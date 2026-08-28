@@ -12,10 +12,9 @@ import (
 //
 // A type name is not program-wide: two modules may each declare a private `Point`, and a
 // module may declare its own `Maybe` over the prelude's. The symbol table settles which
-// declaration a name means with declKey — bare when exported, `<module>::<name>` when
-// private or shadowing a prelude name — and `l.structTypes` has to be keyed the same way,
-// or the second `Point` finds the first one's registered LLVM struct and is lowered
-// against the wrong layout. (It was: two same-named private structs emitted one `%Point`
+// declaration a name means with declKey — resolution to a uniform `<module>::<name>`
+// identity key — and `l.structTypes` has to be keyed the same way, or the second `Point`
+// finds the first one's registered LLVM struct and is lowered against the wrong layout. (It was: two same-named private structs emitted one `%Point`
 // carrying the union of both field lists, which clang rejected as a redefinition.)
 //
 // **The asking module is ambient rather than threaded**, unlike the function path's
@@ -66,16 +65,31 @@ func (l *lowerer) specSiteKey(name string) string {
 
 // llvmTypeName is the name an emitted LLVM type definition carries.
 //
-// A key equal to the declared name — every exported type, and every type in a
-// single-module program — keeps that name verbatim, so the emitted IR is unchanged for
-// everything that was already expressible. Only a module-qualified key is mangled, since
-// `::` would have to be quoted in LLVM's syntax and the point of the name is to be
-// readable in a dump.
-func llvmTypeName(key, name string) string {
-	if key == name {
+// The **program-wide** declaration of a name — the prelude's, an export's, or the entry
+// module's, exactly one per name — keeps that name verbatim, so the emitted IR reads
+// `%Maybe` and `%Node` rather than a mangled key, and is unchanged from the bare-key
+// era for everything that was expressible then. Every other declaration of the name (a
+// private one, or one shadowing the program-wide meaning) is mangled from its
+// module-qualified key, which is what keeps two same-named types two LLVM types.
+func (l *lowerer) llvmTypeName(key, name string) string {
+	// key == name is the resolver's pass-through: no declaration owns the name, which
+	// is every *synthetic* name — a generic instantiation symbol (`Box$i64`) is
+	// registered raw and is already unique, so it keeps its spelling.
+	if key == name || l.keyIsProgramWide(key, name) {
 		return name
 	}
 	return mangleTypeKey(key)
+}
+
+// keyIsProgramWide reports whether key identifies the declaration that a context-free
+// reference to name means — the one declaration per name entitled to the verbatim
+// spelling in emitted IR.
+func (l *lowerer) keyIsProgramWide(key, name string) bool {
+	if l.res == nil || l.res.SymbolTable == nil {
+		return key == name
+	}
+	canonical, ok := l.res.SymbolTable.ProgramWideTypeKey(name)
+	return ok && canonical == key
 }
 
 // lookupTypeDecl resolves a named type to its declaration as the module being lowered
@@ -123,7 +137,7 @@ func (l *lowerer) instantiationSymbol(p types.ParameterizedType) string {
 	}
 	symbol := typetable.TypeSymbol(p.Name, args)
 	key := l.typeKey(p.Name)
-	if key == p.Name {
+	if key == p.Name || l.keyIsProgramWide(key, p.Name) {
 		return symbol
 	}
 	return mangleTypeKey(strings.TrimSuffix(key, p.Name)) + symbol

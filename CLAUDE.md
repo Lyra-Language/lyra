@@ -62,14 +62,22 @@ real failure, and none is local to one package.
    `types.IsCopiedScalar` and `types.CollectTypeVars` exist: one predicate, so two passes
    cannot drift apart.
 
-   **All three maps are keyed by `declKey`** — bare when a declaration is `pub` or in the
-   entry module, `<module>::<name>` when private or when it takes a name reaching it from
-   elsewhere (the prelude's, or one exported by a module it imports — `shadowsAmbient`) —
-   so *which* accessor you use is a correctness question, not a style one. Prefer
-   `LookupTypeFrom`/`LookupTraitFrom`/`LookupFunctionFrom(name, loc)`, which resolve as the
-   file at `loc` sees it; bare `LookupType(name)` answers only for a program-wide name, and
-   asking it from inside a module that declares its own returns *another* module's
-   declaration.
+   **All three maps are keyed uniformly by `<module>::<name>`** (the entry module's empty
+   path gives `::name`) — identity, from the declaration's own file (`DeclKey`). Resolution
+   is a separate function: `declKey(name, loc)` answers with the identity key of the
+   declaration the name means at `loc` — the asking module's own, an imported one (aliases
+   followed to the source), the prelude's export, then any program-wide export (the rung
+   that lets a value's type resolve past the import boundary; a *written* unimported type
+   name is refused via `ResolvedReachably` + the TypeRefs written-occurrence test). An
+   unresolvable name passes through unchanged, which the backend's synthetic instantiation
+   symbols (`Maybe$i64`) depend on. Until 08/27 the key itself encoded visibility (bare
+   when exported or entry-module), so a lookup asked with the wrong context *usually*
+   worked — the soil the four corollaries below grew in. *Which* accessor you use is still
+   a correctness question: prefer `LookupTypeFrom`/`LookupTraitFrom`/
+   `LookupFunctionFrom(name, loc)`, which resolve as the file at `loc` sees it; bare
+   `LookupType(name)` answers for the program-wide meaning of a context-free name
+   (prelude's export, then any module's, then the entry module's declaration), and asking
+   it from inside a module that declares its own returns that other declaration.
 
    Four corollaries, each of which has already bitten:
 
@@ -303,7 +311,7 @@ real failure, and none is local to one package.
    | is this CST node a comment? | `cst.IsComment` |
 
 9. **A name does not identify a declaration, and may not even identify one function.**
-   A *key* is module-qualified for a private declaration (rule 4), and a
+   Every *key* is module-qualified (rule 4), and a
    **receiver-overloaded** name maps to several declarations at once, told apart only by
    the receiver's type. So any pass answering "what does this call call?" by looking the
    name up is wrong in one of two quiet ways: it gets another module's function, or it gets

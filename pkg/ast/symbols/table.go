@@ -127,7 +127,7 @@ type SymbolTable struct {
 
 	// Shadowed records every declaration that took a name arriving from somewhere else
 	// — the prelude, or a module this one imports. Both are warnings, never errors:
-	// see shadowsAmbient.
+	// see noteAmbientShadow.
 	Shadowed []ShadowedName
 
 	// ImportedModules maps a module to the module paths its files import. It is the
@@ -233,8 +233,7 @@ func (s *SymbolTable) AddModuleDoc(modulePath string, doc *ast.Doc, lead bool) {
 // LookupType, LookupTrait and LookupFunction are the **only** ways a pass should
 // resolve a top-level name to its declaration.
 //
-// They exist as a choke point rather than as sugar over the maps. Those maps are keyed
-// by bare name and are read from seven packages; with modules, answering "which
+// They exist as a choke point rather than as sugar over the maps. Answering "which
 // declaration does this name mean" depends on *which module is asking*, and a lookup
 // scattered across dozens of call sites cannot be taught that. Routing every read
 // through here means module resolution is a change in one place — the same reason
@@ -243,78 +242,79 @@ func (s *SymbolTable) AddModuleDoc(modulePath string, doc *ast.Doc, lead bool) {
 // All three are nil-receiver-safe, so a consumer without a symbol table sees "not
 // found" rather than crashing.
 //
-// LookupType and LookupTrait answer for a **program-wide** name: the bare key, which
-// holds a `pub` declaration and the prelude's. A private declaration — and one that took
-// a prelude name — lives under a module-qualified key, so a caller that has a
-// referencing location must ask LookupTypeFrom/LookupTraitFrom instead. Which of the two
-// a site wants is not a style choice: asking the bare form from inside a module that
-// declares its own returns *another* module's declaration.
+// The bare forms answer for a **program-wide** name — what a reference with no module
+// context could mean: the prelude's export, an export any module published, or the
+// entry module's declaration, in that order (the order the old bare-key scheme
+// produced: a shadowing declaration was qualified, so the ambient one kept the bare
+// key). A caller that has a referencing location must ask the From forms instead,
+// which resolve as that location's module sees the name.
 func (st *SymbolTable) LookupType(name string) (*ast.TypeDeclStmt, bool) {
-	if st == nil {
+	sym, ok := st.programWide(name)
+	if !ok {
 		return nil, false
 	}
-	decl, ok := st.Types[name]
+	decl, ok := sym.(*ast.TypeDeclStmt)
 	return decl, ok
 }
 
 func (st *SymbolTable) LookupTrait(name string) (*ast.TraitDeclStmt, bool) {
-	if st == nil {
+	sym, ok := st.programWide(name)
+	if !ok {
 		return nil, false
 	}
-	decl, ok := st.Traits[name]
+	decl, ok := sym.(*ast.TraitDeclStmt)
 	return decl, ok
 }
 
+// programWide is the shared body of the bare lookups: the declaration a context-free
+// reference to name would mean. Prelude before global scope, because a declaration
+// taking a prelude name is the shadowing one — confined to its own module — while the
+// prelude's stays ambient; the entry module last, since nothing can import it.
+func (st *SymbolTable) programWide(name string) (ast.Named, bool) {
+	if st == nil {
+		return nil, false
+	}
+	if st.PreludeScope != nil {
+		if sym, ok := st.PreludeScope.LookupLocal(name); ok {
+			return sym, true
+		}
+	}
+	if st.GlobalScope != nil {
+		if sym, ok := st.GlobalScope.LookupLocal(name); ok {
+			return sym, true
+		}
+	}
+	if scope := st.moduleScope(""); scope != nil {
+		if sym, ok := scope.LookupLocal(name); ok {
+			return sym, true
+		}
+	}
+	return nil, false
+}
+
+// ProgramWideTypeKey is the identity key of the declaration LookupType(name) answers
+// with. It exists for the backend's emitted type names: a type whose key is the
+// program-wide meaning of its name may carry that name verbatim in the IR — readable in
+// a dump, and safe because at most one declaration per name can be the program-wide one.
+func (st *SymbolTable) ProgramWideTypeKey(name string) (string, bool) {
+	decl, ok := st.LookupType(name)
+	if !ok {
+		return "", false
+	}
+	return st.DeclKey(decl), true
+}
+
 // LookupTypeFrom and LookupTraitFrom resolve a name as the file at loc sees it: the
-// asking module's own declaration when it has one, otherwise the program-wide entry.
-//
-// They are to types what LookupFunctionFrom is to functions, and exist for the same
-// reason — with Types keyed by DeclKey, a bare read cannot see a private declaration at
-// all, and silently hands back a same-named one from elsewhere when there is one.
+// asking module's own declaration, an imported one, or the prelude's — declKey's three
+// rungs, so the import boundary is enforced by resolution itself. A declaration the
+// asking module neither made nor imported resolves to that module's own (absent) key
+// and misses, which is what `import lib.{ listed }` admitting only `listed` means here.
 func (st *SymbolTable) LookupTypeFrom(name string, loc ast.Location) (*ast.TypeDeclStmt, bool) {
 	if st == nil {
 		return nil, false
 	}
 	decl, ok := st.Types[st.declKey(name, loc)]
-	if !ok || !st.importedAt(decl, name, loc) {
-		return nil, false
-	}
-	return decl, true
-}
-
-// importedAt reports whether a *type-level* declaration is visible to the file at loc:
-// its own module's, the prelude's, or one that file's module imported by name.
-//
-// **Values do not need this and types do**, which is the asymmetry to keep in mind. A
-// value reference resolves through the scope chain — module → imports → prelude — so the
-// imports scope gates it structurally. A type reference does not: it goes through the
-// Types/Traits maps keyed by declKey, which answers "whose declaration is this" and says
-// nothing about who may see it. Without the gate `import lib.{ listed }` still admitted
-// `lib`'s `Point`, which is the same hole one level up.
-//
-// A declaration's module is the module of the *file* it is written in — not
-// `ModuleOf[name]`, which is last-writer-wins and would answer for whichever module
-// declared that name last (invariant 4).
-func (st *SymbolTable) importedAt(decl ast.Named, name string, loc ast.Location) bool {
-	if decl == nil {
-		return false
-	}
-	asking := st.ModuleOfFile[loc.File]
-	declared := st.ModuleOfFile[decl.GetLocation().File]
-	if declared == asking || declared == st.PreludeModule {
-		return true
-	}
-	// A declaration with no file recorded predates this bookkeeping or was synthesized;
-	// admitting it is the conservative direction, matching declIsPublic's.
-	if declared == "" && decl.GetLocation().File == "" {
-		return true
-	}
-	if imports := st.ImportScopes[asking]; imports != nil {
-		if sym, found := imports.LookupLocal(name); found && sym == decl {
-			return true
-		}
-	}
-	return false
+	return decl, ok
 }
 
 func (st *SymbolTable) LookupTraitFrom(name string, loc ast.Location) (*ast.TraitDeclStmt, bool) {
@@ -322,10 +322,7 @@ func (st *SymbolTable) LookupTraitFrom(name string, loc ast.Location) (*ast.Trai
 		return nil, false
 	}
 	decl, ok := st.Traits[st.declKey(name, loc)]
-	if !ok || !st.importedAt(decl, name, loc) {
-		return nil, false
-	}
-	return decl, true
+	return decl, ok
 }
 
 // LookupTypeIn and LookupTraitIn resolve a name as a member of a named module — the
@@ -341,10 +338,7 @@ func (st *SymbolTable) LookupTypeIn(module, name string) (*ast.TypeDeclStmt, boo
 	if st == nil {
 		return nil, false
 	}
-	if decl, ok := st.Types[qualifiedName(module, name)]; ok {
-		return decl, true
-	}
-	decl, ok := st.Types[name]
+	decl, ok := st.Types[qualifiedName(module, name)]
 	return decl, ok
 }
 
@@ -352,18 +346,18 @@ func (st *SymbolTable) LookupTraitIn(module, name string) (*ast.TraitDeclStmt, b
 	if st == nil {
 		return nil, false
 	}
-	if decl, ok := st.Traits[qualifiedName(module, name)]; ok {
-		return decl, true
-	}
-	decl, ok := st.Traits[name]
+	decl, ok := st.Traits[qualifiedName(module, name)]
 	return decl, ok
 }
 
 func (st *SymbolTable) LookupFunction(name string) (*ast.LambdaExpr, bool) {
-	if st == nil {
+	sym, ok := st.programWide(name)
+	if !ok {
 		return nil, false
 	}
-	fn, ok := st.Functions[name]
+	// The program-wide scopes hold the *binding*; Functions holds the lambda. The
+	// binding's own module and name recover its identity key.
+	fn, ok := st.Functions[st.DeclKey(sym)]
 	return fn, ok
 }
 
@@ -421,16 +415,15 @@ func (st *SymbolTable) PopScope() {
 	st.CurrentScope = st.CurrentScope.Parent
 }
 
-// RegisterType adds a type declaration to the symbol table, under the key its module
-// and visibility earn it (see declKey).
+// RegisterType adds a type declaration to the symbol table, under its identity key
+// (DeclKey).
 //
 // **The declaration lands in its own module's scope first**, and that ordering is
-// load-bearing rather than tidy: declKey asks the module scope whether the name is
-// declared there and whether it is exported, so computing the key before the scope knows
-// about the declaration reads it as another module's and hands back the bare key. Types
-// are registered *during* the walk (unlike functions, which are registered in Finish
-// once every file is done), so there is no later point at which the scope is already
-// populated.
+// load-bearing rather than tidy: resolution (declKey) asks the module scope whether the
+// name is declared there, so a lookup made before the scope knows about the declaration
+// resolves the name to something else. Types are registered *during* the walk (unlike
+// functions, which are registered in Finish once every file is done), so there is no
+// later point at which the scope is already populated.
 //
 // Publication to the global scope is **not** done here. A declaration is exported by
 // collector.exportToGlobal alongside `pub` bindings — one rule, one place — and only a
@@ -444,7 +437,7 @@ func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
 		return err
 	}
 	st.noteAmbientShadow(node.Name, node.GetLocation())
-	st.Types[st.declKey(node.Name, node.GetLocation())] = node
+	st.Types[st.DeclKey(node)] = node
 	return nil
 }
 
@@ -456,7 +449,7 @@ func (st *SymbolTable) RegisterTrait(node *ast.TraitDeclStmt) error {
 		return err
 	}
 	st.noteAmbientShadow(node.Name, node.GetLocation())
-	st.Traits[st.declKey(node.Name, node.GetLocation())] = node
+	st.Traits[st.DeclKey(node)] = node
 	return nil
 }
 
@@ -502,14 +495,17 @@ func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error
 	// the merge rule stays in one place. Every member reaches this function — Finish
 	// walks top-level bindings, not names — and each one re-registers the same set,
 	// which is why the write is idempotent rather than an append.
-	key := st.declKey(name, node.GetLocation())
+	//
+	// The identity key is built here rather than through DeclKey because the lambda is
+	// not the named thing — the binding that holds it is, and `name` is the binding's.
+	key := qualifiedName(st.ModuleOfFile[node.GetLocation().File], name)
 	if set, overloaded := st.OverloadSetFor(name, node.GetLocation()); overloaded {
 		st.registerOverloadSet(key, set)
 		return nil
 	}
-	// A *private* function is keyed by module, so two modules may each declare one
-	// without competing. Only exported names share the bare key, where a clash is
-	// genuine: a bare reference to either would be ambiguous.
+	// Keys are per-module, so a clash here is a redeclaration *within one module* —
+	// two modules exporting one name is exportToGlobal's to report, and two modules
+	// each declaring a private (or entry-module) one is legal and does not meet.
 	if existing, exists := st.Functions[key]; exists && existing != node {
 		return fmt.Errorf("function %q is already defined at %s%s", name,
 			describeLocation(existing.GetLocation()), overloadRefusal(existing, node))
@@ -550,24 +546,47 @@ func receiverType(fn *ast.LambdaExpr) types.Type {
 	return recv.Type
 }
 
-// FunctionKey and TypeKey are the key a declaration is stored under: its bare name when
-// exported (or declared in the entry module), and `<module>::<name>` when private.
+// Keys are **uniform**: every declaration is stored under `<module>::<name>`, with the
+// entry module's empty path giving `::<name>`. Identity and resolution are therefore two
+// different questions with two different functions:
 //
-// Qualifying only the private ones keeps every existing lookup working — an exported
-// name is still found by the name the source writes — while giving each module's
-// private names a space of their own.
+//   - **DeclKey(node)** is a declaration's identity — the key Register* stores it under,
+//     computed from the declaration's own file and name and nothing else.
+//   - **declKey(name, loc)** is resolution — the identity key of the declaration that
+//     `name`, written at loc, resolves to: the asking module's own declaration, then its
+//     imports (following an alias to the source declaration), then the prelude's export.
 //
-// They are two names for **one** rule (declKey), not two rules that happen to agree.
-// Functions got module-qualified keys on 07/30 and types followed; writing the rule
-// twice is precisely the drift invariant 4 exists to prevent, and the two would have to
-// agree anyway — a module's `Point` and its `point` are the same kind of name as far as
-// "whose declaration is this" is concerned.
+// The two agree at a declaration's own site — its module's scope holds it, so the first
+// rung answers — which is what lets a map write use DeclKey and every read use declKey.
+//
+// Until 08/27 the key itself encoded visibility (bare when exported or in the entry
+// module, qualified when private or shadowing an ambient name), so identity and
+// resolution coincided through the shared bare key — and a lookup that asked with the
+// wrong context *usually* worked, which is exactly what made the wrong callers pass
+// review and tests (invariant 4's four corollaries, and the purity pass's two-month
+// last-writer-wins bug). A bare-key read now simply misses, so a caller without a
+// context must use the program-wide forms (LookupType et al.), which say what they mean.
+//
+// FunctionKey and TypeKey are two names for **one** rule (declKey), not two rules that
+// happen to agree — a module's `Point` and its `point` are the same kind of name as far
+// as "which declaration does this mean" is concerned.
 func (st *SymbolTable) FunctionKey(name string, loc ast.Location) string {
 	return st.declKey(name, loc)
 }
 
 func (st *SymbolTable) TypeKey(name string, loc ast.Location) string {
 	return st.declKey(name, loc)
+}
+
+// DeclKey is the identity key a top-level declaration is stored under:
+// `<module>::<name>`, from the declaration's own file. Registration must use this
+// rather than declKey — resolution consults scopes, and a declaration that failed to
+// land in its scope (a duplicate) would resolve to something it is not.
+func (st *SymbolTable) DeclKey(node ast.Named) string {
+	if st == nil || node == nil {
+		return ""
+	}
+	return qualifiedName(st.ModuleOfFile[node.GetLocation().File], node.GetName())
 }
 
 func (st *SymbolTable) declKey(name string, loc ast.Location) string {
@@ -577,35 +596,83 @@ func (st *SymbolTable) declKey(name string, loc ast.Location) string {
 	return st.declKeyIn(st.ModuleOfFile[loc.File], name)
 }
 
-func (st *SymbolTable) declKeyIn(module, name string) string {
-	// A declaration that took an *ambient* name — the prelude's, or one arriving
-	// through an import — is qualified whatever its visibility and whichever module
-	// made it, including the entry module, which otherwise keeps the bare key. The
-	// module the name came from keeps the bare key, so every module that did *not*
-	// shadow it still finds that declaration under it.
-	if st.shadowsAmbient(module, name) {
-		return qualifiedName(module, name)
+// ResolvedReachably reports whether name, written at loc, resolves through the rungs a
+// *written* name may use — the module's own scope, its imports, or the prelude. The
+// resolver itself has a fourth rung (any program-wide export), which exists for types
+// that values carry across the import boundary; a site reporting on a name the user
+// wrote asks this first, so `import lib.{ listed }` still refuses an unlisted `Point`
+// annotation while a `Point` value from a listed function's return stays usable.
+func (st *SymbolTable) ResolvedReachably(name string, loc ast.Location) bool {
+	if st == nil {
+		return false
 	}
-	if module == "" {
-		return name
+	module := st.ModuleOfFile[loc.File]
+	if st.ModuleDeclares(module, name) {
+		return true
 	}
-	// Exported names live under the bare key so a cross-module reference finds them.
-	if decl := st.moduleScope(module); decl != nil {
-		if sym, found := decl.LookupLocal(name); found && !declIsPublic(sym) {
-			return qualifiedName(module, name)
+	if imports := st.ImportScopes[module]; imports != nil {
+		if _, found := imports.LookupLocal(name); found {
+			return true
 		}
 	}
+	if st.PreludeScope != nil {
+		if _, found := st.PreludeScope.LookupLocal(name); found {
+			return true
+		}
+	}
+	return false
+}
+
+// declKeyIn resolves name as module sees it: its own declaration, an imported one, or
+// the prelude's — the same three rungs, in the same order, as the value scope chain
+// (module → imports → prelude), so a key-based lookup and a scope-based one cannot
+// disagree about which declaration a name means.
+func (st *SymbolTable) declKeyIn(module, name string) string {
+	if st.ModuleDeclares(module, name) {
+		return qualifiedName(module, name)
+	}
+	// An import binds a *local* name to a source declaration, so the resolved key is
+	// the declaration's own — which is what makes `import a.{ X as Y }` find `a::X`
+	// under the name this module writes as `Y`.
+	if imports := st.ImportScopes[module]; imports != nil {
+		if sym, found := imports.LookupLocal(name); found {
+			return qualifiedName(st.ModuleOfFile[sym.GetLocation().File], sym.GetName())
+		}
+	}
+	if st.PreludeScope != nil {
+		if _, found := st.PreludeScope.LookupLocal(name); found {
+			return qualifiedName(st.PreludeModule, name)
+		}
+	}
+	// A program-wide **export** resolves from anywhere, imported or not. This is the
+	// rung that lets a value's type outrun the import boundary: `match ev { Mouse(m) =>
+	// m.col }` reaches a struct the file never imported by name, because the value
+	// carried it there. It is also the old scheme's de facto behaviour made
+	// deterministic — the bare key held the export, and the type-resolution cache
+	// (keyed the same way) leaked it past the import gate whenever the exporting
+	// module had resolved the name first, which was nearly always. What the import
+	// boundary actually polices is *identifier* resolution, which runs on the scope
+	// chain and stops at the prelude.
+	if st.GlobalScope != nil {
+		if sym, found := st.GlobalScope.LookupLocal(name); found {
+			return qualifiedName(st.ModuleOfFile[sym.GetLocation().File], sym.GetName())
+		}
+	}
+	// Nothing answers: the name passes through unchanged. For a real name that is a
+	// guaranteed miss — every declaration's key is qualified — and the pass-through is
+	// load-bearing for *synthetic* names: the backend routes generic instantiation
+	// symbols (`Maybe$i64`) through typeKey into a registry that shares this keyspace,
+	// and those are registered raw, under no module.
 	return name
 }
 
 // declIsPublic reports whether a top-level declaration is exported. Bindings, types and
-// traits all carry `pub` on three different nodes, and all three are keyed by declKey,
-// so the predicate is written once here rather than at each switch over them.
+// traits all carry `pub` on three different nodes, and one predicate serves every
+// consumer (ModuleExports, PopulateImportScopes) rather than each switching over them.
 //
-// An unrecognised node counts as exported, which leaves it on the bare key. That is the
-// conservative direction: a wrongly *qualified* key hides a declaration from every
-// module including the one that made it, while a wrongly bare one merely fails to
-// confine it — the behaviour that predates keys at all.
+// An unrecognised node counts as exported. That is the conservative direction: wrongly
+// hiding a declaration takes it away from every module, while wrongly exporting it
+// merely fails to confine it — the behaviour that predates module privacy at all.
 func declIsPublic(sym ast.Named) bool {
 	switch d := sym.(type) {
 	case *ast.VarDeclStmt:
@@ -638,57 +705,6 @@ func declIsPublic(sym ast.Named) bool {
 // qualifiedName is the key a declaration gets when the bare name is not its alone.
 func qualifiedName(module, name string) string {
 	return module + "::" + name
-}
-
-// shadowsAmbient reports whether module declares its own `name` over one that reaches
-// it from elsewhere — the prelude's, or one exported by a module it imports. Both are
-// the case a warning is issued for, and the reason the declaration needs a key of its
-// own.
-//
-// **They are one rule and were two.** A prelude name was shadowable and an imported one
-// was not, so `import util.seq` (which exports a `map`) plus a perfectly ordinary
-// `let map = …` was a hard error while the same declaration over the prelude's `map`
-// merely warned — the explicit act punished and the implicit one forgiven, and a user's
-// only reading of it was that importing a module forbids them a name they can see no
-// reason to lose. Qualifying the local declaration is what `shadowsPrelude` already did
-// for the softer half; this is the same key, asked of a wider set of sources.
-func (st *SymbolTable) shadowsAmbient(module, name string) bool {
-	return st.shadowsPrelude(module, name) || st.shadowsImport(module, name)
-}
-
-// shadowsPrelude reports whether module declares its own `name` over one the prelude
-// exports.
-//
-// It asks the module's *scope*, not ModuleOf: that map is last-writer-wins, so it
-// forgets the prelude ever had the name the moment a user module takes it.
-func (st *SymbolTable) shadowsPrelude(module, name string) bool {
-	if st == nil || st.PreludeModule == "" || module == st.PreludeModule {
-		return false
-	}
-	return st.PreludeNames[name] && st.ModuleDeclares(module, name)
-}
-
-// shadowsImport reports whether module declares its own `name` over one exported by a
-// module it imports.
-//
-// The answer must be **stable** between the moment a declaration is keyed and every
-// later lookup, since a key computed one way and read the other simply misses. Both
-// halves are: ModuleDeclares is true from the moment the declaration lands in its own
-// module's scope, which RegisterType/RegisterTrait do before computing the key and
-// recordModuleBindings does before Finish registers a function; ModuleExports asks the
-// *imported* module's scope, and Resolve returns units in dependency order, so that
-// module was walked first. ImportedModules is the one that could not be assembled as
-// the walk went (see SetImports).
-func (st *SymbolTable) shadowsImport(module, name string) bool {
-	if st == nil || !st.ModuleDeclares(module, name) {
-		return false
-	}
-	for _, imported := range st.ImportedModules[module] {
-		if imported != module && st.ModuleExports(imported, name) {
-			return true
-		}
-	}
-	return false
 }
 
 // ModuleExports reports whether module declares name at its top level *and* exports it.
@@ -920,10 +936,10 @@ func (st *SymbolTable) takesPreludeName(name string, loc ast.Location) bool {
 // mentioned `Maybe` losing the canonical one and reporting "`?` operand must be a Result
 // or Maybe, got Maybe" — a diagnostic about a declaration it had never seen.
 //
-// Keying types and traits by declKey is what removed the need. A declaration taking a
-// prelude name is qualified whatever its visibility, so the prelude keeps the bare key
-// and the two coexist exactly as a shadowing *binding* and the prelude's already did —
-// each module reaching the one it should, through the same key function.
+// Per-module keys are what removed the need: every declaration has a key of its own, so
+// a shadowing declaration and the prelude's coexist exactly as a shadowing *binding* and
+// the prelude's already did — each module reaching the one it should, because resolution
+// tries the asking module's own declaration before the prelude's.
 func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
 	st.Shadowed = append(st.Shadowed, ShadowedName{Name: name, Loc: loc})
 }
@@ -931,12 +947,10 @@ func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
 // noteAmbientShadow records the warning for a declaration that took a name reaching it
 // from elsewhere, whichever source it came from.
 //
-// The prelude half asks takesPreludeName rather than shadowsPrelude, because a *type* is
-// registered before its own scope entry exists and the two questions differ exactly
-// there. The import half has no such wrinkle — every caller has already defined the
-// declaration in its module scope by the time it gets here — so it asks the same
-// predicate declKeyIn does, which is what keeps "was it warned about" and "was it keyed
-// apart" from being able to disagree.
+// The prelude half asks takesPreludeName, which does not consult the declaring module's
+// scope, because a *type* is registered before its own scope entry exists. The import
+// half has no such wrinkle — every caller has already defined the declaration in its
+// module scope by the time it gets here.
 func (st *SymbolTable) noteAmbientShadow(name string, loc ast.Location) {
 	if st == nil {
 		return

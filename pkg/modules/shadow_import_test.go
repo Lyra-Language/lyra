@@ -155,7 +155,7 @@ import util.seq
 pub let map = (n: i64) -> i64 => n + 1`,
 	})
 	res := analyze(t, root)
-	if !errorsContaining(res, `symbol "map" already defined`) {
+	if !errorsContaining(res, `function "map" is already defined`) {
 		t.Errorf("expected a re-export of an imported name to be reported; got %v", res.Errors())
 	}
 }

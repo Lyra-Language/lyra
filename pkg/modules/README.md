@@ -206,14 +206,12 @@ never mentioned it.
 forgiven, and the only reading a user could take from it is that importing a module forbids
 them a name, which is not a rule this language means to have.
 
-It is one rule now, `shadowsAmbient`: a module's own top-level declaration of a name
-reaching it from elsewhere — the prelude's, or one exported by a module it imports — is
-keyed `<module>::<name>`, the source keeps the bare key, and the declaration warns
-(`lyra-W016`, W012's sibling) rather than erroring. So the local declaration wins every
-bare reference in that module, the shadowed one is still reached through the namespace the
-import already binds (`seq.map`), and no other module is affected. Nothing new was
-invented: this is the key `shadowsPrelude` had been computing for the softer half, asked of
-a wider set of sources.
+It is one rule now (`noteAmbientShadow`): a module's own top-level declaration of a name
+reaching it from elsewhere — the prelude's, or one exported by a module it imports — warns
+(`lyra-W016`, W012's sibling) rather than erroring. Every declaration has a key of its own
+(`<module>::<name>`, uniformly), and resolution tries the module's own declaration first, so
+the local one wins every bare reference in that module, the shadowed one is still reached
+through the namespace the import already binds (`seq.map`), and no other module is affected.
 
 What stays an error is a **second claim on the program-wide name**: two modules exporting
 one name, whether or not one imports the other, since a bare reference from a third module
@@ -258,11 +256,11 @@ has to beat it, and one module taking the name must not change what it means any
 Exporting the prelude into the global scope instead — where every module's exports live and
 every module falls through — is what made a shadow program-wide: the first module to declare
 `unwrapOr` handed its own to everybody, and a **private** one was worse, because withdrawing the
-prelude's registration to make room deleted the name for every module at once. A shadowing
-declaration also gets a module-qualified `FunctionKey` whatever its visibility, so the prelude
-keeps the bare key and every module that did not shadow still finds it; the backend and the
-ownership pass already ask for that key from the *referencing* location, so nothing else had to
-learn about the prelude. Consequently `ownership`/`use_after_move` resolve a callee through
+prelude's registration to make room deleted the name for every module at once. Every
+declaration has its own module-qualified key, and resolution (`FunctionKey`, asked from the
+*referencing* location) tries the asking module's own declaration before the prelude's, so a
+shadow reaches exactly as far as the module that declared it and every other module still
+finds the prelude's. Consequently `ownership`/`use_after_move` resolve a callee through
 `LookupFunctionFrom`, not a bare `Functions` read — those passes take the callee's parameter
 modes as a memory-safety decision, and a bare lookup hands back another module's function.
 

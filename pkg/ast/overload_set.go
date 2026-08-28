@@ -105,9 +105,9 @@ func ReceiverHead(decl *VarDeclStmt) (head string, reason string) {
 //   - **Their heads differ.** Two candidates matching one receiver would need a
 //     specificity ordering to rank; refusing the overlap at the declaration is a fixed
 //     error in one place instead of an ambiguity reported at every call site.
-//   - **They agree on `pub`.** A set is one name to the rest of the program, and the
-//     key it is stored under (declKey) is chosen from its visibility — a half-exported
-//     set would be findable from another module for some receivers and not others.
+//   - **They agree on `pub`.** A set is one name to the rest of the program, so whether
+//     it is exported must have one answer — a half-exported set would be findable from
+//     another module for some receivers and not others.
 func OverloadableWith(set *OverloadSet, decl *VarDeclStmt) (string, bool) {
 	head, reason := ReceiverHead(decl)
 	if reason != "" {

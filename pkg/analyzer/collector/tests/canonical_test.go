@@ -10,7 +10,7 @@ import (
 // CanonicalKind ("Result"/"Maybe"/""), failing if the type isn't declared.
 func canonicalKindOf(t *testing.T, table *symbols.SymbolTable, name string) string {
 	t.Helper()
-	decl, ok := table.Types[name]
+	decl, ok := table.LookupType(name)
 	if !ok {
 		t.Fatalf("type %q was not declared", name)
 	}

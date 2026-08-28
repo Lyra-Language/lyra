@@ -127,7 +127,7 @@ func (c *Collector) resolveCanonicalTypes() {
 		decls := marked[kind]
 		if len(decls) == 0 {
 			// Fallback: an unmarked, canonically-shaped type of the same name.
-			if d, ok := c.table.Types[kind]; ok && d.Builtin == "" && matchesCanonicalShape(d, kind) {
+			if d, ok := c.table.LookupType(kind); ok && d.Builtin == "" && matchesCanonicalShape(d, kind) {
 				d.CanonicalKind = kind
 			}
 			continue
@@ -269,7 +269,7 @@ func (c *Collector) resolveCanonicalTraits() {
 	for _, kind := range canonicalTraitKinds {
 		decls := marked[kind]
 		if len(decls) == 0 {
-			if d, ok := c.table.Traits[kind]; ok && d.Builtin == "" && matchesCanonicalTraitShape(d, kind) {
+			if d, ok := c.table.LookupTrait(kind); ok && d.Builtin == "" && matchesCanonicalTraitShape(d, kind) {
 				d.CanonicalKind = kind
 			}
 			continue

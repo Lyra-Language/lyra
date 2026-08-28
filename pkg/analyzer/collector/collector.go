@@ -7,6 +7,7 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 */
 
 import (
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -156,11 +157,11 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 		case *ast.ImportStmt:
 			c.table.Imports[modulePath] = append(c.table.Imports[modulePath], importBinding(s))
 		// A type or trait is already in its module's scope: RegisterType/RegisterTrait
-		// put it there during the walk, because their key (declKey) is computed from
-		// that scope and so cannot wait until the file is finished. Only the export is
-		// left to do here, and it is the same export a `pub` binding gets — a private
-		// declaration stays out of the global scope, which is what lets two modules each
-		// declare a `Point`.
+		// put it there during the walk, because resolution (declKey) reads that scope
+		// and so cannot wait until the file is finished. Only the export is left to do
+		// here, and it is the same export a `pub` binding gets — a private declaration
+		// stays out of the global scope, which is what lets two modules each declare a
+		// `Point`.
 		case *ast.TypeDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.exportToGlobal(modulePath, s, s.IsPublic)
@@ -237,15 +238,41 @@ func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic b
 			c.table.GlobalScope.Symbols[decl.GetName()] = set
 			return
 		}
-	}
-	if err := c.table.GlobalScope.Define(decl); err != nil {
 		// Two modules exporting the same name: a bare reference could mean either, so
-		// it is a genuine clash rather than something privacy can resolve.
+		// it is a genuine clash rather than something privacy can resolve. This is the
+		// **only** place the program-wide claim is enforced — the lookup maps are keyed
+		// per module, so two exports of one name coexist there without meeting — which
+		// is why the message carries the declaration's kind rather than leaning on
+		// Scope.Define's generic "symbol".
 		c.errors = append(c.errors, diag.Diagnostic{
 			Location: decl.GetLocation(),
 			Severity: diag.SeverityError,
-			Message:  err.Error(),
+			Message: fmt.Sprintf("%s %q is already defined at %s:%s",
+				exportKind(existing), decl.GetName(),
+				existing.GetLocation().File, existing.GetLocation().Pretty()),
 		})
+		return
+	}
+	_ = c.table.GlobalScope.Define(decl)
+}
+
+// exportKind names a global-scope declaration for the duplicate-export message — the
+// word the reader would use for the thing they wrote.
+func exportKind(decl ast.Named) string {
+	switch d := decl.(type) {
+	case *ast.TypeDeclStmt:
+		return "type"
+	case *ast.TraitDeclStmt:
+		return "trait"
+	case *ast.OverloadSet:
+		return "function"
+	case *ast.VarDeclStmt:
+		if _, isFn := d.Value.(*ast.LambdaExpr); isFn {
+			return "function"
+		}
+		return "binding"
+	default:
+		return "symbol"
 	}
 }
 
@@ -339,14 +366,14 @@ func (c *Collector) SetPreludeModule(path string) {
 
 // SetImports hands over the whole import graph before the first file is walked, for the
 // same reason SetPreludeModule is called there: a declaration taking a name an imported
-// module exports is keyed apart from it (symbols.declKeyIn), and a type is registered
-// under that key *during* the walk.
+// module exports draws the shadow warning (lyra-W016, symbols.noteAmbientShadow), and a
+// type is registered — and its shadow noted — *during* the walk.
 //
 // Assembling the graph file by file as each is walked would work for a single-file
 // module and quietly fail for the rest: a module whose `import` sits in its second file
-// would key the first file's types as though nothing were imported, and the key a lookup
-// computes afterwards — with the graph complete — would miss them. The graph is known
-// before collection anyway, since resolving it is what produced the units.
+// would walk the first file's types as though nothing were imported, and their shadows
+// would go unwarned. The graph is known before collection anyway, since resolving it is
+// what produced the units.
 func (c *Collector) SetImports(graph map[string][]string) {
 	if graph == nil {
 		return

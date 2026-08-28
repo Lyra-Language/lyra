@@ -9,6 +9,63 @@ Newest first.
 
 ## Dated log
 
+### 08/27/26 — Uniform module-qualified symbol keys: identity split from resolution
+
+**Every declaration is now keyed `<module>::<name>`** (entry module: `::name`), and the
+conditional key encoding — bare when exported or entry-module, qualified when private or
+shadowing an ambient name — is gone. What the old scheme conflated, the new one names as
+two functions: `DeclKey(node)` is a declaration's **identity**, computed from its own file
+and nothing else; `declKey(name, loc)` is **resolution**, answering with the identity key
+of the declaration the name means at loc, through the same rungs as the value scope chain
+(own module → imports → prelude) plus a fourth: any program-wide export.
+
+**Why: the conditional key made wrong lookups *usually* work.** A bare-key read succeeded
+whenever the name happened to be exported, so a caller with the wrong context passed every
+test that didn't shadow — the soil rule 4's four corollaries grew in, and the purity pass's
+two-month last-writer-wins bug. A bare read now simply misses; the program-wide forms
+(`LookupType` et al., reimplemented over PreludeScope → GlobalScope → the entry scope) say
+what they mean.
+
+**What the migration surfaced, all fixed or made deterministic in the same change:**
+
+- **The export rung is the old cache leak made honest.** The typechecker's resolved-type
+  cache was keyed by the same bare name in every module, so an exported type resolved past
+  the import gate whenever the exporting module had resolved it first — which is the only
+  reason `match ev { Mouse(m) => m.col }` (a `std.tui` struct the program never imports)
+  ever worked. The semantics that emerges, now stated: a value carries its type across the
+  import boundary, so an export *resolves* from anywhere; what the boundary polices is
+  names the file *writes*. The written/carried distinction is drawn by `TypeRefs` (the
+  collector's record of every type name written in source): a written unimported type is
+  refused with the add-import hint (`ResolvedReachably` + `writesTypeName`, checked before
+  the cache), while a carried one resolves. Both sides are pinned —
+  `TestImportVisibility_UnlistedTypeIsRefused` and the tui/collectcache suites.
+- **Aliased type imports were half-broken and now work**: `import shapes.{ Point as Pt }`
+  resolved `mk(7)` but refused `let p: Pt = mk(7)` with "cannot assign Point to Pt" — the
+  alias never reached the Types map. Resolution's import rung follows the alias to the
+  source declaration's key.
+- **A transitive export no longer collides with an unrelated declaration.** The entry file
+  declaring `helper` while a module two imports away exported one was a spurious
+  program-wide clash (both took the bare key); keys are per-module now, and the one
+  program-wide claim — two modules *exporting* one name — is enforced in exactly one
+  place, `exportToGlobal`, whose message now carries the declaration's kind ("function
+  %q is already defined at …"), the wording the old map-collision error had.
+- **The unresolvable-name pass-through is load-bearing**: the backend routes generic
+  instantiation symbols (`Maybe$i64`) through `typeKey` into registries that share the
+  keyspace, registered raw. Resolution returns an unresolvable name unchanged — a
+  guaranteed miss for a real name, since every real key is qualified.
+- **Emitted IR is byte-stable where the old scheme was coherent**: `llvmTypeName` keeps a
+  type's verbatim name when its key is the program-wide meaning of that name
+  (`ProgramWideTypeKey`) — prelude, exports, entry — and mangles the rest, which is the
+  same partition the bare key used to draw; synthetic symbols keep their spelling via the
+  pass-through. The one shape that changed: an entry-module function's closure thunk key
+  (`::double`) trims its empty module prefix to keep the `@double.closure` symbol.
+
+`importedAt` and the `shadowsAmbient`/`shadowsImport`/`shadowsPrelude` family are deleted —
+the first subsumed by resolution's rungs, the rest by `noteAmbientShadow`, which had never
+depended on them. W016 and the E028-family hints are unchanged (both were already scan- or
+scope-based). `SetImports` is still handed the graph up front, now for the shadow warnings
+rather than for keying.
+
 ### 08/27/26 — Width and flavor ride one expected-type propagation
 
 **`propagateLiteralType` and `propagateAllocation` are now one walk,

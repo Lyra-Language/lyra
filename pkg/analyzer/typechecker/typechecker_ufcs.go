@@ -371,7 +371,24 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 	}
 	fn, ok := tc.symTable.LookupFunctionFrom(methodName, loc)
 	if !ok {
-		return ""
+		// Resolution is strict — a declaration in a module this file never imported, or
+		// one reachable only through a namespace import, resolves to nothing from here.
+		// The hint has to name it anyway, so the candidate is found by scanning the
+		// declarations, the same set the UFCS rung itself considers.
+		for _, candidate := range tc.symTable.FunctionsNamed(methodName) {
+			if _, isRecv := ufcsReceiverParam(candidate); !isRecv {
+				continue
+			}
+			if !tc.ufcsImported(candidate, loc) {
+				return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style",
+					methodName, tc.symTable.ModuleOfFile[candidate.GetLocation().File])
+			}
+			fn, ok = candidate, true
+			break
+		}
+		if !ok {
+			return ""
+		}
 	}
 	param, isReceiver := ufcsReceiverParam(fn)
 	if !isReceiver {
@@ -379,6 +396,8 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 			"; %s is a free function — name its first parameter `self` to allow method syntax, or call %s(…)",
 			methodName, methodName)
 	}
+	// Reachable because resolution's export rung answers for a module this file never
+	// imported — which is exactly the case where naming the import is the hint.
 	if !tc.ufcsImported(fn, loc) {
 		return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style",
 			methodName, tc.symTable.ModuleOfFile[fn.GetLocation().File])

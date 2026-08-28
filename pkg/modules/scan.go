@@ -25,12 +25,12 @@ import (
 // sorted so a consumer reading it cannot depend on unit order.
 //
 // It exists because the collector needs the graph **before it walks anything**. A
-// module's own declaration of an imported name is keyed apart from the imported one
-// (symbols.declKeyIn), and a type is registered under that key *during* the walk — so a
-// graph assembled per file as it is walked would key the types of a multi-file module by
-// whether the file carrying the `import` happened to come first. Handing the whole graph
-// over up front, the way the prelude's path already is, removes the ordering question
-// rather than answering it.
+// module's own declaration of an imported name draws the shadow warning (lyra-W016,
+// symbols.noteAmbientShadow), and a type is registered — and its shadow noted — *during*
+// the walk, so a graph assembled per file as it is walked would warn on a multi-file
+// module's types by whether the file carrying the `import` happened to come first.
+// Handing the whole graph over up front, the way the prelude's path already is, removes
+// the ordering question rather than answering it.
 //
 // The units are already parsed, and this reads the same shallow top-level slice of the
 // CST that Resolve itself walked, so it costs nothing next to re-deriving the graph.

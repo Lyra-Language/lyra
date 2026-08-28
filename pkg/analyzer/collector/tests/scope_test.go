@@ -340,10 +340,10 @@ func TestScope_TopLevelFunctionsRegistered(t *testing.T) {
 	let explicitPure = pure (n: i64) -> i64 => n + 1
 	let plain = (n: i64) -> i64 => n + 1`)
 
-	if _, ok := table.Functions["explicitPure"]; !ok {
+	if _, ok := table.LookupFunction("explicitPure"); !ok {
 		t.Error("explicitPure should be registered in Functions")
 	}
-	if _, ok := table.Functions["plain"]; !ok {
+	if _, ok := table.LookupFunction("plain"); !ok {
 		t.Error("plain should be registered in Functions")
 	}
 }
@@ -358,7 +358,7 @@ func TestScope_NestedFunctionsNotRegisteredAtTopLevel(t *testing.T) {
 	    0
 	}`)
 
-	if _, ok := table.Functions["nestedPure"]; ok {
+	if _, ok := table.LookupFunction("nestedPure"); ok {
 		t.Error("nestedPure should not be registered in the top-level Functions map")
 	}
 }

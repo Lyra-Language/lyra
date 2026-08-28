@@ -98,7 +98,7 @@ func (l *lowerer) declareNamedStruct(key, name string) error {
 	// Registered under the *key* but named by the readable form: two modules' private
 	// `Point`s are two entries and two LLVM types, while an ordinary program's IR is
 	// byte-for-byte what it was.
-	l.module.NewTypeDef(llvmTypeName(key, name), st) // sets TypeName — st now has identity
+	l.module.NewTypeDef(l.llvmTypeName(key, name), st) // sets TypeName — st now has identity
 	l.structTypes[key] = st
 	return nil
 }

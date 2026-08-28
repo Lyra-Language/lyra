@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -554,7 +555,10 @@ func (l *lowerer) closureThunk(name string) (*ir.Func, error) {
 	for i, p := range target.Params {
 		params = append(params, ir.NewParam(fmt.Sprintf("a%d", i), p.Typ))
 	}
-	thunk := l.module.NewFunc(name+".closure", target.Sig.RetType, params...)
+	// The entry module's identity prefix is empty (`::double`), so trimming it keeps
+	// the thunk's symbol the readable `double.closure`; a named module's stays
+	// module-qualified, as a private function's always was.
+	thunk := l.module.NewFunc(strings.TrimPrefix(name, "::")+".closure", target.Sig.RetType, params...)
 	entry := thunk.NewBlock("entry")
 	args := make([]value.Value, 0, len(params)-1)
 	for _, p := range params[1:] {

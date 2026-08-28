@@ -29,11 +29,11 @@ pass also stamps `ShadowedCanonical` (the kind the declaration looks like but is
 say whether the author re-declared the prelude's type or gave an unrelated type its name. It is
 stamped here rather than re-derived at the diagnostic, so the shape test has one home.
 
-Two traps that pass live in that stamp. It walks the statement list rather than reading
-`c.table.Types[kind]`, because a declaration shadowing a prelude name is keyed `<module>::<name>`
-so the prelude keeps the bare key — the lookup returns the prelude's declaration, the one this is
-not about. And the advice it enables must never be "mark it `@builtin(Maybe)` too": that is a
-duplicate claim, `lyra-E017`, so the message says remove or rename instead.
+Two traps that pass live in that stamp. It walks the statement list rather than asking
+`LookupType(kind)`, because that answers with the *program-wide* declaration — the prelude's,
+when the name shadows it — and the shadowing declaration is exactly the one this is about. And
+the advice it enables must never be "mark it `@builtin(Maybe)` too": that is a duplicate
+claim, `lyra-E017`, so the message says remove or rename instead.
 
 **Struct-pattern reclassification (`reclassifyStructPatterns`, `collector.go`):** after
 `walkProgram`, `Collect` walks every pattern site (match arms, destructuring `let`s, `if

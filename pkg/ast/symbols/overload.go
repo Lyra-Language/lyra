@@ -105,7 +105,7 @@ func (st *SymbolTable) LookupOverloadsFrom(name string, loc ast.Location) (*ast.
 }
 
 // FunctionsNamed returns every registered declaration of name, from every module, in a
-// stable order (bare key first, then by module path).
+// stable order (by module path, the entry module's empty path first).
 //
 // It exists because **a receiver call has to consider all of them.** Every other lookup
 // here answers "which declaration does this name mean", settling it with one key — and for
@@ -143,19 +143,16 @@ func (st *SymbolTable) FunctionsNamed(name string) []*ast.LambdaExpr {
 			out = append(out, fn)
 		}
 	}
-	add(name)
 	modules := make([]string, 0, len(st.ModuleScopes))
 	for module := range st.ModuleScopes {
 		modules = append(modules, module)
 	}
 	sort.Strings(modules)
 	for _, module := range modules {
-		// The **entry** module is included, empty path and all. It takes bare keys like
-		// any other module, except when it declares a name the prelude also has — then
-		// declKeyIn qualifies it to `::name`, which is a key nothing else produces and
-		// which skipping the empty module would hide. That is exactly the case that
-		// matters here: a file declaring its own `map` over the prelude's, whose
-		// declaration would otherwise not be a candidate for its own call.
+		// The **entry** module is included, empty path and all — its key is `::name`.
+		// That is exactly the case that matters here: a file declaring its own `map`
+		// over the prelude's, whose declaration would otherwise not be a candidate for
+		// its own call.
 		add(qualifiedName(module, name))
 	}
 	return out

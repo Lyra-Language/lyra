@@ -1933,6 +1933,24 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 	// answer for every other module — the same hazard that kept the visibility check
 	// below out of the cache when the key was a bare name.
 	key := tc.symTable.TypeKey(tt.Name, loc)
+	// A name this file *writes* without being able to reach — resolvable only through
+	// the export rung — is refused, and before the cache is consulted: the cache is
+	// keyed by the resolved identity, which the exporting module's own (legal)
+	// references share, so checking after the cache would admit exactly the reference
+	// the import boundary exists to refuse. That is how the old bare-name cache key
+	// leaked unimported types for as long as it existed.
+	//
+	// The written-occurrence test (TypeRefs) is what draws the line the language means:
+	// `let p: Point` in a file that never imported `Point` is the author naming a type
+	// they have not asked for, while `m.col` on a value whose type arrived through a
+	// constructor payload writes no name at all — the value carried its type across the
+	// import boundary, and refusing to resolve it would make such values unusable.
+	if !tc.symTable.ResolvedReachably(tt.Name, loc) && tc.writesTypeName(tt.Name, loc.File) {
+		if _, exported := tc.symTable.LookupTypeFrom(tt.Name, loc); exported {
+			tc.addError(loc, SeverityError, "unknown type %q%s", tt, tc.unimportedHint(tt.Name, loc))
+			return tt
+		}
+	}
 	if cached, ok := tc.resolvedTypes[key]; ok {
 		return types.WithAllocation(cached, tt.Allocation)
 	}
@@ -1941,9 +1959,9 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 		// A type named from another module must be exported. Checked here rather
 		// than at each annotation site because every named type reaches its
 		// declaration through this one function. Still deliberately *not* cached:
-		// the key confines a private declaration to its own module, but a `pub`
-		// one shares the bare key with every module that can see it, and only the
-		// reference's own location says whether this one may.
+		// the cache is keyed by the resolved identity, which every module that can
+		// see the declaration shares, and only the reference's own location says
+		// whether this one may.
 		//
 		// Asked of `decl` — the declaration this reference resolved to — and not by
 		// name: see declVisibility.
@@ -3773,7 +3791,11 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 	// struct, or the owning data type for an inline-record constructor.
 	var resultType types.Type
 
-	if d, ok := tc.symTable.LookupTypeFrom(expr.Name, expr.GetLocation()); ok {
+	if d, ok := tc.symTable.LookupTypeFrom(expr.Name, expr.GetLocation()); ok &&
+		// A struct literal *writes* the type's name, so the resolver's export rung does
+		// not admit it — an unlisted import falls through to "undefined struct type"
+		// with the import named, exactly as an unlisted function call reads.
+		tc.symTable.ResolvedReachably(expr.Name, expr.GetLocation()) {
 		st, ok := d.Type.(types.NamedStructType)
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)

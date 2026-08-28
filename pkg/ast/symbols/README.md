@@ -29,32 +29,34 @@ that. Registration rejects a duplicate across modules (a type always did; `Regis
 used to overwrite silently, which with modules meant a program built against whichever module
 was collected last), and the message names the other file.
 
-**All three maps are keyed by `declKey`**, not by bare name: a declaration keeps its own name
-when it is `pub` (or in the entry module), and gets `<module>::<name>` when it is **private**,
-or when it takes a name that reaches it from elsewhere — the prelude's, or one exported by a
-module it imports (`shadowsAmbient`) — whatever its visibility, so the source keeps the bare
-key for every module that did not shadow it. The imported half joined the prelude's on 08/08;
-before that an imported name could not be shadowed at all, and declaring your own was a hard
-error while the same declaration over a prelude name merely warned. `ImportedModules` is what
-the import half reads, and it is handed over before the first file is walked (`SetImports`)
-because a type is keyed as it is registered, mid-walk. That is one rule for bindings, types and
-traits (`FunctionKey` and `TypeKey` are two names for it), because "whose declaration is this"
-does not depend on what kind of declaration it is, and a second copy of the rule is exactly the
-drift hazard 4 warns about. Types and traits joined it on 08/01; before that their namespace
-was program-wide, so two modules could not each declare a `Point` and a shadowed prelude type
-was replaced for the entire program.
+**All three maps are keyed uniformly by `<module>::<name>`** (the entry module's empty path
+gives `::name`), from the declaration's own file — `DeclKey`, the *identity* half. Resolution
+is the other half: `declKey(name, loc)` answers with the identity key of the declaration
+`name` at `loc` means, through the same rungs as the value scope chain — the asking module's
+own declaration, its imports (following an alias to the source declaration), the prelude, and
+finally any program-wide export (the rung that lets a value's type resolve past the import
+boundary; a *written* name is gated separately, see `ResolvedReachably`). Until 08/27 the key
+itself encoded visibility — bare when exported or in the entry module, qualified when private
+or shadowing — so identity and resolution coincided through the shared bare key, and a lookup
+asked with the wrong context *usually* worked; that near-correctness is what CLAUDE.md rule
+4's four corollaries and the purity pass's two-month last-writer-wins bug were made of. It is
+one rule for bindings, types and traits (`FunctionKey` and `TypeKey` are two names for the
+resolution half), because "which declaration does this name mean" does not depend on what
+kind of declaration it is. A name nothing resolves passes through unchanged — a guaranteed
+miss for a real name, and load-bearing for the backend's synthetic instantiation symbols
+(`Maybe$i64`), which share the keyspace and are registered raw.
 
 Which accessor a site wants is therefore **not a style choice**:
 
 - `LookupTypeFrom` / `LookupTraitFrom` / `LookupFunctionFrom(name, loc)` — resolve as the file
-  at `loc` sees it. This is what almost every pass wants. A bare read from inside a module that
-  declares its own `Point` returns *another* module's.
+  at `loc` sees it. This is what almost every pass wants.
 - `LookupTypeIn` / `LookupTraitIn` / `LookupFunctionIn(module, name)` — resolve as a member of a
   named module (`shapes.Point`). These find a **private** declaration deliberately: the
   visibility check needs it in order to refuse it, and a lookup that hid it would report "no
   such member" for a name the module really does declare.
-- `LookupType` / `LookupTrait` / `LookupFunction(name)` — the bare key only, i.e. a name that is
-  program-wide. Correct for a caller that genuinely has no asking position.
+- `LookupType` / `LookupTrait` / `LookupFunction(name)` — the **program-wide** meaning of a
+  context-free name: the prelude's export, then any module's export (`GlobalScope`), then the
+  entry module's declaration. Correct only for a caller that genuinely has no asking position.
 
 `BindingIn(module, name)` is the same `In` form for the **binding** a function's `pub` lives
 on, and exists for the same reason: its by-name sibling `BindingOf` finds the module through
@@ -66,8 +68,8 @@ A private declaration lands only in its own module's scope, so privacy is **stru
 than a post-lookup check — a reference from elsewhere does not find it. The cost is the message:
 "unknown type" reads as a typo for a name the author can see in another file, so the typechecker
 recovers `lyra-E028` on the not-found path (`reportPrivateType`, via `DeclaringModulesOf`).
-`RegisterType`/`RegisterTrait` write the module scope **before** computing the key, because the
-key is read out of that scope and types are registered mid-walk — there is no later point at
+`RegisterType`/`RegisterTrait` write the module scope **before** registering, because
+*resolution* reads that scope and types are registered mid-walk — there is no later point at
 which it is already populated.
 
 - `SymbolTable.Types` / `.Functions` — flat maps for fast global lookup by name; `.Functions`
@@ -112,15 +114,15 @@ receiver type, and a pass without one should not choose.
 
 **An overloaded name is absent from `Functions`.** That map answers "which declaration does
 this name mean", and for a set there is no answer without a receiver. A member left under the
-bare key would be silently right for one receiver and silently wrong for every other, so the
-key is simply empty and a by-name lookup reports the callee unresolved — which is the
+name's key would be silently right for one receiver and silently wrong for every other, so
+the key holds no member and a by-name lookup reports the callee unresolved — which is the
 conservative path every consumer already has. The passes that must do better read the
 callee the typechecker resolved (`typetable.TypeTable.Callee`).
 
-`declKey` treats a set as one declaration, keyed by the visibility its members share —
-`ast.OverloadableWith` refuses a set whose members disagree on `pub` precisely so that
-question has an answer, since a half-exported set would be findable from another module for
-some receivers and not others.
+A set is one declaration with one key, and its members agree on `pub` —
+`ast.OverloadableWith` refuses a set whose members disagree precisely so the export question
+has an answer, since a half-exported set would be findable from another module for some
+receivers and not others.
 
 ## `declKey` is not worth memoizing (measured 08/24)
 

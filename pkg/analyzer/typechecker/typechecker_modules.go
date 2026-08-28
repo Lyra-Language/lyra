@@ -142,6 +142,23 @@ func (tc *TypeChecker) declVisibility(name string, decl ast.AstNode, isPublic bo
 	}
 }
 
+// writesTypeName reports whether file spells name in a type position — an annotation, a
+// return type, a field's declared type, a `where` bound. The collector records every
+// such occurrence (TypeRefs), so this is the provenance signal the import gate needs:
+// a resolution requested for a written name is the author's to justify with an import,
+// while one requested for a type a value carried in has no written name to police.
+func (tc *TypeChecker) writesTypeName(name, file string) bool {
+	if tc.symTable == nil || tc.symTable.TypeRefs == nil {
+		return false
+	}
+	for _, ref := range tc.symTable.TypeRefs.Refs(file) {
+		if ref.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // reportPrivateType turns a failed type lookup into "not yours" when some other module
 // does declare the name, without exporting it. Reports true when it did.
 //

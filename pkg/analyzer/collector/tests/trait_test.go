@@ -78,7 +78,11 @@ trait Show {
     plain: (Self) -> bool
 }`
 	_, table, _, _ := parseAndCollect(t, source)
-	methods := table.Traits["Show"].Methods
+	showDecl, ok := table.LookupTrait("Show")
+	if !ok {
+		t.Fatal("Show trait not collected")
+	}
+	methods := showDecl.Methods
 	if len(methods) != 3 {
 		t.Fatalf("expected 3 methods, got %d", len(methods))
 	}

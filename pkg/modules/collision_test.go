@@ -259,3 +259,26 @@ func TestModules_SingleFileIsUnaffectedByPub(t *testing.T) {
 		t.Errorf("a single-file program must be unaffected by pub; got %v", errs)
 	}
 }
+
+// A name exported deep in the import graph does not collide with the entry file's own
+// declaration of it. Keys are per-module, so the two never meet: the entry's bare
+// references mean its own declaration, and the export is reachable only through the
+// modules that imported it. Under the shared bare keyspace this was a spurious
+// program-wide clash — the entry file could not use a name a module two imports away
+// happened to export.
+func TestModules_TransitiveExportDoesNotCollideWithEntryDeclaration(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra": `import util.mid.{ wrapped }
+let helper = () -> i64 => 10
+let main = () -> u8 => u8(helper() + wrapped())`,
+		"util/mid.lyra": `module util.mid
+import util.lib.{ helper }
+pub let wrapped = () -> i64 => helper()`,
+		"util/lib.lyra": `module util.lib
+pub let helper = () -> i64 => 100`,
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("expected a clean program; got %v", errs)
+	}
+}

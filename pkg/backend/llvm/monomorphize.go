@@ -85,8 +85,8 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// `l.currentLoc` was whatever the previous item left behind and a **private**
 	// module-scoped type argument was looked up under its bare name. It is keyed
 	// `<module>::<name>` (rule 4), so the lookup missed and the build failed with
-	// `unknown named type`. A `pub` type has a bare key and worked, which is what made
-	// the bug look like it was about generics rather than about visibility.
+	// `unknown named type`. A `pub` type resolved from anywhere and worked, which is what
+	// made the bug look like it was about generics rather than about visibility.
 	defer l.enterModuleOf(inst.Func.GetLocation())()
 
 	retType, err := l.lowerType(inst.Func.ReturnType.Type)

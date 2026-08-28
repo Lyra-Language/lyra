@@ -150,3 +150,41 @@ let main = () -> u8 => u8(listed())`)))
 		t.Errorf("expected a clean program; got %v", errs)
 	}
 }
+
+// An `as`-aliased **type** import binds the local name to the source declaration, so the
+// alias works everywhere the type's own name would — including as an annotation. Under
+// the pre-08/27 key scheme the alias never reached the Types map, so `mk(7)` resolved
+// while `let p: Pt = mk(7)` failed with "cannot assign Point to Pt".
+func TestImportVisibility_AliasedTypeResolvesAsAnnotation(t *testing.T) {
+	res := analyze(t, buildTree(t, map[string]string{
+		"app.lyra": `import shapes.{ Point as Pt, mk }
+let main = () -> u8 => {
+  let p: Pt = mk(7)
+  u8(p.x)
+}`,
+		"shapes.lyra": `module shapes
+pub struct Point { x: i64 }
+pub let mk = pure (n: i64) -> Point => Point { x: n }`,
+	}))
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("an aliased type import must resolve as an annotation; got %v", errs)
+	}
+}
+
+// A type the file never imported still resolves where a *value* carried it in — a
+// constructor payload, a listed function's return — because the value's type must be
+// usable wherever the value flows. What the boundary polices is the *written* name:
+// the same file spelling `Point` in an annotation is refused (see
+// TestImportVisibility_UnlistedTypeIsRefused).
+func TestImportVisibility_ValueCarriedTypeStaysUsable(t *testing.T) {
+	res := analyze(t, buildTree(t, map[string]string{
+		"app.lyra": `import shapes.{ mk }
+let main = () -> u8 => u8(mk(9).x)`,
+		"shapes.lyra": `module shapes
+pub struct Point { x: i64 }
+pub let mk = pure (n: i64) -> Point => Point { x: n }`,
+	}))
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("a value-carried type must stay usable without an import; got %v", errs)
+	}
+}

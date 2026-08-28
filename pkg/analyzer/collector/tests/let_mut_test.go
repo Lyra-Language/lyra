@@ -43,7 +43,7 @@ func TestCollect_VarMut_Redundant_Warns(t *testing.T) {
 // A struct field marked `readonly` is frozen; an unmarked field is mutable.
 func TestCollect_StructField_ReadonlyMarker(t *testing.T) {
 	_, table, _, _ := parseAndCollect(t, `struct Entity { readonly id: u64, pos: i64 }`)
-	decl, ok := table.Types["Entity"]
+	decl, ok := table.LookupType("Entity")
 	if !ok {
 		t.Fatal("Entity type not collected")
 	}

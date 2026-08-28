@@ -42,8 +42,9 @@ func NewCollectCache() *CollectCache { return &CollectCache{} }
 //
 // It covers more than the prefix's own bytes, because collection is configured from the
 // *whole* unit set before the first file is walked: `SetPreludeModule` and `SetImports` both
-// affect how a declaration is keyed (`symbols.declKeyIn`), so a prelude module or import
-// graph that differs makes a snapshot of the same files mean something different. Editing an
+// affect how a name resolves (`symbols.declKeyIn`) and which declarations warn as shadows,
+// so a prelude module or import graph that differs makes a snapshot of the same files mean
+// something different. Editing an
 // `import` line therefore invalidates, which is the intent — it is a change to how every
 // name in the program resolves, not just to one file.
 func prefixKey(units []modules.Unit, n int, prelude string, graph map[string][]string) string {
