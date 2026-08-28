@@ -1071,6 +1071,19 @@ write today:
     called itself "cannot be constructed by call *yet*" — a missing solver, not a
     missing answer.
 
+  **[OPEN, found 08/28] A lambda-valued binding annotated with a function-type newtype is
+  not nominal.** `let h: Handler = (n: i64) -> i64 => n + 1` is a *function declaration*
+  to the typechecker, so it never reaches the implicit-conversion check (silently
+  accepted, where an array value in the same position is policed) — and `h` then infers
+  as the lambda's own `(i64) -> i64` rather than as `Handler`, so nothing downstream
+  treats it as one (`base(h)`: "operand must be a newtype"). The constructor form
+  (`Handler((n) => …)`) works end to end and is the pinned spelling
+  (TestTypeCheck_LambdaIntoFunctionTypeBase_ConstructorWorks). The fix is a decision
+  about binding types, not a check: either the annotation wins for lambda bindings (and
+  direct calls resolve through the newtype's transparency) or the annotation form is
+  refused loudly. Predates the 08/28 form-based exemption, which deliberately excludes
+  lambdas so as not to paper over it.
+
   Still open beneath it, smaller than it was: `println(c)` refuses a newtype over a
   printable scalar, so transparency covers arithmetic-adjacent methods and not the one
   harmless thing a wrapper's user asks for daily. A `show` impl per newtype works

@@ -9,6 +9,47 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — A construction is provenance-free by form: the element exemption quirk is fixed
+
+**`let b: Bag = ["a" ++ "1"]` is admitted.** The implicit-newtype exemption
+(`isSyntacticLiteral`) recursed into an array literal's elements, so refusal flipped on
+element *form*: `[1, 2, 3]` converted implicitly while the same array with a computed
+element demanded the constructor — recorded as a quirk while building `base(v)`, whose
+tests had to route around it. The rule is now **form-based**: an array literal and a
+repeat are provenance-free as constructions, elements unexamined.
+
+**The argument, since the old rule was deliberate and pinned both ways** (the parity
+test's own comment said refusing `[x; 3]` like `[x, x, x]` was the point): the provenance
+rule exists to catch an *existing* value being re-labeled with a unit it never carried.
+For `newtype Nums = []i64` the unit-carrier is the container, and `[x, y]` builds that
+container in place, aimed at the annotation — no pre-existing `[]i64` is reinterpreted,
+so `Nums([x, y])` would assert nothing the annotation does not already say (the
+constructor is "a compile-time assertion about which type a value has", and this value
+exists only in this position). What the parity test actually guarded — the two array
+spellings agreeing — still holds: both are now admitted.
+
+**Three boundaries deliberately kept**, each pinned:
+
+- A typed **binding** still needs the constructor (`let n: Nums = xs`) — an identifier is
+  not a construction, whatever it holds.
+- An **element-level** newtype still refuses a typed element (`Row = []Cents` with `[x]`
+  errors at the element, through propagation) — the exemption is about the container's
+  identity, and the discard the element rule catches is the element's.
+- **Scalar and string bases stay on value provenance** (`x + y` into `Cents`, `a ++ b`
+  into `Email` refused) — there the operand *is* the quantity, so the existing tests for
+  both stand unchanged.
+
+**A lambda literal is deliberately not form-exempt**, though the container argument
+reads as if it should apply to a function-type base — because trying it surfaced a
+pre-existing gap the exemption would have papered over: a lambda-valued binding is a
+*function declaration* to the typechecker, so `let h: Handler = (n) => …` never reaches
+the conversion check at all (silently accepted, today and before), and `h` then infers
+as the lambda's own `(i64) -> i64` rather than as Handler — `base(h)` answers "operand
+must be a newtype". Tracked as an open binding-type decision (todo.md, Newtypes); the
+constructor form works end to end and is pinned. The backend's managed-`Bag` cases went
+back to the direct literals that were refused a day earlier — the same programs, now
+the pinning tests.
+
 ### 08/28/26 — `base(v)`: the universal newtype read-out retires the unnameable-base carve-out
 
 **Every newtype now has a read-out spelling, so lyra-E047 refuses the implicit form

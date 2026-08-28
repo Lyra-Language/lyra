@@ -45,7 +45,7 @@ func (tc *TypeChecker) checkImplicitNewtypeConversion(value ast.Expression, from
 	case isNewtypeConversionExempt(from):
 		return
 	case isUntypedLiteralType(from), isSyntacticLiteral(value):
-		return // a literal has no provenance to lose
+		return // a literal, or a construction built in place, has no provenance to lose
 	}
 	tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodeImplicitNewtypeConversion,
 		"cannot use %s as %s implicitly: %s is a distinct type over %s, so the conversion must be written — `%s(...)`",
@@ -333,10 +333,33 @@ func isUntypedLiteralType(t types.Type) bool {
 	return p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt || p.Name == types.UntypedFloat
 }
 
-// isSyntacticLiteral is the other half, for the literals the *type* system cannot
-// identify: a string, bool or rune literal has the same type as a variable holding one,
-// so only the syntax says it is a constant. An array literal counts when every element
-// does, which is what lets `newtype Row = []i64` take `[1, 2, 3]`.
+// isSyntacticLiteral is the other half, for the values the *type* system cannot
+// identify as provenance-free: a string, bool or rune literal has the same type as a
+// variable holding one, so only the syntax says it is a constant.
+//
+// **An aggregate or function construction counts by form, elements unexamined**
+// (08/28). The provenance rule exists to catch an *existing* value being re-labeled
+// with a unit it never carried — and for `newtype Nums = []i64` the unit-carrier is
+// the container, which `[x, y]` builds right here, aimed at this annotation. No
+// pre-existing `[]i64` is being reinterpreted, so `Nums([x, y])` would assert nothing
+// the annotation does not already say: the constructor is "a compile-time assertion
+// about which type a value has", and this value exists only in this position. Elements
+// keep their own rules — a newtype *element* type still refuses a typed element
+// through propagation — and until this, refusal flipped on element form
+// (`[1, 2, 3]` admitted, `["a" ++ "1"]` demanded the constructor), which read as
+// arbitrary at the use site. Scalar and string bases are deliberately different:
+// there the operand *is* the quantity, so `x + y` into `Cents` and `a ++ b` into
+// `Email` stay refused — value provenance for value-carrying bases, construction
+// form for containers.
+//
+// A **lambda literal is deliberately not here**, though the same argument reads as if
+// it should apply to a function-type base — because the question never actually
+// reaches this check: a lambda-valued binding is a *function declaration* to the
+// typechecker, `let h: Handler = (n) => …` is silently accepted on a path that skips
+// the conversion rule, and `h` then infers as the lambda's own signature rather than
+// as Handler, so the binding is not nominal at all (todo.md, Newtypes — an open
+// binding-type decision). An arm here would endorse that half-working form; the
+// constructor (`Handler((n) => …)`) is the spelling that works end to end.
 func isSyntacticLiteral(expr ast.Expression) bool {
 	switch e := expr.(type) {
 	case *ast.StringLiteralExpr, *ast.BooleanLiteralExpr, *ast.CharacterLiteralExpr,
@@ -344,25 +367,10 @@ func isSyntacticLiteral(expr ast.Expression) bool {
 		return true
 	case *ast.NegationExpr:
 		return isSyntacticLiteral(e.Operand)
-	case *ast.ArrayLiteralExpr:
-		for _, el := range e.Elements {
-			if !isSyntacticLiteral(el) {
-				return false
-			}
-		}
+	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
+		// Both array forms — ArrayRepeatExpr is ArrayLiteralExpr's variant (hazard 8),
+		// and the repeat's count was never consulted (a length is not an element).
 		return true
-	case *ast.ArrayRepeatExpr:
-		// `[7; 3]` is as much a literal as `[7, 7, 7]`, and was missing here — so
-		// `let n: Nums = [7; 3]` over `newtype Nums = []i64` was lyra-E046 demanding
-		// `Nums(...)` while the comma form went through. The **count** is deliberately not
-		// consulted: it is a length, not an element, and provenance is about where the
-		// values came from. What that buys is agreement with the arm above — `[x; 3]` is
-		// not a literal for the same reason `[x, x, x]` is not.
-		//
-		// Hazard 8's "when adding an expression kind, grep for the kind it is a variant
-		// of": ArrayRepeatExpr had already been found missing in five places
-		// ArrayLiteralExpr appears. This is the sixth.
-		return isSyntacticLiteral(e.Value)
 	}
 	return false
 }

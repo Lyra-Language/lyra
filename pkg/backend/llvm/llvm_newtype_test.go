@@ -555,8 +555,7 @@ func TestExec_BaseReadout(t *testing.T) {
 			"managed elements through the read-out",
 			`newtype Bag = []string
 			 let main = () -> u8 => {
-			   let xs: []string = ["a" ++ "1", "b" ++ "2"]
-			   let b: Bag = Bag(xs)
+			   let b: Bag = ["a" ++ "1", "b" ++ "2"]
 			   println(base(b)[1])
 			   0
 			 }`,
@@ -611,8 +610,7 @@ func TestExec_BaseReadout_ASan(t *testing.T) {
 	clang := lookClang(t)
 	src := `newtype Bag = []string
 	 let main = () -> u8 => {
-	   let xs: []string = ["a" ++ "1", "b" ++ "2"]
-	   let b: Bag = Bag(xs)
+	   let b: Bag = ["a" ++ "1", "b" ++ "2"]
 	   let s = base(b)[1]
 	   if s == "b2" { 0 } else { 1 }
 	 }`

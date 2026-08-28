@@ -18,10 +18,10 @@ import "testing"
 // ArrayRepeatExpr had already been found missing in five places ArrayLiteralExpr appears.
 // These were the sixth and seventh, and the second was found by sweeping for the first.
 //
-// **The two arms consult different things, deliberately.** The literal rule looks only at the
-// *value*, because provenance is about where the elements came from and a runtime length is
-// still a perfectly good `[]T`. The const rule looks at the value *and* the count, because a
-// const's whole value has to be known at compile time.
+// **The two rules consult different things, deliberately.** The provenance rule (since
+// 08/28) looks only at the *form* — an aggregate construction is provenance-free whatever
+// its elements or count, see isSyntacticLiteral. The const rule looks at the elements *and*
+// the count, because a const's whole value has to be known at compile time.
 func TestTypeCheck_ArrayRepeatIsALiteralWhereArrayLiteralIs(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		{"newtype over a dynamic array", `
@@ -50,13 +50,13 @@ let first = XS[0]`},
 	}
 }
 
-// The parity runs both ways: a repeat whose **value** is not a literal must be refused
-// exactly as the comma form is, or the fix would have bought permissiveness rather than
-// consistency.
-func TestTypeCheck_ArrayRepeatIsNotALiteralWhenItsValueIsNot(t *testing.T) {
-	// Both spellings produce the *identical* message, which is the parity this pins.
-	const want = "cannot use StaticArray<i64, 3> as Nums implicitly: Nums is a distinct type " +
-		"over DynamicArray<i64>, so the conversion must be written — `Nums(...)`"
+// The parity still runs both ways — both spellings of an array of computed values are
+// now *admitted* (08/28): an aggregate construction is provenance-free by form, since
+// the container the newtype names is built in place, aimed at the annotation, and
+// `Nums([x; 3])` would assert nothing the annotation does not already say. The earlier
+// form of this test pinned the refusal of both; what it guarded — that the two
+// spellings agree — is what this still guards.
+func TestTypeCheck_ArrayOfComputedValuesIsAConstructionInBothSpellings(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		{"repeat of a variable", `
 newtype Nums = []i64
@@ -68,7 +68,7 @@ let x = 7
 let n: Nums = [x, x, x]`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			assertErrorsAre(t, parseCollectAndCheck(t, c.src, false), want)
+			assertNoErrors(t, parseCollectAndCheck(t, c.src, false))
 		})
 	}
 }
@@ -82,4 +82,67 @@ func TestTypeCheck_ConstArrayRepeatNeedsAConstantCount(t *testing.T) {
 let k = 3
 const XS = [7; k]
 `, false), "`const` initializer must be a compile-time constant: variable `k` is not constant")
+}
+
+// The case that motivated the form-based rule: refusal used to flip on element *form* —
+// `[1, 2, 3]` admitted while `["a" ++ "1"]` demanded the constructor — which read as
+// arbitrary at the use site. A construction's elements may be computed however they like;
+// the container is still built in place.
+func TestTypeCheck_ComputedElementsStayAConstruction(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"concat elements", `
+newtype Bag = []string
+let b: Bag = ["a" ++ "1", "b" ++ "2"]`},
+		{"mixed literal and variable", `
+newtype Nums = []i64
+let x = 7
+let n: Nums = [1, x, 3]`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			assertNoErrors(t, parseCollectAndCheck(t, c.src, false))
+		})
+	}
+}
+
+// Element-level newtype rules are untouched by the form exemption: the array flows into
+// `Row` freely, and the typed element inside it is still refused against the element
+// newtype — the check lands where the discard actually is.
+func TestTypeCheck_FormExemptionDoesNotBypassElementNewtypes(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+newtype Row = []Cents
+let x = 7
+let r: Row = [x]
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use i64 as Cents implicitly: Cents is a distinct type over i64, so the conversion must be written — `Cents(...)`")
+}
+
+// A typed array *binding* keeps its provenance — the form rule is about a construction
+// written in place, and an identifier is not one, whatever it holds.
+func TestTypeCheck_ATypedArrayBindingStillNeedsTheConstructor(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Nums = []i64
+let xs: []i64 = [1, 2, 3]
+let n: Nums = xs
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use DynamicArray<i64> as Nums implicitly: Nums is a distinct type over DynamicArray<i64>, so the conversion must be written — `Nums(...)`")
+}
+
+// A lambda literal is deliberately NOT form-exempt, though the container argument would
+// seem to apply to a function-type base. The reason is a pre-existing gap this change
+// must not paper over: a lambda-valued binding is a *function declaration* to the
+// typechecker, so `let h: Handler = (n: i64) -> i64 => n + 1` never reaches the
+// conversion check at all — it is silently accepted — and `h` then infers as the
+// lambda's own `(i64) -> i64`, not as Handler, so nothing downstream treats it as one
+// (`base(h)` reports "operand must be a newtype"). Until the binding-type question is
+// settled (todo.md, Newtypes), the constructor is the spelling that works end to end,
+// which this pins.
+func TestTypeCheck_LambdaIntoFunctionTypeBase_ConstructorWorks(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Handler = (i64) -> i64
+let h: Handler = Handler((n: i64) -> i64 => n + 1)
+let out: i64 = base(h)(41)
+`, false))
 }
