@@ -320,7 +320,10 @@ real failure, and none is local to one package.
    whichever overload was registered last. Read `typetable.TypeTable.Callee(call)` first —
    the typechecker publishes the member it picked — and fall back to `LookupFunctionFrom`.
    The backend pays the same tax: `l.funcs` cannot hold two functions of one name, so an
-   overload is keyed by its *declaration* and its emitted symbol carries the receiver head.
+   overload is keyed by its *declaration* and its emitted symbol carries the receiver head
+   — and `l.globals` paid it too (08/28): keyed by bare name, two modules' private globals
+   collided in clang; slots are keyed by funcKey and named per module, with `slotFor`
+   resolving from the referencing location.
 
     **Allocation is context-determined, and the flavor rides the expected type.** A
     construction leaf has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed

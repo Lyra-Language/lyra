@@ -613,7 +613,7 @@ func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, r
 // whose width the typechecker propagated to match the target (checkMathAssignOp),
 // so both operands share a width for the op.
 func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (value.Value, *ir.Block, error) {
-	slot, ok := l.slotFor(e.Left.Name)
+	slot, ok := l.slotFor(e.Left.Name, e.GetLocation())
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: compound assignment to unbound identifier %q", e.Left.Name)
 	}

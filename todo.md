@@ -1082,13 +1082,15 @@ write today:
   was call-dead everywhere, i.e. write-only in practice. The lambda literal joined the
   construction-form E046 exemption with it. See COMPLETED.md.
 
-  **[OPEN, found 08/28] A top-level binding holding a function *value* cannot be
-  called.** `let add1 = mk(1)` (or a constructor-built `let h: Handler = Handler(…)`)
-  at top level fails in the backend with `call to unknown function` — the identifier
-  ladder has arms for l.funcs, locals, conversions, specializations and overloads, but
-  none for a top-level global holding a closure value. Pre-existing and independent of
-  newtypes (a plain `(i64) -> i64` binding fails identically); the same binding inside
-  a function body works (lowerCallThroughValue via l.locals).
+  **[DONE 08/28] A top-level binding holding a function *value* is callable.**
+  `let add1 = mk(1)` (or a constructor-built `let h: Handler = Handler(…)`) at top level
+  used to fail in the backend with `call to unknown function`; the identifier-call
+  ladder now has the missing arm — a name whose storage is a global lowers as the same
+  indirect call a local closure binding takes, placed before the builtin switch so a
+  user binding still shadows a builtin. Fixing it surfaced that **globals were keyed by
+  bare name** — two modules each with a private `stash` collided in clang — cured with
+  the funcKey arrangement (slots keyed and named per module, `slotFor` resolving from
+  the referencing location). See COMPLETED.md.
 
   Still open beneath it, smaller than it was: `println(c)` refuses a newtype over a
   printable scalar, so transparency covers arithmetic-adjacent methods and not the one

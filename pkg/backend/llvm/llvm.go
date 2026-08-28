@@ -741,7 +741,7 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		}
 		return constant.NewInt(lltypes.I1, bit), block, nil
 	case *ast.IdentifierExpr:
-		if slot, ok := l.slotFor(e.Name); ok {
+		if slot, ok := l.slotFor(e.Name, e.GetLocation()); ok {
 			elem, err := slotElemType(slot)
 			if err != nil {
 				return nil, nil, err
@@ -839,11 +839,16 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 // files, which is the drift hazard 8 exists to name. The ordering is the part that must not
 // vary: a local of the same name shadows the global, and a fourth site quietly disagreeing
 // about that would be a wrong *value*, not an error.
-func (l *lowerer) slotFor(name string) (value.Value, bool) {
+//
+// The global half resolves **from the referencing location** (funcKey, rule 9's
+// arrangement): globals are keyed per module, so two modules may each have a private
+// `stash` — keyed by bare name, the second module's slot overwrote the first's and the
+// program failed in clang, which is the same disease l.funcs was cured of.
+func (l *lowerer) slotFor(name string, loc ast.Location) (value.Value, bool) {
 	if slot, ok := l.locals[name]; ok {
 		return slot, true
 	}
-	if g, ok := l.globals[name]; ok {
+	if g, ok := l.globals[l.funcKey(name, loc)]; ok {
 		return g, true
 	}
 	return nil, false
@@ -875,8 +880,16 @@ func (l *lowerer) declareGlobals() error {
 		if err != nil {
 			return fmt.Errorf("llvm: top-level %q: %w", vd.Name, err)
 		}
-		g := l.module.NewGlobalDef("lyra_global_"+vd.Name, constant.NewZeroInitializer(ty))
-		l.globals[vd.Name] = g
+		// The slot is keyed and named per module, like a function's (userSymbol):
+		// two modules may each have a private global of one name, and the bare
+		// spelling made them one slot — the second declaration overwrote the first's
+		// map entry and clang refused the duplicate symbol.
+		symbol := "lyra_global_" + vd.Name
+		if module := l.res.SymbolTable.ModuleOfFile[vd.GetLocation().File]; module != "" {
+			symbol = "lyra_global_" + module + "." + vd.Name
+		}
+		g := l.module.NewGlobalDef(symbol, constant.NewZeroInitializer(ty))
+		l.globals[l.funcKey(vd.Name, vd.GetLocation())] = g
 	}
 	return nil
 }
@@ -895,7 +908,7 @@ func (l *lowerer) declareGlobals() error {
 // ownership pass is not consulted — it reasons about scopes, and a global has none.
 func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 	for _, vd := range l.globalDecls {
-		g, ok := l.globals[vd.Name]
+		g, ok := l.globals[l.funcKey(vd.Name, vd.GetLocation())]
 		if !ok {
 			continue
 		}

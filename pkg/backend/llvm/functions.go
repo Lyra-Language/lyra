@@ -457,6 +457,17 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	key := l.funcKey(ident.Name, e.GetLocation())
 	fn, ok := l.funcs[key]
 	if !ok {
+		// A top-level binding holding a function *value* — `let add1 = mk(1)`, or a
+		// constructor-built newtype over a function type — is a global, not an entry
+		// in l.funcs (that table holds declared lambdas). Calling it is the same
+		// indirect call a local closure binding takes: the value is read out of the
+		// global slot (the identifier lowering already does that for a plain read)
+		// and called through the signature the typechecker recorded on the callee
+		// node. Before the builtin switch, matching the typechecker's order: a user
+		// binding shadows a builtin.
+		if _, isGlobal := l.globals[key]; isGlobal {
+			return l.lowerCallThroughValue(block, e)
+		}
 		// A compiler-provided free function (print/println) — checked only after
 		// user functions, so a user binding of the same name shadows the builtin,
 		// matching the typechecker's resolution order.

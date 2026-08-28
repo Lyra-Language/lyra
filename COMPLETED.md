@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — A top-level function-valued binding is callable, and globals are keyed per module
+
+**The missing arm.** `let add1 = mk(1)` at top level failed in the backend with `call to
+unknown function "add1"` — the identifier-call ladder had arms for l.funcs, locals,
+conversions, the base-readout marker, specializations and overloads, and none for a
+top-level global holding a closure value. The tell that the fix was one arm rather than
+a feature: reading the global into a local and calling *that* already worked, so the
+global-init machinery, the value read and the indirect call all existed — only the
+direct-call spelling missed. The arm sits **before the builtin switch**, matching the
+typechecker's resolution order (a user binding shadows a builtin — pinned with a global
+closure named `print`), and a `var` global rebinds like a local, the call reading
+whatever the slot holds.
+
+**Probing the arm's keying surfaced the real bug underneath**: `l.globals` was keyed by
+bare name and every slot named `lyra_global_<name>`, so two modules each with a private
+top-level `stash` collided — the second overwrote the first's map entry and clang
+refused the duplicate symbol. The same disease l.funcs and l.structTypes were each cured
+of, cured the same way: slots keyed by `funcKey` at the declaration's own location and
+named per module (`lyra_global_<module>.<name>`), with `slotFor` — the one lookup the
+four read/write sites share — resolving from the referencing location. Single-module
+programs keep their `lyra_global_x` symbols byte-stable.
+
+Tests: `TestExec_TopLevelFunctionValuedBindingIsCallable` (closure-from-call, the
+constructor-built Handler that surfaced the gap, builtin shadowing, var rebinding) and
+`TestExec_PrivateGlobalsInTwoModulesGetDistinctSlots`.
+
 ### 08/28/26 — A function-type newtype is nominal and callable: the binding-type decision, settled
 
 **The decision went to annotation-wins, with call transparency to make it usable.**
