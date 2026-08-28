@@ -759,14 +759,60 @@ let s = string(42)
 		"cannot convert integer literal to string: `string(...)` only reads a value of that type — or a newtype over it — back out")
 }
 
-// A newtype over a base the conversion cannot *name* — an array, here — keeps its
-// implicit read-out: refusing with no spelling to offer would make it write-only.
-// The documented limit, pinned so a future spelling knows what to flip.
-func TestImplicitReadout_UnnameableBaseStaysImplicit(t *testing.T) {
+// A newtype over a base the conversion cannot *name* — an array, here — is refused
+// too, with the universal read-out as the spelling (08/28). This retired the
+// documented limit the earlier form of this test pinned: with `base(...)` there is
+// always a spelling to offer, so no base is exempt.
+func TestImplicitReadout_UnnameableBaseIsRefusedToo(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Row = []i64
+let r: Row = [1, 2, 3]
+let plain: []i64 = r
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use Row as DynamicArray<i64> implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `base(...)`")
+}
+
+// …and `base(r)` is the way through: it strips exactly one newtype layer, is an
+// identity at run time like the named conversions, and works whatever the base is.
+func TestImplicitReadout_BaseIsTheWayThrough(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Row = []i64
 let r: Row = [1, 2, 3]
-let base: []i64 = r
+let plain: []i64 = base(r)
+let first = base(r)[0]
+`, false))
+}
+
+// `base(...)` on a value that is not a newtype is refused, naming what the builtin is
+// for — it is a read-out, not a general accessor.
+func TestBaseReadout_NonNewtypeOperandRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let n = base(5)
+`, false)
+	assertErrorsAre(t, res,
+		"base: operand must be a newtype, got integer literal — `base(...)` reads a newtype out to its base type")
+}
+
+// A user binding named `base` shadows the builtin — the same rule print/read_line
+// follow — so existing programs using the name keep meaning what they meant.
+func TestBaseReadout_ShadowedByUserBinding(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let base = (n: i64) -> i64 => n * 2
+let ten = base(5)
+`, false))
+}
+
+// A chain reads out one declaration at a time: `base(...)` strips exactly one layer,
+// so the inner newtype is what one application answers with — matching
+// newtype→newtype conversion having no path.
+func TestBaseReadout_StripsOneLayer(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Inner = []i64
+newtype Outer = Inner
+let o: Outer = [1, 2]
+let i: Inner = base(o)
+let plain: []i64 = base(base(o))
 `, false))
 }
 

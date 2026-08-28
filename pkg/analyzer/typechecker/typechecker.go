@@ -2880,6 +2880,16 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 
 	cp, ok := expected.(types.PrimitiveType)
 	if !ok {
+		// A non-primitive context reaches no leaf arm below, but a settled value in it
+		// is still the read-out surface: `take(b)` against `(xs: []string)` for a
+		// `newtype Bag = []string` is the same silent discard as `take(c)` against
+		// `(x: i64)`, and lyra-E047 is position-uniform now that `base(...)` gives
+		// every base a spelling (08/28). Guarded exactly as the default arm below is.
+		if !viaNewtype {
+			if from, ok := tc.typeTable.Get(expr); ok {
+				tc.checkImplicitNewtypeReadout(expr, from, expected)
+			}
+		}
 		return
 	}
 	switch e := expr.(type) {

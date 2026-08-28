@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — `base(v)`: the universal newtype read-out retires the unnameable-base carve-out
+
+**Every newtype now has a read-out spelling, so lyra-E047 refuses the implicit form
+uniformly.** `base(v)` strips exactly one newtype layer from its operand's type and is an
+identity at run time — precisely what the named conversions (`i64(c)`, `string(e)`) are,
+for precisely the bases those cannot name: arrays, raw pointers, function types. The
+carve-out it retires ("a base the conversion cannot name keeps its implicit read-out")
+was pinned in two tests whose comments said *"pinned so a future spelling knows what to
+flip"* — both flipped, and the newtype feature is one rule shorter: reading out is
+explicit, full stop.
+
+**One layer, not all**: the immediate base is what the declaration names, so a chain
+reads out one declaration at a time (`base(base(x))`) — the same shape as newtype→newtype
+conversion having no path. The named conversions keep looking through every layer, and
+stay the spelling E047's message prefers where they exist, since they say which type the
+value becomes.
+
+**Shadowable by design, so recognition is a marker, not a name.** `base` is a common
+identifier; the builtin resolves like `print`/`read_line` — after scope, so a user
+binding named `base` keeps meaning what it meant. That rules out name-keyed recognition
+in every later pass, and the typechecker publishes its decision instead
+(`TypeTable.SetBaseReadout`/`IsBaseReadout`, the SetCallee arrangement): the ownership
+pass treats a marked call as its operand (or the box is bound with neither retain nor
+release — the imbalance the named conversions' arm exists for), the purity pass charges
+it nothing (a shadowed impure `base` is still reported, pinned), and the backend lowers
+it as the operand (same representation, nothing to cast). The typetable clone
+exhaustiveness gate caught the new field missing from `Clone` on the first run — the
+gate doing exactly what it was built for.
+
+**The retirement exposed a positional gap and closed it.** The read-out check rode
+`propagateExpectedType`'s default arm, which sits under the primitive guard — so
+`take(b)` against `(xs: []string)` (an aggregate expected type) never reached it, and the
+two pinned tests disagreed: the binding position refused while the argument position
+admitted. The non-primitive early-return now runs the same terminal check, so E047 is
+uniform across positions as well as bases.
+
+Probing also recorded a pre-existing quirk, untouched: an array literal with
+*non-literal* elements (`["a" ++ "1"]`) loses the syntactic-literal exemption and is
+refused flowing into a newtype annotation (E046), where `[1, 2, 3]` is admitted — the
+constructor over an annotated binding is the way through.
+
+Tests: the flipped pair plus `base`-specific typechecker tests (non-newtype operand
+refused, shadowing, one-layer chains), `TestExec_BaseReadout` (array/managed/function-
+type/chain), `TestExec_BaseReadout_ASan` with a **differential** accounting (the program
+must emit byte-identical allocs/retains/releases to its newtype-free control — absolute
+conservation does not hold for arrays, whose element releases live in the runtime's drop
+loop), and the two purity pins.
+
 ### 08/27/26 — The purity reporting mirror is collapsed into the one body walk
 
 **Enforcement is now the inference walk re-run with a reporting sink.** A `callable` may

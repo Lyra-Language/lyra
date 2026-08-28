@@ -1081,3 +1081,27 @@ let main = () -> u8 => u8(Cat { n: 1 }.say())`)
 			printlnReports, errs)
 	}
 }
+
+// `base(v)` — the universal newtype read-out — is an identity, so it is legal in
+// `pure`/`det`/`noalloc` code: the effect walk charges it nothing, recognized by the
+// typechecker's marker (TypeTable.IsBaseReadout) rather than by the callee's name.
+func TestPurity_BaseReadoutIsEffectFree(t *testing.T) {
+	errs := checkPurity(t, `
+newtype Row = []i64
+let first = pure noalloc (r: Row) -> i64 => base(r)[0]
+let main = () -> u8 => u8(first([1, 2]))`)
+	assertPurityCount(t, errs, 0)
+}
+
+// The marker is what keeps the name from being blessed: a user binding named `base`
+// shadows the builtin, carries no marker, and is charged its own inferred effect —
+// so an impure user `base` called from a pure function is reported like any callee.
+func TestPurity_UserShadowedBaseIsNotBlessed(t *testing.T) {
+	errs := checkPurity(t, `
+let base = (n: i64) -> i64 => { println("${n}"); n }
+let f = pure (n: i64) -> i64 => base(n)`)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, `impure function "base"`) {
+		t.Errorf("expected the shadowed base to be reported as an impure callee, got %v", errs)
+	}
+}

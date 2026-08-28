@@ -12,6 +12,10 @@ type TypeTable struct {
 	// callees records which declaration an overloaded call resolved to; see
 	// calleetable.go for why only those are recorded.
 	callees map[*ast.FunctionCallExpr]*ast.LambdaExpr
+	// baseReadouts marks the calls the typechecker resolved as the builtin newtype
+	// read-out `base(v)` — recognizable only here, since a user binding named `base`
+	// shadows the builtin. See calleetable.go.
+	baseReadouts map[*ast.FunctionCallExpr]bool
 	// variadicPromotions records the type an argument in a C variadic call is actually
 	// *passed* at, where C's default argument promotions widen it — an integer narrower
 	// than `int` to `int`, a `float` to `double`.

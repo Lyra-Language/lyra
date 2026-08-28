@@ -433,6 +433,14 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	if targetName, isConversion := conversionTargetName(ident.Name); isConversion {
 		return l.lowerNumericConversion(block, e, targetName)
 	}
+	// The universal newtype read-out `base(v)` lowers as its operand — the identity
+	// every read-out conversion is, and a newtype shares its base's representation, so
+	// there is nothing to cast. Recognized by the typechecker's marker rather than by
+	// the callee's name: a user binding named `base` shadows the builtin, carries no
+	// marker, and resolves as the ordinary function it is below.
+	if l.res.TypeTable.IsBaseReadout(e) {
+		return l.lowerExpr(block, e.Arguments[0])
+	}
 	// A call to a *generic* function resolves to the specialization the typechecker
 	// solved for this call site, not to the generic name (which has no emitted body —
 	// a type variable has no representation). Checked before l.funcs so the two can

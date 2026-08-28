@@ -59,12 +59,13 @@ func (tc *TypeChecker) checkImplicitNewtypeConversion(value ast.Expression, from
 // the same unit-mixup shape E046 closed on the way in; Ada requires `Integer(M)` in
 // this direction for the same reason it requires `Meters(F)` in the other.
 //
-// Two deliberate limits. There is no literal half — a newtype value is never a
-// literal, so the refusal is unconditional where it applies. And it applies only when
-// the base is a type the conversion spelling can *name* — a primitive, `string`,
-// `bool`, `rune` — because refusing with no spelling to offer would make the newtype
-// write-only. A newtype over an array or a function type keeps its implicit read-out,
-// which is the grammar's limit and is documented as such (todo.md).
+// One deliberate limit: there is no literal half — a newtype value is never a
+// literal, so the refusal is unconditional. It is unconditional over the base's
+// *shape* too (08/28): a base the conversion spelling can name is refused with that
+// name (`i64(...)`, `string(...)`), and every other base — an array, a raw pointer, a
+// function type — is refused with the universal read-out, `base(...)`. Until that
+// spelling existed those bases kept their implicit read-out as the documented limit,
+// since refusing with nothing to offer would have made such a newtype write-only.
 //
 // Like its mirror, it fires only when the flow is otherwise legal: a base that is not
 // assignable to the target at all is the ordinary mismatch's to report, and a
@@ -91,10 +92,7 @@ func (tc *TypeChecker) checkImplicitNewtypeReadout(value ast.Expression, from, t
 		}
 		base = tc.resolveTypeIfKnown(inner.Type, value.GetLocation())
 	}
-	spelling, ok := readoutSpelling(base)
-	if !ok {
-		return
-	}
+	spelling := readoutSpelling(base)
 	if !isAssignable(base, to) {
 		return
 	}
@@ -111,21 +109,20 @@ func (tc *TypeChecker) checkImplicitNewtypeReadout(value ast.Expression, from, t
 }
 
 // readoutSpelling names the conversion that reads a newtype over base back out —
-// the source keyword, which for bool is not the internal type name ("boolean").
-// A base with no spelling (an array, a tuple, a function type) answers false, and
-// the read-out rule does not apply to it.
-func readoutSpelling(base types.Type) (string, bool) {
-	p, ok := base.(types.PrimitiveType)
-	if !ok {
-		return "", false
+// the source keyword where the base has one (which for bool is not the internal type
+// name "boolean"), and the universal `base(...)` for every other base. Every base has
+// a spelling, so the read-out rule applies uniformly; the named form stays the one
+// the diagnostic prefers where it exists, since it says which type the value becomes.
+func readoutSpelling(base types.Type) string {
+	if p, ok := base.(types.PrimitiveType); ok {
+		switch {
+		case p.Name == types.Boolean:
+			return "bool"
+		case isAnyConcreteInt(p.Name) || isAnyConcreteFloat(p.Name) || p.Name == types.Rune || p.Name == types.String:
+			return string(p.Name)
+		}
 	}
-	switch {
-	case p.Name == types.Boolean:
-		return "bool", true
-	case isAnyConcreteInt(p.Name) || isAnyConcreteFloat(p.Name) || p.Name == types.Rune || p.Name == types.String:
-		return string(p.Name), true
-	}
-	return "", false
+	return types.BaseReadoutName
 }
 
 // isIndexableForFromEnd reports whether t is a type whose `[i]` index refuses a

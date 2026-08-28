@@ -656,6 +656,50 @@ func isBuiltinReadLineFn(name string) bool {
 	return name == "read_line"
 }
 
+// isBuiltinBaseReadoutFn reports whether name is the compiler-provided `base`.
+// Resolved exactly like print/panic/read_line — by name in inferIdentifierCall, after
+// scope resolution misses, so a user binding named `base` shadows it — which is why
+// every later pass recognizes a resolved read-out by the TypeTable marker
+// (SetBaseReadout) rather than by this spelling.
+//
+// `base(v)` is the **universal newtype read-out**: it strips exactly one newtype
+// layer from its operand's type and is an identity at run time, exactly as the named
+// conversions (`i64(c)`, `string(e)`) are. It exists so lyra-E047 can refuse the
+// implicit read-out for *every* base — until it did, a newtype over a base a
+// conversion cannot name (an array, a raw pointer, a function type) kept its
+// implicit read-out as "the documented limit", because refusing with no spelling to
+// offer would have made such a newtype write-only. One layer, not all: the immediate
+// base is what the declaration names, so a chain reads out one declaration at a time
+// (`base(base(x))`), matching newtype→newtype conversion having no path.
+func isBuiltinBaseReadoutFn(name string) bool {
+	return name == types.BaseReadoutName
+}
+
+// inferBaseReadoutCall type-checks `base(v)`: one operand, whose resolved type must
+// be a newtype; the result is the newtype's immediate base, resolved. The marker is
+// recorded only on the resolved path, so a malformed call never reaches the passes
+// that treat the marker as "this call is its operand".
+func (tc *TypeChecker) inferBaseReadoutCall(call *ast.FunctionCallExpr) types.Type {
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"base: expected 1 argument(s), got %d", len(call.Arguments))
+		return nil
+	}
+	argType := tc.inferExprType(call.Arguments[0])
+	if argType == nil {
+		return nil
+	}
+	resolved := tc.resolveTypeIfKnown(argType, call.GetLocation())
+	ct, ok := resolved.(*types.ConstrainedType)
+	if !ok {
+		tc.addError(call.GetLocation(), SeverityError,
+			"base: operand must be a newtype, got %s — `base(...)` reads a newtype out to its base type", argType)
+		return nil
+	}
+	tc.typeTable.SetBaseReadout(call)
+	return tc.resolveTypeIfKnown(ct.Type, call.GetLocation())
+}
+
 // isBuiltinRandomSeedFn reports whether name is the compiler-provided
 // `random_seed`. Resolved exactly like print/panic/read_line — by name in
 // inferIdentifierCall, after scope resolution misses.

@@ -641,6 +641,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinReadLineFn(ident.Name) {
 			return tc.inferReadLineCall(call)
 		}
+		if isBuiltinBaseReadoutFn(ident.Name) {
+			return tc.inferBaseReadoutCall(call)
+		}
 		if isBuiltinRandomSeedFn(ident.Name) {
 			if len(call.Arguments) != 0 {
 				tc.addError(call.GetLocation(), SeverityError,

@@ -5,10 +5,10 @@ import "testing"
 // Keeping a newtype's wrapper across a call boundary must not make it less **nominal** —
 // nominal identity is the whole reason newtype exists.
 //
-// The one deliberate asymmetry: a base a conversion cannot *name* — an array, a function
-// type — keeps its implicit read-out, because refusing with no spelling to offer would make
-// the newtype write-only. So `Bag` flows to a `[]string` parameter and `Cents` does not flow
-// to an `i64` one; the second has `i64(...)` to point at and the first has nothing.
+// The read-out rule is uniform (08/28): a base a conversion can name is refused with that
+// name (`i64(...)`), and every other base with the universal `base(...)`. The asymmetry
+// this file used to pin — an array base flowing implicitly because nothing could spell its
+// read-out — is retired.
 func TestTypeCheck_NewtypeStaysNominalAcrossCalls(t *testing.T) {
 	for _, c := range []struct{ name, src, want string }{
 		// Passed before the fix as well — the base was never implicitly admitted. Kept
@@ -43,13 +43,25 @@ let out = take(c)`,
 	}
 }
 
-// The documented asymmetry, pinned so it is a decision rather than an accident: an array
-// base has no conversion spelling, so its read-out stays implicit.
-func TestTypeCheck_NewtypeOverAnArrayKeepsItsImplicitReadOut(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, `
+// The asymmetry is retired (08/28): an array base is refused implicitly at a call
+// boundary exactly as a scalar one is, and `base(...)` is the spelling offered.
+func TestTypeCheck_NewtypeOverAnArrayIsRefusedAtCallsToo(t *testing.T) {
+	res := parseCollectAndCheck(t, `
 newtype Bag = []string
 let take = (xs: []string) -> i64 => 1
 let b: Bag = ["x"]
 let out = take(b)
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use Bag as DynamicArray<string> implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `base(...)`")
+}
+
+// …and writing the read-out is the way through at a call, as everywhere.
+func TestTypeCheck_NewtypeOverAnArrayReadsOutWithBase(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Bag = []string
+let take = (xs: []string) -> i64 => 1
+let b: Bag = ["x"]
+let out = take(base(b))
 `, false))
 }

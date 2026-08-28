@@ -1045,8 +1045,12 @@ write today:
     implicit form is refused wherever the base is *nameable* — `f(cents)` against
     `(x: i64)` was the same silent unit-discard E046 closed inbound, and Ada requires
     `Integer(M)` here too. A base the conversion cannot name (an array, a function
-    type) keeps its implicit read-out rather than becoming write-only — pinned as the
-    documented limit. Three passes needed to learn the transparent forms are their
+    type) kept its implicit read-out rather than becoming write-only — pinned as the
+    documented limit until **[DONE 08/28]** `base(v)`, the universal read-out, retired
+    it: one stripped newtype layer, an identity at run time, a builtin shadowable by a
+    user binding (so the passes read the typechecker's `IsBaseReadout` marker), and
+    E047 now refuses the implicit form for every base, in every position (the
+    aggregate-context propagation path included). See COMPLETED.md. Three passes needed to learn the transparent forms are their
     operand: the ownership pass (the ASan conservation test caught `string(e)`
     binding a box with neither retain nor matching release the day the spelling
     arrived), the value-range pass (the constructor, in the previous change), and

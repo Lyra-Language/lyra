@@ -522,3 +522,120 @@ let main = () -> void => {
 		t.Errorf("newtype construction = %q; want \"425 44\"", got)
 	}
 }
+
+// `base(v)` is the universal newtype read-out (08/28): it strips exactly one newtype
+// layer and is an identity at run time, like the named conversions — the spelling for
+// exactly the bases those cannot name. The managed cases are the ones with teeth: the
+// ownership pass must treat the call as its operand (TypeTable.IsBaseReadout, since
+// the name is shadowable), or the operand's box is bound with neither retain nor
+// matching release.
+func TestExec_BaseReadout(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		src     string
+		wantOut string
+	}{
+		{
+			"array base, indexed and summed",
+			`newtype Row = []i64
+			 let sum = pure (xs: []i64) -> i64 => {
+			   var t = 0
+			   for x in xs { t = t + x }
+			   t
+			 }
+			 let main = () -> u8 => {
+			   let r: Row = [1, 2, 3]
+			   println("${sum(base(r)) + base(r)[0]}")
+			   0
+			 }`,
+			"7\n",
+		},
+		{
+			"managed elements through the read-out",
+			`newtype Bag = []string
+			 let main = () -> u8 => {
+			   let xs: []string = ["a" ++ "1", "b" ++ "2"]
+			   let b: Bag = Bag(xs)
+			   println(base(b)[1])
+			   0
+			 }`,
+			"b2\n",
+		},
+		{
+			"function-type base, called",
+			`newtype Handler = (i64) -> i64
+			 let h: Handler = Handler((n: i64) -> i64 => n + 1)
+			 let main = () -> u8 => {
+			   println("${base(h)(41)}")
+			   0
+			 }`,
+			"42\n",
+		},
+		{
+			"a chain reads out one layer at a time",
+			`newtype Inner = []i64
+			 newtype Outer = Inner
+			 let main = () -> u8 => {
+			   let o: Outer = [5, 6]
+			   println("${base(base(o))[1]}")
+			   0
+			 }`,
+			"6\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			out, code := buildAndRunCapture(t, c.src)
+			if code != 0 {
+				t.Errorf("%s: exited %d; want 0", c.name, code)
+			}
+			if out != c.wantOut {
+				t.Errorf("%s: stdout = %q; want %q", c.name, out, c.wantOut)
+			}
+		})
+	}
+}
+
+// The managed read-out under AddressSanitizer, plus a **differential** accounting:
+// `base(b)` returns the operand's own box, so the program must emit exactly the
+// allocs/retains/releases its newtype-free control does — a missing ownership arm
+// shows up as a drifted count (the unresolved-callee default retains a result the
+// conversion never produced), and an early release as an ASan fault. Differential
+// rather than absolute, because an array's element releases live in the runtime's
+// drop loop, not in emitted IR, so absolute conservation does not hold for either
+// program.
+func TestExec_BaseReadout_ASan(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	src := `newtype Bag = []string
+	 let main = () -> u8 => {
+	   let xs: []string = ["a" ++ "1", "b" ++ "2"]
+	   let b: Bag = Bag(xs)
+	   let s = base(b)[1]
+	   if s == "b2" { 0 } else { 1 }
+	 }`
+	control := `let main = () -> u8 => {
+	   let xs: []string = ["a" ++ "1", "b" ++ "2"]
+	   let s = xs[1]
+	   if s == "b2" { 0 } else { 1 }
+	 }`
+	if got := buildAndRunASan(t, clang, src); got != 0 {
+		t.Errorf("ASan run exited %d; want 0", got)
+	}
+	counts := func(source string) [3]int {
+		ir, err := emitSource(t, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return [3]int{
+			strings.Count(ir, "call i8* @lyra_rc_alloc"),
+			strings.Count(ir, "call void @lyra_rc_retain"),
+			strings.Count(ir, "call void @lyra_rc_release"),
+		}
+	}
+	if got, want := counts(src), counts(control); got != want {
+		t.Errorf("read-out changed the accounting: allocs/retains/releases = %v, control = %v", got, want)
+	}
+}

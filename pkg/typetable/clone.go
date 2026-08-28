@@ -30,6 +30,7 @@ func (t *TypeTable) Clone() *TypeTable {
 		entries:            cloneMap(t.entries),
 		callees:            cloneMap(t.callees),
 		variadicPromotions: cloneMap(t.variadicPromotions),
+		baseReadouts:       cloneMap(t.baseReadouts),
 	}
 }
 
@@ -125,6 +126,9 @@ func (t *TypeTable) Absorb(other *TypeTable) {
 		if _, ok := t.variadicPromotions[k]; !ok {
 			t.SetVariadicPromotion(k, v)
 		}
+	}
+	for call := range other.baseReadouts {
+		t.SetBaseReadout(call)
 	}
 }
 

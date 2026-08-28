@@ -46,3 +46,32 @@ func (t *TypeTable) Callee(call *ast.FunctionCallExpr) (*ast.LambdaExpr, bool) {
 	fn, ok := t.callees[call]
 	return fn, ok
 }
+
+// The base read-out marker, recorded by the typechecker for the same reason SetCallee
+// exists: `base(v)` is a compiler builtin resolved *after* scope, so a user binding
+// named `base` shadows it — which means no later pass may recognize the read-out by
+// its name. The ownership pass (which must treat the call as its operand, or the
+// operand's box is bound with neither retain nor release), the purity pass (which
+// must charge it nothing) and the backend (which lowers it as the operand, an
+// identity like every read-out conversion) all read this marker instead.
+
+// SetBaseReadout records that the typechecker resolved this call as the builtin
+// newtype read-out `base(v)`.
+func (t *TypeTable) SetBaseReadout(call *ast.FunctionCallExpr) {
+	if t == nil {
+		return
+	}
+	if t.baseReadouts == nil {
+		t.baseReadouts = make(map[*ast.FunctionCallExpr]bool)
+	}
+	t.baseReadouts[call] = true
+}
+
+// IsBaseReadout reports whether the typechecker resolved this call as the builtin
+// newtype read-out. Nil-receiver-safe.
+func (t *TypeTable) IsBaseReadout(call *ast.FunctionCallExpr) bool {
+	if t == nil {
+		return false
+	}
+	return t.baseReadouts[call]
+}

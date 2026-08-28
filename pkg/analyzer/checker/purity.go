@@ -2195,7 +2195,15 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					"pure function mutates captured binding %q; mutation must not escape the function", ex.Left.Name)
 			}
 		case *ast.FunctionCallExpr:
-			if inf.methodTable.IsBuiltinMethod(ex) {
+			if inf.allocSites.table().IsBaseReadout(ex) {
+				// The universal newtype read-out `base(v)`: an identity, like the named
+				// conversions — no effect, no allocation. Recognized by the
+				// typechecker's marker rather than by name, since a user binding named
+				// `base` shadows the builtin (and then resolves through calleeFor below
+				// as the ordinary call it is). With no typechecker in the pipeline the
+				// marker is absent and the call falls to the unresolved-callee default,
+				// which is this AST-only entry point's documented conservatism.
+			} else if inf.methodTable.IsBuiltinMethod(ex) {
 				// A compiler builtin method (`x.wrapping_mul(y)`, `x.floor()`,
 				// `xs.len()`): pure arithmetic, no effect. Checked before the name-based
 				// ladder below, which would otherwise see the dotted name

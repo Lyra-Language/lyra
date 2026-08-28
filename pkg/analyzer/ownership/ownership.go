@@ -1208,6 +1208,13 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 				return
 			}
 		}
+		// The universal read-out `base(v)` is the same identity, but its spelling is
+		// shadowable by a user binding, so it is recognized by the typechecker's marker
+		// rather than by name — a user `base(x)` stays an ordinary call.
+		if a.tt.IsBaseReadout(e) {
+			a.expr(e.Arguments[0], needOwned)
+			return
+		}
 		a.call(e, needOwned)
 
 	case *ast.BlockExpr:
