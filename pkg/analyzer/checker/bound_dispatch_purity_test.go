@@ -43,8 +43,8 @@ struct Box<t> { value: t }
 trait Show { show: (Self) -> string }
 impl Show for i64 {
     show = (n) => {
-        read("x")
-        "i"
+        let got = read_line() ?? "x"
+        got
     }
 }
 impl Show<t> for Box<t> where t: Show {

@@ -22,7 +22,7 @@ func assertBoundError(t *testing.T, errs []diag.Diagnostic, wantCode string) {
 
 // Reading external input is non-deterministic, so it breaks `det`.
 func TestDet_ReadsInput_Violates(t *testing.T) {
-	src := `let load = det (path: string) -> string => { read(path) }`
+	src := `let load = det (path: string) -> string => { read_line() ?? path }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }
 
@@ -58,7 +58,7 @@ let tick = det (n: i64) -> i64 => {
 // too — enforcement runs against the full inferred (transitive) effect set.
 func TestDet_TransitiveInput_Violates(t *testing.T) {
 	src := `
-let helper = (p: string) -> string => { read(p) }
+let helper = (p: string) -> string => { read_line() ?? p }
 let load = det (p: string) -> string => { helper(p) }`
 	// Only the `det` function is flagged; the unannotated helper is fine.
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
@@ -138,22 +138,35 @@ let make = noalloc (x: i64) -> i64 => {
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
 
-// An unknown external call could allocate, and we can't inspect its body to know
-// otherwise, so a `noalloc` function that calls one is conservatively flagged —
-// the alloc-axis sibling of the same taint that makes an unknown call impure for
+// A callee this pass cannot see through could allocate, and we can't inspect its body
+// to know otherwise, so a `noalloc` function that calls one is conservatively flagged —
+// the alloc-axis sibling of the same taint that makes such a call impure for
 // `pure`/`det`. (Before this taint included EffectAlloc, `noalloc` only caught
 // known `shared` constructions and silently passed such calls.)
+//
+// **The callee is a binding holding a function value**, not an undefined name. It used
+// to be `helper(n)`, undefined — which exercised the same branch only because an
+// unresolvable name was charged everything, and stopped doing so on 08/28 when a callee
+// the *typechecker* refuses became its error alone (SetUnresolvedCallee). A program that
+// does not compile is the wrong fixture for a rule about programs that do: this one
+// compiles, and `opaque` is opaque for the reason the rule exists — the value comes from
+// a call, so there is no body here to inspect.
 func TestNoAlloc_UnknownExternalCall_Violates(t *testing.T) {
-	src := `let make = noalloc (n: i64) -> i64 => { helper(n) }`
+	src := `
+let mk = (k: i64) -> (i64) -> i64 => (n: i64) -> i64 => n + k
+let opaque = mk(1)
+let make = noalloc (n: i64) -> i64 => { opaque(n) }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }
 
-// The conservative alloc taint propagates transitively: a `noalloc` function
-// calling a local helper that itself calls an unknown external function is
-// flagged too (the helper's inferred effect set carries EffectAlloc).
+// The conservative alloc taint propagates transitively: a `noalloc` function calling a
+// local helper that itself calls an unseeable one is flagged too (the helper's inferred
+// effect set carries EffectAlloc). Same fixture change as above, for the same reason.
 func TestNoAlloc_TransitiveUnknownCall_Violates(t *testing.T) {
 	src := `
-let helper = (n: i64) -> i64 => { external(n) }
+let mk = (k: i64) -> (i64) -> i64 => (n: i64) -> i64 => n + k
+let opaque = mk(1)
+let helper = (n: i64) -> i64 => { opaque(n) }
 let make = noalloc (n: i64) -> i64 => { helper(n) }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }

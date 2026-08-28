@@ -92,7 +92,7 @@ let bad = pure (m: Opt<i64>) -> i64 => wrapper(m, bump)`
 func TestEffectPoly_BodyEffectsAreStillCharged(t *testing.T) {
 	src := orElseDecl + `
 var log = 0
-let logging = (m: Opt<i64>, f: () -> i64) -> i64 => { log = 1  or_else(m, f) }
+let logging = (m: Opt<i64>, f: () -> i64) -> i64 => { log = 1; or_else(m, f) }
 let bad = pure (m: Opt<i64>) -> i64 => logging(m, () -> i64 => 0)`
 	errs := checkPurity(t, src)
 	assertPurityCount(t, errs, 1)

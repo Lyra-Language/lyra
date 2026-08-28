@@ -698,6 +698,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 			tc.checkVisible(v, call.GetLocation())
 			return nil
 		}
+		// Published for the passes after this one: the call is already refused here, so
+		// analysing it is at best redundant and at worst a cascade (see SetUnresolvedCallee).
+		tc.typeTable.SetUnresolvedCallee(call)
 		tc.addError(call.GetLocation(), SeverityError, "undefined function %q%s", ident.Name, tc.unimportedHint(ident.Name, call.GetLocation()))
 		return nil
 	}
@@ -772,6 +775,7 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		tc.requireUnsafeCall(ident.Name, lambda, call)
 		return tc.inferLambdaCall(ident.Name, lambda, call)
 	}
+	tc.typeTable.SetUnresolvedCallee(call)
 	tc.addError(call.GetLocation(), SeverityError, "cannot resolve function %q", ident.Name)
 	return nil
 }

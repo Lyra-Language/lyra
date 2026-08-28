@@ -2195,7 +2195,19 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					"pure function mutates captured binding %q; mutation must not escape the function", ex.Left.Name)
 			}
 		case *ast.FunctionCallExpr:
-			if inf.allocSites.table().IsBaseReadout(ex) {
+			if inf.allocSites.table().IsUnresolvedCallee(ex) {
+				// **The typechecker already refused this callee**, so the call cannot
+				// happen and there is nothing here to charge. Charging the
+				// unresolved-callee default instead (AllEffects, below) is what turned
+				// one undefined name into a cascade: the enclosing function became
+				// impure, so did its caller, and so on up — three reports at innocent
+				// lines above the single line that explained them, with the cause
+				// printed last. The marker rather than a definedness test of our own,
+				// because "resolves nowhere" *here* also matches a callee this pass
+				// merely cannot see through (a struct field holding a function, a call
+				// result), and going quiet about those would let a `pure` function call
+				// an opaque callback — a hole rather than a tidier message.
+			} else if inf.allocSites.table().IsBaseReadout(ex) {
 				// The universal newtype read-out `base(v)`: an identity, like the named
 				// conversions — no effect, no allocation. Recognized by the
 				// typechecker's marker rather than by name, since a user binding named

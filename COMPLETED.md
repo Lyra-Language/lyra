@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — An undefined callee is the typechecker's error alone, not a purity cascade
+
+**One undefined name produced four errors, with the cause printed last.** Writing
+`round(255.0 * value)` — `round` is a builtin *method*, so the free-call spelling
+resolves to nothing — reported `pure function calls impure function "shade"` (line 289),
+the same for `hue_rgb` (line 350), the same for `round` (line 362), and only then
+`undefined function "round"` (line 362). The purity pass charged the unresolvable callee
+its conservative AllEffects default, which made the enclosing function impure, which
+made *its* caller impure, and the reports come out in pass order, so the one line that
+explained the other three was at the bottom, under two reports at innocent lines.
+
+**Sorting by location would not have fixed it** — the cause is at 362 and the cascade at
+289 and 350, so sorting puts the cause last regardless. The cascade has to not exist.
+
+**The typechecker publishes; the purity pass reads** (`SetUnresolvedCallee`/
+`IsUnresolvedCallee`, the SetCallee/SetBaseReadout arrangement). A call whose callee the
+typechecker refused cannot happen and is already reported, so purity charges it nothing.
+Four errors became one, at the line the mistake is on.
+
+**Why a marker rather than a definedness test inside the purity pass**: "resolves
+nowhere" *there* also matches a callee it merely cannot see through — a struct field
+holding a function, a call result, a binding whose value comes from a call — and going
+quiet about those would let a `pure` function call an opaque callback, a hole rather
+than a tidier message. The typechecker's own resolution is the authority. Pinned from
+both sides: the cascade is gone, an unseeable-but-defined callee is still refused, and a
+function with both an undefined callee and a real violation still reports the real one.
+
+**It did not break eight tests; it revealed eight that passed for the wrong reason.**
+Removing the "undefined ⇒ charged everything" blanket exposed what their fixtures were
+actually exercising:
+
+- **Six called `read(...)`**, which has not existed since 08/24, when it was removed as
+  one of nine phantom `builtinEffects` entries. They read as "reading input breaks
+  `det`" and passed because an *unknown* callee is charged every effect including Input.
+  They now call `read_line()`, a real input builtin, and test what their names say.
+- **One imported `math.{ sqrt }`**, a module that does not exist in that harness — so it
+  tested an undefined name rather than an imported function, and a real import resolves
+  anyway (the driver merges every unit before this pass runs).
+- **One did not parse**: `{ log = 1  or_else(m, f) }`, two statements with no separator.
+  The harness never asks whether the CST holds an error, so it ran on a mangled AST —
+  the same trap the struct-defaults test recorded on 08/06.
+
+The three that genuinely test the conservative unknown-callee rule now use a callee that
+*exists and is opaque* (`let opaque = mk(1)`) rather than one that is undefined, which
+is the rule's real target and a program that actually compiles.
+
 ### 08/28/26 — Struct field defaults work, and the grammar gap was hiding a wider one
 
 **`Person {}` now parses, and — the part that mattered — defaults are actually filled.**

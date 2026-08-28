@@ -775,17 +775,26 @@ let f = pure (n: i64) -> string => {
 
 // --- imported-function impurity ---
 
-// TestPurity_ImportedFunctionCall_TreatedAsImpure: a `pure` function that calls
-// an imported function is flagged — we can't verify the callee's purity.
-func TestPurity_ImportedFunctionCall_TreatedAsImpure(t *testing.T) {
+// A `pure` function calling a callee this pass cannot see through is flagged — we
+// cannot verify the callee's purity, so the conservative answer is the only sound one.
+//
+// **The callee is a binding holding a function value**, not an unresolvable import. The
+// fixture was `import math.{ sqrt }`, which resolves to nothing in this harness (there is
+// no such module) and so tested an *undefined name* rather than an imported one — and a
+// real import does resolve, in the driver, where every unit is merged before this pass
+// runs. Since 08/28 a callee the typechecker refuses is its error alone
+// (SetUnresolvedCallee), so the undefined-name fixture no longer reaches this rule; this
+// one does, and is a program that actually compiles.
+func TestPurity_UnseeableCalleeTreatedAsImpure(t *testing.T) {
 	src := `
-import math.{ sqrt }
+let mk = (k: i64) -> (i64) -> i64 => (n: i64) -> i64 => n + k
+let opaque = mk(1)
 let f = pure (x: i64) -> i64 => {
-    sqrt(x)
+    opaque(x)
 }`
 	errs := checkPurity(t, src)
 	assertPurityCount(t, errs, 1)
-	if errs[0].Message != `pure function calls impure function "sqrt"` {
+	if errs[0].Message != `pure function calls impure function "opaque"` {
 		t.Errorf("unexpected message: %q", errs[0].Message)
 	}
 }
@@ -1116,4 +1125,40 @@ newtype Handler = (i64) -> i64
 let run = pure (f: Handler, n: i64) -> i64 => f(n)
 let main = () -> u8 => u8(run((k) => k + 1, 41))`)
 	assertPurityCount(t, errs, 0)
+}
+
+// A callee the **typechecker** refused is its error alone: the purity pass charges the
+// call nothing and stays silent (08/28).
+//
+// Charging the unresolvable-callee default instead is what turned one undefined name
+// into a cascade. The name is undefined, so the enclosing function is impure, so its
+// caller is impure, and so on up — and because the reports come out in pass order, the
+// one line that explained them was printed *last*, under two reports at lines whose
+// functions were innocent. Sorting would not have helped: the cause was at line 362 and
+// the cascade at 289 and 350.
+//
+// The marker rather than a definedness test of the pass's own, because "resolves
+// nowhere" here also matches a callee it merely cannot see through, and going quiet
+// about those would be a hole rather than a tidier message —
+// TestPurity_UnseeableCalleeTreatedAsImpure is that case, still reported.
+func TestPurity_UndefinedCalleeIsNotAPurityCascade(t *testing.T) {
+	// `round` is a builtin *method* (`x.round()`), so the free-call spelling resolves to
+	// nothing — the real shape this came from.
+	errs := checkPurity(t, `
+let hue = pure (v: f64) -> i64 => round(255.0 * v)
+let shade = pure (v: f64) -> i64 => hue(v)
+let render = pure (v: f64) -> i64 => shade(v)`)
+	assertPurityCount(t, errs, 0)
+}
+
+// The suppression is per *call*, not per function: a pure function with both an
+// undefined callee and a real violation still reports the real one.
+func TestPurity_UndefinedCalleeDoesNotMaskARealViolation(t *testing.T) {
+	errs := checkPurity(t, `
+var counter = 0
+let f = pure (v: f64) -> i64 => { counter = 1; round(v) }`)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, "counter") {
+		t.Errorf("expected the captured-mutation violation, got %q", errs[0].Message)
+	}
 }

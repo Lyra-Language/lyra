@@ -157,11 +157,19 @@ constructions are invisible here regardless; the typechecker checks `with` bodie
 which needed `WithStmt.Body` to become a `*BlockExpr` (see the E050 entry in
 `COMPLETED.md`). If arenas are built, the discharge returns **with an escape analysis** —
 a `shared` value built inside a block and returned out escapes, and "everything lexically
-inside" was always the approximation standing in for that analysis. An **unresolvable external call** (no local lambda, builtin, or type
-conversion) conservatively taints `AllEffects` (`PurityEffects | EffectAlloc`) — everything,
-including Alloc, so `noalloc` flags it too (we can't verify it doesn't allocate).
-`builtinEffects`: print/println→Output, read→Input, write→Input|Output, `await`→Input,
-`random_seed()`→Rand, `wall_clock_nanos()`→Time, **`panic`→None**. Only *ambient* rand/time sources
+inside" was always the approximation standing in for that analysis. A **callee this pass cannot see through** (no local lambda, parameter, builtin, or type
+conversion — a binding whose value came from a call, say) conservatively taints
+`AllEffects` (`PurityEffects | EffectAlloc`) — everything, including Alloc, so `noalloc`
+flags it too (we can't verify it doesn't allocate). **A callee the *typechecker* refused
+is the exception** (08/28): it is already reported as undefined and cannot happen, so it
+is charged nothing and reported nowhere — otherwise one undefined name cascades up every
+caller, and the report that explains the cascade comes out last. The typechecker
+publishes that verdict (`typetable.SetUnresolvedCallee`) rather than this pass
+re-deriving a weaker version of it, because "resolves nowhere" *here* also matches the
+merely-unseeable callee above, and staying quiet about those would be a soundness hole.
+`builtinEffects`: print/println→Output, `read_line`/`read_key`/`terminal_size`/
+`wait_for_key_ms`→Input, `set_raw_mode`→Output, `await`→Input, `random_seed()`→Rand,
+`wall_clock_nanos()`→Time, **`panic`→None**. Only *ambient* rand/time sources
 carry the bit — a threaded RNG's `rng.next()` or a passed-in `tick` (reached through a local
 binding) is ordinary `mut`/`own` data, which is what lets `det` permit seeded randomness and
 sim-time. User surface is the `pure`/`det`/`noalloc` ladder — see `todo.md` FP/Imperative #5.

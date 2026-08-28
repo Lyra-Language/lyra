@@ -31,8 +31,8 @@ func TestTraitBound_Det_ImpureImpl_Flagged(t *testing.T) {
 trait Clock { det now: (Self) -> i64 }
 impl Clock for i64 {
     now = (self) => {
-        read("t")
-        0
+        let got = read_line() ?? "t"
+        got.len()
     }
 }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")

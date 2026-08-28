@@ -12,6 +12,9 @@ type TypeTable struct {
 	// callees records which declaration an overloaded call resolved to; see
 	// calleetable.go for why only those are recorded.
 	callees map[*ast.FunctionCallExpr]*ast.LambdaExpr
+	// unresolvedCallees marks calls whose callee the typechecker refused; see
+	// calleetable.go for why the later passes must be told rather than guess.
+	unresolvedCallees map[*ast.FunctionCallExpr]bool
 	// baseReadouts marks the calls the typechecker resolved as the builtin newtype
 	// read-out `base(v)` — recognizable only here, since a user binding named `base`
 	// shadows the builtin. See calleetable.go.

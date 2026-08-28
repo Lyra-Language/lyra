@@ -75,3 +75,43 @@ func (t *TypeTable) IsBaseReadout(call *ast.FunctionCallExpr) bool {
 	}
 	return t.baseReadouts[call]
 }
+
+// The unresolved-callee marker. A call whose callee the typechecker could not resolve
+// is **already reported** by it ("undefined function") and cannot happen at run time,
+// so the passes after it have nothing useful to say about the call — and saying
+// something anyway is actively harmful, because a bottom-up analysis propagates its
+// verdict to every caller. One undefined name inside a `pure` helper produced four
+// errors, the cause reported *last*: the purity pass charged the unresolvable callee
+// its conservative AllEffects default, which made the helper impure, which made its
+// caller impure, and so on up — three cascade reports at innocent lines above the one
+// line that explained them.
+//
+// The marker is what lets the cascade be suppressed **precisely**. Guessing the
+// condition inside the purity pass is what does not work: "the name resolves nowhere"
+// there also matches a callee it merely cannot see through (a struct field holding a
+// function, a call result, a local binding of a closure), and staying silent about
+// those would let a `pure` function call an opaque callback — a soundness hole rather
+// than a tidier message. The typechecker's own resolution is the authority, so it
+// publishes the answer instead of the purity pass re-deriving a weaker one.
+
+// SetUnresolvedCallee records that the typechecker reported this call's callee as
+// unresolvable.
+func (t *TypeTable) SetUnresolvedCallee(call *ast.FunctionCallExpr) {
+	if t == nil {
+		return
+	}
+	if t.unresolvedCallees == nil {
+		t.unresolvedCallees = make(map[*ast.FunctionCallExpr]bool)
+	}
+	t.unresolvedCallees[call] = true
+}
+
+// IsUnresolvedCallee reports whether the typechecker already refused this call's
+// callee. Nil-receiver-safe: a consumer running without a typechecker pass sees
+// "not recorded" and keeps its own conservative behaviour.
+func (t *TypeTable) IsUnresolvedCallee(call *ast.FunctionCallExpr) bool {
+	if t == nil {
+		return false
+	}
+	return t.unresolvedCallees[call]
+}

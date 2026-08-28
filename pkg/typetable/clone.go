@@ -31,6 +31,7 @@ func (t *TypeTable) Clone() *TypeTable {
 		callees:            cloneMap(t.callees),
 		variadicPromotions: cloneMap(t.variadicPromotions),
 		baseReadouts:       cloneMap(t.baseReadouts),
+		unresolvedCallees:  cloneMap(t.unresolvedCallees),
 	}
 }
 
@@ -129,6 +130,9 @@ func (t *TypeTable) Absorb(other *TypeTable) {
 	}
 	for call := range other.baseReadouts {
 		t.SetBaseReadout(call)
+	}
+	for call := range other.unresolvedCallees {
+		t.SetUnresolvedCallee(call)
 	}
 }
 
