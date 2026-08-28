@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — a filtering comprehension hands its tail back
+
+**The question was whether `map`/`filter` in the prelude should stop using comprehensions.
+For `map` the answer is a firm no**, and it is worth writing down so nobody re-opens it: the
+comprehension allocates exactly n, stores through a GEP at a running count, and never checks
+a capacity or copies anything. The obvious alternative — allocate empty and `push` in a loop
+— is strictly worse on both axes: log(n/4) reallocs, O(n) bytes copied across them, a
+capacity compare per element, and up to 2x overshoot at the end. Rewriting it that way would
+be a regression dressed as an optimization.
+
+**`filter` had a real cost, and it was memory, not time.** The buffer is allocated at n and
+was never shrunk, so filtering a million elements down to ten held the million-element buffer
+for as long as the result was alive — a steady state, not a transient. The two prelude-level
+fixes were both bad: a `push` loop reintroduces every cost above and drags `map` down with
+it, since they share the file; a counting pre-pass calls the predicate twice per element,
+which the 08/04 lowering refused for the right reason (a closure's call count must not be a
+detail of the compiler).
+
+So the fix went where the cost was. `shrinkCompBuffer` reallocs the buffer down to the count
+after the fill loop, keeping the single pass and the single evaluation. The header comment's
+claim that growing "needs a reallocation primitive the language does not have" was stale as a
+constraint on the *backend* — `push` has called libc `realloc` all along, and shrinking asks
+less of it than growing does.
+
+**Two gates, so the common case pays nothing.** At compile time it is emitted only where the
+count can come in under the capacity: a guard, or a source that over-approximates. That
+second one is why `compSource` grew an `overApprox` flag — a string source's capacity is its
+*byte* length, which overshoots its rune count for anything non-ASCII, an over-allocation
+with no guard present to signal it. At run time it is behind `count < capacity`, so a guard
+that rejects nothing pays one compare.
+
+**Three details are load-bearing**, and each is a way to turn a memory saving into a fault.
+The new size is clamped to one element, since `realloc(p, 0)` may free `p` and answer null
+while a `[]T`'s buffer pointer is non-null by construction. A failed shrink stores nothing —
+buffer and capacity go through a select on realloc's answer — an option `push` does not have,
+because a null there has nowhere to put the element. And the capacity field is rewritten with
+the buffer, since `push` reads it to decide whether to grow; getting that wrong is silent
+corruption rather than a wrong answer, which is what the push-after-shrink test pins.
+
+**`filter`'s doc comment was describing a lowering the compiler does not use** — it explained
+the O(n) worst case as `push` growing by doubling, when there is no `push` and no doubling
+and the capacity is n from the first instruction. The table was right and the reason under it
+was wrong; both now say what happens.
+
 ### 08/28/26 — `[1, 2, 3].map(f)` works: one call had two answers by spelling
 
 **The open entry proposed the wrong fix because its premise was wrong.** It held that a

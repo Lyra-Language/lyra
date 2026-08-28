@@ -632,8 +632,22 @@ how many elements survive a guard. The three options were to run the generators 
 to count, once to fill), to grow the box as it fills, or to over-allocate once and record
 the real length. Running twice is *wrong* rather than slow — a guard may call a function,
 and evaluating it twice per element makes the call count a detail of the lowering. Growing
-needs a reallocation primitive the language does not have. Over-allocating costs memory only
-on a filtering comprehension, and keeps every guard evaluated exactly once.
+pays a realloc and a copy per doubling on the *mapping* comprehension too, the common case
+and the one that never over-allocates at all. Over-allocating costs memory only on a
+filtering comprehension, and keeps every guard evaluated exactly once.
+
+**The unused tail is handed back** (`shrinkCompBuffer`, 08/28), so the over-allocation is a
+transient the fill loop needs rather than something the result keeps — a filter of a million
+elements down to ten used to hold the million-element buffer for as long as its result was
+alive. The shrink is emitted only where the count can come in under the capacity (a guard,
+or a string source, whose byte-length bound overshoots its rune count), so `[f(x) for x in
+xs]` is untouched, and it is *also* conditional at run time on `count < capacity`. Two
+details are load-bearing: the new size is clamped to one element, since `realloc(p, 0)` may
+free `p` and answer null while a `[]T`'s buffer pointer is non-null by construction; and a
+failed shrink stores nothing, keeping the old buffer and capacity through a select. Growing
+cannot take that second option — a null there has nowhere to put the element — which is why
+`push` stores unconditionally and this does not. The capacity field is rewritten with the
+buffer, since `push` reads it to decide whether to grow.
 
 **Arrays, ranges and strings** are all sources. Each is a `compSource` that **emits its own
 loop** rather than exposing an index: the index model fits an array and a range and not a

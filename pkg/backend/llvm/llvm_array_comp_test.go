@@ -355,3 +355,136 @@ func TestExec_ArrayComp_ManagedResultIsRetainedASan(t *testing.T) {
 		}
 	}
 }
+
+// --- Shrinking the over-allocated tail -------------------------------------------------
+//
+// The fill loop allocates at the sources' bound and only then learns the count, so a
+// guarded comprehension over-allocates by construction. What it does *not* have to do is
+// keep the excess: shrinkCompBuffer hands the tail back once the count is known. These
+// check both halves of that — the realloc is emitted exactly where it can pay, and the box
+// it leaves behind is still a well-formed `[]T`.
+
+// A mapping comprehension stores on every iteration, so its buffer is already exact and
+// there is nothing to hand back. This is the assertion that fails if the shrink is ever
+// emitted unconditionally — it would put a realloc in the hot, common path.
+func TestEmit_ArrayCompUnguardedDoesNotShrink(t *testing.T) {
+	t.Parallel()
+	got, err := emitSource(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [1, 2, 3, 4]
+  let doubled = [x in xs | x * 2]
+  u8(doubled.len())
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "@realloc") {
+		t.Errorf("an unguarded comprehension should not realloc:\n%s", got)
+	}
+}
+
+// A guard can reject, so the shrink is emitted — behind a runtime `count < capacity`, but
+// emitted. `@realloc` appearing at all is the signal, since nothing else in this program
+// grows or shrinks an array.
+func TestEmit_ArrayCompGuardedShrinks(t *testing.T) {
+	t.Parallel()
+	got, err := emitSource(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [1, 2, 3, 4]
+  let evens = [x in xs | x % 2 == 0 | x]
+  u8(evens.len())
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "@realloc") {
+		t.Errorf("a guarded comprehension should shrink its buffer:\n%s", got)
+	}
+}
+
+// A string source's capacity is its **byte** length, which overshoots the rune count for
+// anything non-ASCII — the second way the count comes in under the capacity, and one no
+// guard is present to signal.
+func TestEmit_ArrayCompOverStringShrinks(t *testing.T) {
+	t.Parallel()
+	got, err := emitSource(t, `
+let main = () -> u8 => {
+  let cs = [c in "héllo" | c]
+  u8(cs.len())
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "@realloc") {
+		t.Errorf("a comprehension over a string should shrink its buffer:\n%s", got)
+	}
+}
+
+// The shrink rewrites the box's buffer pointer and capacity, so the elements must still be
+// there afterwards — a realloc that moved the block and was not stored back reads as
+// garbage here.
+func TestExec_ArrayCompShrunkResultStillReads(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [1, 2, 3, 4, 5, 6, 7, 8]
+  let evens = [x in xs | x % 2 == 0 | x]
+  u8(evens.len() * 10 + evens[0] + evens[3])
+}`)
+	if got != 50 {
+		t.Errorf("expected 50 (len 4 → 40, plus 2 and 8), got %d", got)
+	}
+}
+
+// The capacity the shrink stores has to be the *real* one: push reads it to decide whether
+// to grow, so a stale capacity left over from the allocation would have these pushes write
+// past a buffer that is no longer that big. Eight elements down to two, then pushed back up
+// past the shrunk capacity — the shape that corrupts if the field lies.
+func TestExec_ArrayCompShrunkResultCanBePushedOnto(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [1, 2, 3, 4, 5, 6, 7, 8]
+  var kept = [x in xs | x > 6 | x]
+  kept.push(10)
+  kept.push(20)
+  kept.push(30)
+  u8(kept.len() * 10 + kept[0] + kept[4])
+}`)
+	if got != 87 {
+		t.Errorf("expected 87 (len 5 → 50, plus 7 and 30), got %d", got)
+	}
+}
+
+// Nothing surviving is the edge the shrink must not turn into a null buffer: the new size
+// is clamped to one element rather than passed to `realloc(p, 0)`, which is free to release
+// the block and answer null. An empty result that is then pushed onto is what would fault.
+func TestExec_ArrayCompShrunkToEmptyIsUsable(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [1, 3, 5, 7]
+  var none = [x in xs | x % 2 == 0 | x]
+  none.push(9)
+  u8(none.len() * 10 + none[0])
+}`)
+	if got != 19 {
+		t.Errorf("expected 19 (len 1 → 10, plus 9), got %d", got)
+	}
+}
+
+// A managed element survives the move: the shrink copies the buffer, so the strings' box
+// pointers have to arrive intact and their reference counts have to be untouched by it —
+// a realloc is a move of the pointers, not a new use of what they point at.
+func TestExec_ArrayCompShrunkManagedElements(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [1, 2, 3, 4, 5, 6]
+  let names = [x in xs | x % 3 == 0 | "n${x}"]
+  u8(names.len() * 10 + names[1].len())
+}`)
+	if got != 22 {
+		t.Errorf(`expected 22 (len 2 → 20, plus "n6".len() 2), got %d`, got)
+	}
+}

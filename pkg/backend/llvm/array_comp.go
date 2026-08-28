@@ -25,10 +25,18 @@ import (
 // handle that: run the generators twice (once to count, once to fill), grow the box as it
 // fills, or over-allocate once and record the real length. Running twice is wrong rather
 // than slow — a guard may call a function, and evaluating it twice per element makes the
-// number of calls a detail of the lowering. Growing needs a reallocation primitive the
-// language does not have. Over-allocating costs memory on a filtering comprehension and
-// nothing on a mapping one, which is the common case, and it keeps every guard evaluated
-// exactly once. That is the trade recorded here so a future change knows what it is undoing.
+// number of calls a detail of the lowering. Growing pays a realloc and a copy per doubling
+// on the *mapping* comprehension too, which is the common case and the one that never
+// over-allocates at all. Over-allocating keeps every guard evaluated exactly once and costs
+// a mapping comprehension nothing. That is the trade recorded here so a future change knows
+// what it is undoing.
+//
+// **The unused tail is then handed back** (shrinkCompBuffer), because over-allocating is a
+// transient the fill loop needs and not a property the result should keep: a filter of a
+// million elements down to ten would otherwise hold the million-element buffer for as long
+// as its result is alive. One `realloc` on the way out buys that back, and it is emitted
+// only where the capacity can actually exceed the count — a guard, or a source whose bound
+// is an over-approximation — so `[f(x) for x in xs]` is untouched.
 //
 // **A source drives its own loop** (`compSource.emit`) rather than exposing an index. The
 // first version assumed every source could answer "the value at index i", which is true of
@@ -49,6 +57,10 @@ import (
 type compSource struct {
 	capacity value.Value // an upper bound on the iteration count, for the allocation
 	elemLL   lltypes.Type
+	// overApprox says the capacity is a bound the iteration will not generally reach — a
+	// string's byte length against its rune count. A guard is the other way the count can
+	// come in under the capacity; between them they decide whether the shrink is emitted.
+	overApprox bool
 	// emit runs body once per element, having written that element into slot. It returns
 	// the block execution continues in after the loop.
 	emit func(block *ir.Block, slot value.Value, body func(*ir.Block) (*ir.Block, error)) (*ir.Block, error)
@@ -125,7 +137,63 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	// The *count*, not the capacity: the box holds as many elements as survived the guards.
 	count := after.NewLoad(lltypes.I64, countSlot)
 	after.NewStore(count, dynArrayLenPtr(after, boxTy, box))
+	if overAllocates(e, sources) {
+		after = l.shrinkCompBuffer(after, boxTy, elemLL, box, capacity, count, int64(stride))
+	}
 	return box, after, nil
+}
+
+// overAllocates reports whether this comprehension's count can come in under its capacity,
+// which is the only case the shrink is worth emitting for. A guard rejects elements; a
+// string source's byte-length bound exceeds its rune count for anything non-ASCII. With
+// neither, every iteration stores and the buffer is already exactly the right size.
+func overAllocates(e *ast.ArrayCompExpr, sources []compSource) bool {
+	if len(e.Guards) > 0 {
+		return true
+	}
+	for _, src := range sources {
+		if src.overApprox {
+			return true
+		}
+	}
+	return false
+}
+
+// shrinkCompBuffer hands back the tail the fill loop did not use, once the count is known.
+//
+// **Guarded at run time as well as at compile time**: `overAllocates` says the count *can*
+// be short, this says whether it *is*. A guard nothing rejects pays one compare here and no
+// realloc at all.
+//
+// Two details are load-bearing. **The new size is never zero** — `realloc(p, 0)` is
+// permitted to free `p` and answer null, and a `[]T`'s buffer pointer is non-null by
+// construction (dynArrayAlloc mallocs even at capacity zero), so an emptied comprehension
+// keeps a one-element allocation rather than acquiring a null the rest of the backend does
+// not expect. And **a failed shrink changes nothing**: realloc may answer null without
+// touching the old block, so the stores go through a select and the box keeps the buffer
+// and capacity it already had. Growing cannot take that option — a null there has nowhere
+// to put the element — which is why push stores unconditionally and this does not.
+func (l *lowerer) shrinkCompBuffer(block *ir.Block, boxTy *lltypes.StructType, elemLL lltypes.Type,
+	box, capacity, count value.Value, stride int64,
+) *ir.Block {
+	fn := block.Parent
+	shrink := fn.NewBlock("")
+	done := fn.NewBlock("")
+	block.NewCondBr(block.NewICmp(enum.IPredSLT, count, capacity), shrink, done)
+
+	newCap := shrink.NewSelect(shrink.NewICmp(enum.IPredSGT, count, i64c(0)), count, i64c(1))
+	elemPtrTy := lltypes.NewPointer(elemLL)
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	oldBuf := shrink.NewLoad(elemPtrTy, dynArrayElemsPtr(shrink, boxTy, box))
+	newBuf := shrink.NewCall(l.reallocFunc(),
+		shrink.NewBitCast(oldBuf, i8ptr),
+		shrink.NewMul(newCap, i64c(stride)))
+	kept := shrink.NewICmp(enum.IPredNE, newBuf, constant.NewNull(i8ptr))
+	shrink.NewStore(shrink.NewSelect(kept, shrink.NewBitCast(newBuf, elemPtrTy), oldBuf),
+		dynArrayElemsPtr(shrink, boxTy, box))
+	shrink.NewStore(shrink.NewSelect(kept, newCap, capacity), dynArrayCapPtr(shrink, boxTy, box))
+	shrink.NewBr(done)
+	return done
 }
 
 // emitCompLoops emits generator `depth`'s loop, recursing for the generators inside it and
@@ -447,8 +515,9 @@ func (l *lowerer) stringSource(block *ir.Block, gen *ast.Generator) (compSource,
 	decode := l.utf8DecodeFunc()
 
 	return compSource{
-		capacity: byteLen,
-		elemLL:   lltypes.I32, // a rune
+		capacity:   byteLen,
+		elemLL:     lltypes.I32, // a rune
+		overApprox: true,        // bytes bound runes; anything non-ASCII decodes to fewer
 		emit: func(block *ir.Block, slot value.Value, body func(*ir.Block) (*ir.Block, error)) (*ir.Block, error) {
 			fn := block.Parent
 			entry := fn.Blocks[0]

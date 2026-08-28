@@ -1735,7 +1735,9 @@ A comprehension is always `[]u`, never `[N]u`, even with no guard: a guard decid
 time how many elements survive, and adding one to a comprehension should not change its
 type. Capacity is the product of the source lengths and the box records the survivor
 *count* as its length — the reasoning for over-allocating rather than counting twice or
-growing is in `pkg/backend/llvm/array_comp.go`.
+growing is in `pkg/backend/llvm/array_comp.go`. The over-allocation is a transient: as of
+08/28 the unused tail is handed back once the count is known, so a `filter` keeps O(k) and
+not the O(n) it needed to run.
 
 **[DONE 08/04] Range and string sources.** `[ x in 1..<=10 | x * x ]` and
 `[ c in "héllo" | c ]` both lower, and mix with array sources in one comprehension.

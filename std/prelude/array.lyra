@@ -43,8 +43,10 @@ pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 ///
 /// `predicate` is called once per element whatever it answers, so time does not vary.
 /// Memory is the k elements kept: nothing matching is the best case, everything matching
-/// the worst. The array may hold O(n) *capacity* on the way there even when k is small,
-/// since `push` grows by doubling.
+/// the worst. The comprehension allocates n up front — it cannot know k without running
+/// `predicate`, and running it twice would make the number of calls a detail of the
+/// compiler — and hands the unused tail back once the count is known, so the result holds
+/// O(k) and the O(n) is a transient rather than something the array keeps.
 ///
 /// # Examples
 ///
