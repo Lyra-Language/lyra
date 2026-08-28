@@ -1052,3 +1052,32 @@ let fine = pure (n: i64) -> i64 => n * 2
 		}
 	}
 }
+
+// A violating pure lambda nested inside a pure *method* body is reported exactly once.
+// Under the two-walk arrangement it was reported twice: the program walk descends into
+// every method body (ast.WalkStmt's TraitImplStmt arm) and checkTraitMethodBounds walked
+// the pure method's body again, so the nested lambda's enforcement ran under both. With
+// enforcement fused into the one body walk (callable.reportPure), the orchestration
+// visits each lambda once and the rerun stops at nested boundaries.
+func TestPurity_NestedLambdaInPureMethodReportsOnce(t *testing.T) {
+	errs := checkPurity(t, `
+struct Cat { n: i64 }
+trait Speak { pure say: (Self) -> i64 }
+impl Speak for Cat {
+  say = pure (self) => {
+    let inner = pure () -> i64 => { println("boom"); 1 }
+    inner() + self.n
+  }
+}
+let main = () -> u8 => u8(Cat { n: 1 }.say())`)
+	printlnReports := 0
+	for _, e := range errs {
+		if strings.Contains(e.Message, `impure function "println"`) {
+			printlnReports++
+		}
+	}
+	if printlnReports != 1 {
+		t.Errorf("expected the nested lambda's println to be reported exactly once, got %d: %v",
+			printlnReports, errs)
+	}
+}

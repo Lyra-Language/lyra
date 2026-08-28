@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 08/27/26 — The purity reporting mirror is collapsed into the one body walk
+
+**Enforcement is now the inference walk re-run with a reporting sink.** A `callable` may
+carry `reportPure`; when it does, every arm of `bodyEffects` that charges a
+purity-violating bit reports the site — with the same tailored message the old pass
+produced, from the same predicate, against the same resolution — in the same breath.
+`CheckPurity` re-runs the walk over exactly the bodies that declared `pure`
+(`reportPureLambda`/`reportPureMethod`), and `exprVisitor` shrank to orchestration:
+finding every callable, `det`/`noalloc` against the inferred row, the reruns, and the
+declared-callback-bound checks at call sites. `stmtVisitor`, `checkInteriorMutation`,
+`checkCallPurity`, `isImpureCallee`, `funcScope` and the `assignTargets` field are gone —
+roughly 250 lines of hand-kept mirror whose entire content was re-deriving what
+`bodyEffects` already knew, in order to attach a message to it.
+
+**Why this was the priority**: the documented history of these walks is three copies that
+agreed and were wrong together, then two that diverged on one line — a soundness hole the
+diagnostics could not see *because* the reporting copy was the correct one. After the
+08/24 unification of the two inference walks, the reporting walk was the last mirror; now
+the arm that charges a bit words its diagnostic, so a future edit cannot fix one and miss
+the other.
+
+**Verified byte-for-byte on the suite** (every message-pinning test passed unchanged on
+the first run), with one behavioral improvement and one deliberate asymmetry:
+
+- **A violating pure lambda nested in a pure method was reported twice** — the program
+  walk descends into every method body and `checkTraitMethodBounds` walked it again, so
+  the nested lambda's enforcement ran under both. Once now; pinned by
+  `TestPurity_NestedLambdaInPureMethodReportsOnce`, probed against the old compiler
+  (2 reports → 1).
+- **One reporting-only arm remains, marked in the walk**: a nested lambda's parameter
+  defaults are held to the *enclosing* bound at the definition site, while inference
+  leaves them uncharged there — the default-args desugar appends the shared expression
+  into every call that omits the argument, so a call that runs one pays for it at the
+  call. An asymmetry stated inside the single walk is visible; a second walk was not.
+
+A corner probed and found already-agreeing: forwarding a *bounded* callback parameter
+into a polymorphic slot is clean under both — inference's own argument walk records a
+bounded parameter handed onward as a callback of the encloser, so the fixpoint and the
+rerun see it identically.
+
 ### 08/27/26 — Uniform module-qualified symbol keys: identity split from resolution
 
 **Every declaration is now keyed `<module>::<name>`** (entry module: `::name`), and the

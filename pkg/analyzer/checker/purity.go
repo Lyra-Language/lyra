@@ -74,16 +74,13 @@ func CheckPurity(program *ast.Program, symTable *symbols.SymbolTable, scopeTable
 	inf := newInference(signatures, methodTable, boundGroups, frames, alloc)
 	inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, inf)
 	c := &purityChecker{
-		inference:     inf,
-		assignTargets: map[*ast.IdentifierExpr]bool{},
-		symTable:      symTable,
-		typeTable:     typeTable,
+		inference: inf,
+		symTable:  symTable,
+		typeTable: typeTable,
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
-			// Top level is an impure context: a nil scope means "not inside a pure
-			// function, don't check".
-			ast.WalkStmt(stmt, c.stmtVisitor(nil), c.exprVisitor(nil, base, nil))
+			ast.WalkStmt(stmt, nil, c.exprVisitor(base, nil))
 		}
 		if impl, ok := node.(*ast.TraitImplStmt); ok {
 			c.checkTraitMethodBounds(impl, base)
@@ -112,12 +109,10 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 		if !isPure {
 			continue
 		}
-		scope := c.frames.forMethod(m)
-		// Method parameters have no mut/own/ref modifier syntax yet (unlike a
-		// lambda's), so there is no mutBorrows set to populate here.
-		sc := &funcScope{locals: scope.mutable, mutBorrows: map[string]bool{}}
-		childCapture := pushScope(base, scope)
-		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
+		// The enforcement rerun over the method's body. The orchestration concerns —
+		// nested lambdas' own bounds, declared-bound checks at its call sites — are the
+		// main loop's: the program walk descends into every method body already.
+		c.reportPureMethod(m, base)
 	}
 }
 
@@ -143,10 +138,7 @@ func (c *purityChecker) checkTraitDefaultBounds(trait *ast.TraitDeclStmt, base [
 		if !tm.IsPure {
 			continue
 		}
-		scope := c.frames.forMethod(m)
-		sc := &funcScope{locals: scope.mutable, mutBorrows: map[string]bool{}}
-		childCapture := pushScope(base, scope)
-		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
+		c.reportPureMethod(m, base)
 	}
 }
 
@@ -332,45 +324,6 @@ func resolveFunction(capture []scopeBindings, name string) (*ast.LambdaExpr, boo
 		}
 	}
 	return nil, false
-}
-
-// funcScope describes the binding environment of the pure function currently
-// being walked. A nil *funcScope means "not inside a pure function". locals holds
-// every name owned locally (parameters + body declarations); mutBorrows is the
-// subset of parameters declared `mut` — owned for *name* reassignment (rebinding
-// the borrow is local) but a borrow for *interior* mutation (writing through it
-// escapes to the caller's value).
-type funcScope struct {
-	locals     map[string]bool
-	mutBorrows map[string]bool
-	// callbacks are this function's *effect-polymorphic* parameters: the
-	// function-typed ones it calls. A call through one contributes no effect here —
-	// it belongs to whoever supplies the callback, and is charged at that call site.
-	// See callableParams and the effect-polymorphism note above lambdaEffects.
-	callbacks map[string]int
-}
-
-// isLocal tests **key presence**, not the mapped value: locals is a scope frame's own
-// `mutable` map, whose value records *mutability* while the question here is "declared in
-// this body". Three call sites used to copy the key set into a fresh all-true map to make
-// the value test work, once per round per callable; the presence test lets them share the
-// frame's map instead.
-func (s *funcScope) isLocal(name string) bool {
-	if s == nil {
-		return false
-	}
-	_, ok := s.locals[name]
-	return ok
-}
-
-// isCallback reports whether name is one of this function's effect-polymorphic
-// parameters — a callback whose effects are the caller's, not this function's.
-func (s *funcScope) isCallback(name string) bool {
-	if s == nil {
-		return false
-	}
-	_, ok := s.callbacks[name]
-	return ok
 }
 
 // callableParams maps a lambda's parameter names to their positions, so a call to
@@ -593,7 +546,7 @@ type inference struct {
 
 // newInference builds the fixpoint's state with its four tables empty. They are filled in
 // place by inferImpurity, which is why it takes the struct rather than returning four maps:
-// the reporting walk reads the *same* tables afterwards rather than a copy.
+// the enforcement reruns read the *same* tables afterwards rather than a copy.
 func newInference(
 	signatures map[*ast.TraitMethodImpl]*types.LambdaType,
 	methodTable *typetable.MethodTable,
@@ -620,10 +573,6 @@ type purityChecker struct {
 	// fixpoint rather than copied out of it. Embedded, so `c.impureLambdas`,
 	// `c.methodTable`, `c.frames` and the rest read exactly what inference holds.
 	*inference
-	// assignTargets records IdentifierExpr nodes that are the root of an assignment
-	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
-	// by the mutation checks, so the same node must not be re-reported as a read.
-	assignTargets map[*ast.IdentifierExpr]bool
 	// symTable resolves a trait name **as the module that wrote the impl sees it**, which
 	// is rule 4: a bare-name index is last-writer-wins, and two modules may each declare a
 	// trait of one name. Keyed by name alone, an impl inherited whichever declaration was
@@ -683,75 +632,19 @@ func calleeFor(tt *typetable.TypeTable, call *ast.FunctionCallExpr, capture []sc
 	return resolveCallee(capture, name)
 }
 
-// stmtVisitor returns a statement callback. sc is non-nil exactly when we are
-// inside a `pure` function body. A mutation of a name not owned locally is a
-// mutation of captured outer state; interior mutation through a `mut`-borrowed
-// parameter escapes to the caller's value. (Unlike exprVisitor, this needs no
-// capture stack — statement-level mutation checks resolve names via sc alone.)
-func (c *purityChecker) stmtVisitor(sc *funcScope) func(ast.Statement) bool {
-	return func(stmt ast.Statement) bool {
-		if sc == nil {
-			return true // impure context: descend, but don't flag anything
-		}
-		switch s := stmt.(type) {
-		case *ast.VarReassignmentStmt:
-			if !sc.isLocal(s.Name) {
-				c.report(s.GetLocation(),
-					"pure function reassigns captured binding %q; mutation must not escape the function", s.Name)
-			}
-		case *ast.LValueAssignmentStmt:
-			c.checkInteriorMutation(sc, s.Target, s.GetLocation())
-			// The base of the target (`origin` in `origin.x = v`) is a write, not a
-			// read; suppress the read-check on it. A mutable global used as an *index*
-			// (`grid[i]`) is left untouched, so reading it is still flagged.
-			if id := rootIdentExpr(s.Target); id != nil {
-				c.assignTargets[id] = true
-			}
-		case *ast.DerefAssignmentStmt:
-			c.report(s.GetLocation(),
-				"pure function writes through a pointer; pointer writes may mutate external state")
-		}
-		return true
-	}
-}
-
-// checkInteriorMutation reports an interior-mutation target (`p.x = v`) whose
-// root binding is not a value the pure function owns: a `mut`-borrowed parameter
-// writes through to the caller's value, and a captured outer binding mutates
-// state observable elsewhere. A root that is an owned local (`own` param,
-// body-declared `var`/`let mut`) is fine; an unrooted target (e.g. a call result)
-// can't be attributed to a binding, so it is left alone.
-func (c *purityChecker) checkInteriorMutation(sc *funcScope, target ast.Expression, loc ast.Location) {
-	root := rootIdentName(target)
-	switch {
-	case root == "":
-		return
-	case sc.mutBorrows[root]:
-		c.report(loc,
-			"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
-	case !sc.isLocal(root):
-		c.report(loc,
-			"pure function mutates captured binding %q; mutation must not escape the function", root)
-	}
-}
-
+// exprVisitor is the orchestration walk: it finds every callable in the program and
+// hands each to the checks that apply — `det`/`noalloc` against the inferred row, the
+// enforcement rerun for a `pure` body (reportPureLambda), and the declared-bound checks
+// at every call site. It classifies nothing itself: what an expression *does* is
+// bodyEffects' single copy of that question, run again with the reporting sink for
+// exactly the bodies that declared `pure`.
+//
 // enclosing is the lambda whose body is being walked (nil at the top level, and for a
 // trait-method body). It is needed to answer one question the capture stack cannot: when a
 // callback is handed straight on to a slot with a *declared* bound, whether the enclosing
 // function's own parameter declares one strong enough to satisfy it.
-func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, enclosing *ast.LambdaExpr) func(ast.Expression) bool {
+func (c *purityChecker) exprVisitor(capture []scopeBindings, enclosing *ast.LambdaExpr) func(ast.Expression) bool {
 	return func(expr ast.Expression) bool {
-		// An overloaded operator is a call to a trait impl method, so a `pure` function
-		// using one is as impure as the impl. Reported by naming the *operator*, since
-		// that is what the author wrote — the method name `(_+_)` would send them
-		// looking for a call that is not there.
-		if sc != nil {
-			if eff, method := operatorImplEffect(expr, c.inference); eff&PurityEffects != 0 {
-				c.report(expr.GetLocation(),
-					"pure function uses an operator that dispatches to non-pure trait method %q",
-					method)
-			}
-		}
 		switch e := expr.(type) {
 		case *ast.LambdaExpr:
 			// `det`/`noalloc` are enforced against this lambda's full inferred
@@ -759,108 +652,53 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 			c.checkBoundedEffects(e.IsDet, e.IsNoAlloc, c.impureLambdas[e], e.GetLocation(), c.allocSites.lambdaSites[e])
 			// Default values execute at the call site, in the *enclosing* context.
 			for i := range e.Parameters {
-				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc), c.exprVisitor(sc, capture, enclosing))
+				ast.WalkExpr(e.Parameters[i].DefaultValue, nil, c.exprVisitor(capture, enclosing))
 			}
-			// The body runs in this lambda's own context: pure → build its scope;
-			// impure → nil (no checking). Either way it introduces a new lexical
-			// scope, so push its bindings frame onto the capture stack regardless
-			// of purity — a pure lambda nested deeper still needs to resolve names
-			// captured through this (possibly impure) intermediate scope.
-			var child *funcScope
-			scope := c.frames.forLambda(e)
 			if e.IsPure {
-				// The callback parameters inference found for this lambda travel with the
-				// scope, so the call check below can tell "calls its own callback"
-				// (polymorphic, not this function's effect) from "calls something impure".
-				child = &funcScope{locals: scope.mutable, mutBorrows: c.frames.mutBorrowsFor(e), callbacks: c.callbacks[e]}
+				c.reportPureLambda(e, capture)
 			}
-			childCapture := pushScope(capture, scope)
-			walkLambdaBodies(e, c.stmtVisitor(child), c.exprVisitor(child, childCapture, e))
+			// The body introduces a new lexical scope whatever its purity, so push its
+			// bindings frame onto the capture stack — a pure lambda nested deeper still
+			// needs to resolve names captured through this (possibly impure)
+			// intermediate scope, and a call site inside still gets its declared-bound
+			// checks.
+			childCapture := pushScope(capture, c.frames.forLambda(e))
+			walkLambdaBodies(e, nil, c.exprVisitor(childCapture, e))
 			return false // recursed manually
-
-		case *ast.IdentifierExpr:
-			// A read of a captured binding whose value can change between calls is
-			// non-deterministic — it breaks referential transparency even though no
-			// effect escapes. Writes through this node (an assignment target) are
-			// reported elsewhere, so skip those.
-			if sc != nil && !c.assignTargets[e] && !sc.isLocal(e.Name) && capturedMutable(capture, e.Name) {
-				c.report(e.GetLocation(),
-					"pure function reads captured mutable binding %q; its value can change between calls, breaking referential transparency", e.Name)
-			}
-
-		case *ast.MathAssignOpExpr:
-			// The LHS is a write target (reported below); don't also flag it as a read.
-			c.assignTargets[&e.Left] = true
-			if sc != nil && !sc.isLocal(e.Left.Name) {
-				c.report(e.GetLocation(),
-					"pure function mutates captured binding %q; mutation must not escape the function", e.Left.Name)
-			}
 
 		case *ast.FunctionCallExpr:
 			// A declared bound is a contract on the *callee's signature*, so it is checked
 			// at every call site regardless of whether the caller is itself pure — unlike
-			// the polymorphic case below, which only matters when the caller has something
-			// to protect.
+			// the enforcement rerun, which only runs when the caller has something to
+			// protect.
 			if method, ok := c.methodTable.Get(e); ok {
 				c.checkDeclaredMethodBounds(capture, enclosing, e, method)
 			} else if name := calleeName(e.Function); name != "" {
 				c.checkDeclaredCallbackBounds(capture, enclosing, e, name)
 			}
-			if sc != nil {
-				if c.methodTable.IsBuiltinMethod(e) {
-					// A compiler builtin method (`x.wrapping_mul(y)`, `x.floor()`) is
-					// pure arithmetic. This is the *reporting* copy of the ladder that
-					// lambdaEffects and methodEffects also carry — all three ask "what
-					// does this call call?" and all three must answer alike, or a call
-					// is charged no effect while still being reported as impure.
-					//
-					// Nothing to report either way: the one builtin method that is not
-					// free is `s.slice(…)`, and what it costs is EffectAlloc, which
-					// this walk does not report on (it reports purity violations, and
-					// allocation is orthogonal). `noalloc` sees it through the two
-					// inference copies below.
-				} else if method, ok := c.methodTable.Get(e); ok {
-					// Mask with PurityEffects: only correctness effects (mut/io)
-					// make a callee non-pure — EffectAlloc is orthogonal, so a
-					// pure function may call a method that merely allocates.
-					//
-					// The effect is of *this call site*: a method taking a callback is
-					// polymorphic in it exactly as a free function is, so what the
-					// argument supplied here does is part of the cost.
-					eff := methodCallEffect(method, e, capture, c.inference, callbackParamsOf(sc), nil)
-					if eff&PurityEffects != 0 {
-						if c.impureMethods[method]&PurityEffects != 0 {
-							c.report(e.GetLocation(),
-								"pure function calls non-pure trait method %q", method.Name.GetName())
-						} else {
-							c.report(e.GetLocation(),
-								"pure function calls trait method %q with an impure callback argument; "+
-									"the callback's effects are this call's", method.Name.GetName())
-						}
-					}
-				} else if ref, ok := c.methodTable.GetBound(e); ok {
-					// Abstract dispatch through a `where` bound: pure only if every
-					// impl of the bound trait method is pure.
-					if boundCallEffect(ref, c.inference)&PurityEffects != 0 {
-						c.report(e.GetLocation(),
-							"pure function calls non-pure trait method %q via a bound", ref.Method)
-					}
-				} else if name := calleeName(e.Function); name != "" {
-					c.checkCallPurity(sc, capture, enclosing, e, name)
-				}
-			}
-
-		case *ast.AwaitExpr:
-			// `await` suspends until an external asynchronous operation completes —
-			// an observable I/O effect that breaks determinism and referential
-			// transparency, so it may never appear in a pure function.
-			if sc != nil {
-				c.report(e.GetLocation(),
-					"pure function performs `await`; awaiting suspends on external I/O and must not cross the function boundary")
-			}
 		}
 		return true
 	}
+}
+
+// reportPureLambda re-runs the one body walk over a `pure` lambda with the reporting
+// sink attached, so every site the fixpoint would charge a purity-violating effect for
+// is reported — from the same arms, against the same frames (see callable.reportPure).
+func (c *purityChecker) reportPureLambda(lam *ast.LambdaExpr, defCapture []scopeBindings) {
+	if lam.IsExtern {
+		return // no body to walk; the declaration is the contract (externEffects)
+	}
+	cb := lambdaCallable(lam, defCapture, c.inference)
+	cb.reportPure = c.report
+	bodyEffects(cb, c.inference)
+}
+
+// reportPureMethod is reportPureLambda for a trait-impl method (or a trait default's
+// synthesized method body).
+func (c *purityChecker) reportPureMethod(m *ast.TraitMethodImpl, base []scopeBindings) {
+	cb := methodCallable(m, base, c.inference)
+	cb.reportPure = c.report
+	bodyEffects(cb, c.inference)
 }
 
 // isImpureCallee reports whether a call target with the given dotted name is
@@ -872,16 +710,6 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 //     aren't pure type-conversion calls — these are treated conservatively as
 //     impure (imported/external functions whose purity we can't verify)
 //
-// callbackParamsOf is the enclosing function's polymorphic parameters, or nil outside a
-// pure context. Passing them into an argument-effect walk is what lets a callback handed
-// straight on stay polymorphic rather than tainting the call it is handed to.
-func callbackParamsOf(sc *funcScope) map[string]int {
-	if sc == nil {
-		return nil
-	}
-	return sc.callbacks
-}
-
 // checkDeclaredCallbackBounds enforces the *declared* half of effect polymorphism: a
 // parameter typed `f: pure () -> t` constrains every function handed to it.
 //
@@ -1009,70 +837,6 @@ func effectDescription(e Effect) string {
 	return "has an effect the bound forbids"
 }
 
-// checkCallPurity reports a call inside a `pure` function that is not pure *at this call
-// site* — which, for a higher-order callee, depends on the arguments and not on the callee
-// alone. See the effect-polymorphism note above lambdaEffects.
-//
-// Three outcomes, and the diagnostic distinguishes them because the fix differs:
-//   - the callee is this function's own callback: nothing to report. A `pure` annotation
-//     constrains the function's own body, and effects arriving through its parameters
-//     belong to whoever supplied them.
-//   - the callee's own base effect is impure: the old message, naming the callee.
-//   - the callee is pure but an argument is not: name the *argument*, since the callee is
-//     innocent and pointing at it would send the reader to the wrong file.
-func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, enclosing *ast.LambdaExpr, call *ast.FunctionCallExpr, name string) {
-	if sc.isCallback(name) {
-		return
-	}
-	// A call through a parameter carrying a *declared* bound costs exactly what the bound
-	// still permits — known from the signature, so there is nothing to charge the caller
-	// and nothing to report unless the bound itself allows an impurity. Without this the
-	// pure walk would flag `f()` inside `pure (…, f: pure () -> t) => … f() …`, which is
-	// precisely the function the declared half exists to make writable.
-	if params := c.frames.paramsFor(enclosing); params != nil {
-		if idx, isParam := params[name]; isParam {
-			if bound := declaredBound(enclosing, idx); bound != nil {
-				if boundEffect(bound)&PurityEffects != 0 {
-					c.report(call.GetLocation(),
-						"pure function calls %q, whose declared `%s` bound still permits an effect",
-						name, strings.TrimSpace(bound.EffectPrefix()))
-				}
-				return
-			}
-		}
-	}
-	callee, resolved := calleeFor(c.typeTable, call, capture, name)
-	if !resolved {
-		if c.isImpureCallee(capture, name) {
-			c.report(call.GetLocation(), "pure function calls impure function %q", name)
-		}
-		return
-	}
-	if c.impureLambdas[callee]&PurityEffects != 0 {
-		c.report(call.GetLocation(), "pure function calls impure function %q", name)
-		return
-	}
-	// The callee contributes nothing of its own; anything impure came in through a
-	// callback this site supplied.
-	for cbName, idx := range c.callbacks[callee] {
-		if idx >= len(call.Arguments) {
-			continue // arity mismatch — the typechecker reports it
-		}
-		arg := call.Arguments[idx]
-		eff := argumentEffect(arg, capture, c.inference, sc.callbacks, nil)
-		if eff&PurityEffects == 0 {
-			continue
-		}
-		// Name the parameter as the *callee's signature* spells it. cbName is whatever
-		// binding the callee's body called it through, which for a multi-clause function
-		// is an arm binding (`(None, g) => g()` for a parameter declared `f`) — a name
-		// the caller cannot see anywhere and cannot act on.
-		c.report(arg.GetLocation(),
-			"pure function calls %q with an impure %s argument; the callback's effects are this call's",
-			name, declaredParamName(callee, idx, cbName))
-	}
-}
-
 // declaredParamName is how the callee's signature spells parameter idx, falling back to
 // whatever name the caller had when the head does not bind it plainly.
 func declaredParamName(callee *ast.LambdaExpr, idx int, fallback string) string {
@@ -1083,33 +847,6 @@ func declaredParamName(callee *ast.LambdaExpr, idx int, fallback string) string 
 		return n
 	}
 	return fallback
-}
-
-func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) bool {
-	// **A user binding is resolved first**, and only then the builtin table — the
-	// order the typechecker resolves a call in (scope, then print/println/panic on a
-	// miss), so the two cannot disagree about which declaration a name means.
-	//
-	// Consulting the table first classified a *user's own* function by the builtin's
-	// entry, which is wrong in both directions and unsound in one: a user `print` that
-	// is pure was reported impure (noise), and — once `panic` joined the table as
-	// EffectNone — a user `panic` that mutates or writes would have been waved through
-	// as pure. The name is not the callee.
-	if lam, ok := resolveCallee(capture, name); ok {
-		// Mask with PurityEffects: an alloc-only callee is still pure to call
-		// from a pure function (EffectAlloc is orthogonal to purity).
-		return c.impureLambdas[lam]&PurityEffects != 0
-	}
-	if e, ok := builtinEffects[name]; ok {
-		// Known builtin: only flag if it has a purity-violating effect. An alloc-only
-		// builtin would be fine to call from a pure function — allocation is orthogonal
-		// to purity — but no entry sets EffectAlloc today, and the one this comment used
-		// to name (`Arena.new`) was a phantom, removed 08/24 along with eight others.
-		return e&PurityEffects != 0
-	}
-	// Unresolvable — could be an imported/external function. Conservatively
-	// treat as impure unless it's a known pure type-conversion call.
-	return !isTypeConversionCall(name)
 }
 
 func (c *purityChecker) report(loc ast.Location, format string, args ...any) {
@@ -1194,7 +931,7 @@ type scopeFrames struct {
 	// scope tree — both immutable once collection has finished — and the effect fixpoint
 	// asks for every one of them again on **every round for every callable**, so without
 	// these the scope-subtree walk, the parameter scan and the match-alias walk are redone
-	// once per round per function. The reporting walk asks for the same facts a third time.
+	// once per round per function. The enforcement reruns ask for the same facts again.
 	//
 	// The maps are handed out **shared**, which is safe because nothing writes to one after
 	// it is built: addMatchAliases writes only while constructing its own map, and every
@@ -2216,9 +1953,12 @@ func unknownCallbackEffect(callbacks map[string]int) Effect {
 //	let mid = (r: Runbox) -> i64 => r.run(noisy)      // inferred pure — wrong
 //	let outer = pure (r: Runbox) -> i64 => mid(r)     // accepted, and prints
 //
-// `outer` promised purity, checked clean, and printed at run time. The reporting walk
-// (exprVisitor) had always used methodCallEffect, so the diagnostic machinery was right
-// and the table it consults was wrong — which is why nothing caught it.
+// `outer` promised purity, checked clean, and printed at run time. The reporting walk of
+// the day (exprVisitor's per-site half) had always used methodCallEffect, so the
+// diagnostic machinery was right and the table it consults was wrong — which is why
+// nothing caught it. That walk is gone too (08/27): enforcement now re-runs *this* walk
+// with reportPure set, so there is no second copy of the ladder left to be right or
+// wrong on its own.
 type callable struct {
 	// scope is the body's own frame; declares reports whether a name is bound in it.
 	scope scopeBindings
@@ -2238,6 +1978,38 @@ type callable struct {
 	boundAt func(idx int) *types.LambdaType
 	// walk visits the body: every clause for a lambda, the single clause for a method.
 	walk func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool)
+
+	// reportPure, when non-nil, turns the walk into the enforcement pass: each site whose
+	// charged effect violates `pure` is reported through it, with the message the user
+	// sees. Nil during inference. This is what collapsed the old reporting mirror
+	// (exprVisitor's per-site half): the classification — which predicate fires, how a
+	// callee resolves, what an argument supplies — is the same arm that charges the bit,
+	// so the diagnostic and the inferred effect cannot disagree about what counts.
+	reportPure func(loc ast.Location, format string, args ...any)
+	// assignRoots collects assignment-target identifier nodes during a reporting walk, so
+	// the captured-mutable *read* report can skip a node the mutation reports already own.
+	// The inference half never needs it: charging EffectMut twice is idempotent.
+	assignRoots map[*ast.IdentifierExpr]bool
+}
+
+// pure reports a `pure` violation when this walk is the enforcement pass, and is a no-op
+// during inference.
+func (c *callable) pure(loc ast.Location, format string, args ...any) {
+	if c.reportPure != nil {
+		c.reportPure(loc, format, args...)
+	}
+}
+
+// markAssignRoot remembers an identifier node that is the root of an assignment target,
+// so the read check does not re-report a write the mutation checks already did.
+func (c *callable) markAssignRoot(id *ast.IdentifierExpr) {
+	if c.reportPure == nil || id == nil {
+		return
+	}
+	if c.assignRoots == nil {
+		c.assignRoots = map[*ast.IdentifierExpr]bool{}
+	}
+	c.assignRoots[id] = true
 }
 
 // declares reports whether name is bound directly in this body's own frame — the question
@@ -2257,8 +2029,15 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inferen
 		// what its declaration claims. See externEffects.
 		return externEffects(lam), nil
 	}
+	return bodyEffects(lambdaCallable(lam, defCapture, inf), inf)
+}
+
+// lambdaCallable is the descriptor for a free function's body, shared by the inference
+// fixpoint (lambdaEffects) and the enforcement rerun (reportPureLambda) so the two walk
+// the identical body against the identical frames.
+func lambdaCallable(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inference) *callable {
 	scope := inf.frames.forLambda(lam)
-	c := &callable{
+	return &callable{
 		scope: scope,
 		// Calls/reads inside lam's own body must resolve against a stack that includes
 		// lam's own frame too (a call to a sibling helper declared alongside lam in the
@@ -2272,7 +2051,6 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inferen
 			walkLambdaBodies(lam, onStmt, onExpr)
 		},
 	}
-	return bodyEffects(c, inf)
 }
 
 // methodEffects is lambdaEffects for a trait-impl method: the same walk over a bare
@@ -2284,9 +2062,15 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inferen
 // a method's parameter types live. A nil signature falls back to treating every called
 // parameter as unconstrained, which is the conservative answer.
 func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) (Effect, map[string]int) {
+	return bodyEffects(methodCallable(m, base, inf), inf)
+}
+
+// methodCallable is lambdaCallable for a trait-impl method — one descriptor for the
+// fixpoint and the enforcement rerun alike.
+func methodCallable(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) *callable {
 	scope := inf.frames.forMethod(m)
 	signature := inf.signatures[m]
-	c := &callable{
+	return &callable{
 		scope:   scope,
 		capture: pushScope(base, scope),
 		params:  inf.frames.methodParamsFor(m),
@@ -2296,12 +2080,18 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference)
 			ast.WalkExpr(m.Clause.Body, onStmt, onExpr)
 		},
 	}
-	return bodyEffects(c, inf)
 }
 
 // bodyEffects walks one callable's body and returns its base effect together with the
 // effect-polymorphic parameters it was found to call — the ones whose cost belongs to
 // whoever supplies them, charged at that call site instead.
+//
+// With c.reportPure set it is also the **enforcement pass**: each arm that charges a
+// purity-violating effect reports the site in the same breath, so there is no second
+// walk to keep in step. That mirror existed until 08/27 (exprVisitor's per-site half)
+// and its history is exactly why it is gone: three copies of this ladder once agreed and
+// were wrong together, and the last divergence was a soundness hole the diagnostics
+// could not see because the reporting copy was the correct one (see callable).
 func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 	// foundCallbacks are the effect-polymorphic parameters discovered on this pass: the
 	// ones this body calls, or hands on to another function's callback slot.
@@ -2318,21 +2108,47 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 		case *ast.VarReassignmentStmt:
 			if !c.declares(st.Name) {
 				found |= EffectMut
+				c.pure(st.GetLocation(),
+					"pure function reassigns captured binding %q; mutation must not escape the function", st.Name)
 			}
 		case *ast.LValueAssignmentStmt:
-			if root := rootIdentName(st.Target); root != "" && (c.mutBorrows[root] || !c.declares(root)) {
-				found |= EffectMut
+			if root := rootIdentName(st.Target); root != "" {
+				// The two causes get their own sentences: a `mut`-borrow writes through
+				// to the caller's value, a capture mutates state observable elsewhere.
+				switch {
+				case c.mutBorrows[root]:
+					found |= EffectMut
+					c.pure(st.GetLocation(),
+						"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
+				case !c.declares(root):
+					found |= EffectMut
+					c.pure(st.GetLocation(),
+						"pure function mutates captured binding %q; mutation must not escape the function", root)
+				}
+				// The base of the target (`origin` in `origin.x = v`) is a write, not a
+				// read; suppress the read report on it. A mutable global used as an
+				// *index* (`grid[i]`) is left untouched, so reading it is still flagged.
+				c.markAssignRoot(rootIdentExpr(st.Target))
 			}
 		case *ast.DerefAssignmentStmt:
 			found |= EffectMut
+			c.pure(st.GetLocation(),
+				"pure function writes through a pointer; pointer writes may mutate external state")
 		}
 		return true
 	}
-	onExpr := func(e ast.Expression) bool {
+	var onExpr func(e ast.Expression) bool
+	onExpr = func(e ast.Expression) bool {
 		// An overloaded operator is a call to a trait impl method; charge it as one.
 		// Before the switch, since the operator nodes appear in it for other reasons.
-		if eff, _ := operatorImplEffect(e, inf); eff != EffectNone {
+		// Reported by naming the *operator*, since that is what the author wrote — the
+		// method name `(_+_)` would send them looking for a call that is not there.
+		if eff, method := operatorImplEffect(e, inf); eff != EffectNone {
 			found |= eff
+			if eff&PurityEffects != 0 {
+				c.pure(e.GetLocation(),
+					"pure function uses an operator that dispatches to non-pure trait method %q", method)
+			}
 		}
 		switch ex := e.(type) {
 		case *ast.LambdaExpr:
@@ -2346,18 +2162,37 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			if inf.allocSites.closureAllocates(ex) {
 				noteAlloc(ex)
 			}
+			// Reporting only: a nested lambda's parameter defaults execute at its call
+			// sites — in this enclosing context when called here — and the enforcement
+			// pass has always held them to the enclosing bound. Inference leaves them
+			// uncharged at the definition, because the default-args desugar appends the
+			// same expression into every call that omits the argument, so a call that
+			// runs one pays for it there.
+			if c.reportPure != nil {
+				for i := range ex.Parameters {
+					ast.WalkExpr(ex.Parameters[i].DefaultValue, onStmt, onExpr)
+				}
+			}
 			return false
 		case *ast.IdentifierExpr:
 			// Reading captured mutable state is non-deterministic. (An assignment target
 			// also visits its root as an IdentifierExpr, but those nodes are already
 			// counted by the mutation cases above, so double-counting the bit here is
-			// harmless.)
+			// harmless — the *report* is what assignRoots suppresses.)
 			if !c.declares(ex.Name) && capturedMutable(c.capture, ex.Name) {
 				found |= EffectMut
+				if !c.assignRoots[ex] {
+					c.pure(ex.GetLocation(),
+						"pure function reads captured mutable binding %q; its value can change between calls, breaking referential transparency", ex.Name)
+				}
 			}
 		case *ast.MathAssignOpExpr:
+			// The LHS is a write target (reported here); don't also flag it as a read.
+			c.markAssignRoot(&ex.Left)
 			if !c.declares(ex.Left.Name) {
 				found |= EffectMut
+				c.pure(ex.GetLocation(),
+					"pure function mutates captured binding %q; mutation must not escape the function", ex.Left.Name)
 			}
 		case *ast.FunctionCallExpr:
 			if inf.methodTable.IsBuiltinMethod(ex) {
@@ -2378,11 +2213,29 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				// The method's own base effect **plus** whatever this site supplies for
 				// its callback parameters. The second half is what the free-function walk
 				// used to omit; see callable.
-				found |= methodCallEffect(method, ex, c.capture, inf, c.params, foundCallbacks)
+				eff := methodCallEffect(method, ex, c.capture, inf, c.params, foundCallbacks)
+				found |= eff
+				if eff&PurityEffects != 0 {
+					// The split names the guilty half — the same two values the charge
+					// was computed from, so the verdict and the message cannot drift.
+					if inf.impureMethods[method]&PurityEffects != 0 {
+						c.pure(ex.GetLocation(),
+							"pure function calls non-pure trait method %q", method.Name.GetName())
+					} else {
+						c.pure(ex.GetLocation(),
+							"pure function calls trait method %q with an impure callback argument; "+
+								"the callback's effects are this call's", method.Name.GetName())
+					}
+				}
 			} else if ref, ok := inf.methodTable.GetBound(ex); ok {
 				// Abstract dispatch through a `where` bound: join over the impls of the
 				// bound trait method (pure only if all of them are).
-				found |= boundCallEffect(ref, inf)
+				eff := boundCallEffect(ref, inf)
+				found |= eff
+				if eff&PurityEffects != 0 {
+					c.pure(ex.GetLocation(),
+						"pure function calls non-pure trait method %q via a bound", ref.Method)
+				}
 			} else if name := calleeName(ex.Function); name != "" {
 				// Resolution order: a real binding, then our own parameters, then
 				// builtins — the typechecker's order, and it is also what makes a
@@ -2392,7 +2245,11 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				if target, ok := calleeFor(inf.allocSites.table(), ex, c.capture, name); ok {
 					// The callee's *base* effect plus whatever this site supplies for its
 					// callback parameters.
-					found |= callEffect(target, ex, c.capture, inf, c.params, foundCallbacks)
+					eff := callEffect(target, ex, c.capture, inf, c.params, foundCallbacks)
+					found |= eff
+					if eff&PurityEffects != 0 {
+						c.reportImpureCall(target, ex, name, inf)
+					}
 				} else if idx, isParam := c.params[name]; isParam {
 					if bound := c.boundAt(idx); bound != nil {
 						// The parameter's *type* constrains it (`f: pure () -> t`), so
@@ -2400,7 +2257,13 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 						// charge exactly what the bound still permits. This body is
 						// therefore **not** polymorphic in it — it is pure (or det, or
 						// noalloc) for every caller, which is the point of the bound.
-						found |= boundEffect(bound)
+						eff := boundEffect(bound)
+						found |= eff
+						if eff&PurityEffects != 0 {
+							c.pure(ex.GetLocation(),
+								"pure function calls %q, whose declared `%s` bound still permits an effect",
+								name, strings.TrimSpace(bound.EffectPrefix()))
+						}
 					} else {
 						// Unconstrained: this body is effect-polymorphic in the
 						// parameter. The effect belongs to whoever supplies the callback
@@ -2409,6 +2272,9 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					}
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
+					if e&PurityEffects != 0 {
+						c.pure(ex.GetLocation(), "pure function calls impure function %q", name)
+					}
 				} else if !isTypeConversionCall(name) {
 					// Cannot resolve to a local lambda or known builtin, and not a pure
 					// type-conversion call. Conservatively assume the worst — the callee
@@ -2416,6 +2282,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					// including whether it allocates (AllEffects, not just PurityEffects,
 					// so `noalloc` catches it too).
 					found |= AllEffects
+					c.pure(ex.GetLocation(), "pure function calls impure function %q", name)
 				}
 			}
 		case *ast.StructInstanceExpr, *ast.TupleLiteralExpr, *ast.DataConstructorExpr,
@@ -2449,11 +2316,40 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			// Awaiting resumes with the result of an external async operation, so its
 			// value is non-deterministic — an input effect (forbidden in `pure`/`det`).
 			found |= EffectInput
+			c.pure(ex.GetLocation(),
+				"pure function performs `await`; awaiting suspends on external I/O and must not cross the function boundary")
 		}
 		return true
 	}
 	c.walk(onStmt, onExpr)
 	return found, foundCallbacks
+}
+
+// reportImpureCall says which half of an impure call's effect is the guilty one — the
+// callee's own base, or a callback argument this site supplied — since the fix differs:
+// an impure callee is named at the call, while an innocent callee with an impure argument
+// points at the argument, in the callee's own spelling of the parameter (cbName is
+// whatever binding the callee's body called it through, which for a multi-clause function
+// is an arm binding the caller cannot see anywhere).
+func (c *callable) reportImpureCall(target *ast.LambdaExpr, call *ast.FunctionCallExpr, name string, inf *inference) {
+	if inf.impureLambdas[target]&PurityEffects != 0 {
+		c.pure(call.GetLocation(), "pure function calls impure function %q", name)
+		return
+	}
+	// The callee contributes nothing of its own; anything impure came in through a
+	// callback this site supplied. The same per-argument walk callEffect charged.
+	for cbName, idx := range inf.callbacks[target] {
+		if idx >= len(call.Arguments) {
+			continue // arity mismatch — the typechecker reports it
+		}
+		arg := call.Arguments[idx]
+		if argumentEffect(arg, c.capture, inf, c.params, nil)&PurityEffects == 0 {
+			continue
+		}
+		c.pure(arg.GetLocation(),
+			"pure function calls %q with an impure %s argument; the callback's effects are this call's",
+			name, declaredParamName(target, idx, cbName))
+	}
 }
 
 // isTypeConversionCall reports whether name is a type name used as a
@@ -2501,11 +2397,13 @@ func calleeName(fn ast.Expression) string {
 // with a `(_+_)` impl is a call to that impl's method, and costs whatever the method
 // costs.
 //
-// It exists as one function called from four places rather than four arms, because the
-// four places are the same question asked four times (hazard 8's third instance, and
-// its fifth): the two effect-inference walks, the reporting walk, and the trait-method
-// walk all ask "what does this expression call?", and an operator answers where a
-// FunctionCallExpr would.
+// It exists as one function rather than inline arms, because its callers were the same
+// question asked four times (hazard 8's third instance, and its fifth): the then-two
+// effect-inference walks, the then-separate reporting walk, and the trait-method walk
+// all asked "what does this expression call?", and an operator answers where a
+// FunctionCallExpr would. Those walks have since collapsed into bodyEffects; this stays
+// a named function because the question is still asked from the operator position as
+// well as the call position.
 //
 // **It closes the hole `Eq`/`Ord` opened first.** A comparison operator has dispatched
 // to an impl since 08/07, and none of the ladders looked, so `let f = pure (a: T, b: T)

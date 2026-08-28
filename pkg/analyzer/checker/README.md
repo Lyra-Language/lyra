@@ -628,17 +628,31 @@ had used `methodCallEffect` all along, so the diagnostic machinery was right and
 it consults was wrong — which is exactly why nothing caught it, and why a test asserting
 "this program is rejected" was the only thing that could have.
 
-Inference is now one walk. `bodyEffects` takes a **`callable`**, the descriptor of what the
-two entry points actually differ in: the body's own frame, the capture stack, the `mut`
-parameters (nil for a method, which has no modifier syntax yet — and a nil map reads false,
-which is precisely what the method walk did by omitting the test), the parameter positions,
-where to record an allocation site, how to read a declared bound on a parameter, and how to
-walk the body. Everything else is shared, so a divergence now requires editing the one walk
-into disagreeing with itself.
+There is now one walk, full stop. `bodyEffects` takes a **`callable`**, the descriptor of
+what the two entry points actually differ in: the body's own frame, the capture stack, the
+`mut` parameters (nil for a method, which has no modifier syntax yet — and a nil map reads
+false, which is precisely what the method walk did by omitting the test), the parameter
+positions, where to record an allocation site, how to read a declared bound on a parameter,
+and how to walk the body. Everything else is shared, so a divergence now requires editing
+the one walk into disagreeing with itself.
+
+**Enforcement is that same walk re-run with a reporting sink** (08/27): a `callable` may
+carry `reportPure`, and each arm that charges a purity-violating bit reports the site — the
+tailored message included — in the same breath. The old `exprVisitor` mirror, which
+re-derived the whole call-resolution ladder and every mutation predicate purely to attach
+messages, is gone; `exprVisitor` is now orchestration only (find every callable, run
+`det`/`noalloc` against the inferred row, re-run the walk for `pure` bodies, check declared
+callback bounds at call sites). Collapsing it also removed a double report: the program
+walk descends into every trait-method body and `checkTraitMethodBounds` used to walk a pure
+method's body again, so a violating pure lambda nested in a pure method was reported twice
+(`TestPurity_NestedLambdaInPureMethodReportsOnce`). One deliberate reporting-only arm
+remains, marked as such in the walk: a nested lambda's parameter defaults are held to the
+*enclosing* bound at the definition, while inference leaves them uncharged there because
+the default-args desugar bills each call site that omits the argument.
 
 The tables the walk reads live in **`inference`**, which `purityChecker` embeds rather than
-copying field by field. That is the second half of the same lesson: the reporting walk and
-the fixpoint answer the same questions, so they should not be reading two sets of maps.
+copying field by field. That is the second half of the same lesson: enforcement and the
+fixpoint answer the same questions, so they should not be reading two sets of maps.
 
 ## The fixpoint's per-callable facts are memoized
 

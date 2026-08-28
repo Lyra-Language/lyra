@@ -145,8 +145,10 @@ real failure, and none is local to one package.
      on the method side. A `pure` function passing an impure callback through a trait
      method was therefore inferred pure, checked clean, and printed. The reporting walk had
      the right rule all along, which is why the diagnostic never fired: the machinery was
-     correct and the table it consults was wrong. Inference is now **one** walk
-     (`bodyEffects` over a `callable`), leaving the reporting walk as the only mirror.
+     correct and the table it consults was wrong. There is now **one** walk (`bodyEffects`
+     over a `callable`) — inference runs it bare, and enforcement re-runs it over each
+     `pure` body with a reporting sink (`callable.reportPure`), so the arm that charges a
+     bit is the arm that words the diagnostic and no mirror remains to drift.
    - **Two switches can disagree about a case neither one names**, which grepping will not
      find — `nominalHead` lacked `*ConstrainedType` while `types.HeadName` one layer up
      gives a newtype a head, so a method written *for* a newtype was silently unreachable.
@@ -729,8 +731,8 @@ implements one. All concrete nodes embed `AstBase`, which holds a 1-based `Locat
   a `BoundMethodRef{Trait, Method}`. There is no single concrete impl, so the purity checker
   joins over all impls of that trait method.
 - `SetBuiltinMethod(call, allocates)` records what a builtin method resolved to, because
-  only the typechecker still has the receiver's type. Both purity ladders read it — the
-  one inference walk and the reporting walk.
+  only the typechecker still has the receiver's type. The purity pass's one body walk
+  reads it, for inference and enforcement alike.
 - `SetBoundCandidates` is how a bound-dispatched call **lowers**: the typechecker publishes
   one resolution per implementing type and the backend picks by the receiver's substituted
   type. **Impl matching stays in the typechecker** — a second copy in codegen is exactly the
