@@ -106,3 +106,18 @@ func TestCheck_ArrayBindingReceiverNamesTheEditAgainstThePrelude(t *testing.T) {
 		t.Errorf("the hint should name the annotation; got: %s", errs)
 	}
 }
+
+// The repeat form reaching a prelude combinator, end to end. It needed both halves: the
+// typechecker's literal allowance (which covered both array forms from the start) and a
+// grammar change making `array_repeat_init` a postfix head, without which this was a
+// parse error while `["x", "x", "x"].join("-")` compiled.
+func TestExec_ArrayRepeatReceiverReachesAPreludeCombinator(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> void => { println(["x"; 3].join("-")); }`
+	if errs := checkWithPrelude(t, src+"\n"); len(errs) != 0 {
+		t.Fatalf("expected a clean program; got: %s", strings.Join(errs, "\n"))
+	}
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "x-x-x" {
+		t.Errorf("got %q; want %q", got, "x-x-x")
+	}
+}

@@ -39,10 +39,16 @@ and the three tests that pinned the literal refusal were re-pointed at it rather
 deleted; two more assert the literal now runs against the real prelude (`join` declared
 once, `map` overloaded on three receivers).
 
-**Found while**: `["x"; 3].join("-")` is a *parse* error — the repeat form is not a
-postfix head, `array_repeat_init` having been left out of `_primary_expr` "only because
-nothing wants a method on one yet". Something does now; the typechecker half already
-covers both array forms, so what remains is a grammar change (todo.md).
+**The repeat form followed the same day.** `["x"; 3].join("-")` was a *parse* error while
+`["x", "x", "x"].join("-")` compiled — the two spellings of one construct disagreeing,
+one rung lower than the disagreement above. `array_repeat_init` sat in `_literal`, left
+out of `_primary_expr` "only because nothing wants a method on one yet"; it **moved**
+beside `array_literal` rather than being added to both, so the kind keeps its single
+derivation and needs no conflict entry. The parser got **smaller** — 7902 → 7879, −23
+states — which is what this region's note predicts when a change removes a derivation
+rather than adding one, and the typechecker needed nothing: the literal allowance covered
+both array forms from the start. Hazard 8's "grep for the kind it is a variant of", seen
+from the grammar side.
 
 ### 08/28/26 — An undefined callee is the typechecker's error alone, not a purity cascade
 

@@ -115,9 +115,15 @@ let main = () => {
 	assertNoErrors(t, res)
 }
 
-// The **repeat** form takes the same allowance here (receiverAcceptsValue asks
-// arrayLiteralAsDeclared, which covers both array forms), but it cannot be reached yet:
-// `["x"; 3].squash("")` is a *parse* error, because `array_repeat_init` is deliberately
-// out of the grammar's postfix-head list — left out, its note says, "only because nothing
-// wants a method on one yet". Something does now; see todo.md. No test asserts the
-// working form until the grammar admits it, since one would only pin a syntax error.
+// The **repeat** form is the comma form's variant and takes the same allowance —
+// `receiverAcceptsValue` asks `arrayLiteralAsDeclared`, which covers both. Reaching it
+// needed a grammar change too (08/28): `array_repeat_init` was not a postfix head, so
+// `["x"; 3].squash("")` was a *parse* error while the comma form checked fine, which is
+// hazard 8's "when adding an expression kind, grep for the kind it is a variant of" seen
+// from the grammar side.
+func TestArrayLiteralReceiver_RepeatFormToo(t *testing.T) {
+	res := parseCollectAndCheck(t, dynReceivers+`
+let main = () => println(["x"; 3].squash(""))
+`, false)
+	assertNoErrors(t, res)
+}

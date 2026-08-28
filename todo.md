@@ -3986,11 +3986,13 @@ A fixed-array **binding** is still refused, and that is the case the warning was
 about: there the value already exists as a stack `[N]T`. The 08/14 hint now serves it,
 and the tests that pinned the literal refusal were re-pointed at it.
 
-- **[OPEN, found 08/28] `["x"; 3].join("-")` is a parse error.** The repeat form is not a
-  postfix head — `array_repeat_init` is out of the grammar's `_primary_expr` list, whose
-  note says it was left out "only because nothing wants a method on one yet". Something
-  does now. The typechecker half is already done (the allowance covers both array forms),
-  so this is a grammar change and its state cost, nothing more.
+- **[DONE 08/28] `["x"; 3].join("-")` parses.** The repeat form was not a postfix head —
+  `array_repeat_init` sat in `_literal`, left out of `_primary_expr` "only because nothing
+  wants a method on one yet". It **moved** to `_primary_expr` beside `array_literal`
+  rather than being added to both, so the kind keeps its single derivation and needs no
+  conflict entry; the parser got **smaller** (7902 → 7879, −23 states), which is what the
+  grammar's own note predicts for a change that removes a derivation. The typechecker half
+  was already done — the literal allowance covered both array forms from the start.
 
 ### [DONE 08/18] `[v; n]` that shares a mutable element now says so
 
