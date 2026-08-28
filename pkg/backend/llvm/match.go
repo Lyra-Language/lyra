@@ -525,15 +525,32 @@ func constFloatFromExpr(e ast.Expression, ty *lltypes.FloatType) (value.Value, b
 
 // stringScalarMatchTest is the string counterpart to scalarMatchTest's integer
 // path: a literal arm (`"yes" =>`) tests string equality against the scrutinee
-// (lowerStringEquality). The pattern's raw source text is quoted (unlike a
-// StringLiteralExpr, whose Value the collector already unescaped), so we strip the
-// surrounding quotes to get the bytes. An *escaped* pattern (containing a
-// backslash) is deferred with a loud error rather than risking a mismatch against
-// the collector's Lyra-specific unescaping. Regex patterns are also deferred.
+// (lowerStringEquality), and a regex arm (`r"^#" =>`) tests DFA membership — one
+// call to the shared driver over the same constant tables a `pattern(...)`
+// constraint ships, the second consumer of regex_match.go's machinery (08/28). The
+// literal pattern's raw source text is quoted (unlike a StringLiteralExpr, whose
+// Value the collector already unescaped), so we strip the surrounding quotes to get
+// the bytes. An *escaped* literal pattern (containing a backslash) is deferred with
+// a loud error rather than risking a mismatch against the collector's Lyra-specific
+// unescaping.
 func (l *lowerer) stringScalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern) (value.Value, error) {
+	if rp, ok := pattern.(*ast.RegexPattern); ok {
+		// Compiled and cached by pattern text (regexTablesFor); a pattern that
+		// cannot become a table was already refused at the arm (lyra-E054), so an
+		// error here is rule 5's loud backstop rather than a reachable path.
+		tables, err := l.regexTablesFor(rp.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("llvm: regex match pattern %s: %w", rp.GetName(), err)
+		}
+		data := block.NewExtractValue(scrut, 0)
+		byteLen := block.NewExtractValue(scrut, 1)
+		return block.NewCall(l.regexMatchFunc(), data, byteLen,
+			tables.trans, tables.newlineLast, tables.acceptFinal,
+			i32c(int64(tables.start))), nil
+	}
 	lp, ok := pattern.(*ast.LiteralPattern)
 	if !ok {
-		return nil, fmt.Errorf("llvm: match pattern %T not implemented for a string scrutinee (only string literals; regex patterns deferred)", pattern)
+		return nil, fmt.Errorf("llvm: match pattern %T not implemented for a string scrutinee", pattern)
 	}
 	raw, ok := lp.Value.(string)
 	if !ok {

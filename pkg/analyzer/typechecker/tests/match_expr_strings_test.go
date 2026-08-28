@@ -110,33 +110,29 @@ func TestTypeCheck_StringMatchExpr_GuardedCatchallOnly_Warning(t *testing.T) {
 
 // ── regex patterns ─────────────────────────────────────────────────────────
 
-// A string scrutinee was the one place a regex pattern was accepted; every other
-// scrutinee kind already refused it. Accepted and then not lowered — the build
-// died with `match pattern *ast.RegexPattern not implemented for a string
-// scrutinee (only string literals; regex patterns deferred)` — so it is refused
-// at the arm since 08/13 (lyra-E052). These four tests asserted the acceptance.
-const regexPatternRefused = "matching on a regex pattern is not implemented: " +
-	"a regex literal can only be used in a `where pattern(...)` constraint"
+// A regex pattern on a string scrutinee is **accepted** (08/28): a match pattern is
+// a compile-time constant by grammar, so it compiles to the same DFA tables a
+// `where pattern(...)` constraint ships and the arm's test is one call to the shared
+// driver — the settled sequencing, where `r"…"` means the compile-time, linear-time
+// subset in every position. The 08/13 refusal these tests used to pin cited a
+// runtime with no regex engine, reasoning the constraint machinery had retired the
+// same day.
 
-func TestTypeCheck_StringMatchExpr_RegexPattern_Refused(t *testing.T) {
-	res := parseCollectAndCheck(t, `
+func TestTypeCheck_StringMatchExpr_RegexPatterns_Accepted(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
   let foo = "abc123"
   match foo {
     r"[0-9]+" => "ok",
     r"[a-z]+" => "ok",
     _ => "ok",
   }
-	`, false)
-	// One report per arm: each is its own mistake to remove.
-	assertErrorsAre(t, res, regexPatternRefused, regexPatternRefused)
+	`, false))
 }
 
 func TestTypeCheck_StringMatchExpr_RegexOnlyNoWildcard_StillNotExhaustive(t *testing.T) {
-	// Regex arms never made a string match exhaustive on their own — even if they
-	// collectively cover everything, we don't try to prove it — and that is
-	// unchanged by the refusal: the arms are rejected *and* the match still wants
-	// a catch-all. Worth keeping as a pair, since a refusal that also silenced the
-	// exhaustiveness analysis would hide a second mistake behind the first.
+	// Regex arms never make a string match exhaustive on their own — even if they
+	// collectively cover everything, we don't try to prove it — so the match still
+	// wants a catch-all.
 	res := parseCollectAndCheck(t, `
   let foo = "abc"
   match foo {
@@ -144,31 +140,25 @@ func TestTypeCheck_StringMatchExpr_RegexOnlyNoWildcard_StillNotExhaustive(t *tes
     r"[a-z]+" => "ok",
   }
 	`, false)
-	// assertErrorsAre matches the full diagnostic set in order, warnings included.
-	assertErrorsAre(t, res, regexPatternRefused, regexPatternRefused,
+	assertErrorsAre(t, res,
 		"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 }
 
-func TestTypeCheck_StringMatchExpr_MixedLiteralAndRegex_OnlyRegexRefused(t *testing.T) {
-	// The string-literal arm is untouched — only the regex arm is refused.
-	res := parseCollectAndCheck(t, `
+func TestTypeCheck_StringMatchExpr_MixedLiteralAndRegex_Accepted(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
   let foo = "hello"
   match foo {
     "exact" => "ok",
     r"[A-Z][a-z]+" => "ok",
     _ => "ok",
   }
-	`, false)
-	assertErrorsAre(t, res, regexPatternRefused)
+	`, false))
 }
 
-func TestTypeCheck_StringMatchExpr_InvalidRegex_RefusedNotValidated(t *testing.T) {
-	// A *malformed* regex in pattern position now draws the refusal rather than
-	// `invalid regex pattern`, and that is deliberate: the construct has no
-	// meaning at all, so a second error about the pattern's contents would be a
-	// double report on one mistake. Compile-time syntax validation stays exactly
-	// where it does real work — `where pattern(r"…")`, which is unaffected (see
-	// TestTypeCheck_PatternConstraint_InvalidPattern_Error in regex_test.go).
+func TestTypeCheck_StringMatchExpr_InvalidRegex_ReportedAtTheArm(t *testing.T) {
+	// A malformed regex is a compile error at the arm, exactly as it is at a
+	// constraint declaration — the pattern is compiled at type-check time, so its
+	// contents are checked where they are written.
 	res := parseCollectAndCheck(t, `
   let foo = "hello"
   match foo {
@@ -176,7 +166,23 @@ func TestTypeCheck_StringMatchExpr_InvalidRegex_RefusedNotValidated(t *testing.T
     _ => "ok",
   }
 	`, false)
-	assertErrorsAre(t, res, regexPatternRefused)
+	assertErrorsAre(t, res,
+		`invalid regex pattern r"a*?b": regex parse error at offset 2: lazy quantifiers (*?, +?, ??, {n,m}?) are not supported; rewrite with complement`)
+}
+
+func TestTypeCheck_StringMatchExpr_UncompilablePattern_E054AtTheArm(t *testing.T) {
+	// What lyra-E054 refuses at a constraint it refuses at an arm: a pattern that
+	// cannot become a table is a property of the language's regex, in every
+	// position alike.
+	res := parseCollectAndCheck(t, `
+  let foo = "hello"
+  match foo {
+    r"(?<=a)b" => "ok",
+    _ => "ok",
+  }
+	`, false)
+	assertErrorsAre(t, res,
+		"this pattern cannot be compiled to a runtime matcher (regex: pattern cannot be compiled to a match table: (?<=a)b uses a lookbehind, whose gate depends on text before the input)")
 }
 
 // containsSubstring is a tiny stand-in for strings.Contains to keep the test

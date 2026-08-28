@@ -620,6 +620,21 @@ write today:
   pattern, so lyra-E054 now names the pattern rather than the value. `lyra-E052`, a
   regex as a first-class *value*, is unchanged. See COMPLETED.md.
 
+  - **[DECIDED 08/28] The sequencing is settled, and the subset is the language's
+    regex.** `r"…"` means the compile-time-compiled, linear-time DFA in **every**
+    position — the RE2/Go/Rust-regex discipline — and each new position is a new
+    consumer of the same tables, never a second engine: constraints (08/13), `match`
+    patterns on a string scrutinee (**[DONE 08/28]**, one driver call per arm, invalid
+    and un-table-able patterns reported at the arm with the same E054 a constraint
+    draws, one table per distinct pattern shared across positions), and values
+    whenever a `Regex` type is designed — which will also be literal-constructed and
+    compile-time-compiled. Matching a pattern assembled from *strings at run time* is
+    a separate feature requiring its own deliberate act (a runtime engine or
+    table-builder), not a widening of `r"…"`; E054's refusals are properties of the
+    language's regex, everywhere alike. This closes the design-audit worry that the
+    machinery would harden into a "constraint-position dialect": the dialect *is* the
+    language's regex, on purpose.
+
 - **[DONE 08/13] A `where` constraint is enforced at run time**, so the ladder has its
   second rung. `range(...)`, `values(...)` and `step(...)` now trap on a value that
   violates them; `pattern(...)` refuses a value it cannot read. Details in

@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/regex"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -858,16 +860,27 @@ func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
 	case *ast.WildcardPattern, *ast.IdentifierPattern:
 		return
 	case *ast.RegexPattern:
-		// A string scrutinee is the one place a regex pattern was *accepted* — every
-		// other scrutinee kind already refuses it a few functions up. It was accepted
-		// and then not lowered: `match pattern *ast.RegexPattern not implemented for a
-		// string scrutinee (only string literals; regex patterns deferred)`. Refused
-		// here since 08/13 (lyra-E052) so the failure lands at the arm rather than at
-		// the build, for the same reason a regex *value* is — matching one needs a
-		// regex engine in a runtime that is hand-written C with no FFI.
-		tc.addErrorCode(p.GetLocation(), SeverityError, diag.CodeRegexValuesNotImplemented,
-			"matching on a regex pattern is not implemented: a regex literal can only be "+
-				"used in a `where pattern(...)` constraint")
+		// Accepted since 08/28 — the settled regex sequencing: `r"…"` means the
+		// compile-time-compiled, linear-time DFA subset everywhere it appears, and
+		// each new position is a new consumer of the same tables, never a second
+		// engine. A match pattern is a compile-time constant by grammar, so it
+		// compiles exactly as a `where pattern(...)` constraint does and the arm's
+		// test is one call to the shared driver (backend regex_match.go). The 08/13
+		// refusal here cited a runtime with no regex engine — reasoning the
+		// constraint machinery had retired the same day it was written.
+		//
+		// What is refused is what a constraint refuses: a pattern that cannot become
+		// a table (lyra-E054 — a lookbehind, or a DFA past regex.MaxTableStates), and
+		// one that does not parse. Reported at the arm, where the pattern is written.
+		if _, err := regex.CompileMatcher(p.Pattern, regex.MaxTableStates); err != nil {
+			if errors.Is(err, regex.ErrUncompilablePattern) {
+				tc.addErrorCode(p.GetLocation(), SeverityError, diag.CodePatternValueNotProvable,
+					"this pattern cannot be compiled to a runtime matcher (%v)", err)
+			} else {
+				tc.addError(p.GetLocation(), SeverityError,
+					"invalid regex pattern %s: %v", p.GetName(), err)
+			}
+		}
 	case *ast.BindingPattern:
 		tc.checkStringMatchArm(p.Pattern)
 	case *ast.LiteralPattern:

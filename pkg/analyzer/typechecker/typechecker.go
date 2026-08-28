@@ -2227,7 +2227,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		// and is unaffected by any of this.
 		tc.addErrorCode(e.GetLocation(), SeverityError, diag.CodeRegexValuesNotImplemented,
 			"a regex value is not implemented: a regex literal can only be used in a "+
-				"`where pattern(...)` constraint")
+				"`where pattern(...)` constraint or as a `match` pattern on a string scrutinee")
 		return nil
 	case *ast.InterpolatedStringExpr:
 		return tc.inferInterpolatedStringExpr(e)

@@ -17,7 +17,8 @@ import "testing"
 // value — which is what the rest of this file covers.
 
 const regexValueRefused = "a regex value is not implemented: " +
-	"a regex literal can only be used in a `where pattern(...)` constraint"
+	"a regex literal can only be used in a `where pattern(...)` constraint or as a " +
+	"`match` pattern on a string scrutinee"
 
 func TestTypeCheck_RegexLiteralExpr_Refused(t *testing.T) {
 	res := parseCollectAndCheck(t, `

@@ -154,3 +154,60 @@ let main = () -> void => {
 		t.Error("the same pattern emitted a second table")
 	}
 }
+
+// A regex **match pattern** is the second consumer of the DFA machinery (08/28): the
+// arm's test is one call to the shared driver over the same constant tables a
+// `pattern(...)` constraint ships. The settled sequencing this implements: `r"…"`
+// means the compile-time-compiled, linear-time subset in every position — never a
+// second engine — so a match arm behaves byte-for-byte as the equivalent constraint.
+func TestExec_RegexMatchPattern(t *testing.T) {
+	t.Parallel()
+	src := `let classify = pure (s: string) -> i64 => match s {
+  r"^#[0-9a-fA-F]{6}$" => 1,
+  r"^[0-9]+$" => 2,
+  "" => 3,
+  w @ r"^[a-z]+$" => i64(w.len()),
+  _ => 0,
+}
+let main = () -> u8 => {
+  println("${classify("#a1b2c3")} ${classify("1234")} ${classify("")} ${classify("abcde")} ${classify("MIXED9")}")
+  0
+}`
+	out, code := buildAndRunCapture(t, src)
+	if code != 0 {
+		t.Errorf("exited %d; want 0", code)
+	}
+	// hex color → 1, digits → 2, empty → the literal arm, lowercase → bound and
+	// measured (the `w @ r"…"` binding wrapper works on a regex arm as on any other),
+	// mixed → the wildcard.
+	if out != "1 2 3 5 0\n" {
+		t.Errorf("stdout = %q; want %q", out, "1 2 3 5 0\n")
+	}
+}
+
+// One pattern used as a constraint and as a match arm emits **one** table set
+// (regexTablesFor caches by pattern text), and the two answer alike — the agreement
+// the machinery's tests already pin between compile time and run time, extended to
+// the two run-time consumers.
+func TestExec_RegexPatternSharedBetweenConstraintAndMatch(t *testing.T) {
+	t.Parallel()
+	src := `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
+let is_hex = pure (s: string) -> bool => match s { r"^#[0-9a-fA-F]{6}$" => true, _ => false }
+let main = () -> u8 => {
+  let h: Hex = Hex("#00ff00")
+  if is_hex(string(h)) { 0 } else { 1 }
+}`
+	ir, err := emitSource(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ir, "@.re.trans.0 = ") {
+		t.Error("expected the shared transition table to be emitted")
+	}
+	if strings.Contains(ir, "@.re.trans.1 = ") {
+		t.Error("the constraint and the match arm emitted two tables for one pattern")
+	}
+	if got := buildAndRun(t, src); got != 0 {
+		t.Errorf("exited %d; want 0", got)
+	}
+}

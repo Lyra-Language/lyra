@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — The regex sequencing, settled: one subset everywhere, and match patterns ship
+
+**The decision**: `r"…"` means the compile-time-compiled, linear-time DFA in every
+position — the RE2/Go/Rust-regex discipline — and each new position is a new consumer of
+the same tables, never a second engine. The design-audit worry was that ~1,600 lines of
+regex machinery serving only `pattern(...)` constraints would harden into a
+"constraint-position dialect" once regex values landed with a fuller engine. The
+settlement inverts that reading: the subset *is* the language's regex, on purpose —
+E054's refusals (a lookbehind, a DFA past `regex.MaxTableStates`) are properties of the
+language's regex everywhere alike, and a future `Regex` value type is also
+literal-constructed and compile-time-compiled. Matching a pattern assembled from strings
+at run time would be a separate deliberate feature, not a widening of `r"…"`.
+
+**Settled in code, not prose: regex `match` patterns ship as the second consumer.**
+`match s { r"^#[0-9a-fA-F]{6}$" => …, w @ r"^[a-z]+$" => …, _ => … }` — a match pattern
+is a compile-time constant by grammar, so it compiles exactly as a constraint does and
+the arm's test is **one call to the shared driver** over the same constant tables
+(`regexTablesFor` caches by pattern text, so a pattern used as a constraint and as an
+arm emits one table — pinned in IR). The typechecker validates at the arm: a pattern
+that does not parse is a compile error there, and one that cannot become a table draws
+the same lyra-E054 a constraint does. Regex arms never make a string match exhaustive
+(unchanged, pinned); the `w @ r"…"` binding wrapper works as on any scalar arm; and the
+whole thing is `pure`-legal, the driver being O(n), allocation-free arithmetic.
+
+The 08/13 refusal this retires had cited "a regex engine in a runtime that is
+hand-written C with no FFI" — reasoning the constraint machinery had made false the same
+day it was written, which its own comment half-acknowledged by noting constraints
+compile at type-check time. lyra-E052 now covers the value position only, and its codes.go
+entry records the sequencing decision for whoever builds the `Regex` type.
+
 ### 08/28/26 — A top-level function-valued binding is callable, and globals are keyed per module
 
 **The missing arm.** `let add1 = mk(1)` at top level failed in the backend with `call to

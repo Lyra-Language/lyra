@@ -532,25 +532,24 @@ const (
 	CodeRawPointersNotImplemented = "lyra-E051"
 
 	// CodeRegexValuesNotImplemented: a regex literal used as a **value**
-	// (`let re = r"[a-z]+"`) or as a **match pattern**
-	// (`match s { r"^[0-9]+$" => … }`). Both type-checked clean and then died in the
-	// backend — `expression lowering not implemented for *ast.RegexLiteralExpr`, and
-	// `match pattern *ast.RegexPattern not implemented … (regex patterns deferred)`.
+	// (`let re = r"[a-z]+"`). It type-checked clean and then died in the backend —
+	// `expression lowering not implemented for *ast.RegexLiteralExpr` — and the
+	// `regex` primitive type existed only to type the literal: nothing else read it,
+	// and `regex` is not even a spellable annotation (a lowercase type name parses as
+	// a type *variable*, so `(re: regex)` declared one named `regex`).
 	//
-	// Refused since 08/13, on the lyra-E035/E050/E051 reasoning. A regex *value*
-	// needs a regex engine in the runtime, and Lyra's runtime is hand-written C
-	// shims with no FFI — the `regexp` this compiler uses to validate patterns runs
-	// at compile time and cannot ship into the compiled program. So this is a
-	// project, not a fix, and the `regex` primitive type existed only to type the
-	// literal: nothing else read it, and `regex` is not even a spellable annotation
-	// (a lowercase type name parses as a type *variable*, so `(re: regex)` declared
-	// one named `regex`).
-	//
-	// **`where pattern(r"…")` on a newtype is unaffected and keeps working**, which
-	// is why this refuses the two value positions rather than the literal syntax:
-	// a constraint stores the pattern's *source text* and compiles it at
-	// type-check time, so it never produces a value of type `regex` and never needs
-	// a runtime engine.
+	// Refused since 08/13; the **match-pattern** half of the original refusal retired
+	// on 08/28, when `match s { r"^[0-9]+$" => … }` became the second consumer of the
+	// constraint machinery's DFA tables. That is the settled sequencing this code now
+	// documents: `r"…"` means the compile-time-compiled, linear-time DFA subset
+	// everywhere it appears — the RE2 discipline — and each new position (constraints
+	// 08/13, match patterns 08/28, values whenever a `Regex` type is designed) is a
+	// new consumer of the same tables, never a second engine. A future regex *value*
+	// is therefore also literal-constructed and compile-time-compiled; matching a
+	// pattern assembled from strings at run time would be a separate feature with its
+	// own deliberate act, not a widening of `r"…"`. What lyra-E054 refuses — a
+	// lookbehind, a DFA past regex.MaxTableStates — is a property of the language's
+	// regex, in every position alike.
 	CodeRegexValuesNotImplemented = "lyra-E052"
 
 	// CodeStepConstraintViolation: a compile-time constant that is not on the grid a
