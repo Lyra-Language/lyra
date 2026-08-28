@@ -1071,18 +1071,24 @@ write today:
     called itself "cannot be constructed by call *yet*" — a missing solver, not a
     missing answer.
 
-  **[OPEN, found 08/28] A lambda-valued binding annotated with a function-type newtype is
-  not nominal.** `let h: Handler = (n: i64) -> i64 => n + 1` is a *function declaration*
-  to the typechecker, so it never reaches the implicit-conversion check (silently
-  accepted, where an array value in the same position is policed) — and `h` then infers
-  as the lambda's own `(i64) -> i64` rather than as `Handler`, so nothing downstream
-  treats it as one (`base(h)`: "operand must be a newtype"). The constructor form
-  (`Handler((n) => …)`) works end to end and is the pinned spelling
-  (TestTypeCheck_LambdaIntoFunctionTypeBase_ConstructorWorks). The fix is a decision
-  about binding types, not a check: either the annotation wins for lambda bindings (and
-  direct calls resolve through the newtype's transparency) or the annotation form is
-  refused loudly. Predates the 08/28 form-based exemption, which deliberately excludes
-  lambdas so as not to paper over it.
+  **[DONE 08/28] A lambda-valued binding annotated with a function-type newtype is
+  nominal, and a function-type newtype is callable.** The decision went to
+  annotation-wins: `let h: Handler = (n) => n + 1` records `h` as a Handler (parameters
+  elaborated from the base — elaborateLambda already stripped newtypes), the annotation
+  is checked rather than assumed (which also closed a pre-existing silent gap for
+  *plain* mismatched function annotations), and a call looks through a function-type
+  newtype in every position — binding, parameter, struct field — via
+  `callableSignature`, the same transparency rung indexing uses. Before this a Handler
+  was call-dead everywhere, i.e. write-only in practice. The lambda literal joined the
+  construction-form E046 exemption with it. See COMPLETED.md.
+
+  **[OPEN, found 08/28] A top-level binding holding a function *value* cannot be
+  called.** `let add1 = mk(1)` (or a constructor-built `let h: Handler = Handler(…)`)
+  at top level fails in the backend with `call to unknown function` — the identifier
+  ladder has arms for l.funcs, locals, conversions, specializations and overloads, but
+  none for a top-level global holding a closure value. Pre-existing and independent of
+  newtypes (a plain `(i64) -> i64` binding fails identically); the same binding inside
+  a function body works (lowerCallThroughValue via l.locals).
 
   Still open beneath it, smaller than it was: `println(c)` refuses a newtype over a
   printable scalar, so transparency covers arithmetic-adjacent methods and not the one

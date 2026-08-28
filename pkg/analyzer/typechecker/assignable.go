@@ -352,14 +352,12 @@ func isUntypedLiteralType(t types.Type) bool {
 // `Email` stay refused — value provenance for value-carrying bases, construction
 // form for containers.
 //
-// A **lambda literal is deliberately not here**, though the same argument reads as if
-// it should apply to a function-type base — because the question never actually
-// reaches this check: a lambda-valued binding is a *function declaration* to the
-// typechecker, `let h: Handler = (n) => …` is silently accepted on a path that skips
-// the conversion rule, and `h` then infers as the lambda's own signature rather than
-// as Handler, so the binding is not nominal at all (todo.md, Newtypes — an open
-// binding-type decision). An arm here would endorse that half-working form; the
-// constructor (`Handler((n) => …)`) is the spelling that works end to end.
+// A **lambda literal is the same case for a function-type base** (08/28, second half):
+// it joined once the binding-type decision was settled — a lambda-valued binding
+// annotated with a function-type newtype is nominal (checkVarDecl's lambda branch
+// records the annotation), and a call looks through the newtype (callableSignature) —
+// so admitting the literal no longer endorses a half-typed binding. A lambda held in a
+// typed *binding* is not a construction, exactly as an array binding is not.
 func isSyntacticLiteral(expr ast.Expression) bool {
 	switch e := expr.(type) {
 	case *ast.StringLiteralExpr, *ast.BooleanLiteralExpr, *ast.CharacterLiteralExpr,
@@ -367,7 +365,7 @@ func isSyntacticLiteral(expr ast.Expression) bool {
 		return true
 	case *ast.NegationExpr:
 		return isSyntacticLiteral(e.Operand)
-	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
+	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr, *ast.LambdaExpr:
 		// Both array forms — ArrayRepeatExpr is ArrayLiteralExpr's variant (hazard 8),
 		// and the repeat's count was never consulted (a length is not an element).
 		return true

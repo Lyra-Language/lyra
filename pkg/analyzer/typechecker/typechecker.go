@@ -452,7 +452,34 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		// — the backend has to know it is one to frame it for release — and the
 		// signature is what an indirect call through `f` is checked and lowered
 		// against. Built from the declaration alone, since the body was just checked.
-		tc.typeTable.Set(decl.Value, tc.lambdaSignature(lambda))
+		sig := tc.lambdaSignature(lambda)
+		recorded := types.Type(sig)
+		if decl.Type != nil && sig != nil && len(decl.GenericParams) == 0 {
+			resolved := tc.resolveType(decl.Type, decl.Location)
+			// The annotation is **checked**, not assumed: elaborateLambda fills only
+			// the blanks, so an explicitly mismatched signature — or a non-function
+			// annotation on a lambda — used to be accepted silently and fail at
+			// whatever called it. (Skipped for a generic binding, whose signature
+			// still carries type variables assignability cannot judge.)
+			if resolved != nil && !isAssignable(sig, resolved) {
+				tc.addError(decl.GetLocation(), SeverityError,
+					"%s: cannot assign %s to %s", decl.Name, sig, resolved)
+			}
+			// A **newtype over a function type wins the binding's type** (08/28): the
+			// lambda is a construction written in place, aimed at the annotation —
+			// exactly the array rule — so `let h: Handler = (n) => n + 1` makes `h`
+			// nominal. Recording the lambda's own signature instead is what left such
+			// a binding half-typed: the declaration checked clean and every later use
+			// read a bare `(i64) -> i64` nothing treated as a Handler. Calls through
+			// `h` still work, because a call looks through a function-type newtype
+			// (callableSignature).
+			if ct, isNewtype := resolved.(*types.ConstrainedType); isNewtype {
+				if _, overFn := tc.stripNewtypeResolving(ct, decl.Location).(*types.LambdaType); overFn {
+					recorded = resolved
+				}
+			}
+		}
+		tc.typeTable.Set(decl.Value, recorded)
 		return
 	}
 

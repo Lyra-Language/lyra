@@ -637,3 +637,55 @@ func TestExec_BaseReadout_ASan(t *testing.T) {
 		t.Errorf("read-out changed the accounting: allocs/retains/releases = %v, control = %v", got, want)
 	}
 }
+
+// A newtype over a function type is nominal AND callable (08/28): the annotation wins
+// for a lambda-valued binding (`let h: Handler = (n) => n + 1` is a Handler, parameters
+// elaborated from the base), and a call looks through the newtype in every position —
+// binding, parameter, struct field — via the same transparency rung indexing uses. The
+// representation is the base's closure value, so the backend calls through the stripped
+// signature the typechecker records on the callee node.
+func TestExec_NewtypeOverFunctionType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"every call position, annotation-form binding",
+			`newtype Handler = (i64) -> i64
+			 let take = (f: Handler) -> i64 => f(20)
+			 struct Hooks { on: Handler }
+			 let h: Handler = (n) => n + 1
+			 let main = () -> u8 => {
+			   let hk = Hooks { on: h }
+			   u8(h(1) + take(h) + hk.on(3) + base(h)(10))
+			 }`,
+			38, // 2 + 21 + 4 + 11
+		},
+		{
+			"local constructor form, called directly",
+			`newtype Handler = (i64) -> i64
+			 let main = () -> u8 => {
+			   let h: Handler = Handler((n: i64) -> i64 => n + 1)
+			   u8(h(41))
+			 }`,
+			42,
+		},
+		{
+			"lambda literal as a Handler argument",
+			`newtype Handler = (i64) -> i64
+			 let run = pure (f: Handler, n: i64) -> i64 => f(n)
+			 let main = () -> u8 => u8(run((k) => k + 1, 41))`,
+			42,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
+	}
+}

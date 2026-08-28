@@ -538,6 +538,18 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 // or has no declared return type). Handles identifier callees, direct lambda
 // expressions, member-expression callees (method calls), and fully-qualified
 // trait-method-path callees (TraitName::method(...)).
+// callableSignature is the signature a call-through-value goes through: newtypes are
+// stripped, because **a call is a use-form of the base exactly as indexing is** —
+// `h(5)` on a `newtype Handler = (i64) -> i64` value dispatches through the base's
+// signature the same way `b[0]` on a `newtype Bag = []string` indexes the base's
+// elements, via the same one answer (stripNewtypeResolving). Without this rung a
+// function-type newtype was call-dead in every position — binding, parameter, struct
+// field — which made it write-only in practice (08/28).
+func (tc *TypeChecker) callableSignature(t types.Type, loc ast.Location) (*types.LambdaType, bool) {
+	lt, ok := tc.stripNewtypeResolving(t, loc).(*types.LambdaType)
+	return lt, ok && lt != nil
+}
+
 func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.Type {
 	// Defensive: a malformed callee (e.g. `f.()` — a member expression with no
 	// property) can collect to a nil expression on some paths; the collector emits
@@ -561,7 +573,7 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 		// LambdaType carries the full signature, so the call is checked against it
 		// exactly as a call through a function-typed parameter is.
 		if calleeType := tc.inferExprType(call.Function); calleeType != nil {
-			if lt, ok := calleeType.(*types.LambdaType); ok {
+			if lt, ok := tc.callableSignature(calleeType, call.GetLocation()); ok {
 				return tc.inferLambdaCallFromType(call.Function.GetName(), lt, call)
 			}
 		}
@@ -614,11 +626,14 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 	// `f: (u8) -> u8` — so validate the call against its lambda-type signature.
 	if tc.paramTypes != nil {
 		if pt, ok := tc.paramTypes[ident.Name]; ok {
-			if lt, ok := pt.(*types.LambdaType); ok {
+			if lt, ok := tc.callableSignature(pt, call.GetLocation()); ok {
 				// Record the callee's own type: a call through a function *value* is
 				// lowered as an indirect call, and the signature to call through comes
-				// from this node's recorded type. Nothing else infers a callee
-				// identifier — the resolution above is structural, not by inference.
+				// from this node's recorded type — the **stripped** signature for a
+				// newtype-typed parameter, since that is what the backend calls
+				// through (a newtype shares its base's representation). Nothing else
+				// infers a callee identifier — the resolution above is structural,
+				// not by inference.
 				tc.typeTable.Set(ident, lt)
 				return tc.inferLambdaCallFromType(ident.Name, lt, call)
 			}
@@ -723,7 +738,7 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 			// then a LambdaType, which carries everything a call site needs, so check
 			// against the signature rather than a body that isn't here.
 			declValType := tc.inferExprType(decl.Value)
-			if lt, ok := declValType.(*types.LambdaType); ok {
+			if lt, ok := tc.callableSignature(declValType, call.GetLocation()); ok {
 				tc.typeTable.Set(ident, lt) // the indirect call's signature (see above)
 				return tc.inferLambdaCallFromType(ident.Name, lt, call)
 			}
@@ -960,7 +975,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		if fn != nil {
 			return tc.inferLambdaCall(member.Property.Name, fn, call)
 		}
-		if lt, ok := t.(*types.LambdaType); ok {
+		if lt, ok := tc.callableSignature(t, call.GetLocation()); ok {
 			return tc.inferLambdaCallFromType(member.Property.Name, lt, call)
 		}
 		return nil
@@ -1015,8 +1030,11 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// arguments the unifier needs.
 	if f, ok := structFieldByName(tc.resolveGenericAggregate(objType, member.Object.GetLocation()), methodName); ok {
 		pinReceiver()
+		// The member node keeps the field's declared type, wrapper and all — the
+		// call goes through the stripped signature, but the *value* the member
+		// denotes is still the newtype (reading it out elsewhere is E047's business).
 		tc.typeTable.Set(member, f.Type)
-		if lambdaType, ok := f.Type.(*types.LambdaType); ok {
+		if lambdaType, ok := tc.callableSignature(f.Type, call.GetLocation()); ok {
 			return tc.inferLambdaCallFromType(methodName, lambdaType, call)
 		}
 		tc.addError(call.GetLocation(), SeverityError,

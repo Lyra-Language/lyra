@@ -130,19 +130,25 @@ let n: Nums = xs
 		"cannot use DynamicArray<i64> as Nums implicitly: Nums is a distinct type over DynamicArray<i64>, so the conversion must be written — `Nums(...)`")
 }
 
-// A lambda literal is deliberately NOT form-exempt, though the container argument would
-// seem to apply to a function-type base. The reason is a pre-existing gap this change
-// must not paper over: a lambda-valued binding is a *function declaration* to the
-// typechecker, so `let h: Handler = (n: i64) -> i64 => n + 1` never reaches the
-// conversion check at all — it is silently accepted — and `h` then infers as the
-// lambda's own `(i64) -> i64`, not as Handler, so nothing downstream treats it as one
-// (`base(h)` reports "operand must be a newtype"). Until the binding-type question is
-// settled (todo.md, Newtypes), the constructor is the spelling that works end to end,
-// which this pins.
-func TestTypeCheck_LambdaIntoFunctionTypeBase_ConstructorWorks(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, `
+// A lambda literal joined the form exemption once the binding-type decision was
+// settled (08/28, second half): the annotation wins for a lambda-valued binding, so
+// both spellings — the constructor and the bare literal — produce a nominal Handler,
+// and calls look through the newtype. The newtype-over-function tests in
+// constrained_type_test.go carry the detail; this pins the two spellings agreeing,
+// which is this file's theme.
+func TestTypeCheck_LambdaIntoFunctionTypeBase_BothSpellingsAgree(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"constructor form", `
 newtype Handler = (i64) -> i64
 let h: Handler = Handler((n: i64) -> i64 => n + 1)
-let out: i64 = base(h)(41)
-`, false))
+let out: i64 = base(h)(41)`},
+		{"annotation form", `
+newtype Handler = (i64) -> i64
+let h: Handler = (n: i64) -> i64 => n + 1
+let out: i64 = base(h)(41)`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			assertNoErrors(t, parseCollectAndCheck(t, c.src, false))
+		})
+	}
 }

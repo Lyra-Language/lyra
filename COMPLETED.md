@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — A function-type newtype is nominal and callable: the binding-type decision, settled
+
+**The decision went to annotation-wins, with call transparency to make it usable.**
+Probing had shown a `newtype Handler = (i64) -> i64` was call-dead in every position —
+`h(5)`, `f(5)` through a Handler parameter, `hk.on(5)` through a Handler field all said
+"not callable (type Handler)" — and the bare-lambda annotation form silently produced a
+binding that inferred as the lambda's own signature, nominal in name only. Two halves,
+each the smaller of its alternatives:
+
+- **Calls look through a function-type newtype** (`callableSignature`, joining
+  `stripNewtypeResolving`'s one-answer family): a call is a use-form of the base exactly
+  as indexing is — `h(5)` dispatches through the base's signature the way `b[0]` on a
+  `Bag` indexes the base's elements. Five call-through-value sites asserted
+  `*types.LambdaType` directly; all five now strip first. The alternative — a nominal
+  type you must `base(h)` at every call — would have made the feature noise at exactly
+  the sites it exists to annotate.
+- **The annotation wins for a lambda-valued binding**: checkVarDecl's lambda branch
+  records the resolved annotation when it is a newtype over a function type, so
+  `let h: Handler = (n) => n + 1` is a Handler with parameters elaborated from the base
+  (`elaborateLambda` had stripped newtypes all along — the machinery wanted this). The
+  annotation is now **checked**, not assumed, which closed a pre-existing silent gap
+  found on the way: `let g: (string) -> string = (n: i64) -> i64 => …` — a *plain*
+  mismatched function annotation — was accepted without a word, since elaborateLambda
+  fills only blanks and nothing verified afterwards. Both forms now report
+  "cannot assign … to …" (skipped for generic bindings, whose signatures still carry
+  type variables).
+
+With the binding nominal, the **lambda literal joined the construction-form E046
+exemption** (yesterday's deliberate exclusion existed only to avoid endorsing the
+half-typed binding): `take((n: i64) -> i64 => n * 2)` against a Handler parameter
+converts implicitly, and the read-out direction stays explicit (`let g: (i64) -> i64 =
+h` is E047, `base(...)` the spelling). Purity composes for free: a Handler parameter
+carries no bound the effect walk can read, so a call through one is effect-polymorphic
+and `pure (f: Handler, n: i64) => f(n)` is writable.
+
+**Found-while, recorded open**: a *top-level* binding holding a function value cannot be
+called — the backend's identifier ladder has no arm for a global closure value — and it
+fails identically for a plain `(i64) -> i64`, so it is independent of newtypes
+(todo.md).
+
 ### 08/28/26 — A construction is provenance-free by form: the element exemption quirk is fixed
 
 **`let b: Bag = ["a" ++ "1"]` is admitted.** The implicit-newtype exemption

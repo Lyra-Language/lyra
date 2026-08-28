@@ -993,3 +993,77 @@ newtype Distance = Meters
 let f = (d: Distance) -> Distance => d`, false)
 	assertNoErrors(t, res)
 }
+
+// ── a newtype over a function type is nominal AND callable (08/28) ───────────
+//
+// The binding-type decision, settled: the annotation wins for a lambda-valued binding
+// (`let h: Handler = (n) => n + 1` makes `h` a Handler, parameters elaborated from the
+// newtype's base), and a call looks through a function-type newtype in every position —
+// binding, parameter, struct field — via the same transparency rung indexing uses
+// (stripNewtypeResolving). Before this, such a newtype was call-dead everywhere and the
+// annotation form silently produced a binding nothing treated as a Handler.
+
+func TestNewtypeOverFunction_AnnotationIsNominalAndCallable(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Handler = (i64) -> i64
+let take = (f: Handler) -> i64 => f(20)
+struct Hooks { on: Handler }
+let h: Handler = (n) => n + 1
+let use = () -> i64 => {
+  let hk = Hooks { on: h }
+  h(1) + take(h) + hk.on(3) + base(h)(10)
+}
+`, false))
+}
+
+func TestNewtypeOverFunction_LocalConstructorFormCallable(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Handler = (i64) -> i64
+let use = () -> i64 => {
+  let h: Handler = Handler((n: i64) -> i64 => n + 1)
+  h(41)
+}
+`, false))
+}
+
+// A lambda literal converts implicitly in argument position too — a construction
+// written in place, the array rule's function-type sibling.
+func TestNewtypeOverFunction_LambdaArgumentConvertsImplicitly(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Handler = (i64) -> i64
+let take = (f: Handler) -> i64 => f(20)
+let out = take((n: i64) -> i64 => n * 2)
+`, false))
+}
+
+// Reading the newtype out to its bare base is still explicit — nominal identity is
+// what the wrapper exists for, and `base(...)` is the spelling.
+func TestNewtypeOverFunction_ReadOutStaysExplicit(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Handler = (i64) -> i64
+let h: Handler = (n) => n + 1
+let g: (i64) -> i64 = h
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use Handler as (i64) -> i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `base(...)`")
+}
+
+// The annotation is checked, not assumed — for the newtype form and, closing a
+// pre-existing silent gap found while building this, for a plain function-type
+// annotation too: elaborateLambda fills only blanks, so an explicitly mismatched
+// signature used to be accepted and fail at whatever called it.
+func TestLambdaBindingAnnotationIsChecked(t *testing.T) {
+	t.Run("newtype over a function type", func(t *testing.T) {
+		res := parseCollectAndCheck(t, `
+newtype Handler = (i64) -> i64
+let h: Handler = (s: string) -> string => s
+`, false)
+		assertErrorsAre(t, res, "h: cannot assign (string) -> string to Handler")
+	})
+	t.Run("plain function type", func(t *testing.T) {
+		res := parseCollectAndCheck(t, `
+let g: (string) -> string = (n: i64) -> i64 => n + 1
+`, false)
+		assertErrorsAre(t, res, "g: cannot assign (i64) -> i64 to (string) -> string")
+	})
+}

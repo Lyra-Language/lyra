@@ -1105,3 +1105,15 @@ let f = pure (n: i64) -> i64 => base(n)`)
 		t.Errorf("expected the shadowed base to be reported as an impure callee, got %v", errs)
 	}
 }
+
+// A call through a parameter typed as a newtype over a function type stays
+// effect-polymorphic: the parameter carries no declared bound the walk can read (a
+// Handler is not a *LambdaType), so the call is charged to whoever supplies the
+// callback — a `pure` combinator over a Handler is writable, with a pure argument.
+func TestPurity_CallThroughFunctionNewtypeParamIsPolymorphic(t *testing.T) {
+	errs := checkPurity(t, `
+newtype Handler = (i64) -> i64
+let run = pure (f: Handler, n: i64) -> i64 => f(n)
+let main = () -> u8 => u8(run((k) => k + 1, 41))`)
+	assertPurityCount(t, errs, 0)
+}
