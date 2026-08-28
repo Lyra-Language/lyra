@@ -57,34 +57,52 @@ let main = () -> void => {
 	}
 }
 
-// The hint against the **real** prelude, which is what a reader actually meets: `join` is
-// declared once, `map` is overloaded on three receivers, and both must name the same edit.
+// A literal receiver reaching a `[]t` combinator, against the **real** prelude — which is
+// what a reader actually meets: `join` is declared once and `map` is overloaded on three
+// receivers, and both must work, since a literal is built in the shape its receiver asks
+// for. This asserted the *refusal* and its hint until 08/28.
 //
 // Checked here rather than in the typechecker's own tests because those run without a
-// prelude — `join` and `map` are not declared there, so the hint has nothing to look up and
-// the first draft of this passed vacuously against a bare "member access on non-struct
-// type".
-func TestCheck_ArrayLiteralReceiverNamesTheEditAgainstThePrelude(t *testing.T) {
+// prelude — `join` and `map` are not declared there, so an earlier draft of this passed
+// vacuously against a bare "member access on non-struct type".
+func TestExec_ArrayLiteralReceiverReachesAPreludeCombinator(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct{ src, want string }{
 		"join, declared once": {
-			`let main = () -> void => { println(["a", "b"].join("")); }`,
-			"join takes a dynamic array",
+			`let main = () -> void => { println(["a", "b"].join("-")); }`,
+			"a-b",
 		},
 		"map, overloaded on three receivers": {
-			`let main = () -> void => { println([1, 2].map((x: i64) -> i64 => x).len()); }`,
-			"map takes a dynamic array",
+			`let main = () -> void => { println("${[1, 2].map((x: i64) -> i64 => x * 10).len()}"); }`,
+			"2",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			errs := strings.Join(checkWithPrelude(t, tc.src+"\n"), "\n")
-			if !strings.Contains(errs, tc.want) {
-				t.Errorf("want %q; got: %s", tc.want, errs)
+			if errs := checkWithPrelude(t, tc.src+"\n"); len(errs) != 0 {
+				t.Fatalf("expected a clean program; got: %s", strings.Join(errs, "\n"))
 			}
-			if !strings.Contains(errs, "annotate the value as") {
-				t.Errorf("the hint should name the annotation; got: %s", errs)
+			if got := strings.TrimSpace(buildAndRunWithPrelude(t, tc.src, "")); got != tc.want {
+				t.Errorf("got %q; want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// The hint still exists and still names the edit — for a fixed-array **binding**, where
+// the value already exists as a stack `[N]T` and reaching a `[]t` combinator would widen
+// it. That is the case the rule is actually about.
+func TestCheck_ArrayBindingReceiverNamesTheEditAgainstThePrelude(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> void => {
+  let parts = ["a", "b"]
+  println(parts.join(""))
+}`
+	errs := strings.Join(checkWithPrelude(t, src+"\n"), "\n")
+	if !strings.Contains(errs, "join takes a dynamic array") {
+		t.Errorf("want the array hint; got: %s", errs)
+	}
+	if !strings.Contains(errs, "annotate the value as") {
+		t.Errorf("the hint should name the annotation; got: %s", errs)
 	}
 }

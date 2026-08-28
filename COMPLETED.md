@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — `[1, 2, 3].map(f)` works: one call had two answers by spelling
+
+**The open entry proposed the wrong fix because its premise was wrong.** It held that a
+`[]t` combinator is unreachable from an array literal, that auto-widening must not be the
+answer (a `[N]T` is stack, a `[]T` is heap, so widening at a call allocates invisibly to
+`noalloc`), and that the only honest option left was declaring every combinator a second
+time for `[N]t` — duplicating each body, the duplication this project keeps deleting.
+
+One probe retired all of it: **`map([1, 2, 3], f)` already worked.** The argument rung
+admits an array literal via `arrayLiteralAsDeclared`, on the rule that a literal is
+*built* in the shape its context asks for — the same rule behind `let xs: []i64 = [1, 2,
+3]`. Only the UFCS rung refused: it gathers candidates by matching the receiver's *type*,
+and a miss is the end, while the bare path falls back to the resolved declaration and lets
+the argument rung admit the literal. So one call had two answers depending on how it was
+spelled — the exact disagreement `receiverAccepts`' own header says must not exist ("they
+must agree, or a call would resolve differently depending on how it was spelled").
+
+So this is a consistency fix, not a new rule: `receiverAcceptsValue` asks the same shared
+helper the argument rung does, so the two positions cannot disagree about what a literal
+fits. **It is not the auto-widening the entry warned about** — a literal has no prior
+shape to widen; it is constructed here, in the shape asked for. The allocation stays
+visible because the literal's recorded type becomes the `[]T` it was built as, which is
+what `noalloc` reads: `pure noalloc … => [1, 2, 3].map(f)` is still refused, pinned.
+
+A fixed-array **binding** is still refused, and that is what the warning was really about
+— there the value already exists as a stack `[N]T`. The 08/14 hint now serves that case,
+and the three tests that pinned the literal refusal were re-pointed at it rather than
+deleted; two more assert the literal now runs against the real prelude (`join` declared
+once, `map` overloaded on three receivers).
+
+**Found while**: `["x"; 3].join("-")` is a *parse* error — the repeat form is not a
+postfix head, `array_repeat_init` having been left out of `_primary_expr` "only because
+nothing wants a method on one yet". Something does now; the typechecker half already
+covers both array forms, so what remains is a grammar change (todo.md).
+
 ### 08/28/26 — An undefined callee is the typechecker's error alone, not a purity cascade
 
 **One undefined name produced four errors, with the cause printed last.** Writing

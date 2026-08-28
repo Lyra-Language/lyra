@@ -3960,30 +3960,37 @@ Two smaller questions to settle:
 exclusivity — (c) generalized — changes that. This is a name for the workaround, filed as
 an [IDEA] rather than a plan so it is not mistaken for the answer.
 
-### [OPEN] A `[]t` combinator is unreachable from an array literal
+### [DONE 08/28] A `[]t` combinator is reachable from an array literal
 
-`[1, 2, 3].map(f)` and `["a", "b"].join("")` are both errors: an array literal infers a
-**fixed** `[3]T`, every prelude combinator takes `[]T`, and UFCS does not widen the
-receiver. The workaround is an annotation — `let xs: []i64 = [1, 2, 3]`.
+`[1, 2, 3].map(f)` and `["a", "b"].join("")` work. This entry had argued the rule should
+stay — a `[N]T` is a stack value and a `[]T` a heap box, so widening at a call allocates
+where nothing asked — and proposed declaring every combinator a second time for `[N]t` as
+the only honest option, at the cost of duplicating each body.
 
-**The diagnostic half is done** (08/14): both shapes now name the edit rather than only the
-mismatch — *"map takes a dynamic array — annotate the value as `[]i64` (a `[3]T` literal is
-a fixed array, and widening it would allocate)"*. The suggested type is *defaulted* before
-it is named, since an unannotated literal's elements render as "integer literal", a phrase
-rather than a type.
+**Both were answering the wrong question, and one probe showed it**: `map([1, 2, 3], f)`
+already worked. The argument rung admits an array literal (`arrayLiteralAsDeclared`) on
+the rule that a literal is *built* in the shape its context asks for — the same rule that
+makes `let xs: []i64 = [1, 2, 3]` a heap array. Only the UFCS rung refused, because it
+gathers candidates by matching the receiver's *type* and a miss is the end, while the bare
+path falls back to the resolved declaration and lets the argument rung admit the literal.
+So one call had two answers depending on which spelling was used — the exact disagreement
+`receiverAccepts`' own note says must not exist.
 
-**The rule itself stays, and auto-widening is the fix not to reach for**: a `[N]T` is a
-stack value and a `[]T` is a heap box, so widening at a call allocates. The language's
-position is that you get a heap array when you *ask* for one, and a UFCS call that
-allocated silently would be invisible to `noalloc` exactly where a reader looks for it.
+The fix is that note's invariant restored: `receiverAcceptsValue` asks the same shared
+helper, so the receiver position and the argument position agree about what a literal
+fits. **Not the auto-widening this entry warned about** — a literal has no prior shape to
+widen, and the allocation stays visible because the literal's recorded type becomes the
+`[]T` it was built as, which is what `noalloc` reads (still refused, pinned).
 
-What is left is the ergonomic half, and it has one honest option:
+A fixed-array **binding** is still refused, and that is the case the warning was really
+about: there the value already exists as a stack `[N]T`. The 08/14 hint now serves it,
+and the tests that pinned the literal refusal were re-pointed at it.
 
-- **Declare each combinator for `[N]t` as well.** Receiver-keyed overloading exists for
-  precisely this and the heads differ, so it is legal — at the cost of a second copy of
-  every body, which is the duplication this project keeps deleting. Worth it only if the
-  annotation turns out to be a recurring irritation rather than a one-time surprise, which
-  the mandelbrot program is the right thing to decide.
+- **[OPEN, found 08/28] `["x"; 3].join("-")` is a parse error.** The repeat form is not a
+  postfix head — `array_repeat_init` is out of the grammar's `_primary_expr` list, whose
+  note says it was left out "only because nothing wants a method on one yet". Something
+  does now. The typechecker half is already done (the allowance covers both array forms),
+  so this is a grammar change and its state cost, nothing more.
 
 ### [DONE 08/18] `[v; n]` that shares a mutable element now says so
 

@@ -40,6 +40,39 @@ func receiverAccepts(fn *ast.LambdaExpr, recvType types.Type) bool {
 	return unifyGenericTarget(recv.Type, recvType, lambdaTypeVars(fn), map[string]types.Type{})
 }
 
+// receiverAcceptsValue is receiverAccepts plus the one allowance that depends on **what
+// the receiver expression is** rather than on what its type is: an array literal is
+// *built* in the shape its context asks for, so `[1, 2, 3]` satisfies a `[]t` receiver
+// exactly as it already satisfies a `[]t` parameter.
+//
+// It closes a gap between the two spellings of one call, which the note above says must
+// not exist. `map([1, 2, 3], f)` has always worked — the receiver match fails, the bare
+// path keeps the resolved declaration, and the *argument* rung then admits the literal
+// through `arrayLiteralAsDeclared`. The UFCS rung has no such second chance: it gathers
+// candidates by receiver and a miss is the end, so `[1, 2, 3].map(f)` was refused. Same
+// call, same receiver, two answers — decided by which spelling was used.
+//
+// **This is not the auto-widening the rule forbids.** A `[N]T` is a stack value and a
+// `[]T` is a heap box, so widening an existing *value* at a call would allocate where
+// nothing asked it to, invisibly to `noalloc`. A literal has no prior shape to widen: it
+// is constructed here, in the shape its context asks for, which is the same rule that
+// makes `let xs: []i64 = [1, 2, 3]` a heap array. The allocation stays visible because
+// the literal's recorded type becomes the `[]T` it was built as, which is exactly what
+// `noalloc` reads.
+//
+// The one answer is shared with the argument rung (arrayLiteralAsDeclared) rather than
+// re-derived, so the two positions cannot come to disagree about what a literal fits.
+func receiverAcceptsValue(fn *ast.LambdaExpr, recvExpr ast.Expression, recvType types.Type) bool {
+	if receiverAccepts(fn, recvType) {
+		return true
+	}
+	recv, ok := ast.ReceiverParam(fn)
+	if !ok || recvExpr == nil || recvType == nil {
+		return false
+	}
+	return receiverAccepts(fn, arrayLiteralAsDeclared(recvExpr, recv.Type, promoteToDefault(recvType)))
+}
+
 // resolveOverload picks the member of set that accepts a receiver of recvType.
 //
 // A miss returns nil and leaves the diagnostic to the caller, which knows whether the

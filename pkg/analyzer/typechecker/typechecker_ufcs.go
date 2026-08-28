@@ -162,7 +162,7 @@ func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, membe
 		if !tc.ufcsImported(fn, loc) {
 			continue
 		}
-		if !receiverAccepts(fn, objType) {
+		if !receiverAcceptsValue(fn, member.Object, objType) {
 			continue
 		}
 		matches = append(matches, fn)
@@ -350,15 +350,16 @@ func desugarUFCSCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) {
 // the two near-misses worth naming, since "has no field or method" alone sends the reader
 // looking for a method that was never going to be there.
 func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Location) string {
-	// **The array-literal case is checked first, because it applies to both shapes and
-	// is the only one that names an actual edit.** `["a", "b"].join("")` and
-	// `[1, 2, 3].map(f)` fail identically: a literal infers a *fixed* array, every
-	// prelude combinator takes a dynamic one, and UFCS does not widen — deliberately,
-	// since `[N]T` is a stack value and `[]T` a heap box, so widening at a call would
-	// allocate where nothing asked it to. Left to the branches below, an overloaded name
+	// **The fixed-array case is checked first, because it applies to both shapes and
+	// is the only one that names an actual edit.** A fixed-array *binding* reaching a
+	// `[]t` combinator is refused, and deliberately: the value already exists as a
+	// stack `[N]T` while a `[]T` is a heap box, so widening it at a call would allocate
+	// where nothing asked it to. (A *literal* receiver is admitted since 08/28 — it has
+	// no prior shape to widen, so it is simply built as the `[]T` the receiver asks
+	// for, and never reaches this hint.) Left to the branches below, an overloaded name
 	// answers "map takes DynamicArray<t>, Maybe<t>, Result<t, e>", which is true and
 	// still leaves the reader to work out that an annotation is the fix.
-	if hint, ok := tc.arrayLiteralHint(methodName, recv, loc); ok {
+	if hint, ok := tc.fixedArrayHint(methodName, recv, loc); ok {
 		return hint
 	}
 	// An overloaded name reaches here only when *no* member accepted the receiver, so
@@ -417,14 +418,17 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 	return fmt.Sprintf("; %s takes %s", methodName, want)
 }
 
-// arrayLiteralHint names the edit for the one mismatch a reader cannot guess from the
+// fixedArrayHint names the edit for the one mismatch a reader cannot guess from the
 // types alone: a fixed-array receiver against a combinator that takes a dynamic one.
+//
+// It fires for a *binding* (`let xs = [1, 2, 3]`); a literal receiver is admitted
+// upstream and never arrives here.
 //
 // Keyed on *any* declaration of the name taking a dynamic array, so it covers the
 // overloaded shape (`map`, declared for `[]t`, `Maybe<t>` and `Result<t, e>`) and the
 // single one (`join`) with the same sentence. The annotation is spelled in source syntax —
 // `[]string`, not `DynamicArray<string>` — because it is code the reader is about to type.
-func (tc *TypeChecker) arrayLiteralHint(methodName string, recv types.Type, loc ast.Location) (string, bool) {
+func (tc *TypeChecker) fixedArrayHint(methodName string, recv types.Type, loc ast.Location) (string, bool) {
 	sa, isStatic := recv.(types.StaticArrayType)
 	if !isStatic {
 		return "", false
@@ -442,7 +446,7 @@ func (tc *TypeChecker) arrayLiteralHint(methodName string, recv types.Type, loc 
 		// type, so the suggested annotation would not compile. Same rule the generated
 		// documentation follows: a spelling offered to a reader has to parse.
 		return fmt.Sprintf(
-			"; %s takes a dynamic array — annotate the value as `[]%s` (a `[%d]T` literal is a fixed array, and widening it would allocate)",
+			"; %s takes a dynamic array — annotate the value as `[]%s` (a `[%d]T` value is a fixed array, and widening it would allocate)",
 			methodName, promoteToDefault(sa.ElementType), sa.Size), true
 	}
 	return "", false
