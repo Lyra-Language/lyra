@@ -3917,11 +3917,19 @@ What is left:
   amortize the extra allocations. The full-redraw side is the one that grows without bound,
   so it takes the decision; `frame.lyra` carries both numbers.
 
+  `to_runes` followed on 08/30, and is the only one of the four that is *not* a builder: its
+  count is known (`len()` is O(1)), so it is a comprehension rather than a push loop —
+  exactly sized instead of doubling to n and keeping up to 2n, and slightly faster besides.
+  Writing the exact size up front and filling by index (`[' '; len]` then `out[i] = c`) was
+  tried and is **worse** — 198 µs against 142 on 328k ASCII runes — because the repeat form
+  fills every slot before the loop overwrites it, and the indexed write is bounds-checked.
+
   What is left is `rule`/`fit` in `std.tui`, which build a repeated character per row per
-  frame — and those want the *opposite* treatment, since their payload is small and their
-  count is known: they are `[c; n]`-shaped, not builder-shaped. Whether a general
-  `StringBuilder` is worth a nominal type for something `[]u8` already is stays open, and is
-  now a smaller question than it was.
+  frame. They are the `to_runes` case, not the `join` case: small payload, known count. But
+  their result is a *string*, and a string cannot be sized up front the way a `[]rune` can —
+  so they want either a byte buffer or a `[c; n]`-to-string path that does not exist. Whether
+  a general `StringBuilder` is worth a nominal type for something `[]u8` already is stays
+  open, and is now a smaller question than it was.
 
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
   `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an

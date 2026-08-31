@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — `to_runes` is a comprehension: the one in the sweep that is not a builder
+
+It was a `push` loop from empty, so it reached n by doubling and kept up to 2n — the same
+retained overshoot `filter` had, arrived at from the other side. It is now `[c in self | c]`,
+which sizes its box from the string's byte length and hands back what it did not use, so the
+result stops exactly where the answer does.
+
+**It is the odd one out in this sweep, and the reason is that its count is known.** `join`
+and `render` accumulate something whose size nobody can predict, which is what makes a
+doubling buffer the right shape for them. `to_runes` knows its answer's length before it
+starts — `len()` is O(1), maintained arithmetically — so it never needed a builder at all.
+
+**Which made the obvious third shape worth trying, and it lost.** Allocating the exact size
+up front and filling by index — `var out: []rune = [' '; self.len()]` then
+`for i, c in self { out[i] = c }` — is one allocation of exactly n, no reallocation and no
+shrink, and it is the *slowest* of the three: 198 µs against 142 for the comprehension on
+328k ASCII runes, and 571 against 339 on 360k multi-byte ones. The repeat form writes every
+slot before the loop overwrites it, and the indexed store is bounds-checked where the
+comprehension's is not. "One allocation of exactly the right size" turned out to be the wrong
+thing to optimize for; two passes cost more than the allocator did.
+
+So the comprehension wins on both counts — 142 µs against 152 for the push loop on ASCII,
+212 against 247 on 131k CJK runes, and exact memory instead of up to double. The margin is
+small; the shape is the point.
+
+**Found on the way:** `'\0'` is a syntax error. The rune escape set in the grammar is
+`abefnrtv\'"` — C's, minus `0` — so `'\n'`, `'\e'`, `'\x00'` and `'\o000'` all work and the
+NUL shorthand does not. Worse, it misreports: `['\0'; n]` complains that a
+`StaticArray<AnonymousTuple(), 2>` cannot be assigned to a `DynamicArray<rune>`, because the
+unparsed literal leaves the repeat expression parsed as something else entirely. Filed
+separately, since it is a grammar change with its own push ordering, and since the current
+set may well be deliberate.
+
 ### 08/30/26 — `render` accumulates bytes, and the measurement moved the decision twice
 
 The same `++` quadratic as `join`, in `std.tui`'s frame diff: a full redraw accumulated the

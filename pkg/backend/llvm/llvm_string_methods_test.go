@@ -842,6 +842,50 @@ let main = () -> void => {
 	}
 }
 
+// `to_runes` is a comprehension (08/30), so its box is sized from the string's **byte**
+// length and then shrunk to the rune count — where it used to be a `push` loop that reached
+// the count by doubling and kept up to twice it. These cover what that swap puts at risk.
+
+// **The result is a live array after the shrink.** The shrink rewrites the box's capacity
+// as well as its buffer, and `push` reads that capacity to decide whether to grow — so a
+// caller who pushes onto what `to_runes` handed back is the shape that corrupts if the
+// field is left stale. Multi-byte, so the shrink actually fires: 9 bytes down to 3 runes.
+func TestExec_ToRunesResultCanBePushedOnto(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var rs = "日本語".to_runes();
+  rs.push('!');
+  rs.push('?');
+  println("${rs.len()} ${rs[0]} ${rs[2]} ${rs[3]} ${rs[4]}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "5 日 語 ! ?" {
+		t.Errorf("to_runes then push: %q; want %q", got, "5 日 語 ! ?")
+	}
+}
+
+// A string long enough that the fill loop runs well past any inline or first-bucket case,
+// mixing widths so the byte-length capacity overshoots the rune count by a varying amount.
+// Checked at both ends and in the middle, since a fill that stops early or a shrink that
+// moves the buffer without storing it back reads as a truncation or as garbage.
+func TestExec_ToRunesLongMixedWidthString(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var s = "aé日"
+  for _ in 0..<10 { s = s ++ s }   // 3072 runes, 6144 bytes
+  let rs = s.to_runes();
+  println("${rs.len()} ${rs[0]} ${rs[1]} ${rs[2]} ${rs.from_end(1)}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "3072 a é 日 日" {
+		t.Errorf("to_runes on a long string: %q; want %q", got, "3072 a é 日 日")
+	}
+}
+
 // `split` on an empty separator **traps**, naming `to_runes` as the fix.
 //
 // A zero-span match can never advance the cursor, so before the guard this looped
