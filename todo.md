@@ -3931,11 +3931,30 @@ What is left:
   it is the cleanest win of the sweep: no regression at any width, and 12.6x on `box_top`,
   38x on `box_row` and 52x on `fit` at 400 columns.
 
-  Whether a general `StringBuilder` is worth a nominal type for something `[]u8` already is
-  stays open — but four of the five sites that motivated it are now written, each in two or
-  three lines of ordinary Lyra over the seam, which is evidence against the type rather than
-  for it. `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where
-  it goes.
+  **[DECIDED 08/30] No `StringBuilder` type.** A builder would be a nominal wrapper around a
+  `[]u8` that already grows by doubling, already carries a length, and can already be decoded
+  — a name and a constructor buying nothing that is not there. What the five sites shared was
+  not a type, it was one *operation*: append a string's bytes to a byte buffer, spelled
+  `for b in s.encode_utf8() { bytes.push(b) }` six times across `join` and `render`. That is
+  now `push_utf8` in the prelude, and the idiom appears exactly once in the standard library
+  — inside `push_utf8` itself.
+
+  It is a **seam and not only a shorthand**, which is the part worth keeping. The bytes still
+  go in one at a time through `push`, and a per-byte push is about 25x slower than a memcpy:
+  measured, a 2 KB piece copies in 39 ns and pushes in 1,183, and the copy side is flat in
+  the piece's size where the push side is linear. Closing that needs a builtin, since nothing
+  in the language can copy a run of bytes — and when one lands, `push_utf8`'s body changes
+  and no caller does.
+
+  **The open item is therefore a builtin, not a type.** `bytes.append_utf8(s)` — one capacity
+  check, one grow, one memcpy, and no `[]u8` temporary per piece. It qualifies under the rule
+  that admitted `encode_utf8` (a builtin is what cannot be written in the language; anything
+  else goes in the prelude), and the case for it is already measured: `render`'s steady state
+  is 13% slower than the `++` version it replaced *because* of this loop, which is the one
+  regression in the whole sweep. The rest is upside — `join` and `repeat` spend most of their
+  remaining time there.
+
+  `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where it goes.
 
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
   `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an

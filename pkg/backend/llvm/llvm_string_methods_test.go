@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -959,5 +960,83 @@ let main = () -> void => {
 	want := "TTTTTTTT"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
 		t.Errorf("rune-count ledger = %q; want %q", got, want)
+	}
+}
+
+// `push_utf8` — appending a string's bytes to a byte buffer, which is the one operation
+// every string-building site in the standard library shares, and the answer to whether
+// Lyra wants a `StringBuilder` type (08/30: it does not — what the sites shared was an
+// operation, not a type).
+func TestExec_PushUtf8(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var bytes: []u8 = []
+  bytes.push_utf8("hello")
+  bytes.push_utf8(", ")
+  bytes.push_utf8("wörld")     // multi-byte, so byte and rune counts differ
+  bytes.push_utf8("")           // an empty piece contributes nothing
+  bytes.push_utf8("日本語")
+  let s = bytes.decode_utf8()
+  print("${s} | ${s.len()} ${s.byte_len()} ${bytes.len()}")
+}
+`
+	// "hello, wörld日本語" is 15 runes: 5 + 2 + 5 + 3. In bytes it is 22 — ö is two and each
+	// CJK rune is three — which is the point of asserting both counts.
+	want := "hello, wörld日本語 | 15 22 22"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("push_utf8 = %q; want %q", got, want)
+	}
+}
+
+// It appends rather than replacing, across the buffer's reallocations — 400 pieces of 5
+// bytes doubles the buffer about nine times from its floor of four, and a lost realloc
+// truncates while a mis-stored one corrupts the seam between two pieces.
+func TestExec_PushUtf8AcrossReallocations(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var bytes: []u8 = []
+  for i in 0..<400 { bytes.push_utf8("ab${i % 10}, ") }
+  let s = bytes.decode_utf8()
+  print("${s.len()} ${s.slice(0, 5)} ${s.slice(s.len() - 5, s.len())}")
+}
+`
+	// 400 pieces of 5 runes each; the first is "ab0, " and the last "ab9, " (399 % 10 == 9).
+	// The last piece's trailing space is trimmed off the captured output with the newline.
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "2000 ab0,  ab9," {
+		t.Errorf("push_utf8 across reallocations = %q; want %q", got, "2000 ab0,  ab9,")
+	}
+}
+
+// The receiver must be mutable, by the same rule and the same diagnostic as `xs.push(v)` —
+// it writes through the buffer, so a `let` binding is refused.
+func TestExec_PushUtf8NeedsAMutableReceiver(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let bytes: []u8 = []
+  bytes.push_utf8("no")
+}
+`
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "app.lyra")
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, diags := modules.Resolve(entry, []string{dir, repoStdRoot(t)},
+		modules.Options{Prelude: modules.PreludeModule})
+	if len(diags) != 0 {
+		t.Fatalf("resolve: %v", diags)
+	}
+	res := driver.AnalyzeUnits(units)
+	if !res.HasErrors() {
+		t.Fatal("expected an immutable receiver to be refused")
+	}
+	if got := fmt.Sprint(res.Errors()); !strings.Contains(got, "immutable") {
+		t.Errorf("expected the diagnostic to name immutability, got %v", got)
 	}
 }

@@ -84,17 +84,15 @@ pub let render = (self: mut Renderer, rows: []string) -> void => {
   // is on the case that cannot.
   var bytes: []u8 = []
   let n = rows.len()
-  // Hoisted: the row separator is the same two bytes every time.
-  let newline = "\r\n".encode_utf8()
   for i in 0..<n {
     if self.row_changed(i, rows[i]) {
       // Start a run here, then extend it over every following row that also changed. The
       // position is written once for the whole run.
-      for b in at(0, i).encode_utf8() { bytes.push(b) }
+      bytes.push_utf8(at(0, i))
       for j in i..<n {
         if !self.row_changed(j, rows[j]) { break }
-        if j > i { for b in newline { bytes.push(b) } }
-        for b in rows[j].encode_utf8() { bytes.push(b) }
+        if j > i { bytes.push_utf8("\r\n") }
+        bytes.push_utf8(rows[j])
         self.mark(j, rows[j])
       }
     }

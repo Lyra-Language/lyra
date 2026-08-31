@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — No `StringBuilder`: the five sites shared an operation, not a type
+
+The question the string-building sweep left open, settled. A builder would be a nominal type
+wrapping a `[]u8` that already grows by doubling, already has a length, and can already be
+decoded to a string — a name and a constructor for something that exists. The evidence is
+what the sites turned out to have in common: not a type, but a single *operation*, `for b in
+s.encode_utf8() { bytes.push(b) }`, written six times across `join` and `render`. Six copies
+of one line is an argument for a function, and the function is `push_utf8`. The idiom now
+appears exactly once in the standard library — inside `push_utf8` itself.
+
+**Hoisting was the thing to check, and it turned out not to matter.** Both sites had lifted
+the separator's encode out of the loop (`join`'s `sb`, `render`'s `newline`), and going
+through `push_utf8` gives that up — the temporary is allocated per call. Measured, it costs
+nothing: `join` is 87/328/1147 µs over 600/2400/9600 parts against 100/339/1134 hoisted, and
+`render` came out slightly *ahead* on both the steady state (2074 → 2032 ns) and a full
+redraw. A two-byte allocation and free is cheaper than the code it was hiding from.
+
+**What it deliberately is not is a fix.** The bytes still go in one at a time, and a per-byte
+push is about 25x slower than a memcpy: a 2 KB piece copies in 39 ns and pushes in 1,183, and
+the copy side is *flat* in the piece's size where the push side is linear. So `push_utf8` is
+a **seam**: when a bulk-append builtin lands, its body changes and no caller does. That is
+the argument for writing it now rather than after — it is the shape the fix will need, and
+today it is also the shape a reader wants.
+
+**The open item is therefore a builtin, not a type**, and it is already justified by a number
+this sweep produced rather than a guess: `render`'s steady state is 13% slower than the `++`
+version it replaced *because* of this loop — the one regression in the whole sweep, and the
+one thing a bulk append would erase. `bytes.append_utf8(s)`, one capacity check and one
+memcpy, qualifies under exactly the rule that admitted `encode_utf8`: a builtin is what
+cannot be written in the language, and everything else goes in the prelude.
+
 ### 08/30/26 — The typed-nil crash, closed in three places instead of thirty
 
 An audit of the collectors that share the rune literal's crash shape. The number I gave
