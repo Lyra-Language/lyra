@@ -658,3 +658,32 @@ let main = () -> void => { let xs: []i64 = [1, 2]; xs.clear() }
 		t.Errorf("expected the interior-immutability diagnostic; got: %s", diags[0])
 	}
 }
+
+// **`[v; n]` then `clear()` is the capacity spelling**, and the reason there is no
+// `reserve`: the repeat form allocates n in one go and `clear` gives back the length
+// without the memory. Pinned because it is a *composition* rather than a feature — two
+// builtins that each have their own reason to exist happen to make a third thing, and
+// nothing would fail if `clear` started dropping the buffer except this.
+func TestExec_RepeatThenClearIsASizedEmptyBuffer(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var b: []u8 = [0; 1024]
+  b.clear()
+  b.push_utf8("hi")
+  var xs: []i64 = [0; 100]
+  xs.clear()
+  xs.push(7)
+  // A managed element type works too: [v; n] retains per slot and clear releases per
+  // slot, so the two balance however many were made.
+  var ss: []string = [""; 10]
+  ss.clear()
+  ss.push("a")
+  print("${b.len()} ${b.decode_utf8()} ${xs.len()} ${xs[0]} ${ss.len()} ${ss[0]}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "2 hi 1 7 1 a" {
+		t.Errorf("sized empty buffers = %q; want %q", got, "2 hi 1 7 1 a")
+	}
+}

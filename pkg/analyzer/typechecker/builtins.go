@@ -342,6 +342,19 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 	// It **allocates nothing**, so unlike `push` it is `noalloc`-legal: clearing and
 	// refilling a buffer a `noalloc` function was handed is refused at the refill, which
 	// is where the allocation actually is.
+	//
+	// **It is also the capacity spelling**, which is why there is no `reserve`:
+	//
+	//	var buf: []u8 = [0; 4096]   // one allocation, exactly this size
+	//	buf.clear()                 // ...now empty, and still exactly this size
+	//
+	// `[v; n]` allocates n in one go and `clear` gives back the length without the memory,
+	// so a buffer that knows its size is two lines and no new feature. Measured filling
+	// 6 MB by appending, that is 776 µs growing against 231 pre-sized — and the pre-sized
+	// side is paying for n wasted stores it does not need, which a real `reserve` would
+	// not. Whether that last increment is worth a builtin is open (todo.md); nothing in
+	// the tree builds a buffer big enough to notice, and `zlib.lyra` already writes
+	// `[0; cap]` for the same reason.
 	if _, ok := recv.(types.DynamicArrayType); ok && name == "clear" {
 		return &types.LambdaType{
 			ReturnType: types.ReturnType{Type: types.VoidType{}},

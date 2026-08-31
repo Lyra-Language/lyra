@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — The capacity spelling was already there, and its motivating caller was not
+
+Investigating the last open item retired it. `[v; n]` then `clear()` **is** a sized empty
+buffer — the repeat form allocates n in one go and `clear` hands back the length without the
+memory — so two builtins that each landed for their own reason compose into the third thing,
+for any element type, with no new feature. `zlib.lyra` already writes `[0; cap]` for the same
+purpose. A test pins the composition, because nothing else in the suite would fail if `clear`
+ever started dropping the buffer.
+
+**And `join`, which was the whole reason to want it, cannot use it.** Sizing `join` means
+summing `self[i].show().byte_len()`, and `show` is user code: calling it twice per element
+makes the call count a detail of the prelude, which is exactly the objection that refused a
+counting pre-pass for `filter` back on 08/04. The same rule, met from the other direction, a
+month apart. Materializing the shown strings first avoids the double call and costs an array.
+
+The ceiling was small anyway, which is worth having measured rather than assumed: pre-sizing
+`join` is 130 µs against 129 at 9,600 parts, and 268 against 294 at 38,400 — 0 to 9%.
+
+**Growth is not free, though, and that is why the item stays open rather than closing.**
+Isolated from everything that dilutes it, filling 6 MB by appending is 776 µs growing against
+231 pre-sized — 3.4x, unbounded in the size, and the pre-sized side is *still* paying n wasted
+stores that a real `reserve` would not. The spelling has two warts on top: it wants a fill
+value for something about to be empty, and on an aggregate element type it trips `lyra-W019`'s
+shared-reference warning on values discarded a line later.
+
+So the case for a `reserve` builtin is real and the case against is that **nothing in the tree
+builds a buffer within two orders of magnitude of where it matters**. Every in-tree builder
+either knows its exact size and says so (`zlib`), accumulates a short `[]string` (`mandelbrot`,
+`life`, the viewers), or reuses one buffer (`render`, since `clear`). Adding a primitive with
+no user is what the `random_seed` rule exists to stop, so this is written down with its
+trigger rather than built: a program that appends its way to a multi-megabyte buffer.
+
 ### 08/30/26 — `clear()`: the regression was never about copying
 
 The last 8%, and the diagnosis mattered more than the fix. `render`'s steady state had been

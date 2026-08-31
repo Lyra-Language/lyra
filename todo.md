@@ -3968,11 +3968,32 @@ What is left:
   Three rounds of making the copy faster never reached a cost that was not copying. That is
   the transferable part.
 
-  Still unbuilt, and now wanted for one-shot builds rather than for reuse: a **capacity
-  spelling** (`reserve(n)`, or a sized constructor). `join` knows its output's byte length
-  before it starts — the parts' lengths sum — so it could allocate once instead of growing
-  through log n reallocations, and every `[v; n]`-shaped build is the same case. `clear`
-  serves the loop; this would serve the single pass.
+  **[DECIDED 08/30] The capacity spelling already exists, and `join` cannot use it anyway.**
+
+      var buf: []u8 = [0; 4096]   // one allocation, exactly this size
+      buf.clear()                 // ...now empty, and still exactly this size
+
+  `[v; n]` allocates n in one go and `clear` returns the length without the memory, so two
+  builtins that each exist for their own reason compose into the third thing. It works for
+  any element type, `zlib.lyra` already writes `[0; cap]` for the same purpose, and a test
+  pins the composition since nothing else would fail if `clear` started dropping the buffer.
+
+  **`join` was the motivating caller and is not a caller.** Sizing it means summing
+  `self[i].show().byte_len()`, and `show` is user code — calling it twice per element makes
+  the call count a detail of the prelude, which is the objection that refused a counting
+  pre-pass for `filter` on 08/04. Materializing the shown strings into an array first avoids
+  that and costs an array. So the size is not cheaply knowable, and the ceiling if it were is
+  small: pre-sizing measured 130 µs against 129 at 9,600 parts, and 268 against 294 at
+  38,400.
+
+  **A `reserve` builtin stays open, with a narrow case and no caller.** Growth is not free at
+  scale — filling 6 MB by appending is 776 µs growing against 231 pre-sized, a 3.4x, and the
+  pre-sized side is *still* paying n wasted stores that a real `reserve` would not. Two warts
+  of the spelling would also go: it needs a fill value for something about to be empty, and
+  on an aggregate element type it trips `lyra-W019`'s shared-reference warning on values that
+  are discarded a line later. What is missing is a program that wants it. Nothing in the tree
+  builds a buffer within two orders of magnitude of where this matters, and adding a primitive
+  with no user is the thing the `random_seed` rule exists to stop.
 
   `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where it goes.
 
