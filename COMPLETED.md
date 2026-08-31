@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — `rule` and `fit`: knowing the size lets you skip the builder entirely
+
+The last two `out = out ++ …` sites, and the cleanest result of the sweep — **no regression
+at any width, and 12.6x on `box_top`, 38x on `box_row`, 11.6x on `box_top_titled` and 52x on
+`fit` at 400 columns**, with everything still 4.6x to 12x faster at 80.
+
+**The to-do note about them was wrong, and usefully so.** It said these want the `to_runes`
+treatment rather than the `join` one — small payload, known count — but then that "their
+result is a *string*, and a string cannot be sized up front the way a `[]rune` can", so they
+needed "a `[c; n]`-to-string path that does not exist". It does exist, and it is the seam
+again: `[b; n]` builds the `[]u8` and `decode_utf8` names it a string. The note was written
+while looking at the string half of the problem.
+
+Both go through one `repeat(piece, n)` in text.lyra, private to `std.tui` (both files are the
+same directory module, so `box.lyra` needs no import). It has two branches, and the numbers
+are why:
+
+- **A single-byte piece** — `" "`, and every ASCII one — is the repeat form directly: one
+  allocation, one fill, no index arithmetic. 400 spaces in 126 ns against 9,759.
+- **Anything wider** is a comprehension over two generators (`[j in 0..<n, k in 0..<w |
+  bytes[k]]`), capacity exactly `n * w`, guard-free so no shrink. 400 `─` in 900 ns against
+  13,216. A single generator with `bytes[i %% w]` measured the same to within noise and reads
+  worse.
+
+The single-byte branch earns its case: 3.7x over the general one at 400 columns, and it is
+the branch `fit` always takes.
+
+**One regression was introduced and caught by reading the call sites.** Rewriting `fit` as
+`text ++ repeat(" ", width - text.len())` makes an already-correct-width string pay a `++`
+with an empty pad, and `++` copies whatever it is handed. That is not a degenerate case:
+`box_top_titled` fits its title to `title.len().min(room)`, which *is* exactly this case on
+every title that fits. An `else if text.len() == width { text }` branch handles it.
+
+Four of the five sites that motivated a `StringBuilder` are now written, each in two or three
+lines of ordinary Lyra over `encode_utf8`/`decode_utf8` — evidence against the nominal type
+rather than for it.
+
 ### 08/30/26 — `to_runes` is a comprehension: the one in the sweep that is not a builder
 
 It was a `push` loop from empty, so it reached n by doubling and kept up to 2n — the same

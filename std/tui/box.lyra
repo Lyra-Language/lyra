@@ -69,11 +69,10 @@ pub let box_top_titled = pure (title: string, width: i64) -> string => {
 
 /// `n` horizontal rule characters, or the empty string when `n` is not positive — a box
 /// exactly two columns wide has no interior, which is a real box and not an error.
-let rule = pure (n: i64) -> string => {
-  var out = ""
-  for _ in 0..<n { out = out ++ "─" }
-  out
-}
+///
+/// `repeat` (text.lyra) is where the building happens, and both halves of the empty answer
+/// are its: a non-positive `n` and a zero-width interior are the same call.
+let rule = pure (n: i64) -> string => repeat("─", n)
 
 /// The interior width — what is left after the two borders — having checked there is room
 /// for them.

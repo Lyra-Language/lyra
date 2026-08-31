@@ -538,3 +538,80 @@ let main = () -> void => {
 		t.Errorf("frame ends %q; want the last row intact", frame[len(frame)-12:])
 	}
 }
+
+// `fit` and `rule` build their padding through one `repeat` helper (text.lyra, 08/30),
+// which assembles bytes and decodes once rather than growing a string a character at a
+// time. The box tests above pin the exact widths; these cover what the byte path and the
+// two branches inside `repeat` newly put at risk.
+
+// **The multi-byte branch.** A `─` is three bytes, so the pad is built by a two-generator
+// comprehension rather than the single-byte repeat form. Width is counted in *runes*, so
+// the assertion is the rune length as well as the bytes — a pad built per byte that
+// reported per byte would give a rule three times too long and still look plausible.
+func TestExec_RuleIsExactAtWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ box_top }
+let main = () -> void => {
+  let wide = box_top(60)
+  print("${wide.len()} ${wide[0]} ${wide[1]} ${wide.from_end(1)}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "60 ┌ ─ ┐" {
+		t.Errorf("box_top(60) = %q; want %q", got, "60 ┌ ─ ┐")
+	}
+}
+
+// **The single-byte branch**, which is the one `fit` always takes, and the rune count
+// again: padding a multi-byte string to a width must count the pad in columns, not bytes.
+func TestExec_FitPadsMultiByteTextToRuneWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ fit }
+let main = () -> void => {
+  let padded = fit("héllo", 10)
+  print("[${padded}] ${padded.len()} ${padded.byte_len()}")
+}
+`, "")
+	// 10 runes; "héllo" is 6 bytes, plus 5 spaces is 11.
+	if got := strings.TrimSpace(out); got != "[héllo     ] 10 11" {
+		t.Errorf("fit = %q; want %q", got, "[héllo     ] 10 11")
+	}
+}
+
+// Text already at the width is returned as it is, rather than concatenated with an empty
+// pad — `++` allocates and copies whatever it is handed. `box_top_titled` reaches this on
+// every title that fits, since it fits to `title.len().min(room)`.
+func TestExec_FitAtExactWidthIsUnchanged(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ fit }
+let main = () -> void => {
+  print("[${fit("exact", 5)}][${fit("日本", 2)}][${fit("", 0)}]")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "[exact][日本][]" {
+		t.Errorf("fit at exact width = %q; want %q", got, "[exact][日本][]")
+	}
+}
+
+// A non-positive count is the empty string and not a trap, which matters because the
+// repeat form traps on a negative one — the guard in `repeat` is what stands between. A
+// two-column box has a zero interior and a title with no room left has a negative one.
+func TestExec_RuleOfNonPositiveWidthIsEmpty(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ box_top, box_top_titled }
+let main = () -> void => {
+  print("[${box_top(2)}][${box_top_titled("Title", 7)}][${box_top_titled("Title", 8)}]")
+}
+`, "")
+	// width 7: room is 2, the title cuts to "Ti", and the rule gets 0.
+	if got := strings.TrimSpace(out); got != "[┌┐][┌─ Ti ┐][┌─ Tit ┐]" {
+		t.Errorf("degenerate rules = %q; want %q", got, "[┌┐][┌─ Ti ┐][┌─ Tit ┐]")
+	}
+}

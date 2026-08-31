@@ -3924,12 +3924,18 @@ What is left:
   tried and is **worse** — 198 µs against 142 on 328k ASCII runes — because the repeat form
   fills every slot before the loop overwrites it, and the indexed write is bounds-checked.
 
-  What is left is `rule`/`fit` in `std.tui`, which build a repeated character per row per
-  frame. They are the `to_runes` case, not the `join` case: small payload, known count. But
-  their result is a *string*, and a string cannot be sized up front the way a `[]rune` can —
-  so they want either a byte buffer or a `[c; n]`-to-string path that does not exist. Whether
-  a general `StringBuilder` is worth a nominal type for something `[]u8` already is stays
-  open, and is now a smaller question than it was.
+  `rule` and `fit` closed it on 08/30, and the note above them here was wrong: it said a
+  string cannot be sized up front the way a `[]rune` can, and wanted "a `[c; n]`-to-string
+  path that does not exist". It does exist — `[b; n]` builds the `[]u8` and `decode_utf8`
+  names it a string, which is the seam again. Both now go through one `repeat` helper, and
+  it is the cleanest win of the sweep: no regression at any width, and 12.6x on `box_top`,
+  38x on `box_row` and 52x on `fit` at 400 columns.
+
+  Whether a general `StringBuilder` is worth a nominal type for something `[]u8` already is
+  stays open — but four of the five sites that motivated it are now written, each in two or
+  three lines of ordinary Lyra over the seam, which is evidence against the type rather than
+  for it. `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where
+  it goes.
 
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
   `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an
