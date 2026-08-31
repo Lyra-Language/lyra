@@ -139,6 +139,17 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	case "push_utf8":
 		return l.lowerDynArrayPushUTF8(block, call, member)
 
+	case "reserve":
+		// Falls through on a non-dynamic receiver: `reserve` is an ordinary method name a
+		// user type may also have, the same courtesy `offset` and `clear` get.
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
+		}
+		if dyn, ok := l.resolveForLayout(t).(types.DynamicArrayType); ok {
+			return l.lowerDynArrayReserve(block, call, member, dyn)
+		}
+
 	case "clear":
 		// `clear` is an ordinary method name a user type may also have, so a non-dynamic
 		// receiver falls through rather than erroring, as `offset` does.

@@ -573,6 +573,77 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 	return nil, storeBlock, nil
 }
 
+// lowerDynArrayReserve lowers `xs.reserve(n)`: one realloc to exactly n elements when the
+// buffer holds fewer, and nothing at all when it already holds enough.
+//
+// **To exactly n, not to double.** `push` doubles because it adds one element and cannot
+// know what follows; a caller writing `reserve(n)` has just said what follows. Growing
+// further would be spending memory the caller did not ask for on a guess it already
+// answered.
+//
+// **The length is untouched**, which is the whole difference from `[v; n]`. That form
+// allocates n and then *fills* it, so the n slots exist as values a caller must clear away;
+// this leaves the array exactly as long as it was and only widens the room behind it.
+//
+// **It never shrinks.** `reserve` is a floor, so a smaller n than the current capacity is a
+// no-op rather than a request to give memory back — a caller who has 4 KB and asks for room
+// for 16 elements has not asked to free anything, and a shrink here would silently
+// invalidate a `data()` pointer that the reading of "reserve" does not warn about.
+//
+// A negative n traps, on the same rule and through the same trap as `[v; n]`'s runtime
+// count: a negative length is a caller bug, and the alternative is a `realloc` of a
+// sign-extended enormous size.
+func (l *lowerer) lowerDynArrayReserve(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, dyn types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: reserve() expects 1 argument, got %d", len(call.Arguments))
+	}
+	elemLyra := dyn.ElementType
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, nil, err
+	}
+	elemSize, elemAlign, ok := SizeAndAlign(l.resolveForLayout(elemLyra))
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", elemLyra)
+	}
+	stride := int64(alignUp(elemSize, elemAlign))
+
+	box, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(box, block) {
+		return nil, block, nil
+	}
+	want, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(want, block) {
+		return nil, block, nil
+	}
+	signed, _ := l.getIntSignedness(call.Arguments[0])
+	n := coerceIntWidth(block, want, signed, lltypes.I64)
+	block = l.emitTrapIf(block, block.NewICmp(enum.IPredSLT, n, i64c(0)), l.panicNegativeLengthFunc())
+
+	boxTy := DynArrayBoxType(elemLL)
+	elemPtrTy := lltypes.NewPointer(elemLL)
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+
+	fn := block.Parent
+	grow := fn.NewBlock("")
+	done := fn.NewBlock("")
+	capacity := block.NewLoad(lltypes.I64, dynArrayCapPtr(block, boxTy, box))
+	block.NewCondBr(block.NewICmp(enum.IPredSLT, capacity, n), grow, done)
+
+	oldBuf := grow.NewLoad(elemPtrTy, dynArrayElemsPtr(grow, boxTy, box))
+	newBuf := grow.NewCall(l.reallocFunc(), grow.NewBitCast(oldBuf, i8ptr), grow.NewMul(n, i64c(stride)))
+	grow.NewStore(grow.NewBitCast(newBuf, elemPtrTy), dynArrayElemsPtr(grow, boxTy, box))
+	grow.NewStore(n, dynArrayCapPtr(grow, boxTy, box))
+	grow.NewBr(done)
+	return nil, done, nil
+}
+
 // lowerDynArrayClear lowers `xs.clear()`: release the live elements, set the length to
 // zero, and **keep the buffer**.
 //

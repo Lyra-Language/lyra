@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — `reserve` built anyway: the argument against it is unchanged
+
+The entry below recommended not building this, and the recommendation was overruled by the
+person whose language it is. Recording both, because the reasoning did not turn out to be
+wrong — it turned out not to be decisive.
+
+**What still holds:** no program in the tree wants it. It ships with no caller, which is the
+thing the `random_seed` rule exists to prevent, and `join` — the motivating caller — still
+cannot size itself without calling `show` twice per element.
+
+**What it buys, measured on a raw buffer fill:**
+
+    64 KB     11 us grown    6 us composed    6 us reserved
+    640 KB    48 us          47 us            42 us
+    6 MB    1203 us         531 us           417 us
+    64 MB   6780 us        3536 us          2318 us
+
+2.9x over growing by doubling, and **1.5x over the `[v; n]` + `clear()` composition** at
+64 MB. That second column is the interesting one: the composition was the reason to argue
+against the builtin, and the gap to it is exactly the n zero-stores the repeat form makes
+into slots it forgets a line later. Two smaller warts go with them — a fill value demanded
+for something about to be empty, and a `lyra-W019` about sharing values that are discarded
+immediately.
+
+**Four decisions inside it, each with a reason that is not "whatever push does".** It grows
+to *exactly* n rather than doubling, because `push` doubles for want of knowing what is
+coming and a caller writing `reserve(n)` has just said. It never shrinks: `reserve` reads as
+a floor, and a shrink would silently invalidate a `data()` pointer on a call that looks like
+it does nothing. It leaves the length alone, which is the whole difference from `[v; n]`. And
+a negative n traps through the trap `[v; n]`'s runtime count already uses, rather than
+reaching `realloc` with a sign-extended enormous size that fails in a way unrelated to the
+mistake.
+
+The honest summary is that this is a good primitive with no user today, built on the judgment
+that the language should have it before the program that needs it arrives rather than after.
+
 ### 08/30/26 — The capacity spelling was already there, and its motivating caller was not
 
 Investigating the last open item retired it. `[v; n]` then `clear()` **is** a sized empty

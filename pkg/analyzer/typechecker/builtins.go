@@ -360,6 +360,32 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			ReturnType: types.ReturnType{Type: types.VoidType{}},
 		}, true
 	}
+	// `xs.reserve(n)` — make room for at least n elements, without adding any.
+	//
+	// **The buffer is grown to exactly what is asked**, not doubled: `push` doubles because
+	// it adds one element and cannot know what is coming, and a caller who says `reserve(n)`
+	// has just said. Already having room is a no-op, and the length never changes — this
+	// buys capacity, which is memory, not values.
+	//
+	// **`[v; n]` then `clear()` does the same thing in ordinary Lyra**, and that composition
+	// is why this was argued against before it was built (todo.md). What it costs is the n
+	// stores the repeat form makes into slots about to be forgotten, a fill value for
+	// something that is about to be empty, and — on an aggregate element type — a
+	// `lyra-W019` about sharing values that are discarded a line later. This is the same
+	// operation with none of the three: one realloc, no writes, no value.
+	//
+	// **It invalidates a pointer taken from `data()`**, exactly as `push` does and for the
+	// same reason: the buffer may move. That is the standing rule for a `[]T`'s address, not
+	// a new hazard.
+	//
+	// A negative n traps (`panicNegativeLengthFunc`), which is the rule `[v; n]` already
+	// follows at run time.
+	if _, ok := recv.(types.DynamicArrayType); ok && name == "reserve" {
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.Int64}}},
+			ReturnType: types.ReturnType{Type: types.VoidType{}},
+		}, true
+	}
 	// `bytes.push_utf8(s)` — a string's bytes appended to a `[]u8`, in **one memcpy**.
 	//
 	// **A builtin because nothing in the language can copy a run of bytes.** It shipped
@@ -663,7 +689,7 @@ func builtinMethodAllocates(recv types.Type, name string) bool {
 	// call — amortized doubling means most pushes are a store — but `noalloc` is a
 	// static promise about what a function may do, not a statistical one, so a call
 	// that can allocate counts.
-	if name == "push" || name == "push_utf8" {
+	if name == "push" || name == "push_utf8" || name == "reserve" {
 		if _, isDyn := recv.(types.DynamicArrayType); isDyn {
 			return true
 		}

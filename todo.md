@@ -3986,14 +3986,25 @@ What is left:
   small: pre-sizing measured 130 µs against 129 at 9,600 parts, and 268 against 294 at
   38,400.
 
-  **A `reserve` builtin stays open, with a narrow case and no caller.** Growth is not free at
-  scale — filling 6 MB by appending is 776 µs growing against 231 pre-sized, a 3.4x, and the
-  pre-sized side is *still* paying n wasted stores that a real `reserve` would not. Two warts
-  of the spelling would also go: it needs a fill value for something about to be empty, and
-  on an aggregate element type it trips `lyra-W019`'s shared-reference warning on values that
-  are discarded a line later. What is missing is a program that wants it. Nothing in the tree
-  builds a buffer within two orders of magnitude of where this matters, and adding a primitive
-  with no user is the thing the `random_seed` rule exists to stop.
+  **[DONE 08/30] `reserve` was built anyway, on the author's call.** The argument against was
+  that no program in the tree wants it, and that argument is unchanged — it ships with no
+  caller. The argument for is that growth is not free at scale and the composition above pays
+  n stores it does not need. Measured, filling by appending:
+
+      64 KB     11 us grown    6 us composed    6 us reserved
+      640 KB    48 us          47 us            42 us
+      6 MB    1203 us         531 us           417 us
+      64 MB   6780 us        3536 us          2318 us
+
+  2.9x over growing, and 1.5x over `[v; n]` + `clear` at 64 MB — that last gap is exactly the
+  n zero-stores the composition makes into slots it is about to forget. It also drops the
+  two warts: no fill value for something about to be empty, and no `lyra-W019` about sharing
+  values discarded a line later.
+
+  It grows to **exactly** n rather than doubling (a caller who says `reserve(n)` has said
+  what is coming), never shrinks (a floor, so a smaller n is a no-op rather than a silent
+  `data()` invalidation), leaves the length alone, and traps on a negative n through the same
+  trap `[v; n]` uses.
 
   `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where it goes.
 

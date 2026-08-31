@@ -687,3 +687,127 @@ let main = () -> void => {
 		t.Errorf("sized empty buffers = %q; want %q", got, "2 hi 1 7 1 a")
 	}
 }
+
+// `xs.reserve(n)` — room for at least n elements, without adding any (08/30). It was argued
+// against first, on the grounds that `[v; n]` then `clear()` already composes into a sized
+// buffer and nothing in the tree builds one big enough to care. What it buys over that
+// composition is the n stores the repeat form makes into slots about to be forgotten:
+// filling 64 MB by appending is 6,780 µs growing, 3,536 through the composition, 2,318
+// reserved.
+
+// It grows, keeps what is already there, and adds nothing — the length after a reserve is
+// the length before it, which is the whole difference from `[v; n]`.
+func TestExec_ReserveGrowsWithoutAddingElements(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var xs: []i64 = [1, 2, 3]
+  xs.reserve(1000)
+  xs.push(4)
+  var b: []u8 = []
+  b.reserve(4096)
+  b.push_utf8("hi")
+  print("${xs.len()} ${xs[0]} ${xs[3]} ${b.len()} ${b.decode_utf8()}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "4 1 4 2 hi" {
+		t.Errorf("reserve = %q; want %q", got, "4 1 4 2 hi")
+	}
+}
+
+// **It is a floor, never a shrink.** Asking for less room than the buffer already has is a
+// no-op — not a request to hand memory back, and above all not a truncation of the elements
+// living in it. A `reserve` that shrank would also invalidate a `data()` pointer on a call
+// that reads like it does nothing.
+func TestExec_ReserveNeverShrinksOrTruncates(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var xs: []i64 = []
+  xs.reserve(1000)
+  for i in 0..<10 { xs.push(i) }
+  xs.reserve(2)     // far below both the capacity and the length
+  xs.reserve(0)
+  xs.push(99)
+  print("${xs.len()} ${xs[0]} ${xs[9]} ${xs[10]}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "11 0 9 99" {
+		t.Errorf("reserve below the current size = %q; want %q", got, "11 0 9 99")
+	}
+}
+
+// A realloc may move the buffer, so managed elements have to arrive at the new address
+// intact — their boxes are not touched, only the pointers to them are copied, and nothing
+// is retained or released by a reserve.
+func TestExec_ReserveMovesManagedElements(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var ss: []string = []
+  for i in 0..<5 { ss.push("value ${i}") }
+  ss.reserve(100000)   // large enough that the buffer almost certainly moves
+  ss.push("after")
+  print("${ss.len()} ${ss[0]} ${ss[4]} ${ss[5]}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "6 value 0 value 4 after" {
+		t.Errorf("reserve with managed elements = %q; want %q", got, "6 value 0 value 4 after")
+	}
+}
+
+// A negative n traps, through the same trap `[v; n]`'s runtime count uses. The alternative
+// is a `realloc` of a sign-extended enormous size, which fails in a way that has nothing to
+// do with what the caller got wrong.
+func TestExec_ReserveOfANegativeCountTraps(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var xs: []i64 = []
+  var n = -1
+  xs.reserve(n)
+  println("unreachable")
+}
+`
+	stderr, code := buildAndRunPanic(t, src)
+	if code == 0 {
+		t.Fatal("a negative reserve must trap")
+	}
+	if !strings.Contains(stderr, "must not be negative") {
+		t.Errorf("expected the negative-length trap; got %q", stderr)
+	}
+}
+
+// `noalloc` refuses it — it exists to allocate. That is the one thing separating it from
+// `clear`, which writes a length and is therefore permitted.
+func TestCheck_ReserveIsRefusedByNoalloc(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let prep = pure noalloc (xs: mut []i64, n: i64) -> void => { xs.reserve(n) }
+let main = () -> void => { var a: []i64 = []; prep(a, 8) }
+`
+	if diags := checkWithPrelude(t, src); len(diags) == 0 {
+		t.Fatal("reserve allocates, so `noalloc` must refuse it")
+	}
+}
+
+// It writes the buffer pointer and the capacity, so an immutable receiver is refused by the
+// same predicate as `xs.push(v)`.
+func TestCheck_ReserveNeedsAMutableReceiver(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => { let xs: []i64 = [1, 2]; xs.reserve(64) }
+`
+	diags := checkWithPrelude(t, src)
+	if len(diags) == 0 {
+		t.Fatal("reserve writes through its receiver, so a `let` binding must be refused")
+	}
+	if !strings.Contains(diags[0], "deeply immutable") {
+		t.Errorf("expected the interior-immutability diagnostic; got: %s", diags[0])
+	}
+}
