@@ -22,7 +22,14 @@ func CollectExpressionStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	return nil
 }
 
+// CollectExpression dispatches on the node's kind, and is one of the three places where a
+// concrete collector result becomes an interface — so it is one of the three that must not
+// let a typed nil through. See ast.TrueNil.
 func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression {
+	return ast.TrueNil(collectExpressionByKind(node, ctx))
+}
+
+func collectExpressionByKind(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression {
 	if node == nil {
 		return nil
 	}

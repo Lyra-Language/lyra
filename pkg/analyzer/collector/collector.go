@@ -592,7 +592,14 @@ func (c *Collector) CollectExpr(node *sitter.Node) ast.Expression {
 	return expressions.CollectExpression(node, c.ctx)
 }
 
+// CollectStatement dispatches on the node's kind. Like CollectExpression, it converts a
+// concrete collector result into an interface, so it guards against a typed nil escaping —
+// see ast.TrueNil.
 func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
+	return ast.TrueNil(c.collectStatementByKind(node))
+}
+
+func (c *Collector) collectStatementByKind(node *sitter.Node) ast.Statement {
 	if node == nil {
 		return nil
 	}
@@ -1163,7 +1170,13 @@ func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Patt
 	return c.CollectPattern(patternNode.Child(0))
 }
 
+// CollectPattern dispatches on the node's kind, and is the third of the three interface
+// boundaries — see ast.TrueNil.
 func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
+	return ast.TrueNil(c.collectPatternByKind(patternNode))
+}
+
+func (c *Collector) collectPatternByKind(patternNode *sitter.Node) ast.Pattern {
 	loc := c.ctx.NodeLocation(patternNode)
 	switch patternNode.Kind() {
 	case "identifier":

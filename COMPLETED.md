@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — The typed-nil crash, closed in three places instead of thirty
+
+An audit of the collectors that share the rune literal's crash shape. The number I gave
+first was wrong and worth recording as a method note: a grep for files containing
+`return nil` reported six, and a grep for *functions* returning a concrete `*ast.T` that can
+return nil reported **thirty** — twenty of them feeding an interface (`ast.Expression`,
+`ast.Statement`, `ast.Pattern`), which is the shape that crashes.
+
+**None of the twenty was reachable, and the reason is structural rather than lucky.** Almost
+every one guards a *required grammar field* being nil, and tree-sitter never produces that:
+given `for i in 0..<3` with no body it emits `(block (ERROR (for_in_condition …)))` — there
+is no `for_in_loop` node at all. A node kind exists only when its rule matched, and a rule
+matches only when its required fields are present, so a partial construct becomes an `ERROR`
+the collector skips and the guard never runs.
+
+That is exactly why the rune literal was different. `char_literal` was a token whose
+*content* the grammar validated, so `'\q'` either matched and was well-formed or did not
+exist. Broadening the token created the one category these guards were written for and had
+never seen: **structurally valid, semantically unparseable**. The other route in is a
+sub-parse failing on a well-formed node — `parseType` returning nil on an unhandled kind, of
+which there are five — but three are declaration-only forms and two are wrappers, and the
+grammar will not accept `impl Show for struct { … }` in the first place.
+
+**Evidence, and the row that makes the others mean anything.** Thirty-four hand-written
+malformed shapes through `driver.Analyze`: no panic. 9,558 mutations of 33 real prelude and
+example files — every line prefix and every single-line deletion: no panic. Re-introducing
+the char-literal bug: **caught**, on exactly the `rune, illegal escape` case. A harness that
+cannot fail proves nothing, so it was made to fail on purpose first.
+
+**The fix is central because the alternative is a rule that can be forgotten once.** The
+three dispatchers that build an interface out of a concrete result now pass it through
+`ast.TrueNil`, which maps a nil pointer to a nil interface. Three places, not twenty, and a
+collector written next year is covered without knowing it exists. Reflection is the only way
+to ask that question of an interface value and it costs nothing measurable: over a
+1,600-line file, thirty checks a build, three rounds, 75.1/75.2/75.7 ms against
+75.2/75.0/75.6 — inside the noise, and faster in two rounds of three.
+
+**It prevents the crash without making the nil good, and the difference shows.** With the
+placeholder removed and only the dispatcher standing, `'\q'` no longer crashes — and reports
+three things again: the escape, the unused binding, the missing initializer. Hazard 3's
+advice to return a placeholder is what keeps that at one. The two layers do different jobs
+and both are wanted.
+
 ### 08/30/26 — A better message for a bad rune escape woke a crash that had always been there
 
 `'\q'` reported as a *syntax error* with two cascading type errors behind it, where `"\q"`

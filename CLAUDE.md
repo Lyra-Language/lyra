@@ -67,6 +67,22 @@ real failure, and none is local to one package.
    single bad escape reported the escape, then the unused binding, then the missing
    initializer.
 
+   **The crash itself is now closed structurally, and the rule survives it.** The three
+   dispatchers that turn a concrete collector result into an interface —
+   `CollectExpression`, `CollectStatement`, `CollectPattern` — pass everything through
+   `ast.TrueNil`, so a typed nil cannot escape any of the thirty-odd collectors that can
+   return one, including collectors written after this was. An audit on 08/30 found twenty
+   of them with the crash shape and none reachable, for a reason worth knowing: tree-sitter
+   recovers from a syntax error by emitting an `ERROR` node, **not** a partial named node, so
+   a guard on a missing required field never fires on anything a user can type. What woke the
+   rune literal was the opposite case — a node structurally valid but semantically
+   unparseable — which is what a token whose *content* the collector validates produces.
+   `pkg/driver/malformed_input_test.go` is the standing check.
+
+   `TrueNil` prevents the crash; it does not make the nil good. A placeholder is still the
+   better answer wherever there is a sensible one to return, because it is what keeps the
+   diagnostics honest.
+
 4. **Resolve top-level names only through the `Lookup*` accessors**, never by indexing
    `SymbolTable.Types`/`.Functions`/`.Traits`. Which declaration a name means depends on
    *which module is asking*, and a lookup scattered over dozens of sites cannot be taught
