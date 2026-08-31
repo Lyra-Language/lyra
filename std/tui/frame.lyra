@@ -61,23 +61,50 @@ pub let renderer = pure () -> Renderer => Renderer { prev: [] }
 /// Never traps. A frame with more or fewer rows than the last is handled by writing the
 /// rows that are new; see `invalidate` for what a *resize* needs on top of that.
 pub let render = (self: mut Renderer, rows: []string) -> void => {
-  var out = ""
+  // **Bytes, not `++`.** A string is immutable, so accumulating one copies everything
+  // written so far at every step and a whole frame costs O(size²); a `[]u8` grows by
+  // doubling, so the same bytes cost O(size) across every reallocation together. It is the
+  // shape `join` uses, and for the same reason — this file just cannot call `join`, since
+  // the pieces are decided one at a time by the diff rather than being an array to begin
+  // with. (Measured, and collecting the pieces into a `[]string` to hand to `join` was
+  // *slower* than `++` at 60x200: the piece array costs more at that size than the
+  // asymptotics save.)
+  //
+  // **It is a trade, not a free win, and the numbers are the argument.** What it removes is
+  // a full redraw's cost — a first frame, an `invalidate`, a resize, a scrolling band: at
+  // 60x200, 20 us -> 11 us, and at 120x400, 121 us -> 32 us. What it costs is the steady
+  // state, one row changing in a 60-row frame: 1813 ns -> 2045 ns, a reproducible 13%, from
+  // the extra allocations a small payload does not amortize (an `encode_utf8` per piece and
+  // a decode at the end, against two `++`s that were already about the right size).
+  //
+  // One full redraw pays for about forty steady-state frames at 60x200 and four hundred at
+  // 120x400, so anything that scrolls or resizes clears it immediately; a static viewer with
+  // a ticking status line pays 230 ns a frame, which is 0.0014% of a 60 fps budget. The
+  // asymptotics are on the side of the case that can grow without bound, and the regression
+  // is on the case that cannot.
+  var bytes: []u8 = []
   let n = rows.len()
+  // Hoisted: the row separator is the same two bytes every time.
+  let newline = "\r\n".encode_utf8()
   for i in 0..<n {
     if self.row_changed(i, rows[i]) {
       // Start a run here, then extend it over every following row that also changed. The
       // position is written once for the whole run.
-      out = out ++ at(0, i)
+      for b in at(0, i).encode_utf8() { bytes.push(b) }
       for j in i..<n {
         if !self.row_changed(j, rows[j]) { break }
-        if j > i { out = out ++ "\r\n" }
-        out = out ++ rows[j]
+        if j > i { for b in newline { bytes.push(b) } }
+        for b in rows[j].encode_utf8() { bytes.push(b) }
         self.mark(j, rows[j])
       }
     }
   }
   self.truncate(n)
-  if out != "" { print(out) }
+  // An unchanged frame writes nothing, exactly as before — `at` never returns the empty
+  // string, so an empty buffer means no run was ever started. The empty `[]u8` it allocated
+  // to find that out is the one thing this costs a no-change frame, against the `print` it
+  // still skips.
+  if bytes.len() > 0 { print(bytes.decode_utf8()) }
 }
 
 /// Forget what is on the screen, so the next `render` writes the whole frame.

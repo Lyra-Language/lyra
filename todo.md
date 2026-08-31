@@ -3909,12 +3909,19 @@ What is left:
   The entry said as much — "Lyra already has that half" — and still concluded a size was
   the missing piece.
 
-  What is left is not `join`: it is the same `out = out ++ …` shape in `std.tui`, where
-  `render` accumulates a whole frame (the hot path of every redraw), and `rule`/`fit`
-  build a repeated character per row per frame. All three take the same `[]u8` treatment,
-  and `fit`/`rule` become one-liners over `join`. Whether a general `StringBuilder` is
-  worth a nominal type for something `[]u8` already is stays open, and is now a smaller
-  question than it was.
+  `render` followed on 08/30 and is the entry's own deferral condition met exactly: it
+  predicted the quadratic "would cross the line" on "a whole frame joined and written at
+  once", which is what a full redraw is. Measured, 121 us -> 32 us at 120x400. It is also
+  the one place so far where the byte path is a **trade** rather than a win — the steady
+  state, one row changing, is a reproducible 13% slower, since a 200-rune payload does not
+  amortize the extra allocations. The full-redraw side is the one that grows without bound,
+  so it takes the decision; `frame.lyra` carries both numbers.
+
+  What is left is `rule`/`fit` in `std.tui`, which build a repeated character per row per
+  frame — and those want the *opposite* treatment, since their payload is small and their
+  count is known: they are `[c; n]`-shaped, not builder-shaped. Whether a general
+  `StringBuilder` is worth a nominal type for something `[]u8` already is stays open, and is
+  now a smaller question than it was.
 
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
   `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an

@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — `render` accumulates bytes, and the measurement moved the decision twice
+
+The same `++` quadratic as `join`, in `std.tui`'s frame diff: a full redraw accumulated the
+whole frame one row at a time, each concatenation copying everything written so far. It now
+pushes into a `[]u8` and decodes once, like `join`. **It cannot call `join`**, since the
+pieces are decided one at a time by the diff rather than being an array to begin with.
+
+**Two measurements changed what shipped, which is the entry.**
+
+The first killed the obvious spelling. Collecting the pieces into a `[]string` and handing
+them to the now-linear `join` is less code and reuses the fix, and at 60x200 it was *slower
+than `++`* (22 us against 20) — the piece array costs more at that size than the asymptotics
+save. Only direct byte accumulation won at every size.
+
+The second nearly killed the change and then rescued it. An early run showed the steady state
+— one row changing, the case the whole file exists for — going 4920 ns -> 5833 ns, a 19%
+regression on the common path against a win on the rare one, which reads as a bad trade. That
+run was **cold**: unwarmed, first-execution page faults, and it overstated both sides. Warmed
+and taken as a minimum of five runs of 20,000 frames, reproducible to within 10 ns: 1813 ns
+-> 2045 ns, 13%. The full redraw is 20 us -> 11 us at 60x200 and 121 us -> 32 us at 120x400.
+
+So it *is* a trade, and it is the first one in this sweep — `filter` and `join` cost nothing
+anywhere. One full redraw pays for about forty steady-state frames at 60x200 and four hundred
+at 120x400, so anything that scrolls or resizes clears it at once, while a static viewer with
+a ticking status line pays 230 ns a frame — 0.0014% of a 60 fps budget. The asymptotics sit
+on the side that can grow without bound and the regression on the side that cannot, which is
+what decides it. Both numbers are in `frame.lyra`, because a future reader finding the 13%
+by measurement deserves to find it in the comment first.
+
+**A third shape is worth recording because it is nearly free.** Parenthesizing the two
+concatenations (`out ++ ("\r\n" ++ rows[j])`) — the trick `join`'s own doc documents — took
+120x400 from 121 us to 75 us with no regression anywhere, for a one-line change that stays
+quadratic. It lost to the byte path on asymptotics, not on this frame size.
+
+The diff logic is untouched, and the existing byte-exact renderer tests pin it. The two new
+tests cover what the byte path newly risks: multi-byte rows (box-drawing characters are three
+bytes each, and are what this library's own `box_top` emits) and a 4 KB frame across about ten
+reallocations, where a lost realloc truncates and a mis-stored one corrupts a seam.
+
 ### 08/30/26 — `join` goes linear on a seam that had been there for eleven days
 
 **The fix needed nothing that did not already exist**, which is the whole entry. `join` had

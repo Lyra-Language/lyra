@@ -476,3 +476,65 @@ let main = () -> void => {
 		t.Errorf("status bars = %q; want %q", got, want)
 	}
 }
+
+// `render` accumulates its frame as a `[]u8` and decodes once, rather than `++`-ing a
+// string per row (08/30). The diff logic is unchanged and the tests above pin it byte for
+// byte; what the byte path newly puts at risk is the *encoding*, since the frame's bytes
+// are now assembled by hand and handed to `decode_utf8` at the end.
+
+// Multi-byte rows through the buffer. Box-drawing characters are three bytes each and are
+// what this library's own `box_top` emits, so a frame of them is the ordinary case rather
+// than a contrived one — a piece pushed short or out of order shows up as mojibake.
+func TestExec_RendererMultiByteRows(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ renderer, render }
+let main = () -> void => {
+  var r = renderer()
+  var a: []string = ["┌───┐", "│héllo│", "└───┘"]
+  var b: []string = ["┌───┐", "│wörld│", "└───┘"]
+  r.render(a)
+  r.render(b)   // only the middle row differs
+}
+`, "")
+	got := strings.ReplaceAll(strings.ReplaceAll(out, "\x1b", "<E>"), "\r\n", "|")
+	want := "<E>[1;1H┌───┐|│héllo│|└───┘" + "<E>[2;1H│wörld│"
+	if got != want {
+		t.Errorf("renderer wrote\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// A frame large enough that the byte buffer reallocates many times — 40 rows of 100 runes
+// is ~4 KB, so it doubles about ten times from the floor of 4. A lost or mis-stored
+// reallocation truncates the frame or corrupts a seam, neither of which is visible on the
+// three-row frames above. Asserted by length and by both ends rather than in full.
+func TestExec_RendererLargeFrameAcrossReallocations(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ renderer, render }
+let main = () -> void => {
+  var rows: []string = []
+  for y in 0..<40 {
+    var row = ""
+    for _ in 0..<99 { row = row ++ "x" }
+    rows.push("${y % 10}" ++ row)
+  }
+  var r = renderer()
+  r.render(rows)
+  print("|")
+}
+`, "")
+	frame := strings.Split(out, "|")[0]
+	// One cursor move (6 bytes), 40 rows of 100 runes, 39 "\r\n" between them.
+	if wantLen := 6 + 40*100 + 39*2; len(frame) != wantLen {
+		t.Errorf("frame is %d bytes; want %d", len(frame), wantLen)
+	}
+	if !strings.HasPrefix(frame, "\x1b[1;1H0xxx") {
+		t.Errorf("frame starts %q; want a cursor move then row 0", frame[:12])
+	}
+	if !strings.HasSuffix(frame, "\r\n9"+strings.Repeat("x", 99)) {
+		t.Errorf("frame ends %q; want the last row intact", frame[len(frame)-12:])
+	}
+}
