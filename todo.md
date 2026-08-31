@@ -4006,6 +4006,14 @@ What is left:
   `data()` invalidation), leaves the length alone, and traps on a negative n through the same
   trap `[v; n]` uses.
 
+  **And it does have a caller.** `join` cannot compute its exact size without calling `show`
+  twice per element — that part stands — but the separators are known before any element is
+  evaluated, `len - 1` of them, so reserving their bytes is a floor rather than a guess. One
+  line, 5% to 15% on the real `join`, a wash where the separator is empty. A version summing
+  every element's length first measures *no faster*, so the exactness `join` cannot have was
+  not worth having: the earlier claim that "`join` cannot size itself" was true of the exact
+  size and false of the useful one.
+
   `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where it goes.
 
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a

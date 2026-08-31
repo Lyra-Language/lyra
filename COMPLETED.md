@@ -45,6 +45,28 @@ mistake.
 The honest summary is that this is a good primitive with no user today, built on the judgment
 that the language should have it before the program that needs it arrives rather than after.
 
+**Postscript, same day: it has a caller, and the argument that it could not was too strong.**
+`join` cannot compute its *exact* size without calling `show` twice per element, which is
+true and is why the exact size stays out of reach. But the separators are a different matter:
+there are exactly `len - 1` of them and their width is known before any element is evaluated,
+so `reserve(sep.byte_len() * (len - 1))` is a **floor**, not a guess — the result cannot come
+out smaller. One line, one multiply, no extra evaluation, and `reserve(0)` on an empty
+separator is a no-op.
+
+Measured on the real `join`, three runs: 9,600 parts 140/62/58 µs → 125/53/53, 96,000 parts
+1152/588/600 → 1054/559/573, 480,000 parts 4455/3825/3895 → 4055/3585/3546. Consistently 5%
+to 15%, and a wash where the separator is empty, which is exactly where the floor is zero.
+
+**And the exact size would not have been better.** Measured beside it, a version that sums
+every element's byte length first — the thing `join` is not allowed to do — is *not faster*
+than the separator floor: the summing loop costs what the precision buys. So the constraint
+that looked like a limitation cost nothing, which is worth knowing before anyone tries to
+route around it.
+
+The lesson is the shape of the earlier claim. "`join` cannot size itself" was true of the
+exact size and false of the useful one, and stating it as a property of `join` rather than of
+exactness is what kept it looking closed for two commits.
+
 ### 08/30/26 — The capacity spelling was already there, and its motivating caller was not
 
 Investigating the last open item retired it. `[v; n]` then `clear()` **is** a sized empty

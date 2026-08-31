@@ -235,3 +235,47 @@ let main = () -> void => {
 		t.Errorf("got %q; want %q", got, "10 · 20 · 30 · 40")
 	}
 }
+
+// `join` reserves the separators' bytes up front (08/30) — the one part of the result whose
+// size is known before any element is evaluated. It is a floor and not a guess, so the only
+// way it can be wrong is arithmetically: counting the separator in **runes** would
+// under-reserve on a multi-byte one (harmless, just growth) and, more to the point, would
+// mean the two lengths had been confused somewhere that matters more.
+//
+// This joins enough parts to cross several reallocations with a three-byte separator, and
+// asserts the rune and byte lengths separately.
+func TestExec_JoinReservesSeparatorBytes(t *testing.T) {
+	t.Parallel()
+	src := `
+module main
+let main = () -> void => {
+  var parts: []string = []
+  for i in 0..<400 { parts.push("ab") }
+  let joined = parts.join("—")          // U+2014, three bytes and one rune
+  print("${joined.len()} ${joined.byte_len()} ${joined.slice(0, 3)}")
+}
+`
+	// 400 parts of 2 runes plus 399 separators of 1 rune = 1199 runes.
+	// In bytes: 800 + 399*3 = 1997.
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "1199 1997 ab—" {
+		t.Errorf("join with a multi-byte separator = %q; want %q", got, "1199 1997 ab—")
+	}
+}
+
+// The floor is computed as `len - 1`, so it must sit *after* the early returns: on an empty
+// or single-element array that would be a negative reserve, which traps. The cases are
+// already covered by TestExec_Join, and this states why they matter now.
+func TestExec_JoinShortArraysDoNotReserveNegatively(t *testing.T) {
+	t.Parallel()
+	src := `
+module main
+let main = () -> void => {
+  let none: []string = []
+  let one: []string = ["solo"]
+  print("[${none.join(", ")}][${one.join(", ")}][${["a", "b"].join("")}]")
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "[][solo][ab]" {
+		t.Errorf("short joins = %q; want %q", got, "[][solo][ab]")
+	}
+}

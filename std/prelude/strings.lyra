@@ -402,6 +402,18 @@ pub let join<t> where t: Show = pure (self: []t, sep: string = "") -> string => 
     // The result is valid UTF-8 because every part is, and `decode_utf8` counts runes as
     // the non-continuation bytes — so the length is right without a validating pass.
     var bytes: []u8 = []
+    // **The separators are the one part of the result whose size is known before anything
+    // is evaluated** — there are exactly `len - 1` of them — so reserving that much is a
+    // floor rather than a guess: the result cannot come out smaller. It costs a multiply
+    // when the separator is empty (`reserve(0)` is a no-op) and saves most of the growth
+    // when it is not.
+    //
+    // The *exact* size is not available here and would not be worth it if it were. Getting
+    // it means `self[i].show().byte_len()` before the loop, which calls `show` twice per
+    // element and makes the call count a detail of this function — the objection that
+    // refused a counting pre-pass for `filter`. Measured, the exact version is **not
+    // faster than this one**: summing costs what the precision buys.
+    bytes.reserve(sep.byte_len() * (self.len() - 1))
     bytes.push_utf8(self[0].show())
     for i in 1..<self.len() {
       bytes.push_utf8(sep)
