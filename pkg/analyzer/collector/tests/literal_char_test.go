@@ -37,3 +37,11 @@ func TestCollectCharLiteralExprLargeUnicodeEscape(t *testing.T) {
 func TestCollectRuneTypeAnnotation(t *testing.T) {
 	runGoldenTest(t, `let f = (c: rune) -> rune => c`, "rune_type_annotation")
 }
+
+// `'\0'` is NUL. It is the one simple escape C has that Lyra did not, and the reason it is
+// safe to have is that Lyra's octal carries an explicit `\o` prefix: in C `\0` opens a
+// digit run, which is what makes `'\012'` a newline and `"\08"` an error, and here there is
+// no run for it to open. See TestExec_NulEscape for what `"\012"` is instead.
+func TestCollectCharLiteralExprNulEscape(t *testing.T) {
+	runGoldenTest(t, `let nul = '\0'`, "char_literal_expr_nul_escape")
+}

@@ -97,7 +97,7 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 // unescapeStringContent converts the raw text of a `string_content` node into
 // its runtime value by resolving Lyra escape sequences. Supported escapes:
 //
-//	\a \b \e \f \n \r \t \v \\ \' \" \#   simple escapes
+//	\0 \a \b \e \f \n \r \t \v \\ \' \" \#   simple escapes
 //	\oNNN                                  octal (3 digits)
 //	\xNN                                   hex   (2 digits)
 //	\uNNNN                                 unicode (4 hex digits)
@@ -116,6 +116,17 @@ func unescapeStringContent(raw string) (string, error) {
 		}
 		i++
 		switch esc := raw[i]; esc {
+		case '0':
+			// NUL, and nothing more. C reads `\0` as the start of an octal run — which is
+			// what makes `\012` a newline there and `\08` an error — but Lyra's octal
+			// carries an explicit `\o` prefix, so there is no digit run for this to begin
+			// and no ambiguity to inherit. `"\012"` here is NUL followed by "12".
+			//
+			// An interior NUL is an ordinary byte in a Lyra string: the length is
+			// authoritative, never a terminator. What it is *not* ordinary for is FFI —
+			// `cstring_ptr` refuses a string containing one — which is the same reason
+			// being able to write one down deliberately is worth having.
+			sb.WriteByte(0)
 		case 'a':
 			sb.WriteByte('\a')
 		case 'b':

@@ -337,3 +337,50 @@ func TestEmit_StringDeferred(t *testing.T) {
 		}
 	}
 }
+
+// `\0` is NUL, in a rune and in a string alike — one decoder serves both
+// (`unescapeStringContent`), and the rune half also needed the grammar's escape set, since
+// `char_literal` is a single token (08/30).
+//
+// **It is exactly NUL and never the start of a digit run.** That is what makes the
+// shorthand safe here where C's is a footgun: C reads `\012` as octal 10 and `\08` as an
+// error, while Lyra spells octal `\o012`, so there is nothing for `\0` to open. `"\012"` is
+// asserted below to be three runes — NUL, `1`, `2` — because that is the property, not an
+// accident of the implementation.
+func TestExec_NulEscape(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  let c: rune = '\0'
+  let s = "a\0b"
+  // An interior NUL is an ordinary byte: the length is authoritative, never a terminator,
+  // so this string is three runes and three bytes and its middle one is zero.
+  print("${i64(c)} ${s.len()} ${s.byte_len()} ${i64(s[1])}")
+  let o = "\012"
+  print(" | ${o.len()} ${i64(o[0])} ${o[1]} ${o[2]}")
+}
+`
+	want := "0 3 3 0 | 3 0 1 2"
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != want {
+		t.Errorf("NUL escapes = %q; want %q", got, want)
+	}
+}
+
+// The shape that surfaced the gap: `['\0'; n]` as a zero-filled rune buffer. It did not
+// report a bad escape — the unparsed literal left the repeat expression parsed as something
+// else, and the error named a `StaticArray<AnonymousTuple(), 2>`.
+func TestExec_NulEscapeInARepeatLiteral(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var xs: []rune = ['\0'; 4]
+  xs[1] = 'x'
+  print("${xs.len()} ${i64(xs[0])} ${xs[1]} ${i64(xs[3])}")
+}
+`
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != "4 0 x 0" {
+		t.Errorf("['\\0'; 4] = %q; want %q", got, "4 0 x 0")
+	}
+}
