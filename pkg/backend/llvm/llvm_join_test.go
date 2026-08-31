@@ -121,3 +121,117 @@ func TestExec_ArrayRepeatReceiverReachesAPreludeCombinator(t *testing.T) {
 		t.Errorf("got %q; want %q", got, "x-x-x")
 	}
 }
+
+// --- The byte-buffer accumulation ------------------------------------------------------
+//
+// `join` builds its result as a `[]u8` and decodes once at the end, rather than `++`-ing a
+// string per part — linear instead of quadratic (the doc comment carries the measurement).
+// That moves the risk from arithmetic to encoding: the bytes are now assembled by hand, so
+// what has to be pinned is that they come back out as the same *text*, and that the rune
+// count survives, since `decode_utf8` derives it from the bytes rather than being told.
+
+// A multi-byte separator and multi-byte parts. Concatenating encoded UTF-8 is valid UTF-8,
+// but only if every part's bytes go in whole and in order — a truncated or interleaved
+// push shows up here as mojibake rather than as a length that happens to match.
+func TestExec_JoinMultiByte(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  let parts: []string = ["héllo", "wörld", "日本語"];
+  println(parts.join(" — "));
+}
+`
+	want := "héllo — wörld — 日本語"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
+// **The rune count, not the byte count.** `len()` is rune-indexed, and the joined string's
+// count comes from `decode_utf8` counting non-continuation bytes rather than from anything
+// that tracked it. Ten runes across three multi-byte parts and two separators; the byte
+// length is larger, and a `len()` reporting it would break every caller that indexes.
+func TestExec_JoinMultiByteLength(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  let parts: []string = ["é", "ö", "日"];
+  let joined = parts.join("--");
+  println("${joined.len()} ${joined[0]} ${joined[3]} ${joined[6]}");
+}
+`
+	// "é--ö--日" is 7 runes; bytes would be 11.
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "7 é ö 日" {
+		t.Errorf("got %q; want %q", got, "7 é ö 日")
+	}
+}
+
+// The default empty separator through the byte path: the separator's encoding is hoisted
+// out of the loop, and an empty one has to contribute nothing rather than a stray byte.
+func TestExec_JoinEmptySeparatorMultiByte(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  let parts: []string = ["日", "本", "語"];
+  println(parts.join());
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "日本語" {
+		t.Errorf("got %q; want %q", got, "日本語")
+	}
+}
+
+// Past the buffer's first few doublings, which is where a growth bug stops being invisible:
+// 300 parts of 4 runes plus separators is ~1500 bytes, so the `[]u8` reallocates about nine
+// times. Checked by length and by both ends, since a lost realloc shows up as a truncation
+// and a mis-stored one as garbage at the seam.
+func TestExec_JoinAcrossManyReallocations(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var parts: []string = []
+  for i in 0..<300 { parts.push("ab${i % 10}") }
+  let joined = parts.join(",")
+  println("${joined.len()} ${joined.slice(0, 3)} ${joined.slice(joined.len() - 3, joined.len())}")
+}
+`
+	// 300 parts of 3 runes ("ab" + one digit) + 299 separators = 900 + 299 = 1199.
+	// The first part is "ab0"; the last is "ab9" (299 % 10 == 9).
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "1199 ab0 ab9" {
+		t.Errorf("got %q; want %q", got, "1199 ab0 ab9")
+	}
+}
+
+// One part returns without touching the buffer at all — the early exit that keeps a
+// one-row frame from paying an encode and a decode to arrive back at the string it was
+// handed. Multi-byte, so an accidental round trip through the bytes would still be visible
+// as a wrong `len()` if it also lost the rune count.
+func TestExec_JoinSingleElementIsReturnedWhole(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  let one: []string = ["héllo"];
+  let joined = one.join(", ");
+  println("${joined} ${joined.len()}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "héllo 5" {
+		t.Errorf("got %q; want %q", got, "héllo 5")
+	}
+}
+
+// The Show bound through the byte path: a non-string element is rendered and *then*
+// encoded, so `show` has to run before the bytes are taken rather than the element being
+// encoded as whatever it is.
+func TestExec_JoinNonStringElementsThroughBytes(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  let nums: []i64 = [10, 20, 30, 40];
+  println(nums.join(" · "));
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "10 · 20 · 30 · 40" {
+		t.Errorf("got %q; want %q", got, "10 · 20 · 30 · 40")
+	}
+}

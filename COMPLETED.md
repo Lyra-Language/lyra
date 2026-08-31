@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — `join` goes linear on a seam that had been there for eleven days
+
+**The fix needed nothing that did not already exist**, which is the whole entry. `join` had
+been quadratic since 08/14 and knew it: its doc said so, and the open to-do said the linear
+version "needs a primitive the language does not have", framing the real question as whether
+a string should have a byte seam — with one, "both a builder and a linear join are ordinary
+Lyra in the prelude rather than language features."
+
+**The seam landed on 08/19.** `encode_utf8` and `decode_utf8` went in for their own
+reasons — reading a C buffer, and the fact that nothing in the language could read a byte
+out of a string — and nobody went back to the entry whose stated precondition they met. It
+sat open for eleven days describing a missing piece that was no longer missing. Grepping the
+prelude for the *shape* found it; reading the to-do would not have, because the to-do was
+still arguing for the feature.
+
+**The premise was also wrong in a way worth naming.** The entry held that a linear join
+needs a way to allocate a string of a known size and fill it. It does not: it needs
+**amortized growth**, which `push` has always had. The entry even said so — "Lyra already
+has that half" — and still concluded the size was the missing half. What was actually
+missing was only the read direction, string → bytes.
+
+So `join` now encodes each part, pushes the bytes into a `[]u8`, and decodes once at the
+end. Measured against this prelude, joining `"field${i}"` with `", "`: 215 µs → 100 µs over
+600 parts, 1.54 ms → 0.34 ms over 2400, 35.7 ms → 1.13 ms over 9600. The interesting column
+is not the 31× — it is that quadrupling the input costs the old shape 23× and this one 3.3×,
+so the ratio is a floor rather than a result.
+
+**One part returns early rather than round-tripping.** Encoding and decoding a string to
+arrive back at that string is two copies for nothing, and `rows.join("\n")` on a one-row
+frame is an ordinary call. The empty case already returned `""`.
+
+**What the byte path puts at risk is encoding, not arithmetic**, so that is what the six new
+tests pin: multi-byte parts and separators, an empty separator against multi-byte, and above
+all the **rune count** — `len()` is rune-indexed and `decode_utf8` derives the count from
+the bytes rather than being told it, so a joined `"é--ö--日"` must report 7 and not its 11
+bytes. One test runs 300 parts through about nine reallocations, since a growth bug is
+invisible below the first few.
+
+**Found while checking the other combinators for the problem `filter` had**, which is worth
+recording as the way it surfaced: `to_runes` has the same retained overshoot `filter` did (a
+`push` loop from empty, ending up to 2× over) and is roughly at time parity either way, so it
+is a memory tidy-up and still open. The same `out = out ++ …` shape is in `std.tui` three
+times — `render` accumulating a whole frame on every redraw, `rule` and `fit` per row — and
+those are the ones left.
+
 ### 08/28/26 — a filtering comprehension hands its tail back
 
 **The question was whether `map`/`filter` in the prelude should stop using comprehensions.

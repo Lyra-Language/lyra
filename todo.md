@@ -3889,37 +3889,33 @@ count** builds a dynamic array, so a buffer sized by a window resize needs no `p
 
 What is left:
 
-- **A string can only be built with `++` or interpolation**, and `join` (08/14) is an
-  ergonomic answer rather than a performance one — it is the same quadratic, since each
-  `++` copies everything accumulated and the language has no way to allocate a string of a
-  known size and fill it. Measured at parity with a hand-written loop (323 µs against
-  347 µs over 600 parts), which is the point: it saves the loop, not the copying.
+- **[DONE 08/30] A linear `join`.** The entry below stood as written for eleven days
+  after its own precondition was met, which is the part worth remembering.
 
-  A **linear** join needs a primitive the language does not have, and the useful framing is
-  not "add a string builder" — it is **should a string have a byte seam**.
+  It held that `join` (08/14) was an ergonomic answer rather than a performance one — the
+  same quadratic as a hand-written loop, since each `++` copies everything accumulated and
+  the language has no way to allocate a string of a known size and fill it. It framed the
+  useful question as **should a string have a byte seam**, on the grounds that with one
+  (`s.bytes()` and `[]u8 → string`, say) both a builder and a linear join become ordinary
+  Lyra in the prelude rather than language features — the `starts_with` precedent exactly.
 
-  A builder beats `++` because it is mutable and *over-allocates*: spare capacity, doubling
-  when full, one copy at the end. Lyra already has that half — `push` is amortized doubling
-  and measures dead linear (80,000 in 61 µs). What is missing is the other half: the
-  byte-level surface is `byte_len`, `byte_offset`, `compare_bytes`, `compare_bytes_at`, all
-  read-only *comparisons*, and `to_runes` has no inverse. Everything goes string → data and
-  nothing comes back, so you can build a `[]u8` efficiently and then have no way to call it
-  a string.
+  **The seam landed on 08/19** (`encode_utf8`, `decode_utf8`) for its own reasons, and
+  nobody came back to cash the prediction. `join` now accumulates a `[]u8` and decodes
+  once: 35.7 ms → 1.13 ms over 9600 parts, and quadrupling the input costs 3.3× where it
+  used to cost 23×. Nothing was added to the language to get it.
 
-  With a seam (`s.bytes()` and `[]u8 → string`, say), **both** a builder and a linear join
-  are ordinary Lyra in the prelude rather than language features — which is the
-  `starts_with` precedent exactly: quadratic in its natural form, fixed by adding
-  `byte_len`/`compare_bytes_at` and rewriting it here (19.9 ms → 19 µs). The narrower
-  alternative is `join` as a builtin that sums lengths, allocates once and memcpys; the
-  heaviest is a `StringBuilder` type, which is a new nominal type for something `[]u8`
-  already is.
+  The premise it deferred on was also wrong in a way worth naming: a linear join does not
+  need a size known up front, only **amortized growth**, which `push` has had all along.
+  The entry said as much — "Lyra already has that half" — and still concluded a size was
+  the missing piece.
 
-  **Deferred on measurement, not on taste.** The quadratic is invisible below ~8,000
-  characters in one string (1,332 µs) and hurts at 16,000 (4,985 µs). A terminal frame is
-  ~12,000 characters but built as 60 rows of 200, and renders in 1,440 µs with plain `++`.
-  What would cross the line is a *single* string that large — a whole frame joined and
-  written at once, or a large buffer dumped to a file. If the viewer starts doing that, add
-  the seam; `join` gets faster the same day for free.
+  What is left is not `join`: it is the same `out = out ++ …` shape in `std.tui`, where
+  `render` accumulates a whole frame (the hot path of every redraw), and `rule`/`fit`
+  build a repeated character per row per frame. All three take the same `[]u8` treatment,
+  and `fit`/`rule` become one-liners over `join`. Whether a general `StringBuilder` is
+  worth a nominal type for something `[]u8` already is stays open, and is now a smaller
+  question than it was.
+
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
   `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an
   array that size is 80 KB of stack — but it wants the same treatment eventually, which
