@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — A better message for a bad rune escape woke a crash that had always been there
+
+`'\q'` reported as a *syntax error* with two cascading type errors behind it, where `"\q"`
+reported `unknown escape sequence: \q` — one mistake, two reports, and the worse one on the
+smaller literal. The cause was that `char_literal` is a single token whose alternatives
+enumerate the *legal* escapes, so an illegal one cannot fail to be illegal: it can only fail
+to match, and the literal then reports as whatever token failed to shift.
+
+The fix is the one the modifier-order work already made for `async pure` — let the grammar
+accept and the compiler decide. The escape alternative is now `\\.`, and
+`unescapeStringContent` (which the string path has always validated against, and which
+`collectCharacterLiteralExpr` already called) produces the diagnostic. No new code. The
+longer `\o`/`\x`/`\u`/`\U` alternatives still win, since tree-sitter takes the longest
+match, and the token stays bounded by its closing quote — `'\''` and `'\\'` are corpus
+tests for exactly that.
+
+**And then the compiler segfaulted.** `collectCharacterLiteralExpr` returned a nil
+`*ast.CharacterLiteralExpr` on a decode failure, which is a *non-nil* interface at the call
+site holding a nil pointer, so the typechecker's first `GetLocation` on it died. That is
+hazard 3 verbatim, written down long ago, and the code had violated it for as long as the
+rune literal existed — safely, because **the path was dead**: the grammar's escape set made
+an illegal escape unparseable, so the error branch had never once run. Loosening the token
+woke it, and the change that woke it looks nothing like the crash it caused. Hazard 3 now
+says so.
+
+**The prescribed fix is better than the obvious one, and the diagnostics show why.** The
+obvious fix is to return `ast.Expression` so `nil` is a true nil interface — which is what
+`collectStringLiteralExpr` does, and it does stop the crash. But a literal that collects to
+nothing leaves its declaration uninitialized, so `let a: rune = '\q'` still reported three
+things: the escape, then that `a` was unused, then that `a` must be initialized. Hazard 3
+says emit a diagnostic *and return a placeholder node*, and the placeholder ends the report
+at the mistake. One typo, one error — pinned by a test that asserts the count, not just the
+text.
+
+The shape that started all of this — `['\q'; 4]`, which used to report that a
+`StaticArray<AnonymousTuple(), 2>` could not be assigned to a `DynamicArray<rune>` — is now
+one line naming the escape.
+
 ### 08/30/26 — `rule` and `fit`: knowing the size lets you skip the builder entirely
 
 The last two `out = out ++ …` sites, and the cleanest result of the sweep — **no regression

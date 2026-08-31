@@ -55,6 +55,18 @@ real failure, and none is local to one package.
    crashes a later pass on the first field access. The statement analogue: a block skips a
    child that collects to nil, because a block's value is its final statement.
 
+   **An error path that cannot fire today still has to obey this.** `collectCharacterLiteralExpr`
+   returned nil on a bad escape for as long as the rune literal existed, and never crashed,
+   because the grammar's escape set made an illegal escape fail to *parse* — the path was
+   dead. Broadening that token to improve the message (08/30) woke it, and the compiler
+   segfaulted on `'\q'`. A dead error path is a live one after the next grammar change, and
+   the change that wakes it will look unrelated to the crash it causes.
+
+   The placeholder earns its keep twice over: it is also what keeps one mistake to one
+   diagnostic. A literal that collects to nothing leaves its declaration uninitialized, so a
+   single bad escape reported the escape, then the unused binding, then the missing
+   initializer.
+
 4. **Resolve top-level names only through the `Lookup*` accessors**, never by indexing
    `SymbolTable.Types`/`.Functions`/`.Traits`. Which declaration a name means depends on
    *which module is asking*, and a lookup scattered over dozens of sites cannot be taught
