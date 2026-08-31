@@ -70,18 +70,25 @@ pub let render = (self: mut Renderer, rows: []string) -> void => {
   // *slower* than `++` at 60x200: the piece array costs more at that size than the
   // asymptotics save.)
   //
-  // **It is a trade, not a free win, and the numbers are the argument.** What it removes is
-  // a full redraw's cost — a first frame, an `invalidate`, a resize, a scrolling band: at
-  // 60x200, 20 us -> 11 us, and at 120x400, 121 us -> 32 us. What it costs is the steady
-  // state, one row changing in a 60-row frame: 1813 ns -> 2045 ns, a reproducible 13%, from
-  // the extra allocations a small payload does not amortize (an `encode_utf8` per piece and
-  // a decode at the end, against two `++`s that were already about the right size).
+  // **It is still a trade, and the numbers are the argument.** Three versions of this loop
+  // have been measured against each other, one row changing in a 60-row frame and a full
+  // 120x400 redraw:
   //
-  // One full redraw pays for about forty steady-state frames at 60x200 and four hundred at
-  // 120x400, so anything that scrolls or resizes clears it immediately; a static viewer with
-  // a ticking status line pays 230 ns a frame, which is 0.0014% of a 60 fps budget. The
-  // asymptotics are on the side of the case that can grow without bound, and the regression
-  // is on the case that cannot.
+  //   `++` per row      1802 ns   114 us
+  //   `push_utf8` loop  2010 ns    34 us
+  //   `push_utf8` bulk  1948 ns    12 us
+  //
+  // A full redraw is **9.5x** what it was. The steady state is still ~8% slower than the
+  // `++` version, down from 12% when the bytes went in one at a time — and the bulk builtin
+  // did *not* erase that, which was the prediction. What is left is not copying, which is
+  // now one memcpy: it is that a 200-byte row costs this path more *allocations* than two
+  // concatenations do — an empty `[]u8` box and buffer, a growth realloc, and the decode at
+  // the end, against two string boxes. Closing it needs a buffer that starts sized, not a
+  // faster copy.
+  //
+  // One full redraw now pays for about five hundred steady-state frames, so anything that
+  // scrolls or resizes clears the trade immediately, and a static viewer with a ticking
+  // status line pays 146 ns a frame — 0.0009% of a 60 fps budget.
   var bytes: []u8 = []
   let n = rows.len()
   for i in 0..<n {

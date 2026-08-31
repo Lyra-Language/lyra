@@ -436,3 +436,105 @@ let main = () -> void => { var a: []i64 = []; add(a, 1) }
 		t.Fatal("push can grow the buffer, so `noalloc` must refuse it")
 	}
 }
+
+// `bytes.push_utf8(s)` — a string's bytes appended to a `[]u8` in one memcpy (08/30). It
+// shipped first as ordinary Lyra in the prelude and kept its name when it became a builtin,
+// so the tests written against the prelude version (llvm_string_methods_test.go) exercise
+// this one unchanged. What is new here is the growth arithmetic, which is where a bulk
+// append can go wrong in ways a per-byte push cannot.
+
+// **Grow to what is needed, not merely to double.** `push` doubles because it adds one
+// element and cannot know what is coming; this knows exactly how many bytes are arriving,
+// so a piece larger than twice the capacity must still fit. Appending 500 bytes to an empty
+// buffer would overflow a buffer grown to the floor of 4, or to 2x of nothing.
+func TestExec_PushUtf8GrowsToTheNeededSize(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var big = "x"
+  for _ in 0..<9 { big = big ++ big }   // 512 bytes, far past any doubling step
+  var b: []u8 = []
+  b.push_utf8(big)
+  let s = b.decode_utf8()
+  print("${b.len()} ${s.len()} ${s[0]} ${s.from_end(1)}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "512 512 x x" {
+		t.Errorf("push_utf8 of a 512-byte piece = %q; want %q", got, "512 512 x x")
+	}
+}
+
+// It must also still be *amortized* when the pieces are small, which is what the "at least
+// double" half of the growth is for: 2000 one-byte appends onto a buffer grown only to
+// `len + 1` each time would be 2000 reallocations. Correctness is what is asserted here —
+// the cost is in the doc comment — since a mis-sized growth shows up as a corrupt tail.
+func TestExec_PushUtf8ManySmallAppends(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var b: []u8 = []
+  for i in 0..<2000 { b.push_utf8("${i % 10}") }
+  let s = b.decode_utf8()
+  print("${b.len()} ${s.slice(0, 3)} ${s.slice(s.len() - 3, s.len())}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	// 2000 single digits; the first three are 012 and the last three 789 (1999 % 10 == 9).
+	if got = strings.TrimSpace(got); got != "2000 012 789" {
+		t.Errorf("2000 small appends = %q; want %q", got, "2000 012 789")
+	}
+}
+
+// Interleaving with `push` has to agree about the length and the capacity, since the two
+// maintain the same two fields by different arithmetic — one adds a byte, the other adds a
+// run — and a disagreement writes over the other's bytes rather than erroring.
+func TestExec_PushUtf8InterleavesWithPush(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var b: []u8 = []
+  b.push(65)
+  b.push_utf8("BC")
+  b.push(68)
+  b.push_utf8("")
+  b.push(69)
+  print("${b.decode_utf8()} ${b.len()}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "ABCDE 5" {
+		t.Errorf("interleaved = %q; want %q", got, "ABCDE 5")
+	}
+}
+
+// `noalloc` refuses it, on push's reasoning: it can grow the buffer, and the bound is a
+// static promise about what a function may do rather than a statistical one.
+func TestCheck_PushUtf8IsRefusedByNoalloc(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let add = pure noalloc (b: mut []u8, s: string) -> void => { b.push_utf8(s) }
+let main = () -> void => { var a: []u8 = []; add(a, "x") }
+`
+	if diags := checkWithPrelude(t, src); len(diags) == 0 {
+		t.Fatal("push_utf8 can grow the buffer, so `noalloc` must refuse it")
+	}
+}
+
+// An immutable receiver is refused, by the same predicate and the same diagnostic as
+// `xs.push(v)` — it is interior mutation with a different spelling.
+func TestCheck_PushUtf8NeedsAMutableReceiver(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => { let b: []u8 = []; b.push_utf8("x") }
+`
+	diags := checkWithPrelude(t, src)
+	if len(diags) == 0 {
+		t.Fatal("push_utf8 writes through its receiver, so a `let` binding must be refused")
+	}
+	if !strings.Contains(diags[0], "deeply immutable") {
+		t.Errorf("expected the interior-immutability diagnostic; got: %s", diags[0])
+	}
+}

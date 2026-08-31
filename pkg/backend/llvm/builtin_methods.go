@@ -136,6 +136,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		}
 		return l.lowerDynArrayPush(block, call, member, dyn)
 
+	case "push_utf8":
+		return l.lowerDynArrayPushUTF8(block, call, member)
+
 	case "offset":
 		// `p.offset(n)` — pointer arithmetic, the one form of it the language has
 		// (pointers.go). A non-pointer receiver falls through: `offset` is a perfectly

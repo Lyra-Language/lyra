@@ -1367,7 +1367,7 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 }
 
 // checkBuiltinMutatesReceiver enforces the mutability rule for a builtin method that
-// writes through its receiver — `xs.push(v)` today.
+// writes through its receiver — `xs.push(v)` and `bytes.push_utf8(s)` today.
 //
 // It asks rootBindingIsMutable, the same predicate `xs[i] = v` goes through, because
 // push *is* interior mutation with a different spelling: a plain `let` is deeply
@@ -1378,7 +1378,7 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 // (`f().push(1)`) mutates something with no binding to be immutable, which is useless
 // rather than unsound, and there is no name to report against.
 func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string, member *ast.MemberExpr) {
-	if name != "push" {
+	if name != "push" && name != "push_utf8" {
 		return
 	}
 	if _, isDyn := recv.(types.DynamicArrayType); !isDyn {

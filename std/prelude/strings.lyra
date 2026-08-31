@@ -347,46 +347,6 @@ pub let split<t> where t: Needle = pure(self: string, sep: t) -> []string => {
   parts
 }
 
-/// Append `s`'s UTF-8 bytes to a byte buffer.
-///
-/// The one operation every string-building site in the standard library performs, written
-/// once instead of six times: `join`, `render`, `repeat` and `cstring` all accumulate a
-/// `[]u8` and decode it at the end, and each of them spelled this as its own inner loop.
-///
-/// **This is the answer to "should Lyra have a `StringBuilder`", and the answer is no.** A
-/// builder would be a nominal type wrapping a `[]u8` that already grows by doubling, has a
-/// length, and can be decoded — it would add a name and a constructor and buy nothing that
-/// is not already here. What the sites actually shared was not a *type*, it was this one
-/// *operation*. So this is where it lives, and there is nothing to construct or import.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(n)    | O(n)  |
-/// | **Memory** | O(1) | O(1)    | O(n)  |
-///
-/// n is `s`'s byte length. Amortized O(n) time across the reallocations `push` doubles
-/// through, and the memory column is the buffer's own growth, not this call's.
-///
-/// **It is deliberately a seam and not just a shorthand.** The bytes go in one at a time,
-/// through `push`, which is about 25× slower per byte than a `memcpy` — measured, a 2 KB
-/// piece copies in 39 ns and pushes in 1,183. Closing that needs a builtin, since nothing in
-/// the language can copy a run of bytes; when one arrives, this body changes and **no caller
-/// does**. That is why it is worth having even while it is only a shorthand.
-///
-/// # Examples
-///
-/// ```
-/// var bytes: []u8 = []
-/// bytes.push_utf8("hello")
-/// bytes.push_utf8(", world")
-/// let s = bytes.decode_utf8()   // "hello, world"
-/// ```
-pub let push_utf8 = (self: mut []u8, s: string) -> void => {
-  for b in s.encode_utf8() { self.push(b) }
-}
-
 /// The parts joined with `sep` between them — `split`'s inverse.
 ///
 /// Generic over the element rather than taking `[]string`, so a list of anything

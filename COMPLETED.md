@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — `push_utf8` becomes a builtin, and the seam pays for itself
+
+The bulk append the `StringBuilder` decision pointed at, landed the same day the decision was
+written. One capacity check, one growth, one memcpy, no `[]u8` temporary per piece.
+
+**It kept the prelude version's name, so not one caller changed.** That was the whole reason
+for writing the Lyra version first: it put the seam exactly where the fix would land, and the
+fix arrived by *deleting a body*. Naming the builtin `append_utf8`, as the open item proposed,
+would have meant two names for one operation or a rename at five sites; naming it `push_utf8`
+made the claim in the prelude doc — "when a builtin lands, this body changes and no caller
+does" — literally true. The tests written against the prelude function now exercise the
+builtin unchanged, which is the same property from the other side.
+
+**The wins are large where the copying dominates.** `join` over 9,600 parts: 440 µs → 58, a
+**7x**. A full 120x400 frame redraw: 34 µs → 12.
+
+**And the prediction about `render` was wrong, which is the part worth recording.** The open
+item argued for the builtin partly on the grounds that it would *erase* the one regression of
+the sweep — `render`'s steady state, 12% slower than the `++` version it replaced. Measured
+head to head, one row changing in a 60-row frame: `++` 1802 ns, the push loop 2010, the
+builtin 1948. It halved the regression and did not close it.
+
+The reason is worth more than the number. The copying is now a single memcpy and cannot be
+improved; what remains is **allocation count**. A 200-byte row costs the byte path an empty
+`[]u8` box and its buffer, a growth realloc, and the decode at the end — four — against two
+string boxes for two concatenations. So the last 8% is not a copying problem and no faster
+copy will reach it: it wants a buffer that starts out sized, which is a different feature
+(a capacity spelling, or an empty dynamic array that does not malloc until its first
+element). `frame.lyra` carries the three-way table so the next person starts from it.
+
+**A methodology note, because it nearly produced a wrong entry.** The first three-way run had
+the benchmark's output going through a pipe to `tail`, and a full redraw writes 9.6 MB that
+way — both versions came back at ~770 µs, I/O-bound and identical, which reads as "the
+builtin changed nothing". Redirecting to a file instead gave 114 / 34 / 12. A render
+benchmark measures the terminal unless you take the terminal out of it.
+
+**The ownership side needed nothing.** The string is read and its bytes copied, no pointer to
+it survives, so a builtin signature's default — a bare parameter, read as a borrow — is
+already correct and this stays out of `calleeIsTransferringBuiltin`, where `push` had to be
+added because push keeps what it is given. An owned temporary is released after the call, as
+a borrow should be; the 2,000 interpolated pieces in the small-appends test are that path
+under ASan.
+
 ### 08/30/26 — No `StringBuilder`: the five sites shared an operation, not a type
 
 The question the string-building sweep left open, settled. A builder would be a nominal type

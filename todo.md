@@ -3946,13 +3946,20 @@ What is left:
   in the language can copy a run of bytes — and when one lands, `push_utf8`'s body changes
   and no caller does.
 
-  **The open item is therefore a builtin, not a type.** `bytes.append_utf8(s)` — one capacity
-  check, one grow, one memcpy, and no `[]u8` temporary per piece. It qualifies under the rule
-  that admitted `encode_utf8` (a builtin is what cannot be written in the language; anything
-  else goes in the prelude), and the case for it is already measured: `render`'s steady state
-  is 13% slower than the `++` version it replaced *because* of this loop, which is the one
-  regression in the whole sweep. The rest is upside — `join` and `repeat` spend most of their
-  remaining time there.
+  **[DONE 08/30] The builtin landed the same day**, and kept the prelude version's *name* —
+  `push_utf8` — so not one caller changed. That was what writing the prelude one first bought:
+  the seam sat where the fix would land, and the fix arrived by deleting a body. `join` is
+  **7x** faster (9600 parts, 440 us -> 58) and a full 120x400 redraw is 34 us -> 12.
+
+  **The prediction that it would erase `render`'s steady-state regression was wrong.** Three
+  versions measured head to head, one row changing in a 60-row frame: `++` 1802 ns, the push
+  loop 2010, the builtin 1948. It halved the regression, 12% to 8%, and did not close it.
+  What is left is not copying — that is one memcpy now — but *allocation count*: a 200-byte
+  row costs the byte path an empty `[]u8` box and buffer, a growth realloc and the final
+  decode, against two string boxes for two concatenations. **Closing it needs a buffer that
+  starts sized**, which is the next thing here if anyone wants that last 8%: a
+  `[]u8`-with-capacity spelling, or an empty dynamic array that does not malloc until its
+  first element.
 
   `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where it goes.
 

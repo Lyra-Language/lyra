@@ -325,6 +325,35 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			ReturnType: types.ReturnType{Type: types.VoidType{}},
 		}, true
 	}
+	// `bytes.push_utf8(s)` — a string's bytes appended to a `[]u8`, in **one memcpy**.
+	//
+	// **A builtin because nothing in the language can copy a run of bytes.** It shipped
+	// first as ordinary Lyra in the prelude (08/30) — a per-byte `push` loop over an
+	// `encode_utf8` temporary, which is the only spelling available, since a push is a
+	// capacity compare and a store and there is no bulk form. Measured, a 2 KB piece copies
+	// in 39 ns and pushes in 1,183, the copy flat in the piece's size and the push linear.
+	// So this is the `random_seed` rule again, the primitive being the part that cannot be
+	// written here.
+	//
+	// **It keeps the prelude version's name, so no caller changed.** That was the point of
+	// writing the prelude one first: it put the seam where the fix would land, and the fix
+	// landed by deleting a body rather than by editing five call sites.
+	//
+	// The string is **borrowed**, not transferred: its bytes are copied and no pointer to
+	// it is kept, so a builtin signature's default (a bare parameter, read as a borrow) is
+	// already right and this stays out of `calleeIsTransferringBuiltin` — which is where
+	// `push` had to go, because push keeps what it is given.
+	//
+	// `[]u8` only. A `[N]u8` has no room to grow into and no length to update, and a
+	// `[]T` for any other T would be appending bytes to elements that are not bytes.
+	if dyn, ok := recv.(types.DynamicArrayType); ok && name == "push_utf8" {
+		if p, ok := dyn.ElementType.(types.PrimitiveType); ok && p.Name == types.UInt8 {
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.String}}},
+				ReturnType: types.ReturnType{Type: types.VoidType{}},
+			}, true
+		}
+	}
 	// String methods, both **rune-indexed**, which is not a fresh decision: `s[i]`
 	// already yields the i-th *code point* and `for c in s` already walks code
 	// points, so a byte-based length would make `for i in 0..<s.len() { s[i] }` —
@@ -599,7 +628,7 @@ func builtinMethodAllocates(recv types.Type, name string) bool {
 	// call — amortized doubling means most pushes are a store — but `noalloc` is a
 	// static promise about what a function may do, not a statistical one, so a call
 	// that can allocate counts.
-	if name == "push" {
+	if name == "push" || name == "push_utf8" {
 		if _, isDyn := recv.(types.DynamicArrayType); isDyn {
 			return true
 		}
