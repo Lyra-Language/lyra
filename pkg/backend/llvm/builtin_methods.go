@@ -139,6 +139,17 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	case "push_utf8":
 		return l.lowerDynArrayPushUTF8(block, call, member)
 
+	case "clear":
+		// `clear` is an ordinary method name a user type may also have, so a non-dynamic
+		// receiver falls through rather than erroring, as `offset` does.
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
+		}
+		if dyn, ok := l.resolveForLayout(t).(types.DynamicArrayType); ok {
+			return l.lowerDynArrayClear(block, call, member, dyn)
+		}
+
 	case "offset":
 		// `p.offset(n)` — pointer arithmetic, the one form of it the language has
 		// (pointers.go). A non-pointer receiver falls through: `offset` is a perfectly

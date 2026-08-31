@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 08/30/26 — `clear()`: the regression was never about copying
+
+The last 8%, and the diagnosis mattered more than the fix. `render`'s steady state had been
+slower than the `++` loop it replaced since the byte path landed, and two rounds of making
+the copy faster — a bulk `push_utf8`, then a memcpy builtin behind it — took 12% to 8% and
+stopped. The cost was **allocation count** all along: a 200-byte row bought a fresh `[]u8`
+box, a fresh buffer and a growth realloc every frame, against two string boxes for two
+concatenations. One memcpy had already made the copying optimal, and copying was not the
+problem.
+
+**So the fix is reuse, not sizing.** The open item asked for "a buffer that starts sized",
+and a capacity spelling would have helped — it would have removed the realloc and left the
+box and buffer. What actually removes all three is keeping the buffer between frames, and the
+only thing missing for that was a way to empty an array without dropping its memory.
+`xs.clear()` sets the length to zero and keeps the capacity; rebinding (`xs = []`) already
+does the first half and throws away the second. `Renderer` holds its scratch `[]u8` and
+clears it per render, so the loop allocates once ever.
+
+Four-way, one row changing in a 60-row frame and a full 120x400 redraw:
+
+    `++` per row               1825 ns   115 us
+    `push_utf8` per byte       1921 ns    11 us
+    `push_utf8` bulk           1921 ns    11 us
+    bulk into a reused buffer  1788 ns    10 us
+
+**The sweep's one trade is closed**: `render` is now faster than the version it replaced on
+both axes, where every earlier round had been paying the steady state to buy the redraw.
+
+**`clear` releases its live elements**, which is the part that could have been a leak. The
+element loop is the drop glue's without the free that follows it there, and it runs before
+the length is zeroed since it is bounded by that length. Checked by construction and then by
+measurement: 400,000 strings pushed and cleared hold 1,376 KB peak RSS against 1,360 KB for a
+tenth of the churn — flat, so nothing is retained. Elements past the new length are memory
+and not values, which is the line `push` already draws from the other side.
+
+It is **`noalloc`-legal**, unlike `push` and `push_utf8`: it frees nothing and allocates
+nothing, it writes a length. A `noalloc` function that clears and refills is refused at the
+refill, where the allocation actually is.
+
+The transferable lesson is the shape of the mistake, not the 2%: three rounds of optimizing
+the copy never reached a cost that was never copying. The four-way table is in `frame.lyra`
+so the next person starts from the diagnosis.
+
 ### 08/30/26 — `push_utf8` becomes a builtin, and the seam pays for itself
 
 The bulk append the `StringBuilder` decision pointed at, landed the same day the decision was

@@ -538,3 +538,123 @@ let main = () -> void => { let b: []u8 = []; b.push_utf8("x") }
 		t.Errorf("expected the interior-immutability diagnostic; got: %s", diags[0])
 	}
 }
+
+// `xs.clear()` — length to zero, buffer kept (08/30). Rebinding (`xs = []`) already empties
+// an array; what this adds is keeping the capacity, so a scratch buffer refilled every frame
+// allocates once ever instead of once a frame.
+
+// The buffer survives, which is the feature and is not directly observable — capacity is not
+// a value the language exposes. What is observable is that a cleared array refills and reads
+// correctly, and that its length is the refill's and not the sum of both.
+func TestExec_ClearEmptiesAndRefills(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var b: []u8 = []
+  b.push_utf8("hello")
+  b.clear()
+  b.push_utf8("hi")
+  var xs: []i64 = [1, 2, 3, 4, 5]
+  xs.clear()
+  xs.push(9)
+  print("${b.len()} ${b.decode_utf8()} ${xs.len()} ${xs[0]}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "2 hi 1 9" {
+		t.Errorf("clear then refill = %q; want %q", got, "2 hi 1 9")
+	}
+}
+
+// **A managed element is released, not abandoned.** The element loop is the drop glue's
+// without the free that follows it there, and it has to run *before* the length is zeroed
+// since it is bounded by that length. Under ASan (llvm_ownership_test.go's suite) a missing
+// release is a leak and a double one is a fault; here the assertion is that the strings the
+// clear released are gone while the array is still usable.
+func TestExec_ClearReleasesManagedElements(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var xs: []string = []
+  for i in 0..<50 { xs.push("value ${i}") }
+  xs.clear()
+  for i in 0..<3 { xs.push("after ${i}") }
+  print("${xs.len()} ${xs[0]} ${xs.from_end(1)}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "3 after 0 after 2" {
+		t.Errorf("clear with managed elements = %q; want %q", got, "3 after 0 after 2")
+	}
+}
+
+// Clearing an already-empty array is a no-op rather than an edge case — the element loop
+// runs zero times and the length is already what it is being set to.
+func TestExec_ClearOfAnEmptyArray(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var xs: []i64 = []
+  xs.clear()
+  xs.clear()
+  xs.push(7)
+  print("${xs.len()} ${xs[0]}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "1 7" {
+		t.Errorf("clear of an empty array = %q; want %q", got, "1 7")
+	}
+}
+
+// **Every alias sees it**, because the box is the value and this writes one of its fields —
+// the same reference semantics `push` and `xs[i] = v` already have. A clear that only the
+// clearing binding could see would be a different language.
+func TestExec_ClearIsSeenThroughAliases(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  var a: []i64 = [1, 2, 3]
+  var b = a
+  a.clear()
+  b.push(9)
+  print("${a.len()} ${b.len()} ${a[0]}")
+}
+`
+	got, _ := buildAndRunCapture(t, src)
+	if got = strings.TrimSpace(got); got != "1 1 9" {
+		t.Errorf("clear through an alias = %q; want %q", got, "1 1 9")
+	}
+}
+
+// **`noalloc` permits it**, unlike `push` and `push_utf8` — it frees nothing and allocates
+// nothing, it writes a length. A `noalloc` function that clears and refills is refused at
+// the refill, which is where the allocation is.
+func TestCheck_ClearIsAllowedByNoalloc(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let reset = pure noalloc (xs: mut []i64) -> void => { xs.clear() }
+let main = () -> void => { var a: []i64 = [1, 2]; reset(a) }
+`
+	if diags := checkWithPrelude(t, src); len(diags) != 0 {
+		t.Errorf("clear allocates nothing, so `noalloc` must permit it; got %v", diags)
+	}
+}
+
+// It writes through its receiver, so an immutable binding is refused by the same predicate
+// and the same diagnostic as `xs.push(v)`.
+func TestCheck_ClearNeedsAMutableReceiver(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => { let xs: []i64 = [1, 2]; xs.clear() }
+`
+	diags := checkWithPrelude(t, src)
+	if len(diags) == 0 {
+		t.Fatal("clear writes through its receiver, so a `let` binding must be refused")
+	}
+	if !strings.Contains(diags[0], "deeply immutable") {
+		t.Errorf("expected the interior-immutability diagnostic; got: %s", diags[0])
+	}
+}

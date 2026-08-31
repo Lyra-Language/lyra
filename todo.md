@@ -3951,15 +3951,28 @@ What is left:
   the seam sat where the fix would land, and the fix arrived by deleting a body. `join` is
   **7x** faster (9600 parts, 440 us -> 58) and a full 120x400 redraw is 34 us -> 12.
 
-  **The prediction that it would erase `render`'s steady-state regression was wrong.** Three
-  versions measured head to head, one row changing in a 60-row frame: `++` 1802 ns, the push
-  loop 2010, the builtin 1948. It halved the regression, 12% to 8%, and did not close it.
-  What is left is not copying — that is one memcpy now — but *allocation count*: a 200-byte
-  row costs the byte path an empty `[]u8` box and buffer, a growth realloc and the final
-  decode, against two string boxes for two concatenations. **Closing it needs a buffer that
-  starts sized**, which is the next thing here if anyone wants that last 8%: a
-  `[]u8`-with-capacity spelling, or an empty dynamic array that does not malloc until its
-  first element.
+  **The prediction that it would erase `render`'s steady-state regression was wrong**, and
+  the diagnosis that followed is the useful part. Head to head, one row changing in a 60-row
+  frame: `++` 1802 ns, the push loop 2010, the bulk builtin 1948 — halved, not closed. What
+  was left was never copying, which one memcpy had already made optimal: it was **allocation
+  count**, a fresh `[]u8` box and buffer and a growth realloc every frame against two string
+  boxes for two concatenations.
+
+  **[DONE 08/30] So the fix was reuse, not sizing.** `xs.clear()` sets the length to zero and
+  **keeps the buffer** — rebinding (`xs = []`) already empties an array and drops the memory
+  with it, which is exactly the wrong half. `Renderer` now holds its scratch `[]u8` and
+  clears it per frame, so the whole loop allocates once ever. Four-way, same harness: `++`
+  1825 ns / 115 us, per-byte 1921 / 11, bulk 1921 / 11, reused 1788 / 10. The regression is
+  gone and `render` is now faster than the `++` version it replaced on *both* axes.
+
+  Three rounds of making the copy faster never reached a cost that was not copying. That is
+  the transferable part.
+
+  Still unbuilt, and now wanted for one-shot builds rather than for reuse: a **capacity
+  spelling** (`reserve(n)`, or a sized constructor). `join` knows its output's byte length
+  before it starts — the parts' lengths sum — so it could allocate once instead of growing
+  through log n reallocations, and every `[v; n]`-shaped build is the same case. `clear`
+  serves the loop; this would serve the single pass.
 
   `repeat` is private to `std.tui`; if a third caller wants it, the prelude is where it goes.
 

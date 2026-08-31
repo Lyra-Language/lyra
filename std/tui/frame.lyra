@@ -26,10 +26,18 @@ pub struct Renderer {
   /// The rows as last written to the screen. Empty means nothing is known to be there, so
   /// the next frame is written whole.
   prev: []string,
+  /// Scratch: the bytes of the frame being written, reused across frames.
+  ///
+  /// It lives here rather than in `render` because a local one is a fresh box, a fresh
+  /// buffer and a growth realloc **per frame** — which is most of what a small frame costs.
+  /// Cleared at the top of each render and refilled, so after the first frame the memory is
+  /// already there and already big enough. It holds nothing between calls: `decode_utf8`
+  /// copies out, so what is left here is capacity, not state.
+  buf: []u8,
 }
 
 /// A renderer that assumes nothing is on the screen, so the first frame is written whole.
-pub let renderer = pure () -> Renderer => Renderer { prev: [] }
+pub let renderer = pure () -> Renderer => Renderer { prev: [], buf: [] }
 
 /// Write the rows that differ from the previous frame, in one `print`.
 ///
@@ -70,36 +78,36 @@ pub let render = (self: mut Renderer, rows: []string) -> void => {
   // *slower* than `++` at 60x200: the piece array costs more at that size than the
   // asymptotics save.)
   //
-  // **It is still a trade, and the numbers are the argument.** Three versions of this loop
-  // have been measured against each other, one row changing in a 60-row frame and a full
-  // 120x400 redraw:
+  // **No longer a trade: it is faster on both axes.** Four versions of this loop have been
+  // measured against each other, one row changing in a 60-row frame and a full 120x400
+  // redraw:
   //
-  //   `++` per row      1802 ns   114 us
-  //   `push_utf8` loop  2010 ns    34 us
-  //   `push_utf8` bulk  1948 ns    12 us
+  //   `++` per row               1825 ns   115 us
+  //   `push_utf8` per byte       1921 ns    11 us
+  //   `push_utf8` bulk           1921 ns    11 us
+  //   bulk into a reused buffer  1788 ns    10 us
   //
-  // A full redraw is **9.5x** what it was. The steady state is still ~8% slower than the
-  // `++` version, down from 12% when the bytes went in one at a time — and the bulk builtin
-  // did *not* erase that, which was the prediction. What is left is not copying, which is
-  // now one memcpy: it is that a 200-byte row costs this path more *allocations* than two
-  // concatenations do — an empty `[]u8` box and buffer, a growth realloc, and the decode at
-  // the end, against two string boxes. Closing it needs a buffer that starts sized, not a
-  // faster copy.
+  // The last line is `self.buf` plus `clear`, and it is what finally closed a regression the
+  // middle two carried: for a 200-byte row the byte path was never losing on *copying* — one
+  // memcpy beat two concatenations from the start — it was losing on **allocation count**, a
+  // fresh box and buffer and a growth realloc every frame against two string boxes. Reusing
+  // the buffer removes all three, and what is left per steady-state frame is the position
+  // string and the decode.
   //
-  // One full redraw now pays for about five hundred steady-state frames, so anything that
-  // scrolls or resizes clears the trade immediately, and a static viewer with a ticking
-  // status line pays 146 ns a frame — 0.0009% of a 60 fps budget.
-  var bytes: []u8 = []
+  // The lesson is worth more than the 2%: three rounds of making the copy faster did not
+  // reach a cost that was never copying. The full redraw is 11x, and was already 10x before
+  // the reuse.
+  self.buf.clear()
   let n = rows.len()
   for i in 0..<n {
     if self.row_changed(i, rows[i]) {
       // Start a run here, then extend it over every following row that also changed. The
       // position is written once for the whole run.
-      bytes.push_utf8(at(0, i))
+      self.buf.push_utf8(at(0, i))
       for j in i..<n {
         if !self.row_changed(j, rows[j]) { break }
-        if j > i { bytes.push_utf8("\r\n") }
-        bytes.push_utf8(rows[j])
+        if j > i { self.buf.push_utf8("\r\n") }
+        self.buf.push_utf8(rows[j])
         self.mark(j, rows[j])
       }
     }
@@ -109,7 +117,7 @@ pub let render = (self: mut Renderer, rows: []string) -> void => {
   // string, so an empty buffer means no run was ever started. The empty `[]u8` it allocated
   // to find that out is the one thing this costs a no-change frame, against the `print` it
   // still skips.
-  if bytes.len() > 0 { print(bytes.decode_utf8()) }
+  if self.buf.len() > 0 { print(self.buf.decode_utf8()) }
 }
 
 /// Forget what is on the screen, so the next `render` writes the whole frame.

@@ -325,6 +325,28 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			ReturnType: types.ReturnType{Type: types.VoidType{}},
 		}, true
 	}
+	// `xs.clear()` — length to zero, **buffer kept**.
+	//
+	// The point is the second half. `xs = []` also empties an array and is ordinary Lyra,
+	// but it drops the buffer and the next fill allocates and grows from nothing again;
+	// this keeps the capacity, so a buffer refilled every frame allocates once ever. That
+	// is what a reused scratch buffer needs and the only thing it was missing —
+	// `std.tui`'s `render` builds one frame's bytes per redraw and had no way to hand the
+	// same memory back to itself.
+	//
+	// **It releases the live elements**, so a `[]string` cleared is not a leak; the drop
+	// glue's element loop, without the free that follows it there. Elements past the new
+	// length are gone as far as the language is concerned — the capacity is memory, not
+	// values — which is the same line `push` draws from the other side.
+	//
+	// It **allocates nothing**, so unlike `push` it is `noalloc`-legal: clearing and
+	// refilling a buffer a `noalloc` function was handed is refused at the refill, which
+	// is where the allocation actually is.
+	if _, ok := recv.(types.DynamicArrayType); ok && name == "clear" {
+		return &types.LambdaType{
+			ReturnType: types.ReturnType{Type: types.VoidType{}},
+		}, true
+	}
 	// `bytes.push_utf8(s)` — a string's bytes appended to a `[]u8`, in **one memcpy**.
 	//
 	// **A builtin because nothing in the language can copy a run of bytes.** It shipped

@@ -573,6 +573,69 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 	return nil, storeBlock, nil
 }
 
+// lowerDynArrayClear lowers `xs.clear()`: release the live elements, set the length to
+// zero, and **keep the buffer**.
+//
+// Keeping the buffer is the whole feature. Rebinding (`xs = []`) already empties an array,
+// and it drops the allocation with it, so the next fill grows from nothing — which is what
+// made a per-frame scratch buffer cost a box, a malloc and a realloc per frame in
+// `std.tui`'s `render`, against two string allocations for the `++` loop it replaced. A
+// cleared buffer keeps its capacity, so the loop allocates on its first frame and never
+// again.
+//
+// **The element loop is the drop glue's, without the free.** A `[]string` cleared must
+// release each live element or it leaks, and it must do so before the length is zeroed,
+// since the loop reads that length. What sits past the new length is memory and not values
+// — the same line `push` draws when it stores into spare capacity.
+//
+// The buffer pointer and the capacity are untouched, so an alias sees the clear exactly as
+// it sees a push: the box is the value, and this writes one of its fields.
+func (l *lowerer) lowerDynArrayClear(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, dyn types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 0 {
+		return nil, nil, fmt.Errorf("llvm: clear() expects 0 arguments, got %d", len(call.Arguments))
+	}
+	elemLyra := dyn.ElementType
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, nil, err
+	}
+	box, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(box, block) {
+		return nil, block, nil
+	}
+	boxTy := DynArrayBoxType(elemLL)
+
+	cur := block
+	if l.needsDrop(elemLyra) {
+		fn := block.Parent
+		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
+		iSlot := fn.Blocks[0].NewAlloca(lltypes.I64)
+		block.NewStore(i64c(0), iSlot)
+
+		cond := fn.NewBlock("")
+		body := fn.NewBlock("")
+		exit := fn.NewBlock("")
+		block.NewBr(cond)
+		cond.NewCondBr(cond.NewICmp(enum.IPredSLT, cond.NewLoad(lltypes.I64, iSlot), length), body, exit)
+
+		i := body.NewLoad(lltypes.I64, iSlot)
+		elem := body.NewLoad(elemLL, dynArrayElemPtr(body, boxTy, box, i))
+		end, err := l.emitDropValue(body, elem, elemLyra) // may branch (a `data` element)
+		if err != nil {
+			return nil, nil, err
+		}
+		end.NewStore(end.NewAdd(i, i64c(1)), iSlot)
+		end.NewBr(cond)
+		cur = exit
+	}
+	// After the elements, never before: the loop above reads the length it is bounded by.
+	cur.NewStore(i64c(0), dynArrayLenPtr(cur, boxTy, box))
+	return nil, cur, nil
+}
+
 // lowerDynArrayPushUTF8 lowers `bytes.push_utf8(s)`: grow the buffer once if the
 // string does not fit, then copy its bytes in with a single memcpy.
 //
