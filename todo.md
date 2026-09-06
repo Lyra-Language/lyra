@@ -240,6 +240,24 @@ write today:
 
 ## Known bugs
 
+- **[OPEN 09/06] An array literal mixing a solved and an unsolved generic element ignores
+  the annotation's width.** `let xs: []Maybe<u8> = [Some(200), None]` is refused with
+  *"cannot assign StaticArray<Maybe, 2> to DynamicArray<Maybe<u8>>"*.
+
+  The literal's **own** inferred type is settled from its elements before the annotation
+  narrows them: `Some(200)` solves `t` locally to the i64 default and `None` solves nothing,
+  and the two join to a bare `Maybe` that the annotation is then compared against. One step
+  earlier than the element-context fix of the same day (COMPLETED.md), which repaired the
+  *elements* and left the literal's type alone.
+
+  Two shapes hide it, which is why it is not more visible: `[]Maybe<i64>` works because the
+  default happens to match the annotation, and `[None; n]` works because nothing solves
+  anything — and that repeat form is what a hash table actually uses to size itself, so the
+  gap blocks nothing today.
+
+  Deliberately left untested rather than pinned as correct; the comment beside the passing
+  repeat case in `llvm_generic_array_element_test.go` says so.
+
 - **[DONE 08/24] LSP latency: profiled first, and the profile disagreed with the audit.**
   Per keystroke the server re-resolves the document's import graph and re-analyzes every
   unit. Measured over the real prelude, on a small file: **20.1 ms**, of which the file the

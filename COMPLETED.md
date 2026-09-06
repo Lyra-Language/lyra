@@ -9,6 +9,55 @@ Newest first.
 
 ## Dated log
 
+### 09/06/26 — a word-frequency example, and the four compiler gaps it found
+
+The example is the point of the entry: `examples/word_freq.lyra` is 40 lines and every one
+of the changes below exists because writing it hit a wall. Recorded because the yield per
+line was high enough to be worth repeating deliberately.
+
+**An array element was not a context** (`unknown named type "Maybe"`). `[]Maybe<i64>`
+type-checked and died in the backend, as did `[2]Maybe<t>`, `[]Result<t, e>` and a user's
+own `data Slot<k, v>`; a *non-generic* data type worked, which made it look like a `Maybe`
+problem. It was the one propagate_instantiation.go already describes: a construction that
+solves only some of its parameters stays the bare declaration on purpose, so the
+instantiation comes from the context — and the array literal and repeat arms pushed
+`propagateExpectedType` without its pair. That file's generalization had reached return and
+annotated-`let` position and stopped one site short. Every open-addressing table is a
+`[]Maybe<Entry>`, so a hash map could not be written at all.
+
+**A constructor's type variables were unsolvable.** Solving reads argument types only, so
+`with_capacity<k,v>(cap) -> HashMap<k,v>` had nothing to bind either parameter. Two sources
+added: the turbofish, which the grammar had parsed and the collector recorded all along
+with *nothing downstream reading it* — so `empty::<i64>()` reported the same "cannot infer"
+as if it were absent, which is worse than a refusal; and the context an expression sits in.
+Binding the turbofish needed the declaration's parameters in **order**, lifted onto the
+lambda as `GenericParams` exactly as `GenericBounds` already is. Order of first appearance
+in the signature would have been silently wrong for `let make<a, b> = (y: b, x: a) -> …`.
+
+The context is restricted to variables **no parameter mentions**, and to declarations that
+**declare** their parameters. Both restrictions came out of test failures rather than
+foresight: the second was found by an existing test on `let make = (n: i64) -> t => n`,
+where seeding an implicit return-only variable made the call succeed and surfaced the
+declaration's own inconsistency somewhere else entirely.
+
+**`counts[i].n += 1` was a syntax error** while `counts[i].n = counts[i].n + 1` compiled.
+Fixed by widening the node rather than by desugaring into that statement — the desugar
+walks the path twice, so a side-effecting index runs twice. `checkLValueWritable` is now
+shared by both forms, which is the durable half: the rule cannot come to depend on which
+spelling was used.
+
+**Two things the example taught that no compiler change captures.** A `split_when` whose
+`start` advanced only when it also pushed produced a *plausible* wrong answer — a leaked
+leading space makes `" world"` and `"world"` separate keys, so a count splits in two and
+still looks right. And a synthetic benchmark generated as `w0`…`w3999` measured nothing,
+because `is_ascii_alpha` splits on digits and all 48,000 words collapsed to `w`.
+
+**Still open**: `let xs: []Maybe<u8> = [Some(200), None]` is refused. A separate gap one
+step earlier — the literal's own inferred type settles from its elements before the
+annotation narrows them, so a solved element (i64 by default) and an unsolved one join to a
+bare `Maybe`. `[]Maybe<i64>` works because the default matches, and `[None; n]` works
+because nothing solves anything, which is the shape a table uses.
+
 ### 08/30/26 — `reserve` built anyway: the argument against it is unchanged
 
 The entry below recommended not building this, and the recommendation was overruled by the
