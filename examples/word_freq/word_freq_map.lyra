@@ -1,0 +1,38 @@
+
+struct Count { word: string, n: i64 }
+
+let main = () => {
+  let mut word_counts: []Count = []
+  for {
+    match read_line() {
+      Some(text) => {
+        for w in text.split_when((r) => !r.is_ascii_alpha()) {
+          let word = w.to_ascii_lower()
+          match find(word_counts, word) {
+            Some(idx) => {
+              word_counts[idx].n += 1
+            },
+            None => {
+              word_counts.push(Count { word: word, n: 1 })
+            },
+          }
+        }
+      },
+      None => {
+        break
+      }
+    }
+  }
+  for wc in word_counts {
+    println("${wc.word}: ${wc.n}")
+  }
+}
+
+let find = pure noalloc (word_counts: []Count, word: string) -> Maybe<i64> => {
+  for i, wc in word_counts {
+    if word == wc.word {
+      return Some(i)
+    }
+  }
+  return None
+}
