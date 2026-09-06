@@ -44,8 +44,8 @@ func rewriteBlock(b *BlockExpr, rewrite func(Expression) Expression) {
 // rewriteIdentSlot rewrites a slot whose static type is *IdentifierExpr rather than
 // Expression, storing the result back only if it is still an identifier.
 //
-// **The narrow slots are the one place a rewrite can be dropped**, and there are three:
-// MathAssignOpExpr.Left and the two BaseStruct fields (a record-update target). Each is
+// **The narrow slots are the one place a rewrite can be dropped**, and there are two:
+// the two BaseStruct fields (a record-update target). Each is
 // a binding's *name*, not an arbitrary expression — the grammar admits nothing else
 // there — so a callback that wants to turn one into some other node kind is asking for
 // something the AST cannot represent, and silently keeping the identifier is the only
@@ -159,11 +159,7 @@ func rewriteExprChildren(expr Expression, rewrite func(Expression) Expression) {
 		e.Left = RewriteExpr(e.Left, rewrite)
 		e.Right = RewriteExpr(e.Right, rewrite)
 	case *MathAssignOpExpr:
-		// Left is an IdentifierExpr *value*, so it is rewritten through its address
-		// and stored back only as an identifier — see rewriteIdentSlot.
-		if out, ok := RewriteExpr(&e.Left, rewrite).(*IdentifierExpr); ok {
-			e.Left = *out
-		}
+		e.Left = RewriteExpr(e.Left, rewrite)
 		e.Right = RewriteExpr(e.Right, rewrite)
 	case *BooleanBinaryOpExpr:
 		e.Left = RewriteExpr(e.Left, rewrite)

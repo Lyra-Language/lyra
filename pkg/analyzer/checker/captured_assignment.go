@@ -99,7 +99,7 @@ func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnos
 			return false
 		}
 		if v, ok := e.(*ast.MathAssignOpExpr); ok {
-			report(v.Left.Name, v.GetLocation())
+			report(rootIdentName(v.Left), v.GetLocation())
 		}
 		return true
 	}

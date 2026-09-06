@@ -1358,15 +1358,19 @@ func (tc *TypeChecker) checkDerefAssignment(stmt *ast.DerefAssignmentStmt) {
 	tc.checkDerefWrite(stmt)
 }
 
-// checkLValueAssignment type-checks an interior-mutation statement
-// (`p.x = v`, `arr[i] = v`, `grid[i].y = v`) and enforces the mutability rule:
-// the path must be rooted at a binding that permits interior mutation, i.e. a
-// `var` or a `let mut`. A plain `let` is deeply immutable — interior mutation is
-// rejected even several hops down the path (`a.b.c = v` walks back to `a`).
-func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
+// checkLValueWritable enforces the mutability rule for an interior-mutation path
+// (`p.x`, `arr[i]`, `grid[i].y`): the path must be rooted at a binding that permits
+// interior mutation, i.e. a `var` or a `let mut`. A plain `let` is deeply immutable —
+// interior mutation is rejected even several hops down the path (`a.b.c = v` walks back to
+// `a`) — and no hop may traverse a `readonly` field.
+//
+// Split out of checkLValueAssignment so the **compound** form asks exactly the same
+// questions: `xs[i].n += 1` and `xs[i].n = xs[i].n + 1` name the same place, so a rule that
+// holds for one and not the other is a rule that depends on spelling.
+func (tc *TypeChecker) checkLValueWritable(target ast.Expression) {
 	// Enforce mutability of the root binding first; this is the point of the
 	// statement form and should be reported even if the value doesn't type-check.
-	if root := rootIdentifier(stmt.Target); root != nil {
+	if root := rootIdentifier(target); root != nil {
 		if root.IsConst {
 			tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
 		} else if mod, ok := tc.paramMods[root.Name]; ok {
@@ -1390,7 +1394,13 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	// mutable binding, and (like a deeply-immutable `let` binding) nothing
 	// reached *through* it can be mutated either. Walk every member hop in the
 	// path and reject the write if any traverses a frozen field.
-	tc.checkFrozenFieldPath(stmt.Target)
+	tc.checkFrozenFieldPath(target)
+}
+
+// checkLValueAssignment type-checks an interior-mutation statement — `p.x = v`,
+// `arr[i] = v`, `grid[i].y = v`.
+func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
+	tc.checkLValueWritable(stmt.Target)
 
 	targetType := tc.inferExprType(stmt.Target)
 	valueType := tc.inferExprType(stmt.Value)
@@ -1562,7 +1572,16 @@ func (tc *TypeChecker) addParamImmutableError(loc ast.Location, name string, mod
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
-	// **Record the target's own type on the target node.** `&expr.Left` is the node
+	// `xs[i].n += 1` — a member/index place rather than a binding. Everything below this
+	// point is written in terms of a *name* (assignTargetType, resolveAssignTarget), which
+	// a path does not have, so the interior form takes its own route and the binding form
+	// is left exactly as it was.
+	leftIdent, isIdent := expr.Left.(*ast.IdentifierExpr)
+	if !isIdent {
+		tc.checkMathAssignOpToLValue(expr)
+		return
+	}
+	// **Record the target's own type on the target node.** `leftIdent` is the node
 	// walk.go visits for this form, and nothing had ever given it a type — so a consumer
 	// asking what `x` is in `x >>= n` had to ask about something else instead, and the
 	// backend asked about the *count*. For every non-shift operator the count shares the
@@ -1573,8 +1592,8 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	//
 	// assignTargetType rather than resolveAssignTarget: this is a recording step, and the
 	// reporting one runs below — asking twice prints an immutable-binding error twice.
-	if target := tc.assignTargetType(expr.Left.Name); target != nil {
-		tc.typeTable.Set(&expr.Left, target)
+	if target := tc.assignTargetType(leftIdent.Name); target != nil {
+		tc.typeTable.Set(leftIdent, target)
 	}
 
 	// `x <<= n` is `x = x << n`, and a shift's right operand is a *count* rather than
@@ -1584,7 +1603,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	// for: `x <<= count32` on a `u8` would need a conversion that `x = x << count32`
 	// does not. That asymmetry is what this split exists to remove.
 	if binOp, isBin := expr.Operator.BinaryOp(); isBin && binOp.IsShift() {
-		target, found := tc.resolveAssignTarget(expr.Left.Name, expr.GetLocation())
+		target, found := tc.resolveAssignTarget(leftIdent.Name, expr.GetLocation())
 		if !found {
 			return
 		}
@@ -1612,7 +1631,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 		// The target's type only — not resolveAssignTarget, which *reports* (immutable
 		// binding, borrowed parameter). Asking it here and again through
 		// checkAssignToBinding below would print each of those twice.
-		if target := tc.assignTargetType(expr.Left.Name); target != nil {
+		if target := tc.assignTargetType(leftIdent.Name); target != nil {
 			if result, handled := tc.dispatchCompoundOperator(expr, binOp, target); handled {
 				// The result is stored back into the target, so it must fit. Reported
 				// here rather than left to the store, which is the backend's problem by
@@ -1621,17 +1640,17 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 				if result != nil && !isAssignable(result, target) {
 					tc.addError(expr.GetLocation(), SeverityError,
 						"operator %s: the impl yields %s, which cannot be stored back into %s (%s)",
-						expr.Operator, result, expr.Left.Name, target)
+						expr.Operator, result, leftIdent.Name, target)
 				}
 				// Mutability is still the assignment's own rule, and dispatch says
 				// nothing about it — so ask, and let it report.
-				tc.resolveAssignTarget(expr.Left.Name, expr.GetLocation())
+				tc.resolveAssignTarget(leftIdent.Name, expr.GetLocation())
 				return
 			}
 		}
 	}
 
-	effective := tc.checkAssignToBinding(expr.Left.Name, expr.Right, expr.GetLocation())
+	effective := tc.checkAssignToBinding(leftIdent.Name, expr.Right, expr.GetLocation())
 	if effective == nil {
 		return
 	}
@@ -1662,6 +1681,64 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	// `i += 1` with a narrow `i` lowers `1` at that width (matching plain
 	// reassignment — see checkVarReassignment) rather than the i64 default.
 	tc.propagateExpectedType(expr.Right, effective)
+}
+
+// checkMathAssignOpToLValue is checkMathAssignOp for a place that is not a binding:
+// `counts[i].n += 1`, `p.x *= 2`.
+//
+// It asks the same three questions the binding form does, in the same order, against the
+// path instead of a name: may this place be written, what is its type, and does the
+// operator apply to it. The writability check is literally the one `=` uses
+// (checkLValueWritable), which is the point — the compound form is the shorter spelling of
+// `place = place op rhs`, so the two must agree about `readonly` fields and about which
+// bindings permit interior mutation.
+//
+// A shift's count is typed independently here for the same reason it is in the binding
+// form: `x <<= n` is `x = x << n`, and a count is not a value in the target's domain.
+func (tc *TypeChecker) checkMathAssignOpToLValue(expr *ast.MathAssignOpExpr) {
+	tc.checkLValueWritable(expr.Left)
+
+	target := tc.inferExprType(expr.Left)
+	if target == nil {
+		return
+	}
+	binOp, isBin := expr.Operator.BinaryOp()
+	if !isBin {
+		return
+	}
+	if binOp.IsShift() {
+		count := tc.inferExprType(expr.Right)
+		if count == nil {
+			return
+		}
+		if !isIntegerOperand(target) || !isIntegerOperand(count) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator %s: operands must be integers, got %s and %s",
+				expr.Operator, target, count)
+		}
+		return
+	}
+	// An overloaded operator reaches the interior form too — `positions[i] += delta` on a
+	// type with an `Add` impl is the call `positions[i] = positions[i] + delta` makes.
+	if result, handled := tc.dispatchCompoundOperator(expr, binOp, target); handled {
+		if result != nil && !isAssignable(result, target) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator %s: %s is not assignable back to %s", expr.Operator, result, target)
+		}
+		return
+	}
+	// The right operand is narrowed to the target's type and must fit it, which is the
+	// same pair of calls the binding form makes through checkAssignToBinding.
+	tc.propagateExpectedType(expr.Right, target)
+	tc.checkIntegerLiteralRange("compound assignment", expr.Right, target)
+	right := tc.inferExprType(expr.Right)
+	if right == nil {
+		return
+	}
+	if !tc.assignableValue(expr.Right, right, target) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"operator %s: cannot assign %s to %s", expr.Operator, right, target)
+	}
 }
 
 func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {

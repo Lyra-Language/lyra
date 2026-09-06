@@ -86,7 +86,7 @@ func (tc *TypeChecker) dispatchCompoundOperator(expr *ast.MathAssignOpExpr, binO
 	// there, and the backend needs one: that is how it recovers the *substituted*
 	// receiver type when the operator resolved through a bound and only the
 	// specialization names the impl.
-	tc.typeTable.Set(&expr.Left, target)
+	tc.typeTable.Set(expr.Left, target)
 	name := ast.MethodName{Kind: ast.MethodNameKindBinary, Value: string(binOp)}
 	return tc.dispatchOperator(expr, name, target, []types.Type{tc.inferExprType(expr.Right)},
 		[]ast.Expression{expr.Right}, string(expr.Operator))

@@ -92,7 +92,7 @@ func referencedNames(stmts []ast.Statement) map[string]bool {
 				case *ast.IdentifierExpr:
 					refs[ex.Name] = true
 				case *ast.MathAssignOpExpr:
-					refs[ex.Left.Name] = true
+					refs[rootIdentName(ex.Left)] = true
 				}
 				return true
 			},

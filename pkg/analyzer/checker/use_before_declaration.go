@@ -132,8 +132,8 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 			return false
 
 		case *ast.MathAssignOpExpr:
-			if declared[ex.Left.Name] && !seen[ex.Left.Name] {
-				c.report(ex.Left.GetLocation(), ex.Left.Name)
+			if root := rootIdentExpr(ex.Left); root != nil && declared[root.Name] && !seen[root.Name] {
+				c.report(root.GetLocation(), root.Name)
 			}
 			c.checkExpr(ex.Right, declared, seen)
 			return false

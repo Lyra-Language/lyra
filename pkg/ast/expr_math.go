@@ -50,9 +50,15 @@ func (op MathBinaryOp) IsShift() bool {
 	return op == MathBinaryOpShl || op == MathBinaryOpShr
 }
 
+// MathAssignOpExpr is a compound assignment: `x += 1`, `xs[i].n *= 2`.
+//
+// Left is any assignable place — an IdentifierExpr, or the member/index path an
+// LValueAssignmentStmt targets. It was an IdentifierExpr by value until the interior
+// forms were allowed, which is why consumers wanting the binding being written reach
+// for the path's root (rootIdentExpr) rather than reading a name off this node.
 type MathAssignOpExpr struct {
 	ExprBase
-	Left     IdentifierExpr
+	Left     Expression
 	Operator MathAssignOp
 	Right    Expression
 }

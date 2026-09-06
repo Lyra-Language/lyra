@@ -160,7 +160,7 @@ func WalkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(
 		WalkExpr(e.Left, onStmt, onExpr)
 		WalkExpr(e.Right, onStmt, onExpr)
 	case *MathAssignOpExpr:
-		WalkExpr(&e.Left, onStmt, onExpr)
+		WalkExpr(e.Left, onStmt, onExpr)
 		WalkExpr(e.Right, onStmt, onExpr)
 	case *BooleanBinaryOpExpr:
 		WalkExpr(e.Left, onStmt, onExpr)

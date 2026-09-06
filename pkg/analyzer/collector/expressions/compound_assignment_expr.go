@@ -22,9 +22,16 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	if left == nil {
 		return nil
 	}
-	leftIdent, ok := left.(*ast.IdentifierExpr)
-	if !ok {
-		ctx.AddError(leftNode, diag.SeverityError, "Left side of compound assignment must be an identifier")
+	// Any assignable place, matching what `=` accepts: a binding, or the member/index
+	// path an LValueAssignmentStmt targets. Restricting this to a bare identifier made
+	// `counts[i].n += 1` a syntax-level refusal while `counts[i].n = counts[i].n + 1`
+	// on the identical place compiled — the compound form is the shorter spelling of
+	// that statement, so it has no business accepting less.
+	switch left.(type) {
+	case *ast.IdentifierExpr, *ast.MemberExpr, *ast.IndexExpr:
+	default:
+		ctx.AddError(leftNode, diag.SeverityError,
+			"left side of compound assignment must be a binding, field or element")
 		return nil
 	}
 
@@ -58,7 +65,7 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	}
 	return &ast.MathAssignOpExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Left:     *leftIdent,
+		Left:     left,
 		Operator: operator,
 		Right:    right,
 	}

@@ -2188,11 +2188,11 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			}
 		case *ast.MathAssignOpExpr:
 			// The LHS is a write target (reported here); don't also flag it as a read.
-			c.markAssignRoot(&ex.Left)
-			if !c.declares(ex.Left.Name) {
+			c.markAssignRoot(rootIdentExpr(ex.Left))
+			if !c.declares(rootIdentName(ex.Left)) {
 				found |= EffectMut
 				c.pure(ex.GetLocation(),
-					"pure function mutates captured binding %q; mutation must not escape the function", ex.Left.Name)
+					"pure function mutates captured binding %q; mutation must not escape the function", rootIdentName(ex.Left))
 			}
 		case *ast.FunctionCallExpr:
 			if inf.allocSites.table().IsUnresolvedCallee(ex) {

@@ -466,7 +466,7 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 	case *ast.MathAssignOpExpr:
 		// `x OP= rhs` is `x = x OP rhs`: check the operation for overflow and update
 		// x's tracked interval. (In a loop x is already havoc'd, so this can't fire.)
-		lv, lt, _ := c.eval(st, &v.Left)
+		lv, lt, _ := c.eval(st, v.Left)
 		rv, rt, after := c.eval(st, v.Right)
 		st = after
 		switch v.Operator {
@@ -476,7 +476,7 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 			// the operation's integer type and is the divisor. The new value of x isn't
 			// tracked → ⊤.
 			c.checkDivision(e, v.Right, v.Right, lv, lt, rv, rt)
-			delete(st.vars, v.Left.Name)
+			delete(st.vars, rootIdentName(v.Left))
 			return interval{}, false, st
 		}
 		if binOp, isBin := v.Operator.BinaryOp(); isBin && binOp.IsBitwise() && lt && rt {
@@ -489,11 +489,11 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 				// on the node the backend will ask about — the assignment itself.
 				c.markShiftInRange(e, v.Right, binOp, rv, rt)
 				if r, ok := bitwiseI(binOp, lv, rv, tyIv); ok {
-					st.vars[v.Left.Name] = clampToType(r, tyIv)
+					st.vars[rootIdentName(v.Left)] = clampToType(r, tyIv)
 					return interval{}, false, st
 				}
 			}
-			delete(st.vars, v.Left.Name)
+			delete(st.vars, rootIdentName(v.Left))
 			return interval{}, false, st
 		}
 		if lt && rt {
@@ -512,12 +512,12 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 				// identifier isn't recorded; the RHS carries the target's (propagated)
 				// width, so use it for the overflow bounds.
 				if res, resOK := c.checkArith(e, v.Right, r); resOK {
-					st.vars[v.Left.Name] = res
+					st.vars[rootIdentName(v.Left)] = res
 					return interval{}, false, st
 				}
 			}
 		}
-		delete(st.vars, v.Left.Name) // couldn't track the new value → ⊤
+		delete(st.vars, rootIdentName(v.Left)) // couldn't track the new value → ⊤
 		return interval{}, false, st
 
 	case *ast.BooleanBinaryOpExpr:
@@ -1470,7 +1470,7 @@ func assignedNames(node ast.AstNode) map[string]bool {
 	}
 	onExpr := func(e ast.Expression) bool {
 		if m, ok := e.(*ast.MathAssignOpExpr); ok {
-			out[m.Left.Name] = true
+			out[rootIdentName(m.Left)] = true
 		}
 		return true
 	}

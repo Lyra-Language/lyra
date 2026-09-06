@@ -613,17 +613,44 @@ func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, r
 // whose width the typechecker propagated to match the target (checkMathAssignOp),
 // so both operands share a width for the op.
 func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (value.Value, *ir.Block, error) {
-	slot, ok := l.slotFor(e.Left.Name, e.GetLocation())
-	if !ok {
-		return nil, nil, fmt.Errorf("llvm: compound assignment to unbound identifier %q", e.Left.Name)
-	}
 	binOp, ok := e.Operator.BinaryOp()
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: compound assignment %q not implemented", e.Operator)
 	}
-	elem, err := slotElemType(slot)
-	if err != nil {
-		return nil, nil, err
+	// The place being updated, as an address plus the type stored there. A binding is a
+	// slot; anything else — `xs[i].n += 1` — is the same path walk `xs[i].n = v` takes.
+	//
+	// **The address is computed once**, which is the reason this is not desugared into
+	// `place = place op rhs` in the collector. That spelling re-evaluates the path, so an
+	// index with a side effect (`xs[next()].n += 1`) would run it twice, and a costly one
+	// twice over — a compound assignment reads and writes *one* place, and the shared
+	// address is what says so.
+	var slot value.Value
+	var elem lltypes.Type
+	if ident, isIdent := e.Left.(*ast.IdentifierExpr); isIdent {
+		s, found := l.slotFor(ident.Name, e.GetLocation())
+		if !found {
+			return nil, nil, fmt.Errorf("llvm: compound assignment to unbound identifier %q", ident.Name)
+		}
+		et, err := slotElemType(s)
+		if err != nil {
+			return nil, nil, err
+		}
+		slot, elem = s, et
+	} else {
+		loc, b, err := l.lvalueAddress(block, e.Left)
+		if err != nil {
+			return nil, nil, err
+		}
+		block = b
+		if loc.ty == nil {
+			return nil, nil, fmt.Errorf("llvm: no type recorded for compound assignment target")
+		}
+		et, err := l.lowerType(loc.ty)
+		if err != nil {
+			return nil, nil, err
+		}
+		slot, elem = loc.ptr, et
 	}
 	cur := block.NewLoad(elem, slot)
 	rhs, block, err := l.lowerExpr(block, e.Right)
@@ -635,7 +662,7 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	// only the middle step changes.
 	res, ok := l.res.MethodTable.OperatorResolution(e)
 	if !ok {
-		res, ok = l.operatorCandidate(e, &e.Left)
+		res, ok = l.operatorCandidate(e, e.Left)
 	}
 	if ok {
 		result, block, err := l.lowerOperatorImplCall(block, res, cur, rhs)
@@ -655,7 +682,7 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		// agree, because the count is propagated to the target's type; for a shift they
 		// do not, since a count is typed independently and an untyped one defaults to
 		// signed. Reading the count picked `ashr` for `u8 200 >>= 1` and answered 228.
-		if signed, err = l.getIntSignedness(&e.Left); err == nil {
+		if signed, err = l.getIntSignedness(e.Left); err == nil {
 			// The checked int op may split the block (overflow/divide trap); keep
 			// lowering (the store) into the block it returns.
 			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed, e)
