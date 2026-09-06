@@ -1,21 +1,20 @@
+// Word frequencies over stdin — `word_freq.lyra` with the linear scan replaced by
+// `std.collections`'s `HashMap`, so a lookup is expected O(1) rather than O(words).
+//
+//   lyrac run examples/word_freq/word_freq_map.lyra < some.txt
+//
+// The map's iteration order is the table's, so the report is sorted here by count.
 
-struct Count { word: string, n: i64 }
+import std.collections.{ HashMap, hashmap_new, insert, get_or, entries }
 
 let main = () => {
-  let mut word_counts: []Count = []
+  var word_counts: HashMap<string, i64> = hashmap_new()
   for {
     match read_line() {
       Some(text) => {
         for w in text.split_when((r) => !r.is_ascii_alpha()) {
           let word = w.to_ascii_lower()
-          match find(word_counts, word) {
-            Some(idx) => {
-              word_counts[idx].n += 1
-            },
-            None => {
-              word_counts.push(Count { word: word, n: 1 })
-            },
-          }
+          word_counts.insert(word, word_counts.get_or(word, 0) + 1)
         }
       },
       None => {
@@ -23,16 +22,25 @@ let main = () => {
       }
     }
   }
-  for wc in word_counts {
-    println("${wc.word}: ${wc.n}")
+  for (word, n) in by_count(word_counts.entries()) {
+    println("${word}: ${n}")
   }
 }
 
-let find = pure noalloc (word_counts: []Count, word: string) -> Maybe<i64> => {
-  for i, wc in word_counts {
-    if word == wc.word {
-      return Some(i)
-    }
+// Insertion sort, descending by count and then ascending by word so a tie is stable
+// across runs. Fine for a vocabulary; the prelude has no sort yet.
+let by_count = pure (pairs: [](string, i64)) -> [](string, i64) => {
+  let mut sorted: [](string, i64) = []
+  for (word, n) in pairs {
+    var at = sorted.len()
+    for at > 0 && before(word, n, sorted[at - 1]) { at -= 1 }
+    sorted.push((word, n))
+    var i = sorted.len() - 1
+    for i > at { sorted[i] = sorted[i - 1]; i -= 1 }
+    sorted[at] = (word, n)
   }
-  return None
+  sorted
 }
+
+let before = pure noalloc (word: string, n: i64, other: (string, i64)) -> bool =>
+  n > other.1 || (n == other.1 && word < other.0)

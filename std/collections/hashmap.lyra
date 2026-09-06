@@ -1,0 +1,397 @@
+module std.collections
+//! `HashMap<k, v>` — an unordered map from keys to values — and the `Hash` trait a key
+//! type needs to be one.
+//!
+//! ```
+//! import std.collections.{ HashMap, hashmap_new, insert, get, entries }
+//!
+//! var ages: HashMap<string, i64> = hashmap_new()
+//! ages.insert("ada", 36)
+//! ages.insert("grace", 45)
+//! println(ages.get("ada").unwrap_or(0))    // 36
+//! for (name, age) in ages.entries() { println("${name} is ${age}") }
+//! ```
+//!
+//! `entries()` answers `[](k, v)`, so a `for (name, age) in …` header takes each pair apart
+//! in place; the map itself never iterates a tuple, since its slots are `Maybe<Entry>` and
+//! an absent slot needs a `match`.
+
+// **Open addressing with linear probing**, over one `[]Maybe<Entry<k, v>>` whose length
+// is a power of two. Chaining would want a linked node per entry, which is an allocation
+// per insert and a pointer chase per probe; open addressing keeps every entry in one
+// buffer, so a probe sequence is a sequential scan of memory and a `grow` is one
+// allocation. The load factor is capped at 3/4, which keeps the expected probe length
+// small — under 3 for a hit, under 9 for a miss — and the table always has an empty slot
+// to stop a probe at.
+//
+// **Deletion is backward-shift, not tombstones.** A tombstone marks a removed slot so
+// that probes past it still find what lies beyond, and it costs a rehash to clear them
+// once they accumulate — a table that inserts and removes at a steady rate fills with
+// them and every miss walks the whole cluster. Backward shift instead pulls each later
+// entry of the cluster back into the hole it can legally occupy, so the table after a
+// removal is exactly the table an insertion sequence without that key would have built.
+// It needs each entry's hash to hand, which is why `Entry` stores it: recomputing a
+// string's hash per shifted entry would make `remove` cost a rehash of its cluster.
+//
+// **The hash is mixed before it is used**, by a `splitmix64` finalizer in `hash_key`.
+// That lets an `impl Hash` be the obvious thing — an integer's hash is the integer — while
+// sequential keys still spread across the table rather than marching through it, and a
+// power-of-two mask still reads the low bits of something well distributed.
+
+/// Types that can be a `HashMap` key.
+///
+/// The one rule an implementation must keep: **two values that compare equal with `==`
+/// must hash alike.** The map finds a key by probing from its hash and confirming with
+/// `==`, so an equal key with a different hash is simply never found. The reverse is not
+/// required — distinct values may share a hash — but a hash that collides often makes
+/// every operation walk a long cluster.
+///
+/// The primitive keys are implemented below; `string` hashes its runes with FNV-1a. A
+/// struct key combines its fields with `hash_combine`:
+///
+/// ```
+/// impl Hash for Point {
+///   hash = pure noalloc (self) => hash_combine(self.x.hash(), self.y.hash())
+/// }
+/// ```
+pub trait Hash {
+  /// A 64-bit hash of `self`. Need not be well mixed: the map runs it through a
+  /// finalizer before using it, so an integer's own value is a fine answer.
+  hash: (Self) -> u64
+}
+
+/// An unordered map from `k` to `v`.
+///
+/// Build one with `hashmap_new` or `hashmap_with_capacity`, then `insert`, `get` and
+/// `remove`. Inserting and removing mutate the map, so it must be held in a `var` or
+/// behind a `mut` parameter. Iteration order is the table's, not insertion order, and it
+/// changes when the table grows — sort `keys()` if order matters.
+///
+/// # Examples
+///
+/// ```
+/// var counts: HashMap<string, i64> = hashmap_new()
+/// for word in words {
+///   counts.insert(word, counts.get(word).unwrap_or(0) + 1)
+/// }
+/// ```
+pub struct HashMap<k, v> {
+  /// The slots, a power of two of them. An occupied slot holds its entry; a `None` ends
+  /// every probe sequence that reaches it.
+  slots: []Maybe<Entry<k, v>>,
+  /// The number of occupied slots.
+  count: i64,
+}
+
+/// One occupied slot: the key, its value, and the key's hash, kept so that growing the
+/// table and shifting after a removal never rehash a key.
+pub struct Entry<k, v> {
+  /// `hash_key(key)` — mixed, not the raw `Hash::hash`.
+  hash: u64,
+  /// The key.
+  key: k,
+  /// The value.
+  value: v,
+}
+
+/// An empty map.
+///
+/// Bare rather than `HashMap.new`, because the language has no type-namespaced
+/// associated functions (`lyra-E035`). The type parameters come from the context —
+/// `var m: HashMap<string, i64> = hashmap_new()` — or from a turbofish,
+/// `hashmap_new::<string, i64>()`.
+pub let hashmap_new<k, v> = pure () -> HashMap<k, v> => hashmap_with_capacity(0)
+
+/// An empty map with room for `capacity` entries before it first grows.
+///
+/// Sized so the load factor stays under 3/4 at that count. The capacity is only a hint;
+/// the map grows past it as needed.
+///
+/// # Panics
+///
+/// Traps when `capacity` is negative.
+pub let hashmap_with_capacity<k, v> = pure (capacity: i64) -> HashMap<k, v> => {
+  if capacity < 0 { panic("hashmap_with_capacity: capacity must not be negative") }
+  var slots = 8
+  for slots * 3 < capacity * 4 { slots *= 2 }
+  HashMap { slots: [None; slots], count: 0 }
+}
+
+/// Maps `key` to `value`, replacing any value it already had.
+///
+/// Answers nothing, so the common insert discards nothing — `replace` is the same
+/// operation answering the value it displaced. A replaced entry keeps its position; a
+/// new one may trigger a grow, which rehashes nothing — every entry carries its hash —
+/// but does move every entry.
+///
+/// # Complexity
+///
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(1) | O(1)    | O(n)  |
+/// | **Memory** | O(1) | O(1)    | O(n)  |
+///
+/// The worst case is the insert that grows the table: n entries move to a buffer twice
+/// the size. Amortized over the inserts that filled it, that is O(1) each.
+pub let insert<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, value: v) -> void => {
+  let _ = self.replace(key, value)
+}
+
+/// Maps `key` to `value` and answers the value it replaced, or `None` when the key was
+/// new.
+///
+/// `insert` is this with the answer dropped. A discarded `Maybe` warns (`lyra-W006`), so
+/// reach for this one only when the previous value is wanted.
+pub let replace<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, value: v) -> Maybe<v> => {
+  let hash = hash_key(key)
+  match self.find_index(key, hash) {
+    Some(i) => {
+      let previous: Maybe<v> = match self.slots[i] { Some(e) => Some(e.value), None => None }
+      self.slots[i] = Some(Entry { hash: hash, key: key, value: value })
+      previous
+    },
+    None => {
+      if (self.count + 1) * 4 > self.slots.len() * 3 { self.grow() }
+      self.place(Entry { hash: hash, key: key, value: value })
+      self.count += 1
+      None
+    },
+  }
+}
+
+/// The value mapped to `key`, or `None` if there is none.
+///
+/// Expected O(1): a probe from the key's hash, confirmed with `==`.
+pub let get<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k) -> Maybe<v> =>
+  match self.find_index(key, hash_key(key)) {
+    Some(i) => match self.slots[i] { Some(e) => Some(e.value), None => None },
+    None => None,
+  }
+
+/// The value mapped to `key`, or `fallback` if there is none.
+///
+/// `fallback` is evaluated whether or not it is used, being an ordinary argument — the
+/// same rule as `Maybe`'s `unwrap_or`, which this is one call over.
+pub let get_or<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k, fallback: v) -> v =>
+  self.get(key).unwrap_or(fallback)
+
+/// Whether the map has an entry for `key`.
+pub let contains_key<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k) -> bool =>
+  self.find_index(key, hash_key(key)).is_some()
+
+/// Removes `key`'s entry, answering the value it had, or `None` if there was none.
+///
+/// Expected O(1). The table never shrinks; the capacity stays for the entries that
+/// replace the removed one. When the value is not wanted, `let _ = m.remove(key)` is
+/// how to say so — a discarded `Maybe` warns.
+pub let remove<k, v> where k: Hash = det noalloc (self: mut HashMap<k, v>, key: k) -> Maybe<v> => {
+  match self.find_index(key, hash_key(key)) {
+    None => None,
+    Some(found) => {
+      let removed: Maybe<v> = match self.slots[found] { Some(e) => Some(e.value), None => None }
+      self.close_hole(found)
+      self.count -= 1
+      removed
+    },
+  }
+}
+
+/// The number of entries.
+pub let len<k, v> = pure noalloc (self: HashMap<k, v>) -> i64 => self.count
+
+/// Whether the map has no entries.
+pub let is_empty<k, v> = pure noalloc (self: HashMap<k, v>) -> bool => self.count == 0
+
+/// Removes every entry. The capacity is kept.
+pub let clear<k, v> = det noalloc (self: mut HashMap<k, v>) -> void => {
+  for i in 0..<self.slots.len() { self.slots[i] = None }
+  self.count = 0
+}
+
+/// Every key, in table order.
+///
+/// Allocates the array. The order is the table's, not insertion order — sort the result
+/// when the order matters.
+pub let keys<k, v> = pure (self: HashMap<k, v>) -> []k => {
+  let mut out: []k = []
+  out.reserve(self.count)
+  for slot in self.slots {
+    match slot { Some(e) => out.push(e.key), None => {} }
+  }
+  out
+}
+
+/// Every value, in table order — the order `keys` answers, so the two arrays line up.
+///
+/// Allocates the array.
+pub let values<k, v> = pure (self: HashMap<k, v>) -> []v => {
+  let mut out: []v = []
+  out.reserve(self.count)
+  for slot in self.slots {
+    match slot { Some(e) => out.push(e.value), None => {} }
+  }
+  out
+}
+
+/// Every `(key, value)` pair, in table order.
+///
+/// Allocates the array. This is the way to walk a map:
+///
+/// ```
+/// for (word, n) in counts.entries() { println("${word}: ${n}") }
+/// ```
+pub let entries<k, v> = pure (self: HashMap<k, v>) -> [](k, v) => {
+  let mut out: [](k, v) = []
+  out.reserve(self.count)
+  for slot in self.slots {
+    match slot { Some(e) => out.push((e.key, e.value)), None => {} }
+  }
+  out
+}
+
+/// `key`'s hash as the table uses it: `Hash::hash` run through a `splitmix64`
+/// finalizer, so that an implementation answering the raw integer still spreads.
+///
+/// Exposed so a user `impl Hash` can be tested against what the map will see, and so a
+/// wrapper type can hash exactly as the key it wraps.
+pub let hash_key<k> where k: Hash = pure noalloc (key: k) -> u64 => mix(key.hash())
+
+/// Folds `next` into an accumulated hash `h` — how a struct's `impl Hash` combines its
+/// fields:
+///
+/// ```
+/// hash = pure noalloc (self) => hash_combine(hash_combine(0, self.x.hash()), self.y.hash())
+/// ```
+///
+/// Order matters, so `(1, 2)` and `(2, 1)` hash differently. Each step mixes, so the
+/// fields' own hashes may be as plain as the primitives' are.
+pub let hash_combine = pure noalloc (h: u64, next: u64) -> u64 =>
+  mix(h ~ next.wrapping_add(11400714819323198485).wrapping_add(h << 6).wrapping_add(h >> 2))
+
+// ---- private helpers ----
+
+// The slot holding `key`, or `None` when the map has no entry for it. `hash` is
+// `hash_key(key)`, passed in because every caller already has it. A probe compares the
+// stored hash before the key, so a `string` key is compared only on a hash match.
+//
+// The loop is bounded by the slot count rather than infinite: the load-factor cap
+// guarantees an empty slot, but a bound makes the function's termination visible on the
+// page rather than an invariant the reader has to trust.
+let find_index<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k, hash: u64) -> Maybe<i64> => {
+  let mask = u64(self.slots.len() - 1)
+  var i = i64(hash & mask)
+  for _ in 0..<self.slots.len() {
+    match self.slots[i] {
+      None => { return None },
+      Some(e) => { if e.hash == hash && e.key == key { return Some(i) } },
+    }
+    i = i64((u64(i) + 1) & mask)
+  }
+  None
+}
+
+// Puts `new_entry` in the first empty slot of its probe sequence. The caller has already
+// established that its key is absent and that the table has room.
+let place<k, v> = det noalloc (self: mut HashMap<k, v>, new_entry: Entry<k, v>) -> void => {
+  let mask = u64(self.slots.len() - 1)
+  var i = i64(new_entry.hash & mask)
+  for self.slots[i].is_some() { i = i64((u64(i) + 1) & mask) }
+  self.slots[i] = Some(new_entry)
+}
+
+// Doubles the table and re-places every entry. No key is rehashed — each entry carries
+// its hash — so this costs one allocation and n probes.
+let grow<k, v> = det (self: mut HashMap<k, v>) -> void => {
+  let old = self.slots
+  self.slots = [None; old.len() * 2]
+  for slot in old {
+    match slot { Some(e) => self.place(e), None => {} }
+  }
+}
+
+// Backward-shift deletion: empties slot `hole`, then walks the cluster after it and pulls
+// back each entry that may legally sit earlier. An entry at `j` whose ideal slot is `p`
+// can move to `hole` exactly when `p` is not strictly inside the cyclic range
+// `(hole, j]` — that is, when its distance from `p` to `j` is at least the distance from
+// `hole` to `j` — because a probe for it starts at `p`, passes `hole` before `j`, and
+// would otherwise stop early at the emptied slot. The walk ends at the first empty slot,
+// which no probe crosses.
+let close_hole<k, v> = det noalloc (self: mut HashMap<k, v>, found: i64) -> void => {
+  let mask = u64(self.slots.len() - 1)
+  var hole = found
+  var j = found
+  for {
+    j = i64((u64(j) + 1) & mask)
+    match self.slots[j] {
+      None => { break },
+      Some(e) => {
+        let from_ideal = (u64(j).wrapping_sub(e.hash)) & mask
+        let from_hole = (u64(j).wrapping_sub(u64(hole))) & mask
+        if from_ideal >= from_hole {
+          self.slots[hole] = Some(e)
+          hole = j
+        }
+      },
+    }
+  }
+  self.slots[hole] = None
+}
+
+// The `splitmix64` finalizer: a bijection on u64, so it loses nothing an `impl Hash`
+// provided, and it spreads sequential inputs across every bit.
+let mix = pure noalloc (x: u64) -> u64 => {
+  var z = x
+  z = (z ~ (z >> 30)).wrapping_mul(13787848793156543929)
+  z = (z ~ (z >> 27)).wrapping_mul(10723151780598845931)
+  z ~ (z >> 31)
+}
+
+// The two 64-bit halves xored: a u128 that fits in 64 bits hashes exactly as its u64
+// would, so a key promoted to the wider type keeps its hash.
+let hash_u128 = pure noalloc (x: u128) -> u64 =>
+  u64(x & u128(18446744073709551615)) ~ u64(x >> 64)
+
+// ---- the primitive keys ----
+//
+// An integer hashes to itself, widened or folded to 64 bits; the map's finalizer does the
+// mixing. Widening a signed value is a two's-complement reinterpretation, so `-1` and
+// `u64::MAX` hash alike — which is fine, since they are never equal as keys of one type.
+
+/// `i8` hashes to its value.
+impl Hash for i8 { hash = pure noalloc (self) => u64(i64(self)) }
+/// `i16` hashes to its value.
+impl Hash for i16 { hash = pure noalloc (self) => u64(i64(self)) }
+/// `i32` hashes to its value.
+impl Hash for i32 { hash = pure noalloc (self) => u64(i64(self)) }
+/// `i64` hashes to its value.
+impl Hash for i64 { hash = pure noalloc (self) => u64(self) }
+/// `i128` hashes to its two halves folded together.
+impl Hash for i128 { hash = pure noalloc (self) => hash_u128(u128(self)) }
+/// `u8` hashes to its value.
+impl Hash for u8 { hash = pure noalloc (self) => u64(self) }
+/// `u16` hashes to its value.
+impl Hash for u16 { hash = pure noalloc (self) => u64(self) }
+/// `u32` hashes to its value.
+impl Hash for u32 { hash = pure noalloc (self) => u64(self) }
+/// `u64` hashes to itself.
+impl Hash for u64 { hash = pure noalloc (self) => self }
+/// `u128` hashes to its two halves folded together.
+impl Hash for u128 { hash = pure noalloc (self) => hash_u128(self) }
+/// `rune` hashes to its code point.
+impl Hash for rune { hash = pure noalloc (self) => u64(i64(self)) }
+/// `bool` hashes to 0 or 1.
+impl Hash for bool { hash = pure noalloc (self) => if self { 1 } else { 0 } }
+
+/// `string` hashes its code points with FNV-1a, so equal strings hash alike whatever
+/// their provenance, and a one-rune difference anywhere changes every bit.
+///
+/// O(n) in the rune count, and `noalloc`: the walk is `for c in self`, one linear pass.
+impl Hash for string {
+  hash = pure noalloc (self) => {
+    var h: u64 = 14695981039346656037
+    for c in self {
+      h = (h ~ u64(i64(c))).wrapping_mul(1099511628211)
+    }
+    h
+  }
+}

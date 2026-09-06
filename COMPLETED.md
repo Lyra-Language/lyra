@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 09/06/26 — `std.collections.HashMap`, and the three gaps writing it found
+
+`std/collections/hashmap.lyra` is the map `word_freq_map.lyra` had sketched a call to:
+`HashMap<k, v>` over one `[]Maybe<Entry<k, v>>`, open addressing with linear probing, a
+power-of-two capacity, a 3/4 load cap, and a `Hash` trait the key needs. Ordinary Lyra
+throughout — no builtin was added — which is the point the 09/06 compiler entry above was
+working toward.
+
+**Backward-shift deletion rather than tombstones.** A tombstone is a third slot state
+that probes must step over and a rehash must eventually clear, and a table that inserts
+and removes at a steady rate fills with them. Shifting the cluster back instead leaves the
+table exactly as an insertion sequence without the key would have built it, so `remove`
+needs no rehash and no third state — at the cost of storing each entry's hash, which the
+resize also wants.
+
+**`insert` answers nothing; `replace` answers the displaced value.** Rust's single
+`insert -> Option` would make every ordinary insert draw `lyra-W006` (a discarded `Maybe`),
+so the common spelling is the silent one and the value-returning one is opt-in. `remove`
+still answers the value, since taking it back is common, and its doc names `let _ =` for
+the other case.
+
+**The hash is mixed by the map, not by the key.** `hash_key` runs `Hash::hash` through a
+`splitmix64` finalizer, so an `impl Hash` can answer the raw integer and sequential keys
+still spread under a power-of-two mask. `hash_combine` folds a struct's fields the same
+way. `string` is FNV-1a over its runes, `noalloc` because `for c in s` is one linear walk.
+
+**Three compiler gaps, each now in `todo.md`'s Known bugs:** a parameter named `entry`
+collides with the backend's `entry:` label and fails in clang; an unannotated `match`
+joining `Some(e.value)` with `None` in a generic body lowers as a bare `Maybe` (the array
+bug of the same day, one construct over); and an impl method may not reference a `let`
+declared below it although a `let` may. Each was worked around in the file with a comment
+saying so, and each is a one-line change to trip again.
+
+Pinned by `pkg/backend/llvm/llvm_hashmap_test.go`: growth and deletion checked against
+the answer rather than the count, string churn under ASan, and a struct key.
+
 ### 09/06/26 — a word-frequency example, and the four compiler gaps it found
 
 The example is the point of the entry: `examples/word_freq.lyra` is 40 lines and every one

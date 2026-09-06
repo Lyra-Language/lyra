@@ -240,6 +240,29 @@ write today:
 
 ## Known bugs
 
+- **[OPEN 09/06] A parameter named `entry` fails the build.** `let f = (entry: i64) -> i64
+  => entry + 1` type-checks and clang rejects the IR: *"unable to create block named
+  'entry'"*. The backend names every function's first block `entry` and lowers a
+  parameter under its source name, and LLVM keeps values and labels in one symbol table
+  per function. Found writing `std.collections`'s `place(self, entry: Entry<k, v>)`, which
+  is the obvious name for that parameter; the map renamed it. The fix is to prefix lowered
+  parameter names (or the block), not to reserve the word.
+
+- **[OPEN 09/06] An unannotated `match` joining `Some(e.value)` with `None` in a generic
+  body lowers as a bare `Maybe`.** `let got = match xs[i] { Some(e) => Some(e.value), None
+  => None }` over `xs: []Maybe<Slot<v>>` type-checks and dies in the backend with `unknown
+  named type "Maybe"`; `let got: Maybe<v> = …` compiles. The same shape as the open array
+  literal bug above — one arm solves `t` and the other solves nothing, and the join keeps
+  the unsolved one — reached through a match's arms rather than an array's elements. The
+  map annotates both such bindings (`replace`, `remove`).
+
+- **[OPEN 09/06] A trait-impl method may not reference a top-level `let` declared below
+  it** (`lyra-E002`, "used before its declaration"), while a top-level `let` calling a later
+  one is fine — the rule the workspace `CLAUDE.md` states. `impl Hash for u128 { hash =
+  (self) => hash_u128(self) }` above `let hash_u128 = …` is refused; the map moved the helper
+  above the impls. Either the use-before-declaration pass should treat an impl body as it
+  treats a `let` body, or the rule needs the exception written down.
+
 - **[OPEN 09/06] An array literal mixing a solved and an unsolved generic element ignores
   the annotation's width.** `let xs: []Maybe<u8> = [Some(200), None]` is refused with
   *"cannot assign StaticArray<Maybe, 2> to DynamicArray<Maybe<u8>>"*.

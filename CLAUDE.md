@@ -1084,6 +1084,9 @@ Code extension's `lyra.languageServerPath` should point at `build/lyra-lsp`.
 The standard library's sources live in `std/` and are tracked. The prelude is `std/prelude/`,
 **one module across several files** — `std/prelude/README.md` documents the constraints on
 what may go in it and why the split is within a module rather than into several.
+Beside it: `std/collections/` (`HashMap<k, v>` and the `Hash` trait — the workspace
+`CLAUDE.md` has the rules), `std/math/`, `std/tui/` and `std/ffi.lyra`, each an ordinary
+module a program imports by name.
 
 ## Testing
 
