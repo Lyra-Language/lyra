@@ -58,10 +58,17 @@ type TypeChecker struct {
 	// rewrite `${self}` inside `show` into a call to that same `show`.
 	currentImplMethod ast.MethodName
 	currentImplType   types.Type
-	currentVarDecl    *ast.VarDeclStmt              // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
-	instantiations    *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
-	inferring         map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
-	resolvingTypes    map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
+	currentVarDecl    *ast.VarDeclStmt // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
+	// expectedType is the type the expression currently being inferred is required to
+	// have — an annotation, a declared return type, a parameter type at a call site.
+	// It exists for **return-type-driven generic inference** and is read at exactly one
+	// place (inferGenericCall), because a type variable mentioned only in a callee's
+	// return type cannot be solved from arguments and the context is the only thing that
+	// knows it. A stack rather than a field: an initializer may contain another call.
+	expectedTypes  []types.Type
+	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
+	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
+	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
 	// circularNewtypes are newtypes whose base chain leads back to themselves, found up
 	// front by checkNewtypeCycles. Resolution refuses to hand one back, which is what
 	// makes every newtype-stripping walk in the compiler terminate — see that function.
@@ -489,7 +496,13 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// handles a nested decl inside the initializer (`let a = { let b = ...; b }`).
 	prevVarDecl := tc.currentVarDecl
 	tc.currentVarDecl = decl
+	// The annotation is a context for the *inference* of the value, not only a thing to
+	// check it against afterwards. It has to be pushed here rather than left to
+	// contextualType below, because a generic call reports its own failure inside
+	// inferExprType — by the time the annotation is consulted the error is already filed.
+	restoreExpected := tc.pushExpectedType(decl.Type, decl.Location)
 	inferredType := tc.inferExprType(decl.Value)
+	restoreExpected()
 	tc.currentVarDecl = prevVarDecl
 	if inferredType == nil {
 		return

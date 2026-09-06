@@ -356,7 +356,12 @@ func (tc *TypeChecker) checkBlockVoidReturn(funcName string, block *ast.BlockExp
 // copy did none of the propagation, so a method body's literals kept their default
 // width where the identical free function's narrowed (hazard 8).
 func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, loc ast.Location, declaredReturn types.Type, ownedReturn bool) {
+	// The declared return is a context for inferring the value, not only something to
+	// check it against — see pushExpectedType. A generic callee whose variables live only
+	// in its own return type is solvable here and nowhere else.
+	restoreExpected := tc.pushExpectedType(declaredReturn, loc)
 	valueType := tc.inferExprType(value)
+	restoreExpected()
 	valueType, reported := tc.contextualType(value, declaredReturn, valueType)
 	if reported || declaredReturn == nil || valueType == nil {
 		return
@@ -1473,7 +1478,13 @@ func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter
 		return // no type annotation on this parameter; cannot check
 	}
 	resolvedParamType := tc.resolveType(param.Type, param.GetLocation())
+	// The parameter type is the argument's context while it is inferred, not only
+	// afterwards — a generic callee whose variables its own arguments cannot reach is
+	// solvable from the slot it is being passed into (`take(empty())`). See
+	// pushExpectedType.
+	restoreExpected := tc.pushExpectedType(resolvedParamType, arg.GetLocation())
 	argType := tc.inferExprType(arg)
+	restoreExpected()
 	if argType == nil {
 		return // cannot infer argument type; skip silently
 	}

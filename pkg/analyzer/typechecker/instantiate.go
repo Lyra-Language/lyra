@@ -95,8 +95,15 @@ func (tc *TypeChecker) resolveDeclaredParam(lambda *ast.LambdaExpr, i int) types
 // the specialized function, deciding an alloca's width and an instruction's signedness,
 // so an unresolved literal type reaching codegen is the same class of bug as an int
 // literal in a float slot. The default still applies — one pass later.
-func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool) (map[string]types.Type, bool) {
+func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type) (map[string]types.Type, bool) {
 	subst := map[string]types.Type{}
+	// Pre-bindings the *context* supplied, for variables the arguments cannot reach
+	// (seedFromExpectedReturn). Installed before the passes below so a parameter written
+	// in terms of such a variable is already concrete when an argument is checked
+	// against it; the passes then bind the rest.
+	for k, v := range seed {
+		subst[k] = v
+	}
 	// **Two passes, and the order is the point.** A lambda literal missing annotations
 	// cannot be inferred until it knows what is expected of it — but what is expected
 	// (`() -> t`) is not concrete until the *other* arguments have solved `t`. Unifying it
@@ -148,7 +155,13 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
 		// and the lambda has something concrete to be elaborated against.
 		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst))
+		// The parameter type is this argument's context, so a *nested* generic call whose
+		// variables its own arguments cannot reach — `take(empty())` — is solved from the
+		// parameter it is being passed to. Substituted through what is bound so far, so an
+		// earlier argument's solve reaches a later one.
+		restoreExpected := tc.pushExpectedType(substituteGenerics(declared, subst), call.GetLocation())
 		argType := tc.inferExprType(call.Arguments[i])
+		restoreExpected()
 		if argType == nil {
 			return nil, false
 		}
@@ -310,11 +323,18 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 			"%s: expected %d argument(s), got %d", calleeName, len(lambda.Parameters), len(call.Arguments))
 		return nil
 	}
-	subst, ok := tc.solveTypeVars(lambda, call, vars)
+	subst, ok := tc.explicitTypeArguments(calleeName, lambda, call, vars)
 	if !ok {
-		tc.addError(call.GetLocation(), SeverityError,
-			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))
 		return nil
+	}
+	if subst == nil {
+		subst, ok = tc.solveTypeVars(lambda, call, vars, tc.seedFromExpectedReturn(lambda, vars))
+		if !ok {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: cannot infer %s from these arguments%s", calleeName, typeVarList(vars),
+				turbofishHint(lambda, call))
+			return nil
+		}
 	}
 	params, ret := tc.instantiateSignature(lambda, subst)
 	for i, arg := range call.Arguments {
@@ -405,4 +425,188 @@ func typeVarList(vars map[string]bool) string {
 		return "type variable " + names[0]
 	}
 	return "type variables " + strings.Join(names, ", ")
+}
+
+// explicitTypeArguments binds a call's turbofish (`empty::<i64>()`) to the callee's type
+// parameters, positionally and in declaration order.
+//
+// It answers (nil, true) when there is no turbofish, which is the signal to solve from the
+// arguments instead — the path every call took before this existed.
+//
+// **The turbofish is the only way to call a function whose variables the arguments cannot
+// reach.** Solving reads argument types alone, so a parameter mentioned only in the return
+// type has nothing to bind it: `let empty<t> = () -> []t => []` was uncallable in every
+// position, including under an annotation that says exactly what `t` is. That shape is what
+// a constructor is — `with_capacity<k,v>(cap) -> HashMap<k,v>` takes an i64 and returns the
+// thing the variables live in — so a generic collection had no constructor at all.
+//
+// The grammar has parsed `generic_arguments` on a call since before this; the arguments
+// were collected onto the node and then read by nobody, so `empty::<i64>()` reported the
+// same "cannot infer" as if the turbofish were absent — accepted and silently discarded,
+// which is worse than refusing it.
+//
+// An explicit binding is **not** checked against the arguments here. It does not need to
+// be: instantiateSignature substitutes it through the signature, and the ordinary argument
+// check downstream then rejects a call that disagrees with it — so `id::<i64>("x")` is an
+// argument-type error naming i64 and string, rather than an inference failure naming `t`.
+func (tc *TypeChecker) explicitTypeArguments(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool) (map[string]types.Type, bool) {
+	if len(call.GenericArguments) == 0 {
+		return nil, true
+	}
+	// Declaration order, not order of appearance in the signature — see LambdaExpr's
+	// GenericParams. A lambda with no lifted parameter list (an inline literal, a trait
+	// method) has no order to bind against, so the turbofish cannot apply.
+	params := lambda.GenericParams
+	if len(params) == 0 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: cannot take explicit type arguments; it declares no type parameters", calleeName)
+		return nil, false
+	}
+	if len(call.GenericArguments) != len(params) {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: expected %d type argument(s), got %d", calleeName, len(params), len(call.GenericArguments))
+		return nil, false
+	}
+	subst := make(map[string]types.Type, len(params))
+	for i, p := range params {
+		// Resolved at the *call* site: an alias or a private type named in a turbofish
+		// is visible where it was written, exactly as an annotation's would be.
+		arg := tc.resolveType(call.GenericArguments[i], call.GetLocation())
+		if arg == nil {
+			return nil, false
+		}
+		subst[p.Name] = arg
+	}
+	// A parameter the signature never mentions cannot be bound by position with any
+	// confidence that the caller meant it, but binding it is harmless — nothing reads it.
+	// What must not happen is a *variable* left unsolved, which would reach the backend
+	// as an uninstantiated generic; every name in vars comes from the signature, so the
+	// check is that the declaration covers them.
+	for v := range vars {
+		if _, bound := subst[v]; !bound {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: type variable %s is not one of the declared type parameters", calleeName, v)
+			return nil, false
+		}
+	}
+	return subst, true
+}
+
+// turbofishHint names the escape hatch on an inference failure, but only where it is
+// actually the fix.
+//
+// **The test is whether the arguments could reach the variable at all**, not merely
+// whether solving failed. A variable mentioned in some parameter type is reachable, so a
+// failure there is a *mismatch* — `first_of([1, 2, 3])` against `(xs: []t)` where the
+// literal inferred fixed — and a turbofish would not fix it: naming `t` explicitly just
+// moves the same disagreement to the argument check. Only a variable no parameter mentions
+// is unreachable by construction, and that is the case the turbofish exists for.
+//
+// Hinting on both would attach advice to the far more common mismatch, where following it
+// produces a second error and no progress.
+func turbofishHint(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) string {
+	if len(call.GenericArguments) > 0 || len(lambda.GenericParams) == 0 {
+		return ""
+	}
+	mentioned := map[string]bool{}
+	for i := range lambda.Parameters {
+		collectTypeVars(lambda.Parameters[i].Type, mentioned)
+	}
+	unreachable := false
+	for _, p := range lambda.GenericParams {
+		if !mentioned[p.Name] {
+			unreachable = true
+			break
+		}
+	}
+	if !unreachable {
+		return ""
+	}
+	names := make([]string, len(lambda.GenericParams))
+	for i, p := range lambda.GenericParams {
+		names[i] = p.Name
+	}
+	return fmt.Sprintf("; name them explicitly with ::<%s>", strings.Join(names, ", "))
+}
+
+// pushExpectedType makes t the context for the expression about to be inferred, and
+// returns the function that pops it. A nil t pushes nothing and pops nothing, so an
+// unannotated position costs nothing and — importantly — does not shadow an enclosing
+// context with "no expectation".
+func (tc *TypeChecker) pushExpectedType(t types.Type, loc ast.Location) func() {
+	if t == nil {
+		return func() {}
+	}
+	resolved := tc.resolveTypeIfKnown(t, loc)
+	if resolved == nil {
+		return func() {}
+	}
+	tc.expectedTypes = append(tc.expectedTypes, resolved)
+	return func() { tc.expectedTypes = tc.expectedTypes[:len(tc.expectedTypes)-1] }
+}
+
+// currentExpectedType is the innermost context, or nil where there is none.
+func (tc *TypeChecker) currentExpectedType() types.Type {
+	if len(tc.expectedTypes) == 0 {
+		return nil
+	}
+	return tc.expectedTypes[len(tc.expectedTypes)-1]
+}
+
+// seedFromExpectedReturn binds the type variables that **no parameter mentions** by
+// unifying the callee's declared return type against the context the call sits in.
+//
+// The restriction to unreachable variables is what makes this safe to add to a language
+// that already had programs in it. A variable some parameter mentions is solved from the
+// arguments, and that solve is the author's stated intent at the call; letting the context
+// bind it too would introduce a second source of truth and a precedence question between
+// them, and could change what an existing call means. A variable no parameter mentions has
+// no competing source — argument solving cannot reach it at all — so seeding it can only
+// turn a call that was refused into one that compiles.
+//
+// It is a *seed*, not an override: argument solving runs afterwards over the same map, so
+// a call that is inconsistent for its own reasons still fails for those reasons.
+func (tc *TypeChecker) seedFromExpectedReturn(lambda *ast.LambdaExpr, vars map[string]bool) map[string]types.Type {
+	want := tc.currentExpectedType()
+	if want == nil || len(vars) == 0 {
+		return nil
+	}
+	// Only a declaration that **declares** its type parameters is open to this. A
+	// lowercase name in a signature is a type variable whether or not a `<…>` list
+	// introduced it, so `let make = (n: i64) -> t => n` has a return-only variable too —
+	// but there it is far more likely a typo than an intent to be generic, and binding it
+	// from the context would let a broken declaration compile at the call sites whose
+	// context happens to fit and fail at the others, reporting the declaration's own
+	// inconsistency somewhere else entirely. A written `<t>` is the author saying the
+	// variable is meant, which is the same line the turbofish draws.
+	if len(lambda.GenericParams) == 0 {
+		return nil
+	}
+	mentioned := map[string]bool{}
+	for i := range lambda.Parameters {
+		collectTypeVars(lambda.Parameters[i].Type, mentioned)
+	}
+	unreachable := map[string]bool{}
+	for v := range vars {
+		if !mentioned[v] {
+			unreachable[v] = true
+		}
+	}
+	if len(unreachable) == 0 {
+		return nil
+	}
+	declared := tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())
+	if declared == nil {
+		return nil
+	}
+	seed := map[string]types.Type{}
+	// Unified against the *unreachable* set alone, so a shape that also mentions a
+	// parameter-solved variable contributes only the part this is allowed to bind.
+	if !unifyGenericTarget(declared, want, unreachable, seed) {
+		// No match — the context is a different shape from what the callee returns.
+		// Not reported here: the ordinary check downstream compares the instantiated
+		// return type against the context and says so in concrete terms.
+		return nil
+	}
+	return seed
 }

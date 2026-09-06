@@ -43,6 +43,14 @@ type LambdaExpr struct {
 	// call on a value of type `t` dispatches through it) and to check each solved
 	// type argument at the instantiation.
 	GenericBounds map[string][]string `print:"-"`
+	// GenericParams are the declaration's type parameters **in declaration order**,
+	// lifted off the binding for the same reason GenericBounds are. The order is the
+	// content: a turbofish binds positionally (`empty::<i64>()`), so the list is what
+	// pairs an explicit argument with the parameter it names. Deriving that order from
+	// the signature instead would be wrong wherever a parameter is declared in one
+	// order and first mentioned in another — `let f<u, t> = (a: t, b: u) -> …` — and
+	// wrong silently, binding each argument to the other's parameter.
+	GenericParams []GenericParam `print:"-"`
 	// ReturnTypeInferred records that ReturnType.Type was filled in from the body
 	// (inferLambdaReturnType) rather than written by the author. Everything that
 	// consumes a signature wants the filled-in type and should ignore this; the one

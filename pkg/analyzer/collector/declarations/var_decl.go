@@ -92,6 +92,8 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	// warning — `where t: Show` constrained nothing and did not even bring `show`
 	// into scope in the body.
 	if lambda, ok := initExpr.(*ast.LambdaExpr); ok {
+		// The parameter list itself, in order, for the turbofish to bind against.
+		lambda.GenericParams = genericParameters
 		for _, p := range genericParameters {
 			if len(p.Constraints) == 0 {
 				continue
