@@ -2804,6 +2804,15 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			// channel through the recorded type, and it reaches a value built inside
 			// a `match`/`if` arm, which the separate flavor walk never did.
 			tc.propagateExpectedType(ar.Value, resolved)
+			// …and the element's generic *instantiation*, which the width recursion
+			// above does not carry. A construction that solves only some of its
+			// parameters stays the bare declaration by design, so `[None; 8]` against
+			// `[]Maybe<i64>` leaves `None` recorded as `Maybe` and the backend has no
+			// layout to lower — the same `unknown named type "Maybe"` the return and
+			// annotated-`let` positions had before propagateInstantiation existed.
+			// Every other site that pushes a context into a construction pairs these
+			// two calls; the array arms were the pair that had only one.
+			tc.propagateInstantiation(ar.Value, resolved)
 			tc.checkIntegerLiteralRange("repeated element", ar.Value, resolved)
 			// A *dynamic* context stays dynamic, for the reason the array-literal arm
 			// below gives: the value is used as a dynamic array, and rewriting it to
@@ -2839,6 +2848,8 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			// `[]shared T` context stamps each element's construction through the
 			// same recursion that narrows its width.
 			tc.propagateExpectedType(elem, resolved)
+			// The instantiation half, for the reason the repeat arm above gives.
+			tc.propagateInstantiation(elem, resolved)
 			tc.checkIntegerLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved)
 		}
 		// Re-record with the concrete element type so the backend builds the right
