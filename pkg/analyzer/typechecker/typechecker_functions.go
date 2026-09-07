@@ -396,6 +396,17 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 				tc.checkReturnValue(funcName, s.Value, s.GetLocation(), declaredReturn, ownedReturn)
 			case *ast.ExpressionStmt:
 				if i == len(stmts)-1 {
+					// A loop that can finish as the body's last statement leaves the
+					// function with no value on the path where it does. The generic
+					// mismatch ("expected i64, got void") is true but names the wrong
+					// thing; say what the shape is and what fixes it. A `for { … }` with
+					// no `break` is a `never`, and checkReturnValue accepts it below.
+					if tc.tailLoopCanFinish(s.Expression) && declaredReturn != nil {
+						tc.addError(s.GetLocation(), SeverityError,
+							"%s: the body ends in a loop that can finish, so the function reaches its end without a value; end with an expression or a `return` (a `for { … }` with no `break` never finishes and needs neither)",
+							funcName)
+						continue
+					}
 					// The last expression in a block is its implicit return value,
 					// so it is being used (returned), not dropped.
 					tc.checkReturnValue(funcName, s.Expression, s.GetLocation(), declaredReturn, ownedReturn)
@@ -413,6 +424,20 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 			}
 		}
 	})
+}
+
+// tailLoopCanFinish reports whether expr is a loop that can fall through — the shape
+// checkBlockReturn names specially. It checks the loop too, so its body is typed.
+func (tc *TypeChecker) tailLoopCanFinish(expr ast.Expression) bool {
+	switch e := expr.(type) {
+	case *ast.ForLoopExpr:
+		_, isVoid := tc.inferExprType(e).(types.VoidType)
+		return isVoid
+	case *ast.ForInLoopExpr:
+		tc.inferExprType(e)
+		return true
+	}
+	return false
 }
 
 // inferLambdaCall validates a call against a LambdaExpr (from a VarDeclStmt or
