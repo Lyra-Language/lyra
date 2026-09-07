@@ -79,3 +79,42 @@ let main = () -> void => {
 		t.Fatalf("stdout:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// The heapsort fallback is private and median-of-three defeats the classic adversaries
+// (sorted, reversed, organ pipe), so it is reached through `sort` with Musser's
+// median-of-three killer: a permutation that makes every partition on the first, middle
+// and last element split off two elements, so the partition depth passes 2·log2(n) and
+// the budget runs out. Verified against the prelude's exact pivot rule when written
+// (09/07) by a temporary print in the fallback branch: it fired once at every size
+// here. **Tied to that pivot rule** — a different pivot choice keeps this test green
+// without reaching the fallback, so re-verify the same way if `partition` changes.
+func TestExec_Sort_HeapsortFallback(t *testing.T) {
+	t.Parallel()
+	src := `
+let median_of_three_killer = pure (n: i64) -> []i64 => {
+  let k = n / 2
+  var xs: []i64 = [0; n]
+  for i in 1..<=k {
+    if i %% 2 == 1 {
+      xs[i - 1] = i
+      if i < k { xs[i] = k + i }
+    }
+    xs[k + i - 1] = 2 * i
+  }
+  xs
+}
+
+let main = () -> void => {
+  for n in [64, 1024, 4096] {
+    var xs = median_of_three_killer(n)
+    xs.sort()
+    var ok = xs.len() == n
+    for i, x in xs { if x != i + 1 { ok = false } }
+    println("${n} ${ok}")
+  }
+}`
+	got := buildAndRunWithPrelude(t, src, "")
+	if want := "64 true\n1024 true\n4096 true\n"; got != want {
+		t.Fatalf("stdout:\n%s\nwant:\n%s", got, want)
+	}
+}
