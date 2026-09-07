@@ -54,3 +54,39 @@ pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 /// let evens = [1, 2, 3, 4].filter((n) => n %% 2 == 0)   // [2, 4]
 /// ```
 pub let filter<t> = pure (self: []t, predicate: (t) -> bool) -> []t => [x in self | predicate(x) | x]
+
+/// Sorts `self` in place, ascending by `t`'s `Ord`. Heapsort: O(n log n) in every case,
+/// no allocation, **not stable** — equal elements may change their relative order.
+pub let heap_sort<t> where t: Ord = (self: mut []t) -> void => {
+  let n = self.len()
+
+  // Build the heap: sift down every internal node, last first.
+  for i in (n / 2 - 1)..>=0 {
+    sift_down(self, n, i)
+  }
+
+  // Move the root (the largest) to the end, then restore the heap over what remains.
+  for i in (n - 1)..>0 {
+    let temp = self[0]
+    self[0] = self[i]
+    self[i] = temp
+    sift_down(self, i, 0)
+  }
+}
+
+/// Restores the max-heap property below `i` in `self[0..<n]`.
+let sift_down<t> where t: Ord = (self: mut []t, n: i64, i: i64) -> void => {
+  var largest = i
+  let l = 2 * i + 1
+  let r = 2 * i + 2
+
+  if l < n && self[l].compare(self[largest]) == Greater { largest = l }
+  if r < n && self[r].compare(self[largest]) == Greater { largest = r }
+
+  if largest != i {
+    let temp = self[i]
+    self[i] = self[largest]
+    self[largest] = temp
+    sift_down(self, n, largest)
+  }
+}
