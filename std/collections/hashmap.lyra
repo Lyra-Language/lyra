@@ -290,13 +290,13 @@ let find_index<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k, 
   None
 }
 
-// Puts `new_entry` in the first empty slot of its probe sequence. The caller has already
+// Puts `entry` in the first empty slot of its probe sequence. The caller has already
 // established that its key is absent and that the table has room.
-let place<k, v> = det noalloc (self: mut HashMap<k, v>, new_entry: Entry<k, v>) -> void => {
+let place<k, v> = det noalloc (self: mut HashMap<k, v>, entry: Entry<k, v>) -> void => {
   let mask = u64(self.slots.len() - 1)
-  var i = i64(new_entry.hash & mask)
+  var i = i64(entry.hash & mask)
   for self.slots[i].is_some() { i = i64((u64(i) + 1) & mask) }
-  self.slots[i] = Some(new_entry)
+  self.slots[i] = Some(entry)
 }
 
 // Doubles the table and re-places every entry. No key is rehashed — each entry carries

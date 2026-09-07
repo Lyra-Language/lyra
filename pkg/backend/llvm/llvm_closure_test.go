@@ -348,7 +348,7 @@ func TestEmit_ClosureRepresentation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(got, "define i64 @lyra.apply({ i8*, i8* } %f,") {
+		if !strings.Contains(got, "define i64 @lyra.apply({ i8*, i8* } %p.f,") {
 			t.Errorf("a function-typed parameter should be { i8*, i8* }; got:\n%s", got)
 		}
 	})

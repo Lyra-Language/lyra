@@ -376,6 +376,16 @@ func returnSigned(fn *ast.LambdaExpr) bool {
 // used only to name a *destructuring* parameter: its pattern has no single name
 // (`Pattern.GetName()` is "" for a tuple or struct pattern), and an unnamed ir.Param
 // prints as a bare number that says nothing about which argument it is.
+//
+// **The source name is prefixed, never used bare.** LLVM keeps a function's values and
+// its labels in one symbol table, and every function lowered here opens with a block
+// named `entry` — so a parameter *named* `entry` produced IR clang refused with "unable
+// to create block named 'entry'", on a program the front end had checked clean (found
+// 09/06 by `std.collections`'s `place(self, entry: Entry<k, v>)`, the obvious name for
+// that parameter). A prefix closes the whole class rather than the one word: no other
+// value or label in a user function is named `p.…`, so a source name cannot reach any
+// name the backend assigns, whatever blocks it names in future. `.` is legal in an LLVM
+// identifier and not in a Lyra one, which is what makes the prefix unforgeable.
 func (l *lowerer) lowerParameter(param ast.Parameter, idx int) (*ir.Param, error) {
 	irType, err := l.lowerType(param.Type)
 	if err != nil {
@@ -388,7 +398,7 @@ func (l *lowerer) lowerParameter(param ast.Parameter, idx int) (*ir.Param, error
 	if name == "" {
 		name = fmt.Sprintf("arg%d", idx)
 	}
-	return ir.NewParam(name, irType), nil
+	return ir.NewParam("p."+name, irType), nil
 }
 
 func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
