@@ -37,3 +37,60 @@ type ForInLoopExpr struct {
 }
 
 func (t *ForInLoopExpr) GetName() string { return "for_in_loop" }
+
+// LoopCanExit reports whether a `for` loop can finish — fall through to whatever follows
+// it. It can when it has a condition, or when its body contains a `break` that targets it:
+// an unlabeled `break` not inside a nested loop, or a labeled one naming this loop. A
+// `for { … }` with neither runs until a `return` or a `panic`, so it is a `never`: the
+// typechecker lets it stand as the value of a non-void body, and the backend seals its
+// exit block as unreachable rather than leaving a block with no terminator.
+//
+// A lambda is not entered: a `break` cannot cross one.
+func LoopCanExit(e *ForLoopExpr) bool {
+	if e.Condition != nil {
+		return true
+	}
+	return breaksOutOf(e.Body, e.Label, 0)
+}
+
+// breaksOutOf walks body for a `break` that leaves the loop labeled `label`, `depth`
+// nested loops up from where the walk began.
+func breaksOutOf(body *BlockExpr, label string, depth int) bool {
+	if body == nil {
+		return false
+	}
+	found := false
+	for _, s := range body.Statements {
+		WalkStmt(s, func(st Statement) bool {
+			if b, ok := st.(*BreakStmt); ok {
+				if (b.Label == "" && depth == 0) || (b.Label != "" && b.Label == label) {
+					found = true
+				}
+			}
+			return !found
+		}, func(ex Expression) bool {
+			if found {
+				return false
+			}
+			switch inner := ex.(type) {
+			case *LambdaExpr:
+				return false
+			case *ForLoopExpr:
+				if breaksOutOf(inner.Body, label, depth+1) {
+					found = true
+				}
+				return false
+			case *ForInLoopExpr:
+				if breaksOutOf(inner.Body, label, depth+1) {
+					found = true
+				}
+				return false
+			}
+			return true
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}

@@ -2358,8 +2358,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 	case *ast.ForInLoopExpr:
 		return tc.checkForInLoopExpr(e)
 	case *ast.ForLoopExpr:
-		tc.checkForLoopExpr(e)
-		return nil
+		return tc.checkForLoopExpr(e)
 	case *ast.NullCoalescingExpr:
 		return tc.inferNullCoalescingExpr(e)
 	case *ast.SizeofExpr:

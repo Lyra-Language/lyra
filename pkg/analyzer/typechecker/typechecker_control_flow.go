@@ -1559,7 +1559,7 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 		}
 		tc.checkBlockForEffect(expr.Body)
 	})
-	return nil
+	return types.VoidType{} // a walk over something finite always finishes
 }
 
 // bindForInLoopVars records the loop variable types for a for-in loop. The grammar
@@ -1650,7 +1650,11 @@ func isUntypedNumeric(t types.Type) bool {
 // enclosing scope — checked the body in loopScope, where those names were never
 // defined. The body is checked *for effect*: a loop body has no value, so its
 // last statement must not be put in value position (checkBlockForEffect).
-func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
+// A loop's type is `never` when it cannot finish — no condition and no `break` that
+// targets it — and `void` otherwise. Until 09/07 it was nil, the "already reported"
+// convention, so a non-void function whose body *ended* in a loop passed the return check
+// with no value on the fall-through path and failed in the backend instead.
+func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) types.Type {
 	tc.enterScope(expr, func() {
 		if expr.Init != nil {
 			tc.checkVarDecl(expr.Init)
@@ -1671,6 +1675,10 @@ func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
 		}
 		tc.checkBlockForEffect(expr.Body)
 	})
+	if ast.LoopCanExit(expr) {
+		return types.VoidType{}
+	}
+	return types.NeverType{}
 }
 
 // inferNullCoalescingExpr type-checks a `??` expression. The left operand must

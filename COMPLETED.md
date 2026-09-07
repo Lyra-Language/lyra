@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 09/07/26 — a loop has a type: `never` if it cannot finish, `void` if it can
+
+A `for` loop's type was nil — the "already reported" convention — so a non-void function
+whose body *ended* in a loop passed the return check whatever the loop was, and the
+backend refused it with "block has no value". Two shapes were hiding in that one nil:
+
+- `for i < n { … return i … }` can finish, and then the function has no value. Now
+  **refused at the front end** with a message naming the shape and the fix.
+- `for { … return i … }` with no `break` cannot finish. It is a `never`, the type
+  `panic` already has, so it is **accepted** as the tail of a non-void body — and the
+  backend seals its exit block with `unreachable`, since nothing branches there.
+
+`ast.LoopCanExit` decides, once, for both layers: a condition, or a `break` that targets
+the loop — an unlabeled one outside any nested loop, or a labeled one naming it; a lambda
+is not entered. `for-in` is always `void`, being a walk over something finite. Found by
+`partition` in the prelude's quicksort, which had to `break` to a value meanwhile.
+
 ### 09/07/26 — `sort`: introsort in the prelude, over `Ord`
 
 Heapsort was the first cut because it needs no fallback machinery. `quick_sort` earns its

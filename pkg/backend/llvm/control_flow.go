@@ -358,6 +358,14 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 		postBlock.NewBr(condBlock)
 	}
 
+	// A loop nothing can leave — no condition, no `break` to it — never reaches its
+	// exit block. Seal it: the front end typed the loop `never` and let it stand where
+	// a value was needed, and an open block with no terminator is what "block has no
+	// value" then refused. Every exit from such a loop is a `return` or a trap, which
+	// terminated its own block.
+	if !ast.LoopCanExit(e) {
+		exitBlock.NewUnreachable()
+	}
 	return nil, exitBlock, nil
 }
 

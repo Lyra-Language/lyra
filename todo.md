@@ -240,8 +240,10 @@ write today:
 
 ## Known bugs
 
-- **[OPEN 09/07] A non-void function whose body ends in a loop is accepted with no value
-  on the fall-through path.** `let find = (n: i64) -> i64 => { … for i < n { if … { return
+- **[DONE 09/07] A non-void function whose body ends in a loop is accepted with no value
+  on the fall-through path.** Fixed the same day: a loop is now typed `never` when it
+  cannot finish and `void` when it can (`ast.LoopCanExit`), the tail case gets its own
+  message, and the backend seals an inescapable loop's exit block. Original note: `let find = (n: i64) -> i64 => { … for i < n { if … { return
   i } } }` type-checks; the backend refuses it (*"block has no value"*) where the front end
   should have. Two shapes, one cause — the tail statement is not an expression, and the
   block type check does not ask whether the function can fall off its end. The `for { … }`
