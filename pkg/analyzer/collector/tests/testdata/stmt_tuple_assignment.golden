@@ -1,0 +1,98 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(f) {
+			BindingKind: let
+			Name: f
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								VarDeclStmt(a) {
+									BindingKind: var
+									Name: a
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+									}
+								}
+								VarDeclStmt(b) {
+									BindingKind: var
+									Name: b
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 2
+										}
+									}
+								}
+								ExpressionStmt {
+									Expression: {
+										BlockExpr {
+											Statements: {
+												DestructuringDeclStmt {
+													Keyword: let
+													Pattern: {
+														TuplePattern {
+															Elements: {
+																IdentifierPattern(__tuple_5_2_0) {
+																	Name: __tuple_5_2_0
+																}
+																IdentifierPattern(__tuple_5_2_1) {
+																	Name: __tuple_5_2_1
+																}
+															}
+														}
+													}
+													Value: {
+														TupleLiteralExpr(?) {
+															Elements: {
+																IdentifierExpr(b) {
+																	Name: b
+																}
+																IdentifierExpr(a) {
+																	Name: a
+																}
+															}
+															Name: ?
+														}
+													}
+												}
+												VarReassignmentStmt(a) {
+													Name: a
+													Value: {
+														IdentifierExpr(__tuple_5_2_0) {
+															Name: __tuple_5_2_0
+														}
+													}
+												}
+												VarReassignmentStmt(b) {
+													Name: b
+													Value: {
+														IdentifierExpr(__tuple_5_2_1) {
+															Name: __tuple_5_2_1
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(void) {
+							Type: {
+								VoidType(void) {
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

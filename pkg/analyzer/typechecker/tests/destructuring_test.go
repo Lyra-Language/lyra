@@ -44,20 +44,20 @@ let f = () -> i64 => {
 	assertErrorsAre(t, res, "a: 'let' binding is immutable; use 'var' to allow reassignment")
 }
 
-// TestDestructuring_TupleDeclArityMismatch_NamesUnbound: when the pattern and
-// tuple arity disagree, names are not bound at all (rather than guessing a
-// pairing) — referencing them afterward is still "undefined identifier".
-func TestDestructuring_TupleDeclArityMismatch_NamesUnbound(t *testing.T) {
+// TestDestructuring_TupleDeclArityMismatch_ReportsOnce: when the pattern and tuple
+// arity disagree, the mismatch is the one error. The names that pair up positionally
+// are bound with their element's type and the rest with none, so a later use is
+// silent rather than a second "undefined identifier" per use — the program is already
+// refused, and a cascade pointing at lines below the mistake only obscures where it
+// is. (Before 09/07 the names were left unbound, and the cascade was asserted here.)
+func TestDestructuring_TupleDeclArityMismatch_ReportsOnce(t *testing.T) {
 	source := `
 let f = () -> i64 => {
     let (a, b, c) = (1, 2)
-    a + b
+    a + b + c
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res,
-		"tuple pattern has 3 element(s) but tuple has 2",
-		`undefined identifier "a"`,
-		`undefined identifier "b"`)
+	assertErrorsAre(t, res, "tuple pattern has 3 element(s) but tuple has 2")
 }
 
 // TestDestructuring_SiblingBlocksStayIsolated: two unrelated tuple

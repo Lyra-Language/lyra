@@ -112,11 +112,11 @@ let f = (p: Point) -> i64 => {
 	assertErrorsAre(t, res, `undefined identifier "x"`)
 }
 
-// TestIfLet_ArityMismatchLeavesNamesUnbound: an if-let pattern that doesn't
-// match its scrutinee's static shape (a tuple's arity, checked exactly, unlike
-// arrays) is a compile-time error, mirroring plain destructuring — the
-// mismatched names stay unbound rather than guessed.
-func TestIfLet_ArityMismatchLeavesNamesUnbound(t *testing.T) {
+// TestIfLet_ArityMismatchReportsOnce: an if-let pattern that doesn't match its
+// scrutinee's static shape (a tuple's arity, checked exactly, unlike arrays) is a
+// compile-time error, mirroring plain destructuring — reported once, with the names
+// bound positionally so the branch does not cascade into "undefined identifier".
+func TestIfLet_ArityMismatchReportsOnce(t *testing.T) {
 	source := `
 let f = (pair: (i64, i64)) -> i64 => {
     if let (a, b, c) = pair {
@@ -126,9 +126,7 @@ let f = (pair: (i64, i64)) -> i64 => {
     }
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res,
-		"tuple pattern has 3 element(s) but tuple has 2",
-		`undefined identifier "a"`)
+	assertErrorsAre(t, res, "tuple pattern has 3 element(s) but tuple has 2")
 }
 
 // An if-let is a *statement*, so neither branch is in value position: an ordinary

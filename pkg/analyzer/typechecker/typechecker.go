@@ -785,7 +785,21 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 			tc.addError(p.GetLocation(), SeverityError,
 				"tuple pattern has %d element(s) but tuple has %d",
 				len(p.Elements), len(tt.Elements))
-			return // mismatched arity: elements below can't be paired up reliably
+			// Still bind every name: the ones that pair up with their element's type,
+			// the rest with none. An unbound name reported "undefined identifier" at
+			// each later use — a second diagnostic per use, pointing at the wrong line,
+			// for the one mistake reported above. A name bound with no type is the
+			// already-reported convention every nil type follows, so its uses stay
+			// silent. This matters twice over for a tuple assignment, whose names are
+			// synthesized and would have surfaced in those cascading messages.
+			for i, el := range p.Elements {
+				if i < len(tt.Elements) {
+					tc.walkDestructuredPattern(el, tt.Elements[i], bind)
+				} else {
+					ast.EachPatternBinding(el, func(b ast.PatternBinding) { bind(b.Name, nil) })
+				}
+			}
+			return
 		}
 		for i, el := range p.Elements {
 			if i < len(tt.Elements) {

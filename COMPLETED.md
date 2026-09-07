@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 09/07/26 — `(a, b) = (b, a)`: tuple assignment, as a collector desugaring
+
+Writing heapsort for the prelude put a three-line swap in two places, and the question
+was whether the language could say it. It could not: the grammar had a
+`var_destructuring_reassignment` rule, defined and reachable from nothing, and even
+reachable it took a *pattern* — a pattern binds names, and a swap's target is `xs[i]`.
+
+**The form is a parenthesized list of places.** Python's `a, b = b, a` was considered and
+declined: there the comma makes the tuple and parentheses merely group, while here the
+parentheses *are* the tuple and `let a, b = …` is a syntax error. A comma-tuple that
+existed in exactly one statement would be a second spelling a reader meets on day one.
+
+**Semantics: right side to a tuple first, then places left to right, each address once.**
+That is the whole reason the swap works, and it is stated once — in the shape the
+collector emits: `{ let (__tuple_L_C_0, __tuple_L_C_1) = rhs; p0 = …; p1 = … }`. A new
+statement kind would have needed teaching to purity, ownership, use-after-move, captures,
+captured-assignment, range analysis, unused-variable checks and the backend; a desugaring
+into a destructuring `let` and the existing assignment statements needs teaching to none
+of them, and inherits their diagnostics — an immutable place reports as `c = v` does, a
+wrong element type as `b = "s"` does. The grammar parses the target as an ordinary
+`tuple_literal` (a place-tuple rule beside it is a reduce-reduce conflict at every
+element) and the collector refuses a non-place element by name.
+
+Two things the desugaring exposed, both fixed:
+
+- **A bare block ending in an assignment, last in a void body, failed in the backend**
+  (`block has no value`). The front end accepted it; `lowerBlock` demanded a value. A
+  block in statement position is now lowered through `lowerBlockStmts`, whose value is
+  optional — `{ { 5 } }` is still 5.
+- **A tuple-arity mismatch cascaded into "undefined identifier" at every later use.** The
+  names were left unbound on purpose ("rather than guessing a pairing"), but the program
+  is already refused, and for a tuple assignment the cascade named the synthesized
+  bindings. Names now bind positionally, the unpaired ones with no type — the
+  already-reported convention every nil type follows. Two tests that asserted the cascade
+  were rewritten to assert its absence.
+
+Heapsort's two swaps are the first use.
+
+### 09/06/26 — a parameter's source name no longer reaches the IR bare
+
+`let f = (entry: i64) -> i64 => entry + 1` type-checked and failed in clang, because the
+backend names every function's first block `entry` and LLVM keeps a function's values and
+labels in one symbol table. `lowerParameter` now emits `%p.<name>` for every parameter.
+A prefix rather than a rename of the one word, because the collision is a class: any block
+the backend names later would reopen it, and `.` is legal in an LLVM identifier and not in
+a Lyra one, so a source name can never spell the prefixed form. Nothing reads a
+parameter's IR name back — one IR-text test spelled `%f` and now spells `%p.f`.
+
 ### 09/06/26 — `std.collections.HashMap`, and the three gaps writing it found
 
 `std/collections/hashmap.lyra` is the map `word_freq_map.lyra` had sketched a call to:

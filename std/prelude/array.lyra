@@ -67,9 +67,7 @@ pub let heap_sort<t> where t: Ord = (self: mut []t) -> void => {
 
   // Move the root (the largest) to the end, then restore the heap over what remains.
   for i in (n - 1)..>0 {
-    let temp = self[0]
-    self[0] = self[i]
-    self[i] = temp
+    (self[0], self[i]) = (self[i], self[0])
     sift_down(self, i, 0)
   }
 }
@@ -84,9 +82,7 @@ let sift_down<t> where t: Ord = (self: mut []t, n: i64, i: i64) -> void => {
   if r < n && self[r].compare(self[largest]) == Greater { largest = r }
 
   if largest != i {
-    let temp = self[i]
-    self[i] = self[largest]
-    self[largest] = temp
+    (self[i], self[largest]) = (self[largest], self[i])
     sift_down(self, n, largest)
   }
 }

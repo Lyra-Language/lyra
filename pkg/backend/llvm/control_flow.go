@@ -88,7 +88,17 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		var err error
 		switch s := stmt.(type) {
 		case *ast.ExpressionStmt:
-			v, block, err = l.lowerExpr(block, s.Expression)
+			// A bare block in statement position is lowered as statements, not as a
+			// value: its tail may be an assignment (a tuple assignment desugars to one),
+			// and lowerBlock's demand for a value refused exactly that shape when it was
+			// the last statement of a void body. Its value, when it has one, still
+			// propagates — `{ { 5 } }` is 5 — and a tail block's temporaries are held
+			// on the same terms as any other tail expression's.
+			if inner, ok := s.Expression.(*ast.BlockExpr); ok {
+				v, block, err = l.lowerBlockStmts(block, inner, i != last || flushTail)
+			} else {
+				v, block, err = l.lowerExpr(block, s.Expression)
+			}
 		case *ast.VarDeclStmt:
 			block, err = l.lowerVarDecl(block, s)
 			v = nil // a binding is not itself the block's value

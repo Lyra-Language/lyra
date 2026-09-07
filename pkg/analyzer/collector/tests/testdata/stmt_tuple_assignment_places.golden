@@ -1,0 +1,235 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(f) {
+			BindingKind: let
+			Name: f
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								VarDeclStmt(a) {
+									BindingKind: var
+									Name: a
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+									}
+								}
+								ExpressionStmt {
+									Expression: {
+										UnsafeBlockExpr {
+											Body: {
+												BlockExpr {
+													Statements: {
+														ExpressionStmt {
+															Expression: {
+																BlockExpr {
+																	Statements: {
+																		DestructuringDeclStmt {
+																			Keyword: let
+																			Pattern: {
+																				TuplePattern {
+																					Elements: {
+																						IdentifierPattern(__tuple_4_11_0) {
+																							Name: __tuple_4_11_0
+																						}
+																						IdentifierPattern(__tuple_4_11_1) {
+																							Name: __tuple_4_11_1
+																						}
+																						IdentifierPattern(__tuple_4_11_2) {
+																							Name: __tuple_4_11_2
+																						}
+																						IdentifierPattern(__tuple_4_11_3) {
+																							Name: __tuple_4_11_3
+																						}
+																					}
+																				}
+																			}
+																			Value: {
+																				TupleLiteralExpr(?) {
+																					Elements: {
+																						MemberExpr {
+																							Object: {
+																								IdentifierExpr(p) {
+																									Name: p
+																								}
+																							}
+																							Property: {
+																								IdentifierExpr(x) {
+																									Name: x
+																								}
+																							}
+																						}
+																						IndexExpr {
+																							Index: {
+																								IntegerLiteralExpr {
+																									Base: 10
+																									Value: 0
+																								}
+																							}
+																							Object: {
+																								IdentifierExpr(xs) {
+																									Name: xs
+																								}
+																							}
+																						}
+																						DerefExpr {
+																							Operand: {
+																								IdentifierExpr(q) {
+																									Name: q
+																								}
+																							}
+																						}
+																						IdentifierExpr(a) {
+																							Name: a
+																						}
+																					}
+																					Name: ?
+																				}
+																			}
+																		}
+																		VarReassignmentStmt(a) {
+																			Name: a
+																			Value: {
+																				IdentifierExpr(__tuple_4_11_0) {
+																					Name: __tuple_4_11_0
+																				}
+																			}
+																		}
+																		LValueAssignmentStmt {
+																			Target: {
+																				MemberExpr {
+																					Object: {
+																						IdentifierExpr(p) {
+																							Name: p
+																						}
+																					}
+																					Property: {
+																						IdentifierExpr(x) {
+																							Name: x
+																						}
+																					}
+																				}
+																			}
+																			Value: {
+																				IdentifierExpr(__tuple_4_11_1) {
+																					Name: __tuple_4_11_1
+																				}
+																			}
+																		}
+																		LValueAssignmentStmt {
+																			Target: {
+																				IndexExpr {
+																					Index: {
+																						IntegerLiteralExpr {
+																							Base: 10
+																							Value: 0
+																						}
+																					}
+																					Object: {
+																						IdentifierExpr(xs) {
+																							Name: xs
+																						}
+																					}
+																				}
+																			}
+																			Value: {
+																				IdentifierExpr(__tuple_4_11_2) {
+																					Name: __tuple_4_11_2
+																				}
+																			}
+																		}
+																		DerefAssignmentStmt {
+																			Target: {
+																				DerefExpr {
+																					Operand: {
+																						IdentifierExpr(q) {
+																							Name: q
+																						}
+																					}
+																				}
+																			}
+																			Value: {
+																				IdentifierExpr(__tuple_4_11_3) {
+																					Name: __tuple_4_11_3
+																				}
+																			}
+																		}
+																	}
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(p) {
+									Name: p
+								}
+							}
+							Type: {
+								UnresolvedType(Pt) {
+									Name: Pt
+								}
+							}
+							TypeModifier: mut
+						}
+						Parameter {
+							Pattern: {
+								IdentifierPattern(xs) {
+									Name: xs
+								}
+							}
+							Type: {
+								DynamicArrayType(DynamicArray<i64>) {
+									ElementType: {
+										PrimitiveType(i64) {
+											Name: i64
+										}
+									}
+								}
+							}
+							TypeModifier: mut
+						}
+						Parameter {
+							Pattern: {
+								IdentifierPattern(q) {
+									Name: q
+								}
+							}
+							Type: {
+								RawPointerType(^mut i64) {
+									IsMut: true
+									Pointee: {
+										PrimitiveType(i64) {
+											Name: i64
+										}
+									}
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(void) {
+							Type: {
+								VoidType(void) {
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

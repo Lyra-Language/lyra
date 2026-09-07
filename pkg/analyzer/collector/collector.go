@@ -630,6 +630,8 @@ func (c *Collector) collectStatementByKind(node *sitter.Node) ast.Statement {
 		return statements.CollectDerefAssignmentStmt(node, c.ctx)
 	case "member_assignment", "index_assignment":
 		return statements.CollectLValueAssignmentStmt(node, c.ctx)
+	case "tuple_assignment":
+		return statements.CollectTupleAssignmentStmt(node, c.ctx)
 	case "break_statement":
 		return statements.CollectBreakStatement(node, c.ctx)
 	case "continue_statement":
