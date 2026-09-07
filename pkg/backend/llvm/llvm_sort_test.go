@@ -21,12 +21,13 @@ let is_sorted = pure (xs: []i64) -> bool => {
 }
 
 let check = (name: string, xs: []i64) -> void => {
-  var a = xs
-  var b = xs
+  var a = [...xs]   // a copy each — assignment shares the buffer, and then the
+  var b = [...xs]   // comparison below would compare one buffer with itself
   a.quick_sort()
   b.heap_sort()
-  var same = a.len() == b.len()
-  for i in 0..<a.len() { if a[i] != b[i] { same = false } }
+  let c = xs.sorted()
+  var same = a.len() == b.len() && b.len() == c.len()
+  for i in 0..<a.len() { if a[i] != b[i] || b[i] != c[i] { same = false } }
   println("${name}: ${is_sorted(a)} ${same}")
 }
 
@@ -115,6 +116,40 @@ let main = () -> void => {
 }`
 	got := buildAndRunWithPrelude(t, src, "")
 	if want := "64 true\n1024 true\n4096 true\n"; got != want {
+		t.Fatalf("stdout:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// `sorted` is stable and answers a copy. Records ordered by one key keep their original
+// order among ties, and the receiver is untouched afterwards.
+func TestExec_Sorted_StableCopy(t *testing.T) {
+	t.Parallel()
+	src := `
+struct Rec { key: i64, seq: i64 }
+impl Ord for Rec { compare = pure (self, o) => self.key <=> o.key }
+
+let main = () -> void => {
+  var rng = rng_seeded(3)
+  var recs: []Rec = []
+  for i in 0..<3000 { recs.push(Rec { key: rng.below(20), seq: i }) }
+  let out = recs.sorted()
+  var stable = out.len() == recs.len()
+  for i in 1..<out.len() {
+    let a = out[i - 1]
+    let b = out[i]
+    if a.key > b.key { stable = false }
+    if a.key == b.key && a.seq > b.seq { stable = false }
+  }
+  var untouched = true
+  for i, r in recs { if r.seq != i { untouched = false } }
+  println("${stable} ${untouched}")
+  let small: []i64 = [3, 1, 2]
+  println(small.sorted().join(",") ++ " " ++ small.join(","))
+  let none: []i64 = []
+  println(none.sorted().len())
+}`
+	got := buildAndRunWithPrelude(t, src, "")
+	if want := "true true\n1,2,3 3,1,2\n0\n"; got != want {
 		t.Fatalf("stdout:\n%s\nwant:\n%s", got, want)
 	}
 }

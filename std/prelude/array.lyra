@@ -77,6 +77,70 @@ pub let quick_sort<t> where t: Ord = (self: mut []t) -> void => {
 /// with a guarantee in place of a constant factor.
 pub let sort<t> where t: Ord = (self: mut []t) -> void => self.quick_sort()
 
+/// A sorted **copy** of `self`, ascending by `t`'s `Ord`; `self` is untouched. **Stable**:
+/// elements that compare equal keep their order, so sorting records by one key leaves
+/// ties in their original order, and sorting by a second key afterwards sorts by both.
+/// Merge sort over a scratch buffer of the same length, so it allocates twice and
+/// `noalloc` refuses it; `sort` is the in-place, unstable alternative.
+///
+/// ```
+/// let by_age = people.sorted()     // people is unchanged
+/// ```
+pub let sorted<t> where t: Ord = pure (self: []t) -> []t => {
+  // Bottom-up, and all in one function: a helper taking a `mut []t` is an impure call,
+  // which `pure` refuses even on a buffer this function owns. Mutating a local is fine.
+  var src = [...self]
+  let n = src.len()
+  if n < 2 { return src }
+
+  // Runs of 16 by insertion sort — stable, and the fewest compares on a short range.
+  var run = 0
+  for run < n {
+    let stop = min(run + 16, n)
+    for i in (run + 1)..<stop {
+      let v = src[i]
+      var j = i
+      for j > run && src[j - 1].compare(v) == Greater {
+        src[j] = src[j - 1]
+        j -= 1
+      }
+      src[j] = v
+    }
+    run = stop
+  }
+
+  // Merge runs of `width` from src into dst, then swap the buffers' roles.
+  var dst = [...self]
+  var width = 16
+  for width < n {
+    var start = 0
+    for start < n {
+      let mid = min(start + width, n)
+      let end = min(start + 2 * width, n)
+      var i = start
+      var j = mid
+      var k = start
+      for i < mid && j < end {
+        // The left element wins a tie: that is the whole of stability.
+        if src[j].compare(src[i]) == Less {
+          dst[k] = src[j]
+          j += 1
+        } else {
+          dst[k] = src[i]
+          i += 1
+        }
+        k += 1
+      }
+      for i < mid { dst[k] = src[i]; i += 1; k += 1 }
+      for j < end { dst[k] = src[j]; j += 1; k += 1 }
+      start = end
+    }
+    (src, dst) = (dst, src)
+    width *= 2
+  }
+  src
+}
+
 /// Sorts `self` in place, ascending by `t`'s `Ord`. Heapsort: O(n log n) in every case,
 /// no allocation, **not stable** — equal elements may change their relative order.
 /// `quick_sort` is two to three times faster on typical input and falls back to this.

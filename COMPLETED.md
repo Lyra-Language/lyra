@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 09/07/26 — `sorted`: the stable copy, and the destructuring-`let` borrow it exposed
+
+`sort` is in place and unstable; `sorted` is the other half — `pure`, a fresh `[]t`,
+stable. Bottom-up merge sort: insertion-sorted runs of 16, then merged at doubling widths
+between two buffers that trade roles with `(src, dst) = (dst, src)`. **One function by
+necessity**: the top-down version with a `merge_sort_range(xs: mut []t, …)` helper was
+`lyra-E007`, "pure function calls impure function" — a `mut` parameter is an impure call
+whatever the caller owns, while mutating a local is not. `HashMap.keys` pushes onto a
+local from `pure` code; this is the same line, and the note in the doc comment says so.
+
+**The swap of two array bindings read freed memory.** `(a, b) = (b, a)` desugars to
+`let (t0, t1) = (b, a); a = t0; b = t1`, and a destructuring `let` bound *borrows* — field
+copies of a value somebody else owns, the right thing for a match arm or an `if let`,
+whose names die with the statement that keeps the scrutinee alive. A `let`'s names
+outlive the statement, and the value is a temporary released at its end, so
+`let (x, y) = (b, a)` then `a = []` read a freed box. Pre-existing, from a tuple literal
+and from a call alike; the tuple-assignment ASan test passed because its strings were
+literals, whose release is a no-op. `ownDestructuredNames` now retains each managed leaf
+after the bind and frames it — what `let x = t.0` always did — in both `let` and
+`let … else`. Pinned under ASan with run-time strings, arrays, a struct pattern, a
+`let … else`, a triple swap, and a bound name moved into an `own` parameter.
+
+Also fixed in the sort test: `var a = xs` **shares** the buffer, so its "quicksort and
+heapsort agree" check compared one array with itself. `[...xs]` is the copy.
+
 ### 09/07/26 — a loop has a type: `never` if it cannot finish, `void` if it can
 
 A `for` loop's type was nil — the "already reported" convention — so a non-void function

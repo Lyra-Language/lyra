@@ -102,7 +102,94 @@ func (l *lowerer) lowerDestructuringDecl(block *ir.Block, d *ast.DestructuringDe
 	if err := bind(block, d.Pattern); err != nil {
 		return nil, err
 	}
+	if err := l.ownDestructuredNames(block, d.Pattern, valType); err != nil {
+		return nil, err
+	}
 	return block, nil
+}
+
+// ownDestructuredNames makes the names a `let` pattern just bound into **owners**.
+//
+// aggPatternBind binds a *borrow* — a field copy of a value somebody else owns — which is
+// right for a match arm or an `if let`, whose names die with the statement that keeps the
+// value alive. A `let`'s names outlive the statement, and the value is very often a
+// temporary released at its end: a tuple literal, a call. A borrow of that dangles the
+// moment anything else releases the box, so `let (x, y) = (b, a)` followed by `a = []`
+// read freed memory (09/07; a string was immune only while it was a literal, whose
+// release is a no-op). Each managed leaf now takes a reference of its own and is framed
+// for release at scope exit — exactly what `let x = t.0` does — and the value's own
+// release still happens, so the net is one owner per name.
+func (l *lowerer) ownDestructuredNames(block *ir.Block, pat ast.Pattern, t types.Type) error {
+	switch p := pat.(type) {
+	case *ast.IdentifierPattern:
+		return l.ownDestructuredName(block, p.Name, t)
+	case *ast.BindingPattern:
+		if err := l.ownDestructuredName(block, p.Name, t); err != nil {
+			return err
+		}
+		return l.ownDestructuredNames(block, p.Pattern, t)
+	case *ast.TuplePattern:
+		tt, ok := l.stripNewtype(t).(types.TupleType)
+		if !ok {
+			return nil
+		}
+		for i, el := range p.Elements {
+			if _, isRest := el.(*ast.RestPattern); isRest {
+				return nil // positions after a rest count from the end; nothing binds there today
+			}
+			if i < len(tt.Elements) {
+				if err := l.ownDestructuredNames(block, el, tt.Elements[i]); err != nil {
+					return err
+				}
+			}
+		}
+	case *ast.StructPattern:
+		st, ok := l.resolveStructType(t)
+		if !ok {
+			return nil
+		}
+		for _, f := range p.Fields {
+			if _, isRest := f.Pattern.(*ast.RestPattern); isRest {
+				continue
+			}
+			_, ftype, ok := structFieldIndexAndType(st, f.Name)
+			if !ok {
+				continue
+			}
+			if f.Pattern == nil {
+				if err := l.ownDestructuredName(block, f.Name, ftype); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := l.ownDestructuredNames(block, f.Pattern, ftype); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ownDestructuredName retains the value bound to name and frames its slot, when the
+// type owns anything managed. A name aggPatternBind did not bind (a wildcard) is skipped.
+func (l *lowerer) ownDestructuredName(block *ir.Block, name string, t types.Type) error {
+	if name == "" || name == "_" || !l.needsDrop(t) {
+		return nil
+	}
+	slot, ok := l.locals[name]
+	if !ok {
+		return nil
+	}
+	alloca, ok := slot.(*ir.InstAlloca)
+	if !ok {
+		return nil
+	}
+	v := block.NewLoad(alloca.ElemType, slot)
+	if err := l.deepRetain(block, v, t); err != nil {
+		return err
+	}
+	l.addManagedBinding(slot, t)
+	return nil
 }
 
 // bindParameters binds a function's parameters into l.locals for its body, given the
@@ -336,6 +423,11 @@ func (l *lowerer) lowerElseDestructuring(block *ir.Block, s *ast.ElseDestructuri
 		}
 	}
 	if err := bind(cont, d.Pattern); err != nil {
+		return nil, err
+	}
+	// The names persist after the statement, as a plain `let`'s do — see
+	// ownDestructuredNames for why that makes them owners rather than borrows.
+	if err := l.ownDestructuredNames(cont, d.Pattern, valType); err != nil {
 		return nil, err
 	}
 	return cont, nil

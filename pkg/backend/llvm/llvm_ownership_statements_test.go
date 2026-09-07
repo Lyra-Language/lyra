@@ -73,21 +73,30 @@ func TestExec_DerefAssignmentRetainsWhatItStores(t *testing.T) {
 //
 // Which is the general lesson about a missing walk: "borrowed" and "unvisited" produce the
 // same +0 for a value someone else owns, and differ for one nobody does.
+//
+// The `let` form differs since 09/07: its names outlive the statement, so each managed one
+// takes a reference of its own (ownDestructuredNames) — one retain, and a second release at
+// scope exit — where the `if let`'s name is a borrow that dies with the branch. Before that
+// the `let`'s name dangled once the temporary was released, and only a literal string,
+// whose release is a no-op, kept this case from reading freed memory.
 func TestEmit_DestructuringFromATemporaryReleasesIt(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ name, src string }{
+	for _, c := range []struct {
+		name, src         string
+		releases, retains int
+	}{
 		{"if let", `data Box = Full(string) | Empty
 let mk = () -> Box => Full("a" ++ "b")
 let main = () -> u8 => {
   var out: i64 = 0
   if let Full(s) = mk() { out = s.len() }
   u8(out - 2)
-}`},
+}`, 1, 0},
 		{"tuple destructuring", `let mk = () -> (string, i64) => ("a" ++ "b", 1)
 let main = () -> u8 => {
   let (p, n) = mk()
   u8(p.len() + n - 3)
-}`},
+}`, 2, 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -98,9 +107,12 @@ let main = () -> u8 => {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Count(ir, "call void @lyra_rc_release"); got != 1 {
-				t.Errorf("%d releases; want 1 — a scrutinee nothing else names is disposed "+
-					"of by this statement or by nobody", got)
+			if got := strings.Count(ir, "call void @lyra_rc_release"); got != c.releases {
+				t.Errorf("%d releases; want %d — a scrutinee nothing else names is disposed "+
+					"of by this statement or by nobody, and a `let`'s owning name adds its own", got, c.releases)
+			}
+			if got := strings.Count(ir, "call void @lyra_rc_retain"); got != c.retains {
+				t.Errorf("%d retains; want %d", got, c.retains)
 			}
 		})
 	}
