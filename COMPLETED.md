@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 09/07/26 — `sort`: introsort in the prelude, over `Ord`
+
+Heapsort was the first cut because it needs no fallback machinery. `quick_sort` earns its
+extra hundred lines on the constant factor, and is `sort`'s name for the general case:
+median-of-three Hoare partitioning (equal keys split across both sides, so a run of
+duplicates does not degrade), insertion sort under 16 elements, and heapsort — now over a
+range, with `sift_down` taking a base offset — once partition depth passes 2·log2(n). The
+smaller side recurses and the larger loops, so the stack is O(log n) whatever the pivots
+do. **Not stable**, and said so on every doc comment; a stable `sorted` would allocate and
+is a separate function when something needs it.
+
+Not a `Sortable` trait. The order belongs to the element, and `Ord` already carries it; a
+container-side trait would have one implementation per element type or one blanket one,
+which is a generic function wearing a trait's name.
+
+It found a front-end gap (todo, Known bugs 09/07): a non-void function whose body ends in
+a loop passes the typechecker whether or not every path returns, and the backend refuses
+the shape. `partition` breaks out to a value instead.
+
 ### 09/07/26 — `(a, b) = (b, a)`: tuple assignment, as a collector desugaring
 
 Writing heapsort for the prelude put a three-line swap in two places, and the question

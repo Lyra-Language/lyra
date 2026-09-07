@@ -240,13 +240,24 @@ write today:
 
 ## Known bugs
 
-- **[OPEN 09/06] A parameter named `entry` fails the build.** `let f = (entry: i64) -> i64
-  => entry + 1` type-checks and clang rejects the IR: *"unable to create block named
-  'entry'"*. The backend names every function's first block `entry` and lowers a
-  parameter under its source name, and LLVM keeps values and labels in one symbol table
-  per function. Found writing `std.collections`'s `place(self, entry: Entry<k, v>)`, which
-  is the obvious name for that parameter; the map renamed it. The fix is to prefix lowered
-  parameter names (or the block), not to reserve the word.
+- **[OPEN 09/07] A non-void function whose body ends in a loop is accepted with no value
+  on the fall-through path.** `let find = (n: i64) -> i64 => { … for i < n { if … { return
+  i } } }` type-checks; the backend refuses it (*"block has no value"*) where the front end
+  should have. Two shapes, one cause — the tail statement is not an expression, and the
+  block type check does not ask whether the function can fall off its end. The `for { … }`
+  form (no condition, no `break`) is the legitimate one: it cannot fall through, so it is a
+  `never` and should be accepted; the conditional form should be refused at the front end.
+  Found writing `partition` in the prelude's quicksort, which now `break`s to a value
+  rather than returning from inside the loop.
+
+- **[DONE 09/06] A parameter named `entry` failed the build.** `let f = (entry: i64) -> i64
+  => entry + 1` type-checked and clang rejected the IR: *"unable to create block named
+  'entry'"* — LLVM keeps a function's values and labels in one symbol table, and every
+  lowered function opens with a block named `entry`. Fixed in `lowerParameter` by prefixing
+  every source name (`%p.entry`), which closes the class rather than the word: no other
+  value or label in a user function is named `p.…`. Found writing `std.collections`'s
+  `place(self, entry: Entry<k, v>)`, which has its name back. Pinned by
+  `TestExec_ParameterNamedLikeABlockLabel`.
 
 - **[OPEN 09/06] An unannotated `match` joining `Some(e.value)` with `None` in a generic
   body lowers as a bare `Maybe`.** `let got = match xs[i] { Some(e) => Some(e.value), None
