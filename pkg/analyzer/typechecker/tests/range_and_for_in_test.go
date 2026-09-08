@@ -94,7 +94,7 @@ func TestTypeCheck_ForIn_StringVarIterable_NoError(t *testing.T) {
 
 func TestTypeCheck_ForIn_IntLiteral_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `for x in 42 { }`, false)
-	assertErrorsAre(t, res, "cannot iterate over integer literal: expected an array, string, or range")
+	assertErrorsAre(t, res, "cannot iterate over integer literal: expected an array, string, range, or Seq")
 }
 
 func TestTypeCheck_ForIn_IntVar_Error(t *testing.T) {
@@ -102,7 +102,7 @@ func TestTypeCheck_ForIn_IntVar_Error(t *testing.T) {
 		let n: i64 = 5
 		for x in n { }
 	`, false)
-	assertErrorsAre(t, res, "cannot iterate over i64: expected an array, string, or range")
+	assertErrorsAre(t, res, "cannot iterate over i64: expected an array, string, range, or Seq")
 }
 
 func TestTypeCheck_ForIn_BoolVar_Error(t *testing.T) {
@@ -110,12 +110,12 @@ func TestTypeCheck_ForIn_BoolVar_Error(t *testing.T) {
 		let b: bool = true
 		for x in b { }
 	`, false)
-	assertErrorsAre(t, res, "cannot iterate over boolean: expected an array, string, or range")
+	assertErrorsAre(t, res, "cannot iterate over boolean: expected an array, string, range, or Seq")
 }
 
 func TestTypeCheck_ForIn_FloatLiteral_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `for x in 3.14 { }`, false)
-	assertErrorsAre(t, res, "cannot iterate over float literal: expected an array, string, or range")
+	assertErrorsAre(t, res, "cannot iterate over float literal: expected an array, string, range, or Seq")
 }
 
 // ── Range error causes for-in to still check iterability ────────────────────

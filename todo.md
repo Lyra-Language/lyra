@@ -2139,10 +2139,32 @@ Three reasons, none of them taste:
   — and a `Seq` has no length to compute it from. That is the dynamic-array **growth**
   already open under (#5). Same blocker `split` sits behind, which is the other half of the
   argument: as a `Seq<string>` it is not blocked at all.
-- **[OPEN] The return annotation's spelling.** `-> Seq<u>` (recommended) says what the
-  function returns and gives `yield` something to check against; `-> u` annotates the element
-  and reads like a normal return while meaning something else. Pick before anything is
-  written down.
+- **[DECIDED 09/08] The return annotation is `-> Seq<u>`**, and it is required: a `gen`
+  body's value says nothing about what it yields, so there is nothing to infer it from,
+  and `-> u` would read as a normal return while meaning something else. A `gen` with any
+  other annotation is refused at the declaration ("declares what it yields as `-> Seq<t>`").
+- **[DECIDED 09/08] The element type is the whole type.** `xs.seq()`, `xs.seq().filter(p)`
+  and `….map(f).take(3)` are all `Seq<i64>` — nothing of the chain is recorded in the
+  type. The consequences the entry above lists were weighed and the recommendation
+  taken: a terminal (`sum`, `count`, `first`) is inlined at its call site so the
+  `for-in` becomes local and the stage-1 rewrite applies, and where it cannot be, the
+  loop degrades to a pull through the boxed closure. That is the lowering's contract;
+  the typechecker rung below is written to it.
+- **[DONE 09/08] The typechecker rung.** `Seq<t>` is compiler-known by name
+  (`SeqTypeName`) — not declared in the prelude, since a sequence has no constructors
+  and no fields a program may name, and a program's own `Seq` declaration wins over it. A
+  `gen` body is checked as a void body under the element its annotation names
+  (`enclosingGen`), `yield e` checks `e` against it and is void, `yield from s` takes
+  anything a loop walks, and a `Seq` is the fourth source driver for `for-in` and the
+  comprehension (`seqElementType`, one function shared by all of them). The prelude's
+  `seq.lyra` — `seq`, `map`, `filter`, `take`, `take_while`, `to_array`, `sum`, `count`,
+  `first` — is ordinary Lyra over it, and `examples/primes.lyra` is the target program: it
+  type-checks, and `lyrac build` refuses it by name until stage 1 lands. Three things it
+  hit on the way, each fixed: a comprehension's source could not be a call or a method
+  chain (grammar, `[y in xs.map(f) | y]` was a syntax error since 08/04); a function
+  passed as a value before its declaration was checked had no type; and `yield from
+  0..<3` parses as `(yield from 0) ..< 3`, which is **still open** — the `yield` forms
+  sit at `PREC.AWAIT`, above a range operator; parenthesize the range meanwhile.
 - **[IDEA] Implicit `Seq` → `[]t`, considered and not taken.** One `map`, returning a `Seq`,
   materializing wherever context wants an array (`let ys: []i64 = xs.map(f)`) — with a real
   Lyra precedent, since `[1, 2, 3]` is already `[3]T` or `[]T` "told apart by what the

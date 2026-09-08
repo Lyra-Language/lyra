@@ -7,6 +7,7 @@ import (
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -244,11 +245,43 @@ func (l *lowerer) forEachUserFunction(program *ast.Program, entry *ast.LambdaExp
 		if isGenericLambda(lambda) {
 			continue
 		}
+		// A lazy-sequence function is typechecked and not lowered (09/08): a `gen` body
+		// has no representation here, and neither does a `Seq<t>` parameter or return
+		// — the prelude's `sum` over `Seq<i64>` is one, and it is a plain function every
+		// program would otherwise declare. Skipped rather than refused, exactly as an
+		// unused generic costs nothing; a *call* to one is refused by name (lowerDirectCall).
+		if mentionsSeq(lambda) {
+			l.seqSkipped[l.funcKey(decl.Name, decl.GetLocation())] = true
+			continue
+		}
 		if err := fn(decl, lambda); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// mentionsSeq reports whether a function is a `gen` or names a `Seq<t>` in its own
+// signature — the two shapes the backend leaves undeclared until lazy sequences lower.
+// A `Seq` nested deeper (an array of them, a callback returning one) is not looked for
+// here; lowerType refuses it by name if it is ever reached.
+func mentionsSeq(fn *ast.LambdaExpr) bool {
+	if fn.IsGenerator {
+		return true
+	}
+	isSeq := func(t types.Type) bool {
+		p, ok := t.(types.ParameterizedType)
+		return ok && p.Name == typechecker.SeqTypeName
+	}
+	if fn.ReturnType.Type != nil && isSeq(fn.ReturnType.Type) {
+		return true
+	}
+	for _, param := range fn.Parameters {
+		if param.Type != nil && isSeq(param.Type) {
+			return true
+		}
+	}
+	return false
 }
 
 // declareFunction emits the function's signature (an ir.Func with no body) and
@@ -327,6 +360,13 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 // framing, and the void/typed return split — three things that must not drift
 // between a generic function and a plain one.
 func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name string) error {
+	// Lazy sequences are typechecked and not yet lowered (09/08): a `gen` body yields
+	// into a `Seq<t>` that has no representation here. Refused by name rather than
+	// left to fail on the first `yield` or on the type, so the message says what is
+	// missing instead of reading as a bug (rule 5).
+	if fn.IsGenerator {
+		return fmt.Errorf("llvm: %s is a `gen` function, and lazy sequences are not lowered yet — they type-check today and lower in a later stage (todo.md, Lazy sequences)", name)
+	}
 	defer l.enterModuleOf(fn.GetLocation())()
 	retType, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {
@@ -512,6 +552,9 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerProgramArgCountCall(block, e)
 		case "program_arg":
 			return l.lowerProgramArgCall(block, e)
+		}
+		if l.seqSkipped[l.funcKey(ident.Name, ident.GetLocation())] {
+			return nil, nil, errSeqNotLowered
 		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}

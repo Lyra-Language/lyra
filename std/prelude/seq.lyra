@@ -1,0 +1,82 @@
+module std.prelude
+//! Lazy sequences: `Seq<t>`, what a `gen` function yields into, and the combinators over
+//! it. Nothing here allocates until brackets do — `for x in s.filter(p).map(f)` walks
+//! one fused loop, and `[x in s | x]` is where an array comes into being.
+
+// `Seq<t>` is not declared in this file, or anywhere: a sequence has no constructors and
+// no fields a program may name, so there is nothing to write down, and the compiler
+// knows the name directly (typechecker_control_flow.go, `SeqTypeName`). Every function
+// below is ordinary Lyra: a `gen` function that walks its source and yields. The lazy
+// combinators live on the `Seq` head and the eager ones on `[]t`, which is what lets
+// both `map`s exist in one module (receiver-keyed overloading); `xs.seq()` is the
+// spelling that crosses from one to the other.
+
+/// The array as a lazy sequence — the entry to the lazy combinators.
+///
+/// `xs.map(f)` is eager and answers an array; `xs.seq().map(f)` answers a `Seq` and
+/// runs `f` at the consumer, one element at a time, allocating nothing.
+///
+/// ```
+/// for y in xs.seq().filter(is_even).map(square) { println(y) }
+/// ```
+pub let seq<t> = pure gen (self: []t) -> Seq<t> => {
+  for x in self { yield x }
+}
+
+/// Each element with `f` applied, lazily: `f` runs when the consumer asks, not here.
+pub let map<t,u> = pure gen (self: Seq<t>, f: (t) -> u) -> Seq<u> => {
+  for x in self { yield f(x) }
+}
+
+/// The elements satisfying `predicate`, lazily.
+pub let filter<t> = pure gen (self: Seq<t>, predicate: (t) -> bool) -> Seq<t> => {
+  for x in self { if predicate(x) { yield x } }
+}
+
+/// The first `n` elements, then done — the way to end an infinite sequence.
+///
+/// Fewer when the source runs out first; none for `n <= 0`.
+pub let take<t> = pure gen (self: Seq<t>, n: i64) -> Seq<t> => {
+  var left = n
+  for x in self {
+    if left <= 0 { break }
+    yield x
+    left -= 1
+  }
+}
+
+/// The leading elements while `predicate` holds, then done: the first element that
+/// fails ends the sequence and is not yielded.
+pub let take_while<t> = pure gen (self: Seq<t>, predicate: (t) -> bool) -> Seq<t> => {
+  for x in self {
+    if !predicate(x) { break }
+    yield x
+  }
+}
+
+/// The sequence materialized as an array — the brackets, named.
+///
+/// Prefer the brackets at a site where they read: `[x in s | x]` is this function's
+/// whole body. Allocates the array, so `noalloc` refuses it.
+pub let to_array<t> = pure (self: Seq<t>) -> []t => [x in self | x]
+
+/// The sum of an integer sequence. Consumes it.
+pub let sum = pure noalloc (self: Seq<i64>) -> i64 => {
+  var total = 0
+  for x in self { total += x }
+  total
+}
+
+/// How many elements the sequence yields. Consumes it, so an infinite sequence never
+/// answers — `take` first.
+pub let count<t> = pure noalloc (self: Seq<t>) -> i64 => {
+  var n = 0
+  for _ in self { n += 1 }
+  n
+}
+
+/// The first element, or `None` for an empty sequence. Consumes only that element.
+pub let first<t> = pure noalloc (self: Seq<t>) -> Maybe<t> => {
+  for x in self { return Some(x) }
+  None
+}

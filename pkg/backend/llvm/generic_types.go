@@ -1,10 +1,13 @@
 package llvm
 
 import (
+	"errors"
+
 	"fmt"
 
 	lltypes "github.com/llir/llvm/ir/types"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -58,6 +61,9 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 	}
 	decl, ok := l.lookupTypeDecl(p.Name)
 	if !ok {
+		if p.Name == typechecker.SeqTypeName {
+			return t, errSeqNotLowered
+		}
 		return t, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
 	subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
@@ -115,6 +121,9 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	}
 	decl, ok := l.lookupTypeDecl(p.Name)
 	if !ok {
+		if p.Name == typechecker.SeqTypeName {
+			return nil, errSeqNotLowered
+		}
 		return nil, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
 	if len(decl.GenericParams) != len(p.TypeArguments) {
@@ -186,3 +195,8 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	}
 	return st, nil
 }
+
+// errSeqNotLowered is what a `Seq<t>` reaching the backend reports — a value of the lazy
+// sequence type in a lowered function, which the typechecker admits and this stage does
+// not yet represent (09/08). Named so the two sites that can meet one say the same thing.
+var errSeqNotLowered = errors.New("llvm: a `Seq<t>` value reached the backend, and lazy sequences are not lowered yet — they type-check today and lower in a later stage (todo.md, Lazy sequences)")

@@ -1482,8 +1482,30 @@ func isIterableType(t types.Type) bool {
 	if types.IsArray(t) || types.IsString(t) {
 		return true
 	}
+	if _, ok := seqElementType(t); ok {
+		return true
+	}
 	_, ok := t.(types.RangeType)
 	return ok
+}
+
+// SeqTypeName is the spelling of the lazy sequence type, `Seq<t>`. It is the one
+// generic type the prelude does not declare, because there is nothing to declare: a
+// sequence has no constructors and no fields a program may name, so a `data` or `struct`
+// for it would be a shape with nothing in it. The compiler knows it by name, the way it
+// still knows `Maybe` in a program with no declaration of one. A program's own `Seq`
+// declaration wins over it, as any declaration wins over an ambient name.
+const SeqTypeName = "Seq"
+
+// seqElementType answers `t` for a `Seq<t>`, and false for anything else — the one
+// place the sequence type is taken apart, shared by the source drivers, `yield` and the
+// `gen` body check, so they cannot disagree about which types are sequences.
+func seqElementType(t types.Type) (types.Type, bool) {
+	p, ok := t.(types.ParameterizedType)
+	if !ok || p.Name != SeqTypeName || len(p.TypeArguments) != 1 {
+		return nil, false
+	}
+	return p.TypeArguments[0], true
 }
 
 // inferRangeExpr validates that both ends of a range expression are numeric and
@@ -1558,7 +1580,7 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 	iterType := tc.inferExprType(expr.Iterable)
 	if iterType != nil && !isIterableType(iterType) {
 		tc.addError(expr.Iterable.GetLocation(), SeverityError,
-			"cannot iterate over %s: expected an array, string, or range", iterType)
+			"cannot iterate over %s: expected an array, string, range, or Seq", iterType)
 	}
 	tc.enterScope(expr, func() {
 		// Type the loop variable(s) from the iterable so the body resolves them —
@@ -1605,6 +1627,9 @@ func (tc *TypeChecker) setLoopVarType(name string, t types.Type) {
 // an array's element, a string's `rune`, or a range's numeric type (a range over
 // two untyped literals defaults to i64, matching an untyped literal binding).
 func iterableElementType(t types.Type) types.Type {
+	if elem, ok := seqElementType(t); ok {
+		return elem
+	}
 	switch it := t.(type) {
 	case types.StaticArrayType:
 		return it.ElementType

@@ -143,6 +143,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		res:                res,
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
+		seqSkipped:         map[string]bool{},
 		funcParams:         map[string][]ast.Parameter{},
 		overloads:          map[*ast.LambdaExpr]emitted{},
 		byRefParams:        map[value.Value]bool{},
@@ -260,6 +261,7 @@ type lowerer struct {
 	libc       map[string]*ir.Func
 	res        *driver.Result              // gives you TypeTable, SymbolTable, MethodTable, …
 	funcs      map[string]*ir.Func         // name → its function IR (all declared before any body)
+	seqSkipped map[string]bool             // functions left undeclared because they mention a Seq (forEachUserFunction)
 	funcParams map[string][]ast.Parameter  // name → its declared parameters (call sites need the `mut` by-ref modes)
 	overloads  map[*ast.LambdaExpr]emitted // receiver-keyed overloads, by declaration (see overloads.go)
 	consts     map[string]*ast.VarDeclStmt // top-level `const` name → its declaration (its value is inlined at each use)

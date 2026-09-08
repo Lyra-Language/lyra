@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 09/08/26 — lazy sequences: the two decisions, the target program, and the typechecker rung
+
+`gen`, `yield` and `yield from` had parsed since before 08/04 with nothing downstream
+reading them. The rung that was missing is the typechecker's, and it is in: a `gen` body
+is a void body checked under the element its `-> Seq<t>` names, `yield` is void and
+checked against that element, `yield from` takes anything a loop walks, and a `Seq` is a
+source for `for-in` and the comprehension through the same `iterableElementType` the
+other three use. `examples/primes.lyra` — primes from an infinite `naturals()` through
+`filter`, `map`, `take`, `take_while`, the brackets, and three terminals — type-checks;
+`lyrac build` refuses it by name.
+
+**`Seq<t>` is known by name, not declared.** The `@builtin` marker attaches only to a
+`data` or `trait`, an empty struct does not parse, and neither shape is right anyway: a
+sequence has no constructors and no fields a program may name, so a declaration would be
+a shape with nothing in it. The compiler knows the name the way it knows `Maybe` in a
+program with no declaration, and a program's own `Seq` wins as any declaration does.
+
+**Two decisions taken** (todo.md, Lazy sequences): the annotation is `-> Seq<u>` and is
+required, and the element type is the whole type — nothing of the chain is recorded in
+it, with terminals inlined at the call site and a closure pull as the fallback.
+
+**Three gaps the target program found.** A comprehension's source could not be a call:
+`[y in xs.map(f) | y]` was a syntax error since the form landed, because the source was a
+list of four literal shapes; `call_expr` joins them, under a declared
+`generator`/`_postfix_expr` conflict (a bare `_postfix_expr` collides with a range's
+operand instead). A function passed as a value before its declaration was checked had no
+type, so `xs.filter(is_prime)` above `is_prime` failed the solve — the identifier now
+answers the declaration's signature, as the call path always did. And `yield from 0..<3`
+parses as `(yield from 0) ..< 3`, left open with a parenthesis as the workaround.
+
 ### 09/07/26 — a bare `None` argument adopts the variable another argument bound
 
 `program_args_map` in the new `args.lyra` wrote `args_map.insert(arg1, None)` and got

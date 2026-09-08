@@ -71,7 +71,7 @@ func (tc *TypeChecker) bindGenerator(gen *ast.Generator) {
 	elem := iterableElementType(sourceType)
 	if elem == nil {
 		tc.addError(gen.GetLocation(), SeverityError,
-			"cannot iterate over %s in a comprehension — a generator's source must be an array, a string, or a range",
+			"cannot iterate over %s in a comprehension — a generator's source must be an array, a string, a range, or a Seq",
 			sourceType)
 		return
 	}

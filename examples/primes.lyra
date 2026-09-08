@@ -1,0 +1,48 @@
+// Primes from an infinite sequence — the program that drives lazy sequences.
+//
+//   lyrac run examples/primes.lyra
+//
+// Every line here is something an array cannot say: `naturals()` never ends, so there is
+// no `[]i64` to filter, and `take` is what makes the chain finite. The two primitive
+// consumers are `for-in` and the comprehension; `sum`, `count` and `first` are prelude
+// one-liners over them.
+
+let main = () -> void => {
+  // Materialized by brackets, the one place an array comes into being.
+  let first_ten = [p in naturals().filter(is_prime).take(10) | p]
+  println("first ten: ${first_ten.join(" ")}")
+
+  // Walked, allocating nothing: each prime is squared as the loop asks for it.
+  for sq in naturals().filter(is_prime).map((p) => p * p).take(5) { print("${sq} ") }
+  println("")
+
+  // Terminals put the loop behind a call, which is the ordinary way a chain ends.
+  println("sum of the first hundred: ${naturals().filter(is_prime).take(100).sum()}")
+  println("below twenty: ${naturals().take_while((n) => n < 20).filter(is_prime).count()}")
+  println("first above a thousand: ${naturals().filter((n) => n > 1000).filter(is_prime).first().unwrap_or(-1)}")
+
+  // An array enters the lazy world through seq(), and the eager map stays what it was.
+  let squares: []i64 = [1, 2, 3, 4].map((n) => n * n)
+  println("odd squares: ${squares.seq().filter((n) => n % 2 == 1).to_array().join(" ")}")
+}
+
+// 2, 3, 4, … with no end; only a consumer with `take` or `take_while` finishes it.
+let naturals = pure gen () -> Seq<i64> => {
+  var n = 2
+  for {
+    yield n
+    n += 1
+  }
+}
+
+// Trial division up to the square root. O(sqrt n), and every prime the sequence
+// yields has cost exactly one call.
+let is_prime = pure noalloc (n: i64) -> bool => {
+  if n < 2 { return false }
+  var d = 2
+  for d * d <= n {
+    if n % d == 0 { return false }
+    d += 1
+  }
+  true
+}

@@ -119,6 +119,22 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 		ownedReturn := isOwnedReturn(lambda.ReturnType.TypeModifier)
 
 		_, isVoid := declaredReturn.(types.VoidType)
+		// A `gen` body yields its elements and returns by finishing, so it is checked
+		// as a void body — under the element type its `-> Seq<t>` names, which is what
+		// every `yield` in it is checked against. The annotation is required: the
+		// body's value says nothing about what it yields, and `Seq<t>` is the one
+		// spelling (todo.md, "Lazy sequences", decided 09/08).
+		if lambda.IsGenerator {
+			isVoid = true
+			elem, isSeq := seqElementType(declaredReturn)
+			if !isSeq {
+				tc.addError(lambda.GetLocation(), SeverityError,
+					"%s: a `gen` function declares what it yields as `-> Seq<t>`", funcName)
+			}
+			prevGen := tc.enclosingGen
+			tc.enclosingGen = &generatorContext{name: funcName, elem: elem}
+			defer func() { tc.enclosingGen = prevGen }()
+		}
 		if lambda.Body != nil {
 			if block, ok := lambda.Body.(*ast.BlockExpr); ok {
 				if isVoid {

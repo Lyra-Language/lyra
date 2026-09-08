@@ -76,6 +76,7 @@ type TypeChecker struct {
 	ufcsModules      map[string]map[string]bool // file -> modules it reached through a UFCS call; see UFCSModules
 	defaultedCtors   map[ast.Expression]bool    // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
 	provisionalStamp bool                       // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
+	enclosingGen     *generatorContext          // the `gen` body being checked, nil outside one; see checkYieldExpr
 	// overflowReported guards checkIntegerLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
@@ -2288,6 +2289,10 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return tc.inferBlockType(e)
 	case *ast.ArrayCompExpr:
 		return tc.inferArrayCompType(e)
+	case *ast.YieldExpr:
+		return tc.checkYieldExpr(e)
+	case *ast.YieldFromExpr:
+		return tc.checkYieldFromExpr(e)
 	case *ast.IfExpr:
 		return tc.checkIfExpr(e, true)
 	case *ast.MatchExpr:
@@ -2405,6 +2410,18 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 			}
 			if t == nil {
 				t = v.Type
+			}
+			// A function *referred to* before its declaration has been checked — passed
+			// as a value to a call above it in the file, the order the house style asks
+			// for — has no recorded type yet, and answering nil here failed the callee's
+			// solve as "cannot infer type variable t" (09/08). Its signature is built
+			// from the declaration alone, exactly as the call path does
+			// (inferIdentifierCall → lambdaSignature), so order does not decide whether
+			// `xs.filter(keep)` can see what `keep` takes.
+			if t == nil {
+				if lambda, isLambda := v.Value.(*ast.LambdaExpr); isLambda {
+					t = tc.lambdaSignature(lambda)
+				}
 			}
 			if t != nil {
 				tc.typeTable.Set(e, t)
@@ -4246,7 +4263,12 @@ func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 	// function type is expected — e.g. `apply((n: u8) => n, 0)` against a
 	// `(u8) -> u8` parameter — fails as `(u8) -> ?` vs `(u8) -> u8`. Multi-clause
 	// lambdas (no single Body) are left un-inferred for now.
-	if t.ReturnType.Type == nil && lambda.Body != nil {
+	if lambda.IsGenerator && lambda.Body != nil {
+		// A `gen` body's value is nothing — it yields — so inferring the return from
+		// the body would answer void for a function whose type is a sequence. The
+		// annotation is required, and checkLambdaBody is what says so.
+		tc.checkLambdaBody("lambda", lambda)
+	} else if t.ReturnType.Type == nil && lambda.Body != nil {
 		tc.withParamScope(lambda, func() {
 			t.ReturnType.Type = tc.inferExprType(lambda.Body)
 		})
