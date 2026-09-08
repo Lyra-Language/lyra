@@ -1385,6 +1385,17 @@ proves. It self-skips when zlib is absent, which is safe only because `asan.Dock
 the CI workflow both install `zlib1g-dev` — the reason is written beside each `apt-get` line,
 since a package whose purpose is undocumented is one a future cleanup removes.
 
+**An `extern` and the compiler's own libc use name one symbol space.** LLVM permits one
+declaration per symbol, and the backend kept two tables — `l.externs` and `l.libc` — so
+`extern write` beside any `print` emitted a second `declare @write` and clang refused the
+module on a program the front end had checked clean (09/08, found writing
+`std.io.write_file`). Both tables now consult the other and share the declaration;
+disagreeing signatures are refused by name, which `declareExtern` can return and
+`declareLibc` cannot — it has no error to return and ten call sites ignore one, so it
+records the conflict in `l.symbolConflict` and `emitModule` fails on it. **When adding a
+libc function the compiler calls for itself, that symbol becomes unavailable to nobody —
+but its signature becomes a claim a program's own `extern` must match.**
+
 **A libc function that Lyra can express is written in Lyra, not bound.** `cstring_len` is
 `strlen` in prelude-style code, because scanning for a zero byte stopped needing C the
 moment `offset` existed — the `read_line`/`parse_i64` division, applied at the boundary.

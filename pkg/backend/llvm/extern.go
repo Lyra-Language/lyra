@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	lltypes "github.com/llir/llvm/ir/types"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -86,6 +87,21 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The compiler declares libc functions of its own — `write` for `print`, `memcpy`,
+	// `realloc` — and a C symbol has one declaration per module, so an extern naming one
+	// of them shares that declaration rather than emitting a second. Here there *is* an
+	// error to return, so a disagreement is named rather than deferred (declareLibc's
+	// side of the same rule has to record it instead).
+	if prior, ok := l.libc[ext.Name]; ok {
+		if !lltypes.Equal(prior.Sig, declared.Sig) {
+			return nil, fmt.Errorf(
+				"llvm: `extern %s` declares the C symbol %q as %s, and the compiler uses it as %s — "+
+					"one symbol cannot have both signatures. Rename the extern, or declare it to match",
+				ext.Name, ext.Name, declared.Sig, prior.Sig)
+		}
+		l.module.Funcs = removeFunc(l.module.Funcs, declared)
+		declared = prior
+	}
 	// **Variadic-ness is on the emitted signature, not on the call.** LLVM renders a
 	// variadic declaration as `declare i32 @printf(ptr, ...)` and requires every call to
 	// it to name that signature explicitly — `call i32 (ptr, ...) @printf(…)` — which llir
@@ -121,4 +137,17 @@ func describeLocation(loc ast.Location) string {
 		return fmt.Sprintf("%s:%s", loc.File, loc.Pretty())
 	}
 	return loc.Pretty()
+}
+
+// removeFunc drops one declaration from the module, for the case where it turned out to
+// name a symbol already declared. Emitting it and taking it back is what keeps
+// declareFunctionAs the one place a signature is lowered — the alternative is a second
+// path that lowers a signature only to compare it, which is the drift hazard 8 is about.
+func removeFunc(funcs []*ir.Func, drop *ir.Func) []*ir.Func {
+	for i, fn := range funcs {
+		if fn == drop {
+			return append(funcs[:i], funcs[i+1:]...)
+		}
+	}
+	return funcs
 }

@@ -217,3 +217,43 @@ let main = () -> u8 => {
 		t.Errorf("strlen through a closure exited %d; want 3", got)
 	}
 }
+
+// An `extern` may name a C symbol the compiler declares for itself — `write`, which
+// `print` goes through — and the two share one declaration.
+//
+// LLVM permits one declaration per symbol, and the backend kept externs and its own libc
+// functions in separate tables, so declaring `extern write` beside any `print` emitted a
+// second `declare @write` and clang refused the module: `invalid redefinition of function
+// 'write'`, on a program the front end had checked clean (09/08, found writing
+// `std.io.write_file`). The program below is that shape, and it must both compile and put
+// the two writes in order.
+func TestExec_AnExternMayNameALibcSymbolTheCompilerUses(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+unsafe extern write: (fd: i32, buf: ^u8, count: u64) -> i64
+let main = () -> void => {
+  print("from print, ")
+  let bytes = "from the extern\n".encode_utf8()
+  let _ = unsafe { write(1, &bytes[0], u64(bytes.len())) }
+}
+`, "")
+	if got := out; got != "from print, from the extern\n" {
+		t.Errorf("printed %q; want \"from print, from the extern\\n\"", got)
+	}
+}
+
+// …and a signature that disagrees with the compiler's own use of that symbol is refused
+// by name, because only one of the two can describe what will be linked.
+func TestEmit_AnExternDisagreeingWithACompilerSymbolIsRefused(t *testing.T) {
+	t.Parallel()
+	_, err := emitWithPreludeErr(t, `module main
+unsafe extern write: (fd: i32) -> i32
+let main = () -> void => {
+  print("x")
+  let _ = unsafe { write(1) }
+}
+`)
+	if err == nil || !strings.Contains(err.Error(), "one symbol cannot have both signatures") {
+		t.Errorf("want a refusal naming the conflicting signatures; got %v", err)
+	}
+}

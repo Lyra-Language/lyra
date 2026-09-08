@@ -11,7 +11,7 @@ module std.io
 //! address-of each, so nothing is lost.
 //!
 //! ```
-//! import std.io.{ read_file, read_stdin }
+//! import std.io.{ read_file, write_file, read_stdin }
 //!
 //! match read_file("notes.txt") {
 //!   Some(text) => print(text),
@@ -62,11 +62,49 @@ let read_all = (fd: i32) -> string => {
   chunks.join("")
 }
 
+/// The file at `path` overwritten with `contents`, answering whether all of it landed.
+///
+/// The file is created if it does not exist (mode 0644, before the process umask) and
+/// truncated if it does. `false` means the path could not be opened for writing or the
+/// write was cut short — a full disk, a broken pipe — and in the second case the file is
+/// left holding however much got through, which is what any writer that does not write
+/// to a temporary and rename can promise.
+///
+/// **Every write loops.** `write` is permitted to take fewer bytes than it was offered,
+/// and a single call that assumed otherwise would truncate a large file at whatever
+/// boundary the kernel chose — silently, and only for files past some size.
+///
+/// The bytes are the string's UTF-8, copied once into a buffer this can take the address
+/// of. The copy is what makes an interior NUL ordinary: a string may hold one, and the
+/// no-copy path to a string's bytes (`cstring_ptr`) is the one that refuses them.
+///
+/// ```
+/// if !write_file("notes.txt", "one\ntwo\n") { println("could not write notes.txt") }
+/// ```
+pub let write_file = (path: string, contents: string) -> bool => {
+  let fd = unsafe { creat(path.cstring_ptr(), FILE_MODE) }
+  if fd < 0 { return false }
+  var bytes = contents.encode_utf8()
+  var written = 0
+  let total = bytes.len()
+  for written < total {
+    let n = unsafe { write(fd, &bytes[written], u64(total - written)) }
+    if n <= 0 { break }
+    written += n
+  }
+  unsafe { close(fd) }
+  written == total
+}
+
 /// Bytes per `read`. Big enough that a small file is one call, small enough not to matter.
 const CHUNK = 65536
 
 /// `O_RDONLY` is 0 on every platform Lyra targets.
 const O_RDONLY: i32 = 0
+
+/// `rw-r--r--`, the mode a new file is created with, before the process umask narrows it.
+/// Written in octal's value because Lyra has no octal literal: 0644 is 6*64 + 4*8 + 4.
+const FILE_MODE: u32 = 420
 
 /// Standard input's descriptor.
 const STDIN: i32 = 0
@@ -74,6 +112,23 @@ const STDIN: i32 = 0
 // File descriptors rather than `FILE *`: a raw pointer cannot be tested for null, an
 // integer can be compared with -1. `open` is variadic in C (the mode, read only under
 // `O_CREAT`), and is declared so, since the ABI for a variadic call differs.
+// **`creat` rather than `open` with flags, and that is a portability rule rather than a
+// shortcut.** `O_RDONLY` is 0 everywhere, which is why the read side needs no more; every
+// other flag differs between the targets — measured 09/08, macOS against Linux:
+// `O_CREAT` 512 vs 64, `O_TRUNC` 1024 vs 512, `O_APPEND` 8 vs 1024. A constant written
+// here would not merely be wrong on the other platform, it would name a *different flag*
+// that opens successfully and does something else. `creat(path, mode)` is defined as
+// `open(path, O_WRONLY|O_CREAT|O_TRUNC, mode)` and carries no number to get wrong.
+//
+// Appending has no such spelling, so `append_file` waits for a program that wants it —
+// and will need the flags, which means either a per-target constant the compiler supplies
+// (the way `tui.go` supplies `TIOCGWINSZ`) or a C shim.
+//
+// `mode_t` is 16 bits on macOS and 32 on Linux, so the parameter is written as the wider
+// one: the value fits either, and aarch64 passes both in the same register with the
+// callee reading the width it declared.
 unsafe extern open: (path: ^u8, flags: i32, ...) -> i32
+unsafe extern creat: (path: ^u8, mode: u32) -> i32
 unsafe extern read: (fd: i32, buf: ^mut u8, count: u64) -> i64
+unsafe extern write: (fd: i32, buf: ^u8, count: u64) -> i64
 unsafe extern close: (fd: i32) -> i32

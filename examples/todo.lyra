@@ -1,0 +1,159 @@
+// A to-do list on the command line — the program that drives writing files.
+//
+//   lyrac build -o todo examples/todo.lyra
+//   ./todo add buy milk          # the words after the command are the task
+//   ./todo list
+//   ./todo done 1
+//   ./todo remove 1
+//   ./todo -f groceries.txt add eggs
+//
+// The list is a plain text file, one task per line, `[ ] text` or `[x] text`. That is
+// the point of a text store: the file is readable and editable without this program,
+// and a line someone typed by hand still loads.
+
+import std.collections.{ ProgramArgs, parse_args, value }
+import std.io.{ read_file, write_file }
+
+let main = () -> u8 => {
+  let args = parse_args(["-f"])
+  let path = args.value("-f").unwrap_or("todo.txt")
+  if args.positional.len() == 0 { return usage(args.program) }
+
+  let command = args.positional[0]
+  let rest = args.positional.slice(1, args.positional.len())
+  var tasks = load(path)
+
+  if command == "list" {
+    show(tasks)
+    return 0
+  }
+  if command == "add" {
+    if rest.len() == 0 {
+      println("add needs the task's text")
+      return 2
+    }
+    tasks.push(Task { done: false, text: rest.join(" ") })
+    return store(path, tasks)
+  }
+  if command == "done" {
+    match index_of(rest, tasks.len()) {
+      None => {
+        println("done needs the number of a task on the list")
+        return 2
+      },
+      Some(i) => {
+        tasks[i].done = true
+        return store(path, tasks)
+      },
+    }
+  }
+  if command == "remove" {
+    match index_of(rest, tasks.len()) {
+      None => {
+        println("remove needs the number of a task on the list")
+        return 2
+      },
+      Some(i) => { return store(path, without(tasks, i)) },
+    }
+  }
+  usage(args.program)
+}
+
+/// One line of the file: what it says, and whether it is finished.
+struct Task {
+  done: bool,
+  text: string,
+}
+
+// The list, numbered, in the order `load` put it in.
+//
+// **The sort belongs there and not here**, and that is the whole of why the numbers can
+// be trusted: `done 2` indexes the same list `list` printed, so ordering the display
+// separately would number the tasks one way and address them another — and the mistake
+// would look right for as long as nothing was finished, since the two orders agree until
+// the first `[x]`.
+let show = (tasks: []Task) -> void => {
+  if tasks.len() == 0 {
+    println("nothing to do")
+    return
+  }
+  for i, task in tasks {
+    println("${i + 1}. ${render(task)}")
+  }
+}
+
+// 0 before 1, so the unfinished sort first.
+let rank = pure noalloc (task: Task) -> i64 => if task.done { 1 } else { 0 }
+
+// The file's own spelling of a task, which is also what the list prints.
+let render = pure (task: Task) -> string =>
+  if task.done { "[x] " ++ task.text } else { "[ ] " ++ task.text }
+
+// The file's tasks, or an empty list when there is no file yet — a list nobody has
+// added to and a list that does not exist are the same list, and making the first `add`
+// report a missing file would be answering a question nobody asked.
+let load = (path: string) -> []Task => {
+  var tasks: []Task = []
+  match read_file(path) {
+    None => tasks,
+    Some(text) => {
+      for line in text.split("\n") {
+        if line.trim().len() > 0 { tasks.push(parse_line(line)) }
+      }
+      // Unfinished first, and **stable**, so tasks keep the order they were added in
+      // within each group. Every command sees this one order, which is what makes the
+      // number `list` prints the number `done` and `remove` take.
+      tasks.sorted_by(pure (a: Task, b: Task) => rank(a) <=> rank(b))
+    },
+  }
+}
+
+// A line that is neither `[x] ` nor `[ ] ` is a task somebody typed into the file by
+// hand, and is read as unfinished rather than refused.
+let parse_line = pure (line: string) -> Task =>
+  if line.starts_with("[x] ") {
+    Task { done: true, text: line.slice(4, line.len()).trim() }
+  } else if line.starts_with("[ ] ") {
+    Task { done: false, text: line.slice(4, line.len()).trim() }
+  } else {
+    Task { done: false, text: line.trim() }
+  }
+
+// Writes the list back, and answers the exit code: 0 written, 1 not.
+let store = (path: string, tasks: []Task) -> u8 => {
+  var lines: []string = []
+  for task in tasks { lines.push(render(task)) }
+  let text = if lines.len() == 0 { "" } else { lines.join("\n") ++ "\n" }
+  if write_file(path, text) { 0 } else {
+    println("cannot write ${path}")
+    1
+  }
+}
+
+// The 1-based number a caller typed, as an index into the list — `None` when it is
+// missing, not a number, or not on the list. One answer for every way it can be wrong,
+// because the caller's next move is the same in each case.
+let index_of = pure (rest: []string, count: i64) -> Maybe<i64> => {
+  if rest.len() == 0 { return None }
+  match rest[0].parse_i64() {
+    None => None,
+    Some(n) => if n >= 1 && n <= count { Some(n - 1) } else { None },
+  }
+}
+
+// Every task but the one at `i`.
+let without = pure (tasks: []Task, i: i64) -> []Task => {
+  var kept: []Task = []
+  for j, task in tasks {
+    if j != i { kept.push(task) }
+  }
+  kept
+}
+
+let usage = (program: string) -> u8 => {
+  println("usage: ${program} [-f FILE] list")
+  println("       ${program} [-f FILE] add TEXT...")
+  println("       ${program} [-f FILE] done N")
+  println("       ${program} [-f FILE] remove N")
+  2
+}

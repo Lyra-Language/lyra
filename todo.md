@@ -240,6 +240,23 @@ write today:
 
 ## Known bugs
 
+- **[DONE 09/08] An `extern` naming a libc symbol the compiler declares was a duplicate
+  definition.** `extern write` beside any `print` emitted a second `declare @write` and
+  clang refused the module (`invalid redefinition of function 'write'`), on a program the
+  front end checked clean — the backend kept externs and its own libc functions in
+  separate tables over one LLVM symbol space. Both now consult the other and share the
+  declaration; a signature disagreement is refused by name. Found writing
+  `std.io.write_file`; pinned by `TestExec_AnExternMayNameALibcSymbolTheCompilerUses`.
+
+- **[OPEN 09/08] `std.io` cannot append to a file.** `write_file` goes through `creat`,
+  which is `open(O_WRONLY|O_CREAT|O_TRUNC, mode)` and needs no flag constant; appending
+  has no such spelling and the flags differ per target (`O_APPEND` is 8 on macOS and 1024
+  on Linux, and `O_CREAT`/`O_TRUNC` disagree too — a constant written down would name a
+  *different flag* on the other platform rather than simply being wrong). It needs either
+  a per-target constant the compiler supplies, the way `tui.go` supplies `TIOCGWINSZ`, or
+  a C shim. Left until a program wants it: `examples/todo.lyra` rewrites the whole file,
+  which is what add, done and remove each need anyway.
+
 - **[OPEN 09/08] A comprehension inside a string interpolation does not parse.**
   `"${[x in xs | x].join(",")}"` is a syntax error at the file's first line, with or
   without sequences; bound to a `let` first it is fine. Presumably the `|` inside `${…}`

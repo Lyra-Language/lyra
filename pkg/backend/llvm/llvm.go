@@ -264,6 +264,9 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	if err := l.definePendingTraitMethods(); err != nil {
 		return nil, err
 	}
+	if l.symbolConflict != nil {
+		return nil, l.symbolConflict
+	}
 	b.coroSymbols = l.seqCoroSymbols
 	return m, nil
 }
@@ -274,10 +277,13 @@ type lowerer struct {
 	// is declared once however many call sites want it. Eight named fields with eight
 	// `if l.x == nil` accessors before this; the accessors remain, because what a call
 	// site wants is `l.memcpyFunc()` and not a signature spelled out again.
-	libc       map[string]*ir.Func
-	res        *driver.Result      // gives you TypeTable, SymbolTable, MethodTable, …
-	funcs      map[string]*ir.Func // name → its function IR (all declared before any body)
-	seqSkipped map[string]bool     // functions left undeclared because they mention a Seq (forEachUserFunction)
+	libc map[string]*ir.Func
+	// symbolConflict is the first C symbol an `extern` and the compiler's own libc use
+	// declared with disagreeing signatures; emitModule fails on it. See noteSymbolConflict.
+	symbolConflict error
+	res            *driver.Result      // gives you TypeTable, SymbolTable, MethodTable, …
+	funcs          map[string]*ir.Func // name → its function IR (all declared before any body)
+	seqSkipped     map[string]bool     // functions left undeclared because they mention a Seq (forEachUserFunction)
 	// Lazy sequences (seq_lower.go): the sequence parameters of the body being inlined,
 	// the consumer its yields feed, and where an inlined body's `return` goes.
 	seqParams map[string]seqBinding
@@ -976,6 +982,22 @@ func (l *lowerer) declareLibc(name string, ret lltypes.Type, params ...lltypes.T
 	if fn, ok := l.libc[name]; ok {
 		return fn, false
 	}
+	// A program's own `extern` may name this symbol first — `extern write` beside the
+	// `write` that `print` goes through — and a C symbol has **one** declaration per
+	// module, so a second is `invalid redefinition of function 'write'` from clang, on a
+	// program the front end checked clean (09/08). The two tables are one namespace:
+	// share the declaration when the signatures agree, and record the conflict when they
+	// do not, since this returns no error and ten call sites ignore one.
+	if prior, ok := l.externs[name]; ok {
+		if want := lltypes.NewFunc(ret, params...); !lltypes.Equal(prior.fn.Sig, want) {
+			l.noteSymbolConflict(name, prior.fn.Sig, want)
+		}
+		if l.libc == nil {
+			l.libc = map[string]*ir.Func{}
+		}
+		l.libc[name] = prior.fn
+		return prior.fn, false
+	}
 	ps := make([]*ir.Param, len(params))
 	for i, t := range params {
 		ps[i] = ir.NewParam("", t)
@@ -986,6 +1008,21 @@ func (l *lowerer) declareLibc(name string, ret lltypes.Type, params ...lltypes.T
 	}
 	l.libc[name] = fn
 	return fn, true
+}
+
+// noteSymbolConflict records that a C symbol was declared twice with signatures that
+// disagree — once by a program's `extern` and once by the compiler's own use of libc.
+// Kept rather than returned because declareLibc has no error to return and its ten call
+// sites have none to propagate; emitModule reports it at the end, which is as loud and
+// still lands before any IR reaches a compiler.
+func (l *lowerer) noteSymbolConflict(name string, declared, wanted *lltypes.FuncType) {
+	if l.symbolConflict != nil {
+		return
+	}
+	l.symbolConflict = fmt.Errorf(
+		"llvm: `extern %s` declares the C symbol %q as %s, and the compiler uses it as %s — "+
+			"one symbol cannot have both signatures. Rename the extern, or declare it to match",
+		name, name, declared, wanted)
 }
 
 // privateConst defines a private, immutable module global — the form every interned

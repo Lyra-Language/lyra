@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 09/08/26 — `write_file`, and a to-do list to drive it
+
+`examples/todo.lyra` is `add`/`list`/`done`/`remove` over a plain text file, one task per
+line as `[ ] text` or `[x] text`. It needed `std.io` to write, which it could not.
+
+**`creat`, not `open` with flags, and that is the entry.** The read side gets away with
+`O_RDONLY` because it is 0 on every target. Every other flag differs — measured on the
+two platforms this project builds on: `O_CREAT` 512 on macOS against 64 on Linux,
+`O_TRUNC` 1024 against 512, `O_APPEND` 8 against 1024. A constant written down here would
+not be *wrong* on the other platform in a way that fails; it would name a **different
+flag**, open successfully, and do something else. `creat(path, mode)` is defined as
+`open(path, O_WRONLY|O_CREAT|O_TRUNC, mode)` and has no number in it. That leaves
+appending with no flagless spelling, so there is no `append_file` (todo.md) — and the
+to-do list wants none, since add, done and remove each rewrite the file.
+
+**A backend bug it found.** `extern write` beside any `print` was `invalid redefinition
+of function 'write'` from clang, on a program the front end checked clean: the backend
+kept a program's externs and the libc functions it declares for itself in two tables over
+one LLVM symbol space. They now share, and a signature disagreement is refused by name.
+Only `declareExtern` could return that error — `declareLibc` has none to return and ten
+call sites that ignore one — so it records the conflict and `emitModule` fails on it.
+
+**And one bug in the example, of the kind worth writing down.** `show` sorted the list
+for display while `done N` indexed the unsorted one, so the number a caller read was not
+the number they addressed. It is invisible until the first task is finished, because the
+two orders agree until then — the plausible wrong answer this project keeps meeting. The
+sort moved into `load`, so every command sees one order; the session test finishes a task
+and then removes by the number the previous process printed, which is the shape that
+catches it.
+
 ### 09/08/26 — lazy sequences, stage 2: a sequence as a value, on LLVM coroutines
 
 Stage 1 lowers a producer at its consumer and needs no representation; stage 2 is the
