@@ -1,0 +1,77 @@
+module std.collections
+//! The program's arguments, parsed: `ProgramArgs` over the prelude's `program_args`.
+
+/// The program's arguments, sorted into the three kinds a command line carries.
+///
+/// A key has three states on a command line — absent, present, present with a value —
+/// and a map from name to `Maybe<string>` answers `get` with a `Maybe<Maybe<string>>`,
+/// which no caller ever wants to read. This keeps the kinds apart instead, so each
+/// question has the answer its type deserves: `has` answers a bool, `value` one `Maybe`.
+///
+/// ```
+/// import std.collections.{ ProgramArgs, parse_args, has, value }
+///
+/// let args = parse_args(["-o"])
+/// if args.has("-v") { println("verbose") }
+/// let out = args.value("-o").unwrap_or("a.out")
+/// for path in args.positional { println(path) }
+/// ```
+pub struct ProgramArgs {
+  /// What the shell ran — `program_args()[0]`.
+  program: string,
+  /// Flags that take no value, in order: `-v`. A flag that was declared as valued but
+  /// came last with nothing after it lands here too, so `has` says it was written
+  /// and `value` says it had nothing.
+  switches: []string,
+  /// Flags that take the argument after them: `-o out.bin` maps `-o` to `out.bin`.
+  options: HashMap<string, string>,
+  /// Everything else, in order: `input.txt`.
+  positional: []string,
+}
+
+/// Parses the program's arguments. `valued` names the flags that take a value — the
+/// parser cannot tell `-o out.bin` from `-v input.txt` by looking, so the program says.
+///
+/// Every argument starting with `-` is a flag: one named in `valued` takes the next
+/// argument as its value, whatever it looks like; any other is a switch. Everything
+/// else is positional. There is no `--flag=value` form and no `--` terminator yet.
+///
+/// A flag written twice keeps the last value; a switch written twice is listed twice.
+pub let parse_args = (valued: []string) -> ProgramArgs => {
+  let args = program_args()
+  var parsed = ProgramArgs {
+    program: args[0],
+    switches: [],
+    options: hashmap_new::<string, string>(),
+    positional: [],
+  }
+  var i = 1
+  for i < args.len() {
+    let arg = args[i]
+    if !arg.starts_with("-") {
+      parsed.positional.push(arg)
+      i += 1
+    } else if valued.holds(arg) && i + 1 < args.len() {
+      parsed.options.insert(arg, args[i + 1])
+      i += 2
+    } else {
+      parsed.switches.push(arg)
+      i += 1
+    }
+  }
+  parsed
+}
+
+/// Whether `flag` was written, as a switch or with a value.
+pub let has = pure noalloc (self: ProgramArgs, flag: string) -> bool =>
+  self.switches.holds(flag) || self.options.contains_key(flag)
+
+/// The value written after `flag`, or `None` if it had none or was not written.
+pub let value = pure noalloc (self: ProgramArgs, flag: string) -> Maybe<string> =>
+  self.options.get(flag)
+
+// Whether `s` is an element of `xs`. Linear, and the lists here are a handful long.
+let holds = pure noalloc (self: []string, s: string) -> bool => {
+  for x in self { if x == s { return true } }
+  false
+}

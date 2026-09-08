@@ -142,7 +142,7 @@ func TestEmit_NewtypeDecl_NoLLVMType(t *testing.T) {
 	if strings.Contains(got, "%Meters") {
 		t.Errorf("a newtype should register no LLVM type of its own:\n%s", got)
 	}
-	if !strings.Contains(got, "define i32 @main()") {
+	if !strings.Contains(got, "define i32 @main(i32 %argc, i8** %argv)") {
 		t.Errorf("missing @main definition:\n%s", got)
 	}
 }

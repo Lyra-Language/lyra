@@ -181,6 +181,11 @@ var builtinEffects = map[string]Effect{
 	// precedes. A `det` function that could observe whether a key is waiting would not be
 	// reproducible.
 	"wait_for_key_ms": EffectInput,
+	// The program's arguments never change during a run, but they are input in the sense
+	// the bit means — the answer depends on state nobody passed in — so a `det` function
+	// reading them would be exactly as unreproducible as one reading stdin.
+	"program_arg_count": EffectInput,
+	"program_arg":       EffectInput,
 	// Arena helpers: pure (EffectNone). An arena is the *solution* to heap
 	// allocation tracking — its creation is a one-time bounded setup, not a
 	// per-frame GC-visible alloc; constructions built *inside* a `with`-arena

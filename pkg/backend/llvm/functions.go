@@ -162,9 +162,15 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	// the entry module — usually "" — but saying so explicitly is what keeps it from
 	// inheriting whichever module happened to be lowered last.
 	defer l.enterModuleOf(entry.Lambda.GetLocation())()
-	fn := l.module.NewFunc("main", lltypes.I32)
+	// `main(int argc, char **argv)` — the C runtime passes both whether or not they are
+	// read, and stashing them first is what lets `program_arg` be called from anywhere,
+	// including a module-level initializer below.
+	argcParam := ir.NewParam("argc", lltypes.I32)
+	argvParam := ir.NewParam("argv", lltypes.NewPointer(lltypes.NewPointer(lltypes.I8)))
+	fn := l.module.NewFunc("main", lltypes.I32, argcParam, argvParam)
 	l.beginFunction(lltypes.I32, entry.Lambda.ReturnType.Type, false, true) // entryABI: emitReturn handles the u8→i32 coercion
 	block := fn.NewBlock("entry")
+	l.storeProgramArgs(block, argcParam, argvParam)
 
 	// Module-level data is filled before the body runs, in declaration order — main is
 	// the one place guaranteed to run before anything reads one, and it avoids
@@ -502,6 +508,10 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerTerminalSizeCall(block, e)
 		case "wait_for_key_ms":
 			return l.lowerWaitForKeyCall(block, e)
+		case "program_arg_count":
+			return l.lowerProgramArgCountCall(block, e)
+		case "program_arg":
+			return l.lowerProgramArgCall(block, e)
 		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}

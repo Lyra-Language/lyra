@@ -149,3 +149,4 @@ readable, testable and replaceable.
 | `parse.lyra` | `parse_i64` |
 | `strings.lyra` | `is_ascii_space`, `trim`/`trim_start`/`trim_end` |
 | `rand.lyra` | `Rng` and the draws built on `random_seed()` |
+| `args.lyra` | `program_args()`, the `[]string` over `program_arg_count()`/`program_arg(i)` |

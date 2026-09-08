@@ -313,10 +313,13 @@ type lowerer struct {
 	wallClock  *ir.Func // lyra_wall_clock_nanos: nanoseconds since the epoch (clock.go)
 	// The terminal (tui.go). Three builtins, each a libc call with no Lyra spelling;
 	// everything layered on them is prelude code.
-	setRawMode   *ir.Func // lyra_set_raw_mode: tcsetattr via cfmakeraw, original saved
-	readKey      *ir.Func // lyra_read_key: one code point from stdin, Maybe<rune>
-	terminalSize *ir.Func // lyra_terminal_size: TIOCGWINSZ, (columns, rows)
-	waitForKey   *ir.Func // lyra_wait_for_key_ms: poll(stdin) with a timeout
+	setRawMode   *ir.Func   // lyra_set_raw_mode: tcsetattr via cfmakeraw, original saved
+	readKey      *ir.Func   // lyra_read_key: one code point from stdin, Maybe<rune>
+	terminalSize *ir.Func   // lyra_terminal_size: TIOCGWINSZ, (columns, rows)
+	waitForKey   *ir.Func   // lyra_wait_for_key_ms: poll(stdin) with a timeout
+	cstrLen      *ir.Func   // lyra_cstr_len: bytes before the NUL (args.go)
+	argcGlobal   *ir.Global // lyra_argc / lyra_argv: what main was called with (args.go)
+	argvGlobal   *ir.Global
 	rcAlloc      *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
 	rcRetain     *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
 	rcRelease    *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)

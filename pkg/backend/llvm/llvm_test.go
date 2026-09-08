@@ -37,7 +37,7 @@ func TestEmit_IntegerLiteralBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"define i32 @main()", "zext i8 42 to i32", "ret i32"} {
+	for _, want := range []string{"define i32 @main(i32 %argc, i8** %argv)", "zext i8 42 to i32", "ret i32"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("emitted IR missing %q:\n%s", want, got)
 		}

@@ -66,6 +66,33 @@ arm that is a plain `Maybe<i64>` variable is not stamped and must keep its misma
 A separate gap found on the way is open: a prelude call on a nested generic inside a
 generic body (`xs[i].is_some()` on `[]Maybe<Slot<v>>`) fails the build.
 
+### 09/07/26 — `program_args()`, `std.io.read_file`, and `./word_count -f notes.txt`
+
+Two features, split along the `random_seed` line. **Arguments need the compiler**: argv
+exists only in the C runtime's `main`, so `main` is now `main(argc, argv)`, stashes both
+in module globals first thing, and two builtins read them — `program_arg_count()` and
+`program_arg(i)`, the latter a fresh string copied out of argv[i] (a string is a box whose
+header precedes its payload, so it cannot point into the runtime's memory) that traps
+outside `0..<count`. The C-string length comes from an emitted shim rather than a
+`declare strlen`, because the backend keys externs by C symbol and a program's own
+`extern strlen` must keep its one declaration. `program_args() -> []string` is one line
+of prelude over the two. EffectInput for both: the arguments never change, but a `det`
+function reading them is as unreproducible as one reading stdin.
+
+**A file does not need the compiler.** `std.io.read_file(path) -> Maybe<string>` is
+ordinary Lyra over `open`/`read`/`close` externs, chunked through a `[]u8` and
+`decode_utf8`. File descriptors rather than `fopen`, since a raw pointer cannot be tested
+for null and an integer can be compared with -1; `open` declared variadic because it is.
+One detail worth keeping: a bare `const` is an `i64`, so `O_RDONLY` carries an `i32`
+annotation to be passed to an `extern` taking `int`. And one the module's header
+records: it does **not** import `std.ffi`, whose exported `get` collides with
+`HashMap`'s the moment one program reaches both — the open "a name may not be exported
+by two modules" limit, met here by the first two standard modules to share a name. The
+two crossings are the `cstring_ptr` builtin and one `&mut buf[0]`, so nothing is lost.
+
+The word-frequency example takes `-f FILE` and reads stdin without it, the two sources
+handing one counting loop one string; its output is byte-identical either way.
+
 ### 09/07/26 — `sort_by` and `sorted_by`: the comparator forms become the core
 
 A `(t, t) -> Ordering` comparator and no bound, which is how a float array is sorted at

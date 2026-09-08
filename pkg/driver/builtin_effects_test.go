@@ -41,6 +41,8 @@ func TestBuiltinEffects_EveryKeyNamesACallableBuiltin(t *testing.T) {
 		{"read_key", `read_key()`},
 		{"terminal_size", `terminal_size()`},
 		{"wait_for_key_ms", `wait_for_key_ms(10)`},
+		{"program_arg_count", `program_arg_count()`},
+		{"program_arg", `program_arg(0)`},
 		{"random_seed", `random_seed()`},
 		{"wall_clock_nanos", `wall_clock_nanos()`},
 	} {

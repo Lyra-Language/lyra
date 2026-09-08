@@ -1,0 +1,49 @@
+// Every feature of `ProgramArgs`, exercised from the command line.
+//
+//   lyrac build examples/args_map.lyra
+//   ./examples/args_map -v --name lyra input.txt -n 3 --name again -q extra --out
+//
+// `--name` and `-n` and `--out` are declared as taking a value; everything else that
+// starts with `-` is a switch, and everything else is positional. Run it with no
+// arguments too, and with a valued flag last (`--out` above), to see the two edge cases.
+
+import std.collections.{ ProgramArgs, parse_args, has, value }
+
+let main = () => {
+  let args = parse_args(["--name", "-n", "--out"])
+
+  // The program's own name is what the shell ran.
+  println("program: ${args.program}")
+
+  // `has` answers for a switch and for a valued flag alike.
+  println("verbose (-v): ${args.has("-v")}")
+  println("quiet (-q): ${args.has("-q")}")
+  println("debug (-d): ${args.has("-d")}")
+  println("has --name: ${args.has("--name")}")
+
+  // `value` answers one Maybe: the value, or None whether the flag was absent or bare.
+  println("name: ${args.value("--name").unwrap_or("<none>")}")
+  println("count: ${args.value("-n").unwrap_or("1")}")
+  match args.value("--missing") {
+    Some(v) => println("--missing is '${v}'"),
+    None => println("--missing was not given"),
+  }
+
+  // A valued flag written last has nothing to take: it is present but has no value.
+  // The two answers together tell the program to complain.
+  if args.has("--out") && args.value("--out").is_none() {
+    println("--out needs a value")
+  }
+
+  // A switch is only ever a switch, so asking it for a value is None.
+  println("value of -v: ${args.value("-v").unwrap_or("<none>")}")
+
+  // The raw lists, in command-line order. A repeated valued flag keeps its last value
+  // (`--name again` above), while a repeated switch is listed each time.
+  println("switches: ${args.switches.join(" ")}")
+  println("positional: ${args.positional.join(" ")}")
+  println("positional count: ${args.positional.len()}")
+  for i, path in args.positional {
+    println("  [${i}] ${path}")
+  }
+}

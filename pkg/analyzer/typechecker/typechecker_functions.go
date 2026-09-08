@@ -712,6 +712,16 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinWaitForKeyFn(ident.Name) {
 			return tc.inferWaitForKeyCall(call)
 		}
+		if isBuiltinProgramArgCountFn(ident.Name) {
+			if len(call.Arguments) != 0 {
+				tc.addError(call.GetLocation(), SeverityError,
+					"program_arg_count: expected 0 argument(s), got %d", len(call.Arguments))
+			}
+			return types.PrimitiveType{Name: types.Int64}
+		}
+		if isBuiltinProgramArgFn(ident.Name) {
+			return tc.inferProgramArgCall(call)
+		}
 		if isBuiltinTerminalSizeFn(ident.Name) {
 			if len(call.Arguments) != 0 {
 				tc.addError(call.GetLocation(), SeverityError,
@@ -954,6 +964,23 @@ func (tc *TypeChecker) inferWaitForKeyCall(call *ast.FunctionCallExpr) types.Typ
 	}
 	tc.propagateExpectedType(call.Arguments[0], types.PrimitiveType{Name: types.Int64})
 	return types.PrimitiveType{Name: types.Boolean}
+}
+
+// inferProgramArgCall type-checks `program_arg(i)`: one integer index, a `string` back.
+func (tc *TypeChecker) inferProgramArgCall(call *ast.FunctionCallExpr) types.Type {
+	str := types.PrimitiveType{Name: types.String}
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"program_arg: expected 1 argument(s), got %d", len(call.Arguments))
+		return str
+	}
+	argT := tc.inferExprType(call.Arguments[0])
+	if argT != nil && !isIntegerOperand(argT) {
+		tc.addError(call.Arguments[0].GetLocation(), SeverityError,
+			"program_arg: expected an index (an integer), got %s", promoteToDefault(argT))
+	}
+	tc.propagateExpectedType(call.Arguments[0], types.PrimitiveType{Name: types.Int64})
+	return str
 }
 
 // inferReadKeyCall type-checks `read_key()` and gives it the type `Maybe<rune>`.

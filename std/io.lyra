@@ -1,0 +1,56 @@
+module std.io
+//! Files, over libc — the part of I/O that needs no builtin.
+//!
+//! `read_line` and the terminal builtins are the compiler's because a syscall is
+//! primitive. A file is not: `open`, `read` and `close` are three `extern`s, and
+//! everything else here is the arithmetic over them. Written the way `std.ffi` is
+//! written — `unsafe` appears in this file so it need not appear at a call site — but
+//! not *over* `std.ffi`: importing it would bring its exported `get` into every program
+//! that also uses `std.collections`, whose `HashMap` exports one too, and a name may not
+//! yet be exported by two modules at once. The two crossings are one builtin and one
+//! address-of each, so nothing is lost.
+//!
+//! ```
+//! import std.io.{ read_file }
+//!
+//! match read_file("notes.txt") {
+//!   Some(text) => print(text),
+//!   None => println("cannot read notes.txt"),
+//! }
+//! ```
+
+/// The whole of the file at `path` as one string, or `None` if it cannot be opened —
+/// missing, unreadable, a directory.
+///
+/// The bytes are read as UTF-8 without validation, as `read_line` reads libc's; a file
+/// in another encoding decodes to a string whose length disagrees with its bytes.
+///
+/// `None` rather than an error value, because the one question a caller asks first is
+/// "did it open", and the reason is what `errno` holds — reachable through an `extern`
+/// when a program needs it, and not something this answers yet.
+pub let read_file = (path: string) -> Maybe<string> => {
+  let fd = unsafe { open(path.cstring_ptr(), O_RDONLY) }
+  if fd < 0 { return None }
+  var chunks: []string = []
+  var buf: []u8 = [0; CHUNK]
+  for {
+    let n = unsafe { read(fd, &mut buf[0], u64(CHUNK)) }
+    if n <= 0 { break }
+    chunks.push(buf.slice(0, n).decode_utf8())
+  }
+  unsafe { close(fd) }
+  Some(chunks.join(""))
+}
+
+/// Bytes per `read`. Big enough that a small file is one call, small enough not to matter.
+const CHUNK = 65536
+
+/// `O_RDONLY` is 0 on every platform Lyra targets.
+const O_RDONLY: i32 = 0
+
+// File descriptors rather than `FILE *`: a raw pointer cannot be tested for null, an
+// integer can be compared with -1. `open` is variadic in C (the mode, read only under
+// `O_CREAT`), and is declared so, since the ABI for a variadic call differs.
+unsafe extern open: (path: ^u8, flags: i32, ...) -> i32
+unsafe extern read: (fd: i32, buf: ^mut u8, count: u64) -> i64
+unsafe extern close: (fd: i32) -> i32

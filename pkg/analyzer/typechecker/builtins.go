@@ -928,6 +928,31 @@ func isBuiltinWaitForKeyFn(name string) bool {
 	return name == "wait_for_key_ms"
 }
 
+// The program's arguments — `program_arg_count() -> i64` and `program_arg(i: i64) ->
+// string`. Resolved by name in inferIdentifierCall after scope resolution misses, like
+// every builtin above.
+//
+// Two builtins on the `random_seed` rule: argv exists only in the C runtime's `main`, so
+// nothing in the language can reach it, and that is the whole of what is primitive. The
+// `[]string` a program wants is `program_args()`, ordinary Lyra in the prelude over these
+// two, and flag parsing is the program's own arithmetic over that.
+//
+// `program_arg(i)` answers a fresh copy of argv[i] and **traps** outside `0..<count`, as
+// `xs[i]` does — the index is one. Index 0 is the program's name, as in C: leaving it out
+// would make every other language's convention off by one here, for no gain a
+// `program_args()[1..]` cannot give.
+//
+// EffectInput for both. The arguments never change during a run, but they are input in
+// the sense the bit means — the answer depends on state nobody passed in — and a `det`
+// function reading them is exactly as unreproducible as one reading stdin.
+func isBuiltinProgramArgCountFn(name string) bool {
+	return name == "program_arg_count"
+}
+
+func isBuiltinProgramArgFn(name string) bool {
+	return name == "program_arg"
+}
+
 // isPrintableType reports whether print/println can format a value of type t:
 // a string, any integer or float, a bool, or a rune. Each has a backend
 // formatting path (write for strings, snprintf for numbers, "true"/"false" for

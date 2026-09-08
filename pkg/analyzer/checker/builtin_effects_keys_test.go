@@ -27,6 +27,8 @@ func TestBuiltinEffects_KeySetIsPinned(t *testing.T) {
 		"panic",
 		"print",
 		"println",
+		"program_arg",
+		"program_arg_count",
 		"random_seed",
 		"read_key",
 		"read_line",

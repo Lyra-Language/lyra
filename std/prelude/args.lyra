@@ -1,0 +1,15 @@
+//! The program's arguments, over the two builtins that reach `argv`.
+module std.prelude
+
+/// The program's arguments, the program's own name first — `program_args()[0]` is what
+/// the shell ran, and `[1..]` is what it was given, as in C and every language that
+/// followed it.
+///
+/// A fresh array of fresh strings each call, so a program that reads its arguments in
+/// two places pays twice; bind it once.
+///
+/// ```
+/// let args = program_args()
+/// if args.len() > 1 && args[1] == "-v" { println("verbose") }
+/// ```
+pub let program_args = () -> []string => [i in 0..<program_arg_count() | program_arg(i)]

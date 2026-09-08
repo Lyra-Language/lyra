@@ -88,7 +88,7 @@ func assertIsIR(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("expected emitted IR at %s: %v", path, err)
 	}
-	if !strings.Contains(string(ir), "define i32 @main()") {
+	if !strings.Contains(string(ir), "define i32 @main(i32 %argc, i8** %argv)") {
 		t.Errorf("%s is missing the @main definition:\n%s", path, ir)
 	}
 }

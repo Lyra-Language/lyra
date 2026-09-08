@@ -1085,8 +1085,8 @@ The standard library's sources live in `std/` and are tracked. The prelude is `s
 **one module across several files** — `std/prelude/README.md` documents the constraints on
 what may go in it and why the split is within a module rather than into several.
 Beside it: `std/collections/` (`HashMap<k, v>` and the `Hash` trait — the workspace
-`CLAUDE.md` has the rules), `std/math/`, `std/tui/` and `std/ffi.lyra`, each an ordinary
-module a program imports by name.
+`CLAUDE.md` has the rules), `std/math/`, `std/tui/`, `std/ffi.lyra` and `std/io.lyra`
+(`read_file`, over three libc externs), each an ordinary module a program imports by name.
 
 ## Testing
 
