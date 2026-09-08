@@ -55,38 +55,60 @@ pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 /// ```
 pub let filter<t> = pure (self: []t, predicate: (t) -> bool) -> []t => [x in self | predicate(x) | x]
 
-/// Sorts `self` in place, ascending by `t`'s `Ord`. Introsort: quicksort with a
-/// median-of-three pivot and Hoare partitioning, insertion sort on ranges under 16, and
-/// heapsort on any range whose recursion depth passes 2·log2(n) — so the worst case is
-/// O(n log n) rather than quicksort's O(n²), and no input, sorted or adversarial, defeats
-/// it. No allocation. **Not stable**: equal elements may change their relative order.
+/// Sorts `self` in place by `cmp`, which answers how its first argument orders against
+/// its second. No `Ord` needed, which is what makes it the way to sort floats, or by one
+/// field, or descending:
 ///
 /// ```
-/// var xs: []i64 = [5, 3, 9, 1]
-/// xs.quick_sort()      // [1, 3, 5, 9]
+/// xs.sort_by((a, b) => b.compare(a))                       // descending
+/// people.sort_by((a, b) => a.age.compare(b.age))           // by one field
+/// fs.sort_by((a, b) => if a < b { Less } else if a > b { Greater } else { Equal })
 /// ```
-pub let quick_sort<t> where t: Ord = (self: mut []t) -> void => {
+///
+/// Introsort: quicksort with a median-of-three pivot and Hoare partitioning, insertion
+/// sort on ranges under 16, and heapsort on any range whose partition depth passes
+/// 2·log2(n) — so the worst case is O(n log n) and no input, sorted or adversarial,
+/// defeats it. No allocation. **Not stable**: elements `cmp` calls equal may change
+/// their relative order; `sorted_by` keeps it. `cmp` must be a strict weak order, or
+/// the result is some permutation and nothing more.
+pub let sort_by<t> = (self: mut []t, cmp: (t, t) -> Ordering) -> void => {
   let n = self.len()
   var budget = 0
   var m = n
   for m > 1 { m = m / 2; budget += 2 }
-  quick_sort_range(self, 0, n, budget)
+  quick_sort_range(self, cmp, 0, n, budget)
 }
 
-/// `quick_sort`'s general-purpose name — see [quick_sort]. `heap_sort` is the same order
-/// with a guarantee in place of a constant factor.
-pub let sort<t> where t: Ord = (self: mut []t) -> void => self.quick_sort()
-
-/// A sorted **copy** of `self`, ascending by `t`'s `Ord`; `self` is untouched. **Stable**:
-/// elements that compare equal keep their order, so sorting records by one key leaves
-/// ties in their original order, and sorting by a second key afterwards sorts by both.
-/// Merge sort over a scratch buffer of the same length, so it allocates twice and
-/// `noalloc` refuses it; `sort` is the in-place, unstable alternative.
+/// Sorts `self` in place, ascending by `t`'s `Ord` — `sort_by` with `compare`, and the
+/// general-purpose name. `heap_sort` is the same order with a guarantee in place of a
+/// constant factor; `sorted` is the stable copy.
 ///
 /// ```
-/// let by_age = people.sorted()     // people is unchanged
+/// var xs: []i64 = [5, 3, 9, 1]
+/// xs.sort()      // [1, 3, 5, 9]
 /// ```
-pub let sorted<t> where t: Ord = pure (self: []t) -> []t => {
+pub let sort<t> where t: Ord = (self: mut []t) -> void => self.sort_by(pure (a: t, b: t) => a.compare(b))
+
+/// `sort` under its algorithm's name — see [sort_by] for what it does.
+pub let quick_sort<t> where t: Ord = (self: mut []t) -> void => self.sort_by(pure (a: t, b: t) => a.compare(b))
+
+/// Sorts `self` in place, ascending by `t`'s `Ord`. Heapsort: O(n log n) in every case,
+/// no allocation, **not stable** — equal elements may change their relative order.
+/// `sort` is two to three times faster on typical input and falls back to this.
+pub let heap_sort<t> where t: Ord = (self: mut []t) -> void =>
+  heap_sort_range(self, pure (a: t, b: t) => a.compare(b), 0, self.len())
+
+/// A **copy** of `self` sorted by `cmp`, which answers how its first argument orders
+/// against its second; `self` is untouched. **Stable**: elements `cmp` calls equal keep
+/// their order, so sorting records by one key leaves ties in their original order, and
+/// sorting by a second key afterwards sorts by both. Merge sort over a scratch buffer of
+/// the same length, so it allocates twice and `noalloc` refuses it; `sort_by` is the
+/// in-place, unstable alternative.
+///
+/// ```
+/// let by_age = people.sorted_by((a, b) => a.age.compare(b.age))   // people unchanged
+/// ```
+pub let sorted_by<t> = pure (self: []t, cmp: (t, t) -> Ordering) -> []t => {
   // Bottom-up, and all in one function: a helper taking a `mut []t` is an impure call,
   // which `pure` refuses even on a buffer this function owns. Mutating a local is fine.
   var src = [...self]
@@ -100,7 +122,7 @@ pub let sorted<t> where t: Ord = pure (self: []t) -> []t => {
     for i in (run + 1)..<stop {
       let v = src[i]
       var j = i
-      for j > run && src[j - 1].compare(v) == Greater {
+      for j > run && cmp(src[j - 1], v) == Greater {
         src[j] = src[j - 1]
         j -= 1
       }
@@ -122,7 +144,7 @@ pub let sorted<t> where t: Ord = pure (self: []t) -> []t => {
       var k = start
       for i < mid && j < end {
         // The left element wins a tie: that is the whole of stability.
-        if src[j].compare(src[i]) == Less {
+        if cmp(src[j], src[i]) == Less {
           dst[k] = src[j]
           j += 1
         } else {
@@ -141,34 +163,37 @@ pub let sorted<t> where t: Ord = pure (self: []t) -> []t => {
   src
 }
 
-/// Sorts `self` in place, ascending by `t`'s `Ord`. Heapsort: O(n log n) in every case,
-/// no allocation, **not stable** — equal elements may change their relative order.
-/// `quick_sort` is two to three times faster on typical input and falls back to this.
-pub let heap_sort<t> where t: Ord = (self: mut []t) -> void => heap_sort_range(self, 0, self.len())
+/// A sorted **copy** of `self`, ascending by `t`'s `Ord`; `self` is untouched.
+/// **Stable** — `sorted_by` with `compare`, and see there for the rest.
+///
+/// ```
+/// let by_age = people.sorted()     // people is unchanged
+/// ```
+pub let sorted<t> where t: Ord = pure (self: []t) -> []t => self.sorted_by(pure (a: t, b: t) => a.compare(b))
 
-/// Sorts `self[start..<end]`. `budget` is the partition depth left before the range is
-/// handed to heapsort. The smaller side recurses and the larger side loops, so the stack
-/// is O(log n) whatever the partitions do.
-let quick_sort_range<t> where t: Ord = (self: mut []t, start: i64, end: i64, budget: i64) -> void => {
+/// Sorts `self[start..<end]` by `cmp`. `budget` is the partition depth left before the
+/// range is handed to heapsort. The smaller side recurses and the larger side loops, so
+/// the stack is O(log n) whatever the partitions do.
+let quick_sort_range<t> = (self: mut []t, cmp: (t, t) -> Ordering, start: i64, end: i64, budget: i64) -> void => {
   var lo = start
   var hi = end
   var left = budget
   for hi - lo > 16 {
     if left == 0 {
-      heap_sort_range(self, lo, hi)
+      heap_sort_range(self, cmp, lo, hi)
       return
     }
     left -= 1
-    let p = partition(self, lo, hi)
+    let p = partition(self, cmp, lo, hi)
     if p + 1 - lo < hi - (p + 1) {
-      quick_sort_range(self, lo, p + 1, left)
+      quick_sort_range(self, cmp, lo, p + 1, left)
       lo = p + 1
     } else {
-      quick_sort_range(self, p + 1, hi, left)
+      quick_sort_range(self, cmp, p + 1, hi, left)
       hi = p + 1
     }
   }
-  insertion_sort_range(self, lo, hi)
+  insertion_sort_range(self, cmp, lo, hi)
 }
 
 /// Hoare partition of `self[start..<end]` around the median of its first, middle and
@@ -177,34 +202,34 @@ let quick_sort_range<t> where t: Ord = (self: mut []t, start: i64, end: i64, bud
 /// non-empty — the pivot is moved to `start` first, which is what guarantees that. Equal
 /// keys are split between the sides rather than piled on one, so a run of duplicates
 /// does not degrade the sort.
-let partition<t> where t: Ord = (self: mut []t, start: i64, end: i64) -> i64 => {
+let partition<t> = (self: mut []t, cmp: (t, t) -> Ordering, start: i64, end: i64) -> i64 => {
   let mid = start + (end - start) / 2
   let last = end - 1
-  if self[mid].compare(self[start]) == Less { (self[start], self[mid]) = (self[mid], self[start]) }
-  if self[last].compare(self[start]) == Less { (self[start], self[last]) = (self[last], self[start]) }
-  if self[last].compare(self[mid]) == Less { (self[mid], self[last]) = (self[last], self[mid]) }
+  if cmp(self[mid], self[start]) == Less { (self[start], self[mid]) = (self[mid], self[start]) }
+  if cmp(self[last], self[start]) == Less { (self[start], self[last]) = (self[last], self[start]) }
+  if cmp(self[last], self[mid]) == Less { (self[mid], self[last]) = (self[last], self[mid]) }
   (self[start], self[mid]) = (self[mid], self[start])
   let pivot = self[start]
   var i = start
   var j = end
   for {
     i += 1
-    for self[i].compare(pivot) == Less { i += 1 }
+    for cmp(self[i], pivot) == Less { i += 1 }
     j -= 1
-    for self[j].compare(pivot) == Greater { j -= 1 }
+    for cmp(self[j], pivot) == Greater { j -= 1 }
     if i >= j { break }
     (self[i], self[j]) = (self[j], self[i])
   }
   j
 }
 
-/// Insertion sort of `self[start..<end]`: fewest compares on a short or nearly sorted
-/// range, which is what quicksort leaves behind.
-let insertion_sort_range<t> where t: Ord = (self: mut []t, start: i64, end: i64) -> void => {
+/// Insertion sort of `self[start..<end]` by `cmp`: fewest compares on a short or nearly
+/// sorted range, which is what quicksort leaves behind.
+let insertion_sort_range<t> = (self: mut []t, cmp: (t, t) -> Ordering, start: i64, end: i64) -> void => {
   for i in (start + 1)..<end {
     let v = self[i]
     var j = i
-    for j > start && self[j - 1].compare(v) == Greater {
+    for j > start && cmp(self[j - 1], v) == Greater {
       self[j] = self[j - 1]
       j -= 1
     }
@@ -212,27 +237,27 @@ let insertion_sort_range<t> where t: Ord = (self: mut []t, start: i64, end: i64)
   }
 }
 
-/// Heapsort of `self[start..<end]`, indices relative to `start`.
-let heap_sort_range<t> where t: Ord = (self: mut []t, start: i64, end: i64) -> void => {
+/// Heapsort of `self[start..<end]` by `cmp`, indices relative to `start`.
+let heap_sort_range<t> = (self: mut []t, cmp: (t, t) -> Ordering, start: i64, end: i64) -> void => {
   let n = end - start
   for i in (n / 2 - 1)..>=0 {
-    sift_down(self, start, n, i)
+    sift_down(self, cmp, start, n, i)
   }
   for i in (n - 1)..>0 {
     (self[start], self[start + i]) = (self[start + i], self[start])
-    sift_down(self, start, i, 0)
+    sift_down(self, cmp, start, i, 0)
   }
 }
 
 /// Restores the max-heap property below `i` in the `n`-element heap at `self[base..]`.
-let sift_down<t> where t: Ord = (self: mut []t, base: i64, n: i64, i: i64) -> void => {
+let sift_down<t> = (self: mut []t, cmp: (t, t) -> Ordering, base: i64, n: i64, i: i64) -> void => {
   var largest = i
   let l = 2 * i + 1
   let r = 2 * i + 2
-  if l < n && self[base + l].compare(self[base + largest]) == Greater { largest = l }
-  if r < n && self[base + r].compare(self[base + largest]) == Greater { largest = r }
+  if l < n && cmp(self[base + l], self[base + largest]) == Greater { largest = l }
+  if r < n && cmp(self[base + r], self[base + largest]) == Greater { largest = r }
   if largest != i {
     (self[base + i], self[base + largest]) = (self[base + largest], self[base + i])
-    sift_down(self, base, n, largest)
+    sift_down(self, cmp, base, n, largest)
   }
 }

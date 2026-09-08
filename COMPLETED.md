@@ -37,6 +37,21 @@ arm that is a plain `Maybe<i64>` variable is not stamped and must keep its misma
 A separate gap found on the way is open: a prelude call on a nested generic inside a
 generic body (`xs[i].is_some()` on `[]Maybe<Slot<v>>`) fails the build.
 
+### 09/07/26 — `sort_by` and `sorted_by`: the comparator forms become the core
+
+A `(t, t) -> Ordering` comparator and no bound, which is how a float array is sorted at
+all (`Ord` refuses floats), and how one field or a reversed order is asked for. Rather
+than a second copy of introsort and merge sort, the comparator forms *are* the
+algorithms and the `Ord` forms delegate through `pure (a: t, b: t) => a.compare(b)` — one
+indirect call per compare, which the prelude's own use of bound dispatch already paid.
+The fallback test still reaches heapsort through the delegation.
+
+The lambda is written out in full because the short form fails twice, and both are
+recorded as open bugs: the unannotated `(a, b) => …` is not elaborated from a *generic*
+callee's slot, and a lambda calling a bound method is charged impure where the direct
+call is not. The second is the more interesting one — `Ord::compare` is declared without
+`pure`, and whether it should be is a question about what an impl is allowed to do.
+
 ### 09/07/26 — `sorted`: the stable copy, and the destructuring-`let` borrow it exposed
 
 `sort` is in place and unstable; `sorted` is the other half — `pure`, a fresh `[]t`,

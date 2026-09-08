@@ -153,3 +153,53 @@ let main = () -> void => {
 		t.Fatalf("stdout:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// `sort_by` and `sorted_by` take the order as a comparator, with no `Ord` bound: floats,
+// which `Ord` refuses, a field, and a reversed order. `sorted_by` keeps ties in order.
+func TestExec_SortBy(t *testing.T) {
+	t.Parallel()
+	src := `
+struct Rec { key: i64, seq: i64 }
+
+let main = () -> void => {
+  var fs: []f64 = [2.5, -1.0, 9.75, 0.0, 3.25]
+  fs.sort_by((a, b) => if a < b { Less } else if a > b { Greater } else { Equal })
+  for f in fs { print("${f} ") }
+  println("")
+
+  var xs: []i64 = [3, 1, 4, 1, 5, 9, 2, 6]
+  xs.sort_by((a, b) => b.compare(a))
+  println(xs.join(","))
+
+  var ws: []string = ["pear", "fig", "banana", "kiwi"]
+  ws.sort_by((a, b) => a.len().compare(b.len()))
+  println(ws[0] ++ " " ++ ws[3])
+
+  var rng = rng_seeded(5)
+  var recs: []Rec = []
+  for i in 0..<2000 { recs.push(Rec { key: rng.below(10), seq: i }) }
+  let out = recs.sorted_by((a, b) => a.key.compare(b.key))
+  var stable = out.len() == recs.len()
+  for i in 1..<out.len() {
+    if out[i - 1].key > out[i].key { stable = false }
+    if out[i - 1].key == out[i].key && out[i - 1].seq > out[i].seq { stable = false }
+  }
+  var untouched = true
+  for i, r in recs { if r.seq != i { untouched = false } }
+  println("${stable} ${untouched}")
+
+  var big: []i64 = []
+  for i in 0..<3000 { big.push(rng.between(-500, 500)) }
+  var by = [...big]
+  by.sort_by((a, b) => a.compare(b))
+  big.sort()
+  var same = true
+  for i in 0..<big.len() { if big[i] != by[i] { same = false } }
+  println(same)
+}`
+	got := buildAndRunWithPrelude(t, src, "")
+	want := "-1 0 2.5 3.25 9.75 \n9,6,5,4,3,2,1,1\nfig banana\ntrue true\ntrue\n"
+	if got != want {
+		t.Fatalf("stdout:\n%s\nwant:\n%s", got, want)
+	}
+}
