@@ -86,17 +86,80 @@ let main = () -> void => {
 	}
 }
 
-// What stage 1 refuses, by name: a sequence held in a binding, and one used as a value.
-func TestEmit_SeqStage1Refusals(t *testing.T) {
+// Stage 2 (seq_coro.go): a sequence as a value — held, stepped, and walked in lockstep.
+// A `gen` used as a value is an LLVM coroutine; `next()` resumes it once; `zip` steps
+// its second sequence while walking its first.
+func TestExec_SeqValuesNextAndZip(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ name, body, want string }{
-		{"bound", `let s = small(); for x in s { print("${x}") }`, "used as a value"},
-		{"value", `let n = small(); print("${n.sum()}")`, "used as a value"},
+	out := buildAndRunWithPrelude(t, `module main
+let nums = pure gen () -> Seq<i64> => { var n = 0; for { yield n; n += 1 } }
+let names = pure gen () -> Seq<string> => { for i in 0..<4 { yield "name-" ++ "${i}" } }
+let main = () -> void => {
+  let held = nums().take(3)
+  var total = 0
+  for x in held { total += x }
+  var cursor = nums().filter((n) => n % 2 == 1)
+  let stepped = "${cursor.next().unwrap_or(-1)},${cursor.next().unwrap_or(-1)},${cursor.next().unwrap_or(-1)}"
+  var pairs: []string = []
+  for (i, s) in nums().zip(names()) { pairs.push("${i}=${s}") }
+  let a = nums().take(10)
+  let b = nums().map((n) => n * n)
+  var squares: []string = []
+  for (x, y) in a.zip(b) { if x > 2 { break }; squares.push("${x}:${y}") }
+  var inf = nums()
+  let _ = inf.next()
+  print("${total} ${stepped} ${pairs.join(" ")} ${squares.join(" ")} ${inf.next().unwrap_or(-1)}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "3 1,3,5 0=name-0 1=name-1 2=name-2 3=name-3 0:0 1:1 2:4 1" {
+		t.Errorf("printed %q; want \"3 1,3,5 0=name-0 1=name-1 2=name-2 3=name-3 0:0 1:1 2:4 1\"", got)
+	}
+}
+
+// Managed state through the value form, under ASan: elements handed across the promise
+// carry a +1 for the consumer; a coroutine dropped while suspended releases what its
+// body still held — the string parameter it retained on entry, and the element left in
+// its frame — through the destroy branch of the suspend it sits in.
+func TestExec_SeqValuesManagedASan(t *testing.T) {
+	t.Parallel()
+	src := `module main
+let tagged = pure gen (tag: string, n: i64) -> Seq<string> => {
+  let prefix = tag ++ "-"
+  for i in 0..<n { yield prefix ++ "${i}" }
+}
+let main = () -> u8 => {
+  var total = 0
+  let held = tagged("a" ++ "b", 3).map((s) => s ++ "!")
+  for s in held { total += s.len() }
+  var early = tagged("x" ++ "y", 100)
+  let first = early.next().unwrap_or("")
+  total += first.len()
+  var stepped = tagged("p" ++ "q", 5).filter((s) => s.len() > 0)
+  let _ = stepped.next()
+  for (l, r) in tagged("l" ++ "m", 2).zip(tagged("r" ++ "s", 5)) { total += l.len() + r.len() }
+  if total == 15 + 4 + 16 { 3 } else { 1 }
+}`
+	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
+		t.Errorf("under ASan: exited %d; want 3", got)
+	}
+}
+
+// What stage 2 still refuses, by name.
+func TestEmit_SeqStage2Refusals(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ name, decls, body, want string }{
+		{"a plain function returning a sequence from a block body, held",
+			`let evens = pure (s: Seq<i64>) -> Seq<i64> => { let t = s; t.filter((n) => n % 2 == 0) }`,
+			`let e = evens(small()); for x in e { print("${x}") }`, "only a `gen` can produce a sequence held as a value"},
+		{"a lambda literal inside a gen used as a value",
+			`let g = pure gen () -> Seq<i64> => { let f = (n: i64) => n + 1; yield f(1) }`,
+			`let s = g(); for x in s { print("${x}") }`, "holds a lambda literal"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := emitWithPreludeErr(t, `module main
 let small = pure gen () -> Seq<i64> => { yield 1 }
+`+c.decls+`
 let main = () -> void => { `+c.body+` }
 `)
 			if err == nil || !strings.Contains(err.Error(), c.want) {

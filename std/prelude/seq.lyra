@@ -80,3 +80,22 @@ pub let first<t> = pure noalloc (self: Seq<t>) -> Maybe<t> => {
   for x in self { return Some(x) }
   None
 }
+
+/// Pairs of the two sequences' elements, in lockstep, ending with the shorter.
+///
+/// The one combinator that needs a sequence as a *value*: `other` is stepped with
+/// `next()` while `self` is walked, so the two advance together. A sequence held as a
+/// value is a cursor, and copies share it.
+///
+/// ```
+/// for (i, name) in naturals().zip(names.seq()) { println("${i}: ${name}") }
+/// ```
+pub let zip<a, b> = pure gen (self: Seq<a>, other: Seq<b>) -> Seq<(a, b)> => {
+  var rest = other
+  for x in self {
+    match rest.next() {
+      Some(y) => { yield (x, y) },
+      None => { break },
+    }
+  }
+}

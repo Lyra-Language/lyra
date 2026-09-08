@@ -268,6 +268,9 @@ func SizeAndAlign(t types.Type) (size, align int, ok bool) {
 	if _, ok := t.(types.WeakType); ok {
 		return pointerSize, pointerSize, true // a weak reference is a non-owning pointer
 	}
+	if types.IsSeq(t) {
+		return pointerSize, pointerSize, true // a sequence value is a pointer to its box (seq_coro.go)
+	}
 	if _, ok := t.(types.DynamicArrayType); ok {
 		return pointerSize, pointerSize, true // a `[]T` value is a box pointer (dynarray.go)
 	}

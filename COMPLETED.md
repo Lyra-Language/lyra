@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/08/26 — lazy sequences, stage 2: a sequence as a value, on LLVM coroutines
+
+Stage 1 lowers a producer at its consumer and needs no representation; stage 2 is the
+representation for what that cannot do — a sequence held in a binding, stepped with
+`next()`, walked in lockstep by `zip`. A `gen` used as a value is emitted as an LLVM
+coroutine (`llvm.coro.id/begin/suspend/end`), and that choice is the entry: the hard
+part of a hand-written state machine is spilling every value live across a `yield`
+into a frame — the array loop's box and length sit in SSA registers, not allocas — and
+LLVM's split pass does exactly that, so the body is lowered by the code that lowers any
+function and only `yield` differs. A hand-written `.ll` proved it at -O0, -O2 and under
+ASan before a line of the backend changed.
+
+**Three lessons.** *A consumer's continuation must be its own block*: the pull loop
+first passed its header as the continuation and then emitted the element's release
+into it — a block that precedes the body and was already terminated. *A refactor of the
+yield path added a branch from the continuation block to itself*, an infinite loop on
+every inlined yield's resume; the probe's second element never printed, and the
+stage-1 tests had not been rerun since the refactor. *The Linux container caught a real
+typed-pointer fault*: the sequence box's drop function was passed to the release shim as
+a function pointer where the shim takes an `i8*`, a mismatch opaque pointers hide.
+
+**And a portability decision.** LLVM 15 and later split only a function carrying
+`presplitcoroutine`, and LLVM 14 not only rejects the word but — from IR input — runs
+no coroutine pass at all, crashing in instruction selection; stripping the attribute
+was tried and is not a fix. So a compiler that refuses the attribute cannot build a
+program holding a sequence value, and both consumers of emitted IR say so:
+`CheckCoroutineSupport` probes a one-line module once per compiler path (not a version
+string — Apple's clang is numbered on another scale), `lyrac` refuses by name, the
+harness skips. The Linux container moved from Debian's default clang 14 to its
+`clang-15`, verified to split the prototype at -O0, -O2 and under ASan *and* still to
+report a typed-pointer mismatch — 16 dropped typed pointers, which is why the pin is
+not the newest.
+
 ### 09/08/26 — lazy sequences lower: stage 1, the producer at its consumer
 
 `examples/primes.lyra` runs, and every number it prints is right. Nothing represents a

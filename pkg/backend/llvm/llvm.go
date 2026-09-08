@@ -104,7 +104,9 @@ import (
 )
 
 // Backend is the LLVM IR code generator.
-type Backend struct{}
+type Backend struct {
+	coroSymbols []string // the coroutine functions the last emitModule produced (seq_coro.go)
+}
 
 // New returns an LLVM backend.
 func New() *Backend { return &Backend{} }
@@ -125,7 +127,9 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	return []byte(m.String()), nil
+	// A coroutine's `define` needs an attribute the IR library cannot spell
+	// (seq_coro.go), added to the text on the way out.
+	return []byte(addCoroutineAttributes(m.String(), b.coroSymbols)), nil
 }
 
 // emitModule is Emit before serialization: it returns the built *ir.Module rather
@@ -144,6 +148,8 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
 		seqSkipped:         map[string]bool{},
+		seqCoros:           map[string]*ir.Func{},
+		coroIntrinsics:     map[string]*ir.Func{},
 		funcParams:         map[string][]ast.Parameter{},
 		overloads:          map[*ast.LambdaExpr]emitted{},
 		byRefParams:        map[value.Value]bool{},
@@ -249,6 +255,16 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	if err := l.definePendingTraitMethods(); err != nil {
 		return nil, err
 	}
+	// A sequence used as a value queues a coroutine body (seq_coro.go), and that body
+	// may queue trait methods of its own; drained after everything else, then the
+	// methods once more.
+	if err := l.defineSeqCoroutines(); err != nil {
+		return nil, err
+	}
+	if err := l.definePendingTraitMethods(); err != nil {
+		return nil, err
+	}
+	b.coroSymbols = l.seqCoroSymbols
 	return m, nil
 }
 
@@ -264,12 +280,21 @@ type lowerer struct {
 	seqSkipped map[string]bool     // functions left undeclared because they mention a Seq (forEachUserFunction)
 	// Lazy sequences (seq_lower.go): the sequence parameters of the body being inlined,
 	// the consumer its yields feed, and where an inlined body's `return` goes.
-	seqParams  map[string]seqBinding
-	yield      *seqYield
-	inlineRet  *inlineReturn
-	funcParams map[string][]ast.Parameter  // name → its declared parameters (call sites need the `mut` by-ref modes)
-	overloads  map[*ast.LambdaExpr]emitted // receiver-keyed overloads, by declaration (see overloads.go)
-	consts     map[string]*ast.VarDeclStmt // top-level `const` name → its declaration (its value is inlined at each use)
+	seqParams map[string]seqBinding
+	yield     *seqYield
+	inlineRet *inlineReturn
+	// Sequences as values (seq_coro.go): the coroutine being lowered, the coroutine
+	// per gen instantiation, the ones still to emit, and the shared glue.
+	coro           *coroCtx
+	seqCoros       map[string]*ir.Func
+	seqCoroSymbols []string
+	pendingCoros   []coroWork
+	seqCoroCount   int
+	seqDrop        *ir.Func
+	coroIntrinsics map[string]*ir.Func
+	funcParams     map[string][]ast.Parameter  // name → its declared parameters (call sites need the `mut` by-ref modes)
+	overloads      map[*ast.LambdaExpr]emitted // receiver-keyed overloads, by declaration (see overloads.go)
+	consts         map[string]*ast.VarDeclStmt // top-level `const` name → its declaration (its value is inlined at each use)
 	// globals are top-level `let`/`var` bindings whose value is *not* a function —
 	// module-level data. Unlike a `const` they have storage, because their value is
 	// computed at run time (a string box, an array, a call); unlike a local they outlive

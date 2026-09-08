@@ -1,13 +1,10 @@
 package llvm
 
 import (
-	"errors"
-
 	"fmt"
 
 	lltypes "github.com/llir/llvm/ir/types"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -61,8 +58,8 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 	}
 	decl, ok := l.lookupTypeDecl(p.Name)
 	if !ok {
-		if p.Name == typechecker.SeqTypeName {
-			return t, errSeqNotLowered
+		if types.IsSeq(p) {
+			return t, nil // a sequence is its box pointer (lowerType); nothing to instantiate
 		}
 		return t, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
@@ -121,8 +118,8 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	}
 	decl, ok := l.lookupTypeDecl(p.Name)
 	if !ok {
-		if p.Name == typechecker.SeqTypeName {
-			return nil, errSeqNotLowered
+		if types.IsSeq(p) {
+			return seqBoxPtrType(), nil
 		}
 		return nil, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
@@ -195,8 +192,3 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	}
 	return st, nil
 }
-
-// errSeqNotLowered is what a `Seq<t>` reaching lowerType reports: the typechecker admits
-// a sequence anywhere a type goes, and stage 1 gives it no representation — it exists
-// only at a consumer (seq_lower.go). Named so the two sites that can meet one agree.
-var errSeqNotLowered = errors.New("llvm: a `Seq<t>` reached the backend as a value — stored in a field, an element or a binding — and a sequence has no value of its own: it is lowered at its consumer (seq_lower.go; todo.md, Lazy sequences)")

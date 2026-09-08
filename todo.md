@@ -2147,8 +2147,25 @@ Three reasons, none of them taste:
 - **[DONE 09/08 — the list is in the stage-1 entry above] What stage 1 must refuse, loudly.** `zip` (two producers interleaved needs pull),
   and a `Seq` reaching a consumer that cannot be inlined through — which under the first
   option above is the general form of the previous bullet.
-- **[IDEA] Stage 2: state-machine transformation** (Rust async / C# iterators / Kotlin) for
-  whatever stage 1's refusals turn out to cost. Worth noting the machinery lands *in the
+- **[DONE 09/08] Stage 2: a sequence as a value** (`seq_coro.go`). A `gen` used as a
+  value is an **LLVM coroutine** — the switched-resume intrinsics, with LLVM's own split
+  pass hoisting everything live across a `yield` into a heap frame — so the body is
+  lowered by the ordinary code and only `yield` differs: element into the promise with a
+  +1 for the consumer, then suspend. The value is a ref-counted box around the handle,
+  managed as a `shared` box; its drop destroys the coroutine, whose destroy branch at
+  whatever suspend it sits in releases what the body still held. **`next()`** is the one
+  pull primitive (a builtin on a `Seq` receiver, `mut` like `push`), and `zip` is prelude
+  Lyra over it. A sequence parameter used as a value in an inlined body takes the value
+  form; one used only as a loop's source stays syntactic, so the fused path is untouched.
+  Copies of a value share the cursor. **Still refused:** a plain function returning a
+  sequence from a block body, a lambda literal inside a gen used as a value, a `mut`
+  parameter on one, `yield from` over a non-sequence. The one portability rule: only
+  LLVM ≥ 15 splits a coroutine from IR input (14 rejects `presplitcoroutine` and runs no
+  coroutine pass at all, crashing in instruction selection), so `CheckCoroutineSupport`
+  probes the compiler once; `lyrac` refuses by name and the harness skips — and the Linux
+  container moved to Debian's `clang-15`, which still uses typed pointers.
+- **[IDEA] Stage 2 was: a state-machine transformation** (Rust async / C# iterators /
+  Kotlin) for whatever stage 1's refusals turn out to cost. Worth noting the machinery lands *in the
   compiler*, so the language still never grows associated types and the prelude functions do
   not change — which is the argument for stage 1 not being a throwaway.
 

@@ -55,6 +55,12 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		// methodParams falls back to reading the same table for its modes.
 		return l.lowerTraitMethodCall(block, call, member, fn, typetable.Resolution{})
 	}
+	// `s.next()` on a sequence value: one resume through its coroutine (seq_coro.go).
+	if member.Property.Name == "next" {
+		if t, ok := l.recordedType(member.Object); ok && types.IsSeq(t) {
+			return l.lowerSeqNext(block, call, member)
+		}
+	}
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)
 	}

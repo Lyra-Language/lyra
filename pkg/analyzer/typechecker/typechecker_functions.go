@@ -1452,10 +1452,14 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 // (`f().push(1)`) mutates something with no binding to be immutable, which is useless
 // rather than unsound, and there is no name to report against.
 func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string, member *ast.MemberExpr) {
-	if name != "push" && name != "push_utf8" && name != "clear" && name != "reserve" {
-		return
+	mutates := false
+	switch name {
+	case "push", "push_utf8", "clear", "reserve":
+		_, mutates = recv.(types.DynamicArrayType)
+	case "next":
+		_, mutates = seqElementType(recv) // a step moves the sequence's cursor
 	}
-	if _, isDyn := recv.(types.DynamicArrayType); !isDyn {
+	if !mutates {
 		return
 	}
 	root := rootIdentifier(member.Object)

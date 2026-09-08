@@ -113,6 +113,11 @@ func (l *lowerer) boxDropFn(t types.Type) (value.Value, error) {
 	if _, ok := t.(*types.LambdaType); ok {
 		return l.closureEnvDropFn(), nil
 	}
+	// A sequence's box holds a coroutine handle; its drop destroys the coroutine, which
+	// releases whatever the suspended body still held (seq_coro.go).
+	if types.IsSeq(t) {
+		return l.seqDropFn(), nil
+	}
 	// A dynamic array `[]T` owns its elements: its drop_fn loops over the runtime
 	// length releasing each (null when T owns nothing managed).
 	if dyn, ok := t.(types.DynamicArrayType); ok {

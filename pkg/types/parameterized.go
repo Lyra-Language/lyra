@@ -34,3 +34,14 @@ func (p ParameterizedType) String() string {
 	}
 	return p.GetName() + "<" + strings.Join(args, ", ") + ">"
 }
+
+// SeqTypeName is the spelling of the lazy sequence type, `Seq<t>` — the one generic
+// type no prelude file declares (a sequence has no constructors and no fields a program
+// may name), known to the compiler by this name alone.
+const SeqTypeName = "Seq"
+
+// IsSeq reports whether t is a `Seq<…>`.
+func IsSeq(t Type) bool {
+	p, ok := t.(ParameterizedType)
+	return ok && p.Name == SeqTypeName
+}

@@ -319,6 +319,19 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 	// The receiver must permit interior mutation, checked at the call site by the same
 	// predicate `a[0] = v` uses — a plain `let` is deeply immutable, and push is
 	// interior mutation with a different spelling.
+	// `s.next()` on a sequence: the next element, or `None` once it is done. The one
+	// pull primitive, and what `zip` in the prelude is written over; it needs the
+	// sequence as a value, so the backend gives the receiver its coroutine form.
+	// The receiver must be mutable, as `push`'s must: a step moves the cursor.
+	if elem, ok := seqElementType(recv); ok && name == "next" {
+		maybeName, found := tc.canonicalTypeName("Maybe", loc)
+		if !found {
+			maybeName = "Maybe"
+		}
+		return &types.LambdaType{
+			ReturnType: types.ReturnType{Type: types.ParameterizedType{Name: maybeName, TypeArguments: []types.Type{elem}}},
+		}, true
+	}
 	if dyn, ok := recv.(types.DynamicArrayType); ok && name == "push" {
 		return &types.LambdaType{
 			Parameters: []types.ParameterType{{Type: dyn.ElementType}},

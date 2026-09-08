@@ -706,6 +706,18 @@ a terminal is an inlined call. Four things to know before touching it:
 - **A consumer's `loopCtx` carries the consumer's depths**, so its `break` releases
   what the producer had live; the producer's own loops sit above it while its body
   lowers, which is what keeps `take`'s `break` aimed at the producer it consumes.
+- **A sequence *value* is an LLVM coroutine** (`seq_coro.go`): a box around the handle,
+  managed as a `shared` box with `lyra_seq_drop` as its glue, and a `{ i1 has, t value }`
+  promise the consumer reads through `llvm.coro.promise`. Coroutine bodies are queued
+  and emitted after every other function (`defineSeqCoroutines`), never re-entrantly.
+  `yieldValueTo` picks the form: a handler means inline, none inside a coroutine means
+  suspend. A managed parameter is retained on entry and framed, because the frame
+  outlives the call. `CheckCoroutineSupport` refuses a compiler that cannot split one
+  (older than LLVM 15) — `lyrac` errors by name, the harness's `compileCached` skips,
+  and a third consumer of emitted IR must ask it too.
+- **Pass a drop function to the release shim as an `i8*`**, never as the `*ir.Func`: the
+  shim's parameter is `i8*`, opaque pointers hide the mismatch on macOS, and the Linux
+  container reports it as a function-type error. `lyra_seq_drop` was the instance.
 
 ## Sweeping for surfaces nothing reads
 

@@ -396,6 +396,12 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		}
 		return lltypes.NewPointer(DynArrayBoxType(elem)), nil
 	}
+	// A sequence held as a value is a pointer to a ref-counted box around its coroutine
+	// handle (seq_coro.go) — the same shape whatever the element, since the element
+	// lives in the coroutine's frame and is read through the handle.
+	if types.IsSeq(lyraType) {
+		return seqBoxPtrType(), nil
+	}
 	// A `shared` value is a pointer to a ref-counted box `{ i64 rc, payload }`
 	// (ALLOCATION.md) — regardless of what the payload is. Strip the flavor to get
 	// the by-value payload type, lower that, and wrap it in the box pointer. This is

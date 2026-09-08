@@ -1896,10 +1896,16 @@ lines from a call to `intMinConst`.
 
 ## Lazy sequences (`seq_lower.go`)
 
-A `Seq<t>` has no representation. A `gen` producer is lowered at its consumer — a
-`for-in` or a comprehension — with each `yield` running the consumer's body, so a chain
-of prelude combinators fuses into one loop nest; a terminal (`sum`, `first`, …) is an
-inlined call whose `return` goes to a result slot. Sequence functions are never emitted.
-The environment a body runs in (`seqEnv`) is captured at the consumer and reinstalled at
-each yield; the refusals and the two open gaps are listed under "Lazy sequences" in
-`todo.md`.
+Consumed where it is written, a `Seq<t>` has no representation. A `gen` producer is
+lowered at its consumer — a `for-in` or a comprehension — with each `yield` running the
+consumer's body, so a chain of prelude combinators fuses into one loop nest; a terminal
+(`sum`, `first`, …) is an inlined call whose `return` goes to a result slot. The
+environment a body runs in (`seqEnv`) is captured at the consumer and reinstalled at
+each yield.
+
+Held as a value (`seq_coro.go`), a sequence is a ref-counted box around an LLVM
+coroutine handle: the `gen` body is emitted with `llvm.coro.*` intrinsics and LLVM's
+split pass builds the frame and the state machine; `next()` resumes it once and reads the
+promise; a pull loop does that until `has` is false. `CheckCoroutineSupport` refuses a compiler
+older than LLVM 15, which cannot split one. The refusals and the open
+gaps are listed under "Lazy sequences" in `todo.md`.

@@ -187,6 +187,12 @@ func IsManaged(t types.Type) bool {
 	if _, ok := t.(*types.LambdaType); ok {
 		return true
 	}
+	// A sequence held as a value is a ref-counted box around a coroutine handle
+	// (backend/llvm/seq_coro.go): copying one shares the cursor, and the last reference
+	// destroys the coroutine and whatever it still held.
+	if types.IsSeq(t) {
+		return true
+	}
 	// A dynamic array `[]T` is always a heap-boxed, ref-counted value (dynarray.go),
 	// so it is managed regardless of flavor — like a string.
 	return types.IsString(t) || types.IsDynamicArray(t) || types.AllocationOf(t) == types.Shared

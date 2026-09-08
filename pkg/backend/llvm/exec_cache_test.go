@@ -110,6 +110,13 @@ func compileCachedSalted(t *testing.T, clang, ir, salt string, extraArgs ...stri
 
 	compile := func(binPath string) {
 		llPath := filepath.Join(t.TempDir(), "prog.ll")
+		// A sequence value is a coroutine, which a compiler older than LLVM 15 cannot
+		// split. Skipped rather than failed, as the zlib round trip skips without zlib —
+		// and, as there, it must not skip in the Linux container or in CI, both of which
+		// carry a clang that can.
+		if err := CheckCoroutineSupport([]byte(ir), clang); err != nil {
+			t.Skip(err)
+		}
 		if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
 			t.Fatal(err)
 		}

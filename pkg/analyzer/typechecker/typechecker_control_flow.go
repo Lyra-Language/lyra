@@ -1495,7 +1495,7 @@ func isIterableType(t types.Type) bool {
 // for it would be a shape with nothing in it. The compiler knows it by name, the way it
 // still knows `Maybe` in a program with no declaration of one. A program's own `Seq`
 // declaration wins over it, as any declaration wins over an ambient name.
-const SeqTypeName = "Seq"
+const SeqTypeName = types.SeqTypeName
 
 // seqElementType answers `t` for a `Seq<t>`, and false for anything else — the one
 // place the sequence type is taken apart, shared by the source drivers, `yield` and the

@@ -367,6 +367,14 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		return "", 1
 	}
 
+	// A program holding a sequence as a value needs a compiler that splits coroutines
+	// (clang 15 or later); an older one would crash in code generation, so it is refused
+	// here by name, with the IR kept for a compiler that can.
+	if err := llvm.CheckCoroutineSupport(ir, cc); err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s %s -o %s\n", llPath, o.opt, llPath, strings.Join(libs, " "), exePath(o))
+		return "", 1
+	}
 	exe := exePath(o)
 	cmd := exec.Command(cc, append(append([]string{o.opt, llPath}, libs...), "-o", exe)...)
 	if out, err := cmd.CombinedOutput(); err != nil {

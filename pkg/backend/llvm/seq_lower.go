@@ -72,6 +72,7 @@ type seqEnv struct {
 	// terminal that flushed from the *caller's* base released a string the caller's
 	// statement was still using — `"${xs.join(",")} ${s.sum()}"` copied freed bytes.
 	pendingBase int
+	coro        *coroCtx
 }
 
 func (l *lowerer) captureEnv() seqEnv {
@@ -87,6 +88,7 @@ func (l *lowerer) captureEnv() seqEnv {
 		yield:         l.yield,
 		inlineRet:     l.inlineRet,
 		pendingBase:   l.pendingBase,
+		coro:          l.coro,
 	}
 }
 
@@ -102,6 +104,7 @@ func (l *lowerer) installEnv(e seqEnv) {
 	l.yield = e.yield
 	l.inlineRet = e.inlineRet
 	l.pendingBase = e.pendingBase
+	l.coro = e.coro
 }
 
 // seqBinding is a `Seq`-typed parameter: the producer expression the caller passed, and
@@ -177,7 +180,8 @@ func (l *lowerer) lowerSeqProducer(block *ir.Block, src ast.Expression, y *seqYi
 			l.installEnv(saved)
 			return end, err
 		}
-		return nil, errSeqStage1("%q holds a sequence, and a sequence cannot be bound: write the chain where it is consumed, or materialize it with brackets", s.Name)
+		// A binding holding a sequence value: pulled through its coroutine (stage 2).
+		return l.lowerSeqPullExpr(block, s, y)
 	case *ast.UnsafeBlockExpr:
 		if s.Body != nil {
 			return l.lowerSeqProducer(block, s.Body, y)
@@ -201,7 +205,29 @@ func (l *lowerer) lowerSeqProducer(block *ir.Block, src ast.Expression, y *seqYi
 		}
 		return l.inlineProducerAlias(block, s, lambda, subst, key, site, y)
 	}
-	return nil, errSeqStage1("a sequence produced by a %s cannot be consumed here", src.GetName())
+	// Anything else that is a sequence — a field, an element, a call's result — is a
+	// value, pulled through its coroutine (stage 2).
+	return l.lowerSeqPullExpr(block, src, y)
+}
+
+// lowerSeqPullExpr lowers a sequence *value* and walks it for y.
+func (l *lowerer) lowerSeqPullExpr(block *ir.Block, src ast.Expression, y *seqYield) (*ir.Block, error) {
+	srcType, ok := l.recordedType(src)
+	if !ok {
+		return nil, fmt.Errorf("llvm: no type recorded for a sequence source")
+	}
+	elem, ok := seqElem(srcType)
+	if !ok {
+		return nil, errSeqStage1("a %s of type %s cannot be walked as a sequence", src.GetName(), srcType)
+	}
+	box, block, err := l.lowerSeqValue(block, src)
+	if err != nil {
+		return nil, err
+	}
+	if diverged(box, block) {
+		return block, nil
+	}
+	return l.lowerSeqPull(block, box, elem, y)
 }
 
 func lambdaDisplayName(call *ast.FunctionCallExpr) string {
@@ -244,8 +270,9 @@ func (l *lowerer) seqCallee(call *ast.FunctionCallExpr) (lambda *ast.LambdaExpr,
 // sequence, met in value position. A terminal (`sum`, `first`) is inlined and its
 // result is the call's value; a producer used as a value has nowhere to go.
 func (l *lowerer) inlineSeqCall(block *ir.Block, call *ast.FunctionCallExpr, lambda *ast.LambdaExpr, subst map[string]types.Type, key string, site ast.Location) (value.Value, *ir.Block, error) {
+	// A producer in value position is a sequence *value*: a coroutine (stage 2).
 	if lambda.IsGenerator || (lambda.ReturnType.Type != nil && isSeqType(lambda.ReturnType.Type)) {
-		return nil, nil, errSeqStage1("the sequence %q produces is used as a value: consume it with for-in, brackets, or a terminal such as sum() or to_array()", lambdaDisplayName(call))
+		return l.lowerSeqValue(block, call)
 	}
 	return l.inlineCallee(block, call, lambda, subst, key, site, nil)
 }
@@ -388,8 +415,19 @@ func (l *lowerer) bindInlineParams(block *ir.Block, call *ast.FunctionCallExpr, 
 		arg := call.Arguments[i]
 		b := boundArg{param: param, name: ident.Name}
 		switch {
-		case isSeqType(param.Type):
+		case isSeqType(param.Type) && !paramUsedAsValue(lambda, ident.Name):
 			b.seq = &seqBinding{expr: arg, env: callerEnv}
+		case isSeqType(param.Type):
+			// Used as a value in the body (`rest.next()`, `var r = other`): the argument
+			// becomes a coroutine box, and the body's walks over it pull.
+			v, next, err := l.lowerSeqValue(block, arg)
+			if err != nil {
+				return nil, 0, nil, err
+			}
+			if diverged(v, next) {
+				return nil, 0, nil, errSeqStage1("an argument to %q diverges", lambdaDisplayName(call))
+			}
+			block, b.val = next, v
 		case paramIsByRef(param):
 			ptr, next, err := l.argumentAddress(block, arg)
 			if err != nil {
@@ -461,8 +499,8 @@ func (l *lowerer) bindInlineParams(block *ir.Block, call *ast.FunctionCallExpr, 
 // continuation the producer resumes in. The consumer runs in its own environment, with
 // a loopCtx whose break leaves this producer and whose continue comes back here.
 func (l *lowerer) lowerYieldExpr(block *ir.Block, e *ast.YieldExpr) (value.Value, *ir.Block, error) {
-	if l.yield == nil {
-		return nil, nil, errSeqStage1("a yield outside an inlined producer")
+	if l.yield == nil && l.coro == nil {
+		return nil, nil, errSeqStage1("a yield outside a producer")
 	}
 	v, block, err := l.lowerExpr(block, e.Value)
 	if err != nil {
@@ -478,8 +516,8 @@ func (l *lowerer) lowerYieldExpr(block *ir.Block, e *ast.YieldExpr) (value.Value
 // lowerYieldFromExpr lowers `yield from s`: every element of s is yielded in turn, so
 // s is consumed with this producer's own yield as the consumer.
 func (l *lowerer) lowerYieldFromExpr(block *ir.Block, e *ast.YieldFromExpr) (value.Value, *ir.Block, error) {
-	if l.yield == nil {
-		return nil, nil, errSeqStage1("a yield outside an inlined producer")
+	if l.yield == nil && l.coro == nil {
+		return nil, nil, errSeqStage1("a yield outside a producer")
 	}
 	srcType, ok := l.recordedType(e.Generator)
 	if !ok {
@@ -503,24 +541,40 @@ func (l *lowerer) lowerYieldFromExpr(block *ir.Block, e *ast.YieldFromExpr) (val
 // depth and temp base are the consumer's, so a `break` releases what the producer had
 // live as well as the consumer's own. This producer's environment is put back after.
 func (l *lowerer) yieldValueTo(block *ir.Block, v value.Value) (*ir.Block, error) {
-	y := l.yield
-	cont := block.Parent.NewBlock("")
-	saved := l.captureEnv()
-	l.installEnv(y.env)
-	l.loops = append(l.loops, loopCtx{breakTarget: y.exit, continueTarget: cont, frameDepth: y.frameDepth, tempBase: y.tempBase})
-	end, err := y.consume(block, v)
-	l.installEnv(saved)
-	if err != nil {
-		return nil, err
+	// Inside a coroutine body the consumer is whoever resumes it: suspend (stage 2).
+	if l.yield == nil {
+		return l.lowerCoroYield(block, v)
 	}
-	if end.Term == nil {
-		end.NewBr(cont)
+	cont := block.Parent.NewBlock("")
+	if _, err := l.runConsumer(block, l.yield, v, cont); err != nil {
+		return nil, err
 	}
 	// The producer resumes in cont. A statement-level flush after this yield lands
 	// there, and cont is dominated by every block above it, so a temporary produced
 	// for the yielded value is released on the resumed path — and, through the
 	// consumer's tempBase, on a break.
 	return cont, nil
+}
+
+// runConsumer runs y's consumer on v under the consumer's own environment, with a
+// loopCtx whose break leaves the producer and whose continue goes to `next` — the
+// yield's continuation for an inlined producer, the loop head for a pulled one. The
+// current environment is put back after; the returned block is the consumer's end,
+// unterminated when its body fell through.
+func (l *lowerer) runConsumer(block *ir.Block, y *seqYield, v value.Value, next *ir.Block) (*ir.Block, error) {
+	saved := l.captureEnv()
+	l.installEnv(y.env)
+	l.loops = append(l.loops, loopCtx{breakTarget: y.exit, continueTarget: next, frameDepth: y.frameDepth, tempBase: y.tempBase})
+	end, err := y.consume(block, v)
+	l.installEnv(saved)
+	if err != nil {
+		return nil, err
+	}
+	if end.Term == nil {
+		end.NewBr(next)
+		return next, nil
+	}
+	return next, nil
 }
 
 // lowerForInSeq lowers `for x in s { body }` over a sequence: the loop variable is a
