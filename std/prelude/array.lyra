@@ -55,6 +55,23 @@ pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 /// ```
 pub let filter<t> = pure (self: []t, predicate: (t) -> bool) -> []t => [x in self | predicate(x) | x]
 
+/// A copy of the first `n` elements — all of them when `n` exceeds the length, so
+/// `ranked.take(10)` on a shorter array is the whole array rather than a trap. Allocates
+/// the copy, as `slice` does.
+///
+/// ```
+/// for (word, count) in ranked.take(10) { println("${word}: ${count}") }
+/// ```
+///
+/// # Panics
+///
+/// Traps when `n` is negative: there is no such prefix, and clamping it to zero would
+/// turn a sign mistake into a silently empty result.
+pub let take<t> = pure (self: []t, n: i64) -> []t => {
+  if n < 0 { panic("take: count must not be negative") }
+  self.slice(0, min(n, self.len()))
+}
+
 /// Sorts `self` in place by `cmp`, which answers how its first argument orders against
 /// its second. No `Ord` needed, which is what makes it the way to sort floats, or by one
 /// field, or descending:

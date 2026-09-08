@@ -11,7 +11,7 @@ module std.io
 //! address-of each, so nothing is lost.
 //!
 //! ```
-//! import std.io.{ read_file }
+//! import std.io.{ read_file, read_stdin }
 //!
 //! match read_file("notes.txt") {
 //!   Some(text) => print(text),
@@ -31,6 +31,27 @@ module std.io
 pub let read_file = (path: string) -> Maybe<string> => {
   let fd = unsafe { open(path.cstring_ptr(), O_RDONLY) }
   if fd < 0 { return None }
+  let text = read_all(fd)
+  unsafe { close(fd) }
+  Some(text)
+}
+
+/// The whole of standard input as one string, read to end-of-file.
+///
+/// The counterpart of `read_file` for a program that takes its input from a pipe, so
+/// the two sources hand the rest of the program one shape; `read_line` is the
+/// line-at-a-time alternative for a program that answers as it reads. Newlines are kept
+/// as they arrived. Blocks until the writer closes the pipe, or until Ctrl-D on a
+/// terminal.
+///
+/// ```
+/// let text = match args.value("-f") { Some(path) => read_file(path)?, None => read_stdin() }
+/// ```
+pub let read_stdin = () -> string => read_all(STDIN)
+
+// Reads `fd` to end-of-file, a chunk at a time, and joins the chunks once — so a large
+// input costs one copy rather than one per chunk. The reader for both sources above.
+let read_all = (fd: i32) -> string => {
   var chunks: []string = []
   var buf: []u8 = [0; CHUNK]
   for {
@@ -38,8 +59,7 @@ pub let read_file = (path: string) -> Maybe<string> => {
     if n <= 0 { break }
     chunks.push(buf.slice(0, n).decode_utf8())
   }
-  unsafe { close(fd) }
-  Some(chunks.join(""))
+  chunks.join("")
 }
 
 /// Bytes per `read`. Big enough that a small file is one call, small enough not to matter.
@@ -47,6 +67,9 @@ const CHUNK = 65536
 
 /// `O_RDONLY` is 0 on every platform Lyra targets.
 const O_RDONLY: i32 = 0
+
+/// Standard input's descriptor.
+const STDIN: i32 = 0
 
 // File descriptors rather than `FILE *`: a raw pointer cannot be tested for null, an
 // integer can be compared with -1. `open` is variadic in C (the mode, read only under

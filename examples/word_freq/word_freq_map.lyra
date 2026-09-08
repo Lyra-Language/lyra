@@ -9,8 +9,8 @@
 //
 // The map's iteration order is the table's, so the report is sorted here by count.
 
-import std.collections.{ HashMap, hashmap_new, insert, get_or, entries, ProgramArgs, parse_args, has, value }
-import std.io.{ read_file }
+import std.collections.{ HashMap, hashmap_new, update, entries, ProgramArgs, parse_args, has, value }
+import std.io.{ read_file, read_stdin }
 
 let main = () -> u8 => {
   let args = parse_args(["-f", "-n"])
@@ -31,32 +31,21 @@ let main = () -> u8 => {
       },
     },
   }
-  // A valued flag with a default: absent, or not a number, means every word.
-  let limit = args.value("-n").flat_map((s) => s.parse_i64()).unwrap_or(-1)
-
   var word_counts: HashMap<string, i64> = hashmap_new()
   for w in text.split_when((r) => !r.is_ascii_alpha()) {
-    let word = w.to_ascii_lower()
-    word_counts.insert(word, word_counts.get_or(word, 0) + 1)
+    word_counts.update(w.to_ascii_lower(), 0, (n) => n + 1)
   }
-  for i, (word, n) in by_count(word_counts.entries()) {
-    if limit >= 0 && i >= limit { break }
+
+  // A valued flag with a default: absent, not a number, or negative means every word.
+  let ranked = by_count(word_counts.entries())
+  let shown = match args.value("-n").flat_map((s) => s.parse_i64()).filter((n) => n >= 0) {
+    Some(n) => ranked.take(n),
+    None => ranked,
+  }
+  for (word, n) in shown {
     println("${word}: ${n}")
   }
   0
-}
-
-// Every line of stdin, joined back with the newlines `read_line` removed — so the two
-// sources hand the counting loop one shape.
-let read_stdin = () -> string => {
-  var lines: []string = []
-  for {
-    match read_line() {
-      Some(line) => { lines.push(line) },
-      None => { break },
-    }
-  }
-  lines.join("\n")
 }
 
 // Descending by count, then ascending by word, so a tie is the same across runs — the

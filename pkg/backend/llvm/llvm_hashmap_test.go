@@ -114,3 +114,27 @@ let main = () -> void => {
 		t.Errorf("struct-keyed lookups = %q; want \"ab?\"", got)
 	}
 }
+
+// `update` is the counting idiom in one probe: `f` of the current value, or of the
+// default when the key is new. Checked against a count the test can compute — 1000
+// updates over seven keys, so each key sees 142 or 143 of them on top of its default.
+// `take` and `read_stdin` ride along, being the other two additions the word-frequency
+// example drove on the same day: `take` clamps to the length, and `read_stdin` answers
+// the whole of a piped input with its newlines kept.
+func TestExec_HashMapUpdateTakeAndReadStdin(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+import std.collections.{ HashMap, hashmap_new, update, get_or, len }
+import std.io.{ read_stdin }
+let main = () -> void => {
+  var m: HashMap<string, i64> = hashmap_new()
+  for i in 0..<1000 { m.update("k${i %% 7}", 100, (n) => n + 1) }
+  let xs: []i64 = [1, 2, 3]
+  let text = read_stdin()
+  print("${m.len()} ${m.get_or("k0", -1)} ${m.get_or("k6", -1)} | ${xs.take(2).join(",")} ${xs.take(10).len()} ${xs.take(0).len()} | ${text.len()} ${text.split("\n").len()}")
+}
+`, "one\ntwo\nthree\n")
+	if got := strings.TrimSpace(out); got != "7 243 242 | 1,2 3 0 | 14 4" {
+		t.Errorf("printed %q; want \"7 243 242 | 1,2 3 0 | 14 4\"", got)
+	}
+}

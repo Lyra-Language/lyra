@@ -159,6 +159,27 @@ pub let replace<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, valu
   }
 }
 
+/// Maps `key` to `f` of its current value — or of `default`, when the key is absent.
+///
+/// The counting idiom in one probe: `counts.update(word, 0, (n) => n + 1)` is what
+/// `counts.insert(word, counts.get_or(word, 0) + 1)` says, without finding the key twice.
+/// `default` is evaluated whether or not it is used, being an ordinary argument; `f`
+/// runs exactly once. A new key may trigger a grow, as `insert` may.
+pub let update<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, default: v, f: (v) -> v) -> void => {
+  let hash = hash_key(key)
+  match self.find_index(key, hash) {
+    Some(i) => match self.slots[i] {
+      Some(e) => { self.slots[i] = Some(Entry { hash: hash, key: key, value: f(e.value) }) },
+      None => {},
+    },
+    None => {
+      if (self.count + 1) * 4 > self.slots.len() * 3 { self.grow() }
+      self.place(Entry { hash: hash, key: key, value: f(default) })
+      self.count += 1
+    },
+  }
+}
+
 /// The value mapped to `key`, or `None` if there is none.
 ///
 /// Expected O(1): a probe from the key's hash, confirmed with `==`.
