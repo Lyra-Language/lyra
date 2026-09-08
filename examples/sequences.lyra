@@ -1,0 +1,87 @@
+// Sequences as values — `zip` and `next()`, the two things a chain consumed in place
+// cannot do.
+//
+//   lyrac run examples/sequences.lyra
+//
+// A chain walked where it is written is one fused loop and holds nothing. Held in a
+// binding, a sequence is a cursor over a suspended computation: `next()` steps it, `zip`
+// walks two in lockstep, and a copy shares the cursor. Everything here is infinite, so
+// every walk ends by `take`.
+
+let main = () -> void => {
+  // Numbering: a counter zipped against the sequence.
+  for (i, f) in naturals().zip(fib()).take(10) { print("F${i}=${f} ") }
+  println("")
+
+  // Consecutive differences: the sequence zipped against a copy of itself that was
+  // stepped once with next(), so the copy runs one element ahead.
+  var ahead = fib()
+  let _ = ahead.next()
+  for (a, b) in fib().zip(ahead).take(8) { print("${b - a} ") }
+  println("")
+
+  // Two cursors driven by hand: the ascending merge of two ascending sequences.
+  for m in merge(multiples(3), multiples(5)).take(12) { print("${m} ") }
+  println("")
+
+  // A held cursor keeps its place: stepped twice by hand, then walked from there.
+  var evens = naturals().filter((n) => n % 2 == 0)
+  let one = evens.next().unwrap_or(-1)
+  let two = evens.next().unwrap_or(-1)
+  let rest = [x in evens.take(3) | x]
+  println("stepped ${one} and ${two}, then ${rest.join(" ")}")
+}
+
+// 0, 1, 1, 2, 3, 5, … — each element the sum of the two before it.
+let fib = pure gen () -> Seq<i64> => {
+  var a = 0
+  var b = 1
+  for {
+    yield a
+    let after = a + b
+    a = b
+    b = after
+  }
+}
+
+// 0, 1, 2, … with no end.
+let naturals = pure gen () -> Seq<i64> => {
+  var n = 0
+  for { yield n; n += 1 }
+}
+
+// k, 2k, 3k, …
+let multiples = pure gen (k: i64) -> Seq<i64> => {
+  var n = k
+  for { yield n; n += k }
+}
+
+// The ascending merge of two ascending sequences, each value once. This is what next()
+// exists for: a walk over one sequence can never look at the other's head, so both are
+// held as cursors and the smaller head is yielded and advanced.
+let merge = pure gen (a: Seq<i64>, b: Seq<i64>) -> Seq<i64> => {
+  var xs = a
+  var ys = b
+  var x = xs.next()
+  var y = ys.next()
+  for {
+    match (x, y) {
+      (None, None) => { break },
+      (Some(v), None) => { yield v; x = xs.next() },
+      (None, Some(w)) => { yield w; y = ys.next() },
+      (Some(v), Some(w)) => {
+        if v < w {
+          yield v
+          x = xs.next()
+        } else if w < v {
+          yield w
+          y = ys.next()
+        } else {
+          yield v
+          x = xs.next()
+          y = ys.next()
+        }
+      },
+    }
+  }
+}
