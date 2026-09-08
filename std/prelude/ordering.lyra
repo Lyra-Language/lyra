@@ -210,6 +210,37 @@ pub let min<t> where t: Ord = pure noalloc (self: t, other: t) -> t =>
 pub let max<t> where t: Ord = pure noalloc (self: t, other: t) -> t =>
   match self.compare(other) { Less => other, Equal => other, Greater => self }
 
+/// `self` unless it is `Equal`, in which case `next` — the tie-break, so a comparator
+/// over two keys reads as one line: `(a.count <=> b.count).then(a.name <=> b.name)`.
+///
+/// `next` is evaluated whether or not it is needed, being an ordinary argument. That is
+/// a compare of the second key, which for the keys a comparator is usually written over
+/// costs nothing worth a closure; `then_with` is the lazy form for when it does.
+///
+/// # Examples
+///
+/// ```
+/// pairs.sorted_by(((word_a, count_a), (word_b, count_b)) =>
+///   (count_b <=> count_a).then(word_a <=> word_b))
+/// ```
+pub let then = pure noalloc (self: Ordering, next: Ordering) -> Ordering =>
+  match self { Equal => next, decided => decided }
+
+/// `self` unless it is `Equal`, in which case the result of calling `f` — the lazy
+/// `then`, for a tie-break that is expensive or has an effect worth skipping.
+///
+/// `f` runs only on the `Equal` branch, so a comparator whose second key is computed
+/// (a lowercased copy, a parsed number, a lookup) pays for it only on a tie. The same
+/// relation `unwrap_or_else` has to `unwrap_or`.
+///
+/// # Examples
+///
+/// ```
+/// (a.count <=> b.count).then_with(() => a.name.to_ascii_lower() <=> b.name.to_ascii_lower())
+/// ```
+pub let then_with = pure noalloc (self: Ordering, f: () -> Ordering) -> Ordering =>
+  match self { Equal => f(), decided => decided }
+
 /// `self` restricted to the range `lo..=hi`.
 ///
 /// ```

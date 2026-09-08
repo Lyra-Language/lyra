@@ -60,7 +60,12 @@ let read_stdin = () -> string => {
 }
 
 // Descending by count, then ascending by word, so a tie is the same across runs — the
-// map's iteration order is the table's. `sorted_by` is the prelude's stable copy, and the
-// comparator says the order once, in the `Ordering` every sort takes.
+// map's iteration order is the table's. `sorted_by` is the prelude's stable copy. The
+// comparator names the tuple's halves and lets the count decide unless it is a tie;
+// `count_b <=> count_a`, operands reversed, is how a descending order is spelled.
 let by_count = pure (pairs: [](string, i64)) -> [](string, i64) =>
-  pairs.sorted_by((a, b) => if a.1 != b.1 { b.1.compare(a.1) } else { a.0.compare(b.0) })
+  pairs.sorted_by(((word_a, count_a), (word_b, count_b)) =>
+    match count_b <=> count_a {
+      Equal => word_a <=> word_b,
+      by_count => by_count,
+    })
