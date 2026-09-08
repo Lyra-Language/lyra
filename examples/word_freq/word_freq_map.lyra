@@ -27,20 +27,8 @@ let main = () => {
   }
 }
 
-// Insertion sort, descending by count and then ascending by word so a tie is stable
-// across runs. Fine for a vocabulary; the prelude has no sort yet.
-let by_count = pure (pairs: [](string, i64)) -> [](string, i64) => {
-  let mut sorted: [](string, i64) = []
-  for (word, n) in pairs {
-    var at = sorted.len()
-    for at > 0 && before(word, n, sorted[at - 1]) { at -= 1 }
-    sorted.push((word, n))
-    var i = sorted.len() - 1
-    for i > at { sorted[i] = sorted[i - 1]; i -= 1 }
-    sorted[at] = (word, n)
-  }
-  sorted
-}
-
-let before = pure noalloc (word: string, n: i64, other: (string, i64)) -> bool =>
-  n > other.1 || (n == other.1 && word < other.0)
+// Descending by count, then ascending by word, so a tie is the same across runs — the
+// map's iteration order is the table's. `sorted_by` is the prelude's stable copy, and the
+// comparator says the order once, in the `Ordering` every sort takes.
+let by_count = pure (pairs: [](string, i64)) -> [](string, i64) =>
+  pairs.sorted_by((a, b) => if a.1 != b.1 { b.1.compare(a.1) } else { a.0.compare(b.0) })

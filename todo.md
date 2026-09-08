@@ -243,9 +243,10 @@ write today:
 - **[OPEN 09/07] A lambda argument's parameters are not elaborated from a generic
   callee's parameter type.** `self.sort_by((a, b) => a.compare(b))` inside
   `sort<t> where t: Ord` reports *undefined symbol "a"* and then *cannot infer type
-  variable t*; `(a: t, b: t) => …` works, and so does the unannotated form against a
-  non-generic callee. The receiver already fixes `t`, so the lambda's slot type is known
-  before the lambda is looked at. Found delegating the prelude's `Ord` sorts to
+  variable t*; `(a: t, b: t) => …` works, and so does the unannotated form when the receiver is
+  concrete (`pairs.sorted_by((a, b) => …)` in `examples/word_freq`), so the gap is a
+  receiver whose type is itself a type parameter. That receiver already fixes `t`, so the
+  lambda's slot type is known before the lambda is looked at. Found delegating the prelude's `Ord` sorts to
   `sort_by`.
 
 - **[OPEN 09/07] A lambda calling a bound method is impure; the same call inline is
