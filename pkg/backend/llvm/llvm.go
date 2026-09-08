@@ -259,9 +259,14 @@ type lowerer struct {
 	// `if l.x == nil` accessors before this; the accessors remain, because what a call
 	// site wants is `l.memcpyFunc()` and not a signature spelled out again.
 	libc       map[string]*ir.Func
-	res        *driver.Result              // gives you TypeTable, SymbolTable, MethodTable, …
-	funcs      map[string]*ir.Func         // name → its function IR (all declared before any body)
-	seqSkipped map[string]bool             // functions left undeclared because they mention a Seq (forEachUserFunction)
+	res        *driver.Result      // gives you TypeTable, SymbolTable, MethodTable, …
+	funcs      map[string]*ir.Func // name → its function IR (all declared before any body)
+	seqSkipped map[string]bool     // functions left undeclared because they mention a Seq (forEachUserFunction)
+	// Lazy sequences (seq_lower.go): the sequence parameters of the body being inlined,
+	// the consumer its yields feed, and where an inlined body's `return` goes.
+	seqParams  map[string]seqBinding
+	yield      *seqYield
+	inlineRet  *inlineReturn
 	funcParams map[string][]ast.Parameter  // name → its declared parameters (call sites need the `mut` by-ref modes)
 	overloads  map[*ast.LambdaExpr]emitted // receiver-keyed overloads, by declaration (see overloads.go)
 	consts     map[string]*ast.VarDeclStmt // top-level `const` name → its declaration (its value is inlined at each use)
@@ -800,6 +805,10 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerArrayRepeatExpr(block, e)
 	case *ast.ArrayCompExpr:
 		return l.lowerArrayComp(block, e)
+	case *ast.YieldExpr:
+		return l.lowerYieldExpr(block, e)
+	case *ast.YieldFromExpr:
+		return l.lowerYieldFromExpr(block, e)
 	case *ast.IndexExpr:
 		return l.lowerIndexExpr(block, e)
 	case *ast.AnonymousStructInstanceExpr:

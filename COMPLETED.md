@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 09/08/26 — lazy sequences lower: stage 1, the producer at its consumer
+
+`examples/primes.lyra` runs, and every number it prints is right. Nothing represents a
+`Seq<t>`: a `gen` function's body is lowered inside the loop that walks it, each
+`yield e` becoming the consumer's body on `e`, so `naturals().filter(p).take(n)` is one
+loop nest — `take`'s body at the consumer, `filter`'s inside its `for x in self`,
+`naturals` inside that. A terminal is an inlined call with `return` redirected to a
+result slot, which is what makes `sum`'s own `for-in` local again. No sequence
+function is emitted at any instantiation; the backend skips them where it skips
+unused generics.
+
+**Three mechanisms, and the one bug worth recording.** A consumer's body runs under a
+`loopCtx` whose break target is the block after the whole producer and whose continue
+target is that yield's continuation, so `take`'s `break` — written in a body *it* runs as
+a consumer — exits exactly the producer it consumes. Every body runs in its own
+environment (`seqEnv`: locals, loops, substitution, ownership table, module, sequence
+parameters, the yield and return handlers), captured when a consumer is set up and
+reinstalled at each yield. And a `Seq` argument is never evaluated: it is the producer
+expression plus the environment it was written in, lowered where the callee walks it.
+The bug: an inlined body's temporary flushes ran from the *caller's* statement base, so
+`sum` inlined inside `"${xs.join(",")} ${s.sum()}"` released the join's string before
+the interpolation copied it — NUL bytes of the right length, and a duplicated literal.
+The base now travels in the environment; a body flushes only what it made.
+
+**Managed elements are right under ASan.** A yielded string is a temporary of its yield
+statement, released after the consumer body ran, on the resumed path and on a break
+through the consumer's temp base; what brackets keep is retained into the array.
+
+Two things found on the way and left open: a comprehension inside a string
+interpolation is a syntax error with or without sequences, and `yield from` over an
+array, string or range type-checks but is refused by the lowering until someone needs it.
+
 ### 09/08/26 — lazy sequences: the two decisions, the target program, and the typechecker rung
 
 `gen`, `yield` and `yield from` had parsed since before 08/04 with nothing downstream

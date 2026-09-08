@@ -1,29 +1,33 @@
 package main
 
 import (
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// `examples/primes.lyra` is the target program for lazy sequences, and this pins its
-// status (09/08): it **type-checks** — `gen`, `yield`, `Seq<t>` as a source, the prelude's
-// combinators — and the build is **refused by name**, because the lowering has not landed.
-// When stage 1 lands, the second half of this test flips to running the program; until
-// then a refusal that reads as anything but "not lowered yet" is a regression in the
-// message, and a build that succeeds is a lowering nobody wrote.
-func TestExample_PrimesTypeChecksAndIsRefusedByName(t *testing.T) {
+// `examples/primes.lyra` is the target program for lazy sequences, run end to end: an
+// infinite `naturals()` through `filter`, `map`, `take` and `take_while`, consumed by
+// brackets, by `for`, and by three terminals. Every value is checked against the number
+// theory rather than against the program's own output — the sum of the first hundred
+// primes is 24133, eight primes lie below twenty, and 1009 is the first above a
+// thousand — so a lowering that runs and answers wrong fails here too.
+func TestExample_PrimesRuns(t *testing.T) {
 	root := repoRoot(t)
 	t.Setenv("LYRA_STD", root)
 	example := filepath.Join(root, "examples", "primes.lyra")
-	if _, stderr, code := captureRun(t, "check", example); code != 0 {
-		t.Fatalf("check exited %d\nstderr: %s", code, stderr)
+	bin := filepath.Join(t.TempDir(), "primes")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, example); code != 0 {
+		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
 	}
-	_, stderr, code := captureRun(t, "build", "-o", filepath.Join(t.TempDir(), "primes"), example)
-	if code == 0 {
-		t.Fatal("build succeeded: lazy sequences lower now, so this test should run the program instead")
+	out, err := exec.Command(bin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the example failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(stderr, "lazy sequences are not lowered yet") {
-		t.Errorf("the refusal should say what is missing; got:\n%s", stderr)
+	want := "First ten primes: 2 3 5 7 11 13 17 19 23 29\n4 9 25 49 121 \nSum of the first hundred primes: 24133\nHow many primes are below twenty: 8\nFirst prime above a thousand: 1009\nodd squares: 1 9\n"
+	if got := string(out); got != want {
+		t.Errorf("output:\n%s\nwant:\n%s", got, want)
 	}
+	_ = strings.TrimSpace
 }

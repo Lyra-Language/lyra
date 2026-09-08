@@ -7,7 +7,6 @@ import (
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -36,6 +35,9 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSig
 	l.exitReleases = nil
 	l.reuseToken = nil
 	l.byRefParams = map[value.Value]bool{}
+	l.seqParams = map[string]seqBinding{}
+	l.yield = nil
+	l.inlineRet = nil
 }
 
 // paramIsByRef reports whether a parameter is passed as a **pointer to the caller's
@@ -94,6 +96,17 @@ func paramIsByRef(param ast.Parameter) bool {
 func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
 	if err := l.flushStmtTemps(start, block); err != nil {
 		return err
+	}
+	// Inside an inlined sequence function (seq_lower.go) a `return` leaves that body,
+	// not the function it was inlined into: the value goes to the inline result slot,
+	// the frames the inlined body pushed are released, and control goes to its exit.
+	if r := l.inlineRet; r != nil {
+		if err := l.releaseManagedFramesFrom(block, r.frameDepth); err != nil {
+			return err
+		}
+		l.storeInlineResult(block, val, r)
+		block.NewBr(r.exit)
+		return nil
 	}
 	if err := l.releaseAllManagedFrames(block); err != nil {
 		return err
@@ -245,11 +258,10 @@ func (l *lowerer) forEachUserFunction(program *ast.Program, entry *ast.LambdaExp
 		if isGenericLambda(lambda) {
 			continue
 		}
-		// A lazy-sequence function is typechecked and not lowered (09/08): a `gen` body
-		// has no representation here, and neither does a `Seq<t>` parameter or return
-		// — the prelude's `sum` over `Seq<i64>` is one, and it is a plain function every
-		// program would otherwise declare. Skipped rather than refused, exactly as an
-		// unused generic costs nothing; a *call* to one is refused by name (lowerDirectCall).
+		// A sequence function has no emitted body: a `gen` is lowered at its consumer and
+		// a terminal at its call (seq_lower.go), so the prelude's `sum` over `Seq<i64>` —
+		// a plain function every program would otherwise declare — is skipped here,
+		// exactly as an unused generic costs nothing.
 		if mentionsSeq(lambda) {
 			l.seqSkipped[l.funcKey(decl.Name, decl.GetLocation())] = true
 			continue
@@ -269,15 +281,11 @@ func mentionsSeq(fn *ast.LambdaExpr) bool {
 	if fn.IsGenerator {
 		return true
 	}
-	isSeq := func(t types.Type) bool {
-		p, ok := t.(types.ParameterizedType)
-		return ok && p.Name == typechecker.SeqTypeName
-	}
-	if fn.ReturnType.Type != nil && isSeq(fn.ReturnType.Type) {
+	if fn.ReturnType.Type != nil && isSeqType(fn.ReturnType.Type) {
 		return true
 	}
 	for _, param := range fn.Parameters {
-		if param.Type != nil && isSeq(param.Type) {
+		if param.Type != nil && isSeqType(param.Type) {
 			return true
 		}
 	}
@@ -497,6 +505,12 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	if l.res.TypeTable.IsBaseReadout(e) {
 		return l.lowerExpr(block, e.Arguments[0])
 	}
+	// A function that takes or returns a sequence has no emitted body: it is inlined
+	// at its call (seq_lower.go). Checked before the specialization and overload
+	// tables, which hold no entry for it.
+	if lambda, subst, key, site, ok := l.seqCallee(e); ok && mentionsSeq(lambda) {
+		return l.inlineSeqCall(block, e, lambda, subst, key, site)
+	}
 	// A call to a *generic* function resolves to the specialization the typechecker
 	// solved for this call site, not to the generic name (which has no emitted body —
 	// a type variable has no representation). Checked before l.funcs so the two can
@@ -552,9 +566,6 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerProgramArgCountCall(block, e)
 		case "program_arg":
 			return l.lowerProgramArgCall(block, e)
-		}
-		if l.seqSkipped[l.funcKey(ident.Name, ident.GetLocation())] {
-			return nil, nil, errSeqNotLowered
 		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}

@@ -404,6 +404,11 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	if types.IsString(iterType) {
 		return l.lowerForInString(block, e)
 	}
+	// A sequence is lowered at this loop: the producer's body, with each yield running
+	// the loop body (seq_lower.go).
+	if isSeqType(iterType) {
+		return l.lowerForInSeq(block, e, iterType.(types.ParameterizedType).TypeArguments[0])
+	}
 
 	// Resolve the element/index variable names from the one/two-variable form.
 	elemVar, indexVar := e.Key, ""

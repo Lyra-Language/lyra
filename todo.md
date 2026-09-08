@@ -240,6 +240,11 @@ write today:
 
 ## Known bugs
 
+- **[OPEN 09/08] A comprehension inside a string interpolation does not parse.**
+  `"${[x in xs | x].join(",")}"` is a syntax error at the file's first line, with or
+  without sequences; bound to a `let` first it is fine. Presumably the `|` inside `${…}`
+  or the nested brackets confuse the interpolation scanner.
+
 - **[OPEN 09/07] A struct literal's field is not a context for a call's type arguments.**
   `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,
   string>` reports "cannot infer type variables k, v" and names the turbofish, which is
@@ -2089,15 +2094,32 @@ Three reasons, none of them taste:
 
 ### Lowering — push first, state machine only if forced
 
-- **[IDEA] Stage 1: inline the generator into its consumer.** A `Seq` is only ever consumed
+- **[DONE 09/08] Stage 1: the producer is lowered at its consumer** (`seq_lower.go`).
+  `for x in g(a) { B }` lowers g's body with each `yield e` running B on `e`; a chain
+  fuses into one loop nest by construction; a terminal (`sum`, `count`, `first`,
+  `to_array`) is inlined at its call with `return` redirected to a result slot; a plain
+  function whose whole body is a chain is inlined as a producer. A consumer's `break`
+  leaves the whole producer and its `continue` resumes it; every body runs in its own
+  environment (`seqEnv`), reinstalled at each yield; a `Seq` argument is never
+  evaluated, only bound syntactically and lowered where the callee walks it. No
+  sequence function is ever emitted, at any instantiation. `examples/primes.lyra` runs.
+  **Refused, loudly:** a sequence held in a binding or used as a value; a producer that
+  is not a call; a lambda literal inside a sequence function; a destructuring or `mut`
+  parameter on one; a comprehension with a sequence beside another generator; `yield
+  from` over an array, string or range (write the loop); and `zip`, which is stage 2's.
+  One lesson worth its line: an inlined body must start its own temporary base —
+  flushing from the caller's released a string the caller's statement still held
+  (`"${xs.join(",")} ${s.sum()}"` copied freed bytes), and that base now travels in
+  the environment with everything else.
+- **[IDEA] Stage 1 was: inline the generator into its consumer.** A `Seq` is only ever consumed
   by `for-in` or a comprehension, and both consume it in a single loop, so `for x in g(a) { B }`
   can lower as g's body with each `yield e` rewritten to `let x = e; B`. Internal iteration:
   no coroutines, no state machine, no suspension, no heap. **The chain fuses into one loop by
   construction rather than by an optimizer**, which is the whole point of the entry. Buys
   `map`, `filter`, `flat_map`, `take`, `take_while`, `enumerate`, `chain`, `scan`, and
   infinite sequences.
-- **[OPEN] A terminal puts the loop behind a call boundary, and stage 1 has to get through
-  it.** `s.sum()` has its `for-in` inside `sum`, so the generator is not statically visible
+- **[DONE 09/08 — inlined at the call site, as recommended below] A terminal puts the loop
+  behind a call boundary, and stage 1 has to get through it.** `s.sum()` has its `for-in` inside `sum`, so the generator is not statically visible
   to the loop consuming it — and terminals are the *normal* way to end a chain, so this is
   not an edge case. The question underneath is **whether the element type is the whole
   type** — whether `xs.seq()`, `xs.seq().filter(p)` and `xs.seq().filter(p).map(f).take(3)`
@@ -2122,7 +2144,7 @@ Three reasons, none of them taste:
     needs a trait — which drags the `Iterator` trait back in, with the closure-in-a-field
     effect hole that was the second argument against it above. The two options are not
     symmetric.
-- **[OPEN] What stage 1 must refuse, loudly.** `zip` (two producers interleaved needs pull),
+- **[DONE 09/08 — the list is in the stage-1 entry above] What stage 1 must refuse, loudly.** `zip` (two producers interleaved needs pull),
   and a `Seq` reaching a consumer that cannot be inlined through — which under the first
   option above is the general form of the previous bullet.
 - **[IDEA] Stage 2: state-machine transformation** (Rust async / C# iterators / Kotlin) for

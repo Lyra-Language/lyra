@@ -1893,3 +1893,13 @@ typechecker's numericPrimitiveByName exactly" — an unenforced second copy of a
 (`types.ConversionTargetName` is the live one); `isManagedLLVMType`, dead; `maxInt`, which
 predates Go's builtin `max`; and `emitCheckedDiv` rebuilding INT_MIN with `big.Int` twenty
 lines from a call to `intMinConst`.
+
+## Lazy sequences (`seq_lower.go`)
+
+A `Seq<t>` has no representation. A `gen` producer is lowered at its consumer — a
+`for-in` or a comprehension — with each `yield` running the consumer's body, so a chain
+of prelude combinators fuses into one loop nest; a terminal (`sum`, `first`, …) is an
+inlined call whose `return` goes to a result slot. Sequence functions are never emitted.
+The environment a body runs in (`seqEnv`) is captured at the consumer and reinstalled at
+each yield; the refusals and the two open gaps are listed under "Lazy sequences" in
+`todo.md`.

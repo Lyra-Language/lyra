@@ -63,6 +63,11 @@ func (l *lowerer) declareSpecializations() error {
 }
 
 func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
+	// A sequence function is inlined at its consumer or call, never emitted — at any
+	// instantiation (seq_lower.go, forEachUserFunction).
+	if mentionsSeq(inst.Func) {
+		return nil
+	}
 	if len(inst.Func.LambdaClauses) > 0 {
 		return fmt.Errorf("llvm: a multi-clause generic function is not implemented yet (%q)", inst.Name)
 	}
@@ -142,6 +147,9 @@ func (l *lowerer) defineSpecializations() error {
 }
 
 func (l *lowerer) defineSpecialization(inst typetable.Instantiation) error {
+	if mentionsSeq(inst.Func) {
+		return nil // inlined where it is used; see declareSpecialization
+	}
 	irFn := l.specialized[inst.Key()]
 	if irFn == nil {
 		return fmt.Errorf("llvm: specialization %s was not declared", inst.Key())

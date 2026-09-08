@@ -196,7 +196,7 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	return st, nil
 }
 
-// errSeqNotLowered is what a `Seq<t>` reaching the backend reports — a value of the lazy
-// sequence type in a lowered function, which the typechecker admits and this stage does
-// not yet represent (09/08). Named so the two sites that can meet one say the same thing.
-var errSeqNotLowered = errors.New("llvm: a `Seq<t>` value reached the backend, and lazy sequences are not lowered yet — they type-check today and lower in a later stage (todo.md, Lazy sequences)")
+// errSeqNotLowered is what a `Seq<t>` reaching lowerType reports: the typechecker admits
+// a sequence anywhere a type goes, and stage 1 gives it no representation — it exists
+// only at a consumer (seq_lower.go). Named so the two sites that can meet one agree.
+var errSeqNotLowered = errors.New("llvm: a `Seq<t>` reached the backend as a value — stored in a field, an element or a binding — and a sequence has no value of its own: it is lowered at its consumer (seq_lower.go; todo.md, Lazy sequences)")

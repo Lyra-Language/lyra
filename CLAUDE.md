@@ -684,6 +684,29 @@ inside this project, three things:
   lowers to a `getelementptr` with the pointee's type, so "in elements" is what LLVM
   already means and no scaling is written by hand.
 
+## Lazy sequences
+
+`Seq<t>` is compiler-known by name (`typechecker.SeqTypeName`) and declared nowhere; the
+typechecker rung is `typechecker_yield.go` plus `seqElementType`, one function every
+consumer shares. **The backend never represents one** (`backend/llvm/seq_lower.go`): a
+producer is lowered at its consumer, with each `yield` becoming the consumer's body, and
+a terminal is an inlined call. Four things to know before touching it:
+
+- **`mentionsSeq` is the skip.** A function that is a `gen`, or names a `Seq` in its
+  signature, is never declared, defined or specialized; `lowerFunctionCallExpr` inlines a
+  call to one before the specialization and overload tables are consulted. A `Seq<t>`
+  reaching `lowerType` anyway — a field, an element — is `errSeqNotLowered`.
+- **Every body runs in a `seqEnv`**, and anything a body's lowering depends on that is
+  not the shared frame and temporary *stacks* belongs in it. `pendingBase` was the
+  omission that bit: a body flushing from another statement's base frees that
+  statement's temporaries.
+- **`emitReturn` honours `inlineRet`** — a `return` inside an inlined body stores and
+  branches rather than `ret`s, releasing only the frames above the inline's base — so
+  `?` inside a terminal would take the same path. Nothing else may emit a `ret`.
+- **A consumer's `loopCtx` carries the consumer's depths**, so its `break` releases
+  what the producer had live; the producer's own loops sit above it while its body
+  lowers, which is what keeps `take`'s `break` aimed at the producer it consumes.
+
 ## Sweeping for surfaces nothing reads
 
 Features that parse, collect, and are consumed by nobody look implemented and do nothing,

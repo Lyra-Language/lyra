@@ -10,16 +10,16 @@
 let main = () -> void => {
   // Materialized by brackets, the one place an array comes into being.
   let first_ten = [p in naturals().filter(is_prime).take(10) | p]
-  println("first ten: ${first_ten.join(" ")}")
+  println("First ten primes: ${first_ten.join(" ")}")
 
   // Walked, allocating nothing: each prime is squared as the loop asks for it.
   for sq in naturals().filter(is_prime).map((p) => p * p).take(5) { print("${sq} ") }
   println("")
 
   // Terminals put the loop behind a call, which is the ordinary way a chain ends.
-  println("sum of the first hundred: ${naturals().filter(is_prime).take(100).sum()}")
-  println("below twenty: ${naturals().take_while((n) => n < 20).filter(is_prime).count()}")
-  println("first above a thousand: ${naturals().filter((n) => n > 1000).filter(is_prime).first().unwrap_or(-1)}")
+  println("Sum of the first hundred primes: ${naturals().filter(is_prime).take(100).sum()}")
+  println("How many primes are below twenty: ${naturals().take_while((n) => n < 20).filter(is_prime).count()}")
+  println("First prime above a thousand: ${naturals().filter((n) => n > 1000).filter(is_prime).first().unwrap_or(-1)}")
 
   // An array enters the lazy world through seq(), and the eager map stays what it was.
   let squares: []i64 = [1, 2, 3, 4].map((n) => n * n)

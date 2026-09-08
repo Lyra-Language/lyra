@@ -543,7 +543,14 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 		return nil, nil, err
 	}
 
-	boxTy := DynArrayBoxType(elemLL)
+	return nil, l.emitDynArrayPush(block, DynArrayBoxType(elemLL), box, v, stride), nil
+}
+
+// emitDynArrayPush appends v to the box, doubling the buffer when it is full (cap 0 → 4),
+// and returns the block after the store. The push builtin and a comprehension over a
+// sequence (seq_lower.go) — the one comprehension that grows rather than fills — share it.
+func (l *lowerer) emitDynArrayPush(block *ir.Block, boxTy *lltypes.StructType, box, v value.Value, stride int64) *ir.Block {
+	elemLL := v.Type()
 	elemPtrTy := lltypes.NewPointer(elemLL)
 	length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
 	capacity := block.NewLoad(lltypes.I64, dynArrayCapPtr(block, boxTy, box))
@@ -570,7 +577,7 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 	// path stored the new pointer into the box, so one load answers for both paths.
 	storeBlock.NewStore(v, dynArrayElemPtr(storeBlock, boxTy, box, length))
 	storeBlock.NewStore(storeBlock.NewAdd(length, i64c(1)), dynArrayLenPtr(storeBlock, boxTy, box))
-	return nil, storeBlock, nil
+	return storeBlock
 }
 
 // lowerDynArrayReserve lowers `xs.reserve(n)`: one realloc to exactly n elements when the

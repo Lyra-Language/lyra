@@ -86,6 +86,18 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	}
 	stride := alignUp(elemSize, elemAlign)
 
+	// A sequence source has no length to size the box from, so it takes the growing
+	// path (seq_lower.go) — alone: a sequence beside another generator would need the
+	// product of a count and something that has none.
+	for i := range e.Generators {
+		if srcType, ok := l.recordedType(e.Generators[i].Value); ok && isSeqType(srcType) {
+			if len(e.Generators) != 1 {
+				return nil, nil, errSeqStage1("a comprehension over a sequence takes one generator; nest the others inside it")
+			}
+			return l.lowerSeqComp(block, e, &e.Generators[i], dynType)
+		}
+	}
+
 	// The generator bindings belong to the comprehension, exactly as a loop variable
 	// belongs to its loop: scope them so they cannot leak into what follows.
 	defer l.pushLocalScope()()
