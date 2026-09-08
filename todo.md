@@ -240,6 +240,14 @@ write today:
 
 ## Known bugs
 
+- **[IDEA 09/08] `Result` has no `map_err`.** It has `map` and `flat_map` over the `Ok`
+  side and `ok`/`err` to project either out, but nothing that transforms the error while
+  keeping the value — so a function calling one that fails differently must `match` and
+  rebuild rather than write `inner()?` with a conversion. `examples/csv/csv.lyra` did not need
+  it (one error type throughout, which is the shape to prefer), so this is an observation
+  rather than a gap with a caller waiting: the first program that composes two error types
+  is the one that should decide the signature.
+
 - **[DONE 09/08] An `extern` naming a libc symbol the compiler declares was a duplicate
   definition.** `extern write` beside any `print` emitted a second `declare @write` and
   clang refused the module (`invalid redefinition of function 'write'`), on a program the

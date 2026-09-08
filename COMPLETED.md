@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/08/26 — a CSV reader, and an example that found nothing wrong
+
+`examples/csv/csv.lyra` is RFC 4180 — quoted fields, doubled quotes, `\r\n` — answering
+`Result<Sheet, CsvError>`, where `CsvError` is four variants each carrying the line and
+column it happened at and one `Show` impl renders them. It was written to drive `Result`,
+`?` and a `Show` for an error type, and **it compiled the first time and found no compiler
+gap at all**, which is worth recording precisely because the last four examples each found
+two or three. `?` through two steps, a `data` type with multi-field payloads, a `Show`
+impl nesting another (`Position` inside `CsvError`), and `[]rune.join("")` to rebuild a
+scanned field all worked as written.
+
+Two design points in it are the reusable part:
+
+**Position is computed only when an error is built.** `position_of` walks from the start
+of the file counting newlines, which is linear — and free, because a file that parses
+never asks and a file that does not asks once. Threading a line and column through every
+field instead would charge every correct file for the report a broken one gets.
+
+**`[]rune` up front, not `s[i]`.** Indexing a string is O(i), so a parser walking one by
+index is quadratic; `to_runes()` is the one pass that buys O(1) indexing, and a field is
+rebuilt with `join("")` over the runes rather than `++` in a loop, which would be
+quadratic again.
+
+It stays an example rather than becoming `std.csv`. The standard library here is
+infrastructure — io, collections, math, tui, ffi — and a file format is application code;
+the rule against shipping what has no caller applies to a module as much as to a builtin.
+
 ### 09/08/26 — `write_file`, and a to-do list to drive it
 
 `examples/todo.lyra` is `add`/`list`/`done`/`remove` over a plain text file, one task per

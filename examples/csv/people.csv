@@ -1,0 +1,5 @@
+name,email,city,note
+Ada Lovelace,ada@example.com,London,"Wrote the first algorithm, in 1843"
+Grace Hopper,grace@example.com,"New York, NY","Coined ""debugging"" after a moth"
+Alan Turing,alan@example.com,Wilmslow,
+Katherine Johnson,katherine@example.com,Hampton,"Checked the machine's numbers by hand"

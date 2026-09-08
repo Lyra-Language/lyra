@@ -1,0 +1,266 @@
+// A CSV reader — the program that drives `Result`.
+//
+//   lyrac build -o csv examples/csv/csv.lyra
+//   ./csv -f examples/csv/people.csv                # the whole sheet
+//   ./csv -f examples/csv/people.csv -c email       # one column
+//   cat examples/csv/people.csv | ./csv             # or from a pipe
+//
+// `people.csv` is beside this file and exercises the parts of the dialect that a split on
+// commas gets wrong: a quoted field holding a separator, a doubled quote, and an empty
+// field at the end of a row.
+//
+// Every way a CSV file can be malformed is a value here — `CsvError`, carrying the line
+// and column it happened at — and every function that can meet one answers a `Result`.
+// The `?` operator is what keeps that from turning the parser inside out: a scan that
+// fails returns its error to the caller unchanged, so the happy path reads straight down.
+//
+// The dialect is RFC 4180: fields separated by commas, records by newlines, a field
+// optionally wrapped in double quotes, and a doubled quote inside one meaning a literal
+// quote. `\r\n` is accepted as a record separator.
+
+import std.collections.{ parse_args }
+import std.io.{ read_file, read_stdin }
+
+let main = () -> u8 => {
+  let args = parse_args(["-f", "-c"])
+  let text = match args.value("-f") {
+    Some(path) => match read_file(path) {
+      Some(contents) => contents,
+      None => {
+        println("cannot read ${path}")
+        return 1
+      },
+    },
+    None => read_stdin(),
+  }
+  match parse_csv(text) {
+    Err(problem) => {
+      println("csv: ${problem}")
+      1
+    },
+    Ok(sheet) => report(sheet, args.value("-c")),
+  }
+}
+
+/// A parsed sheet: the first record is the header, and every other record has as many
+/// fields as it has.
+struct Sheet {
+  header: []string,
+  rows: [][]string,
+}
+
+/// Everything that can be wrong with a CSV file, and where.
+///
+/// One type rather than a string, so the caller can tell the cases apart — and one
+/// `Show` impl, so a caller that only wants to print it says `"${problem}"`.
+data CsvError =
+  /// A quoted field that reaches the end of the file without closing.
+  UnterminatedQuote(Position)
+  /// A quote inside a field that did not start with one: `ab"cd`.
+  | UnexpectedQuote(Position)
+  /// Anything but a comma or a newline after a quoted field closed: `"ab"cd`.
+  | TextAfterQuote(Position)
+  /// A record with a different number of fields than the header.
+  | WrongFieldCount(Position, i64, i64)
+
+/// A place in the file, counted in lines and columns from 1 — what an editor shows.
+struct Position {
+  line: i64,
+  column: i64,
+}
+
+impl Show for Position {
+  show = pure (self) => "line ${self.line}, column ${self.column}"
+}
+
+impl Show for CsvError {
+  show = pure (self) => match self {
+    UnterminatedQuote(at) => "${at}: a quoted field is never closed",
+    UnexpectedQuote(at) => "${at}: a quote inside an unquoted field",
+    TextAfterQuote(at) => "${at}: text after a closing quote",
+    WrongFieldCount(at, want, got) => "${at}: expected ${want} fields, found ${got}",
+  }
+}
+
+/// The sheet, or the first thing wrong with it.
+///
+/// The two `?`s are the shape the whole file is written for: each step answers a
+/// `Result`, and a failure leaves by the same door without the step after it having to
+/// know. An empty input is an empty sheet rather than an error — a file with no records
+/// is not malformed.
+let parse_csv = pure (text: string) -> Result<Sheet, CsvError> => {
+  // Runes once, up front. Indexing a *string* is O(i), so walking one by index is
+  // quadratic; `[]rune` is the shape a parser wants and `to_runes` is the one pass that
+  // makes it.
+  let runes = text.to_runes()
+  let records = split_records(runes)?
+  if records.len() == 0 { return Ok(Sheet { header: [], rows: [] }) }
+  let header = records[0].fields
+  let rows = check_widths(runes, records, header.len())?
+  Ok(Sheet { header: header, rows: rows })
+}
+
+/// One record, and where it started — the index is kept so an error about the record can
+/// name a line without every record paying to know its own.
+struct Record {
+  fields: []string,
+  start: i64,
+}
+
+// The file's records, each split into fields.
+//
+// A **blank line is skipped** rather than read as a one-empty-field record. The two are
+// the same characters, so this is a choice: a file that ends with a newline would
+// otherwise gain a final record whose width never matches, and reporting that as a field
+// count error would blame the last row for the file's punctuation.
+let split_records = pure (runes: []rune) -> Result<[]Record, CsvError> => {
+  var records: []Record = []
+  var fields: []string = []
+  var start = 0
+  var i = 0
+  for i < runes.len() {
+    let field = scan_field(runes, i)?
+    fields.push(field.text)
+    i = field.next
+    if field.ends_record {
+      if fields.len() > 1 || fields[0].len() > 0 {
+        records.push(Record { fields: fields, start: start })
+      }
+      fields = []
+      start = i
+    }
+  }
+  Ok(records)
+}
+
+/// One field of a record: its text, where the next field begins, and whether it was the
+/// last on its line.
+///
+/// `ends_record` cannot be derived from `next` by the caller — a record ends at a
+/// newline, and the file may end without one — so the scan that consumed the separator
+/// is what reports it.
+struct Field {
+  text: string,
+  next: i64,
+  ends_record: bool,
+}
+
+// A quote at the very start opens a quoted field; anywhere else it is part of one.
+let scan_field = pure (runes: []rune, start: i64) -> Result<Field, CsvError> =>
+  if start < runes.len() && runes[start] == '"' {
+    scan_quoted(runes, start + 1)
+  } else {
+    scan_bare(runes, start)
+  }
+
+// An unquoted field runs to the next comma, newline or end of file. A quote in it is the
+// one thing that cannot be there: the field did not open with one, so nothing would say
+// where it closed.
+let scan_bare = pure (runes: []rune, start: i64) -> Result<Field, CsvError> => {
+  var text: []rune = []
+  var i = start
+  for i < runes.len() {
+    let c = runes[i]
+    if c == ',' { return Ok(Field { text: text.join(""), next: i + 1, ends_record: false }) }
+    if c == '\n' { return Ok(Field { text: text.join(""), next: i + 1, ends_record: true }) }
+    if c == '"' { return Err(UnexpectedQuote(position_of(runes, i))) }
+    if c != '\r' { text.push(c) }
+    i += 1
+  }
+  Ok(Field { text: text.join(""), next: i, ends_record: true })
+}
+
+// A quoted field runs to a quote that is not doubled. `""` inside one is a literal quote
+// — the only escape the format has, and the reason this cannot be a `split` on commas.
+let scan_quoted = pure (runes: []rune, start: i64) -> Result<Field, CsvError> => {
+  var text: []rune = []
+  var i = start
+  for i < runes.len() {
+    let c = runes[i]
+    if c != '"' {
+      text.push(c)
+      i += 1
+    } else if i + 1 < runes.len() && runes[i + 1] == '"' {
+      text.push('"')
+      i += 2
+    } else {
+      return after_quote(runes, text.join(""), i + 1)
+    }
+  }
+  Err(UnterminatedQuote(position_of(runes, start - 1)))
+}
+
+// What follows a closing quote must be a separator or the end of the file.
+let after_quote = pure (runes: []rune, text: string, close: i64) -> Result<Field, CsvError> => {
+  var i = close
+  if i < runes.len() && runes[i] == '\r' { i += 1 }
+  if i >= runes.len() { return Ok(Field { text: text, next: i, ends_record: true }) }
+  if runes[i] == ',' { return Ok(Field { text: text, next: i + 1, ends_record: false }) }
+  if runes[i] == '\n' { return Ok(Field { text: text, next: i + 1, ends_record: true }) }
+  Err(TextAfterQuote(position_of(runes, i)))
+}
+
+// Every record after the header, checked against its width.
+let check_widths = pure (runes: []rune, records: []Record, want: i64) -> Result<[][]string, CsvError> => {
+  var rows: [][]string = []
+  for i, record in records {
+    if i > 0 {
+      if record.fields.len() != want {
+        return Err(WrongFieldCount(position_of(runes, record.start), want, record.fields.len()))
+      }
+      rows.push(record.fields)
+    }
+  }
+  Ok(rows)
+}
+
+// The line and column of `index`, counted from the start of the file.
+//
+// **Called only when an error is being built**, which is what makes the linear scan
+// free: a file that parses never asks, and a file that does not asks once. Tracking a
+// position through every field instead would charge every correct file for the report a
+// broken one gets.
+let position_of = pure noalloc (runes: []rune, index: i64) -> Position => {
+  var line = 1
+  var column = 1
+  for i in 0..<index {
+    if runes[i] == '\n' {
+      line += 1
+      column = 1
+    } else {
+      column += 1
+    }
+  }
+  Position { line: line, column: column }
+}
+
+// The whole sheet, or one named column of it.
+let report = (sheet: Sheet, column: Maybe<string>) -> u8 => {
+  match column {
+    None => {
+      println("${sheet.header.len()} columns, ${sheet.rows.len()} rows")
+      if sheet.header.len() > 0 { println(sheet.header.join(" | ")) }
+      for row in sheet.rows { println(row.join(" | ")) }
+      0
+    },
+    Some(name) => match column_index(sheet, name) {
+      None => {
+        println("no column named ${name}; the header is ${sheet.header.join(", ")}")
+        1
+      },
+      Some(at) => {
+        for row in sheet.rows { println(row[at]) }
+        0
+      },
+    },
+  }
+}
+
+// Which column a header names, or `None` — a `Maybe` and not a `Result`, because there
+// is only one way it can fail and the name is already in the caller's hand.
+let column_index = pure noalloc (sheet: Sheet, name: string) -> Maybe<i64> => {
+  for i, heading in sheet.header {
+    if heading == name { return Some(i) }
+  }
+  None
+}
