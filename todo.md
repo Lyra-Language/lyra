@@ -240,6 +240,23 @@ write today:
 
 ## Known bugs
 
+- **[OPEN 09/07] A lambda argument's parameters are not elaborated from a generic
+  callee's parameter type.** `self.sort_by((a, b) => a.compare(b))` inside
+  `sort<t> where t: Ord` reports *undefined symbol "a"* and then *cannot infer type
+  variable t*; `(a: t, b: t) => …` works, and so does the unannotated form against a
+  non-generic callee. The receiver already fixes `t`, so the lambda's slot type is known
+  before the lambda is looked at. Found delegating the prelude's `Ord` sorts to
+  `sort_by`.
+
+- **[OPEN 09/07] A lambda calling a bound method is impure; the same call inline is
+  not.** `pure (self: []t) => self.sorted_by((a, b) => a.compare(b))` is `lyra-E007`
+  ("impure cmp argument"), while `min`'s body calls `self.compare(other)` from `pure`
+  code without complaint. `Ord::compare` is declared without `pure`, so the lambda's
+  inferred effect takes the trait's word and the direct call takes the dispatch ladder's.
+  One of the two is wrong; marking the lambda `pure` is the workaround, and whether the
+  trait should declare `compare` pure (every impl would then have to be) is the design
+  question underneath.
+
 - **[DONE 09/07] A non-void function whose body ends in a loop is accepted with no value
   on the fall-through path.** Fixed the same day: a loop is now typed `never` when it
   cannot finish and `void` when it can (`ast.LoopCanExit`), the tail case gets its own
