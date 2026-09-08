@@ -240,6 +240,30 @@ write today:
 
 ## Known bugs
 
+- **[OPEN 09/07] A struct literal's field is not a context for a call's type arguments.**
+  `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,
+  string>` reports "cannot infer type variables k, v" and names the turbofish, which is
+  what `std/collections/args.lyra` writes. An annotated `let`, a return and an argument
+  slot all reach `seedFromExpectedReturn`; the struct field pushes width and flavor
+  through `propagateExpectedType` but never seeds a generic call's variables.
+
+- **[DONE 09/07] A bare construction argument failed the solve when another argument had
+  already bound its variable.** `m.insert(key, None)` on a `HashMap<string, Maybe<string>>`
+  reported "cannot infer type variables k, v" — both, for a call whose receiver fixes both —
+  while `m.insert(key, Some(s))` beside it solved. `None` records the bare `Maybe`, and a
+  bound variable was checked by equality. `solveTypeVars` now defers a bare *generic*
+  construction to the third pass beside the untyped literals: a bound variable is met by
+  assignability (nominal), a free one is bound as before, and the argument check then
+  stamps the `None` with the settled instantiation. Pinned in
+  `bare_construction_argument_test.go` and `TestExec_BareNoneArgumentAdoptsTheSolvedInstantiation`.
+
+- **[OPEN 09/07] A generic struct literal with a bare-construction field is refused under
+  its annotation.** `let b: Box<string, Maybe<string>> = Box { key: "a", value: None }`
+  reports "cannot assign Box<string, Maybe> to Box<string, Maybe<string>>": the literal's
+  own solve records the field as the bare `Maybe`, and the annotation's stamp
+  (`stampAggregate`) does not reach a struct-typed literal whose recorded *arguments*
+  disagree with the context's. `value: Some("s")` works, as does a `data` payload.
+
 - **[OPEN 09/07] A lambda argument's parameters are not elaborated from a generic
   callee's parameter type.** `self.sort_by((a, b) => a.compare(b))` inside
   `sort<t> where t: Ord` reports *undefined symbol "a"* and then *cannot infer type
@@ -299,12 +323,12 @@ write today:
   along that composition leaves a `Maybe` un-monomorphized. Found writing the join tests
   above, which route around it with a `bool` parameter. A plain `Maybe<v>` receiver works.
 
-- **[OPEN 09/06] A trait-impl method may not reference a top-level `let` declared below
-  it** (`lyra-E002`, "used before its declaration"), while a top-level `let` calling a later
-  one is fine — the rule the workspace `CLAUDE.md` states. `impl Hash for u128 { hash =
-  (self) => hash_u128(self) }` above `let hash_u128 = …` is refused; the map moved the helper
-  above the impls. Either the use-before-declaration pass should treat an impl body as it
-  treats a `let` body, or the rule needs the exception written down.
+- **[DONE 09/07] A trait-impl method may not reference a top-level `let` declared below
+  it** (`lyra-E002`) while a `let`'s lambda could. The use-before-declaration pass gave a
+  lambda body a fresh scope under its parameters and let the walker hand an impl method's
+  clause body over *bare*, in the top-level scope. `checkClauseBody` now gives an impl
+  method and a trait default the lambda's treatment. `std.collections`'s `hash_u128` is
+  back below the impls that call it, where a private helper belongs.
 
 - **[OPEN 09/06] An array literal mixing a solved and an unsolved generic element ignores
   the annotation's width.** `let xs: []Maybe<u8> = [Some(200), None]` is refused with

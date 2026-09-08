@@ -74,3 +74,22 @@ let main = () -> void => print("${get(true).unwrap_or(0)} ${get(false).unwrap_or
 		})
 	}
 }
+
+// The bare `None` reaches the callee as the instantiation the call settled on, and the
+// value it stands in for round-trips: the argument check stamps it after the solve.
+func TestExec_BareNoneArgumentAdoptsTheSolvedInstantiation(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+import std.collections.{ HashMap, hashmap_new, insert, get_or }
+let main = () -> void => {
+  var flags: HashMap<string, Maybe<string>> = hashmap_new()
+  flags.insert("-v", None)
+  flags.insert("-o", Some("out"))
+  let missing: Maybe<string> = None
+  print("${flags.get_or("-v", Some("?")).unwrap_or("none")} ${flags.get_or("-o", missing).unwrap_or("none")}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "none out" {
+		t.Errorf("printed %q; want \"none out\"", got)
+	}
+}

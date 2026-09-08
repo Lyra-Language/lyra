@@ -146,6 +146,22 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 			untyped = append(untyped, untypedArg{index: i, typ: argType})
 			continue
 		}
+		// A construction that solved nothing — `None`, or `Ok(v)` against a `Result<t,
+		// e>` — records its declaration's bare form, and that form says as little about
+		// the variable as an untyped literal does: only which declaration, never which
+		// instantiation. It speaks last for the same reason. Unified first it *failed*
+		// the call whenever another argument had already bound the variable, because a
+		// bound variable is checked by equality and `Maybe` is not `Maybe<string>`:
+		// `m.insert(key, None)` on a `HashMap<string, Maybe<string>>` reported "cannot
+		// infer type variables k, v" — both of them, for a call whose receiver fixes
+		// both — while `m.insert(key, Some(s))` beside it solved (09/07). In the third
+		// pass a bound variable is met by assignability, which a bare declaration
+		// satisfies nominally, and the ordinary argument check then stamps the
+		// construction with the instantiation the call settled on.
+		if tc.isBareGenericConstruction(argType, arg.GetLocation()) {
+			untyped = append(untyped, untypedArg{index: i, typ: argType})
+			continue
+		}
 		if !unifyGenericTarget(declared, arrayLiteralAsDeclared(arg, declared, promoteToDefault(argType)), vars, subst) {
 			return nil, false
 		}
@@ -207,6 +223,19 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		}
 	}
 	return subst, true
+}
+
+// isBareGenericConstruction reports whether t is the bare form of a *generic* data
+// declaration — the type a construction records when its arguments solved none, or only
+// some, of the declaration's parameters. A non-generic data type's bare form is its
+// whole type and unifies like any other.
+func (tc *TypeChecker) isBareGenericConstruction(t types.Type, loc ast.Location) bool {
+	name, ok := dataTypeName(t)
+	if !ok {
+		return false
+	}
+	decl, found := tc.symTable.LookupTypeFrom(name, loc)
+	return found && decl != nil && len(decl.GenericParams) > 0
 }
 
 // arrayLiteralAsDeclared reads an **array literal** argument's type the way the

@@ -156,3 +156,36 @@ func TestUBD_NoDiag_RecursiveLambda(t *testing.T) {
 	errs := parseCollectAndCheck(t, source)
 	assertNoErrors(t, errs)
 }
+
+// An impl method's body is a function body, so a top-level name declared *below* the
+// impl is not a use before declaration — exactly as it is not from a `let`'s lambda.
+// Until 09/07 the impl's clause body was checked bare in the top-level scope, so
+// `std.collections` had to hoist a helper above the impls that called it.
+func TestUBD_NoDiag_ImplMethodCallsLaterTopLevel(t *testing.T) {
+	errs := parseCollectAndCheck(t, `
+trait Hh { h: (Self) -> u64 }
+impl Hh for u8 { h = (self) => helper(u64(self)) }
+let helper = (x: u64) -> u64 => x + 1
+`)
+	assertNoErrors(t, errs)
+}
+
+// The same for a trait's default method body.
+func TestUBD_NoDiag_TraitDefaultCallsLaterTopLevel(t *testing.T) {
+	errs := parseCollectAndCheck(t, `
+trait Hh { h: (Self) -> u64 = (self) => helper(1) }
+let helper = (x: u64) -> u64 => x + 1
+`)
+	assertNoErrors(t, errs)
+}
+
+// The fresh scope is still a scope: a local declared later *inside* the method body is
+// still reported, and the receiver is in scope from the start.
+func TestUBD_Diag_ImplMethodBodyStillChecked(t *testing.T) {
+	errs := parseCollectAndCheck(t, `
+trait Hh { h: (Self) -> u64 }
+impl Hh for u8 { h = (self) => { let a = b + u64(self); let b = 1; a } }
+`)
+	assertErrorCount(t, errs, 1)
+	assertErrorContains(t, errs, `"b"`)
+}

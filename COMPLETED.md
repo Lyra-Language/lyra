@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 09/07/26 — a bare `None` argument adopts the variable another argument bound
+
+`program_args_map` in the new `args.lyra` wrote `args_map.insert(arg1, None)` and got
+"cannot infer type variables k, v" — for a call whose receiver, a `HashMap<string,
+Maybe<string>>`, determines both. `None` records its declaration's bare form, and the
+solver met a bound variable with `TypesEqual`, which `Maybe` against `Maybe<string>` fails.
+
+The fix is the untyped-literal rule applied to a second kind of argument that has nothing
+to say beyond its head: a bare *generic* construction (`None`, `Ok(v)` for a `Result<t,
+e>`) is deferred to the solver's third pass, where a bound variable is met by
+assignability — nominal for a bare declaration — and a free one is bound exactly as
+before. The ordinary argument check then stamps the `None` with the instantiation the
+call settled on, so it lowers as `Maybe<string>` rather than as the bare declaration.
+
+A neighbour found on the way stays open: the same `None` as a *field* of a generic struct
+literal under an annotation is still refused (`todo.md`).
+
+### 09/07/26 — an impl method's body is a function body to the use-before-declaration pass
+
+`impl Hash for u128 { hash = (self) => hash_u128(self) }` above `let hash_u128 = …` was
+lyra-E002 while the same call from a `let`'s lambda was fine. The pass opens a fresh scope
+for a `LambdaExpr` body — top-level names are not "declared in this block" there, so a
+later one cannot be used early — but an impl method and a trait default are bare
+`LambdaClause`s, and `ast.WalkStmt` handed their bodies over as expressions of the
+top-level statement. `checkClauseBody` gives a clause the lambda's scope, seeded with its
+pattern names and covering its guard. The `let` exemption was always the rule; this is
+the impl catching up to it, and the workspace `CLAUDE.md`'s "no forward-declaration
+constraint" is true again without an exception.
+
 ### 09/07/26 — a bare declaration joined with its instantiation settles on the instantiation
 
 `match m { Some(e) => Some(e.name), None => None }` with no annotation type-checked as a

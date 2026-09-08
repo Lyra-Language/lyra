@@ -346,11 +346,6 @@ let mix = pure noalloc (x: u64) -> u64 => {
   z ~ (z >> 31)
 }
 
-// The two 64-bit halves xored: a u128 that fits in 64 bits hashes exactly as its u64
-// would, so a key promoted to the wider type keeps its hash.
-let hash_u128 = pure noalloc (x: u128) -> u64 =>
-  u64(x & u128(18446744073709551615)) ~ u64(x >> 64)
-
 // ---- the primitive keys ----
 //
 // An integer hashes to itself, widened or folded to 64 bits; the map's finalizer does the
@@ -395,3 +390,9 @@ impl Hash for string {
     h
   }
 }
+
+
+// The two 64-bit halves xored: a u128 that fits in 64 bits hashes exactly as its u64
+// would, so a key promoted to the wider type keeps its hash.
+let hash_u128 = pure noalloc (x: u128) -> u64 =>
+  u64(x & u128(18446744073709551615)) ~ u64(x >> 64)

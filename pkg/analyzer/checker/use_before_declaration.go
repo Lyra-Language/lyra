@@ -110,6 +110,26 @@ func (c *ubeChecker) checkStmt(stmt ast.Statement, declared, seen map[string]boo
 		c.checkExpr(s.DestructuringStatement.Value, declared, seen)
 		c.checkStatements(s.Else.Statements)
 
+	// A method body is a function body, and gets the scope a function body gets: a
+	// fresh one under its own parameters, in which a top-level name is *not* a name
+	// declared in the enclosing block and so cannot be used early. A `let`'s lambda has
+	// always had that — its body runs when it is called, after every top-level
+	// declaration exists — and the walker's default below would hand the method's
+	// clause body over bare, in the top-level scope, where `impl Hash for u128 { hash =
+	// (self) => hash_u128(self) }` above `let hash_u128 = …` read as a use before its
+	// declaration (lyra-E002, 09/06) while the same call from a `let` was fine.
+	case *ast.TraitImplStmt:
+		for i := range s.Methods {
+			c.checkClauseBody(&s.Methods[i].Clause)
+		}
+
+	case *ast.TraitDeclStmt:
+		for i := range s.Methods {
+			if s.Methods[i].DefaultMethod != nil {
+				c.checkClauseBody(s.Methods[i].DefaultMethod)
+			}
+		}
+
 	default:
 		// All other statements have only expression children; delegate to walker.
 		ast.WalkStmt(stmt, nil, func(expr ast.Expression) bool {
@@ -179,6 +199,23 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 
 		return true
 	})
+}
+
+// checkClauseBody checks one function clause's body in a fresh scope under the names its
+// patterns bind — the treatment a lambda's body gets, for a clause that is not wrapped
+// in a LambdaExpr (an impl method, a trait default).
+func (c *ubeChecker) checkClauseBody(clause *ast.LambdaClause) {
+	if clause == nil {
+		return
+	}
+	params := map[string]bool{}
+	for _, p := range clause.Patterns {
+		collectPatternNames(p, params)
+	}
+	if clause.Guard != nil {
+		c.checkExprInScope(clause.Guard.Condition, params)
+	}
+	c.checkExprInScope(clause.Body, params)
 }
 
 // checkExprNewScope checks an expression in a completely fresh scope.
