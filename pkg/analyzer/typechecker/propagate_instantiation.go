@@ -82,23 +82,51 @@ func (tc *TypeChecker) propagateInstantiation(expr ast.Expression, want types.Ty
 		return tc.stampAggregate(e, values, names, declared, inst)
 	case *ast.MatchExpr:
 		reported := false
+		arms := make([]ast.Expression, 0, len(e.MatchArms))
 		for _, arm := range e.MatchArms {
 			reported = tc.propagateInstantiation(arm.Body, want) || reported
+			arms = append(arms, arm.Body)
 		}
+		tc.refreshBranchingRecord(e, arms, inst)
 		return reported
 	case *ast.IfExpr:
 		thenReported := tc.propagateInstantiation(e.Then, want)
-		return tc.propagateInstantiation(e.Else, want) || thenReported
+		elseReported := tc.propagateInstantiation(e.Else, want)
+		tc.refreshBranchingRecord(e, []ast.Expression{e.Then, e.Else}, inst)
+		return thenReported || elseReported
 	case *ast.BlockExpr:
 		// A block's value is its final statement, the same tail the other two
 		// propagators follow.
 		if n := len(e.Statements); n > 0 {
 			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
-				return tc.propagateInstantiation(es.Expression, want)
+				reported := tc.propagateInstantiation(es.Expression, want)
+				tc.refreshBranchingRecord(e, []ast.Expression{es.Expression}, inst)
+				return reported
 			}
 		}
 	}
 	return false
+}
+
+// refreshBranchingRecord re-records a match, if or block at the context's instantiation
+// once every arm has taken it. The arms are stamped leaf by leaf, but the branching node
+// keeps the type its arms *joined to* before the context arrived — so `-> Maybe<u8> =>
+// if b { Some(200) } else { Some(201) }` narrowed both payloads to u8 and was then refused
+// as "expected Maybe<u8>, got Maybe<i64>", the join's answer, which nothing had revisited.
+// A node is refreshed only when every arm now records a type assignable to the context:
+// an arm that is a plain `Maybe<i64>` variable is not stamped by the walk, stays what it
+// was, and must keep the mismatch it is.
+func (tc *TypeChecker) refreshBranchingRecord(node ast.Expression, arms []ast.Expression, inst types.ParameterizedType) {
+	for _, arm := range arms {
+		if arm == nil {
+			return
+		}
+		t, ok := tc.typeTable.Get(arm)
+		if !ok || t == nil || !isAssignable(t, inst) {
+			return
+		}
+	}
+	tc.typeTable.Set(node, inst)
 }
 
 // contextualType applies want's instantiation to expr and reports the type expr should
@@ -140,6 +168,27 @@ func (tc *TypeChecker) contextualType(expr ast.Expression, want, current types.T
 // else reports); and the declaration's parameters must match the context's arguments in
 // number.
 func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, elements []ast.Expression, inst types.ParameterizedType) bool {
+	// A branch join's push (pushSettledInstantiation) re-stamps the arm that *solved*
+	// the join with what it already recorded, and that re-stamp has nothing to gain and
+	// something to lose: the payload loop below narrows an untyped literal to the
+	// instantiation's width, so `Some(200)` re-stamped at the `Maybe<i64>` its own solve
+	// produced promotes the `200` to i64 — and a `-> Maybe<u8>` return context arriving
+	// *later* finds a payload it can no longer narrow ("Some: cannot assign i64 to u8",
+	// 09/07). Skipping it keeps the literal open until a context that differs arrives.
+	//
+	// Only the provisional push skips. A real context must always descend even when
+	// the node already reads as the instantiation, because propagateExpectedType has
+	// often just recorded it so (it pushes the flavor first) while the node's *own*
+	// payload is still waiting: `Cons(1, Cons(2, Cons(3, Nil)))` under `shared
+	// List<i64>` reaches the inner `Nil` only through this loop.
+	if tc.provisionalStamp {
+		if recorded, ok := tc.typeTable.Get(node); ok {
+			if r, isInst := recorded.(types.ParameterizedType); isInst &&
+				r.Allocation == inst.Allocation && types.TypesEqual(r, inst) {
+				return false
+			}
+		}
+	}
 	dt, ok := tc.stampableDataType(node, inst)
 	if !ok {
 		return false
@@ -189,6 +238,13 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 		tc.typeTable.Set(elem, expected)
 	}
 	tc.typeTable.Set(node, inst)
+	if tc.provisionalStamp {
+		// Stamped from a branch join, not from a context: the arm that solved the join
+		// may itself have defaulted (`Some(200)`), so what its sibling `None` takes from
+		// it is a guess with the same standing, and a later annotation or return type
+		// must still be able to override it.
+		tc.markDefaultedConstruction(node)
+	}
 	return false
 }
 

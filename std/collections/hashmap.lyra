@@ -146,7 +146,7 @@ pub let replace<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, valu
   let hash = hash_key(key)
   match self.find_index(key, hash) {
     Some(i) => {
-      let previous: Maybe<v> = match self.slots[i] { Some(e) => Some(e.value), None => None }
+      let previous = match self.slots[i] { Some(e) => Some(e.value), None => None }
       self.slots[i] = Some(Entry { hash: hash, key: key, value: value })
       previous
     },
@@ -188,7 +188,7 @@ pub let remove<k, v> where k: Hash = det noalloc (self: mut HashMap<k, v>, key: 
   match self.find_index(key, hash_key(key)) {
     None => None,
     Some(found) => {
-      let removed: Maybe<v> = match self.slots[found] { Some(e) => Some(e.value), None => None }
+      let removed = match self.slots[found] { Some(e) => Some(e.value), None => None }
       self.close_hole(found)
       self.count -= 1
       removed

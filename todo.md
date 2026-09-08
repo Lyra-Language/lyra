@@ -261,13 +261,25 @@ write today:
   `place(self, entry: Entry<k, v>)`, which has its name back. Pinned by
   `TestExec_ParameterNamedLikeABlockLabel`.
 
-- **[OPEN 09/06] An unannotated `match` joining `Some(e.value)` with `None` in a generic
-  body lowers as a bare `Maybe`.** `let got = match xs[i] { Some(e) => Some(e.value), None
-  => None }` over `xs: []Maybe<Slot<v>>` type-checks and dies in the backend with `unknown
-  named type "Maybe"`; `let got: Maybe<v> = …` compiles. The same shape as the open array
-  literal bug above — one arm solves `t` and the other solves nothing, and the join keeps
-  the unsolved one — reached through a match's arms rather than an array's elements. The
-  map annotates both such bindings (`replace`, `remove`).
+- **[DONE 09/07] An unannotated `match` joining `Some(e.value)` with `None` lowered as a
+  bare `Maybe`** — in generic and concrete code alike (`unknown named type "Maybe"`). The
+  two are assignable both ways, so `branchCommonType` answered whichever operand came
+  second. It now prefers the instantiation (`instantiationOverBare`), and every join site —
+  match arms, if branches, array elements — pushes it back onto the arm that contributed
+  the bare declaration (`pushSettledInstantiation`). Two guards keep a literal's default
+  from outranking a later context: the push never re-stamps the arm that solved the join,
+  and what it stamps is marked provisional. And `refreshBranchingRecord` re-records a
+  match/if/block once every arm has taken a context's instantiation, which also fixed the
+  pre-existing refusal of `-> Maybe<u8> => if b { Some(200) } else { Some(201) }`. The
+  hashmap's `previous`/`removed` bindings lost their annotations. Pinned by
+  `llvm_join_instantiation_test.go`.
+
+- **[OPEN 09/07] A prelude call on a nested generic inside a generic body fails the
+  build.** `let has<v> = (xs: []Maybe<Slot<v>>, i: i64) -> bool => xs[i].is_some()` is
+  refused by the backend with `cannot lay out data type "Maybe"` — the instantiation
+  `is_some<t = Slot<v>>` is a template composed at the caller's `v = i64`, and something
+  along that composition leaves a `Maybe` un-monomorphized. Found writing the join tests
+  above, which route around it with a `bool` parameter. A plain `Maybe<v>` receiver works.
 
 - **[OPEN 09/06] A trait-impl method may not reference a top-level `let` declared below
   it** (`lyra-E002`, "used before its declaration"), while a top-level `let` calling a later
@@ -282,7 +294,9 @@ write today:
 
   The literal's **own** inferred type is settled from its elements before the annotation
   narrows them: `Some(200)` solves `t` locally to the i64 default and `None` solves nothing,
-  and the two join to a bare `Maybe` that the annotation is then compared against. One step
+  and the join (since 09/07 `Maybe<i64>` rather than a bare `Maybe`) is what the annotation
+  is compared against — the element push marks the `None` provisional, but the literal's
+  StaticArray type is built from the join before the annotation reaches it. One step
   earlier than the element-context fix of the same day (COMPLETED.md), which repaired the
   *elements* and left the literal's type alone.
 

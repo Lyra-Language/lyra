@@ -214,6 +214,11 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 				thenType, elseType)
 			return nil
 		}
+		// The branch that contributed a bare declaration takes the instantiation its
+		// sibling solved — `if c { Some(v) } else { None }` — the same push the match
+		// arms get; a no-op when the join is not an instantiation.
+		tc.pushSettledInstantiation(expr.Then, common)
+		tc.pushSettledInstantiation(expr.Else, common)
 		return common
 	}
 
@@ -526,9 +531,15 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	// result type. When the common type is itself still untyped (all arms were
 	// untyped literals), this is a no-op — an outer context (a declared return
 	// type, an annotation) narrows the whole match later via propagateExpectedType.
+	// And the joined *instantiation*, when the join produced one: the arm that
+	// contributed the bare declaration (`None`) is stamped with the instantiation its
+	// sibling solved, under its pattern's bindings because the stamp re-checks a
+	// payload that may name them. Without this the join alone changed nothing — the
+	// match's type read `Maybe<v>` while the `None` arm still lowered as bare `Maybe`.
 	for _, arm := range expr.MatchArms {
 		tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
 			tc.propagateExpectedType(arm.Body, commonType)
+			tc.pushSettledInstantiation(arm.Body, commonType)
 		})
 	}
 	return commonType
@@ -1734,6 +1745,20 @@ func branchCommonType(a, b types.Type) (types.Type, bool) {
 	if types.TypesEqual(a, b) {
 		return a, true
 	}
+	// A generic type's bare declaration beside one of its instantiations joins to the
+	// **instantiation**. `Some(e.value)` infers to `Maybe<v>` and `None` to the bare
+	// `Maybe` (a nullary constructor solves nothing, propagate_instantiation.go), and
+	// the two are assignable *both* ways by nominalDataMatch — so the widening rules
+	// below answered whichever operand came second, and `match … { Some(e) =>
+	// Some(e.value), None => None }` with no annotation settled on the bare
+	// declaration, which the backend cannot lay out (`unknown named type "Maybe"`,
+	// 09/06). Order-dependent, too: the arms swapped joined correctly. The bare
+	// declaration is the one that has *less* to say, so it never wins this join; the
+	// match then pushes the instantiation back onto the bare arm through
+	// propagateExpectedType, exactly as an annotation would have.
+	if inst, ok := instantiationOverBare(a, b); ok && instantiationIsSettled(inst) {
+		return inst, true
+	}
 	// Untyped widening: if a is assignable to b, b is the more concrete type.
 	if isAssignable(a, b) {
 		return b, true
@@ -1754,6 +1779,65 @@ func branchCommonType(a, b types.Type) (types.Type, bool) {
 		return signed, true
 	}
 	return nil, false
+}
+
+// pushSettledInstantiation stamps expr with joined when joined is a settled
+// instantiation, and does nothing otherwise — the one push the three join sites (match
+// arms, if branches, array elements) share, so they cannot disagree about when a join's
+// answer is firm enough to write back onto the arm that contributed the bare declaration.
+//
+// What it stamps is marked **provisional** (defaultedCtors): the join is only as firm as
+// the arm that produced it, and that arm may have defaulted an untyped payload — so the
+// `None` that takes `Maybe<i64>` from a sibling `Some(200)` stays open to the
+// `-> Maybe<u8>` that arrives afterwards, exactly as the `Some(200)` itself does.
+func (tc *TypeChecker) pushSettledInstantiation(expr ast.Expression, joined types.Type) {
+	inst, ok := joined.(types.ParameterizedType)
+	if !ok || !instantiationIsSettled(inst) {
+		return
+	}
+	was := tc.provisionalStamp
+	tc.provisionalStamp = true
+	tc.propagateInstantiation(expr, inst)
+	tc.provisionalStamp = was
+}
+
+// instantiationIsSettled reports whether every type argument of inst is a real type
+// rather than an untyped literal still waiting for a context. `Some(200)` beside `None`
+// joins to `Maybe<untyped_int>`, and stamping the `None` with *that* would promote the
+// literal to i64 before a `-> Maybe<u8>` return could narrow it — which is exactly what
+// happened the first time the join preferred the instantiation: "Some: cannot assign i64
+// to u8" on a program that had always compiled. An unsettled instantiation keeps the
+// old join and waits for the outer context, as it always did; the fix is for the case
+// where the argument is a genuine type (`Maybe<v>`, `Maybe<string>`) and no context
+// will come.
+func instantiationIsSettled(inst types.ParameterizedType) bool {
+	for _, arg := range inst.TypeArguments {
+		if isUntypedLiteralType(arg) {
+			return false
+		}
+		if nested, ok := arg.(types.ParameterizedType); ok && !instantiationIsSettled(nested) {
+			return false
+		}
+	}
+	return true
+}
+
+// instantiationOverBare answers the instantiated side when one of a and b is a generic
+// type's bare declaration and the other is a `ParameterizedType` over the same name.
+// Anything else — two instantiations, two bare declarations, unrelated types — is not
+// this function's question and is left to the ordinary rules.
+func instantiationOverBare(a, b types.Type) (types.ParameterizedType, bool) {
+	if inst, ok := a.(types.ParameterizedType); ok {
+		if name, isBare := dataTypeName(b); isBare && name == inst.Name {
+			return inst, true
+		}
+	}
+	if inst, ok := b.(types.ParameterizedType); ok {
+		if name, isBare := dataTypeName(a); isBare && name == inst.Name {
+			return inst, true
+		}
+	}
+	return types.ParameterizedType{}, false
 }
 
 // untypedIntegerJoin returns the common type of two untyped integer literal types, and

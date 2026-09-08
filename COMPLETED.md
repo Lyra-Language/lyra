@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 09/07/26 — a bare declaration joined with its instantiation settles on the instantiation
+
+`match m { Some(e) => Some(e.name), None => None }` with no annotation type-checked as a
+bare `Maybe` and died in the backend — concrete code too, not only the generic body the
+hashmap found it in. `Some(…)` records the instantiation and `None` the bare declaration;
+the two are assignable both ways, so the join answered whichever arm came second, and the
+arms swapped compiled. `branchCommonType` now prefers the instantiation and each join
+site pushes it onto the arm that contributed the bare one.
+
+**The first version regressed a program that had always compiled**, and the fix for that
+is the half worth recording. `-> Maybe<u8> => if b { Some(200) } else { None }` joined to
+`Maybe<i64>` — the literal's default — and the push stamped it onto *both* arms, promoting
+the `200` to i64 before the return type could narrow it. Two guards: the push never
+re-stamps the arm that solved the join (`stampDataConstruction` skips a node already at
+that instantiation, but only during the push — a real context must always descend, since
+`propagateExpectedType` records the flavor first and a nested `Cons(3, Nil)` is reached
+only through the payload loop), and what it does stamp is marked provisional through the
+existing `defaultedCtors`, so a later context overrides it.
+
+**And a pre-existing refusal fell to the same work.** `if b { Some(200) } else { Some(201) }`
+under `-> Maybe<u8>` never compiled: the leaves were narrowed to u8 by the return context
+and the `if` node kept the join's `Maybe<i64>`. `refreshBranchingRecord` re-records a
+match/if/block once every arm has taken the context's instantiation, and only then — an
+arm that is a plain `Maybe<i64>` variable is not stamped and must keep its mismatch.
+
+A separate gap found on the way is open: a prelude call on a nested generic inside a
+generic body (`xs[i].is_some()` on `[]Maybe<Slot<v>>`) fails the build.
+
 ### 09/07/26 — `sorted`: the stable copy, and the destructuring-`let` borrow it exposed
 
 `sort` is in place and unstable; `sorted` is the other half — `pure`, a fresh `[]t`,

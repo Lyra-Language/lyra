@@ -75,6 +75,7 @@ type TypeChecker struct {
 	circularNewtypes map[string]bool
 	ufcsModules      map[string]map[string]bool // file -> modules it reached through a UFCS call; see UFCSModules
 	defaultedCtors   map[ast.Expression]bool    // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
+	provisionalStamp bool                       // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
 	// overflowReported guards checkIntegerLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
@@ -3229,6 +3230,15 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 			return nil
 		}
 		elemType = common
+	}
+	// An element that contributed a bare declaration takes the instantiation its
+	// siblings solved — `[Some(1), None]` — the same push a match's arms get after
+	// their join. A no-op when the element type is not an instantiation, and a spread
+	// is not a construction to stamp.
+	for _, el := range expr.Elements {
+		if _, isSpread := el.(*ast.SpreadExpr); !isSpread {
+			tc.pushSettledInstantiation(el, elemType)
+		}
 	}
 	if spread {
 		// **A spread makes the result a `[]T`, always** — even when every operand happens
