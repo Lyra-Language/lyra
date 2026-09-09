@@ -63,10 +63,11 @@ func TestExec_Union(t *testing.T) {
 			// A union in every position that matters — rule 8's probe, kept as a test.
 			//
 			// A **closure capture** is deliberately not among them, and not because a
-			// union cannot be captured: capturing any named aggregate fails in a file
+			// union cannot be captured: capturing any named aggregate failed in a file
 			// that declares `module` ("cannot lower captured binding"), a struct exactly
-			// as much as a union, on `main` before this feature existed. Putting it here
-			// would pin someone else's bug to this test.
+			// as much as a union, on `main` before this feature existed. Fixed 09/09 and
+			// pinned by TestExec_ClosureOverAModuleType, which is where it belongs —
+			// the bug was the lifted-lambda lowering path's, not this feature's.
 			"in a struct, an array and a return",
 			`union U { a: u32, b: f32 }
 			 struct Holder { u: U, n: i64 }

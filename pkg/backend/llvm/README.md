@@ -450,6 +450,17 @@ bodies are deliberately where it sits rather than `declareFunction`/`defineFunct
 **trait method** and a **generic specialization** lower through them too and would otherwise
 resolve names against whichever module was lowered last.
 
+**Every path that lowers a body enters its module, and a lifted lambda is a path of its own.**
+`declareClosure`/`defineClosure` are driven by top-level loops (llvm.go), not from the enclosing
+function, so they inherit nothing from it; until 09/09 they entered no module and `l.currentLoc`
+was the zero Location by the time they ran, which keyed every named type bare. A closure over a
+`struct`, a `data` value or a named tuple therefore failed to build in any file with a `module`
+header — `cannot lower captured binding "s": unknown named type "Pt"` — and a lambda merely
+*mentioning* one in its signature failed the same way at the declaration. A `union` too,
+which is why `llvm_union_test.go` keeps a capture out of its own probe. The rule to apply to
+the next such path: if it lowers a signature or a body from a top-level loop, it needs its own
+`enterModuleOf`.
+
 It is an `ast.Location` rather than a module path so the backend deals in the same currency as
 every other caller (`LookupTypeFrom`, `ownership.OwnsManaged`) and the symbol table keeps sole
 authority over the file → module step. `lookupTypeDecl(name)` is the backend's `LookupTypeFrom`;

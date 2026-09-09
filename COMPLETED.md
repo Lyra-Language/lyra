@@ -9,6 +9,60 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — A closure over a named type, in a file that declares a module
+
+A lambda capturing a `struct` failed to build in any file with a `module` header:
+
+```lyra
+module main
+struct Pt { a: u32 }
+let main = () -> void => {
+  let s = Pt { a: 5 }
+  let cap = pure () -> u32 => s.a
+  println("${cap()}")
+}
+```
+
+— `llvm: cannot lower captured binding "s": llvm: unknown named type "Pt"`. Delete the
+header and the same program prints 5, which is what made it look like a bug about modules.
+
+**It is the 08/07 specialization bug again, in the one remaining path.** A named type is
+keyed `<module>::<name>` when it is private, and the backend answers "which module is
+asking" from `l.currentLoc`, set by `enterModuleOf` on the item being lowered. A *lifted
+lambda* is lowered from a top-level loop rather than from the enclosing function — bodies
+last, never re-entrantly at the creation site — so it inherits nothing from it, and
+`declareClosure`/`defineClosure` were the pair that never entered a module. By the time
+those loops run, every earlier `enterModuleOf` has restored, so `currentLoc` was the
+**zero** Location and the lookup went out under the bare name.
+
+Two lines, one on each, matching `declareFunctionAs`/`defineFunctionInto`.
+
+**The bug was not about captures**, though that is how it reports. `defineClosure`'s
+environment layout is the first thing to touch the type, so a capture is what a program
+hits first — but a lambda whose *signature* names the type (`() -> Pt`, or `(p: Pt) -> u32`)
+fails at `declareClosure` with the bare `unknown named type "Pt"` and no capture anywhere.
+Struct, `data`, `union` and named tuple all fail alike, so it is not about a kind either.
+All six shapes are in the new test.
+
+The `union` case is the one with a paper trail: the feature that landed the same day
+found this, could not fix it there, and left a comment in `llvm_union_test.go` keeping a
+capture out of its probe so the bug would not be pinned to the wrong test. That comment
+now points here.
+
+**Why it sat undetected is worth more than the fix.** Every capture test in the backend
+suite omits the `module` line, and without a header the module is `""` — the bare key is
+then the *right* one, so the whole feature works. The 08/07 entry says the same sentence
+about `pub`: the difference between a passing and a failing program was one keyword nobody
+would think to vary. The corollary now recorded in the backend README is the general
+one — **if a path lowers a signature or a body from a top-level loop, it needs its own
+`enterModuleOf`** — because the remaining paths (trait methods, coroutine bodies) have it
+and the next one added will not.
+
+It matters out of proportion to its size: every multi-file program declares a module, so
+this made closures over user types unusable in exactly the programs that are not
+single-file scratch files. `examples/` is single-file and mostly headerless, which is why
+nothing there caught it.
+
 ### 09/09/26 — `union`, `@symbol`, and SDL3
 
 SDL3 runs from Lyra: `examples/sdl3.lyra` pushes an SDL user event, polls it back, reads

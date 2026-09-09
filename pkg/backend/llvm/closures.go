@@ -207,6 +207,14 @@ func nestedLambdasIn(fn *ast.LambdaExpr) []*ast.LambdaExpr {
 // creation site can reference the function before its body exists (the same
 // two-pass shape declareFunction/defineFunction use for named functions).
 func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
+	// A lifted lambda is lowered from a top-level loop, not from the enclosing
+	// function's body, so nothing has entered its module for it — and a named type in
+	// its signature or captures is keyed `<module>::<name>` (type_identity.go). Without
+	// this, `l.currentLoc` held whatever the previous item left behind, which is the
+	// zero Location by the time the nested-lambda loops run: the key came out bare and
+	// every named type in a *module-declaring* file failed to resolve. The same
+	// `enterModuleOf` declareFunctionAs/defineFunctionInto make, for the same reason.
+	defer l.enterModuleOf(fn.GetLocation())()
 	if len(fn.LambdaClauses) > 0 {
 		return fmt.Errorf("llvm: multi-clause lambdas are not implemented yet")
 	}
@@ -257,6 +265,8 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 // record a plain retain: a capture is never last-use-eligible, having no
 // declaration inside the lambda.
 func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
+	// The body's module, for the same reason declareClosure enters it.
+	defer l.enterModuleOf(fn.GetLocation())()
 	irFn := l.closures[l.closureKeyFor(fn)]
 	retTy, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {

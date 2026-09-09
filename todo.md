@@ -240,6 +240,18 @@ write today:
 
 ## Known bugs
 
+- **[DONE 09/09] A closure over a named type did not lower in a file declaring a
+  `module`.** `let cap = pure () -> u32 => s.a` over a `let s = Pt { a: 5 }` failed with
+  `llvm: cannot lower captured binding "s": llvm: unknown named type "Pt"`; without the
+  `module` line the same program built. The 08/07 specialization bug in its last path: a
+  lifted lambda is lowered from a top-level loop rather than from the enclosing function,
+  so `declareClosure`/`defineClosure` inherited no `enterModuleOf` and `l.currentLoc` was
+  the zero Location — which keys a private type bare where it is `<module>::<name>`. Not
+  about captures (a lambda whose *signature* names the type fails the same way at the
+  declaration) and not about a kind (`struct`, `data`, `union` and named tuple alike). Undetected
+  because every capture test omitted the header, which is exactly the 08/07 story with
+  `pub` in place of `module`. Pinned by `TestExec_ClosureOverAModuleType`.
+
 - **[IDEA 09/08] `Result` has no `map_err`.** It has `map` and `flat_map` over the `Ok`
   side and `ok`/`err` to project either out, but nothing that transforms the error while
   keeping the value — so a function calling one that fails differently must `match` and
