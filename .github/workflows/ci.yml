@@ -81,6 +81,15 @@ jobs:
       # missing — which is exactly why it is installed here rather than left to chance.
       - name: Install clang and zlib
         run: |
+          # Drop the runner image's third-party apt lists before updating. We need
+          # `clang` and `zlib1g-dev` from Ubuntu's own repositories and nothing from
+          # Google's Chrome repo — but `apt-get update` exits non-zero if *any* configured
+          # source has a bad index, so a broken Chrome `Packages.gz` (which is what
+          # happened, twice, on 09/09) fails the whole build before a line of Lyra is
+          # compiled. Removing the list we do not use makes our build depend only on the
+          # repositories it actually reads.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
           sudo apt-get install -y clang zlib1g-dev
 
