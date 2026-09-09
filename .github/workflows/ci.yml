@@ -88,8 +88,11 @@ jobs:
           # happened, twice, on 09/09) fails the whole build before a line of Lyra is
           # compiled. Removing the list we do not use makes our build depend only on the
           # repositories it actually reads.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
-                     /etc/apt/sources.list.d/microsoft-prod.list
+          # Matched by *content*, not filename: the runner image has moved between
+          # `google-chrome.list` and deb822 `.sources` files, and removing a path that no
+          # longer exists silently fixes nothing — which is what the first attempt did.
+          sudo grep -rlE 'dl\.google\.com|packages\.microsoft\.com' \
+            /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
           sudo apt-get update
           sudo apt-get install -y clang zlib1g-dev
 
