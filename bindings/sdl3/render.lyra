@@ -1,0 +1,68 @@
+module bindings.sdl3
+//! The 2D renderer: a draw colour, a clear, and filled rectangles.
+
+/// An `SDL_Renderer *`. A newtype for the reason [Window] is one.
+pub newtype Renderer = ^u8
+
+/// `SDL_FRect` — the rectangle SDL draws, in floats.
+///
+/// It crosses **by pointer**, which is what `SDL_RenderFillRect` asks for, so this is an
+/// ordinary struct and the boundary has nothing to be clever about. Lyra's struct layout
+/// already matches C's — the FFI fixture proves `sizeof` and every `offsetof` — so this is
+/// a transcription and nothing more. (A library that passed rectangles *by value* would
+/// need struct-by-value, which is a separate feature; SDL does not.)
+pub struct Rect {
+  x: f32,
+  y: f32,
+  w: f32,
+  h: f32,
+}
+
+@symbol("SDL_CreateRenderer")
+unsafe extern sdl_create_renderer: (window: Window, name: ^u8) -> Renderer
+
+@symbol("SDL_DestroyRenderer")
+unsafe extern sdl_destroy_renderer: (renderer: Renderer) -> void
+
+@symbol("SDL_SetRenderDrawColor")
+unsafe extern sdl_set_draw_color: (renderer: Renderer, r: u8, g: u8, b: u8, a: u8) -> u8
+
+@symbol("SDL_RenderClear")
+unsafe extern sdl_render_clear: (renderer: Renderer) -> u8
+
+@symbol("SDL_RenderFillRect")
+unsafe extern sdl_render_fill_rect: (renderer: Renderer, rect: ^Rect) -> u8
+
+@symbol("SDL_RenderPresent")
+unsafe extern sdl_render_present: (renderer: Renderer) -> u8
+
+/// The renderer for a window, or `None` if SDL could not make one.
+///
+/// `nullptr` asks SDL to choose a driver, which is the call the null literal exists for:
+/// before it there was no way to pass NULL and no way to test one either.
+pub let create_renderer = (window: Window) -> Maybe<Renderer> => {
+  let r = unsafe { sdl_create_renderer(window, nullptr) }
+  if r == nullptr { None } else { Some(r) }
+}
+
+/// Release a renderer.
+pub let destroy_renderer = (renderer: Renderer) -> void =>
+  unsafe { sdl_destroy_renderer(renderer) }
+
+/// Set the colour subsequent drawing uses. Components are 0–255.
+pub let set_draw_color = (renderer: Renderer, r: u8, g: u8, b: u8, a: u8) -> bool =>
+  unsafe { sdl_set_draw_color(renderer, r, g, b, a) } != 0
+
+/// Fill the whole target with the current draw colour.
+pub let clear = (renderer: Renderer) -> bool => unsafe { sdl_render_clear(renderer) } != 0
+
+/// Fill one rectangle with the current draw colour.
+///
+/// The rectangle is taken **by reference** here as it is in C — `&rect` at the call is the
+/// address of the caller's own storage, and SDL only reads through it.
+pub let fill_rect = (renderer: Renderer, rect: Rect) -> bool =>
+  unsafe { sdl_render_fill_rect(renderer, &rect) } != 0
+
+/// Show everything drawn since the last present.
+pub let present = (renderer: Renderer) -> bool =>
+  unsafe { sdl_render_present(renderer) } != 0

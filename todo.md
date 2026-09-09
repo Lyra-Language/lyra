@@ -3279,17 +3279,93 @@ One per declaration, unlike `@link`: a declaration links against any number of l
 and binds exactly one symbol. The backend now keys `l.externs` by the **symbol** rather
 than the Lyra name, so two Lyra names for one C function collapse to one `declare`.
 
-### An `unsafe` block is not a comparison operand — **[OPEN]**
+### An `unsafe` block is a comparison operand — **[DONE 09/09]**
 
-`unsafe { f() } == 0` does not parse: `_comparison_operand` admits a literal, a postfix
-expression, a math expression and `&x`, and `unsafe_block` is none of them. Found writing
-`examples/sdl3.lyra`, where every SDL call returns a `u8` to be tested against zero, so
-each one has to be bound first.
+`unsafe { f() } != 0` parses. `unsafe_block` joined `_comparison_operand`: **+49 states**,
+no new conflicts, corpus clean.
 
-Binding the result reads better and the example does that deliberately, so this is an
-ergonomic gap rather than a blocker. Worth measuring before adding: the operand rules are
-in the finely-balanced region grammar.js's conflict notes warn about, and an `unsafe`
-block reaches `block`, which is what makes `for` conditions unable to take `$.expression`.
+It was recorded as an ergonomic gap on 09/09 and fixed the same day, because writing a
+*binding module* changed the arithmetic. In an example it costs one `let` per call; in
+`bindings/sdl3` every wrapper over a C predicate is exactly this shape — `pub let clear =
+(r: Renderer) -> bool => unsafe { sdl_render_clear(r) } != 0` — so the workaround was
+about to be repeated a dozen times in the one file whose job is to not make callers repeat
+things.
+
+The region's warning held: this is the finely-balanced operand area, so the check was the
+corpus rather than the generator's silence.
+
+### A constant is importable — **[DONE 09/09]**
+
+`import lib.{ MAX_SIZE }`. `importable_name` gained `const_identifier` beside `identifier`
+and `user_defined_type_name`.
+
+**A `pub const` was exportable and unimportable**, which is a surface that looks like it
+works: `const_identifier` is `/[A-Z][A-Z0-9_]*/` and `user_defined_type_name` is
+`/[A-Z][a-zA-Z0-9]*/`, so `INIT_VIDEO` lexed as the type name `INIT` followed by a stray
+`_VIDEO` — a syntax error pointing at an underscore, for a name the module genuinely
+exports. Found writing `bindings/sdl3`, which exports `INIT_VIDEO` and `KEY_ESCAPE`.
+
+**Zero new states.** Two corpus expectations changed rather than broke: an all-caps alias
+(`HashMap as HM`) and an all-caps member (`math.{ …, PI }`) now lex as `const_identifier`,
+which for `PI` is the more accurate reading. The two patterns overlap on an all-caps name
+with no underscore, and that tie is settled in the lexer — not something a conflict entry
+could reach.
+
+### `pub newtype` was silently private — **[FIXED 09/09]**
+
+`collectConstrainedTypeDeclaration` never read the declaration's `visibility` field, so
+`pub newtype Handle = ^u8` collected with `IsPublic` false. Every import of it drew
+lyra-E028, whose message tells the author to add a `pub` that is already there.
+
+It is the `pub let` bug again, in exactly the shape CLAUDE.md's field-label rule warns
+about — **reading an unlabelled child by field name returns nil silently**, so the mistake
+reads as "this declaration is never public" rather than as an error. Found writing
+`bindings/sdl3`, where every opaque C handle is a `pub newtype` over a raw pointer.
+
+### Binding modules — `bindings/sdl3` — **[DONE 09/09]**
+
+The shape this file has called for since 08/19: a per-library module owning its `extern`s
+and exporting Lyra over them, Rust's `*-sys` pattern. It needed nothing new from the
+language, which was the claim.
+
+- **The externs are private and that is structural.** There is no `pub extern`, so what a
+  binding module exports is always the Lyra it puts over them — which is where `unsafe`
+  stops, where NULL becomes a `Maybe`, and where the untagged `SDL_Event` becomes a `data`
+  type. **A program using it writes no `unsafe` at all.**
+- **`@link` rides the declarations**, so importing the module links the library.
+- **Not `vendor/`**, which would be the conventional name: the directory sits inside a Go
+  module, and `vendor/` at a Go module root is Go's own — creating one breaks every `go`
+  command in the repo until it is removed. Measured by doing it.
+- Resolution is `bindings.sdl3` → `<root>/bindings/sdl3/`, so a source checkout needs
+  `LYRA_STD=$(pwd)`; module paths resolve under the standard-library root.
+
+### `@link` is module-level — **[DONE 09/09]**
+
+`@link("SDL3")` on the `module` header covers every `extern` below it. **+3 states.**
+
+The fact is the module's: `bindings/sdl3` carried **fourteen** `@link("SDL3")` lines for one
+library, which is the same claim written fourteen times. The per-extern form stays legal and
+is what a lone `extern` in a module-less program uses — `examples/zlib.lyra` still writes it
+that way — and the driver unions the two, deduplicated.
+
+**Asked for as an alternative to `@symbol`, and it is the right half to cut.** The question
+was whether extern names could just take capital letters instead. They cannot: capitals are
+*already* legal (`sdl_PollEvent` parses), so the ask is a leading capital, and in expression
+position that is already claimed — `InitWindow(…)` parses as a **constructor call** and
+`SDL_PollEvent(1)` lexes as `SDL_P` plus a stray tail. The claim is load-bearing: it is what
+makes `Some -1` unambiguous rather than Haskell's ambiguity. And it would fail on raylib
+anyway, whose names are exactly `user_defined_type_name`. `@symbol` is per-declaration
+information; `@link` was the redundant one.
+
+`@symbol` has **no** module form, deliberately: a symbol is one declaration's C name and a
+module has no single one, so it is refused on a header by name rather than ignored.
+
+### Open: `maybe != None` does not lower
+
+Comparing a generic `data` value against a bare nullary constructor fails in the backend
+with `unknown named type "Maybe"`. Pre-existing, reproducible with the plain prelude, and
+the first thing anyone reaches for when draining a queue. `examples/sdl3_window.lyra`
+works around it with a `None` arm and a flag; remove that when this is fixed.
 
 ### Named extern parameters — **[DONE 08/26]**
 

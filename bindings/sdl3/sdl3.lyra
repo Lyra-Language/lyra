@@ -1,0 +1,87 @@
+@link("SDL3")
+module bindings.sdl3
+//! Bindings to SDL3 — the shape `todo.md` calls for: a per-library module owning its
+//! `extern`s and exporting Lyra over them, Rust's `*-sys` pattern.
+//!
+//! **The externs are private, and that is structural rather than stylistic.** There is no
+//! `pub extern` — precisely so two libraries both declaring `strlen` cannot collide on a
+//! program-wide name — so what a binding module exports is always the Lyra it puts over
+//! them. That constraint is what makes this module worth having: the wrappers are where
+//! `unsafe` stops, where a NULL becomes a `Maybe`, and where C's untagged event union
+//! becomes a `data` type a `match` can be exhaustive over. **A program using this module
+//! writes no `unsafe` at all.**
+//!
+//! **`@link("SDL3")` rides the declarations**, so a program that imports this module links
+//! against SDL3 by saying nothing — the flags are collected across every module in the
+//! compile. What `@link` cannot say is *where* the library is: it names a system library,
+//! and a search path is the build system's problem, so a Homebrew install still needs
+//! `LIBRARY_PATH=$(pkg-config --variable=libdir sdl3)` on the command line.
+//!
+//! ```
+//! import bindings.sdl3.{ init, quit, create_window, INIT_VIDEO }
+//!
+//! let main = () -> void => {
+//!   if !init(INIT_VIDEO) { println("no SDL"); return }
+//!   match create_window("hello", 640, 480) {
+//!     Some(w) => { … ; destroy_window(w) },
+//!     None => println("no window"),
+//!   }
+//!   quit()
+//! }
+//! ```
+//!
+//! **Not `vendor/`**, which would be the conventional name: this directory sits inside a
+//! Go module, and `vendor/` at a Go module root is Go's own — creating one breaks every
+//! `go` command in the repo until it is removed.
+//!
+//! **Resolution**: a module path resolves under a *root*, so `bindings.sdl3` is
+//! `<root>/bindings/sdl3/` exactly as `std.prelude` is `<root>/std/prelude/`. `./build.sh`
+//! links `bindings` beside `std` in `build/`, so the built compiler finds this with no
+//! environment set up. Running the compiler from source (`go run ./cmd/lyrac`) needs
+//! `LYRA_STD=$(pwd)` from `lyra/`, for the same reason it does for the prelude.
+//!
+//! What is bound is what a small program needs: init, a window, a renderer, filled
+//! rectangles, the event queue and a delay. Deliberately not the whole of SDL — every
+//! entry point is a maintenance commitment and an ABI claim nobody checks, which is the
+//! argument that decided there would be no `std.libc` either.
+
+import std.ffi.{ cstring_len }
+
+/// `SDL_INIT_VIDEO`, which implies the event subsystem.
+pub const INIT_VIDEO: u32 = 0x00000020
+
+/// `SDL_INIT_EVENTS` alone, for a program that wants the queue and no display.
+pub const INIT_EVENTS: u32 = 0x00004000
+
+@symbol("SDL_Init")
+unsafe extern sdl_init: (flags: u32) -> u8
+
+@symbol("SDL_Quit")
+unsafe extern sdl_quit: () -> void
+
+@symbol("SDL_GetError")
+unsafe extern sdl_get_error: () -> ^u8
+
+/// Bring up the named subsystems. `false` means SDL refused; [last_error] says why.
+///
+/// The `u8` an SDL predicate answers is C's `bool`, which is a **byte** — Lyra's is one
+/// bit and is refused at the boundary (lyra-E063) — so every wrapper here converts, and
+/// no caller has to remember that C's truth is a `1`.
+pub let init = (flags: u32) -> bool => unsafe { sdl_init(flags) } != 0
+
+/// Shut SDL down. Safe to call whether or not [init] succeeded.
+pub let quit = () -> void => unsafe { sdl_quit() }
+
+/// SDL's account of the last failure, or `""` when it has nothing to say.
+///
+/// `SDL_GetError` never answers NULL — it returns an empty string instead — but this
+/// checks anyway: the cost is one comparison, and the alternative is `cstring_len`
+/// walking from address zero.
+pub let last_error = () -> string => {
+  let p = unsafe { sdl_get_error() }
+  if p == nullptr {
+    ""
+  } else {
+    unsafe { p.decode_utf8(cstring_len(p)) }
+  }
+}

@@ -1328,12 +1328,19 @@ needs before touching anything nearby:
 - **Ownership never crosses.** Neither side adopts the other's buffer; both directions
   would need the other to understand the rc header. A `^T` into a live array dangles at the
   next `push`.
-- **A link requirement rides the extern that needs it** — `@link("m")` on the declaration,
-  collected across every module in the compile, sorted and deduplicated, emitted as `-l`
-  (`lyrac`'s `linkFlags`, which every "compile with" hint prints too). Not a CLI flag (a
-  module's requirement would not compose) and not a manifest (this compiler has
-  deliberately never had one). It needs no `unsafe`: a wrong library name fails loudly at
-  link time, which is exactly what an effect bound does not do.
+- **A link requirement rides the module, or the extern that needs it** — `@link("m")` on
+  the `module` header or on the declaration, unioned across every module in the compile,
+  sorted and deduplicated, emitted as `-l` (`lyrac`'s `linkFlags`, which every "compile
+  with" hint prints too). Not a CLI flag (a module's requirement would not compose) and not
+  a manifest (this compiler has deliberately never had one). It needs no `unsafe`: a wrong
+  library name fails loudly at link time, which is exactly what an effect bound does not do.
+
+  **The module form is the one a binding module wants**, and it exists because the fact is
+  the module's: `bindings/sdl3` carried fourteen `@link("SDL3")` lines for one library.
+  The per-extern form stays, because a lone `extern` in a module-less program has no header
+  to put it on. `@symbol` deliberately has no module form — a symbol is one declaration's C
+  name and a module has no single one, so it is refused on a header by name rather than
+  ignored.
 
 **A `union` is a type kind, not a declaration kind**, so it rides `TypeDeclStmt` and pays
 rule 8's *type* tax only (`types.UnionType`, `typechecker/union.go`,
@@ -1471,6 +1478,37 @@ moment `offset` existed — the `read_line`/`parse_i64` division, applied at the
 There is deliberately **no `std.libc`**: an extern cannot be exported anyway, and a shared
 bindings module re-creates the libc shim layer FFI was built to dissolve. The shape that
 works is a per-library binding module owning its own externs, which needs nothing new.
+
+## Binding modules (`bindings/`)
+
+`bindings/sdl3/` is SDL3, and the shape `todo.md` has called for since the FFI landed: a
+per-library module owning its `extern`s and exporting Lyra over them, Rust's `*-sys`
+pattern. It needed nothing new from the language.
+
+- **The externs are private and that is structural.** There is no `pub extern` — precisely
+  so two libraries both declaring `strlen` cannot collide on a program-wide name — so what
+  a binding module exports is always the Lyra it puts over them. That is where `unsafe`
+  stops, where NULL becomes a `Maybe`, and where the untagged `SDL_Event` becomes a `data`
+  type a `match` can be exhaustive over. **`examples/sdl3_window.lyra` contains no
+  `unsafe` and no `extern`.**
+- **`@link("SDL3")` sits on the `module` header**, once, and covers all fourteen externs;
+  a program importing the module links the library by saying nothing. What `@link` still
+  cannot say is *where* — a search path is the build system's problem, so a Homebrew SDL3
+  needs `LIBRARY_PATH=$(pkg-config --variable=libdir sdl3)`.
+- **Not `vendor/`**, the conventional name: this directory is inside a Go module, and
+  `vendor/` at a Go module root is Go's own — creating one breaks every `go` command in
+  the repo until it is removed.
+- **Resolution is `bindings.sdl3` → `<root>/bindings/sdl3/`**, the same rule that makes
+  `std.prelude` `<root>/std/prelude/`. **`build.sh` links `bindings` beside `std`**, so the
+  built compiler resolves it with no environment set up — that link was missed when the
+  directory was added, and the symptom was that the example compiled only under
+  `LYRA_STD=$(pwd)`, which is not how anyone runs the compiler. `go run ./cmd/lyrac` still
+  needs `LYRA_STD`, for the same reason it does for the prelude: it builds into a temp
+  directory with neither beside it.
+
+`examples/sdl3.lyra` binds SDL directly and is dense with `unsafe` — it exists to prove the
+boundary works. `bindings/sdl3` is what using it looks like afterwards. Keep both: the
+first is the proof, the second is the demonstration.
 
 ## Current Development Focus
 

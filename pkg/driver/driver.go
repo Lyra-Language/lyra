@@ -516,8 +516,8 @@ func lastSegment(module string) string {
 	return module
 }
 
-// collectLinks is the union of every `extern`'s `@link` in the program, sorted and
-// deduplicated.
+// collectLinks is the union of every `@link` in the program — on a module header or on
+// an individual `extern` — sorted and deduplicated.
 //
 // A flat set rather than an ordered list: link order matters for static archives, and if a
 // real case ever needs it, that is evidence the set is the wrong shape rather than a reason
@@ -529,13 +529,22 @@ func collectLinks(program *ast.Program) []string {
 	}
 	seen := map[string]bool{}
 	for _, stmt := range program.Statements {
-		ext, ok := stmt.(*ast.ExternDeclStmt)
-		if !ok {
-			continue
-		}
-		for _, lib := range ext.Links {
-			if lib != "" {
-				seen[lib] = true
+		// **Both sources, unioned.** A module header's `@link` covers every extern below
+		// it, which is what a binding module wants; a per-extern `@link` still works and
+		// is what a lone extern in a module-less program has. Neither supersedes the
+		// other, and the set is deduplicated anyway.
+		switch decl := stmt.(type) {
+		case *ast.ExternDeclStmt:
+			for _, lib := range decl.Links {
+				if lib != "" {
+					seen[lib] = true
+				}
+			}
+		case *ast.ModuleDeclStmt:
+			for _, lib := range decl.Links {
+				if lib != "" {
+					seen[lib] = true
+				}
 			}
 		}
 	}

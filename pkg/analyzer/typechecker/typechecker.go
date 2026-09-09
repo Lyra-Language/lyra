@@ -1918,9 +1918,21 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 	// typed side is the context for the untyped one, which is what the numeric ladder
 	// below does for `x == 5` — the difference is only that a pointer has no common
 	// type to compute, since the two sides are already the same type or an error.
-	if common := pointerComparisonType(leftType, rightType); common != nil {
-		tc.propagateExpectedType(expr.Left, common)
-		tc.propagateExpectedType(expr.Right, common)
+	// `p == nullptr` is the whole reason the literal exists, and the comparison is the
+	// one context that supplies a pointee with no annotation in sight.
+	//
+	// **Only the unpinned side is given a context.** Pushing the pointer type onto both
+	// would hand a real operand a context it does not need — and where that operand is a
+	// `newtype Window = ^u8`, the stripped `^u8` reads as an implicit read-out and draws
+	// lyra-E047 about a comparison whose two sides are one type. Two already-typed
+	// pointers need nothing from this at all.
+	if pt := nullPtrComparisonPointee(leftType, rightType); pt != nil {
+		if isUntypedNullPtr(leftType) {
+			tc.propagateExpectedType(expr.Left, pt)
+		}
+		if isUntypedNullPtr(rightType) {
+			tc.propagateExpectedType(expr.Right, pt)
+		}
 		return
 	}
 	common := numericResultType(leftType, rightType)
@@ -1931,20 +1943,29 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 	tc.propagateExpectedType(expr.Right, common)
 }
 
-// pointerComparisonType is the type both sides of a pointer `==`/`!=` are pinned to,
-// or nil when the comparison is not one. Exactly one shape can supply it: a pointer on
-// at least one side, with the other a pointer or an unpinned `nullptr`.
+// nullPtrComparisonPointee is the pointer type an unpinned `nullptr` takes from the
+// other side of a `==`/`!=`, or nil when neither side is one.
+//
+// **Newtypes are stripped**, which is what makes a handle type work: a
+// `newtype Window = ^u8` is a pointer at run time, and `w == nullptr` is the whole reason
+// a binding declares one. The literal is pinned to the *base* pointer, since that is what
+// it will be lowered as — the newtype's identity belongs to the operand that has it.
 //
 // **The mutable side never wins.** `^mut T` and `^T` compare, since mutability is a
 // permission to write and not part of an address's identity, and pinning a `nullptr` to
 // the mutable one would hand it a permission the comparison did not ask for. So a
-// mismatched pair pins to the *immutable* type, which both sides are assignable to.
+// mismatched pair answers the *immutable* type, which both sides are assignable to.
 //
 // Two unpinned literals answer nil rather than inventing a pointee: `nullptr ==
 // nullptr` has no type to compare at, and lyra-E069 says so at each of them.
-func pointerComparisonType(a, b types.Type) types.Type {
-	ap, aIsPtr := a.(types.RawPointerType)
-	bp, bIsPtr := b.(types.RawPointerType)
+func nullPtrComparisonPointee(a, b types.Type) types.Type {
+	// **Newtypes are stripped first**, which is what makes a handle type work: a
+	// `newtype Window = ^u8` is a pointer at run time and `w == nullptr` is the whole
+	// reason a binding declares one. Without this the comparison did not pin the
+	// literal and reported lyra-E069 about a `nullptr` that had a pointer right beside
+	// it. Found writing the SDL3 bindings, where every opaque handle is such a newtype.
+	ap, aIsPtr := types.StripNewtype(a).(types.RawPointerType)
+	bp, bIsPtr := types.StripNewtype(b).(types.RawPointerType)
 	switch {
 	case aIsPtr && bIsPtr:
 		if ap.IsMut != bp.IsMut {

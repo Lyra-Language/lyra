@@ -1,0 +1,146 @@
+module bindings.sdl3
+//! The event queue — and the one place in these bindings where the conversion is
+//! interesting rather than mechanical.
+//!
+//! **`SDL_Event` is an untagged union and `Event` is a tagged one**, which is the whole
+//! difference between C's model and Lyra's. A union records nothing about which member is
+//! live, so reading one is `unsafe`; a `data` type carries a discriminant, which is what
+//! lets `match` be exhaustive over it. [poll_event] is the conversion: it reads the tag,
+//! reads the one member that tag licenses, and answers a value that cannot lie about
+//! which it is.
+//!
+//! That conversion has to happen *somewhere*, and here is the right somewhere — once, in
+//! the binding, rather than in every program's event loop. It is why a caller of this
+//! module writes no `unsafe`.
+
+/// `SDL_KeyboardEvent`, field for field.
+///
+/// Every field is present although only `key` is read: the layout is what puts `key` at
+/// offset 28, and a missing `reserved` or `which` would move it and read a neighbouring
+/// field instead. That is the boundary's characteristic failure — it links cleanly and
+/// gives a plausible wrong answer.
+///
+/// `down` and `repeat` are C's `bool`, a **byte**; Lyra's is one bit and is refused at the
+/// boundary, so they are `u8`.
+struct KeyboardEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  which: u32,
+  scancode: u32,
+  key: u32,
+  modifiers: u16,
+  raw: u16,
+  down: u8,
+  repeat: u8,
+}
+
+/// `SDL_MouseMotionEvent`.
+struct MouseMotionEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  which: u32,
+  state: u32,
+  x: f32,
+  y: f32,
+  xrel: f32,
+  yrel: f32,
+}
+
+/// `SDL_MouseButtonEvent`.
+struct MouseButtonEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  which: u32,
+  button: u8,
+  down: u8,
+  clicks: u8,
+  padding: u8,
+  x: f32,
+  y: f32,
+}
+
+/// `SDL_Event` — 128 bytes, read as a `u32` to find the tag and as a struct to read the
+/// payload that tag selects.
+///
+/// The `padding` member is what fixes the size at 128. SDL declares it so the union's size
+/// never changes as it adds event types; without it Lyra would size the union at 40 — the
+/// largest real member here — and `SDL_PollEvent` would write 88 bytes past the end of the
+/// caller's stack slot. That is a stack smash rather than a wrong value, which is why the
+/// member is transcribed even though nothing reads it.
+union RawEvent {
+  kind: u32,
+  key: KeyboardEvent,
+  motion: MouseMotionEvent,
+  button: MouseButtonEvent,
+  padding: [128]u8,
+}
+
+const EVENT_QUIT: u32 = 0x100
+const EVENT_KEY_DOWN: u32 = 0x300
+const EVENT_KEY_UP: u32 = 0x301
+const EVENT_MOUSE_MOTION: u32 = 0x400
+const EVENT_MOUSE_BUTTON_DOWN: u32 = 0x401
+const EVENT_MOUSE_BUTTON_UP: u32 = 0x402
+
+/// `SDLK_ESCAPE` — the virtual key code, not the physical scancode.
+pub const KEY_ESCAPE: u32 = 0x0000001b
+
+/// One thing that happened, as a type that records which thing it is.
+///
+/// `Other` carries the raw SDL event code, so a program can recognise something these
+/// bindings do not model without the module having to grow a variant for it — and so that
+/// widening this enumeration later never silently changes what an existing `match` does.
+pub data Event =
+  | Quit
+  | KeyDown(u32)
+  | KeyUp(u32)
+  | MouseMotion(f32, f32)
+  | MouseDown(u8, f32, f32)
+  | MouseUp(u8, f32, f32)
+  | Other(u32)
+
+@symbol("SDL_PollEvent")
+unsafe extern sdl_poll_event: (event: ^mut RawEvent) -> u8
+
+/// Take the next event off the queue, or `None` when it is empty.
+///
+/// **The tag is read first, and only then the member it licenses.** That is the whole
+/// discipline an untagged union asks of a reader, and doing it here means no caller ever
+/// has to: what comes back is a `data` value whose variant *is* the fact that was checked.
+pub let poll_event = () -> Maybe<Event> => {
+  // A union Lyra allocated and SDL writes through — the direction that proves the size,
+  // since a short buffer would be a stack smash rather than a wrong answer.
+  var raw = RawEvent { padding: [0; 128] }
+  let got = unsafe { sdl_poll_event(&mut raw) }
+  if got == 0 {
+    None
+  } else {
+    Some(classify(raw))
+  }
+}
+
+/// Read the tag, then the one member it selects.
+let classify = pure (raw: RawEvent) -> Event => {
+  let kind = unsafe { raw.kind }
+  if kind == EVENT_QUIT {
+    Quit
+  } else if kind == EVENT_KEY_DOWN {
+    KeyDown(unsafe { raw.key.key })
+  } else if kind == EVENT_KEY_UP {
+    KeyUp(unsafe { raw.key.key })
+  } else if kind == EVENT_MOUSE_MOTION {
+    MouseMotion(unsafe { raw.motion.x }, unsafe { raw.motion.y })
+  } else if kind == EVENT_MOUSE_BUTTON_DOWN {
+    MouseDown(unsafe { raw.button.button }, unsafe { raw.button.x }, unsafe { raw.button.y })
+  } else if kind == EVENT_MOUSE_BUTTON_UP {
+    MouseUp(unsafe { raw.button.button }, unsafe { raw.button.x }, unsafe { raw.button.y })
+  } else {
+    Other(kind)
+  }
+}

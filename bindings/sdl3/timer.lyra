@@ -1,0 +1,14 @@
+module bindings.sdl3
+//! Time.
+
+@symbol("SDL_Delay")
+unsafe extern sdl_delay: (ms: u32) -> void
+
+@symbol("SDL_GetTicks")
+unsafe extern sdl_get_ticks: () -> u64
+
+/// Sleep for roughly `ms` milliseconds — the simplest frame pacing there is.
+pub let delay = (ms: u32) -> void => unsafe { sdl_delay(ms) }
+
+/// Milliseconds since SDL was initialised.
+pub let ticks = () -> u64 => unsafe { sdl_get_ticks() }

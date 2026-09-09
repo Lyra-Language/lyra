@@ -23,5 +23,50 @@ func CollectModuleDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Mo
 			moduleDecl.Path = append(moduleDecl.Path, ast.ModuleName{Name: ctx.NodeText(child)})
 		}
 	}
+	moduleDecl.Links = collectModuleLinks(node, ctx)
 	return moduleDecl
+}
+
+// collectModuleLinks reads `@link("SDL3")` off the module header.
+//
+// **`@link` is the only attribute a module takes**, and `@symbol` is refused here by
+// name rather than ignored: a symbol is one declaration's C name and a module has no
+// single one, so admitting it silently would let a reader believe every extern below
+// had been renamed. That is the standing rule on this surface — an attribute that
+// parses and is read by nobody costs more than an absent one.
+func collectModuleLinks(node *sitter.Node, ctx *collector_ctx.Ctx) []string {
+	attrs := cst.Field(node, "attributes")
+	if attrs == nil {
+		return nil
+	}
+	var links []string
+	for i := uint(0); i < attrs.NamedChildCount(); i++ {
+		attr := attrs.NamedChild(i)
+		nameNode := cst.Field(attr, "name")
+		if nameNode == nil {
+			continue
+		}
+		if name := ctx.NodeText(nameNode); name != "link" {
+			ctx.AddError(attr, diag.SeverityError,
+				"unknown attribute `@%s` on a module; the only one is `@link(\"name\")`",
+				name)
+			continue
+		}
+		args := cst.Field(attr, "args")
+		if args == nil {
+			ctx.AddError(attr, diag.SeverityError,
+				"`@link` needs the library to link, as a string: `@link(\"m\")`")
+			continue
+		}
+		for j := uint(0); j < args.NamedChildCount(); j++ {
+			arg := args.NamedChild(j)
+			if arg.Kind() != "string_literal" {
+				ctx.AddError(arg, diag.SeverityError,
+					"`@link` takes a library name as a string: `@link(\"m\")`")
+				continue
+			}
+			links = append(links, stringLiteralText(arg, ctx))
+		}
+	}
+	return links
 }

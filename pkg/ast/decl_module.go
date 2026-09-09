@@ -10,6 +10,14 @@ type ModuleDeclStmt struct {
 	// and its several files each want to say something about the module they join.
 	// Docs from every file of a multi-file module are concatenated in file order.
 	Doc *Doc
+	// Links are the libraries `@link("m")` on the module header names.
+	//
+	// **Module-level because that is where the fact lives.** A binding module links one
+	// library and declares a dozen `extern`s against it, so repeating `@link` on each was
+	// the same claim written a dozen times — `bindings/sdl3` carried fourteen. The
+	// per-extern form stays legal and is what a lone `extern` in a module-less program
+	// uses; the driver takes the union of both.
+	Links []string
 }
 
 func (m *ModuleDeclStmt) statementNode() {}

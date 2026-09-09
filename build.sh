@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build the compiler and language server into build/, laid out the way an install is:
-# the binaries with `std/` beside them.
+# the binaries with `std/` and `bindings/` beside them.
 #
 #   ./build.sh
 #
@@ -10,6 +10,12 @@
 # Zig and Go use for their sysroot — so building this way exercises the resolution path
 # every day instead of only at release time, and a program can use the prelude without
 # any environment set up.
+#
+# **`bindings/` is linked for the same reason and was missed when it was added**: a module
+# path resolves under a *root*, and the root is this directory — so `bindings.sdl3` is
+# `<root>/bindings/sdl3/` exactly as `std.prelude` is `<root>/std/prelude/`. Without the
+# link, `examples/sdl3_window.lyra` could only be compiled with `LYRA_STD` pointed at the
+# source tree, which is not how anyone runs the compiler.
 #
 # `std` is a **symlink** to the tracked sources, not a copy. A copy drifts silently: you
 # would edit std/prelude.lyra, rebuild, and still get the old prelude. Every confusing
@@ -26,8 +32,10 @@ mkdir -p "$OUT"
 go build -o "$OUT/lyrac" ./cmd/lyrac
 go build -o "$OUT/lyra-lsp" ./cmd/lyra-lsp
 
-# Recreated each time so it cannot survive as a stale copy if std/ ever moves.
-rm -f "$OUT/std"
-ln -s ../std "$OUT/std"
+# Recreated each time so neither can survive as a stale copy if its source ever moves.
+for dir in std bindings; do
+  rm -f "$OUT/$dir"
+  ln -s "../$dir" "$OUT/$dir"
+done
 
-printf 'built %s/{lyrac,lyra-lsp} with std -> ../std\n' "$OUT"
+printf 'built %s/{lyrac,lyra-lsp} with std -> ../std, bindings -> ../bindings\n' "$OUT"

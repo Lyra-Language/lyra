@@ -52,6 +52,13 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx
 			Type:        typeType,
 			Constraints: constraints,
 		},
+		// The grammar has always admitted `pub newtype`, and this never read it — so a
+		// public newtype collected as private and lyra-E028 told the importer to add a
+		// `pub` that was already there. It is the `pub let` bug again, in the shape
+		// CLAUDE.md's field-label rule warns about: reading an unlabelled child by field
+		// name returns nil *silently*, so the mistake reads as "this is never public".
+		// Found writing `bindings/sdl3`, where every opaque handle is a `pub newtype`.
+		IsPublic: cst.Field(node, "visibility") != nil,
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {

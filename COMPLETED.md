@@ -9,6 +9,109 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — `bindings/sdl3`, and what writing a binding module found
+
+The shape `todo.md` has called for since the FFI landed: a per-library module owning its
+`extern`s and exporting Lyra over them, Rust's `*-sys` pattern. It needed nothing new from
+the language — which was the claim — but it found **four** things, and that is the entry's
+point. An *example* uses a feature once; a *binding module* uses it a dozen times, and the
+difference is what turns an ergonomic note into a bug report.
+
+`examples/sdl3_window.lyra` is now written against it and **contains no `unsafe` and no
+`extern`**. Every one of both is in `bindings/sdl3/`, which is what a binding module is
+for: the `unsafe` is written once, where the C prototype is transcribed.
+
+#### The interesting conversion
+
+`SDL_Event` is an untagged union and `Event` is a tagged one, and `poll_event` is the
+bridge: read the tag, read the one member it licenses, answer a `data` value that cannot
+lie about which it is. That conversion has to happen somewhere, and the binding is the
+right somewhere — once, rather than in every program's event loop. It is exactly why a
+caller writes no `unsafe`.
+
+`Other(u32)` carries the raw SDL code, so a program can recognise an event the bindings do
+not model, and so widening the enumeration later never silently changes an existing
+`match`.
+
+#### Four things it found
+
+**An `unsafe` block is now a comparison operand** (+49 states, no new conflicts). Recorded
+as an ergonomic gap the day before and fixed the day after, because the arithmetic changed:
+in an example `unsafe { f() } != 0` costs one `let`, while in a binding module *every*
+wrapper over a C predicate is that shape, so the workaround was about to be repeated a
+dozen times in the one file whose job is to stop callers repeating things.
+
+**A constant is now importable.** `importable_name` admitted `identifier` and
+`user_defined_type_name` and not `const_identifier`, so `import lib.{ INIT_VIDEO }` lexed
+as the type name `INIT` followed by a stray `_VIDEO`. A `pub const` was **exportable and
+unimportable** — a surface that looks like it works. Zero new states; two corpus
+expectations shifted rather than broke, and for `math.{ …, PI }` the new reading is the
+more accurate one.
+
+**`pub newtype` was silently private.** `collectConstrainedTypeDeclaration` never read the
+`visibility` field, so every import of one drew lyra-E028 — whose message tells the author
+to add a `pub` that is already there. This is the `pub let` bug again in precisely the
+shape the field-label rule warns about: *reading an unlabelled child by field name returns
+nil silently*, so the mistake reads as "this declaration is never public" rather than as an
+error. Found because every opaque C handle is a `pub newtype` over a raw pointer.
+
+**`nullptr` did not pin through a newtype.** `w == nullptr` on a `newtype Window = ^u8`
+reported lyra-E069 about a literal with a pointer sitting right beside it, because the
+comparison's pointee lookup did not strip newtypes. Fixing it turned up a second half:
+propagating the pointer type to *both* operands handed the handle a `^u8` context, which
+reads as an implicit read-out and drew lyra-E047 about a comparison whose two sides are one
+type. **Only the unpinned side needs a context** — an already-typed operand needs nothing
+from this at all.
+
+#### `@link` moved to the module header
+
+Asked as an alternative to `@symbol` — *could extern names just take capital letters?* —
+and the investigation is the useful part, because the answer is no for a reason worth
+writing down.
+
+**Capitals are already legal.** `unsafe extern sdl_PollEvent:` parses today; only the first
+character is restricted. So the proposal is a *leading* capital, and in expression position
+— where the thing must be called — that is already claimed:
+
+```
+InitWindow(640, 480)   → error: undefined tuple type "InitWindow"
+SDL_PollEvent(1)       → syntax error: unexpected "ollEvent"
+```
+
+raylib's names are exactly `user_defined_type_name`, so they parse as **constructor calls**;
+SDL's lex as `SDL_P` (SCREAMING_CASE greedily takes the underscore) plus a stray tail. And
+the claim is load-bearing: *a PascalCase name in expression position is always a
+constructor* is what makes `Some -1` unambiguous rather than Haskell's ambiguity. Relaxing
+it would trade a documented invariant for an attribute — and fail on raylib regardless.
+Some C symbols are not identifiers in any language either (Darwin's `_open$NOCANCEL`,
+glibc's versioned `memcpy@GLIBC_2.14`, anything C++ mangled), which is why Rust has
+`#[link_name]` and C# `EntryPoint` rather than relaxed identifier rules.
+
+**But the instinct about the ceremony was right, aimed one attribute over.** `bindings/sdl3`
+carried fourteen `@link("SDL3")` lines for one library — the same claim fourteen times —
+against fourteen `@symbol`s that each carry a *different* C name. `@symbol` is
+per-declaration information a reader checks against the header; `@link` is a module fact.
+So `@link` moved to the `module` header (+3 states) and the per-extern form stayed, because
+a lone extern in a module-less program has no header to put it on; the driver unions the two.
+
+`@symbol` deliberately gained no module form: a module has no single C name, so it is
+refused on a header by name rather than ignored — the standing rule that an attribute which
+parses and is read by nobody costs more than an absent one.
+
+#### Two constraints worth recording
+
+**Not `vendor/`.** The conventional name is unavailable: the directory sits inside a Go
+module, and `vendor/` at a Go module root is Go's own — creating one breaks every `go`
+command in the repo until it is removed. Measured by doing it, and undone in the same
+minute. `bindings/` says what the directory is anyway.
+
+**`maybe != None` does not lower**, which is pre-existing and reproducible with the plain
+prelude: comparing a generic `data` value against a bare nullary constructor loses the
+instantiation and the backend reports `unknown named type "Maybe"`. It is the first thing
+anyone reaches for when draining a queue. The example works around it with a `None` arm and
+a flag — which reads better anyway, since "the queue is empty" becomes a case like every
+other outcome — and the workaround is marked for removal.
+
 ### 09/09/26 — A closure over a named type, in a file that declares a module
 
 A lambda capturing a `struct` failed to build in any file with a `module` header:

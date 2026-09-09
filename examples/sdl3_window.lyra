@@ -1,0 +1,129 @@
+// A window with something moving in it, written against the SDL3 bindings.
+//
+// **There is no `unsafe` in this file, and no `extern`.** Every one of them is in
+// `bindings/sdl3/`, which is the point of a binding module: the `unsafe` is written once,
+// where the C prototype is transcribed, rather than at every call. Compare
+// `examples/sdl3.lyra`, which binds SDL directly and is dense with it — that one exists to
+// prove the boundary works, this one to show what using it looks like afterwards.
+//
+// Run it with:
+//
+//     LIBRARY_PATH=$(pkg-config --variable=libdir sdl3) lyrac run examples/sdl3_window.lyra
+//
+// That is `build/lyrac` from `./build.sh`, which puts `std/` and `bindings/` beside the
+// binary — a module path resolves under that root, so both are found with no environment
+// set up. Running the compiler straight from source (`go run ./cmd/lyrac`) needs
+// `LYRA_STD=$(pwd)` from `lyra/` instead, because `go run` builds into a temp directory
+// that has neither beside it.
+//
+// `@link("SDL3")` rides the bindings' declarations, so nothing here mentions the library.
+// Close the window or press Escape to quit.
+
+import bindings.sdl3.{
+  init, quit, last_error, INIT_VIDEO,
+  create_window, destroy_window,
+  Renderer, Rect, create_renderer, destroy_renderer,
+  set_draw_color, clear, fill_rect, present,
+  poll_event, KEY_ESCAPE,
+  delay,
+}
+
+const WIDTH: f32 = 640.0
+const HEIGHT: f32 = 480.0
+const SIDE: f32 = 80.0
+
+let main = () -> void => {
+  if !init(INIT_VIDEO) {
+    println("SDL_Init failed: ${last_error()}")
+    return
+  }
+
+  match create_window("Lyra × SDL3", 640, 480) {
+    None => {
+      println("could not open a window: ${last_error()}")
+      quit()
+    },
+    Some(window) => {
+      match create_renderer(window) {
+        None => {
+          println("could not make a renderer: ${last_error()}")
+          destroy_window(window)
+          quit()
+        },
+        Some(renderer) => {
+          run(renderer)
+          destroy_renderer(renderer)
+          destroy_window(window)
+          quit()
+          println("closed cleanly")
+        },
+      }
+    },
+  }
+}
+
+/// The render loop: bounce a square around and drift its colour.
+let run = (renderer: Renderer) -> void => {
+  // f32 throughout, because `Rect` is f32 and Lyra refuses a narrowing f64 → f32
+  // conversion. Staying in the width the C type uses is simpler than converting at the
+  // edge, and it is what the rectangle gets built from anyway.
+  var x: f32 = 40.0
+  var y: f32 = 60.0
+  var dx: f32 = 3.5
+  var dy: f32 = 2.5
+  var tick: f32 = 0.0
+  var running = true
+
+  for running {
+    // **The event loop a tagged type buys.** `poll_event` already read the union's tag
+    // and the member it licensed, so what arrives here is a value that cannot lie about
+    // which event it is — no `unsafe`, and a `match` the compiler checks.
+    // Drain the queue. `None` is an arm rather than a loop condition because
+    // `next != None` does not lower today — comparing a generic `data` value against a
+    // bare nullary constructor loses the instantiation (filed; the plain prelude `Maybe`
+    // has it too). One `match` reads better here regardless: every outcome, including
+    // "the queue is empty", is a case.
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        // An assignment is a statement, not an expression, so an arm that assigns needs
+        // a block around it.
+        Some(Quit) => { running = false },
+        Some(KeyDown(key)) => {
+          if key == KEY_ESCAPE { running = false }
+        },
+        _ => {},
+      }
+    }
+
+    x += dx
+    y += dy
+    if x <= 0.0 || x >= WIDTH - SIDE { dx = -dx }
+    if y <= 0.0 || y >= HEIGHT - SIDE { dy = -dy }
+    tick += 0.02
+
+    set_draw_color(renderer, 18, 18, 28, 255)
+    clear(renderer)
+
+    // `round()` is the explicit float → integer step the language insists on; a bare
+    // `u8(f)` is refused, which is the lossy-conversion rule doing its job.
+    let r = u8((120.0 + 120.0 * wave(tick)).round())
+    let g = u8((120.0 + 120.0 * wave(tick + 2.1)).round())
+    let b = u8((120.0 + 120.0 * wave(tick + 4.2)).round())
+    set_draw_color(renderer, r, g, b, 255)
+    fill_rect(renderer, Rect { x: x, y: y, w: SIDE, h: SIDE })
+
+    present(renderer)
+    delay(16)
+  }
+}
+
+/// A smooth 0..1 wave without a trig builtin — Lyra has `sqrt` and the logarithms and no
+/// `sin`, so this folds the tick into a triangle and smooths it. Enough to drift a colour,
+/// and it keeps the example free of anything the language does not already have.
+let wave = pure (t: f32) -> f32 => {
+  let phase = t - f32((t / 2.0).floor()) * 2.0
+  let tri = if phase < 1.0 { phase } else { 2.0 - phase }
+  tri * tri * (3.0 - 2.0 * tri)
+}

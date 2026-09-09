@@ -1,0 +1,41 @@
+module bindings.sdl3
+//! Windows.
+
+import std.ffi.{ with_cstring }
+
+/// An `SDL_Window *`.
+///
+/// **A newtype over a raw pointer**, which is the shape a C handle wants and costs
+/// nothing: it is a `^u8` at run time, and `isFFISafe` looks through it, so an extern may
+/// take one directly. What it buys is that a `Window` and a [Renderer] are different
+/// types, where two bare `^u8`s are interchangeable and getting them the wrong way round
+/// links cleanly.
+///
+/// It is deliberately **not** a struct wrapping the pointer: a handle is one machine word,
+/// and the only operations on it are "hand it back to SDL" and "is it null".
+pub newtype Window = ^u8
+
+@symbol("SDL_CreateWindow")
+unsafe extern sdl_create_window: (title: ^u8, w: i32, h: i32, flags: u64) -> Window
+
+@symbol("SDL_DestroyWindow")
+unsafe extern sdl_destroy_window: (window: Window) -> void
+
+/// Open a window, or `None` if SDL could not — [last_error] says why.
+///
+/// **This is where a C convention becomes the language's own.** SDL answers NULL on
+/// failure, which is indistinguishable from success in a bare `^u8`; a `Maybe` makes the
+/// failure a case the caller has to handle. The `extern` stays a transcription of the C
+/// prototype and the interpretation happens here, which is the same division
+/// `read_line`/`parse_i64` draws.
+///
+/// `with_cstring` lends the title's bytes for the call and takes them back, so no buffer
+/// has to be kept alive by hand — and it is `pure noalloc`, since a Lyra string already
+/// carries the NUL a C call needs.
+pub let create_window = (title: string, width: i32, height: i32) -> Maybe<Window> => {
+  let w = title.with_cstring((t) => unsafe { sdl_create_window(t, width, height, 0) })
+  if w == nullptr { None } else { Some(w) }
+}
+
+/// Close a window. The handle must not be used afterwards; nothing here can check that.
+pub let destroy_window = (window: Window) -> void => unsafe { sdl_destroy_window(window) }

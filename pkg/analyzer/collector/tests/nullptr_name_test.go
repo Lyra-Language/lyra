@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
@@ -53,6 +54,50 @@ func TestNullPtr_CannotBeBoundAsAVarOrConst(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s nullptr: expected lyra-E070, got: %v", kind, errors)
+		}
+	}
+}
+
+// **A `pub newtype` is public**, which it silently was not until 09/09.
+//
+// `collectConstrainedTypeDeclaration` never read the declaration's `visibility` field, so
+// `pub newtype Handle = ^u8` collected with IsPublic false: the type was exportable in the
+// grammar, refused at every import with lyra-E028, and the diagnostic told the author to
+// add a `pub` that was already there.
+//
+// It is the `pub let` bug again, in exactly the shape CLAUDE.md's field-label rule warns
+// about — reading an unlabelled child by field name returns nil *silently*, so the mistake
+// reads as "this declaration is never public" rather than as an error. Found writing
+// `bindings/sdl3`, where every opaque C handle is a `pub newtype` over a raw pointer.
+func TestNewtype_PubIsCollected(t *testing.T) {
+	for _, src := range []string{
+		"\npub newtype Handle = ^u8\n",
+		"\npub newtype Meters = f64\n",
+		"\npub newtype Percent = u8 where range(0..<=100)\n",
+	} {
+		program, _, _, _ := parseAndCollect(t, src)
+		found := false
+		for _, stmt := range program.Statements {
+			if td, ok := stmt.(*ast.TypeDeclStmt); ok {
+				found = true
+				if !td.IsPublic {
+					t.Errorf("%q: newtype %s collected as private", src, td.Name)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%q: no type declaration collected", src)
+		}
+	}
+}
+
+// The negative half: an unmarked newtype stays private, so the fix reads the field rather
+// than defaulting to public.
+func TestNewtype_WithoutPubIsPrivate(t *testing.T) {
+	program, _, _, _ := parseAndCollect(t, "\nnewtype Handle = ^u8\n")
+	for _, stmt := range program.Statements {
+		if td, ok := stmt.(*ast.TypeDeclStmt); ok && td.IsPublic {
+			t.Errorf("newtype %s without `pub` collected as public", td.Name)
 		}
 	}
 }
