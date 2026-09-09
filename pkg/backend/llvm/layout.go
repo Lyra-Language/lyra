@@ -288,6 +288,8 @@ func SizeAndAlign(t types.Type) (size, align int, ok bool) {
 		return pointerSize, pointerSize, true
 	case types.NamedStructType:
 		return aggregateSizeAndAlign(fieldTypes(v.Fields))
+	case types.UnionType:
+		return unionSizeAndAlign(v)
 	case types.AnonymousStructType:
 		return aggregateSizeAndAlign(fieldTypes(v.Fields))
 	case types.TupleType:
@@ -338,6 +340,35 @@ func aggregateSizeAndAlign(fields []types.Type) (int, int, bool) {
 		size = alignUp(size, fa) + fs
 		if fa > align {
 			align = fa
+		}
+	}
+	return alignUp(size, align), align, true
+}
+
+// unionSizeAndAlign sizes a C union: **max over members, not a sum**, with every member
+// at offset 0.
+//
+// This is the one function that has to know a union is not a struct, and it is where
+// getting it wrong is worst: a too-small union links cleanly and lets the C side write
+// past the end of a Lyra stack slot, which is a stack smash rather than a type error.
+// `TestExec_UnionLayoutMatchesC` compares every number here against C's own `sizeof`
+// and `_Alignof` through the vendored fixture, and the SDL3 test against a header
+// nobody wrote for Lyra.
+//
+// The trailing `alignUp` is what makes `SDL_Event` 128 rather than 125: C rounds a
+// union's size up to its alignment so an array of them is correctly strided.
+func unionSizeAndAlign(ut types.UnionType) (int, int, bool) {
+	size, align := 0, 1
+	for _, m := range ut.Members {
+		ms, ma, ok := SizeAndAlign(m.Type)
+		if !ok {
+			return 0, 0, false
+		}
+		if ms > size {
+			size = ms
+		}
+		if ma > align {
+			align = ma
 		}
 	}
 	return alignUp(size, align), align, true

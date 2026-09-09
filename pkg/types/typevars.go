@@ -22,7 +22,7 @@ package types
 // entry asks for, and the union of the two switches turned up two cases *neither*
 // had: AnonymousStructType and RangeType.
 //
-// **What is deliberately not walked: nominal types.** NamedStructType and
+// **What is deliberately not walked: nominal types.** NamedStructType, UnionType and
 // DataType carry their own declaration's parameters (`struct Box<t> { v: t }`),
 // and those are bound by that declaration, not by the signature mentioning it. A
 // function taking a `Box<i64>` mentions no variable of its own; descending into

@@ -337,6 +337,14 @@ func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
 		tc.resolveType(decl.Type, decl.GetLocation())
 		return
 	}
+	// A **union** does have a declaration-level rule, unlike the shapes below: every
+	// member must be FFI-safe. Checked here rather than at a use because it is a
+	// property of the declaration, and because a union nothing happens to mention would
+	// otherwise go unchecked while still being the thing an ownership walk trusts.
+	if ut, ok := decl.Type.(types.UnionType); ok {
+		tc.checkUnionMembersAreFFISafe(decl, ut)
+		return
+	}
 	// Only a constrained type has anything left to check at its declaration. A
 	// struct, data or tuple declaration is checked by being *used*: its field types
 	// resolve through resolveType at each reference, and there is no declaration-level
@@ -1797,6 +1805,21 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		// the compatibility test, not after: the impl decides what equality means for
 		// this type, so there is nothing for the structural rule to say about it.
 		if tc.dispatchEq(expr, leftType, rightType) {
+			return
+		}
+		// A union has no equality, and C does not give one either. Structural comparison
+		// would have to pick a member, and the type is precisely the thing that does not
+		// record which member is live; a byte-wise comparison would answer on padding
+		// that no member names. Both are answers to a question the value cannot be
+		// asked, so it is refused with the fix named — compare the member you know is
+		// live, which is the same discipline the read itself demands.
+		if unionOperand(leftType, rightType) != nil {
+			ut := unionOperand(leftType, rightType)
+			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeMalformedUnion,
+				"operator %s: a union has no equality — nothing records which member of "+
+					"%s is live, so there is no member to compare. Read the member you "+
+					"know is live and compare that",
+				expr.Operator, ut.Name)
 			return
 		}
 		if !areEqualityCompatible(leftType, rightType) {
@@ -4034,6 +4057,11 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// not admit it — an unlisted import falls through to "undefined struct type"
 		// with the import named, exactly as an unlisted function call reads.
 		tc.symTable.ResolvedReachably(expr.Name, expr.GetLocation()) {
+		// A union is built with the same braces and checked by its own rule: exactly
+		// one member, because a union holds one.
+		if ut, isUnion := d.Type.(types.UnionType); isUnion {
+			return tc.inferUnionInstanceExpr(expr, ut)
+		}
 		st, ok := d.Type.(types.NamedStructType)
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)
@@ -4370,6 +4398,12 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	objType = tc.resolveGenericAggregate(objType, m.Object.GetLocation())
 	fieldName := m.Property.Name
 
+	// A **union** member read, before the struct rungs: it resolves the same way and
+	// carries one extra obligation the struct path has no business knowing about — an
+	// enclosing `unsafe`, because nothing records which member is live.
+	if ut, ok := types.StripNewtype(objType).(types.UnionType); ok {
+		return tc.inferUnionMemberRead(m, ut, fieldName)
+	}
 	if f, ok := structFieldByName(objType, fieldName); ok {
 		// Resolve the field's own declared type: a field naming another declared
 		// type is stored as an UnresolvedType, so reading it out unresolved meant

@@ -1,0 +1,128 @@
+// SDL3 from Lyra — the proof that a `union` describes a C type nobody wrote for this
+// language.
+//
+// zlib was the FFI's first real library, and it exercised everything the boundary had
+// except an aggregate: pointers, lengths, `@link`, and effect bounds. SDL3 is the second,
+// and it is here because `SDL_Event` is the shape zlib had none of — a union, 128 bytes,
+// read one way to find the tag and another to read the payload.
+//
+// Run it with:
+//
+//     LIBRARY_PATH=$(pkg-config --variable=libdir sdl3) lyrac run examples/sdl3.lyra
+//
+// It needs no display: `SDL_INIT_EVENTS` brings up the event queue alone, so the whole
+// round trip — push an event, poll it back, read its payload through the union — runs on
+// a machine with no window server, which is what makes it a test rather than a demo.
+
+/// The subsystem flags. `SDL_INIT_EVENTS` is the only one this needs; a video init would
+/// require a display and turn a test into a demo.
+const SDL_INIT_EVENTS: u32 = 0x00004000
+
+/// The first event type applications may use for their own events.
+const SDL_EVENT_USER: u32 = 32768
+
+/// `SDL_UserEvent`, field for field.
+///
+/// **Transcribed rather than derived**, and every field has to be here even though only
+/// two are read: the layout is what puts `code` at offset 20, and a missing `reserved`
+/// would move it to 16 and read the timestamp's low half instead. That is the failure the
+/// boundary specializes in — it links cleanly and computes a plausible number.
+struct SdlUserEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  code: i32,
+  data1: ^u8,
+  data2: ^u8,
+}
+
+/// `SDL_Event` — the union this example exists for.
+///
+/// Three members, and each earns its place:
+///
+/// - `kind` is the tag. Every SDL event begins with a `Uint32` type, which is what makes
+///   the union usable at all: read this member first, and it tells you which of the
+///   others is live.
+/// - `user` is the one payload this program reads.
+/// - `padding` is why the type is 128 bytes. SDL declares a `Uint8 padding[128]` member
+///   precisely so the union's size never changes as SDL adds event types, and without it
+///   here Lyra would size the union at 40 — the largest *real* member — and
+///   `SDL_PollEvent` would write 88 bytes past the end of the caller's stack slot.
+union SdlEvent {
+  kind: u32,
+  user: SdlUserEvent,
+  padding: [128]u8,
+}
+
+// SDL3 returns C's `_Bool`, which is a byte. Lyra's `bool` is one bit and is refused at
+// the boundary (lyra-E063), so these are `u8` and compared against 0 — the same
+// transcription discipline the struct above follows.
+@link("SDL3")
+@symbol("SDL_Init")
+unsafe extern sdl_init: (flags: u32) -> u8
+
+@link("SDL3")
+@symbol("SDL_PushEvent")
+unsafe extern sdl_push_event: (event: ^mut SdlEvent) -> u8
+
+@link("SDL3")
+@symbol("SDL_PollEvent")
+unsafe extern sdl_poll_event: (event: ^mut SdlEvent) -> u8
+
+@link("SDL3")
+@symbol("SDL_Quit")
+unsafe extern sdl_quit: () -> void
+
+let main = () -> void => {
+  // The result is bound before it is compared: an `unsafe` block is not a comparison
+  // operand in the grammar today, so `unsafe { f() } == 0` does not parse. Binding it
+  // reads better regardless — the block says exactly which call is the unchecked part.
+  let started = unsafe { sdl_init(SDL_INIT_EVENTS) }
+  if started == 0 {
+    println("SDL_Init failed")
+    return
+  }
+
+  // Build the event as its `user` member — the one the union literal names is the one
+  // that is live, and the other 88 bytes are zeroed.
+  var push = SdlEvent {
+    user: SdlUserEvent {
+      kind: SDL_EVENT_USER,
+      reserved: 0,
+      timestamp: 0,
+      window_id: 0,
+      code: 4242,
+      data1: nullptr,
+      data2: nullptr,
+    },
+  }
+  let pushed = unsafe { sdl_push_event(&mut push) }
+  if pushed == 0 {
+    println("SDL_PushEvent failed")
+    return
+  }
+
+  // Poll it back. `got` is a union Lyra allocated and SDL wrote through — the direction
+  // that proves the size, since a short buffer would be a stack smash rather than a
+  // wrong answer.
+  var got = SdlEvent { padding: [0; 128] }
+  var found = false
+  var polling = unsafe { sdl_poll_event(&mut got) }
+  for polling != 0 {
+    // The tag first, then the member it licenses. This is the whole discipline a union
+    // asks of a reader, and the reason the read is `unsafe`: nothing but this `if` says
+    // that `user` is the live member.
+    let kind = unsafe { got.kind }
+    if kind == SDL_EVENT_USER {
+      println("user event, code ${unsafe { got.user.code }}")
+      found = true
+    }
+    polling = unsafe { sdl_poll_event(&mut got) }
+  }
+  if !found {
+    println("no user event came back")
+  }
+
+  unsafe { sdl_quit() }
+}

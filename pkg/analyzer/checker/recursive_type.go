@@ -25,7 +25,7 @@ func CheckRecursiveTypes(program *ast.Program) []diag.Diagnostic {
 			continue
 		}
 		switch td.Type.(type) {
-		case types.NamedStructType, types.DataType, types.TupleType:
+		case types.NamedStructType, types.UnionType, types.DataType, types.TupleType:
 			decls[td.Name] = td
 		}
 	}
@@ -108,6 +108,15 @@ func byValueDepsOf(decl *ast.TypeDeclStmt, decls map[string]*ast.TypeDeclStmt) [
 	case types.NamedStructType:
 		for _, f := range t.Fields {
 			collectByValueNames(f.Type, decls, seen, &deps)
+		}
+	case types.UnionType:
+		// A union containing itself by value is infinite for the same reason a struct
+		// is — worse, in fact, since a union's size is computed *from* its members
+		// before its body exists, so an unreported cycle is an unbounded recursion in
+		// `unionSizeAndAlign` rather than a diagnostic. Found by probing, exactly as
+		// rule 8 says to: `union R { x: R, y: u32 }` checked clean.
+		for _, m := range t.Members {
+			collectByValueNames(m.Type, decls, seen, &deps)
 		}
 	case types.DataType:
 		for _, ctor := range t.Constructors {

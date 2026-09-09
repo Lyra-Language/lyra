@@ -854,6 +854,25 @@ const (
 	// the others do not need.
 	CodeReservedName = "lyra-E070"
 
+	// CodeNotFFISafeUnion: a `union` member whose type has no C spelling.
+	//
+	// A union exists to name a C type, so its members are held to the same rule an
+	// `extern` signature is (lyra-E063). It is also what makes the ownership walk's
+	// answer sound: no FFI-safe type is managed, so a union owns nothing, so
+	// `eachComponent` can yield nothing for one. A `string` member would make that
+	// arm a double free — it aliases the same bytes as every other member, and
+	// nothing records which was written.
+	CodeNotFFISafeUnion = "lyra-E071"
+
+	// CodeMalformedUnion: a `union` declaration the grammar admits and the language
+	// does not — a member marked `readonly`, a member with a default value, or a union
+	// with no members at all.
+	//
+	// The body reuses the grammar's `struct_member` rule deliberately (a union member
+	// *is* a name and a type), so the two struct-only forms arrive here and are refused
+	// by name. The admit-then-report trade is lyra-E065's and lyra-E067's.
+	CodeMalformedUnion = "lyra-E072"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

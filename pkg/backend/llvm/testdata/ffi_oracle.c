@@ -27,6 +27,28 @@ struct LyraFixturePoint {
 double lyra_fixture_read_point(const struct LyraFixturePoint *p);
 void lyra_fixture_bump_point(struct LyraFixturePoint *p);
 
+/* The union, redeclared here rather than shared through a header for the reason the file
+ * header gives: two independent transcriptions that must agree is the claim, and a shared
+ * declaration would make them agree by construction. */
+typedef struct LyraFixtureUserPayload {
+  uint32_t kind;
+  uint32_t reserved;
+  int64_t code;
+  double weight;
+} LyraFixtureUserPayload;
+
+typedef union LyraFixtureEvent {
+  uint32_t kind;
+  LyraFixtureUserPayload user;
+  uint8_t padding[64];
+} LyraFixtureEvent;
+
+int64_t lyra_fixture_event_size(void);
+int64_t lyra_fixture_event_align(void);
+int64_t lyra_fixture_event_code_offset(void);
+void lyra_fixture_make_event(LyraFixtureEvent *out, int64_t code);
+int64_t lyra_fixture_event_code(const LyraFixtureEvent *ev);
+
 int main(void) {
   printf("%d\n", lyra_fixture_narrow(-3, 200, -300, 40000));
 
@@ -38,5 +60,12 @@ int main(void) {
    * is a reason to keep the fixture's numbers small rather than to reach for a format. */
   printf("%lld %g %g %d %u %g %lld\n", (long long)lyra_fixture_point_size(), before,
          lyra_fixture_read_point(&p), p.x, (unsigned)p.tag, p.weight, (long long)p.id);
+  LyraFixtureEvent ev;
+  lyra_fixture_make_event(&ev, 99);
+  printf("%lld %lld %lld %u %lld %g %lld\n", (long long)lyra_fixture_event_size(),
+         (long long)lyra_fixture_event_align(), (long long)lyra_fixture_event_code_offset(),
+         ev.kind, (long long)ev.user.code, ev.user.weight,
+         (long long)lyra_fixture_event_code(&ev));
+
   return 0;
 }

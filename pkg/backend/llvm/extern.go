@@ -72,17 +72,23 @@ func (l *lowerer) declareExterns(program *ast.Program) error {
 // declarations that disagree about the signature, because only one of them can describe
 // the function that will be linked, and emitting either silently picks a winner.
 func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
-	if prior, ok := l.externs[ext.Name]; ok {
+	// **Keyed by the C symbol, not the Lyra name.** `@symbol("SDL_PollEvent")` makes the
+	// two differ, and it is the symbol that shares a namespace with every other
+	// declaration in the module — two Lyra names for one symbol are the same function
+	// and must collapse to one `declare`, while two symbols under one Lyra name cannot
+	// happen (a name declares once per module).
+	symbol := ext.CSymbol()
+	if prior, ok := l.externs[symbol]; ok {
 		if !types.TypesEqual(prior.signature, ext.Signature) {
-			return nil, fmt.Errorf("llvm: `extern %s` is declared twice with different signatures, "+
+			return nil, fmt.Errorf("llvm: the C symbol %q is declared twice with different signatures, "+
 				"%s at %s and %s at %s — one C symbol cannot have both",
-				ext.Name, prior.signature, describeLocation(prior.at), ext.Signature,
+				symbol, prior.signature, describeLocation(prior.at), ext.Signature,
 				describeLocation(ext.NameLocation))
 		}
 		return prior.fn, nil
 	}
 	restore := l.pushExternSignature()
-	declared, err := l.declareFunctionAs(ext.Name, ext.Func())
+	declared, err := l.declareFunctionAs(symbol, ext.Func())
 	restore()
 	if err != nil {
 		return nil, err
@@ -92,12 +98,12 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 	// of them shares that declaration rather than emitting a second. Here there *is* an
 	// error to return, so a disagreement is named rather than deferred (declareLibc's
 	// side of the same rule has to record it instead).
-	if prior, ok := l.libc[ext.Name]; ok {
+	if prior, ok := l.libc[symbol]; ok {
 		if !lltypes.Equal(prior.Sig, declared.Sig) {
 			return nil, fmt.Errorf(
 				"llvm: `extern %s` declares the C symbol %q as %s, and the compiler uses it as %s — "+
 					"one symbol cannot have both signatures. Rename the extern, or declare it to match",
-				ext.Name, ext.Name, declared.Sig, prior.Sig)
+				ext.Name, symbol, declared.Sig, prior.Sig)
 		}
 		l.module.Funcs = removeFunc(l.module.Funcs, declared)
 		declared = prior
@@ -116,7 +122,7 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 	if ext.Signature != nil && ext.Signature.IsVariadic {
 		declared.Sig.Variadic = true
 	}
-	l.externs[ext.Name] = externDecl{fn: declared, signature: ext.Signature, at: ext.NameLocation}
+	l.externs[symbol] = externDecl{fn: declared, signature: ext.Signature, at: ext.NameLocation}
 	return declared, nil
 }
 

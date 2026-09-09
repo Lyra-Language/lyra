@@ -185,3 +185,44 @@ int64_t lyra_fixture_fold(const uint8_t *data, int64_t n,
   for (int64_t i = 0; i < n; i++) acc = fn(acc, data[i]);
   return acc;
 }
+
+/* A union in the shape every real C one takes: a tag first, then the payloads that tag
+ * selects, and a padding member that fixes the size independently of them.
+ *
+ * `SDL_Event` is exactly this — a `Uint32 type`, a dozen event structs, and a
+ * `Uint8 padding[128]` — and the padding is the member that catches a wrong
+ * implementation. Sizing a union as its largest *real* member gives 24 here and 40 for
+ * SDL_Event, and a C function then writes past the end of the caller's slot: a stack
+ * smash rather than a wrong value, which is why this member is here rather than a
+ * simpler two-member union. */
+typedef struct LyraFixtureUserPayload {
+  uint32_t kind;
+  uint32_t reserved;
+  int64_t code;
+  double weight;
+} LyraFixtureUserPayload;
+
+typedef union LyraFixtureEvent {
+  uint32_t kind;
+  LyraFixtureUserPayload user;
+  uint8_t padding[64];
+} LyraFixtureEvent;
+
+int64_t lyra_fixture_event_size(void) { return (int64_t)sizeof(LyraFixtureEvent); }
+int64_t lyra_fixture_event_align(void) { return (int64_t)_Alignof(LyraFixtureEvent); }
+int64_t lyra_fixture_event_code_offset(void) {
+  return (int64_t)offsetof(LyraFixtureEvent, user.code);
+}
+
+/* Fill a caller-owned union, so the *write* direction is proved too: a Lyra union that is
+ * too small is a buffer overrun here rather than a wrong number. */
+void lyra_fixture_make_event(LyraFixtureEvent *out, int64_t code) {
+  memset(out, 0, sizeof(*out));
+  out->user.kind = 7;
+  out->user.reserved = 0;
+  out->user.code = code;
+  out->user.weight = 2.5;
+}
+
+/* Read one back, so a Lyra-built union is proved to be what C expects. */
+int64_t lyra_fixture_event_code(const LyraFixtureEvent *ev) { return ev->user.code; }

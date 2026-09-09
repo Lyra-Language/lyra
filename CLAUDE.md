@@ -1335,6 +1335,41 @@ needs before touching anything nearby:
   deliberately never had one). It needs no `unsafe`: a wrong library name fails loudly at
   link time, which is exactly what an effect bound does not do.
 
+**A `union` is a type kind, not a declaration kind**, so it rides `TypeDeclStmt` and pays
+rule 8's *type* tax only (`types.UnionType`, `typechecker/union.go`,
+`backend/llvm/union.go`). What that tax actually came to, since the rule says the family
+to check is the walks that must reach every composite:
+
+- `SizeAndAlign` → `unionSizeAndAlign`, **max over members rather than a sum**, and the
+  one function that has to know a union is not a struct. A too-small union is a stack
+  smash rather than a wrong value, which is why `TestExec_FFIFixture_UnionLayoutMatchesC`
+  compares every number against C's own `sizeof`/`_Alignof`/`offsetof`.
+- `Substitute`, `TypesEqual` (nominal, by name), `HeadName`, `resolveForLayout`, and
+  ownership's `eachComponent`/`hasWritableField` each gained an arm.
+  `CollectTypeVars` correctly gained **none** — a union is nominal, so its parameters are
+  its declaration's — and that exclusion is written next to the reason, as rule 8 asks.
+- **`lowerUnionDef` resolves before it measures**, which the struct path never has to do:
+  a struct's LLVM body is its field list and each field resolves as it is lowered, while a
+  union's body is computed *from* its size. An unresolved member has no size, and
+  `examples/sdl3.lyra` found it immediately.
+- **Two bugs the probes found, and neither would have come from reading switches** — which
+  is rule 8's own advice, followed: a **recursive union** checked clean and would have
+  recursed forever in `unionSizeAndAlign` (`recursive_type.go` had no arm), and **equality**
+  fell through to a backend "not implemented" rather than being refused where it should be.
+
+**A union lowers to memory, not to an SSA aggregate**, and that is forced: members sit at
+offset 0, so reading one written as another is a *reinterpretation*, which LLVM cannot say
+about an SSA value. `alloca`, then bitcast the address to a pointer to the member's own
+type — the shape `buildDataValue` already uses for a `data` payload blob. Its LLVM body is
+`{ <widest-aligned member>, [pad x i8] }`: a real member carries the alignment (an
+`[N x i8]` blob would be align 1 and every load through it under-aligned), and the padding
+carries the size.
+
+**`@symbol("…")` names the C symbol** (`ExternDeclStmt.Symbol`, read through `CSymbol()`).
+The backend keys `l.externs` by the **symbol**, not the Lyra name — two Lyra names for one
+C function are the same function and must collapse to one `declare`, and it is the symbol
+that shares a namespace with the compiler's own libc declarations.
+
 **`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`/`with_cstring`/
 `with_cstrings`/`data`/`data_mut`/`is_null`/`to_maybe`/`CLong`/`CULong`** — and every
 piece of it ordinary Lyra over the primitives.

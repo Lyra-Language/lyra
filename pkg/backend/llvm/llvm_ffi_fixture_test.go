@@ -28,6 +28,10 @@ import (
 const (
 	wantNarrow = "319197"                     // -3 + 200*2 + -300*4 + 40000*8
 	wantPoint  = "24 1013.5 1116 11 4 1 1100" // sizeof, before, after, then the bumped fields
+	// sizeof, _Alignof, offsetof(user.code), then a C-built event read from Lyra and
+	// the same event read back by C. 64 is the *padding* member's doing: the largest
+	// real member is 24, and a union sized from that would be a 40-byte overrun.
+	wantEvent = "64 8 8 7 99 2.5 99"
 )
 
 // fixturePath is the C fixture's absolute path, and fixtureSource its bytes — the latter
@@ -267,14 +271,17 @@ func TestExec_FFIFixture_CAgreesWithLyra(t *testing.T) {
 		t.Fatalf("running the oracle failed: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("the oracle printed %d lines, want 2:\n%s", len(lines), out)
+	if len(lines) != 3 {
+		t.Fatalf("the oracle printed %d lines, want 3:\n%s", len(lines), out)
 	}
 	if got := strings.TrimSpace(lines[0]); got != wantNarrow {
 		t.Errorf("C computes narrow = %q; the Lyra test expects %q", got, wantNarrow)
 	}
 	if got := strings.TrimSpace(lines[1]); got != wantPoint {
 		t.Errorf("C computes the point line = %q; the Lyra test expects %q", got, wantPoint)
+	}
+	if got := strings.TrimSpace(lines[2]); got != wantEvent {
+		t.Errorf("C computes the event line = %q; the Lyra test expects %q", got, wantEvent)
 	}
 }
 
@@ -348,4 +355,33 @@ let main = () -> void => unsafe {
   println(lyra_fixture_va_signed(n, neg, pos, small, byte))
 }
 `, "59945") // -300 + 60000 + -5 + 250
+}
+
+// **A union's layout, against C's own numbers.** This is the test that would have caught
+// every plausible way of getting `unionSizeAndAlign` wrong, and the `padding` member is
+// what makes it sharp: the largest *real* member is 24 bytes and the union is 64, so an
+// implementation that sizes a union from its biggest payload passes every other check
+// here and overruns the caller's slot by 40 bytes in `lyra_fixture_make_event`.
+//
+// Both directions are exercised. C fills a union Lyra allocated — which is where a short
+// Lyra union is a stack smash rather than a wrong value — and C reads back a member Lyra
+// wrote, which is where a wrong *offset* shows up. The expectations come from
+// `testdata/ffi_oracle.c` making the same calls in C, not from what Lyra happened to
+// print; see TestExec_FFIFixture_CAgreesWithLyra.
+func TestExec_FFIFixture_UnionLayoutMatchesC(t *testing.T) {
+	t.Parallel()
+	checkFixture(t, `module main
+struct FixtureUserPayload { kind: u32, reserved: u32, code: i64, weight: f64 }
+union FixtureEvent { kind: u32, user: FixtureUserPayload, padding: [64]u8 }
+unsafe extern pure lyra_fixture_event_size: () -> i64
+unsafe extern pure lyra_fixture_event_align: () -> i64
+unsafe extern pure lyra_fixture_event_code_offset: () -> i64
+unsafe extern pure lyra_fixture_make_event: (out: ^mut FixtureEvent, code: i64) -> void
+unsafe extern pure lyra_fixture_event_code: (ev: ^FixtureEvent) -> i64
+let main = () -> void => unsafe {
+  var ev = FixtureEvent { padding: [0; 64] }
+  lyra_fixture_make_event(&mut ev, 99)
+  println("${lyra_fixture_event_size()} ${lyra_fixture_event_align()} ${lyra_fixture_event_code_offset()} ${ev.user.kind} ${ev.user.code} ${ev.user.weight} ${lyra_fixture_event_code(&ev)}")
+}
+`, wantEvent)
 }

@@ -44,7 +44,7 @@ func CollectExternDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Ex
 		expressions.CheckModifierOrder(mods, ctx)
 		applyExternModifiers(mods, decl, ctx)
 	}
-	decl.Links = collectLinkAttributes(node, ctx)
+	decl.Links, decl.Symbol = collectExternAttributes(node, ctx)
 	return decl
 }
 
@@ -85,28 +85,35 @@ func applyExternModifiers(mods *sitter.Node, decl *ast.ExternDeclStmt, ctx *coll
 // Only `link` is recognized; any other attribute on an extern is reported rather than
 // ignored, on the standing rule that a surface which parses and is read by nobody costs
 // more than an absent one.
-func collectLinkAttributes(node *sitter.Node, ctx *collector_ctx.Ctx) []string {
+func collectExternAttributes(node *sitter.Node, ctx *collector_ctx.Ctx) ([]string, string) {
 	attrs := cst.Field(node, "attributes")
 	if attrs == nil {
-		return nil
+		return nil, ""
 	}
 	var links []string
+	var symbol string
 	for i := uint(0); i < attrs.NamedChildCount(); i++ {
 		attr := attrs.NamedChild(i)
 		nameNode := cst.Field(attr, "name")
 		if nameNode == nil {
 			continue
 		}
-		if ctx.NodeText(nameNode) != "link" {
+		attrName := ctx.NodeText(nameNode)
+		if attrName != "link" && attrName != "symbol" {
 			ctx.AddError(attr, diag.SeverityError,
-				"unknown attribute `@%s` on an extern; the only one is `@link(\"name\")`",
-				ctx.NodeText(nameNode))
+				"unknown attribute `@%s` on an extern; the two are `@link(\"name\")` "+
+					"and `@symbol(\"c_name\")`",
+				attrName)
 			continue
 		}
 		args := cst.Field(attr, "args")
 		if args == nil {
 			ctx.AddError(attr, diag.SeverityError,
-				"`@link` needs the library to link, as a string: `@link(\"m\")`")
+				"`@%s` needs a string argument: `@%s(\"…\")`", attrName, attrName)
+			continue
+		}
+		if attrName == "symbol" {
+			symbol = collectSymbolAttribute(args, attr, symbol, ctx)
 			continue
 		}
 		for j := uint(0); j < args.NamedChildCount(); j++ {
@@ -122,7 +129,39 @@ func collectLinkAttributes(node *sitter.Node, ctx *collector_ctx.Ctx) []string {
 			links = append(links, stringLiteralText(arg, ctx))
 		}
 	}
-	return links
+	return links, symbol
+}
+
+// collectSymbolAttribute reads `@symbol("SDL_PollEvent")`.
+//
+// **One per declaration**, unlike `@link`: a declaration links against any number of
+// libraries and binds exactly one symbol, so a second `@symbol` is a contradiction
+// rather than a list. The text is taken verbatim — it is the linker's name, and
+// anything the compiler did to it would be a mangling the header does not know about.
+func collectSymbolAttribute(args, attr *sitter.Node, existing string, ctx *collector_ctx.Ctx) string {
+	if args.NamedChildCount() != 1 {
+		ctx.AddError(attr, diag.SeverityError,
+			"`@symbol` takes exactly one C symbol name: `@symbol(\"SDL_PollEvent\")`")
+		return existing
+	}
+	arg := args.NamedChild(0)
+	if arg.Kind() != "string_literal" {
+		ctx.AddError(arg, diag.SeverityError,
+			"`@symbol` takes the C symbol as a string: `@symbol(\"SDL_PollEvent\")`")
+		return existing
+	}
+	name := stringLiteralText(arg, ctx)
+	if name == "" {
+		ctx.AddError(arg, diag.SeverityError, "`@symbol` cannot be empty")
+		return existing
+	}
+	if existing != "" {
+		ctx.AddError(attr, diag.SeverityError,
+			"a declaration binds one C symbol, so `@symbol` may appear once; "+
+				"it already names %q", existing)
+		return existing
+	}
+	return name
 }
 
 // stringLiteralText is the content of a plain string literal, without its quotes.

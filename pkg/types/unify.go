@@ -68,6 +68,13 @@ func TypesEqual(a, b Type) bool {
 	case NamedStructType:
 		bt, ok := b.(NamedStructType)
 		return ok && at.Name == bt.Name
+	case UnionType:
+		// Nominal, by name alone, exactly as a NamedStructType is: a union declares
+		// its own identity, and two unions with identical members but different names
+		// are different types — which is the whole reason to declare one rather than
+		// reach for an anonymous shape.
+		bt, ok := b.(UnionType)
+		return ok && at.Name == bt.Name
 	case AnonymousStructType:
 		bt, ok := b.(AnonymousStructType)
 		if !ok {

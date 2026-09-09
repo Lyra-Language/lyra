@@ -42,6 +42,8 @@ func HeadName(t Type) (string, bool) {
 		return nonEmpty(tt.Name)
 	case NamedStructType:
 		return nonEmpty(tt.Name)
+	case UnionType:
+		return nonEmpty(tt.Name)
 	case DataType:
 		return nonEmpty(tt.Name)
 	case UnresolvedType:

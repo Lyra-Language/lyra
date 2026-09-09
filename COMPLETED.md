@@ -9,6 +9,109 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — `union`, `@symbol`, and SDL3
+
+SDL3 runs from Lyra: `examples/sdl3.lyra` pushes an SDL user event, polls it back, reads
+the tag and then the payload through a `union`. It is the second real library the FFI has
+talked to, and the first with an aggregate — zlib exercised pointers, lengths, `@link` and
+effect bounds, and had no `SDL_Event`.
+
+**The blocker was not unions.** Writing the binding found it in the first five minutes:
+`unsafe extern SDL_PollEvent:` is a **syntax error**. An extern's name *is* the emitted C
+symbol, and a Lyra `identifier` is lowercase-leading, so every SDL entry point was
+unspellable. zlib had never revealed it because `crc32`, `compress`, `uncompress` and
+`zlibVersion` are all lowercase — the one library that could be bound without noticing.
+`@symbol("SDL_PollEvent")` is the fix, `@link`'s own shape reused (an attribute taking a
+string), and the backend now keys `l.externs` by the **symbol** rather than the Lyra name,
+so two Lyra names for one C function collapse to one `declare`.
+
+The lesson is the one the FFI keeps teaching: **a fixture whose both sides we wrote cannot
+find this class of bug.** Nothing about the compiler was wrong; the language simply could
+not say a thing C needed said, and only a real header revealed it.
+
+#### Why `union` is a keyword and not `@union` on a struct
+
+A union's member read is `unsafe` and a struct field read is not. Behind an attribute the
+two would be spelled identically — `s.field` either way — with nothing at the use site to
+say which one reinterprets bytes. That is the trade this language refused when it kept
+pointer arithmetic a named method rather than `p[i]`, on the rule that *two things that
+behave differently must not look alike*, and refusing it again cost rule 8's type tax:
+seven walks, and two bugs that only probing found.
+
+It rides `TypeDeclStmt`, so it pays no *declaration* tax — the ten-switch sweep
+`ExternDeclStmt` needed does not apply.
+
+#### The padding member is the whole layout story
+
+`SDL_Event` is 128 bytes, and not one of its payloads is that large — the largest is 40.
+The size comes from a `Uint8 padding[128]` member SDL declares precisely so the union's
+size never changes as it adds event types. An implementation that sizes a union from its
+largest *real* member gets 40, and `SDL_PollEvent` then writes 88 bytes past the end of
+the caller's stack slot: a stack smash, not a wrong value, and one that would pass every
+test that did not have such a member. The fixture's union has one for that reason, and
+`TestExec_FFIFixture_UnionLayoutMatchesC` compares `sizeof`, `_Alignof` and `offsetof`
+against C's own numbers in both directions — C filling a union Lyra allocated, and C
+reading back a member Lyra wrote.
+
+**A union lowers to memory, not to an SSA aggregate**, and that is forced rather than
+chosen: every member sits at offset 0, so reading one written as another is a
+*reinterpretation*, which LLVM has no way to say about an SSA value. `alloca`, then
+bitcast the address to a pointer to the member's own type — the shape `buildDataValue`
+already uses for a `data` payload blob. The LLVM body is `{ <widest-aligned member>,
+[pad x i8] }`: a real member carries the alignment, because an `[N x i8]` blob would be
+align 1 and every load through it under-aligned, and the padding carries the size.
+
+#### Two rules that are the same fact
+
+**Members need a C *layout*, which is a wider rule than lyra-E063's.** E063 asks whether a
+type can cross a function boundary **by value** and refuses every aggregate, because that
+needs a per-target classifier LLVM does not supply. This asks whether a type has a
+**layout**, and structs and arrays do — which they must, since that is what a C union is
+made of. Conflating the two refused `SDL_Event` outright, and the two questions are worth
+keeping apart wherever else they meet.
+
+It is also a **soundness** rule, not only a fitness one. `eachComponent` yields *nothing*
+for a union: its members alias one block, so walking them would retain or release every
+member of a value that holds at most one, and a release of a member never written frees
+whatever bytes are there. That is safe only while no member can be managed — which is
+exactly what FFI-safety guarantees, since no FFI-safe type is refcounted. If a `string`
+member ever became legal, that arm is a double free.
+
+**The rest of a union's storage is zeroed**, which C does not promise. An indeterminate
+byte makes a wrong read depend on whatever call ran before it; one store of a zero
+constant makes a wrong read wrong the *same way every time*, which is the difference
+between a bug that reproduces and one that does not.
+
+#### The two bugs probing found
+
+Rule 8 says the way to check a new type kind is to **probe behaviours, not read switches**,
+and this is the second feature where that was the difference:
+
+- **A recursive union checked clean.** `union R { x: R, y: u32 }` produced no diagnostic
+  and would have recursed forever in `unionSizeAndAlign` — worse than the struct case it
+  mirrors, because a union's size is computed *from* its members before its body exists.
+  `recursive_type.go` simply had no arm.
+- **Equality fell through to the backend.** `a == b` on two unions reached
+  `lowerStructuralEquality` and failed there. The right answer is to refuse it in the
+  typechecker with the fix named: a union has no equality for the reason C gives it none,
+  since nothing records which member to compare.
+
+#### What it cost, and what it did not
+
++30 parser states. One grammar rule reusing `struct_member` for its body — a union member
+*is* a name and a type, and the two struct-only forms (`readonly`, a default value) are
+refused by the collector on the admit-then-report trade `lyra-E065` already makes.
+
+**A pre-existing bug surfaced and was left alone**: a closure capturing a named aggregate
+fails to lower in any file that declares `module` — a struct exactly as much as a union,
+on `main` before this work. It is filed rather than fixed here, and the union test drops
+its capture case rather than pinning someone else's bug.
+
+Still open: a union cannot cross by *value* (the struct classifier again), there is no
+`match` on one (a tag is the program's to read — that is what untagged means), and
+`unsafe { f() } == 0` does not parse, so every SDL call's result is bound before it is
+compared. The last was found by writing the example, and binding reads better anyway.
+
 ### 09/08/26 — `nullptr`, and the FFI's missing question
 
 A C function that answers a pointer answers NULL on failure. Until now Lyra could not ask

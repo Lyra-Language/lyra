@@ -144,6 +144,9 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for struct instance %q", e.Name)
 	}
+	if ut, isUnion := recorded.(types.UnionType); isUnion {
+		return l.lowerUnionInstanceExpr(block, e, ut)
+	}
 	structType, ok := recorded.(types.NamedStructType)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: struct instance lowering not implemented for %s", recorded)
@@ -219,6 +222,11 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for member-access object")
+	}
+	// A union member is read by reinterpreting the storage at offset 0, not by
+	// indexing a field — see union.go.
+	if ut, isUnion := objType.(types.UnionType); isUnion {
+		return l.lowerUnionMemberExpr(block, e, ut)
 	}
 	fields, ok := l.namedStructFields(objType)
 	if !ok {

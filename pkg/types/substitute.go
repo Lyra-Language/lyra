@@ -71,6 +71,18 @@ func Substitute(t Type, subst map[string]Type) Type {
 		}
 		tt.Fields = fields
 		return tt
+	case UnionType:
+		// The same rebuild a struct gets, and for the same reason: an instantiation's
+		// layout is the declaration rewritten at its arguments. A union's *layout* is
+		// max-over-members rather than a sum of offsets, but that is SizeAndAlign's
+		// concern; substitution only has to reach every member type.
+		members := make([]StructField, len(tt.Members))
+		copy(members, tt.Members)
+		for i := range members {
+			members[i].Type = Substitute(members[i].Type, subst)
+		}
+		tt.Members = members
+		return tt
 	case DataType:
 		ctors := make([]DataTypeConstructor, len(tt.Constructors))
 		copy(ctors, tt.Constructors)

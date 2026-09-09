@@ -302,6 +302,18 @@ func eachComponent(t types.Type, yield func(name string, ct types.Type) bool) bo
 				return true
 			}
 		}
+	case types.UnionType:
+		// **A union yields nothing, and that is a claim rather than an omission.**
+		// Its members alias one block of storage and nothing records which is live, so
+		// walking them would retain or release every member for a value that holds at
+		// most one — and a release of a member never written is a free of whatever
+		// bytes happen to be there.
+		//
+		// It is *sound* to yield nothing because every member must be FFI-safe
+		// (checkUnionMembersAreFFISafe, lyra-E071), and no FFI-safe type is managed.
+		// So a union owns nothing by construction, and the walk has nothing to find.
+		// If a managed member ever became legal, this arm would be a double-free
+		// waiting to happen and the rule above is what prevents it.
 	case types.AnonymousStructType:
 		for _, f := range v.Fields {
 			if yield(f.Name, f.Type) {
@@ -493,6 +505,11 @@ func hasWritableField(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 	switch v := t.(type) {
 	case types.NamedStructType:
 		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool { return !f.Frozen })
+	case types.UnionType:
+		// Any member is writable (through `unsafe`), and `readonly` is refused on one,
+		// so a union with members has writable state. Conservative in the direction
+		// that costs a warning rather than misses one.
+		return len(v.Members) > 0
 	case types.AnonymousStructType:
 		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool { return !f.Frozen })
 	case types.TupleType:

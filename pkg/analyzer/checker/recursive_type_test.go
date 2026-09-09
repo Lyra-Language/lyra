@@ -203,3 +203,29 @@ func TestRecursiveType_NoRecursion_InlineRecord_Ok(t *testing.T) {
 		data Expr = Lit(i64) | Pair { left: i64, right: i64 }
 	`)
 }
+
+// A **union** containing itself by value has no finite size, exactly as a struct does —
+// and worse in one respect: a union's size is computed *from* its members before its
+// LLVM body exists, so an unreported cycle is unbounded recursion in `unionSizeAndAlign`
+// rather than a diagnostic.
+//
+// It was found by probing behaviours rather than by reading switches, which is what rule
+// 8 prescribes for a new type kind: `union R { x: R, y: u32 }` checked clean and built
+// forever.
+func TestRecursiveTypes_UnionSelfReferenceIsRefused(t *testing.T) {
+	assertRecursiveTypeError(t, `union R { x: R, y: u32 }`, "R")
+}
+
+// Through a struct, so the cycle is found across both kinds rather than only within one.
+func TestRecursiveTypes_UnionThroughAStructIsRefused(t *testing.T) {
+	assertRecursiveTypeError(t, `
+union U { s: S, n: u32 }
+struct S { u: U }
+`, "U")
+}
+
+// A union member that is a *pointer* to itself is finite and legal — which is how a C
+// linked structure is written, and the shape the FFI actually needs.
+func TestRecursiveTypes_UnionThroughAPointerIsFine(t *testing.T) {
+	assertNoRecursiveTypeErrors(t, `union U { next: ^U, n: u32 }`)
+}

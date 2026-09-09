@@ -64,7 +64,7 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 		return nil
 	}
 	switch t := typeDeclStmt.Type.(type) {
-	case types.TupleType, types.NamedStructType, types.DataType:
+	case types.TupleType, types.NamedStructType, types.DataType, types.UnionType:
 		// Key by the declaration's name (typeDeclStmt.Name), not t.GetName():
 		// TupleType.GetName() renders the full shape ("Point(i32, i32)"), while
 		// the definition pass and lowerType both look the type up by its bare
@@ -132,6 +132,8 @@ func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 		return l.lowerTupleDef(t)
 	case types.NamedStructType:
 		return l.lowerStructDef(t)
+	case types.UnionType:
+		return l.lowerUnionDef(t)
 	case types.DataType:
 		return l.lowerDataDef(t)
 	case *types.ConstrainedType:
@@ -204,6 +206,14 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 			fields[i] = f
 		}
 		v.Fields = fields
+		return v
+	case types.UnionType:
+		members := make([]types.StructField, len(v.Members))
+		for i, m := range v.Members {
+			m.Type = l.resolveForLayout(m.Type)
+			members[i] = m
+		}
+		v.Members = members
 		return v
 	case types.AnonymousStructType:
 		// The same walk. SizeAndAlign already had an arm for this type, so without the
@@ -490,6 +500,8 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		return l.lookupNamedType(t.Name)
 	case types.NamedStructType:
 		return l.lookupNamedType(t.Name)
+	case types.UnionType:
+		return l.lookupNamedType(t.Name)
 	case types.AnonymousStructType:
 		// Structural, exactly like an anonymous tuple: there is no declaration to have
 		// registered a named type, so the LLVM struct is built from the fields on the
@@ -667,4 +679,70 @@ func (l *lowerer) pushExternSignature() func() {
 	prev := l.externSignature
 	l.externSignature = true
 	return func() { l.externSignature = prev }
+}
+
+// lowerUnionDef gives a union its LLVM body: **the member with the largest alignment,
+// followed by enough `i8` padding to reach the union's size**.
+//
+// LLVM has no union type, and this is the representation clang emits for one. Taking a
+// real member as the first field is what carries the *alignment* — an `[N x i8]` blob
+// would be align 1 and every load through it would be under-aligned, which is a fault on
+// a target that cares and a silent slowdown on one that does not. The padding then
+// carries the *size*, which the largest-aligned member need not have: SDL_Event's widest
+// alignment comes from a pointer-bearing member of 40 bytes, while its size is 128,
+// forced by a `Uint8 padding[128]` member that has alignment 1.
+//
+// Nothing reads these fields by index. Every member access bitcasts the union's *address*
+// to a pointer to the member's own type and loads through that, because that is what
+// "several members at offset 0" means and there is no LLVM aggregate that says it.
+func (l *lowerer) lowerUnionDef(t types.UnionType) error {
+	st := l.structTypes[l.typeKey(t.Name)]
+	if st == nil {
+		return fmt.Errorf("llvm: no registered LLVM type for union type %q", t.Name)
+	}
+	// Resolve member types first: a member naming another declared type arrives as an
+	// UnresolvedType, which has no size. The struct path is spared this because nothing
+	// asks a struct for its *size* to define it — its LLVM body is the field list, and
+	// each field resolves as it is lowered. A union's body is computed **from** its size,
+	// so resolution has to happen before the measurement rather than during it.
+	if resolved, ok := l.resolveForLayout(t).(types.UnionType); ok {
+		t = resolved
+	}
+	size, align, ok := SizeAndAlign(t)
+	if !ok {
+		return fmt.Errorf("llvm: cannot size union %q", t.Name)
+	}
+	widest, widestSize, err := l.widestAlignedMember(t, align)
+	if err != nil {
+		return err
+	}
+	st.Fields = append(st.Fields, widest)
+	if pad := size - widestSize; pad > 0 {
+		st.Fields = append(st.Fields, lltypes.NewArray(uint64(pad), lltypes.I8))
+	}
+	return nil
+}
+
+// widestAlignedMember picks the member whose alignment equals the union's, preferring
+// the largest such member so the trailing padding is as small as possible. It returns
+// that member's LLVM type and its size in bytes.
+func (l *lowerer) widestAlignedMember(t types.UnionType, align int) (lltypes.Type, int, error) {
+	best, bestSize := types.Type(nil), -1
+	for _, m := range t.Members {
+		ms, ma, ok := SizeAndAlign(m.Type)
+		if !ok {
+			return nil, 0, fmt.Errorf("llvm: cannot size member %q of union %q", m.Name, t.Name)
+		}
+		if ma == align && ms > bestSize {
+			best, bestSize = m.Type, ms
+		}
+	}
+	if best == nil {
+		return nil, 0, fmt.Errorf("llvm: union %q has no member at its own alignment %d", t.Name, align)
+	}
+	llT, err := l.lowerType(best)
+	if err != nil {
+		return nil, 0, err
+	}
+	return llT, bestSize, nil
 }

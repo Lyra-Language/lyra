@@ -3211,11 +3211,73 @@ since a `shared` value is also an LLVM pointer — to its box. Two boxes with eq
 answered false. `TestExec_SharedAggregateEquality` failed immediately; the fix is to key on
 the *Lyra* type. See COMPLETED.md.
 
-**What is still missing for SDL3**, in order: `SDL_Event` is a union and Lyra has no union
-type, so the event loop is a caller-allocated buffer plus hand-written offset decoding; and
-`@link` names a system library only, so `-L`, a static archive by path and a macOS
-framework are all still the build system's problem (below, *What is deliberately not
-decided here*). Raylib additionally needs struct-by-value, which is refused above.
+**SDL3 is bound — [DONE 09/09].** See *Unions* below. What is still missing is
+`@link`'s search path: it names a system library only, so `-L`, a static archive by path
+and a macOS framework remain the build system's problem (below, *What is deliberately not
+decided here*), and `examples/sdl3.lyra` is run with `LIBRARY_PATH` set. Raylib
+additionally needs struct-by-value, which is refused above.
+
+### Unions — **[DONE 09/09]**
+
+`union` declares a C union: one block of storage its members read several ways. Built for
+SDL3, and proved against it — `examples/sdl3.lyra` pushes a user event, polls it back and
+reads the payload through the union, headless.
+
+**Its own keyword, not `@union` on a struct.** A union's member read is `unsafe` and a
+struct's is not, and behind an attribute the two would be spelled identically with nothing
+at the use site to tell them apart — the trade the language refused when it kept pointer
+arithmetic a named method rather than `p[i]`. The cost is rule 8's *type* tax, which came
+to seven walks; it rides `TypeDeclStmt`, so it pays no declaration tax.
+
+- **Layout is max-over-members**, every member at offset 0, size rounded up to alignment.
+  `SDL_Event`'s 128 bytes come from its `padding[128]` member, not from any payload, and
+  an implementation sizing a union from its largest *real* member overruns the caller's
+  slot by 88 — a stack smash, not a wrong number. The fixture pins every number against
+  C's own `sizeof`/`_Alignof`/`offsetof`.
+- **Members need a C *layout*, which is wider than lyra-E063's rule.** E063 asks whether a
+  type crosses a boundary by value and refuses every aggregate; a union member may be an
+  array or a struct, and must be. That rule is also what makes `eachComponent` yielding
+  nothing for a union *sound* rather than merely convenient.
+- **A literal names one member and zeroes the rest.** C leaves the rest indeterminate,
+  which makes a wrong read depend on the previous call's stack; one store makes it wrong
+  the same way every time.
+- **No equality** (lyra-E072), for the reason C has none: there is no member to compare.
+
+**Two bugs the behaviour probes found**, which reading switches would not have: a
+recursive union checked clean and recursed forever in `unionSizeAndAlign`, and equality
+fell through to a backend "not implemented". Rule 8 says to probe rather than sweep, and
+this is the second feature where that was the difference.
+
+**Still open**: a union cannot cross by *value* (lyra-E063, waiting on the same per-target
+classifier a struct is), and there is no `match` on one — a tag is the program's to read,
+which is the whole of what "untagged" means.
+
+### Naming a C symbol — `@symbol` — **[DONE 09/09]**
+
+`@symbol("SDL_PollEvent")` on an extern names the C symbol, leaving the Lyra name to
+Lyra's rules.
+
+**It was the actual blocker for SDL3, and it is not about unions at all.** An extern's own
+name *is* the emitted symbol, and a Lyra `identifier` is lowercase-leading — so
+`unsafe extern SDL_PollEvent:` is a **syntax error**, and every SDL entry point with it.
+zlib only ever worked because `crc32`, `compress` and `zlibVersion` happen to be
+lowercase. Found by writing the binding, which is the argument for writing one.
+
+One per declaration, unlike `@link`: a declaration links against any number of libraries
+and binds exactly one symbol. The backend now keys `l.externs` by the **symbol** rather
+than the Lyra name, so two Lyra names for one C function collapse to one `declare`.
+
+### An `unsafe` block is not a comparison operand — **[OPEN]**
+
+`unsafe { f() } == 0` does not parse: `_comparison_operand` admits a literal, a postfix
+expression, a math expression and `&x`, and `unsafe_block` is none of them. Found writing
+`examples/sdl3.lyra`, where every SDL call returns a `u8` to be tested against zero, so
+each one has to be bound first.
+
+Binding the result reads better and the example does that deliberately, so this is an
+ergonomic gap rather than a blocker. Worth measuring before adding: the operand rules are
+in the finely-balanced region grammar.js's conflict notes warn about, and an `unsafe`
+block reaches `block`, which is what makes `for` conditions unable to take `$.expression`.
 
 ### Named extern parameters — **[DONE 08/26]**
 

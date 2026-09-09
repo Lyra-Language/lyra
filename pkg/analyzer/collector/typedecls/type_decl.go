@@ -14,6 +14,8 @@ func CollectTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Type
 			return collectNamedTupleTypeDeclaration(child, ctx)
 		case "struct_type":
 			return collectStructTypeDeclaration(child, ctx)
+		case "union_type":
+			return collectUnionTypeDeclaration(child, ctx)
 		case "data_type":
 			return collectDataTypeDeclaration(child, ctx)
 		case "constrained_type":

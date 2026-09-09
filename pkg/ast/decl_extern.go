@@ -27,13 +27,33 @@ type ExternDeclStmt struct {
 	// Links are the libraries `@link("m")` names, in source order. Collected here and
 	// unioned across the program by the driver; see todo.md, Foreign functions.
 	Links []string
-	Doc   *Doc
+	// Symbol is the C symbol this extern binds, from `@symbol("SDL_PollEvent")`, or ""
+	// when the Lyra name is the symbol.
+	//
+	// It exists because the two naming rules genuinely differ and neither can give way.
+	// A Lyra `identifier` is lowercase-leading, and C symbols are whatever the library
+	// chose: zlib's `crc32` needs nothing, while every SDL entry point is
+	// `SDL_CreateWindow`-shaped and does not parse as a name at all. Rust spells this
+	// `#[link_name]` and C# `EntryPoint`, for the same reason.
+	Symbol string
+	Doc    *Doc
 	// fn caches Func()'s result. Unexported and reached only through it — see there for
 	// why one instance per declaration is the invariant.
 	fn *LambdaExpr
 }
 
 func (e *ExternDeclStmt) statementNode() {}
+
+// CSymbol is the name the linker sees: `@symbol("…")` when given, else the Lyra name.
+// Every consumer that emits or dedups by symbol must ask this rather than reading Name,
+// which is the Lyra-side identity — two modules may each declare `puts` under different
+// Lyra names, and it is this that has to collide, not that.
+func (e *ExternDeclStmt) CSymbol() string {
+	if e.Symbol != "" {
+		return e.Symbol
+	}
+	return e.Name
+}
 
 func (e *ExternDeclStmt) GetName() string { return e.Name }
 
