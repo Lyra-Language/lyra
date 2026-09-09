@@ -19,13 +19,18 @@ jobs:
       # than letting `go` fetch a separate module toolchain — the module
       # toolchain ships without the `covdata` tool that -coverpkg needs to
       # write coverage for packages that have no in-package tests.
+      #
+      # setup-go v6 began setting this itself (actions/setup-go#460), so this is
+      # now belt-and-braces — kept deliberately, because the reason above is not
+      # recoverable from the action's default and a future action that stopped
+      # setting it would break coverage silently rather than loudly.
       GOTOOLCHAIN: local
     steps:
       # The main module. Kept in a subdirectory so the tree-sitter grammar
       # can sit next to it as a sibling, matching the `replace` directive in
       # go.mod (`=> ../tree-sitter-lyra`).
       - name: Checkout lyra
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: lyra
 
@@ -33,13 +38,13 @@ jobs:
       # ordinary tracked text since the state-explosion fix took it out of Git LFS, so
       # no `lfs: true` is needed — and this job regenerates it below in any case.
       - name: Checkout tree-sitter-lyra grammar
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Lyra-Language/tree-sitter-lyra
           path: tree-sitter-lyra
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: lyra/go.mod
           cache-dependency-path: lyra/go.sum
@@ -104,7 +109,7 @@ jobs:
 
       - name: Upload coverage profile
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-profile
           path: lyra/cover.out
