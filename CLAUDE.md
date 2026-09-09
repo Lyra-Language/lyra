@@ -1397,7 +1397,7 @@ to check is the walks that must reach every composite:
 - **`lowerUnionDef` resolves before it measures**, which the struct path never has to do:
   a struct's LLVM body is its field list and each field resolves as it is lowered, while a
   union's body is computed *from* its size. An unresolved member has no size, and
-  `examples/sdl3.lyra` found it immediately.
+  `examples/SDL3/events.lyra` found it immediately.
 - **Two bugs the probes found, and neither would have come from reading switches** — which
   is rule 8's own advice, followed: a **recursive union** checked clean and would have
   recursed forever in `unionSizeAndAlign` (`recursive_type.go` had no arm), and **equality**
@@ -1528,7 +1528,7 @@ pattern. It needed nothing new from the language.
   so two libraries both declaring `strlen` cannot collide on a program-wide name — so what
   a binding module exports is always the Lyra it puts over them. That is where `unsafe`
   stops, where NULL becomes a `Maybe`, and where the untagged `SDL_Event` becomes a `data`
-  type a `match` can be exhaustive over. **`examples/sdl3_window.lyra` contains no
+  type a `match` can be exhaustive over. **`examples/SDL3/basic.lyra` contains no
   `unsafe` and no `extern`.**
 - **`@link("SDL3")` sits on the `module` header**, once, and covers all fourteen externs;
   a program importing the module links the library by saying nothing. What `@link` still
@@ -1558,9 +1558,14 @@ Two things it ran into that the SDL3 module did not:
 - **`rec` is a reserved word**, one of the function modifiers, so raylib's own parameter
   name for a rectangle cannot be used and the wrapper says `rect`.
 
-`examples/sdl3.lyra` binds SDL directly and is dense with `unsafe` — it exists to prove the
+`examples/raylib/breakout.lyra` is what the pair is *for*: a playable game — paddle, ball, a
+`[]Brick` grid, lives, score, and a `data GameState` a `match` covers exhaustively — with
+no `unsafe` and no `extern` in it. It is also the honest test of the ABI work, since a
+misclassified `Vector2` there is a ball that passes through bricks rather than a crash.
+
+`examples/SDL3/events.lyra` binds SDL directly and is dense with `unsafe` — it exists to prove the
 boundary works. `bindings/sdl3` and `bindings/raylib` are what using it looks like
-afterwards, and `examples/raylib.lyra` contains no `unsafe` and no `extern` at all. Keep
+afterwards, and `examples/raylib/basic.lyra` contains no `unsafe` and no `extern` at all. Keep
 both kinds: the direct one is the proof, the binding is the demonstration.
 
 ## Current Development Focus

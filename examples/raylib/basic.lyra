@@ -12,7 +12,7 @@
 //
 // Run it with:
 //
-//     LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac run examples/raylib.lyra
+//     LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac run examples/raylib/basic.lyra
 //
 // That is `build/lyrac` from `./build.sh`, which puts `std/` and `bindings/` beside the
 // binary. Running the compiler from source (`go run ./cmd/lyrac`) needs `LYRA_STD=$(pwd)`

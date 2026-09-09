@@ -3160,7 +3160,7 @@ without parsing format strings, which would be a second language embedded in thi
 
 ### Struct-by-value — **[DONE 09/09]**
 
-Built, and raylib runs: `examples/raylib.lyra` opens a window and draws through
+Built, and raylib runs: `examples/raylib/basic.lyra` opens a window and draws through
 `DrawCircleV(Vector2, float, Color)` and `DrawRectangleRec(Rectangle, Color)`, reading the
 mouse from a `GetMousePosition()` that returns a `Vector2` **in registers**.
 
@@ -3265,13 +3265,13 @@ the *Lyra* type. See COMPLETED.md.
 **SDL3 is bound — [DONE 09/09].** See *Unions* below. What is still missing is
 `@link`'s search path: it names a system library only, so `-L`, a static archive by path
 and a macOS framework remain the build system's problem (below, *What is deliberately not
-decided here*), and `examples/sdl3.lyra` is run with `LIBRARY_PATH` set. Raylib
+decided here*), and `examples/SDL3/events.lyra` is run with `LIBRARY_PATH` set. Raylib
 additionally needs struct-by-value, which is refused above.
 
 ### Unions — **[DONE 09/09]**
 
 `union` declares a C union: one block of storage its members read several ways. Built for
-SDL3, and proved against it — `examples/sdl3.lyra` pushes a user event, polls it back and
+SDL3, and proved against it — `examples/SDL3/events.lyra` pushes a user event, polls it back and
 reads the payload through the union, headless.
 
 **Its own keyword, not `@union` on a struct.** A union's member read is `unsafe` and a
@@ -3399,11 +3399,27 @@ information; `@link` was the redundant one.
 `@symbol` has **no** module form, deliberately: a symbol is one declaration's C name and a
 module has no single one, so it is refused on a header by name rather than ignored.
 
+### `examples/raylib/breakout.lyra` — **[DONE 09/09]**
+
+A playable game: paddle, ball, a `[]Brick` grid, lives, score, and a `data GameState` the
+overlay `match` covers exhaustively. No `unsafe` and no `extern`.
+
+It is the first example that is a *program* rather than a demonstration of a feature, and
+it earned three small additions to `bindings/raylib`: `circle_hits_rect`, `rects_overlap`
+and `point_in_rect`. Those are bound rather than written in Lyra because raylib's versions
+are the ones its own drawing agrees with — a hand-rolled second opinion about whether a
+ball touched a brick is a bug waiting for a rounding difference.
+
+**Verified headlessly rather than by watching the window**: the collision calls against
+known geometry (inside, outside, grazing), and the grid math against its own arithmetic
+(50 bricks, first at the gap, last inside the window, `remaining` tracking kills, a
+distinct colour per row). A window that opens proves only that nothing crashed.
+
 ### `bindings/raylib` — **[DONE 09/09]**
 
 The second binding module, and the one that exercises struct-by-value:
 `draw_circle(Vector2, f32, Color)` passes two aggregates and `mouse_position()` returns
-one. `examples/raylib.lyra` is written against it and contains **no `unsafe` and no
+one. `examples/raylib/basic.lyra` is written against it and contains **no `unsafe` and no
 `extern`** — a ball, a mouse crosshair, click-to-mark, text and an FPS counter.
 
 Two language facts it ran into:

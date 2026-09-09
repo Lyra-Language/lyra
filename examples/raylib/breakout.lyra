@@ -1,0 +1,228 @@
+// Breakout — a playable game in Lyra, drawn with raylib.
+//
+// Arrow keys or the mouse move the paddle, space launches the ball, R restarts. Clear all
+// the bricks to win; lose all three lives and it is over.
+//
+// Run it with:
+//
+//     LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac run examples/raylib/breakout.lyra
+//
+// **No `unsafe` and no `extern`** — those are in `bindings/raylib/`. What the game is made
+// of is ordinary Lyra: a `[]Brick` it walks and mutates, a `data GameState` a `match`
+// covers, and `Vector2`/`Rectangle` values passed to raylib **by value**, which is the
+// whole reason the ABI classifier had to exist before this file could.
+
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps, frame_time,
+  begin_drawing, end_drawing, clear_background,
+  Vector2, Rectangle, draw_rectangle, draw_circle, circle_hits_rect,
+  Color, rgb, raywhite, red, blue, orange,
+  draw_text, measure_text, key_down, key_pressed, mouse_position,
+  KEY_LEFT, KEY_RIGHT, KEY_SPACE, KEY_R,
+}
+
+const WIDTH: f32 = 800.0
+const HEIGHT: f32 = 500.0
+const PADDLE_W: f32 = 110.0
+const PADDLE_H: f32 = 16.0
+const PADDLE_Y: f32 = 460.0
+const PADDLE_SPEED: f32 = 520.0
+const BALL_R: f32 = 8.0
+const BALL_SPEED: f32 = 340.0
+const ROWS: i64 = 5
+const COLS: i64 = 10
+const BRICK_W: f32 = 72.0
+const BRICK_H: f32 = 24.0
+const BRICK_TOP: f32 = 60.0
+const GAP: f32 = 6.0
+const LIVES: i64 = 3
+
+/// One brick, and whether it is still there.
+///
+/// `alive` rather than removing it from the array: the bricks never move, so a flag keeps
+/// the grid's geometry and lets the draw loop skip. Compacting the array every hit would
+/// reallocate for nothing.
+struct Brick {
+  rect: Rectangle,
+  color: Color,
+  alive: bool,
+}
+
+/// Where the game is. A `data` type rather than a pair of booleans, so the `match` that
+/// draws the overlay is exhaustive and a state added later is a compile error at every
+/// place that has to handle it.
+data GameState =
+  | Ready
+  | Playing
+  | Won
+  | Lost
+
+let main = () -> void => {
+  init_window(800, 500, "Breakout — Lyra × raylib")
+  set_target_fps(60)
+
+  var bricks = build_bricks()
+  var paddle_x: f32 = 345.0
+  var ball = Vector2 { x: 400.0, y: 300.0 }
+  var vel = Vector2 { x: 0.0, y: 0.0 }
+  var state = Ready
+  var lives = LIVES
+  var score = 0
+
+  for !should_close() {
+    let dt = frame_time()
+
+    if key_pressed(KEY_R) {
+      bricks = build_bricks()
+      paddle_x = 345.0
+      ball = Vector2 { x: 400.0, y: 300.0 }
+      vel = Vector2 { x: 0.0, y: 0.0 }
+      state = Ready
+      lives = LIVES
+      score = 0
+    }
+
+    paddle_x = move_paddle(paddle_x, dt)
+    let paddle = Rectangle { x: paddle_x, y: PADDLE_Y, width: PADDLE_W, height: PADDLE_H }
+
+    match state {
+      Ready => {
+        // The ball rides the paddle until it is launched.
+        ball = Vector2 { x: paddle_x + PADDLE_W / 2.0, y: PADDLE_Y - BALL_R - 1.0 }
+        if key_pressed(KEY_SPACE) {
+          vel = Vector2 { x: BALL_SPEED * 0.55, y: -BALL_SPEED }
+          state = Playing
+        }
+      },
+      Playing => {
+        ball = Vector2 { x: ball.x + vel.x * dt, y: ball.y + vel.y * dt }
+
+        // Walls: left, right and top reflect; the floor costs a life.
+        if ball.x <= BALL_R || ball.x >= WIDTH - BALL_R { vel = Vector2 { x: -vel.x, y: vel.y } }
+        if ball.y <= BALL_R { vel = Vector2 { x: vel.x, y: -vel.y } }
+        if ball.y >= HEIGHT + BALL_R {
+          lives -= 1
+          if lives <= 0 {
+            state = Lost
+          } else {
+            state = Ready
+          }
+        }
+
+        // The paddle. Where the ball lands across its width steers the bounce, so the
+        // player aims rather than only survives — the one rule that makes Breakout a game.
+        if vel.y > 0.0 && circle_hits_rect(ball, BALL_R, paddle) {
+          let offset = (ball.x - (paddle_x + PADDLE_W / 2.0)) / (PADDLE_W / 2.0)
+          vel = Vector2 { x: BALL_SPEED * clamp_unit(offset), y: -abs_f32(vel.y) }
+        }
+
+        // Bricks. The first hit per frame wins: a ball is smaller than a brick, so
+        // reflecting once per frame cannot miss one and cannot double-reflect into a
+        // brick it has already passed.
+        var i = 0
+        var hit = false
+        for i < bricks.len() {
+          if !hit && bricks[i].alive && circle_hits_rect(ball, BALL_R, bricks[i].rect) {
+            bricks[i].alive = false
+            score += 10
+            vel = Vector2 { x: vel.x, y: -vel.y }
+            hit = true
+          }
+          i += 1
+        }
+
+        if remaining(bricks) == 0 { state = Won }
+      },
+      Won => {},
+      Lost => {},
+    }
+
+    begin_drawing()
+    clear_background(rgb(24, 24, 32))
+
+    var b = 0
+    for b < bricks.len() {
+      if bricks[b].alive { draw_rectangle(bricks[b].rect, bricks[b].color) }
+      b += 1
+    }
+
+    draw_rectangle(paddle, raywhite())
+    draw_circle(ball, BALL_R, orange())
+
+    draw_text("score ${score}", 14, 14, 20, raywhite())
+    draw_text("lives ${lives}", 700, 14, 20, raywhite())
+
+    match state {
+      Ready => centred("press space to launch", 220, 24, raywhite()),
+      Playing => {},
+      Won => centred("you win — R to play again", 220, 30, blue()),
+      Lost => centred("game over — R to play again", 220, 30, red()),
+    }
+
+    end_drawing()
+  }
+
+  close_window()
+}
+
+/// The full grid, every brick alive, coloured by row.
+let build_bricks = pure () -> []Brick => {
+  var out: []Brick = []
+  var row = 0
+  for row < ROWS {
+    var col = 0
+    for col < COLS {
+      let x = GAP + f32(col) * (BRICK_W + GAP)
+      let y = BRICK_TOP + f32(row) * (BRICK_H + GAP)
+      out.push(Brick {
+        rect: Rectangle { x: x, y: y, width: BRICK_W, height: BRICK_H },
+        color: row_color(row),
+        alive: true,
+      })
+      col += 1
+    }
+    row += 1
+  }
+  out
+}
+
+/// A colour per row, so the wall reads as ranks rather than a block.
+let row_color = pure (row: i64) -> Color =>
+  if row == 0 { rgb(220, 70, 70) }
+  else if row == 1 { rgb(230, 140, 60) }
+  else if row == 2 { rgb(220, 200, 70) }
+  else if row == 3 { rgb(90, 190, 120) }
+  else { rgb(80, 150, 230) }
+
+/// Arrow keys, or the mouse if it has moved into range — whichever the player reaches for.
+let move_paddle = (x: f32, dt: f32) -> f32 => {
+  var next = x
+  if key_down(KEY_LEFT) { next -= PADDLE_SPEED * dt }
+  if key_down(KEY_RIGHT) { next += PADDLE_SPEED * dt }
+  let m = mouse_position()
+  if m.y > 300.0 { next = m.x - PADDLE_W / 2.0 }
+  if next < 0.0 { 0.0 } else if next > WIDTH - PADDLE_W { WIDTH - PADDLE_W } else { next }
+}
+
+/// How many bricks are still standing.
+let remaining = pure (bricks: []Brick) -> i64 => {
+  var n = 0
+  var i = 0
+  for i < bricks.len() {
+    if bricks[i].alive { n += 1 }
+    i += 1
+  }
+  n
+}
+
+/// Text centred on the window, since `measure_text` is the only way to know its width.
+let centred = (text: string, y: i32, size: i32, color: Color) -> void =>
+  draw_text(text, 400 - measure_text(text, size) / 2, y, size, color)
+
+/// `-1..1`, so a ball caught at the paddle's edge leaves at the steepest angle the game
+/// allows and one caught in the middle goes nearly straight up.
+let clamp_unit = pure (v: f32) -> f32 =>
+  if v < -1.0 { -1.0 } else if v > 1.0 { 1.0 } else { v }
+
+/// Lyra has `floor`/`ceil`/`round` and no `abs` on floats, so the sign flip is written out.
+let abs_f32 = pure (v: f32) -> f32 => if v < 0.0 { -v } else { v }

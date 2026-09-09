@@ -61,6 +61,34 @@ pub let draw_circle = (center: Vector2, radius: f32, color: Color) -> void =>
 pub let draw_rectangle = (rect: Rectangle, color: Color) -> void =>
   unsafe { rl_draw_rectangle(rect, color) }
 
+@symbol("CheckCollisionCircleRec")
+unsafe extern rl_circle_hits_rect: (center: Vector2, radius: f32, rect: Rectangle) -> u8
+
+@symbol("CheckCollisionRecs")
+unsafe extern rl_rects_overlap: (a: Rectangle, b: Rectangle) -> u8
+
+@symbol("CheckCollisionPointRec")
+unsafe extern rl_point_in_rect: (point: Vector2, rect: Rectangle) -> u8
+
 /// A line between two points.
 pub let draw_line = (start: Vector2, finish: Vector2, color: Color) -> void =>
   unsafe { rl_draw_line(start, finish, color) }
+
+
+/// Whether a circle overlaps a rectangle.
+///
+/// **Three aggregates in one call** — a `Vector2` by value, a scalar, and a `Rectangle` by
+/// value — which is the shape that makes raylib worth binding at all and was impossible
+/// before the ABI classifier. Written here rather than in Lyra because raylib's version is
+/// the one its own drawing agrees with, and a hand-rolled second opinion about whether a
+/// ball touched a brick is a bug waiting for a rounding difference.
+pub let circle_hits_rect = (center: Vector2, radius: f32, rect: Rectangle) -> bool =>
+  unsafe { rl_circle_hits_rect(center, radius, rect) } != 0
+
+/// Whether two rectangles overlap.
+pub let rects_overlap = (a: Rectangle, b: Rectangle) -> bool =>
+  unsafe { rl_rects_overlap(a, b) } != 0
+
+/// Whether a point falls inside a rectangle.
+pub let point_in_rect = (point: Vector2, rect: Rectangle) -> bool =>
+  unsafe { rl_point_in_rect(point, rect) } != 0

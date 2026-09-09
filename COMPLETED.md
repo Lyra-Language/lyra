@@ -100,13 +100,13 @@ which belongs to the front end and is filed as its own entry.
 Worth knowing why it survived the sweep: the binding has to be **used** to trip it. An
 unused one is never lowered, so `let t = (None, 1)` on its own compiles fine.
 
-`examples/sdl3_window.lyra` kept its `None`-as-a-match-arm event loop, which was a
+`examples/SDL3/basic.lyra` kept its `None`-as-a-match-arm event loop, which was a
 workaround and is now a preference — one `match` where every outcome including "the queue
 is empty" is a case reads better than a condition plus a match.
 
 ### 09/09/26 — struct-by-value, and raylib
 
-raylib runs from Lyra. `examples/raylib.lyra` opens a window and draws through
+raylib runs from Lyra. `examples/raylib/basic.lyra` opens a window and draws through
 `DrawCircleV(Vector2, float, Color)` and `DrawRectangleRec(Rectangle, Color)` — two structs
 passed **by value** — reading the mouse from a `GetMousePosition()` that returns one in
 registers.
@@ -193,7 +193,7 @@ the language — which was the claim — but it found **four** things, and that 
 point. An *example* uses a feature once; a *binding module* uses it a dozen times, and the
 difference is what turns an ergonomic note into a bug report.
 
-`examples/sdl3_window.lyra` is now written against it and **contains no `unsafe` and no
+`examples/SDL3/basic.lyra` is now written against it and **contains no `unsafe` and no
 `extern`**. Every one of both is in `bindings/sdl3/`, which is what a binding module is
 for: the `unsafe` is written once, where the C prototype is transcribed.
 
@@ -344,7 +344,7 @@ nothing there caught it.
 
 ### 09/09/26 — `union`, `@symbol`, and SDL3
 
-SDL3 runs from Lyra: `examples/sdl3.lyra` pushes an SDL user event, polls it back, reads
+SDL3 runs from Lyra: `examples/SDL3/events.lyra` pushes an SDL user event, polls it back, reads
 the tag and then the payload through a `union`. It is the second real library the FFI has
 talked to, and the first with an aggregate — zlib exercised pointers, lengths, `@link` and
 effect bounds, and had no `SDL_Event`.

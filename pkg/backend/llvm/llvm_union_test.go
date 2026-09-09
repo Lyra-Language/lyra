@@ -219,13 +219,20 @@ func TestExec_RaylibBindings(t *testing.T) {
 	libdir := pkgConfigLibDir(t, "raylib")
 	src := `
 module main
-import bindings.raylib.{ Vector2, Color, rgb, rgba, red, mouse_position, KEY_ESCAPE }
+import bindings.raylib.{ Vector2, Rectangle, Color, rgb, rgba, red, mouse_position,
+                         circle_hits_rect, KEY_ESCAPE }
 let main = () -> void => {
   let c = rgb(1, 2, 3)
   let t = rgba(9, 8, 7, 6)
   let r = red()
   let m = mouse_position()
-  println("${c.r} ${c.g} ${c.b} ${c.a} ${t.a} ${r.r} ${m.x} ${m.y} ${KEY_ESCAPE}")
+  // Two aggregates by value in one call, which is the shape a game actually uses:
+  // CheckCollisionCircleRec(Vector2, float, Rectangle). A wrong classification here is
+  // a ball that passes through bricks rather than a crash.
+  let brick = Rectangle { x: 100.0, y: 100.0, width: 72.0, height: 24.0 }
+  let hit = circle_hits_rect(Vector2 { x: 136.0, y: 112.0 }, 8.0, brick)
+  let miss = circle_hits_rect(Vector2 { x: 136.0, y: 80.0 }, 8.0, brick)
+  println("${c.r} ${c.g} ${c.b} ${c.a} ${t.a} ${r.r} ${m.x} ${m.y} ${KEY_ESCAPE} ${hit} ${miss}")
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
@@ -235,8 +242,8 @@ let main = () -> void => {
 			t.Fatalf("running the raylib-bindings binary failed: %v", err)
 		}
 	}
-	if got := strings.TrimSpace(string(raw)); got != "1 2 3 255 6 230 0 0 256" {
-		t.Errorf("raylib bindings = %q; want \"1 2 3 255 6 230 0 0 256\"", got)
+	if got := strings.TrimSpace(string(raw)); got != "1 2 3 255 6 230 0 0 256 true false" {
+		t.Errorf("raylib bindings = %q; want \"1 2 3 255 6 230 0 0 256 true false\"", got)
 	}
 }
 
