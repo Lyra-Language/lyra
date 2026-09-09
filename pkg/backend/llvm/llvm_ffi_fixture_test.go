@@ -32,6 +32,10 @@ const (
 	// the same event read back by C. 64 is the *padding* member's doing: the largest
 	// real member is 24, and a union sized from that would be a 40-byte overrun.
 	wantEvent = "64 8 8 7 99 2.5 99"
+	// The by-value aggregates, in the order the oracle prints them. Each shape here
+	// classifies differently on each target, and each links cleanly when classified
+	// wrongly — which is why they are run rather than only compiled.
+	wantByValue = "4 3 4 100 1 2 3 4 12 15 10 14 11.5"
 )
 
 // fixturePath is the C fixture's absolute path, and fixtureSource its bytes — the latter
@@ -271,8 +275,8 @@ func TestExec_FFIFixture_CAgreesWithLyra(t *testing.T) {
 		t.Fatalf("running the oracle failed: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("the oracle printed %d lines, want 3:\n%s", len(lines), out)
+	if len(lines) != 4 {
+		t.Fatalf("the oracle printed %d lines, want 4:\n%s", len(lines), out)
 	}
 	if got := strings.TrimSpace(lines[0]); got != wantNarrow {
 		t.Errorf("C computes narrow = %q; the Lyra test expects %q", got, wantNarrow)
@@ -282,6 +286,9 @@ func TestExec_FFIFixture_CAgreesWithLyra(t *testing.T) {
 	}
 	if got := strings.TrimSpace(lines[2]); got != wantEvent {
 		t.Errorf("C computes the event line = %q; the Lyra test expects %q", got, wantEvent)
+	}
+	if got := strings.TrimSpace(lines[3]); got != wantByValue {
+		t.Errorf("C computes the by-value line = %q; the Lyra test expects %q", got, wantByValue)
 	}
 }
 
@@ -384,4 +391,51 @@ let main = () -> void => unsafe {
   println("${lyra_fixture_event_size()} ${lyra_fixture_event_align()} ${lyra_fixture_event_code_offset()} ${ev.user.kind} ${ev.user.code} ${ev.user.weight} ${lyra_fixture_event_code(&ev)}")
 }
 `, wantEvent)
+}
+
+// **An aggregate passed and returned by value**, which is the whole of what `pkg/abi`
+// exists for — and the shapes are raylib's, because raylib is the library that needed it.
+//
+// Each classifies differently, and differently again per target:
+//
+//   - `V2` is a homogeneous float aggregate — `[2 x float]` in the float registers on
+//     aarch64, `<2 x float>` on x86-64 SysV.
+//   - `Color` is four bytes in one integer register: `i64` on aarch64 when passed,
+//     `i32` on SysV, and `i32` when *returned* on either — the parameter/return
+//     asymmetry AAPCS64 has and reasoning would not predict.
+//   - `Rect` is the largest HFA there is; one more float and it goes to memory.
+//   - `Big` is 20 bytes, so it is memory on both: a pointer in, an `sret` buffer out.
+//   - `agg_mixed` puts a scalar *between* two aggregates, so the scalar must land in the
+//     register left after the aggregate took however many it takes.
+//
+// **Every one of these links cleanly when the classification is wrong**, which is why the
+// expectations come from `testdata/ffi_oracle.c` making the same calls in C rather than
+// from what Lyra happened to print. See TestExec_FFIFixture_CAgreesWithLyra.
+func TestExec_FFIFixture_AggregatesByValue(t *testing.T) {
+	t.Parallel()
+	checkFixture(t, `module main
+struct V2 { x: f32, y: f32 }
+struct Color { r: u8, g: u8, b: u8, a: u8 }
+struct Rect { x: f32, y: f32, w: f32, h: f32 }
+struct Big { a: i32, b: i32, c: i32, d: i32, e: i32 }
+unsafe extern pure lyra_fixture_v2_sum: (v: V2) -> f32
+unsafe extern pure lyra_fixture_v2_make: (x: f32, y: f32) -> V2
+unsafe extern pure lyra_fixture_color_sum: (c: Color) -> i32
+unsafe extern pure lyra_fixture_color_make: (r: u8, g: u8, b: u8, a: u8) -> Color
+unsafe extern pure lyra_fixture_rect_area: (r: Rect) -> f32
+unsafe extern pure lyra_fixture_big_sum: (s: Big) -> i64
+unsafe extern pure lyra_fixture_big_make: (n: i32) -> Big
+unsafe extern pure lyra_fixture_agg_mixed: (a: V2, k: f32, c: Color) -> f32
+let main = () -> void => unsafe {
+  let v = lyra_fixture_v2_make(3.0, 4.0)
+  let col = lyra_fixture_color_make(1, 2, 3, 4)
+  let big = lyra_fixture_big_make(10)
+  let sv = V2 { x: 1.5, y: 2.5 }
+  let sc = Color { r: 10, g: 20, b: 30, a: 40 }
+  let sr = Rect { x: 0.0, y: 0.0, w: 3.0, h: 4.0 }
+  let sb = Big { a: 1, b: 2, c: 3, d: 4, e: 5 }
+  let mc = Color { r: 7, g: 0, b: 0, a: 0 }
+  println("${lyra_fixture_v2_sum(sv)} ${v.x} ${v.y} ${lyra_fixture_color_sum(sc)} ${col.r} ${col.g} ${col.b} ${col.a} ${lyra_fixture_rect_area(sr)} ${lyra_fixture_big_sum(sb)} ${big.a} ${big.e} ${lyra_fixture_agg_mixed(sv, 0.5, mc)}")
+}
+`, wantByValue)
 }

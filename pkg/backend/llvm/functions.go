@@ -587,6 +587,12 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 // Shared by an ordinary call by name and a call to a generic *specialization*, so
 // the by-reference `mut`/`ref` argument handling below has one definition.
 func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *ir.Func, params []ast.Parameter) (value.Value, *ir.Block, error) {
+	// A foreign call whose signature carries an aggregate by value is coerced rather than
+	// passed straight through — one Lyra argument may become several LLVM ones, and the
+	// return may arrive through a caller-allocated buffer. See abi_lower.go.
+	if plan := l.externPlans[fn]; plan != nil {
+		return l.lowerExternCall(block, e, fn, plan)
+	}
 	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params, calleeParamTypes(fn, 0))
 	if err != nil {
 		return nil, nil, err

@@ -2,6 +2,7 @@ package abi
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -55,6 +56,27 @@ func FromTriple(triple string) Target {
 	case "aarch64", "arm64", "aarch64_be", "arm64e":
 		return AArch64
 	case "x86_64", "amd64":
+		return X86_64SysV
+	}
+	return Unknown
+}
+
+// HostTarget is the convention of the machine this compiler is *running* on, derived from
+// the Go build's own GOARCH/GOOS.
+//
+// **It is the default, not the authority.** `DetectTarget` asks the C compiler, which is
+// what actually compiles the emitted IR and is therefore right under `--cc` naming a
+// cross-compiler; this needs no subprocess, so it is what a constructor can reasonably
+// use. The two agree on every ordinary build, and where they disagree the cc is correct —
+// which is why `lyrac` overrides with it.
+func HostTarget() Target {
+	if runtime.GOOS == "windows" {
+		return Unknown
+	}
+	switch runtime.GOARCH {
+	case "arm64":
+		return AArch64
+	case "amd64":
 		return X86_64SysV
 	}
 	return Unknown

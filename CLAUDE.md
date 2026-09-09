@@ -777,6 +777,7 @@ consumer. Those need their own sweeps, and a field-level one will not find them.
 | `pkg/analyzer/ownership` | Where the backend must retain/release; Perceus | [README](pkg/analyzer/ownership/README.md) |
 | `pkg/modules` | Import resolution (a module is a file *or* a directory), namespacing, the implicit prelude | [README](pkg/modules/README.md) |
 | `pkg/driver` | The one reusable front-end pipeline | below |
+| `pkg/abi` | C calling conventions: how an aggregate crosses, per target | below |
 | `pkg/backend/llvm` | The LLVM IR backend | [README](pkg/backend/llvm/README.md) |
 | `pkg/docgen` | AST → per-module documentation; the Markdown renderer | below |
 | `pkg/printer` | Reflection-based AST printer, for golden tests | — |
@@ -893,6 +894,30 @@ the entry point resolves, so an implementation may assume a well-typed program.
 constant (`TIOCGWINSZ` differs between the targets), and it is sound only because `lyrac`
 compiles for its own host. The other terminal builtins avoid the question by going through
 `cfmakeraw`, so `struct termios`'s genuinely-different layout is never indexed, only carried.
+
+### `pkg/abi`
+
+`Classify(target, aggregate, isReturn)` answers how a struct crosses the C boundary:
+AAPCS64 and System V AMD64, the two conventions this project's three platforms use.
+
+**Nothing in it is inferred from first principles.** `abi_diff_test.go` compiles each shape
+with clang and demands the package agree — a differential test rather than a table, because
+a table records what clang did the day someone looked, while this keeps holding when a
+clang release legitimately changes its mind. 19 shapes × 3 targets, parameter and return
+each; the shapes are every aggregate raylib passes by value plus every branch of both
+classifiers.
+
+Two facts worth carrying, both read off clang rather than reasoned to: AAPCS64 passes an
+HFA in float registers **however large it is** (`{double×3}` is 24 bytes and still
+register-passed, where a 24-byte integer struct is memory), and its parameter/return widths
+are **asymmetric** — `{u8,u8}` is passed as an `i64` and returned as an `i16`. SysV's
+per-eightbyte rule changes the *arity*, which is why classification reaches call lowering
+and not declarations alone.
+
+`DetectTarget(cc)` asks the C compiler; `HostTarget()` is the GOARCH-derived default.
+**Windows is deliberately `Unknown`** — its x64 convention is neither of these, so calling
+it SysV would emit exactly the silently-wrong code this package exists to prevent. An
+unknown target is a refusal at the crossing, never a guess.
 
 ### `pkg/docgen`
 
@@ -1307,12 +1332,26 @@ needs before touching anything nearby:
   tuples, `data` types and anything `shared` are refused at the signature, so there is no
   implicit conversion and therefore no nul-termination policy to get wrong. `std.ffi`
   supplies `s.cstring()` and `xs.data()` as ordinary Lyra.
-- **A struct is refused on an ABI ground, not a layout one** (08/26), and E063's hint says
-  so. The layouts match — the fixture proves `sizeof` and every `offsetof` — so `^T` is the
-  right shape rather than a workaround. By *value* needs a per-target classifier LLVM does
-  not supply: aarch64 coalesces a ≤16-byte struct into registers while x86-64 SysV
-  classifies it per eightbyte and can change the parameter count. The table is in
-  `todo.md`; do not reopen without one for both ABIs.
+- **An aggregate with a C layout crosses by value** (09/09), classified per target by
+  `pkg/abi`. A struct, a union, a tuple and a fixed array all cross; a `data` type does
+  not, and E063's hint says why — its tag exists only in Lyra, so there is no C type for
+  those bytes to be. The front end admits an aggregate **unconditionally** and the backend
+  refuses on a target with no classifier, because `lyrac check` must not change its answer
+  according to which clang is installed.
+
+  `pkg/abi` decides *what* a struct becomes and `backend/llvm/abi_lower.go` emits it. The
+  split is deliberate: the decision is the part that fails silently, so it is made in one
+  place and validated against clang shape by shape (`abi_diff_test.go`, 19 shapes × 3
+  targets, parameter and return). **Only `extern` takes this path** — Lyra's own calling
+  convention is Lyra's, `declareFunctionAs` is untouched, and an extern with no aggregate
+  gets no plan. Coercion goes through memory (alloca, store, bitcast, load the parts)
+  because the bytes are being reinterpreted as registers, which LLVM cannot say about an
+  SSA value.
+
+  **`planExtern` must enter the extern's module** before resolving anything in its
+  signature — `declareExterns` walks from the top level, and without it a named type stays
+  unresolved, the classifier is skipped, and the declaration comes out as `%main__Big`. The
+  third instance of the rule below, and invisible without a `module` header.
 - **A callback crosses as a bare function pointer, and only a top-level function is one**
   (08/26). A function type in an extern's *parameter* position is C's `int (*)(…)`, with
   every type in its own signature checked by the same FFI-safe predicate; in *return*

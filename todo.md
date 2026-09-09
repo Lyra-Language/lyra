@@ -3158,7 +3158,46 @@ language default differently from every other would be a rule with no way to see
 **It makes the ABI right, not the call safe.** A format-string mismatch is undetectable
 without parsing format strings, which would be a second language embedded in this one.
 
-### Struct-by-value — **[DECIDED 08/26] refused, and the reason is the ABI, not the layout**
+### Struct-by-value — **[DONE 09/09]**
+
+Built, and raylib runs: `examples/raylib.lyra` opens a window and draws through
+`DrawCircleV(Vector2, float, Color)` and `DrawRectangleRec(Rectangle, Color)`, reading the
+mouse from a `GetMousePosition()` that returns a `Vector2` **in registers**.
+
+`pkg/abi` is the classifier the entry below demanded, for **both** ABIs. What makes it
+trustworthy is `abi_diff_test.go`: rather than a table of expected strings — which records
+what clang did the day someone looked — it compiles each shape with clang and demands the
+package agree. 19 shapes × 3 targets (macOS arm64, Linux arm64, Linux x86-64), parameter
+and return each. The shapes are raylib's own, plus every branch of both classifiers.
+
+- **The classifier needed no correction.** The first run's failures were the *test's* IR
+  parsing — `byval(%struct.X)` contains the paren a `[^)]*` class stops at. A table would
+  have hidden that.
+- **The front end admits an aggregate unconditionally**, and the backend refuses on a
+  target it cannot classify. `lyrac check` must not change its answer according to which
+  clang is installed.
+- **Only `extern` takes this path.** Lyra's own calling convention is Lyra's;
+  `declareFunctionAs` is untouched, and an extern with no aggregate gets no plan at all.
+- **Coercion goes through memory** — alloca, store, bitcast, load the parts — because the
+  bytes are being reinterpreted as the registers the ABI names, and LLVM cannot say that
+  about an SSA value. It is what clang emits at `-O0` and what the optimizer folds.
+- **`lyrac` takes the target from the C compiler** (`-print-target-triple`), not from
+  GOARCH: clang compiles the IR, so clang's answer is right under `--cc`. `New()` defaults
+  to the host. Windows is deliberately `Unknown` — its x64 convention is neither of these.
+
+**The bug it hit, and the rule that predicted it**: `planExtern` resolves a named type in a
+foreign signature, and `declareExterns` runs from the top level where no module scope is
+installed — so `Big` stayed unresolved, the classifier was skipped entirely, and the
+declaration came out as `%main__Big`. That is the third instance of "a path that lowers a
+signature from a top-level loop needs its own `enterModuleOf`", written down the same day
+by the closure-capture fix. **Invisible without a `module` header**, which every real
+program has and every paste-sized reproduction does not; the backend harness prepends
+`module main`, which is why the test caught what four hand-written checks had not.
+
+Still refused: a `data` type, whose tag exists only in Lyra, so there is no C type for
+those bytes to be. E063's hint says that now rather than talking about calling conventions.
+
+### Struct-by-value — the refusal this replaced — **[SUPERSEDED 09/09]**
 
 Investigated and deliberately not built. The two halves are worth keeping apart:
 

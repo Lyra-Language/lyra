@@ -87,11 +87,24 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		}
 		return prior.fn, nil
 	}
-	restore := l.pushExternSignature()
-	declared, err := l.declareFunctionAs(symbol, ext.Func())
-	restore()
+	// **An aggregate crossing by value takes its own declaration path.** `declareFunctionAs`
+	// is shared with Lyra's own functions, whose calling convention is Lyra's and must not
+	// move; a planned signature is built from the ABI classifier instead. A foreign
+	// signature with no aggregate in it gets no plan and nothing here changes.
+	plan, err := l.planExtern(ext)
 	if err != nil {
 		return nil, err
+	}
+	var declared *ir.Func
+	if plan != nil {
+		declared = l.declareExternWithPlan(symbol, plan)
+	} else {
+		restore := l.pushExternSignature()
+		declared, err = l.declareFunctionAs(symbol, ext.Func())
+		restore()
+		if err != nil {
+			return nil, err
+		}
 	}
 	// The compiler declares libc functions of its own — `write` for `print`, `memcpy`,
 	// `realloc` — and a C symbol has one declaration per module, so an extern naming one
@@ -123,6 +136,12 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		declared.Sig.Variadic = true
 	}
 	l.externs[symbol] = externDecl{fn: declared, signature: ext.Signature, at: ext.NameLocation}
+	if plan != nil {
+		if l.externPlans == nil {
+			l.externPlans = map[*ir.Func]*externPlan{}
+		}
+		l.externPlans[declared] = plan
+	}
 	return declared, nil
 }
 

@@ -40,23 +40,38 @@ let main = () -> void => unsafe { take(1, "nope"); () }
 	assertHasErrorContaining(t, res, `argument 2 is string, which has no C spelling`)
 }
 
-// **An aggregate at the boundary is refused on an ABI ground, not a layout one**, and the
-// message has to say which — the layouts *do* match C's, so "take a pointer" is the right
-// shape rather than a workaround for a representational mismatch.
+// **An aggregate with a C layout crosses by value** (09/09), classified per target by
+// `pkg/abi`. This used to be lyra-E063 with a message saying to take a pointer, and the
+// reason it was refused was real — by value is a per-target calling convention, and a
+// wrong one links cleanly and computes garbage. What changed is that the classifier now
+// exists and is validated against clang shape by shape.
 //
-// By value is a per-target calling convention: clang rewrites the signature differently for
-// aarch64 and x86-64 SysV (a 16-byte all-int struct is `[2 x i64]` on one and two separate
-// `i64` parameters on the other, and SysV can change the *arity*), so it needs a classifier
-// this compiler does not have. See lyra-E063's note.
-func TestFFISafe_AnAggregateIsToldToCrossByPointer(t *testing.T) {
+// The front end admits it **unconditionally**, on purpose: whether a given target can
+// classify it is the backend's question, so `lyrac check` does not change its answer
+// according to which clang happens to be installed.
+func TestFFISafe_AnAggregateWithACLayoutCrossesByValue(t *testing.T) {
 	for _, sig := range []string{
 		"struct Pt { x: i32, y: i32 }\nunsafe extern pure f: (n: Pt) -> i32",
 		"unsafe extern pure f: (n: (i32, i32)) -> i32",
+		"struct Pt { x: i32, y: i32 }\nunsafe extern pure f: () -> Pt",
+		"union U { a: u32, b: f32 }\nunsafe extern pure f: (n: U) -> i32",
+	} {
+		res := parseCollectAndCheck(t, sig+"\nlet main = () -> void => println(\"x\")\n", false)
+		assertNoErrors(t, res)
+	}
+}
+
+// **What is still refused is a type with no C storage at all** — a `data` type carries a
+// tag Lyra invented, a string and a dynamic array are refcounted boxes, a closure is
+// `{code, env}`. Having a layout is the question; a `data` type's layout is not C's.
+func TestFFISafe_ATypeWithNoCLayoutIsStillRefused(t *testing.T) {
+	for _, sig := range []string{
 		"data Sh = A | B\nunsafe extern pure f: (n: Sh) -> i32",
+		"unsafe extern pure f: (n: string) -> i32",
+		"unsafe extern pure f: (n: []i32) -> i32",
 	} {
 		res := parseCollectAndCheck(t, sig+"\n", false)
-		assertHasErrorContaining(t, res, "A struct crosses by pointer: take `^T` and pass `&value`")
-		assertHasErrorContaining(t, res, "per-target calling convention")
+		assertHasErrorContaining(t, res, "which has no C spelling")
 	}
 }
 

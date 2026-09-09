@@ -9,6 +9,87 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — struct-by-value, and raylib
+
+raylib runs from Lyra. `examples/raylib.lyra` opens a window and draws through
+`DrawCircleV(Vector2, float, Color)` and `DrawRectangleRec(Rectangle, Color)` — two structs
+passed **by value** — reading the mouse from a `GetMousePosition()` that returns one in
+registers.
+
+This was the FFI's last refusal, and the entry it replaces had a standing condition on it:
+*reopen only with a real classifier for both ABIs, validated case-by-case against clang.*
+That is what `pkg/abi` is.
+
+#### Why the differential test is the whole thing
+
+The classifier could have been written from the psABI documents and a table of expected
+strings. A table records what clang did on the day someone looked; it cannot notice a clang
+release legitimately changing its mind, and — the part that actually happened — it cannot
+tell you when *you* are the one who is wrong.
+
+So `abi_diff_test.go` compiles each shape with clang, reads the signature it lowered to,
+and demands this package say the same: 19 shapes × 3 targets (macOS arm64, Linux arm64,
+Linux x86-64), parameter and return each. The shapes are every aggregate raylib passes by
+value plus every branch of both classifiers.
+
+**The classifier needed no correction.** The first run's failures were the *test's* own IR
+parsing — `byval(%struct.X)` contains the very paren a `[^)]*` class stops at, so the
+parameter list came back truncated and the test blamed the package. A table would have
+recorded the truncation as the expectation.
+
+Two facts in it were read off clang and would not have been reasoned to. AAPCS64 passes a
+homogeneous float aggregate in float registers **however large it is** — `{double×3}` is 24
+bytes and still register-passed, where a 24-byte integer struct goes to memory — and its
+parameter and return widths are **asymmetric**: `{u8,u8}` is passed as an `i64` and comes
+back as an `i16`. SysV's per-eightbyte rule changes the *arity*, which is why classification
+had to reach call lowering rather than declarations alone.
+
+#### The shape of the implementation
+
+**Only `extern` takes this path.** Lyra's own calling convention is Lyra's, and
+`declareFunctionAs` is untouched; an extern with no aggregate in its signature gets no plan
+at all, so the overwhelmingly common foreign call is unchanged. The decision lives in
+`pkg/abi` and the emission in `backend/llvm/abi_lower.go`, because the decision is the half
+that fails silently and belongs in one validated place.
+
+**Coercion goes through memory** — alloca, store, bitcast, load the parts — and that is
+forced rather than lazy: the bytes are being reinterpreted as the registers the ABI names,
+which LLVM has no way to say about an SSA value. It is what clang emits at `-O0`, and the
+optimizer folds it.
+
+**The front end admits an aggregate unconditionally**, and the *backend* refuses on a
+target it cannot classify. `lyrac check` must not change its answer according to which
+clang happens to be installed, and a target with no classifier is a refusal naming the
+target rather than a guess — which is the whole reason Windows is `Unknown` rather than
+approximated as SysV.
+
+#### The bug, and the rule that had just been written down
+
+`planExtern` resolves the named types in a foreign signature, and `declareExterns` walks
+the program from the top level, where no module scope is installed. So `Big` stayed an
+`UnresolvedType`, `isCAggregate` answered false, the classifier was skipped **entirely**,
+and the declaration came out as `%main__Big` where clang expects a pointer.
+
+That is the third instance of *a path that lowers a signature from a top-level loop needs
+its own `enterModuleOf`* — a rule written into this file the same day by the
+closure-capture fix. And it has the same tell: **invisible without a `module` header**.
+Four hand-written checks passed, because a paste-sized reproduction has no header and every
+real program does. The backend harness prepends `module main`, which is why the fixture
+test caught it immediately.
+
+#### What it cost
+
+One new package, one lowering file, one predicate widened in the front end. Three tests
+that were asserting the refusal now assert the crossing, and one of mine turned out to be
+**flaky by construction**: it asserted *which* of two names a cycle diagnostic carries, and
+the dependency graph is a map, so Go's iteration order decides. It reported "U" for weeks
+and "S" after this change perturbed the map. Either is correct; the assertion is now that a
+cycle is reported at all.
+
+Verified on macOS arm64 and in the linux/arm64 container under clang-15's typed pointers;
+CI covers x86-64 SysV. The hermetic proof is the fixture — every shape run against C's own
+answers in both directions — and the real one is raylib, a header nobody wrote for Lyra.
+
 ### 09/09/26 — `bindings/sdl3`, and what writing a binding module found
 
 The shape `todo.md` has called for since the FFI landed: a per-library module owning its

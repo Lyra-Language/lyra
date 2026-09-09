@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Lyra-Language/lyra/pkg/abi"
 	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/driver"
@@ -314,7 +315,17 @@ func analyze(path string) (*driver.Result, bool) {
 // It prints nothing on success — the caller knows whether its command has a
 // summary to report — so `lyrac run`'s output is the program's alone.
 func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) (string, int) {
-	be := llvm.New()
+	// **The target is resolved before emitting, not after**, because an aggregate crossing
+	// the C boundary is classified per target (pkg/abi) — so the IR itself is
+	// target-specific the moment a program passes a struct by value. `findCC` runs again
+	// below for the link step and is cheap; an error here is deliberately ignored, since
+	// the target then stays `abi.Unknown` and a by-value aggregate is refused with a clear
+	// message rather than guessed at. A program that passes none is unaffected.
+	target := abi.Unknown
+	if cc, err := findCC(o.cc); err == nil {
+		target = abi.DetectTarget(cc)
+	}
+	be := llvm.NewForTarget(target)
 	libs := linkFlags(res)
 	ir, err := be.Emit(res, entry)
 	if err != nil {

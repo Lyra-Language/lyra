@@ -117,7 +117,7 @@ func TestExec_Union(t *testing.T) {
 // must need none. `examples/sdl3.lyra` is the same program to run by hand.
 func TestExec_UnionAgainstSDL3(t *testing.T) {
 	t.Parallel()
-	libdir := sdl3LibDir(t)
+	libdir := pkgConfigLibDir(t, "sdl3")
 	src := `
 module main
 const SDL_INIT_EVENTS: u32 = 0x00004000
@@ -162,20 +162,62 @@ let main = () -> void => {
 	}
 }
 
-// sdl3LibDir asks pkg-config where SDL3 lives, skipping the test when it is not
-// installed. `@link` emits `-lSDL3` and nothing more — a search path is a build-system
-// question the language deliberately does not answer (todo.md) — so the directory is
-// passed as a `-L` at compile time, which is what a real project would do with a `--cc`
-// wrapper.
-func sdl3LibDir(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("pkg-config", "--variable=libdir", "sdl3").Output()
+// **raylib, the library struct-by-value exists for.**
+//
+// SDL3 never needed it — its render API takes `const SDL_FRect *`, so every aggregate
+// crosses as a pointer. raylib passes them by value everywhere, and each of its types
+// classifies differently: `Color` is four bytes in one integer register, `Vector2` a
+// homogeneous float aggregate, `Rectangle` the largest HFA there is, and
+// `GetMousePosition` *returns* one.
+//
+// This calls the real library rather than a fixture, which is the claim a fixture cannot
+// make: that Lyra's classifier agrees with a header nobody wrote for it. `GetMousePosition`
+// answers (0, 0) with no window open, which is a definite value rather than a crash — and
+// a wrong classification here does not answer 0, it faults or returns rubbish.
+//
+// Skipped where raylib is absent, as the SDL3 and zlib tests skip: the automated suite must
+// need no package on either platform. `examples/raylib.lyra` is the windowed version.
+func TestExec_ByValueAgainstRaylib(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+struct Vector2 { x: f32, y: f32 }
+struct Color { r: u8, g: u8, b: u8, a: u8 }
+@symbol("GetMousePosition") unsafe extern mouse_position: () -> Vector2
+@symbol("ColorToInt") unsafe extern color_to_int: (c: Color) -> i32
+let main = () -> void => unsafe {
+  let m = mouse_position()
+  println("${m.x} ${m.y} ${color_to_int(Color { r: 1, g: 2, b: 3, a: 4 })}")
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
 	if err != nil {
-		t.Skip("SDL3 is not installed (pkg-config has no sdl3); run examples/sdl3.lyra by hand")
+		if _, isExit := err.(*exec.ExitError); !isExit {
+			t.Fatalf("running the raylib binary failed: %v", err)
+		}
+	}
+	// ColorToInt packs RGBA big-endian: 0x01020304 = 16909060.
+	if got := strings.TrimSpace(string(raw)); got != "0 0 16909060" {
+		t.Errorf("raylib by-value = %q; want \"0 0 16909060\"", got)
+	}
+}
+
+// pkgConfigLibDir asks pkg-config where a library lives, skipping when it is absent.
+//
+// `@link` emits `-lNAME` and nothing more — a search path is a build-system question the
+// language deliberately does not answer (todo.md) — so the directory is passed as a `-L`
+// at compile time, which is what a real project would do with a `--cc` wrapper.
+func pkgConfigLibDir(t *testing.T, lib string) string {
+	t.Helper()
+	out, err := exec.Command("pkg-config", "--variable=libdir", lib).Output()
+	if err != nil {
+		t.Skipf("%s is not installed (pkg-config has no %s)", lib, lib)
 	}
 	dir := strings.TrimSpace(string(out))
 	if dir == "" {
-		t.Skip("pkg-config reports no libdir for sdl3")
+		t.Skipf("pkg-config reports no libdir for %s", lib)
 	}
 	return dir
 }

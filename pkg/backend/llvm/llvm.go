@@ -96,6 +96,7 @@ import (
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
+	"github.com/Lyra-Language/lyra/pkg/abi"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/backend"
@@ -106,10 +107,28 @@ import (
 // Backend is the LLVM IR code generator.
 type Backend struct {
 	coroSymbols []string // the coroutine functions the last emitModule produced (seq_coro.go)
+	// target is the C calling convention aggregates cross by (pkg/abi). It is
+	// `abi.Unknown` unless a caller sets it, and an Unknown target **refuses** a
+	// by-value aggregate at the boundary rather than guessing — which is what keeps a
+	// platform with no classifier a diagnostic instead of silent garbage.
+	//
+	// Only the *extern* boundary reads it. Lyra's own calling convention is Lyra's and
+	// does not vary by target.
+	target abi.Target
 }
 
-// New returns an LLVM backend.
-func New() *Backend { return &Backend{} }
+// New returns an LLVM backend targeting the host.
+//
+// **The host rather than nothing**, because a backend with no target refuses every
+// by-value aggregate at the boundary, and "I did not say" almost always means "this
+// machine" — which is what the tests want, and what an embedder would be surprised not to
+// get. `lyrac` still calls NewForTarget with the *C compiler's* answer, which is the
+// authority: it is what compiles the IR, and it is right under `--cc` naming a
+// cross-compiler where the host is not.
+func New() *Backend { return &Backend{target: abi.HostTarget()} }
+
+// NewForTarget returns a backend that classifies aggregates for t.
+func NewForTarget(t abi.Target) *Backend { return &Backend{target: t} }
 
 // Compile-time assertion that Backend satisfies the contract.
 var _ backend.Backend = (*Backend)(nil)
@@ -145,6 +164,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	l := &lowerer{
 		module:             m,
 		res:                res,
+		target:             b.target,
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
 		seqSkipped:         map[string]bool{},
@@ -281,9 +301,15 @@ type lowerer struct {
 	// symbolConflict is the first C symbol an `extern` and the compiler's own libc use
 	// declared with disagreeing signatures; emitModule fails on it. See noteSymbolConflict.
 	symbolConflict error
-	res            *driver.Result      // gives you TypeTable, SymbolTable, MethodTable, …
-	funcs          map[string]*ir.Func // name → its function IR (all declared before any body)
-	seqSkipped     map[string]bool     // functions left undeclared because they mention a Seq (forEachUserFunction)
+	res            *driver.Result // gives you TypeTable, SymbolTable, MethodTable, …
+	// target is the C calling convention for the extern boundary; see Backend.target.
+	target abi.Target
+	// externPlans holds the ABI plan for each foreign function whose signature carries an
+	// aggregate by value, keyed by the declared function so the call site can find it.
+	// Absent for every other extern, which is the common case.
+	externPlans map[*ir.Func]*externPlan
+	funcs       map[string]*ir.Func // name → its function IR (all declared before any body)
+	seqSkipped  map[string]bool     // functions left undeclared because they mention a Seq (forEachUserFunction)
 	// Lazy sequences (seq_lower.go): the sequence parameters of the body being inlined,
 	// the consumer its yields feed, and where an inlined body's `return` goes.
 	seqParams map[string]seqBinding

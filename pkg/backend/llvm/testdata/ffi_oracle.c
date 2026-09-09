@@ -49,6 +49,20 @@ int64_t lyra_fixture_event_code_offset(void);
 void lyra_fixture_make_event(LyraFixtureEvent *out, int64_t code);
 int64_t lyra_fixture_event_code(const LyraFixtureEvent *ev);
 
+typedef struct LyraFixtureV2 { float x, y; } LyraFixtureV2;
+typedef struct LyraFixtureColor { uint8_t r, g, b, a; } LyraFixtureColor;
+typedef struct LyraFixtureRect { float x, y, w, h; } LyraFixtureRect;
+typedef struct LyraFixtureBig { int32_t a, b, c, d, e; } LyraFixtureBig;
+
+float lyra_fixture_v2_sum(LyraFixtureV2 v);
+LyraFixtureV2 lyra_fixture_v2_make(float x, float y);
+int32_t lyra_fixture_color_sum(LyraFixtureColor c);
+LyraFixtureColor lyra_fixture_color_make(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+float lyra_fixture_rect_area(LyraFixtureRect r);
+int64_t lyra_fixture_big_sum(LyraFixtureBig s);
+LyraFixtureBig lyra_fixture_big_make(int32_t n);
+float lyra_fixture_agg_mixed(LyraFixtureV2 a, float k, LyraFixtureColor c);
+
 int main(void) {
   printf("%d\n", lyra_fixture_narrow(-3, 200, -300, 40000));
 
@@ -66,6 +80,20 @@ int main(void) {
          (long long)lyra_fixture_event_align(), (long long)lyra_fixture_event_code_offset(),
          ev.kind, (long long)ev.user.code, ev.user.weight,
          (long long)lyra_fixture_event_code(&ev));
+
+  LyraFixtureV2 v = lyra_fixture_v2_make(3.0f, 4.0f);
+  LyraFixtureColor col = lyra_fixture_color_make(1, 2, 3, 4);
+  LyraFixtureBig big = lyra_fixture_big_make(10);
+  LyraFixtureV2 sv = {1.5f, 2.5f};
+  LyraFixtureColor sc = {10, 20, 30, 40};
+  LyraFixtureRect sr = {0.0f, 0.0f, 3.0f, 4.0f};
+  LyraFixtureBig sb = {1, 2, 3, 4, 5};
+  LyraFixtureColor mc = {7, 0, 0, 0};
+  printf("%g %g %g %d %u %u %u %u %g %lld %d %d %g\n",
+         lyra_fixture_v2_sum(sv), v.x, v.y, lyra_fixture_color_sum(sc),
+         col.r, col.g, col.b, col.a, lyra_fixture_rect_area(sr),
+         (long long)lyra_fixture_big_sum(sb), big.a, big.e,
+         lyra_fixture_agg_mixed(sv, 0.5f, mc));
 
   return 0;
 }

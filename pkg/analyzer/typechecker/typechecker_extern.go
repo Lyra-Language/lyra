@@ -100,6 +100,19 @@ func (tc *TypeChecker) requireFFISafe(t types.Type, decl *ast.ExternDeclStmt, wh
 	if isFFISafe(resolved) {
 		return
 	}
+	// **An aggregate with a C layout crosses by value** (09/09). A struct, a union or a
+	// fixed array is admitted here and classified per target by `pkg/abi`; what stays
+	// refused is a type with no C storage at all — a `string` or dynamic array (a
+	// refcounted box), a closure (`{code, env}`), a `data` type (a tag Lyra invented),
+	// anything `shared`.
+	//
+	// The *front end* accepts it unconditionally, on purpose: whether a given target can
+	// classify it is the backend's question, and `lyrac check` must not change its answer
+	// according to which clang happens to be installed. A target with no classifier
+	// refuses the call there, with the target named.
+	if tc.hasCLayout(resolved, map[string]bool{}) {
+		return
+	}
 	where := what
 	if idx > 0 {
 		where = fmt.Sprintf(what, idx)
@@ -148,16 +161,14 @@ func ffiHint(t types.Type) string {
 	case *types.LambdaType:
 		return ". A Lyra closure is a code pointer plus a ref-counted environment, which is " +
 			"not a C function pointer; passing callbacks to C is not designed yet"
-	case types.NamedStructType, types.AnonymousStructType, types.TupleType, types.DataType:
-		// **The layouts already agree** — `TestExec_FFIFixture_StructLayoutMatchesC` proves
-		// Lyra's `{i32, u8, f64, i64}` matches C's `sizeof` and every `offsetof` — so a
-		// pointer is not a workaround for a representational mismatch. What is missing is
-		// the *calling convention*, which is a different thing and a per-target one.
-		return ". A struct crosses by pointer: take `^T` and pass `&value` — no copy, and " +
-			"the layouts already match C's. By *value* is a per-target calling convention " +
-			"rather than a missing spelling (aarch64 and x86-64 classify the same struct " +
-			"differently, and x86-64 can change the parameter count), which this compiler " +
-			"does not implement"
+	case types.DataType:
+		// **A struct and a union now cross by value** (09/09) and never reach this hint; a
+		// `data` type still does, and the reason is not the calling convention — it is that
+		// its layout is not C's at all. It carries a tag Lyra invented, so there is nothing
+		// on the other side for those bytes to be.
+		return ". A `data` type carries a tag that exists only in Lyra, so there is no C " +
+			"type it corresponds to. Cross with the payload it holds, or with a `struct` " +
+			"or `union` matching the C declaration"
 	}
 	return ""
 }

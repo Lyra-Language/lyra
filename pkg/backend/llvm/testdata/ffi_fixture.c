@@ -226,3 +226,41 @@ void lyra_fixture_make_event(LyraFixtureEvent *out, int64_t code) {
 
 /* Read one back, so a Lyra-built union is proved to be what C expects. */
 int64_t lyra_fixture_event_code(const LyraFixtureEvent *ev) { return ev->user.code; }
+
+/* ---- Aggregates by value -------------------------------------------------
+ *
+ * These are the shapes raylib passes: a homogeneous float aggregate (Vector2,
+ * Rectangle), a four-byte integer aggregate (Color), and one past the register
+ * limit so it goes to memory. Each classifies differently on each target, and each
+ * links cleanly when classified wrongly — which is what makes them worth running
+ * rather than only compiling. */
+typedef struct LyraFixtureV2 { float x, y; } LyraFixtureV2;
+typedef struct LyraFixtureColor { uint8_t r, g, b, a; } LyraFixtureColor;
+typedef struct LyraFixtureRect { float x, y, w, h; } LyraFixtureRect;
+typedef struct LyraFixtureBig { int32_t a, b, c, d, e; } LyraFixtureBig;
+
+float lyra_fixture_v2_sum(LyraFixtureV2 v) { return v.x + v.y; }
+LyraFixtureV2 lyra_fixture_v2_make(float x, float y) {
+  LyraFixtureV2 v = {x, y};
+  return v;
+}
+int32_t lyra_fixture_color_sum(LyraFixtureColor c) { return c.r + c.g + c.b + c.a; }
+LyraFixtureColor lyra_fixture_color_make(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+  LyraFixtureColor c = {r, g, b, a};
+  return c;
+}
+float lyra_fixture_rect_area(LyraFixtureRect r) { return r.w * r.h; }
+int64_t lyra_fixture_big_sum(LyraFixtureBig s) {
+  return s.a + s.b + s.c + s.d + s.e;
+}
+LyraFixtureBig lyra_fixture_big_make(int32_t n) {
+  LyraFixtureBig s = {n, n + 1, n + 2, n + 3, n + 4};
+  return s;
+}
+
+/* Aggregates mixed with scalars, in the order raylib's `DrawCircleV` uses: the
+ * interesting part is that the scalar must land in the register the ABI assigns it
+ * *after* the aggregate has taken however many it takes. */
+float lyra_fixture_agg_mixed(LyraFixtureV2 a, float k, LyraFixtureColor c) {
+  return a.x + a.y + k + (float)c.r;
+}

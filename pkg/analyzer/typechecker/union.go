@@ -141,10 +141,13 @@ func (tc *TypeChecker) hasCLayout(t types.Type, seen map[string]bool) bool {
 	case types.RawPointerType:
 		return true
 	case types.PrimitiveType:
-		// Deliberately not `isFFISafe`'s exact set: `void` is a return type, not
-		// storage, so a `void` member is refused here and admitted there.
-		return isAnyConcreteInt(v.Name) || isAnyConcreteFloat(v.Name) ||
-			v.Name == types.Rune || v.Name == types.Boolean
+		// Deliberately not `isFFISafe`'s exact set, and the two differences are opposite:
+		// `void` is a return type rather than storage, so it is admitted there and refused
+		// here; **`bool` is refused in both**, because Lyra's is one bit and C's `_Bool` is
+		// a byte (lyra-E063). Admitting it here made every `extern` taking a `bool` compile
+		// once this predicate started backing the boundary check too — a silent widening,
+		// caught by the test that pins E063's `_Bool` message.
+		return isAnyConcreteInt(v.Name) || isAnyConcreteFloat(v.Name) || v.Name == types.Rune
 	case types.StaticArrayType:
 		return tc.hasCLayout(tc.resolveTypeIfKnown(v.ElementType, ast.Location{}), seen)
 	case types.NamedStructType:
@@ -154,6 +157,25 @@ func (tc *TypeChecker) hasCLayout(t types.Type, seen map[string]bool) bool {
 		seen[v.Name] = true
 		for _, f := range v.Fields {
 			if !tc.hasCLayout(tc.resolveTypeIfKnown(f.Type, ast.Location{}), seen) {
+				return false
+			}
+		}
+		return true
+	case types.AnonymousStructType:
+		for _, f := range v.Fields {
+			if !tc.hasCLayout(tc.resolveTypeIfKnown(f.Type, ast.Location{}), seen) {
+				return false
+			}
+		}
+		return true
+	case types.TupleType:
+		// **A tuple has a struct's layout, so it classifies like one.** It must be here
+		// rather than merely tolerated, because the backend's `isCAggregate` admits it:
+		// a front end that refuses what the backend handles — or worse, admits what the
+		// backend refuses — is a bug generator, and these two predicates answer the same
+		// question from opposite ends of the pipeline.
+		for _, e := range v.Elements {
+			if !tc.hasCLayout(tc.resolveTypeIfKnown(e, ast.Location{}), seen) {
 				return false
 			}
 		}
