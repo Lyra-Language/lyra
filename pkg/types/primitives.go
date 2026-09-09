@@ -19,10 +19,16 @@ const (
 	UntypedInt       PrimitiveTypeName = "untyped_int"
 	UntypedSignedInt PrimitiveTypeName = "untyped_signed_int"
 	UntypedFloat     PrimitiveTypeName = "untyped_float"
-	Boolean          PrimitiveTypeName = "boolean"
-	String           PrimitiveTypeName = "string"
-	Rune             PrimitiveTypeName = "rune"
-	Regex            PrimitiveTypeName = "regex"
+	// UntypedNullPtr is `nullptr` before a context has said what it points at.
+	// It is an untyped literal on exactly the model of UntypedInt — the
+	// difference is that there is no default to fall back to, since no pointee
+	// is more plausible than another, so an unpinned one is lyra-E069 rather
+	// than a widening. Assignable to every RawPointerType and to nothing else.
+	UntypedNullPtr PrimitiveTypeName = "untyped_nullptr"
+	Boolean        PrimitiveTypeName = "boolean"
+	String         PrimitiveTypeName = "string"
+	Rune           PrimitiveTypeName = "rune"
+	Regex          PrimitiveTypeName = "regex"
 )
 
 type PrimitiveType struct {
@@ -37,6 +43,8 @@ func (p PrimitiveType) GetName() string {
 		return "integer literal"
 	case UntypedFloat:
 		return "float literal"
+	case UntypedNullPtr:
+		return "null pointer literal"
 	default:
 		return string(p.Name)
 	}

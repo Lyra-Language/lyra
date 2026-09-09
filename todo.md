@@ -933,9 +933,11 @@ write today:
   be taken of a `var`, so neither implies the other. `&` of a temporary is `lyra-E059` and
   `^` on a non-pointer is `lyra-E060`.
 
-  Deliberately absent: pointer arithmetic, comparison, null, and any way to make a pointer
-  other than `&`. Producing one from an integer is a separate feature with its own safety
-  story. See COMPLETED.md.
+  Deliberately absent at the time: pointer arithmetic, comparison, null, and any way to
+  make a pointer other than `&`. Two of the four have since landed — `p.offset(n)` on
+  08/19, and `nullptr` with `==`/`!=` on 09/08 — leaving only the last. Producing a
+  pointer from an integer is a separate feature with its own safety story.
+  See COMPLETED.md.
 
 - **[DONE 08/13] The raw-pointer / `unsafe` phantom is closed** (`lyra-E051`), and its
   distinguishing feature was that **the compiler's own advice could not be followed**.
@@ -3175,6 +3177,45 @@ Investigated and deliberately not built. The two halves are worth keeping apart:
 not merely a missing spelling, so a reader is not left thinking the shape is unimplemented
 syntax. Reopen this only with a real classifier for both ABIs, validated case-by-case
 against clang — the fixture and its pure-C oracle are the harness for exactly that.
+
+### Null pointers — **[DONE 09/08]**
+
+`nullptr`, and `==`/`!=` on two raw pointers. Both **safe**; only the deref they guard is
+`unsafe`. `std.ffi` gained `is_null` and `to_maybe` over them, one line each.
+
+It closes the gap that made SDL3-shaped libraries unbindable: a C function answering a
+pointer answers NULL on failure, and there was no way to ask which had happened. `open`
+could report failure as `-1` because a descriptor is an integer; a pointer had no
+equivalent.
+
+- **An untyped literal with no default**, which is the one way it differs from `5`. A
+  context supplies the pointee — annotation, parameter, return type, or the other side of
+  a `==` — and an unpinned one is `lyra-E069` rather than a guessed `^u8` that would
+  surface as a mismatch at some later call.
+- **Modelled as a `PrimitiveType` name, not a new type kind**, so rule 8's tax was zero:
+  no switch over composite types gained a case. The pointee lives in the TypeTable, which
+  is what the backend reads — clang 15 has typed pointers, so `i8* null` and `i64* null`
+  are different constants.
+- **Equality only.** Ordering two pointers is refused: addresses from separate
+  allocations have no meaningful order, which is why it is UB in C too.
+- **`lyra-E070`** refuses a binding named `nullptr`. The grammar cannot: tree-sitter lexes
+  against the tokens valid in the parse state, so in name position it is an ordinary
+  identifier — the same context-sensitivity that deliberately keeps `let type = 5` legal.
+  The difference is that this binding could never be *read*, since every later mention
+  lexes as the literal.
+- **Zero new parser states** (7899 → 7899), +89 KB of lex tables.
+
+**One regression it caused and one test caught it**: keying the backend's address
+comparison on the LLVM type made every `shared` aggregate equality an address comparison,
+since a `shared` value is also an LLVM pointer — to its box. Two boxes with equal payloads
+answered false. `TestExec_SharedAggregateEquality` failed immediately; the fix is to key on
+the *Lyra* type. See COMPLETED.md.
+
+**What is still missing for SDL3**, in order: `SDL_Event` is a union and Lyra has no union
+type, so the event loop is a caller-allocated buffer plus hand-written offset decoding; and
+`@link` names a system library only, so `-L`, a static archive by path and a macOS
+framework are all still the build system's problem (below, *What is deliberately not
+decided here*). Raylib additionally needs struct-by-value, which is refused above.
 
 ### Named extern parameters — **[DONE 08/26]**
 

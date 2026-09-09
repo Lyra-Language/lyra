@@ -683,6 +683,30 @@ inside this project, three things:
   the same three tokens, so the syntactic pass could only refuse both or neither. It
   lowers to a `getelementptr` with the pointee's type, so "in elements" is what LLVM
   already means and no scaling is written by hand.
+- **`nullptr` is an untyped literal, so the *pointee* is a recorded fact, not a node
+  property** (`typechecker/nullptr.go`, `backend/llvm/pointers.go`). `NullPtrExpr.GetType`
+  is the `untyped_nullptr` placeholder and the backend never reads it: a context pins the
+  pointer type in `propagateExpected` and the backend takes it from the TypeTable, because
+  clang 15 still uses **typed** pointers and `i8* null` is a different constant from
+  `i64* null`. Modelled as a `PrimitiveType` name rather than a new type *kind*, which is
+  what keeps rule 8's tax at zero — no switch over composite types gained a case.
+- **`lyra-E069` is a sweep, not a per-site check** (`checkUnpinnedNullPtrs`, run at the end
+  of `checkRange`). Every other untyped literal has a default, so each site can settle its
+  own leaf; a `nullptr` is settled by whichever of several contexts happens to reach it,
+  and no single site knows whether another already did. Only once the statement is finished
+  does "unpinned" mean what it says.
+- **Pointer `==` is keyed on the Lyra type, never the LLVM one** (`isRawPointerExpr`). A
+  `shared` aggregate is *also* an LLVM pointer — to its box — and compares by value, so
+  keying the address arm on `left.Type()` turned every `shared` equality into an address
+  comparison and two boxes with equal payloads answered false.
+  `TestExec_SharedAggregateEquality` is what caught it, which is the argument for keeping
+  both it and `TestExec_NullPtr`.
+- **`lyra-E070` is in the collector because the grammar cannot hold it.** tree-sitter lexes
+  against the tokens valid in the current parse state, so `nullptr` in *name* position is an
+  ordinary identifier and `let nullptr = 5` parses. The same context-sensitivity
+  deliberately keeps `let type = 5` and `let extern = 5` legal — the difference is that
+  those leave a binding that can still be read, and this one leaves one that cannot, since
+  every later mention lexes as the literal.
 
 ## Lazy sequences
 
@@ -1237,7 +1261,7 @@ compiler already hardcodes LP64 in three places — `layout.go`'s `pointerSize`,
 | `int` | `i32` | `float` | `f32` |
 | `unsigned int` | `u32` | `double` | `f64` |
 | `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
-| `...` | `...` (extern only) | | |
+| `NULL` | `nullptr` | `...` | `...` (extern only) |
 
 **`...` declares a C variadic** — `unsafe extern printf: (^u8, ...) -> i32` — and it is the
 only place the marker is legal (`lyra-E065`), because **Lyra has no variadic functions of
@@ -1312,8 +1336,18 @@ needs before touching anything nearby:
   link time, which is exactly what an effect bound does not do.
 
 **`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`/`with_cstring`/
-`with_cstrings`/`data`/`data_mut`/`CLong`/`CULong`** — complete as of 08/22, and every
+`with_cstrings`/`data`/`data_mut`/`is_null`/`to_maybe`/`CLong`/`CULong`** — and every
 piece of it ordinary Lyra over the primitives.
+
+`is_null` and `to_maybe` (09/08) are the null-return direction, one line each over
+`nullptr` and `==`. **Neither is marked `unsafe`**, which is the module's standing line
+rather than an exception to it: `data` is marked because it hands a pointer *out to keep*
+and `cstring_len` because the terminator is a promise nothing can check, while these
+dereference nothing at all. `to_maybe` is where C's convention becomes the language's —
+a `Maybe` cannot cross the boundary (lyra-E063), so an `extern` stays a transcription of
+the C prototype and the `Maybe` goes on after, the same split `read_line`/`parse_i64`
+draws. Neither makes the pointer *valid*: a dangling pointer is non-null and answers
+`Some`.
 `cstring` is the out direction for a string and is a plain `[]u8` — option A, chosen over a
 `CString` type because the dangling shape is already `lyra-E059`, because a struct storing
 the pointer dangles for real on the next `push` (measured), and because the wrapper that

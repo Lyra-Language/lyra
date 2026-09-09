@@ -42,6 +42,8 @@ func collectExpressionByKind(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expr
 		return collectFloatLiteralExpr(node, ctx, loc)
 	case "boolean_literal":
 		return collectBooleanLiteralExpr(node, ctx, loc)
+	case "nullptr_literal":
+		return collectNullPtrExpr(node, ctx, loc)
 	case "char_literal":
 		return collectCharacterLiteralExpr(node, ctx, loc)
 	case "regex_literal":

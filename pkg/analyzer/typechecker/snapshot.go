@@ -143,4 +143,11 @@ func (tc *TypeChecker) checkRange(program *ast.Program, start, end int) {
 			tc.checkInModule(program.Statements[i])
 		}
 	}
+	// After both loops, because a context can arrive from anywhere in the statement —
+	// an annotation reaches a `nullptr` on the way down, a comparison from the side, a
+	// return type from above — and only when the statement is finished is "nothing
+	// pinned this" a fact rather than a not-yet.
+	for i := start; i < end; i++ {
+		tc.checkUnpinnedNullPtrs(program.Statements[i])
+	}
 }

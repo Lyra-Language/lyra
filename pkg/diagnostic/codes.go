@@ -820,6 +820,40 @@ const (
 	// error naming a token.
 	CodeSpreadOutsideArray = "lyra-E068"
 
+	// CodeUnpinnedNullPtr: a `nullptr` no context gave a pointee to — `let p = nullptr`,
+	// or `nullptr == nullptr`.
+	//
+	// `nullptr` is an untyped literal, like `5`, and takes its type from where it is
+	// used: an annotation, a parameter, a return type, or the other side of a `==`. The
+	// difference from every other untyped literal is that there is **no default** to
+	// fall back to. An integer literal defaults to i64 because one width has to be
+	// picked and i64 is the one a reader expects; no pointee is more plausible than
+	// another, and guessing `^u8` would make a mismatch appear at some later call
+	// instead of here.
+	//
+	// It is not a missing feature, which is why the message names the two spellings that
+	// supply a type rather than apologizing: an annotation (`let p: ^u8 = nullptr`), or
+	// the comparison that is the literal's whole reason for existing (`p == nullptr`,
+	// where `p` says what it points at).
+	CodeUnpinnedNullPtr = "lyra-E069"
+
+	// CodeReservedName: a binding of the name `nullptr`.
+	//
+	// `nullptr` is a keyword in *value* position only. tree-sitter lexes against the
+	// tokens valid in the current parse state, so `let nullptr = 5` reads the name as an
+	// ordinary identifier and the binding is created — and then every read of it lexes
+	// as the literal instead, so the binding cannot be referred to. The program is not
+	// silently wrong (the reads fail, as lyra-E069 or a type error), but it fails
+	// somewhere other than the mistake, with a message about pointers for a binding
+	// holding an integer.
+	//
+	// Reported here rather than reserved in the grammar because it cannot be reserved
+	// there: the same context-sensitivity is what makes `let type = 5` and `let extern
+	// = 5` legal, which is deliberate. This is the one keyword where the leftover
+	// binding is unreadable rather than merely shadowed, which is what earns it a rule
+	// the others do not need.
+	CodeReservedName = "lyra-E070"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

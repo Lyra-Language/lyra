@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -152,4 +153,36 @@ func (l *lowerer) lowerPointerOffset(block *ir.Block, call *ast.FunctionCallExpr
 	// it, and a GEP index of the wrong width is a module clang refuses.
 	idx = coerceIntWidth(block, idx, true, lltypes.I64)
 	return block.NewGetElementPtr(elem, ptr, idx), block, nil
+}
+
+// lowerNullPtr lowers `nullptr` to a typed null constant.
+//
+// **The type has to come from the TypeTable, not from this node.** clang 15 — the
+// oldest compiler the project supports, and the one the Linux container pins — still
+// uses *typed* pointers, so `i8* null` and `i64* null` are different constants and a
+// function expecting one rejects the other at link time rather than silently. The
+// typechecker pins the pointee from context and records it (propagateExpected); an
+// unpinned literal is lyra-E069 and never reaches here.
+//
+// It allocates nothing and reads nothing, which is why the literal needed no `unsafe`:
+// a null pointer names no storage, so there is no memory this could be wrong about. The
+// deref that follows is what carries the keyword.
+func (l *lowerer) lowerNullPtr(e *ast.NullPtrExpr) (value.Value, error) {
+	t, ok := l.recordedType(e)
+	if !ok {
+		return nil, fmt.Errorf("llvm: nullptr with no recorded pointer type (lyra-E069 should have caught this)")
+	}
+	ptrT, ok := t.(types.RawPointerType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: nullptr recorded as %s, which is not a pointer type", t)
+	}
+	llT, err := l.lowerType(ptrT)
+	if err != nil {
+		return nil, err
+	}
+	pt, ok := llT.(*lltypes.PointerType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: nullptr lowered to %s, which is not an LLVM pointer", llT)
+	}
+	return constant.NewNull(pt), nil
 }

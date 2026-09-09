@@ -324,3 +324,52 @@ pub type CLong = i64
 
 /// C's `unsigned long` — the same story as [CLong], unsigned.
 pub type CULong = u64
+
+/// Whether `self` is the null pointer.
+///
+/// ```
+/// import std.ffi.{ is_null }
+///
+/// let w = unsafe { SDL_CreateWindow(t, 800, 600, 0) }
+/// if w.is_null() { panic("could not create a window") }
+/// ```
+///
+/// **Not `unsafe`, and that is the point of it.** Everything else in this module that
+/// touches a pointer is marked because it reads through one or hands one out; this
+/// dereferences nothing and answers a question about the address itself. Marking it
+/// would have put an `unsafe` block around the *guard* that exists to make the
+/// following deref safe — the same argument [with_cstring] makes, and the same shape:
+/// the ceremony belongs on the act that can be wrong.
+///
+/// It exists because a C function that answers a pointer answers NULL on failure, and
+/// that convention has no other spelling. `open` could report failure as -1 because a
+/// file descriptor is an integer (see `std.io`); a pointer had no equivalent until
+/// `nullptr`, so a failed `SDL_CreateWindow` or `getenv` was indistinguishable from a
+/// successful one.
+pub let is_null = pure noalloc (self: ^t) -> bool => self == nullptr
+
+/// `self` as a `Maybe`, `None` where it is null — C's convention translated into the
+/// language's own.
+///
+/// ```
+/// import std.ffi.{ to_maybe }
+///
+/// match unsafe { getenv(name) }.to_maybe() {
+///   Some(p) => unsafe { p.decode_utf8(cstring_len(p)) },
+///   None => "",
+/// }
+/// ```
+///
+/// **A `Maybe` cannot cross the boundary, which is why this is a separate step rather
+/// than something an `extern` could declare.** Only the FFI-safe types cross
+/// (lyra-E063), so a C function's return type is written `^T` and the null check
+/// happens on the Lyra side of it. That is the same division `read_line` draws — the
+/// builtin answers what libc gives and the `Maybe` is put on afterwards — and it keeps
+/// the `extern` a transcription of the C prototype rather than an interpretation of it.
+///
+/// **It does not make the pointer valid.** `Some(p)` says only that `p` is not null; a
+/// pointer into freed memory is non-null and this answers `Some` for it. What the
+/// `Maybe` buys is that the *documented* failure is now a case the language forces a
+/// reader to handle, which is what a bare `^T` did not.
+pub let to_maybe = pure noalloc (self: ^t) -> Maybe<^t> =>
+  if self.is_null() { None } else { Some(self) }

@@ -105,6 +105,15 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 		}
 	}
 
+	// `nullptr` names a binding nothing can read back: every later mention of it lexes
+	// as the literal, not as this name. Refused here because the grammar cannot refuse
+	// it — see lyra-E070.
+	if name == "nullptr" {
+		ctx.AddErrorCoded(nameNode, diag.SeverityError, diag.CodeReservedName,
+			"`nullptr` is the null pointer literal and cannot be used as a name — "+
+				"every reference to it would read as the literal. Choose another name")
+	}
+
 	astNode := &ast.VarDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind:   kind,

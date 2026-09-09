@@ -193,6 +193,26 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	lt, lok := left.Type().(*lltypes.IntType)
 	rt, rok := right.Type().(*lltypes.IntType)
 	if !lok || !rok {
+		// **Two raw pointers compare as addresses**, before the structural rule below
+		// gets a chance at them. A pointer is an aggregate to nothing — it is one
+		// machine word — and comparing one field-by-field would read *through* it,
+		// which for a `nullptr` is a segfault at the one comparison written to avoid
+		// segfaulting. Only `==`/`!=` arrive: the typechecker refuses to order
+		// pointers, since addresses from two allocations have no meaningful order.
+		//
+		// **The test is the Lyra type, not the LLVM one**, and that distinction is the
+		// whole care here: a `shared` aggregate is *also* an LLVM pointer — to its box
+		// — and it compares by value, so keying on `left.Type()` silently turned every
+		// `shared` equality into an address comparison. Two boxes holding equal
+		// payloads then answered false. Caught by TestExec_SharedAggregateEquality,
+		// which is why that test earns its keep.
+		if l.isRawPointerExpr(e.Left) || l.isRawPointerExpr(e.Right) {
+			if lp, ok := left.Type().(*lltypes.PointerType); ok {
+				if _, ok := right.Type().(*lltypes.PointerType); ok {
+					return l.lowerPointerComparison(block, e, left, right, lp)
+				}
+			}
+		}
 		// An aggregate — struct, tuple, `data`, inline array — compares **structurally**,
 		// field by field. The typechecker has always accepted this and the backend always
 		// refused it, which is hazard 5 inverted; equality.go builds the per-type glue.
@@ -1014,4 +1034,43 @@ func (l *lowerer) lowerSpaceship(block *ir.Block, e *ast.BooleanBinaryOpExpr, le
 			constant.NewInt(tagTy, int64(greaterTag)),
 			constant.NewInt(tagTy, int64(equalTag))))
 	return block.NewInsertValue(constant.NewUndef(unionTy), tag, 0), nil
+}
+
+// lowerPointerComparison lowers `p == q` / `p != q` on two raw pointers to an `icmp`
+// on the addresses.
+//
+// The bitcast is for clang 15's *typed* pointers: `icmp` wants both operands at one
+// type, and while the typechecker holds the two pointees equal, a `nullptr` pinned
+// through a newtype over a pointer can reach here at the stripped spelling of the same
+// type. A bitcast between two pointer types is free at every optimization level and
+// cannot change which address is compared, so it is the cheap thing to do rather than a
+// mismatch to report.
+func (l *lowerer) lowerPointerComparison(block *ir.Block, e *ast.BooleanBinaryOpExpr, left, right value.Value, want *lltypes.PointerType) (value.Value, *ir.Block, error) {
+	if !right.Type().Equal(want) {
+		right = block.NewBitCast(right, want)
+	}
+	var pred enum.IPred
+	switch e.Operator {
+	case ast.BooleanBinaryOpEq:
+		pred = enum.IPredEQ
+	case ast.BooleanBinaryOpNEq:
+		pred = enum.IPredNE
+	default:
+		return nil, nil, fmt.Errorf("llvm: pointer operator %v not implemented", e.Operator)
+	}
+	return block.NewICmp(pred, left, right), block, nil
+}
+
+// isRawPointerExpr reports whether an operand's *Lyra* type is a raw pointer.
+//
+// Either side answering yes is enough, because the other is then a raw pointer or a
+// `nullptr` pinned to one — the typechecker admits no third possibility for a `==` with
+// a pointer on one side.
+func (l *lowerer) isRawPointerExpr(e ast.Expression) bool {
+	t, ok := l.recordedType(e)
+	if !ok {
+		return false
+	}
+	_, isPtr := t.(types.RawPointerType)
+	return isPtr
 }

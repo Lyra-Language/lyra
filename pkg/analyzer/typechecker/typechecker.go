@@ -1890,12 +1890,50 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 // gives common type i8, so `3` is recorded as i8 and the backend emits a single
 // i8 `icmp` instead of mixing i8 and i64.
 func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, leftType, rightType types.Type) {
+	// `p == nullptr` is the whole reason the literal exists, and the comparison is the
+	// one context that supplies a pointee without an annotation anywhere in sight. The
+	// typed side is the context for the untyped one, which is what the numeric ladder
+	// below does for `x == 5` — the difference is only that a pointer has no common
+	// type to compute, since the two sides are already the same type or an error.
+	if common := pointerComparisonType(leftType, rightType); common != nil {
+		tc.propagateExpectedType(expr.Left, common)
+		tc.propagateExpectedType(expr.Right, common)
+		return
+	}
 	common := numericResultType(leftType, rightType)
 	if common == nil {
 		return
 	}
 	tc.propagateExpectedType(expr.Left, common)
 	tc.propagateExpectedType(expr.Right, common)
+}
+
+// pointerComparisonType is the type both sides of a pointer `==`/`!=` are pinned to,
+// or nil when the comparison is not one. Exactly one shape can supply it: a pointer on
+// at least one side, with the other a pointer or an unpinned `nullptr`.
+//
+// **The mutable side never wins.** `^mut T` and `^T` compare, since mutability is a
+// permission to write and not part of an address's identity, and pinning a `nullptr` to
+// the mutable one would hand it a permission the comparison did not ask for. So a
+// mismatched pair pins to the *immutable* type, which both sides are assignable to.
+//
+// Two unpinned literals answer nil rather than inventing a pointee: `nullptr ==
+// nullptr` has no type to compare at, and lyra-E069 says so at each of them.
+func pointerComparisonType(a, b types.Type) types.Type {
+	ap, aIsPtr := a.(types.RawPointerType)
+	bp, bIsPtr := b.(types.RawPointerType)
+	switch {
+	case aIsPtr && bIsPtr:
+		if ap.IsMut != bp.IsMut {
+			return types.RawPointerType{Pointee: ap.Pointee, IsMut: false}
+		}
+		return ap
+	case aIsPtr && isUntypedNullPtr(b):
+		return ap
+	case bIsPtr && isUntypedNullPtr(a):
+		return bp
+	}
+	return nil
 }
 
 func (tc *TypeChecker) addImmutableBindingError(loc ast.Location, name string, kind ast.BindingKind) {
@@ -2247,6 +2285,11 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 	case *ast.StringLiteralExpr:
 		return e.GetType()
 	case *ast.BooleanLiteralExpr:
+		return e.GetType()
+	case *ast.NullPtrExpr:
+		// The untyped placeholder. A context overwrites it in propagateExpected;
+		// what is left untouched by the time checkUnpinnedNullPtrs runs is
+		// lyra-E069.
 		return e.GetType()
 	case *ast.CharacterLiteralExpr:
 		return e.GetType()
@@ -3034,6 +3077,23 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			}
 		}
 		tc.recordUntypedValueNode(e, expected)
+		return
+	}
+
+	// `nullptr` is a leaf whose context is a *pointer*, so it cannot wait for the
+	// primitive guard below — this is the only place a pointee ever reaches it. The
+	// recorded type is what the backend emits the constant at: raw pointers are
+	// typed in the IR clang 15 still consumes, so `^u8 null` and `^i64 null` are
+	// different constants and an unrecorded one has no width to choose.
+	//
+	// Unconditional, unlike the numeric leaves' `currentTypeIsUntyped` guard: there
+	// is no widening ladder here to protect a narrower earlier decision, and every
+	// context that reaches a given literal is the same pointer type — a second one
+	// that disagreed is a type error the assignability check has already reported.
+	if _, isNull := expr.(*ast.NullPtrExpr); isNull {
+		if pt, ok := expected.(types.RawPointerType); ok {
+			tc.typeTable.Set(expr, pt)
+		}
 		return
 	}
 

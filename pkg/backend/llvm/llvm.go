@@ -781,6 +781,9 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 			bit = 1
 		}
 		return constant.NewInt(lltypes.I1, bit), block, nil
+	case *ast.NullPtrExpr:
+		v, err := l.lowerNullPtr(e)
+		return v, block, err
 	case *ast.IdentifierExpr:
 		if slot, ok := l.slotFor(e.Name, e.GetLocation()); ok {
 			elem, err := slotElemType(slot)

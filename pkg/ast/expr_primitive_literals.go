@@ -219,6 +219,28 @@ func (b *BooleanLiteralExpr) LiteralText() string        { return fmt.Sprintf("%
 func (b *BooleanLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.Boolean} }
 func (b *BooleanLiteralExpr) GetName() string     { return b.LiteralText() }
 
+// NullPtrExpr is `nullptr` — the null raw pointer, and the only pointer value
+// that does not come from `&`. It exists for the FFI: a C function answering a
+// pointer answers NULL on failure, and until this literal there was nothing to
+// compare against.
+//
+// **It is not a `primitiveLiteralValueNode`.** That interface marks a value a
+// `data` payload or a const may hold, and a null pointer is neither — it has no
+// type of its own to hold. GetType is the *untyped* placeholder for the same
+// reason an integer literal's is: a context supplies the pointee, and the
+// typechecker overwrites the recorded type with the concrete `^T` at that point
+// (an unpinned one is lyra-E069). The backend reads the recorded type, never
+// this one, because a pointee is what decides the emitted constant's LLVM type
+// under the typed pointers clang 15 still uses.
+type NullPtrExpr struct {
+	ExprBase
+}
+
+func (n *NullPtrExpr) GetType() types.Type {
+	return types.PrimitiveType{Name: types.UntypedNullPtr}
+}
+func (n *NullPtrExpr) GetName() string { return "nullptr" }
+
 type CharacterLiteralExpr struct {
 	ExprBase
 	Value rune

@@ -9,6 +9,106 @@ Newest first.
 
 ## Dated log
 
+### 09/08/26 — `nullptr`, and the FFI's missing question
+
+A C function that answers a pointer answers NULL on failure. Until now Lyra could not ask
+which had happened, and that single gap is what made an SDL3-shaped library unbindable:
+`SDL_CreateWindow` returning nothing was indistinguishable from it succeeding. `std.io`'s
+`open` sidesteps it by returning a *descriptor* — an integer, comparable with `-1`, which
+is why file I/O could be written without this — and the doc comment on that decision says
+so outright. A pointer had no equivalent.
+
+`nullptr` is the literal, `==`/`!=` compare two pointers, and `std.ffi`'s `is_null` and
+`to_maybe` are one line each over them.
+
+**Neither the literal nor the comparison is `unsafe`, and that is the whole design.** The
+alternative was seriously available — `&x` is marked, so marking every raw-pointer
+operation is the consistent-looking rule — and it inverts the feature. The literal exists
+to *guard* a deref, so requiring a block would put ceremony around the check protecting
+the block:
+
+```lyra
+if !p.is_null() { unsafe { p^ } }          // what it is
+if unsafe { !p.is_null() } { unsafe { p^ } }  // what marking it would have cost
+```
+
+This is the line `with_cstring` already drew and the same sentence covers both: **`unsafe`
+marks handing a pointer out to keep, or reading through one — not asking a question about
+an address.** `CBuffer.get` is unmarked for the same reason, and `data` is marked because
+it does hand one out. A safer shape that costs more is a shape nobody reaches for.
+
+**It is an untyped literal with no default, which is the one place it is not `5`.** A
+context supplies the pointee — an annotation, a parameter, a return type, or the other
+side of a `==`, which is what lets `p == nullptr` need no annotation anywhere in sight.
+Every other untyped literal falls back when nothing pins it, because a width has to be
+picked and i64 is the one a reader expects. No pointee is more plausible than another, and
+a guessed `^u8` would not fail here — it would fail at some later call, about a type
+nobody wrote. So an unpinned one is `lyra-E069`, whose message names the two spellings that
+supply a type rather than apologizing for an unbuilt feature.
+
+**The pointee is a recorded fact, not a property of the node**, and clang 15 is why. The
+Linux container pins it (14 cannot split a coroutine, 16 dropped typed pointers), and
+typed pointers make `i8* null` and `i64* null` different constants — a shared opaque null
+would fail to link rather than miscompile, but only where something exercised two widths.
+`NullPtrExpr.GetType` is the placeholder; the backend reads the TypeTable, where
+`propagateExpected` put the concrete `^T`.
+
+**Modelled as a `PrimitiveType` name rather than a new type kind**, which is what kept
+rule 8's tax at zero. A new *type* kind pays the same tax as a new declaration kind —
+that is the lesson `SizeAndAlign`'s missing `RawPointerType` case taught on 08/22 — and
+nothing enumerates the switches over composite types. `untyped_nullptr` beside
+`untyped_int` needed one assignability rule, one propagation arm and one lowering case.
+
+**`lyra-E069` had to be a sweep rather than a per-site check**, and the reason generalizes.
+Every other untyped literal can be settled where it sits, because it has a default to fall
+back to. A `nullptr` is settled by whichever of several contexts happens to reach it, and
+no one site knows whether another already did — so "nothing pinned this" is only a fact
+once the statement is finished. It runs at the end of `checkRange`.
+
+**Equality only.** Ordering two pointers is refused, for the reason C makes it UB:
+addresses from separate allocations have no meaningful order, and inventing one would have
+every generic inherit the guess — the same argument that keeps `<=>` off floats.
+
+#### The regression, and the test that caught it in one run
+
+Keying the backend's address comparison on `left.Type()` — is this an LLVM pointer? — is
+the obvious implementation and it is wrong. **A `shared` aggregate is also an LLVM
+pointer**, to its box, and it compares *by value*. So every `shared` equality silently
+became an address comparison and two boxes holding equal payloads answered false.
+
+`TestExec_SharedAggregateEquality` failed on the first full run, naming both of its cases.
+The fix is one predicate: ask the **Lyra** type, through `recordedType`, not the lowered
+one. Worth recording because the failure had no visible connection to the change — a
+feature about null pointers broke structural equality — and because it is the second time
+in this area that a representation two features share has made one of them quietly answer
+for the other.
+
+#### `nullptr` is a keyword in value position only
+
+`let nullptr = 5` parses. tree-sitter lexes against the tokens valid in the current parse
+state, so in *name* position the string is an ordinary identifier — the same
+context-sensitivity that deliberately keeps `let type = 5` and `let extern = 5` legal, and
+that the grammar's own notes record as "the `reserved` block reserves nothing".
+
+The difference is that those leave a binding that still works. This one leaves a binding
+that can never be **read**, because every later mention sits in value position where the
+literal is valid. Left alone the program failed at the use, with a message about pointers,
+for a binding holding an integer. `lyra-E070` refuses it in the collector — the same
+admit-then-report trade `lyra-E029`, `E065` and `E067` already make. A *parameter* of the
+name is already a syntax error, so the binding position was the only one that needed a
+rule.
+
+#### Cost
+
+**Zero new parser states** (7899 → 7899) and +89 KB of `parser.c`, all of it lex tables.
+Measured because this grammar's notes say to; a literal in `_primary_expr` adds no
+derivation an operand position has to choose between, which is the reverse of the
+juxtaposition case that cost 19%.
+
+The whole feature is one grammar rule, one primitive name, one AST node, one collector
+case, one assignability rule, one propagation arm, one sweep, two backend cases and two
+prelude functions. Verified on macOS and in the clang-15 container.
+
 ### 09/08/26 — a CSV reader, and an example that found nothing wrong
 
 `examples/csv/csv.lyra` is RFC 4180 — quoted fields, doubled quotes, `\r\n` — answering

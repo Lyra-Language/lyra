@@ -436,6 +436,19 @@ func isAssignable(from, to types.Type) bool {
 			return true
 		}
 	}
+	// `nullptr` fills any pointer slot, mutable or not, whatever the pointee — it is
+	// the one pointer value that names no storage, so there is nothing for a pointee
+	// rule to be invariant about and nothing a `^mut` permits that it could misuse.
+	//
+	// One-directional, like every untyped-literal rule: a `^T` is not assignable to a
+	// slot of this type, which is what keeps the placeholder from leaking into a
+	// signature. Nothing can write `untyped_nullptr` down, so the only slot of that
+	// type is another unpinned literal.
+	if isUntypedNullPtr(from) {
+		if _, ok := to.(types.RawPointerType); ok {
+			return true
+		}
+	}
 	// A data-type value is assignable to the same nominal type whether the slot
 	// is written as a bare name, with generic arguments (`Maybe<i64>`), or as
 	// another reference to the data type. The checker does not instantiate
@@ -897,4 +910,14 @@ func isAnyConcreteFloat(n types.PrimitiveTypeName) bool {
 		return true
 	}
 	return false
+}
+
+// isUntypedNullPtr reports whether t is a `nullptr` whose pointee no context has
+// supplied yet. Deliberately not folded into `isUntypedLiteral` beside the numeric
+// ones: those widen to a default when nothing pins them (an integer literal is an
+// i64), and this one is an error instead, so every caller that asks "is this still
+// open?" would have to special-case it straight back out.
+func isUntypedNullPtr(t types.Type) bool {
+	p, ok := t.(types.PrimitiveType)
+	return ok && p.Name == types.UntypedNullPtr
 }
