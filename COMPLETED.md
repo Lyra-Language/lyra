@@ -344,8 +344,10 @@ nothing there caught it.
 
 ### 09/09/26 — `union`, `@symbol`, and SDL3
 
-SDL3 runs from Lyra: `examples/SDL3/events.lyra` pushes an SDL user event, polls it back, reads
-the tag and then the payload through a `union`. It is the second real library the FFI has
+SDL3 runs from Lyra: a user event is pushed, polled back, and its payload read through a
+`union` — headless, so it needs no display. (Written first as a direct-extern example and
+since reduced to `TestExec_UnionAgainstSDL3`, which runs in the suite rather than when
+somebody remembers.) It is the second real library the FFI has
 talked to, and the first with an aggregate — zlib exercised pointers, lengths, `@link` and
 effect bounds, and had no `SDL_Event`.
 

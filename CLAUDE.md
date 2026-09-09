@@ -1396,8 +1396,8 @@ to check is the walks that must reach every composite:
   its declaration's — and that exclusion is written next to the reason, as rule 8 asks.
 - **`lowerUnionDef` resolves before it measures**, which the struct path never has to do:
   a struct's LLVM body is its field list and each field resolves as it is lowered, while a
-  union's body is computed *from* its size. An unresolved member has no size, and
-  `examples/SDL3/events.lyra` found it immediately.
+  union's body is computed *from* its size. An unresolved member has no size, and the
+  first SDL3 binding written against it found this immediately.
 - **Two bugs the probes found, and neither would have come from reading switches** — which
   is rule 8's own advice, followed: a **recursive union** checked clean and would have
   recursed forever in `unionSizeAndAlign` (`recursive_type.go` had no arm), and **equality**
@@ -1563,10 +1563,12 @@ Two things it ran into that the SDL3 module did not:
 no `unsafe` and no `extern` in it. It is also the honest test of the ABI work, since a
 misclassified `Vector2` there is a ball that passes through bricks rather than a crash.
 
-`examples/SDL3/events.lyra` binds SDL directly and is dense with `unsafe` — it exists to prove the
-boundary works. `bindings/sdl3` and `bindings/raylib` are what using it looks like
-afterwards, and `examples/raylib/basic.lyra` contains no `unsafe` and no `extern` at all. Keep
-both kinds: the direct one is the proof, the binding is the demonstration.
+**The direct-extern examples are gone deliberately**, and the proof they carried lives in
+tests instead: `TestExec_UnionAgainstSDL3` and `TestExec_ByValueAgainstRaylib` call the real
+libraries and skip where they are absent, and `TestExec_FFIFixture_UnionLayoutMatchesC`
+checks the layout hermetically against C's own numbers. A test runs in the suite; an example
+dense with `unsafe` only ran when somebody remembered. What `examples/` keeps is what the
+binding modules look like *in use* — none of them containing an `unsafe` or an `extern`.
 
 ## Current Development Focus
 

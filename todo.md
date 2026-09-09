@@ -3265,14 +3265,14 @@ the *Lyra* type. See COMPLETED.md.
 **SDL3 is bound — [DONE 09/09].** See *Unions* below. What is still missing is
 `@link`'s search path: it names a system library only, so `-L`, a static archive by path
 and a macOS framework remain the build system's problem (below, *What is deliberately not
-decided here*), and `examples/SDL3/events.lyra` is run with `LIBRARY_PATH` set. Raylib
+decided here*), so every SDL3 program is run with `LIBRARY_PATH` set. Raylib
 additionally needs struct-by-value, which is refused above.
 
 ### Unions — **[DONE 09/09]**
 
 `union` declares a C union: one block of storage its members read several ways. Built for
-SDL3, and proved against it — `examples/SDL3/events.lyra` pushes a user event, polls it back and
-reads the payload through the union, headless.
+SDL3, and proved against it — `TestExec_UnionAgainstSDL3` pushes a user event, polls it
+back and reads the payload through the union, headless, skipping where SDL3 is absent.
 
 **Its own keyword, not `@union` on a struct.** A union's member read is `unsafe` and a
 struct's is not, and behind an attribute the two would be spelled identically with nothing
