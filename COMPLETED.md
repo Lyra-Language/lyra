@@ -9,6 +9,56 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — lyra-E073: the type parameter nothing solved
+
+`let t = (None, 1)` used to type-check clean and fail in the **backend** with `unknown
+named type "Maybe"`. That is the wrong end of the compiler and a message about an internal
+table rather than about the program.
+
+**It is not the propagation bug it resembles.** Where a context exists and is not pushed
+onto a constructor, that is a compiler fault and was fixed as one the same day. Here there
+is no context at all: a nullary constructor solves none of its parameters, the tuple
+supplies none, and the binding has no annotation. The program does not say what it means,
+and the right answer is a diagnostic naming what is missing.
+
+**A sweep, for lyra-E069's reason.** A constructor is settled by whichever of several
+contexts happens to reach it, and no single site knows whether another already did — so
+only once the statement is finished does "nothing solved this" mean what it says.
+
+#### The predicate is one test, and three exclusions fall out of it
+
+A construction still recorded as the **bare declaration** of a type that **has** generic
+parameters. Nothing else needs a case:
+
+- a **non-generic** constructor — `North` of `data Dir` is always bare, and having no
+  parameters is the whole test;
+- an already-stamped instantiation, which is every solved one;
+- a `Maybe<t>` inside a **generic body**, which is a `ParameterizedType` carrying the
+  enclosing function's variable — flagging it would refuse every generic function that
+  names a generic type.
+
+Writing it as one test rather than three arms is what makes those exclusions provable
+rather than remembered.
+
+#### It reports what the backend could not
+
+An **unused** binding is now diagnosed. The backend never saw one — an unused value is
+never lowered — so the identical ill-typed program compiled or did not depending on
+whether anyone read the value. Whether a program is well-typed cannot depend on that, and
+it is the clearest sign the check belonged in the front end all along.
+
+#### One test changed rather than broke
+
+`let n = wrap(None)` through `wrap<t>(v: t) -> t` was asserted to check clean. It solves
+`t` to the bare `Maybe` and leaves `Maybe`'s *own* parameter unsolved, so the pre-E073
+compiler answers `unknown named type` the moment the value is used — the test was encoding
+the permissive behaviour, not a property worth keeping.
+
+What it *was* guarding is real and still guarded: the solve for `t` must succeed rather
+than report an unsolvable variable. So the test now asserts E073 **and** that no error
+names `t`, which is what a regression in the adoption rule would look like. Checking that
+the new error is the right *kind* is the part that would have been easy to skip.
+
 ### 09/09/26 — `m != None`, and one omission in four places
 
 Comparing a `Maybe` against a bare `None` failed in the backend with `unknown named type

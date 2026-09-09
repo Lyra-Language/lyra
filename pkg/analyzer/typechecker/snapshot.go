@@ -149,5 +149,6 @@ func (tc *TypeChecker) checkRange(program *ast.Program, start, end int) {
 	// pinned this" a fact rather than a not-yet.
 	for i := start; i < end; i++ {
 		tc.checkUnpinnedNullPtrs(program.Statements[i])
+		tc.checkUninferableConstructions(program.Statements[i])
 	}
 }

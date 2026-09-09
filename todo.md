@@ -3436,20 +3436,34 @@ the pair as one operation would end the family; as two calls, each new context s
 remember. `TestExec_BareConstructorTakesItsInstantiation` enumerates all seven positions,
 including the four that already worked, so a change here cannot quietly break them.
 
-### Open: an un-inferable type parameter is not diagnosed
+### An un-inferable type parameter is diagnosed — **[DONE 09/09]**
 
-`let t = (None, 1)` followed by a use of `t` reaches the backend and fails with
-`unknown named type "Maybe"`. Unlike the entry above this is **not** a missing
-propagation — there is no context anywhere, so nothing could be propagated: the program is
-genuinely ill-typed and `None`'s parameter is unsolvable.
+`lyra-E073`. `let t = (None, 1)` names the unsolved parameter and asks for a type, where
+it used to check clean and fail in the backend with `unknown named type "Maybe"` — the
+wrong end of the compiler, and a message about an internal table rather than about the
+program.
 
-What is missing is the *diagnostic*. It should be a front-end error naming the unsolved
-parameter and asking for an annotation, in the shape lyra-E036 reports an unsatisfied
-bound. Today it type-checks clean and crashes the backend, which is the wrong end of the
-compiler and the wrong message.
+**A sweep, for lyra-E069's reason**: a constructor is settled by whichever of several
+contexts reaches it, so only once the statement is finished does "nothing solved this" mean
+what it says.
 
-Note the binding must be **used** to trip it — an unused one is never lowered, so
-`let t = (None, 1)` alone compiles. That is why it survived the sweep above.
+The predicate is narrow on purpose — a construction still recorded as the **bare
+declaration** of a type that **has** generic parameters. Three things it must not flag, and
+each falls out of that one test rather than needing a case: a non-generic constructor
+(`North` of `data Dir` is always bare and has nothing to solve), an already-stamped
+instantiation, and a `Maybe<t>` inside a generic body, where the specialization substitutes
+`t` later.
+
+**It also reports an *unused* binding**, which the backend could not: an unused value is
+never lowered, so the same ill-typed program compiled or did not depending on whether
+anyone read it. Whether a program is well-typed cannot depend on that.
+
+One existing test changed rather than broke. `let n = wrap(None)` through
+`wrap<t>(v: t) -> t` was asserted to check clean; it solves `t` to the bare `Maybe` and
+leaves `Maybe`'s own parameter unsolved, so the pre-E073 compiler answers `unknown named
+type` the moment the value is used. The test now asserts E073 **and** that the error names
+`Maybe`'s parameter rather than `t` — the adoption rule it was written to guard is
+unchanged, and an error naming `t` would mean it had regressed.
 
 ### Named extern parameters — **[DONE 08/26]**
 

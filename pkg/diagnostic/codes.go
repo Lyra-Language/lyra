@@ -873,6 +873,19 @@ const (
 	// by name. The admit-then-report trade is lyra-E065's and lyra-E067's.
 	CodeMalformedUnion = "lyra-E072"
 
+	// CodeUninferableType: a construction whose generic type parameters nothing solved —
+	// `let t = (None, 1)` with no annotation anywhere.
+	//
+	// It is deliberately **not** the same failure as a context that exists and was not
+	// propagated: those are bugs in the compiler (see COMPLETED.md 09/09, one omission in
+	// four places), and this is a program that genuinely does not say what it means. A
+	// nullary constructor solves none of its parameters, so something else has to.
+	//
+	// Reported as a sweep after the statement is checked, for the reason lyra-E069 is: a
+	// constructor is settled by whichever of several contexts reaches it, and no single
+	// site knows whether another already did.
+	CodeUninferableType = "lyra-E073"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"
