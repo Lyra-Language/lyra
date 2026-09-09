@@ -204,6 +204,42 @@ let main = () -> void => unsafe {
 	}
 }
 
+// **The raylib bindings, exercised as a program uses them** — through `bindings/raylib`
+// rather than through raw externs.
+//
+// It is a separate test from the one above on purpose: that one pins the *classification*
+// against a header, and this one pins that the binding module built on top of it works —
+// wrappers converting C's byte-wide `bool`, colours built by `pure` functions because a
+// `const` cannot hold a struct, and `Vector2` returned by value through two layers of Lyra.
+//
+// Headless, so it runs anywhere raylib is installed: no window is opened, and the calls
+// used are the ones that need none.
+func TestExec_RaylibBindings(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ Vector2, Color, rgb, rgba, red, mouse_position, KEY_ESCAPE }
+let main = () -> void => {
+  let c = rgb(1, 2, 3)
+  let t = rgba(9, 8, 7, 6)
+  let r = red()
+  let m = mouse_position()
+  println("${c.r} ${c.g} ${c.b} ${c.a} ${t.a} ${r.r} ${m.x} ${m.y} ${KEY_ESCAPE}")
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		if _, isExit := err.(*exec.ExitError); !isExit {
+			t.Fatalf("running the raylib-bindings binary failed: %v", err)
+		}
+	}
+	if got := strings.TrimSpace(string(raw)); got != "1 2 3 255 6 230 0 0 256" {
+		t.Errorf("raylib bindings = %q; want \"1 2 3 255 6 230 0 0 256\"", got)
+	}
+}
+
 // pkgConfigLibDir asks pkg-config where a library lives, skipping when it is absent.
 //
 // `@link` emits `-lNAME` and nothing more — a search path is a build-system question the

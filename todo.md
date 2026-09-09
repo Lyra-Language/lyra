@@ -3399,6 +3399,25 @@ information; `@link` was the redundant one.
 `@symbol` has **no** module form, deliberately: a symbol is one declaration's C name and a
 module has no single one, so it is refused on a header by name rather than ignored.
 
+### `bindings/raylib` — **[DONE 09/09]**
+
+The second binding module, and the one that exercises struct-by-value:
+`draw_circle(Vector2, f32, Color)` passes two aggregates and `mouse_position()` returns
+one. `examples/raylib.lyra` is written against it and contains **no `unsafe` and no
+`extern`** — a ball, a mouse crosshair, click-to-mark, text and an FPS counter.
+
+Two language facts it ran into:
+
+- **A `const` cannot hold a struct** (lyra-E012), so the named colours are `pure` nullary
+  functions. That matches raylib, whose colours are macros expanding to a compound literal
+  — a value built where it is used rather than a constant.
+- **`rec` is reserved** (a function modifier), so raylib's own parameter name for a
+  rectangle is spelled `rect` in the wrapper.
+
+Neither is a gap worth closing on this evidence. A struct-valued `const` would want
+compile-time evaluation of a constructor, which is the CTFE entry's business; `rec` is
+load-bearing where it is.
+
 ### Open: `maybe != None` does not lower
 
 Comparing a generic `data` value against a bare nullary constructor fails in the backend

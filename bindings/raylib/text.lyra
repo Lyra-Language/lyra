@@ -1,0 +1,28 @@
+module bindings.raylib
+//! Text, with raylib's built-in font.
+
+import std.ffi.{ with_cstring }
+
+@symbol("DrawText")
+unsafe extern rl_draw_text: (text: ^u8, x: i32, y: i32, size: i32, color: Color) -> void
+
+@symbol("MeasureText")
+unsafe extern rl_measure_text: (text: ^u8, size: i32) -> i32
+
+@symbol("DrawFPS")
+unsafe extern rl_draw_fps: (x: i32, y: i32) -> void
+
+/// Draw text at a pixel position.
+///
+/// `with_cstring` lends the string's bytes for the call and takes them back, so no buffer
+/// has to be kept alive by hand — and it copies nothing, since a Lyra string already
+/// carries the NUL a C call needs.
+pub let draw_text = (text: string, x: i32, y: i32, size: i32, color: Color) -> void =>
+  text.with_cstring((t) => unsafe { rl_draw_text(t, x, y, size, color) })
+
+/// How wide that text would be, in pixels — for centering it.
+pub let measure_text = (text: string, size: i32) -> i32 =>
+  text.with_cstring((t) => unsafe { rl_measure_text(t, size) })
+
+/// raylib's own frame-rate counter.
+pub let draw_fps = (x: i32, y: i32) -> void => unsafe { rl_draw_fps(x, y) }

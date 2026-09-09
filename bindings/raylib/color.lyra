@@ -1,0 +1,41 @@
+module bindings.raylib
+//! Colours.
+
+/// `Color` — four bytes, and the aggregate raylib passes most.
+///
+/// It crosses **by value**, in a single integer register: `i64` on aarch64, `i32` on
+/// x86-64 System V. Nothing here says that — `pkg/abi` decides it per target — and the
+/// point of the type being an ordinary `struct` is that a reader never has to care.
+pub struct Color {
+  r: u8,
+  g: u8,
+  b: u8,
+  a: u8,
+}
+
+/// An opaque colour.
+pub let rgb = pure (r: u8, g: u8, b: u8) -> Color => Color { r: r, g: g, b: b, a: 255 }
+
+/// A colour with an alpha channel, 0 transparent through 255 opaque.
+pub let rgba = pure (r: u8, g: u8, b: u8, a: u8) -> Color => Color { r: r, g: g, b: b, a: a }
+
+// **The named colours are functions, not constants**, and that is the language rather than
+// a preference: a `const` initializer must be a compile-time constant and a struct instance
+// is not one (lyra-E012), so `const RAYWHITE: Color = …` does not compile. raylib spells
+// them as macros expanding to a compound literal, which is the same shape — a value built
+// where it is used — and `pure` means the call folds to exactly that.
+
+/// raylib's own off-white background.
+pub let raywhite = pure () -> Color => Color { r: 245, g: 245, b: 245, a: 255 }
+
+pub let white = pure () -> Color => Color { r: 255, g: 255, b: 255, a: 255 }
+pub let black = pure () -> Color => Color { r: 0, g: 0, b: 0, a: 255 }
+pub let blank = pure () -> Color => Color { r: 0, g: 0, b: 0, a: 0 }
+pub let red = pure () -> Color => Color { r: 230, g: 41, b: 55, a: 255 }
+pub let green = pure () -> Color => Color { r: 0, g: 228, b: 48, a: 255 }
+pub let blue = pure () -> Color => Color { r: 0, g: 121, b: 241, a: 255 }
+pub let yellow = pure () -> Color => Color { r: 253, g: 249, b: 0, a: 255 }
+pub let orange = pure () -> Color => Color { r: 255, g: 161, b: 0, a: 255 }
+pub let purple = pure () -> Color => Color { r: 200, g: 122, b: 255, a: 255 }
+pub let darkgray = pure () -> Color => Color { r: 80, g: 80, b: 80, a: 255 }
+pub let lightgray = pure () -> Color => Color { r: 200, g: 200, b: 200, a: 255 }

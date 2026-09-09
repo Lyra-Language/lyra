@@ -1,0 +1,108 @@
+@link("raylib")
+module bindings.raylib
+//! Bindings to raylib — a per-library module owning its `extern`s and exporting Lyra over
+//! them, the same shape `bindings/sdl3` takes.
+//!
+//! **raylib is the library struct-by-value exists for.** SDL3 never needed it: its render
+//! API takes `const SDL_FRect *`, so every aggregate crosses as a pointer. raylib passes
+//! them by value everywhere — `DrawCircleV(Vector2, float, Color)` passes two structs and
+//! `GetMousePosition()` returns one — which is a per-target *calling convention* rather
+//! than a spelling, and was refused until `pkg/abi` could classify it.
+//!
+//! So this module reads like ordinary Lyra precisely because the hard part is elsewhere:
+//! `Vector2` is a `struct`, it is passed as one, and nothing here says a word about
+//! registers.
+//!
+//! ```
+//! import bindings.raylib.{ init_window, close_window, should_close, begin_drawing,
+//!                          end_drawing, clear_background, draw_circle,
+//!                          Vector2, rgb, raywhite }
+//!
+//! let main = () -> void => {
+//!   init_window(800, 450, "hello")
+//!   for !should_close() {
+//!     begin_drawing()
+//!     clear_background(raywhite())
+//!     draw_circle(Vector2 { x: 400.0, y: 225.0 }, 40.0, rgb(200, 60, 60))
+//!     end_drawing()
+//!   }
+//!   close_window()
+//! }
+//! ```
+//!
+//! **`@link("raylib")` is on the module header**, so a program importing this links the
+//! library by saying nothing. What `@link` cannot say is *where*: a search path is the
+//! build system's problem, so a Homebrew raylib needs
+//! `LIBRARY_PATH=$(pkg-config --variable=libdir raylib)` on the command line.
+//!
+//! Bound is what a small program needs — a window, the frame loop, shapes, text, and
+//! input. Deliberately not the whole of raylib: every entry point is a maintenance
+//! commitment and an ABI claim nobody checks, the argument that decided there would be no
+//! `std.libc`.
+
+import std.ffi.{ with_cstring }
+
+@symbol("InitWindow")
+unsafe extern rl_init_window: (width: i32, height: i32, title: ^u8) -> void
+
+@symbol("CloseWindow")
+unsafe extern rl_close_window: () -> void
+
+@symbol("WindowShouldClose")
+unsafe extern rl_should_close: () -> u8
+
+@symbol("SetTargetFPS")
+unsafe extern rl_set_target_fps: (fps: i32) -> void
+
+@symbol("SetWindowTitle")
+unsafe extern rl_set_window_title: (title: ^u8) -> void
+
+@symbol("GetScreenWidth")
+unsafe extern rl_screen_width: () -> i32
+
+@symbol("GetScreenHeight")
+unsafe extern rl_screen_height: () -> i32
+
+@symbol("GetFrameTime")
+unsafe extern rl_frame_time: () -> f32
+
+@symbol("GetTime")
+unsafe extern rl_time: () -> f64
+
+/// Open a window and create its OpenGL context. Call before anything else here.
+///
+/// raylib has no failure return for this — it logs and carries on — so there is no `Maybe`
+/// to hand back, unlike `SDL_CreateWindow`. A binding does not get to invent a failure the
+/// library does not report.
+pub let init_window = (width: i32, height: i32, title: string) -> void =>
+  title.with_cstring((t) => unsafe { rl_init_window(width, height, t) })
+
+/// Close the window and release the context.
+pub let close_window = () -> void => unsafe { rl_close_window() }
+
+/// Whether the user has asked to quit — the close button, or Escape.
+///
+/// The `u8` raylib answers is C's `bool`, a **byte**; Lyra's is one bit and is refused at
+/// the boundary (lyra-E063), so every predicate here converts and no caller has to
+/// remember that C's truth is a `1`.
+pub let should_close = () -> bool => unsafe { rl_should_close() } != 0
+
+/// Cap the frame rate. raylib sleeps the difference in `end_drawing`.
+pub let set_target_fps = (fps: i32) -> void => unsafe { rl_set_target_fps(fps) }
+
+/// Retitle the open window.
+pub let set_window_title = (title: string) -> void =>
+  title.with_cstring((t) => unsafe { rl_set_window_title(t) })
+
+/// The window's current width in pixels.
+pub let screen_width = () -> i32 => unsafe { rl_screen_width() }
+
+/// The window's current height in pixels.
+pub let screen_height = () -> i32 => unsafe { rl_screen_height() }
+
+/// Seconds the last frame took — what to scale movement by so speed is frame-rate
+/// independent.
+pub let frame_time = () -> f32 => unsafe { rl_frame_time() }
+
+/// Seconds since `init_window`.
+pub let elapsed = () -> f64 => unsafe { rl_time() }

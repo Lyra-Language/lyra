@@ -1,0 +1,66 @@
+module bindings.raylib
+//! Vectors, rectangles, and the drawing calls that take them.
+
+/// `Vector2` — two floats, raylib's most-passed type.
+///
+/// A **homogeneous float aggregate**: it travels in the float registers, as `[2 x float]`
+/// on aarch64 and `<2 x float>` on x86-64 System V. `mouse_position` returns one the same
+/// way, which is the half that needs no caller-allocated buffer.
+pub struct Vector2 {
+  x: f32,
+  y: f32,
+}
+
+/// `Rectangle` — four floats, the largest homogeneous float aggregate there is. One more
+/// member and it would go to memory instead.
+///
+/// raylib names the last two `width`/`height`; the names here are ours and the **layout**
+/// is what has to match.
+pub struct Rectangle {
+  x: f32,
+  y: f32,
+  width: f32,
+  height: f32,
+}
+
+@symbol("BeginDrawing")
+unsafe extern rl_begin_drawing: () -> void
+
+@symbol("EndDrawing")
+unsafe extern rl_end_drawing: () -> void
+
+@symbol("ClearBackground")
+unsafe extern rl_clear_background: (color: Color) -> void
+
+@symbol("DrawCircleV")
+unsafe extern rl_draw_circle: (center: Vector2, radius: f32, color: Color) -> void
+
+@symbol("DrawRectangleRec")
+unsafe extern rl_draw_rectangle: (rect: Rectangle, color: Color) -> void
+
+@symbol("DrawLineV")
+unsafe extern rl_draw_line: (start: Vector2, finish: Vector2, color: Color) -> void
+
+/// Start a frame. Every drawing call belongs between this and [end_drawing].
+pub let begin_drawing = () -> void => unsafe { rl_begin_drawing() }
+
+/// Finish a frame and present it. Also where raylib waits out the target frame rate.
+pub let end_drawing = () -> void => unsafe { rl_end_drawing() }
+
+/// Fill the whole frame with one colour.
+pub let clear_background = (color: Color) -> void => unsafe { rl_clear_background(color) }
+
+/// A filled circle.
+pub let draw_circle = (center: Vector2, radius: f32, color: Color) -> void =>
+  unsafe { rl_draw_circle(center, radius, color) }
+
+/// A filled rectangle.
+///
+/// The parameter is `rect` rather than raylib's own `rec`, because `rec` is a reserved
+/// word here — one of the function modifiers — so it cannot name a parameter.
+pub let draw_rectangle = (rect: Rectangle, color: Color) -> void =>
+  unsafe { rl_draw_rectangle(rect, color) }
+
+/// A line between two points.
+pub let draw_line = (start: Vector2, finish: Vector2, color: Color) -> void =>
+  unsafe { rl_draw_line(start, finish, color) }

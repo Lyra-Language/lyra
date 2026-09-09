@@ -1,0 +1,45 @@
+module bindings.raylib
+//! Keyboard and mouse.
+
+/// The key codes a small program reaches for. raylib's are GLFW's, and the printable ones
+/// are ASCII — `KEY_SPACE` is 32 and `KEY_Q` is 81 — so a code not listed here can be
+/// written as its own number without waiting for this module to grow.
+pub const KEY_SPACE: i32 = 32
+pub const KEY_Q: i32 = 81
+pub const KEY_R: i32 = 82
+pub const KEY_ESCAPE: i32 = 256
+pub const KEY_ENTER: i32 = 257
+pub const KEY_RIGHT: i32 = 262
+pub const KEY_LEFT: i32 = 263
+pub const KEY_DOWN: i32 = 264
+pub const KEY_UP: i32 = 265
+
+pub const MOUSE_LEFT: i32 = 0
+pub const MOUSE_RIGHT: i32 = 1
+
+@symbol("IsKeyPressed")
+unsafe extern rl_key_pressed: (key: i32) -> u8
+
+@symbol("IsKeyDown")
+unsafe extern rl_key_down: (key: i32) -> u8
+
+@symbol("IsMouseButtonPressed")
+unsafe extern rl_mouse_pressed: (button: i32) -> u8
+
+@symbol("GetMousePosition")
+unsafe extern rl_mouse_position: () -> Vector2
+
+/// Whether the key went down **this frame** — an edge, so it fires once per press.
+pub let key_pressed = (key: i32) -> bool => unsafe { rl_key_pressed(key) } != 0
+
+/// Whether the key is held **now** — a level, so it is true every frame it is down.
+pub let key_down = (key: i32) -> bool => unsafe { rl_key_down(key) } != 0
+
+/// Whether the mouse button went down this frame.
+pub let mouse_pressed = (button: i32) -> bool => unsafe { rl_mouse_pressed(button) } != 0
+
+/// The cursor, in window coordinates.
+///
+/// **The return half of by-value**: raylib hands a `Vector2` back in the float registers,
+/// so there is no caller-allocated buffer and nothing to free.
+pub let mouse_position = () -> Vector2 => unsafe { rl_mouse_position() }

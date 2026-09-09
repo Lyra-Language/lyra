@@ -1,146 +1,88 @@
 // raylib from Lyra — the library that needed **struct-by-value**.
 //
-// SDL3 was reachable without it: its render API takes `const SDL_FRect *`, so every
-// aggregate crosses as a pointer, which the FFI has always supported. raylib is the
-// opposite and does it everywhere — `DrawCircleV(Vector2, float, Color)` passes two
-// structs *by value*, and `GetMousePosition()` returns one. That is a per-target calling
-// convention rather than a spelling, which is why it was refused until `pkg/abi` existed.
+// **There is no `unsafe` in this file, and no `extern`.** Every one of both is in
+// `bindings/raylib/`, which is what a binding module is for: `Vector2` is an ordinary
+// struct here, passed to `draw_circle` the way any value is passed, and the fact that it
+// travels in the float registers is `pkg/abi`'s business rather than this program's.
+//
+// SDL3 never needed any of that — its render API takes `const SDL_FRect *`, so every
+// aggregate crosses as a pointer. raylib passes them by value everywhere, which is a
+// per-target calling convention rather than a spelling, and was refused until the
+// classifier existed.
 //
 // Run it with:
 //
 //     LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac run examples/raylib.lyra
 //
-// A window opens with a ball bouncing around and a rectangle that follows the mouse.
+// That is `build/lyrac` from `./build.sh`, which puts `std/` and `bindings/` beside the
+// binary. Running the compiler from source (`go run ./cmd/lyrac`) needs `LYRA_STD=$(pwd)`
+// from `lyra/`, since `go run` builds into a temp directory that has neither.
+//
+// A ball bounces around, a rectangle follows the mouse, and clicking drops a marker.
 // Press Escape or close the window to quit.
-//
-// **Every aggregate here classifies differently**, which is the point of the example:
-//
-//   - `Color` is four bytes, so it travels in *one integer register* — `i64` on aarch64,
-//     `i32` on x86-64 SysV.
-//   - `Vector2` is two floats, a homogeneous float aggregate: `[2 x float]` in the float
-//     registers on aarch64, `<2 x float>` on SysV.
-//   - `Rectangle` is four floats, the largest HFA there is — one more member and it would
-//     go to memory instead.
-//   - `GetMousePosition` *returns* an HFA, which comes back in registers rather than
-//     through a caller-allocated buffer.
-//
-// None of that is written here. `pkg/abi` decides it per target, checked against clang
-// shape by shape, and the backend emits what it says.
 
-import std.ffi.{ with_cstring }
-
-/// `Vector2` — two floats, and raylib's most-passed type.
-struct Vector2 {
-  x: f32,
-  y: f32,
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps, frame_time,
+  begin_drawing, end_drawing, clear_background,
+  Vector2, Rectangle, draw_circle, draw_rectangle, draw_line,
+  rgba, raywhite, darkgray, red, blue,
+  mouse_position, mouse_pressed, key_down, MOUSE_LEFT, KEY_SPACE,
+  draw_text, measure_text, draw_fps,
 }
-
-/// `Color` — four bytes, so the whole struct rides in one integer register.
-struct Color {
-  r: u8,
-  g: u8,
-  b: u8,
-  a: u8,
-}
-
-/// `Rectangle` — four floats. Field for field with raylib's, which names them
-/// `x`/`y`/`width`/`height`; the names are ours and the *layout* is what has to match.
-struct Rectangle {
-  x: f32,
-  y: f32,
-  width: f32,
-  height: f32,
-}
-
-// raylib returns C's `bool`, which is a byte — Lyra's is one bit and is refused at the
-// boundary (lyra-E063) — so `should_close` is a `u8` compared against 0.
-@link("raylib")
-@symbol("InitWindow")
-unsafe extern init_window: (width: i32, height: i32, title: ^u8) -> void
-
-@symbol("CloseWindow")
-unsafe extern close_window: () -> void
-
-@symbol("WindowShouldClose")
-unsafe extern should_close: () -> u8
-
-@symbol("SetTargetFPS")
-unsafe extern set_target_fps: (fps: i32) -> void
-
-@symbol("BeginDrawing")
-unsafe extern begin_drawing: () -> void
-
-@symbol("EndDrawing")
-unsafe extern end_drawing: () -> void
-
-@symbol("ClearBackground")
-unsafe extern clear_background: (color: Color) -> void
-
-@symbol("DrawCircleV")
-unsafe extern draw_circle: (center: Vector2, radius: f32, color: Color) -> void
-
-@symbol("DrawRectangleRec")
-unsafe extern draw_rectangle: (rec: Rectangle, color: Color) -> void
-
-@symbol("GetMousePosition")
-unsafe extern mouse_position: () -> Vector2
 
 const WIDTH: f32 = 800.0
 const HEIGHT: f32 = 450.0
-const RADIUS: f32 = 40.0
+const RADIUS: f32 = 28.0
 
 let main = () -> void => {
-  "Lyra × raylib".with_cstring((t) => unsafe { init_window(800, 450, t) })
-  unsafe { set_target_fps(60) }
+  init_window(800, 450, "Lyra × raylib")
+  set_target_fps(60)
 
   var x: f32 = 120.0
   var y: f32 = 140.0
-  var dx: f32 = 4.0
-  var dy: f32 = 3.0
-  var tick: f32 = 0.0
+  var dx: f32 = 260.0
+  var dy: f32 = 190.0
+  var marks: []Vector2 = []
 
-  var closing = unsafe { should_close() }
-  for closing == 0 {
-    x += dx
-    y += dy
+  for !should_close() {
+    // **Frame-rate independent movement**: raylib caps the rate, but scaling by the
+    // frame's own duration is what keeps the ball at the same speed if it ever does not.
+    let dt = frame_time()
+    x += dx * dt
+    y += dy * dt
     if x <= RADIUS || x >= WIDTH - RADIUS { dx = -dx }
     if y <= RADIUS || y >= HEIGHT - RADIUS { dy = -dy }
-    tick += 0.02
 
-    unsafe { begin_drawing() }
-    unsafe { clear_background(Color { r: 18, g: 18, b: 28, a: 255 }) }
+    let m = mouse_position()
+    if mouse_pressed(MOUSE_LEFT) { marks.push(m) }
+    if key_down(KEY_SPACE) { marks = [] }
 
-    // A rectangle that follows the mouse — the *return* half of by-value, since
-    // `GetMousePosition` hands back a `Vector2` in registers.
-    let m = unsafe { mouse_position() }
-    unsafe {
-      draw_rectangle(
-        Rectangle { x: m.x - 30.0, y: m.y - 20.0, width: 60.0, height: 40.0 },
-        Color { r: 60, g: 60, b: 90, a: 255 },
-      )
+    begin_drawing()
+    clear_background(raywhite())
+
+    // A crosshair on the cursor, then a box around it — `Vector2` and `Rectangle` both
+    // cross by value, and both are just structs here.
+    draw_line(Vector2 { x: m.x - 12.0, y: m.y }, Vector2 { x: m.x + 12.0, y: m.y }, darkgray())
+    draw_line(Vector2 { x: m.x, y: m.y - 12.0 }, Vector2 { x: m.x, y: m.y + 12.0 }, darkgray())
+    draw_rectangle(
+      Rectangle { x: m.x - 34.0, y: m.y - 24.0, width: 68.0, height: 48.0 },
+      rgba(60, 60, 90, 40),
+    )
+
+    for mark in marks {
+      draw_circle(mark, 5.0, rgba(0, 121, 241, 160))
     }
 
-    // `round()` is the explicit float → integer step the language insists on; a bare
-    // `u8(f)` is refused, which is the lossy-conversion rule doing its job.
-    let cr = u8((120.0 + 120.0 * wave(tick)).round())
-    let cg = u8((120.0 + 120.0 * wave(tick + 2.1)).round())
-    let cb = u8((120.0 + 120.0 * wave(tick + 4.2)).round())
-    unsafe {
-      draw_circle(Vector2 { x: x, y: y }, RADIUS, Color { r: cr, g: cg, b: cb, a: 255 })
-    }
+    draw_circle(Vector2 { x: x, y: y }, RADIUS, red())
 
-    unsafe { end_drawing() }
-    closing = unsafe { should_close() }
+    let hint = "click to mark · space to clear"
+    draw_text(hint, 400 - measure_text(hint, 20) / 2, 410, 20, darkgray())
+    draw_text("${marks.len()} marks", 12, 12, 20, blue())
+    draw_fps(12, 40)
+
+    end_drawing()
   }
 
-  unsafe { close_window() }
+  close_window()
   println("closed cleanly")
-}
-
-/// A smooth 0..1 wave without a trig builtin — Lyra has `sqrt` and the logarithms and no
-/// `sin`, so this folds the tick into a triangle and smooths it.
-let wave = pure (t: f32) -> f32 => {
-  let phase = t - f32((t / 2.0).floor()) * 2.0
-  let tri = if phase < 1.0 { phase } else { 2.0 - phase }
-  tri * tri * (3.0 - 2.0 * tri)
 }

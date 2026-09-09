@@ -1545,9 +1545,23 @@ pattern. It needed nothing new from the language.
   needs `LYRA_STD`, for the same reason it does for the prelude: it builds into a temp
   directory with neither beside it.
 
+`bindings/raylib/` is the second, and it is the one that needs **struct-by-value**:
+`draw_circle(Vector2, f32, Color)` passes two structs and `mouse_position()` returns one.
+Its module reads like ordinary Lyra precisely because the hard part is in `pkg/abi` — a
+`Vector2` is a `struct`, passed as one, and nothing in the binding mentions registers.
+
+Two things it ran into that the SDL3 module did not:
+
+- **A `const` cannot hold a struct** (lyra-E012), so raylib's named colours are `pure`
+  nullary functions rather than constants. raylib spells them as macros expanding to a
+  compound literal, which is the same shape — a value built where it is used.
+- **`rec` is a reserved word**, one of the function modifiers, so raylib's own parameter
+  name for a rectangle cannot be used and the wrapper says `rect`.
+
 `examples/sdl3.lyra` binds SDL directly and is dense with `unsafe` — it exists to prove the
-boundary works. `bindings/sdl3` is what using it looks like afterwards. Keep both: the
-first is the proof, the second is the demonstration.
+boundary works. `bindings/sdl3` and `bindings/raylib` are what using it looks like
+afterwards, and `examples/raylib.lyra` contains no `unsafe` and no `extern` at all. Keep
+both kinds: the direct one is the proof, the binding is the demonstration.
 
 ## Current Development Focus
 
