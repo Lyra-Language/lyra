@@ -3418,12 +3418,38 @@ Neither is a gap worth closing on this evidence. A struct-valued `const` would w
 compile-time evaluation of a constructor, which is the CTFE entry's business; `rec` is
 load-bearing where it is.
 
-### Open: `maybe != None` does not lower
+### `maybe != None` lowers — **[DONE 09/09]**
 
-Comparing a generic `data` value against a bare nullary constructor fails in the backend
-with `unknown named type "Maybe"`. Pre-existing, reproducible with the plain prelude, and
-the first thing anyone reaches for when draining a queue. `examples/sdl3_window.lyra`
-works around it with a `None` arm and a flag; remove that when this is fixed.
+`None` solves none of `Maybe`'s parameters, so it is always recorded as the bare
+declaration and always needs the surrounding type. The backend has no layout to lower
+`Maybe` at, so a site pushing a *width* without the *instantiation* failed with
+`unknown named type "Maybe"` on a program the front end checked clean.
+
+**Three sites had only one half**, found by enumerating the positions rather than fixing
+the reported one: a comparison, a reassignment, and a tuple or anonymous-struct element.
+The array arms had already been fixed for exactly this on 08/27, which makes four
+instances of one omission.
+
+The rule, and the reason the fix is boring: **every site that pushes a context into a
+construction must pair `propagateExpectedType` with `propagateInstantiation`.** Treating
+the pair as one operation would end the family; as two calls, each new context site has to
+remember. `TestExec_BareConstructorTakesItsInstantiation` enumerates all seven positions,
+including the four that already worked, so a change here cannot quietly break them.
+
+### Open: an un-inferable type parameter is not diagnosed
+
+`let t = (None, 1)` followed by a use of `t` reaches the backend and fails with
+`unknown named type "Maybe"`. Unlike the entry above this is **not** a missing
+propagation — there is no context anywhere, so nothing could be propagated: the program is
+genuinely ill-typed and `None`'s parameter is unsolvable.
+
+What is missing is the *diagnostic*. It should be a front-end error naming the unsolved
+parameter and asking for an annotation, in the shape lyra-E036 reports an unsatisfied
+bound. Today it type-checks clean and crashes the backend, which is the wrong end of the
+compiler and the wrong message.
+
+Note the binding must be **used** to trip it — an unused one is never lowered, so
+`let t = (None, 1)` alone compiles. That is why it survived the sweep above.
 
 ### Named extern parameters — **[DONE 08/26]**
 

@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — `m != None`, and one omission in four places
+
+Comparing a `Maybe` against a bare `None` failed in the backend with `unknown named type
+"Maybe"`, on a program the front end checked clean. The cause generalizes further than the
+symptom did.
+
+**A nullary constructor solves none of its type parameters**, so `None` is *always*
+recorded as the bare `Maybe` declaration and *always* needs the surrounding type. The
+backend has no layout for a bare `Maybe` — only for an instantiation — so any site that
+pushed a context's *width* without its *instantiation* left the constructor unlowerable.
+
+`propagateExpectedType` pushes the width; `propagateInstantiation` pushes the
+instantiation. **They must be called in pairs**, and three sites were calling only the
+first: a comparison, a reassignment, and a tuple or anonymous-struct element. The array
+arms had already been fixed for precisely this on 08/27 — so this is the same omission in
+four places, which is the shape rule 8 describes and the argument for making the pair one
+operation rather than two calls each new context site must remember.
+
+#### Finding the other three
+
+The reported case was the comparison. Fixing it and stopping would have left `m = None`
+broken, which is the very next line anyone writes. So the positions were enumerated
+instead — comparison, reassignment, argument, named-struct field, array element, tuple
+element, anonymous-struct field, annotated binding — and each tried. Four already worked,
+three did not, and the test now covers all seven **including the four that worked**, so a
+change here cannot quietly break them.
+
+That enumeration is cheap and mechanical, and it is the second time this week it has found
+more than the bug report did.
+
+#### What is deliberately still broken
+
+`let t = (None, 1)` followed by a use of `t` still reaches the backend and still fails
+with the same message — and it is **not** the same bug. There is no context anywhere, so
+nothing could have been propagated: the program is genuinely ill-typed and `None`'s
+parameter is unsolvable. What is missing is a *diagnostic* naming the unsolved parameter,
+which belongs to the front end and is filed as its own entry.
+
+Worth knowing why it survived the sweep: the binding has to be **used** to trip it. An
+unused one is never lowered, so `let t = (None, 1)` on its own compiles fine.
+
+`examples/sdl3_window.lyra` kept its `None`-as-a-match-arm event loop, which was a
+workaround and is now a preference — one `match` where every outcome including "the queue
+is empty" is a case reads better than a condition plus a match.
+
 ### 09/09/26 — struct-by-value, and raylib
 
 raylib runs from Lyra. `examples/raylib.lyra` opens a window and draws through

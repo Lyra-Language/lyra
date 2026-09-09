@@ -78,11 +78,9 @@ let run = (renderer: Renderer) -> void => {
     // **The event loop a tagged type buys.** `poll_event` already read the union's tag
     // and the member it licensed, so what arrives here is a value that cannot lie about
     // which event it is — no `unsafe`, and a `match` the compiler checks.
-    // Drain the queue. `None` is an arm rather than a loop condition because
-    // `next != None` does not lower today — comparing a generic `data` value against a
-    // bare nullary constructor loses the instantiation (filed; the plain prelude `Maybe`
-    // has it too). One `match` reads better here regardless: every outcome, including
-    // "the queue is empty", is a case.
+    // Drain the queue with `None` as an arm rather than as a loop condition. That was
+    // once forced — `next != None` did not lower — and is now a choice: one `match`
+    // reads better, because every outcome including "the queue is empty" is a case.
     var draining = true
     for draining {
       match poll_event() {

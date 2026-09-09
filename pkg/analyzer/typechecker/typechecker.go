@@ -1361,6 +1361,17 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 	// Record the variable's width on untyped literal leaves of the RHS (`x = x + 1`
 	// where x: i8 lowers `1` as i8), matching an annotated let binding.
 	tc.propagateExpectedType(stmt.Value, effective)
+	// …**and the generic instantiation**, which the width recursion does not carry. A
+	// construction that solves none of its parameters stays the bare declaration by
+	// design, so `m = None` against a `Maybe<i64>` binding left `None` recorded as
+	// `Maybe` and the backend had no layout to lower it at (`unknown named type
+	// "Maybe"`, on a program that type-checks clean).
+	//
+	// Every site that pushes a context into a construction must pair these two calls.
+	// This was the third to have only one — after the array arms (08/27) and the
+	// comparison operands above — which is the argument for treating the pair as one
+	// operation rather than two calls a new site has to remember.
+	tc.propagateInstantiation(stmt.Value, effective)
 }
 
 // checkDerefAssignment handles the two statements that share this node. The
@@ -1935,12 +1946,47 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 		}
 		return
 	}
+	// **A bare nullary constructor takes the other side's instantiation.** `m == None`
+	// leaves `None` recorded as the bare `Maybe` — a constructor solving none of its
+	// parameters is always the declaration, by design — and the backend then has no
+	// layout to lower it at, failing with `unknown named type "Maybe"` on a program that
+	// type-checks clean.
+	//
+	// This is the *same* omission the array arms had before 08/27: every site that pushes
+	// a context into a construction must pair `propagateExpectedType` with
+	// `propagateInstantiation`, and the comparison was pushing width alone. `[None; 8]`
+	// against `[]Maybe<i64>` failed identically, for identically the same reason.
+	//
+	// Both operands are offered it: `propagateInstantiation` is a no-op on anything that
+	// is not a construction, so the side that already has a type is untouched, and
+	// `None == m` works as well as `m == None`.
+	if inst := comparisonInstantiation(leftType, rightType); inst != nil {
+		tc.propagateInstantiation(expr.Left, inst)
+		tc.propagateInstantiation(expr.Right, inst)
+		return
+	}
 	common := numericResultType(leftType, rightType)
 	if common == nil {
 		return
 	}
 	tc.propagateExpectedType(expr.Left, common)
 	tc.propagateExpectedType(expr.Right, common)
+}
+
+// comparisonInstantiation is the instantiated generic type among two compared operands,
+// or nil when neither is one.
+//
+// Either side will do, and there is no ambiguity to resolve: the two are already known
+// equality-compatible, so if both are instantiated they are the same instantiation, and if
+// only one is then the other is the bare declaration that needs it.
+func comparisonInstantiation(a, b types.Type) types.Type {
+	if pt, ok := types.StripNewtype(a).(types.ParameterizedType); ok {
+		return pt
+	}
+	if pt, ok := types.StripNewtype(b).(types.ParameterizedType); ok {
+		return pt
+	}
+	return nil
 }
 
 // nullPtrComparisonPointee is the pointer type an unpinned `nullptr` takes from the
@@ -2928,6 +2974,9 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			}
 			resolved := tc.resolveType(want, expr.GetLocation())
 			tc.propagateExpectedType(f.Value, resolved)
+			// Paired with the width push, for the reason the tuple and array arms give:
+			// `{ m: None }` against `{ m: Maybe<i64> }` needs the instantiation too.
+			tc.propagateInstantiation(f.Value, resolved)
 			tc.checkIntegerLiteralRange("field "+f.Name, f.Value, resolved)
 		}
 		// Re-record with the context's field types, so the value the backend lowers has
@@ -2951,6 +3000,11 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		for i, elem := range tl.Elements {
 			resolved[i] = tc.resolveType(tt.Elements[i], elem.GetLocation())
 			tc.propagateExpectedType(elem, resolved[i])
+			// …and the element's generic *instantiation*, for the reason the array arms
+			// below give: a construction solving none of its parameters stays the bare
+			// declaration, so `let t: (Maybe<i64>, i64) = (None, 1)` left `None` recorded
+			// as `Maybe` and the backend had no layout to lower it at.
+			tc.propagateInstantiation(elem, resolved[i])
 			// …and a leaf that does not fit the width it was just narrowed to is
 			// reported here, because nothing downstream will. The scalar form has
 			// checkIntegerLiteralRange at its assignment sites, but those look at the
