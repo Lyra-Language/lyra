@@ -380,8 +380,9 @@ pub let draw_texture_v = (texture: Texture2D, position: Vector2, tint: Color) ->
 
 /// A texture rotated about its top-left corner and uniformly scaled.
 pub let draw_texture_ex =
-  (texture: Texture2D, position: Vector2, rotation: f32, scale: f32, tint: Color) -> void =>
-    unsafe { rl_draw_texture_ex(texture, position, rotation, scale, tint) }
+  (texture: Texture2D, position: Vector2, rotation: Degrees, scale: f32,
+   tint: Color) -> void =>
+    unsafe { rl_draw_texture_ex(texture, position, f32(rotation), scale, tint) }
 
 /// One rectangle of a texture, drawn at a point. This is how a sprite sheet is used.
 ///
@@ -396,16 +397,16 @@ pub let draw_texture_rect =
 /// The most general of the six: it scales, rotates and crops in one call, and `origin` is
 /// measured from `dest`'s own top-left corner rather than from the screen.
 pub let draw_texture_pro =
-  (texture: Texture2D, source: Rectangle, dest: Rectangle, origin: Vector2, rotation: f32,
-   tint: Color) -> void =>
-    unsafe { rl_draw_texture_pro(texture, source, dest, origin, rotation, tint) }
+  (texture: Texture2D, source: Rectangle, dest: Rectangle, origin: Vector2,
+   rotation: Degrees, tint: Color) -> void =>
+    unsafe { rl_draw_texture_pro(texture, source, dest, origin, f32(rotation), tint) }
 
 /// A nine-patch: a texture sliced so its corners keep their size while its edges and
 /// centre stretch to fill `dest`. What a resizable UI panel is drawn with.
 pub let draw_texture_npatch =
-  (texture: Texture2D, patch: NPatchInfo, dest: Rectangle, origin: Vector2, rotation: f32,
-   tint: Color) -> void =>
-    unsafe { rl_draw_texture_npatch(texture, patch, dest, origin, rotation, tint) }
+  (texture: Texture2D, patch: NPatchInfo, dest: Rectangle, origin: Vector2,
+   rotation: Degrees, tint: Color) -> void =>
+    unsafe { rl_draw_texture_npatch(texture, patch, dest, origin, f32(rotation), tint) }
 
 // ---------------------------------------------------------------------------------------
 // The externs

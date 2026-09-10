@@ -9,8 +9,8 @@ module bindings.raylib
 //! [draw_pixel] beside [draw_pixel_v], because a single pixel is as often addressed by
 //! two integers as by a point.
 //!
-//! Angles are **degrees**, as raylib's are, and measured clockwise from the positive x
-//! axis. `segments` is how many straight edges approximate a curve; 0 lets raylib choose.
+//! Angles are [Degrees], a newtype over f32 — raylib measures in degrees and an `f32`
+//! does not say so. See `angle.lyra`. `segments` is how many straight edges approximate a curve; 0 lets raylib choose.
 
 /// `Vector2` — two floats, raylib's most-passed type.
 ///
@@ -111,16 +111,19 @@ pub let draw_circle_gradient =
 
 /// A filled wedge of a circle, from `start_angle` to `end_angle` in degrees.
 pub let draw_circle_sector =
-  (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
+  (center: Vector2, radius: f32, start_angle: Degrees, end_angle: Degrees, segments: i32,
    color: Color) -> void =>
-    unsafe { rl_draw_circle_sector(center, radius, start_angle, end_angle, segments, color) }
+    unsafe {
+      rl_draw_circle_sector(center, radius, f32(start_angle), f32(end_angle), segments, color)
+    }
 
 /// The outline of a wedge of a circle.
 pub let draw_circle_sector_lines =
-  (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
+  (center: Vector2, radius: f32, start_angle: Degrees, end_angle: Degrees, segments: i32,
    color: Color) -> void =>
     unsafe {
-      rl_draw_circle_sector_lines(center, radius, start_angle, end_angle, segments, color)
+      rl_draw_circle_sector_lines(center, radius, f32(start_angle), f32(end_angle),
+                                  segments, color)
     }
 
 /// A filled ellipse with separate horizontal and vertical radii.
@@ -135,19 +138,20 @@ pub let draw_ellipse_lines =
 
 /// A filled annulus — the area between two concentric circles, over an angular span.
 pub let draw_ring =
-  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
-   segments: i32, color: Color) -> void =>
+  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: Degrees,
+   end_angle: Degrees, segments: i32, color: Color) -> void =>
     unsafe {
-      rl_draw_ring(center, inner_radius, outer_radius, start_angle, end_angle, segments, color)
+      rl_draw_ring(center, inner_radius, outer_radius, f32(start_angle), f32(end_angle),
+                   segments, color)
     }
 
 /// The outline of an annulus.
 pub let draw_ring_lines =
-  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
-   segments: i32, color: Color) -> void =>
+  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: Degrees,
+   end_angle: Degrees, segments: i32, color: Color) -> void =>
     unsafe {
-      rl_draw_ring_lines(center, inner_radius, outer_radius, start_angle, end_angle,
-                         segments, color)
+      rl_draw_ring_lines(center, inner_radius, outer_radius, f32(start_angle),
+                         f32(end_angle), segments, color)
     }
 
 // ---------------------------------------------------------------------------------------
@@ -168,8 +172,8 @@ pub let draw_rectangle_v = (position: Vector2, size: Vector2, color: Color) -> v
 /// A filled rectangle rotated `rotation` degrees about `origin`, which is measured from
 /// the rectangle's own top-left corner rather than from the screen.
 pub let draw_rectangle_pro =
-  (rect: Rectangle, origin: Vector2, rotation: f32, color: Color) -> void =>
-    unsafe { rl_draw_rectangle_pro(rect, origin, rotation, color) }
+  (rect: Rectangle, origin: Vector2, rotation: Degrees, color: Color) -> void =>
+    unsafe { rl_draw_rectangle_pro(rect, origin, f32(rotation), color) }
 
 /// A rectangle's outline, drawn inside its bounds at the given thickness.
 pub let draw_rectangle_lines = (rect: Rectangle, thick: f32, color: Color) -> void =>
@@ -240,18 +244,19 @@ pub let draw_triangle_strip = (points: []Vector2, color: Color) -> void => {
 
 /// A filled regular polygon of `sides` sides.
 pub let draw_poly =
-  (center: Vector2, sides: i32, radius: f32, rotation: f32, color: Color) -> void =>
-    unsafe { rl_draw_poly(center, sides, radius, rotation, color) }
+  (center: Vector2, sides: i32, radius: f32, rotation: Degrees, color: Color) -> void =>
+    unsafe { rl_draw_poly(center, sides, radius, f32(rotation), color) }
 
 /// A regular polygon's outline.
 pub let draw_poly_lines =
-  (center: Vector2, sides: i32, radius: f32, rotation: f32, color: Color) -> void =>
-    unsafe { rl_draw_poly_lines(center, sides, radius, rotation, color) }
+  (center: Vector2, sides: i32, radius: f32, rotation: Degrees, color: Color) -> void =>
+    unsafe { rl_draw_poly_lines(center, sides, radius, f32(rotation), color) }
 
 /// A regular polygon's outline at a given thickness.
 pub let draw_poly_lines_ex =
-  (center: Vector2, sides: i32, radius: f32, rotation: f32, thick: f32, color: Color) -> void =>
-    unsafe { rl_draw_poly_lines_ex(center, sides, radius, rotation, thick, color) }
+  (center: Vector2, sides: i32, radius: f32, rotation: Degrees, thick: f32,
+   color: Color) -> void =>
+    unsafe { rl_draw_poly_lines_ex(center, sides, radius, f32(rotation), thick, color) }
 
 // ---------------------------------------------------------------------------------------
 // Splines

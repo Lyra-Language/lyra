@@ -29,7 +29,7 @@ import bindings.raylib.{
   Vector2, vec2, rect, draw_rectangle, draw_rectangle_lines, draw_circle, draw_line_ex,
   draw_text, mouse_position, key_pressed, KEY_SPACE,
   Color, rgb, rgba,
-  Image, Texture2D, RenderTexture, NPatchInfo,
+  Image, Texture2D, RenderTexture, NPatchInfo, Degrees,
   gen_image_color, gen_image_checked, gen_image_gradient_linear, gen_image_gradient_radial,
   gen_image_gradient_square, gen_image_white_noise, gen_image_perlin_noise,
   gen_image_cellular, gen_image_text,
@@ -480,7 +480,7 @@ let render_into = (rt: RenderTexture, sheet: Texture2D, scene: Texture2D, t: f32
   draw_circle(vec2(200.0, 40.0), 22.0, ORANGE)
   draw_line_ex(vec2(10.0, 160.0), vec2(230.0, 20.0), 4.0, GREEN)
   draw_texture_pro(sheet, rect(0.0, 0.0, f32(FRAME), f32(FRAME)),
-    rect(150.0, 110.0, 56.0, 56.0), vec2(28.0, 28.0), 25.0 * t, WHITE)
+    rect(150.0, 110.0, 56.0, 56.0), vec2(28.0, 28.0), Degrees(25.0 * t), WHITE)
   draw_text("offscreen", 12, 10, CAPTION, RAYWHITE)
   end_texture_mode()
 }
@@ -504,7 +504,7 @@ let draw_edited_panel = (sepia: Texture2D, x: f32, y: f32) -> void => {
 /// `draw_texture_ex` rotates about the top-left corner; `draw_texture_pro` about a chosen
 /// origin, so the second spins in place rather than orbiting.
 let draw_transformed_panel = (scene: Texture2D, x: f32, y: f32, t: f32) -> void => {
-  let spin = 30.0 * t
+  let spin = Degrees(30.0 * t)
   draw_texture_ex(scene, vec2(x + 40.0, y + 10.0), spin, 0.5, WHITE)
   draw_texture_pro(scene, rect(0.0, 0.0, 160.0, 100.0),
     rect(x + 250.0, y + 60.0, 130.0, 82.0), vec2(65.0, 41.0), spin, WHITE)

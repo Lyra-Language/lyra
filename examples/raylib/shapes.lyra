@@ -27,7 +27,7 @@ import bindings.raylib.{
   draw_rectangle, draw_rectangle_v, draw_rectangle_pro, draw_rectangle_lines,
   draw_rectangle_rounded, draw_rectangle_rounded_lines, draw_rectangle_gradient,
   draw_triangle, draw_triangle_lines, draw_triangle_fan, draw_triangle_strip,
-  draw_poly, draw_poly_lines, draw_poly_lines_ex,
+  draw_poly, draw_poly_lines, draw_poly_lines_ex, turns,
   draw_spline_linear, draw_spline_basis, draw_spline_catmull_rom,
   draw_spline_bezier_quadratic, draw_spline_bezier_cubic,
   draw_spline_segment_linear, draw_spline_segment_basis, draw_spline_segment_catmull_rom,
@@ -267,7 +267,7 @@ let draw_circles_panel = (x: f32, y: f32, t: f32) -> void => {
   draw_circle_gradient(vec2(x + 200.0, y + 40.0), 30.0, YELLOW, ORANGE)
 
   // The sector sweeps, which is what makes an angle argument legible.
-  let sweep = 360.0 * wrap01(t * 0.15)
+  let sweep = turns(wrap01(t * 0.15))
   draw_circle_sector(vec2(x + 40.0, y + 120.0), 30.0, 0.0, sweep, 32, PURPLE)
   draw_circle_sector_lines(vec2(x + 120.0, y + 120.0), 30.0, 0.0, sweep, 32, DARKGRAY)
 
@@ -289,7 +289,7 @@ let draw_rects_panel = (x: f32, y: f32, t: f32) -> void => {
   draw_rectangle_gradient(rect(x, y + 120.0, 140.0, 50.0), RED, YELLOW, GREEN, BLUE)
 
   // Rotated about its own centre, so it spins in place rather than orbiting.
-  let spin = 360.0 * wrap01(t * 0.1)
+  let spin = turns(wrap01(t * 0.1))
   draw_rectangle_pro(rect(x + 190.0, y + 145.0, 50.0, 50.0), vec2(25.0, 25.0), spin, ORANGE)
 }
 
@@ -322,7 +322,7 @@ let draw_polys_panel = (x: f32, y: f32, t: f32) -> void => {
   }
   draw_triangle_strip(strip, LIGHTGRAY)
 
-  let spin = 360.0 * wrap01(t * 0.08)
+  let spin = turns(wrap01(t * 0.08))
   draw_poly(vec2(x + 240.0, y + 120.0), 6, 30.0, spin, GREEN)
   draw_poly_lines(vec2(x + 160.0, y + 150.0), 5, 26.0, spin, PURPLE)
   draw_poly_lines_ex(vec2(x + 60.0, y + 150.0), 8, 26.0, spin, 3.0, BLACK)

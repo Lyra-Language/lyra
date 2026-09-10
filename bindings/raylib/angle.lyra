@@ -1,0 +1,43 @@
+module bindings.raylib
+//! Angles, and the unit they are in.
+//!
+//! **raylib measures every angle in degrees**, and eleven of the calls in this module take
+//! one. Nothing about an `f32` says which unit it holds, so a value in radians crosses the
+//! boundary without complaint and draws a shape rotated by a fifty-seventh of what the
+//! author meant — a wrong picture rather than an error, and one that reads as "the maths
+//! is off somewhere" rather than as a unit mixup.
+//!
+//! [Degrees] is the type that says so. It costs nothing at run time — a newtype lowers to
+//! its operand — and it costs nothing at a *literal* call site either, since an untyped
+//! literal converts implicitly: `draw_poly(centre, 6, 30.0, 45.0, GREEN)` is unchanged. A
+//! **computed** `f32` is the case it catches, and there the conversion has to be written.
+
+/// An angle in degrees, measured clockwise from the positive x axis.
+///
+/// **Deliberately unconstrained.** A `where range(0..<360)` would state something true of
+/// the *canonical* representative and false of angles in general: 370 degrees is a
+/// perfectly good angle, a sweep may legitimately run to 720, and a rotation may be
+/// negative. Worse, a range constraint refuses a literal at **compile time**
+/// (`lyra-E023`), so `Degrees(370.0)` would not even build — and raylib itself is happy to
+/// take it. The type is here to catch a *unit* mistake, which is nominal identity's job;
+/// range is a different question with a different answer.
+///
+/// It carries no arithmetic either: operators on a newtype are opt-in (`lyra-E043`), and
+/// nothing here needs to add two angles. Read one out with `f32(d)` and compute on that.
+pub newtype Degrees = f32
+
+/// Degrees from a fraction of a full turn — 0.0 to 1.0 around the circle.
+///
+/// The form an animation actually wants, since a phase is what a clock produces:
+/// `turns(elapsed_fraction)` rather than `Degrees(360.0 * elapsed_fraction)`, which is the
+/// same thing with a constant to get wrong.
+pub let turns = pure (fraction: f32) -> Degrees => Degrees(360.0 * fraction)
+
+/// Degrees from radians, which is what every trigonometric function in sight produces.
+///
+/// **This is the conversion the type exists for.** Without it the mistake is invisible:
+/// an `f32` from `atan2` looks exactly like an `f32` of degrees, and raylib takes either.
+pub let from_radians = pure (radians: f32) -> Degrees => Degrees(radians * 57.295780)
+
+/// Radians from degrees, for handing an angle back to trigonometry.
+pub let to_radians = pure (angle: Degrees) -> f32 => f32(angle) * 0.017453292

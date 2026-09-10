@@ -1561,7 +1561,7 @@ nothing bound. `checker.CheckLetElseDiverges` reports it, after typechecking bec
   enforced divergence and no pass did — a premise written in a comment, believed by later
   code, and checked nowhere near where it was relied on.
 
-## A leading `-` is not a continuation (`lyra-W023`)
+## A leading `-`, `(` or `[` is not a continuation (`lyra-W023`, `lyra-W024`)
 
 	x - x * x2 / 6.0 + x * x2 * x2 / 120.0
 	  - x * x2 * x2 * x2 / 5040.0
@@ -1584,8 +1584,22 @@ last term. `checker.CheckLeadingMinusContinuation` reports it.
   later does not start firing this warning until someone decides it should, which is the
   direction a warning with no suppression syntax has to err in.
 
-`(` and `[` misparse differently — `f` then a `(x)` line becomes a *call* rather than two
-statements — so they need their own signature and are not covered.
+**`(` and `[` are the same misparse with a different fix**, which is why they are
+`lyra-W024` rather than more of W023: an operator moves to the *end* of the previous line,
+while a bracket moves *up* to close the gap — `f(` with the arguments on the next line is
+one call, since a newline inside the brackets is not a terminator. `add` then `(1, 2)` is a
+discarded name and a tuple; `xs` then `[0]` is a discarded name and an array literal.
+
+**One of the three tokens is invisible to the AST**, and that decided how the check works.
+A negation, a tuple literal and the array forms all carry their own opening token, so they
+are recognised by *kind*. Parentheses around a **single** expression are erased — `(x)`
+collects to a bare `IdentifierExpr` with nothing to say they were there — so that case is
+caught by **column**: the statement's span still covers the paren, so a statement beginning
+one column before its own expression began with a `(`. That is the commonest spelling of
+the mistake, a one-argument call split across two lines, and a kind-based check misses it
+entirely.
+
+`*` needs nothing — it cannot begin a statement, so the mistake is a syntax error.
 
 ## Releasing a foreign resource (`@must_release`)
 
@@ -1781,6 +1795,27 @@ the repository root and from `examples/raylib/`, so it runs from either.
 `update_texture` is exercised on the real artwork rather than a fill: the scene is read
 back with `image_from_texture`, warmed pixel by pixel in Lyra, and uploaded to a second
 texture, with `update_texture_rect` patching one corner.
+
+**`Degrees` is a newtype over f32** (`bindings/raylib/angle.lyra`), and every one of the
+eleven angle parameters across `shapes.lyra` and `texture.lyra` takes one. raylib measures
+in degrees and an `f32` does not say so, so a radians value crossed the boundary silently
+and drew a shape rotated by a fifty-seventh of what was meant — a wrong picture rather than
+an error.
+
+- **It costs nothing at a literal call site.** An untyped literal converts implicitly, so
+  `draw_poly(centre, 6, 30.0, 45.0, GREEN)` is unchanged. A **computed** `f32` is refused
+  (`lyra-E046`) and must say `Degrees(x)` or `from_radians(x)` — which is exactly the case
+  worth catching, and exactly the nine sites the examples had.
+- **Deliberately unconstrained.** A `where range(0..<360)` states something true of the
+  canonical representative and false of angles: 370 degrees is a real angle, a sweep may
+  run to 720, a rotation may be negative. Worse, a range constraint refuses a *literal* at
+  compile time (`lyra-E023`), so `Degrees(370.0)` would not build while raylib is happy to
+  take it. Nominal identity catches the unit mistake; range is a different question.
+- **`turns(fraction)` is the form an animation wants**, since a clock produces a phase:
+  `turns(wrap01(t * 0.15))` rather than `Degrees(360.0 * wrap01(t * 0.15))`, which is the
+  same thing with a constant to get wrong.
+- No arithmetic impls: operators on a newtype are opt-in (`lyra-E043`) and nothing here
+  needs to add two angles. Read one out with `f32(d)`.
 
 **`bindings/raylib/texture.lyra` is the third module** (09/10) — 46 functions covering the
 whole pipeline from pixels to screen: **6 of 6** drawing calls, **3 of 3** configuration,

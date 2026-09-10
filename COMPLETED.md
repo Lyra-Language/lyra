@@ -9,6 +9,77 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — `Degrees` across the raylib bindings
+
+`pub newtype Degrees = f32` in `bindings/raylib/angle.lyra`, and all eleven angle
+parameters in `shapes.lyra` and `texture.lyra` take one. raylib measures in degrees and an
+`f32` does not say so, so a radians value crosses the boundary without complaint and draws
+a shape rotated by a fifty-seventh of what the author meant — a wrong picture, which reads
+as "the maths is off somewhere" rather than as a unit mixup.
+
+**The question it came from was whether wrapping could be a *constraint*** — a
+`newtype Radians = f32 where range(-PI..<=PI)` that normalises instead of rejecting. The
+answer is no, and establishing why is what produced this instead. Three things settled it,
+the first two measured:
+
+  - A range constraint **rejects**; it does not normalise. Out of range is
+    `lyra: value violates its newtype's constraint` at run time.
+  - A *literal* out of range is refused at **compile time** (`lyra-E023`), so
+    `Radians(6.0)` would not build — and 6.0 radians is a perfectly good angle. A range
+    constraint is actively hostile to a cyclic quantity.
+  - A constraint is a **predicate** and wrapping is a **function**. Every existing one
+    (`range`, `step`, `pattern`) answers yes/no, and a newtype constructor "lowers to its
+    operand and nothing else". Making some constructors *compute* would break the property
+    that makes them free, and which behaviour is right — wrap or refuse — is domain
+    knowledge the type name does not carry: wrapping is right for an angle and catastrophic
+    for a percentage.
+
+The third point is the practical killer for the original idea: constraints are checked
+where a value *flows*, but arithmetic on a newtype is opt-in (`lyra-E043`), so `a + b` on
+two angles never reaches the machinery. The one place re-wrapping is wanted is the one
+place a constraint never runs.
+
+**What the type does catch is a unit mistake, and it costs nothing where it should not.**
+An untyped literal converts implicitly, so `draw_poly(centre, 6, 30.0, 45.0, GREEN)` is
+untouched; a computed `f32` is `lyra-E046` and must say `Degrees(x)` or `from_radians(x)`.
+Turning the eleven signatures over found exactly nine such sites in the two galleries and
+nothing else — which is a fair measure of how much ceremony the change actually costs.
+
+`turns(fraction)` came out of those sites: every one was `360.0 * phase`, so the form an
+animation wants is the fraction, not the product with a constant to get wrong. The
+galleries screenshot identically afterwards, which is what says the refactor was
+behaviour-preserving.
+
+### 09/10/26 — `lyra-W024`, and a note in todo.md that was simply wrong
+
+`add` on one line and `(1, 2)` on the next is a discarded name followed by a tuple; `xs`
+then `[0]` is a discarded name followed by an array literal. Both now warn.
+
+**The todo entry that asked for this was wrong about what happens**, and probing it first
+is what caught that. It said `f` then `(x)` "becomes a **call**" and therefore needed a
+different signature from W023 — reasoning from the *pre-terminator* behaviour the grammar
+notes describe as the bug the statement terminator exists to fix. It does not become a
+call: the terminator fires and it is two statements, exactly like the `-` case. Had that
+note been implemented as written, the pass would have gone looking for a shape that does
+not occur.
+
+So the two checks are one pass over one block walk, sharing `leftmost` and
+`discardedValue`. They keep separate codes because the **fix** differs: an operator moves
+to the end of the previous line, a bracket moves up to close the gap. `f(` with the
+arguments on the next line is one call, since a newline inside the brackets is not a
+terminator — and a test writes exactly that and requires it to be clean, because a message
+naming a fix that does not work is worse than one naming none.
+
+**One of the three tokens is invisible to the AST, which decided how the check works.** A
+negation, a tuple literal and the three array forms carry their own opening token and are
+recognised by kind. Parentheses around a *single* expression are **erased** — `(x)`
+collects to a bare `IdentifierExpr`, with nothing in the node to say they were ever there.
+What survives is the **statement's** span, which still covers the paren: a statement
+beginning one column before its own expression began with a `(`. That is what catches
+`one` then `(x)`, and it is the commonest spelling of the whole mistake — a one-argument
+call split across two lines. A check written on kinds alone would have shipped with its
+most likely case missing, and looked complete.
+
 ### 09/10/26 — `lyra-W023`: a leading `-` is not a continuation
 
 The footgun found in `shapes.lyra`'s `sin32` is now a warning.
