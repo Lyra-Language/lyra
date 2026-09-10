@@ -3456,6 +3456,44 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
+### `DrawTextEx`-shaped externs panic the backend in `aggregateSpill`
+
+    panic: store operands are not compatible: src={ i8*, i8* }; dst=%Color*
+      at (*lowerer).aggregateSpill
+
+A **Go panic**, not a diagnostic — `lyrac build` dies with a stack trace on a program the
+front end approved. Two raylib bindings hit it and are unbound because of it
+(`bindings/raylib/text.lyra` records where they would have gone).
+
+**The contrast is the useful part**, since the neighbours are fine:
+
+    DrawTextCodepoint(Font, int, Vector2, float, Color)          lowers correctly
+    DrawTextEx       (Font, char*, Vector2, float, float, Color) panics
+
+One pointer and one more float apart. `MeasureTextEx`, `GetGlyphInfo` and
+`DrawTextCodepoints` all pass the same 48-byte `Font` by value and are fine, so the large
+struct alone is not it. The shape suggests **register exhaustion on aarch64**: enough
+mixed-class arguments to force a stack spill, with the spill path storing the wrong
+operand. `{ i8*, i8* }` is two pointers wide — a closure or a fat value — being stored into
+a `%Color` slot.
+
+**It resisted reduction, and what was ruled out is worth keeping:**
+
+- a self-contained file with the same structs, the same extern and the same call site
+  lowers fine — it needs the whole `bindings.raylib` module present;
+- so does a file with several `with_cstring` call sites capturing different aggregate
+  shapes, which was the shared-specialization hypothesis;
+- **the closure is not the cause**: replacing `with_cstring` with a copying `cstring()`,
+  removing the lambda entirely, still panics.
+
+Reproduce with `bindings/raylib/text.lyra` at commit-with-the-two-restored plus any program
+importing `bindings.raylib`. Bisecting by removing declarations and adding them back one at
+a time is what found it; truncating the file does not work, since a half file fails `check`
+for an unrelated reason.
+
+Two things to fix: the panic itself, and that a backend failure of this kind is a Go stack
+trace rather than the loud, located error rule 5 asks for.
+
 ### A parameter shadowing an imported function makes a method call lower to garbage
 
 	import std.ffi.{ data }

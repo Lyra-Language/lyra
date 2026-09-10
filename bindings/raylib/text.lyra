@@ -26,3 +26,243 @@ pub let measure_text = (text: string, size: i32) -> i32 =>
 
 /// raylib's own frame-rate counter.
 pub let draw_fps = (x: i32, y: i32) -> void => unsafe { rl_draw_fps(x, y) }
+
+// ---------------------------------------------------------------------------------------
+// Fonts
+//
+// The three calls above use raylib's built-in font, which is a bitmap and looks it. A
+// [Font] is a loaded typeface — a TTF rasterised into an atlas at one size — and every
+// `*_ex` and `*_pro` call below takes one.
+// ---------------------------------------------------------------------------------------
+
+/// `GlyphInfo` — one character's metrics and its bitmap. 40 bytes.
+pub struct GlyphInfo {
+  /// The Unicode code point this glyph draws.
+  value: i32,
+  /// Where to put the bitmap relative to the pen, horizontally…
+  offset_x: i32,
+  /// …and vertically.
+  offset_y: i32,
+  /// How far the pen moves after drawing it.
+  advance_x: i32,
+  /// The glyph's own pixels, which the atlas was built from.
+  image: Image,
+}
+
+/// `Font` — a typeface rasterised into a texture atlas at one size. 48 bytes.
+///
+/// **Rasterised at one size**, which is the thing to know before drawing: a font loaded at
+/// 32 and drawn at 12 is a downscaled 32, not a 12. [load_font_sized] is how to ask for
+/// the size you will use.
+///
+/// The layout was checked against C's `sizeof` and `offsetof` — 48 bytes with `texture` at
+/// 12, `recs` at 32 and `glyphs` at 40 — because a nested `Texture2D` between two `int`s
+/// is exactly where padding assumptions go wrong.
+@must_release(unload_font)
+pub struct Font {
+  /// The size it was rasterised at.
+  base_size: i32,
+  /// How many glyphs the atlas holds.
+  glyph_count: i32,
+  /// Pixels of padding around each glyph in the atlas.
+  glyph_padding: i32,
+  /// The atlas itself.
+  texture: Texture2D,
+  /// Where each glyph sits in the atlas — `glyph_count` rectangles.
+  recs: ^Rectangle,
+  /// Each glyph's metrics — `glyph_count` entries.
+  glyphs: ^GlyphInfo,
+}
+
+/// raylib's built-in bitmap font, which needs no loading and no unloading.
+///
+/// **Do not pass it to [unload_font]** — it is raylib's own static data, not something
+/// this program allocated. It is deliberately not `Maybe`-wrapped and deliberately not
+/// tracked by `@must_release`, because the value never came from a loader.
+pub let default_font = () -> Font => unsafe { rl_default_font() }
+
+/// Load a font at raylib's default size, or `None` if the file could not be read.
+pub let load_font = (path: string) -> Maybe<Font> => {
+  let f = path.with_cstring((p) => unsafe { rl_load_font(p) })
+  if font_valid(f) { Some(f) } else { None }
+}
+
+/// Load a font rasterised at a given size, over the default character set.
+///
+/// **The size matters and cannot be changed afterwards.** Ask for the size the text will
+/// be drawn at; drawing a 32-point atlas at 12 points is a downscale, and looks like one.
+pub let load_font_sized = (path: string, size: i64) -> Maybe<Font> => {
+  let f = path.with_cstring((p) =>
+    unsafe { rl_load_font_ex(p, i32(size), nullptr, 0) })
+  if font_valid(f) { Some(f) } else { None }
+}
+
+/// Load a font rasterised at a given size, over exactly the code points listed.
+///
+/// The default set is ASCII; anything beyond it — accented letters, Greek, an arrow — has
+/// to be asked for here or it draws as a missing glyph.
+pub let load_font_codepoints = (path: string, size: i64, codepoints: []i32) -> Maybe<Font> => {
+  if codepoints.len() == 0 {
+    load_font_sized(path, size)
+  } else {
+    let f = path.with_cstring((p) =>
+      unsafe { rl_load_font_ex(p, i32(size), codepoints.data(), i32(codepoints.len())) })
+    if font_valid(f) { Some(f) } else { None }
+  }
+}
+
+/// Load a font from bytes already in memory. `kind` is the extension, with or without the
+/// dot — normalised here, as every `*_from_memory` in these bindings does.
+pub let font_from_memory = (kind: string, bytes: []u8, size: i64) -> Maybe<Font> => {
+  if bytes.len() == 0 {
+    None
+  } else {
+    let ext = if kind.starts_with(".") { kind } else { "." ++ kind }
+    let f = ext.with_cstring((k) =>
+      unsafe { rl_font_from_memory(k, bytes.data(), i32(bytes.len()), i32(size), nullptr, 0) })
+    if font_valid(f) { Some(f) } else { None }
+  }
+}
+
+/// Build a font from an image of glyphs laid out in a row, separated by `key`-coloured
+/// pixels — the classic sprite-sheet font. `first_char` is the code point of the leftmost.
+pub let font_from_image = (image: Image, key: Color, first_char: i32) -> Maybe<Font> => {
+  let f = unsafe { rl_font_from_image(image, key, first_char) }
+  if font_valid(f) { Some(f) } else { None }
+}
+
+pub let font_valid = pure (font: Font) -> bool => unsafe { rl_font_valid(font) } != 0
+
+/// Free a font's atlas and glyph data. Not for [default_font].
+pub let unload_font = (font: Font) -> void => unsafe { rl_unload_font(font) }
+
+/// Write a font out as a C array in a header, which is how raylib's examples embed one.
+pub let export_font_as_code = (font: Font, path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_export_font_as_code(font, p) }) != 0
+
+// ---------------------------------------------------------------------------------------
+// Drawing with a font
+// ---------------------------------------------------------------------------------------
+
+// **`DrawTextEx` and `DrawTextPro` are not bound: they crash the compiler.**
+//
+// Both make the backend panic in `aggregateSpill` —
+// *"store operands are not compatible: src={ i8*, i8* }; dst=%Color*"* — a Go panic
+// rather than a diagnostic, so `lyrac build` dies with a stack trace.
+//
+// The shape that triggers it is worth recording, because the neighbouring calls are fine:
+//
+//     DrawTextCodepoint(Font, int, Vector2, float, Color)          bound, works
+//     DrawTextEx       (Font, char*, Vector2, float, float, Color) crashes
+//
+// One pointer and one more float apart. Everything else here that passes a `Font` by
+// value — `MeasureTextEx`, `GetGlyphInfo`, `DrawTextCodepoints` — lowers correctly, so it
+// is not the 48-byte struct on its own. It looks like register exhaustion in the aarch64
+// classifier: enough mixed-class arguments to force a stack spill, and the spill path
+// storing the wrong operand.
+//
+// **It could not be reduced to a self-contained file.** The same structs, the same extern
+// and the same call site in a standalone program lower fine; it needs the whole
+// `bindings.raylib` module present. Several hypotheses were tested and ruled out — a
+// closure capturing aggregates, a shared `with_cstring<void>` specialization across call
+// sites with different environments, and replacing the closure with a copying `cstring()`
+// (which still crashes, so the lambda is not the cause). See todo.md.
+//
+// Until it is fixed, [draw_text] covers the default font and [draw_codepoint] draws a
+// glyph at a time in a loaded one.
+
+/// One character, by code point. What a text editor draws a cursor line with.
+pub let draw_codepoint =
+  (font: Font, codepoint: rune, position: Vector2, size: f32, tint: Color) -> void =>
+    unsafe { rl_draw_codepoint(font, i32(codepoint), position, size, tint) }
+
+/// A run of code points, without building a string for them.
+pub let draw_codepoints =
+  (font: Font, codepoints: []i32, position: Vector2, size: f32, spacing: f32,
+   tint: Color) -> void => {
+    if codepoints.len() > 0 {
+      unsafe {
+        rl_draw_codepoints(font, codepoints.data(), i32(codepoints.len()), position, size,
+                           spacing, tint)
+      }
+    }
+  }
+
+// ---------------------------------------------------------------------------------------
+// Measuring
+// ---------------------------------------------------------------------------------------
+
+/// How much space that text would take in a loaded font — width and height.
+pub let measure_text_ex = pure (font: Font, text: string, size: f32, spacing: f32) -> Vector2 =>
+  text.with_cstring((t) => unsafe { rl_measure_text_ex(font, t, size, spacing) })
+
+/// The same for a run of code points.
+pub let measure_codepoints = pure
+  (font: Font, codepoints: []i32, size: f32, spacing: f32) -> Vector2 => {
+    if codepoints.len() == 0 {
+      Vector2 { x: 0.0, y: 0.0 }
+    } else {
+      unsafe {
+        rl_measure_codepoints(font, codepoints.data(), i32(codepoints.len()), size, spacing)
+      }
+    }
+  }
+
+/// Vertical distance between lines, in pixels, for text containing newlines.
+pub let set_text_line_spacing = (spacing: i64) -> void =>
+  unsafe { rl_set_text_line_spacing(i32(spacing)) }
+
+/// Where a code point sits in the font's glyph table, or the fallback glyph's index when
+/// the font has no such character.
+pub let glyph_index = pure (font: Font, codepoint: rune) -> i64 =>
+  i64(unsafe { rl_glyph_index(font, i32(codepoint)) })
+
+/// One glyph's metrics.
+pub let glyph_info = pure (font: Font, codepoint: rune) -> GlyphInfo =>
+  unsafe { rl_glyph_info(font, i32(codepoint)) }
+
+/// Where a code point's glyph sits in the font's atlas texture — which is what
+/// `draw_texture_rect` needs to draw one character by hand.
+pub let glyph_atlas_rect = pure (font: Font, codepoint: rune) -> Rectangle =>
+  unsafe { rl_glyph_atlas_rec(font, i32(codepoint)) }
+
+
+@symbol("GetFontDefault")
+unsafe extern rl_default_font: () -> Font
+@symbol("LoadFont")
+unsafe extern rl_load_font: (path: ^u8) -> Font
+@symbol("LoadFontEx")
+unsafe extern rl_load_font_ex:
+  (path: ^u8, size: i32, codepoints: ^i32, count: i32) -> Font
+@symbol("LoadFontFromMemory")
+unsafe extern rl_font_from_memory:
+  (kind: ^u8, data: ^u8, size: i32, font_size: i32, codepoints: ^i32, count: i32) -> Font
+@symbol("LoadFontFromImage")
+unsafe extern rl_font_from_image: (image: Image, key: Color, first_char: i32) -> Font
+@symbol("IsFontValid")
+unsafe extern pure rl_font_valid: (font: Font) -> u8
+@symbol("UnloadFont")
+unsafe extern rl_unload_font: (font: Font) -> void
+@symbol("ExportFontAsCode")
+unsafe extern rl_export_font_as_code: (font: Font, path: ^u8) -> u8
+@symbol("DrawTextCodepoint")
+unsafe extern rl_draw_codepoint:
+  (font: Font, codepoint: i32, position: Vector2, size: f32, tint: Color) -> void
+@symbol("DrawTextCodepoints")
+unsafe extern rl_draw_codepoints:
+  (font: Font, codepoints: ^i32, count: i32, position: Vector2, size: f32, spacing: f32,
+   tint: Color) -> void
+@symbol("MeasureTextEx")
+unsafe extern pure rl_measure_text_ex:
+  (font: Font, text: ^u8, size: f32, spacing: f32) -> Vector2
+@symbol("MeasureTextCodepoints")
+unsafe extern pure rl_measure_codepoints:
+  (font: Font, codepoints: ^i32, count: i32, size: f32, spacing: f32) -> Vector2
+@symbol("SetTextLineSpacing")
+unsafe extern rl_set_text_line_spacing: (spacing: i32) -> void
+@symbol("GetGlyphIndex")
+unsafe extern pure rl_glyph_index: (font: Font, codepoint: i32) -> i32
+@symbol("GetGlyphInfo")
+unsafe extern pure rl_glyph_info: (font: Font, codepoint: i32) -> GlyphInfo
+@symbol("GetGlyphAtlasRec")
+unsafe extern pure rl_glyph_atlas_rec: (font: Font, codepoint: i32) -> Rectangle

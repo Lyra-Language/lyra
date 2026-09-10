@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — raylib text and fonts, and a backend panic that would not reduce
+
+`Font`, `GlyphInfo`, font loading, glyph metrics and code-point drawing: 289 to 305 of
+raylib's 548.
+
+**`Font`'s layout was checked against C** — 48 bytes with `texture` at 12, `recs` at 32 and
+`glyphs` at 40 — because a nested `Texture2D` sandwiched between `int`s is exactly where a
+padding assumption goes wrong. The behavioural proof cross-checks itself: raylib's default
+font reports 224 glyphs in a 128x128 atlas, and glyph 'A' comes back with `value` 65, a
+6x10 image, and an atlas rectangle of 6x10 at (45,12). Two independent readings of the same
+glyph agreeing is what says the pointers are being followed correctly.
+
+**Two functions are unbound because they crash the compiler**, and the contrast is the
+whole finding:
+
+    DrawTextCodepoint(Font, int, Vector2, float, Color)          lowers correctly
+    DrawTextEx       (Font, char*, Vector2, float, float, Color) panics in aggregateSpill
+
+One pointer and one more float apart. `MeasureTextEx` and `GetGlyphInfo` pass the same
+48-byte `Font` by value and are fine, so the large struct alone is not it — it looks like
+register exhaustion on aarch64 forcing a stack spill that stores the wrong operand.
+
+**It resisted reduction for four rounds, and the ruled-out hypotheses are the useful
+record.** A self-contained file with the same structs, extern and call site lowers fine. So
+does one with several `with_cstring` sites capturing different aggregate shapes, which was
+the shared-specialization guess. And the closure is *not* the cause: replacing
+`with_cstring` with a copying `cstring()` — no lambda at all — still panics. It needs the
+whole `bindings.raylib` module present, which is the same signature the `data.data()` bug
+had, and points at something whole-program rather than local.
+
+The method that did work, twice now: **remove the section, confirm the module lowers, then
+add its declarations back one at a time.** Truncating the file never works — a half file
+leaves undefined externs and fails `check` for an unrelated reason, which reads like a
+different bug.
+
+Shipping the working subset and documenting the two that are blocked, with the repro, is
+the honest outcome. `draw_text` covers the default font and `draw_codepoint` draws a glyph
+at a time in a loaded one, so nothing is unreachable — only less convenient.
+
 ### 09/10/26 — raylib audio finished, and a compiler bug that hid behind it
 
 `Music`, `SoundAlias`, audio streams and the rest of Wave/Sound: 244 bound to 289 of
