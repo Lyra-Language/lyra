@@ -1518,6 +1518,53 @@ There is deliberately **no `std.libc`**: an extern cannot be exported anyway, an
 bindings module re-creates the libc shim layer FFI was built to dissolve. The shape that
 works is a per-library binding module owning its own externs, which needs nothing new.
 
+## Releasing a foreign resource (`@must_release`)
+
+`@must_release(unload_sound) struct Sound { … }`, enforced by
+`checker.CheckMustRelease` (`lyra-W022`). The language-level rules are in the workspace
+`CLAUDE.md`; inside this project:
+
+- **The attribute argument is an `identifier`, and that cost nothing.** `attribute_args`
+  gained `$.identifier` beside the number, type name and string — **zero new states**,
+  since `identifier` is lowercase-leading and `user_defined_type_name` capital-leading,
+  so the two are lexically disjoint. It is spelled as a name rather than as a string
+  because it names something in *Lyra's* namespace: `@link("SDL3")` and
+  `@symbol("SDL_Free")` are text handed to the linker verbatim, and a Lyra name that
+  resolves would be lying about itself as a string.
+- **The name is resolved from the type declaration's location, not the use site.** In a
+  binding module the release function is often unexported; looking it up from the using
+  module would answer for whatever that module can see, or for nothing.
+- **A discharge is tested against the resolved declaration, not the spelling** (rule 9),
+  with the name as the fallback for a callee too dynamic to resolve — a dispatched
+  method, a call through a local. An unrecognized call shape must never manufacture a
+  warning.
+- **The join is the *intersection*, where `CheckUseAfterMove`'s is the union.** The two
+  passes answer mirror-image questions and should be read together, but this is the line
+  where copying the other one is wrong: a use-after-move reports on what a branch *adds*,
+  so union is its conservative direction; this reports on what is *left over*, so
+  intersection is. Flipping it makes every early return a false positive.
+- **Escape is the default, and there is deliberately no list of construction kinds.** A
+  held binding mentioned anywhere but a borrowing call argument escapes — returned,
+  wrapped in a `Some`, put in a struct, captured, aliased. A whitelist of the two
+  positions that *keep* an obligation cannot suffer rule 8's tax; a switch over
+  `ArrayLiteralExpr`/`StructInstanceExpr`/`TupleLiteralExpr`/… would, and that family is
+  the one that already cost this compiler eight instances of one omission.
+
+**Two bugs found by probing behaviour rather than by reading the code**, which is rule 8's
+own advice:
+
+1. **The check was blind to `Maybe<Sound>`** — and so to every real acquisition, since a
+   binding module's constructors all answer a `Maybe`. Found by deleting an
+   `unload_sound` from `examples/raylib/breakout.lyra` and getting no warning at all.
+2. **The `match`-arm handling was dead code.** The scrutinee was walked through `expr`
+   before the arm seeding read it, so the escape default had already dropped the binding.
+   Every test around it passed — by not reporting, which is what those tests asserted.
+   Found by writing the *unwrap-and-forget* case, which is the one that must report.
+
+Both are the same shape: **a pass that under-reports is silent when it is broken**, so
+its tests have to include cases that *must* fire. The `assertLeaks` half of
+`must_release_test.go` is there for that reason, not for symmetry.
+
 ## Binding modules (`bindings/`)
 
 `bindings/sdl3/` is SDL3, and the shape `todo.md` has called for since the FFI landed: a
@@ -1550,6 +1597,9 @@ pattern. It needed nothing new from the language.
 Its module reads like ordinary Lyra precisely because the hard part is in `pkg/abi` — a
 `Vector2` is a `struct`, passed as one, and nothing in the binding mentions registers.
 
+**`Sound` and `Wave` carry `@must_release`**, and this module is that feature's first
+user — the note below about unloading being the caller's is what prompted it.
+
 `bindings/raylib/audio.lyra` is the third aggregate case and the one where the *aggregates
 are large*: `Sound` is 40 bytes and `Wave` 24, so both come back through an `sret` buffer
 rather than in registers. It needed nothing new — which is the point of having validated
@@ -1560,7 +1610,8 @@ rather than in registers. It needed nothing new — which is the point of having
 - **Unloading is the caller's, and there is no alternative.** Lyra has no destructors, so a
   `Sound` cannot free itself; a managed box with a `drop_fn` over raylib's memory is the
   ownership crossing the FFI refuses in both directions. `unload_sound`/`unload_wave` are
-  exported and the program calls them, as C does.
+  exported and the program calls them, as C does — and `@must_release` is what makes
+  forgetting a warning rather than a silent leak.
 - **A C function can fail by succeeding, and the wrapper is where that stops.**
   `LoadWaveFromMemory` wants the extension **with a dot** and answers an all-zero `Wave`
   without one — no error, no log line. `wave_from_memory` normalises the extension and

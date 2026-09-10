@@ -279,6 +279,12 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// parameter).
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt, res.MethodTable)...)
 
+	// A `@must_release` resource dropped without its release call (lyra-W022). After
+	// typechecking for the same reason use-after-move is: the binding's *settled* type
+	// is what says whether it carries an obligation, and the callee resolution it uses
+	// to tell a release from a borrow is the typechecker's.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckMustRelease(program, symTable, tt, res.MethodTable)...)
+
 	// `[v; n]` whose slots share one mutable value (lyra-W019). After typechecking
 	// because the element's *settled* type is the question: under a `[][]rune`
 	// annotation the inner `[' '; WIDTH]` infers as a fixed `[WIDTH]rune` and only

@@ -27,6 +27,10 @@ pub struct AudioStream {
 
 /// `Sound` — a stream plus its length. 40 bytes, so it crosses in memory rather than in
 /// registers; `pkg/abi` decides that, and nothing here has to.
+///
+/// The samples belong to raylib, so [unload_sound] is the call that gives them back and
+/// `@must_release` is what makes forgetting it a warning rather than a silent leak.
+@must_release(unload_sound)
 pub struct Sound {
   stream: AudioStream,
   frame_count: u32,
@@ -37,6 +41,7 @@ pub struct Sound {
 /// It is a separate type because it is a separate lifetime: a `Wave` holds the decoded
 /// buffer, [sound_from_wave] copies what it needs, and the wave can then be unloaded
 /// while the sound plays on.
+@must_release(unload_wave)
 pub struct Wave {
   frame_count: u32,
   sample_rate: u32,

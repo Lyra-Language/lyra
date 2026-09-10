@@ -2,7 +2,9 @@ package typedecls
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/cst"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -60,4 +62,48 @@ func CollectBuiltin(attrList *sitter.Node, ctx *collector_ctx.Ctx) string {
 		}
 	}
 	return ""
+}
+
+// CollectMustRelease extracts the single argument of a `@must_release(f)` attribute —
+// the function that discharges the obligation a value of this type carries — together
+// with that argument's own span. Returns ("", zero) when the attribute is absent.
+//
+// The name is taken as **text and not resolved here**, which is rule 4's constraint
+// rather than laziness: which declaration a bare name means depends on the module
+// asking, and the collector is still building the table that answers. `checker`'s
+// must-release pass resolves it with LookupFunctionFrom from the declaration's own
+// location, so an unexported release function in a binding module is found and a
+// same-named function in another module is not.
+//
+// Only the first argument counts. A release is one call — a type needing two is a
+// type wanting a wrapper.
+//
+// An attribute with no argument names no function and is reported **here**, returning
+// "" — so a caller can read "" as "this type carries no obligation" with no second
+// state to disambiguate. Encoding "present but empty" as a non-zero location beside an
+// empty name would be a convention every reader has to know and one reader will miss.
+func CollectMustRelease(attrList *sitter.Node, ctx *collector_ctx.Ctx) (string, ast.Location) {
+	for i := uint(0); i < attrList.ChildCount(); i++ {
+		child := attrList.Child(i)
+		if child.Kind() != "attribute" {
+			continue
+		}
+		nameNode := cst.Field(child, "name")
+		if nameNode == nil || ctx.NodeText(nameNode) != "must_release" {
+			continue
+		}
+		argsNode := cst.Field(child, "args")
+		if argsNode == nil {
+			ctx.AddError(child, diag.SeverityError, "the `@must_release` attribute needs the "+
+				"name of the function that releases this type, as in `@must_release(unload_sound)`")
+			return "", ast.Location{}
+		}
+		for j := uint(0); j < argsNode.ChildCount(); j++ {
+			if argsNode.FieldNameForChild(uint32(j)) == "value" {
+				arg := argsNode.Child(j)
+				return ctx.NodeText(arg), ctx.NodeLocation(arg)
+			}
+		}
+	}
+	return "", ast.Location{}
 }

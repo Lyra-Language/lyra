@@ -9,6 +9,95 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — `@must_release`, and why Lyra is not getting destructors
+
+`@must_release(unload_sound) struct Sound { … }`, and `lyra-W022` when a binding of one
+goes out of scope with the call unwritten. `bindings/raylib`'s `Sound` and `Wave` are
+marked; nothing else in the tree is, and nothing else warns.
+
+**The question that produced it was "should we add destructors", and the answer is no.**
+Three of the language's own commitments each rule them out independently, and it is worth
+recording them together because each is easy to forget alone:
+
+1. **A destructor is a call at a point with no syntax.** Lyra's central bet is that
+   effects are *written* — `lyra-W018` exists to make an unwritten bound noticeable. A
+   `Sound`'s release is an FFI call carrying `AllEffects`; a `pure` function holding one
+   would run it at a closing brace. The two ways out are both bad: charge every scope
+   exit with the effects of every destructor in scope, which makes `pure` unattainable
+   and puts the diagnostic on a `}`, or exempt destructors from the effect system, which
+   is a hole in the thing this language is most careful about.
+2. **Under refcounting you would not get RAII anyway.** With Perceus and `shared`, the
+   last release is a data-flow fact, not a lexical one — it can happen in another
+   function. So the guarantee on offer is "runs eventually, somewhere", which is fine for
+   a file descriptor and wrong for the case people reach for destructors to fix.
+3. **The FFI already refuses the crossing it needs.** A `drop_fn` over memory raylib owns
+   is ownership crossing the boundary, which the rule refuses in both directions, and it
+   is hazard 12's territory — glue that can free the box it is running on.
+
+The one point in favour, worth keeping: `panic` traps rather than unwinds, so Lyra is
+free of the worst part of destructors elsewhere — no unwinding-during-unwinding, no
+`noexcept` question. If they are ever wanted, that cost is already not there.
+
+So the release call stays the program's to write, and a **checker** is what notices when
+it was not. It is the inverse of `CheckUseAfterMove`, and reuses its shape: the same
+flow-sensitive per-body walk with a per-binding map, asking "does every path reach a
+release?" where that asks "does any path read after a move?".
+
+**The join is where copying it would have been wrong.** Use-after-move takes the union of
+its branches, because moved-in-either is *its* conservative direction. This reports on
+what is left over, so the conservative direction is the intersection — released down any
+one branch counts. That deliberately misses `if ok { unload(s) }` with no else, and the
+alternative fires on correct early-return code, which for a warning nobody can suppress
+is the worse failure. It is a warning for that reason and one more: there is no
+`#[allow]` in this language, so a hard error would have no answer for a resource
+deliberately held until the process exits.
+
+**Escape is the default, and there is no list of construction kinds.** A held binding
+mentioned anywhere but a borrowing call argument escapes. The alternative — a switch over
+`TupleLiteralExpr`/`StructInstanceExpr`/`ArrayLiteralExpr`/… — is precisely the family
+that already cost this compiler eight instances of one omission (rule 8). A whitelist of
+the two positions that *keep* an obligation cannot suffer that: a node kind added
+tomorrow escapes, which is the quiet direction.
+
+**Two bugs, both found by probing behaviour rather than reading code**, and both the same
+shape underneath:
+
+- **The check was blind to `Maybe<Sound>`.** Acquiring a foreign resource can fail, so
+  every acquisition in a binding module answers a `Maybe` — `load_sound`,
+  `wave_from_memory`, `sound_from_wave`. Tracking only a bare `Sound` left it silent on
+  the one shape it exists for. Found by deleting an `unload_sound` from
+  `examples/raylib/breakout.lyra` and getting **no warning at all**, which is the only
+  test that could have found it: every other case was asserting silence.
+- **The `match`-arm handling was dead code.** The scrutinee was walked through `expr`
+  before the arm seeding read it, so the escape default had already dropped the binding.
+  Every test around it passed, by not reporting. Found by writing the unwrap-and-forget
+  case — `match s { Some(v) => play_sound(v), None => {} }` — which is the one that must
+  fire.
+
+**The lesson is that a pass which under-reports is silent when it is broken.** Its tests
+cannot be mostly clean-cases; the ones that *must* fire are the ones doing the work. That
+is what `assertLeaks` is for, and it is why the two bugs above were both found in minutes
+once such a case existed and neither in the hour before.
+
+One more thing the message pays for: `unload_sound(s)` does not compile when `s` is a
+`Maybe<Sound>`, so the wrapped case suggests the unwrap instead — and the test **takes
+the advice literally** and requires the result to check clean. This file already records
+the same mistake once, when a diagnostic advised `where Self: A`, syntax the language
+does not have.
+
+**The grammar change was one word**: `attribute_args` gained `$.identifier`, at **zero
+new states** — it is lexically disjoint from `user_defined_type_name`, so no state has to
+choose. A name rather than a string because it names something in *Lyra's* namespace,
+where `@link("SDL3")` and `@symbol` are text handed to the linker verbatim.
+
+**Deliberately not built**, and the reasoning rather than the list: `defer` was the other
+candidate and is the better *second* move — it is a written call, so effects are charged
+normally, and it pairs with this (the check says you must, the `defer` makes doing it one
+line). The scoped-closure form `with_cstring` already established covers most of what it
+would buy, so it waits for a program that strains against that. A `newtype` cannot carry
+the attribute until `constrained_type` takes an `attribute_list`, which is the obvious
+extension and where `newtype Fd = i32` wants to go.
+
 ### 09/09/26 — raylib audio, and a silent success at the boundary
 
 `bindings/raylib/audio.lyra` binds the device, `Sound`, `Wave` and playback, and

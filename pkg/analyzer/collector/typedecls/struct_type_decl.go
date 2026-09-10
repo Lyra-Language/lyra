@@ -15,6 +15,8 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 	var genericParams []ast.GenericParam
 	var fields []types.StructField
 	var derives []string
+	var mustRelease string
+	var mustReleaseLoc ast.Location
 	var memberDocs map[string]*ast.Doc
 	isPublic := cst.Field(node, "visibility") != nil
 
@@ -23,6 +25,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 		switch child.Kind() {
 		case "attribute_list":
 			derives = collectDerives(child, ctx)
+			mustRelease, mustReleaseLoc = CollectMustRelease(child, ctx)
 		case "struct_name":
 			name = ctx.NodeText(child)
 			nameLoc = ctx.NodeLocation(child)
@@ -43,9 +46,11 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 			Name:   name,
 			Fields: fields,
 		},
-		IsPublic:   isPublic,
-		Derives:    derives,
-		MemberDocs: memberDocs,
+		IsPublic:       isPublic,
+		Derives:        derives,
+		MustRelease:    mustRelease,
+		MustReleaseLoc: mustReleaseLoc,
+		MemberDocs:     memberDocs,
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {

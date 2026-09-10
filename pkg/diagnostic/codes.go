@@ -1086,4 +1086,23 @@ const (
 	// so a second `Wrap` written where `Nil` was meant would compile and run with one
 	// branch quietly missing.
 	CodeUnreachableMatchArm = "lyra-W021"
+
+	// CodeUnreleasedResource: a binding of a `@must_release(f)` type goes out of
+	// scope with `f` never called on it.
+	//
+	// The attribute marks a type whose values name a resource **something other than
+	// Lyra owns** — a raylib `Sound`, an SDL renderer, a file descriptor. Lyra has no
+	// destructors, and deliberately so (COMPLETED.md, 09/09): a destructor is a call
+	// at a point with no syntax, which is the one thing a language whose effect bounds
+	// are *written* cannot afford, and under refcounting its run point is a data-flow
+	// fact rather than a lexical one. So the release call stays the program's to write,
+	// and this is what notices when it was not written.
+	//
+	// **A warning, not an error, for two reasons that both matter.** The analysis is
+	// approximate by construction — it resolves uncertainty toward not reporting, the
+	// rule every new diagnostic in this package follows — so a hard error would be
+	// betting correctness on an under-approximation. And there is no `#[allow]` in this
+	// language: an error with no escape hatch would have no answer for a resource
+	// deliberately held until the process exits.
+	CodeUnreleasedResource = "lyra-W022"
 )

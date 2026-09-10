@@ -3419,6 +3419,25 @@ check the wrong declaration.
 `bindings/raylib`'s named colours are `pub const` rather than nullary `pure` functions,
 which is what the change was for.
 
+### `@must_release` — a resource dropped without its release call — **[DONE 09/09]**
+
+`@must_release(unload_sound)` on a `struct` names the call that gives a foreign resource
+back; `lyra-W022` fires when a binding of one goes out of scope without it. Answers
+"should we add destructors" with no — see COMPLETED.md for the three commitments that
+each rule one out. `bindings/raylib`'s `Sound` and `Wave` are marked.
+
+**Open extensions**, in rough order of value:
+
+- **`newtype` cannot carry the attribute.** `constrained_type` has no `attribute_list`
+  slot, and `newtype Fd = i32` with `@must_release(close)` is where `std.io` wants to go.
+- **`if let` does not seed a payload** the way a `match` arm does, so
+  `if let Some(s) = maybe_sound { … }` escapes rather than tracking. The `match` path is
+  the one the language idiom uses and is what breakout exercises; the `if let` shape wants
+  `destructuringBranches`' treatment, mirroring `CheckUseAfterMove`.
+- **`defer`** is the natural companion — a written call, so effects are charged normally,
+  and the check would accept it as the discharge. Waiting on a program that strains
+  against the scoped-closure form (`with_cstring`) the language already has.
+
 ### raylib audio, and Breakout has sound — **[DONE 09/09]**
 
 `bindings/raylib/audio.lyra`: `init_audio_device`, `load_sound`, `wave_from_memory`,

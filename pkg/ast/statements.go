@@ -52,6 +52,17 @@ type TypeDeclStmt struct {
 	// advice.
 	ShadowedCanonical     string
 	ShapeMatchesCanonical bool
+	// MustRelease is the function named by a `@must_release(f)` attribute — the call
+	// that discharges the obligation a value of this type carries — or "" when the
+	// declaration has no such attribute. MustReleaseLoc is the attribute argument's
+	// own span, so a diagnostic about the *name* points at the name rather than at
+	// the whole declaration.
+	//
+	// It is the raw text, resolved by the checker rather than here: a name means what
+	// the declaring module says it means (rule 4), and the collector has no resolved
+	// symbol table to ask while it is still building one.
+	MustRelease    string
+	MustReleaseLoc Location `print:"-"`
 	// Doc is the `///` comment block immediately above the declaration, nil if
 	// undocumented.
 	Doc *Doc
