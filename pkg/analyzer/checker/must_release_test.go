@@ -297,8 +297,14 @@ let main = () -> void => {
 `)
 }
 
-// Unwrapping is not releasing. The arm that can see the value is the arm that has to
-// discharge it, and the report lands on the payload rather than on the wrapper.
+// Unwrapping is not releasing — but **the report lands on the binding, not on the arm's
+// payload**, because that is the thing that still holds the resource after the match ends.
+//
+// The payload is a *view*: releasing through it discharges the binding, and merely using
+// it does not. Getting that backwards produced a false positive on the shape every program
+// with a long-lived optional resource writes —
+// `match held { Some(t) => draw(t), None => {} }` once a frame — which is how it was
+// found, writing `examples/raylib/textures.lyra`.
 func TestMustRelease_UnwrappingWithoutReleasingIsReported(t *testing.T) {
 	assertLeaks(t, `
 let main = () -> void => {
@@ -308,7 +314,25 @@ let main = () -> void => {
     None => {},
   }
 }
-`, "v")
+`, "s")
+}
+
+// The shape the view rule exists for: a binding unwrapped to be *used*, over and over,
+// and released once somewhere else.
+func TestMustRelease_UnwrappingToUseIsABorrow(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  let s = try_load(1)
+  match s {
+    Some(v) => play_sound(v),
+    None => {},
+  }
+  match s {
+    Some(v) => unload_sound(v),
+    None => {},
+  }
+}
+`)
 }
 
 // A diagnostic naming a call the reader cannot write is worse than one naming none:
@@ -350,13 +374,24 @@ let main = () -> void => {
 `)
 }
 
-// The mirror of the `match` case: unwrapping is not releasing, and the branch that can
-// see the value is the branch that has to discharge it.
+// The mirror of the `match` case, and the same rule: the binding is what is reported,
+// since it is what still holds the resource once the branch is over.
 func TestMustRelease_IfLetUnwrapWithoutReleasingIsReported(t *testing.T) {
 	assertLeaks(t, `
 let main = () -> void => {
   let s = try_load(1)
   if let Some(v) = s { play_sound(v) }
+}
+`, "s")
+}
+
+// Where the scrutinee is a **temporary**, the payload really is the only handle and the
+// arm really is the last chance — so there the report lands on the payload. That is the
+// distinction the view rule draws, and both halves of it are pinned.
+func TestMustRelease_ATemporaryScrutineeReportsThePayload(t *testing.T) {
+	assertLeaks(t, `
+let main = () -> void => {
+  if let Some(v) = try_load(1) { play_sound(v) }
 }
 `, "v")
 }

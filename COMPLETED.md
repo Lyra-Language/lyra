@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — the textures example, and the view rule it forced out of `@must_release`
+
+`examples/raylib/textures.lyra`, on the plan `shapes.lyra` established: a `--check` mode
+that holds the image half to 30 answers following from the numbers, and a gallery for the
+six drawing calls. All **48** public functions exercised. No assets ship — the sprite sheet
+and the nine-patch panel are `[]Color` built in Lyra and uploaded with `update_texture`,
+which is also the only thing that exercises that call.
+
+**Writing it found a false positive in `@must_release`, and the fix is a real rule rather
+than a patch.** The shape was ordinary:
+
+	match shot { Some(tex) => draw_texture_pro(tex, …), None => {} }
+
+a long-lived optional texture, unwrapped once a frame to be drawn, released after the loop.
+The pass reported it as leaked, because the arm-seeding rule moved the obligation onto the
+payload and then reported the payload for not releasing it.
+
+The correct model is that **the payload is a *view* of the binding, not a handover**. One
+resource under two names: releasing through the view discharges the binding, and so does
+*escaping* through it, while merely using it does neither. Where the scrutinee is a
+**temporary** — `if let Some(v) = load(…)` — there is no binding to hold the claim, the
+arm is the last chance, and the payload owns it. That distinction is the whole rule, and
+both halves are now pinned by tests.
+
+**The escape half was found by the shipped code, not by a test.** Clearing the alias only
+on *release* left `examples/raylib/breakout.lyra` reported as leaking a sound it hands
+straight back — `match sound_from_wave(w) { Some(snd) => Some(snd), … }` escapes the
+payload into a fresh `Maybe`, so the binding it came from left too. That is the commonest
+shape there is, and it was invisible to a suite where every fixture released explicitly.
+The sweep over `examples/`, `std/` and `bindings/` after every checker change is what
+caught it.
+
+Two of the pass's own tests changed their expected *binding* as a result — from the arm's
+payload to the binding it came from — and the new answer is better: it names the thing that
+still holds the resource and that the reader must release, and the suggested fix is the
+match they would write.
+
+The example also drove out a shape worth recording: **two names for one GPU object is
+something the checker cannot see through**, since it tracks bindings rather than textures.
+`var mipped = sheet` and then unloading `sheet` asks for two unloads of a thing freed once.
+The example hands the match arm's binding into a single owning `var` and releases only
+that, which is the shape to copy.
+
 ### 09/10/26 — the texture bindings, and `@must_release` earning its keep
 
 `bindings/raylib/texture.lyra`: 46 functions, the whole pipeline from pixels to screen.

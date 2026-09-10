@@ -134,6 +134,12 @@ type resource struct {
 	typName   string
 	release   string
 	releaseFn *ast.LambdaExpr
+	// aliasOf names the binding this one is a *view* of — a `match` arm's payload
+	// unwrapped from a `Maybe` that a longer-lived binding still holds. Releasing
+	// through the view discharges the binding it came from, because they are one
+	// resource; the view itself carries no separate obligation. "" for an ordinary
+	// binding that owns what it holds.
+	aliasOf string
 	// wrapped marks an obligation reached through a canonical wrapper — the `Sound`
 	// inside a `Maybe<Sound>`. It changes the message and nothing else, because the
 	// fix is a different one: `unload_sound(chime)` does not compile when `chime` is
@@ -315,7 +321,7 @@ func (c *mustRelease) expr(st heldState, e ast.Expression) heldState {
 		// and the obligation goes with it. See the header: a whitelist of the
 		// positions that *keep* an obligation is what makes a new expression kind
 		// safe by default instead of one more switch to keep in step.
-		delete(st, v.Name)
+		c.clear(st, v.Name)
 		return st
 
 	case *ast.MemberExpr:
@@ -483,23 +489,44 @@ func (c *mustRelease) discharge(
 	if !held {
 		return
 	}
+	released := false
 	switch {
 	case r.releaseFn != nil && calleeFn != nil:
 		// Both resolved: compare declarations, so another module's same-named
 		// function cannot discharge this obligation.
-		if calleeFn == r.releaseFn {
-			delete(st, name)
-			return
-		}
+		released = calleeFn == r.releaseFn
 	case calleeName != "" && calleeName == r.release:
 		// One side did not resolve — a call through a local, a dispatched method.
 		// Fall back to the spelling rather than reporting: an unrecognized call
 		// shape must not manufacture a warning.
-		delete(st, name)
+		released = true
+	}
+	if released {
+		c.clear(st, name)
 		return
 	}
 	if pos < len(params) && params[pos].TypeModifier == types.Own {
 		delete(st, name)
+	}
+}
+
+// clear discharges a binding **and whatever it is a view of**. One resource can be held
+// under two names — a `match` arm's payload beside the binding it was unwrapped from — and
+// the view's fate is the resource's fate whichever way it goes: released through the view,
+// or escaped through it.
+//
+// The escape half is not a refinement but the commonest shape there is:
+//
+//	match sound_from_wave(w) { Some(snd) => Some(snd), None => None }
+//
+// hands the payload to the caller inside a fresh `Maybe`, so the binding it came from left
+// too. Clearing only on release reported `examples/raylib/breakout.lyra` as leaking a
+// sound it hands straight back.
+func (c *mustRelease) clear(st heldState, name string) {
+	r, held := st[name]
+	delete(st, name)
+	if held && r.aliasOf != "" {
+		delete(st, r.aliasOf)
 	}
 }
 
@@ -694,25 +721,41 @@ func (c *mustRelease) arm(
 ) heldState {
 	out := st.clone()
 	var payload []string
+	owning := u.scrutinee == ""
 	if binds && u.isHeld && pat != nil {
 		if bound := patternBoundNames(pat); len(bound) == 1 {
 			payload = bound
-			delete(out, u.scrutinee) // the payload is the resource now
 			r := u.held
 			r.loc = pat.GetLocation()
-			// Inside the alternative the payload *is* the resource, so the message
-			// names the direct call again rather than the unwrap that just happened.
+			// Inside the alternative the payload stands for the resource, so the
+			// message names the direct call rather than the unwrap that just happened.
 			r.wrapped = false
-			out[bound[0]] = r
+			if owning {
+				// The scrutinee was a temporary — `if let Some(v) = load(…)` — so this
+				// alternative is the only place the value is ever visible, and failing
+				// to release it here is a leak with nowhere else to be reported.
+				out[bound[0]] = r
+			} else {
+				// **A named binding keeps its own claim and the payload is a view of
+				// it.** Releasing through the view discharges the binding; merely
+				// *using* the view does not, because the binding outlives this
+				// alternative and may be released later — which is what
+				// `match held { Some(t) => draw(t), … }` does every frame.
+				r.aliasOf = u.scrutinee
+				out[bound[0]] = r
+			}
 		}
 	}
 	out = run(out)
-	// Report and clear what this alternative was handed, so a payload never reaches the
-	// join — where the intersection would silently drop it.
+	// A payload never reaches the join: an owning one is reported here, since nothing
+	// outside can release it, and a view is simply dropped — its binding carries the
+	// claim and answers for it at its own scope end.
 	leaked := heldState{}
 	for _, name := range payload {
 		if r, still := out[name]; still {
-			leaked[name] = r
+			if owning {
+				leaked[name] = r
+			}
 			delete(out, name)
 		}
 	}

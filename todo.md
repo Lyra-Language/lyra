@@ -3475,9 +3475,10 @@ texture half cannot be tested for.
 Also unbound: `LoadTextureCubemap` (wants the 3D module) and `ExportImageToMemory`, which
 answers a non-null pointer and a size of 0 — measured, not assumed.
 
-**No example yet.** The image half is covered by `TestExec_RaylibImageBindings`; the
-drawing half has nothing exercising it, and a gallery like `examples/raylib/shapes.lyra`
-is what it wants.
+`examples/raylib/textures.lyra` exercises all 48, with a `--check` mode over the image half
+(30 cases) and a gallery for the drawing calls. Writing it found a false positive in
+`@must_release` — a long-lived optional resource unwrapped to be *used* was reported as
+leaked — and the view rule that fixes it is in COMPLETED.md.
 
 ### `bindings/raylib/shapes.lyra` is complete — **[DONE 09/10]**
 

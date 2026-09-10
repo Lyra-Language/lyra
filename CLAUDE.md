@@ -1586,6 +1586,13 @@ nothing bound. `checker.CheckLetElseDiverges` reports it, after typechecking bec
   where copying the other one is wrong: a use-after-move reports on what a branch *adds*,
   so union is its conservative direction; this reports on what is *left over*, so
   intersection is. Flipping it makes every early return a false positive.
+- **A named binding's unwrapped payload is a *view*, not a handover.** `match held {
+  Some(t) => draw(t), … }` borrows: the binding keeps the claim and answers for it at its
+  own scope end, and only releasing *or escaping* through the view discharges it. Where
+  the scrutinee is a **temporary** (`if let Some(v) = load(…)`) the payload really is the
+  only handle, so there the arm must release and the report lands on the payload. Both
+  halves are pinned by tests, and getting the first one backwards produced a false
+  positive on the shape every program with a long-lived optional resource writes.
 - **Escape is the default, and there is deliberately no list of construction kinds.** A
   held binding mentioned anywhere but a borrowing call argument escapes — returned,
   wrapped in a `Some`, put in a struct, captured, aliased. A whitelist of the two
@@ -1726,6 +1733,13 @@ window, and a `--check` mode that runs every collision and spline-point binding 
 geometry whose answer follows from the numbers. 61 of 61 public functions are exercised.
 The split exists because a drawing demo cannot be checked by a machine and the geometry
 underneath it can — the lesson breakout learned, applied at the start this time.
+
+`examples/raylib/textures.lyra` is its example, on `shapes.lyra`'s two-programs-in-one-file
+plan: a `--check` mode covering the image half against answers that follow from the numbers
+(30 cases), and a gallery for the six drawing calls. All **48** public functions are
+exercised. It ships no assets — the sprite sheet and nine-patch panel are `[]Color` built
+in Lyra and uploaded with `update_texture`, which is also the only thing that exercises
+that call.
 
 **`bindings/raylib/texture.lyra` is the third module** (09/10) — 46 functions covering the
 whole pipeline from pixels to screen: **6 of 6** drawing calls, **3 of 3** configuration,
