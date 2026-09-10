@@ -242,7 +242,8 @@ func (l *lowerer) lowerExternCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 			args = append(args, v)
 			continue
 		}
-		pieces, err := l.coerceAggregateOut(block, v, slot)
+		pieces, err := l.coerceAggregateOut(block, v, slot,
+			fmt.Sprintf("argument %d of %s at %s", i+1, fn.GlobalIdent.Ident(), arg.GetLocation().Pretty()))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -263,8 +264,11 @@ func (l *lowerer) lowerExternCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 }
 
 // coerceAggregateOut turns an aggregate value into the register pieces the ABI passes.
-func (l *lowerer) coerceAggregateOut(block *ir.Block, v value.Value, slot abiSlot) ([]value.Value, error) {
-	store := l.aggregateSpill(block, v, slot)
+func (l *lowerer) coerceAggregateOut(block *ir.Block, v value.Value, slot abiSlot, what string) ([]value.Value, error) {
+	store, err := l.aggregateSpill(block, v, slot, what)
+	if err != nil {
+		return nil, err
+	}
 	if slot.class.Indirect {
 		// A memory argument is the address of the caller's copy. The copy matters: the
 		// callee may write through it, and `byval` means it gets one of its own on SysV.
@@ -294,15 +298,28 @@ func (l *lowerer) coerceAggregateIn(block *ir.Block, ret value.Value, slot abiSl
 
 // aggregateSpill stores v into a stack slot big enough for both its own shape and the
 // coerced one, and answers the slot.
-func (l *lowerer) aggregateSpill(block *ir.Block, v value.Value, slot abiSlot) value.Value {
+//
+// **The shape check is rule 5's, standing in front of a panic.** `ir.NewStore` refuses
+// mismatched operands by panicking inside llir, so a value that is not the aggregate the
+// slot expects took `lyrac build` down with a Go stack trace naming neither the argument
+// nor the file — which is how a front-end bug in another pass presents here. It happened:
+// a closure over a parameter whose name a sibling module file also declared was lowered as
+// a reference to that declaration, so a `{ i8*, i8* }` arrived where a `%Color` belonged
+// (captures.go, 09/10). A caller-supplied `what` names the argument, since by this depth
+// the call site is out of sight.
+func (l *lowerer) aggregateSpill(block *ir.Block, v value.Value, slot abiSlot, what string) (value.Value, error) {
 	var coerceTy lltypes.Type = slot.aggTy
 	if !slot.class.Indirect {
 		coerceTy = lltypes.NewStruct(slot.llTypes...)
 	}
+	if !v.Type().Equal(slot.aggTy) {
+		return nil, fmt.Errorf("llvm: %s lowered to %s, but the C signature passes %s there",
+			what, v.Type(), slot.aggTy)
+	}
 	store := l.allocaFor(block, slot.aggTy, coerceTy)
 	as := block.NewBitCast(store, lltypes.NewPointer(slot.aggTy))
 	block.NewStore(v, as)
-	return store
+	return store, nil
 }
 
 // allocaFor reserves a slot that holds both shapes, allocating the larger and bitcasting

@@ -81,6 +81,7 @@ func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.
 	a := &analyzer{
 		table:   &Table{byLambda: map[*ast.LambdaExpr][]Capture{}},
 		globals: globalNames(program, symTable),
+		outer:   map[string]bool{},
 		tt:      tt,
 	}
 	for _, node := range program.Statements {
@@ -97,7 +98,13 @@ func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.
 type analyzer struct {
 	table   *Table
 	globals map[string]bool
-	tt      *typetable.TypeTable
+	// outer is every name a *lexically enclosing* lambda binds. It is what tells a
+	// shadowed global from a real one: `tint` is a top-level function in
+	// bindings.raylib and also a parameter of the function whose body holds the
+	// closure, and only the enclosing binders say which one a read inside that
+	// closure means. See capturesOf.
+	outer map[string]bool
+	tt    *typetable.TypeTable
 }
 
 func (a *analyzer) onStmt(ast.Statement) bool { return true }
@@ -107,13 +114,44 @@ func (a *analyzer) onExpr(expr ast.Expression) bool {
 	if !ok {
 		return true
 	}
-	// Recurse first (the walk continues into the body below), then record this
-	// lambda's own set. A nested lambda's free names show up in this lambda's read
-	// set too — the read walk does not stop at a lambda boundary — so an inner
-	// closure's capture is transitively captured by every enclosing lambda that
-	// does not bind it, which is exactly what the environment chain needs.
+	// Record this lambda's own set against the enclosing binders in force *here*,
+	// then descend with those binders extended by this lambda's own. A nested
+	// lambda's free names show up in this lambda's read set too — the read walk does
+	// not stop at a lambda boundary — so an inner closure's capture is transitively
+	// captured by every enclosing lambda that does not bind it, which is exactly what
+	// the environment chain needs.
+	//
+	// The descent is driven here rather than left to the walker, because the outer set
+	// has to be popped on the way back out and a visitor has no exit hook. It is still
+	// the canonical walker doing the walking (`WalkExprChildren`), which is the point:
+	// a second traversal written by hand is how a binder kind comes to be missing from
+	// one copy and present in the other.
 	a.table.byLambda[fn] = a.capturesOf(fn)
-	return true
+	saved := a.outer
+	a.outer = make(map[string]bool, len(saved))
+	for name := range saved {
+		a.outer[name] = true
+	}
+	directBinders(fn, a.outer)
+	ast.WalkExprChildren(fn, a.onStmt, a.onExpr)
+	a.outer = saved
+	return false
+}
+
+// directBinders adds every name fn binds in its own right: its parameters, and the
+// binders in its body that are not inside a *nested* lambda. A sibling closure's
+// parameter is deliberately excluded — it is not in scope here, and admitting it would
+// make an unrelated name of the same spelling look capturable.
+func directBinders(fn *ast.LambdaExpr, bound map[string]bool) {
+	for _, p := range fn.Parameters {
+		addPatternNames(bound, p.Pattern)
+	}
+	for _, c := range fn.LambdaClauses {
+		for _, p := range c.Patterns {
+			addPatternNames(bound, p)
+		}
+	}
+	collectInto(bodyOf(fn), bound, nil, false)
 }
 
 // capturesOf computes one lambda's captures: names read inside it, minus names
@@ -133,7 +171,19 @@ func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 
 	var out []Capture
 	for name, read := range reads {
-		if bound[name] || a.globals[name] {
+		if bound[name] {
+			continue
+		}
+		// **A global of the same name is only a global where nothing else binds it.**
+		// The set is keyed by bare name, so subtracting it unconditionally silently
+		// dropped every capture whose name a top-level declaration anywhere in the
+		// program happened to share — hazard 9, and one that cannot fail loudly: the
+		// backend then lowered the read as a reference to that global, so a closure
+		// over a parameter named `tint` passed raylib's `tint` *function* where a
+		// `Color` was expected, and the ABI lowering died in a Go panic storing a
+		// `{ i8*, i8* }` into a `%Color*` (09/10). It needed a sibling *file* of the
+		// same module to declare the name, which is why it resisted reduction.
+		if a.globals[name] && !a.outer[name] {
 			continue
 		}
 		var t types.Type
@@ -165,13 +215,27 @@ func bodyOf(fn *ast.LambdaExpr) []ast.Expression {
 // in bound for the same reason a local does — a read of that name can only occur
 // where it is bound.
 func collect(body []ast.Expression, bound map[string]bool, reads map[string]ast.Expression) {
+	collectInto(body, bound, reads, true)
+}
+
+// collectInto is collect with the one knob directBinders needs: `intoLambdas` false stops
+// at a nested lambda, so the binders gathered are the ones this body has in its own right.
+// A flag rather than a second walk, because the binder switch below is exactly the thing
+// that must not exist twice — a kind missing from one copy reads a bound name as free.
+func collectInto(body []ast.Expression, bound map[string]bool, reads map[string]ast.Expression, intoLambdas bool) {
 	onExpr := func(e ast.Expression) bool {
 		switch v := e.(type) {
 		case *ast.IdentifierExpr:
+			if reads == nil {
+				break
+			}
 			if _, seen := reads[v.Name]; !seen {
 				reads[v.Name] = v
 			}
 		case *ast.LambdaExpr:
+			if !intoLambdas {
+				return false
+			}
 			for _, p := range v.Parameters {
 				addPatternNames(bound, p.Pattern)
 			}
@@ -222,6 +286,9 @@ func collect(body []ast.Expression, bound map[string]bool, reads map[string]ast.
 	onStmt := func(s ast.Statement) bool {
 		switch v := s.(type) {
 		case *ast.VarReassignmentStmt:
+			if reads == nil {
+				break
+			}
 			// **A bare `name = value` write is invisible to the read walk**, because
 			// VarReassignmentStmt keeps its target in a plain `Name string` field rather
 			// than an IdentifierExpr — so the walker never sees a node for it. Every other

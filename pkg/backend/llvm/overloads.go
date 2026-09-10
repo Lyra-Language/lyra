@@ -86,3 +86,18 @@ func (l *lowerer) resolvedCallee(e *ast.FunctionCallExpr) (emitted, bool) {
 	got, ok := l.overloads[lam]
 	return got, ok
 }
+
+// calleeIsDeclared reports whether the typechecker published the *declaration* this call
+// resolves to — which it does for an overloaded callee and for every desugared UFCS call.
+//
+// It is the answer to "is this a direct call?" wherever the callee's spelling cannot
+// settle it, and it is deliberately weaker than `resolvedCallee`: that one needs an
+// entry in `l.overloads`, which holds only genuinely overloaded declarations, so a
+// resolved *non*-overloaded callee answers false there and true here.
+func (l *lowerer) calleeIsDeclared(e *ast.FunctionCallExpr) bool {
+	if l.res == nil || l.res.TypeTable == nil {
+		return false
+	}
+	_, ok := l.res.TypeTable.Callee(e)
+	return ok
+}

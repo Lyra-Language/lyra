@@ -144,32 +144,23 @@ pub let export_font_as_code = (font: Font, path: string) -> bool =>
 // Drawing with a font
 // ---------------------------------------------------------------------------------------
 
-// **`DrawTextEx` and `DrawTextPro` are not bound: they crash the compiler.**
-//
-// Both make the backend panic in `aggregateSpill` —
-// *"store operands are not compatible: src={ i8*, i8* }; dst=%Color*"* — a Go panic
-// rather than a diagnostic, so `lyrac build` dies with a stack trace.
-//
-// The shape that triggers it is worth recording, because the neighbouring calls are fine:
-//
-//     DrawTextCodepoint(Font, int, Vector2, float, Color)          bound, works
-//     DrawTextEx       (Font, char*, Vector2, float, float, Color) crashes
-//
-// One pointer and one more float apart. Everything else here that passes a `Font` by
-// value — `MeasureTextEx`, `GetGlyphInfo`, `DrawTextCodepoints` — lowers correctly, so it
-// is not the 48-byte struct on its own. It looks like register exhaustion in the aarch64
-// classifier: enough mixed-class arguments to force a stack spill, and the spill path
-// storing the wrong operand.
-//
-// **It could not be reduced to a self-contained file.** The same structs, the same extern
-// and the same call site in a standalone program lower fine; it needs the whole
-// `bindings.raylib` module present. Several hypotheses were tested and ruled out — a
-// closure capturing aggregates, a shared `with_cstring<void>` specialization across call
-// sites with different environments, and replacing the closure with a copying `cstring()`
-// (which still crashes, so the lambda is not the cause). See todo.md.
-//
-// Until it is fixed, [draw_text] covers the default font and [draw_codepoint] draws a
-// glyph at a time in a loaded one.
+/// Text in a loaded font, at a size and letter spacing of your own.
+///
+/// **This is the call [draw_text] is the shorthand for**: `draw_text` is raylib's
+/// `DrawText`, which is this with the default font and a spacing derived from the size.
+/// Anything loaded by [load_font] or [font_from_memory] is drawn through here.
+pub let draw_text_ex =
+  (font: Font, text: string, position: Vector2, size: f32, spacing: f32,
+   tint: Color) -> void =>
+    text.with_cstring((t) => unsafe { rl_draw_text_ex(font, t, position, size, spacing, tint) })
+
+/// The same, rotated about `origin` — which is measured from `position`, so a label that
+/// turns about its own centre passes half its measured extent rather than a screen point.
+pub let draw_text_pro =
+  (font: Font, text: string, position: Vector2, origin: Vector2, rotation: Degrees,
+   size: f32, spacing: f32, tint: Color) -> void =>
+    text.with_cstring((t) =>
+      unsafe { rl_draw_text_pro(font, t, position, origin, f32(rotation), size, spacing, tint) })
 
 /// One character, by code point. What a text editor draws a cursor line with.
 pub let draw_codepoint =
@@ -245,6 +236,13 @@ unsafe extern pure rl_font_valid: (font: Font) -> u8
 unsafe extern rl_unload_font: (font: Font) -> void
 @symbol("ExportFontAsCode")
 unsafe extern rl_export_font_as_code: (font: Font, path: ^u8) -> u8
+@symbol("DrawTextEx")
+unsafe extern rl_draw_text_ex:
+  (font: Font, text: ^u8, position: Vector2, size: f32, spacing: f32, tint: Color) -> void
+@symbol("DrawTextPro")
+unsafe extern rl_draw_text_pro:
+  (font: Font, text: ^u8, position: Vector2, origin: Vector2, rotation: f32, size: f32,
+   spacing: f32, tint: Color) -> void
 @symbol("DrawTextCodepoint")
 unsafe extern rl_draw_codepoint:
   (font: Font, codepoint: i32, position: Vector2, size: f32, tint: Color) -> void

@@ -487,7 +487,16 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	// A local binding or parameter holding a function value shadows any top-level
 	// function of the same name, exactly as it does for a non-function binding —
 	// and it is the only way `let add5 = makeAdder(5)` can be called at all.
-	if _, isLocal := l.locals[ident.Name]; isLocal {
+	//
+	// **Unless the typechecker already said which declaration this call calls.** A
+	// desugared UFCS call's callee is a synthesized identifier carrying the *method's*
+	// name (typechecker_ufcs.go), and a method name is resolved against the receiver's
+	// type, not against the scope chain — so `data.data()` on a parameter named `data`
+	// is the free function, whatever the enclosing scope binds. Asking `l.locals` by
+	// name is hazard 9 in its plainest form: the shadow made every such call an
+	// indirect one through a value that is not callable, and the whole module stopped
+	// lowering with a message naming neither the call nor the file.
+	if _, isLocal := l.locals[ident.Name]; isLocal && !l.calleeIsDeclared(e) {
 		return l.lowerCallThroughValue(block, e)
 	}
 	// A type-name callee is a conversion (`i32(x)`), not a function call. `string`

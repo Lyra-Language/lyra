@@ -3456,70 +3456,18 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
-### `DrawTextEx`-shaped externs panic the backend in `aggregateSpill`
+### `lyrac build --emit-llvm` ignores `-o`
 
-    panic: store operands are not compatible: src={ i8*, i8* }; dst=%Color*
-      at (*lowerer).aggregateSpill
+    lyrac build --emit-llvm -o /tmp/out.ll examples/primes.lyra
+    examples/primes.lyra: wrote examples/primes.ll (llvm backend)
+      compile with: clang -O2 examples/primes.ll -lm -o /tmp/out.ll
 
-A **Go panic**, not a diagnostic — `lyrac build` dies with a stack trace on a program the
-front end approved. Two raylib bindings hit it and are unbound because of it
-(`bindings/raylib/text.lyra` records where they would have gone).
-
-**The contrast is the useful part**, since the neighbours are fine:
-
-    DrawTextCodepoint(Font, int, Vector2, float, Color)          lowers correctly
-    DrawTextEx       (Font, char*, Vector2, float, float, Color) panics
-
-One pointer and one more float apart. `MeasureTextEx`, `GetGlyphInfo` and
-`DrawTextCodepoints` all pass the same 48-byte `Font` by value and are fine, so the large
-struct alone is not it. The shape suggests **register exhaustion on aarch64**: enough
-mixed-class arguments to force a stack spill, with the spill path storing the wrong
-operand. `{ i8*, i8* }` is two pointers wide — a closure or a fat value — being stored into
-a `%Color` slot.
-
-**It resisted reduction, and what was ruled out is worth keeping:**
-
-- a self-contained file with the same structs, the same extern and the same call site
-  lowers fine — it needs the whole `bindings.raylib` module present;
-- so does a file with several `with_cstring` call sites capturing different aggregate
-  shapes, which was the shared-specialization hypothesis;
-- **the closure is not the cause**: replacing `with_cstring` with a copying `cstring()`,
-  removing the lambda entirely, still panics.
-
-Reproduce with `bindings/raylib/text.lyra` at commit-with-the-two-restored plus any program
-importing `bindings.raylib`. Bisecting by removing declarations and adding them back one at
-a time is what found it; truncating the file does not work, since a half file fails `check`
-for an unrelated reason.
-
-Two things to fix: the panic itself, and that a backend failure of this kind is a Go stack
-trace rather than the loud, located error rule 5 asks for.
-
-### A parameter shadowing an imported function makes a method call lower to garbage
-
-	import std.ffi.{ data }
-	let take = (data: []u8, n: i64) -> bool => {
-	  if data.len() == 0 { false } else { let _ = unsafe { c_strlen(data.data()) }; true }
-	}
-
-`lyrac check` **passes clean**. `lyrac build` fails with
-*"llvm: no type recorded for the callee of an indirect call"* — a message naming neither
-the expression nor the file, from a program the front end approved.
-
-The parameter `data` shadows the imported `data`, so `data.data()` is a method call whose
-name resolves to a **local binding that is not a function**. The typechecker records
-nothing for the callee and the backend finds an indirect call it has no type for. It should
-be a front-end error: either "no method `data` on `[]u8`" or a shadowing diagnostic at the
-parameter.
-
-Found 09/10 in `bindings/raylib/audio.lyra`, where the parameter was `data: []u8` and the
-call `data.data()`. The symptom was that **the whole module stopped lowering** — every
-program importing `bindings.raylib` failed, including ones touching nothing in that file —
-so the error pointed nowhere near the cause and bisection was the only way in. Renaming the
-parameter fixed it.
-
-Two things worth fixing separately: the missing front-end check, and the backend message,
-which should name the call site it could not lower (hazard 15's shape — a consumer that
-finds a nil and reports it far from where it was made).
+The IR lands beside the **source**, and `-o` is reported as the executable the hint would
+build — for a mode whose whole point is that it produces no executable. `--keep-ll` has the
+same question and the same answer, so whatever `-o` comes to mean it should mean in both.
+`-o` is refused rather than ignored for `run`, which is the call to copy: silently writing
+somewhere other than where the flag said is the one outcome to avoid. Found 09/10 building
+every example in a loop.
 
 ### `bindings/raylib/texture.lyra` — **[DONE 09/10]**
 
@@ -3530,8 +3478,9 @@ texture half cannot be tested for.
 
 **Three families left unbound, each its own job:**
 
-- **~17 colour utilities** — `ColorLerp`, `Fade`, `ColorToHSV`, `GetColor`,
-  `ColorAlphaBlend`. These belong in `color.lyra`, beside `rgb`/`rgba` and the palette.
+- **~17 colour utilities** — **[DONE 09/10]**, in `color.lyra` beside `rgb`/`rgba` and the
+  palette: `color_lerp`, `with_alpha` (raylib's `Fade`), `color_to_hsv`, `color_from_int`,
+  `color_alpha_blend` and the rest.
 - **~20 `ImageDraw*` calls** — the shapes module again, rasterising onto an `Image` instead
   of the screen. Same argument shapes, so it should be mechanical.
 - **~15 further image manipulations** — `ImageCopy`, `ImageBlurGaussian`, `ImageDither`,

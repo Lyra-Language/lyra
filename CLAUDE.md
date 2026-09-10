@@ -140,6 +140,14 @@ real failure, and none is local to one package.
    yet is a hard error, never a guess — including where it must repeat a check the front end
    already made.
 
+   **A loud error also means one llir cannot turn into a panic.** `ir.NewStore` refuses
+   mismatched operands by panicking, so `aggregateSpill` took `lyrac build` down with a Go
+   stack trace naming neither the argument nor the file — hazard 15's shape one layer down,
+   and the way a front-end bug in another pass presents at the C boundary. It checks the
+   value against the slot first and names which argument of which C function lowered to
+   what. Any site building an instruction from a value another pass produced owes the same
+   check.
+
 6. **ASan only works because the test harness adds the `sanitize_address` attribute** to
    every `define` in the emitted module. Without it the instrumentation pass rewrites
    nothing and the ASan tests pass vacuously — which they did, swallowing three real faults.
@@ -361,6 +369,30 @@ real failure, and none is local to one package.
    — and `l.globals` paid it too (08/28): keyed by bare name, two modules' private globals
    collided in clang; slots are keyed by funcKey and named per module, with `slotFor`
    resolving from the referencing location.
+
+   **A by-name set consulted where the enclosing scope is the question is the same bug,
+   and it fails silently in both directions.** Two instances, both 09/10, both from one
+   afternoon's raylib work and neither reported by any pass:
+
+   - **`l.locals` decided a desugared UFCS callee.** A method name is resolved against the
+     *receiver's* type, so `data.data()` on a parameter named `data` is `std.ffi`'s free
+     function; the typechecker rewrites the call to `data(data)` and the backend then found
+     the parameter in `l.locals` and lowered a call through a `[]u8`. Ask
+     `TypeTable.Callee` first (`calleeIsDeclared`) — a genuine local closure has no entry,
+     which is what tells the two apart.
+   - **`captures.globalNames` decided a free variable.** It is every top-level name in the
+     program, subtracted from each lambda's reads with no notion of what the *enclosing*
+     lambda binds — so a closure over a parameter whose name any top-level declaration
+     happened to share carried no slot for it, and the backend lowered the read as a
+     reference to that declaration. `bindings/raylib`'s `draw_text_ex` passed the `tint`
+     **function** where a `Color` belonged. `analyzer.outer` is the enclosing binders, and
+     a global is subtracted only where nothing shadows it.
+
+   **The second one needed a *sibling file of the same module* to declare the name**, which
+   is why four rounds of reduction failed and the diagnosis in todo.md was a confident,
+   wrong story about aarch64 register exhaustion. When a reduction keeps failing, that is
+   evidence about the *scope* of the cause: stop reducing and instrument. One `Fprintf` in
+   the argument loop, naming the expression and its lowered type, answered it in a minute.
 
     **Allocation is context-determined, and the flavor rides the expected type.** A
     construction leaf has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed
@@ -1847,6 +1879,15 @@ the shapes module again but rasterising onto an `Image`; and the remaining image
 manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`) is a
 fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
 pointer and a size of **0**, measured.
+
+**`bindings/raylib/text.lyra` is the fourth**, and it is where the captures bug above was
+found. `Font`, `GlyphInfo`, loading, glyph metrics, measuring, and drawing — including
+`draw_text_ex` and `draw_text_pro`, which were unbound for a day because the *compiler*
+crashed on them and not because raylib is awkward. `draw_text_pro` takes a `Degrees` like
+every other angle here. The note worth keeping: **a binding module that will not lower is
+evidence about the compiler, not about the library**, and the whole-module symptom — every
+program importing `bindings.raylib` failing over one file it does not touch — is what a
+by-name lookup consulted in the wrong scope looks like from the outside.
 
 **Both galleries size their labels from a named `LABEL` constant** (22px) and are laid out
 to suit it — the cell width is what caps a label's length, since raylib's default font runs

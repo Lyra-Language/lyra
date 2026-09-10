@@ -9,6 +9,62 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — two compiler bugs, both "a name does not identify a declaration"
+
+The two the raylib work turned up (todo.md carried each with a reproduction). They read as
+unrelated — one a wrong callee, one a Go panic in the ABI lowering — and are the **same
+bug in two passes**: a set keyed by bare name, consulted where the enclosing scope was the
+question. Hazard 9, twice, and neither failed loudly.
+
+**A method call is resolved against its receiver, so a local of that name is irrelevant.**
+`data.data()` on a parameter named `data` is `std.ffi`'s free function; the typechecker
+resolves it and desugars the call to `data(data)` before anything downstream runs. The
+backend then looked the *synthesized* callee identifier up in `l.locals`, found the
+parameter, and lowered a call through a `[]u8` as though it were a function value —
+`lyrac check` clean, `lyrac build` dead. The fix is to ask the typechecker first
+(`calleeIsDeclared`), which publishes the declaration for every UFCS and overloaded call;
+a genuine local closure has no such entry, which is exactly what tells the two apart.
+
+**A global of the same name is only a global where nothing else binds it.** The captures
+pass subtracted its `globals` set — every top-level name in the program — from each
+lambda's free variables, with no notion of what the *enclosing* lambda binds. So a closure
+over a parameter whose name any top-level declaration happened to share carried no slot for
+it, and the backend lowered the read as a reference to that declaration. For a function
+that means a closure value: `bindings/raylib`'s `draw_text_ex` passed the `tint` *function*
+where a `Color` belonged, and `ir.NewStore` panicked with *"store operands are not
+compatible: src={ i8*, i8* }; dst=%Color*"*.
+
+**The diagnosis in todo.md was wrong, and the way it was wrong is the lesson.** It read
+"register exhaustion on aarch64 forcing a stack spill that stores the wrong operand", from
+the shape of the two neighbouring signatures — `DrawTextCodepoint` fine, `DrawTextEx` one
+pointer and one float further along. That is a plausible story about the *classifier*, and
+the classifier had nothing to do with it. Every reduction failed for the same reason the
+story was wrong: the colliding declaration is `tint` in **texture.lyra**, a sibling file of
+the same module, so a self-contained file cannot contain the bug. Four rounds of reduction
+against a hypothesis about registers, when one `fmt.Fprintf` in the argument loop naming
+the expression and its lowered type answered it in a minute. **When a reduction keeps
+failing, stop reducing and instrument** — a failed reduction is evidence about the *scope*
+of the cause, which is information the hypothesis should have been updated with rather
+than worked around.
+
+The captures fix is to thread the enclosing binders down the walk: `analyzer.outer` holds
+what a lexically enclosing lambda binds, and a global is subtracted only where nothing in
+`outer` shadows it. The descent is driven from `onExpr` — a visitor has no exit hook and
+the set has to be popped — but through `ast.WalkExprChildren`, so there is still one
+traversal and one binder switch (`collectInto`, with the knob `directBinders` needs). A
+**sibling** lambda's parameters are deliberately excluded from `outer`, which is why that
+knob exists: admitting them would make an unrelated name of the same spelling look
+capturable, and that direction turns working programs into errors.
+
+**Both messages were rule 5 failures too, and both are fixed.** `lowerCallThroughValue`
+named neither the call nor the file; it now names the callee and its location.
+`aggregateSpill` did not fail at all — it panicked inside llir, hazard 15's shape one layer
+down — and now checks the operand against the slot first and reports which argument of
+which C function lowered to what.
+
+**`DrawTextEx` and `DrawTextPro` are bound**, which is what the second fix was for: 307 of
+raylib's 548. `draw_text_pro` takes a `Degrees`, like every other angle in the bindings.
+
 ### 09/10/26 — raylib text and fonts, and a backend panic that would not reduce
 
 `Font`, `GlyphInfo`, font loading, glyph metrics and code-point drawing: 289 to 305 of
@@ -30,6 +86,11 @@ whole finding:
 One pointer and one more float apart. `MeasureTextEx` and `GetGlyphInfo` pass the same
 48-byte `Font` by value and are fine, so the large struct alone is not it — it looks like
 register exhaustion on aarch64 forcing a stack spill that stores the wrong operand.
+
+**That diagnosis was wrong and the entry above records what it actually was** (a capture
+subtracted because a sibling file declares `tint`). What follows is left as written,
+because the reductions it rules out are the evidence that should have retired the
+hypothesis and did not.
 
 **It resisted reduction for four rounds, and the ruled-out hypotheses are the useful
 record.** A self-contained file with the same structs, extern and call site lowers fine. So

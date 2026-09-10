@@ -623,13 +623,33 @@ func (l *lowerer) memberIsFunctionField(member *ast.MemberExpr) bool {
 func (l *lowerer) lowerCallThroughValue(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
 	calleeType, ok := l.recordedType(e.Function)
 	if !ok {
-		return nil, nil, fmt.Errorf("llvm: no type recorded for the callee of an indirect call")
+		return nil, nil, fmt.Errorf("llvm: no type recorded for the callee of the indirect call %s at %s",
+			calleeText(e.Function), e.GetLocation().Pretty())
 	}
 	lt, ok := calleeType.(*types.LambdaType)
 	if !ok {
-		return nil, nil, fmt.Errorf("llvm: callee of type %s is not callable", calleeType)
+		return nil, nil, fmt.Errorf("llvm: the callee %s at %s has type %s, which is not callable",
+			calleeText(e.Function), e.GetLocation().Pretty(), calleeType)
 	}
 	return l.lowerIndirectCall(block, e, lt)
+}
+
+// calleeText names a callee expression the way the source spells it, for a diagnostic.
+//
+// A backend error about a call must say *which* call, and the location alone is not
+// enough when a line holds several — the failure this exists for was a whole binding
+// module that stopped lowering behind a message naming neither the expression nor the
+// file, leaving bisection as the only way in (hazard 15's shape). The two kinds that can
+// reach it by name are the ones worth spelling; anything else falls back to its Go type,
+// which at least says what shape of callee could not be lowered.
+func calleeText(fn ast.Expression) string {
+	switch f := fn.(type) {
+	case *ast.IdentifierExpr:
+		return "`" + f.Name + "`"
+	case *ast.MemberExpr:
+		return "`." + f.Property.Name + "`"
+	}
+	return fmt.Sprintf("(%T)", fn)
 }
 
 // lowerIndirectCall calls a function *value*: unpack the fat pointer, bitcast the
