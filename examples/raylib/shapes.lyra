@@ -4,11 +4,13 @@ module main
 //! Two programs in one file, because a drawing demo cannot be checked by a machine and the
 //! geometry underneath it can:
 //!
-//!  LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac build examples/raylib/shapes.lyra && ./shapes --check   # geometry, exits 0/1
-//!  LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac run examples/raylib/shapes.lyra # the gallery
+//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
+//!   lyrac run examples/raylib/shapes.lyra -- --check   # the geometry, exits 0 or 1
+//!   lyrac run examples/raylib/shapes.lyra              # the gallery, in a window
 //!
-//! It is `build` and then the binary for the first one because `lyrac run` passes no
-//! arguments through to the program.
+//! Everything after `--` goes to the program rather than to lyrac. `LIBRARY_PATH` is
+//! there because `@link` says which library to link and not where it lives — a search
+//! path is the build system's problem — so a Homebrew raylib needs pointing at.
 //!
 //! `--check` runs every collision and spline-point binding against geometry whose answer is
 //! known by construction and prints a pass/fail line for each. That is the half worth

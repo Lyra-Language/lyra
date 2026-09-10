@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — `lyrac run` passes arguments through
+
+`lyrac run prog.lyra -- --verbose input.txt`, reachable in the program through
+`program_args()`. Before this a program that reads its arguments could not be run by the
+tool that exists to run programs — it had to be built first, which is what
+`examples/raylib/shapes.lyra` documented as a workaround.
+
+**The whole decision is the separator, and `go run` is the wrong model for it.** `go run`
+needs no `--` because its own flags must precede the file, so everything after the file is
+unambiguously the program's. `parseBuildArgs` deliberately accepts flags on **either
+side** of the source path — its own comment says a build command is as often edited by
+appending a flag as by inserting one — so the same rule here would silently reclaim
+`lyrac run prog.lyra --cc clang`, which today means the compiler's C compiler, as two
+arguments for the program. **Adding a feature must not change what an existing command
+line means**, and that is what picks `--` over the shorter spelling.
+
+The `--` check sits before the value-consuming branch, so `--cc` *after* the separator is
+an ordinary argument rather than a flag eating the next one; a test covers exactly that.
+A bare `--` is an empty argument list rather than an error. `build` refuses program
+arguments outright — it runs nothing — which is the call this parser already makes for
+`-o` under `run`.
+
 ### 09/10/26 — float narrowing, and the "every position" claim made true for floats
 
 `f32(x)` on an f64 compiles and rounds to nearest. It was refused outright, with a message

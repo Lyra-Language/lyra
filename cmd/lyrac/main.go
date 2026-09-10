@@ -88,6 +88,10 @@ build flags:
 
 run flags:
   --cc <path>   as above; run leaves no executable or IR behind
+  --            everything after it is passed to the program, not to lyrac:
+                lyrac run prog.lyra -- --verbose input.txt
+                Reachable in the program through program_args(), with the
+                program's own name at index 0 as in C
 
 doc flags:
   -o <dir>      write the pages here (default: ./docs)
@@ -124,6 +128,11 @@ type buildOptions struct {
 	// written into the source tree — not even the IR that a failed link
 	// otherwise leaves behind for the user to compile by hand.
 	ephemeral bool
+
+	// programArgs is everything after a `--`, handed to the program `run` executes
+	// and reachable there through `program_args()`. Empty for a build, which runs
+	// nothing.
+	programArgs []string
 }
 
 // parseBuildArgs accepts flags before or after the source path, since a build
@@ -134,6 +143,24 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 	var o buildOptions
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		// **`--` ends lyrac's arguments**; the rest belong to the program `run`
+		// executes, whatever they look like. A separator is needed here where
+		// `go run` manages without one, and the reason is the line above: this
+		// parser accepts flags *after* the source path, so "everything following
+		// the file is the program's" would silently swallow a `--cc` that today
+		// means the compiler's. Taking arguments cannot quietly change what an
+		// existing command line means.
+		if arg == "--" {
+			if cmd != "run" {
+				fmt.Fprintf(os.Stderr,
+					"lyrac: %s runs nothing, so it has no arguments to pass (use `lyrac run`)\n", cmd)
+				return o, false
+			}
+			// Everything after, including a bare `--` with nothing after it, which
+			// is an empty argument list rather than an error.
+			o.programArgs = append(o.programArgs, args[i+1:]...)
+			break
+		}
 		// A flag taking a value consumes the next argument; running off the end
 		// is a usage error rather than an empty value silently taking effect.
 		takesValue := arg == "-o" || arg == "--cc"
@@ -245,7 +272,9 @@ func runProgram(o buildOptions) int {
 		return code
 	}
 
-	cmd := exec.Command(exe)
+	// argv[0] is the executable, as C's is, so `program_args()` indexes from the
+	// program's own name exactly as it does for a built binary.
+	cmd := exec.Command(exe, o.programArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError

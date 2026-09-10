@@ -3471,9 +3471,8 @@ duplicate-spelling rule.
   came out from under it, both also fixed: the constant guard initially missed untyped
   literals, and a named struct literal's field had never been range-checked at all, for
   integers either.
-- **`lyrac run` passes no arguments through** to the program, so a program that reads
-  `program_args()` has to be built first. `go run` forwards after `--`; there is no
-  spelling here.
+- **`lyrac run` passes arguments through** — **[FIXED 09/10]**: everything after `--`.
+  See COMPLETED.md for why the separator is required where `go run` needs none.
 
 ### raylib audio, and Breakout has sound — **[DONE 09/09]**
 

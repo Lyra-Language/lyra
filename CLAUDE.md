@@ -1109,6 +1109,15 @@ gcc would reject the IR with a confusing error instead of a clear one. When none
 the build fails (exit 1) but **writes `<name>.ll` next to the source anyway** and prints the
 `clang` line: that IR is all the user has to compile once they install one.
 
+**`--` ends lyrac's arguments and the rest are the program's**: `lyrac run prog.lyra --
+--verbose input.txt`, reachable through `program_args()` with the program's own name at
+index 0 as in C. A separator is needed where `go run` manages without one, and the reason
+is `parseBuildArgs` accepting flags on **either side** of the source path: "everything
+after the file is the program's" would silently reclaim `lyrac run prog.lyra --cc clang`,
+which today means the compiler's. Taking arguments must not change what an existing
+command line means. `build` refuses them rather than dropping them, the call this parser
+already makes for `-o` under `run`.
+
 `run` is that same pipeline with every artifact in a temp directory
 (`buildOptions.ephemeral`), then `exec` with the child inheriting stdio. Two consequences to
 keep: **it prints no build summary** (so `lowerAndEmit` returns the executable's path and
