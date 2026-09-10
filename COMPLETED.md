@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — two bugs a screenshot found, and the discovery that I can take one
+
+Both reported from running the gallery, and both invisible to everything the suite does.
+
+**The flipped sprite was drawing the wrong frame.** `draw_texture_rect` with a negative
+source width was written as `rect(frame*32 + 32, 0, -32, 32)` — the OpenGL-texcoord
+intuition, where a negative width measures leftwards from the right edge. raylib does not
+mean that: it reads a negative width as *mirror this region*, setting a flip flag and
+taking `|width|` from `source.x` unchanged. So the flipped panel drew frame **n+1** and
+wrapped past the end of the sheet at the last one, which is what "missing a frame" looked
+like.
+
+**It was settled by measurement, not by argument.** A probe uploaded four solid colour
+bands as a texture, drew each frame through both spellings into a render texture, and read
+the middle pixel back with `image_from_texture`. `x = f*32, w = -32` selects frame f;
+`x = f*32 + 32` selects f+1 and wraps. No reasoning about texture coordinates required, and
+no raylib source to read — the bottle ships none.
+
+**The bigger finding is that a window opens fine here after all.** The earlier conclusion —
+"the drawing half cannot be verified from this shell" — was drawn from a *backgrounded*
+run, which dies because a detached process has no GUI session. A **foreground** run works.
+That was worth an hour of wrong assumptions: everything visual in these examples had been
+declared unverifiable on the strength of one failed invocation.
+
+So the gallery was screenshotted: copy to `/tmp`, swap the `should_close` loop for a fixed
+tick count, `image_from_screen` + `export_image`, read the PNG. **The layout was visibly
+broken** — three labels overlapping their neighbours and a fourth running off the window
+edge — because the labels had grown to 22px while the columns stayed 360px wide, and
+"draw_texture_npatch — follows the mouse" is 39 characters. An extent calculation had
+already passed this layout, and could not have caught it: it knows where a `draw_text`
+starts and nothing about how wide the string renders.
+
+The grid is a 3x3 of 390x230 cells now, with labels short enough for the column
+("nine-patch", "sprite sheet", "render texture"), the detail moved into `CAPTION`-sized
+sub-labels. Two things the screenshot also showed and no test would have: the "tinted"
+panel was tinted a blue so close to the scene's own that it read as a duplicate, and the
+render texture drew the *whole four-frame sheet* rotated, which looked like three creatures
+in a row.
+
+**The lesson to carry**: compute the extents *and* look at the picture. The calculation
+catches a one-pixel overlap between a panel and the label below it; the screenshot catches
+a label twice as wide as its column. Neither finds the other's bug.
+
 ### 09/10/26 — the textures example gets real artwork, and readable labels
 
 Two pieces of feedback from actually running the gallery, which is the half of it no test

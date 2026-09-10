@@ -1788,10 +1788,19 @@ fourth. `ExportImageToMemory` is left out because it does not work: it answers a
 pointer and a size of **0**, measured.
 
 **Both galleries size their labels from a named `LABEL` constant** (22px) and are laid out
-to suit it. A gallery that cannot be looked at from here is laid out by *computing* each
-panel's extent from its largest `x + N`/`y + N` and checking it against the window and the
-next row's label — which is how a one-pixel overlap between a panel's bottom and the label
-below it was caught, a thing no screenshot would have shown.
+to suit it — the cell width is what caps a label's length, since raylib's default font runs
+about 0.55em per character.
+
+**A gallery can be looked at from here, and should be.** A *foreground* run opens a window
+fine; it is only a detached background process that cannot. So the way to check one is to
+copy it to `/tmp`, replace the `should_close` loop with a fixed tick count, screenshot with
+`image_from_screen` + `export_image`, and read the PNG. That found in one look what an
+extent calculation had missed — three labels overlapping their neighbours and a fourth off
+the window edge — because the calculation cannot know how wide a *string* renders.
+
+Compute extents as well, for what a screenshot cannot show: a one-pixel overlap between a
+panel's bottom and the label below it. The two checks find different things and neither
+replaces the other.
 
 `examples/raylib/breakout.lyra` is what the pair is *for*: a playable game — paddle, ball, a
 `[]Brick` grid, lives, score, sound, and a `data GameState` a `match` covers exhaustively —

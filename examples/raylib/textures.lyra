@@ -260,7 +260,12 @@ let check_case = (name: string, got: bool, want: bool) -> i64 => {
 // ---------------------------------------------------------------------------------------
 
 let run_gallery = () -> void => {
-  init_window(1100, 800, "Lyra — raylib textures")
+  // A 3x3 grid of 390x230 cells, each label 34px above its cell. The cell width is what
+  // caps the labels: raylib's default font is about 0.55em per character, so 390px at
+  // `LABEL` holds roughly 29 — which is why they are short. The first version wrote
+  // "draw_texture_npatch — follows the mouse" in a 360px column and three of them
+  // overlapped their neighbours while a fourth ran off the window.
+  init_window(1200, 760, "Lyra — raylib textures")
   set_target_fps(60)
   match load_assets() {
     Some(_) => {},
@@ -429,32 +434,34 @@ let loop_frames =
       begin_drawing()
       clear_background(RAYWHITE)
 
-      draw_scene_panel(scene, sepia, 30.0, 76.0)
-      draw_transformed_panel(scene, 430.0, 76.0, t)
-      draw_filter_panel(sheet, 800.0, 76.0)
-      draw_sheet_panel(sheet, 30.0, 330.0, frame)
-      draw_npatch_panel(panel, 430.0, 330.0, cursor)
+      draw_scene_panel(scene, 30.0, 70.0)
+      draw_transformed_panel(scene, 420.0, 70.0, t)
+      draw_filter_panel(sheet, 810.0, 70.0)
+      draw_edited_panel(sepia, 30.0, 300.0)
+      draw_sheet_panel(sheet, 420.0, 300.0, frame)
+      draw_npatch_panel(panel, 810.0, 300.0, cursor)
 
       match target {
-        Some(rt) => draw_render_texture_panel(rt.texture, 800.0, 330.0),
-        None => draw_text("no render texture", 800, 330, LABEL, DARKGRAY),
+        Some(rt) => draw_render_texture_panel(rt.texture, 30.0, 530.0),
+        None => draw_text("unavailable", 30, 530, CAPTION, DARKGRAY),
       }
 
-      draw_text("draw_texture / _v — plain, tinted, pixel-edited", 30, 40, LABEL, DARKGRAY)
-      draw_text("_ex and _pro — rotate, scale", 430, 40, LABEL, DARKGRAY)
-      draw_text("point / bilinear", 800, 40, LABEL, DARKGRAY)
-      draw_text("draw_texture_rect — a sprite sheet", 30, 294, LABEL, DARKGRAY)
-      draw_text("draw_texture_npatch — follows the mouse", 430, 294, LABEL, DARKGRAY)
-      draw_text("a render texture, drawn back", 800, 294, LABEL, DARKGRAY)
+      draw_text("as loaded / tinted", 30, 36, LABEL, DARKGRAY)
+      draw_text("_ex and _pro", 420, 36, LABEL, DARKGRAY)
+      draw_text("point / bilinear", 810, 36, LABEL, DARKGRAY)
+      draw_text("update_texture", 30, 266, LABEL, DARKGRAY)
+      draw_text("sprite sheet", 420, 266, LABEL, DARKGRAY)
+      draw_text("nine-patch", 810, 266, LABEL, DARKGRAY)
+      draw_text("render texture", 30, 496, LABEL, DARKGRAY)
+      draw_text("screenshot", 420, 496, LABEL, DARKGRAY)
 
       match shot {
         Some(tex) => {
-          draw_text("last screenshot", 800, 560, LABEL, DARKGRAY)
-          draw_rectangle_lines(rect(800.0, 590.0, 260.0, 180.0), 2.0, DARKGRAY)
+          draw_rectangle_lines(rect(420.0, 530.0, 260.0, 176.0), 2.0, DARKGRAY)
           draw_texture_pro(tex, rect(0.0, 0.0, f32(tex.width), f32(tex.height)),
-            rect(802.0, 592.0, 256.0, 176.0), vec2(0.0, 0.0), 0.0, WHITE)
+            rect(422.0, 532.0, 256.0, 172.0), vec2(0.0, 0.0), 0.0, WHITE)
         },
-        None => draw_text("space to screenshot", 800, 560, LABEL, DARKGRAY),
+        None => draw_text("press space", 420, 530, CAPTION, DARKGRAY),
       }
       end_drawing()
     }
@@ -472,54 +479,67 @@ let render_into = (rt: RenderTexture, sheet: Texture2D, scene: Texture2D, t: f32
   draw_texture_ex(scene, vec2(10.0, 24.0), 0.0, 0.9, rgba(255, 255, 255, 150))
   draw_circle(vec2(200.0, 40.0), 22.0, ORANGE)
   draw_line_ex(vec2(10.0, 160.0), vec2(230.0, 20.0), 4.0, GREEN)
-  draw_texture_ex(sheet, vec2(90.0, 70.0), 25.0 * t, 1.6, WHITE)
+  draw_texture_pro(sheet, rect(0.0, 0.0, f32(FRAME), f32(FRAME)),
+    rect(150.0, 110.0, 56.0, 56.0), vec2(28.0, 28.0), 25.0 * t, WHITE)
   draw_text("offscreen", 12, 10, CAPTION, RAYWHITE)
   end_texture_mode()
 }
 
-/// The scene as it is, tinted, and the pixel-edited copy: `draw_texture`, `draw_texture_v`
-/// and what `update_texture` produced, side by side.
-let draw_scene_panel = (scene: Texture2D, sepia: Texture2D, x: f32, y: f32) -> void => {
+/// The scene as loaded and the same scene tinted: `draw_texture` and `draw_texture_v`.
+let draw_scene_panel = (scene: Texture2D, x: f32, y: f32) -> void => {
   draw_texture(scene, i32(x.round()), i32(y.round()), WHITE)
-  draw_texture_v(scene, vec2(x + 180.0, y), rgba(150, 210, 255, 255))
-  draw_texture_v(sepia, vec2(x, y + 120.0), WHITE)
-  draw_text("as loaded", i32(x.round()), i32(y.round()) + 104, CAPTION, DARKGRAY)
-  draw_text("tinted", i32(x.round()) + 180, i32(y.round()) + 104, CAPTION, DARKGRAY)
-  draw_text("update_texture", i32(x.round()), i32(y.round()) + 224, CAPTION, DARKGRAY)
+  draw_texture_v(scene, vec2(x + 180.0, y), rgba(255, 170, 120, 255))
+  draw_text("as loaded", i32(x.round()), i32(y.round()) + 106, CAPTION, DARKGRAY)
+  draw_text("tinted", i32(x.round()) + 180, i32(y.round()) + 106, CAPTION, DARKGRAY)
+}
+
+/// The copy this program built pixel by pixel and uploaded with `update_texture`, with one
+/// corner patched by `update_texture_rect`.
+let draw_edited_panel = (sepia: Texture2D, x: f32, y: f32) -> void => {
+  draw_texture_v(sepia, vec2(x, y), WHITE)
+  draw_text("read back, warmed, re-uploaded",
+    i32(x.round()), i32(y.round()) + 106, CAPTION, DARKGRAY)
 }
 
 /// `draw_texture_ex` rotates about the top-left corner; `draw_texture_pro` about a chosen
 /// origin, so the second spins in place rather than orbiting.
 let draw_transformed_panel = (scene: Texture2D, x: f32, y: f32, t: f32) -> void => {
   let spin = 30.0 * t
-  draw_texture_ex(scene, vec2(x + 30.0, y + 10.0), spin, 0.55, WHITE)
-  let dest = rect(x + 130.0, y + 200.0, 150.0, 94.0)
-  draw_texture_pro(scene, rect(0.0, 0.0, 160.0, 100.0), dest, vec2(75.0, 47.0), spin, WHITE)
-  draw_text("_ex", i32(x.round()), i32(y.round()) + 130, CAPTION, DARKGRAY)
-  draw_text("_pro, about its centre", i32(x.round()), i32(y.round()) + 262, CAPTION, DARKGRAY)
+  draw_texture_ex(scene, vec2(x + 40.0, y + 10.0), spin, 0.5, WHITE)
+  draw_texture_pro(scene, rect(0.0, 0.0, 160.0, 100.0),
+    rect(x + 250.0, y + 60.0, 130.0, 82.0), vec2(65.0, 41.0), spin, WHITE)
+  draw_text("_ex", i32(x.round()) + 30, i32(y.round()) + 130, CAPTION, DARKGRAY)
+  draw_text("_pro, centred", i32(x.round()) + 190, i32(y.round()) + 130, CAPTION, DARKGRAY)
 }
 
 /// One frame of the sheet at a time — what `draw_texture_rect` is for. The second copy
 /// uses a **negative source width**, which is how a sprite faces the other way.
+///
+/// **`x` stays the frame's left edge.** raylib reads a negative width as "mirror this
+/// region", not as "measure leftwards from here" — it flips the texture coordinates and
+/// takes `|width|` from `x`. Shifting `x` to the right edge, which is what the
+/// OpenGL-texcoord intuition suggests, silently draws frame *n+1* and wraps past the end
+/// of the sheet at the last one. Measured, not reasoned: a probe drew four solid colour
+/// bands through both spellings and read the pixels back.
 let draw_sheet_panel = (sheet: Texture2D, x: f32, y: f32, frame: i64) -> void => {
   let source = rect(f32(frame * FRAME), 0.0, f32(FRAME), f32(FRAME))
-  let flipped = rect(f32(frame * FRAME) + f32(FRAME), 0.0, 0.0 - f32(FRAME), f32(FRAME))
-  draw_rectangle(rect(x, y, 120.0, 120.0), LIGHTGRAY)
-  draw_texture_pro(sheet, source, rect(x + 12.0, y + 12.0, 96.0, 96.0),
+  let flipped = rect(f32(frame * FRAME), 0.0, 0.0 - f32(FRAME), f32(FRAME))
+  draw_rectangle(rect(x, y, 110.0, 110.0), LIGHTGRAY)
+  draw_texture_pro(sheet, source, rect(x + 11.0, y + 11.0, 88.0, 88.0),
     vec2(0.0, 0.0), 0.0, WHITE)
-  draw_rectangle(rect(x + 140.0, y, 120.0, 120.0), LIGHTGRAY)
-  draw_texture_pro(sheet, flipped, rect(x + 152.0, y + 12.0, 96.0, 96.0),
+  draw_rectangle(rect(x + 130.0, y, 110.0, 110.0), LIGHTGRAY)
+  draw_texture_pro(sheet, flipped, rect(x + 141.0, y + 11.0, 88.0, 88.0),
     vec2(0.0, 0.0), 0.0, WHITE)
-  draw_text("frame ${frame}", i32(x.round()), i32(y.round()) + 128, CAPTION, DARKGRAY)
-  draw_text("flipped", i32(x.round()) + 140, i32(y.round()) + 128, CAPTION, DARKGRAY)
+  draw_text("frame ${frame}", i32(x.round()), i32(y.round()) + 118, CAPTION, DARKGRAY)
+  draw_text("flipped", i32(x.round()) + 130, i32(y.round()) + 118, CAPTION, DARKGRAY)
 }
 
 /// A nine-patch stretched to wherever the cursor is: the border keeps its thickness while
 /// the middle grows, which is the whole point of the form and the reason the panel needed
 /// to be real artwork rather than a flat square.
 let draw_npatch_panel = (panel: Texture2D, x: f32, y: f32, cursor: Vector2) -> void => {
-  let w = clamp_f32(cursor.x - x, 80.0, 320.0)
-  let h = clamp_f32(cursor.y - y, 60.0, 200.0)
+  let w = clamp_f32(cursor.x - x, 80.0, 340.0)
+  let h = clamp_f32(cursor.y - y, 60.0, 165.0)
   let patch = NPatchInfo {
     source: rect(0.0, 0.0, f32(PANEL), f32(PANEL)),
     left: i32(BORDER),
@@ -536,12 +556,12 @@ let draw_npatch_panel = (panel: Texture2D, x: f32, y: f32, cursor: Vector2) -> v
 let draw_filter_panel = (sheet: Texture2D, x: f32, y: f32) -> void => {
   let source = rect(0.0, 0.0, f32(FRAME), f32(FRAME))
   set_texture_filter(sheet, FILTER_POINT)
-  draw_texture_pro(sheet, source, rect(x, y, 120.0, 120.0), vec2(0.0, 0.0), 0.0, WHITE)
+  draw_texture_pro(sheet, source, rect(x, y, 110.0, 110.0), vec2(0.0, 0.0), 0.0, WHITE)
   set_texture_filter(sheet, FILTER_BILINEAR)
-  draw_texture_pro(sheet, source, rect(x + 136.0, y, 120.0, 120.0), vec2(0.0, 0.0), 0.0, WHITE)
+  draw_texture_pro(sheet, source, rect(x + 130.0, y, 110.0, 110.0), vec2(0.0, 0.0), 0.0, WHITE)
   set_texture_filter(sheet, FILTER_POINT)
-  draw_text("point", i32(x.round()), i32(y.round()) + 128, CAPTION, DARKGRAY)
-  draw_text("bilinear", i32(x.round()) + 136, i32(y.round()) + 128, CAPTION, DARKGRAY)
+  draw_text("point", i32(x.round()), i32(y.round()) + 118, CAPTION, DARKGRAY)
+  draw_text("bilinear", i32(x.round()) + 130, i32(y.round()) + 118, CAPTION, DARKGRAY)
 }
 
 /// A render texture drawn back to the screen.
