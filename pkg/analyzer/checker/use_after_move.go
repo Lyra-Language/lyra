@@ -177,7 +177,7 @@ func (c *useAfterMove) stmt(st moveState, s ast.Statement) moveState {
 	case *ast.IfDestructuringStmt:
 		return c.destructuringBranches(st, &v.DestructuringStatement, v.Then, v.Else)
 	case *ast.ElseDestructuringStmt:
-		return c.destructuringBranches(st, &v.DestructuringStatement, nil, v.Else)
+		return c.letElse(st, &v.DestructuringStatement, v.Else)
 
 	case *ast.TraitImplStmt:
 		// Each method is its own function, so each gets a fresh state. Letting the
@@ -208,14 +208,17 @@ func (c *useAfterMove) stmt(st moveState, s ast.Statement) moveState {
 	return st
 }
 
-// destructuringBranches walks an `if let` / `else let`: the scrutinee, then each branch as
-// an alternative, joined by union — the convention IfExpr follows.
+// destructuringBranches walks an `if let`: the scrutinee, then each branch as an
+// alternative, joined by union — the convention IfExpr follows.
 //
 // The reason it exists rather than the DestructuringDeclStmt case covering it: these embed
 // the declaration **by value** (`DestructuringStatement DestructuringDeclStmt`), so the
 // walker never sees a `*ast.DestructuringDeclStmt` and that case never fires. The names the
 // pattern binds are fresh in the *matching* branch only, which is also why the delete
 // happens on the branch's state rather than on the state flowing past.
+//
+// **`let … else` is not this shape and must not come back here.** It used to, and the two
+// false positives that cost are pinned by tests in use_after_move_destructuring_test.go.
 func (c *useAfterMove) destructuringBranches(st moveState, d *ast.DestructuringDeclStmt, then, els *ast.BlockExpr) moveState {
 	st = c.expr(st, d.Value)
 	bound := patternBoundNames(d.Pattern)
@@ -231,12 +234,46 @@ func (c *useAfterMove) destructuringBranches(st moveState, d *ast.DestructuringD
 		}
 		return c.expr(s, b)
 	}
-	// The pattern's names are in scope in `then` for an `if let` and in `els` for an
-	// `else let` — the branch that ran because the match succeeded.
-	if then != nil {
-		return mergeMoves(branch(then, true), branch(els, false))
+	// The pattern's names are in scope in `then` — the branch that ran because the
+	// match succeeded.
+	return mergeMoves(branch(then, true), branch(els, false))
+}
+
+// letElse walks `let Some(v) = m else { … }`, which reads like a branch and is not one.
+//
+// It is Rust's `let … else`: the payload binds in the **enclosing** scope and outlives the
+// statement, while the else block is the diverging path that never sees it. The collector
+// says so where it builds the node ("Else never sees them, matching let-else semantics"),
+// and the compiler agrees — `let Some(v) = opt() else { println("${v}") }` is `undefined
+// identifier "v"`, while a use *after* the statement checks clean.
+//
+// Analyzing it as a branch produced two false positives on correct code, and both are
+// regression-tested:
+//
+//   - a move inside the diverging else escaped it, so `take(s)` after the statement was
+//     reported against a move on a path that returns;
+//   - the payload names were cleared only inside the else's own state, so the union threw
+//     the clear away and a name **rebound** by the let-else kept a stale move record.
+//
+// Discarding the else's moves is sound because the else always diverges. Note that
+// `lyrac check` alone does not enforce that — a non-diverging else passes the front end —
+// but the backend refuses it by name, so it holds for every program that can be built.
+// (That the enforcement sits a pass too late, with no location on the error, is a separate
+// gap; see todo.md.)
+//
+// The else is still **walked**, against a copy, so a use-after-move *inside* it is reported
+// as before. Only its moves are prevented from escaping.
+func (c *useAfterMove) letElse(st moveState, d *ast.DestructuringDeclStmt, els *ast.BlockExpr) moveState {
+	st = c.expr(st, d.Value)
+	if els != nil {
+		c.expr(st.clone(), els)
 	}
-	return mergeMoves(branch(nil, false), branch(els, true))
+	// The payload binds in the enclosing scope, so each name is a fresh binding owning a
+	// value again — exactly what the VarDeclStmt case does with its single name.
+	for _, name := range patternBoundNames(d.Pattern) {
+		delete(st, name)
+	}
+	return st
 }
 
 func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {

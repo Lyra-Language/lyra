@@ -9,6 +9,47 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — `CheckUseAfterMove` had `let … else` backwards too
+
+The suspicion recorded in the entry below turned out to be right, and it was costing
+`lyra-E019` — a **hard error** — on two shapes of correct code:
+
+- **A move inside the diverging `else` escaped it.** `take(s)` after the statement was
+  reported against a move on a path that returns.
+- **A name rebound by the `let … else` kept a stale move record.** The pattern's names
+  were cleared only inside the else branch's own state, and the union then threw the
+  clear away, so a fresh binding was reported as moved.
+
+Both come from the same misreading the must-release pass nearly shipped: `let … else`
+reads like a branch and is not one. The payload binds in the **enclosing** scope and
+outlives the statement; the else is the diverging path that never sees it.
+
+**The check that decided it was whether a non-diverging else is legal**, because if it
+were, unioning the else's moves would have been correct rather than conservative — the
+code after the statement would be reachable from the else. It is not legal: the backend
+refuses it by name. But `lyrac check` **accepts** it, which is its own gap and is now in
+todo.md — the rule is right and the enforcement sits a pass too late, with no location on
+the error. That question is the whole reason to probe rather than read: the same code is a
+bug or not a bug depending on a fact about a different pass.
+
+`letElse` walks the else against a *copy*, so a use-after-move inside it is still reported
+and only its moves are stopped from escaping, then clears the pattern's names from the
+ongoing state exactly as the `VarDeclStmt` case does with its single name.
+
+**The regression tests were checked against the old code**, which is the part worth
+keeping as a habit: two of the five fail without the fix and three pass either way. The
+three that pass either way are not filler — they pin what must *not* change (the pass
+still sees into the else; the payload really does live on afterwards; `if let` genuinely
+is a branch and still unions). A regression test that passes before and after is worth
+nothing as a regression test, and knowing which of yours are which takes one revert.
+
+**How it was found is the transferable part.** Two passes answering mirror-image questions
+over the same AST — one asking "was this read after a move", the other "was this released
+before it died" — will misread the same construct in the same way, because the construct
+is what is confusing, not the question. Writing `letElse` for the second one is what
+raised the suspicion about the first. When a pass is built by mirroring another, the
+mirror is worth pointing back at the original.
+
 ### 09/10/26 — `@must_release` reaches `if let`, and three more misses under it
 
 `if let Some(s) = m { … }` now tracks the payload the way a `match` arm does, and with it

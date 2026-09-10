@@ -340,6 +340,15 @@ real failure, and none is local to one package.
    | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
    | is this CST node a comment? | `cst.IsComment` |
 
+    **A construct that two passes both misread is the construct's fault, not the pass's.**
+    `let … else` was analyzed as a branch by `CheckUseAfterMove` and nearly by
+    `CheckMustRelease` — the payload binds in the *enclosing* scope and the else is the
+    diverging path that never sees it. Two passes asking mirror-image questions over one
+    AST ("read after a move?" / "released before it died?") will misread the same node the
+    same way, because the node is what is confusing. **When a pass is built by mirroring
+    another, point the mirror back**: writing the second one's `letElse` is what exposed
+    the first one's bug, which had been shipping a hard error on correct code.
+
 9. **A name does not identify a declaration, and may not even identify one function.**
    Every *key* is module-qualified (rule 4), and a
    **receiver-overloaded** name maps to several declarations at once, told apart only by
@@ -1558,8 +1567,9 @@ works is a per-library binding module owning its own externs, which needs nothin
   **enclosing** scope and lives past the statement, while the else block is the diverging
   path that never sees it. It is handled like a `VarDeclStmt`, not like `if let`.
   Verified against the compiler rather than assumed, because the obvious reading is the
-  opposite one — and `CheckUseAfterMove` takes it, binding the pattern's names in the
-  *else* branch, which is where they are not.
+  opposite one — and **`CheckUseAfterMove` had taken it**, which cost `lyra-E019` on two
+  shapes of correct code until 09/10. Both passes now have a `letElse`; if a third pass
+  ever walks this node, it is the shape to check first.
 - **The scrutinee is usually not a binding.** `let Some(v) = load_sound(p) else { return }`
   acquires and unwraps in one statement, so `beginUnwrap` asks whether the *expression*
   produced an obligation as well as whether a bare name is holding one. This is the shape

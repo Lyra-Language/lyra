@@ -3442,16 +3442,22 @@ it, including a field read escaping its binding.
   and the check would accept it as the discharge. Waiting on a program that strains
   against the scoped-closure form (`with_cstring`) the language already has.
 
-### `CheckUseAfterMove` may have `let … else` backwards
+### A non-diverging `let … else` is caught by the backend, not by `check`
 
-Its `destructuringBranches` binds the pattern's names in the **else** branch for an
-`else let`, and the else block is the diverging path that never sees them — the payload
-binds in the *enclosing* scope, which the collector's own comment says and the compiler
-confirms (`let Some(v) = opt() else { println("${v}") }` is `undefined identifier`).
-Found while writing the must-release equivalent 09/10; **not investigated**, so it may be
-harmless — a move recorded in a branch whose names cannot be mentioned may simply never
-fire. Worth a probe: a `let … else` whose payload is moved after the statement, checked
-for a missed `lyra-E019`.
+`let Some(v) = opt() else { println("no") }` passes `lyrac check` and is then refused by
+the backend — *"the `else` branch of a `let … else` must diverge"* — with **no location**
+on the error and only at build time. The rule is right and the enforcement is a pass too
+late: it belongs in `checker`, beside the other statement-shape rules, where it can point
+at the else block.
+
+It matters beyond the message, because two analyses now *depend* on the rule while only
+the backend enforces it: `CheckUseAfterMove.letElse` and `CheckMustRelease.letElse` both
+discard the else block's effects on the grounds that nothing after the statement is
+reachable from it. That is sound for anything that builds, and it is worth having the
+front end say so.
+
+Found 09/10 while establishing whether the use-after-move `let … else` bug was real —
+if a non-diverging else were legal, the old union would have been correct.
 
 ### raylib audio, and Breakout has sound — **[DONE 09/09]**
 
