@@ -1561,6 +1561,32 @@ nothing bound. `checker.CheckLetElseDiverges` reports it, after typechecking bec
   enforced divergence and no pass did — a premise written in a comment, believed by later
   code, and checked nowhere near where it was relied on.
 
+## A leading `-` is not a continuation (`lyra-W023`)
+
+	x - x * x2 / 6.0 + x * x2 * x2 / 120.0
+	  - x * x2 * x2 * x2 / 5040.0
+
+is **two statements**, and the block evaluates to the second — so the function returns its
+last term. `checker.CheckLeadingMinusContinuation` reports it.
+
+- **The asymmetry is the whole reason it exists.** The grammar deliberately keeps `-`, `(`,
+  `[` and `*` off the continuation set, since each can begin a statement; that is the right
+  call. But the same mistake written with a leading `+` is a *type error* — there is no
+  unary plus — so `+` is caught by the compiler and `-` is silent. It compiles, runs, and
+  is wrong.
+- **Two conditions, because the first alone has honest uses.** The statement must begin
+  with a unary minus **and** the statement before it must be a pure value expression whose
+  value is discarded. `{ log(); -x }` is an ordinary body that prints and answers a
+  negation; `{ a + b; -c }` throws away a computation, which nobody writes on purpose.
+- **The negation is a leaf, not the root.** `- x * x / 6.0` parses as `(((-x) * x) / 6.0)`,
+  so the pass walks the **left spine**; testing the root finds nothing.
+- **`discardedValue`'s list is short and defaults to silence** — an expression kind added
+  later does not start firing this warning until someone decides it should, which is the
+  direction a warning with no suppression syntax has to err in.
+
+`(` and `[` misparse differently — `f` then a `(x)` line becomes a *call* rather than two
+statements — so they need their own signature and are not covered.
+
 ## Releasing a foreign resource (`@must_release`)
 
 `@must_release(unload_sound) struct Sound { … }`, enforced by

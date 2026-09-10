@@ -1118,4 +1118,17 @@ const (
 	// language: an error with no escape hatch would have no answer for a resource
 	// deliberately held until the process exits.
 	CodeUnreleasedResource = "lyra-W022"
+
+	// CodeLeadingMinusContinuation: a statement beginning with a unary `-` that looks
+	// like the continuation of the line above.
+	//
+	// A line starting with `-` is not a continuation — `-x` is a statement in its own
+	// right, which is why the grammar deliberately keeps `-` off the continuation set.
+	// So a multi-term expression written with the operator leading each line is several
+	// statements, all but the last discarded, and the block evaluates to the tail.
+	//
+	// **It compiles and runs and is wrong**, and the same mistake with `+` does not: there
+	// is no unary plus, so that spelling is a type error. Only `-` is silent, and that
+	// asymmetry is what this exists for.
+	CodeLeadingMinusContinuation = "lyra-W023"
 )

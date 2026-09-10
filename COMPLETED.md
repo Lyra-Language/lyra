@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — `lyra-W023`: a leading `-` is not a continuation
+
+The footgun found in `shapes.lyra`'s `sin32` is now a warning.
+
+	x - x * x2 / 6.0 + x * x2 * x2 / 120.0
+	  - x * x2 * x2 * x2 / 5040.0
+
+Two statements. The first is computed and discarded, the block evaluates to the second, and
+the function returns its last term. It compiled and ran and was wrong for as long as the
+file existed.
+
+**The asymmetry is what makes it worth a diagnostic rather than a documentation note.** The
+grammar's exclusion of `-`, `(`, `[` and `*` from the continuation set is correct and its
+reasoning is written down — each can begin a statement, and treating them as continuations
+is a worse bug. What that leaves is a trap with an uneven floor: the same mistake spelled
+with `+` is a type error, because there is no unary plus, so the compiler catches one
+spelling and not the other. A rule that is enforced for `+` and silent for `-` is exactly
+where a warning belongs.
+
+**It takes two conditions, and the second is what keeps it quiet.** The statement must begin
+with a unary minus *and* the one before it must be a pure value expression whose value is
+discarded. `{ log(); -x }` is an ordinary body that prints and answers a negation — warning
+about that would be noise — while `{ a + b; -c }` computes something and drops it, which
+nobody writes deliberately. Five accepted shapes are pinned alongside the three that fire.
+
+One implementation note worth carrying: **the negation is a leaf, not the root.**
+`- x * x / 6.0` parses as `(((-x) * x) / 6.0)`, whose root is a division, so the pass walks
+the left spine. Testing the root — the obvious first attempt — finds nothing at all. That
+was established by printing the AST rather than reasoning about precedence.
+
+The test that matters most is the one that **takes the advice**: the message says to put the
+operator at the end of the previous line, and a test writes exactly that and requires it to
+be clean. This file already records the cost of a diagnostic whose suggested fix is not real
+syntax.
+
 ### 09/10/26 — three more the shapes gallery had been hiding
 
 The shapes example had been given bigger labels **blind**, on the assumption that a layout

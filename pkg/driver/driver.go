@@ -354,6 +354,10 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// Post-typecheck checker passes that already return diag.Diagnostic (they
 	// carry their own severity and Unnecessary/Deprecated tags).
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnreachableCode(program)...)
+
+	// A statement beginning with `-` that meant to continue the line above (lyra-W023).
+	// Purely a shape question, so it needs no types and runs beside the other AST passes.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckLeadingMinusContinuation(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedVariables(program)...)
 	// The UFCS map comes from the typechecker: a method-style call into another module
 	// never writes that module's name, so the syntactic check cannot see the use.

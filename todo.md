@@ -3456,6 +3456,17 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
+### A leading `(` or `[` on a continuation line misparses too — **[`-` DONE 09/10]**
+
+The `-` half is `lyra-W023`; see COMPLETED.md. The other two excluded tokens misparse
+*differently* and are still open: `f` on one line and `(x)` on the next becomes a **call**
+rather than two statements, and `xs` then `[0]` becomes an **index**. Both are silent, and
+neither has the discarded-value corroboration W023 leans on — the first line is consumed
+rather than dropped, so there is nothing left over to notice. A signature for them wants
+its own thought.
+
+Original note, kept for the reasoning:
+
 ### A leading `-` on a continuation line silently splits a statement
 
 	let f = pure (x: f32) -> f32 => {
