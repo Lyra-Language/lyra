@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — a `const` may hold a struct, and the CTFE claim was wrong
+
+`const WHITE: Color = Color { r: 245, g: 245, b: 245, a: 255 }` compiles. It did not
+before, and `bindings/raylib`'s named colours were nullary `pure` functions working around
+that.
+
+**The interesting part is that this file recorded the wrong reason for the refusal.** When
+the raylib bindings hit it, the note said a struct-valued `const` "would want compile-time
+evaluation of a constructor, which is the CTFE entry's business". That was a guess from the
+outside, and reading `firstNonConstant` disproved it in about a minute: the predicate is
+**structural**, walking sub-expressions and asking whether each is a literal, a const
+reference, or an operator over those. It already had arms for array literals, array repeats
+and tuples.
+
+A struct literal computes nothing — it *is* its fields — so it belongs in exactly that
+company. Adding it is one arm, not a compile-time evaluator. Nothing runs a constructor;
+a field holding a call is still refused, with the *call* named rather than the struct,
+because the walk recurses rather than accepting outright.
+
+The rule as it stood made `Color { r: 245, … }` less constant than `[245, 245, 245, 255]`,
+and nothing about either justified the difference.
+
+#### Two things that came free, and one that stayed refused
+
+Anonymous structs came with it — same arm, since neither adds a way to compute something —
+and tuples turned out to work already, which is how the duplicate-case compile error found
+the existing arm.
+
+**The update form stays refused**, and now reports *itself*. Handing back the base produced
+"variable `BASE` is not constant" about a thing that is very often a `const` and plainly
+is constant, which sends a reader to check the wrong declaration. `describeNonConstant`
+distinguishes the two shapes of the same node kind.
+
+#### The lesson worth keeping
+
+A note in `todo.md` saying a feature "wants" some larger unbuilt thing is a hypothesis, and
+it ages into a fact nobody rechecks. This one cost the raylib bindings a workaround for as
+long as it stood — which was a day, only because the bindings were written the same week.
+When such a note is written, it is worth saying whether it was *measured* or *assumed*.
+
 ### 09/09/26 — lyra-E073: the type parameter nothing solved
 
 `let t = (None, 1)` used to type-check clean and fail in the **backend** with `unknown

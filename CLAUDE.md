@@ -1552,9 +1552,9 @@ Its module reads like ordinary Lyra precisely because the hard part is in `pkg/a
 
 Two things it ran into that the SDL3 module did not:
 
-- **A `const` cannot hold a struct** (lyra-E012), so raylib's named colours are `pure`
-  nullary functions rather than constants. raylib spells them as macros expanding to a
-  compound literal, which is the same shape — a value built where it is used.
+- **A `const` may hold a struct** as of 09/09, so raylib's named colours are `pub const`.
+  They were nullary `pure` functions before that, working around a rule that made a struct
+  literal less constant than an array literal.
 - **`rec` is a reserved word**, one of the function modifiers, so raylib's own parameter
   name for a rectangle cannot be used and the wrapper says `rect`.
 

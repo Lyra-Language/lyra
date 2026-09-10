@@ -219,12 +219,12 @@ func TestExec_RaylibBindings(t *testing.T) {
 	libdir := pkgConfigLibDir(t, "raylib")
 	src := `
 module main
-import bindings.raylib.{ Vector2, Rectangle, Color, rgb, rgba, red, mouse_position,
+import bindings.raylib.{ Vector2, Rectangle, Color, rgb, rgba, RED, mouse_position,
                          circle_hits_rect, KEY_ESCAPE }
 let main = () -> void => {
   let c = rgb(1, 2, 3)
   let t = rgba(9, 8, 7, 6)
-  let r = red()
+  let r = RED
   let m = mouse_position()
   // Two aggregates by value in one call, which is the shape a game actually uses:
   // CheckCollisionCircleRec(Vector2, float, Rectangle). A wrong classification here is

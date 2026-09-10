@@ -122,6 +122,46 @@ func (tc *TypeChecker) firstNonConstant(expr ast.Expression) (ast.Expression, bo
 		}
 		return nil, true
 
+	case *ast.StructInstanceExpr:
+		// `const WHITE: Color = Color { r: 245, g: 245, b: 245, a: 255 }` is as constant
+		// as the array literal above, and for the same reason: a struct literal computes
+		// nothing, it *is* its fields, so it is constant exactly when they are.
+		//
+		// **This is not compile-time evaluation**, which is what it was mistaken for when
+		// it was refused. Nothing here runs a constructor or folds a call — the walk is
+		// structural, the same one the array arms take, and a field holding a call is
+		// still refused with that call named. What it removes is a rule that made
+		// `Color { … }` less constant than `[245, 245, 245, 255]`, which nothing about
+		// either justified.
+		//
+		// A record-update base (`Other { base | r: 1 }`) is refused, and the offender is
+		// the **literal** rather than the base: the base is very often a `const` and
+		// naming it produces "variable `BASE` is not constant" about a thing that
+		// plainly is. What is not constant is the update form.
+		if e.BaseStruct != nil {
+			return e, false
+		}
+		for _, f := range e.Fields {
+			if f.Value == nil {
+				continue
+			}
+			if off, ok := tc.firstNonConstant(f.Value); !ok {
+				return off, false
+			}
+		}
+		return nil, true
+
+	case *ast.AnonymousStructInstanceExpr:
+		for _, f := range e.Fields {
+			if f.Value == nil {
+				continue
+			}
+			if off, ok := tc.firstNonConstant(f.Value); !ok {
+				return off, false
+			}
+		}
+		return nil, true
+
 	case *ast.ArrayRepeatExpr:
 		// `const XS = [7; 3]` is as constant as `const XS = [1, 2, 3]`, and was refused as
 		// "not a compile-time constant" without this arm.
@@ -150,8 +190,11 @@ func (tc *TypeChecker) firstNonConstant(expr ast.Expression) (ast.Expression, bo
 		return nil, true
 
 	default:
-		// Function calls, member/index access, interpolated strings, struct
-		// instances, if/match/blocks, etc. all depend on more than literals.
+		// Function calls, member/index access, interpolated strings, if/match/blocks
+		// and the rest all depend on more than literals. **Struct instances left this
+		// list on 09/09**: a struct literal computes nothing and is constant exactly
+		// when its fields are, which is the same rule the array and tuple arms above
+		// apply.
 		return expr, false
 	}
 }
@@ -170,7 +213,14 @@ func describeNonConstant(expr ast.Expression) string {
 		return "an index access"
 	case *ast.InterpolatedStringExpr:
 		return "an interpolated string"
-	case *ast.StructInstanceExpr, *ast.AnonymousStructInstanceExpr:
+	case *ast.StructInstanceExpr:
+		// A struct literal is constant when its fields are (09/09), so reaching here
+		// means the *update* form, which is the only shape of it that is not.
+		if e.BaseStruct != nil {
+			return "a struct update"
+		}
+		return "a struct instance"
+	case *ast.AnonymousStructInstanceExpr:
 		return "a struct instance"
 	default:
 		return "this expression"

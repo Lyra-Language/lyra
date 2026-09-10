@@ -3399,6 +3399,26 @@ information; `@link` was the redundant one.
 `@symbol` has **no** module form, deliberately: a symbol is one declaration's C name and a
 module has no single one, so it is refused on a header by name rather than ignored.
 
+### A `const` may hold a struct — **[DONE 09/09]**
+
+`const WHITE: Color = Color { r: 245, g: 245, b: 245, a: 255 }`. A struct literal computes
+nothing — it *is* its fields — so it is constant exactly when they are, which is the rule
+the array and tuple arms of `firstNonConstant` already applied.
+
+**It was recorded here as wanting CTFE, and that was wrong.** Nothing evaluates a
+constructor or folds a call: the walk is structural, and a field holding a call is still
+refused with the *call* named rather than the struct. Refusing the literal made
+`Color { … }` less constant than `[245, 245, 245, 255]`, which nothing about either
+justified.
+
+Anonymous structs come with it, and tuples already worked. **The update form
+(`Color { BASE | r: 9 }`) stays refused**, and reports *itself* — naming its base produced
+"variable `BASE` is not constant" about a thing that plainly is, sending the reader to
+check the wrong declaration.
+
+`bindings/raylib`'s named colours are `pub const` rather than nullary `pure` functions,
+which is what the change was for.
+
 ### `examples/raylib/breakout.lyra` — **[DONE 09/09]**
 
 A playable game: paddle, ball, a `[]Brick` grid, lives, score, and a `data GameState` the
@@ -3424,15 +3444,11 @@ one. `examples/raylib/basic.lyra` is written against it and contains **no `unsaf
 
 Two language facts it ran into:
 
-- **A `const` cannot hold a struct** (lyra-E012), so the named colours are `pure` nullary
-  functions. That matches raylib, whose colours are macros expanding to a compound literal
-  — a value built where it is used rather than a constant.
+- **A `const` could not hold a struct** (lyra-E012), so the named colours were `pure`
+  nullary functions. **Fixed 09/09** — see below; they are `pub const` now.
 - **`rec` is reserved** (a function modifier), so raylib's own parameter name for a
-  rectangle is spelled `rect` in the wrapper.
-
-Neither is a gap worth closing on this evidence. A struct-valued `const` would want
-compile-time evaluation of a constructor, which is the CTFE entry's business; `rec` is
-load-bearing where it is.
+  rectangle is spelled `rect` in the wrapper. That one stays: `rec` is load-bearing where
+  it is.
 
 ### `maybe != None` lowers — **[DONE 09/09]**
 

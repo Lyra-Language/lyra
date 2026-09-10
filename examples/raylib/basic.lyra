@@ -25,7 +25,7 @@ import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps, frame_time,
   begin_drawing, end_drawing, clear_background,
   Vector2, Rectangle, draw_circle, draw_rectangle, draw_line,
-  rgba, raywhite, darkgray, red, blue,
+  rgba, RAYWHITE, DARKGRAY, RED, BLUE,
   mouse_position, mouse_pressed, key_down, MOUSE_LEFT, KEY_SPACE,
   draw_text, measure_text, draw_fps,
 }
@@ -58,12 +58,12 @@ let main = () -> void => {
     if key_down(KEY_SPACE) { marks = [] }
 
     begin_drawing()
-    clear_background(raywhite())
+    clear_background(RAYWHITE)
 
     // A crosshair on the cursor, then a box around it — `Vector2` and `Rectangle` both
     // cross by value, and both are just structs here.
-    draw_line(Vector2 { x: m.x - 12.0, y: m.y }, Vector2 { x: m.x + 12.0, y: m.y }, darkgray())
-    draw_line(Vector2 { x: m.x, y: m.y - 12.0 }, Vector2 { x: m.x, y: m.y + 12.0 }, darkgray())
+    draw_line(Vector2 { x: m.x - 12.0, y: m.y }, Vector2 { x: m.x + 12.0, y: m.y }, DARKGRAY)
+    draw_line(Vector2 { x: m.x, y: m.y - 12.0 }, Vector2 { x: m.x, y: m.y + 12.0 }, DARKGRAY)
     draw_rectangle(
       Rectangle { x: m.x - 34.0, y: m.y - 24.0, width: 68.0, height: 48.0 },
       rgba(60, 60, 90, 40),
@@ -73,11 +73,11 @@ let main = () -> void => {
       draw_circle(mark, 5.0, rgba(0, 121, 241, 160))
     }
 
-    draw_circle(Vector2 { x: x, y: y }, RADIUS, red())
+    draw_circle(Vector2 { x: x, y: y }, RADIUS, RED)
 
     let hint = "click to mark · space to clear"
-    draw_text(hint, 400 - measure_text(hint, 20) / 2, 410, 20, darkgray())
-    draw_text("${marks.len()} marks", 12, 12, 20, blue())
+    draw_text(hint, 400 - measure_text(hint, 20) / 2, 410, 20, DARKGRAY)
+    draw_text("${marks.len()} marks", 12, 12, 20, BLUE)
     draw_fps(12, 40)
 
     end_drawing()

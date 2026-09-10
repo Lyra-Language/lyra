@@ -16,7 +16,7 @@ import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps, frame_time,
   begin_drawing, end_drawing, clear_background,
   Vector2, Rectangle, draw_rectangle, draw_circle, circle_hits_rect,
-  Color, rgb, raywhite, red, blue, orange,
+  Color, rgb, RAYWHITE, RED, BLUE, ORANGE,
   draw_text, measure_text, key_down, key_pressed, mouse_position,
   KEY_LEFT, KEY_RIGHT, KEY_SPACE, KEY_R,
 }
@@ -146,17 +146,17 @@ let main = () -> void => {
       b += 1
     }
 
-    draw_rectangle(paddle, raywhite())
-    draw_circle(ball, BALL_R, orange())
+    draw_rectangle(paddle, RAYWHITE)
+    draw_circle(ball, BALL_R, ORANGE)
 
-    draw_text("score ${score}", 14, 14, 20, raywhite())
-    draw_text("lives ${lives}", 700, 14, 20, raywhite())
+    draw_text("score ${score}", 14, 14, 20, RAYWHITE)
+    draw_text("lives ${lives}", 700, 14, 20, RAYWHITE)
 
     match state {
-      Ready => centred("press space to launch", 220, 24, raywhite()),
+      Ready => centred("press space to launch", 220, 24, RAYWHITE),
       Playing => {},
-      Won => centred("you win — R to play again", 220, 30, blue()),
-      Lost => centred("game over — R to play again", 220, 30, red()),
+      Won => centred("you win — R to play again", 220, 30, BLUE),
+      Lost => centred("game over — R to play again", 220, 30, RED),
     }
 
     end_drawing()
