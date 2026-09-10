@@ -10,8 +10,8 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
-// lyra-W023 needs no types, so this runs the collector and the pass and nothing else.
-func leadingMinusWarnings(t *testing.T, source string) []diag.Diagnostic {
+// These need no types, so this runs the collector and the pass and nothing else.
+func continuationWarnings(t *testing.T, source string) []diag.Diagnostic {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -19,13 +19,13 @@ func leadingMinusWarnings(t *testing.T, source string) []diag.Diagnostic {
 	}
 	c := collector.NewCollector([]byte(source))
 	program, _, _, _ := c.Collect(tree.RootNode())
-	out := checker.CheckLeadingMinusContinuation(program)
+	out := checker.CheckContinuationLines(program)
 	for _, d := range out {
-		if d.Code != diag.CodeLeadingMinusContinuation {
+		if d.Code != diag.CodeLeadingMinusContinuation && d.Code != diag.CodeSplitCallOrIndex {
 			t.Fatalf("unexpected code %q", d.Code)
 		}
 		if d.Severity != diag.SeverityWarning {
-			t.Fatalf("lyra-W023 must be a warning, got %v", d.Severity)
+			t.Fatalf("a continuation diagnostic must be a warning, got %v", d.Severity)
 		}
 	}
 	return out
@@ -37,7 +37,7 @@ func leadingMinusWarnings(t *testing.T, source string) []diag.Diagnostic {
 // the file existed: three statements, the first two discarded, the function returning its
 // last term. It compiled and ran and was wrong, and nothing said so.
 func TestLeadingMinus_TheOriginalBug(t *testing.T) {
-	got := leadingMinusWarnings(t, `
+	got := continuationWarnings(t, `
 let sin32 = pure (radians: f32) -> f32 => {
   let x2 = radians * radians
   radians - radians * x2 / 6.0 + radians * x2 * x2 / 120.0
@@ -58,7 +58,7 @@ let sin32 = pure (radians: f32) -> f32 => {
 // The negation is a *leaf*, not the root: `- x * x / 6.0` parses as `(((-x) * x) / 6.0)`.
 // Testing the root would find nothing, which is why the pass walks the left spine.
 func TestLeadingMinus_FindsANegationDownTheLeftSpine(t *testing.T) {
-	if got := leadingMinusWarnings(t, `
+	if got := continuationWarnings(t, `
 let f = pure (x: f64) -> f64 => {
   x + x
     - x * x * x / 6.0
@@ -70,7 +70,7 @@ let f = pure (x: f64) -> f64 => {
 
 // A bare negation, where the negation *is* the root.
 func TestLeadingMinus_FindsABareNegation(t *testing.T) {
-	if got := leadingMinusWarnings(t, `
+	if got := continuationWarnings(t, `
 let f = pure (x: f64) -> f64 => {
   x + x
     - x
@@ -108,7 +108,7 @@ let f = pure (x: f64) -> f64 => {
 }`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := leadingMinusWarnings(t, c.src); len(got) != 0 {
+			if got := continuationWarnings(t, c.src); len(got) != 0 {
 				t.Errorf("expected no warning, got %v", got)
 			}
 		})
@@ -118,11 +118,141 @@ let f = pure (x: f64) -> f64 => {
 // Taking the advice must produce a program that means what the author wanted — the only
 // way to know a suggested fix is real rather than plausible.
 func TestLeadingMinus_TheSuggestedFixIsAccepted(t *testing.T) {
-	if got := leadingMinusWarnings(t, `
+	if got := continuationWarnings(t, `
 let sin32 = pure (radians: f32) -> f32 => {
   let x2 = radians * radians
   radians - radians * x2 / 6.0 + radians * x2 * x2 / 120.0 -
     radians * x2 * x2 * x2 / 5040.0
+}
+`); len(got) != 0 {
+		t.Errorf("the fix the message names should be clean, got %v", got)
+	}
+}
+
+// --- lyra-W024: a leading `(` or `[` ---------------------------------------------------
+//
+// The same misparse with a different fix. A call or an index split before its bracket is
+// a discarded name followed by a tuple or an array literal.
+
+func TestContinuation_CallSplitBeforeItsParen(t *testing.T) {
+	got := continuationWarnings(t, `
+let add = pure (a: i64, b: i64) -> i64 => a + b
+let f = pure () -> i64 => {
+  add
+    (1, 2)
+}
+`)
+	if len(got) != 1 || got[0].Code != diag.CodeSplitCallOrIndex {
+		t.Fatalf("want one W024, got %v", got)
+	}
+	if !strings.Contains(got[0].Message, "move the `(` up") {
+		t.Errorf("message should name the fix; got: %s", got[0].Message)
+	}
+}
+
+// **The commonest spelling, and the one the AST cannot see by kind.** `(x)` collects to a
+// bare `IdentifierExpr` — the parentheses are erased — so this is caught by the statement
+// starting a column before its own expression.
+func TestContinuation_SingleArgumentCallSplitBeforeItsParen(t *testing.T) {
+	got := continuationWarnings(t, `
+let one = pure (a: i64) -> i64 => a
+let f = pure (x: i64) -> i64 => {
+  one
+    (x)
+}
+`)
+	if len(got) != 1 || got[0].Code != diag.CodeSplitCallOrIndex {
+		t.Fatalf("want one W024, got %v", got)
+	}
+}
+
+func TestContinuation_IndexSplitBeforeItsBracket(t *testing.T) {
+	got := continuationWarnings(t, `
+let f = pure (xs: []i64) -> i64 => {
+  xs
+    [0]
+}
+`)
+	if len(got) != 1 || got[0].Code != diag.CodeSplitCallOrIndex {
+		t.Fatalf("want one W024, got %v", got)
+	}
+	if !strings.Contains(got[0].Message, "move the `[` up") {
+		t.Errorf("message should name the fix; got: %s", got[0].Message)
+	}
+}
+
+// A method call split before its parenthesis: the previous statement is a member access,
+// which computes a value and drops it exactly as a bare name does.
+func TestContinuation_MethodCallSplitBeforeItsParen(t *testing.T) {
+	got := continuationWarnings(t, `
+struct P { n: i64 }
+let f = pure (p: P) -> i64 => {
+  p.n
+    (1, 2)
+}
+`)
+	if len(got) != 1 || got[0].Code != diag.CodeSplitCallOrIndex {
+		t.Fatalf("want one W024, got %v", got)
+	}
+}
+
+// Buried by precedence, as the negation is: `(x + 1) * 2` has a multiplication at its root.
+func TestContinuation_ParenBuriedUnderPrecedence(t *testing.T) {
+	got := continuationWarnings(t, `
+let f = pure (x: i64) -> i64 => {
+  x
+    (x + 1) * 2
+}
+`)
+	if len(got) != 1 || got[0].Code != diag.CodeSplitCallOrIndex {
+		t.Fatalf("want one W024, got %v", got)
+	}
+}
+
+func TestContinuation_ParenAndBracketAccepted(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		// The fix W024 names, and it is checked to parse as one call by
+		// TestContinuation_TheSuggestedParenFixIsAccepted below.
+		{"paren moved up", `
+let add = pure (a: i64, b: i64) -> i64 => a + b
+let f = pure () -> i64 => {
+  add(
+    1, 2)
+}`},
+		// A void call then a tuple: a call is an ordinary statement, so it does not
+		// corroborate and nothing fires.
+		{"a call then a tuple", `
+let g = () -> void => {}
+let f = () -> (i64, i64) => {
+  g()
+  (1, 2)
+}`},
+		// One statement — nothing above it to have been continuing.
+		{"a lone tuple", `let f = pure () -> (i64, i64) => (1, 2)`},
+		// Deliberate, on one line, with the split spelled out.
+		{"explicit semicolon", `let f = pure (x: i64) -> (i64, i64) => { x; (1, 2) }`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := continuationWarnings(t, c.src); len(got) != 0 {
+				t.Errorf("expected no warning, got %v", got)
+			}
+		})
+	}
+}
+
+// Taking W024's advice must produce a program that means what the author wanted. The
+// message claims a newline inside the parentheses is not a terminator; this is that claim.
+func TestContinuation_TheSuggestedParenFixIsAccepted(t *testing.T) {
+	if got := continuationWarnings(t, `
+let add = pure (a: i64, b: i64) -> i64 => a + b
+let one = pure (a: i64) -> i64 => a
+let f = pure (xs: []i64) -> i64 => {
+  add(
+    1, 2)
+  one(
+    3)
+  xs[
+    0]
 }
 `); len(got) != 0 {
 		t.Errorf("the fix the message names should be clean, got %v", got)

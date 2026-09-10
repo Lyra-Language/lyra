@@ -1131,4 +1131,17 @@ const (
 	// is no unary plus, so that spelling is a type error. Only `-` is silent, and that
 	// asymmetry is what this exists for.
 	CodeLeadingMinusContinuation = "lyra-W023"
+
+	// CodeSplitCallOrIndex: a statement beginning with `(` or `[` that looks like the
+	// continuation of the line above — a call or an index split across two lines.
+	//
+	// Neither token continues a line, for the reason W023 gives about `-`: `(a, b)` and
+	// `[1, 2]` are statements in their own right. So `f` on one line and `(x)` on the
+	// next is a discarded name followed by a parenthesised expression, not a call.
+	//
+	// Its own code rather than W023's because the *fix* differs: an operator moves to the
+	// end of the previous line, while a `(` moves up to close the gap — `f(` with the
+	// arguments on the next line is one call, since a newline inside the parentheses is
+	// not a terminator.
+	CodeSplitCallOrIndex = "lyra-W024"
 )
