@@ -41,6 +41,10 @@ import bindings.raylib.{
   RAYWHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY, LIGHTGRAY,
 }
 
+/// Panel label size. Named because it is set in one place and was once too small to read
+/// at a normal viewing distance — the same complaint `textures.lyra` answered.
+const LABEL: i32 = 22
+
 let main = () -> u8 => {
   if wants_check() { return run_checks() }
   run_gallery()
@@ -201,7 +205,9 @@ let near = pure (a: f32, b: f32) -> bool => {
 // ---------------------------------------------------------------------------------------
 
 let run_gallery = () -> void => {
-  init_window(900, 640, "Lyra — raylib shapes")
+  // 1100x800 rather than 900x640: the labels grew, so the grid needed the room. A bigger
+  // font in the same space is a crowded window, not a readable one.
+  init_window(1100, 820, "Lyra — raylib shapes")
   set_target_fps(60)
 
   for !should_close() {
@@ -214,19 +220,19 @@ let run_gallery = () -> void => {
     begin_drawing()
     clear_background(RAYWHITE)
 
-    draw_lines_panel(20.0, 40.0, t)
-    draw_circles_panel(320.0, 40.0, t)
-    draw_rects_panel(620.0, 40.0, t)
-    draw_polys_panel(20.0, 250.0, t)
-    draw_splines_panel(320.0, 250.0, t)
-    draw_collision_panel(20.0, 440.0, cursor)
+    draw_lines_panel(30.0, 76.0, t)
+    draw_circles_panel(390.0, 76.0, t)
+    draw_rects_panel(750.0, 76.0, t)
+    draw_polys_panel(30.0, 346.0, t)
+    draw_splines_panel(390.0, 346.0, t)
+    draw_collision_panel(30.0, 636.0, cursor)
 
-    draw_text("lines", 20, 20, 18, DARKGRAY)
-    draw_text("circles, ellipses, rings", 320, 20, 18, DARKGRAY)
-    draw_text("rectangles", 620, 20, 18, DARKGRAY)
-    draw_text("triangles and polygons", 20, 230, 18, DARKGRAY)
-    draw_text("splines", 320, 230, 18, DARKGRAY)
-    draw_text("collision — move the mouse", 20, 420, 18, DARKGRAY)
+    draw_text("lines", 30, 40, LABEL, DARKGRAY)
+    draw_text("circles, ellipses, rings", 390, 40, LABEL, DARKGRAY)
+    draw_text("rectangles", 750, 40, LABEL, DARKGRAY)
+    draw_text("triangles and polygons", 30, 310, LABEL, DARKGRAY)
+    draw_text("splines", 390, 310, LABEL, DARKGRAY)
+    draw_text("collision — move the mouse", 30, 600, LABEL, DARKGRAY)
     end_drawing()
   }
   close_window()

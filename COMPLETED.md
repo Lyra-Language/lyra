@@ -36,8 +36,16 @@ assumed. Path resolution tries the repository root and `examples/raylib/`, both 
 
 **The labels were too small to read**, which is the kind of thing only running it finds.
 `LABEL` and `CAPTION` are named constants now (22 and 18, up from 16 and 14) and the window
-grew to 1100x800 to give the panels room. `examples/raylib/shapes.lyra` has the same 16/18
-labels and the same problem; it is left alone here because it was not what was reported.
+grew to 1100x800 to give the panels room — **a bigger font in the same space is a crowded
+window, not a readable one**, so the layout moved with the type. `examples/raylib/shapes.lyra`
+got the same treatment straight after (22px labels, 1100x820, a 360x270 grid).
+
+Its layout was checked by **computing the panels' extents from the source** rather than by
+looking: each panel's largest `x + N` and `y + N`, plus an allowance for the radii drawn at
+them, against the window and against the next row's label. The first spacing put row one's
+bottom at 301 and row two's label at 300, which is the sort of one-pixel overlap that is
+invisible in a screenshot and obvious in the arithmetic. Worth remembering as the way to
+lay out a window you cannot see.
 
 `update_texture` is better exercised for the change: the scene is read back with
 `image_from_texture`, warmed pixel by pixel in Lyra, and uploaded to a second texture, with

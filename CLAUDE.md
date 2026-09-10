@@ -1787,6 +1787,12 @@ manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`)
 fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
 pointer and a size of **0**, measured.
 
+**Both galleries size their labels from a named `LABEL` constant** (22px) and are laid out
+to suit it. A gallery that cannot be looked at from here is laid out by *computing* each
+panel's extent from its largest `x + N`/`y + N` and checking it against the window and the
+next row's label — which is how a one-pixel overlap between a panel's bottom and the label
+below it was caught, a thing no screenshot would have shown.
+
 `examples/raylib/breakout.lyra` is what the pair is *for*: a playable game — paddle, ball, a
 `[]Brick` grid, lives, score, sound, and a `data GameState` a `match` covers exhaustively —
 with no `unsafe` and no `extern` in it. Its tones are **synthesised in Lyra** rather than
