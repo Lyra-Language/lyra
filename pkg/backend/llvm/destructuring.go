@@ -386,11 +386,21 @@ func (l *lowerer) lowerIfDestructuring(block *ir.Block, s *ast.IfDestructuringSt
 // Unlike `if let`, the bindings belong to the *enclosing* scope — they are visible
 // after the statement, which is the whole point of the form — so they are bound
 // into the continuation block, not a nested one. That is sound precisely because
-// Else cannot fall through: the typechecker requires it to diverge (return/break/
-// continue), so the only path reaching the continuation is the one where the
-// pattern matched. A diverging Else seals its own block, so no join is emitted for
-// it; a fall-through would be a use of unbound names, and is a loud error here
-// rather than a jump into code that reads them.
+// Else cannot fall through, so the only path reaching the continuation is the one
+// where the pattern matched. A diverging Else seals its own block, so no join is
+// emitted for it; a fall-through would be a use of unbound names.
+//
+// **The front end enforces that** — `checker.CheckLetElseDiverges`, lyra-E074, which
+// reports at `lyrac check` with a location. This check stays anyway, per rule 5: the
+// backend errors rather than emitting wrong code, including where the front end has
+// already looked. Until 09/10 the comment here claimed the typechecker required
+// divergence and no pass did, which is how `lyrac check` came to accept a program the
+// backend then refused with no location on the error.
+//
+// The two disagree on exactly one shape, and it is this check that is wrong about it:
+// an Else of `if c { return } else { return }` diverges on every path, and the front
+// end accepts it, but the `if` lowering leaves the merge block without a terminator so
+// the test below fires. See todo.md.
 func (l *lowerer) lowerElseDestructuring(block *ir.Block, s *ast.ElseDestructuringStmt) (*ir.Block, error) {
 	d := &s.DestructuringStatement
 	val, valType, block, err := l.destructuringValue(block, d)
@@ -419,7 +429,9 @@ func (l *lowerer) lowerElseDestructuring(block *ir.Block, s *ast.ElseDestructuri
 			return nil, err
 		}
 		if elseEnd.Term == nil {
-			return nil, fmt.Errorf("llvm: the `else` branch of a `let … else` must diverge (return, break, or continue)")
+			return nil, fmt.Errorf("llvm: the `else` branch of a `let … else` must diverge " +
+				"(return, break, continue, or panic) — this should have been reported as " +
+				"lyra-E074 at check time")
 		}
 	}
 	if err := bind(cont, d.Pattern); err != nil {

@@ -3442,22 +3442,19 @@ it, including a field read escaping its binding.
   and the check would accept it as the discharge. Waiting on a program that strains
   against the scoped-closure form (`with_cstring`) the language already has.
 
-### A non-diverging `let … else` is caught by the backend, not by `check`
+### The backend refuses a `let … else` whose else is `if c { return } else { return }`
 
-`let Some(v) = opt() else { println("no") }` passes `lyrac check` and is then refused by
-the backend — *"the `else` branch of a `let … else` must diverge"* — with **no location**
-on the error and only at build time. The rule is right and the enforcement is a pass too
-late: it belongs in `checker`, beside the other statement-shape rules, where it can point
-at the else block.
+`lowerElseDestructuring` decides divergence on whether the lowered Else block has a
+terminator, and the `if` lowering leaves its merge block without one even when **both**
+branches diverge. So that Else is refused although every path through it returns.
 
-It matters beyond the message, because two analyses now *depend* on the rule while only
-the backend enforces it: `CheckUseAfterMove.letElse` and `CheckMustRelease.letElse` both
-discard the else block's effects on the grounds that nothing after the statement is
-reachable from it. That is sound for anything that builds, and it is worth having the
-front end say so.
+The front-end check (lyra-E074, landed 09/10) accepts it, deliberately — a front-end error
+says "this is not a legal program" and that program is legal — so the two disagree on this
+one shape and the backend is the one to fix. Every other shape agrees; the accept-set was
+established by running the backend on thirteen of them.
 
-Found 09/10 while establishing whether the use-after-move `let … else` bug was real —
-if a non-diverging else were legal, the old union would have been correct.
+The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
+sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
 ### raylib audio, and Breakout has sound — **[DONE 09/09]**
 

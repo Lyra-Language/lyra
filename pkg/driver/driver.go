@@ -279,6 +279,13 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// parameter).
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt, res.MethodTable)...)
 
+	// A `let … else` whose else branch can fall through (lyra-E074). After typechecking
+	// because `panic(…)` is recognised by its recorded `never` type rather than by name.
+	// Two later passes depend on this rule — CheckUseAfterMove and CheckMustRelease both
+	// discard a let-else's else-block effects as unreachable — so it is stated here,
+	// before them, rather than left to the backend check that still backs it up.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckLetElseDiverges(program, tt)...)
+
 	// A `@must_release` resource dropped without its release call (lyra-W022). After
 	// typechecking for the same reason use-after-move is: the binding's *settled* type
 	// is what says whether it carries an obligation, and the callee resolution it uses

@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — the `let … else` divergence rule moves into the front end
+
+`lyra-E074`, `checker.CheckLetElseDiverges`: an else branch that can fall through is now
+reported at `lyrac check`, **with a location**, instead of at `lyrac build` with none.
+
+The rule was never new — `lowerElseDestructuring` has always refused an Else whose lowered
+form has no terminator. What was wrong is where it lived. Three costs, and the third is the
+one that matters:
+
+1. The error arrived at build time, after a clean `check`.
+2. It carried no location, so it named the mistake without saying where.
+3. **Two analyses had come to depend on the invariant while nothing in the front end
+   stated it.** `CheckUseAfterMove.letElse` and `CheckMustRelease.letElse` both discard the
+   else block's effects because nothing after the statement is reachable from it. That is
+   sound only because the else always diverges — and the backend's own comment asserted
+   "the typechecker requires it to diverge", which was true of no pass at all. A premise
+   written into a comment, believed by later code, and enforced nowhere near where it is
+   relied on.
+
+**The accept-set was established by running the backend, not by reading it.** Divergence
+there is a property of the *lowered* block's terminator, which the AST does not wear on its
+face, so thirteen shapes were compiled and the verdicts recorded before a line of the pass
+was written. That is what turned up the two surprises: `match` with every arm diverging is
+accepted, and `if c { return } else { return }` is **refused** — the `if` lowering leaves
+its merge block without a terminator even when no branch reaches it.
+
+**The front end accepts that `if`, and the disagreement is deliberate.** A front-end error
+says "this is not a legal program", and that program is legal; the backend has the gap and
+it is filed. The direction is what matters — of thirteen shapes, twelve agree exactly and
+the thirteenth is the front end being *more* permissive. There is no shape where `check`
+refuses something the backend would have built, which is the only direction that could
+break working code.
+
+Two gaps left open on purpose, both toward accepting. An infinite loop (`else { for true
+{ } }`) is reported, since deciding otherwise means proving no `break` is reachable — a
+real analysis rather than a shape test — and the backend refuses it too, so the two agree
+and nothing that built stops building. And a function that panics internally is still
+declared `-> void`, so nothing at its call site says it diverges; `never` has no syntax, so
+`panic(…)` written in place is the whole of what the type can say.
+
+**The backend check stays**, per rule 5, and its message now says it should have been
+caught as E074 — so if it ever fires, it is reporting a hole in the front end rather than
+a user error.
+
 ### 09/10/26 — `CheckUseAfterMove` had `let … else` backwards too
 
 The suspicion recorded in the entry below turned out to be right, and it was costing

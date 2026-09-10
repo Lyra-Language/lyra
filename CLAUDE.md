@@ -1527,6 +1527,31 @@ There is deliberately **no `std.libc`**: an extern cannot be exported anyway, an
 bindings module re-creates the libc shim layer FFI was built to dissolve. The shape that
 works is a per-library binding module owning its own externs, which needs nothing new.
 
+## `let … else` must diverge (`lyra-E074`)
+
+The payload binds in the **enclosing** scope, so the statement after the form reads it;
+the else runs when the pattern did not match, so falling through reaches that read with
+nothing bound. `checker.CheckLetElseDiverges` reports it, after typechecking because
+`panic(…)` is recognised by its recorded `never` type rather than by name.
+
+- **The backend check stays** (`lowerElseDestructuring`), per rule 5, and its message now
+  says it should have been caught as E074 — if it fires, it is reporting a hole here
+  rather than a user error.
+- **The accept-set was measured, not read.** Divergence in the backend is a property of
+  the *lowered* block's terminator, which the AST does not show, so thirteen shapes were
+  compiled and their verdicts recorded first. Two surprises came out of it: an all-arms
+  `match` is accepted, and `if c { return } else { return }` is **refused**.
+- **The one disagreement is deliberate and one-directional.** The front end accepts that
+  `if`; the backend's `if` lowering leaves the merge block without a terminator, which is
+  its gap (todo.md). Twelve of thirteen shapes agree exactly and the thirteenth is the
+  front end being *more* permissive — there is no shape where `check` refuses what the
+  backend would have built, which is the only direction that breaks working code.
+- **Two passes depend on this rule**, which is why it belongs here and runs before them:
+  `CheckUseAfterMove.letElse` and `CheckMustRelease.letElse` both discard the else block's
+  effects as unreachable. Before 09/10 the backend's comment claimed the typechecker
+  enforced divergence and no pass did — a premise written in a comment, believed by later
+  code, and checked nowhere near where it was relied on.
+
 ## Releasing a foreign resource (`@must_release`)
 
 `@must_release(unload_sound) struct Sound { … }`, enforced by

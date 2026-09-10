@@ -885,6 +885,19 @@ const (
 	// constructor is settled by whichever of several contexts reaches it, and no single
 	// site knows whether another already did.
 	CodeUninferableType = "lyra-E073"
+	// CodeLetElseMustDiverge: the `else` branch of a `let … else` can fall through.
+	//
+	// The names the pattern binds belong to the *enclosing* scope, so the statement
+	// after the form reads them; the else runs when the pattern did not match, so
+	// falling through reaches that read with nothing bound. Rust requires divergence
+	// here for the same reason.
+	//
+	// The rule is older than this code — the **backend** has always refused an else
+	// block whose lowered form has no terminator. What moved to the front end is
+	// *where it is reported*: at `lyrac check`, with a location, rather than at
+	// `lyrac build` with neither. The backend keeps its check, per the rule that it
+	// errors rather than emitting wrong code even where the front end has looked.
+	CodeLetElseMustDiverge = "lyra-E074"
 
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
