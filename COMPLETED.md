@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — raylib audio finished, and a compiler bug that hid behind it
+
+`Music`, `SoundAlias`, audio streams and the rest of Wave/Sound: 244 bound to 289 of
+raylib's 548.
+
+**`Music`'s layout was checked against C rather than reasoned about.** It is 56 bytes with
+a nested `AudioStream` at 0, `frame_count` at 32, a C `_Bool` at 36, `ctx_type` at 40 and
+`ctx_data` at 48 — verified with a C program printing `sizeof` and `offsetof`, because a
+wrong answer here is not a mismatch but garbage. The behavioural check is the one that
+proves it: a synthesised one-second tone reports `music_length` of exactly 1.0.
+
+**`SoundAlias` is a wrapper struct, and the reason is a double free.** An alias is the same
+twenty bytes as a `Sound` and is released by a *different* function — `UnloadSound` frees
+the samples, `UnloadSoundAlias` does not, because the original still owns them. One type
+for both would have `@must_release` naming `unload_sound` on an alias: a diagnostic
+confidently advising the call that corrupts the heap, which is worse than none. The
+compiler said so first, warning W022 on a probe that used `unload_sound_alias`.
+
+**Five functions cannot be bound at all**, and that is a language limit rather than an
+oversight. `SetAudioStreamCallback` and the four processor attach/detach calls take a C
+function pointer; only a top-level function may cross (`lyra-E066`), and a wrapper cannot
+forward one because its callback *parameter* is a closure whatever it holds. Since an
+extern cannot be `pub`, a caller cannot reach the raw declaration either. The module's
+usual arrangement has nowhere to stand.
+
+**And a compiler bug the whole thing hid behind.** A parameter named `data` shadowed
+`std.ffi`'s `data`, so `data.data()` resolved to a local binding that is not a function.
+`lyrac check` passed clean and the backend failed with *"no type recorded for the callee of
+an indirect call"* — naming neither expression nor file. The symptom was that **every
+program importing `bindings.raylib` stopped building**, including ones touching nothing in
+that file, so the error pointed nowhere near the cause.
+
+Bisection was the only way in, and the shape of it is worth keeping: truncating the file
+did not work (a half file leaves undefined externs and fails `check` for a different
+reason), so the method was to *remove* the section, confirm the module lowered, then add
+its declarations back one at a time until it broke. That found it in one pass. Minimal
+reproduction and the two things to fix are in todo.md.
+
 ### 09/10/26 — `Degrees` across the raylib bindings
 
 `pub newtype Degrees = f32` in `bindings/raylib/angle.lyra`, and all eleven angle

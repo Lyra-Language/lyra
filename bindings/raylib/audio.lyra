@@ -181,3 +181,357 @@ pub let set_sound_volume = (sound: Sound, volume: f32) -> void =>
 /// of one buffer.
 pub let set_sound_pitch = (sound: Sound, pitch: f32) -> void =>
   unsafe { rl_set_sound_pitch(sound, pitch) }
+
+// ---------------------------------------------------------------------------------------
+// Music — a stream decoded as it plays
+//
+// The difference from a [Sound] is where the samples live. A `Sound` is decoded whole into
+// memory and played from there, which is right for a footstep and wrong for a four-minute
+// track; a `Music` keeps a decoder open and is fed a buffer at a time, which is why it
+// needs [update_music] called every frame and a `Sound` does not.
+// ---------------------------------------------------------------------------------------
+
+/// `Music` — a streaming decoder. 56 bytes, and the widest aggregate this module passes.
+///
+/// **`looping` is a `u8`, not a `bool`.** C's `_Bool` is a byte and Lyra's `bool` is a
+/// bit, so `bool` is refused at the boundary (`lyra-E063`) and the byte is what crosses.
+/// The layout was checked against C's own `sizeof` and `offsetof` rather than reasoned
+/// about: 56 bytes with `stream` at 0, `frame_count` at 32, `looping` at 36, `ctx_type` at
+/// 40 and `ctx_data` at 48. A wrong answer here would not be a mismatch but garbage.
+@must_release(unload_music)
+pub struct Music {
+  stream: AudioStream,
+  frame_count: u32,
+  looping: u8,
+  ctx_type: i32,
+  ctx_data: ^u8,
+}
+
+/// Open a music file for streaming, or `None` if it could not be read.
+pub let load_music = (path: string) -> Maybe<Music> => {
+  let m = path.with_cstring((p) => unsafe { rl_load_music(p) })
+  if music_valid(m) { Some(m) } else { None }
+}
+
+/// Open music from bytes already in memory. `kind` is the extension, with or without the
+/// dot — normalised here, as [wave_from_memory] does and for the same raylib convention.
+pub let music_from_memory = (kind: string, bytes: []u8) -> Maybe<Music> => {
+  if bytes.len() == 0 {
+    None
+  } else {
+    let ext = if kind.starts_with(".") { kind } else { "." ++ kind }
+    let m = ext.with_cstring((k) =>
+      unsafe { rl_music_from_memory(k, bytes.data(), i32(bytes.len())) })
+    if music_valid(m) { Some(m) } else { None }
+  }
+}
+
+pub let music_valid = pure (music: Music) -> bool => unsafe { rl_music_valid(music) } != 0
+
+/// Close the decoder and free its buffers. Nothing does this for you.
+pub let unload_music = (music: Music) -> void => unsafe { rl_unload_music(music) }
+
+pub let play_music = (music: Music) -> void => unsafe { rl_play_music(music) }
+
+/// **Call this every frame while music plays**, or the buffer runs dry and the sound
+/// stops. It is the whole difference between a `Music` and a `Sound`, and forgetting it
+/// produces a track that plays for a fraction of a second and then silence.
+pub let update_music = (music: Music) -> void => unsafe { rl_update_music(music) }
+
+pub let music_playing = (music: Music) -> bool => unsafe { rl_music_playing(music) } != 0
+pub let stop_music = (music: Music) -> void => unsafe { rl_stop_music(music) }
+pub let pause_music = (music: Music) -> void => unsafe { rl_pause_music(music) }
+pub let resume_music = (music: Music) -> void => unsafe { rl_resume_music(music) }
+
+/// Jump to a position in seconds.
+pub let seek_music = (music: Music, seconds: f32) -> void =>
+  unsafe { rl_seek_music(music, seconds) }
+
+pub let set_music_volume = (music: Music, volume: f32) -> void =>
+  unsafe { rl_set_music_volume(music, volume) }
+pub let set_music_pitch = (music: Music, pitch: f32) -> void =>
+  unsafe { rl_set_music_pitch(music, pitch) }
+/// Stereo placement, -1.0 left through 0.0 centre to 1.0 right.
+pub let set_music_pan = (music: Music, pan: f32) -> void =>
+  unsafe { rl_set_music_pan(music, pan) }
+
+/// The track's whole length in seconds.
+pub let music_length = pure (music: Music) -> f32 => unsafe { rl_music_length(music) }
+/// How far into the track playback has reached, in seconds.
+pub let music_played = (music: Music) -> f32 => unsafe { rl_music_played(music) }
+
+// ---------------------------------------------------------------------------------------
+// The rest of Wave and Sound
+// ---------------------------------------------------------------------------------------
+
+/// Load a wave from a file, or `None` if it could not be decoded.
+pub let load_wave = (path: string) -> Maybe<Wave> => {
+  let w = path.with_cstring((p) => unsafe { rl_load_wave(p) })
+  if wave_valid(w) { Some(w) } else { None }
+}
+
+/// `SoundAlias` — a second playback head over another sound's samples.
+///
+/// **A wrapper struct rather than a bare [Sound], and the reason is a double free.** The
+/// two are the same twenty bytes to C, but they are released by *different* functions:
+/// `UnloadSound` frees the sample data and `UnloadSoundAlias` does not, because the
+/// original still owns it. One type for both would mean `@must_release` naming
+/// `unload_sound` on an alias — a diagnostic confidently advising the call that corrupts
+/// the heap, which is worse than no diagnostic at all.
+///
+/// The cost is one field access at each playback call, and the type is what makes the
+/// mixup unwritable.
+@must_release(unload_sound_alias)
+pub struct SoundAlias {
+  sound: Sound,
+}
+
+/// A second voice for a sound, sharing its samples.
+///
+/// **What lets one sound play twice at once.** `play_sound` on a sound already playing
+/// restarts it; an alias is a separate playback head over the same data, so a rapid-fire
+/// effect wants a handful of them. Reach the playable value through `.sound`.
+pub let sound_alias = (source: Sound) -> Maybe<SoundAlias> => {
+  let a = unsafe { rl_sound_alias(source) }
+  if sound_valid(a) { Some(SoundAlias { sound: a }) } else { None }
+}
+
+/// Free an alias without touching the samples it borrowed.
+pub let unload_sound_alias = (alias: SoundAlias) -> void =>
+  unsafe { rl_unload_sound_alias(alias.sound) }
+
+/// Replace a sound's samples. `frames` counts frames, not bytes.
+pub let update_sound = (sound: Sound, samples: []u8, frames: i64) -> bool => {
+  if samples.len() == 0 {
+    false
+  } else {
+    unsafe { rl_update_sound(sound, samples.data(), i32(frames)) }
+    true
+  }
+}
+
+pub let pause_sound = (sound: Sound) -> void => unsafe { rl_pause_sound(sound) }
+pub let resume_sound = (sound: Sound) -> void => unsafe { rl_resume_sound(sound) }
+/// Stereo placement, -1.0 left through 0.0 centre to 1.0 right.
+pub let set_sound_pan = (sound: Sound, pan: f32) -> void =>
+  unsafe { rl_set_sound_pan(sound, pan) }
+
+/// Write a wave to a file — `.wav` or `.qoa`, taken from the extension.
+pub let export_wave = (wave: Wave, path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_export_wave(wave, p) }) != 0
+
+/// Write a wave as a C array in a header file, which is how raylib's own examples embed
+/// audio.
+pub let export_wave_as_code = (wave: Wave, path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_export_wave_as_code(wave, p) }) != 0
+
+/// An independent copy of a wave's samples. The copy is the caller's to unload.
+pub let wave_copy = (wave: Wave) -> Maybe<Wave> => {
+  let c = unsafe { rl_wave_copy(wave) }
+  if wave_valid(c) { Some(c) } else { None }
+}
+
+/// Trim a wave to a frame range, in place.
+pub let crop_wave = (self: mut Wave, first_frame: i64, last_frame: i64) -> void =>
+  unsafe { rl_wave_crop(&mut self, i32(first_frame), i32(last_frame)) }
+
+/// Convert a wave's sample rate, bit depth or channel count, in place.
+pub let format_wave =
+  (self: mut Wave, sample_rate: i64, sample_size: i64, channels: i64) -> void =>
+    unsafe { rl_wave_format(&mut self, i32(sample_rate), i32(sample_size), i32(channels)) }
+
+/// A wave's samples as `[]f32`, one entry per frame per channel, normalised to -1.0..1.0.
+///
+/// It copies into an array Lyra owns and hands raylib's buffer straight back, so there is
+/// nothing further to release — the same arrangement `image_colors` uses, and for the same
+/// reason: a raw pointer would be faster and would put a lifetime nothing tracks into the
+/// caller's hands.
+pub let wave_samples = (wave: Wave) -> []f32 => {
+  var out: []f32 = []
+  let total = i64(wave.frame_count) * i64(wave.channels)
+  if total > 0 {
+    let raw = unsafe { rl_wave_samples(wave) }
+    if raw != nullptr {
+      var i = 0
+      for i < total {
+        out.push(unsafe { raw.offset(i)^ })
+        i += 1
+      }
+      unsafe { rl_unload_wave_samples(raw) }
+    }
+  }
+  out
+}
+
+/// The master volume, as [set_master_volume] last left it.
+pub let master_volume = pure () -> f32 => unsafe { rl_master_volume() }
+
+// ---------------------------------------------------------------------------------------
+// Audio streams — samples a program generates itself
+//
+// The rung below [Music]: no decoder, no file, just a buffer the program fills and hands
+// over. What a synthesiser or a network voice chat writes into.
+//
+// **`AudioStream` deliberately carries no `@must_release`**, though a loaded one must be
+// unloaded. It is a *field* of both [Sound] and [Music], and the marker is on a binding's
+// type rather than on its provenance — so marking it would demand a release for every
+// `sound.stream` a program reads, which borrows rather than owns. The obligation is real
+// and this is the one place in the module it has to be remembered rather than checked.
+// ---------------------------------------------------------------------------------------
+
+/// A stream a program feeds itself. `sample_size` is bits per sample: 8, 16 or 32.
+pub let load_audio_stream = (sample_rate: i64, sample_size: i64, channels: i64) -> Maybe<AudioStream> => {
+  let s = unsafe { rl_load_audio_stream(u32(sample_rate), u32(sample_size), u32(channels)) }
+  if audio_stream_valid(s) { Some(s) } else { None }
+}
+
+pub let audio_stream_valid = pure (stream: AudioStream) -> bool =>
+  unsafe { rl_audio_stream_valid(stream) } != 0
+
+/// Free the stream. See the note above on why this is not `@must_release`-checked.
+pub let unload_audio_stream = (stream: AudioStream) -> void =>
+  unsafe { rl_unload_audio_stream(stream) }
+
+/// Hand the stream more samples. Ask [audio_stream_processed] first — writing to a stream
+/// that has not drained its buffer drops the data.
+pub let update_audio_stream = (stream: AudioStream, samples: []u8, frames: i64) -> bool => {
+  if samples.len() == 0 {
+    false
+  } else {
+    unsafe { rl_update_audio_stream(stream, samples.data(), i32(frames)) }
+    true
+  }
+}
+
+/// Whether the stream has finished with its current buffer and wants more.
+pub let audio_stream_processed = (stream: AudioStream) -> bool =>
+  unsafe { rl_audio_stream_processed(stream) } != 0
+
+pub let play_audio_stream = (stream: AudioStream) -> void =>
+  unsafe { rl_play_audio_stream(stream) }
+pub let stop_audio_stream = (stream: AudioStream) -> void =>
+  unsafe { rl_stop_audio_stream(stream) }
+pub let pause_audio_stream = (stream: AudioStream) -> void =>
+  unsafe { rl_pause_audio_stream(stream) }
+pub let resume_audio_stream = (stream: AudioStream) -> void =>
+  unsafe { rl_resume_audio_stream(stream) }
+pub let audio_stream_playing = (stream: AudioStream) -> bool =>
+  unsafe { rl_audio_stream_playing(stream) } != 0
+pub let set_audio_stream_volume = (stream: AudioStream, volume: f32) -> void =>
+  unsafe { rl_set_audio_stream_volume(stream, volume) }
+pub let set_audio_stream_pitch = (stream: AudioStream, pitch: f32) -> void =>
+  unsafe { rl_set_audio_stream_pitch(stream, pitch) }
+pub let set_audio_stream_pan = (stream: AudioStream, pan: f32) -> void =>
+  unsafe { rl_set_audio_stream_pan(stream, pan) }
+
+/// The buffer size new streams are created with, in frames.
+pub let set_audio_stream_buffer_size = (frames: i64) -> void =>
+  unsafe { rl_set_audio_stream_buffer_size(i32(frames)) }
+
+// **raylib's five callback-taking audio functions are not bound, and cannot be today.**
+//
+//   SetAudioStreamCallback, AttachAudioStreamProcessor, DetachAudioStreamProcessor,
+//   AttachAudioMixedProcessor, DetachAudioMixedProcessor
+//
+// A C callback is a bare code address, and Lyra's function values are `{code, env}`
+// closures uniformly — so only a **top-level function** may cross (`lyra-E066`). A wrapper
+// cannot forward one: its callback *parameter* is a closure whatever it happens to hold,
+// and the compiler has no way to know the value came from a top-level function. Since an
+// extern cannot be `pub`, a caller cannot reach the raw declaration either, and the
+// module's usual arrangement — Lyra over a private extern — has nowhere to stand.
+//
+// What would fix it is a way to say "this parameter is a bare function pointer", which is
+// a language question rather than a binding one. See todo.md.
+
+@symbol("LoadMusicStream")
+unsafe extern rl_load_music: (path: ^u8) -> Music
+@symbol("LoadMusicStreamFromMemory")
+unsafe extern rl_music_from_memory: (kind: ^u8, data: ^u8, size: i32) -> Music
+@symbol("IsMusicValid")
+unsafe extern pure rl_music_valid: (music: Music) -> u8
+@symbol("UnloadMusicStream")
+unsafe extern rl_unload_music: (music: Music) -> void
+@symbol("PlayMusicStream")
+unsafe extern rl_play_music: (music: Music) -> void
+@symbol("UpdateMusicStream")
+unsafe extern rl_update_music: (music: Music) -> void
+@symbol("IsMusicStreamPlaying")
+unsafe extern rl_music_playing: (music: Music) -> u8
+@symbol("StopMusicStream")
+unsafe extern rl_stop_music: (music: Music) -> void
+@symbol("PauseMusicStream")
+unsafe extern rl_pause_music: (music: Music) -> void
+@symbol("ResumeMusicStream")
+unsafe extern rl_resume_music: (music: Music) -> void
+@symbol("SeekMusicStream")
+unsafe extern rl_seek_music: (music: Music, seconds: f32) -> void
+@symbol("SetMusicVolume")
+unsafe extern rl_set_music_volume: (music: Music, volume: f32) -> void
+@symbol("SetMusicPitch")
+unsafe extern rl_set_music_pitch: (music: Music, pitch: f32) -> void
+@symbol("SetMusicPan")
+unsafe extern rl_set_music_pan: (music: Music, pan: f32) -> void
+@symbol("GetMusicTimeLength")
+unsafe extern pure rl_music_length: (music: Music) -> f32
+@symbol("GetMusicTimePlayed")
+unsafe extern rl_music_played: (music: Music) -> f32
+@symbol("LoadWave")
+unsafe extern rl_load_wave: (path: ^u8) -> Wave
+@symbol("LoadSoundAlias")
+unsafe extern rl_sound_alias: (source: Sound) -> Sound
+@symbol("UnloadSoundAlias")
+unsafe extern rl_unload_sound_alias: (alias: Sound) -> void
+@symbol("UpdateSound")
+unsafe extern rl_update_sound: (sound: Sound, data: ^u8, frames: i32) -> void
+@symbol("PauseSound")
+unsafe extern rl_pause_sound: (sound: Sound) -> void
+@symbol("ResumeSound")
+unsafe extern rl_resume_sound: (sound: Sound) -> void
+@symbol("SetSoundPan")
+unsafe extern rl_set_sound_pan: (sound: Sound, pan: f32) -> void
+@symbol("ExportWave")
+unsafe extern rl_export_wave: (wave: Wave, path: ^u8) -> u8
+@symbol("ExportWaveAsCode")
+unsafe extern rl_export_wave_as_code: (wave: Wave, path: ^u8) -> u8
+@symbol("WaveCopy")
+unsafe extern rl_wave_copy: (wave: Wave) -> Wave
+@symbol("WaveCrop")
+unsafe extern rl_wave_crop: (wave: ^mut Wave, first: i32, last: i32) -> void
+@symbol("WaveFormat")
+unsafe extern rl_wave_format:
+  (wave: ^mut Wave, sample_rate: i32, sample_size: i32, channels: i32) -> void
+@symbol("LoadWaveSamples")
+unsafe extern rl_wave_samples: (wave: Wave) -> ^f32
+@symbol("UnloadWaveSamples")
+unsafe extern rl_unload_wave_samples: (samples: ^f32) -> void
+@symbol("GetMasterVolume")
+unsafe extern pure rl_master_volume: () -> f32
+@symbol("LoadAudioStream")
+unsafe extern rl_load_audio_stream:
+  (sample_rate: u32, sample_size: u32, channels: u32) -> AudioStream
+@symbol("IsAudioStreamValid")
+unsafe extern pure rl_audio_stream_valid: (stream: AudioStream) -> u8
+@symbol("UnloadAudioStream")
+unsafe extern rl_unload_audio_stream: (stream: AudioStream) -> void
+@symbol("UpdateAudioStream")
+unsafe extern rl_update_audio_stream: (stream: AudioStream, data: ^u8, frames: i32) -> void
+@symbol("IsAudioStreamProcessed")
+unsafe extern rl_audio_stream_processed: (stream: AudioStream) -> u8
+@symbol("PlayAudioStream")
+unsafe extern rl_play_audio_stream: (stream: AudioStream) -> void
+@symbol("StopAudioStream")
+unsafe extern rl_stop_audio_stream: (stream: AudioStream) -> void
+@symbol("PauseAudioStream")
+unsafe extern rl_pause_audio_stream: (stream: AudioStream) -> void
+@symbol("ResumeAudioStream")
+unsafe extern rl_resume_audio_stream: (stream: AudioStream) -> void
+@symbol("IsAudioStreamPlaying")
+unsafe extern rl_audio_stream_playing: (stream: AudioStream) -> u8
+@symbol("SetAudioStreamVolume")
+unsafe extern rl_set_audio_stream_volume: (stream: AudioStream, volume: f32) -> void
+@symbol("SetAudioStreamPitch")
+unsafe extern rl_set_audio_stream_pitch: (stream: AudioStream, pitch: f32) -> void
+@symbol("SetAudioStreamPan")
+unsafe extern rl_set_audio_stream_pan: (stream: AudioStream, pan: f32) -> void
+@symbol("SetAudioStreamBufferSizeDefault")
+unsafe extern rl_set_audio_stream_buffer_size: (frames: i32) -> void

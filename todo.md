@@ -3456,6 +3456,33 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
+### A parameter shadowing an imported function makes a method call lower to garbage
+
+	import std.ffi.{ data }
+	let take = (data: []u8, n: i64) -> bool => {
+	  if data.len() == 0 { false } else { let _ = unsafe { c_strlen(data.data()) }; true }
+	}
+
+`lyrac check` **passes clean**. `lyrac build` fails with
+*"llvm: no type recorded for the callee of an indirect call"* — a message naming neither
+the expression nor the file, from a program the front end approved.
+
+The parameter `data` shadows the imported `data`, so `data.data()` is a method call whose
+name resolves to a **local binding that is not a function**. The typechecker records
+nothing for the callee and the backend finds an indirect call it has no type for. It should
+be a front-end error: either "no method `data` on `[]u8`" or a shadowing diagnostic at the
+parameter.
+
+Found 09/10 in `bindings/raylib/audio.lyra`, where the parameter was `data: []u8` and the
+call `data.data()`. The symptom was that **the whole module stopped lowering** — every
+program importing `bindings.raylib` failed, including ones touching nothing in that file —
+so the error pointed nowhere near the cause and bisection was the only way in. Renaming the
+parameter fixed it.
+
+Two things worth fixing separately: the missing front-end check, and the backend message,
+which should name the call site it could not lower (hazard 15's shape — a consumer that
+finds a nil and reports it far from where it was made).
+
 ### `bindings/raylib/texture.lyra` — **[DONE 09/10]**
 
 46 functions: images (load, generate, edit in place, read pixels), textures (load, upload,
