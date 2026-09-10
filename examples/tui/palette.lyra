@@ -4,7 +4,7 @@ import std.tui.{ fg, bg, rgb, grey, reset, bold, dim, inverse }
 // loop. Safe to pipe into a file or a pager, which is the point of styles being
 // *strings* rather than commands: this program never touches the terminal's state.
 //
-// Run: lyrac run examples/tui_palette.lyra
+// Run: lyrac run examples/tui/palette.lyra
 
 const SWATCH = "  "
 

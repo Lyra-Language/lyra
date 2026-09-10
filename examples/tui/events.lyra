@@ -10,7 +10,7 @@ import std.tui.{
 // raw builtin and answers one *code point*, so an arrow key arrives as three of them.
 // `next_event()` is the decoder over it, and answers `Up`.
 //
-// Run: lyrac run examples/tui_events.lyra
+// Run: lyrac run examples/tui/events.lyra
 
 let main = () => {
   // Raw mode first: without it `read_key` waits for Enter and none of this works.

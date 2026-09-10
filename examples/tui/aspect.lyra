@@ -16,7 +16,7 @@ import std.tui.{
 // changes the font, and an apparent size difference between two programs is a difference
 // in what they *drew*, not in how the terminal drew it.
 //
-// Run: lyrac run examples/tui_aspect.lyra
+// Run: lyrac run examples/tui/aspect.lyra
 
 // Each bar is this many rows tall. Five keeps the candidate widths small integers.
 const BAR_ROWS = 5

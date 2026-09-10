@@ -26,7 +26,7 @@ import std.tui.{
 //   * Arrows and mouse both move the marker, the wheel changes a zoom number: the input
 //     vocabulary a pan-and-zoom viewer needs.
 //
-// Run: lyrac run examples/tui_viewer.lyra   (q to quit)
+// Run: lyrac run examples/tui/viewer.lyra   (q to quit)
 
 /// How long the loop waits for input before looking at the terminal size again. Short
 /// enough that a resize feels immediate, long enough that an idle program is not spinning
