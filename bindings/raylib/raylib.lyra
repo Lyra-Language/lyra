@@ -1,108 +1,429 @@
 @link("raylib")
 module bindings.raylib
-//! Bindings to raylib — a per-library module owning its `extern`s and exporting Lyra over
-//! them, the same shape `bindings/sdl3` takes.
+//! The window, the frame, the clock, and the odds and ends that belong to neither.
 //!
-//! **raylib is the library struct-by-value exists for.** SDL3 never needed it: its render
-//! API takes `const SDL_FRect *`, so every aggregate crosses as a pointer. raylib passes
-//! them by value everywhere — `DrawCircleV(Vector2, float, Color)` passes two structs and
-//! `GetMousePosition()` returns one — which is a per-target *calling convention* rather
-//! than a spelling, and was refused until `pkg/abi` could classify it.
+//! **`@link("raylib")` sits here, once, and covers every extern in the module** — a
+//! program that imports `bindings.raylib` links the library by saying nothing. What
+//! `@link` cannot say is *where*, since a search path is the build system's problem, so a
+//! Homebrew raylib needs `LIBRARY_PATH=$(pkg-config --variable=libdir raylib)`.
 //!
-//! So this module reads like ordinary Lyra precisely because the hard part is elsewhere:
-//! `Vector2` is a `struct`, it is passed as one, and nothing here says a word about
-//! registers.
-//!
-//! ```
-//! import bindings.raylib.{ init_window, close_window, should_close, begin_drawing,
-//!                          end_drawing, clear_background, draw_circle,
-//!                          Vector2, rgb, raywhite }
-//!
-//! let main = () -> void => {
-//!   init_window(800, 450, "hello")
-//!   for !should_close() {
-//!     begin_drawing()
-//!     clear_background(raywhite())
-//!     draw_circle(Vector2 { x: 400.0, y: 225.0 }, 40.0, rgb(200, 60, 60))
-//!     end_drawing()
-//!   }
-//!   close_window()
-//! }
-//! ```
-//!
-//! **`@link("raylib")` is on the module header**, so a program importing this links the
-//! library by saying nothing. What `@link` cannot say is *where*: a search path is the
-//! build system's problem, so a Homebrew raylib needs
-//! `LIBRARY_PATH=$(pkg-config --variable=libdir raylib)` on the command line.
-//!
-//! Bound is what a small program needs — a window, the frame loop, shapes, text, and
-//! input. Deliberately not the whole of raylib: every entry point is a maintenance
-//! commitment and an ABI claim nobody checks, the argument that decided there would be no
-//! `std.libc`.
+//! Sizes here are `i64` rather than raylib's `int`, because a screen dimension is a number
+//! a Lyra program does arithmetic on and `i64` is what arithmetic defaults to. The
+//! conversion is one `i32(...)` inside the wrapper, written once instead of at every call.
 
-import std.ffi.{ with_cstring }
+import std.ffi.{ with_cstring, is_null, cstring_len }
 
-@symbol("InitWindow")
-unsafe extern rl_init_window: (width: i32, height: i32, title: ^u8) -> void
+// ---------------------------------------------------------------------------------------
+// Configuration flags — set *before* the window is created
+//
+// `set_config_flags` only takes effect ahead of [init_window]; afterwards the live ones
+// are [set_window_state] and [clear_window_state]. They are the same bits either way.
+// ---------------------------------------------------------------------------------------
 
-@symbol("CloseWindow")
-unsafe extern rl_close_window: () -> void
+/// Wait for the vertical blank, capping the frame rate at the display's.
+pub const FLAG_VSYNC_HINT: u32 = 0x00000040
+pub const FLAG_FULLSCREEN_MODE: u32 = 0x00000002
+/// Let the user resize the window. Pair with [window_resized] to notice.
+pub const FLAG_WINDOW_RESIZABLE: u32 = 0x00000004
+pub const FLAG_WINDOW_UNDECORATED: u32 = 0x00000008
+pub const FLAG_WINDOW_HIDDEN: u32 = 0x00000080
+pub const FLAG_WINDOW_MINIMIZED: u32 = 0x00000200
+pub const FLAG_WINDOW_MAXIMIZED: u32 = 0x00000400
+pub const FLAG_WINDOW_UNFOCUSED: u32 = 0x00000800
+pub const FLAG_WINDOW_TOPMOST: u32 = 0x00001000
+pub const FLAG_WINDOW_ALWAYS_RUN: u32 = 0x00000100
+pub const FLAG_WINDOW_TRANSPARENT: u32 = 0x00000010
+/// Ask for a backing store at the display's real pixel density.
+pub const FLAG_WINDOW_HIGHDPI: u32 = 0x00002000
+pub const FLAG_WINDOW_MOUSE_PASSTHROUGH: u32 = 0x00004000
+pub const FLAG_BORDERLESS_WINDOWED_MODE: u32 = 0x00008000
+/// Four-sample multisampling, which is what smooths a diagonal edge.
+pub const FLAG_MSAA_4X_HINT: u32 = 0x00000020
+pub const FLAG_INTERLACED_HINT: u32 = 0x00010000
 
-@symbol("WindowShouldClose")
-unsafe extern rl_should_close: () -> u8
+/// Trace-log levels, for [set_trace_log_level]. `LOG_NONE` silences raylib entirely, which
+/// is what a program wants when its own output is the point.
+pub const LOG_ALL: i32 = 0
+pub const LOG_TRACE: i32 = 1
+pub const LOG_DEBUG: i32 = 2
+pub const LOG_INFO: i32 = 3
+pub const LOG_WARNING: i32 = 4
+pub const LOG_ERROR: i32 = 5
+pub const LOG_FATAL: i32 = 6
+pub const LOG_NONE: i32 = 7
 
-@symbol("SetTargetFPS")
-unsafe extern rl_set_target_fps: (fps: i32) -> void
+/// Blend modes for [begin_blend_mode].
+pub const BLEND_ALPHA: i32 = 0
+pub const BLEND_ADDITIVE: i32 = 1
+pub const BLEND_MULTIPLIED: i32 = 2
+pub const BLEND_ADD_COLORS: i32 = 3
+pub const BLEND_SUBTRACT_COLORS: i32 = 4
+pub const BLEND_ALPHA_PREMULTIPLY: i32 = 5
 
-@symbol("SetWindowTitle")
-unsafe extern rl_set_window_title: (title: ^u8) -> void
+// ---------------------------------------------------------------------------------------
+// The window
+// ---------------------------------------------------------------------------------------
 
-@symbol("GetScreenWidth")
-unsafe extern rl_screen_width: () -> i32
-
-@symbol("GetScreenHeight")
-unsafe extern rl_screen_height: () -> i32
-
-@symbol("GetFrameTime")
-unsafe extern rl_frame_time: () -> f32
-
-@symbol("GetTime")
-unsafe extern rl_time: () -> f64
-
-/// Open a window and create its OpenGL context. Call before anything else here.
-///
-/// raylib has no failure return for this — it logs and carries on — so there is no `Maybe`
-/// to hand back, unlike `SDL_CreateWindow`. A binding does not get to invent a failure the
-/// library does not report.
-pub let init_window = (width: i32, height: i32, title: string) -> void =>
-  title.with_cstring((t) => unsafe { rl_init_window(width, height, t) })
+/// Create the window and the GL context. **Everything that touches a texture needs this
+/// to have run**, which is the line between the halves of `texture.lyra`.
+pub let init_window = (width: i64, height: i64, title: string) -> void =>
+  title.with_cstring((t) => unsafe { rl_init_window(i32(width), i32(height), t) })
 
 /// Close the window and release the context.
 pub let close_window = () -> void => unsafe { rl_close_window() }
 
-/// Whether the user has asked to quit — the close button, or Escape.
+/// Whether the user has asked to close the window — the escape key or the close button.
+pub let should_close = () -> bool => unsafe { rl_window_should_close() } != 0
+
+/// Whether the window and context are up.
+pub let window_ready = () -> bool => unsafe { rl_window_ready() } != 0
+
+/// Whether the window is fullscreen.
+pub let window_fullscreen = () -> bool => unsafe { rl_window_fullscreen() } != 0
+
+pub let window_hidden = () -> bool => unsafe { rl_window_hidden() } != 0
+pub let window_minimized = () -> bool => unsafe { rl_window_minimized() } != 0
+pub let window_maximized = () -> bool => unsafe { rl_window_maximized() } != 0
+pub let window_focused = () -> bool => unsafe { rl_window_focused() } != 0
+
+/// Whether the window was resized since the last frame.
 ///
-/// The `u8` raylib answers is C's `bool`, a **byte**; Lyra's is one bit and is refused at
-/// the boundary (lyra-E063), so every predicate here converts and no caller has to
-/// remember that C's truth is a `1`.
-pub let should_close = () -> bool => unsafe { rl_should_close() } != 0
+/// **True for one frame only**, so a program that reacts to a resize must ask every frame
+/// rather than when it happens to remember.
+pub let window_resized = () -> bool => unsafe { rl_window_resized() } != 0
 
-/// Cap the frame rate. raylib sleeps the difference in `end_drawing`.
-pub let set_target_fps = (fps: i32) -> void => unsafe { rl_set_target_fps(fps) }
+/// Whether a given `FLAG_*` is currently set.
+pub let window_state = (flag: u32) -> bool => unsafe { rl_window_state(flag) } != 0
 
-/// Retitle the open window.
+/// Turn `FLAG_*` bits on, after the window exists.
+pub let set_window_state = (flags: u32) -> void => unsafe { rl_set_window_state(flags) }
+
+/// Turn `FLAG_*` bits off.
+pub let clear_window_state = (flags: u32) -> void => unsafe { rl_clear_window_state(flags) }
+
+/// Set `FLAG_*` bits **before** [init_window]. Afterwards they do nothing; use
+/// [set_window_state].
+pub let set_config_flags = (flags: u32) -> void => unsafe { rl_set_config_flags(flags) }
+
+pub let toggle_fullscreen = () -> void => unsafe { rl_toggle_fullscreen() }
+pub let toggle_borderless = () -> void => unsafe { rl_toggle_borderless() }
+pub let maximize_window = () -> void => unsafe { rl_maximize_window() }
+pub let minimize_window = () -> void => unsafe { rl_minimize_window() }
+pub let restore_window = () -> void => unsafe { rl_restore_window() }
+pub let focus_window = () -> void => unsafe { rl_focus_window() }
+
+/// Use an image as the window icon. The image stays the caller's to unload.
+pub let set_window_icon = (image: Image) -> void => unsafe { rl_set_window_icon(image) }
+
 pub let set_window_title = (title: string) -> void =>
   title.with_cstring((t) => unsafe { rl_set_window_title(t) })
 
-/// The window's current width in pixels.
-pub let screen_width = () -> i32 => unsafe { rl_screen_width() }
+pub let set_window_position = (x: i64, y: i64) -> void =>
+  unsafe { rl_set_window_position(i32(x), i32(y)) }
 
-/// The window's current height in pixels.
-pub let screen_height = () -> i32 => unsafe { rl_screen_height() }
+pub let set_window_monitor = (monitor: i64) -> void =>
+  unsafe { rl_set_window_monitor(i32(monitor)) }
 
-/// Seconds the last frame took — what to scale movement by so speed is frame-rate
+pub let set_window_size = (width: i64, height: i64) -> void =>
+  unsafe { rl_set_window_size(i32(width), i32(height)) }
+
+pub let set_window_min_size = (width: i64, height: i64) -> void =>
+  unsafe { rl_set_window_min_size(i32(width), i32(height)) }
+
+pub let set_window_max_size = (width: i64, height: i64) -> void =>
+  unsafe { rl_set_window_max_size(i32(width), i32(height)) }
+
+/// Window transparency, 0.0 clear through 1.0 opaque.
+pub let set_window_opacity = (opacity: f32) -> void =>
+  unsafe { rl_set_window_opacity(opacity) }
+
+/// The window's size in screen coordinates.
+pub let screen_width = () -> i64 => i64(unsafe { rl_screen_width() })
+pub let screen_height = () -> i64 => i64(unsafe { rl_screen_height() })
+
+/// The framebuffer's size in **pixels**, which differs from [screen_width] on a
+/// high-density display: the window may be 800 coordinates wide and 1600 pixels.
+pub let render_width = () -> i64 => i64(unsafe { rl_render_width() })
+pub let render_height = () -> i64 => i64(unsafe { rl_render_height() })
+
+/// The window's top-left corner on the desktop.
+pub let window_position = () -> Vector2 => unsafe { rl_window_position() }
+
+/// The window's scale factor, which is the ratio [render_width] bears to [screen_width].
+pub let window_scale_dpi = () -> Vector2 => unsafe { rl_window_scale_dpi() }
+
+// ---------------------------------------------------------------------------------------
+// Monitors
+// ---------------------------------------------------------------------------------------
+
+pub let monitor_count = () -> i64 => i64(unsafe { rl_monitor_count() })
+pub let current_monitor = () -> i64 => i64(unsafe { rl_current_monitor() })
+pub let monitor_position = (monitor: i64) -> Vector2 =>
+  unsafe { rl_monitor_position(i32(monitor)) }
+pub let monitor_width = (monitor: i64) -> i64 =>
+  i64(unsafe { rl_monitor_width(i32(monitor)) })
+pub let monitor_height = (monitor: i64) -> i64 =>
+  i64(unsafe { rl_monitor_height(i32(monitor)) })
+/// The monitor's physical size in millimetres, which is what a real DPI is computed from.
+pub let monitor_physical_width = (monitor: i64) -> i64 =>
+  i64(unsafe { rl_monitor_physical_width(i32(monitor)) })
+pub let monitor_physical_height = (monitor: i64) -> i64 =>
+  i64(unsafe { rl_monitor_physical_height(i32(monitor)) })
+pub let monitor_refresh_rate = (monitor: i64) -> i64 =>
+  i64(unsafe { rl_monitor_refresh_rate(i32(monitor)) })
+
+/// The monitor's name, or `None` where it has none.
+///
+/// **raylib owns the string and this copies it**, which is the rule for every `const
+/// char *` it hands back: the pointer is into raylib's own storage and is valid only until
+/// the next call that touches it. A Lyra `string` that borrowed it would dangle on a
+/// schedule nothing here can see.
+pub let monitor_name = (monitor: i64) -> Maybe<string> =>
+  copy_c_string(unsafe { rl_monitor_name(i32(monitor)) })
+
+// ---------------------------------------------------------------------------------------
+// The clipboard
+// ---------------------------------------------------------------------------------------
+
+pub let set_clipboard_text = (text: string) -> void =>
+  text.with_cstring((t) => unsafe { rl_set_clipboard_text(t) })
+
+/// The clipboard's contents, or `None` when it holds no text. Copied, per [monitor_name].
+pub let clipboard_text = () -> Maybe<string> =>
+  copy_c_string(unsafe { rl_clipboard_text() })
+
+// ---------------------------------------------------------------------------------------
+// The cursor
+// ---------------------------------------------------------------------------------------
+
+pub let show_cursor = () -> void => unsafe { rl_show_cursor() }
+pub let hide_cursor = () -> void => unsafe { rl_hide_cursor() }
+pub let cursor_hidden = () -> bool => unsafe { rl_cursor_hidden() } != 0
+
+/// Release the cursor, so it moves and leaves the window normally.
+pub let enable_cursor = () -> void => unsafe { rl_enable_cursor() }
+
+/// Capture the cursor: it is hidden and locked to the window, and [mouse_delta] becomes
+/// the way to read movement. What a first-person camera wants.
+pub let disable_cursor = () -> void => unsafe { rl_disable_cursor() }
+
+pub let cursor_on_screen = () -> bool => unsafe { rl_cursor_on_screen() } != 0
+
+// ---------------------------------------------------------------------------------------
+// The frame and the clock
+// ---------------------------------------------------------------------------------------
+
+/// Ask raylib to pace the loop at this many frames per second.
+pub let set_target_fps = (fps: i64) -> void => unsafe { rl_set_target_fps(i32(fps)) }
+
+/// Seconds the last frame took — what to multiply a speed by so motion is frame-rate
 /// independent.
 pub let frame_time = () -> f32 => unsafe { rl_frame_time() }
 
-/// Seconds since `init_window`.
-pub let elapsed = () -> f64 => unsafe { rl_time() }
+/// Seconds since [init_window].
+pub let elapsed = () -> f64 => unsafe { rl_elapsed() }
+
+/// The measured frame rate, averaged by raylib over recent frames.
+pub let fps = () -> i64 => i64(unsafe { rl_fps() })
+
+/// Wait for events rather than spinning, until [disable_event_waiting].
+///
+/// The right mode for a program that only redraws on input — an editor rather than a game
+/// — since it stops burning a core to draw the same picture sixty times a second.
+pub let enable_event_waiting = () -> void => unsafe { rl_enable_event_waiting() }
+pub let disable_event_waiting = () -> void => unsafe { rl_disable_event_waiting() }
+
+/// Restrict drawing to a rectangle of the screen until [end_scissor_mode]; anything
+/// outside is discarded. What a scrolling pane clips itself with.
+pub let begin_scissor_mode = (x: i64, y: i64, width: i64, height: i64) -> void =>
+  unsafe { rl_begin_scissor_mode(i32(x), i32(y), i32(width), i32(height)) }
+
+pub let end_scissor_mode = () -> void => unsafe { rl_end_scissor_mode() }
+
+/// How subsequent drawing combines with what is already there — one of the `BLEND_*`
+/// constants — until [end_blend_mode].
+pub let begin_blend_mode = (mode: i32) -> void => unsafe { rl_begin_blend_mode(mode) }
+pub let end_blend_mode = () -> void => unsafe { rl_end_blend_mode() }
+
+// ---------------------------------------------------------------------------------------
+// Odds and ends
+// ---------------------------------------------------------------------------------------
+
+/// Write a screenshot to a file, relative to the working directory.
+pub let take_screenshot = (path: string) -> void =>
+  path.with_cstring((p) => unsafe { rl_take_screenshot(p) })
+
+/// How much raylib says on stdout. `LOG_NONE` silences it, `LOG_WARNING` keeps the
+/// complaints and drops the running commentary.
+pub let set_trace_log_level = (level: i32) -> void =>
+  unsafe { rl_set_trace_log_level(level) }
+
+/// Open a URL in the user's browser.
+pub let open_url = (url: string) -> void =>
+  url.with_cstring((u) => unsafe { rl_open_url(u) })
+
+/// Seed raylib's own generator, which is **not** the one `std.prelude` provides.
+///
+/// Reach for [raylib_random] only when raylib's own sequence is what matters — sharing a
+/// seed with a raylib example, say. For everything else `rng_seeded` in the prelude is
+/// deterministic, `det`-legal and does not depend on a graphics library.
+pub let set_random_seed = (seed: u32) -> void => unsafe { rl_set_random_seed(seed) }
+
+/// A random integer in `low..=high`, from raylib's generator.
+///
+/// Named `raylib_random` rather than `random_between` because the prelude already exports
+/// that, and a binding module quietly winning a prelude name (lyra-W012) is the sort of
+/// thing that changes what a program means from a distance.
+pub let raylib_random = (low: i64, high: i64) -> i64 =>
+  i64(unsafe { rl_random_value(i32(low), i32(high)) })
+
+/// Copy a `const char *` raylib owns into a Lyra string, or `None` for NULL.
+///
+/// Private, and the answer to a rule this module cannot avoid: raylib hands back pointers
+/// into its own storage — a monitor name, the clipboard, a file path — valid only until
+/// the next call that touches the same buffer. Every one of them comes through here.
+let copy_c_string = pure (p: ^u8) -> Maybe<string> => {
+  if is_null(p) {
+    None
+  } else {
+    let len = unsafe { cstring_len(p) }
+    if len == 0 { Some("") } else { Some(unsafe { p.decode_utf8(len) }) }
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The externs
+// ---------------------------------------------------------------------------------------
+
+@symbol("InitWindow")
+unsafe extern rl_init_window: (width: i32, height: i32, title: ^u8) -> void
+@symbol("CloseWindow")
+unsafe extern rl_close_window: () -> void
+@symbol("WindowShouldClose")
+unsafe extern rl_window_should_close: () -> u8
+@symbol("IsWindowReady")
+unsafe extern rl_window_ready: () -> u8
+@symbol("IsWindowFullscreen")
+unsafe extern rl_window_fullscreen: () -> u8
+@symbol("IsWindowHidden")
+unsafe extern rl_window_hidden: () -> u8
+@symbol("IsWindowMinimized")
+unsafe extern rl_window_minimized: () -> u8
+@symbol("IsWindowMaximized")
+unsafe extern rl_window_maximized: () -> u8
+@symbol("IsWindowFocused")
+unsafe extern rl_window_focused: () -> u8
+@symbol("IsWindowResized")
+unsafe extern rl_window_resized: () -> u8
+@symbol("IsWindowState")
+unsafe extern rl_window_state: (flag: u32) -> u8
+@symbol("SetWindowState")
+unsafe extern rl_set_window_state: (flags: u32) -> void
+@symbol("ClearWindowState")
+unsafe extern rl_clear_window_state: (flags: u32) -> void
+@symbol("SetConfigFlags")
+unsafe extern rl_set_config_flags: (flags: u32) -> void
+@symbol("ToggleFullscreen")
+unsafe extern rl_toggle_fullscreen: () -> void
+@symbol("ToggleBorderlessWindowed")
+unsafe extern rl_toggle_borderless: () -> void
+@symbol("MaximizeWindow")
+unsafe extern rl_maximize_window: () -> void
+@symbol("MinimizeWindow")
+unsafe extern rl_minimize_window: () -> void
+@symbol("RestoreWindow")
+unsafe extern rl_restore_window: () -> void
+@symbol("SetWindowFocused")
+unsafe extern rl_focus_window: () -> void
+@symbol("SetWindowIcon")
+unsafe extern rl_set_window_icon: (image: Image) -> void
+@symbol("SetWindowTitle")
+unsafe extern rl_set_window_title: (title: ^u8) -> void
+@symbol("SetWindowPosition")
+unsafe extern rl_set_window_position: (x: i32, y: i32) -> void
+@symbol("SetWindowMonitor")
+unsafe extern rl_set_window_monitor: (monitor: i32) -> void
+@symbol("SetWindowSize")
+unsafe extern rl_set_window_size: (width: i32, height: i32) -> void
+@symbol("SetWindowMinSize")
+unsafe extern rl_set_window_min_size: (width: i32, height: i32) -> void
+@symbol("SetWindowMaxSize")
+unsafe extern rl_set_window_max_size: (width: i32, height: i32) -> void
+@symbol("SetWindowOpacity")
+unsafe extern rl_set_window_opacity: (opacity: f32) -> void
+@symbol("GetScreenWidth")
+unsafe extern rl_screen_width: () -> i32
+@symbol("GetScreenHeight")
+unsafe extern rl_screen_height: () -> i32
+@symbol("GetRenderWidth")
+unsafe extern rl_render_width: () -> i32
+@symbol("GetRenderHeight")
+unsafe extern rl_render_height: () -> i32
+@symbol("GetWindowPosition")
+unsafe extern rl_window_position: () -> Vector2
+@symbol("GetWindowScaleDPI")
+unsafe extern rl_window_scale_dpi: () -> Vector2
+@symbol("GetMonitorCount")
+unsafe extern rl_monitor_count: () -> i32
+@symbol("GetCurrentMonitor")
+unsafe extern rl_current_monitor: () -> i32
+@symbol("GetMonitorPosition")
+unsafe extern rl_monitor_position: (monitor: i32) -> Vector2
+@symbol("GetMonitorWidth")
+unsafe extern rl_monitor_width: (monitor: i32) -> i32
+@symbol("GetMonitorHeight")
+unsafe extern rl_monitor_height: (monitor: i32) -> i32
+@symbol("GetMonitorPhysicalWidth")
+unsafe extern rl_monitor_physical_width: (monitor: i32) -> i32
+@symbol("GetMonitorPhysicalHeight")
+unsafe extern rl_monitor_physical_height: (monitor: i32) -> i32
+@symbol("GetMonitorRefreshRate")
+unsafe extern rl_monitor_refresh_rate: (monitor: i32) -> i32
+@symbol("GetMonitorName")
+unsafe extern rl_monitor_name: (monitor: i32) -> ^u8
+@symbol("SetClipboardText")
+unsafe extern rl_set_clipboard_text: (text: ^u8) -> void
+@symbol("GetClipboardText")
+unsafe extern rl_clipboard_text: () -> ^u8
+@symbol("ShowCursor")
+unsafe extern rl_show_cursor: () -> void
+@symbol("HideCursor")
+unsafe extern rl_hide_cursor: () -> void
+@symbol("IsCursorHidden")
+unsafe extern rl_cursor_hidden: () -> u8
+@symbol("EnableCursor")
+unsafe extern rl_enable_cursor: () -> void
+@symbol("DisableCursor")
+unsafe extern rl_disable_cursor: () -> void
+@symbol("IsCursorOnScreen")
+unsafe extern rl_cursor_on_screen: () -> u8
+@symbol("SetTargetFPS")
+unsafe extern rl_set_target_fps: (fps: i32) -> void
+@symbol("GetFrameTime")
+unsafe extern rl_frame_time: () -> f32
+@symbol("GetTime")
+unsafe extern rl_elapsed: () -> f64
+@symbol("GetFPS")
+unsafe extern rl_fps: () -> i32
+@symbol("EnableEventWaiting")
+unsafe extern rl_enable_event_waiting: () -> void
+@symbol("DisableEventWaiting")
+unsafe extern rl_disable_event_waiting: () -> void
+@symbol("BeginScissorMode")
+unsafe extern rl_begin_scissor_mode: (x: i32, y: i32, width: i32, height: i32) -> void
+@symbol("EndScissorMode")
+unsafe extern rl_end_scissor_mode: () -> void
+@symbol("BeginBlendMode")
+unsafe extern rl_begin_blend_mode: (mode: i32) -> void
+@symbol("EndBlendMode")
+unsafe extern rl_end_blend_mode: () -> void
+@symbol("TakeScreenshot")
+unsafe extern rl_take_screenshot: (path: ^u8) -> void
+@symbol("SetTraceLogLevel")
+unsafe extern rl_set_trace_log_level: (level: i32) -> void
+@symbol("OpenURL")
+unsafe extern rl_open_url: (url: ^u8) -> void
+@symbol("SetRandomSeed")
+unsafe extern rl_set_random_seed: (seed: u32) -> void
+@symbol("GetRandomValue")
+unsafe extern rl_random_value: (low: i32, high: i32) -> i32

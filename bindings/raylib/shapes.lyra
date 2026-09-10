@@ -22,6 +22,30 @@ pub struct Vector2 {
   y: f32,
 }
 
+/// `Vector3` — three floats. 12 bytes, and an HFA like [Vector2], so it travels in the
+/// float registers on both targets.
+///
+/// Here beside its siblings rather than in a file of its own: the vector family belongs
+/// together, and splitting it across files to match 2D against 3D would put `Vector2` and
+/// `Vector3` in different places for a reader looking for either.
+pub struct Vector3 {
+  x: f32,
+  y: f32,
+  z: f32,
+}
+
+/// `Vector4` — four floats, the largest homogeneous float aggregate. Also spelled
+/// `Quaternion` in raylib's headers, which is the same sixteen bytes read differently.
+pub struct Vector4 {
+  x: f32,
+  y: f32,
+  z: f32,
+  w: f32,
+}
+
+/// A point in space, spelled shorter than the struct literal.
+pub let vec3 = pure (x: f32, y: f32, z: f32) -> Vector3 => Vector3 { x: x, y: y, z: z }
+
 /// `Rectangle` — four floats, the largest homogeneous float aggregate there is. One more
 /// member and it would go to memory instead.
 ///

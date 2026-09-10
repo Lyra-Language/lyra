@@ -318,7 +318,7 @@ let row_color = pure (row: i64) -> Color =>
   else { rgb(80, 150, 230) }
 
 /// Arrow keys, or the mouse if it has moved into range — whichever the player reaches for.
-let move_paddle = (x: f32, dt: f32) -> f32 => {
+let move_paddle = pure (x: f32, dt: f32) -> f32 => {
   var next = x
   if key_down(KEY_LEFT) { next -= PADDLE_SPEED * dt }
   if key_down(KEY_RIGHT) { next += PADDLE_SPEED * dt }

@@ -38,3 +38,119 @@ pub const ORANGE: Color = Color { r: 255, g: 161, b: 0, a: 255 }
 pub const PURPLE: Color = Color { r: 200, g: 122, b: 255, a: 255 }
 pub const DARKGRAY: Color = Color { r: 80, g: 80, b: 80, a: 255 }
 pub const LIGHTGRAY: Color = Color { r: 200, g: 200, b: 200, a: 255 }
+
+// ---------------------------------------------------------------------------------------
+// Colour arithmetic
+//
+// Every one of these is raylib's rather than reimplemented, on the rule the collision
+// functions established: raylib's answers are the ones its own drawing agrees with, and a
+// second opinion about a blend is a difference nobody will trace.
+// ---------------------------------------------------------------------------------------
+
+/// Whether two colours are the same in all four channels.
+pub let colors_equal = pure (a: Color, b: Color) -> bool =>
+  unsafe { rl_color_equal(a, b) } != 0
+
+/// The same colour at a new alpha, 0.0 clear through 1.0 opaque.
+///
+/// **`fade` in raylib**, renamed because "fade" names an animation and this is a single
+/// value; the alpha is set, not approached.
+pub let with_alpha = pure (color: Color, alpha: f32) -> Color =>
+  unsafe { rl_color_alpha(color, alpha) }
+
+/// Pack a colour into `0xRRGGBBAA`.
+///
+/// **Answers a `u32`, where raylib's C prototype says `int`.** The two are the same
+/// thirty-two bits in the same register, so the extern is declared unsigned rather than
+/// converted afterwards — and it has to be, because a packed colour with the high bit set
+/// reads as a *negative* number through `int`: `color_to_int(RED)` is -433506305 signed
+/// and 0xE6334DFF unsigned. The second is the one that pairs with [color_from_int].
+pub let color_to_int = pure (color: Color) -> u32 => unsafe { rl_color_to_int(color) }
+
+/// Unpack `0xRRGGBBAA` into a colour. What a hex literal from a palette becomes.
+pub let color_from_int = pure (hex: u32) -> Color => unsafe { rl_color_from_int(hex) }
+
+/// The four channels as 0.0..1.0 floats, which is what a shader uniform wants.
+pub let color_normalized = pure (color: Color) -> Vector4 =>
+  unsafe { rl_color_normalize(color) }
+
+/// The reverse of [color_normalized].
+pub let color_from_normalized = pure (v: Vector4) -> Color =>
+  unsafe { rl_color_from_normalized(v) }
+
+/// Hue in degrees (0..360), saturation and value in 0.0..1.0.
+pub let color_to_hsv = pure (color: Color) -> Vector3 => unsafe { rl_color_to_hsv(color) }
+
+/// A colour from hue, saturation and value — the way to walk a palette evenly, since
+/// stepping the hue gives distinct colours where stepping RGB does not.
+pub let color_from_hsv = pure (hue: f32, saturation: f32, value: f32) -> Color =>
+  unsafe { rl_color_from_hsv(hue, saturation, value) }
+
+/// Multiply a colour by another, which is what a texture `tint` does.
+pub let color_tint = pure (color: Color, tint: Color) -> Color =>
+  unsafe { rl_color_tint(color, tint) }
+
+/// Lighten or darken. `factor` runs -1.0 (black) through 0.0 (unchanged) to 1.0 (white).
+pub let color_brightness = pure (color: Color, factor: f32) -> Color =>
+  unsafe { rl_color_brightness(color, factor) }
+
+/// Push the channels away from or toward the midpoint. `contrast` runs -1.0 to 1.0.
+pub let color_contrast = pure (color: Color, contrast: f32) -> Color =>
+  unsafe { rl_color_contrast(color, contrast) }
+
+/// Composite `src` over `dst`, honouring `src`'s alpha and multiplying by `tint`.
+pub let color_alpha_blend = pure (dst: Color, src: Color, tint: Color) -> Color =>
+  unsafe { rl_color_alpha_blend(dst, src, tint) }
+
+/// Interpolate between two colours; `factor` 0.0 gives the first, 1.0 the second.
+pub let color_lerp = pure (a: Color, b: Color, factor: f32) -> Color =>
+  unsafe { rl_color_lerp(a, b, factor) }
+
+/// How many bytes `width * height` pixels occupy in a given `PIXELFORMAT_*`.
+pub let pixel_data_size = pure (width: i64, height: i64, format: i32) -> i64 =>
+  i64(unsafe { rl_pixel_data_size(i32(width), i32(height), format) })
+
+/// Read one pixel out of raw image data, in the given format.
+///
+/// **`unsafe`, and it must be**: nothing here can check that the pointer addresses a pixel
+/// of that format, and the length is the caller's knowledge. `image_colors` is the safe
+/// way to read an image's pixels; this is for a buffer the program already owns.
+pub let pixel_color_at = unsafe pure (src: ^u8, format: i32) -> Color =>
+  unsafe { rl_pixel_color(src, format) }
+
+/// Write one pixel into raw image data. `unsafe` for [pixel_color_at]'s reason.
+pub let set_pixel_color_at = unsafe (dst: ^mut u8, color: Color, format: i32) -> void =>
+  unsafe { rl_set_pixel_color(dst, color, format) }
+
+@symbol("ColorIsEqual")
+unsafe extern pure rl_color_equal: (a: Color, b: Color) -> u8
+@symbol("ColorAlpha")
+unsafe extern pure rl_color_alpha: (color: Color, alpha: f32) -> Color
+@symbol("ColorToInt")
+unsafe extern pure rl_color_to_int: (color: Color) -> u32
+@symbol("GetColor")
+unsafe extern pure rl_color_from_int: (hex: u32) -> Color
+@symbol("ColorNormalize")
+unsafe extern pure rl_color_normalize: (color: Color) -> Vector4
+@symbol("ColorFromNormalized")
+unsafe extern pure rl_color_from_normalized: (v: Vector4) -> Color
+@symbol("ColorToHSV")
+unsafe extern pure rl_color_to_hsv: (color: Color) -> Vector3
+@symbol("ColorFromHSV")
+unsafe extern pure rl_color_from_hsv: (hue: f32, saturation: f32, value: f32) -> Color
+@symbol("ColorTint")
+unsafe extern pure rl_color_tint: (color: Color, tint: Color) -> Color
+@symbol("ColorBrightness")
+unsafe extern pure rl_color_brightness: (color: Color, factor: f32) -> Color
+@symbol("ColorContrast")
+unsafe extern pure rl_color_contrast: (color: Color, contrast: f32) -> Color
+@symbol("ColorAlphaBlend")
+unsafe extern pure rl_color_alpha_blend: (dst: Color, src: Color, tint: Color) -> Color
+@symbol("ColorLerp")
+unsafe extern pure rl_color_lerp: (a: Color, b: Color, factor: f32) -> Color
+@symbol("GetPixelDataSize")
+unsafe extern pure rl_pixel_data_size: (width: i32, height: i32, format: i32) -> i32
+@symbol("GetPixelColor")
+unsafe extern pure rl_pixel_color: (src: ^u8, format: i32) -> Color
+@symbol("SetPixelColor")
+unsafe extern rl_set_pixel_color: (dst: ^mut u8, color: Color, format: i32) -> void

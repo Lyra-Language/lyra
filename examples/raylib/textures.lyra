@@ -408,7 +408,7 @@ let loop_frames =
       // to a PNG, and the PNG is loaded straight back as a texture and shown as a
       // thumbnail — a realistic gesture that exercises four bindings at once.
       if key_pressed(KEY_SPACE) {
-        match take_screenshot() {
+        match capture_to_texture() {
           Some(fresh) => {
             // The previous thumbnail is released *before* the name is rebound, because
             // rebinding over a live resource is the one leak lyra-W022 cannot attribute
@@ -576,11 +576,14 @@ let draw_render_texture_panel = (tex: Texture2D, x: f32, y: f32) -> void => {
 
 /// Grab the screen, write it to a PNG, and load that PNG back as a texture.
 ///
+/// Not `take_screenshot`: raylib exports one of those now (it writes a file and stops),
+/// and a local declaration quietly winning an imported name is lyra-W016.
+///
 /// Deliberately the long way round rather than `image_from_texture`: it is the round trip
 /// a "save a screenshot" button actually performs, and it exercises the file path as well
 /// as the memory one. Every intermediate `Image` is released here — only the texture
 /// leaves.
-let take_screenshot = () -> Maybe<Texture2D> => {
+let capture_to_texture = () -> Maybe<Texture2D> => {
   var made: Maybe<Texture2D> = None
   match image_from_screen() {
     Some(shot) => {
