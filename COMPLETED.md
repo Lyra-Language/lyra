@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — the textures example gets real artwork, and readable labels
+
+Two pieces of feedback from actually running the gallery, which is the half of it no test
+reaches.
+
+**Flat generated colour was the wrong choice, and for a reason worth keeping.** The example
+built its sprite sheet and nine-patch panel as `[]Color` in Lyra, on the reasoning that an
+example shipping assets is an example that breaks when they go missing. That reasoning is
+sound and the conclusion was still wrong: **a demonstration of a visual feature needs
+artwork the feature can act on.** Bilinear filtering against a hard-edged disc shows
+nothing at all — the two filter panels were identical — and a nine-patch's entire point is
+a border that must not stretch, which a flat square does not have.
+
+`examples/raylib/assets/` now holds three committed PNGs — a four-frame sprite sheet, a
+rounded UI panel, and a small landscape — totalling 12 KB, with `generate.py` beside them:
+a pure-standard-library rasteriser (PNG is a zlib stream in a few length-prefixed chunks)
+that supersamples at 4x and box-filters down, which is where the anti-aliased edges come
+from. Committing the generator is what answers the original objection: the assets are
+reproducible and reviewable rather than binaries that arrived somehow.
+
+The `--check` mode grew three cases for them. Loading an `Image` needs no window, so the
+artwork the gallery draws is verified headlessly against the sizes `generate.py` writes —
+and that check was confirmed by hiding a file and watching it fail with exit 1, rather than
+assumed. Path resolution tries the repository root and `examples/raylib/`, both tested.
+
+**The labels were too small to read**, which is the kind of thing only running it finds.
+`LABEL` and `CAPTION` are named constants now (22 and 18, up from 16 and 14) and the window
+grew to 1100x800 to give the panels room. `examples/raylib/shapes.lyra` has the same 16/18
+labels and the same problem; it is left alone here because it was not what was reported.
+
+`update_texture` is better exercised for the change: the scene is read back with
+`image_from_texture`, warmed pixel by pixel in Lyra, and uploaded to a second texture, with
+`update_texture_rect` patching a corner. That is the read-modify-write path on real pixels
+rather than a flat fill re-fetched.
+
 ### 09/10/26 — the textures example, and the view rule it forced out of `@must_release`
 
 `examples/raylib/textures.lyra`, on the plan `shapes.lyra` established: a `--check` mode

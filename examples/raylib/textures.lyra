@@ -12,10 +12,16 @@ module main
 //! GPU and needs a context, so the six drawing calls can only be looked at. `--check` is
 //! the half a machine can hold to account.
 //!
-//! **Nothing here is loaded from disk.** The sprite sheet and the nine-patch panel are
-//! built as `[]Color` in Lyra and uploaded with `update_texture`, which is the same
-//! discipline `breakout.lyra` follows for its sounds — an example that ships assets is an
-//! example that stops working when they go missing.
+//! **It draws real artwork**, from `assets/` beside this file: a sprite sheet, a UI panel
+//! and a small landscape. They are committed PNGs, and `assets/generate.py` is the
+//! standard-library script that made them — so they are reproducible rather than opaque
+//! binaries that arrived somehow. Flat generated colour was what this example used first
+//! and it was the wrong choice twice over: bilinear filtering has nothing to show against
+//! a hard-edged disc, and a nine-patch's whole point is invisible without a border worth
+//! preserving.
+//!
+//! **Run it from the repository root**, or from `examples/raylib/` — those are the two
+//! places it looks for `assets/`.
 
 import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps, elapsed,
@@ -41,12 +47,17 @@ import bindings.raylib.{
   RAYWHITE, WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY, LIGHTGRAY,
 }
 
-/// One sprite frame, and how many the sheet holds.
+/// One sprite frame, and how many `assets/sprites.png` holds.
 const FRAME: i64 = 32
 const FRAMES: i64 = 4
-/// The nine-patch panel's source size and how wide its fixed border is.
+/// `assets/panel.png`'s size, and how wide the border a nine-patch must not stretch is.
 const PANEL: i64 = 48
 const BORDER: i64 = 14
+
+/// Label and caption sizes. Named because they are set together and were once too small
+/// to read at a normal viewing distance.
+const LABEL: i32 = 22
+const CAPTION: i32 = 18
 
 let main = () -> u8 => {
   if wants_check() { return run_checks() }
@@ -62,6 +73,25 @@ let wants_check = () -> bool => {
   found
 }
 
+/// Where an asset lives, tried in order: from the repository root, then from beside the
+/// example itself. Answers the first that loads, so the program works from either.
+let asset_path = (name: string) -> Maybe<string> => {
+  let candidates: []string = ["examples/raylib/assets/" ++ name, "assets/" ++ name]
+  var found: Maybe<string> = None
+  for path in candidates {
+    match found {
+      Some(_) => {},
+      None => {
+        match load_image(path) {
+          Some(probe) => { unload_image(probe); found = Some(path) },
+          None => {},
+        }
+      },
+    }
+  }
+  found
+}
+
 // ---------------------------------------------------------------------------------------
 // The headless half — everything an Image can do, checked
 // ---------------------------------------------------------------------------------------
@@ -71,7 +101,7 @@ let wants_check = () -> bool => {
 /// A solid 8x4 has 32 pixels all of one colour; a 2x2-checked square has corners that
 /// differ; a top-to-bottom gradient differs top from bottom. Nothing here asks raylib what
 /// the answer is and then asserts it — that would only establish that raylib agrees with
-/// itself.
+/// itself. The assets are checked against the sizes `assets/generate.py` writes.
 let run_checks = () -> u8 => {
   var failures = 0
 
@@ -172,14 +202,11 @@ let run_checks = () -> u8 => {
   }
   failures += check_case("an empty byte list is refused, not a trap", empty, true)
 
-  // The pixel data the gallery uploads, checked here where it can be.
-  let sheet = sprite_sheet_pixels()
-  failures += check_case("sprite sheet pixel count",
-    sheet.len() == FRAME * FRAMES * FRAME, true)
-  let panel = panel_pixels()
-  failures += check_case("panel pixel count", panel.len() == PANEL * PANEL, true)
-  failures += check_case("panel border differs from its centre",
-    panel[0].r != panel[(PANEL / 2) * PANEL + PANEL / 2].r, true)
+  // The committed artwork, at the sizes assets/generate.py writes. Loading an Image needs
+  // no window, so the assets the gallery draws are checkable here.
+  failures += check_asset("assets/sprites.png", "sprites.png", FRAME * FRAMES, FRAME)
+  failures += check_asset("assets/panel.png", "panel.png", PANEL, PANEL)
+  failures += check_asset("assets/scene.png", "scene.png", 160, 100)
 
   unload_image(text)
   unload_image(cells)
@@ -200,6 +227,24 @@ let run_checks = () -> u8 => {
   }
 }
 
+/// An asset loads and is the size its generator writes.
+let check_asset = (label: string, name: string, width: i64, height: i64) -> i64 => {
+  var right_size = false
+  match asset_path(name) {
+    Some(path) => {
+      match load_image(path) {
+        Some(img) => {
+          right_size = i64(img.width) == width && i64(img.height) == height
+          unload_image(img)
+        },
+        None => {},
+      }
+    },
+    None => {},
+  }
+  check_case(label, right_size, true)
+}
+
 let check_case = (name: string, got: bool, want: bool) -> i64 => {
   if got == want {
     println("  ok    ${name}")
@@ -211,151 +256,143 @@ let check_case = (name: string, got: bool, want: bool) -> i64 => {
 }
 
 // ---------------------------------------------------------------------------------------
-// Pixel data, built in Lyra
-//
-// There is no `ImageDraw*` binding yet, so these compute a `[]Color` and hand it to
-// `update_texture` — which is also the only thing that exercises that call.
+// The gallery
 // ---------------------------------------------------------------------------------------
 
-/// Four 32x32 frames side by side: a disc that grows across the sheet, each frame its own
-/// colour, so an animation is visibly stepping and a flipped draw is visibly flipped.
-let sprite_sheet_pixels = pure () -> []Color => {
-  let palette: []Color = [RED, ORANGE, YELLOW, GREEN]
-  let width = FRAME * FRAMES
-  var out: []Color = []
-  var y = 0
-  for y < FRAME {
-    var x = 0
-    for x < width {
-      let frame = x / FRAME
-      let fx = x %% FRAME
-      // A disc, growing a little with each frame, nudged right so the flip shows.
-      let dx = fx - FRAME / 2 - 3
-      let dy = y - FRAME / 2
-      let radius = 8 + frame * 2
-      if dx * dx + dy * dy <= radius * radius {
-        out.push(palette[frame])
-      } else {
-        out.push(rgba(0, 0, 0, 0))
-      }
-      x += 1
-    }
-    y += 1
+let run_gallery = () -> void => {
+  init_window(1100, 800, "Lyra — raylib textures")
+  set_target_fps(60)
+  match load_assets() {
+    Some(_) => {},
+    None => println("could not load assets/ — run from the repository root"),
   }
-  out
+  close_window()
 }
 
-/// One frame's worth of a single colour — what `update_texture_rect` patches in.
-let solid_frame = pure (color: Color) -> []Color => {
+/// Load the three textures, run the gallery, and release them. Nested rather than
+/// flattened because each load can fail on its own; the `Maybe` is what says so.
+let load_assets = () -> Maybe<bool> => {
+  var done: Maybe<bool> = None
+  match asset_texture("sprites.png") {
+    Some(fresh) => {
+      // `gen_mipmaps` mutates the `Texture2D` it is handed, so it wants a `var` — and
+      // moving the match arm's binding into one keeps a single name on the resource.
+      // Two names for one GPU object is a shape the compiler cannot see through: it
+      // tracks bindings, not textures, so it would ask for two unloads of a thing that
+      // must be freed once.
+      var sheet = fresh
+      set_texture_filter(sheet, FILTER_POINT)
+      set_texture_wrap(sheet, WRAP_CLAMP)
+      sheet.gen_mipmaps()
+      println("sprite sheet: ${sheet.width}x${sheet.height}, valid=${texture_valid(sheet)}, "
+        ++ "${sheet.mipmaps} mipmap level(s)")
+      match asset_texture("panel.png") {
+        Some(panel) => {
+          match asset_texture("scene.png") {
+            Some(scene) => {
+              with_all(sheet, panel, scene)
+              done = Some(true)
+              unload_texture(scene)
+            },
+            None => {},
+          }
+          unload_texture(panel)
+        },
+        None => {},
+      }
+      unload_texture(sheet)
+    },
+    None => {},
+  }
+  done
+}
+
+/// A texture from a file in `assets/`, wherever that turns out to be.
+let asset_texture = (name: string) -> Maybe<Texture2D> => {
+  var made: Maybe<Texture2D> = None
+  match asset_path(name) {
+    Some(path) => {
+      match load_texture(path) {
+        Some(t) => { made = Some(t) },
+        None => {},
+      }
+    },
+    None => {},
+  }
+  made
+}
+
+/// The render texture, and a second copy of the scene the program edits pixel by pixel.
+let with_all = (sheet: Texture2D, panel: Texture2D, scene: Texture2D) -> void => {
+  match sepia_of(scene) {
+    Some(sepia) => {
+      match load_render_texture(240, 170) {
+        Some(rt) => {
+          println("render texture valid: ${render_texture_valid(rt)}")
+          loop_frames(sheet, panel, scene, sepia, Some(rt))
+          unload_render_texture(rt)
+        },
+        None => loop_frames(sheet, panel, scene, sepia, None),
+      }
+      unload_texture(sepia)
+    },
+    None => println("could not build the edited copy"),
+  }
+}
+
+/// Read a texture's pixels back, warm them in Lyra, and upload the result to a new
+/// texture — the read-modify-write path, on real artwork rather than a flat fill.
+///
+/// `update_texture_rect` then patches one corner, which is how an atlas is usually
+/// changed: a region at a time rather than a whole reupload.
+let sepia_of = (source: Texture2D) -> Maybe<Texture2D> => {
+  var made: Maybe<Texture2D> = None
+  match image_from_texture(source) {
+    Some(img) => {
+      let pixels = image_colors(img)
+      var warmed: []Color = []
+      for p in pixels {
+        let lum = (i64(p.r) * 30 + i64(p.g) * 59 + i64(p.b) * 11) / 100
+        warmed.push(rgba(u8(min_i64(255, lum * 12 / 10)), u8(lum), u8(lum * 7 / 10), p.a))
+      }
+      let blank = gen_image_color(img.width, img.height, rgba(0, 0, 0, 0))
+      match texture_from_image(blank) {
+        Some(t) => {
+          if update_texture(t, warmed) {
+            // A corner swatch, so the partial update is visible against the rest.
+            let patch = solid_block(24, 24, rgb(210, 96, 72))
+            let patched = update_texture_rect(t, rect(0.0, 0.0, 24.0, 24.0), patch)
+            println("corner repatched: ${patched}")
+            made = Some(t)
+          } else {
+            unload_texture(t)
+          }
+        },
+        None => {},
+      }
+      unload_image(blank)
+      unload_image(img)
+    },
+    None => {},
+  }
+  made
+}
+
+let solid_block = pure (width: i64, height: i64, color: Color) -> []Color => {
   var out: []Color = []
   var i = 0
-  for i < FRAME * FRAME {
+  for i < width * height {
     out.push(color)
     i += 1
   }
   out
 }
 
-/// A 48x48 panel with a thick border and a lighter middle — the shape a nine-patch is for,
-/// since the border must keep its size while the middle stretches.
-let panel_pixels = pure () -> []Color => {
-  var out: []Color = []
-  var y = 0
-  for y < PANEL {
-    var x = 0
-    for x < PANEL {
-      let edge = x < BORDER || y < BORDER || x >= PANEL - BORDER || y >= PANEL - BORDER
-      if edge { out.push(PURPLE) } else { out.push(rgb(230, 225, 245)) }
-      x += 1
-    }
-    y += 1
-  }
-  out
-}
-
-/// Turn a block of pixels into a texture, or `None` if the upload failed.
-let texture_of = (pixels: []Color, width: i64, height: i64) -> Maybe<Texture2D> => {
-  let blank = gen_image_color(i32(width), i32(height), rgba(0, 0, 0, 0))
-  var made: Maybe<Texture2D> = None
-  match texture_from_image(blank) {
-    Some(t) => { if update_texture(t, pixels) { made = Some(t) } else { unload_texture(t) } },
-    None => {},
-  }
-  unload_image(blank)
-  made
-}
-
-// ---------------------------------------------------------------------------------------
-// The gallery
-// ---------------------------------------------------------------------------------------
-
-let run_gallery = () -> void => {
-  init_window(900, 660, "Lyra — raylib textures")
-  set_target_fps(60)
-
-  // Everything is built once, before the loop. Each of these is a resource the compiler
-  // will insist is released (lyra-W022), which is why they are unloaded at the end.
-  match texture_of(sprite_sheet_pixels(), FRAME * FRAMES, FRAME) {
-    Some(fresh) => {
-      // **`gen_mipmaps` mutates the `Texture2D` it is handed**, so it wants a `var` —
-      // and moving the match arm's binding into one is what keeps a single name on the
-      // resource. Two names for one GPU object is a shape the compiler cannot see
-      // through: it tracks bindings, not textures, so it would ask for two unloads of a
-      // thing that must be freed once. Here `fresh` hands off to `sheet` and only
-      // `sheet` is released.
-      var sheet = fresh
-      set_texture_filter(sheet, FILTER_POINT)
-      set_texture_wrap(sheet, WRAP_CLAMP)
-      sheet.gen_mipmaps()
-      println("sheet valid: ${texture_valid(sheet)}, ${sheet.mipmaps} mipmap level(s)")
-
-      // One frame recoloured after the fact, which is what `update_texture_rect` is for:
-      // a sprite atlas is usually patched a region at a time rather than reuploaded.
-      let patch = solid_frame(rgba(120, 200, 255, 255))
-      let patched = update_texture_rect(sheet, rect(0.0, 0.0, f32(FRAME), f32(FRAME)), patch)
-      println("frame 0 repatched: ${patched}")
-
-      // And the round trip back out of the GPU, which is how a program checks that what
-      // it uploaded is what the card is holding.
-      match image_from_texture(sheet) {
-        Some(back) => {
-          println("read back: ${back.width}x${back.height}")
-          unload_image(back)
-        },
-        None => println("could not read the sheet back"),
-      }
-      match texture_of(panel_pixels(), PANEL, PANEL) {
-        Some(panel) => {
-          run_with(sheet, panel)
-          unload_texture(panel)
-        },
-        None => println("could not upload the panel texture"),
-      }
-      unload_texture(sheet)
-    },
-    None => println("could not upload the sprite sheet — is there a GPU context?"),
-  }
-  close_window()
-}
-
-/// The frame loop, with both textures and a framebuffer in hand.
-///
-/// Split out because a `match` per fallible resource would otherwise nest the whole
-/// program four levels deep — the shape `Maybe` pushes a caller into when several things
-/// can each fail.
-let run_with = (sheet: Texture2D, panel: Texture2D) -> void => {
-  match load_render_texture(200, 140) {
-    Some(rt) => {
-      println("render texture valid: ${render_texture_valid(rt)}")
-      loop_frames(sheet, panel, Some(rt))
-      unload_render_texture(rt)
-    },
-    None => loop_frames(sheet, panel, None),
-  }
-}
+let min_i64 = pure (a: i64, b: i64) -> i64 => if a < b { a } else { b }
 
 let loop_frames =
-  (sheet: Texture2D, panel: Texture2D, target: Maybe<RenderTexture>) -> void => {
+  (sheet: Texture2D, panel: Texture2D, scene: Texture2D, sepia: Texture2D,
+   target: Maybe<RenderTexture>) -> void => {
     var shot: Maybe<Texture2D> = None
     for !should_close() {
       let t = f32(elapsed())
@@ -364,8 +401,7 @@ let loop_frames =
 
       // Space takes a screenshot: the framebuffer becomes an `Image`, the `Image` goes
       // to a PNG, and the PNG is loaded straight back as a texture and shown as a
-      // thumbnail. Four bindings in one gesture, and a realistic one — a program that
-      // can screenshot itself does exactly this.
+      // thumbnail — a realistic gesture that exercises four bindings at once.
       if key_pressed(KEY_SPACE) {
         match take_screenshot() {
           Some(fresh) => {
@@ -386,39 +422,39 @@ let loop_frames =
       // not nest inside `begin_drawing`, so the framebuffer is filled before the screen
       // is, and then drawn back below like any other texture.
       match target {
-        Some(rt) => render_into(rt, sheet, t),
+        Some(rt) => render_into(rt, sheet, scene, t),
         None => {},
       }
 
       begin_drawing()
       clear_background(RAYWHITE)
 
-      draw_plain_panel(sheet, 20.0, 40.0)
-      draw_transformed_panel(sheet, 320.0, 40.0, t)
-      draw_sheet_panel(sheet, 20.0, 200.0, frame)
-      draw_npatch_panel(panel, 320.0, 200.0, cursor)
-      draw_filter_panel(sheet, 620.0, 40.0)
+      draw_scene_panel(scene, sepia, 30.0, 76.0)
+      draw_transformed_panel(scene, 430.0, 76.0, t)
+      draw_filter_panel(sheet, 800.0, 76.0)
+      draw_sheet_panel(sheet, 30.0, 330.0, frame)
+      draw_npatch_panel(panel, 430.0, 330.0, cursor)
 
       match target {
-        Some(rt) => draw_render_texture_panel(rt.texture, 620.0, 300.0),
-        None => draw_text("no render texture", 620, 300, 16, DARKGRAY),
+        Some(rt) => draw_render_texture_panel(rt.texture, 800.0, 330.0),
+        None => draw_text("no render texture", 800, 330, LABEL, DARKGRAY),
       }
 
-      draw_text("draw_texture / _v", 20, 20, 16, DARKGRAY)
-      draw_text("draw_texture_ex — rotate and scale", 320, 20, 16, DARKGRAY)
-      draw_text("point vs bilinear", 620, 20, 16, DARKGRAY)
-      draw_text("draw_texture_rect — a sprite sheet", 20, 180, 16, DARKGRAY)
-      draw_text("draw_texture_npatch — follows the mouse", 320, 180, 16, DARKGRAY)
-      draw_text("a render texture, drawn back", 620, 280, 16, DARKGRAY)
+      draw_text("draw_texture / _v — plain, tinted, pixel-edited", 30, 40, LABEL, DARKGRAY)
+      draw_text("_ex and _pro — rotate, scale", 430, 40, LABEL, DARKGRAY)
+      draw_text("point / bilinear", 800, 40, LABEL, DARKGRAY)
+      draw_text("draw_texture_rect — a sprite sheet", 30, 294, LABEL, DARKGRAY)
+      draw_text("draw_texture_npatch — follows the mouse", 430, 294, LABEL, DARKGRAY)
+      draw_text("a render texture, drawn back", 800, 294, LABEL, DARKGRAY)
 
       match shot {
         Some(tex) => {
-          draw_rectangle_lines(rect(620.0, 480.0, 200.0, 150.0), 2.0, DARKGRAY)
+          draw_text("last screenshot", 800, 560, LABEL, DARKGRAY)
+          draw_rectangle_lines(rect(800.0, 590.0, 260.0, 180.0), 2.0, DARKGRAY)
           draw_texture_pro(tex, rect(0.0, 0.0, f32(tex.width), f32(tex.height)),
-            rect(622.0, 482.0, 196.0, 146.0), vec2(0.0, 0.0), 0.0, WHITE)
-          draw_text("last screenshot", 620, 462, 16, DARKGRAY)
+            rect(802.0, 592.0, 256.0, 176.0), vec2(0.0, 0.0), 0.0, WHITE)
         },
-        None => draw_text("space to screenshot", 620, 462, 16, DARKGRAY),
+        None => draw_text("space to screenshot", 800, 560, LABEL, DARKGRAY),
       }
       end_drawing()
     }
@@ -427,6 +463,96 @@ let loop_frames =
       None => {},
     }
   }
+
+/// Fill the framebuffer with something this program drew, so what comes back is visibly
+/// not a blank rectangle.
+let render_into = (rt: RenderTexture, sheet: Texture2D, scene: Texture2D, t: f32) -> void => {
+  begin_texture_mode(rt)
+  clear_background(rgb(30, 30, 46))
+  draw_texture_ex(scene, vec2(10.0, 24.0), 0.0, 0.9, rgba(255, 255, 255, 150))
+  draw_circle(vec2(200.0, 40.0), 22.0, ORANGE)
+  draw_line_ex(vec2(10.0, 160.0), vec2(230.0, 20.0), 4.0, GREEN)
+  draw_texture_ex(sheet, vec2(90.0, 70.0), 25.0 * t, 1.6, WHITE)
+  draw_text("offscreen", 12, 10, CAPTION, RAYWHITE)
+  end_texture_mode()
+}
+
+/// The scene as it is, tinted, and the pixel-edited copy: `draw_texture`, `draw_texture_v`
+/// and what `update_texture` produced, side by side.
+let draw_scene_panel = (scene: Texture2D, sepia: Texture2D, x: f32, y: f32) -> void => {
+  draw_texture(scene, i32(x.round()), i32(y.round()), WHITE)
+  draw_texture_v(scene, vec2(x + 180.0, y), rgba(150, 210, 255, 255))
+  draw_texture_v(sepia, vec2(x, y + 120.0), WHITE)
+  draw_text("as loaded", i32(x.round()), i32(y.round()) + 104, CAPTION, DARKGRAY)
+  draw_text("tinted", i32(x.round()) + 180, i32(y.round()) + 104, CAPTION, DARKGRAY)
+  draw_text("update_texture", i32(x.round()), i32(y.round()) + 224, CAPTION, DARKGRAY)
+}
+
+/// `draw_texture_ex` rotates about the top-left corner; `draw_texture_pro` about a chosen
+/// origin, so the second spins in place rather than orbiting.
+let draw_transformed_panel = (scene: Texture2D, x: f32, y: f32, t: f32) -> void => {
+  let spin = 30.0 * t
+  draw_texture_ex(scene, vec2(x + 30.0, y + 10.0), spin, 0.55, WHITE)
+  let dest = rect(x + 130.0, y + 200.0, 150.0, 94.0)
+  draw_texture_pro(scene, rect(0.0, 0.0, 160.0, 100.0), dest, vec2(75.0, 47.0), spin, WHITE)
+  draw_text("_ex", i32(x.round()), i32(y.round()) + 130, CAPTION, DARKGRAY)
+  draw_text("_pro, about its centre", i32(x.round()), i32(y.round()) + 262, CAPTION, DARKGRAY)
+}
+
+/// One frame of the sheet at a time — what `draw_texture_rect` is for. The second copy
+/// uses a **negative source width**, which is how a sprite faces the other way.
+let draw_sheet_panel = (sheet: Texture2D, x: f32, y: f32, frame: i64) -> void => {
+  let source = rect(f32(frame * FRAME), 0.0, f32(FRAME), f32(FRAME))
+  let flipped = rect(f32(frame * FRAME) + f32(FRAME), 0.0, 0.0 - f32(FRAME), f32(FRAME))
+  draw_rectangle(rect(x, y, 120.0, 120.0), LIGHTGRAY)
+  draw_texture_pro(sheet, source, rect(x + 12.0, y + 12.0, 96.0, 96.0),
+    vec2(0.0, 0.0), 0.0, WHITE)
+  draw_rectangle(rect(x + 140.0, y, 120.0, 120.0), LIGHTGRAY)
+  draw_texture_pro(sheet, flipped, rect(x + 152.0, y + 12.0, 96.0, 96.0),
+    vec2(0.0, 0.0), 0.0, WHITE)
+  draw_text("frame ${frame}", i32(x.round()), i32(y.round()) + 128, CAPTION, DARKGRAY)
+  draw_text("flipped", i32(x.round()) + 140, i32(y.round()) + 128, CAPTION, DARKGRAY)
+}
+
+/// A nine-patch stretched to wherever the cursor is: the border keeps its thickness while
+/// the middle grows, which is the whole point of the form and the reason the panel needed
+/// to be real artwork rather than a flat square.
+let draw_npatch_panel = (panel: Texture2D, x: f32, y: f32, cursor: Vector2) -> void => {
+  let w = clamp_f32(cursor.x - x, 80.0, 320.0)
+  let h = clamp_f32(cursor.y - y, 60.0, 200.0)
+  let patch = NPatchInfo {
+    source: rect(0.0, 0.0, f32(PANEL), f32(PANEL)),
+    left: i32(BORDER),
+    top: i32(BORDER),
+    right: i32(BORDER),
+    bottom: i32(BORDER),
+    layout: NPATCH_NINE,
+  }
+  draw_texture_npatch(panel, patch, rect(x, y, w, h), vec2(0.0, 0.0), 0.0, WHITE)
+}
+
+/// One sprite magnified hard under each filter, so the difference is unmissable — which
+/// is what anti-aliased artwork buys and a flat disc could never show.
+let draw_filter_panel = (sheet: Texture2D, x: f32, y: f32) -> void => {
+  let source = rect(0.0, 0.0, f32(FRAME), f32(FRAME))
+  set_texture_filter(sheet, FILTER_POINT)
+  draw_texture_pro(sheet, source, rect(x, y, 120.0, 120.0), vec2(0.0, 0.0), 0.0, WHITE)
+  set_texture_filter(sheet, FILTER_BILINEAR)
+  draw_texture_pro(sheet, source, rect(x + 136.0, y, 120.0, 120.0), vec2(0.0, 0.0), 0.0, WHITE)
+  set_texture_filter(sheet, FILTER_POINT)
+  draw_text("point", i32(x.round()), i32(y.round()) + 128, CAPTION, DARKGRAY)
+  draw_text("bilinear", i32(x.round()) + 136, i32(y.round()) + 128, CAPTION, DARKGRAY)
+}
+
+/// A render texture drawn back to the screen.
+///
+/// **With a negative source height**, because a framebuffer's contents are upside down
+/// relative to the screen — OpenGL's y axis runs the other way. Getting this wrong is not
+/// an error, just a picture that is inexplicably inverted.
+let draw_render_texture_panel = (tex: Texture2D, x: f32, y: f32) -> void => {
+  let source = rect(0.0, 0.0, f32(tex.width), 0.0 - f32(tex.height))
+  draw_texture_rect(tex, source, vec2(x, y), WHITE)
+}
 
 /// Grab the screen, write it to a PNG, and load that PNG back as a texture.
 ///
@@ -449,88 +575,6 @@ let take_screenshot = () -> Maybe<Texture2D> => {
     None => {},
   }
   made
-}
-
-/// Fill the framebuffer: a couple of shapes and a sprite, so what comes back is visibly
-/// something this program drew rather than a blank rectangle.
-let render_into = (rt: RenderTexture, sheet: Texture2D, t: f32) -> void => {
-  begin_texture_mode(rt)
-  clear_background(rgb(30, 30, 46))
-  draw_circle(vec2(60.0, 70.0), 34.0, ORANGE)
-  draw_line_ex(vec2(10.0, 130.0), vec2(190.0, 10.0), 4.0, GREEN)
-  draw_texture_ex(sheet, vec2(110.0, 40.0), 25.0 * t, 1.4, rgba(255, 255, 255, 200))
-  draw_text("offscreen", 12, 12, 16, RAYWHITE)
-  end_texture_mode()
-}
-
-/// The two simplest calls, side by side: integer coordinates and a point.
-let draw_plain_panel = (sheet: Texture2D, x: f32, y: f32) -> void => {
-  draw_texture(sheet, i32(x.round()), i32(y.round()), WHITE)
-  draw_texture_v(sheet, vec2(x, y + 40.0), rgba(255, 255, 255, 120))
-  draw_text("tinted ->", i32(x.round()) + 140, i32(y.round()) + 50, 14, DARKGRAY)
-}
-
-/// `draw_texture_ex` rotates about the top-left corner and scales uniformly.
-let draw_transformed_panel = (sheet: Texture2D, x: f32, y: f32, t: f32) -> void => {
-  let spin = 40.0 * t
-  draw_texture_ex(sheet, vec2(x + 40.0, y + 20.0), spin, 0.8, WHITE)
-  // …and `draw_texture_pro` rotates about a chosen origin: the centre, so it spins in
-  // place rather than orbiting.
-  let dest = rect(x + 190.0, y + 70.0, 80.0, 80.0)
-  draw_texture_pro(sheet, rect(0.0, 0.0, f32(FRAME), f32(FRAME)), dest,
-    vec2(40.0, 40.0), spin, WHITE)
-  draw_text("_pro", i32(x.round()) + 170, i32(y.round()) + 118, 14, DARKGRAY)
-}
-
-/// One frame of the sheet at a time — what `draw_texture_rect` is for. The second copy
-/// uses a **negative source width**, which is how a sprite faces the other way.
-let draw_sheet_panel = (sheet: Texture2D, x: f32, y: f32, frame: i64) -> void => {
-  let source = rect(f32(frame * FRAME), 0.0, f32(FRAME), f32(FRAME))
-  let flipped = rect(f32(frame * FRAME) + f32(FRAME), 0.0, 0.0 - f32(FRAME), f32(FRAME))
-  draw_rectangle(rect(x, y, 72.0, 72.0), LIGHTGRAY)
-  draw_texture_rect(sheet, source, vec2(x + 20.0, y + 20.0), WHITE)
-  draw_rectangle(rect(x + 90.0, y, 72.0, 72.0), LIGHTGRAY)
-  draw_texture_rect(sheet, flipped, vec2(x + 110.0, y + 20.0), WHITE)
-  draw_text("frame ${frame}", i32(x.round()), i32(y.round()) + 78, 14, DARKGRAY)
-  draw_text("flipped", i32(x.round()) + 90, i32(y.round()) + 78, 14, DARKGRAY)
-}
-
-/// A nine-patch stretched to wherever the cursor is: the border keeps its thickness while
-/// the middle grows, which is the whole point of the form.
-let draw_npatch_panel = (panel: Texture2D, x: f32, y: f32, cursor: Vector2) -> void => {
-  let w = clamp_f32(cursor.x - x, 60.0, 240.0)
-  let h = clamp_f32(cursor.y - y, 50.0, 140.0)
-  let patch = NPatchInfo {
-    source: rect(0.0, 0.0, f32(PANEL), f32(PANEL)),
-    left: i32(BORDER),
-    top: i32(BORDER),
-    right: i32(BORDER),
-    bottom: i32(BORDER),
-    layout: NPATCH_NINE,
-  }
-  draw_texture_npatch(panel, patch, rect(x, y, w, h), vec2(0.0, 0.0), 0.0, WHITE)
-}
-
-/// The same texture magnified twice, with the two filters, so the difference is visible.
-let draw_filter_panel = (sheet: Texture2D, x: f32, y: f32) -> void => {
-  let source = rect(0.0, 0.0, f32(FRAME), f32(FRAME))
-  set_texture_filter(sheet, FILTER_POINT)
-  draw_texture_pro(sheet, source, rect(x, y, 90.0, 90.0), vec2(0.0, 0.0), 0.0, WHITE)
-  set_texture_filter(sheet, FILTER_BILINEAR)
-  draw_texture_pro(sheet, source, rect(x + 110.0, y, 90.0, 90.0), vec2(0.0, 0.0), 0.0, WHITE)
-  set_texture_filter(sheet, FILTER_POINT)
-  draw_text("point", i32(x.round()), i32(y.round()) + 96, 14, DARKGRAY)
-  draw_text("bilinear", i32(x.round()) + 110, i32(y.round()) + 96, 14, DARKGRAY)
-}
-
-/// A render texture drawn back to the screen.
-///
-/// **With a negative source height**, because a framebuffer's contents are upside down
-/// relative to the screen — OpenGL's y axis runs the other way. Getting this wrong is not
-/// an error, just a picture that is inexplicably inverted.
-let draw_render_texture_panel = (tex: Texture2D, x: f32, y: f32) -> void => {
-  let source = rect(0.0, 0.0, f32(tex.width), 0.0 - f32(tex.height))
-  draw_texture_rect(tex, source, vec2(x, y), WHITE)
 }
 
 let clamp_f32 = pure (v: f32, lo: f32, hi: f32) -> f32 =>
