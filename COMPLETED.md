@@ -9,6 +9,94 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — raylib image editing and painting
+
+`bindings/raylib/image.lyra`: 36 functions over 37 externs — editing an image in place,
+making new ones from old, and painting onto one. **344 of the 600 `RLAPI` declarations**
+in the installed raylib 6.0 header. (Earlier entries counted against 548; that number does
+not match this header, and the count here is the measured one.)
+
+**Painting is `paint_*`, and the name is forced rather than chosen.** `shapes.lyra` already
+exports `draw_circle`, `draw_line`, `draw_rectangle` and the rest as **free functions with
+no receiver** — they draw on the screen. Receiver-keyed overloading needs *every*
+declaration of a name to take a `self`, so a second `draw_circle` taking `self: mut Image`
+is a duplicate rather than an overload. The two candidates were an `image_` prefix, which
+reads as noise at a call site (`img.image_draw_circle(…)`), and a verb that says which
+surface: `canvas.paint_circle(centre, 8, RED)`. The rule generalises — **when a name is
+taken by a receiverless declaration, the fix is a different verb, not a prefix on the same
+one.**
+
+**`gen_mipmaps` is the first cross-file receiver-keyed overload here**, `self: mut Image`
+in one file beside `self: mut Texture2D` in another. It needed nothing, which is worth
+recording because the export set is built per *file* and that has bitten before
+(`symbol "area" already defined`); `exportToGlobal` letting a set supersede a global
+binding that is one of its own members is what makes it work.
+
+**`image_text` answers a `Maybe` because the alternative is a segfault, and that was
+measured rather than guessed.** raylib loads its built-in font in `InitWindow`, so with no
+window `GetFontDefault()` hands back a font whose glyph array is NULL and whose glyph count
+is zero — and `ImageText` walks it with no check. A pure-C caller exits **139**;
+`IsFontValid` answers 0 and predicts it exactly. So the gate costs one call and turns a
+crash into a `None`, which is `to_maybe`'s rule applied to a convention that is neither
+NULL nor an error code. Two things the probing turned up that reading the header would not:
+`ImageDrawText` **survives** without a window (raylib 6.0 guards it) while `ImageDrawTextEx`
+does not, and `GenImageText` survives too — so the family does not share one answer, and
+the binding gives it one anyway, since "this one happens to be safe in 6.0" is not a
+property to build on.
+
+**The convolution kernel's `kernelSize` is an element count, not a side length** — nine for
+a 3x3 — confirmed with a C probe applying an identity kernel and reading the centre pixel
+back unchanged. The header says only "square convolution kernel". A `[]f32` therefore
+carries the count and there is no second argument to disagree with it.
+
+**Eight of the family are deliberately unbound**, and both reasons are the modules' existing
+rules: six loose-int twins of calls bound in their Vector2/Rectangle spelling, and
+`ImageRotateCW`/`CCW`, which are `rotate(±90)` — the rule that already left
+`DrawRectangleGradientV`/`H` out of the shapes module.
+
+**`examples/raylib/painting.lyra` is the example, and writing it paid for itself twice.**
+Two programs in one file on `shapes.lyra`'s plan — 49 pixel checks under `--check`, a
+twelve-panel gallery otherwise — and **nothing in it is loaded from disk**: every picture
+is painted by Lyra onto an `Image` and uploaded once, which is exactly what the module
+makes possible. Both findings came from panels that looked broken:
+
+- **An edge-detect panel came out blank.** raylib convolves all four channels, so a
+  Laplacian — which sums to zero, that being the point — drives the *alpha* to zero and
+  leaves a transparent image with a few edge pixels in it. The pixel checks pass either
+  way, since an identity kernel says nothing about alpha. The panel is an emboss now,
+  whose kernel sums to 1, with the reason written next to it.
+- **A dither panel could not be uploaded at all**, and that one was a binding bug.
+  `2-2-2-0` is not one of raylib's three packings; it warns and then leaves the image in
+  **pixel format 0** — width and height intact, nothing to say it is unusable until an
+  upload fails. Measured across all five combinations: `5-6-5-0`, `4-4-4-4` and `5-5-5-1`
+  work, `8-8-8-8` is ignored harmlessly, and anything narrower corrupts the format.
+  `dither` now refuses a packing that does not exist and answers whether it applied.
+
+That is the second time a raylib example has found something a fixture had not — the first
+was `@must_release`'s view rule, on `textures.lyra` — and both times the finding was a
+*panel that rendered wrong*, which no pixel assertion was ever going to catch.
+
+**The proof is `TestExec_RaylibImageEditingAndPainting`, and it is headless**, which is
+exactly what the image half was always able to have and the texture half was not. Every
+expectation follows from the numbers rather than from what the bindings printed: a copy is
+independent of its original, an identity convolution changes nothing, the alpha border is
+the rectangle that was painted, a two-colour image has a two-entry palette, 5x3 rounds up
+to 8x4, an 8x8 image has four mipmap levels. It was checked against a deliberately broken
+expectation, since a behavioural test that cannot fail is the failure mode this area
+specialises in.
+
+**And it was looked at.** The pixel assertions pass for a rectangle painted in the wrong
+place, so the whole family was painted onto one canvas, uploaded and screenshotted beside a
+blurred copy of itself: outlines, a gradient triangle, a triangle fan, a thick line and
+text all render as meant. The two checks find different things, as the galleries already
+established.
+
+**One thing it found and did not fix**: `default_font()` draws lyra-W022 advising
+`unload_font` on raylib's shared font, which the API says not to call. Filed in todo.md
+with the measurement that decides its severity — raylib's `UnloadFont` guards the default
+font and does nothing, so this is noise rather than the corrupting diagnostic the
+`SoundAlias` decision was avoiding.
+
 ### 09/10/26 — two compiler bugs, both "a name does not identify a declaration"
 
 The two the raylib work turned up (todo.md carried each with a reproduction). They read as

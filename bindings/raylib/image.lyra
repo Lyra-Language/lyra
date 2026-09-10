@@ -1,0 +1,437 @@
+module bindings.raylib
+//! Editing an image, and drawing onto one.
+//!
+//! Everything here works on **CPU pixels** and so needs no window — which is the whole
+//! reason the family is worth having beside [texture.lyra]'s uploads: an image can be
+//! built, painted and checked headlessly, then uploaded once with [texture_from_image].
+//!
+//! **Painting is `paint_*`, not `draw_*`, and the reason is structural.** `shapes.lyra`'s
+//! `draw_circle` and its neighbours draw on the *screen* and take no receiver, so they
+//! cannot become receiver-keyed overloads of a call taking `self: mut Image` — that rule
+//! needs every declaration of the name to have a receiver. Rather than have two families
+//! whose names differ by an `image_` prefix nobody reads at a call site, the one that
+//! paints onto a surface you hand it says so: `canvas.paint_circle(centre, 8.0, RED)`.
+//!
+//! **An in-place edit takes `self: mut Image`**, the rule `resize` and `crop` established
+//! in `texture.lyra`: raylib frees the old pixel buffer and installs a new one, so a form
+//! answering a *fresh* `Image` would leave the caller holding a freed one that
+//! `@must_release` would then insist on unloading.
+
+import std.ffi.{ with_cstring, data }
+
+// ---------------------------------------------------------------------------------------
+// New images from an existing one
+//
+// Each answers an `Image` the caller owns and must unload — the same obligation
+// `load_image` carries, and `@must_release` on the type is what reports forgetting it.
+// ---------------------------------------------------------------------------------------
+
+/// A duplicate, with pixels of its own. Two images to unload afterwards, not one.
+pub let image_copy = (image: Image) -> Image => unsafe { rl_image_copy(image) }
+
+/// A rectangular piece of an image, as a new image. `crop` is the in-place form.
+pub let image_region = (image: Image, area: Rectangle) -> Image =>
+  unsafe { rl_image_from_image(image, area) }
+
+/// One channel on its own, as a grayscale image — channel 0 is red through 3 alpha.
+///
+/// What a mask is made of: pull the alpha out, and the result is the shape of the sprite.
+pub let image_channel = (image: Image, channel: i32) -> Image =>
+  unsafe { rl_image_from_channel(image, channel) }
+
+/// Text rasterised into a new image in raylib's built-in font, or `None` with no window.
+///
+/// **This is not [gen_image_text]**, which fills a canvas of a size you give with text;
+/// this sizes the image to the text.
+///
+/// **The `Maybe` is a segfault the binding absorbs**, and it is the one place the image
+/// half of these bindings is not headless. raylib loads the built-in font in `InitWindow`,
+/// so with no window [default_font] answers a `Font` with a null glyph array and a glyph
+/// count of zero — and `ImageText` walks it, in C, with no check. Measured: a pure-C
+/// caller exits 139. [font_valid] predicts it exactly, so the gate costs one call and
+/// turns a crash into a `None`, which is `to_maybe`'s rule applied to a convention that is
+/// neither NULL nor an error code.
+///
+/// The gate is written inline rather than as `let font = default_font()`, and that is not
+/// style: `Font` carries `@must_release(unload_font)`, so binding one draws lyra-W022
+/// advising `unload_font` — a call raylib documents as invalid on the *shared* built-in
+/// font. See todo.md; the check is right by its own rule and the rule does not fit a
+/// borrowed handle.
+pub let image_text = (text: string, size: i32, color: Color) -> Maybe<Image> => {
+  if !font_valid(default_font()) { None }
+  else { Some(text.with_cstring((t) => unsafe { rl_image_text(t, size, color) })) }
+}
+
+/// The same in a loaded font, with letter spacing — [image_text]'s [draw_text_ex].
+///
+/// `None` when `font` is invalid, for [image_text]'s reason: `ImageTextEx` walks the glyph
+/// array without checking it, so an unloaded or failed font is a crash rather than blank
+/// text. Here it is the caller's font being tested rather than the ambient one.
+pub let image_text_ex =
+  (font: Font, text: string, size: f32, spacing: f32, tint: Color) -> Maybe<Image> => {
+    if !font_valid(font) { None }
+    else {
+      Some(text.with_cstring((t) => unsafe { rl_image_text_ex(font, t, size, spacing, tint) }))
+    }
+  }
+
+// ---------------------------------------------------------------------------------------
+// Editing in place
+// ---------------------------------------------------------------------------------------
+
+/// Crop away the fully transparent border. `threshold` is the alpha, 0.0 to 1.0, below
+/// which a pixel counts as empty.
+pub let alpha_crop = (self: mut Image, threshold: f32) -> void =>
+  unsafe { rl_image_alpha_crop(&mut self, threshold) }
+
+/// Replace every pixel whose alpha is below `threshold` with `color` — the way to turn a
+/// soft edge into a hard one before a format that has no alpha.
+pub let alpha_clear = (self: mut Image, color: Color, threshold: f32) -> void =>
+  unsafe { rl_image_alpha_clear(&mut self, color, threshold) }
+
+/// Take this image's alpha from another image's grayscale. Both must be the same size.
+pub let alpha_mask = (self: mut Image, mask: Image) -> void =>
+  unsafe { rl_image_alpha_mask(&mut self, mask) }
+
+/// Multiply the colour channels by the alpha, which is what a correct blend wants.
+pub let alpha_premultiply = (self: mut Image) -> void =>
+  unsafe { rl_image_alpha_premultiply(&mut self) }
+
+/// Gaussian blur, `radius` in pixels.
+pub let blur = (self: mut Image, radius: i32) -> void =>
+  unsafe { rl_image_blur_gaussian(&mut self, radius) }
+
+/// Apply a **square** convolution kernel — sharpen, emboss, edge-detect.
+///
+/// The kernel is given row by row and its length must be a perfect square: nine values for
+/// a 3x3, twenty-five for a 5x5. raylib takes the count and derives the side, so a length
+/// that is not a square is its error to make rather than one this can catch, and a `[]f32`
+/// is what carries the count without a second argument to disagree with it.
+///
+/// An empty kernel does nothing, on the rule the shapes module set for an empty point list.
+pub let convolve = (self: mut Image, kernel: []f32) -> void => {
+  if kernel.len() > 0 {
+    unsafe { rl_image_kernel_convolution(&mut self, kernel.data(), i32(kernel.len())) }
+  }
+}
+
+/// Grow (never shrink) the canvas to power-of-two dimensions, filling the new area.
+///
+/// Older GPUs could only sample a power-of-two texture, and some still sample one faster.
+pub let to_power_of_two = (self: mut Image, fill: Color) -> void =>
+  unsafe { rl_image_to_pot(&mut self, fill) }
+
+/// Resize the canvas without scaling the picture: the existing pixels land at
+/// (`offset_x`, `offset_y`) and everything else becomes `fill`. Negative offsets crop.
+pub let resize_canvas =
+  (self: mut Image, width: i32, height: i32, offset_x: i32, offset_y: i32,
+   fill: Color) -> void =>
+    unsafe { rl_image_resize_canvas(&mut self, width, height, offset_x, offset_y, fill) }
+
+/// Generate the mipmap chain, in place.
+///
+/// **The same name as the `Texture2D` call**, which receiver-keyed overloading is exactly
+/// what allows: two declarations of one name whose receiver type heads differ. One is CPU
+/// pixels and one is a GL object, and they are the same operation.
+pub let gen_mipmaps = (self: mut Image) -> void =>
+  unsafe { rl_image_mipmaps(&mut self) }
+
+/// Reduce to fewer bits per channel with Floyd–Steinberg dithering — the classic way to
+/// keep a gradient looking smooth in a palette that cannot hold it.
+///
+/// **Only three packings exist**, and asking for a fourth is what this guards. raylib
+/// supports `5-6-5`, `5-5-5-1` and `4-4-4-4`; anything wider than sixteen bits it warns
+/// about and ignores, which is harmless — and anything *narrower* it warns about and then
+/// **leaves the image in an invalid pixel format**, measured: `2-2-2-0` comes back as
+/// format 0, with the width and height intact and nothing to say the image is unusable
+/// until an upload of it fails. A C function failing by succeeding, which is where a
+/// binding earns its keep.
+///
+/// It answers whether the dither was applied, so a caller who cares can tell; the image is
+/// untouched when it was not. A `bool` rather than a trap because the depths are usually
+/// constants a reader can check, and rather than a `Maybe<Image>` because the operation is
+/// in place.
+pub let dither =
+  (self: mut Image, r_bits: i32, g_bits: i32, b_bits: i32, a_bits: i32) -> bool => {
+    let packing = "${r_bits}-${g_bits}-${b_bits}-${a_bits}"
+    if packing == "5-6-5-0" || packing == "5-5-5-1" || packing == "4-4-4-4" {
+      unsafe { rl_image_dither(&mut self, r_bits, g_bits, b_bits, a_bits) }
+      true
+    } else {
+      false
+    }
+  }
+
+/// Push the channels away from or toward the midpoint. `amount` runs -100.0 to 100.0.
+///
+/// **Not [color_contrast]'s scale**: that one takes -1.0 to 1.0, because it is raylib's
+/// `ColorContrast` and this is raylib's `ImageColorContrast`. The two disagree in raylib's
+/// own header, so the range is documented at each rather than silently normalised — a
+/// binding that quietly rescaled one would make the header stop describing the call.
+pub let contrast = (self: mut Image, amount: f32) -> void =>
+  unsafe { rl_image_color_contrast(&mut self, amount) }
+
+/// Lighten or darken every channel. `amount` runs -255 to 255.
+pub let brightness = (self: mut Image, amount: i32) -> void =>
+  unsafe { rl_image_color_brightness(&mut self, amount) }
+
+/// Swap one exact colour for another, across the whole image. Chroma keying.
+pub let replace_color = (self: mut Image, from: Color, to: Color) -> void =>
+  unsafe { rl_image_color_replace(&mut self, from, to) }
+
+// ---------------------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------------------
+
+/// The smallest rectangle containing every pixel whose alpha is at or above `threshold`.
+///
+/// What a sprite packer measures: the visible extent inside a padded frame.
+pub let image_alpha_border = pure (image: Image, threshold: f32) -> Rectangle =>
+  unsafe { rl_image_alpha_border(image, threshold) }
+
+/// The distinct colours in an image, at most `limit` of them, as a `[]Color` Lyra owns.
+///
+/// It copies and hands raylib's buffer straight back, exactly as [image_colors] does, so
+/// there is nothing further to release. **raylib pads the answer with blanks** — it
+/// returns `limit` entries with the unused tail all-zero — so the count it reports is the
+/// length here and the padding never reaches the caller.
+pub let image_palette = (image: Image, limit: i32) -> []Color => {
+  var out: []Color = []
+  if limit > 0 {
+    // `found` rather than `count`: the prelude exports a `count`, and shadowing it here
+    // would be W001 noise in a binding module nobody is reading for that.
+    var found: i32 = 0
+    let raw = unsafe { rl_image_palette(image, limit, &mut found) }
+    if raw != nullptr {
+      var i = 0
+      let total = i64(found)
+      for i < total {
+        out.push(unsafe { raw.offset(i)^ })
+        i += 1
+      }
+      unsafe { rl_unload_image_palette(raw) }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------------------
+// Painting onto an image
+//
+// The `paint_*` family, and the Vector2/Rectangle spellings are the ones bound — the rule
+// `shapes.lyra` set, since a caller already holds a `Vector2` and binding the loose-int
+// twin gives one capability two spellings.
+//
+// Every one of them takes `self: mut Image`: raylib's parameter is an `Image *` because it
+// writes through it, not because it reallocates.
+// ---------------------------------------------------------------------------------------
+
+/// Fill the whole image with one colour.
+///
+/// **`clear_background` is the screen's** and takes no receiver, so this cannot be an
+/// overload of it — see the module note. `fill` says the same thing about a surface handed
+/// in rather than the one being drawn to.
+pub let fill = (self: mut Image, color: Color) -> void =>
+  unsafe { rl_image_clear_background(&mut self, color) }
+
+pub let paint_pixel = (self: mut Image, position: Vector2, color: Color) -> void =>
+  unsafe { rl_image_draw_pixel_v(&mut self, position, color) }
+
+pub let paint_line = (self: mut Image, start: Vector2, finish: Vector2,
+                      color: Color) -> void =>
+  unsafe { rl_image_draw_line_v(&mut self, start, finish, color) }
+
+/// A line with thickness. **`thick` is an `i32` here** where the screen's `draw_line_ex`
+/// takes an `f32`: a rasteriser counts whole pixels, and raylib's two prototypes say so.
+pub let paint_line_ex = (self: mut Image, start: Vector2, finish: Vector2, thick: i32,
+                         color: Color) -> void =>
+  unsafe { rl_image_draw_line_ex(&mut self, start, finish, thick, color) }
+
+/// A filled circle. `radius` is an `i32` for [paint_line_ex]'s reason.
+pub let paint_circle = (self: mut Image, center: Vector2, radius: i32,
+                        color: Color) -> void =>
+  unsafe { rl_image_draw_circle_v(&mut self, center, radius, color) }
+
+pub let paint_circle_lines = (self: mut Image, center: Vector2, radius: i32,
+                              color: Color) -> void =>
+  unsafe { rl_image_draw_circle_lines_v(&mut self, center, radius, color) }
+
+pub let paint_rectangle = (self: mut Image, rect: Rectangle, color: Color) -> void =>
+  unsafe { rl_image_draw_rectangle_rec(&mut self, rect, color) }
+
+pub let paint_rectangle_lines = (self: mut Image, rect: Rectangle, thick: i32,
+                                 color: Color) -> void =>
+  unsafe { rl_image_draw_rectangle_lines(&mut self, rect, thick, color) }
+
+pub let paint_triangle = (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2,
+                          color: Color) -> void =>
+  unsafe { rl_image_draw_triangle(&mut self, v1, v2, v3, color) }
+
+/// A triangle with a colour at each corner, interpolated across the face.
+pub let paint_triangle_gradient =
+  (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2, c1: Color, c2: Color,
+   c3: Color) -> void =>
+    unsafe { rl_image_draw_triangle_ex(&mut self, v1, v2, v3, c1, c2, c3) }
+
+pub let paint_triangle_lines = (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2,
+                                color: Color) -> void =>
+  unsafe { rl_image_draw_triangle_lines(&mut self, v1, v2, v3, color) }
+
+/// Triangles all sharing `points[0]`. An empty list paints nothing rather than trapping.
+pub let paint_triangle_fan = (self: mut Image, points: []Vector2, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_image_draw_triangle_fan(&mut self, points.data(), i32(points.len()), color) }
+  }
+}
+
+/// Triangles each sharing an edge with the last. An empty list paints nothing.
+pub let paint_triangle_strip = (self: mut Image, points: []Vector2,
+                                color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe {
+      rl_image_draw_triangle_strip(&mut self, points.data(), i32(points.len()), color)
+    }
+  }
+}
+
+/// Paint part of one image onto part of another, scaling to fit and multiplying by `tint`.
+///
+/// The blit every sprite sheet needs, and the one call here that reads a second image.
+pub let paint_image = (self: mut Image, src: Image, source: Rectangle, dest: Rectangle,
+                       tint: Color) -> void =>
+  unsafe { rl_image_draw(&mut self, src, source, dest, tint) }
+
+/// Text in raylib's built-in font, at a pixel position.
+///
+/// **Paints nothing where the font is not loaded**, which with the built-in font means
+/// before [init_window] — see [image_text] for why that is a crash in C rather than blank
+/// output. A void call cannot answer `None`, so the degenerate case is the no-op an empty
+/// point list already is in this module.
+pub let paint_text = (self: mut Image, text: string, x: i32, y: i32, size: i32,
+                      color: Color) -> void => {
+  if font_valid(default_font()) {
+    text.with_cstring((t) => unsafe { rl_image_draw_text(&mut self, t, x, y, size, color) })
+  }
+}
+
+/// Text in a loaded font, with letter spacing. Paints nothing if `font` is invalid.
+pub let paint_text_ex =
+  (self: mut Image, font: Font, text: string, position: Vector2, size: f32, spacing: f32,
+   tint: Color) -> void => {
+    if font_valid(font) {
+      text.with_cstring((t) =>
+        unsafe { rl_image_draw_text_ex(&mut self, font, t, position, size, spacing, tint) })
+    }
+  }
+
+// ---------------------------------------------------------------------------------------
+// The externs
+//
+// **`ImageRotateCW` and `ImageRotateCCW` are deliberately absent.** They are
+// `ImageRotate(±90)`, which `rotate` already binds — the same rule that left
+// `DrawRectangleGradientV`/`H` out of the shapes module. So is `UnloadImagePalette`, which
+// [image_palette] calls before it returns; a caller never sees the buffer it frees.
+// ---------------------------------------------------------------------------------------
+
+@symbol("ImageCopy")
+unsafe extern rl_image_copy: (image: Image) -> Image
+@symbol("ImageFromImage")
+unsafe extern rl_image_from_image: (image: Image, area: Rectangle) -> Image
+@symbol("ImageFromChannel")
+unsafe extern rl_image_from_channel: (image: Image, channel: i32) -> Image
+@symbol("ImageText")
+unsafe extern rl_image_text: (text: ^u8, size: i32, color: Color) -> Image
+@symbol("ImageTextEx")
+unsafe extern rl_image_text_ex:
+  (font: Font, text: ^u8, size: f32, spacing: f32, tint: Color) -> Image
+
+@symbol("ImageAlphaCrop")
+unsafe extern rl_image_alpha_crop: (image: ^mut Image, threshold: f32) -> void
+@symbol("ImageAlphaClear")
+unsafe extern rl_image_alpha_clear:
+  (image: ^mut Image, color: Color, threshold: f32) -> void
+@symbol("ImageAlphaMask")
+unsafe extern rl_image_alpha_mask: (image: ^mut Image, mask: Image) -> void
+@symbol("ImageAlphaPremultiply")
+unsafe extern rl_image_alpha_premultiply: (image: ^mut Image) -> void
+@symbol("ImageBlurGaussian")
+unsafe extern rl_image_blur_gaussian: (image: ^mut Image, radius: i32) -> void
+@symbol("ImageKernelConvolution")
+unsafe extern rl_image_kernel_convolution:
+  (image: ^mut Image, kernel: ^f32, count: i32) -> void
+@symbol("ImageToPOT")
+unsafe extern rl_image_to_pot: (image: ^mut Image, fill: Color) -> void
+@symbol("ImageResizeCanvas")
+unsafe extern rl_image_resize_canvas:
+  (image: ^mut Image, width: i32, height: i32, offset_x: i32, offset_y: i32,
+   fill: Color) -> void
+@symbol("ImageMipmaps")
+unsafe extern rl_image_mipmaps: (image: ^mut Image) -> void
+@symbol("ImageDither")
+unsafe extern rl_image_dither:
+  (image: ^mut Image, r_bits: i32, g_bits: i32, b_bits: i32, a_bits: i32) -> void
+@symbol("ImageColorContrast")
+unsafe extern rl_image_color_contrast: (image: ^mut Image, amount: f32) -> void
+@symbol("ImageColorBrightness")
+unsafe extern rl_image_color_brightness: (image: ^mut Image, amount: i32) -> void
+@symbol("ImageColorReplace")
+unsafe extern rl_image_color_replace:
+  (image: ^mut Image, from: Color, to: Color) -> void
+
+@symbol("GetImageAlphaBorder")
+unsafe extern pure rl_image_alpha_border: (image: Image, threshold: f32) -> Rectangle
+@symbol("LoadImagePalette")
+unsafe extern rl_image_palette:
+  (image: Image, limit: i32, count: ^mut i32) -> ^Color
+@symbol("UnloadImagePalette")
+unsafe extern rl_unload_image_palette: (colors: ^Color) -> void
+
+@symbol("ImageClearBackground")
+unsafe extern rl_image_clear_background: (dst: ^mut Image, color: Color) -> void
+@symbol("ImageDrawPixelV")
+unsafe extern rl_image_draw_pixel_v:
+  (dst: ^mut Image, position: Vector2, color: Color) -> void
+@symbol("ImageDrawLineV")
+unsafe extern rl_image_draw_line_v:
+  (dst: ^mut Image, start: Vector2, finish: Vector2, color: Color) -> void
+@symbol("ImageDrawLineEx")
+unsafe extern rl_image_draw_line_ex:
+  (dst: ^mut Image, start: Vector2, finish: Vector2, thick: i32, color: Color) -> void
+@symbol("ImageDrawCircleV")
+unsafe extern rl_image_draw_circle_v:
+  (dst: ^mut Image, center: Vector2, radius: i32, color: Color) -> void
+@symbol("ImageDrawCircleLinesV")
+unsafe extern rl_image_draw_circle_lines_v:
+  (dst: ^mut Image, center: Vector2, radius: i32, color: Color) -> void
+@symbol("ImageDrawRectangleRec")
+unsafe extern rl_image_draw_rectangle_rec:
+  (dst: ^mut Image, rect: Rectangle, color: Color) -> void
+@symbol("ImageDrawRectangleLines")
+unsafe extern rl_image_draw_rectangle_lines:
+  (dst: ^mut Image, rect: Rectangle, thick: i32, color: Color) -> void
+@symbol("ImageDrawTriangle")
+unsafe extern rl_image_draw_triangle:
+  (dst: ^mut Image, v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void
+@symbol("ImageDrawTriangleEx")
+unsafe extern rl_image_draw_triangle_ex:
+  (dst: ^mut Image, v1: Vector2, v2: Vector2, v3: Vector2, c1: Color, c2: Color,
+   c3: Color) -> void
+@symbol("ImageDrawTriangleLines")
+unsafe extern rl_image_draw_triangle_lines:
+  (dst: ^mut Image, v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void
+@symbol("ImageDrawTriangleFan")
+unsafe extern rl_image_draw_triangle_fan:
+  (dst: ^mut Image, points: ^Vector2, count: i32, color: Color) -> void
+@symbol("ImageDrawTriangleStrip")
+unsafe extern rl_image_draw_triangle_strip:
+  (dst: ^mut Image, points: ^Vector2, count: i32, color: Color) -> void
+@symbol("ImageDraw")
+unsafe extern rl_image_draw:
+  (dst: ^mut Image, src: Image, source: Rectangle, dest: Rectangle, tint: Color) -> void
+@symbol("ImageDrawText")
+unsafe extern rl_image_draw_text:
+  (dst: ^mut Image, text: ^u8, x: i32, y: i32, size: i32, color: Color) -> void
+@symbol("ImageDrawTextEx")
+unsafe extern rl_image_draw_text_ex:
+  (dst: ^mut Image, font: Font, text: ^u8, position: Vector2, size: f32, spacing: f32,
+   tint: Color) -> void

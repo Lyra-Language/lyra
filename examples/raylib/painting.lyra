@@ -1,0 +1,643 @@
+module main
+//! Painting onto an image, and every filter `bindings.raylib`'s `image.lyra` can apply.
+//!
+//! Two programs in one file, on `shapes.lyra`'s plan:
+//!
+//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
+//!   lyrac run examples/raylib/painting.lyra -- --check   # the pixels, exits 0 or 1
+//!   lyrac run examples/raylib/painting.lyra              # the gallery, in a window
+//!
+//! **Nothing here is loaded from disk.** Every picture in the window is painted by Lyra
+//! code onto `Image`s in ordinary memory and uploaded once — which is the point of the
+//! module: the whole pipeline up to the upload needs no window, so `--check` can assert
+//! what the pixels *are* rather than that a window opened.
+//!
+//! The one exception is the text panel, and it is worth watching for. raylib loads its
+//! built-in font in `init_window`, so `image_text` answers `None` under `--check` and a
+//! rendered image in the gallery. The binding gates on `font_valid` because the C call
+//! walks a null glyph array otherwise — a segfault rather than blank output.
+
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps,
+  begin_drawing, end_drawing, clear_background,
+  Image, Texture2D, Color, Vector2, vec2, rect,
+  gen_image_color, gen_image_gradient_linear, unload_image, image_color_at, image_colors,
+  reformat, texture_from_image, unload_texture, draw_texture, draw_text, measure_text,
+  image_copy, image_region, image_channel, image_text, image_text_ex,
+  alpha_crop, alpha_clear, alpha_mask, alpha_premultiply, alpha_border_of,
+  blur, convolve, to_power_of_two, resize_canvas, gen_mipmaps, dither,
+  contrast, brightness, replace_color, image_alpha_border, image_palette,
+  fill, paint_pixel, paint_line, paint_line_ex, paint_circle, paint_circle_lines,
+  paint_rectangle, paint_rectangle_lines, paint_triangle, paint_triangle_gradient,
+  paint_triangle_lines, paint_triangle_fan, paint_triangle_strip, paint_image,
+  paint_text, paint_text_ex, default_font, font_valid,
+  RAYWHITE, WHITE, BLACK, BLANK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE,
+  DARKGRAY, LIGHTGRAY, rgb, rgba,
+}
+
+/// Panel label size, in one place because it decides the grid — see `shapes.lyra`.
+const LABEL: i32 = 20
+
+/// Every painted canvas is this size, and the grid is laid out from it.
+const CELL_W: i32 = 220
+const CELL_H: i32 = 150
+
+/// `PIXELFORMAT_UNCOMPRESSED_R8G8B8A8`. Named because three panels reformat back to it
+/// after a filter that changes the format underneath them.
+const RGBA8: i32 = 7
+
+let main = () -> u8 => {
+  if wants_check() { return run_checks() }
+  run_gallery()
+  0
+}
+
+/// Whether `--check` was passed.
+let wants_check = () -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == "--check" { found = true }
+  }
+  found
+}
+
+// ---------------------------------------------------------------------------------------
+// The headless half
+//
+// Every expectation follows from the numbers rather than from what the bindings printed:
+// a copy is independent of its original, an identity convolution changes nothing, an
+// alpha border is the rectangle that was painted, 5x3 rounds up to 8x4. Anything needing
+// raylib to supply the answer would only assert that raylib agrees with itself.
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  // --- painting ------------------------------------------------------------------------
+  var canvas = gen_image_color(16, 16, BLANK)
+  canvas.paint_rectangle(rect(2.0, 2.0, 4.0, 4.0), BLUE)
+  failures += same("paint_rectangle, inside", at(canvas, 3, 3), BLUE)
+  failures += same("paint_rectangle, outside", at(canvas, 9, 9), BLANK)
+
+  canvas.paint_pixel(vec2(10.0, 10.0), GREEN)
+  failures += same("paint_pixel", at(canvas, 10, 10), GREEN)
+
+  canvas.paint_line(vec2(0.0, 14.0), vec2(15.0, 14.0), RED)
+  failures += same("paint_line", at(canvas, 7, 14), RED)
+
+  canvas.paint_line_ex(vec2(0.0, 8.0), vec2(15.0, 8.0), 3, ORANGE)
+  failures += same("paint_line_ex, thick enough to cover the row above", at(canvas, 7, 7), ORANGE)
+
+  canvas.paint_circle(vec2(12.0, 3.0), 2, WHITE)
+  failures += same("paint_circle", at(canvas, 12, 3), WHITE)
+
+  // A fill is the whole canvas, which is what makes it the reset between cases.
+  canvas.fill(BLANK)
+  failures += same("fill", at(canvas, 8, 8), BLANK)
+
+  canvas.paint_triangle(vec2(0.0, 0.0), vec2(0.0, 8.0), vec2(8.0, 0.0), GREEN)
+  failures += same("paint_triangle", at(canvas, 1, 1), GREEN)
+
+  canvas.fill(BLANK)
+  canvas.paint_triangle_fan([vec2(8.0, 8.0), vec2(2.0, 2.0), vec2(8.0, 1.0),
+                             vec2(14.0, 2.0)], PURPLE)
+  failures += same("paint_triangle_fan", at(canvas, 8, 4), PURPLE)
+
+  canvas.fill(BLANK)
+  canvas.paint_triangle_strip([vec2(1.0, 14.0), vec2(1.0, 2.0), vec2(8.0, 14.0),
+                               vec2(8.0, 2.0)], YELLOW)
+  failures += same("paint_triangle_strip", at(canvas, 4, 8), YELLOW)
+
+  // The empty-list guard: `data()` traps on an empty array and these absorb it, on the
+  // rule `draw_triangle_fan` set for the screen.
+  let nothing: []Vector2 = []
+  canvas.fill(BLANK)
+  canvas.paint_triangle_fan(nothing, RED)
+  canvas.paint_triangle_strip(nothing, RED)
+  failures += same("an empty point list paints nothing", at(canvas, 8, 8), BLANK)
+
+  // Outlines touch the edge and not the middle.
+  canvas.fill(BLANK)
+  canvas.paint_rectangle_lines(rect(2.0, 2.0, 8.0, 8.0), 1, RED)
+  failures += same("paint_rectangle_lines, on the edge", at(canvas, 2, 5), RED)
+  failures += same("paint_rectangle_lines, hollow", at(canvas, 5, 5), BLANK)
+
+  canvas.fill(BLANK)
+  canvas.paint_circle_lines(vec2(8.0, 8.0), 5, RED)
+  failures += same("paint_circle_lines, hollow", at(canvas, 8, 8), BLANK)
+
+  canvas.fill(BLANK)
+  canvas.paint_triangle_lines(vec2(1.0, 1.0), vec2(1.0, 13.0), vec2(13.0, 1.0), RED)
+  failures += same("paint_triangle_lines, on the edge", at(canvas, 1, 7), RED)
+  failures += same("paint_triangle_lines, hollow", at(canvas, 4, 4), BLANK)
+
+  // A gradient triangle takes each corner's colour at that corner.
+  canvas.fill(BLANK)
+  canvas.paint_triangle_gradient(vec2(0.0, 0.0), vec2(0.0, 15.0), vec2(15.0, 0.0),
+                                 RED, GREEN, BLUE)
+  failures += check("paint_triangle_gradient blends between its corners",
+    at_color(canvas, 1, 1).r != at_color(canvas, 1, 13).r, true)
+
+  // --- copying and regions -------------------------------------------------------------
+  var flat = gen_image_color(8, 8, RED)
+  var dup = image_copy(flat)
+  dup.fill(GREEN)
+  failures += same("image_copy has pixels of its own", at(flat, 0, 0), RED)
+  failures += same("image_copy, the copy changed", at(dup, 0, 0), GREEN)
+
+  let piece = image_region(flat, rect(0.0, 0.0, 3.0, 2.0))
+  failures += check("image_region size", "${piece.width}x${piece.height}", "3x2")
+
+  // A blit of the whole image onto a blank one reproduces it.
+  var target = gen_image_color(8, 8, BLANK)
+  target.paint_image(flat, rect(0.0, 0.0, 8.0, 8.0), rect(0.0, 0.0, 8.0, 8.0), WHITE)
+  failures += same("paint_image", at(target, 4, 4), RED)
+
+  // --- alpha ---------------------------------------------------------------------------
+  // An opaque rectangle inside a transparent canvas: the border is that rectangle, and
+  // cropping to it leaves an image of exactly that size.
+  var sparse = gen_image_color(10, 10, BLANK)
+  sparse.paint_rectangle(rect(3.0, 4.0, 2.0, 3.0), RED)
+  let border = image_alpha_border(sparse, 0.5)
+  failures += check("image_alpha_border",
+    "${border.x},${border.y},${border.width},${border.height}", "3,4,2,3")
+
+  var cropped = image_copy(sparse)
+  cropped.alpha_crop(0.5)
+  failures += check("alpha_crop shrinks to the border",
+    "${cropped.width}x${cropped.height}", "2x3")
+
+  // alpha_clear replaces what is *below* the threshold, so the opaque part survives.
+  var cleared = image_copy(sparse)
+  cleared.alpha_clear(GREEN, 0.5)
+  failures += same("alpha_clear, the transparent part", at(cleared, 0, 0), GREEN)
+  failures += same("alpha_clear, the opaque part", at(cleared, 3, 4), RED)
+
+  // A half-transparent white premultiplies to half-grey, alpha unchanged.
+  var half = gen_image_color(4, 4, rgba(255, 255, 255, 128))
+  half.alpha_premultiply()
+  let hp = at_color(half, 0, 0)
+  failures += check("alpha_premultiply halves the channels", hp.r < 200 && hp.a == 128, true)
+
+  // A mask takes its alpha from another image's brightness: black masks to nothing.
+  var masked = gen_image_color(8, 8, RED)
+  let mask = gen_image_color(8, 8, BLACK)
+  masked.alpha_mask(mask)
+  failures += check("alpha_mask, a black mask is fully transparent",
+    at_color(masked, 4, 4).a, 0)
+
+  // --- filters -------------------------------------------------------------------------
+  // A 3x3 identity kernel leaves every pixel where it was. raylib takes the element
+  // *count* and derives the side, so nine values is a 3x3 — confirmed against C.
+  var conv = image_copy(flat)
+  conv.convolve([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+  failures += same("convolve, identity kernel", at(conv, 4, 4), RED)
+
+  var empty_kernel = image_copy(flat)
+  let no_kernel: []f32 = []
+  empty_kernel.convolve(no_kernel)
+  failures += same("convolve, an empty kernel does nothing", at(empty_kernel, 4, 4), RED)
+
+  // Blurring a flat colour leaves it flat — the interesting property, since it says the
+  // kernel is normalised rather than darkening what it touches.
+  var soft = image_copy(flat)
+  soft.blur(2)
+  failures += check("blur keeps a flat colour flat", near_color(at_color(soft, 4, 4), RED), true)
+
+  var bright = image_copy(flat)
+  bright.brightness(25)
+  failures += check("brightness raises every channel",
+    at_color(bright, 0, 0).g > 41, true)
+
+  var harder = image_copy(flat)
+  harder.contrast(50.0)
+  failures += check("contrast changes the image",
+    at(harder, 0, 0) != at(flat, 0, 0), true)
+
+  var swapped = image_copy(flat)
+  swapped.replace_color(RED, GREEN)
+  failures += same("replace_color", at(swapped, 0, 0), GREEN)
+
+  // `5-6-5` is one of the three packings raylib has, so it applies and the format drops.
+  var dithered = gen_image_gradient_linear(16, 16, 0, RED, BLUE)
+  failures += check("dither, a supported packing applies", dithered.dither(5, 6, 5, 0), true)
+  failures += check("dither drops to a 16bpp format", dithered.format != RGBA8, true)
+
+  // `2-2-2-0` is not, and raylib's own answer to it is an image in pixel format 0 that
+  // nothing can upload — so the binding refuses it and leaves the image alone.
+  var untouched = gen_image_gradient_linear(16, 16, 0, RED, BLUE)
+  failures += check("dither, an unsupported packing is refused",
+    untouched.dither(2, 2, 2, 0), false)
+  failures += check("dither, the refused image is untouched",
+    "${untouched.format}", "${RGBA8}")
+
+  // --- shape ---------------------------------------------------------------------------
+  var canv = image_copy(flat)
+  canv.resize_canvas(12, 12, 2, 2, BLANK)
+  failures += check("resize_canvas size", "${canv.width}x${canv.height}", "12x12")
+  failures += same("resize_canvas puts the old pixels at the offset", at(canv, 2, 2), RED)
+  failures += same("resize_canvas fills the rest", at(canv, 0, 0), BLANK)
+
+  var pot = gen_image_color(5, 3, RED)
+  pot.to_power_of_two(BLANK)
+  failures += check("to_power_of_two rounds up", "${pot.width}x${pot.height}", "8x4")
+
+  var mip = gen_image_color(8, 8, RED)
+  mip.gen_mipmaps()
+  failures += check("gen_mipmaps on an 8x8 gives four levels", "${mip.mipmaps}", "4")
+
+  // Channel 0 alone is a grayscale image — PIXELFORMAT_UNCOMPRESSED_GRAYSCALE is 1.
+  let red_channel = image_channel(flat, 0)
+  failures += check("image_channel is grayscale",
+    "${red_channel.width}x${red_channel.height},${red_channel.format}", "8x8,1")
+
+  // --- palette -------------------------------------------------------------------------
+  // Two colours, two entries. raylib pads its answer out to the limit and the binding
+  // trims to the count it reports, which is the whole reason it takes one.
+  var two = gen_image_color(4, 4, RED)
+  two.paint_rectangle(rect(0.0, 0.0, 2.0, 4.0), BLUE)
+  failures += check("image_palette counts distinct colours", "${image_palette(two, 8).len()}", "2")
+  failures += check("image_palette, a limit of zero", "${image_palette(two, 0).len()}", "0")
+
+  // --- text, the one call that is not headless -----------------------------------------
+  failures += check("image_text is None with no window", image_text("hi", 20, BLACK).is_none(), true)
+  failures += check("image_text_ex is None with an unloaded font",
+    image_text_ex(default_font(), "hi", 20.0, 1.0, BLACK).is_none(), true)
+  failures += check("the built-in font is not loaded before init_window",
+    font_valid(default_font()), false)
+
+  // The void half degrades to a no-op rather than a crash, so this must leave the canvas
+  // untouched rather than take the process down.
+  canvas.fill(BLANK)
+  canvas.paint_text("hi", 1, 1, 10, RED)
+  canvas.paint_text_ex(default_font(), "hi", vec2(1.0, 1.0), 10.0, 1.0, RED)
+  failures += same("paint_text paints nothing with no font", at(canvas, 2, 2), BLANK)
+
+  unload_image(canvas) ; unload_image(flat) ; unload_image(dup) ; unload_image(piece)
+  unload_image(target) ; unload_image(sparse) ; unload_image(cropped) ; unload_image(cleared)
+  unload_image(half) ; unload_image(masked) ; unload_image(mask) ; unload_image(conv)
+  unload_image(empty_kernel) ; unload_image(soft) ; unload_image(bright)
+  unload_image(harder) ; unload_image(swapped) ; unload_image(dithered)
+  unload_image(untouched) ; unload_image(canv)
+  unload_image(pot) ; unload_image(mip) ; unload_image(red_channel) ; unload_image(two)
+
+  if failures == 0 {
+    println("all pixel checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+/// One pixel, rendered so a failure prints the channels rather than `false`.
+let at = pure (image: Image, x: i32, y: i32) -> string => {
+  let c = image_color_at(image, x, y)
+  "${c.r},${c.g},${c.b},${c.a}"
+}
+
+/// The same pixel as a `Color`, for a case comparing one channel.
+let at_color = pure (image: Image, x: i32, y: i32) -> Color => image_color_at(image, x, y)
+
+/// A pixel against a colour, both rendered, so the failure line reads.
+let same = (name: string, got: string, want: Color) -> i64 =>
+  check(name, got, "${want.r},${want.g},${want.b},${want.a}")
+
+/// Two channel values within 2, since a blur is an average and lands a step off.
+let near_color = pure (a: Color, b: Color) -> bool => {
+  let d = if a.r > b.r { i64(a.r) - i64(b.r) } else { i64(b.r) - i64(a.r) }
+  d <= 2
+}
+
+let check<t> where t: Show = (name: string, got: t, want: t) -> i64 => {
+  if "${got}" == "${want}" {
+    println("  ok    ${name}")
+    0
+  } else {
+    println("  FAIL  ${name}: got ${got}, want ${want}")
+    1
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The gallery
+//
+// Every panel is painted once into an `Image`, uploaded, and the image released — a
+// texture is what the window draws from, and holding both would keep two copies of every
+// picture for no reason. The textures are released at the end; `@must_release` is what
+// reports it if one is missed.
+// ---------------------------------------------------------------------------------------
+
+/// One uploaded panel and the caption under it.
+struct Panel {
+  label: string,
+  tex: Texture2D,
+}
+
+let run_gallery = () -> void => {
+  init_window(i64(4 * CELL_W + 100), i64(3 * (CELL_H + 46) + 60),
+              "Lyra — raylib image painting")
+  set_target_fps(60)
+
+  // The window is open, so the built-in font is loaded and the text panel has something
+  // to render — the difference `--check` reports as a `None`.
+  var panels: []Panel = []
+  panels.upload("primitives", primitives())
+  panels.upload("text into pixels", text_panel())
+  panels.upload("source", scene())
+  panels.upload("blur", filtered_blur())
+  panels.upload("sharpen", filtered_sharpen())
+  panels.upload("emboss", filtered_emboss())
+  panels.upload("dither, 4-4-4-4", filtered_dither())
+  panels.upload("brightness, contrast", tone_panel())
+  panels.upload("replace_color", replaced())
+  panels.upload("channels", channels())
+  panels.upload("alpha", alpha_panel())
+  panels.upload("region, canvas, palette", composed())
+
+  for !should_close() {
+    begin_drawing()
+    clear_background(RAYWHITE)
+    draw_text("painted in Lyra, uploaded once - no assets on disk", 30, 18, LABEL, DARKGRAY)
+
+    var i = 0
+    for p in panels {
+      let col = i32(i %% 4)
+      let row = i32(i / 4)
+      let x = 30 + col * (CELL_W + 10)
+      let y = 56 + row * (CELL_H + 46)
+      draw_texture(p.tex, x, y, WHITE)
+      draw_text(p.label, x, y + CELL_H + 6, LABEL, DARKGRAY)
+      i += 1
+    }
+    end_drawing()
+  }
+
+  for p in panels { unload_texture(p.tex) }
+  close_window()
+}
+
+/// Upload a painted image, keep the texture, release the image.
+let upload = (self: mut []Panel, label: string, image: Image) -> void => {
+  match texture_from_image(image) {
+    Some(tex) => self.push(Panel { label: label, tex: tex }),
+    None => println("could not upload ${label}"),
+  }
+  unload_image(image)
+}
+
+// ---------------------------------------------------------------------------------------
+// The panels
+// ---------------------------------------------------------------------------------------
+
+/// Every `paint_*` call on one canvas.
+let primitives = () -> Image => {
+  var c = blank()
+  c.paint_rectangle(rect(8.0, 8.0, 52.0, 34.0), BLUE)
+  c.paint_rectangle_lines(rect(8.0, 8.0, 52.0, 34.0), 2, BLACK)
+  c.paint_circle(vec2(96.0, 25.0), 17, RED)
+  c.paint_circle_lines(vec2(96.0, 25.0), 17, BLACK)
+  c.paint_line(vec2(130.0, 10.0), vec2(210.0, 40.0), DARKGRAY)
+  c.paint_line_ex(vec2(130.0, 20.0), vec2(210.0, 50.0), 4, ORANGE)
+  c.paint_triangle(vec2(14.0, 108.0), vec2(40.0, 58.0), vec2(66.0, 108.0), GREEN)
+  c.paint_triangle_lines(vec2(14.0, 108.0), vec2(40.0, 58.0), vec2(66.0, 108.0), BLACK)
+  c.paint_triangle_gradient(vec2(76.0, 108.0), vec2(102.0, 58.0), vec2(128.0, 108.0),
+                            RED, YELLOW, PURPLE)
+  c.paint_triangle_fan([vec2(178.0, 88.0), vec2(142.0, 108.0), vec2(160.0, 58.0),
+                        vec2(206.0, 68.0)], BLUE)
+  c.paint_triangle_strip([vec2(10.0, 140.0), vec2(10.0, 118.0), vec2(60.0, 140.0),
+                          vec2(60.0, 118.0), vec2(110.0, 140.0)], ORANGE)
+  c.paint_pixel(vec2(4.0, 4.0), RED)
+  c.paint_text("paint_*", 128, 126, 20, BLACK)
+  c
+}
+
+/// `image_text` and `image_text_ex` produce images; `paint_text_ex` writes onto one.
+///
+/// All three are `None`/no-ops without a window, which is what `--check` asserts — so this
+/// panel existing at all is the other half of that pair.
+let text_panel = () -> Image => {
+  var c = blank()
+  c.fill(rgb(245, 245, 245))
+  match image_text("image_text", 24, BLACK) {
+    Some(t) => {
+      c.paint_image(t, whole(t), rect(10.0, 14.0, f32(t.width), f32(t.height)), WHITE)
+      unload_image(t)
+    },
+    None => c.paint_text("no font", 10, 14, 20, RED),
+  }
+  match image_text_ex(default_font(), "image_text_ex", 20.0, 2.0, BLUE) {
+    Some(t) => {
+      c.paint_image(t, whole(t), rect(10.0, 52.0, f32(t.width), f32(t.height)), WHITE)
+      unload_image(t)
+    },
+    None => c.paint_text("no font", 10, 52, 20, RED),
+  }
+  c.paint_text("paint_text", 10, 90, 20, DARKGRAY)
+  c.paint_text_ex(default_font(), "paint_text_ex", vec2(10.0, 118.0), 20.0, 2.0, PURPLE)
+  c
+}
+
+/// The picture every filter panel is a copy of — enough structure for a filter to show on.
+let scene = () -> Image => {
+  var c = gen_image_gradient_linear(CELL_W, CELL_H, 0, rgb(30, 60, 120), rgb(220, 200, 120))
+  c.reformat(RGBA8)
+  c.paint_circle(vec2(60.0, 60.0), 34, rgb(240, 90, 60))
+  c.paint_circle(vec2(150.0, 50.0), 22, rgb(250, 230, 90))
+  c.paint_triangle(vec2(20.0, 140.0), vec2(90.0, 76.0), vec2(160.0, 140.0),
+                   rgb(40, 150, 90))
+  c.paint_rectangle(rect(168.0, 96.0, 40.0, 44.0), rgb(120, 60, 160))
+  c.paint_line_ex(vec2(0.0, 148.0), vec2(f32(CELL_W), 148.0), 3, BLACK)
+  c
+}
+
+let filtered_blur = () -> Image => {
+  var c = scene()
+  c.blur(4)
+  c
+}
+
+/// A sharpening kernel: 5 at the centre, -1 at each edge neighbour, summing to 1.
+let filtered_sharpen = () -> Image => {
+  var c = scene()
+  c.convolve([0.0, -1.0, 0.0, -1.0, 5.0, -1.0, 0.0, -1.0, 0.0])
+  c
+}
+
+/// An emboss kernel, and **it sums to 1 on purpose**.
+///
+/// The obvious demonstration here is a Laplacian (8 at the centre against -1 all round),
+/// and it is invisible: raylib convolves **all four channels**, so a kernel summing to
+/// zero drives the *alpha* to zero as well and the result is a transparent image with a
+/// few edge pixels in it. That reads as a broken binding rather than as an edge detector,
+/// which is exactly why this panel is in the gallery — the pixel checks pass either way.
+///
+/// A kernel that sums to 1 leaves an opaque image opaque, which is the constraint any
+/// convolution over RGBA has to respect unless the alpha is what it means to change.
+let filtered_emboss = () -> Image => {
+  var c = scene()
+  c.convolve([-2.0, -1.0, 0.0, -1.0, 1.0, 1.0, 0.0, 1.0, 2.0])
+  c
+}
+
+/// Four bits per channel — the coarsest packing raylib has, and so the one that shows.
+///
+/// **This panel is why `dither` answers a `bool`.** It started as `2-2-2-0`, which raylib
+/// warns about and then leaves the image in pixel format 0 — an image whose width and
+/// height are fine and which cannot be uploaded, so the gallery printed *"could not upload
+/// dither"* and nothing else. The binding now refuses a packing raylib does not have and
+/// says so, which is the finding this example contributed.
+let filtered_dither = () -> Image => {
+  var c = scene()
+  let applied = c.dither(4, 4, 4, 4)
+  if !applied { c.paint_text("unsupported packing", 10, 10, 20, RED) }
+  c
+}
+
+/// Brighter above, harder contrast below, split by a blit of two edited copies.
+let tone_panel = () -> Image => {
+  var c = blank()
+  var top = scene()
+  top.brightness(60)
+  var bottom = scene()
+  bottom.contrast(60.0)
+  let half = f32(CELL_H) / 2.0
+  c.paint_image(top, rect(0.0, 0.0, f32(CELL_W), half), rect(0.0, 0.0, f32(CELL_W), half), WHITE)
+  c.paint_image(bottom, rect(0.0, half, f32(CELL_W), half),
+                rect(0.0, half, f32(CELL_W), half), WHITE)
+  c.paint_line(vec2(0.0, half), vec2(f32(CELL_W), half), BLACK)
+  unload_image(top) ; unload_image(bottom)
+  c
+}
+
+/// One exact colour swapped for another, which is what chroma keying is.
+let replaced = () -> Image => {
+  var c = blank()
+  c.fill(rgb(30, 60, 120))
+  c.paint_rectangle(rect(20.0, 20.0, 80.0, 50.0), GREEN)
+  c.paint_circle(vec2(150.0, 45.0), 30, GREEN)
+  c.paint_rectangle(rect(20.0, 90.0, 180.0, 40.0), rgb(240, 90, 60))
+  c.replace_color(GREEN, YELLOW)
+  c
+}
+
+/// The four channels of the source, side by side as grayscale strips.
+///
+/// `image_channel` answers a GRAYSCALE image, which cannot be painted onto or blitted into
+/// an RGBA canvas — so each strip is reformatted back to RGBA8 first. That is the one
+/// place in this file a format conversion is load-bearing rather than defensive.
+let channels = () -> Image => {
+  var c = blank()
+  let src = scene()
+  let strip = f32(CELL_W) / 4.0
+  var i = 0
+  for i < 4 {
+    var ch = image_channel(src, i32(i))
+    ch.reformat(RGBA8)
+    c.paint_image(ch, whole(ch), rect(f32(i) * strip, 0.0, strip, f32(CELL_H)), WHITE)
+    c.paint_rectangle_lines(rect(f32(i) * strip, 0.0, strip, f32(CELL_H)), 1, BLACK)
+    unload_image(ch)
+    i += 1
+  }
+  unload_image(src)
+  c
+}
+
+/// A soft-edged blob, then the alpha family applied to copies of it.
+///
+/// Left: the blob. Middle: `alpha_clear` filling everything below the threshold. Right:
+/// `alpha_crop` shrinking to the border `image_alpha_border` reports, drawn back at the
+/// size the crop produced so the shrink is visible.
+let alpha_panel = () -> Image => {
+  var c = blank()
+  c.fill(rgb(235, 235, 235))
+
+  var blob = gen_image_color(70, 70, BLANK)
+  blob.paint_circle(vec2(35.0, 35.0), 24, rgba(220, 60, 60, 255))
+  blob.blur(6)
+
+  var cleared = image_copy(blob)
+  cleared.alpha_clear(rgb(120, 190, 255), 0.5)
+
+  var cropped = image_copy(blob)
+  cropped.alpha_crop(0.5)
+
+  var premul = image_copy(blob)
+  premul.alpha_premultiply()
+
+  c.paint_image(blob, whole(blob), rect(4.0, 8.0, 70.0, 70.0), WHITE)
+  c.paint_image(cleared, whole(cleared), rect(78.0, 8.0, 70.0, 70.0), WHITE)
+  c.paint_image(cropped, whole(cropped),
+                rect(152.0, 8.0, f32(cropped.width), f32(cropped.height)), WHITE)
+
+  // The border the crop was taken from, drawn where the blob is.
+  let b = image_alpha_border(blob, 0.5)
+  c.paint_rectangle_lines(rect(4.0 + b.x, 8.0 + b.y, b.width, b.height), 1, BLUE)
+
+  // A mask takes its alpha from another image's brightness: a white circle on black keeps
+  // a disc of the source and drops the rest.
+  var masked = scene()
+  masked.resize_canvas(70, 70, 0, 0, BLANK)
+  var mask = gen_image_color(70, 70, BLACK)
+  mask.paint_circle(vec2(35.0, 35.0), 26, WHITE)
+  masked.alpha_mask(mask)
+  c.paint_image(masked, whole(masked), rect(4.0, 84.0, 70.0, 70.0), WHITE)
+  c.paint_text("mask", 80, 100, 20, DARKGRAY)
+
+  unload_image(blob) ; unload_image(cleared) ; unload_image(cropped)
+  unload_image(premul) ; unload_image(masked) ; unload_image(mask)
+  c
+}
+
+/// `image_region`, `resize_canvas`, `to_power_of_two` and `image_palette` in one cell.
+///
+/// The palette is drawn as swatches, which is the only way to look at a `[]Color`.
+let composed = () -> Image => {
+  var c = blank()
+  c.fill(rgb(250, 250, 250))
+
+  let src = scene()
+
+  // A region of the source, framed where it came from.
+  let piece = image_region(src, rect(30.0, 30.0, 60.0, 45.0))
+  c.paint_image(piece, whole(piece), rect(6.0, 8.0, 60.0, 45.0), WHITE)
+  c.paint_rectangle_lines(rect(6.0, 8.0, 60.0, 45.0), 1, BLACK)
+
+  // The same region with room grown around it — the picture is not scaled, only offset.
+  var grown = image_copy(piece)
+  grown.resize_canvas(76, 61, 8, 8, rgb(200, 220, 240))
+  c.paint_image(grown, whole(grown), rect(74.0, 8.0, 76.0, 61.0), WHITE)
+
+  // 60x45 rounds up to 64x64, and the fill shows where the picture stops.
+  var pot = image_copy(piece)
+  pot.to_power_of_two(rgb(255, 210, 120))
+  c.paint_image(pot, whole(pot), rect(158.0, 8.0, 56.0, 56.0), WHITE)
+  c.paint_text("${pot.width}x${pot.height}", 158, 70, 20, DARKGRAY)
+
+  // Every distinct colour in the region, as swatches.
+  let palette = image_palette(piece, 24)
+  var i = 0
+  for swatch in palette {
+    let col = f32(i %% 12)
+    let row = f32(i / 12)
+    c.paint_rectangle(rect(6.0 + col * 17.0, 96.0 + row * 17.0, 16.0, 16.0), swatch)
+    i += 1
+  }
+  c.paint_text("palette ${palette.len()}", 6, 130, 20, DARKGRAY)
+
+  // Mipmaps cost nothing to look at, but the level count is worth printing.
+  var mip = image_copy(piece)
+  mip.gen_mipmaps()
+  c.paint_text("mips ${mip.mipmaps}", 140, 130, 20, DARKGRAY)
+
+  unload_image(src) ; unload_image(piece) ; unload_image(grown) ; unload_image(pot)
+  unload_image(mip)
+  c
+}
+
+/// A transparent cell-sized canvas, which every panel starts from.
+let blank = () -> Image => gen_image_color(CELL_W, CELL_H, BLANK)
+
+/// The whole of an image as a source rectangle, for a `paint_image` that copies all of it.
+let whole = pure (image: Image) -> Rectangle =>
+  rect(0.0, 0.0, f32(image.width), f32(image.height))

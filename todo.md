@@ -3469,6 +3469,28 @@ same question and the same answer, so whatever `-o` comes to mean it should mean
 somewhere other than where the flag said is the one outcome to avoid. Found 09/10 building
 every example in a loop.
 
+### `default_font()` draws lyra-W022 advising a call raylib ignores
+
+    let f = default_font()
+    warning [lyra-W022]: "f" holds a Font and goes out of scope without being
+    released; call `unload_font(f)`
+
+`Font` carries `@must_release(unload_font)`, correctly for a *loaded* font, and
+[default_font] hands out raylib's shared built-in one — which `unload_font` must not be
+called on. So the shape every program using the built-in font writes gets advice the API
+documents as wrong, on a binding it has no way to satisfy.
+
+**Measured before filing: raylib's `UnloadFont` guards against the default font and does
+nothing**, so taking the advice is harmless and this is noise rather than the corrupting
+diagnostic the `SoundAlias` decision avoided. That is what keeps it a todo instead of a
+bug. `image.lyra` works around it by writing the gate inline (no binding, no obligation),
+which is a workaround and reads like one.
+
+The `SoundAlias` precedent says the fix is a distinct type for the handle that is released
+differently — here, not at all — but a `DefaultFont` would need unwrapping at every call
+taking a `Font`, which is worse than the warning. A `@must_release` type with a *borrowed*
+constructor is the shape the attribute does not have.
+
 ### `bindings/raylib/texture.lyra` — **[DONE 09/10]**
 
 46 functions: images (load, generate, edit in place, read pixels), textures (load, upload,
@@ -3481,10 +3503,12 @@ texture half cannot be tested for.
 - **~17 colour utilities** — **[DONE 09/10]**, in `color.lyra` beside `rgb`/`rgba` and the
   palette: `color_lerp`, `with_alpha` (raylib's `Fade`), `color_to_hsv`, `color_from_int`,
   `color_alpha_blend` and the rest.
-- **~20 `ImageDraw*` calls** — the shapes module again, rasterising onto an `Image` instead
-  of the screen. Same argument shapes, so it should be mechanical.
-- **~15 further image manipulations** — `ImageCopy`, `ImageBlurGaussian`, `ImageDither`,
-  `ImageAlphaMask`, `ImageResizeCanvas`, `ImageMipmaps`.
+- **~20 `ImageDraw*` calls** — **[DONE 09/10]**, and **~15 further image manipulations**
+  with them, as `image.lyra`: 36 functions over 37 externs. Painting is `paint_*` rather
+  than `draw_*` because the screen's names take no receiver and so cannot be overloaded;
+  see COMPLETED.md for that, for the `image_text` segfault the binding gates, and for the
+  `dither` packing that leaves an image in an invalid pixel format.
+  `examples/raylib/painting.lyra` exercises all 36, with 49 pixel checks under `--check`.
 
 Also unbound: `LoadTextureCubemap` (wants the 3D module) and `ExportImageToMemory`, which
 answers a non-null pointer and a size of 0 — measured, not assumed.

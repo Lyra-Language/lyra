@@ -1880,6 +1880,54 @@ manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`)
 fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
 pointer and a size of **0**, measured.
 
+**`bindings/raylib/image.lyra` is the fifth** (09/10) — 36 functions over 37 externs:
+editing an image in place, making new ones from old, and painting onto one. What it
+establishes:
+
+- **Painting is `paint_*` because `draw_*` was already taken, and the reason is a rule
+  rather than a clash.** `shapes.lyra`'s `draw_circle` draws on the *screen* and takes no
+  receiver, so it cannot become a receiver-keyed overload of one taking `self: mut Image` —
+  that rule needs **every** declaration of the name to have a receiver. The alternative was
+  an `image_` prefix that reads as noise at a call site; `canvas.paint_circle(c, 8, RED)`
+  says which surface without one.
+- **`gen_mipmaps` *is* an overload**, across two files of one module: `self: mut Image`
+  beside `self: mut Texture2D`. That is the first cross-file receiver-keyed overload in
+  this tree and it needed nothing — worth knowing, since the module system's export set is
+  built per file (see the hazard at the end of this document).
+- **`image_text` answers a `Maybe` because the alternative is a segfault.** raylib loads
+  its built-in font in `InitWindow`, so with no window `GetFontDefault()` hands back a font
+  whose glyph array is NULL — and `ImageText` walks it unchecked. Measured: a pure-C caller
+  exits 139. `font_valid` predicts it exactly, so the gate costs one call. The void members
+  of the family (`paint_text`, `paint_text_ex`) paint nothing instead, on the rule an empty
+  point list already follows. **This is the one call in the image half that is not
+  headless**, which is why it is worth stating.
+- **A convolution kernel is a `[]f32` whose length must be a perfect square.** raylib takes
+  the element *count* and derives the side — confirmed against C, not read off the header
+  comment — so the array carries the count and there is no second argument to disagree
+  with it. **A kernel that does not sum to 1 changes the alpha channel too**, since raylib
+  convolves all four: a Laplacian drives an opaque image to fully transparent, which reads
+  as a broken binding rather than as an edge detector.
+- **`dither` answers a `bool` because raylib has exactly three packings** — `5-6-5`,
+  `5-5-5-1`, `4-4-4-4`. Wider than sixteen bits it warns about and ignores, harmlessly;
+  **narrower it warns about and then leaves the image in pixel format 0**, measured — an
+  image whose width and height are intact and which nothing can upload, with no error
+  anywhere until the upload fails. The binding refuses a packing that does not exist and
+  says whether it applied. Found by writing the example, which printed *"could not upload
+  dither"* and nothing else.
+- **Six loose-int twins and `ImageRotateCW`/`CCW` are deliberately unbound**, the same rule
+  that left `DrawRectangleGradientV`/`H` out of the shapes module: the Vector2/Rectangle
+  spelling is the one bound, and a rotate by a constant is `rotate(±90)`.
+
+`TestExec_RaylibImageEditingAndPainting` is the proof, and it is headless — which is what
+the image half was always able to have and the texture half was not.
+
+`examples/raylib/painting.lyra` is the example, on the two-programs-in-one-file plan: 49
+pixel checks under `--check` and a twelve-panel gallery. **Nothing in it is loaded from
+disk** — every picture is painted by Lyra onto an `Image` and uploaded once, which is what
+the module makes possible and what keeps the example one file with nothing to fetch. The
+text panel is the pair to the `--check` half: `image_text` answers `None` headlessly and
+renders in the window, because `init_window` is what loads the built-in font.
+
 **`bindings/raylib/text.lyra` is the fourth**, and it is where the captures bug above was
 found. `Font`, `GlyphInfo`, loading, glyph metrics, measuring, and drawing — including
 `draw_text_ex` and `draw_text_pro`, which were unbound for a day because the *compiler*

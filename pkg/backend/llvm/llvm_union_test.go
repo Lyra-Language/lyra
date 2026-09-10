@@ -432,6 +432,144 @@ let main = () -> void => {
 // The expected values follow from the generated image rather than from raylib: a solid
 // 8x4 of (200,100,50) has 32 pixels all of that colour, and a 2x2-checked 4x4 has corners
 // that differ.
+// `bindings/raylib/image.lyra` — editing an image and painting onto one, all of it on CPU
+// pixels and so **headless**, which is the reason this family is worth a behavioural test
+// where the texture half cannot have one.
+//
+// Every expectation follows from the numbers rather than from what the bindings printed:
+// a copy is independent of its original, an identity convolution changes nothing, an alpha
+// border is the rectangle that was painted, a two-colour image has a two-entry palette.
+//
+// **The text case asserts a `None`**, and it is the interesting one: raylib loads its
+// built-in font in `InitWindow`, so with no window `GetFontDefault()` answers a font with
+// a null glyph array and `ImageText` walks it — a pure-C caller exits 139. `image_text`
+// gates on `font_valid` and answers `None`, so the one call in this module that is not
+// headless says so instead of taking the process down.
+func TestExec_RaylibImageEditingAndPainting(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ Image, gen_image_color, unload_image, image_color_at, reformat,
+                         image_copy, image_region, image_channel, image_text, fill,
+                         paint_pixel, paint_rectangle, paint_image, image_palette,
+                         image_alpha_border, alpha_crop, convolve, brightness,
+                         replace_color, resize_canvas, to_power_of_two, gen_mipmaps,
+                         Vector2, rect, RED, GREEN, BLUE, WHITE, BLANK }
+
+// PIXELFORMAT_UNCOMPRESSED_R8G8B8A8. The paint calls need a format with alpha, and
+// gen_image_color answers R8G8B8A8 already — this is here so the test says which format
+// its expectations are about rather than inheriting one.
+const RGBA8: i32 = 7
+
+let px = pure (im: Image, x: i32, y: i32) -> string => {
+  let c = image_color_at(im, x, y)
+  "${c.r},${c.g},${c.b},${c.a}"
+}
+
+let main = () -> void => {
+  var base = gen_image_color(8, 8, RED)
+  base.reformat(RGBA8)
+
+  // A copy has pixels of its own: filling one leaves the other alone.
+  var dup = image_copy(base)
+  dup.fill(GREEN)
+  print("${px(base, 0, 0)} ${px(dup, 0, 0)} ")
+
+  let reg = image_region(base, rect(0.0, 0.0, 3.0, 2.0))
+  print("${reg.width}x${reg.height} ")
+
+  // Painting: inside the rectangle is blue, outside is untouched.
+  var canvas = gen_image_color(16, 16, BLANK)
+  canvas.reformat(RGBA8)
+  canvas.paint_rectangle(rect(2.0, 2.0, 4.0, 4.0), BLUE)
+  canvas.paint_pixel(Vector2 { x: 10.0, y: 10.0 }, GREEN)
+  print("${px(canvas, 3, 3)} ${px(canvas, 8, 8)} ${px(canvas, 10, 10)} ")
+
+  // A blit of the whole image onto a blank one reproduces it.
+  var dst = gen_image_color(8, 8, BLANK)
+  dst.reformat(RGBA8)
+  dst.paint_image(base, rect(0.0, 0.0, 8.0, 8.0), rect(0.0, 0.0, 8.0, 8.0), WHITE)
+  print("${px(dst, 4, 4)} ")
+
+  // Two colours, two palette entries — raylib pads its answer to the limit and the
+  // binding trims to the count it reports.
+  var two = gen_image_color(4, 4, RED)
+  two.reformat(RGBA8)
+  two.paint_rectangle(rect(0.0, 0.0, 2.0, 4.0), BLUE)
+  print("${image_palette(two, 8).len()} ")
+
+  // The alpha border is exactly the rectangle painted into a transparent canvas, and
+  // alpha_crop shrinks the image to it.
+  var sparse = gen_image_color(10, 10, BLANK)
+  sparse.reformat(RGBA8)
+  sparse.paint_rectangle(rect(3.0, 4.0, 2.0, 3.0), RED)
+  let b = image_alpha_border(sparse, 0.5)
+  var cropped = image_copy(sparse)
+  cropped.alpha_crop(0.5)
+  print("${b.x},${b.y},${b.width},${b.height} ${cropped.width}x${cropped.height} ")
+
+  // A 3x3 identity kernel leaves every pixel where it was.
+  var conv = image_copy(base)
+  conv.convolve([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+  print("${px(conv, 4, 4)} ")
+
+  var bright = image_copy(base)
+  bright.brightness(25)
+  var swapped = image_copy(base)
+  swapped.replace_color(RED, GREEN)
+  print("${px(bright, 0, 0)} ${px(swapped, 0, 0)} ")
+
+  // The canvas grows without scaling: the old pixels sit at the offset, the rest is fill.
+  var canv = image_copy(base)
+  canv.resize_canvas(12, 12, 2, 2, BLANK)
+  print("${canv.width}x${canv.height} ${px(canv, 2, 2)} ${px(canv, 0, 0)} ")
+
+  // 5x3 rounds up to 8x4, and an 8x8 image has four mipmap levels (8, 4, 2, 1).
+  var pot = gen_image_color(5, 3, RED)
+  pot.to_power_of_two(BLANK)
+  var mip = gen_image_color(8, 8, RED)
+  mip.gen_mipmaps()
+  print("${pot.width}x${pot.height} ${mip.mipmaps} ")
+
+  // Channel 0 on its own is a grayscale image (PIXELFORMAT_UNCOMPRESSED_GRAYSCALE = 1).
+  let ch = image_channel(base, 0)
+  print("${ch.width}x${ch.height},${ch.format} ")
+
+  // The one call here that needs a window, and it says so rather than crashing.
+  println("${image_text("hi", 20, RED).is_none()}")
+
+  unload_image(base) ; unload_image(dup) ; unload_image(reg) ; unload_image(canvas)
+  unload_image(dst) ; unload_image(two) ; unload_image(sparse) ; unload_image(cropped)
+  unload_image(conv) ; unload_image(bright) ; unload_image(swapped) ; unload_image(canv)
+  unload_image(pot) ; unload_image(mip) ; unload_image(ch)
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		t.Fatalf("running the raylib-image-editing binary failed: %v", err)
+	}
+	want := strings.Join([]string{
+		"230,41,55,255", "0,228,48,255", // a copy is independent
+		"3x2",                                      // image_region
+		"0,121,241,255", "0,0,0,0", "0,228,48,255", // paint_rectangle, outside, paint_pixel
+		"230,41,55,255",  // paint_image
+		"2",              // image_palette
+		"3,4,2,3", "2x3", // alpha border, alpha_crop
+		"230,41,55,255",                 // identity convolution
+		"255,66,80,255", "0,228,48,255", // brightness, replace_color
+		"12x12", "230,41,55,255", "0,0,0,0", // resize_canvas
+		"8x4", "4", // to_power_of_two, gen_mipmaps
+		"8x8,1", // image_channel
+		"true",  // image_text is None with no window
+	}, " ")
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if got := strings.TrimSpace(lines[len(lines)-1]); got != want {
+		t.Errorf("raylib image editing = %q; want %q", got, want)
+	}
+}
+
 func TestExec_RaylibImageBindings(t *testing.T) {
 	t.Parallel()
 	libdir := pkgConfigLibDir(t, "raylib")
