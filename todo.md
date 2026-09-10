@@ -3426,17 +3426,32 @@ back; `lyra-W022` fires when a binding of one goes out of scope without it. Answ
 "should we add destructors" with no — see COMPLETED.md for the three commitments that
 each rule one out. `bindings/raylib`'s `Sound` and `Wave` are marked.
 
+**`if let`, `let … else` and destructuring `let` landed 09/10** — four unwrapping
+constructs over one runner. See COMPLETED.md for the three further misses that came with
+it, including a field read escaping its binding.
+
 **Open extensions**, in rough order of value:
 
 - **`newtype` cannot carry the attribute.** `constrained_type` has no `attribute_list`
   slot, and `newtype Fd = i32` with `@must_release(close)` is where `std.io` wants to go.
-- **`if let` does not seed a payload** the way a `match` arm does, so
-  `if let Some(s) = maybe_sound { … }` escapes rather than tracking. The `match` path is
-  the one the language idiom uses and is what breakout exercises; the `if let` shape wants
-  `destructuringBranches`' treatment, mirroring `CheckUseAfterMove`.
+- **A multi-binding pattern is not tracked.** `let (snd, n) = pair()` stays silent,
+  because deciding *which* name receives the obligation needs a structural walk of the
+  pattern against the scrutinee's type — a pattern binding is an `IdentifierPattern`, so
+  the TypeTable has no per-name type. Pinned by a test as a known limit.
 - **`defer`** is the natural companion — a written call, so effects are charged normally,
   and the check would accept it as the discharge. Waiting on a program that strains
   against the scoped-closure form (`with_cstring`) the language already has.
+
+### `CheckUseAfterMove` may have `let … else` backwards
+
+Its `destructuringBranches` binds the pattern's names in the **else** branch for an
+`else let`, and the else block is the diverging path that never sees them — the payload
+binds in the *enclosing* scope, which the collector's own comment says and the compiler
+confirms (`let Some(v) = opt() else { println("${v}") }` is `undefined identifier`).
+Found while writing the must-release equivalent 09/10; **not investigated**, so it may be
+harmless — a move recorded in a branch whose names cannot be mentioned may simply never
+fire. Worth a probe: a `let … else` whose payload is moved after the statement, checked
+for a missed `lyra-E019`.
 
 ### raylib audio, and Breakout has sound — **[DONE 09/09]**
 

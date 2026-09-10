@@ -9,6 +9,47 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — `@must_release` reaches `if let`, and three more misses under it
+
+`if let Some(s) = m { … }` now tracks the payload the way a `match` arm does, and with it
+`let … else` and a plain destructuring `let`. Four constructs, one runner (`arm`, over an
+`unwrapper`), because they differ only in which alternative binds.
+
+**The interesting part is that going after one gap found three more, and every one was
+found by running a real program rather than by reading the pass.**
+
+- **`let … else` is not a branch**, and analyzing it as one bound the payload where it is
+  not in scope. It is Rust's `let … else`: the payload binds in the *enclosing* scope and
+  outlives the statement, while the else block is the diverging path that never sees it.
+  The compiler was asked rather than the code read — `let Some(v) = opt() else {
+  println("${v}") }` is `undefined identifier "v"`, and a use after the statement checks
+  clean. Worth knowing because **`CheckUseAfterMove` has the opposite reading**, binding
+  the pattern's names in the else branch; whether that is a live bug there is untested and
+  is now a todo.
+- **The scrutinee is usually not a binding at all.** `let Some(v) = load_sound(p) else {
+  return }` acquires and unwraps in one statement, so the resource never sits in a binding
+  for the state map to hold. Every fixture had spelled it in two steps.
+- **Reading a field escaped the binding.** `println("${w.frame_count}")` silenced the
+  check on a `Wave` — which guts the feature for the type, since a resource with readable
+  fields is the ordinary case. A field or element read is a *borrow*: the value is going
+  nowhere.
+
+**The one-name rule is where it declines to guess.** The payload is seeded only when the
+pattern binds exactly one name, because a pattern binding is an `IdentifierPattern` and
+not an expression — the TypeTable has no per-name type to consult, and matching a
+pattern's shape against the scrutinee's type positionally would be a new structural walk
+over both, with a case missing for every pattern kind added later. One name covers every
+wrapper unwrap (`Some(v)`, `Ok(v)`, `Err(e)`), which is what these constructs are for. A
+multi-binding pattern stays silent, and a test pins that as a known limit rather than
+leaving it to be rediscovered.
+
+**The lesson, restated because it keeps paying**: a pass that under-reports is silent when
+it is broken, so its fixtures cannot be trusted to represent reality. Both of the worst
+misses here — the `Maybe` blindness yesterday and the field read today — were invisible to
+a growing suite of unit tests and obvious within a minute of writing twenty lines of Lyra
+against the real `bindings/raylib`. The fixtures were all *true*; they were just not what
+anyone writes.
+
 ### 09/09/26 — `@must_release`, and why Lyra is not getting destructors
 
 `@must_release(unload_sound) struct Sound { … }`, and `lyra-W022` when a binding of one

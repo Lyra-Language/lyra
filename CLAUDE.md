@@ -1550,20 +1550,47 @@ works is a per-library binding module owning its own externs, which needs nothin
   `ArrayLiteralExpr`/`StructInstanceExpr`/`TupleLiteralExpr`/… would, and that family is
   the one that already cost this compiler eight instances of one omission.
 
-**Two bugs found by probing behaviour rather than by reading the code**, which is rule 8's
-own advice:
+**Four constructs unwrap a resource, and three of them share one runner** (`arm`, over an
+`unwrapper`): a `match` arm, an `if let` branch, `let … else`, and a plain destructuring
+`let`. The rules that were not obvious:
+
+- **`let … else` is not a branch.** It is Rust's `let … else`: the payload binds in the
+  **enclosing** scope and lives past the statement, while the else block is the diverging
+  path that never sees it. It is handled like a `VarDeclStmt`, not like `if let`.
+  Verified against the compiler rather than assumed, because the obvious reading is the
+  opposite one — and `CheckUseAfterMove` takes it, binding the pattern's names in the
+  *else* branch, which is where they are not.
+- **The scrutinee is usually not a binding.** `let Some(v) = load_sound(p) else { return }`
+  acquires and unwraps in one statement, so `beginUnwrap` asks whether the *expression*
+  produced an obligation as well as whether a bare name is holding one. This is the shape
+  the idiom takes, not a corner.
+- **The payload is seeded only when the pattern binds exactly one name.** A pattern
+  binding is an `IdentifierPattern`, not an expression, so the TypeTable has no per-name
+  type; matching a pattern's shape against the scrutinee's type positionally would be a
+  new structural walk over both, with a case missing for every pattern kind added later.
+  One name is unambiguous and covers every wrapper unwrap. A multi-binding pattern falls
+  through to the escape default and stays silent.
+- **Reading a field or an element is a borrow.** `MemberExpr`/`IndexExpr`/`TupleIndexExpr`
+  over a bare name do not escape it. Without that, one `println("${w.frame_count}")`
+  silences the check for any resource with a readable field.
+
+**Four bugs, every one found by probing behaviour rather than by reading the code** —
+rule 8's own advice, and the entry below it is the reason to keep taking it:
 
 1. **The check was blind to `Maybe<Sound>`** — and so to every real acquisition, since a
    binding module's constructors all answer a `Maybe`. Found by deleting an
    `unload_sound` from `examples/raylib/breakout.lyra` and getting no warning at all.
 2. **The `match`-arm handling was dead code.** The scrutinee was walked through `expr`
    before the arm seeding read it, so the escape default had already dropped the binding.
-   Every test around it passed — by not reporting, which is what those tests asserted.
-   Found by writing the *unwrap-and-forget* case, which is the one that must report.
+3. **`let … else` was analyzed as a branch**, binding the payload where it is not in scope.
+4. **A field read escaped the binding**, which gutted the feature for `Wave`. Found on a
+   program written in the if-let style against the real bindings — not on a fixture.
 
-Both are the same shape: **a pass that under-reports is silent when it is broken**, so
-its tests have to include cases that *must* fire. The `assertLeaks` half of
-`must_release_test.go` is there for that reason, not for symmetry.
+All four are the same shape: **a pass that under-reports is silent when it is broken**, so
+its tests must include cases that *must* fire, and its fixtures must be checked against a
+real program. The `assertLeaks` half of `must_release_test.go` is there for the first;
+`/tmp`-scratch programs against `bindings/raylib` are what caught (1) and (4), which no
+fixture had.
 
 ## Binding modules (`bindings/`)
 

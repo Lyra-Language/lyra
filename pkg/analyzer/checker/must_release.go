@@ -266,6 +266,18 @@ func (c *mustRelease) stmt(st heldState, s ast.Statement) heldState {
 		// rule is a second thing to keep in step.
 		return c.expr(st, v.Value)
 
+	case *ast.IfDestructuringStmt:
+		return c.ifLet(st, &v.DestructuringStatement, v.Then, v.Else)
+	case *ast.ElseDestructuringStmt:
+		return c.letElse(st, &v.DestructuringStatement, v.Else)
+	case *ast.DestructuringDeclStmt:
+		// A plain `let (a, b) = …`. The same rule as `let … else` with no else: the
+		// payload outlives the statement, so the obligation moves onto it where the
+		// pattern binds exactly one name, and the enclosing block reports it.
+		var u unwrapper
+		st, u = c.beginUnwrap(st, v.Value)
+		return c.bindPayload(st, u, v.Pattern, v.GetLocation())
+
 	case *ast.TraitImplStmt:
 		for i := range v.Methods {
 			c.report(c.expr(heldState{}, v.Methods[i].Clause.Body))
@@ -305,6 +317,36 @@ func (c *mustRelease) expr(st heldState, e ast.Expression) heldState {
 		// safe by default instead of one more switch to keep in step.
 		delete(st, v.Name)
 		return st
+
+	case *ast.MemberExpr:
+		// **Reading part of a value is a borrow, not a handover.** `s.id` looks at the
+		// resource; the resource itself is going nowhere, so the obligation stays.
+		// Falling to the escape default here guts the feature for any resource with a
+		// readable field — one `println("${w.frame_count}")` and a leaked `Wave` goes
+		// unreported — which is how this was found, on a program written in the
+		// if-let style against the real raylib bindings.
+		//
+		// A *partial move* (`let inner = s.handle`, where the field is itself a
+		// resource) is a different question this pass does not model, and it
+		// under-reports rather than guessing — `bareName` admits only a plain
+		// identifier for the same reason.
+		if _, isName := bareName(v.Object); isName {
+			return st
+		}
+		return c.expr(st, v.Object)
+
+	case *ast.IndexExpr:
+		// The same rule for `xs[i]`: reading an element borrows the container.
+		if _, isName := bareName(v.Object); !isName {
+			st = c.expr(st, v.Object)
+		}
+		return c.expr(st, v.Index)
+
+	case *ast.TupleIndexExpr:
+		if _, isName := bareName(v.Object); isName {
+			return st
+		}
+		return c.expr(st, v.Object)
 
 	case *ast.LambdaExpr:
 		// Analyzed on its own. Anything it captures escapes, which capturedEscape
@@ -587,60 +629,108 @@ func (c *mustRelease) wrappedResource(t types.Type, e ast.Expression) (resource,
 	return resource{}, false
 }
 
-// matchArms runs a `match` whose scrutinee may be holding a resource.
+// unwrapping is the shared half of `match`, `if let` and `else let`: each is a construct
+// whose pattern may pull a resource out of the wrapper a binding is holding.
 //
-// The shape this exists for is how the language unwraps one:
+// The shape they exist for is how the language gets at one:
 //
 //	match chime { Some(s) => unload_sound(s), None => {} }
+//	if let Some(s) = chime { unload_sound(s) }
 //
 // The obligation is on `chime`, and the call that discharges it names `s` — a *different*
-// binding, introduced by the pattern. So an arm that destructures a held scrutinee has
-// each name its pattern binds seeded with the same obligation, and the scrutinee's own
-// claim moves into that arm rather than staying behind. An arm still holding its payload
-// at the end is reported there, which is the same rule `block` applies one level out:
-// a scope that acquires is a scope that must discharge.
-func (c *mustRelease) matchArms(st heldState, v *ast.MatchExpr) heldState {
-	// A bare-name scrutinee is **not** walked, for the reason `call` gives about its
-	// arguments: the escape default in `expr` would delete the binding before this
-	// could read it, and the whole arm-seeding below would then be dead code. It was,
-	// until a test unwrapped a resource and forgot to release it and nothing fired.
-	scrutinee, isName := bareName(v.Scrutinee)
-	if !isName {
-		st = c.expr(st, v.Scrutinee)
+// binding, introduced by the pattern. So an alternative that destructures a held scrutinee
+// has the payload name seeded with the same obligation, and the scrutinee's own claim moves
+// into that alternative rather than staying behind. One still holding its payload at the
+// end is reported there, which is the rule `block` applies one level out: a scope that
+// acquires is a scope that must discharge.
+//
+// **The payload is seeded only when the pattern binds exactly one name**, which is the
+// whole of how it decides *which* name receives the obligation. A pattern binding is an
+// `IdentifierPattern` and not an expression, so the TypeTable has no per-name type to
+// consult, and matching a pattern's shape against the scrutinee's type positionally would
+// be a new structural walk over both — rule 8's family, with a missing case for every
+// pattern kind added later. One name is unambiguous and covers every wrapper unwrap
+// (`Some(v)`, `Ok(v)`, `Err(e)`), which is what these constructs are for. A multi-binding
+// pattern falls through to the escape default and stays silent, which is the direction
+// this pass errs in everywhere else.
+type unwrapper struct {
+	scrutinee string   // the binding being destructured; "" when it is not a bare name
+	held      resource // what it holds
+	isHeld    bool
+}
+
+// beginUnwrap reads the scrutinee without letting the escape default consume it.
+//
+// A bare-name scrutinee is deliberately **not** walked, for the reason `call` gives about
+// its arguments: `expr` would delete the binding before any of this could read it, and the
+// seeding below would be dead code. It was, until a test unwrapped a resource and forgot
+// to release it and nothing fired.
+func (c *mustRelease) beginUnwrap(st heldState, scrutinee ast.Expression) (heldState, unwrapper) {
+	if name, isName := bareName(scrutinee); isName {
+		held, isHeld := st[name]
+		return st, unwrapper{scrutinee: name, held: held, isHeld: isHeld}
 	}
-	held, isHeld := st[scrutinee]
-	holdsResource := isName
+	// Not a binding — and this is the shape the idiom actually takes, so it is not a
+	// fallback: `let Some(v) = load_sound(p) else { return }` acquires and unwraps in
+	// one statement, and the resource never sits in a binding of its own. Walk the
+	// expression, then ask whether it produced an obligation. The empty `scrutinee`
+	// name is what says there is no prior binding to take the claim away from.
+	st = c.expr(st, scrutinee)
+	if r, ok := c.resourceOf(scrutinee); ok {
+		return st, unwrapper{held: r, isHeld: true}
+	}
+	return st, unwrapper{}
+}
+
+// arm runs one alternative — a `match` arm, or one branch of an `if let` — seeding the
+// payload where `binds` says this alternative's pattern destructures the scrutinee, and
+// reporting what the alternative failed to discharge.
+func (c *mustRelease) arm(
+	st heldState,
+	u unwrapper,
+	pat ast.Pattern,
+	binds bool,
+	run func(heldState) heldState,
+) heldState {
+	out := st.clone()
+	var payload []string
+	if binds && u.isHeld && pat != nil {
+		if bound := patternBoundNames(pat); len(bound) == 1 {
+			payload = bound
+			delete(out, u.scrutinee) // the payload is the resource now
+			r := u.held
+			r.loc = pat.GetLocation()
+			// Inside the alternative the payload *is* the resource, so the message
+			// names the direct call again rather than the unwrap that just happened.
+			r.wrapped = false
+			out[bound[0]] = r
+		}
+	}
+	out = run(out)
+	// Report and clear what this alternative was handed, so a payload never reaches the
+	// join — where the intersection would silently drop it.
+	leaked := heldState{}
+	for _, name := range payload {
+		if r, still := out[name]; still {
+			leaked[name] = r
+			delete(out, name)
+		}
+	}
+	c.report(leaked)
+	return out
+}
+
+func (c *mustRelease) matchArms(st heldState, v *ast.MatchExpr) heldState {
+	st, u := c.beginUnwrap(st, v.Scrutinee)
 	var merged *heldState
 	for i := range v.MatchArms {
-		arm := st.clone()
-		bound := patternBoundNames(v.MatchArms[i].Pattern)
-		if holdsResource && isHeld && len(bound) > 0 {
-			// The payload is the resource now; the wrapper's claim goes with it.
-			delete(arm, scrutinee)
-			for _, name := range bound {
-				r := held
-				r.loc = v.MatchArms[i].Pattern.GetLocation()
-				// Inside the arm the payload *is* the resource, so the message
-				// names the direct call again rather than the unwrap that just
-				// happened.
-				r.wrapped = false
-				arm[name] = r
+		arm := v.MatchArms[i]
+		out := c.arm(st, u, arm.Pattern, true, func(s heldState) heldState {
+			if g := arm.Guard; g != nil {
+				s = c.expr(s, g.Condition)
 			}
-		}
-		if g := v.MatchArms[i].Guard; g != nil {
-			arm = c.expr(arm, g.Condition)
-		}
-		out := c.expr(arm, v.MatchArms[i].Body)
-		// Report and clear what this arm was handed, so a payload never leaks into
-		// the join — where the intersection would silently drop it.
-		leaked := heldState{}
-		for _, name := range bound {
-			if r, still := out[name]; still {
-				leaked[name] = r
-				delete(out, name)
-			}
-		}
-		c.report(leaked)
+			return c.expr(s, arm.Body)
+		})
 		if merged == nil {
 			merged = &out
 			continue
@@ -652,6 +742,81 @@ func (c *mustRelease) matchArms(st heldState, v *ast.MatchExpr) heldState {
 		return st
 	}
 	return *merged
+}
+
+// ifLet walks an `if let`: the scrutinee, then the two branches as alternatives, joined
+// by intersection. The payload is in scope in `then` only — the branch that ran because
+// the match succeeded — which is the branch that can release it and therefore the one
+// that must.
+//
+// It exists rather than being covered by a DestructuringDeclStmt case for the reason
+// CheckUseAfterMove's twin gives: these embed the declaration **by value**, so the walker
+// never sees a `*ast.DestructuringDeclStmt` and that case never fires.
+func (c *mustRelease) ifLet(
+	st heldState,
+	d *ast.DestructuringDeclStmt,
+	then, els *ast.BlockExpr,
+) heldState {
+	st, u := c.beginUnwrap(st, d.Value)
+	branch := func(b *ast.BlockExpr, binds bool) heldState {
+		return c.arm(st, u, d.Pattern, binds, func(s heldState) heldState {
+			if b == nil {
+				return s
+			}
+			return c.expr(s, b)
+		})
+	}
+	return mergeHeld(branch(then, true), branch(els, false))
+}
+
+// letElse walks `let Some(v) = m else { … }`, which is **not** a branch and must not be
+// analyzed as one.
+//
+// It is Rust's `let … else`: the payload binds in the **enclosing** scope and lives on
+// after the statement, while the else block is the diverging path that never sees it.
+// Verified rather than assumed — `let Some(v) = opt() else { println("${v}") }` is
+// `undefined identifier "v"`, and a use after the statement checks clean — because the
+// obvious reading is the opposite one, and `CheckUseAfterMove`'s twin takes it: that pass
+// binds the pattern's names in the *else* branch, which is where they are not.
+//
+// So the obligation moves to the payload and this scope's own end is what reports it,
+// exactly as for an ordinary `let`. The else block runs against a copy: it diverges, so
+// what it does is on a path where the payload was never bound, and it cannot discharge
+// what the main path is still holding.
+func (c *mustRelease) letElse(
+	st heldState,
+	d *ast.DestructuringDeclStmt,
+	els *ast.BlockExpr,
+) heldState {
+	st, u := c.beginUnwrap(st, d.Value)
+	if els != nil {
+		c.block(st.clone(), els)
+	}
+	return c.bindPayload(st, u, d.Pattern, d.GetLocation())
+}
+
+// bindPayload moves a held scrutinee's obligation onto the single name its pattern binds,
+// for the two constructs whose payload outlives the statement — `let … else` and a plain
+// destructuring `let`. The one-name rule is the `arm` header's, for the same reason.
+func (c *mustRelease) bindPayload(
+	st heldState,
+	u unwrapper,
+	pat ast.Pattern,
+	loc ast.Location,
+) heldState {
+	if !u.isHeld || pat == nil {
+		return st
+	}
+	bound := patternBoundNames(pat)
+	if len(bound) != 1 {
+		return st
+	}
+	delete(st, u.scrutinee)
+	r := u.held
+	r.loc = loc
+	r.wrapped = false
+	st[bound[0]] = r
+	return st
 }
 
 // calleeParams returns the callee's declared parameters and, for a `.`-call, the

@@ -338,3 +338,144 @@ let main = () -> void => {
 }
 `)
 }
+
+// --- `if let`, the other way the language unwraps a Maybe -------------------------
+
+func TestMustRelease_IfLetUnwrapAndReleaseIsClean(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  let s = try_load(1)
+  if let Some(v) = s { unload_sound(v) }
+}
+`)
+}
+
+// The mirror of the `match` case: unwrapping is not releasing, and the branch that can
+// see the value is the branch that has to discharge it.
+func TestMustRelease_IfLetUnwrapWithoutReleasingIsReported(t *testing.T) {
+	assertLeaks(t, `
+let main = () -> void => {
+  let s = try_load(1)
+  if let Some(v) = s { play_sound(v) }
+}
+`, "v")
+}
+
+func TestMustRelease_IfLetWithAnElseIsClean(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  let s = try_load(1)
+  if let Some(v) = s { unload_sound(v) } else { }
+}
+`)
+}
+
+// --- `let … else`, which is not a branch --------------------------------------------
+//
+// It is Rust's `let … else`: the payload binds in the **enclosing** scope and the else
+// block is the diverging path that never sees it. The obvious reading is the opposite
+// one, and `CheckUseAfterMove` takes it — so these pin the real semantics, which were
+// checked against the compiler rather than assumed.
+
+func TestMustRelease_LetElseMovesTheObligationToThePayload(t *testing.T) {
+	assertLeaks(t, `
+let main = () -> void => {
+  let Some(v) = try_load(1) else { return }
+  play_sound(v)
+}
+`, "v")
+}
+
+func TestMustRelease_LetElseReleasedAfterwardsIsClean(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  let Some(v) = try_load(1) else { return }
+  play_sound(v)
+  unload_sound(v)
+}
+`)
+}
+
+// The else block runs on a path where the payload was never bound, so nothing it does
+// can discharge what the main path is holding.
+func TestMustRelease_LetElseDivergingBranchDischargesNothing(t *testing.T) {
+	assertLeaks(t, `
+let other = () -> Sound => load_sound(9)
+let main = () -> void => {
+  let Some(v) = try_load(1) else { return }
+  play_sound(v)
+}
+`, "v")
+}
+
+// --- what the one-name rule declines to guess ----------------------------------------
+
+// A pattern binding is an `IdentifierPattern` and not an expression, so there is no
+// per-name type to consult; matching a pattern's shape against the scrutinee's type
+// positionally would be a new structural walk with a case missing for every pattern kind
+// added later (rule 8's family). So a multi-binding pattern falls through to the escape
+// default and stays **silent** — under-reporting, the direction this pass errs in
+// everywhere. This pins that as a known limit rather than leaving it to be rediscovered.
+func TestMustRelease_AMultiBindingPatternIsNotTracked(t *testing.T) {
+	assertClean(t, `
+let pair = (n: i64) -> (Sound, i64) => (load_sound(n), n)
+let main = () -> void => {
+  let (snd, n) = pair(1)
+  play_sound(snd)
+}
+`)
+}
+
+// --- acquiring and unwrapping in one statement ----------------------------------------
+//
+// This is what the idiom actually looks like — the resource never sits in a binding of
+// its own — so it is the shape that matters most, not a corner.
+
+func TestMustRelease_IfLetOnADirectAcquisitionIsTracked(t *testing.T) {
+	assertLeaks(t, `
+let main = () -> void => {
+  if let Some(v) = try_load(1) { play_sound(v) }
+}
+`, "v")
+}
+
+func TestMustRelease_IfLetOnADirectAcquisitionReleasedIsClean(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  if let Some(v) = try_load(1) { unload_sound(v) }
+}
+`)
+}
+
+func TestMustRelease_MatchOnADirectAcquisitionIsTracked(t *testing.T) {
+	assertLeaks(t, `
+let main = () -> void => {
+  match try_load(1) {
+    Some(v) => play_sound(v),
+    None => {},
+  }
+}
+`, "v")
+}
+
+// Reading a field is a **borrow**, not a handover: the value itself is going nowhere, so
+// the obligation stays. Without this the feature is gutted for any resource with a
+// readable field — `println("${w.frame_count}")` would silence the check on a `Wave` —
+// and that is not hypothetical: it is how the miss was found, on a program written in
+// the if-let style against the real raylib bindings.
+func TestMustRelease_ReadingAFieldDoesNotEscape(t *testing.T) {
+	assertLeaks(t, `
+let main = () -> void => {
+  let s = load_sound(1)
+  println("${s.id}")
+}
+`, "s")
+}
+
+func TestMustRelease_ReadingAFieldInAnIfLetDoesNotEscape(t *testing.T) {
+	assertLeaks(t, `
+let main = () -> void => {
+  if let Some(v) = try_load(1) { println("${v.id}") }
+}
+`, "v")
+}
