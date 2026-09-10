@@ -3456,6 +3456,29 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
+### `bindings/raylib/texture.lyra` — **[DONE 09/10]**
+
+46 functions: images (load, generate, edit in place, read pixels), textures (load, upload,
+configure, update), render textures, and all six drawing calls. `Image` and `Texture2D`
+carry `@must_release`. See COMPLETED.md for the `self: mut Image` decision and what the
+texture half cannot be tested for.
+
+**Three families left unbound, each its own job:**
+
+- **~17 colour utilities** — `ColorLerp`, `Fade`, `ColorToHSV`, `GetColor`,
+  `ColorAlphaBlend`. These belong in `color.lyra`, beside `rgb`/`rgba` and the palette.
+- **~20 `ImageDraw*` calls** — the shapes module again, rasterising onto an `Image` instead
+  of the screen. Same argument shapes, so it should be mechanical.
+- **~15 further image manipulations** — `ImageCopy`, `ImageBlurGaussian`, `ImageDither`,
+  `ImageAlphaMask`, `ImageResizeCanvas`, `ImageMipmaps`.
+
+Also unbound: `LoadTextureCubemap` (wants the 3D module) and `ExportImageToMemory`, which
+answers a non-null pointer and a size of 0 — measured, not assumed.
+
+**No example yet.** The image half is covered by `TestExec_RaylibImageBindings`; the
+drawing half has nothing exercising it, and a gallery like `examples/raylib/shapes.lyra`
+is what it wants.
+
 ### `bindings/raylib/shapes.lyra` is complete — **[DONE 09/10]**
 
 61 public functions over 59 externs: every shape raylib draws, every collision it tests,

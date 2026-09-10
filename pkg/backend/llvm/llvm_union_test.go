@@ -414,6 +414,67 @@ let main = () -> void => {
 	}
 }
 
+// **The texture module's image half**, which is the half a machine can check: an `Image`
+// is pixels in ordinary memory, so none of this needs a window or a GL context. The
+// texture half does, and is not tested here for that reason — not because it is less
+// important.
+//
+// Four crossings it pins, each one a shape a wrong ABI breaks silently:
+//
+//   - `Image` **returned** by value — 24 bytes, a pointer and four ints, so a mixed
+//     register class on both targets;
+//   - `Color` returned by value from GetImageColor;
+//   - `^mut Image` as an in-out parameter, which is how every in-place edit works — and
+//     the mutation has to reach the *caller's* binding, which is what `self: mut Image`
+//     buys and what the resize assertion below actually establishes;
+//   - `^Color` back from LoadImageColors, walked with offset.
+//
+// The expected values follow from the generated image rather than from raylib: a solid
+// 8x4 of (200,100,50) has 32 pixels all of that colour, and a 2x2-checked 4x4 has corners
+// that differ.
+func TestExec_RaylibImageBindings(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ gen_image_color, gen_image_checked, image_valid, unload_image,
+                         image_color_at, image_colors, resize, crop, grayscale,
+                         rect, rgb, RED, BLUE }
+let main = () -> void => {
+  var img = gen_image_color(8, 4, rgb(200, 100, 50))
+  let c = image_color_at(img, 2, 2)
+  print("${image_valid(img)} ${c.r},${c.g},${c.b},${c.a} ")
+
+  let colors = image_colors(img)
+  print("${colors.len()} ${colors[0].r == 200 && colors[31].r == 200} ")
+
+  // The in-place edits mutate this binding, not a copy.
+  img.resize(16, 8)
+  print("${img.width}x${img.height} ")
+  img.crop(rect(0.0, 0.0, 4.0, 4.0))
+  print("${img.width}x${img.height} ")
+  img.grayscale()
+  let g = image_color_at(img, 1, 1)
+  print("${g.r == g.g && g.g == g.b} ")
+
+  var checks = gen_image_checked(4, 4, 2, 2, RED, BLUE)
+  println("${image_color_at(checks, 0, 0).r != image_color_at(checks, 3, 0).r}")
+  unload_image(checks)
+  unload_image(img)
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		t.Fatalf("running the raylib-image binary failed: %v", err)
+	}
+	want := "true 200,100,50,255 32 true 16x8 4x4 true true"
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if got := strings.TrimSpace(lines[len(lines)-1]); got != want {
+		t.Errorf("raylib image bindings = %q; want %q", got, want)
+	}
+}
+
 // pkgConfigLibDir asks pkg-config where a library lives, skipping when it is absent.
 //
 // `@link` emits `-lNAME` and nothing more — a search path is a build-system question the

@@ -1,0 +1,573 @@
+module bindings.raylib
+//! Images, textures, and drawing them.
+//!
+//! **Two types with two different homes.** An `Image` is pixels in ordinary memory, so
+//! everything here that only touches one works with no window open — generating, loading,
+//! resizing, reading a pixel. A [Texture2D] lives in the GPU, so every call taking one
+//! needs [init_window] to have run first; without it raylib logs a warning and hands back
+//! an invalid texture. That is the split to keep in mind when testing: the image half is
+//! checkable headlessly and the texture half is not.
+//!
+//! Both are resources Lyra does not own, so both carry `@must_release` and the compiler
+//! reports a binding that goes out of scope unreleased (lyra-W022).
+
+import std.ffi.{ with_cstring, data }
+
+/// `Image` — pixels in CPU memory, 24 bytes, crossing by value.
+///
+/// `data` is raylib's buffer and is deliberately opaque here: [image_colors] is the way to
+/// read pixels, since it copies into a `[]Color` Lyra owns rather than handing out a
+/// pointer whose lifetime nothing tracks.
+@must_release(unload_image)
+pub struct Image {
+  data: ^u8,
+  width: i32,
+  height: i32,
+  mipmaps: i32,
+  format: i32,
+}
+
+/// `Texture2D` — an image uploaded to the GPU. 20 bytes, crossing by value.
+///
+/// `id` is the OpenGL name. Everything taking one needs a window, since that is what
+/// creates the GL context.
+@must_release(unload_texture)
+pub struct Texture2D {
+  id: u32,
+  width: i32,
+  height: i32,
+  mipmaps: i32,
+  format: i32,
+}
+
+/// `RenderTexture` — a framebuffer you can draw *into*, and then draw *from*.
+///
+/// **A struct of structs**: 44 bytes holding two whole `Texture2D`s, which is the widest
+/// aggregate this binding set passes by value. Its `texture` field is what [draw_texture]
+/// and friends take.
+@must_release(unload_render_texture)
+pub struct RenderTexture {
+  id: u32,
+  texture: Texture2D,
+  depth: Texture2D,
+}
+
+/// `NPatchInfo` — how to slice a texture into a stretchable nine-patch.
+pub struct NPatchInfo {
+  source: Rectangle,
+  left: i32,
+  top: i32,
+  right: i32,
+  bottom: i32,
+  layout: i32,
+}
+
+/// No filtering: a magnified texture stays blocky. What pixel art wants.
+pub const FILTER_POINT: i32 = 0
+/// Linear filtering, the usual choice for photographic art.
+pub const FILTER_BILINEAR: i32 = 1
+pub const FILTER_TRILINEAR: i32 = 2
+pub const FILTER_ANISOTROPIC_4X: i32 = 3
+pub const FILTER_ANISOTROPIC_8X: i32 = 4
+pub const FILTER_ANISOTROPIC_16X: i32 = 5
+
+/// Tile the texture outside its bounds.
+pub const WRAP_REPEAT: i32 = 0
+/// Clamp to the edge pixel outside its bounds.
+pub const WRAP_CLAMP: i32 = 1
+pub const WRAP_MIRROR_REPEAT: i32 = 2
+pub const WRAP_MIRROR_CLAMP: i32 = 3
+
+/// A nine-patch: corners fixed, edges stretched one way, centre stretched both.
+pub const NPATCH_NINE: i32 = 0
+/// Three horizontal bands.
+pub const NPATCH_THREE_VERTICAL: i32 = 1
+/// Three vertical bands.
+pub const NPATCH_THREE_HORIZONTAL: i32 = 2
+
+/// Eight bits each of red, green, blue and alpha — what every `gen_image_*` produces and
+/// what [update_texture] expects.
+pub const PIXELFORMAT_R8G8B8A8: i32 = 7
+
+// ---------------------------------------------------------------------------------------
+// Images — loading
+// ---------------------------------------------------------------------------------------
+
+/// Load an image from a file, or `None` if it could not be read or decoded.
+///
+/// The format is taken from the extension. No window is needed.
+pub let load_image = (path: string) -> Maybe<Image> => {
+  let img = path.with_cstring((p) => unsafe { rl_load_image(p) })
+  if image_valid(img) { Some(img) } else { None }
+}
+
+/// Decode an image from bytes already in memory, or `None` if they were not a `kind`.
+///
+/// `kind` is the format's extension, with or without the dot — `"png"` and `".png"` both
+/// work. **raylib itself requires the dot**, answering NULL without one, and absorbing
+/// that is this wrapper's job: the caller is naming a format, not a filename. It is the
+/// same trap [wave_from_memory] absorbs, and raylib's header documents both the same way.
+pub let image_from_memory = (kind: string, bytes: []u8) -> Maybe<Image> => {
+  if bytes.len() == 0 {
+    None
+  } else {
+    let ext = if kind.starts_with(".") { kind } else { "." ++ kind }
+    let img = ext.with_cstring((k) =>
+      unsafe { rl_image_from_memory(k, bytes.data(), i32(bytes.len())) })
+    if image_valid(img) { Some(img) } else { None }
+  }
+}
+
+/// Read a texture back out of the GPU into an image. Needs a window.
+pub let image_from_texture = (texture: Texture2D) -> Maybe<Image> => {
+  let img = unsafe { rl_image_from_texture(texture) }
+  if image_valid(img) { Some(img) } else { None }
+}
+
+/// Grab the current framebuffer as an image — a screenshot. Needs a window.
+pub let image_from_screen = () -> Maybe<Image> => {
+  let img = unsafe { rl_image_from_screen() }
+  if image_valid(img) { Some(img) } else { None }
+}
+
+/// Whether an image holds usable pixels.
+pub let image_valid = pure (image: Image) -> bool => unsafe { rl_image_valid(image) } != 0
+
+/// Give an image's pixels back to raylib. **Nothing does this for you** — Lyra has no
+/// destructors, which is why [Image] carries `@must_release`.
+pub let unload_image = (image: Image) -> void => unsafe { rl_unload_image(image) }
+
+/// Write an image to a file, the format taken from the extension. `true` on success.
+pub let export_image = (image: Image, path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_export_image(image, p) }) != 0
+
+// ---------------------------------------------------------------------------------------
+// Images — generating
+//
+// Every one of these makes pixels from nothing, so none needs a window, and each answers
+// an `Image` the caller owns and must unload.
+// ---------------------------------------------------------------------------------------
+
+/// A solid rectangle of one colour.
+pub let gen_image_color = (width: i32, height: i32, color: Color) -> Image =>
+  unsafe { rl_gen_image_color(width, height, color) }
+
+/// A linear gradient. `direction` is the angle in degrees: 0 top-to-bottom, 90 left-to-right.
+pub let gen_image_gradient_linear =
+  (width: i32, height: i32, direction: i32, start: Color, finish: Color) -> Image =>
+    unsafe { rl_gen_image_gradient_linear(width, height, direction, start, finish) }
+
+/// A radial gradient from the centre out. `density` runs 0.0 to 1.0.
+pub let gen_image_gradient_radial =
+  (width: i32, height: i32, density: f32, inner: Color, outer: Color) -> Image =>
+    unsafe { rl_gen_image_gradient_radial(width, height, density, inner, outer) }
+
+/// A square gradient from the centre out.
+pub let gen_image_gradient_square =
+  (width: i32, height: i32, density: f32, inner: Color, outer: Color) -> Image =>
+    unsafe { rl_gen_image_gradient_square(width, height, density, inner, outer) }
+
+/// A checkerboard of `checks_x` by `checks_y` squares.
+pub let gen_image_checked =
+  (width: i32, height: i32, checks_x: i32, checks_y: i32, first: Color, second: Color) -> Image =>
+    unsafe { rl_gen_image_checked(width, height, checks_x, checks_y, first, second) }
+
+/// White noise: each pixel white with probability `factor`, else black.
+pub let gen_image_white_noise = (width: i32, height: i32, factor: f32) -> Image =>
+  unsafe { rl_gen_image_white_noise(width, height, factor) }
+
+/// Perlin noise, offset into the field so tiles can be made to join.
+pub let gen_image_perlin_noise =
+  (width: i32, height: i32, offset_x: i32, offset_y: i32, scale: f32) -> Image =>
+    unsafe { rl_gen_image_perlin_noise(width, height, offset_x, offset_y, scale) }
+
+/// Cellular (Worley) noise, with cells about `tile_size` across.
+pub let gen_image_cellular = (width: i32, height: i32, tile_size: i32) -> Image =>
+  unsafe { rl_gen_image_cellular(width, height, tile_size) }
+
+/// Text rendered into an image with raylib's default font.
+pub let gen_image_text = (width: i32, height: i32, text: string) -> Image =>
+  text.with_cstring((t) => unsafe { rl_gen_image_text(width, height, t) })
+
+// ---------------------------------------------------------------------------------------
+// Images — editing in place
+//
+// **These take `self: mut Image` and mutate the caller's binding**, which is what raylib
+// does: each frees the old pixel buffer and installs a new one. A form answering a *new*
+// `Image` would leave the caller holding a freed one that `@must_release` would then
+// insist on unloading — a double free the type system would have argued for.
+// ---------------------------------------------------------------------------------------
+
+/// Resize, smoothly (bicubic).
+pub let resize = (self: mut Image, width: i32, height: i32) -> void =>
+  unsafe { rl_image_resize(&mut self, width, height) }
+
+/// Resize by nearest neighbour, which keeps pixel art crisp.
+pub let resize_nearest = (self: mut Image, width: i32, height: i32) -> void =>
+  unsafe { rl_image_resize_nn(&mut self, width, height) }
+
+/// Crop to a rectangle.
+pub let crop = (self: mut Image, area: Rectangle) -> void =>
+  unsafe { rl_image_crop(&mut self, area) }
+
+/// Flip top to bottom.
+pub let flip_vertical = (self: mut Image) -> void =>
+  unsafe { rl_image_flip_vertical(&mut self) }
+
+/// Flip left to right.
+pub let flip_horizontal = (self: mut Image) -> void =>
+  unsafe { rl_image_flip_horizontal(&mut self) }
+
+/// Rotate clockwise by `degrees`.
+pub let rotate = (self: mut Image, degrees: i32) -> void =>
+  unsafe { rl_image_rotate(&mut self, degrees) }
+
+/// Multiply every pixel by a colour.
+pub let tint = (self: mut Image, color: Color) -> void =>
+  unsafe { rl_image_color_tint(&mut self, color) }
+
+/// Invert every pixel.
+pub let invert = (self: mut Image) -> void =>
+  unsafe { rl_image_color_invert(&mut self) }
+
+/// Convert to greyscale.
+pub let grayscale = (self: mut Image) -> void =>
+  unsafe { rl_image_color_grayscale(&mut self) }
+
+/// Convert to another pixel format — one of the `PIXELFORMAT_*` constants.
+pub let reformat = (self: mut Image, format: i32) -> void =>
+  unsafe { rl_image_format(&mut self, format) }
+
+// ---------------------------------------------------------------------------------------
+// Images — reading pixels
+// ---------------------------------------------------------------------------------------
+
+/// One pixel, by coordinate.
+pub let image_color_at = pure (image: Image, x: i32, y: i32) -> Color =>
+  unsafe { rl_image_color_at(image, x, y) }
+
+/// Every pixel, as a `[]Color` **Lyra owns**, row by row from the top left.
+///
+/// It copies and then hands raylib's own buffer straight back, so there is nothing further
+/// to release — which is why this is the pixel accessor rather than a raw `^Color`. A
+/// pointer would be faster and would put a lifetime nothing tracks into the caller's
+/// hands; the copy is what makes the result an ordinary Lyra value.
+pub let image_colors = (image: Image) -> []Color => {
+  var out: []Color = []
+  let total = i64(image.width) * i64(image.height)
+  if total > 0 {
+    let raw = unsafe { rl_image_colors(image) }
+    if raw != nullptr {
+      var i = 0
+      for i < total {
+        out.push(unsafe { raw.offset(i)^ })
+        i += 1
+      }
+      unsafe { rl_unload_image_colors(raw) }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------------------
+// Textures
+//
+// Every call below needs a window: a texture lives in the GPU, and the window is what
+// creates the context. Without one raylib logs a warning and answers an invalid texture,
+// which the `Maybe` here turns into `None`.
+// ---------------------------------------------------------------------------------------
+
+/// Load a texture straight from an image file, or `None` if it could not be uploaded.
+pub let load_texture = (path: string) -> Maybe<Texture2D> => {
+  let t = path.with_cstring((p) => unsafe { rl_load_texture(p) })
+  if texture_valid(t) { Some(t) } else { None }
+}
+
+/// Upload an image to the GPU. The image is untouched and is still the caller's to unload.
+pub let texture_from_image = (image: Image) -> Maybe<Texture2D> => {
+  let t = unsafe { rl_texture_from_image(image) }
+  if texture_valid(t) { Some(t) } else { None }
+}
+
+/// Whether a texture is a live GPU object.
+pub let texture_valid = pure (texture: Texture2D) -> bool =>
+  unsafe { rl_texture_valid(texture) } != 0
+
+/// Free a texture's GPU memory. Nothing does this for you.
+pub let unload_texture = (texture: Texture2D) -> void =>
+  unsafe { rl_unload_texture(texture) }
+
+/// Replace a texture's pixels. `pixels` must hold exactly `width * height` colours and the
+/// texture must be in `PIXELFORMAT_R8G8B8A8`; a short array is refused here rather than
+/// read past by raylib, which cannot tell how long it is.
+pub let update_texture = (texture: Texture2D, pixels: []Color) -> bool => {
+  let need = i64(texture.width) * i64(texture.height)
+  if pixels.len() != need || need == 0 {
+    false
+  } else {
+    unsafe { rl_update_texture(texture, pixels.data()) }
+    true
+  }
+}
+
+/// Replace one rectangle of a texture's pixels, with the same length rule.
+pub let update_texture_rect =
+  (texture: Texture2D, area: Rectangle, pixels: []Color) -> bool => {
+    let need = area.width.round() * area.height.round()
+    if pixels.len() != need || need == 0 {
+      false
+    } else {
+      unsafe { rl_update_texture_rec(texture, area, pixels.data()) }
+      true
+    }
+  }
+
+/// Generate mipmaps for a texture, in place.
+pub let gen_mipmaps = (self: mut Texture2D) -> void =>
+  unsafe { rl_gen_texture_mipmaps(&mut self) }
+
+/// How a magnified texture is sampled — one of the `FILTER_*` constants.
+pub let set_texture_filter = (texture: Texture2D, filter: i32) -> void =>
+  unsafe { rl_set_texture_filter(texture, filter) }
+
+/// What happens outside a texture's bounds — one of the `WRAP_*` constants.
+pub let set_texture_wrap = (texture: Texture2D, wrap: i32) -> void =>
+  unsafe { rl_set_texture_wrap(texture, wrap) }
+
+// ---------------------------------------------------------------------------------------
+// Render textures — drawing into a texture instead of the screen
+// ---------------------------------------------------------------------------------------
+
+/// A framebuffer of the given size, or `None` if the GPU refused it.
+pub let load_render_texture = (width: i32, height: i32) -> Maybe<RenderTexture> => {
+  let t = unsafe { rl_load_render_texture(width, height) }
+  if render_texture_valid(t) { Some(t) } else { None }
+}
+
+/// Whether a render texture is live.
+pub let render_texture_valid = pure (target: RenderTexture) -> bool =>
+  unsafe { rl_render_texture_valid(target) } != 0
+
+/// Free a render texture and both its attachments.
+pub let unload_render_texture = (target: RenderTexture) -> void =>
+  unsafe { rl_unload_render_texture(target) }
+
+/// Send drawing to a render texture instead of the screen, until [end_texture_mode].
+///
+/// **Its contents are upside down relative to the screen**, because OpenGL's y axis runs
+/// the other way. Drawing it back with a *negative* source height is the usual fix:
+/// `draw_texture_rect(t.texture, rect(0.0, 0.0, w, -h), …)`.
+pub let begin_texture_mode = (target: RenderTexture) -> void =>
+  unsafe { rl_begin_texture_mode(target) }
+
+/// Send drawing back to the screen.
+pub let end_texture_mode = () -> void => unsafe { rl_end_texture_mode() }
+
+// ---------------------------------------------------------------------------------------
+// Drawing
+//
+// `tint` multiplies the texture's own colours, so `WHITE` draws it unchanged and any other
+// colour shades it. That is raylib's convention and not a Lyra one.
+// ---------------------------------------------------------------------------------------
+
+/// A texture at integer coordinates.
+pub let draw_texture = (texture: Texture2D, pos_x: i32, pos_y: i32, tint: Color) -> void =>
+  unsafe { rl_draw_texture(texture, pos_x, pos_y, tint) }
+
+/// A texture at a point.
+pub let draw_texture_v = (texture: Texture2D, position: Vector2, tint: Color) -> void =>
+  unsafe { rl_draw_texture_v(texture, position, tint) }
+
+/// A texture rotated about its top-left corner and uniformly scaled.
+pub let draw_texture_ex =
+  (texture: Texture2D, position: Vector2, rotation: f32, scale: f32, tint: Color) -> void =>
+    unsafe { rl_draw_texture_ex(texture, position, rotation, scale, tint) }
+
+/// One rectangle of a texture, drawn at a point. This is how a sprite sheet is used.
+///
+/// A negative `source` width or height flips that axis, which is both how a sprite faces
+/// the other way and how a render texture's upside-down contents are corrected.
+pub let draw_texture_rect =
+  (texture: Texture2D, source: Rectangle, position: Vector2, tint: Color) -> void =>
+    unsafe { rl_draw_texture_rec(texture, source, position, tint) }
+
+/// One rectangle of a texture, stretched into another rectangle, rotated about `origin`.
+///
+/// The most general of the six: it scales, rotates and crops in one call, and `origin` is
+/// measured from `dest`'s own top-left corner rather than from the screen.
+pub let draw_texture_pro =
+  (texture: Texture2D, source: Rectangle, dest: Rectangle, origin: Vector2, rotation: f32,
+   tint: Color) -> void =>
+    unsafe { rl_draw_texture_pro(texture, source, dest, origin, rotation, tint) }
+
+/// A nine-patch: a texture sliced so its corners keep their size while its edges and
+/// centre stretch to fill `dest`. What a resizable UI panel is drawn with.
+pub let draw_texture_npatch =
+  (texture: Texture2D, patch: NPatchInfo, dest: Rectangle, origin: Vector2, rotation: f32,
+   tint: Color) -> void =>
+    unsafe { rl_draw_texture_npatch(texture, patch, dest, origin, rotation, tint) }
+
+// ---------------------------------------------------------------------------------------
+// The externs
+// ---------------------------------------------------------------------------------------
+
+@symbol("LoadImage")
+unsafe extern rl_load_image: (path: ^u8) -> Image
+
+@symbol("LoadImageFromMemory")
+unsafe extern rl_image_from_memory: (kind: ^u8, bytes: ^u8, size: i32) -> Image
+
+@symbol("LoadImageFromTexture")
+unsafe extern rl_image_from_texture: (texture: Texture2D) -> Image
+
+@symbol("LoadImageFromScreen")
+unsafe extern rl_image_from_screen: () -> Image
+
+@symbol("IsImageValid")
+unsafe extern pure rl_image_valid: (image: Image) -> u8
+
+@symbol("UnloadImage")
+unsafe extern rl_unload_image: (image: Image) -> void
+
+@symbol("ExportImage")
+unsafe extern rl_export_image: (image: Image, path: ^u8) -> u8
+
+@symbol("GenImageColor")
+unsafe extern rl_gen_image_color: (width: i32, height: i32, color: Color) -> Image
+
+@symbol("GenImageGradientLinear")
+unsafe extern rl_gen_image_gradient_linear:
+  (width: i32, height: i32, direction: i32, start: Color, finish: Color) -> Image
+
+@symbol("GenImageGradientRadial")
+unsafe extern rl_gen_image_gradient_radial:
+  (width: i32, height: i32, density: f32, inner: Color, outer: Color) -> Image
+
+@symbol("GenImageGradientSquare")
+unsafe extern rl_gen_image_gradient_square:
+  (width: i32, height: i32, density: f32, inner: Color, outer: Color) -> Image
+
+@symbol("GenImageChecked")
+unsafe extern rl_gen_image_checked:
+  (width: i32, height: i32, checks_x: i32, checks_y: i32, first: Color, second: Color) -> Image
+
+@symbol("GenImageWhiteNoise")
+unsafe extern rl_gen_image_white_noise: (width: i32, height: i32, factor: f32) -> Image
+
+@symbol("GenImagePerlinNoise")
+unsafe extern rl_gen_image_perlin_noise:
+  (width: i32, height: i32, offset_x: i32, offset_y: i32, scale: f32) -> Image
+
+@symbol("GenImageCellular")
+unsafe extern rl_gen_image_cellular: (width: i32, height: i32, tile_size: i32) -> Image
+
+@symbol("GenImageText")
+unsafe extern rl_gen_image_text: (width: i32, height: i32, text: ^u8) -> Image
+
+@symbol("ImageResize")
+unsafe extern rl_image_resize: (image: ^mut Image, width: i32, height: i32) -> void
+
+@symbol("ImageResizeNN")
+unsafe extern rl_image_resize_nn: (image: ^mut Image, width: i32, height: i32) -> void
+
+@symbol("ImageCrop")
+unsafe extern rl_image_crop: (image: ^mut Image, area: Rectangle) -> void
+
+@symbol("ImageFlipVertical")
+unsafe extern rl_image_flip_vertical: (image: ^mut Image) -> void
+
+@symbol("ImageFlipHorizontal")
+unsafe extern rl_image_flip_horizontal: (image: ^mut Image) -> void
+
+@symbol("ImageRotate")
+unsafe extern rl_image_rotate: (image: ^mut Image, degrees: i32) -> void
+
+@symbol("ImageColorTint")
+unsafe extern rl_image_color_tint: (image: ^mut Image, color: Color) -> void
+
+@symbol("ImageColorInvert")
+unsafe extern rl_image_color_invert: (image: ^mut Image) -> void
+
+@symbol("ImageColorGrayscale")
+unsafe extern rl_image_color_grayscale: (image: ^mut Image) -> void
+
+@symbol("ImageFormat")
+unsafe extern rl_image_format: (image: ^mut Image, format: i32) -> void
+
+@symbol("GetImageColor")
+unsafe extern pure rl_image_color_at: (image: Image, x: i32, y: i32) -> Color
+
+@symbol("LoadImageColors")
+unsafe extern rl_image_colors: (image: Image) -> ^Color
+
+@symbol("UnloadImageColors")
+unsafe extern rl_unload_image_colors: (colors: ^Color) -> void
+
+@symbol("LoadTexture")
+unsafe extern rl_load_texture: (path: ^u8) -> Texture2D
+
+@symbol("LoadTextureFromImage")
+unsafe extern rl_texture_from_image: (image: Image) -> Texture2D
+
+@symbol("IsTextureValid")
+unsafe extern pure rl_texture_valid: (texture: Texture2D) -> u8
+
+@symbol("UnloadTexture")
+unsafe extern rl_unload_texture: (texture: Texture2D) -> void
+
+@symbol("UpdateTexture")
+unsafe extern rl_update_texture: (texture: Texture2D, pixels: ^Color) -> void
+
+@symbol("UpdateTextureRec")
+unsafe extern rl_update_texture_rec:
+  (texture: Texture2D, area: Rectangle, pixels: ^Color) -> void
+
+@symbol("GenTextureMipmaps")
+unsafe extern rl_gen_texture_mipmaps: (texture: ^mut Texture2D) -> void
+
+@symbol("SetTextureFilter")
+unsafe extern rl_set_texture_filter: (texture: Texture2D, filter: i32) -> void
+
+@symbol("SetTextureWrap")
+unsafe extern rl_set_texture_wrap: (texture: Texture2D, wrap: i32) -> void
+
+@symbol("LoadRenderTexture")
+unsafe extern rl_load_render_texture: (width: i32, height: i32) -> RenderTexture
+
+@symbol("IsRenderTextureValid")
+unsafe extern pure rl_render_texture_valid: (target: RenderTexture) -> u8
+
+@symbol("UnloadRenderTexture")
+unsafe extern rl_unload_render_texture: (target: RenderTexture) -> void
+
+@symbol("BeginTextureMode")
+unsafe extern rl_begin_texture_mode: (target: RenderTexture) -> void
+
+@symbol("EndTextureMode")
+unsafe extern rl_end_texture_mode: () -> void
+
+@symbol("DrawTexture")
+unsafe extern rl_draw_texture:
+  (texture: Texture2D, pos_x: i32, pos_y: i32, tint: Color) -> void
+
+@symbol("DrawTextureV")
+unsafe extern rl_draw_texture_v:
+  (texture: Texture2D, position: Vector2, tint: Color) -> void
+
+@symbol("DrawTextureEx")
+unsafe extern rl_draw_texture_ex:
+  (texture: Texture2D, position: Vector2, rotation: f32, scale: f32, tint: Color) -> void
+
+@symbol("DrawTextureRec")
+unsafe extern rl_draw_texture_rec:
+  (texture: Texture2D, source: Rectangle, position: Vector2, tint: Color) -> void
+
+@symbol("DrawTexturePro")
+unsafe extern rl_draw_texture_pro:
+  (texture: Texture2D, source: Rectangle, dest: Rectangle, origin: Vector2, rotation: f32,
+   tint: Color) -> void
+
+@symbol("DrawTextureNPatch")
+unsafe extern rl_draw_texture_npatch:
+  (texture: Texture2D, patch: NPatchInfo, dest: Rectangle, origin: Vector2, rotation: f32,
+   tint: Color) -> void

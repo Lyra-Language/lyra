@@ -9,6 +9,48 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — the texture bindings, and `@must_release` earning its keep
+
+`bindings/raylib/texture.lyra`: 46 functions, the whole pipeline from pixels to screen.
+**6 of 6** drawing calls, **3 of 3** configuration, 9 of 10 loading.
+
+**Four capabilities were probed before writing**, as the shapes module taught: an `Image`
+returned by value (24 bytes, a pointer and four ints — a mixed register class on both
+targets), a `Color` returned by value, `^mut Image` as an in-out parameter, and `^Color`
+walked back from `LoadImageColors`. All four worked.
+
+**The design decision worth recording is `self: mut Image`.** raylib's `ImageResize` frees
+the old pixel buffer and installs a new one, mutating through a pointer. The obvious Lyra
+shape — take an `Image`, answer a new one — is a trap: the caller would hold a freed image
+that `@must_release` would then *insist* on unloading, a double free the type system would
+have argued for. The mutating form keeps one image and one unload. Finding the spelling
+took a probe too, since the modifier binds to the **type** and not the name — `(self: mut
+Image)`, which the error message for the wrong guess names outright.
+
+**`@must_release` paid for itself here**, which is the first time it has been used by
+something other than the module it was built for. It caught a leak in this module's own
+probe program: a `match` arm that unwrapped a `Texture2D` and forgot to unload it. That is
+the exact shape the feature exists for, found in code written by someone who had just
+written the feature.
+
+**One limit is structural and worth stating rather than working around.** An `Image` is
+CPU pixels, so every generation, load and edit is checkable headlessly —
+`TestExec_RaylibImageBindings` does. A `Texture2D` is a GL object and needs a window, so
+the six drawing calls and the whole texture half are **not tested**, and cannot be from a
+shell that cannot open one. What was checked is that they degrade safely: with no context
+raylib warns and answers an invalid texture, which the `Maybe` turns into `None` rather
+than a crash.
+
+Two smaller findings. `LoadImageFromMemory` has the **same dot trap** as
+`LoadWaveFromMemory` — raylib's header documents both with the same words, `i.e. '.png'` —
+so the wrapper normalises identically. And `ExportImageToMemory` is **left unbound because
+it does not work**: it answers a non-null pointer with a size of 0, measured both with and
+without the dot.
+
+The diagnostic gained an article while these types were being written: "a Image" became
+"an Image", which is the sort of thing a reader notices in a message they were already
+unhappy to see.
+
 ### 09/10/26 — `lyrac run` passes arguments through
 
 `lyrac run prog.lyra -- --verbose input.txt`, reachable in the program through

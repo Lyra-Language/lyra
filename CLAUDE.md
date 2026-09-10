@@ -1727,6 +1727,37 @@ geometry whose answer follows from the numbers. 61 of 61 public functions are ex
 The split exists because a drawing demo cannot be checked by a machine and the geometry
 underneath it can — the lesson breakout learned, applied at the start this time.
 
+**`bindings/raylib/texture.lyra` is the third module** (09/10) — 46 functions covering the
+whole pipeline from pixels to screen: **6 of 6** drawing calls, **3 of 3** configuration,
+and 9 of 10 loading (`LoadTextureCubemap` wants the 3D module). What it establishes:
+
+- **`Image` and `Texture2D` are the first `@must_release` types that are not audio**, and
+  the check composes exactly as designed — it caught a leak in the module's own probe
+  program, in a `match` arm that unwrapped a texture and forgot to unload it.
+- **An in-place edit takes `self: mut Image`**, not a fresh return. raylib's `ImageResize`
+  frees the old pixel buffer and installs a new one, so a form answering a *new* `Image`
+  would leave the caller holding a freed one that `@must_release` would then insist on
+  unloading — a double free the type system would have argued for. `(self: mut Image)` —
+  the modifier binds to the **type**, after the colon — makes `img.resize(16, 8)` one
+  image and one unload.
+- **The image half is headless and the texture half is not.** An `Image` is CPU pixels;
+  a `Texture2D` is a GL object and every call taking one needs `init_window` first. That
+  is what `TestExec_RaylibImageBindings` can cover and why nothing tests the drawing half.
+  Without a context raylib warns and answers an invalid texture, which the `Maybe` turns
+  into `None` — it degrades rather than crashing, which was worth checking.
+- **`image_colors` copies into a `[]Color` and hands raylib's buffer straight back**, so
+  there is nothing further to release. A raw `^Color` would be faster and would put a
+  lifetime nothing tracks into the caller's hands.
+- `LoadImageFromMemory` has **the same dot trap as `LoadWaveFromMemory`** — raylib's header
+  documents both identically — so `image_from_memory` normalises the extension the same way.
+
+Three families are deliberately unbound and each is its own job: the ~17 colour utilities
+(`ColorLerp`, `Fade`, `ColorToHSV`) belong in `color.lyra`; the ~20 `ImageDraw*` calls are
+the shapes module again but rasterising onto an `Image`; and the remaining image
+manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`) is a
+fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
+pointer and a size of **0**, measured.
+
 `examples/raylib/breakout.lyra` is what the pair is *for*: a playable game — paddle, ball, a
 `[]Brick` grid, lives, score, sound, and a `data GameState` a `match` covers exhaustively —
 with no `unsafe` and no `extern` in it. Its tones are **synthesised in Lyra** rather than

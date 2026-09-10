@@ -208,7 +208,7 @@ func (c *mustRelease) report(st heldState) {
 			Severity: diag.SeverityWarning,
 			Code:     diag.CodeUnreleasedResource,
 			Message: fmt.Sprintf(
-				"%q holds a %s and goes out of scope without being released; %s. "+
+				"%q holds "+article(r.typName)+" %s and goes out of scope without being released; %s. "+
 					"%s is marked `@must_release(%s)` because it names a resource Lyra does not own — "+
 					"there are no destructors, so nothing will release it for you. "+
 					"If the value outlives this function, return it or pass it to an `own` parameter, "+
@@ -855,4 +855,19 @@ func bareName(e ast.Expression) (string, bool) {
 		return "", false
 	}
 	return id.Name, true
+}
+
+// article picks "a" or "an" for a type name. Crude on purpose — it reads the first letter
+// and nothing else, which is right for every type name a program is likely to write and
+// wrong for the handful that begin with a vowel letter but a consonant sound. "a Image"
+// is the kind of thing a reader notices in a message they were already unhappy to see.
+func article(typeName string) string {
+	if typeName == "" {
+		return "a"
+	}
+	switch typeName[0] {
+	case 'A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u':
+		return "an"
+	}
+	return "a"
 }
