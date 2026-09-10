@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — three more the shapes gallery had been hiding
+
+The shapes example had been given bigger labels **blind**, on the assumption that a layout
+calculation was enough. One screenshot found three bugs, none of them about layout, and two
+of them long-standing.
+
+**A yellow triangle slashed diagonally across the entire window.** The example's own
+`cos32`/`sin32` were bare three-term Taylor series, which are accurate near zero and
+worthless away from it: `cos32(2*PI)` answered **-39.3** instead of 1.0, so the closing
+vertex of a triangle fan landed far off-screen. Range-reducing to [-PI, PI] before the
+series and going to five terms brings the error under 0.002 across a full turn, measured
+both in Python and by running the fixed Lyra.
+
+**`sin32` was worse, and broken by a *parsing* subtlety.** Its terms were written with the
+operator leading the continuation line:
+
+	radians - radians * x2 / 6.0 + radians * x2 * x2 / 120.0
+	  - radians * x2 * x2 * x2 / 5040.0
+
+A line starting with `-` is not a continuation — the grammar deliberately excludes `-`,
+`(`, `[` and `*`, since each can begin a statement — so that is **two** statements, and a
+block's value is its last one. The function returned only its final term. It compiled and
+ran and was wrong. Writing the same thing with a leading `+` is a type error, because there
+is no unary plus; the `-` spelling is the silent one. **Put the operator at the end of the
+line.**
+
+**The triangle fan drew nothing at all.** raylib culls clockwise triangles, screen y grows
+downward, and the textbook `(cos t, +sin t)` sweep is anticlockwise only on a
+mathematician's axes. Subtracting the sine fixes it. The binding's `draw_triangle_fan` now
+carries the rule, as `draw_triangle` already did.
+
+And one non-bug worth knowing: an **em dash renders as `?`** in raylib's default font, which
+is ASCII. `"collision — move the mouse"` was the only non-ASCII label in any example.
+
+**The pattern across all three is the same.** Every one is invisible to a layout
+calculation, because the calculation reads the offsets *written in the source* and these
+were computed — a vertex from a trig call, a fan from a loop, a glyph from a font. Two of
+them predate the label change entirely and had been shipping since the example was written,
+looked at by nobody. **A gallery nobody has looked at is a gallery nobody has tested.**
+
 ### 09/10/26 — two bugs a screenshot found, and the discovery that I can take one
 
 Both reported from running the gallery, and both invisible to everything the suite does.

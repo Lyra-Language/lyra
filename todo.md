@@ -3456,6 +3456,26 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
+### A leading `-` on a continuation line silently splits a statement
+
+	let f = pure (x: f32) -> f32 => {
+	  x - x * x / 6.0
+	    - x * x * x / 120.0     // a second statement, and the block's value
+	}
+
+The grammar deliberately keeps `-`, `(`, `[` and `*` off the continuation list, since each
+can begin a statement — that is the right call and the tree-sitter notes explain it. What
+makes this one sharp is the **asymmetry**: a leading `+` is a type error (there is no unary
+plus), so it is caught, while a leading `-` parses as a fresh statement and the enclosing
+block quietly evaluates to it. A multi-term expression written the natural way loses every
+term but the last.
+
+Found 09/10 in `examples/raylib/shapes.lyra`'s `sin32`, where it had been shipping since
+the example was written. Worth a **warning**: a block statement that is a bare unary
+negation of an expression, in a block with more than one statement, is almost always a
+continuation the author meant to join. `lyra-W020`'s neighbourhood — an expression whose
+value is discarded — may already be the place for it.
+
 ### `bindings/raylib/texture.lyra` — **[DONE 09/10]**
 
 46 functions: images (load, generate, edit in place, read pixels), textures (load, upload,

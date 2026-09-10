@@ -212,6 +212,12 @@ pub let draw_triangle_lines = (v1: Vector2, v2: Vector2, v3: Vector2, color: Col
 
 /// A fan of triangles sharing the first point.
 ///
+/// **The rim must run anticlockwise *on screen*, or raylib culls every triangle and the
+/// fan silently draws nothing** — the same winding rule [draw_triangle] carries, and the
+/// same silent failure. Screen y grows downward, so the textbook `(cos t, +sin t)` sweep
+/// is anticlockwise on a mathematician's axes and *clockwise* here: subtract the sine.
+/// `examples/raylib/shapes.lyra` had it the textbook way and drew an empty panel.
+///
 /// **An empty array draws nothing rather than trapping.** `data()` traps on one, correctly
 /// — there is no first element to address — but "draw no triangles" is the obvious meaning
 /// of an empty list of points, and absorbing that is what a binding module is for. Every
@@ -223,6 +229,9 @@ pub let draw_triangle_fan = (points: []Vector2, color: Color) -> void => {
 }
 
 /// A strip of triangles, each sharing an edge with the last.
+///
+/// Winding alternates along a strip by construction, so unlike [draw_triangle_fan] this
+/// one has no orientation to get wrong.
 pub let draw_triangle_strip = (points: []Vector2, color: Color) -> void => {
   if points.len() > 0 {
     unsafe { rl_draw_triangle_strip(points.data(), i32(points.len()), color) }
