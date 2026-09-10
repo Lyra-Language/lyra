@@ -82,11 +82,21 @@ func signedTypeMinMagnitude(name types.PrimitiveTypeName) (int64, bool) {
 	return 0, false
 }
 
-// checkIntegerLiteralRange emits an error when expr is a compile-time integer
-// constant that does not fit in the concrete integer type targetType. It is a
-// no-op when expr is not a literal constant or targetType is not a concrete
-// integer. The variable name is used in the error message.
-func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Expression, targetType types.Type) {
+// checkLiteralRange emits an error when expr is a compile-time numeric constant that does
+// not fit the concrete numeric type targetType. It is a no-op when expr is not a literal
+// constant or targetType is not a concrete number. The variable name is used in the
+// message.
+//
+// **Fifteen call sites funnel here**, which is what makes the workspace CLAUDE.md's claim
+// — "a literal that cannot hold its value is a compile error in every position" — true
+// rather than aspirational: an annotation, an argument, a return, a struct field, an array
+// element, a repeat, a compound assignment, a generic instantiation. Adding a numeric kind
+// here reaches all of them; adding one at a call site reaches one.
+//
+// Floats joined 09/10, and until then that claim held for integers only: `let x: f32 =
+// 1.0e40` was silently `inf` in every one of those positions. It was named
+// `checkLiteralRange` while it was the integer check.
+func (tc *TypeChecker) checkLiteralRange(varName string, expr ast.Expression, targetType types.Type) {
 	// A newtype is checked against its base — a Percent value is a u8 and cannot
 	// hold 300 either. Skipped when the newtype carries a range constraint, since
 	// that constraint is a subset of the base and checkRangeConstraints already
@@ -98,7 +108,29 @@ func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Express
 		targetType = tc.resolveTypeIfKnown(ct.Type, expr.GetLocation())
 	}
 	toP, ok := targetType.(types.PrimitiveType)
-	if !ok || !isAnyConcreteInt(toP.Name) {
+	if !ok {
+		return
+	}
+	// A float target: the bound is the type's finite range, since what makes a float
+	// literal wrong is **overflowing to infinity** rather than truncating. Precision loss
+	// is not an error at any magnitude — `let x: f32 = 0.1` is what the type is for.
+	if isAnyConcreteFloat(toP.Name) {
+		v, isConst := floatLiteralValue(expr)
+		if !isConst || floatFitsInType(v, toP.Name) {
+			return
+		}
+		if tc.overflowReported[expr] {
+			return
+		}
+		if tc.overflowReported == nil {
+			tc.overflowReported = map[ast.Expression]bool{}
+		}
+		tc.overflowReported[expr] = true
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s: literal value %v overflows %s — it would become infinity", varName, v, toP.Name)
+		return
+	}
+	if !isAnyConcreteInt(toP.Name) {
 		return
 	}
 	// A **wide** constant does not fold to an int64, so it is range-checked against the
@@ -213,4 +245,39 @@ func intWidthOf(name types.PrimitiveTypeName) (bits int, signed bool, ok bool) {
 		return 128, false, true
 	}
 	return 0, false, false
+}
+
+// floatLiteralValue reads a written float constant, and whether the expression is one.
+//
+// A literal or a negated literal, and nothing more: there is no float constant folder in
+// this compiler the way `ast.FoldIntExpr` folds integers, so `f32(BIG * 2.0)` is not seen.
+// That is the same scope limit `checkLiteralRange` has, and it errs toward
+// accepting — the conversion is legal, so missing a case costs a diagnostic rather than
+// admitting something unsound.
+func floatLiteralValue(expr ast.Expression) (float64, bool) {
+	switch e := expr.(type) {
+	case *ast.FloatLiteralExpr:
+		return e.Value, true
+	case *ast.NegationExpr:
+		if inner, ok := floatLiteralValue(e.Operand); ok {
+			return -inner, true
+		}
+	}
+	return 0, false
+}
+
+// floatFitsInType reports whether a value is within the finite range of a float type —
+// its *magnitude*, since what makes a narrowing surprising is overflowing to infinity
+// rather than losing digits. Answers true for anything that is not a narrower float, so
+// callers may ask unconditionally.
+func floatFitsInType(v float64, name types.PrimitiveTypeName) bool {
+	magnitude := math.Abs(v)
+	switch name {
+	case types.Float16:
+		// The largest finite half is 65504; the next value up rounds to infinity.
+		return magnitude <= 65504
+	case types.Float32:
+		return magnitude <= math.MaxFloat32
+	}
+	return true
 }

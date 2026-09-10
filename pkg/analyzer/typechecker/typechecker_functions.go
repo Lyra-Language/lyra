@@ -393,7 +393,7 @@ func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, l
 	// The propagation below deliberately leaves an unfitting literal untyped,
 	// expecting a *downstream* site to report it — and a return has no downstream,
 	// so this is the same call the decl/reassign sites make, with the same dedup.
-	tc.checkIntegerLiteralRange(funcName, value, declaredReturn)
+	tc.checkLiteralRange(funcName, value, declaredReturn)
 	tc.propagateExpectedType(value, declaredReturn)
 	if ownedReturn {
 		tc.checkAllocationCompat(valueType, declaredReturn, loc, funcName)
@@ -572,7 +572,7 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 		// A call *through a function-typed value* is still an argument position, and a
 		// literal too wide for the parameter is the same error here as at a direct call.
 		// A function type has no parameter names to quote, so the subject is positional.
-		tc.checkIntegerLiteralRange(
+		tc.checkLiteralRange(
 			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, param.Type)
 	}
 
@@ -1588,7 +1588,7 @@ func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter
 		// declaration, reassignment and return positions already make; the language
 		// rule is that a literal which cannot hold its value is an error in *every*
 		// position.
-		tc.checkIntegerLiteralRange(
+		tc.checkLiteralRange(
 			fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName),
 			arg, resolvedParamType)
 		if param.TypeModifier == types.Mut {

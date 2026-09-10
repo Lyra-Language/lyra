@@ -32,9 +32,9 @@ import (
 // non-constant value is left to the value-range pass (which independently reports a
 // provable violation, e.g. `let n: u8 = 150` then `let p: Percent = n`) and otherwise
 // to the runtime. So this stays a definite-only compile-time check, like
-// checkIntegerLiteralRange, and never yields a false positive.
+// checkLiteralRange, and never yields a false positive.
 //
-// A constrained newtype is a *ConstrainedType, which checkIntegerLiteralRange skips (it
+// A constrained newtype is a *ConstrainedType, which checkLiteralRange skips (it
 // only matches a bare PrimitiveType), so there is no double report against the *base*
 // type's own bounds: a constraint is normally a subset of the base, so a constraint
 // violation subsumes a base overflow.
@@ -319,7 +319,7 @@ func (tc *TypeChecker) reportStepViolation(typeName, valueStr string, value ast.
 }
 
 // hasRangeConstraint reports whether a newtype declares any range(...) constraint.
-// checkIntegerLiteralRange uses it to decide who reports an out-of-range constant:
+// checkLiteralRange uses it to decide who reports an out-of-range constant:
 // with a range constraint this function's caller owns it (lyra-E023), without one
 // the base type's own bounds are the only check there is.
 func hasRangeConstraint(ct *types.ConstrainedType) bool {

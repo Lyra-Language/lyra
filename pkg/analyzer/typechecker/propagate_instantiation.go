@@ -228,7 +228,7 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 		// `Maybe<u8>` has a u8 payload holding 300, which is assignable to u8 and
 		// wrong. Until this stamp existed the question could not arise, because the
 		// annotation was rejected wholesale before any narrowing happened.
-		tc.checkIntegerLiteralRange(ctor, elem, expected)
+		tc.checkLiteralRange(ctor, elem, expected)
 		actual := tc.inferExprType(elem)
 		if actual != nil && !tc.assignableValue(elem, actual, expected) {
 			tc.addError(elem.GetLocation(), SeverityError,

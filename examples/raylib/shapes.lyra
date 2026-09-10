@@ -4,8 +4,8 @@ module main
 //! Two programs in one file, because a drawing demo cannot be checked by a machine and the
 //! geometry underneath it can:
 //!
-//!   lyrac build examples/raylib/shapes.lyra && ./shapes --check   # geometry, exits 0/1
-//!   lyrac run examples/raylib/shapes.lyra                         # the gallery
+//!  LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac build examples/raylib/shapes.lyra && ./shapes --check   # geometry, exits 0/1
+//!  LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac run examples/raylib/shapes.lyra # the gallery
 //!
 //! It is `build` and then the binary for the first one because `lyrac run` passes no
 //! arguments through to the program.
@@ -17,7 +17,7 @@ module main
 
 import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps,
-  begin_drawing, end_drawing, clear_background,
+  begin_drawing, end_drawing, clear_background, elapsed,
   Vector2, vec2, rect,
   draw_pixel, draw_pixel_v, draw_line, draw_line_ex, draw_line_bezier, draw_line_dashed, draw_line_strip,
   draw_circle, draw_circle_lines, draw_circle_gradient, draw_circle_sector,
@@ -188,10 +188,6 @@ let check_case = (name: string, got: bool, want: bool) -> i64 => {
 }
 
 /// Float comparison with a tolerance, since these come back through the C boundary as f32.
-///
-/// The arithmetic stays in f32 rather than widening: `f64(a) - f64(b)` would be more
-/// precise and then have nowhere to go, because narrowing f64 back to f32 has no spelling
-/// in the language at all — `f32(x)` on an f64 is refused outright.
 let near = pure (a: f32, b: f32) -> bool => {
   let d = a - b
   let magnitude = if d < 0.0 { 0.0 - d } else { d }
@@ -206,24 +202,21 @@ let run_gallery = () -> void => {
   init_window(900, 640, "Lyra — raylib shapes")
   set_target_fps(60)
 
-  // Animation runs off a frame counter rather than off `elapsed()`, and that is forced
-  // rather than stylistic: the clock is f64 and **narrowing f64 to f32 has no spelling in
-  // the language** — `f32(x)` on an f64 is refused outright — while every raylib
-  // coordinate is f32. Counting frames stays in integers and converts upward, which is
-  // allowed, and it makes the animation deterministic into the bargain.
-  var frame = 0
   for !should_close() {
-    frame += 1
+    // `elapsed()` is f64 and every raylib coordinate is f32, so this is a narrowing —
+    // which had no spelling in the language at all until 09/10 and forced this loop to
+    // count frames instead.
+    let t = f32(elapsed())
     let cursor = mouse_position()
 
     begin_drawing()
     clear_background(RAYWHITE)
 
-    draw_lines_panel(20.0, 40.0, frame)
-    draw_circles_panel(320.0, 40.0, frame)
-    draw_rects_panel(620.0, 40.0, frame)
-    draw_polys_panel(20.0, 250.0, frame)
-    draw_splines_panel(320.0, 250.0, frame)
+    draw_lines_panel(20.0, 40.0, t)
+    draw_circles_panel(320.0, 40.0, t)
+    draw_rects_panel(620.0, 40.0, t)
+    draw_polys_panel(20.0, 250.0, t)
+    draw_splines_panel(320.0, 250.0, t)
     draw_collision_panel(20.0, 440.0, cursor)
 
     draw_text("lines", 20, 20, 18, DARKGRAY)
@@ -237,7 +230,7 @@ let run_gallery = () -> void => {
   close_window()
 }
 
-let draw_lines_panel = (x: f32, y: f32, frame: i64) -> void => {
+let draw_lines_panel = (x: f32, y: f32, t: f32) -> void => {
   draw_line(vec2(x, y), vec2(x + 260.0, y), BLACK)
   draw_line_ex(vec2(x, y + 20.0), vec2(x + 260.0, y + 20.0), 4.0, RED)
   draw_line_bezier(vec2(x, y + 45.0), vec2(x + 260.0, y + 75.0), 3.0, BLUE)
@@ -245,7 +238,7 @@ let draw_lines_panel = (x: f32, y: f32, frame: i64) -> void => {
 
   // Two travelling pixels, one addressed each way — the module's one deliberate
   // duplicate, so the example exercises both spellings.
-  let phase = cycle(frame, 240)
+  let phase = wrap01(t * 0.25)
   draw_pixel_v(vec2(x + 260.0 * phase, y + 120.0), BLACK)
   draw_pixel(i32((x + 260.0 * phase).round()), i32((y + 128.0).round()), RED)
 
@@ -260,13 +253,13 @@ let draw_lines_panel = (x: f32, y: f32, frame: i64) -> void => {
   draw_line_strip(zigzag, GREEN)
 }
 
-let draw_circles_panel = (x: f32, y: f32, frame: i64) -> void => {
+let draw_circles_panel = (x: f32, y: f32, t: f32) -> void => {
   draw_circle(vec2(x + 40.0, y + 40.0), 30.0, RED)
   draw_circle_lines(vec2(x + 120.0, y + 40.0), 30.0, BLUE)
   draw_circle_gradient(vec2(x + 200.0, y + 40.0), 30.0, YELLOW, ORANGE)
 
   // The sector sweeps, which is what makes an angle argument legible.
-  let sweep = 360.0 * cycle(frame, 400)
+  let sweep = 360.0 * wrap01(t * 0.15)
   draw_circle_sector(vec2(x + 40.0, y + 120.0), 30.0, 0.0, sweep, 32, PURPLE)
   draw_circle_sector_lines(vec2(x + 120.0, y + 120.0), 30.0, 0.0, sweep, 32, DARKGRAY)
 
@@ -277,7 +270,7 @@ let draw_circles_panel = (x: f32, y: f32, frame: i64) -> void => {
   draw_ring_lines(vec2(x + 120.0, y + 180.0), 12.0, 26.0, 0.0, 360.0, 32, RED)
 }
 
-let draw_rects_panel = (x: f32, y: f32, frame: i64) -> void => {
+let draw_rects_panel = (x: f32, y: f32, t: f32) -> void => {
   draw_rectangle(rect(x, y, 60.0, 40.0), RED)
   draw_rectangle_v(vec2(x + 80.0, y), vec2(60.0, 40.0), GREEN)
   draw_rectangle_lines(rect(x + 160.0, y, 60.0, 40.0), 3.0, BLUE)
@@ -288,11 +281,11 @@ let draw_rects_panel = (x: f32, y: f32, frame: i64) -> void => {
   draw_rectangle_gradient(rect(x, y + 120.0, 140.0, 50.0), RED, YELLOW, GREEN, BLUE)
 
   // Rotated about its own centre, so it spins in place rather than orbiting.
-  let spin = 360.0 * cycle(frame, 600)
+  let spin = 360.0 * wrap01(t * 0.1)
   draw_rectangle_pro(rect(x + 190.0, y + 145.0, 50.0, 50.0), vec2(25.0, 25.0), spin, ORANGE)
 }
 
-let draw_polys_panel = (x: f32, y: f32, frame: i64) -> void => {
+let draw_polys_panel = (x: f32, y: f32, t: f32) -> void => {
   // Counter-clockwise, which `draw_triangle` requires and silently culls without.
   draw_triangle(vec2(x + 40.0, y), vec2(x, y + 60.0), vec2(x + 80.0, y + 60.0), RED)
   draw_triangle_lines(vec2(x + 140.0, y), vec2(x + 100.0, y + 60.0), vec2(x + 180.0, y + 60.0), BLUE)
@@ -316,13 +309,13 @@ let draw_polys_panel = (x: f32, y: f32, frame: i64) -> void => {
   }
   draw_triangle_strip(strip, LIGHTGRAY)
 
-  let spin = 360.0 * cycle(frame, 750)
+  let spin = 360.0 * wrap01(t * 0.08)
   draw_poly(vec2(x + 240.0, y + 120.0), 6, 30.0, spin, GREEN)
   draw_poly_lines(vec2(x + 160.0, y + 150.0), 5, 26.0, spin, PURPLE)
   draw_poly_lines_ex(vec2(x + 60.0, y + 150.0), 8, 26.0, spin, 3.0, BLACK)
 }
 
-let draw_splines_panel = (x: f32, y: f32, frame: i64) -> void => {
+let draw_splines_panel = (x: f32, y: f32, t: f32) -> void => {
   let control: []Vector2 = [
     vec2(x, y + 60.0), vec2(x + 70.0, y), vec2(x + 140.0, y + 90.0), vec2(x + 210.0, y + 20.0),
   ]
@@ -347,7 +340,7 @@ let draw_splines_panel = (x: f32, y: f32, frame: i64) -> void => {
 
   // A dot riding the curve, which is what the `spline_point_*` family is for: following a
   // path rather than only drawing it.
-  let along = cycle(frame, 300)
+  let along = wrap01(t * 0.2)
   draw_circle(spline_point_catmull_rom(s1, s2, s3, s4, along), 5.0, BLACK)
   draw_circle(spline_point_bezier_cubic(s1, s2, s3, s4, along), 4.0, PURPLE)
   draw_circle(spline_point_basis(s1, s2, s3, s4, along), 4.0, BLUE)
@@ -412,11 +405,11 @@ let draw_collision_panel = (x: f32, y: f32, cursor: Vector2) -> void => {
 // Small helpers
 // ---------------------------------------------------------------------------------------
 
-/// A 0.0..1.0 phase that repeats every `period` frames.
-///
-/// Integers all the way until the last step, which converts *upward* to f32 — the
-/// direction the language allows.
-let cycle = pure (frame: i64, period: i64) -> f32 => f32(frame %% period) / f32(period)
+/// The fractional part of a positive number — a 0.0..1.0 phase from a running clock.
+let wrap01 = pure (v: f32) -> f32 => {
+  let whole = v.floor()
+  v - f32(whole)
+}
 
 /// Cosine and sine at f32, for laying out a fan of points. Six terms of the Taylor series
 /// is ample over the one turn these are asked for, and it keeps the example free of a

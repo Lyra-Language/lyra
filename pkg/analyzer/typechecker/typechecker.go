@@ -77,7 +77,7 @@ type TypeChecker struct {
 	defaultedCtors   map[ast.Expression]bool    // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
 	provisionalStamp bool                       // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
 	enclosingGen     *generatorContext          // the `gen` body being checked, nil outside one; see checkYieldExpr
-	// overflowReported guards checkIntegerLiteralRange: a leaf can be narrowed by more
+	// overflowReported guards checkLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
 	// constraintReported is that same guard for checkNewtypeConstraints, and it is
@@ -548,7 +548,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// (The *newtype* constraint checks are not here: they ride propagateExpectedType
 	// below, so they reach every position a newtype context flows to rather than only
 	// a binding — see checkNewtypeConstraints.)
-	tc.checkIntegerLiteralRange(decl.Name, decl.Value, resolvedDeclType)
+	tc.checkLiteralRange(decl.Name, decl.Value, resolvedDeclType)
 
 	// The implicit-conversion rules are checked *here*, before the annotation is
 	// recorded on the value below — after that the value node reads as the annotation
@@ -1357,7 +1357,7 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 	}
 	// Check that the literal value fits within the variable's integer type's range.
 	// (Newtype constraints ride propagateExpectedType below — see checkNewtypeConstraints.)
-	tc.checkIntegerLiteralRange(stmt.Name, stmt.Value, effective)
+	tc.checkLiteralRange(stmt.Name, stmt.Value, effective)
 	// Record the variable's width on untyped literal leaves of the RHS (`x = x + 1`
 	// where x: i8 lowers `1` as i8), matching an annotated let binding.
 	tc.propagateExpectedType(stmt.Value, effective)
@@ -1475,7 +1475,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if !tc.checkStorable(stmt.Value, valueType, targetType, targetType, stmt.GetLocation(), "") {
 		return
 	}
-	tc.checkIntegerLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
+	tc.checkLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
 	if ct, ok := targetType.(*types.ConstrainedType); ok {
 		tc.checkImplicitNewtypeConversion(stmt.Value, valueType, ct)
 	}
@@ -1765,7 +1765,7 @@ func (tc *TypeChecker) checkMathAssignOpToLValue(expr *ast.MathAssignOpExpr) {
 	// The right operand is narrowed to the target's type and must fit it, which is the
 	// same pair of calls the binding form makes through checkAssignToBinding.
 	tc.propagateExpectedType(expr.Right, target)
-	tc.checkIntegerLiteralRange("compound assignment", expr.Right, target)
+	tc.checkLiteralRange("compound assignment", expr.Right, target)
 	right := tc.inferExprType(expr.Right)
 	if right == nil {
 		return
@@ -2727,16 +2727,42 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 			"cannot convert %s to %s: use floor(), ceil(), or round() to convert explicitly", argType, ident.Name)
 		return targetType
 	}
-	if srcPrec, dstPrec := floatPrecision(argType), floatPrecision(targetType); srcPrec > dstPrec && dstPrec > 0 {
-		tc.addError(call.GetLocation(), SeverityError,
-			"cannot convert %s to %s: narrowing conversion may lose precision", argType, ident.Name)
-		return targetType
+	// **Float→float narrowing is allowed**, and a compile-time constant that overflows
+	// the target is refused — the same shape as the integer rule directly below, which
+	// is the point: `u8(x)` truncates and is permitted while `u8(256)` is not.
+	//
+	// It was refused outright until 09/10, and the reason that was wrong is worth
+	// keeping. The float→**int** error above names `floor`/`ceil`/`round` because
+	// rounding *mode* is a real choice; f64→f32 has no such choice, since IEEE
+	// specifies round-to-nearest-even, so a named conversion here would disambiguate
+	// nothing. And the old message named no way forward at all: every raylib
+	// coordinate is f32 while `elapsed()` is f64, so a clock-driven animation could
+	// not be written — `examples/raylib/shapes.lyra` counts frames because of it.
+	//
+	// Precision loss itself is **not** refused, for a constant or anything else:
+	// `f32(0.1)` is exactly what the narrower type is for. What is refused is a value
+	// silently becoming infinity, which is the surprise worth a diagnostic.
+	//
+	// The range test is **not** guarded on the source being wider, and that is the half
+	// that took a probe to get right: an untyped float literal has no precision rank at
+	// all (`floatPrecision` answers 0 for `untyped_float`), so a guard written the
+	// obvious way skips `f32(1.0e40)` — the exact expression it exists for. That one
+	// has silently produced `inf` since floats landed, and still did after the first
+	// version of this check, which is why the test for it asserts the error rather than
+	// asserting that narrowing compiles.
+	if toP, ok := targetType.(types.PrimitiveType); ok && isAnyConcreteFloat(toP.Name) {
+		if v, isConst := floatLiteralValue(call.Arguments[0]); isConst && !floatFitsInType(v, toP.Name) {
+			tc.addError(call.GetLocation(), SeverityError,
+				"cannot convert %v to %s: literal value is out of range and would become infinity",
+				v, ident.Name)
+			return targetType
+		}
 	}
 	// Integer→integer conversion of a compile-time constant that does not fit the
 	// target (e.g. u8(256), i8(300), u8(-1)). This makes lossy int conversions
 	// loud for the constant case, matching the float-narrowing error above.
 	// Non-constant int narrowing is deferred to a future value-range pass, the
-	// same scope limit checkIntegerLiteralRange already has.
+	// same scope limit checkLiteralRange already has.
 	if toP, ok := targetType.(types.PrimitiveType); ok && isAnyConcreteInt(toP.Name) && isIntType(argType) {
 		// A large-unsigned literal (Unsigned) fits only u64: its true magnitude
 		// exceeds int64, so extractIntLiteralValue's int64 bit pattern (negative)
@@ -2977,7 +3003,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			// Paired with the width push, for the reason the tuple and array arms give:
 			// `{ m: None }` against `{ m: Maybe<i64> }` needs the instantiation too.
 			tc.propagateInstantiation(f.Value, resolved)
-			tc.checkIntegerLiteralRange("field "+f.Name, f.Value, resolved)
+			tc.checkLiteralRange("field "+f.Name, f.Value, resolved)
 		}
 		// Re-record with the context's field types, so the value the backend lowers has
 		// the shape the annotation asked for rather than the one its leaves inferred.
@@ -3007,11 +3033,11 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			tc.propagateInstantiation(elem, resolved[i])
 			// …and a leaf that does not fit the width it was just narrowed to is
 			// reported here, because nothing downstream will. The scalar form has
-			// checkIntegerLiteralRange at its assignment sites, but those look at the
+			// checkLiteralRange at its assignment sites, but those look at the
 			// declared type — which for `let t: (u8, u8) = (300, 1)` is a tuple, not
 			// an integer, so the check returns immediately and the 300 sailed through
 			// to a u8 slot.
-			tc.checkIntegerLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved[i])
+			tc.checkLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved[i])
 		}
 		// Re-record the literal itself at the context's element widths, exactly as the
 		// array case below does and for the same reason: narrowing the *leaves* is not
@@ -3075,7 +3101,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			// Every other site that pushes a context into a construction pairs these
 			// two calls; the array arms were the pair that had only one.
 			tc.propagateInstantiation(ar.Value, resolved)
-			tc.checkIntegerLiteralRange("repeated element", ar.Value, resolved)
+			tc.checkLiteralRange("repeated element", ar.Value, resolved)
 			// A *dynamic* context stays dynamic, for the reason the array-literal arm
 			// below gives: the value is used as a dynamic array, and rewriting it to
 			// static would mask a later dynamic→static assignment error. The backend
@@ -3112,7 +3138,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			tc.propagateExpectedType(elem, resolved)
 			// The instantiation half, for the reason the repeat arm above gives.
 			tc.propagateInstantiation(elem, resolved)
-			tc.checkIntegerLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved)
+			tc.checkLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved)
 		}
 		// Re-record with the concrete element type so the backend builds the right
 		// shape. A *static* context records `[N x <resolved>]`; a *dynamic* context
@@ -3234,11 +3260,11 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		// to the narrow type; it then surfaces loudly downstream (a fold-based
 		// overflow error at a decl/reassign site, or a width mismatch in the
 		// backend) instead of miscompiling. This also keeps propagation from
-		// double-reporting the overflow that checkIntegerLiteralRange already owns.
+		// double-reporting the overflow that checkLiteralRange already owns.
 		// A **wide** literal narrows only to a 128-bit type — the only widths that can
 		// hold it — and recording that is what makes the backend emit the constant at
 		// i128/u128 rather than at the i64 default. A narrower context is left alone
-		// here and reported by checkIntegerLiteralRange, which owns the message.
+		// here and reported by checkLiteralRange, which owns the message.
 		if e.IsWide() {
 			if cp.Name == types.Int128 || cp.Name == types.UInt128 {
 				tc.typeTable.Set(e, cp)
@@ -3275,7 +3301,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		// value into a narrow slot and emitting invalid IR the moment it meets a
 		// proper-width operand in arithmetic. Narrow the operand leaf directly:
 		// the backend's `sub 0, 2^(bits-1)` yields the min bit pattern at that
-		// width, and checkIntegerLiteralRange has already accepted the value.
+		// width, and checkLiteralRange has already accepted the value.
 		if lit, ok := e.Operand.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned && !lit.IsWide() && tc.currentTypeIsUntyped(lit) {
 			if mag, isMin := signedTypeMinMagnitude(cp.Name); isMin && lit.Value == mag {
 				tc.typeTable.Set(lit, cp)
@@ -3590,7 +3616,7 @@ func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
 	// Recognize it before the generic "cannot negate unsigned" rejection below.
 	// The literal's bit pattern already equals i64 min and `0 - i64min == i64min`
 	// in two's complement, so the backend's `sub 0, x` emits the right bits; a
-	// narrower signed target is still caught by checkIntegerLiteralRange.
+	// narrower signed target is still caught by checkLiteralRange.
 	if lit, ok := expr.Operand.(*ast.IntegerLiteralExpr); ok && lit.Unsigned {
 		if lit.UnsignedValue() == uint64(1)<<63 {
 			return types.PrimitiveType{Name: types.UntypedSignedInt}
@@ -4237,6 +4263,14 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 			// `value: u8`) stays untyped_int and the backend lowers it at the i64
 			// default, mismatching the struct's i8 field.
 			tc.propagateExpectedType(f.Value, expected)
+			// Paired with the width push, and it had been missing: a named struct's
+			// field was the one position where a literal too large for its type was
+			// **not** an error, for integers as well as floats — `Point { n: 300 }`
+			// with `n: u8` compiled and truncated. The anonymous-struct arm in
+			// propagateExpectedType has always had this call; the named one never
+			// did, which is hazard 8's exact shape (a list of aggregate forms with
+			// one missing) in the walk whose header warns about it.
+			tc.checkLiteralRange(expr.Name+"."+name, f.Value, expected)
 			tc.typeTable.Set(f.Value, expected)
 		}
 	}

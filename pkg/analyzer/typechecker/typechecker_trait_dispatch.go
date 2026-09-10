@@ -612,7 +612,7 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		// the callee's storage so the allocation flavors must match. Without these a
 		// `mut Self` method silently accepted a temporary and discarded every write.
 		// The declared width must hold the literal, exactly as at a free-function call.
-		tc.checkIntegerLiteralRange(
+		tc.checkLiteralRange(
 			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, paramType)
 		if param.Borrow == types.Mut {
 			tc.checkMutArgument(calleeName, i+1, "", arg, paramType)

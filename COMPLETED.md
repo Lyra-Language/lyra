@@ -9,6 +9,53 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — float narrowing, and the "every position" claim made true for floats
+
+`f32(x)` on an f64 compiles and rounds to nearest. It was refused outright, with a message
+naming **no way forward at all** — and that was the tell: every other lossy conversion in
+this language points somewhere. The float→int error names `floor`/`ceil`/`round`; the
+integer-narrowing rule permits `u8(x)` and refuses only `u8(256)`.
+
+**The reason a named conversion is wrong here** is the reason `floor`/`ceil`/`round` are
+right there: rounding *mode* is a real choice for float→int, and float→float has none —
+IEEE specifies round-to-nearest-even. A `narrow()` would disambiguate nothing and cost a
+spelling. So the rule is integer narrowing's: allowed, with a compile-time constant that
+would **become infinity** refused. Precision loss is never the error, at any magnitude; a
+narrower float existing at all is the program asking for one.
+
+**The backend needed nothing.** `coerceFloatWidth` has emitted `fptrunc` since floats
+landed, under a comment saying "only widening reaches here (narrowing is a typecheck
+error)" — a path that was correct and had never once run. `TestExec_FloatNarrowing` is the
+first thing to reach it.
+
+**Two gaps came out from under it, and neither was the one being fixed.**
+
+The first: the constant guard as first written **did not fire on the case it existed for**.
+`floatPrecision` answers 0 for `untyped_float`, so a guard written the obvious way —
+"source is wider than target" — skips `f32(1.0e40)`, whose argument is an untyped literal
+with no rank at all. That expression had silently produced `inf` since floats landed and
+still did after the first version of the check. It was found by running it, not by reading
+it, which is the only way it could have been: the code looked exactly right.
+
+The second is larger. Extending the range check to floats meant putting it in
+`checkIntegerLiteralRange`, where **fifteen call sites** funnel — and a test asserting the
+workspace CLAUDE.md's claim ("a literal that cannot hold its value is a compile error in
+every position") across six positions failed on one. A **named struct literal's field** was
+never range-checked, for **integers either**: `Point { n: 300 }` with `n: u8` compiled and
+truncated. The anonymous-struct arm of `propagateExpectedType` has always had the call and
+the named one never did — hazard 8's exact shape, a list of aggregate forms with one
+missing, in the walk whose own header warns about that. Fixed, and the function is now
+`checkLiteralRange`, since it stopped being the integer check.
+
+The lesson is about where a check goes. Fifteen positions were covered by one branch
+because they already shared a function; the sixteenth was missing precisely because it did
+not. **A new numeric kind is cheap where the positions are already funnelled and invisible
+where they are not** — and the way to find out which you have is to write the test that
+asserts the claim, not to read the call sites.
+
+`examples/raylib/shapes.lyra` lost its workaround: the animation runs off `elapsed()` again
+rather than counting frames, which is what it wanted to do.
+
 ### 09/10/26 — the shapes module, finished, and a gallery that checks itself
 
 `bindings/raylib/shapes.lyra` went from 5 public functions to **61 over 59 externs** —

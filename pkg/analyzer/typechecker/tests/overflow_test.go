@@ -206,3 +206,49 @@ func TestTypeCheck_Overflow_F64_NoCheck(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: f64 = 99999`, false)
 	assertNoErrors(t, res)
 }
+
+// The workspace CLAUDE.md's claim is that "a literal that cannot hold its value is a
+// compile error in **every position**". That held for integers only until 09/10: a float
+// literal too large for its target was silently `inf` in an annotation, an argument, a
+// return, a struct field and an array element alike.
+//
+// Fifteen call sites funnel into `checkLiteralRange`, so this is one branch reaching all
+// of them — which is exactly why the check lives there and not at a call site.
+func TestOverflow_FloatLiteralOutOfRangeInEveryPosition(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"annotation", `let a: f32 = 1.0e40`},
+		{"argument", `
+			let takes = pure (v: f32) -> f32 => v
+			let a = takes(1.0e40)
+		`},
+		{"return", `let make = pure () -> f32 => 1.0e40`},
+		{"array element", `let xs: []f32 = [1.0e40]`},
+		{"struct field", `
+			struct Point { x: f32 }
+			let p = Point { x: 1.0e40 }
+		`},
+		{"repeated element", `let xs: []f32 = [1.0e40; 3]`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := parseCollectAndCheck(t, c.src, false)
+			assertHasErrorContaining(t, res, "overflows f32")
+		})
+	}
+}
+
+// The same positions with a representable value stay clean, so the check is a bound and
+// not a ban on large floats.
+func TestOverflow_RepresentableFloatIsAcceptedEverywhere(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"annotation", `let a: f32 = 3.0e38`},
+		{"array element", `let xs: []f32 = [3.0e38]`},
+		{"struct field", `
+			struct Point { x: f32 }
+			let p = Point { x: 3.0e38 }
+		`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			assertNoErrors(t, parseCollectAndCheck(t, c.src, false))
+		})
+	}
+}

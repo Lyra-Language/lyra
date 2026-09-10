@@ -89,30 +89,70 @@ func TestTypeCheck_TypeConversion_NoArgs(t *testing.T) {
 	assertErrorsAre(t, res, "f64: type conversion requires exactly 1 argument, got 0")
 }
 
-// --- float narrowing (lossy, blocked) ---
+// --- float narrowing (lossy, allowed since 09/10) ---
+//
+// It was refused outright, with no escape hatch named. The float→**int** error above points
+// at `floor`/`ceil`/`round` because rounding *mode* is a real choice; narrowing f64 to f32
+// has no such choice — IEEE specifies round-to-nearest-even — so there was nothing for a
+// named conversion to disambiguate and nothing a program could write instead. The rule now
+// matches integer narrowing, which permits `u8(x)` and refuses only `u8(256)`.
 
-func TestTypeCheck_TypeConversion_F64ToF32_Error(t *testing.T) {
+func TestTypeCheck_TypeConversion_F64ToF32(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let x: f64 = 3.14
 		let y: f32 = f32(x)
 	`, false)
-	assertErrorsAre(t, res, "cannot convert f64 to f32: narrowing conversion may lose precision")
+	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_TypeConversion_F64ToF16_Error(t *testing.T) {
+func TestTypeCheck_TypeConversion_F64ToF16(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let x: f64 = 3.14
 		let y: f16 = f16(x)
 	`, false)
-	assertErrorsAre(t, res, "cannot convert f64 to f16: narrowing conversion may lose precision")
+	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_TypeConversion_F32ToF16_Error(t *testing.T) {
+func TestTypeCheck_TypeConversion_F32ToF16(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let x: f32 = 1.5
 		let y: f16 = f16(x)
 	`, false)
-	assertErrorsAre(t, res, "cannot convert f32 to f16: narrowing conversion may lose precision")
+	assertNoErrors(t, res)
+}
+
+// Precision loss is never the error, at any magnitude: a narrower float existing at all is
+// the program saying it wants one.
+func TestTypeCheck_TypeConversion_FloatPrecisionLossIsNotAnError(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y: f32 = f32(0.1)`, false)
+	assertNoErrors(t, res)
+}
+
+// What *is* refused is a constant that would become infinity — the float twin of
+// `u8(256)`, and the case that silently produced `inf` before this landed.
+func TestTypeCheck_TypeConversion_FloatOverflowsToInfinity(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y: f32 = f32(1.0e40)`, false)
+	assertErrorsAre(t, res,
+		"cannot convert 1e+40 to f32: literal value is out of range and would become infinity")
+}
+
+func TestTypeCheck_TypeConversion_NegativeFloatOverflowsToInfinity(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y: f32 = f32(-1.0e40)`, false)
+	assertErrorsAre(t, res,
+		"cannot convert -1e+40 to f32: literal value is out of range and would become infinity")
+}
+
+// The largest finite half is 65504.
+func TestTypeCheck_TypeConversion_F16OverflowsToInfinity(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y: f16 = f16(70000.0)`, false)
+	assertErrorsAre(t, res,
+		"cannot convert 70000 to f16: literal value is out of range and would become infinity")
+}
+
+// A value inside the range is accepted, so the bound is a bound rather than a ban.
+func TestTypeCheck_TypeConversion_LargeButRepresentableFloatIsFine(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y: f32 = f32(3.0e38)`, false)
+	assertNoErrors(t, res)
 }
 
 // --- float widening (lossless, allowed) ---

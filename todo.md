@@ -3466,12 +3466,11 @@ duplicate-spelling rule.
 
 **Two language limits it ran into**, both worth their own entries some day:
 
-- **Narrowing f64 to f32 has no spelling.** `f32(x)` on an f64 is refused outright, with
-  no escape hatch named — unlike float-to-int, which points at `floor()`/`round()`. Every
-  raylib coordinate is f32 and `elapsed()` is f64, so an animation driven by the clock
-  cannot be written at all; the example counts frames instead. Whatever the answer is
-  (an explicit `narrow()`, or the conversion pointing at one), the current message names
-  no way forward.
+- **Narrowing f64 to f32** — **[FIXED 09/10]**, see COMPLETED.md. `f32(x)` compiles and
+  rounds to nearest; a constant that would become infinity is refused. Two further gaps
+  came out from under it, both also fixed: the constant guard initially missed untyped
+  literals, and a named struct literal's field had never been range-checked at all, for
+  integers either.
 - **`lyrac run` passes no arguments through** to the program, so a program that reads
   `program_args()` has to be built first. `go run` forwards after `--`; there is no
   spelling here.

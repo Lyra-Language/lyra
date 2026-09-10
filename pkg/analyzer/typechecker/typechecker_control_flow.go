@@ -1758,7 +1758,7 @@ func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) typ
 	// literal narrows to it (`m ?? 0` on a Maybe<u8> lowers the 0 at u8, which the
 	// backend's phi requires), and one that cannot hold its value is refused rather
 	// than truncated — the same pair of calls every decl site makes.
-	tc.checkIntegerLiteralRange("`??` default", expr.Default, common)
+	tc.checkLiteralRange("`??` default", expr.Default, common)
 	tc.propagateExpectedType(expr.Default, common)
 	return common
 }

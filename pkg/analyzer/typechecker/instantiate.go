@@ -396,7 +396,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		tc.propagateExpectedType(arg, params[i])
 		// A solved parameter is a width like any other, and the same "no downstream to
 		// report it" rule applies.
-		tc.checkIntegerLiteralRange(
+		tc.checkLiteralRange(
 			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, params[i])
 	}
 	// Checked after the solve and before the instantiation is recorded: every

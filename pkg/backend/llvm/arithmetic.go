@@ -809,7 +809,9 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 	if dstFloat, ok := dstLL.(*lltypes.FloatType); ok {
 		switch arg.Type().(type) {
 		case *lltypes.FloatType:
-			// float→float: only widening reaches here (narrowing is a typecheck error).
+			// float→float, both directions: `fptrunc` to narrow, `fpext` to widen.
+			// Narrowing was a typecheck error until 09/10 and this arm handled it
+			// correctly the whole time — the path existed and nothing had reached it.
 			return coerceFloatWidth(block, arg, dstFloat), block, nil
 		case *lltypes.IntType:
 			// int→float: signed vs unsigned source picks sitofp vs uitofp.

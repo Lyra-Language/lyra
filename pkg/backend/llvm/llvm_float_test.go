@@ -379,3 +379,43 @@ func TestEmit_FloatRoundingIR(t *testing.T) {
 		}
 	}
 }
+
+// **Narrowing a float rounds to nearest and the value is right**, which is the half a
+// typecheck cannot establish. Refused outright until 09/10, so the backend path existed —
+// `coerceFloatWidth` emits the fptrunc — and nothing had ever reached it.
+//
+// The expected values are IEEE's, not Lyra's: a third is 0x3FD5555555555555 as a double
+// and 0x3EAAAAAB as a float, which prints as 0.33333334 at f32's nine significant digits.
+func TestExec_FloatNarrowing(t *testing.T) {
+	t.Parallel()
+	out, code := buildAndRunCapture(t, `let main = () -> void => {
+	   let wide: f64 = 1.0 / 3.0
+	   let narrow: f32 = f32(wide)
+	   let half: f16 = f16(narrow)
+	   println("${wide} ${narrow} ${half}")
+	 }`)
+	want := "0.3333333333333333 0.33333334 0.3333"
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("float narrowing = %q; want %q", got, want)
+	}
+	if code != 0 {
+		t.Errorf("exit = %d; want 0", code)
+	}
+}
+
+// The instruction, not just the answer: an fptrunc rather than a store-and-reload or a
+// call into a runtime helper.
+func TestEmit_FloatNarrowingIR(t *testing.T) {
+	t.Parallel()
+	got, err := emitSource(t, `let main = () -> void => {
+	   let wide: f64 = 1.0 / 3.0
+	   let narrow: f32 = f32(wide)
+	   println("${narrow}")
+	 }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "fptrunc double") {
+		t.Errorf("narrowing should emit an fptrunc from double:\n%s", got)
+	}
+}
