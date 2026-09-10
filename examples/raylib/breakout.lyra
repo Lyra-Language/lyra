@@ -185,9 +185,9 @@ let main = () -> void => {
 
   // **Unloading is the caller's** — Lyra has no destructors, so a `Sound` is freed here
   // and nowhere else. Before `close_audio_device`, not after.
-  match blip { Some(s) => unload_sound(s), None => {} }
-  match thud { Some(s) => unload_sound(s), None => {} }
-  match chime { Some(s) => unload_sound(s), None => {} }
+  if let Some(s) = blip { unload_sound(s) }
+  if let Some(s) = thud { unload_sound(s) }
+  if let Some(s) = chime { unload_sound(s) }
   close_audio_device()
   close_window()
 }
