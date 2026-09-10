@@ -1,0 +1,178 @@
+module bindings.raylib
+//! Sound.
+//!
+//! **This is the first part of the module that owns a resource**, and raylib does not
+//! signal failure the way SDL does: `LoadSound` answers a `Sound` whose handle is invalid
+//! rather than a NULL, so the `Maybe` here is built on `IsSoundValid` instead of a null
+//! check. The wrappers below hand back a `Maybe<Sound>` for that reason and no other.
+//!
+//! **Unloading is the caller's**, and nothing here can make it otherwise: Lyra has no
+//! destructors, so a `Sound` is freed by calling [unload_sound] and by nothing else.
+//! Leaking one costs a buffer until the process exits, which for a game is survivable and
+//! for a long-running program is not. The alternative — a handle that frees itself — needs
+//! a language feature this does not have, and inventing a half of it in a binding module
+//! would be worse than saying so.
+
+import std.ffi.{ with_cstring }
+
+/// `AudioStream` — raylib's internal playback handle. Its two pointers are opaque: nothing
+/// on this side reads through them, and they are here so the struct's **layout** matches.
+pub struct AudioStream {
+  buffer: ^u8,
+  processor: ^u8,
+  sample_rate: u32,
+  sample_size: u32,
+  channels: u32,
+}
+
+/// `Sound` — a stream plus its length. 40 bytes, so it crosses in memory rather than in
+/// registers; `pkg/abi` decides that, and nothing here has to.
+pub struct Sound {
+  stream: AudioStream,
+  frame_count: u32,
+}
+
+/// `Wave` — decoded samples, before they become a playable [Sound].
+///
+/// It is a separate type because it is a separate lifetime: a `Wave` holds the decoded
+/// buffer, [sound_from_wave] copies what it needs, and the wave can then be unloaded
+/// while the sound plays on.
+pub struct Wave {
+  frame_count: u32,
+  sample_rate: u32,
+  sample_size: u32,
+  channels: u32,
+  data: ^u8,
+}
+
+@symbol("InitAudioDevice")
+unsafe extern rl_init_audio: () -> void
+
+@symbol("CloseAudioDevice")
+unsafe extern rl_close_audio: () -> void
+
+@symbol("IsAudioDeviceReady")
+unsafe extern rl_audio_ready: () -> u8
+
+@symbol("SetMasterVolume")
+unsafe extern rl_set_master_volume: (volume: f32) -> void
+
+@symbol("LoadSound")
+unsafe extern rl_load_sound: (path: ^u8) -> Sound
+
+@symbol("LoadWaveFromMemory")
+unsafe extern rl_load_wave_from_memory: (kind: ^u8, data: ^u8, size: i32) -> Wave
+
+@symbol("LoadSoundFromWave")
+unsafe extern rl_load_sound_from_wave: (wave: Wave) -> Sound
+
+@symbol("IsSoundValid")
+unsafe extern rl_sound_valid: (sound: Sound) -> u8
+
+@symbol("UnloadSound")
+unsafe extern rl_unload_sound: (sound: Sound) -> void
+
+@symbol("IsWaveValid")
+unsafe extern rl_wave_valid: (wave: Wave) -> u8
+
+@symbol("UnloadWave")
+unsafe extern rl_unload_wave: (wave: Wave) -> void
+
+@symbol("PlaySound")
+unsafe extern rl_play_sound: (sound: Sound) -> void
+
+@symbol("StopSound")
+unsafe extern rl_stop_sound: (sound: Sound) -> void
+
+@symbol("IsSoundPlaying")
+unsafe extern rl_sound_playing: (sound: Sound) -> u8
+
+@symbol("SetSoundVolume")
+unsafe extern rl_set_sound_volume: (sound: Sound, volume: f32) -> void
+
+@symbol("SetSoundPitch")
+unsafe extern rl_set_sound_pitch: (sound: Sound, pitch: f32) -> void
+
+/// Bring up the audio device. Nothing below works before this, and raylib logs rather than
+/// returning a failure — [audio_ready] is how to ask.
+pub let init_audio_device = () -> void => unsafe { rl_init_audio() }
+
+/// Shut the audio device down. Unload sounds before this, not after.
+pub let close_audio_device = () -> void => unsafe { rl_close_audio() }
+
+/// Whether the device came up. A machine with no output device is the ordinary case here —
+/// a CI runner, a container — so a program that wants to run anywhere should ask and carry
+/// on quietly rather than treating silence as an error.
+pub let audio_ready = () -> bool => unsafe { rl_audio_ready() } != 0
+
+/// Overall output volume, 0.0 through 1.0.
+pub let set_master_volume = (volume: f32) -> void =>
+  unsafe { rl_set_master_volume(volume) }
+
+/// Load a sound from a file, or `None` if raylib could not.
+///
+/// **The `Maybe` is built on `IsSoundValid`, not on a null check.** raylib answers a
+/// `Sound` whose internal handle is invalid rather than a null pointer, so there is nothing
+/// to compare against `nullptr` — which is why this is the one binding in the module where
+/// the failure test is a call rather than a comparison.
+pub let load_sound = (path: string) -> Maybe<Sound> => {
+  let s = path.with_cstring((p) => unsafe { rl_load_sound(p) })
+  if sound_valid(s) { Some(s) } else { None }
+}
+
+/// Decode samples from bytes already in memory, or `None` if they were not a `kind`.
+///
+/// `kind` is the format's extension, with or without the dot — `"wav"` and `".wav"` both
+/// work. **raylib itself requires the dot**, silently returning an empty `Wave` without
+/// one, which is a trap worth absorbing here rather than documenting: the caller is
+/// naming a format, not a filename, and which spelling raylib happens to want is not
+/// their problem.
+///
+/// It exists so a program can carry its sounds as data rather than as files beside the
+/// executable, which is what `examples/raylib/breakout.lyra` does: it synthesises its
+/// tones and never touches the disk. The `[]u8` stays Lyra's — raylib copies what it
+/// needs — and taking the buffer's address is this function's `unsafe`, not the caller's.
+pub let wave_from_memory = (kind: string, bytes: []u8) -> Maybe<Wave> => {
+  let ext = if kind.starts_with(".") { kind } else { "." ++ kind }
+  let w = ext.with_cstring((k) =>
+    unsafe { rl_load_wave_from_memory(k, bytes.data(), i32(bytes.len())) })
+  if wave_valid(w) { Some(w) } else { None }
+}
+
+/// Whether a wave holds usable samples.
+pub let wave_valid = (wave: Wave) -> bool => unsafe { rl_wave_valid(wave) } != 0
+
+/// Turn decoded samples into something playable, or `None` if they were not usable.
+///
+/// The wave may be unloaded afterwards: raylib copies what the sound needs.
+pub let sound_from_wave = (wave: Wave) -> Maybe<Sound> => {
+  let s = unsafe { rl_load_sound_from_wave(wave) }
+  if sound_valid(s) { Some(s) } else { None }
+}
+
+/// Whether a sound's handle is usable.
+pub let sound_valid = (sound: Sound) -> bool => unsafe { rl_sound_valid(sound) } != 0
+
+/// Free a sound. **Nothing calls this for you** — see the module note.
+pub let unload_sound = (sound: Sound) -> void => unsafe { rl_unload_sound(sound) }
+
+/// Free a wave's decoded buffer.
+pub let unload_wave = (wave: Wave) -> void => unsafe { rl_unload_wave(wave) }
+
+/// Play a sound, from the start. Playing one already playing restarts it.
+pub let play_sound = (sound: Sound) -> void => unsafe { rl_play_sound(sound) }
+
+/// Stop a sound.
+pub let stop_sound = (sound: Sound) -> void => unsafe { rl_stop_sound(sound) }
+
+/// Whether a sound is still playing.
+pub let sound_playing = (sound: Sound) -> bool => unsafe { rl_sound_playing(sound) } != 0
+
+/// One sound's volume, 0.0 through 1.0.
+pub let set_sound_volume = (sound: Sound, volume: f32) -> void =>
+  unsafe { rl_set_sound_volume(sound, volume) }
+
+/// One sound's pitch, 1.0 being its recorded speed. Cheapest way to get several sounds out
+/// of one buffer.
+pub let set_sound_pitch = (sound: Sound, pitch: f32) -> void =>
+  unsafe { rl_set_sound_pitch(sound, pitch) }

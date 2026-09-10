@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 09/09/26 — raylib audio, and a silent success at the boundary
+
+`bindings/raylib/audio.lyra` binds the device, `Sound`, `Wave` and playback, and
+`examples/raylib/breakout.lyra` plays three tones it synthesises itself. The ABI half was
+free: a `Sound` is 40 bytes and a `Wave` 24, so both are returned through an `sret` buffer,
+which `pkg/abi` had already been validated for against clang.
+
+**The bug worth recording is a C convention that fails by succeeding.**
+`LoadWaveFromMemory("wav", data, size)` returns an all-zero `Wave` — not an error, not a
+log line at default verbosity, just a wave with no frames. raylib compares the extension
+*including the dot*, and says so in a comment in its own header. Everything downstream then
+behaves: `LoadSoundFromWave` accepts it, `PlaySound` plays nothing, and the program runs.
+
+Isolating it meant proving three innocent things innocent, in this order: the synthesised
+header bytes (compared against a Python reference, identical), the same bytes loaded from a
+*file* (worked), and the `data()` pointer (verified through `p^` and `p.offset(n)^`). Only
+then was the argument that had never been suspected the one left. The lesson is the
+ordering — a silent-empty-success has no failing component to look at, so the method is to
+subtract known-good pieces until the remainder is small.
+
+**The binding absorbs it**: `wave_from_memory` normalises the extension and answers a
+`Maybe<Wave>` gated on `IsWaveValid`, so the empty-success convention stops at the module
+boundary exactly as NULL does at `to_maybe`. `load_sound` and `sound_from_wave` are gated
+on `IsSoundValid` for the same reason.
+
+**Unloading stays the caller's, deliberately.** Lyra has no destructors, so nothing can
+free a `Sound` when its binding goes out of scope; the alternative — a managed box with a
+`drop_fn` over memory raylib owns — is the ownership crossing the FFI refuses in both
+directions, and it would free a handle raylib may still be mixing. `unload_sound` and
+`unload_wave` are exported and the program calls them, as C does.
+
+Two things that keep the example and the test runnable where there is no sound card: the
+tones are **synthesised in Lyra** (a decaying square wave, 8-bit mono, 22050 Hz, written
+into a WAV by hand) so no binary asset ships, and `audio_ready()` gates every call, with
+the HUD reading "audio off" when no device came up. `TestExec_RaylibAudioBindings` needs no
+device at all, since `LoadWaveFromMemory` is pure decoding — it checks both spellings of
+the extension and a junk-bytes refusal.
+
 ### 09/09/26 — a `const` may hold a struct, and the CTFE claim was wrong
 
 `const WHITE: Color = Color { r: 245, g: 245, b: 245, a: 255 }` compiles. It did not

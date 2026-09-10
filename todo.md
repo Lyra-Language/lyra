@@ -3419,6 +3419,36 @@ check the wrong declaration.
 `bindings/raylib`'s named colours are `pub const` rather than nullary `pure` functions,
 which is what the change was for.
 
+### raylib audio, and Breakout has sound — **[DONE 09/09]**
+
+`bindings/raylib/audio.lyra`: `init_audio_device`, `load_sound`, `wave_from_memory`,
+`sound_from_wave`, `play_sound`/`stop_sound`/`sound_playing`, volume and pitch, and the
+`unload_*` pair. It needed nothing new from the language — `Sound` is 40 bytes and `Wave`
+24, so both are returned through an `sret` buffer, which is exactly what `pkg/abi` already
+decided.
+
+**Unloading is the caller's, and nothing here can make it otherwise.** Lyra has no
+destructors, so a `Sound` cannot free itself when its binding goes out of scope; the
+binding exposes `unload_sound`/`unload_wave` and the program calls them, as it would in C.
+Wrapping the handle in a managed box would put a Lyra `drop_fn` on memory raylib owns,
+which is the ownership rule the FFI already refuses in both directions.
+
+**The trap the binding absorbs: raylib wants the extension *with* a dot.**
+`LoadWaveFromMemory("wav", …)` answers an all-zero `Wave` and logs nothing at default
+verbosity — it is a silent empty success, not a failure. `wave_from_memory` normalises the
+extension and returns a `Maybe<Wave>` gated on `IsWaveValid`, so the C convention stops at
+the boundary the way NULL does. Finding it took isolating three things that were *not*
+wrong (the synthesised header bytes, the `data()` pointer, the same bytes from a file), and
+the answer was in a comment in raylib's own header.
+
+`examples/raylib/breakout.lyra` **synthesises its tones rather than shipping assets** — a
+decaying square wave, 8-bit mono at 22050 Hz, written into a WAV in Lyra — so the example
+stays one file with nothing to fetch. Audio is optional at runtime: `audio_ready()` gates
+every call and the HUD says "audio off" when no device came up, since a CI runner and a
+container have none. `TestExec_RaylibAudioBindings` is the headless half — `LoadWaveFromMemory`
+is pure decoding, so it needs no device — and it checks both spellings of the extension
+plus a junk-bytes refusal.
+
 ### `examples/raylib/breakout.lyra` — **[DONE 09/09]**
 
 A playable game: paddle, ball, a `[]Brick` grid, lives, score, and a `data GameState` the

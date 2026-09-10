@@ -1550,6 +1550,23 @@ pattern. It needed nothing new from the language.
 Its module reads like ordinary Lyra precisely because the hard part is in `pkg/abi` — a
 `Vector2` is a `struct`, passed as one, and nothing in the binding mentions registers.
 
+`bindings/raylib/audio.lyra` is the third aggregate case and the one where the *aggregates
+are large*: `Sound` is 40 bytes and `Wave` 24, so both come back through an `sret` buffer
+rather than in registers. It needed nothing new — which is the point of having validated
+`pkg/abi` against clang before wiring it.
+
+**Two rules the audio module establishes for a binding:**
+
+- **Unloading is the caller's, and there is no alternative.** Lyra has no destructors, so a
+  `Sound` cannot free itself; a managed box with a `drop_fn` over raylib's memory is the
+  ownership crossing the FFI refuses in both directions. `unload_sound`/`unload_wave` are
+  exported and the program calls them, as C does.
+- **A C function can fail by succeeding, and the wrapper is where that stops.**
+  `LoadWaveFromMemory` wants the extension **with a dot** and answers an all-zero `Wave`
+  without one — no error, no log line. `wave_from_memory` normalises the extension and
+  gates on `IsWaveValid`, returning a `Maybe<Wave>`; `load_sound`/`sound_from_wave` gate on
+  `IsSoundValid`. That is `to_maybe`'s rule applied to a convention that is not NULL.
+
 Two things it ran into that the SDL3 module did not:
 
 - **A `const` may hold a struct** as of 09/09, so raylib's named colours are `pub const`.
@@ -1559,8 +1576,10 @@ Two things it ran into that the SDL3 module did not:
   name for a rectangle cannot be used and the wrapper says `rect`.
 
 `examples/raylib/breakout.lyra` is what the pair is *for*: a playable game — paddle, ball, a
-`[]Brick` grid, lives, score, and a `data GameState` a `match` covers exhaustively — with
-no `unsafe` and no `extern` in it. It is also the honest test of the ABI work, since a
+`[]Brick` grid, lives, score, sound, and a `data GameState` a `match` covers exhaustively —
+with no `unsafe` and no `extern` in it. Its tones are **synthesised in Lyra** rather than
+shipped, so the example is one file with nothing to fetch, and `audio_ready()` gates every
+audio call so it still runs where there is no sound card. It is also the honest test of the ABI work, since a
 misclassified `Vector2` there is a ball that passes through bricks rather than a crash.
 
 **The direct-extern examples are gone deliberately**, and the proof they carried lives in

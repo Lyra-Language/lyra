@@ -247,6 +247,111 @@ let main = () -> void => {
 	}
 }
 
+// **The audio bindings**, which are where raylib's aggregates get large: a `Sound` is 40
+// bytes and a `Wave` 24, so both cross in memory rather than in registers, and both are
+// *returned* that way through an `sret` buffer.
+//
+// It synthesises a WAV rather than shipping one, which is also what
+// `examples/raylib/breakout.lyra` does — and it exercises the trap the binding absorbs:
+// raylib's `LoadWaveFromMemory` wants the extension **with** a dot and silently answers an
+// empty `Wave` without one, so `wave_from_memory` normalises and both spellings are
+// checked here.
+//
+// No device is opened. `LoadWaveFromMemory` is pure decoding, so this runs on a machine
+// with no audio output — which is every CI runner.
+func TestExec_RaylibAudioBindings(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ wave_from_memory, unload_wave }
+let main = () -> void => {
+  let bytes = wav_bytes(880, 40)
+  var dotted = "none"
+  match wave_from_memory(".wav", bytes) {
+    Some(w) => { dotted = "${w.frame_count}/${w.sample_rate}"; unload_wave(w) },
+    None => {},
+  }
+  var bare = "none"
+  match wave_from_memory("wav", bytes) {
+    Some(w) => { bare = "${w.frame_count}/${w.sample_rate}"; unload_wave(w) },
+    None => {},
+  }
+  var junk = "none"
+  match wave_from_memory("wav", [1, 2, 3, 4]) {
+    Some(w) => { junk = "decoded"; unload_wave(w) },
+    None => { junk = "refused" },
+  }
+  println("${bytes.len()} ${dotted} ${bare} ${junk}")
+}
+let wav_bytes = pure (freq: i64, ms: i64) -> []u8 => {
+  let rate = 22050
+  let frames = rate * ms / 1000
+  let period = rate / freq
+  var s: []u8 = []
+  var i = 0
+  for i < frames {
+    let amp = 70.0 * (1.0 - f64(i) / f64(frames))
+    let v = if (i % period) * 2 < period { 128.0 + amp } else { 128.0 - amp }
+    s.push(u8(v.round()))
+    i += 1
+  }
+  var out: []u8 = []
+  out = ascii(out, "RIFF")
+  out = u32le(out, 36 + s.len())
+  out = ascii(out, "WAVE")
+  out = ascii(out, "fmt ")
+  out = u32le(out, 16)
+  out = u16le(out, 1)
+  out = u16le(out, 1)
+  out = u32le(out, rate)
+  out = u32le(out, rate)
+  out = u16le(out, 1)
+  out = u16le(out, 8)
+  out = ascii(out, "data")
+  out = u32le(out, s.len())
+  var j = 0
+  for j < s.len() { out.push(s[j]); j += 1 }
+  out
+}
+let ascii = pure (buf: []u8, s: string) -> []u8 => {
+  var out = buf
+  for b in s.encode_utf8() { out.push(b) }
+  out
+}
+let u32le = pure (buf: []u8, v: i64) -> []u8 => {
+  var out = buf
+  out.push(u8(v % 256))
+  out.push(u8((v / 256) % 256))
+  out.push(u8((v / 65536) % 256))
+  out.push(u8((v / 16777216) % 256))
+  out
+}
+let u16le = pure (buf: []u8, v: i64) -> []u8 => {
+  var out = buf
+  out.push(u8(v % 256))
+  out.push(u8((v / 256) % 256))
+  out
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		if _, isExit := err.(*exec.ExitError); !isExit {
+			t.Fatalf("running the raylib-audio binary failed: %v", err)
+		}
+	}
+	// 44-byte header + 882 frames; both spellings decode; junk bytes are refused.
+	//
+	// The last line only: raylib writes its own INFO/WARNING trace to stdout, and the
+	// refused case deliberately provokes one of them.
+	want := "926 882/22050 882/22050 refused"
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if got := strings.TrimSpace(lines[len(lines)-1]); got != want {
+		t.Errorf("raylib audio = %q; want %q", got, want)
+	}
+}
+
 // pkgConfigLibDir asks pkg-config where a library lives, skipping when it is absent.
 //
 // `@link` emits `-lNAME` and nothing more — a search path is a build-system question the

@@ -17,6 +17,9 @@ import bindings.raylib.{
   begin_drawing, end_drawing, clear_background,
   Vector2, Rectangle, draw_rectangle, draw_circle, circle_hits_rect,
   Color, rgb, RAYWHITE, RED, BLUE, ORANGE,
+  Sound, init_audio_device, close_audio_device, audio_ready,
+  wave_from_memory, sound_from_wave, unload_wave, unload_sound,
+  play_sound, set_sound_volume,
   draw_text, measure_text, key_down, key_pressed, mouse_position,
   KEY_LEFT, KEY_RIGHT, KEY_SPACE, KEY_R,
 }
@@ -61,6 +64,18 @@ let main = () -> void => {
   init_window(800, 500, "Breakout — Lyra × raylib")
   set_target_fps(60)
 
+  // **The sounds are synthesised, not shipped.** A game with audio usually needs asset
+  // files beside the binary; these are three decaying square waves built as WAV bytes in
+  // `tone_wav` below and handed to raylib from memory, so the example stays one file and
+  // carries nothing binary. `audio_ready()` is asked because a machine with no output
+  // device — a container, a CI runner — is an ordinary case, and silence there should not
+  // be an error.
+  init_audio_device()
+  let has_audio = audio_ready()
+  var blip = load_tone(440, 60, 0.35)
+  var thud = load_tone(220, 90, 0.40)
+  var chime = load_tone(880, 140, 0.30)
+
   var bricks = build_bricks()
   var paddle_x: f32 = 345.0
   var ball = Vector2 { x: 400.0, y: 300.0 }
@@ -102,6 +117,7 @@ let main = () -> void => {
         if ball.y <= BALL_R { vel = Vector2 { x: vel.x, y: -vel.y } }
         if ball.y >= HEIGHT + BALL_R {
           lives -= 1
+          play(thud)
           if lives <= 0 {
             state = Lost
           } else {
@@ -114,6 +130,7 @@ let main = () -> void => {
         if vel.y > 0.0 && circle_hits_rect(ball, BALL_R, paddle) {
           let offset = (ball.x - (paddle_x + PADDLE_W / 2.0)) / (PADDLE_W / 2.0)
           vel = Vector2 { x: BALL_SPEED * clamp_unit(offset), y: -abs_f32(vel.y) }
+          play(chime)
         }
 
         // Bricks. The first hit per frame wins: a ball is smaller than a brick, so
@@ -127,6 +144,7 @@ let main = () -> void => {
             score += 10
             vel = Vector2 { x: vel.x, y: -vel.y }
             hit = true
+            play(blip)
           }
           i += 1
         }
@@ -151,6 +169,9 @@ let main = () -> void => {
 
     draw_text("score ${score}", 14, 14, 20, RAYWHITE)
     draw_text("lives ${lives}", 700, 14, 20, RAYWHITE)
+    // Said out loud rather than left as silence, so a machine with no output device looks
+    // deliberate instead of broken.
+    if !has_audio { draw_text("audio off", 350, 14, 20, rgb(120, 120, 130)) }
 
     match state {
       Ready => centred("press space to launch", 220, 24, RAYWHITE),
@@ -162,7 +183,109 @@ let main = () -> void => {
     end_drawing()
   }
 
+  // **Unloading is the caller's** — Lyra has no destructors, so a `Sound` is freed here
+  // and nowhere else. Before `close_audio_device`, not after.
+  match blip { Some(s) => unload_sound(s), None => {} }
+  match thud { Some(s) => unload_sound(s), None => {} }
+  match chime { Some(s) => unload_sound(s), None => {} }
+  close_audio_device()
   close_window()
+}
+
+/// Build one tone and hand back a playable sound, or `None` where there is no audio
+/// device. The wave is unloaded straight away: raylib copies what the sound needs.
+let load_tone = (freq: i64, ms: i64, volume: f32) -> Maybe<Sound> => {
+  match wave_from_memory("wav", tone_wav(freq, ms)) {
+    None => None,
+    Some(w) => {
+      let s = sound_from_wave(w)
+      unload_wave(w)
+      match s {
+        Some(snd) => { set_sound_volume(snd, volume); Some(snd) },
+        None => None,
+      }
+    },
+  }
+}
+
+/// Play a sound if there is one. Every call site is a game event rather than an audio
+/// decision, so the absence of a device is handled here once.
+let play = (sound: Maybe<Sound>) -> void =>
+  match sound {
+    Some(s) => play_sound(s),
+    None => {},
+  }
+
+/// A decaying square-wave blip, as 8-bit mono WAV bytes at 22050 Hz.
+///
+/// Square rather than sine because Lyra has `sqrt` and the logarithms and no `sin`, and a
+/// square wave is a comparison per sample. The linear decay is what keeps it a *blip*
+/// rather than a beep.
+let tone_wav = pure (freq: i64, ms: i64) -> []u8 => {
+  let rate = 22050
+  let frames = rate * ms / 1000
+  let period = rate / freq
+  var samples: []u8 = []
+  var i = 0
+  for i < frames {
+    let env = 1.0 - f64(i) / f64(frames)
+    let amp = 70.0 * env
+    let v = if (i % period) * 2 < period { 128.0 + amp } else { 128.0 - amp }
+    samples.push(u8(v.round()))
+    i += 1
+  }
+  wav_bytes(samples, rate)
+}
+
+/// A minimal RIFF/WAVE container around 8-bit mono PCM samples.
+///
+/// Written out rather than pulled from a library because there is no library: the header
+/// is eleven fields, and every one of them is a constant here except the two lengths.
+let wav_bytes = pure (samples: []u8, rate: i64) -> []u8 => {
+  let n = samples.len()
+  var out: []u8 = []
+  out = push_ascii(out, "RIFF")
+  out = push_u32(out, 36 + n)
+  out = push_ascii(out, "WAVE")
+  out = push_ascii(out, "fmt ")
+  out = push_u32(out, 16)      // fmt chunk size
+  out = push_u16(out, 1)       // PCM
+  out = push_u16(out, 1)       // mono
+  out = push_u32(out, rate)
+  out = push_u32(out, rate)    // byte rate: 8-bit mono, so one byte per frame
+  out = push_u16(out, 1)       // block align
+  out = push_u16(out, 8)       // bits per sample
+  out = push_ascii(out, "data")
+  out = push_u32(out, n)
+  var i = 0
+  for i < n {
+    out.push(samples[i])
+    i += 1
+  }
+  out
+}
+
+let push_ascii = pure (buf: []u8, s: string) -> []u8 => {
+  var out = buf
+  for b in s.encode_utf8() { out.push(b) }
+  out
+}
+
+/// WAV is little-endian, so the low byte goes first.
+let push_u32 = pure (buf: []u8, v: i64) -> []u8 => {
+  var out = buf
+  out.push(u8(v % 256))
+  out.push(u8((v / 256) % 256))
+  out.push(u8((v / 65536) % 256))
+  out.push(u8((v / 16777216) % 256))
+  out
+}
+
+let push_u16 = pure (buf: []u8, v: i64) -> []u8 => {
+  var out = buf
+  out.push(u8(v % 256))
+  out.push(u8((v / 256) % 256))
+  out
 }
 
 /// The full grid, every brick alive, coloured by row.
