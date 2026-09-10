@@ -1688,6 +1688,36 @@ Two things it ran into that the SDL3 module did not:
 - **`rec` is a reserved word**, one of the function modifiers, so raylib's own parameter
   name for a rectangle cannot be used and the wrapper says `rect`.
 
+**`bindings/raylib/shapes.lyra` is complete** as of 09/10 — 61 public functions over 59
+externs, covering every shape raylib draws and every collision it tests. Three rules
+shaped it:
+
+- **The Vector2/Rectangle form is the one bound.** raylib offers most calls twice, once in
+  loose `int` coordinates and once taking an aggregate; binding both gives one capability
+  two spellings for no gain, since a Lyra caller already holds a `Vector2`. The single
+  deliberate duplicate is `draw_pixel` beside `draw_pixel_v`. raylib's `DrawRectangleGradientV`
+  and `…H` are left out for the same reason — they are `DrawRectangleGradientEx` with a
+  colour repeated, and only in loose coordinates.
+- **An empty array draws nothing rather than trapping.** `xs.data()` traps on an empty
+  array, correctly — there is no first element to address — but "draw no triangles" is the
+  obvious meaning of an empty point list, and absorbing that is what a binding module is
+  for. Every array-taking call here does it, and `point_in_poly` answers `false`.
+- **An out-parameter becomes a `Maybe`.** `CheckCollisionLines` reports the crossing
+  through a `Vector2 *`, which is C's way of returning two things; `lines_intersect`
+  answers `Maybe<Vector2>` and the `^mut` never leaves the wrapper. Same rule as
+  `to_maybe` for NULL.
+
+The **query externs carry `pure`** — the collision tests, the spline-point getters and
+`GetCollisionRec` compute and nothing else. An extern's bound is a claim the compiler
+records rather than checks, which is why narrowing one is `unsafe`; these are already
+`unsafe`, and without the bound a `pure` wrapper cannot call them at all.
+
+`examples/raylib/shapes.lyra` is the gallery, and it is **two programs in one file**: the
+window, and a `--check` mode that runs every collision and spline-point binding against
+geometry whose answer follows from the numbers. 61 of 61 public functions are exercised.
+The split exists because a drawing demo cannot be checked by a machine and the geometry
+underneath it can — the lesson breakout learned, applied at the start this time.
+
 `examples/raylib/breakout.lyra` is what the pair is *for*: a playable game — paddle, ball, a
 `[]Brick` grid, lives, score, sound, and a `data GameState` a `match` covers exhaustively —
 with no `unsafe` and no `extern` in it. Its tones are **synthesised in Lyra** rather than

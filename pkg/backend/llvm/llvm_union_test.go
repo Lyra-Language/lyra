@@ -352,6 +352,68 @@ let u16le = pure (buf: []u8, v: i64) -> []u8 => {
 	}
 }
 
+// **The shapes module's four hard crossings**, which are the ones a wrong ABI breaks
+// silently rather than loudly:
+//
+//   - `collision_rect` **returns** a `Rectangle` by value — sixteen bytes of homogeneous
+//     float, so the float registers on aarch64 and an `sret` buffer on x86-64;
+//   - `lines_intersect` passes four `Vector2` by value *and* a `^mut Vector2`
+//     out-parameter, which the binding turns into a `Maybe`;
+//   - `point_in_poly` passes a `[]Vector2`'s buffer as `^Vector2` plus a count;
+//   - `circle_hits_rect` puts two different aggregates and a scalar in one call.
+//
+// All four are pure geometry, so this needs **no window and no display** — which is what
+// makes it runnable in CI, where the gallery in `examples/raylib/shapes.lyra` is not.
+//
+// The expected values follow from the geometry rather than from having run raylib: the
+// overlap of (0,0,10,10) and (5,5,10,10) is the square (5,5,5,5), and the diagonals of a
+// 10x10 square cross at its centre. A value read off Lyra's own output would assert only
+// that Lyra agrees with itself.
+func TestExec_RaylibShapeGeometry(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ Vector2, vec2, rect, collision_rect, lines_intersect,
+                         point_in_poly, circle_hits_rect, rects_overlap }
+let main = () -> void => {
+  let a = rect(0.0, 0.0, 10.0, 10.0)
+  let b = rect(5.0, 5.0, 10.0, 10.0)
+  let o = collision_rect(a, b)
+  print("${o.x},${o.y},${o.width},${o.height} ")
+
+  var crossed = "none"
+  match lines_intersect(vec2(0.0, 0.0), vec2(10.0, 10.0), vec2(0.0, 10.0), vec2(10.0, 0.0)) {
+    Some(h) => { crossed = "${h.x},${h.y}" },
+    None => {},
+  }
+  var parallel = "some"
+  match lines_intersect(vec2(0.0, 0.0), vec2(10.0, 0.0), vec2(0.0, 5.0), vec2(10.0, 5.0)) {
+    Some(_) => {},
+    None => { parallel = "none" },
+  }
+  print("${crossed} ${parallel} ")
+
+  let square: []Vector2 = [vec2(0.0, 0.0), vec2(10.0, 0.0), vec2(10.0, 10.0), vec2(0.0, 10.0)]
+  let empty: []Vector2 = []
+  print("${point_in_poly(vec2(5.0, 5.0), square)} ${point_in_poly(vec2(50.0, 5.0), square)} ")
+  // The binding answers false where data() would trap on the empty buffer.
+  print("${point_in_poly(vec2(5.0, 5.0), empty)} ")
+
+  println("${circle_hits_rect(vec2(5.0, 5.0), 1.0, a)} ${rects_overlap(a, b)}")
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		t.Fatalf("running the raylib-geometry binary failed: %v", err)
+	}
+	want := "5,5,5,5 5,5 none true false false true true"
+	if got := strings.TrimSpace(string(raw)); got != want {
+		t.Errorf("raylib shape geometry = %q; want %q", got, want)
+	}
+}
+
 // pkgConfigLibDir asks pkg-config where a library lives, skipping when it is absent.
 //
 // `@link` emits `-lNAME` and nothing more — a search path is a build-system question the

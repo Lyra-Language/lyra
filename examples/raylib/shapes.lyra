@@ -1,0 +1,433 @@
+module main
+//! Every shape `bindings.raylib` can draw, and every collision it can test.
+//!
+//! Two programs in one file, because a drawing demo cannot be checked by a machine and the
+//! geometry underneath it can:
+//!
+//!   lyrac build examples/raylib/shapes.lyra && ./shapes --check   # geometry, exits 0/1
+//!   lyrac run examples/raylib/shapes.lyra                         # the gallery
+//!
+//! It is `build` and then the binary for the first one because `lyrac run` passes no
+//! arguments through to the program.
+//!
+//! `--check` runs every collision and spline-point binding against geometry whose answer is
+//! known by construction and prints a pass/fail line for each. That is the half worth
+//! trusting: a window that opens proves only that nothing crashed, and `breakout.lyra`
+//! learned the same lesson the same way.
+
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps,
+  begin_drawing, end_drawing, clear_background,
+  Vector2, vec2, rect,
+  draw_pixel, draw_pixel_v, draw_line, draw_line_ex, draw_line_bezier, draw_line_dashed, draw_line_strip,
+  draw_circle, draw_circle_lines, draw_circle_gradient, draw_circle_sector,
+  draw_circle_sector_lines, draw_ellipse, draw_ellipse_lines, draw_ring, draw_ring_lines,
+  draw_rectangle, draw_rectangle_v, draw_rectangle_pro, draw_rectangle_lines,
+  draw_rectangle_rounded, draw_rectangle_rounded_lines, draw_rectangle_gradient,
+  draw_triangle, draw_triangle_lines, draw_triangle_fan, draw_triangle_strip,
+  draw_poly, draw_poly_lines, draw_poly_lines_ex,
+  draw_spline_linear, draw_spline_basis, draw_spline_catmull_rom,
+  draw_spline_bezier_quadratic, draw_spline_bezier_cubic,
+  draw_spline_segment_linear, draw_spline_segment_basis, draw_spline_segment_catmull_rom,
+  draw_spline_segment_bezier_quadratic, draw_spline_segment_bezier_cubic,
+  spline_point_linear, spline_point_basis, spline_point_catmull_rom,
+  spline_point_bezier_quadratic, spline_point_bezier_cubic,
+  rects_overlap, circles_overlap, circle_hits_rect, circle_hits_line,
+  point_in_rect, point_in_circle, point_in_triangle, point_in_line, point_in_poly,
+  lines_intersect, collision_rect,
+  draw_text, mouse_position,
+  RAYWHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY, LIGHTGRAY,
+}
+
+let main = () -> u8 => {
+  if wants_check() { return run_checks() }
+  run_gallery()
+  0
+}
+
+/// Whether `--check` was passed.
+let wants_check = () -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == "--check" { found = true }
+  }
+  found
+}
+
+// ---------------------------------------------------------------------------------------
+// The headless half
+// ---------------------------------------------------------------------------------------
+
+/// Every geometry binding against an answer known by construction. Exits 0 when all pass.
+///
+/// The cases are chosen so the expected answer follows from the numbers rather than from
+/// having run raylib: a unit square at the origin, circles whose centres are 5 apart with
+/// radii 3 and 3 (overlapping) or 2 and 2 (not), diagonals of a 10×10 square crossing at
+/// its centre. Anything that needed raylib to tell us the answer would be asserting that
+/// raylib agrees with itself.
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  let unit = rect(0.0, 0.0, 10.0, 10.0)
+  let shifted = rect(5.0, 5.0, 10.0, 10.0)
+  let far = rect(100.0, 100.0, 10.0, 10.0)
+
+  failures += check_case("rects_overlap, overlapping", rects_overlap(unit, shifted), true)
+  failures += check_case("rects_overlap, disjoint", rects_overlap(unit, far), false)
+
+  // The overlap of (0,0,10,10) and (5,5,10,10) is the square (5,5,5,5).
+  let overlap = collision_rect(unit, shifted)
+  failures += check_case("collision_rect x", near(overlap.x, 5.0), true)
+  failures += check_case("collision_rect y", near(overlap.y, 5.0), true)
+  failures += check_case("collision_rect width", near(overlap.width, 5.0), true)
+  failures += check_case("collision_rect height", near(overlap.height, 5.0), true)
+
+  failures += check_case("circles_overlap, touching",
+    circles_overlap(vec2(0.0, 0.0), 3.0, vec2(5.0, 0.0), 3.0), true)
+  failures += check_case("circles_overlap, apart",
+    circles_overlap(vec2(0.0, 0.0), 2.0, vec2(5.0, 0.0), 2.0), false)
+
+  failures += check_case("circle_hits_rect, inside",
+    circle_hits_rect(vec2(5.0, 5.0), 1.0, unit), true)
+  failures += check_case("circle_hits_rect, outside",
+    circle_hits_rect(vec2(50.0, 50.0), 1.0, unit), false)
+
+  failures += check_case("circle_hits_line, crossing",
+    circle_hits_line(vec2(5.0, 0.0), 2.0, vec2(0.0, 0.0), vec2(10.0, 0.0)), true)
+  failures += check_case("circle_hits_line, clear",
+    circle_hits_line(vec2(5.0, 50.0), 2.0, vec2(0.0, 0.0), vec2(10.0, 0.0)), false)
+
+  failures += check_case("point_in_rect, inside", point_in_rect(vec2(5.0, 5.0), unit), true)
+  failures += check_case("point_in_rect, outside", point_in_rect(vec2(50.0, 5.0), unit), false)
+
+  failures += check_case("point_in_circle, inside",
+    point_in_circle(vec2(1.0, 1.0), vec2(0.0, 0.0), 5.0), true)
+  failures += check_case("point_in_circle, outside",
+    point_in_circle(vec2(9.0, 9.0), vec2(0.0, 0.0), 5.0), false)
+
+  // A right triangle with legs on the axes; (1,1) is inside it and (9,9) is not.
+  let t1 = vec2(0.0, 0.0)
+  let t2 = vec2(10.0, 0.0)
+  let t3 = vec2(0.0, 10.0)
+  failures += check_case("point_in_triangle, inside",
+    point_in_triangle(vec2(1.0, 1.0), t1, t2, t3), true)
+  failures += check_case("point_in_triangle, outside",
+    point_in_triangle(vec2(9.0, 9.0), t1, t2, t3), false)
+
+  failures += check_case("point_in_line, on it",
+    point_in_line(vec2(5.0, 0.0), vec2(0.0, 0.0), vec2(10.0, 0.0), 1), true)
+  failures += check_case("point_in_line, off it",
+    point_in_line(vec2(5.0, 9.0), vec2(0.0, 0.0), vec2(10.0, 0.0), 1), false)
+
+  let square: []Vector2 = [vec2(0.0, 0.0), vec2(10.0, 0.0), vec2(10.0, 10.0), vec2(0.0, 10.0)]
+  failures += check_case("point_in_poly, inside", point_in_poly(vec2(5.0, 5.0), square), true)
+  failures += check_case("point_in_poly, outside", point_in_poly(vec2(50.0, 5.0), square), false)
+  // The empty-list guard: the binding answers false where `data()` would trap.
+  let none_at_all: []Vector2 = []
+  failures += check_case("point_in_poly, empty list is false",
+    point_in_poly(vec2(5.0, 5.0), none_at_all), false)
+
+  // The diagonals of a 10x10 square cross at its centre.
+  match lines_intersect(vec2(0.0, 0.0), vec2(10.0, 10.0), vec2(0.0, 10.0), vec2(10.0, 0.0)) {
+    Some(hit) => {
+      failures += check_case("lines_intersect x", near(hit.x, 5.0), true)
+      failures += check_case("lines_intersect y", near(hit.y, 5.0), true)
+    },
+    None => { failures += check_case("lines_intersect, crossing", false, true) },
+  }
+  match lines_intersect(vec2(0.0, 0.0), vec2(10.0, 0.0), vec2(0.0, 5.0), vec2(10.0, 5.0)) {
+    Some(_) => { failures += check_case("lines_intersect, parallel", true, false) },
+    None => { failures += check_case("lines_intersect, parallel is None", true, true) },
+  }
+
+  // A spline point at t=0 is the first control point and at t=1 the last; halfway along a
+  // straight segment is the midpoint. Those hold for every family, which is what makes
+  // them checkable without reproducing each basis function.
+  let a = vec2(0.0, 0.0)
+  let b = vec2(10.0, 0.0)
+  let mid = spline_point_linear(a, b, 0.5)
+  failures += check_case("spline_point_linear midpoint", near(mid.x, 5.0), true)
+  let at_zero = spline_point_linear(a, b, 0.0)
+  failures += check_case("spline_point_linear at t=0", near(at_zero.x, 0.0), true)
+  let at_one = spline_point_linear(a, b, 1.0)
+  failures += check_case("spline_point_linear at t=1", near(at_one.x, 10.0), true)
+
+  let c = vec2(20.0, 0.0)
+  let d = vec2(30.0, 0.0)
+  // Four collinear, evenly spaced points: every family stays on the line, so only x moves.
+  let basis = spline_point_basis(a, b, c, d, 0.5)
+  failures += check_case("spline_point_basis stays on the line", near(basis.y, 0.0), true)
+  let catmull = spline_point_catmull_rom(a, b, c, d, 0.5)
+  failures += check_case("spline_point_catmull_rom midpoint", near(catmull.x, 15.0), true)
+  let quad = spline_point_bezier_quadratic(a, b, c, 0.0)
+  failures += check_case("spline_point_bezier_quadratic at t=0", near(quad.x, 0.0), true)
+  let cubic = spline_point_bezier_cubic(a, b, c, d, 1.0)
+  failures += check_case("spline_point_bezier_cubic at t=1", near(cubic.x, 30.0), true)
+
+  if failures == 0 {
+    println("all geometry checks passed")
+    0
+  } else {
+    println("${failures} check(s) FAILED")
+    1
+  }
+}
+
+/// Report one case and answer 1 when it failed, so the caller can just add.
+///
+/// Not `expect` — that is the prelude's, and shadowing it here would win every bare
+/// reference in this file (lyra-W012).
+let check_case = (name: string, got: bool, want: bool) -> i64 => {
+  if got == want {
+    println("  ok    ${name}")
+    0
+  } else {
+    println("  FAIL  ${name}: got ${got}, want ${want}")
+    1
+  }
+}
+
+/// Float comparison with a tolerance, since these come back through the C boundary as f32.
+///
+/// The arithmetic stays in f32 rather than widening: `f64(a) - f64(b)` would be more
+/// precise and then have nowhere to go, because narrowing f64 back to f32 has no spelling
+/// in the language at all — `f32(x)` on an f64 is refused outright.
+let near = pure (a: f32, b: f32) -> bool => {
+  let d = a - b
+  let magnitude = if d < 0.0 { 0.0 - d } else { d }
+  magnitude < 0.001
+}
+
+// ---------------------------------------------------------------------------------------
+// The gallery
+// ---------------------------------------------------------------------------------------
+
+let run_gallery = () -> void => {
+  init_window(900, 640, "Lyra — raylib shapes")
+  set_target_fps(60)
+
+  // Animation runs off a frame counter rather than off `elapsed()`, and that is forced
+  // rather than stylistic: the clock is f64 and **narrowing f64 to f32 has no spelling in
+  // the language** — `f32(x)` on an f64 is refused outright — while every raylib
+  // coordinate is f32. Counting frames stays in integers and converts upward, which is
+  // allowed, and it makes the animation deterministic into the bargain.
+  var frame = 0
+  for !should_close() {
+    frame += 1
+    let cursor = mouse_position()
+
+    begin_drawing()
+    clear_background(RAYWHITE)
+
+    draw_lines_panel(20.0, 40.0, frame)
+    draw_circles_panel(320.0, 40.0, frame)
+    draw_rects_panel(620.0, 40.0, frame)
+    draw_polys_panel(20.0, 250.0, frame)
+    draw_splines_panel(320.0, 250.0, frame)
+    draw_collision_panel(20.0, 440.0, cursor)
+
+    draw_text("lines", 20, 20, 18, DARKGRAY)
+    draw_text("circles, ellipses, rings", 320, 20, 18, DARKGRAY)
+    draw_text("rectangles", 620, 20, 18, DARKGRAY)
+    draw_text("triangles and polygons", 20, 230, 18, DARKGRAY)
+    draw_text("splines", 320, 230, 18, DARKGRAY)
+    draw_text("collision — move the mouse", 20, 420, 18, DARKGRAY)
+    end_drawing()
+  }
+  close_window()
+}
+
+let draw_lines_panel = (x: f32, y: f32, frame: i64) -> void => {
+  draw_line(vec2(x, y), vec2(x + 260.0, y), BLACK)
+  draw_line_ex(vec2(x, y + 20.0), vec2(x + 260.0, y + 20.0), 4.0, RED)
+  draw_line_bezier(vec2(x, y + 45.0), vec2(x + 260.0, y + 75.0), 3.0, BLUE)
+  draw_line_dashed(vec2(x, y + 100.0), vec2(x + 260.0, y + 100.0), 8, 6, PURPLE)
+
+  // Two travelling pixels, one addressed each way — the module's one deliberate
+  // duplicate, so the example exercises both spellings.
+  let phase = cycle(frame, 240)
+  draw_pixel_v(vec2(x + 260.0 * phase, y + 120.0), BLACK)
+  draw_pixel(i32((x + 260.0 * phase).round()), i32((y + 128.0).round()), RED)
+
+  var zigzag: []Vector2 = []
+  var i = 0
+  for i <= 8 {
+    let step = f32(i)
+    let high = (i % 2) == 0
+    zigzag.push(vec2(x + step * 32.0, y + 140.0 + (if high { 0.0 } else { 24.0 })))
+    i += 1
+  }
+  draw_line_strip(zigzag, GREEN)
+}
+
+let draw_circles_panel = (x: f32, y: f32, frame: i64) -> void => {
+  draw_circle(vec2(x + 40.0, y + 40.0), 30.0, RED)
+  draw_circle_lines(vec2(x + 120.0, y + 40.0), 30.0, BLUE)
+  draw_circle_gradient(vec2(x + 200.0, y + 40.0), 30.0, YELLOW, ORANGE)
+
+  // The sector sweeps, which is what makes an angle argument legible.
+  let sweep = 360.0 * cycle(frame, 400)
+  draw_circle_sector(vec2(x + 40.0, y + 120.0), 30.0, 0.0, sweep, 32, PURPLE)
+  draw_circle_sector_lines(vec2(x + 120.0, y + 120.0), 30.0, 0.0, sweep, 32, DARKGRAY)
+
+  draw_ellipse(vec2(x + 200.0, y + 120.0), 34.0, 20.0, GREEN)
+  draw_ellipse_lines(vec2(x + 200.0, y + 165.0), 34.0, 14.0, BLACK)
+
+  draw_ring(vec2(x + 40.0, y + 180.0), 12.0, 26.0, 0.0, sweep, 32, BLUE)
+  draw_ring_lines(vec2(x + 120.0, y + 180.0), 12.0, 26.0, 0.0, 360.0, 32, RED)
+}
+
+let draw_rects_panel = (x: f32, y: f32, frame: i64) -> void => {
+  draw_rectangle(rect(x, y, 60.0, 40.0), RED)
+  draw_rectangle_v(vec2(x + 80.0, y), vec2(60.0, 40.0), GREEN)
+  draw_rectangle_lines(rect(x + 160.0, y, 60.0, 40.0), 3.0, BLUE)
+
+  draw_rectangle_rounded(rect(x, y + 60.0, 60.0, 40.0), 0.5, 8, PURPLE)
+  draw_rectangle_rounded_lines(rect(x + 80.0, y + 60.0, 60.0, 40.0), 0.5, 8, 3.0, DARKGRAY)
+
+  draw_rectangle_gradient(rect(x, y + 120.0, 140.0, 50.0), RED, YELLOW, GREEN, BLUE)
+
+  // Rotated about its own centre, so it spins in place rather than orbiting.
+  let spin = 360.0 * cycle(frame, 600)
+  draw_rectangle_pro(rect(x + 190.0, y + 145.0, 50.0, 50.0), vec2(25.0, 25.0), spin, ORANGE)
+}
+
+let draw_polys_panel = (x: f32, y: f32, frame: i64) -> void => {
+  // Counter-clockwise, which `draw_triangle` requires and silently culls without.
+  draw_triangle(vec2(x + 40.0, y), vec2(x, y + 60.0), vec2(x + 80.0, y + 60.0), RED)
+  draw_triangle_lines(vec2(x + 140.0, y), vec2(x + 100.0, y + 60.0), vec2(x + 180.0, y + 60.0), BLUE)
+
+  var fan: []Vector2 = [vec2(x + 240.0, y + 30.0)]
+  var i = 0
+  for i <= 6 {
+    let angle = 3.14159 * 2.0 * f32(i) / 6.0
+    fan.push(vec2(x + 240.0 + 34.0 * cos32(angle), y + 30.0 + 34.0 * sin32(angle)))
+    i += 1
+  }
+  draw_triangle_fan(fan, YELLOW)
+
+  var strip: []Vector2 = []
+  var j = 0
+  for j <= 7 {
+    let step = f32(j)
+    let high = (j % 2) == 0
+    strip.push(vec2(x + step * 26.0, y + 90.0 + (if high { 0.0 } else { 40.0 })))
+    j += 1
+  }
+  draw_triangle_strip(strip, LIGHTGRAY)
+
+  let spin = 360.0 * cycle(frame, 750)
+  draw_poly(vec2(x + 240.0, y + 120.0), 6, 30.0, spin, GREEN)
+  draw_poly_lines(vec2(x + 160.0, y + 150.0), 5, 26.0, spin, PURPLE)
+  draw_poly_lines_ex(vec2(x + 60.0, y + 150.0), 8, 26.0, spin, 3.0, BLACK)
+}
+
+let draw_splines_panel = (x: f32, y: f32, frame: i64) -> void => {
+  let control: []Vector2 = [
+    vec2(x, y + 60.0), vec2(x + 70.0, y), vec2(x + 140.0, y + 90.0), vec2(x + 210.0, y + 20.0),
+  ]
+  draw_spline_linear(control, 2.0, LIGHTGRAY)
+  draw_spline_basis(control, 3.0, BLUE)
+  draw_spline_catmull_rom(control, 3.0, RED)
+
+  let quad_pts: []Vector2 = [vec2(x, y + 130.0), vec2(x + 100.0, y + 100.0), vec2(x + 200.0, y + 130.0)]
+  draw_spline_bezier_quadratic(quad_pts, 3.0, GREEN)
+  draw_spline_bezier_cubic(control, 2.0, PURPLE)
+
+  // The segment forms, drawn one row down.
+  let s1 = vec2(x, y + 160.0)
+  let s2 = vec2(x + 70.0, y + 190.0)
+  let s3 = vec2(x + 140.0, y + 160.0)
+  let s4 = vec2(x + 210.0, y + 190.0)
+  draw_spline_segment_linear(s1, s2, 2.0, DARKGRAY)
+  draw_spline_segment_basis(s1, s2, s3, s4, 2.0, BLUE)
+  draw_spline_segment_catmull_rom(s1, s2, s3, s4, 2.0, RED)
+  draw_spline_segment_bezier_quadratic(s1, s2, s3, 2.0, GREEN)
+  draw_spline_segment_bezier_cubic(s1, s2, s3, s4, 2.0, ORANGE)
+
+  // A dot riding the curve, which is what the `spline_point_*` family is for: following a
+  // path rather than only drawing it.
+  let along = cycle(frame, 300)
+  draw_circle(spline_point_catmull_rom(s1, s2, s3, s4, along), 5.0, BLACK)
+  draw_circle(spline_point_bezier_cubic(s1, s2, s3, s4, along), 4.0, PURPLE)
+  draw_circle(spline_point_basis(s1, s2, s3, s4, along), 4.0, BLUE)
+  draw_circle(spline_point_bezier_quadratic(s1, s2, s3, along), 4.0, GREEN)
+  draw_circle(spline_point_linear(s1, s4, along), 4.0, DARKGRAY)
+}
+
+/// Every predicate at once, against the cursor: each shape lights up while it contains the
+/// mouse, so the collision bindings are checked by eye as well as by `--check`.
+let draw_collision_panel = (x: f32, y: f32, cursor: Vector2) -> void => {
+  let box = rect(x, y, 110.0, 80.0)
+  let circle_at = vec2(x + 190.0, y + 40.0)
+  let t1 = vec2(x + 300.0, y)
+  let t2 = vec2(x + 260.0, y + 80.0)
+  let t3 = vec2(x + 340.0, y + 80.0)
+  let poly_at = vec2(x + 440.0, y + 40.0)
+  let poly: []Vector2 = [
+    vec2(x + 400.0, y + 10.0), vec2(x + 480.0, y + 10.0),
+    vec2(x + 480.0, y + 70.0), vec2(x + 400.0, y + 70.0),
+  ]
+  let line_a = vec2(x + 520.0, y + 10.0)
+  let line_b = vec2(x + 640.0, y + 70.0)
+
+  draw_rectangle(box, if point_in_rect(cursor, box) { GREEN } else { LIGHTGRAY })
+  draw_circle(circle_at, 40.0, if point_in_circle(cursor, circle_at, 40.0) { GREEN } else { LIGHTGRAY })
+  draw_triangle(t1, t2, t3, if point_in_triangle(cursor, t1, t2, t3) { GREEN } else { LIGHTGRAY })
+  draw_poly(poly_at, 4, 42.0, 45.0,
+    if point_in_poly(cursor, poly) { GREEN } else { LIGHTGRAY })
+  draw_line_ex(line_a, line_b, 6.0,
+    if point_in_line(cursor, line_a, line_b, 6) { GREEN } else { LIGHTGRAY })
+
+  // The cursor as a circle, tested against the box and the line: two more predicates, and
+  // the pair that a game actually reaches for.
+  let touching_box = circle_hits_rect(cursor, 18.0, box)
+  let touching_line = circle_hits_line(cursor, 18.0, line_a, line_b)
+  draw_circle_lines(cursor, 18.0, if touching_box || touching_line { RED } else { DARKGRAY })
+
+  // A fixed rectangle and one that follows the cursor: their overlap is drawn where it is.
+  let follower = rect(cursor.x - 30.0, cursor.y - 20.0, 60.0, 40.0)
+  let anchor = rect(x + 680.0, y, 90.0, 80.0)
+  draw_rectangle_lines(anchor, 2.0, DARKGRAY)
+  if rects_overlap(anchor, follower) {
+    draw_rectangle(collision_rect(anchor, follower), ORANGE)
+  }
+
+  // And where the cursor's own crosshair crosses a fixed diagonal.
+  let diag_a = vec2(x + 520.0, y + 70.0)
+  let diag_b = vec2(x + 640.0, y + 10.0)
+  draw_line(diag_a, diag_b, DARKGRAY)
+  match lines_intersect(diag_a, diag_b, vec2(cursor.x - 40.0, cursor.y), vec2(cursor.x + 40.0, cursor.y)) {
+    Some(hit) => draw_circle(hit, 6.0, RED),
+    None => {},
+  }
+
+  // Two circles, one moving with the cursor: green while they overlap.
+  let fixed_at = vec2(x + 820.0, y + 40.0)
+  let overlapping = circles_overlap(fixed_at, 30.0, cursor, 18.0)
+  draw_circle_lines(fixed_at, 30.0, if overlapping { GREEN } else { DARKGRAY })
+}
+
+// ---------------------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------------------
+
+/// A 0.0..1.0 phase that repeats every `period` frames.
+///
+/// Integers all the way until the last step, which converts *upward* to f32 — the
+/// direction the language allows.
+let cycle = pure (frame: i64, period: i64) -> f32 => f32(frame %% period) / f32(period)
+
+/// Cosine and sine at f32, for laying out a fan of points. Six terms of the Taylor series
+/// is ample over the one turn these are asked for, and it keeps the example free of a
+/// dependency on a math module it would otherwise need for two calls.
+let cos32 = pure (radians: f32) -> f32 => {
+  let x2 = radians * radians
+  1.0 - x2 / 2.0 + x2 * x2 / 24.0 - x2 * x2 * x2 / 720.0
+}
+
+let sin32 = pure (radians: f32) -> f32 => {
+  let x2 = radians * radians
+  radians - radians * x2 / 6.0 + radians * x2 * x2 / 120.0
+    - radians * x2 * x2 * x2 / 5040.0
+}

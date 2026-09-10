@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — the shapes module, finished, and a gallery that checks itself
+
+`bindings/raylib/shapes.lyra` went from 5 public functions to **61 over 59 externs** —
+every shape raylib draws and every collision it tests — and `examples/raylib/shapes.lyra`
+exercises all 61.
+
+**Three capabilities were probed before any of it was written**, because each would have
+decided the scope and none was obvious from the header: a `Rectangle` **returned** by value
+(sixteen bytes of homogeneous float), a `[]Vector2` passed as `^Vector2` plus a count via
+`xs.data()`, and a `^mut Vector2` out-parameter. All three worked first try, which is what
+made the whole surface bindable rather than half of it.
+
+**What the module refuses to duplicate.** raylib offers most calls twice, in loose `int`
+coordinates and taking an aggregate. Binding both gives one capability two spellings for
+no gain, since a Lyra caller already holds a `Vector2` — so the aggregate form is the one
+bound, with `draw_pixel`/`draw_pixel_v` the single deliberate exception. That is also why
+`DrawRectangleGradientV`/`…H` are absent: they are `…GradientEx` with a colour repeated.
+
+**Two C conventions stop at the boundary**, which is the standing job of a binding module.
+An empty array draws nothing rather than trapping — `data()` traps on one, correctly, but
+"draw no triangles" is what an empty point list means — and `CheckCollisionLines`'s
+out-parameter becomes `Maybe<Vector2>`, the same rule `to_maybe` applies to NULL.
+
+**The example is two programs in one file**, and that is the transferable part. A drawing
+demo cannot be checked by a machine; the geometry underneath it can. `--check` runs every
+collision and spline-point binding against cases whose answers follow from the numbers —
+the overlap of (0,0,10,10) and (5,5,10,10) is (5,5,5,5); the diagonals of a 10×10 square
+cross at its centre — prints a pass/fail line each, and exits 0 or 1. **The harness was
+itself checked** by breaking one expectation and confirming a FAIL and a non-zero exit,
+which is the difference between a test and a decoration.
+
+Breakout learned that lesson after the fact; this one was built with it. And the reason it
+matters here is that the window path **could not be verified at all** from this shell: a
+detached background process cannot open a GUI window, and breakout dies the same way when
+run that way. So the only machine-checkable claim about the gallery is that it compiles,
+links against real raylib, and references every binding — which is a real claim, and a
+smaller one than "it works".
+
+`TestExec_RaylibShapeGeometry` is the CI half, covering the four crossings a wrong ABI
+breaks *silently*: the aggregate return, the out-parameter, the array-plus-count, and
+three aggregates in one call. Pure geometry, so it needs no display.
+
+Two language limits surfaced and are worth knowing, both in `examples/raylib/shapes.lyra`'s
+comments. **Narrowing f64 to f32 has no spelling** — `f32(x)` on an f64 is refused outright
+— so the animation runs off a frame counter rather than `elapsed()`, converting upward from
+integers, which is allowed. And `lyrac run` **passes no arguments through** to the program,
+so `--check` needs `lyrac build` and then the binary.
+
 ### 09/10/26 — the `let … else` divergence rule moves into the front end
 
 `lyra-E074`, `checker.CheckLetElseDiverges`: an else branch that can fall through is now

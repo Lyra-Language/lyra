@@ -1,5 +1,16 @@
 module bindings.raylib
-//! Vectors, rectangles, and the drawing calls that take them.
+//! Vectors, rectangles, and every shape raylib can draw or collide.
+//!
+//! **The Vector2/Rectangle form is the one bound.** raylib offers most calls twice — once
+//! taking loose `int` coordinates and once taking an aggregate — and binding both would
+//! give one capability two spellings for no gain, since Lyra callers already hold a
+//! `Vector2`. Where raylib offers only the aggregate form, that is what is here; where it
+//! offers only loose coordinates, so is that. The one deliberate duplicate is
+//! [draw_pixel] beside [draw_pixel_v], because a single pixel is as often addressed by
+//! two integers as by a point.
+//!
+//! Angles are **degrees**, as raylib's are, and measured clockwise from the positive x
+//! axis. `segments` is how many straight edges approximate a curve; 0 lets raylib choose.
 
 /// `Vector2` — two floats, raylib's most-passed type.
 ///
@@ -23,23 +34,16 @@ pub struct Rectangle {
   height: f32,
 }
 
-@symbol("BeginDrawing")
-unsafe extern rl_begin_drawing: () -> void
+/// A point, spelled shorter than the struct literal.
+pub let vec2 = pure (x: f32, y: f32) -> Vector2 => Vector2 { x: x, y: y }
 
-@symbol("EndDrawing")
-unsafe extern rl_end_drawing: () -> void
+/// A rectangle, spelled shorter than the struct literal.
+pub let rect = pure (x: f32, y: f32, width: f32, height: f32) -> Rectangle =>
+  Rectangle { x: x, y: y, width: width, height: height }
 
-@symbol("ClearBackground")
-unsafe extern rl_clear_background: (color: Color) -> void
-
-@symbol("DrawCircleV")
-unsafe extern rl_draw_circle: (center: Vector2, radius: f32, color: Color) -> void
-
-@symbol("DrawRectangleRec")
-unsafe extern rl_draw_rectangle: (rect: Rectangle, color: Color) -> void
-
-@symbol("DrawLineV")
-unsafe extern rl_draw_line: (start: Vector2, finish: Vector2, color: Color) -> void
+// ---------------------------------------------------------------------------------------
+// The frame
+// ---------------------------------------------------------------------------------------
 
 /// Start a frame. Every drawing call belongs between this and [end_drawing].
 pub let begin_drawing = () -> void => unsafe { rl_begin_drawing() }
@@ -50,9 +54,105 @@ pub let end_drawing = () -> void => unsafe { rl_end_drawing() }
 /// Fill the whole frame with one colour.
 pub let clear_background = (color: Color) -> void => unsafe { rl_clear_background(color) }
 
+// ---------------------------------------------------------------------------------------
+// Points and lines
+// ---------------------------------------------------------------------------------------
+
+/// A single pixel, by integer coordinates.
+pub let draw_pixel = (pos_x: i32, pos_y: i32, color: Color) -> void =>
+  unsafe { rl_draw_pixel(pos_x, pos_y, color) }
+
+/// A single pixel, by point.
+pub let draw_pixel_v = (position: Vector2, color: Color) -> void =>
+  unsafe { rl_draw_pixel_v(position, color) }
+
+/// A one-pixel line between two points.
+pub let draw_line = (start: Vector2, finish: Vector2, color: Color) -> void =>
+  unsafe { rl_draw_line(start, finish, color) }
+
+/// A line of a given thickness.
+pub let draw_line_ex = (start: Vector2, finish: Vector2, thick: f32, color: Color) -> void =>
+  unsafe { rl_draw_line_ex(start, finish, thick, color) }
+
+/// A line drawn as a cubic bezier curve, which for two points is a gentle S.
+pub let draw_line_bezier = (start: Vector2, finish: Vector2, thick: f32, color: Color) -> void =>
+  unsafe { rl_draw_line_bezier(start, finish, thick, color) }
+
+/// A dashed line: `dash` pixels drawn, `gap` pixels skipped, repeating.
+pub let draw_line_dashed =
+  (start: Vector2, finish: Vector2, dash: i32, gap: i32, color: Color) -> void =>
+    unsafe { rl_draw_line_dashed(start, finish, dash, gap, color) }
+
+/// A connected run of line segments through every point in order.
+///
+/// An empty array draws nothing rather than trapping — see the note on [draw_triangle_fan].
+pub let draw_line_strip = (points: []Vector2, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_line_strip(points.data(), i32(points.len()), color) }
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// Circles, ellipses and rings
+// ---------------------------------------------------------------------------------------
+
 /// A filled circle.
 pub let draw_circle = (center: Vector2, radius: f32, color: Color) -> void =>
   unsafe { rl_draw_circle(center, radius, color) }
+
+/// A circle's outline.
+pub let draw_circle_lines = (center: Vector2, radius: f32, color: Color) -> void =>
+  unsafe { rl_draw_circle_lines(center, radius, color) }
+
+/// A filled circle shading from `inner` at the centre to `outer` at the rim.
+pub let draw_circle_gradient =
+  (center: Vector2, radius: f32, inner: Color, outer: Color) -> void =>
+    unsafe { rl_draw_circle_gradient(center, radius, inner, outer) }
+
+/// A filled wedge of a circle, from `start_angle` to `end_angle` in degrees.
+pub let draw_circle_sector =
+  (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
+   color: Color) -> void =>
+    unsafe { rl_draw_circle_sector(center, radius, start_angle, end_angle, segments, color) }
+
+/// The outline of a wedge of a circle.
+pub let draw_circle_sector_lines =
+  (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
+   color: Color) -> void =>
+    unsafe {
+      rl_draw_circle_sector_lines(center, radius, start_angle, end_angle, segments, color)
+    }
+
+/// A filled ellipse with separate horizontal and vertical radii.
+pub let draw_ellipse =
+  (center: Vector2, radius_h: f32, radius_v: f32, color: Color) -> void =>
+    unsafe { rl_draw_ellipse(center, radius_h, radius_v, color) }
+
+/// An ellipse's outline.
+pub let draw_ellipse_lines =
+  (center: Vector2, radius_h: f32, radius_v: f32, color: Color) -> void =>
+    unsafe { rl_draw_ellipse_lines(center, radius_h, radius_v, color) }
+
+/// A filled annulus — the area between two concentric circles, over an angular span.
+pub let draw_ring =
+  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
+   segments: i32, color: Color) -> void =>
+    unsafe {
+      rl_draw_ring(center, inner_radius, outer_radius, start_angle, end_angle, segments, color)
+    }
+
+/// The outline of an annulus.
+pub let draw_ring_lines =
+  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
+   segments: i32, color: Color) -> void =>
+    unsafe {
+      rl_draw_ring_lines(center, inner_radius, outer_radius, start_angle, end_angle,
+                         segments, color)
+    }
+
+// ---------------------------------------------------------------------------------------
+// Rectangles
+// ---------------------------------------------------------------------------------------
 
 /// A filled rectangle.
 ///
@@ -61,34 +161,487 @@ pub let draw_circle = (center: Vector2, radius: f32, color: Color) -> void =>
 pub let draw_rectangle = (rect: Rectangle, color: Color) -> void =>
   unsafe { rl_draw_rectangle(rect, color) }
 
-@symbol("CheckCollisionCircleRec")
-unsafe extern rl_circle_hits_rect: (center: Vector2, radius: f32, rect: Rectangle) -> u8
+/// A filled rectangle from a corner and a size.
+pub let draw_rectangle_v = (position: Vector2, size: Vector2, color: Color) -> void =>
+  unsafe { rl_draw_rectangle_v(position, size, color) }
 
-@symbol("CheckCollisionRecs")
-unsafe extern rl_rects_overlap: (a: Rectangle, b: Rectangle) -> u8
+/// A filled rectangle rotated `rotation` degrees about `origin`, which is measured from
+/// the rectangle's own top-left corner rather than from the screen.
+pub let draw_rectangle_pro =
+  (rect: Rectangle, origin: Vector2, rotation: f32, color: Color) -> void =>
+    unsafe { rl_draw_rectangle_pro(rect, origin, rotation, color) }
 
-@symbol("CheckCollisionPointRec")
-unsafe extern rl_point_in_rect: (point: Vector2, rect: Rectangle) -> u8
+/// A rectangle's outline, drawn inside its bounds at the given thickness.
+pub let draw_rectangle_lines = (rect: Rectangle, thick: f32, color: Color) -> void =>
+  unsafe { rl_draw_rectangle_lines(rect, thick, color) }
 
-/// A line between two points.
-pub let draw_line = (start: Vector2, finish: Vector2, color: Color) -> void =>
-  unsafe { rl_draw_line(start, finish, color) }
+/// A filled rectangle with rounded corners. `roundness` runs 0.0 (square) to 1.0.
+pub let draw_rectangle_rounded =
+  (rect: Rectangle, roundness: f32, segments: i32, color: Color) -> void =>
+    unsafe { rl_draw_rectangle_rounded(rect, roundness, segments, color) }
 
+/// The outline of a rounded rectangle.
+pub let draw_rectangle_rounded_lines =
+  (rect: Rectangle, roundness: f32, segments: i32, thick: f32, color: Color) -> void =>
+    unsafe { rl_draw_rectangle_rounded_lines(rect, roundness, segments, thick, color) }
+
+/// A rectangle shaded between four corner colours.
+///
+/// raylib's separate vertical and horizontal gradients are this call with a colour
+/// repeated, which is why they are not bound: they are the same capability spelled twice
+/// and only in loose coordinates.
+pub let draw_rectangle_gradient =
+  (rect: Rectangle, top_left: Color, bottom_left: Color, bottom_right: Color,
+   top_right: Color) -> void =>
+    unsafe {
+      rl_draw_rectangle_gradient(rect, top_left, bottom_left, bottom_right, top_right)
+    }
+
+// ---------------------------------------------------------------------------------------
+// Triangles and polygons
+// ---------------------------------------------------------------------------------------
+
+/// A filled triangle. **Vertices must be given counter-clockwise** or raylib culls it and
+/// nothing appears — the one rule in this module that fails silently.
+pub let draw_triangle = (v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void =>
+  unsafe { rl_draw_triangle(v1, v2, v3, color) }
+
+/// A triangle's outline. Winding does not matter here, unlike [draw_triangle].
+pub let draw_triangle_lines = (v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void =>
+  unsafe { rl_draw_triangle_lines(v1, v2, v3, color) }
+
+/// A fan of triangles sharing the first point.
+///
+/// **An empty array draws nothing rather than trapping.** `data()` traps on one, correctly
+/// — there is no first element to address — but "draw no triangles" is the obvious meaning
+/// of an empty list of points, and absorbing that is what a binding module is for. Every
+/// array-taking call here does the same.
+pub let draw_triangle_fan = (points: []Vector2, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_triangle_fan(points.data(), i32(points.len()), color) }
+  }
+}
+
+/// A strip of triangles, each sharing an edge with the last.
+pub let draw_triangle_strip = (points: []Vector2, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_triangle_strip(points.data(), i32(points.len()), color) }
+  }
+}
+
+/// A filled regular polygon of `sides` sides.
+pub let draw_poly =
+  (center: Vector2, sides: i32, radius: f32, rotation: f32, color: Color) -> void =>
+    unsafe { rl_draw_poly(center, sides, radius, rotation, color) }
+
+/// A regular polygon's outline.
+pub let draw_poly_lines =
+  (center: Vector2, sides: i32, radius: f32, rotation: f32, color: Color) -> void =>
+    unsafe { rl_draw_poly_lines(center, sides, radius, rotation, color) }
+
+/// A regular polygon's outline at a given thickness.
+pub let draw_poly_lines_ex =
+  (center: Vector2, sides: i32, radius: f32, rotation: f32, thick: f32, color: Color) -> void =>
+    unsafe { rl_draw_poly_lines_ex(center, sides, radius, rotation, thick, color) }
+
+// ---------------------------------------------------------------------------------------
+// Splines
+//
+// Each `draw_spline_*` takes the whole control-point array; each `draw_spline_segment_*`
+// takes the fixed number of points one segment needs. The `spline_point_*` family answers
+// the point at `t` in 0.0..1.0 along a segment, which is how a program follows a curve
+// rather than only drawing it.
+// ---------------------------------------------------------------------------------------
+
+/// A polyline through every control point.
+pub let draw_spline_linear = (points: []Vector2, thick: f32, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_spline_linear(points.data(), i32(points.len()), thick, color) }
+  }
+}
+
+/// A B-spline through the control points. Smooth, and does not pass through them.
+pub let draw_spline_basis = (points: []Vector2, thick: f32, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_spline_basis(points.data(), i32(points.len()), thick, color) }
+  }
+}
+
+/// A Catmull-Rom spline, which *does* pass through its control points.
+pub let draw_spline_catmull_rom = (points: []Vector2, thick: f32, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_spline_catmull_rom(points.data(), i32(points.len()), thick, color) }
+  }
+}
+
+/// A quadratic bezier spline: point, control, point, control, …
+pub let draw_spline_bezier_quadratic =
+  (points: []Vector2, thick: f32, color: Color) -> void => {
+    if points.len() > 0 {
+      unsafe { rl_draw_spline_bezier_quad(points.data(), i32(points.len()), thick, color) }
+    }
+  }
+
+/// A cubic bezier spline: point, control, control, point, …
+pub let draw_spline_bezier_cubic = (points: []Vector2, thick: f32, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_spline_bezier_cubic(points.data(), i32(points.len()), thick, color) }
+  }
+}
+
+/// One straight segment of a spline.
+pub let draw_spline_segment_linear =
+  (p1: Vector2, p2: Vector2, thick: f32, color: Color) -> void =>
+    unsafe { rl_draw_spline_seg_linear(p1, p2, thick, color) }
+
+/// One B-spline segment, which needs four control points.
+pub let draw_spline_segment_basis =
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, thick: f32, color: Color) -> void =>
+    unsafe { rl_draw_spline_seg_basis(p1, p2, p3, p4, thick, color) }
+
+/// One Catmull-Rom segment, which needs four control points.
+pub let draw_spline_segment_catmull_rom =
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, thick: f32, color: Color) -> void =>
+    unsafe { rl_draw_spline_seg_catmull_rom(p1, p2, p3, p4, thick, color) }
+
+/// One quadratic bezier segment: two endpoints and one control point.
+pub let draw_spline_segment_bezier_quadratic =
+  (p1: Vector2, c2: Vector2, p3: Vector2, thick: f32, color: Color) -> void =>
+    unsafe { rl_draw_spline_seg_bezier_quad(p1, c2, p3, thick, color) }
+
+/// One cubic bezier segment: two endpoints and two control points.
+pub let draw_spline_segment_bezier_cubic =
+  (p1: Vector2, c2: Vector2, c3: Vector2, p4: Vector2, thick: f32, color: Color) -> void =>
+    unsafe { rl_draw_spline_seg_bezier_cubic(p1, c2, c3, p4, thick, color) }
+
+/// The point at `t` along a straight segment, `t` running 0.0 to 1.0.
+pub let spline_point_linear = pure (start: Vector2, finish: Vector2, t: f32) -> Vector2 =>
+  unsafe { rl_spline_point_linear(start, finish, t) }
+
+/// The point at `t` along a B-spline segment.
+pub let spline_point_basis = pure
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, t: f32) -> Vector2 =>
+    unsafe { rl_spline_point_basis(p1, p2, p3, p4, t) }
+
+/// The point at `t` along a Catmull-Rom segment.
+pub let spline_point_catmull_rom = pure
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, t: f32) -> Vector2 =>
+    unsafe { rl_spline_point_catmull_rom(p1, p2, p3, p4, t) }
+
+/// The point at `t` along a quadratic bezier segment.
+pub let spline_point_bezier_quadratic = pure
+  (p1: Vector2, c2: Vector2, p3: Vector2, t: f32) -> Vector2 =>
+    unsafe { rl_spline_point_bezier_quad(p1, c2, p3, t) }
+
+/// The point at `t` along a cubic bezier segment.
+pub let spline_point_bezier_cubic = pure
+  (p1: Vector2, c2: Vector2, c3: Vector2, p4: Vector2, t: f32) -> Vector2 =>
+    unsafe { rl_spline_point_bezier_cubic(p1, c2, c3, p4, t) }
+
+// ---------------------------------------------------------------------------------------
+// Collision
+//
+// Every one of these is bound rather than written in Lyra, for the reason the first of
+// them established: raylib's answers are the ones its own drawing agrees with, and a
+// hand-rolled second opinion about whether two things touch is a bug waiting for a
+// rounding difference.
+// ---------------------------------------------------------------------------------------
+
+/// Whether two rectangles overlap.
+pub let rects_overlap = pure (a: Rectangle, b: Rectangle) -> bool =>
+  unsafe { rl_rects_overlap(a, b) } != 0
+
+/// Whether two circles overlap.
+pub let circles_overlap = pure
+  (center1: Vector2, radius1: f32, center2: Vector2, radius2: f32) -> bool =>
+    unsafe { rl_circles_overlap(center1, radius1, center2, radius2) } != 0
 
 /// Whether a circle overlaps a rectangle.
 ///
 /// **Three aggregates in one call** — a `Vector2` by value, a scalar, and a `Rectangle` by
 /// value — which is the shape that makes raylib worth binding at all and was impossible
-/// before the ABI classifier. Written here rather than in Lyra because raylib's version is
-/// the one its own drawing agrees with, and a hand-rolled second opinion about whether a
-/// ball touched a brick is a bug waiting for a rounding difference.
-pub let circle_hits_rect = (center: Vector2, radius: f32, rect: Rectangle) -> bool =>
+/// before the ABI classifier.
+pub let circle_hits_rect = pure (center: Vector2, radius: f32, rect: Rectangle) -> bool =>
   unsafe { rl_circle_hits_rect(center, radius, rect) } != 0
 
-/// Whether two rectangles overlap.
-pub let rects_overlap = (a: Rectangle, b: Rectangle) -> bool =>
-  unsafe { rl_rects_overlap(a, b) } != 0
+/// Whether a circle touches a line segment.
+pub let circle_hits_line = pure
+  (center: Vector2, radius: f32, p1: Vector2, p2: Vector2) -> bool =>
+    unsafe { rl_circle_hits_line(center, radius, p1, p2) } != 0
 
 /// Whether a point falls inside a rectangle.
-pub let point_in_rect = (point: Vector2, rect: Rectangle) -> bool =>
+pub let point_in_rect = pure (point: Vector2, rect: Rectangle) -> bool =>
   unsafe { rl_point_in_rect(point, rect) } != 0
+
+/// Whether a point falls inside a circle.
+pub let point_in_circle = pure (point: Vector2, center: Vector2, radius: f32) -> bool =>
+  unsafe { rl_point_in_circle(point, center, radius) } != 0
+
+/// Whether a point falls inside a triangle.
+pub let point_in_triangle = pure
+  (point: Vector2, p1: Vector2, p2: Vector2, p3: Vector2) -> bool =>
+    unsafe { rl_point_in_triangle(point, p1, p2, p3) } != 0
+
+/// Whether a point falls within `threshold` pixels of a line segment.
+pub let point_in_line = pure
+  (point: Vector2, p1: Vector2, p2: Vector2, threshold: i32) -> bool =>
+    unsafe { rl_point_in_line(point, p1, p2, threshold) } != 0
+
+/// Whether a point falls inside a polygon.
+///
+/// An empty point list is `false` rather than a trap, matching the drawing calls.
+pub let point_in_poly = pure (point: Vector2, points: []Vector2) -> bool => {
+  if points.len() == 0 {
+    false
+  } else {
+    unsafe { rl_point_in_poly(point, points.data(), i32(points.len())) } != 0
+  }
+}
+
+/// Where two line segments cross, or `None` if they do not.
+///
+/// **raylib reports the crossing through an out-parameter**, which is C's way of returning
+/// two things; the `Maybe` is where that convention stops. The `^mut Vector2` never leaves
+/// this function — the local it points at outlives the call and nothing else can see it —
+/// which is the whole reason the wrapper is worth having.
+pub let lines_intersect = pure
+  (start1: Vector2, finish1: Vector2, start2: Vector2, finish2: Vector2) -> Maybe<Vector2> => {
+    var hit = Vector2 { x: 0.0, y: 0.0 }
+    let crossed = unsafe { rl_lines_intersect(start1, finish1, start2, finish2, &mut hit) }
+    if crossed != 0 { Some(hit) } else { None }
+  }
+
+/// The overlapping area of two rectangles, empty (zero width and height) when they do not
+/// overlap.
+///
+/// It **returns a `Rectangle` by value** — sixteen bytes of homogeneous float, so it comes
+/// back in the float registers on aarch64 and through an `sret` buffer on x86-64. Nothing
+/// here says so; `pkg/abi` decides it per target.
+pub let collision_rect = pure (a: Rectangle, b: Rectangle) -> Rectangle =>
+  unsafe { rl_collision_rect(a, b) }
+
+// ---------------------------------------------------------------------------------------
+// The externs
+//
+// Private, as every extern is — there is no `pub extern` — so the module's surface is the
+// Lyra above and `unsafe` is written here once instead of at every call site.
+// ---------------------------------------------------------------------------------------
+
+@symbol("BeginDrawing")
+unsafe extern rl_begin_drawing: () -> void
+
+@symbol("EndDrawing")
+unsafe extern rl_end_drawing: () -> void
+
+@symbol("ClearBackground")
+unsafe extern rl_clear_background: (color: Color) -> void
+
+@symbol("DrawPixel")
+unsafe extern rl_draw_pixel: (pos_x: i32, pos_y: i32, color: Color) -> void
+
+@symbol("DrawPixelV")
+unsafe extern rl_draw_pixel_v: (position: Vector2, color: Color) -> void
+
+@symbol("DrawLineV")
+unsafe extern rl_draw_line: (start: Vector2, finish: Vector2, color: Color) -> void
+
+@symbol("DrawLineEx")
+unsafe extern rl_draw_line_ex: (start: Vector2, finish: Vector2, thick: f32, color: Color) -> void
+
+@symbol("DrawLineBezier")
+unsafe extern rl_draw_line_bezier:
+  (start: Vector2, finish: Vector2, thick: f32, color: Color) -> void
+
+@symbol("DrawLineDashed")
+unsafe extern rl_draw_line_dashed:
+  (start: Vector2, finish: Vector2, dash: i32, gap: i32, color: Color) -> void
+
+@symbol("DrawLineStrip")
+unsafe extern rl_draw_line_strip: (points: ^Vector2, count: i32, color: Color) -> void
+
+@symbol("DrawCircleV")
+unsafe extern rl_draw_circle: (center: Vector2, radius: f32, color: Color) -> void
+
+@symbol("DrawCircleLinesV")
+unsafe extern rl_draw_circle_lines: (center: Vector2, radius: f32, color: Color) -> void
+
+@symbol("DrawCircleGradient")
+unsafe extern rl_draw_circle_gradient:
+  (center: Vector2, radius: f32, inner: Color, outer: Color) -> void
+
+@symbol("DrawCircleSector")
+unsafe extern rl_draw_circle_sector:
+  (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
+   color: Color) -> void
+
+@symbol("DrawCircleSectorLines")
+unsafe extern rl_draw_circle_sector_lines:
+  (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
+   color: Color) -> void
+
+@symbol("DrawEllipseV")
+unsafe extern rl_draw_ellipse:
+  (center: Vector2, radius_h: f32, radius_v: f32, color: Color) -> void
+
+@symbol("DrawEllipseLinesV")
+unsafe extern rl_draw_ellipse_lines:
+  (center: Vector2, radius_h: f32, radius_v: f32, color: Color) -> void
+
+@symbol("DrawRing")
+unsafe extern rl_draw_ring:
+  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
+   segments: i32, color: Color) -> void
+
+@symbol("DrawRingLines")
+unsafe extern rl_draw_ring_lines:
+  (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
+   segments: i32, color: Color) -> void
+
+@symbol("DrawRectangleRec")
+unsafe extern rl_draw_rectangle: (rect: Rectangle, color: Color) -> void
+
+@symbol("DrawRectangleV")
+unsafe extern rl_draw_rectangle_v: (position: Vector2, size: Vector2, color: Color) -> void
+
+@symbol("DrawRectanglePro")
+unsafe extern rl_draw_rectangle_pro:
+  (rect: Rectangle, origin: Vector2, rotation: f32, color: Color) -> void
+
+@symbol("DrawRectangleLinesEx")
+unsafe extern rl_draw_rectangle_lines: (rect: Rectangle, thick: f32, color: Color) -> void
+
+@symbol("DrawRectangleRounded")
+unsafe extern rl_draw_rectangle_rounded:
+  (rect: Rectangle, roundness: f32, segments: i32, color: Color) -> void
+
+@symbol("DrawRectangleRoundedLinesEx")
+unsafe extern rl_draw_rectangle_rounded_lines:
+  (rect: Rectangle, roundness: f32, segments: i32, thick: f32, color: Color) -> void
+
+@symbol("DrawRectangleGradientEx")
+unsafe extern rl_draw_rectangle_gradient:
+  (rect: Rectangle, top_left: Color, bottom_left: Color, bottom_right: Color,
+   top_right: Color) -> void
+
+@symbol("DrawTriangle")
+unsafe extern rl_draw_triangle: (v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void
+
+@symbol("DrawTriangleLines")
+unsafe extern rl_draw_triangle_lines:
+  (v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void
+
+@symbol("DrawTriangleFan")
+unsafe extern rl_draw_triangle_fan: (points: ^Vector2, count: i32, color: Color) -> void
+
+@symbol("DrawTriangleStrip")
+unsafe extern rl_draw_triangle_strip: (points: ^Vector2, count: i32, color: Color) -> void
+
+@symbol("DrawPoly")
+unsafe extern rl_draw_poly:
+  (center: Vector2, sides: i32, radius: f32, rotation: f32, color: Color) -> void
+
+@symbol("DrawPolyLines")
+unsafe extern rl_draw_poly_lines:
+  (center: Vector2, sides: i32, radius: f32, rotation: f32, color: Color) -> void
+
+@symbol("DrawPolyLinesEx")
+unsafe extern rl_draw_poly_lines_ex:
+  (center: Vector2, sides: i32, radius: f32, rotation: f32, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineLinear")
+unsafe extern rl_draw_spline_linear:
+  (points: ^Vector2, count: i32, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineBasis")
+unsafe extern rl_draw_spline_basis:
+  (points: ^Vector2, count: i32, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineCatmullRom")
+unsafe extern rl_draw_spline_catmull_rom:
+  (points: ^Vector2, count: i32, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineBezierQuadratic")
+unsafe extern rl_draw_spline_bezier_quad:
+  (points: ^Vector2, count: i32, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineBezierCubic")
+unsafe extern rl_draw_spline_bezier_cubic:
+  (points: ^Vector2, count: i32, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineSegmentLinear")
+unsafe extern rl_draw_spline_seg_linear:
+  (p1: Vector2, p2: Vector2, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineSegmentBasis")
+unsafe extern rl_draw_spline_seg_basis:
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineSegmentCatmullRom")
+unsafe extern rl_draw_spline_seg_catmull_rom:
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineSegmentBezierQuadratic")
+unsafe extern rl_draw_spline_seg_bezier_quad:
+  (p1: Vector2, c2: Vector2, p3: Vector2, thick: f32, color: Color) -> void
+
+@symbol("DrawSplineSegmentBezierCubic")
+unsafe extern rl_draw_spline_seg_bezier_cubic:
+  (p1: Vector2, c2: Vector2, c3: Vector2, p4: Vector2, thick: f32, color: Color) -> void
+
+@symbol("GetSplinePointLinear")
+unsafe extern pure rl_spline_point_linear: (start: Vector2, finish: Vector2, t: f32) -> Vector2
+
+@symbol("GetSplinePointBasis")
+unsafe extern pure rl_spline_point_basis:
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, t: f32) -> Vector2
+
+@symbol("GetSplinePointCatmullRom")
+unsafe extern pure rl_spline_point_catmull_rom:
+  (p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2, t: f32) -> Vector2
+
+@symbol("GetSplinePointBezierQuad")
+unsafe extern pure rl_spline_point_bezier_quad:
+  (p1: Vector2, c2: Vector2, p3: Vector2, t: f32) -> Vector2
+
+@symbol("GetSplinePointBezierCubic")
+unsafe extern pure rl_spline_point_bezier_cubic:
+  (p1: Vector2, c2: Vector2, c3: Vector2, p4: Vector2, t: f32) -> Vector2
+
+@symbol("CheckCollisionRecs")
+unsafe extern pure rl_rects_overlap: (a: Rectangle, b: Rectangle) -> u8
+
+@symbol("CheckCollisionCircles")
+unsafe extern pure rl_circles_overlap:
+  (center1: Vector2, radius1: f32, center2: Vector2, radius2: f32) -> u8
+
+@symbol("CheckCollisionCircleRec")
+unsafe extern pure rl_circle_hits_rect: (center: Vector2, radius: f32, rect: Rectangle) -> u8
+
+@symbol("CheckCollisionCircleLine")
+unsafe extern pure rl_circle_hits_line:
+  (center: Vector2, radius: f32, p1: Vector2, p2: Vector2) -> u8
+
+@symbol("CheckCollisionPointRec")
+unsafe extern pure rl_point_in_rect: (point: Vector2, rect: Rectangle) -> u8
+
+@symbol("CheckCollisionPointCircle")
+unsafe extern pure rl_point_in_circle: (point: Vector2, center: Vector2, radius: f32) -> u8
+
+@symbol("CheckCollisionPointTriangle")
+unsafe extern pure rl_point_in_triangle:
+  (point: Vector2, p1: Vector2, p2: Vector2, p3: Vector2) -> u8
+
+@symbol("CheckCollisionPointLine")
+unsafe extern pure rl_point_in_line:
+  (point: Vector2, p1: Vector2, p2: Vector2, threshold: i32) -> u8
+
+@symbol("CheckCollisionPointPoly")
+unsafe extern pure rl_point_in_poly: (point: Vector2, points: ^Vector2, count: i32) -> u8
+
+@symbol("CheckCollisionLines")
+unsafe extern pure rl_lines_intersect:
+  (start1: Vector2, finish1: Vector2, start2: Vector2, finish2: Vector2,
+   hit: ^mut Vector2) -> u8
+
+@symbol("GetCollisionRec")
+unsafe extern pure rl_collision_rect: (a: Rectangle, b: Rectangle) -> Rectangle

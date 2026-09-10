@@ -3456,6 +3456,26 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
+### `bindings/raylib/shapes.lyra` is complete — **[DONE 09/10]**
+
+61 public functions over 59 externs: every shape raylib draws, every collision it tests,
+the spline families, and the point-getters that let a program follow a curve rather than
+only draw it. `examples/raylib/shapes.lyra` exercises all 61 and self-checks the geometry
+under `--check`. See COMPLETED.md for the two C conventions the module absorbs and the
+duplicate-spelling rule.
+
+**Two language limits it ran into**, both worth their own entries some day:
+
+- **Narrowing f64 to f32 has no spelling.** `f32(x)` on an f64 is refused outright, with
+  no escape hatch named — unlike float-to-int, which points at `floor()`/`round()`. Every
+  raylib coordinate is f32 and `elapsed()` is f64, so an animation driven by the clock
+  cannot be written at all; the example counts frames instead. Whatever the answer is
+  (an explicit `narrow()`, or the conversion pointing at one), the current message names
+  no way forward.
+- **`lyrac run` passes no arguments through** to the program, so a program that reads
+  `program_args()` has to be built first. `go run` forwards after `--`; there is no
+  spelling here.
+
 ### raylib audio, and Breakout has sound — **[DONE 09/09]**
 
 `bindings/raylib/audio.lyra`: `init_audio_device`, `load_sound`, `wave_from_memory`,
