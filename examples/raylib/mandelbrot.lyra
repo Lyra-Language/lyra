@@ -1,0 +1,138 @@
+import std.math.{ Complex }
+
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps,
+  begin_drawing, end_drawing, clear_background, draw_pixel,
+  rgb, BLACK,
+}
+
+const MAX_ITER = 100
+const X_MIN = -2.00
+const X_MAX = 0.47
+const X_LEN = X_MAX - X_MIN
+
+const Y_MIN = -1.12
+const Y_MAX = 1.12
+const Y_LEN = Y_MAX - Y_MIN
+
+const ASPECT_RATIO = Y_LEN / X_LEN
+
+const WINDOW_WIDTH = 1080
+
+const ESCAPE = 65536.0
+// Colour is computed rather than looked up, now that the terminal takes 24-bit values:
+// a **hue circle** at full saturation, which is piecewise linear over six sectors and
+// closes on itself.
+//
+// Closing on itself is the point. A palette had to be walked there-and-back to avoid a
+// seam where the cycle repeated; a hue circle has no ends to join, so it simply wraps.
+// And "running out of colours" stops being a concept — the gradient is continuous, so
+// depth costs nothing.
+//
+// Black is still the set, and the far field still fades to black, but by *value* now
+// rather than by landing on a dark palette entry.
+
+/// Escape iterations per full turn of the hue circle.
+const COLOR_CYCLE = 64.0
+
+/// Escape iterations over which the colour fades up from black.
+///
+/// Without it the fastest-escaping points — the whole far field — come out fully bright,
+/// and the picture reads as a flat wash with the structure lost in it. Fading the first
+/// few iterations to black is what keeps the boundary the brightest thing on screen.
+const FADE_IN = 8.0
+
+/// How much one wheel notch scales the span. Zoom is **multiplicative**, not a level
+/// counter: a fixed step feels like the same movement at every depth, which is what makes
+/// it read as smooth rather than as jumping between preset magnifications.
+const ZOOM_STEP = 0.85
+
+let main = () -> void => {
+  let window_width = f64(WINDOW_WIDTH)
+  let window_height = window_width * ASPECT_RATIO
+  init_window(WINDOW_WIDTH, window_height.floor(), "Lyra - raylib Mandelbrot Set")
+  set_target_fps(60)
+
+  for !should_close() {
+    begin_drawing()
+    clear_background(BLACK)
+
+    for py in 0..<=window_height.floor() {
+      for px in 0..<=window_width.floor() {
+        let c = Complex {
+          re: X_MIN + X_LEN * f64(px) / window_width,
+          im: Y_MIN + Y_LEN * f64(py) / window_height,
+        }
+        let color = shade(c, iter_limit(window_width))
+        draw_pixel(i32(px), i32(py), color)
+      }
+    }
+
+    end_drawing()
+  }
+
+  close_window()
+  println("closed cleanly")
+}
+
+let iter_limit = pure (window_width: f64) -> i64 => {
+  let magnification = X_LEN / window_width
+  if magnification <= 1.0 {
+    MAX_ITER
+  } else {
+    MAX_ITER + (120.0 * magnification.log10()).round()
+  }
+}
+
+let shade = pure (c: Complex<f64>, max_iter: i64) -> Color => {
+  var z = Complex { re: 0.0, im: 0.0 }
+  var mag2 = 0.0
+  var iter = 0
+  for iter < max_iter {
+    z = z * z + c
+    mag2 = z.re * z.re + z.im * z.im
+    if mag2 > ESCAPE { break }
+    iter += 1
+  }
+
+  if iter >= max_iter {
+    BLACK // the set itself: black
+  } else {
+    // Smooth escape time, `n + 1 - log2(log|z|)`: the integer iteration count alone
+    // draws visible contours, since every point escaping on the same step gets the same
+    // colour. The smooth value is used **linearly** here — the logarithmic mapping this
+    // replaced existed to spend a single fixed ramp sensibly, and a cycle has no ramp to
+    // exhaust.
+    let smooth = f64(iter) + 1.0 - mag2.sqrt().log().log2()
+    // The correction is worth about -1.5, so a point escaping immediately lands below
+    // zero — and a negative feeds a negative into the remainder below, which would index
+    // backwards off the palette.
+    let s = if smooth < 0.0 { 0.0 } else { smooth }
+
+    // The fractional part of the turn count is the position on the hue circle, so the
+    // colour wraps with no seam however many times it goes round.
+    let turns = s / COLOR_CYCLE
+    let hue = 6.0 * (turns - f64(turns.floor()))
+    let value = if s >= FADE_IN { 1.0 } else { s / FADE_IN }
+    hue_rgb(hue, value)
+  }
+}
+
+/// A hue at full saturation and the given value, packed.
+///
+/// Plain HSV with S = 1: each sector holds one channel at full, ramps a second up or down,
+/// and leaves the third at zero. Six linear sectors, no trigonometry — which is just as
+/// well, since the language has `log` and `sqrt` and no `cos`.
+let hue_rgb = pure (hue: f64, value: f64) -> Color => {
+  let sector = hue.floor()
+  let f = hue - f64(sector)
+  let full = u8((255.0 * value).round())
+  let up = u8((255.0 * value * f).round())
+  let down = u8((255.0 * value * (1.0 - f)).round())
+  if sector <= 0 { rgb(full, up, 0) }
+  else if sector == 1 { rgb(down, full, 0) }
+  else if sector == 2 { rgb(0, full, up) }
+  else if sector == 3 { rgb(0, down, full) }
+  else if sector == 4 { rgb(up, 0, full) }
+  else { rgb(full, 0, down) }
+}
