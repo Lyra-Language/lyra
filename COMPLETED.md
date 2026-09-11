@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 09/11/26 — a compound assignment takes what `=` takes
+
+`x += if wide { 2 } else { 1 }` was a syntax error while `x = if wide { … } else { … }`
+parsed. A compound assignment is the shorter spelling of `place = place op rhs`, so the two
+differed by spelling alone — the rule this language states for the *left* side (any place
+`=` accepts, not just a binding) failing on the right.
+
+The cause: `compound_assignment` lives in the expression tier and both its operands were
+`_math_operand` — `_postfix_expr`, nested math, `address_of_expr` — which has no
+block-bodied form in it. `var_reassignment` is a statement whose value is the whole
+`expression`, which is why `=` never had the problem.
+
+**The right field now lists the block-bodied forms** (`if_block_expr`, `match_expr`,
+`block`, `unsafe_block`) beside `_math_operand`, rather than taking `$.expression` whole.
+That is the part worth remembering: the operand tier is what keeps `x += 1 + 2`
+unambiguous, since with the full expression on the right the `+ 2` could attach to either
+operator — grammar.js's own `[expression, _math_operand]` conflict is that race one level
+up. None of the block forms can begin an arithmetic operand, so none of them races with it:
+the generated parser reports the same two (pre-existing) unnecessary-conflict warnings as
+before, and the corpus is unchanged at 522 parses plus the new cases. The **left** side
+stays `_math_operand`: it is a place, not a value.
+
 ### 09/11/26 — a name inside a declaration belongs to the declaring module
 
 `pub struct Outer { xs: []Inner }` over a **private** `Inner` built, and then failed the

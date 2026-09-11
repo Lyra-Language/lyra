@@ -240,9 +240,10 @@ write today:
 
 ## Known bugs
 
-- **[OPEN 09/11] A compound assignment will not take an `if` expression.** `x = if c { 1 }
-  else { 2 }` parses; `x += if c { 1 } else { 2 }` is a syntax error. A grammar gap in the
-  compound-assignment rule's right-hand side; `std/json.lyra` writes the two branches out.
+- **[DONE 09/11] A compound assignment takes a block-bodied right side.** `x += if c { 1 }
+  else { 2 }` was a syntax error while `x = if c { … }` parsed — the compound rule's right
+  field was the arithmetic operand tier. It accepts `if`, `match`, a block and an `unsafe`
+  block now; the left stays a place. See COMPLETED.md.
 
 - **[DONE 09/11] `?` refused every struct error type**, identical ones included ("error type
   E is not convertible to … E"): the enclosing return type was compared as written against
