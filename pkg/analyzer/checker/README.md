@@ -580,7 +580,16 @@ provably-nonzero divisor / no signed `INT_MIN÷-1` → `emitCheckedDivOp` drops 
 `lowerIndexExpr` drops the bounds trap *and* the negative-from-end adjustment; a loop counter is
 proven via the widening fixpoint, a refined param via branch refinement). Sound by construction
 (only *proven*-safe ops are present; a nil table / absent entry reports false, so a real fault
-is never elided). The analysis's original deferred list is now cleared — diagnostics + elision
+is never elided) — **provided the pass sees every write to a variable it tracks**, which until
+09/11 it did not. `&mut x` was invisible: after `set(&mut i, 7)` the pass still believed
+`i == 0`, proved `xs[i]` in bounds, and the backend dropped the trap, so safe code read past
+the array (and wrapped an add, and divided by zero). **A name whose address is taken with
+`&mut` anywhere in a function is never tracked there** — `mutAddressTaken` collects the set at
+each function entry (`analyzeBody`), and `tracked`, the single read of a stored interval,
+answers ⊤ for any name in it. Flow-insensitive because a havoc at the `&mut` site is undone
+by a later reassignment the pass *can* see while the write through the pointer stays
+invisible (`let p = &mut i; i = 0; p^ = 7`). `&x` cannot write and keeps tracking. See
+CLAUDE.md rule 18. The analysis's original deferred list is now cleared — diagnostics + elision
 across overflow / divide-by-zero / bounds, all integer widths (i8–u64), `if`-branch +
 `match`-arm + C-style-loop + for-in-range refinement, and `RangeConstraint` enforcement both
 ways (the typechecker's `range_constraint.go` for a constant value, this pass's

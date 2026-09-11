@@ -46,9 +46,17 @@ func (l *lowerer) patternMatcher(block *ir.Block, val value.Value, valType types
 		// half-working path.
 		return nil, nil, fmt.Errorf("llvm: destructuring an array with a pattern is not implemented yet — use `match`")
 	}
-	scrut, err := l.unboxSharedData(block, val)
-	if err != nil {
-		return nil, nil, err
+	// A raw pointer is never a `shared` box, whatever it points at, so it is matched as
+	// the value it is. unboxSharedData decides by LLVM shape alone, so handed one it
+	// refused every `let _ = p` — and a pointer to a struct with a box's field count
+	// would have been read as a box. The Lyra type is what knows.
+	scrut := value.Value(val)
+	if _, isPtr := types.StripNewtype(valType).(types.RawPointerType); !isPtr {
+		unboxed, err := l.unboxSharedData(block, val)
+		if err != nil {
+			return nil, nil, err
+		}
+		scrut = unboxed
 	}
 	test := func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 		return l.aggPatternTest(b, scrut, pat, valType)

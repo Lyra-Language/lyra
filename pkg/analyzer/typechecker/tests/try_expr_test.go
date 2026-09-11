@@ -136,3 +136,35 @@ let f = (n: i64) -> i64 => {
 	assertErrorsAre(t, res,
 		"`?` operand must be a Result or Maybe, got Result")
 }
+
+// A struct error type propagates into the same struct. The enclosing function's return
+// type was compared as written — the bare name — against the operand's resolved
+// declaration, so until 09/11 every struct error type was refused, identical ones
+// included ("error type E is not convertible to … E"). Found writing std.json.
+func TestTry_StructErrorTypePropagates(t *testing.T) {
+	source := `
+data Result<t, e> = Ok t | Err e
+struct ParseError { message: string, offset: i64 }
+let step = (n: i64) -> Result<(i64, i64), ParseError> => { Ok((n, n)) }
+let f = (n: i64) -> Result<i64, ParseError> => {
+    let (a, b) = step(n)?
+    Ok(a + b)
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// The fix resolves both sides; it must not make two different structs compatible.
+func TestTry_DifferentStructErrorTypesRefused(t *testing.T) {
+	source := `
+data Result<t, e> = Ok t | Err e
+struct IoError { code: i64 }
+struct ParseError { message: string }
+let read = (n: i64) -> Result<i64, IoError> => { Ok(n) }
+let f = (n: i64) -> Result<i64, ParseError> => {
+    let x = read(n)?
+    Ok(x)
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertHasErrorContaining(t, res, "is not convertible to the enclosing function's error type")
+}

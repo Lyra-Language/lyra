@@ -1041,8 +1041,9 @@ func isVoidResult(v value.Value) bool {
 // `if` used as a statement) by returning a nil value instead of erroring. A block
 // goes through lowerBlockStmts with flushTail false, exactly like a value block: a
 // value branch's tail escapes to the phi, and a void branch's tail temporaries are
-// released by the enclosing statement's flush in their (conditional) production
-// block. A non-block branch goes through lowerExpr.
+// released by the enclosing statement's flush where the branch leaves the region
+// their production block dominates (regionExits) — not in the production block,
+// which precedes the rest of the branch. A non-block branch goes through lowerExpr.
 func (l *lowerer) lowerBranchValue(block *ir.Block, branch ast.Expression) (value.Value, *ir.Block, error) {
 	if be, ok := branch.(*ast.BlockExpr); ok {
 		return l.lowerBlockStmts(block, be, false)

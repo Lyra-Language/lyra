@@ -466,3 +466,54 @@ func TestBuild_NoOutIsUnchanged(t *testing.T) {
 	}
 	assertIsIR(t, replaceExt(path, ".ll"))
 }
+
+// ---------------------------------------------------------------------------------------
+// Layout across modules
+// ---------------------------------------------------------------------------------------
+
+// **A struct's layout does not depend on whether its fields' types are exported.**
+//
+// The backend's `resolveForLayout` looked each field's named type up by bare name from the
+// module being lowered, so a public struct with a field of a type *private to its own
+// module* could not be sized from any other module — "cannot size dynamic array element
+// type" the moment one was held in a `[]T` elsewhere. The typechecker's `hasCLayout` had
+// the same bug and was fixed the same day (09/11); this is the backend's copy of it, found
+// by `examples/raylib/models.lyra` holding a `Model` — which has a private
+// `ModelSkeleton` — in a `[]Placed`.
+//
+// A CLI build rather than a backend test, because the shape needs two modules and the
+// backend harness takes one source string. `--emit-llvm` is the whole assertion: the bug
+// was a refusal to lower, and emitting IR needs no C compiler.
+func TestBuild_APrivateNestedStructSizesFromAnotherModule(t *testing.T) {
+	dir := t.TempDir()
+	lib := `module lib
+struct Inner { a: i32, b: i32 }
+pub struct Outer { inner: Inner, c: f32 }
+pub let make = pure (c: f32) -> Outer => Outer { inner: Inner { a: 1, b: 2 }, c: c }
+`
+	main := `module main
+import lib.{ Outer, make }
+struct Held { name: string, o: Outer }
+let main = () -> void => {
+  var all: []Held = []
+  all.push(Held { name: "x", o: make(1.5) })
+  // And the public struct held directly, which reaches layout as an already-resolved
+  // struct type rather than as a name — the other of the two paths the fix covers.
+  let outs: []Outer = [make(2.5)]
+  println("${all.len()} ${outs.len()}")
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "lib.lyra"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "main.lyra")
+	if err := os.WriteFile(path, []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "main.ll")
+	_, stderr, code := captureRun(t, "build", "--emit-llvm", "-o", out, path)
+	if code != 0 {
+		t.Fatalf("a struct holding a private nested struct from another module must lower; exit %d\nstderr: %s", code, stderr)
+	}
+	assertIsIR(t, out)
+}

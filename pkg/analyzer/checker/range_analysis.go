@@ -164,6 +164,9 @@ type rangeChecker struct {
 	// narrowing fixpoint (the body is analyzed many times to find its invariant,
 	// then once loudly with that invariant); side-effect-free otherwise-identical.
 	silent bool
+	// addressTaken is every name the current function body takes `&mut` of, anywhere.
+	// Such a name is **never tracked** — see tracked.
+	addressTaken map[string]bool
 }
 
 // topLevel analyzes each function body from a fresh environment. Every function
@@ -179,27 +182,84 @@ func (c *rangeChecker) topLevel(stmt ast.AstNode) {
 	case *ast.TraitImplStmt:
 		for i := range v.Methods {
 			if b := v.Methods[i].Clause.Body; b != nil {
-				c.eval(newEnv(), b)
+				c.analyzeBody(b)
 			}
 		}
 	case *ast.TraitDeclStmt:
 		for i := range v.Methods {
 			if d := v.Methods[i].DefaultMethod; d != nil && d.Body != nil {
-				c.eval(newEnv(), d.Body)
+				c.analyzeBody(d.Body)
 			}
 		}
 	}
 }
 
 func (c *rangeChecker) analyzeLambda(lam *ast.LambdaExpr) {
+	var bodies []ast.Expression
 	if lam.Body != nil {
-		c.eval(newEnv(), lam.Body)
+		bodies = append(bodies, lam.Body)
 	}
 	for i := range lam.LambdaClauses {
 		if b := lam.LambdaClauses[i].Body; b != nil {
-			c.eval(newEnv(), b)
+			bodies = append(bodies, b)
 		}
 	}
+	c.analyzeBody(bodies...)
+}
+
+// analyzeBody analyzes one function's bodies, each from a fresh environment, with that
+// function's address-taken set in force — saved and restored, since a nested lambda is
+// analyzed from inside its enclosing function's walk.
+func (c *rangeChecker) analyzeBody(bodies ...ast.Expression) {
+	saved := c.addressTaken
+	c.addressTaken = mutAddressTaken(bodies...)
+	for _, b := range bodies {
+		c.eval(newEnv(), b)
+	}
+	c.addressTaken = saved
+}
+
+// tracked is **the** read of a variable's interval, and the one place the address-taken
+// rule is applied.
+//
+// A binding whose address is taken with `&mut` can change behind this pass's back — through
+// the pointer, by this program or by a C function it is handed to — so no interval for it
+// is ever believed. Until 09/11 the pass simply did not know `&mut` existed: after
+// `set(&mut i, 7)` it still believed `i == 0`, and because the backend **drops the runtime
+// check** for anything this pass proves safe, `xs[i]` read past the array, `x + 10` wrapped
+// a u8, and `10 / d` divided by zero — in code with no `unsafe` of its own. It is a
+// soundness hole rather than a wrong warning, which is why it is closed at the read: every
+// consumer of a stored interval goes through here.
+//
+// **Flow-insensitive on purpose.** Widening only at the `&mut` site is not enough:
+// `let p = &mut i; i = 0; p^ = 7` re-establishes `i == 0` after the havoc, and the write
+// through `p` is invisible. Tracking a name the program has handed a mutable pointer to is
+// a claim the pass cannot back, so it does not make one anywhere in that function.
+func (c *rangeChecker) tracked(env rangeEnv, name string) (interval, bool) {
+	if c.addressTaken[name] {
+		return interval{}, false
+	}
+	iv, ok := env.vars[name]
+	return iv, ok
+}
+
+// mutAddressTaken is every binding a function's bodies take `&mut` of — the root name of
+// the operand, so `&mut p.x` untracks `p` as `&mut n` untracks `n`. It descends into nested
+// lambdas: untracking a name the outer body did not need to only costs precision, and a
+// pass like this one must err toward reporting nothing.
+func mutAddressTaken(bodies ...ast.Expression) map[string]bool {
+	out := map[string]bool{}
+	for _, b := range bodies {
+		ast.WalkExpr(b, nil, func(e ast.Expression) bool {
+			if v, ok := e.(*ast.AddressOfExpr); ok && v.IsMut {
+				if root, ok := lvalueRootName(v.Operand); ok {
+					out[root] = true
+				}
+			}
+			return true
+		})
+	}
+	return out
 }
 
 // ── the abstract domain ──────────────────────────────────────────────────────
@@ -384,7 +444,7 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		return interval{v.Value, v.Value}, true, st
 
 	case *ast.IdentifierExpr:
-		if iv, ok := st.vars[v.Name]; ok {
+		if iv, ok := c.tracked(st, v.Name); ok {
 			return iv, true, st
 		}
 		return c.typeIntervalIn(v, st)
@@ -1091,7 +1151,7 @@ func (c *rangeChecker) pureInterval(st rangeEnv, e ast.Expression) (interval, bo
 		}
 		return interval{}, false
 	case *ast.IdentifierExpr:
-		if iv, ok := st.vars[v.Name]; ok {
+		if iv, ok := c.tracked(st, v.Name); ok {
 			return iv, true
 		}
 		if lo, hi, ok := c.intBoundsOf(v); ok {
@@ -1102,7 +1162,7 @@ func (c *rangeChecker) pureInterval(st rangeEnv, e ast.Expression) (interval, bo
 }
 
 func (c *rangeChecker) curInterval(env rangeEnv, id *ast.IdentifierExpr) (interval, bool) {
-	if iv, ok := env.vars[id.Name]; ok {
+	if iv, ok := c.tracked(env, id.Name); ok {
 		return iv, true
 	}
 	if lo, hi, ok := c.intBoundsOf(id); ok {

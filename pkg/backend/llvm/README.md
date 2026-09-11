@@ -24,7 +24,9 @@ checked** — Pit-of-Success #2, `trap.go`: `+`/`-`/`*` lower to
 `lyra_panic_divide_by_zero` — that writes to stderr and `exit(101)`s via the shared `emitTrapIf`
 helper; a runtime array index out of bounds traps the same way via
 `lyra_panic_index_out_of_bounds`. Any of these checks is **elided** (plain instruction / bare
-load, no trap) when the value-range analysis proved it can't fire (`res.RangeSafety`): the
+load, no trap) when the value-range analysis proved it can't fire (`res.RangeSafety` — sound only
+because that pass accounts for every write to a tracked variable, which it did not for `&mut`
+until 09/11; lyra/CLAUDE.md rule 18): the
 `+`/`-`/`*` overflow check via `NoOverflow(e)` (→ `emitWrappingOp`), the divide-by-zero /
 signed-div-overflow guards via `NoDivZero(e)`/`NoDivOverflow(e)` (in `emitCheckedDivOp`), and
 the array bounds trap + negative-index adjustment via `IndexInBounds(e)` (in `lowerIndexExpr`)),
@@ -834,9 +836,13 @@ arise.
 `grid[i].y = v`, `p.arr[i] = v`, `m[i][j] = v`, `line.start.x = v` — all lower through one
 recursive **`lvalueAddress`** (`lvalue.go`): an identifier root → its alloca, a `.field` hop →
 gep into the object's stack-struct storage, an `[i]` hop → gep to the array element
-(bounds-checked, negative-from-end); a fixed-size array is addressed through its storage, a
-`shared`/dynamic array through its box (loaded from the object's slot). Because it recurses on
-the object, index and member hops nest in any order. A **managed target** (a
+(bounds-checked, negative-from-end), a `p^` hop → the pointer value itself (09/11: until then
+`p.offset(i)^.field = v` was refused here); a fixed-size array is addressed through its
+storage, a `shared`/dynamic array through its box (loaded from the object's slot). Because it
+recurses on the object, index, member and deref hops nest in any order. **A raw pointer is
+never unboxed by a pattern either** (`patternMatcher`): `unboxSharedData` decides by LLVM
+shape, and took every pointer for a `shared` box — refusing `let _ = p`, and ready to read a
+pointer to a three-field struct as one — so the Lyra type is tested first. A **managed target** (a
 `string`/`shared`/`[]T` array element or struct field) is handled: `lowerLValueAssignment`
 releases whatever the slot held before storing the new (+1) value — the ownership pass's
 `LValueAssignmentStmt` case gives the RHS its +1, and the new value is computed before the
@@ -1252,8 +1258,17 @@ after its statement, each in a block that follows all of its uses (`flushStmtTem
 is **dominance** — a temp whose production block dominates the statement-*end* block is freed
 there, so it survives a later argument whose branch moves control onward before the call
 (releasing it in its production block was a use-after-free), while a temp built in an
-`&&`/`if` branch does *not* dominate the end block and is freed in its own, the only block
-that produced it. That test used to be `p.block == start`, a proxy that held only while every
+`&&`/`if`/`match` branch does *not* dominate the end block and is freed **where control
+leaves the region its production block dominates** (`regionExits`) — never in the production
+block itself, which precedes the rest of the branch. Until 09/11 it was freed there, which is
+a use-after-free the moment the branch splits again after producing it: the glTF viewer's arm
+`"…${animation_name(a, clip)}…" ++ "${frame.floor()}"` freed its left operand at the float
+guard in the right one and then memcpy'd from it, drawing a clip line whose first 23 bytes
+were zero. The dominator tree for this is **rooted at the statement's start block**
+(`newDomTreeFrom`), not the entry: mid-lowering an enclosing block can still be unsealed, which
+makes the statement look unreachable from the entry and every dominance answer false — and
+false here means the early free, not the leak. An exit that is also an edge back into the
+region leaks instead, and a `break`/`continue` block is left to `resolveExitReleases`. That test used to be `p.block == start`, a proxy that held only while every
 other block was conditional; `slice`/`read_line`/`<=>` branch unconditionally, so their
 continuation blocks broke it and two `slice`s in one expression freed the first result before
 allocating the second (08/07); temps of an enclosing statement
@@ -1779,8 +1794,9 @@ supports: the five lowerings take the value rather than lowering it themselves, 
 that is a block flushes per statement and would otherwise release them mid-arm.
 
 It replaces a use-after-free. A scrutinee is the one temporary whose *uses* are in successor
-blocks, so `flushStmtTemps`' "release it at its production block" — right for a temp produced
-inside a branch — put the release before the `switch`, since appending to a terminated block
+blocks, so `flushStmtTemps`' "release it at its production block" — which it then did for a
+temp produced inside a branch, and no longer does (see the dominance rule above) — put the
+release before the `switch`, since appending to a terminated block
 lands before its terminator. Only the nested position was affected: as a statement the
 scrutinee's block *is* the statement's start block and the flush's fast path moves the
 release past the whole match.

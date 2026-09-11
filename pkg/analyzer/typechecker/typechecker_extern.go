@@ -110,7 +110,7 @@ func (tc *TypeChecker) requireFFISafe(t types.Type, decl *ast.ExternDeclStmt, wh
 	// classify it is the backend's question, and `lyrac check` must not change its answer
 	// according to which clang happens to be installed. A target with no classifier
 	// refuses the call there, with the target named.
-	if tc.hasCLayout(resolved, map[string]bool{}) {
+	if tc.hasCLayout(resolved, decl.GetLocation(), map[string]bool{}) {
 		return
 	}
 	where := what

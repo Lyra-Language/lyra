@@ -1425,11 +1425,47 @@ func (tc *TypeChecker) checkLValueWritable(target ast.Expression) {
 		}
 	}
 
+	// A path through a pointer — `p^.x`, `p.offset(i)^.y` — writes the pointee, so the
+	// question is the pointer's type, exactly as it is for `p^ = v` (lyra-E061). The deref
+	// nearest the written place is the one that matters: the storage it names is where
+	// the write lands, whatever the path to the pointer went through. rootIdentifier stops
+	// at a deref, so without this such a path was checked against nothing at all.
+	tc.checkPointerPathWritable(target)
+
 	// A field declared `readonly` is frozen: it cannot be mutated even through a
 	// mutable binding, and (like a deeply-immutable `let` binding) nothing
 	// reached *through* it can be mutated either. Walk every member hop in the
 	// path and reject the write if any traverses a frozen field.
 	tc.checkFrozenFieldPath(target)
+}
+
+// checkPointerPathWritable reports lyra-E061 for an assignment path whose innermost
+// storage is reached through a read-only pointer.
+func (tc *TypeChecker) checkPointerPathWritable(target ast.Expression) {
+	for {
+		switch e := target.(type) {
+		case *ast.MemberExpr:
+			target = e.Object
+		case *ast.IndexExpr:
+			target = e.Object
+		case *ast.DerefExpr:
+			if e.Operand == nil {
+				return
+			}
+			operand := tc.inferExprType(e.Operand)
+			if operand == nil {
+				return
+			}
+			if ptr, ok := types.StripNewtype(operand).(types.RawPointerType); ok && !ptr.IsMut {
+				tc.addErrorCode(e.GetLocation(), SeverityError, diag.CodeImmutablePointerWrite,
+					"cannot write through %s: it is a read-only pointer — take it with `&mut` to "+
+						"write through it", operand)
+			}
+			return
+		default:
+			return
+		}
+	}
 }
 
 // checkLValueAssignment type-checks an interior-mutation statement — `p.x = v`,
@@ -4047,7 +4083,15 @@ func (tc *TypeChecker) resolveConstantInt(expr ast.Expression) (int64, bool) {
 			return 0, false
 		}
 		v, ok := sym.(*ast.VarDeclStmt)
-		if !ok || v.Value == nil {
+		// **Only a binding that cannot change folds to its initializer.** A `var` may be
+		// reassigned and a `let mut` may be written through `&mut` (measured: it prints the
+		// written value), so for either the initializer says nothing about the value at the
+		// use. Until 09/11 this folded any binding at all, so `var i = 5; i = 0; xs[i]` on
+		// a three-element array was refused as "index 5 out of range" — a hard error on a
+		// correct program, in every one of this function's five callers: the array and
+		// negative-index checks, the slice-bound check, and the tuple index, which typed
+		// `t[k]` by `k`'s initializer whatever `k` had become.
+		if !ok || v.Value == nil || v.CanMutateInterior() {
 			return 0, false
 		}
 		return tc.resolveConstantInt(v.Value)

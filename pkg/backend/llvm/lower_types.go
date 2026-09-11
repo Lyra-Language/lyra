@@ -183,6 +183,14 @@ func (l *lowerer) lowerDataDefInto(st *lltypes.StructType, t types.DataType) err
 // never chased) — which is also what keeps resolution finite: a recursive type's
 // cycle must pass through a `shared` field (lyra-E014), so every by-value chain is
 // acyclic and terminates.
+//
+// **A declaration's fields are resolved from the declaration's own location**, not from
+// whatever is being lowered. `lookupTypeDecl` resolves a name as `l.currentLoc` sees it, and
+// until 09/11 that was the lowering site all the way down — so a public struct with a field of
+// a type *private to its own module* could not be sized from any other module ("cannot size
+// dynamic array element type"), the moment one was held in a `[]T` elsewhere. It is the
+// backend's copy of the typechecker's `hasCLayout` bug, fixed the same day: copies can agree
+// and be wrong together (rule 8), and fixing one of them is how the other one surfaced.
 func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 	switch v := t.(type) {
 	case *types.ConstrainedType:
@@ -198,8 +206,10 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		if !ok {
 			return t // unknown name; SizeAndAlign will fail loudly downstream
 		}
+		defer l.resolvingFrom(decl.GetLocation())()
 		return l.resolveForLayout(types.WithAllocation(decl.Type, v.Allocation))
 	case types.NamedStructType:
+		defer l.resolvingFrom(l.declLocOf(v.Name))()
 		fields := make([]types.StructField, len(v.Fields))
 		for i, f := range v.Fields {
 			f.Type = l.resolveForLayout(f.Type)
@@ -208,6 +218,7 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		v.Fields = fields
 		return v
 	case types.UnionType:
+		defer l.resolvingFrom(l.declLocOf(v.Name))()
 		members := make([]types.StructField, len(v.Members))
 		for i, m := range v.Members {
 			m.Type = l.resolveForLayout(m.Type)
@@ -745,4 +756,23 @@ func (l *lowerer) widestAlignedMember(t types.UnionType, align int) (lltypes.Typ
 		return nil, 0, err
 	}
 	return llT, bestSize, nil
+}
+
+// resolvingFrom makes `loc` the location names are resolved from, returning the restore — the
+// `defer l.resolvingFrom(x)()` idiom, so a nested resolution cannot leak its context back out
+// into the lowering that asked for it.
+func (l *lowerer) resolvingFrom(loc ast.Location) func() {
+	saved := l.currentLoc
+	l.currentLoc = loc
+	return func() { l.currentLoc = saved }
+}
+
+// declLocOf is where the named type is declared, as the current location resolves the name —
+// or the current location itself for a name the symbol table cannot place (an instantiation's
+// mangled symbol, say), which leaves resolution exactly as it was before.
+func (l *lowerer) declLocOf(name string) ast.Location {
+	if decl, ok := l.lookupTypeDecl(name); ok && decl != nil {
+		return decl.GetLocation()
+	}
+	return l.currentLoc
 }

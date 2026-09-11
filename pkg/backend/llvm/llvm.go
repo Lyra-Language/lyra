@@ -641,7 +641,10 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 // built into yet — is sound for the reason it is not sound for `resolveExitReleases`
 // (see dominators.go): `end` is the block lowering *continues into*, so it never
 // becomes the target of a later edge. Nothing added afterwards can create a path to
-// `end` that bypasses a block dominating it today. The tree is built lazily, only when
+// `end` that bypasses a block dominating it today. **The tree is rooted at `start`,
+// not the entry**: an enclosing block may still be unsealed, which would make `end`
+// unreachable from the entry and every answer false — and false here means "release
+// at the production block", a premature free rather than a leak (newDomTreeFrom). The tree is built lazily, only when
 // some temp was produced in a third block, which is the uncommon case.
 //
 // start/end nil (the flushTemps wrapper, used by early exits) releases everything at
@@ -660,11 +663,29 @@ func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
 			blk = end
 		default:
 			if dt == nil {
-				dt = newDomTree(end.Parent)
+				// Rooted at the statement, not the entry: see newDomTreeFrom.
+				dt = newDomTreeFrom(end.Parent, start)
 			}
 			if dt.dominates(p.block, end) {
 				blk = end
+				break
 			}
+			// Produced on one branch of the statement (a match arm, an `if` branch), so
+			// it is not live at end. It is released where that branch *leaves* the
+			// region its production block dominates — never at the production block
+			// itself, which is ahead of whatever the rest of the branch still does with
+			// it: `"${name(a)}" ++ "${x.floor()}"` split at the float guard, and a
+			// release there freed the left operand before the concat copied it.
+			exits, ok := l.regionExits(dt, p.block)
+			if !ok {
+				continue // an exit that also stays inside: leak rather than free early
+			}
+			for _, x := range exits {
+				if err := l.deepRelease(x, p.val, p.ty); err != nil {
+					return err
+				}
+			}
+			continue
 		}
 		if err := l.deepRelease(blk, p.val, p.ty); err != nil {
 			return err
@@ -672,6 +693,47 @@ func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
 	}
 	l.pendingReleases = l.pendingReleases[:l.pendingBase]
 	return nil
+}
+
+// regionExits answers the blocks through which control leaves the region `from`
+// dominates — the last blocks a value produced in `from` is live in. Each is sealed
+// (only end is not, and end is outside the region by the caller's test), so a release
+// appended to one lands ahead of its terminator.
+//
+// Three kinds of exit are not answered. A block with no successors — a trap, a `ret`
+// — leaves nothing to release for: a trap ends the process, and a return's own flush
+// or a `?`'s releaseTempsOnExit already covers what it owes. A `break`/`continue`
+// block settles its temporaries in resolveExitReleases, so releasing here too would
+// be a double free. And a block with one successor inside the region and one outside
+// cannot take a release ahead of its terminator without freeing the value for the
+// inside edge too; that answers ok=false, and the caller leaks — the conservative
+// direction, as everywhere in this file.
+func (l *lowerer) regionExits(dt *domTree, from *ir.Block) ([]*ir.Block, bool) {
+	jumps := make(map[*ir.Block]bool, len(l.exitReleases))
+	for _, ex := range l.exitReleases {
+		jumps[ex.block] = true
+	}
+	var exits []*ir.Block
+	for _, b := range from.Parent.Blocks {
+		if b.Term == nil || !dt.dominates(from, b) || jumps[b] {
+			continue
+		}
+		inside, outside := false, false
+		for _, s := range b.Term.Succs() {
+			if dt.dominates(from, s) {
+				inside = true
+			} else {
+				outside = true
+			}
+		}
+		switch {
+		case outside && inside:
+			return nil, false
+		case outside:
+			exits = append(exits, b)
+		}
+	}
+	return exits, true
 }
 
 // flushTemps releases this scope's pending temporaries at their production blocks —

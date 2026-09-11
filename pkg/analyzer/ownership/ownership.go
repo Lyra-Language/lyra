@@ -1020,7 +1020,11 @@ func (a *analyzer) stmt(s ast.AstNode) {
 	case *ast.LValueAssignmentStmt:
 		// Interior assignment (`xs[i] = v`, `p.name = v`): the slot takes ownership of
 		// the new value (+1) — the backend releases whatever the slot held before. A
-		// non-managed target borrows (nothing to own).
+		// non-managed target borrows (nothing to own). A path through a pointer walks the
+		// pointer borrowing, as `p^ = v` does: a place written through, not consumed.
+		if d := pointerOfPath(s.Target); d != nil {
+			a.expr(d.Operand, false)
+		}
 		a.expr(s.Value, a.ownsManaged(s.Value))
 	case *ast.DerefAssignmentStmt:
 		// `p^ = v`. The pointee slot takes ownership of the new value, exactly as an
@@ -1755,4 +1759,21 @@ func paramOwnsArgument(mod types.TypeModifier) bool {
 
 func isOwnedReturn(mod types.TypeModifier) bool {
 	return mod != types.Ref && mod != types.Mut
+}
+
+// pointerOfPath answers the deref nearest the written place of an assignment path, or nil
+// when the path reaches its storage without one.
+func pointerOfPath(target ast.Expression) *ast.DerefExpr {
+	for {
+		switch e := target.(type) {
+		case *ast.MemberExpr:
+			target = e.Object
+		case *ast.IndexExpr:
+			target = e.Object
+		case *ast.DerefExpr:
+			return e
+		default:
+			return nil
+		}
+	}
 }

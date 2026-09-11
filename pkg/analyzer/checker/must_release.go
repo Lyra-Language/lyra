@@ -247,7 +247,7 @@ func (c *mustRelease) stmt(st heldState, s ast.Statement) heldState {
 		// resource is a leak this pass cannot attribute to a scope end, and reporting
 		// it belongs to a separate diagnostic rather than to this one's message.
 		delete(st, v.Name)
-		if r, ok := c.resourceOf(v.Value); ok {
+		if r, ok := c.acquiredBy(v.Value); ok {
 			r.loc = v.GetLocation()
 			st[v.Name] = r
 		}
@@ -256,7 +256,7 @@ func (c *mustRelease) stmt(st heldState, s ast.Statement) heldState {
 	case *ast.VarReassignmentStmt:
 		st = c.expr(st, v.Value)
 		delete(st, v.Name)
-		if r, ok := c.resourceOf(v.Value); ok {
+		if r, ok := c.acquiredBy(v.Value); ok {
 			r.loc = v.GetLocation()
 			st[v.Name] = r
 		}
@@ -697,6 +697,18 @@ func (c *mustRelease) beginUnwrap(st heldState, scrutinee ast.Expression) (heldS
 		held, isHeld := st[name]
 		return st, unwrapper{scrutinee: name, held: held, isHeld: isHeld}
 	}
+	// **A stored place is a view too, not a temporary.** `match o.anims { Some(a) => … }`
+	// reads a field of storage something else owns — a parameter, a struct in a local —
+	// exactly as a bare name reads its binding, and "reading a field or an element is a
+	// borrow" is already this pass's rule everywhere except here. Treating the place as a
+	// temporary made its payload *owning*, so the check told a function that only looked
+	// at a viewer's model to `unload_animations(a)` — a diagnostic recommending a double
+	// free, which is the harm the `SoundAlias` decision exists to avoid. The pass does not
+	// track obligations inside aggregates, so this can hide nothing it used to catch.
+	// Found by examples/raylib/gltf_viewer.lyra (09/11).
+	if isStoredPlaceRead(scrutinee) {
+		return c.expr(st, scrutinee), unwrapper{}
+	}
 	// Not a binding — and this is the shape the idiom actually takes, so it is not a
 	// fallback: `let Some(v) = load_sound(p) else { return }` acquires and unwraps in
 	// one statement, and the resource never sits in a binding of its own. Walk the
@@ -913,4 +925,31 @@ func article(typeName string) string {
 		return "an"
 	}
 	return "a"
+}
+
+// acquiredBy is resourceOf for a binding's initializer: whether assigning this value takes on
+// an obligation. It differs in one case — **a read of a stored place is not an acquisition**.
+// `let copy = h.s` makes a second handle to a resource `h`'s owner already answers for, and
+// seeding `copy` as an obligation told a function that only looked at a viewer's model to
+// unload it: a diagnostic recommending a double free (09/11, examples/raylib/gltf_viewer.lyra).
+// A bare name is not a stored-place read here, since `let t = s` hands the obligation over —
+// the walk of `s` has already released `s` as escaped, so `t` is the one left holding it.
+// Both seeding sites — a `let` and a reassignment — go through here, since they are twins.
+func (c *mustRelease) acquiredBy(value ast.Expression) (resource, bool) {
+	if isStoredPlaceRead(value) {
+		return resource{}, false
+	}
+	return c.resourceOf(value)
+}
+
+// isStoredPlaceRead reports whether e reads storage something else owns — a field or element
+// path rooted at a name, `o.anims` or `xs[i].s` — rather than being a bare name or a value
+// some call produced. The one definition of "this is a view", shared by the `match`
+// scrutinee rule (beginUnwrap) and the binding-initializer rule (acquiredBy).
+func isStoredPlaceRead(e ast.Expression) bool {
+	if _, isName := bareName(e); isName {
+		return false
+	}
+	_, isPlace := lvalueRootName(e)
+	return isPlace
 }

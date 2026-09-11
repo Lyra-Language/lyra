@@ -1008,3 +1008,33 @@ let main = () -> void => {
   println(60 / z)
 }`, "lyra-E021", "divides by zero")
 }
+
+// ── a binding whose address is taken ─────────────────────────────────────────
+
+// After `&mut`, a comparison's outcome is not known: the pointer can change the value, and
+// until 09/11 this reported `n <= 0` as always true — while the program ran the other arm.
+// The same stale interval is what made the backend drop runtime checks; the behavioural
+// half is in pkg/backend/llvm (llvm_range_address_taken_test.go).
+func TestRange_AddressTaken_ComparisonIsNotDecided(t *testing.T) {
+	noDiag(t, `
+let fill = (p: ^mut i32) -> void => unsafe { p^ = 7 }
+let main = () -> void => {
+  var n: i32 = 0
+  unsafe { fill(&mut n) }
+  if n <= 0 { println("zero") } else { println("seven") }
+}
+`)
+}
+
+// The rule is specific to a *mutable* pointer. `&n` cannot write, so `n` stays tracked and
+// a comparison the interval decides is still reported.
+func TestRange_AddressTaken_AnImmutableBorrowKeepsTracking(t *testing.T) {
+	onlyDiag(t, `
+let peek = (p: ^i32) -> i32 => unsafe { p^ }
+let main = () -> void => {
+  var n: i32 = 0
+  let _ = unsafe { peek(&n) }
+  if n <= 0 { println("zero") } else { println("never") }
+}
+`, diag.CodeConstantComparison)
+}

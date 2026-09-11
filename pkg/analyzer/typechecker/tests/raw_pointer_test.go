@@ -51,6 +51,36 @@ let main = () -> void => {
 	assertHasErrorContaining(t, res, "it is a read-only pointer")
 }
 
+// A field or element path through a deref writes the pointee, so the pointer's type is
+// the question there too. rootIdentifier stops at a deref, and until 09/11 such a path was
+// checked against nothing: `p.offset(1)^.b = 9` through a `^P` compiled.
+func TestPointers_FieldWriteThroughAReadOnlyPointerRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct P { a: i32, b: i32 }
+let main = () -> void => {
+  var xs: [2]P = [P { a: 1, b: 2 }; 2]
+  unsafe {
+    let p = &xs[0]
+    p.offset(1)^.b = 9
+  }
+}`, false)
+	assertHasErrorContaining(t, res, "it is a read-only pointer")
+}
+
+func TestPointers_FieldWriteThroughAMutablePointerAccepted(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct P { a: i32, b: i32 }
+let main = () -> void => {
+  var xs: [2]P = [P { a: 1, b: 2 }; 2]
+  unsafe {
+    let p = &mut xs[0]
+    p.offset(1)^.b = 9
+    p^.a += 1
+  }
+}`, false)
+	assertNoErrors(t, res)
+}
+
 func TestPointers_MutablePointerToAnImmutableBindingRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let main = () -> void => {

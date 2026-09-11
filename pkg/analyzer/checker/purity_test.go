@@ -714,6 +714,20 @@ impl Show for i64 {
 	}
 }
 
+// A field write through a pointer is the same act as `p^ = v`, and was charged nothing:
+// the path has no identifier root, so the LValueAssignmentStmt case skipped it.
+func TestPurity_FieldWriteThroughAPointer_Error(t *testing.T) {
+	src := `
+struct P { a: i32, b: i32 }
+let poke = pure (p: ^mut P) -> void => unsafe { p.offset(1)^.b = 9 }`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	want := "pure function writes through a pointer; pointer writes may mutate external state"
+	if errs[0].Message != want {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
 // Calling a non-pure method from a non-pure function is unconstrained —
 // purity only governs `pure` contexts.
 func TestPurity_NonPureMethodInImpureFunction_Ok(t *testing.T) {

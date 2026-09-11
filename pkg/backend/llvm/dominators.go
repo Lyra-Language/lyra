@@ -35,6 +35,9 @@ type domTree struct {
 	// dominator, or -1 for the entry block.
 	idx  map[*ir.Block]int
 	doms []int
+	// root is the index the tree is rooted at: the entry block for a finished
+	// function, a statement's start block for newDomTreeFrom.
+	root int
 }
 
 // newDomTree computes the dominator tree of fn with the classic iterative
@@ -42,13 +45,33 @@ type domTree struct {
 // dozen blocks — so the simple fixpoint is the right trade against a Lengauer-Tarjan
 // implementation nobody would want to maintain.
 func newDomTree(fn *ir.Func) *domTree {
-	blocks := fn.Blocks
-	if len(blocks) == 0 {
+	if len(fn.Blocks) == 0 {
 		return &domTree{idx: map[*ir.Block]int{}}
 	}
+	return newDomTreeFrom(fn, fn.Blocks[0])
+}
+
+// newDomTreeFrom computes dominance over the part of fn reachable from root, as if
+// root were the entry. **This is the form to use while the function is still being
+// built.** Mid-lowering, some block *enclosing* the current statement can still lack
+// its terminator — a match whose dispatch is emitted after its arms, a loop header
+// sealed after its body — so from the real entry the statement's blocks look
+// unreachable, and dominates answers false for all of them. For flushStmtTemps that
+// answer is not the safe direction: it means "release where it was produced", which
+// frees a temporary a later operand of the same statement still reads (the glTF
+// viewer's `"…${name}…" ++ "${x.floor()}"` read its left operand after the float guard
+// released it). A statement is single-entry at its start block, and by the time it is
+// flushed every block inside it is sealed, so the region rooted there is complete and
+// its dominance is the whole CFG's.
+func newDomTreeFrom(fn *ir.Func, root *ir.Block) *domTree {
+	blocks := fn.Blocks
 	idx := make(map[*ir.Block]int, len(blocks))
 	for i, b := range blocks {
 		idx[b] = i
+	}
+	r, ok := idx[root]
+	if !ok {
+		return &domTree{idx: map[*ir.Block]int{}}
 	}
 	// Predecessors, derived from each block's terminator successors. A block llir
 	// has not sealed yet has no terminator and so contributes no edges; by the time
@@ -64,18 +87,21 @@ func newDomTree(fn *ir.Func) *domTree {
 			}
 		}
 	}
-	// blocks[0] is the entry block, and llir's function layout guarantees that.
-	// The traversal order is the block order, which for a body built front-to-back
+	// The root stands in for the entry (blocks[0] for a whole function — llir's
+	// layout guarantees that). The traversal order is the block order, which for a body built front-to-back
 	// is close enough to reverse postorder that the fixpoint settles in a pass or
 	// two; correctness does not depend on the order, only speed.
 	doms := make([]int, len(blocks))
 	for i := range doms {
 		doms[i] = -1
 	}
-	doms[0] = 0
+	doms[r] = r
 	for changed := true; changed; {
 		changed = false
-		for i := 1; i < len(blocks); i++ {
+		for i := range blocks {
+			if i == r {
+				continue
+			}
 			newIdom := -1
 			for _, p := range preds[i] {
 				if doms[p] == -1 {
@@ -93,7 +119,7 @@ func newDomTree(fn *ir.Func) *domTree {
 			}
 		}
 	}
-	return &domTree{idx: idx, doms: doms}
+	return &domTree{idx: idx, doms: doms, root: r}
 }
 
 // intersect walks two nodes up the dominator tree until they meet — the standard
@@ -137,8 +163,8 @@ func (d *domTree) dominates(a, b *ir.Block) bool {
 		if ai == bi {
 			return true
 		}
-		if bi == 0 {
-			return false // walked to entry without meeting a
+		if bi == d.root {
+			return false // walked to the root without meeting a
 		}
 		next := d.doms[bi]
 		if next == bi || next == -1 {

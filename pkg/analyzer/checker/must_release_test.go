@@ -514,3 +514,55 @@ let main = () -> void => {
 }
 `, "v")
 }
+
+// ---------------------------------------------------------------------------------------
+// A value read from a stored place is a view, not an acquisition
+// ---------------------------------------------------------------------------------------
+//
+// **Both of these advised a double free** until 09/11. A function that only *looks* at a
+// resource held in a struct it was handed — a model viewer reading its model's animation
+// clips — was told to release it, and following that advice frees a resource its owner is
+// still using. The rule the pass already applied to a field read ("reading a field or an
+// element is a borrow") had not reached a `match` scrutinee or a `let` initializer.
+// Found by examples/raylib/gltf_viewer.lyra.
+
+// Matching on a field of a borrowed parameter unwraps a view of storage the caller owns.
+func TestMustRelease_MatchingOnAFieldOfAParameterIsAView(t *testing.T) {
+	assertClean(t, `
+struct Holder { res: Maybe<Sound> }
+let peek = (h: Holder) -> void =>
+  match h.res {
+    Some(s) => play_sound(s),
+    None => { },
+  }
+let main = () -> void => { }
+`)
+}
+
+// Copying a resource out of a field makes a second handle to the same resource, not a new
+// one — the model viewer copies its model to give the copy a different transform.
+func TestMustRelease_CopyingAFieldOfAParameterIsAView(t *testing.T) {
+	assertClean(t, `
+struct Holder { s: Sound }
+let peek = (h: Holder) -> void => {
+  let copy = h.s
+  play_sound(copy)
+}
+let main = () -> void => { }
+`)
+}
+
+// The line these two must not cross: a *call* that answers a resource is still an
+// acquisition wherever its result is bound, and still leaks when it is not released.
+func TestMustRelease_ACallIsStillAnAcquisitionBesideAView(t *testing.T) {
+	assertLeaks(t, `
+struct Holder { s: Sound }
+let peek = (h: Holder) -> void => {
+  let copy = h.s
+  play_sound(copy)
+  let fresh = load_sound(2)
+  play_sound(fresh)
+}
+let main = () -> void => { }
+`, "fresh")
+}

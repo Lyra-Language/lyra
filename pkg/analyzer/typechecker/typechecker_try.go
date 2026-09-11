@@ -50,6 +50,14 @@ func (tc *TypeChecker) inferTryExpr(e *ast.TryExpr) types.Type {
 	// exists, that means assignable (usually the same nominal error type); a
 	// mismatch (e.g. propagating a `Result<_, IoError>` out of a `Result<_,
 	// ParseError>` function) must be converted explicitly at the call site.
+	// Both sides are resolved before comparing. The enclosing function's return type is
+	// its annotation as written, so a struct error type there can still be the bare name
+	// while the operand's has been resolved to the declaration — and the two then compare
+	// unequal, which refused `?` for every struct error type, identical ones included.
+	if found && kind == "Result" && operandErr != nil && enclErr != nil {
+		operandErr = tc.resolveType(operandErr, e.GetLocation())
+		enclErr = tc.resolveType(enclErr, e.GetLocation())
+	}
 	if found && kind == "Result" && operandErr != nil && enclErr != nil &&
 		!errorTypesCompatible(operandErr, enclErr) {
 		tc.addError(e.GetLocation(), SeverityError,

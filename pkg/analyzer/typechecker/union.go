@@ -74,7 +74,7 @@ func (tc *TypeChecker) inferUnionInstanceExpr(expr *ast.StructInstanceExpr, ut t
 func (tc *TypeChecker) checkUnionMembersAreFFISafe(decl *ast.TypeDeclStmt, ut types.UnionType) {
 	for _, m := range ut.Members {
 		resolved := tc.resolveTypeIfKnown(m.Type, decl.GetLocation())
-		if tc.hasCLayout(resolved, map[string]bool{ut.Name: true}) {
+		if tc.hasCLayout(resolved, decl.GetLocation(), map[string]bool{ut.Name: true}) {
 			continue
 		}
 		tc.addErrorCode(decl.NameLocation, SeverityError, diag.CodeNotFFISafeUnion,
@@ -136,7 +136,15 @@ func (tc *TypeChecker) inferUnionMemberRead(m *ast.MemberExpr, ut types.UnionTyp
 // `seen` breaks a cycle. A union containing itself has no finite size, and the recursive-
 // type checker reports that with its own message; answering here rather than recursing
 // forever is what lets it get that far.
-func (tc *TypeChecker) hasCLayout(t types.Type, seen map[string]bool) bool {
+//
+// **`loc` is where `t`'s names are resolved from**, and a struct's fields are resolved from
+// the struct's own declaration. Until 09/11 every field was resolved with an *empty*
+// location — no module context — so a field whose type was **private** to the declaring
+// module resolved to nothing, and a struct with one was refused as having "no C
+// spelling": `bindings/raylib`'s `Model` holds a private `ModelSkeleton`, and twelve
+// externs taking a `Model` were E063 until the helper was made `pub` for no reason
+// related to layout. Rule 4: a name resolved without asking which module is asking.
+func (tc *TypeChecker) hasCLayout(t types.Type, loc ast.Location, seen map[string]bool) bool {
 	switch v := types.StripNewtype(t).(type) {
 	case types.RawPointerType:
 		return true
@@ -149,21 +157,22 @@ func (tc *TypeChecker) hasCLayout(t types.Type, seen map[string]bool) bool {
 		// caught by the test that pins E063's `_Bool` message.
 		return isAnyConcreteInt(v.Name) || isAnyConcreteFloat(v.Name) || v.Name == types.Rune
 	case types.StaticArrayType:
-		return tc.hasCLayout(tc.resolveTypeIfKnown(v.ElementType, ast.Location{}), seen)
+		return tc.hasCLayout(tc.resolveTypeIfKnown(v.ElementType, loc), loc, seen)
 	case types.NamedStructType:
 		if seen[v.Name] {
 			return true
 		}
 		seen[v.Name] = true
+		at := tc.declarationSite(v.Name, loc)
 		for _, f := range v.Fields {
-			if !tc.hasCLayout(tc.resolveTypeIfKnown(f.Type, ast.Location{}), seen) {
+			if !tc.hasCLayout(tc.resolveTypeIfKnown(f.Type, at), at, seen) {
 				return false
 			}
 		}
 		return true
 	case types.AnonymousStructType:
 		for _, f := range v.Fields {
-			if !tc.hasCLayout(tc.resolveTypeIfKnown(f.Type, ast.Location{}), seen) {
+			if !tc.hasCLayout(tc.resolveTypeIfKnown(f.Type, loc), loc, seen) {
 				return false
 			}
 		}
@@ -175,7 +184,7 @@ func (tc *TypeChecker) hasCLayout(t types.Type, seen map[string]bool) bool {
 		// backend refuses — is a bug generator, and these two predicates answer the same
 		// question from opposite ends of the pipeline.
 		for _, e := range v.Elements {
-			if !tc.hasCLayout(tc.resolveTypeIfKnown(e, ast.Location{}), seen) {
+			if !tc.hasCLayout(tc.resolveTypeIfKnown(e, loc), loc, seen) {
 				return false
 			}
 		}
@@ -185,14 +194,27 @@ func (tc *TypeChecker) hasCLayout(t types.Type, seen map[string]bool) bool {
 			return true
 		}
 		seen[v.Name] = true
+		at := tc.declarationSite(v.Name, loc)
 		for _, m := range v.Members {
-			if !tc.hasCLayout(tc.resolveTypeIfKnown(m.Type, ast.Location{}), seen) {
+			if !tc.hasCLayout(tc.resolveTypeIfKnown(m.Type, at), at, seen) {
 				return false
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// declarationSite is where the named type is declared, as the file at `loc` resolves the
+// name — the location a struct's or union's own field types must be resolved from, since
+// a field may name a type private to the declaring module. It falls back to `loc` for a
+// name the symbol table cannot place, which can only make resolution *more* likely to
+// succeed than the empty location it replaces.
+func (tc *TypeChecker) declarationSite(name string, loc ast.Location) ast.Location {
+	if decl, ok := tc.symTable.LookupTypeFrom(name, loc); ok && decl != nil {
+		return decl.GetLocation()
+	}
+	return loc
 }
 
 // unionOperand returns the union among two operand types, or nil if neither is one.

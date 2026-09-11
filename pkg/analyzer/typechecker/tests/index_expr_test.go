@@ -199,3 +199,56 @@ func TestIndexExpr_Tuple_RuntimeVariableIndex_Error(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, "tuple index must be an integer literal")
 }
+
+// ── a binding that can change is not a constant ─────────────────────────────
+//
+// `resolveConstantInt` folded **any** binding to its initializer, so a `var` reassigned into
+// range was still reported as out of range by its initial value — a hard error on a correct
+// program. Only a plain `let` or a `const` folds now: a `var` can be reassigned and a
+// `let mut` can be written through `&mut`. The `let` case above
+// (TestIndexExpr_StaticArray_ConstLetIndex_OutOfBounds_Error) is what must still fire.
+
+func TestIndexExpr_ReassignedVarIndexIsNotAConstant(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let xs: [3]i64 = [1, 2, 3]
+		var i: i64 = 5
+		i = 0
+		let y = xs[i]
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestIndexExpr_LetMutIndexIsNotAConstant(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let set = (p: ^mut i64, v: i64) -> void => unsafe { p^ = v }
+		let xs: [3]i64 = [1, 2, 3]
+		let mut i: i64 = 5
+		unsafe { set(&mut i, 0) }
+		let y = xs[i]
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// The negative-index check shares the folding, and so shared the bug.
+func TestIndexExpr_ReassignedNegativeVarIsNotRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let xs: [3]i64 = [1, 2, 3]
+		var i: i64 = -1
+		i = 2
+		let y = xs[i]
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// **A tuple index must be known at compile time, so a `var` is refused** — which is the
+// fix, not a regression: it used to type `t[k]` by `k`'s *initializer*, whatever `k` had
+// become by then.
+func TestIndexExpr_TupleIndexThroughAVarIsRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let t: (i64, string) = (1, "one")
+		var k: i64 = 0
+		k = 1
+		let v = t[k]
+	`, false)
+	assertHasErrorContaining(t, res, "tuple index must be an integer literal")
+}

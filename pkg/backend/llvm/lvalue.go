@@ -233,6 +233,18 @@ func (l *lowerer) lvalueAddressRaw(block *ir.Block, e ast.Expression) (lvalueLoc
 
 	case *ast.IndexExpr:
 		return l.indexElemAddress(block, t)
+
+	case *ast.DerefExpr:
+		// `p^` names the storage p points at, so its address is p itself — which is what
+		// makes `p.offset(i)^.field = v` a store into that element's field. The front end
+		// has already required `unsafe` and a `^mut` pointer (lyra-E011, lyra-E061); the
+		// pointee is whatever the pointer's owner laid out, never a Lyra box.
+		ptr, block, err := l.lowerExpr(block, t.Operand)
+		if err != nil {
+			return lvalueLoc{}, nil, err
+		}
+		lyraType, _ := l.recordedType(t)
+		return lvalueLoc{ptr: ptr, ty: lyraType}, block, nil
 	}
 	return lvalueLoc{}, nil, fmt.Errorf("llvm: unsupported assignment target path element %T", e)
 }

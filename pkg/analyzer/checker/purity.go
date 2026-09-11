@@ -2112,7 +2112,13 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					"pure function reassigns captured binding %q; mutation must not escape the function", st.Name)
 			}
 		case *ast.LValueAssignmentStmt:
-			if root := rootIdentName(st.Target); root != "" {
+			// `p^.x = v` and `p.offset(i)^.y = v` write the pointee, so they are charged as
+			// `p^ = v` is: the path has no identifier root, and before this nothing was.
+			if writesThroughPointer(st.Target) {
+				found |= EffectMut
+				c.pure(st.GetLocation(),
+					"pure function writes through a pointer; pointer writes may mutate external state")
+			} else if root := rootIdentName(st.Target); root != "" {
 				// The two causes get their own sentences: a `mut`-borrow writes through
 				// to the caller's value, a capture mutates state observable elsewhere.
 				switch {
@@ -2450,4 +2456,21 @@ func operatorImplEffect(e ast.Expression, inf *inference) (Effect, string) {
 		return boundCallEffect(ref, inf), ref.Method
 	}
 	return EffectNone, ""
+}
+
+// writesThroughPointer reports whether an assignment path reaches its storage through a
+// `^` — `p^.x`, `xs[i]^.y`, `p.offset(1)^.z`.
+func writesThroughPointer(target ast.Expression) bool {
+	for {
+		switch e := target.(type) {
+		case *ast.MemberExpr:
+			target = e.Object
+		case *ast.IndexExpr:
+			target = e.Object
+		case *ast.DerefExpr:
+			return true
+		default:
+			return false
+		}
+	}
 }
