@@ -152,13 +152,20 @@ const (
 	// definite-only, compile-time check like the literal integer range check.
 	CodeRangeConstraintViolation = "lyra-E023"
 
-	// CodeCapturedAssignment: a lambda assigns to a binding it captured from an
+	// CodeCapturedAssignment: a lambda writes to a binding it captured from an
 	// enclosing scope. A closure captures **by value** — the copy is taken when the
 	// closure is created, so it can outlive the frame the original lives in — which
 	// means the write can only reach the closure's own copy, never the enclosing
 	// binding. Silently doing nothing is the same class of bug as a lost write
 	// through a by-value `mut` parameter, so it is rejected instead: return the new
 	// value, or move the state into a value the closure is handed.
+	//
+	// **`&mut n` is that write one spelling further out, and carries the same code.**
+	// The pointer addresses the environment's copy, so anything written through it —
+	// including by a C function the pointer is handed to — lands there. One rule, two
+	// spellings, one place to look it up; the message differs to name the act and the
+	// fix (take the pointer outside the closure). `&n` is untouched: it cannot write,
+	// and reading through it sees exactly what the closure sees.
 	CodeCapturedAssignment = "lyra-E024"
 
 	// CodeBorrowedParamReassignment: a function reassigns a *borrowed* parameter —

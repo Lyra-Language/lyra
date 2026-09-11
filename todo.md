@@ -3491,37 +3491,6 @@ differently — here, not at all — but a `DefaultFont` would need unwrapping a
 taking a `Font`, which is worse than the warning. A `@must_release` type with a *borrowed*
 constructor is the shape the attribute does not have.
 
-### `&mut` on a captured binding writes to the capture, silently
-
-    let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }
-    let apply = (f: () -> void) -> void => f()
-    let main = () -> void => {
-      var captured: i32 = 0
-      apply(() => unsafe { fill(&mut captured) })
-      println("${captured}")        // prints 0
-    }
-
-`lyrac check` passes, the program runs, and the write is **lost**. Captures are by value,
-so `&mut captured` inside the lambda addresses the copy in the closure environment; the
-enclosing binding never changes and nothing is reported anywhere.
-
-**`lyra-E024` already refuses assigning to a captured binding** for exactly this reason —
-"assigning to a captured binding inside a lambda cannot affect the enclosing binding, which
-is why that is rejected outright rather than silently doing nothing". Taking a mutable
-pointer to one is the same act through a different spelling and is not refused, so the
-rule holds for `x = v` and not for `&mut x`.
-
-The fix is to extend E024 (or give this its own code) to `&mut` on a name the captures pass
-resolved as a capture — the pass already computes exactly that set.
-
-**Found 09/10 writing `bindings/raylib/files.lyra`**, where an out-parameter taken inside a
-`with_cstring` closure made `LoadFileData` report a length of zero into a copy, so every
-binary file read back empty. **The same shape was already shipping in `image.lyra`**:
-`paint_text` took `&mut self` inside a `with_cstring` lambda, and it *worked* — an `Image`
-is a struct whose `data` field is a pointer, so the copy addresses the same pixels. It
-would have failed silently the first time raylib reallocated the buffer. Both are now
-written outside the closure, over `cstring()`.
-
 ### `bindings/raylib/texture.lyra` — **[DONE 09/10]**
 
 46 functions: images (load, generate, edit in place, read pixels), textures (load, upload,

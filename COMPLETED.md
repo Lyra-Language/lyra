@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — `&mut` on a capture is E024's write, one spelling further out
+
+    let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }
+    let apply = (f: () -> void) -> void => f()
+    var captured: i32 = 0
+    apply(() => unsafe { fill(&mut captured) })   // `captured` is still 0
+
+`lyrac check` passed, the program ran, and the write was lost. Captures are by value, so
+`&mut captured` addresses the copy in the closure environment.
+
+**`lyra-E024` already refused exactly this, under a different spelling.** Its own
+documentation says a write to a capture "can only reach the closure's own copy" and is
+"rejected instead" of compiling into a write that silently vanishes — and the check covered
+`n = v`, `n += v` and `p.x = v` while saying nothing about `&mut n`, which is the same
+write with the store one call further out. So the rule held for three spellings and not the
+fourth.
+
+It extends E024 rather than minting a new code, because it is not a new rule: one rule, two
+spellings, one place to look it up. Only the message differs, and it has to — the usual
+cause is an out-parameter taken inside a *lending* closure, so the fix is "take the pointer
+outside the closure" rather than "return the new value".
+
+**`&n` is deliberately untouched.** It cannot write, and reading through it sees exactly
+what the closure sees; refusing it would make the safe spelling the refused one. A pointer
+to the lambda's **own** local is fine too, and had to be checked — that is the shape the
+fix must not break, since taking an out-parameter inside a closure is ordinary as long as
+the storage belongs to the closure.
+
+**Found the day before, in `bindings/raylib/files.lyra`**: an out-parameter taken inside a
+`with_cstring` lambda had raylib write a buffer length into the copy, so every binary file
+read back empty. The same shape was already shipping in `image.lyra`, where it *worked* —
+an `Image` is a struct whose `data` field is a pointer, so the copy addresses the same
+pixels — and would have failed the first time raylib reallocated. Both were rewritten
+around it at the time; the compiler now refuses the shape outright, and a sweep of every
+`.lyra` in the tree finds nothing else.
+
 ### 09/10/26 — the shadowing check had no idea what modules are
 
 `lyra-W001` reported a local named `turns` in `examples/raylib/mandelbrot.lyra` as shadowing

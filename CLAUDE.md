@@ -733,6 +733,12 @@ inside this project, three things:
   does not leak across a lambda boundary — was written and tested throughout but *not run*
   between 08/13 and 08/18, because the block it recommended was itself an unknown
   expression.
+- **`&mut` on a *captured* binding is `lyra-E024`**, the same check that refuses assigning
+  to one (`checker/captured_assignment.go`). It is the same write with the store one call
+  further out, so it shares the code rather than minting one — only the message differs,
+  since the usual cause is an out-parameter taken inside a lending closure and the fix is to
+  move the call out of it. Three spellings were covered and the fourth was not, which cost
+  a real bug in `bindings/raylib/files.lyra` (09/10).
 - **Mutability is two checks, deliberately.** `requireMutableRoot` reuses the binding rule
   `checkLValueAssignment` applies, so a `&mut` cannot outrun the assignment rule; the
   pointer's own `IsMut` is what `checkDerefWrite` tests. Neither implies the other.

@@ -115,3 +115,103 @@ let main = () -> u8 => {
 }
 `)
 }
+
+// ---------------------------------------------------------------------------
+// `&mut` on a capture — the same rule one spelling further out
+// ---------------------------------------------------------------------------
+
+// A mutable pointer to a capture addresses the **closure's copy**, so whatever is written
+// through it — by this program or by a C function handed the pointer — changes the copy
+// and nothing else. Until 09/10 this compiled, ran, and lost the write with nothing said.
+//
+// The four-line program below is the reduction of a real bug: an out-parameter taken
+// inside a `with_cstring` lambda had raylib write a buffer length into the copy, so every
+// binary file read back empty (`bindings/raylib/files.lyra`).
+func assertCapturedAddress(t *testing.T, src, wantName string) {
+	t.Helper()
+	got := capturedAssignmentErrors(t, src)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 captured-address error, got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0].Message, "cannot take `&mut` of \""+wantName+"\"") {
+		t.Errorf("message should name the binding %q: %q", wantName, got[0].Message)
+	}
+}
+
+func TestCapturedAddress_MutablePointerToACapture(t *testing.T) {
+	assertCapturedAddress(t, `
+let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }
+let apply = (f: () -> void) -> void => f()
+let main = () -> u8 => {
+  var captured: i32 = 0
+  apply(() => unsafe { fill(&mut captured) })
+  0
+}
+`, "captured")
+}
+
+// Rooted at a capture through a path, which is the same storage `p.x = v` would name —
+// and which the assignment half already refuses through the same walk.
+func TestCapturedAddress_ThroughAPath(t *testing.T) {
+	assertCapturedAddress(t, `
+struct Box { n: i32 }
+let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }
+let apply = (f: () -> void) -> void => f()
+let main = () -> u8 => {
+  var b = Box { n: 0 }
+  apply(() => unsafe { fill(&mut b.n) })
+  0
+}
+`, "b")
+}
+
+// **An immutable `&` is untouched**, and that is the line: it cannot write, so reading
+// through it sees exactly what the closure sees. Refusing it would make the safe spelling
+// the refused one.
+func TestCapturedAddress_ImmutableBorrowIsFine(t *testing.T) {
+	src := `
+let peek = (p: ^i32) -> i32 => unsafe { p^ }
+let apply = (f: () -> void) -> void => f()
+let main = () -> u8 => {
+  var readable: i32 = 7
+  apply(() => println("${unsafe { peek(&readable) }}"))
+  0
+}
+`
+	if got := capturedAssignmentErrors(t, src); len(got) != 0 {
+		t.Errorf("got %v; want none — `&` cannot write, so there is nothing to lose", got)
+	}
+}
+
+// A lambda's own local is not a capture, so a pointer to it addresses the only copy there
+// is. This is the shape the fix must not break: taking an out-parameter inside a closure
+// is fine as long as the storage is the closure's.
+func TestCapturedAddress_OwnLocalIsFine(t *testing.T) {
+	src := `
+let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }
+let apply = (f: () -> void) -> void => f()
+let main = () -> u8 => {
+  apply(() => { var own: i32 = 0  unsafe { fill(&mut own) }  println("${own}") })
+  0
+}
+`
+	if got := capturedAssignmentErrors(t, src); len(got) != 0 {
+		t.Errorf("got %v; want none — `own` is the lambda's own local", got)
+	}
+}
+
+// And outside any lambda there is no capture at all.
+func TestCapturedAddress_OutsideALambdaIsFine(t *testing.T) {
+	src := `
+let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }
+let main = () -> u8 => {
+  var plain: i32 = 0
+  unsafe { fill(&mut plain) }
+  println("${plain}")
+  0
+}
+`
+	if got := capturedAssignmentErrors(t, src); len(got) != 0 {
+		t.Errorf("got %v; want none — nothing is captured here", got)
+	}
+}

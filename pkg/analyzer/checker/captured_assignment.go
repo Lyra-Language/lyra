@@ -22,8 +22,15 @@ import (
 // getting it wrong is a dangling pointer rather than a lost update.
 //
 // It covers all three assignment forms (`n = …`, `n += …`, and a path write like
-// `p.x = …`), and only fires for a name the capture pass actually recorded, so a
-// lambda writing to its own local or parameter is untouched.
+// `p.x = …`) **and `&mut n`**, which is the same write one spelling further out: the
+// pointer addresses the environment's copy, so whatever is written through it lands
+// there. That spelling went unreported until 09/10 and cost a real bug — an out-parameter
+// taken inside a `with_cstring` lambda had raylib write a buffer length into the copy, so
+// every binary file read back empty with nothing said anywhere. `&n` is untouched, since
+// reading through it sees exactly what the closure sees.
+//
+// It only fires for a name the capture pass actually recorded, so a lambda writing to its
+// own local or parameter is untouched.
 func CheckCapturedAssignment(program *ast.Program, caps *captures.Table) []diag.Diagnostic {
 	if caps == nil {
 		return nil
@@ -62,7 +69,7 @@ func CheckCapturedAssignment(program *ast.Program, caps *captures.Table) []diag.
 // captured names.
 func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnostic {
 	var out []diag.Diagnostic
-	report := func(name string, loc ast.Location) {
+	reportWith := func(name string, loc ast.Location, message string) {
 		if !captured[name] {
 			return
 		}
@@ -70,9 +77,25 @@ func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnos
 			Severity: diag.SeverityError,
 			Code:     diag.CodeCapturedAssignment,
 			Location: loc,
-			Message: "cannot assign to \"" + name + "\": it is captured from an enclosing scope, and a closure captures by value — " +
-				"the write would only change the closure's own copy. Return the new value instead, or pass the state in as a parameter",
+			Message:  message,
 		})
+	}
+	report := func(name string, loc ast.Location) {
+		reportWith(name, loc,
+			"cannot assign to \""+name+"\": it is captured from an enclosing scope, and a closure captures by value — "+
+				"the write would only change the closure's own copy. Return the new value instead, or pass the state in as a parameter")
+	}
+	// **The same rule, one spelling further out.** A mutable pointer to a capture
+	// addresses the closure's copy, so a write through it — by this program or by a C
+	// function it is handed to — changes the copy and nothing else. The advice differs
+	// from the assignment case because the shape does: the usual cause is an
+	// out-parameter taken inside a lending closure, and moving the call out of the
+	// closure is what fixes it.
+	reportAddress := func(name string, loc ast.Location) {
+		reportWith(name, loc,
+			"cannot take `&mut` of \""+name+"\": it is captured from an enclosing scope, and a closure captures by value — "+
+				"the pointer addresses the closure's own copy, so anything written through it is lost. "+
+				"Take the pointer outside the closure, or pass the state in as a parameter")
 	}
 	onStmt := func(s ast.Statement) bool {
 		switch v := s.(type) {
@@ -100,6 +123,14 @@ func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnos
 		}
 		if v, ok := e.(*ast.MathAssignOpExpr); ok {
 			report(rootIdentName(v.Left), v.GetLocation())
+		}
+		// `&mut n`, and `&mut p.x` rooted at a capture — the same path walk the
+		// assignment case uses, since writing through `&mut p.x` and writing `p.x = v`
+		// reach the same storage. `&n` is not reported: it cannot write.
+		if v, ok := e.(*ast.AddressOfExpr); ok && v.IsMut {
+			if root, ok := lvalueRootName(v.Operand); ok {
+				reportAddress(root, v.GetLocation())
+			}
 		}
 		return true
 	}
