@@ -782,3 +782,88 @@ let main = () -> void => {
 		t.Errorf("raylib files = %q;\n                want %q", got, want)
 	}
 }
+
+// `bindings/raylib/models.lyra` — meshes and models, which need a **GL context**, unlike
+// every other raylib family tested here.
+//
+// raylib segfaults generating a mesh with no window (measured), so the binding gates every
+// GPU call on `window_ready()`. The program opens a *hidden* window — `FLAG_WINDOW_HIDDEN`
+// creates the context and shows nothing — and says "no-display" where there is no display
+// to open one on, which is the Linux container; the test skips there rather than failing.
+//
+// The ray casts carry the weight: a ray from z=10 meets a 2x2x2 cube after nine units, misses
+// once the cube is translated along x, and travels three units further once it is moved back
+// along z — which is also what proves `matrix_translation` puts the offset where raylib
+// reads it. The first check runs *before* the window, and is the `None` the gate exists for.
+func TestExec_RaylibModels(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ set_config_flags, FLAG_WINDOW_HIDDEN, init_window, close_window,
+                         window_ready, gen_mesh_cube, gen_mesh_sphere, unload_mesh,
+                         mesh_bounding_box, ray_hits_mesh, matrix_identity,
+                         matrix_translation, model_from_mesh, unload_model, vec3, ray, RayHit,
+                         load_material_default, unload_material, material_supports_instancing }
+
+let hit = pure (h: Maybe<RayHit>) -> string =>
+  match h { Some(c) => f64(c.distance).to_fixed(2), None => "miss" }
+
+let main = () -> void => {
+  // Computed first, printed once at the end: raylib writes its own log lines to stdout.
+  let before = gen_mesh_cube(1.0, 1.0, 1.0).is_none()
+  set_config_flags(FLAG_WINDOW_HIDDEN)
+  init_window(64, 64, "models test")
+  if !window_ready() {
+    println("no-display")
+    return
+  }
+  var report = "${before}"
+  match gen_mesh_cube(2.0, 2.0, 2.0) {
+    Some(cube) => {
+      let b = mesh_bounding_box(cube)
+      let down = ray(vec3(0.0, 0.0, 10.0), vec3(0.0, 0.0, 0.0 - 1.0))
+      report = report ++ " ${cube.vertex_count} ${cube.triangle_count}" ++
+        " ${f64(b.min.x).to_fixed(1)},${f64(b.max.x).to_fixed(1)}" ++
+        " ${hit(ray_hits_mesh(down, cube, matrix_identity()))}" ++
+        " ${hit(ray_hits_mesh(down, cube, matrix_translation(vec3(5.0, 0.0, 0.0))))}" ++
+        " ${hit(ray_hits_mesh(down, cube, matrix_translation(vec3(0.0, 0.0, 0.0 - 3.0))))}"
+      match model_from_mesh(cube) {
+        Some(model) => {
+          report = report ++ " ${model.mesh_count}/${model.material_count}"
+          unload_model(model)
+        },
+        None => { report = report ++ " no-model" },
+      }
+    },
+    None => { report = report ++ " no-cube" },
+  }
+  match gen_mesh_sphere(1.0, 8, 8) {
+    Some(s) => { report = report ++ " ${s.vertex_count > 0}" ; unload_mesh(s) },
+    None => { report = report ++ " no-sphere" },
+  }
+  // The default material's shader has no per-instance transform attribute, so it cannot
+  // draw instances — raylib would draw one mesh at the origin and ignore the rest.
+  match load_material_default() {
+    Some(mat) => { report = report ++ " ${material_supports_instancing(mat)}" ; unload_material(mat) },
+    None => { report = report ++ " no-material" },
+  }
+  close_window()
+  println(report)
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		t.Fatalf("running the raylib-models binary failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	got := strings.TrimSpace(lines[len(lines)-1])
+	if got == "no-display" {
+		t.Skip("no display to create a GL context on")
+	}
+	want := "true 24 12 -1.0,1.0 9.00 miss 12.00 1/1 true false"
+	if got != want {
+		t.Errorf("raylib models = %q; want %q", got, want)
+	}
+}

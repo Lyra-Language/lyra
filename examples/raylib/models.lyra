@@ -1,0 +1,340 @@
+module main
+//! Every mesh raylib can generate, drawn as models, with a picked one boxed.
+//!
+//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
+//!   lyrac run examples/raylib/models.lyra -- --check   # checks under a hidden window
+//!   lyrac run examples/raylib/models.lyra              # the scene
+//!
+//! **`--check` opens a window, and nothing appears.** Every call in `models.lyra` that
+//! uploads to the GPU needs a GL context — raylib segfaults without one — so the checks set
+//! `FLAG_WINDOW_HIDDEN` first, which creates the context and shows nothing. Where there is
+//! no display at all the window never becomes ready, the binding answers `None` rather
+//! than crashing, and `--check` says it skipped.
+//!
+//! **Move the mouse to pick.** A ray from the cursor is tested against each model's
+//! bounding box — not against its meshes, which a model owns and does not hand out.
+
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps, set_config_flags, window_ready,
+  FLAG_WINDOW_HIDDEN, begin_drawing, end_drawing, clear_background, elapsed,
+  Vector3, Model, Mesh, Material, Camera3D, BoundingBox, RayHit,
+  vec2, vec3, ray, camera_3d, begin_mode_3d, end_mode_3d, update_camera, CAMERA_ORBITAL,
+  screen_to_world_ray, world_to_screen, ray_hits_box, draw_grid,
+  gen_mesh_poly, gen_mesh_plane, gen_mesh_cube, gen_mesh_sphere, gen_mesh_hemisphere,
+  gen_mesh_cylinder, gen_mesh_cone, gen_mesh_torus, gen_mesh_knot, gen_mesh_heightmap,
+  gen_mesh_cubicmap, unload_mesh, mesh_bounding_box, ray_hits_mesh, export_mesh,
+  model_from_mesh, load_model, unload_model, model_bounding_box, model_valid,
+  draw_model, draw_model_ex, draw_model_wires, draw_model_wires_ex, draw_bounding_box,
+  draw_mesh, draw_mesh_instanced,
+  load_material_default, unload_material, material_valid, material_supports_instancing,
+  matrix_identity, matrix_translation, turns, Degrees,
+  gen_image_gradient_linear, gen_image_checked, unload_image,
+  draw_text, measure_text, mouse_position, Matrix, Color,
+  RAYWHITE, WHITE, BLACK, RED, GREEN, BLUE, ORANGE, PURPLE, DARKGRAY, rgb,
+}
+
+const LABEL: i32 = 20
+
+let main = () -> u8 => {
+  if wants_check(program_args()) { return run_checks() }
+  run_scene()
+  0
+}
+
+let wants_check = pure (args: []string) -> bool => {
+  var found = false
+  for a in args {
+    if a == "--check" { found = true }
+  }
+  found
+}
+
+// ---------------------------------------------------------------------------------------
+// The checks
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  // **Before any window: every generator answers `None`.** raylib's own answer here is a
+  // segfault, measured, which is what the binding's gate on `window_ready()` is for.
+  failures += check("gen_mesh_cube with no window is None",
+    gen_mesh_cube(1.0, 1.0, 1.0).is_none(), true)
+  failures += check("load_material_default with no window is None",
+    load_material_default().is_none(), true)
+
+  set_config_flags(FLAG_WINDOW_HIDDEN)
+  init_window(128, 128, "models --check")
+  if !window_ready() {
+    println("skipped: no display to create a GL context on")
+    return 0
+  }
+
+  // A 2x2x2 cube: 24 vertices (four per face, so each face gets its own normals) and
+  // twelve triangles, centred on the origin.
+  match gen_mesh_cube(2.0, 2.0, 2.0) {
+    Some(cube) => {
+      failures += check("gen_mesh_cube vertex count", "${cube.vertex_count}", "24")
+      failures += check("gen_mesh_cube triangle count", "${cube.triangle_count}", "12")
+      let b = mesh_bounding_box(cube)
+      failures += check("mesh_bounding_box", "${two(b.min.x)}..${two(b.max.x)}", "-1.00..1.00")
+
+      // A ray from z=10 down -Z meets the cube's +Z face after nine units. Translated along
+      // x it misses; translated back along z it travels three units further. That is also
+      // the check that `matrix_translation` puts the offset where raylib reads it.
+      let down = ray(vec3(0.0, 0.0, 10.0), vec3(0.0, 0.0, 0.0 - 1.0))
+      failures += check("ray_hits_mesh, identity",
+        hit(ray_hits_mesh(down, cube, matrix_identity())), "9.00")
+      failures += check("ray_hits_mesh, moved along x",
+        hit(ray_hits_mesh(down, cube, matrix_translation(vec3(5.0, 0.0, 0.0)))), "miss")
+      failures += check("ray_hits_mesh, moved along z",
+        hit(ray_hits_mesh(down, cube, matrix_translation(vec3(0.0, 0.0, 0.0 - 3.0)))), "12.00")
+
+      failures += check("export_mesh", export_mesh(cube, "/tmp/lyra-models-cube.obj"), true)
+
+      // **`own`**: the model takes the cube, and unloading the model frees it. Unloading
+      // the cube as well would be a double free — which is why this does not compile if
+      // attempted, rather than crashing.
+      match model_from_mesh(cube) {
+        Some(model) => {
+          failures += check("model_from_mesh holds one mesh", "${model.mesh_count}", "1")
+          failures += check("and the default material", "${model.material_count}", "1")
+          failures += check("model_bounding_box", two(model_bounding_box(model).max.y), "1.00")
+          unload_model(model)
+        },
+        None => failures += check("model_from_mesh", "None", "Some"),
+      }
+    },
+    None => failures += check("gen_mesh_cube", "None", "Some"),
+  }
+
+  // An OBJ written above reads back as a model of one mesh.
+  match load_model("/tmp/lyra-models-cube.obj") {
+    Some(m) => {
+      failures += check("load_model reads the exported OBJ", model_valid(m), true)
+      unload_model(m)
+    },
+    None => failures += check("load_model", "None", "Some"),
+  }
+  failures += check("load_model on a missing file is None",
+    load_model("/tmp/lyra-models-no-such-file.obj").is_none(), true)
+
+  // Every other generator produces a mesh with vertices.
+  failures += check("gen_mesh_sphere", counts(gen_mesh_sphere(1.0, 8, 8)), true)
+  failures += check("gen_mesh_hemisphere", counts(gen_mesh_hemisphere(1.0, 8, 8)), true)
+  failures += check("gen_mesh_plane", counts(gen_mesh_plane(2.0, 2.0, 2, 2)), true)
+  failures += check("gen_mesh_poly", counts(gen_mesh_poly(6, 1.0)), true)
+  failures += check("gen_mesh_cylinder", counts(gen_mesh_cylinder(1.0, 2.0, 8)), true)
+  failures += check("gen_mesh_cone", counts(gen_mesh_cone(1.0, 2.0, 8)), true)
+  failures += check("gen_mesh_torus", counts(gen_mesh_torus(1.0, 0.3, 8, 8)), true)
+  failures += check("gen_mesh_knot", counts(gen_mesh_knot(1.0, 0.3, 8, 8)), true)
+  let height = gen_image_gradient_linear(8, 8, 0, BLACK, WHITE)
+  let blocks = gen_image_checked(4, 4, 1, 1, WHITE, BLACK)
+  failures += check("gen_mesh_heightmap", counts(gen_mesh_heightmap(height, vec3(4.0, 1.0, 4.0))), true)
+  failures += check("gen_mesh_cubicmap", counts(gen_mesh_cubicmap(blocks, vec3(1.0, 1.0, 1.0))), true)
+  unload_image(height)
+  unload_image(blocks)
+
+  match load_material_default() {
+    Some(mat) => {
+      failures += check("load_material_default", material_valid(mat), true)
+      // **The default shader cannot draw instances** — it has no per-instance transform
+      // attribute, so raylib's `DrawMeshInstanced` draws one mesh at the origin and ignores
+      // every transform, with no error. The binding answers this so a program can tell,
+      // and `draw_mesh_instanced` falls back to one draw per transform when it is false.
+      failures += check("the default material cannot instance",
+        material_supports_instancing(mat), false)
+      unload_material(mat)
+    },
+    None => failures += check("load_material_default", "None", "Some"),
+  }
+
+  close_window()
+  if failures == 0 {
+    println("all model checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+/// Whether a generated mesh has vertices, releasing it either way.
+let counts = (m: Maybe<Mesh>) -> bool =>
+  match m {
+    Some(mesh) => {
+      let has = mesh.vertex_count > 0
+      unload_mesh(mesh)
+      has
+    },
+    None => false,
+  }
+
+let hit = pure (h: Maybe<RayHit>) -> string =>
+  match h { Some(c) => two(c.distance), None => "miss" }
+
+let two = pure (v: f32) -> string => f64(v).to_fixed(2)
+
+let check<t> where t: Show = (name: string, got: t, want: t) -> i64 => {
+  if "${got}" == "${want}" {
+    println("  ok    ${name}")
+    0
+  } else {
+    println("  FAIL  ${name}: got ${got}, want ${want}")
+    1
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The scene
+// ---------------------------------------------------------------------------------------
+
+/// One model in the ring, where it stands, and its name for the pick readout.
+struct Placed {
+  name: string,
+  model: Model,
+  at: Vector3,
+  tint: Color,
+}
+
+let run_scene = () -> void => {
+  init_window(1100, 720, "Lyra - raylib models")
+  set_target_fps(60)
+
+  // Every generated mesh becomes a model, which takes the mesh `own` — so `placed` holds
+  // the only handles, and unloading the models at the end frees everything.
+  var placed: []Placed = []
+  placed.place("cube", gen_mesh_cube(1.6, 1.6, 1.6), 0, BLUE)
+  placed.place("sphere", gen_mesh_sphere(1.0, 16, 16), 1, RED)
+  placed.place("hemisphere", gen_mesh_hemisphere(1.0, 16, 16), 2, ORANGE)
+  placed.place("cylinder", gen_mesh_cylinder(0.8, 2.0, 16), 3, GREEN)
+  placed.place("cone", gen_mesh_cone(1.0, 2.0, 16), 4, PURPLE)
+  placed.place("torus", gen_mesh_torus(1.0, 0.8, 16, 16), 5, rgb(90, 170, 230))
+  placed.place("knot", gen_mesh_knot(0.8, 1.2, 64, 12), 6, rgb(230, 100, 140))
+  placed.place("poly", gen_mesh_poly(6, 1.2), 7, rgb(140, 200, 120))
+  placed.place("plane", gen_mesh_plane(2.0, 2.0, 4, 4), 8, rgb(200, 180, 90))
+  let height = gen_image_gradient_linear(16, 16, 45, BLACK, WHITE)
+  placed.place("heightmap", gen_mesh_heightmap(height, vec3(2.4, 1.2, 2.4)), 9, rgb(120, 160, 90))
+  unload_image(height)
+  let blocks = gen_image_checked(4, 4, 1, 1, WHITE, BLACK)
+  placed.place("cubicmap", gen_mesh_cubicmap(blocks, vec3(0.5, 0.5, 0.5)), 10, DARKGRAY)
+  unload_image(blocks)
+
+  // One mesh drawn many times in a single call — a row of cubes through the ring's centre.
+  let row = gen_mesh_cube(0.4, 0.4, 0.4)
+  let material = load_material_default()
+  var transforms: []Matrix = []
+  var k = 0
+  for k < 9 {
+    transforms.push(matrix_translation(vec3(0.0 - 4.0 + f32(k), 0.2, 0.0)))
+    k += 1
+  }
+
+  var camera = camera_3d(vec3(18.0, 13.0, 18.0), vec3(0.0, 1.0, 0.0), 45.0)
+
+  for !should_close() {
+    camera.update_camera(CAMERA_ORBITAL)
+    let spin = turns(wrap01(f32(elapsed()) * 0.1))
+
+    // The nearest model whose box the cursor's ray meets.
+    let pick = screen_to_world_ray(mouse_position(), camera)
+    var picked = 0 - 1
+    var best = 1.0e30
+    var i = 0
+    for p in placed {
+      match ray_hits_box(pick, world_box(p)) {
+        Some(h) => if f64(h.distance) < best {
+          best = f64(h.distance)
+          picked = i
+        },
+        None => { },
+      }
+      i += 1
+    }
+
+    begin_drawing()
+    clear_background(rgb(102, 191, 255))
+    begin_mode_3d(camera)
+    draw_grid(24, 1.0)
+    i = 0
+    for p in placed {
+      // Every other model turns. Its wireframe has to turn with it — `draw_model_wires`
+      // beside a rotated `draw_model_ex` draws the edges of a model that is not there,
+      // which the first screenshot of this scene showed on every spinning shape.
+      if i %% 2 == 0 {
+        let axis = vec3(0.0, 1.0, 0.0)
+        let one = vec3(1.0, 1.0, 1.0)
+        draw_model_ex(p.model, p.at, axis, spin, one, p.tint)
+        draw_model_wires_ex(p.model, p.at, axis, spin, one, BLACK)
+      } else {
+        draw_model(p.model, p.at, 1.0, p.tint)
+        draw_model_wires(p.model, p.at, 1.0, BLACK)
+      }
+      if i == picked { draw_bounding_box(world_box(p), rgb(255, 230, 0)) }
+      i += 1
+    }
+    match row {
+      Some(mesh) => match material {
+        Some(mat) => draw_mesh_instanced(mesh, mat, transforms),
+        None => { },
+      },
+      None => { },
+    }
+    end_mode_3d()
+
+    draw_text("raylib models - orbital camera, move the mouse to pick", 24, 16, LABEL, DARKGRAY)
+    let name = if picked >= 0 { placed[picked].name } else { "nothing" }
+    draw_text("picked: ${name}", 24, 42, LABEL, BLACK)
+    // Above each model with room to spare — the tall ones reach past two units — and lifted
+    // by a line, since `draw_text` takes the *top* of the text and a label placed at a
+    // model's crown otherwise hangs down over it (`shapes3d.lyra` learned the same).
+    for p in placed {
+      let s = world_to_screen(vec3(p.at.x, p.at.y + 2.8, p.at.z), camera)
+      draw_text(p.name, i32(s.x.round()) - measure_text(p.name, 16) / 2,
+                i32(s.y.round()) - 18, 16, DARKGRAY)
+    }
+    end_drawing()
+  }
+
+  for p in placed { unload_model(p.model) }
+  match row { Some(mesh) => unload_mesh(mesh), None => { } }
+  match material { Some(mat) => unload_material(mat), None => { } }
+  close_window()
+}
+
+/// Turn a generated mesh into a model standing at ring slot `slot`.
+let place = (self: mut []Placed, name: string, mesh: Maybe<Mesh>, slot: i64,
+             tint: Color) -> void =>
+  match mesh {
+    Some(m) => match model_from_mesh(m) {
+      Some(model) => self.push(Placed { name: name, model: model, at: ring(slot), tint: tint }),
+      None => println("could not build a model for ${name}"),
+    },
+    None => println("could not generate ${name}"),
+  }
+
+/// A model's box, moved to where it stands. `model_bounding_box` is in model space.
+let world_box = (p: Placed) -> BoundingBox => {
+  let b = model_bounding_box(p.model)
+  BoundingBox {
+    min: vec3(b.min.x + p.at.x, b.min.y + p.at.y, b.min.z + p.at.z),
+    max: vec3(b.max.x + p.at.x, b.max.y + p.at.y, b.max.z + p.at.z),
+  }
+}
+
+/// Slot `n` of eleven around a circle of radius 8 — a ring, so an orbiting camera never
+/// sees the models edge-on in a row (the lesson `shapes3d.lyra` learned).
+let ring = pure (n: i64) -> Vector3 => {
+  let p = RING[n %% RING.len()]
+  vec3(p.0, 1.0, p.1)
+}
+
+/// Eleven (x, z) pairs, 360/11 degrees apart at radius 8. Written out because Lyra has
+/// no `cos`/`sin`.
+const RING: [11](f32, f32) = [
+  (8.00, 0.00), (6.73, 4.32), (3.32, 7.28), (0.0 - 1.14, 7.92), (0.0 - 5.24, 6.05),
+  (0.0 - 7.68, 2.25), (0.0 - 7.68, 0.0 - 2.25), (0.0 - 5.24, 0.0 - 6.05),
+  (0.0 - 1.14, 0.0 - 7.92), (3.32, 0.0 - 7.28), (6.73, 0.0 - 4.32),
+]
+
+let wrap01 = pure (v: f32) -> f32 => v - f32(f64(v).floor())

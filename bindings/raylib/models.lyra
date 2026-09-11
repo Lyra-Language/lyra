@@ -1,0 +1,741 @@
+module bindings.raylib
+//! Meshes, models, materials and animations — the half of raylib's 3D that loads things.
+//!
+//! **Everything that touches the GPU needs a window, and says so rather than crashing.**
+//! `GenMeshCube` with no window open does not fail: it warns twice that the GPU is not
+//! ready and then **segfaults** — measured, in a pure-C caller. `IsWindowReady()` predicts
+//! it exactly, so every call here that uploads anything answers a `Maybe` gated on
+//! [window_ready], the rule `image_text` set for the built-in font. A hidden window
+//! (`FLAG_WINDOW_HIDDEN`) is enough: it creates the GL context and shows nothing, which is
+//! how `examples/raylib/models.lyra` checks all of this without flashing a window.
+//!
+//! **A model owns its meshes.** [model_from_mesh] takes `own Mesh` because raylib keeps the
+//! mesh's buffers and frees them in `UnloadModel` — unloading the mesh as well is a double
+//! free, measured (the C caller aborts). `own` is what the language already means by "this
+//! call takes it", so the `@must_release` check treats the mesh as handed over, and a later
+//! `unload_mesh` of it is a use-after-move error rather than a corrupted heap.
+//!
+//! Every layout here was measured against C — `Mesh` 120 bytes, `Material` 40, `Model` 136
+//! with its skeleton at 96, `ModelAnimation` 48 — because a wrong offset in a struct this
+//! size is not a type error but a pointer read from the wrong eight bytes.
+
+// ---------------------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------------------
+
+/// `Mesh` — vertex data on the CPU and, once uploaded, the GL buffers holding it.
+///
+/// Only the counts are meant for reading; the pointers are raylib's, and there is no safe
+/// way to walk them without knowing which attributes this mesh actually has.
+@must_release(unload_mesh)
+pub struct Mesh {
+  vertex_count: i32,
+  triangle_count: i32,
+  vertices: ^f32,
+  texcoords: ^f32,
+  texcoords2: ^f32,
+  normals: ^f32,
+  tangents: ^f32,
+  colors: ^u8,
+  indices: ^u16,
+  bone_count: i32,
+  bone_indices: ^u8,
+  bone_weights: ^f32,
+  anim_vertices: ^f32,
+  anim_normals: ^f32,
+  vao_id: u32,
+  vbo_id: ^u32,
+}
+
+/// `Shader` — a GL program and its uniform locations. Declared here because a `Material`
+/// holds one; `shaders.lyra` loads and releases them. The locations are writable because
+/// that is how a sampler is given a texture slot ([bind_shader_map]).
+@must_release(unload_shader)
+pub struct Shader {
+  id: u32,
+  locs: ^mut i32,
+}
+
+/// One texture slot of a material — albedo, normal, roughness and so on.
+pub struct MaterialMap {
+  texture: Texture2D,
+  color: Color,
+  value: f32,
+}
+
+/// `Material` — a shader, its texture slots, and four generic parameters.
+@must_release(unload_material)
+pub struct Material {
+  shader: Shader,
+  maps: ^mut MaterialMap,
+  params: [4]f32,
+}
+
+/// `Model` — meshes, the materials they are drawn with, and an optional skeleton.
+///
+/// `mesh_count` and `material_count` are the fields worth reading. The arrays behind them
+/// are raylib's and are **not** handed out as values: a `Mesh` read out of a model would be
+/// a second handle to buffers the model frees, which `@must_release` would then insist on
+/// releasing twice.
+@must_release(unload_model)
+pub struct Model {
+  transform: Matrix,
+  mesh_count: i32,
+  material_count: i32,
+  meshes: ^Mesh,
+  materials: ^mut Material,
+  mesh_material: ^i32,
+  skeleton: ModelSkeleton,
+  current_pose: ^u8,
+  bone_matrices: ^Matrix,
+}
+
+/// raylib 6.0's skeleton: a bone count, the bones, and the bind pose. Private — nothing
+/// here reads it, and it exists so `Model`'s layout is right.
+struct ModelSkeleton {
+  bone_count: i32,
+  bones: ^u8,
+  bind_pose: ^u8,
+}
+
+/// One animation clip, as raylib lays it out. Read through the [Animations] helpers rather
+/// than directly, since its poses point into the array [load_animations] owns.
+pub struct ModelAnimation {
+  name: [32]u8,
+  bone_count: i32,
+  keyframe_count: i32,
+  keyframe_poses: ^u8,
+}
+
+/// The clips loaded from one file, and the only handle that releases them.
+///
+/// **One wrapper for the whole array, not a `ModelAnimation` per clip.** raylib hands back
+/// an array and frees it as one (`UnloadModelAnimations(ptr, count)`); a clip is not a
+/// resource of its own, so a `@must_release` per element would demand releases that do not
+/// exist. The `SoundAlias` decision in the other direction: one release, so one handle.
+@must_release(unload_animations)
+pub struct Animations {
+  list: ^ModelAnimation,
+  count: i32,
+}
+
+// ---------------------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------------------
+
+/// Load a model file — OBJ, glTF, IQM, VOX, M3D — or `None` if it could not be read or
+/// there is no window to upload it to.
+pub let load_model = (path: string) -> Maybe<Model> => {
+  if !window_ready() { return None }
+  let m = path.with_cstring((p) => unsafe { rl_load_model(p) })
+  // A failed load still allocates a default material, so it is released rather than
+  // dropped — `UnloadModel` on a model with no meshes is safe and frees exactly that.
+  if loaded(m) { Some(m) } else { unload_model(m) ; None }
+}
+
+/// A model holding one mesh, drawn with the default material.
+///
+/// **Takes the mesh `own`**, because the model keeps its buffers and frees them with
+/// itself. Unloading the mesh afterwards is a double free, and `own` is what turns that into
+/// a compile-time use-after-move instead.
+pub let model_from_mesh = (mesh: own Mesh) -> Maybe<Model> => {
+  if !window_ready() { return None }
+  let m = unsafe { rl_load_model_from_mesh(mesh) }
+  if loaded(m) { Some(m) } else { unload_model(m) ; None }
+}
+
+/// Whether every vertex attribute that has data has also been uploaded to the GPU — raylib's
+/// `IsModelValid`, and **not** "did this load".
+///
+/// **It answers false for any model raylib skins on the CPU**, which is every animated glTF
+/// drawn with the default shader: the bone indices and weights stay on the CPU and are never
+/// given a GPU buffer, so the check fails on a model that loads and draws perfectly. Measured
+/// with the Khronos Fox sample — vertices and texture coordinates uploaded, bone indices and
+/// weights present with no buffer, `IsModelValid` 0. [load_model] therefore does not use it;
+/// until 09/11 it did, and every animated glTF loaded as `None`.
+pub let model_valid = (model: Model) -> bool => unsafe { rl_model_valid(model) } != 0
+
+/// Whether a load produced anything at all — the test raylib's own loader applies, since a
+/// failed `LoadModel` comes back with no meshes.
+let loaded = pure (m: Model) -> bool => m.mesh_count > 0 && m.meshes != nullptr
+
+/// Free a model: its meshes, its materials, and **every texture those materials hold**.
+///
+/// raylib's `UnloadModel` frees the meshes and each material's slot array and leaves the
+/// textures on the GPU — measured: the Fox sample's 1024x1024 texture is never unloaded.
+/// raylib expects the caller to free them, and a Lyra program cannot, since a model's
+/// materials are not handed out as values. So this frees each distinct one first, skipping
+/// raylib's shared 1x1 default, which every material without a texture of its own points
+/// at. A shader is **not** freed: one is usually shared by several models, and
+/// [set_model_material_shader] only borrows it.
+pub let unload_model = (model: Model) -> void => {
+  var freed: []u32 = []
+  let default_id = unsafe { rl_texture_id_default() }
+  for i in 0..<i64(model.material_count) {
+    let maps = unsafe { model.materials.offset(i)^.maps }
+    if maps != nullptr {
+      for map in 0..<MATERIAL_MAP_COUNT {
+        let id = unsafe { maps.offset(map)^.texture.id }
+        if id != 0 && id != default_id && !holds(freed, id) {
+          unsafe { rl_unload_texture(maps.offset(map)^.texture) }
+          freed.push(id)
+        }
+      }
+    }
+  }
+  unsafe { rl_unload_model(model) }
+}
+
+let holds = pure (ids: []u32, id: u32) -> bool => {
+  var found = false
+  for x in ids { if x == id { found = true } }
+  found
+}
+
+/// The box enclosing every mesh of the model, in model space.
+pub let model_bounding_box = (model: Model) -> BoundingBox =>
+  unsafe { rl_model_bounding_box(model) }
+
+pub let draw_model = (model: Model, position: Vector3, scale: f32, tint: Color) -> void =>
+  unsafe { rl_draw_model(model, position, scale, tint) }
+
+/// Draw a model rotated about an axis and scaled per axis.
+pub let draw_model_ex =
+  (model: Model, position: Vector3, axis: Vector3, angle: Degrees, scale: Vector3,
+   tint: Color) -> void =>
+    unsafe { rl_draw_model_ex(model, position, axis, f32(angle), scale, tint) }
+
+pub let draw_model_wires = (model: Model, position: Vector3, scale: f32, tint: Color) -> void =>
+  unsafe { rl_draw_model_wires(model, position, scale, tint) }
+
+pub let draw_model_wires_ex =
+  (model: Model, position: Vector3, axis: Vector3, angle: Degrees, scale: Vector3,
+   tint: Color) -> void =>
+    unsafe { rl_draw_model_wires_ex(model, position, axis, f32(angle), scale, tint) }
+
+/// A bounding box's edges — for seeing what [model_bounding_box] actually answered.
+pub let draw_bounding_box = (box: BoundingBox, color: Color) -> void =>
+  unsafe { rl_draw_bounding_box(box, color) }
+
+/// Draw one of the model's meshes with a different one of its materials.
+pub let set_model_mesh_material = (self: mut Model, mesh_id: i32, material_id: i32) -> void =>
+  unsafe { rl_set_model_mesh_material(&mut self, mesh_id, material_id) }
+
+// ---------------------------------------------------------------------------------------
+// Generating meshes
+//
+// **Each answers `None` with no window**, because each uploads its vertex data to the GPU
+// on the way out and raylib segfaults when there is no GPU to upload to.
+// ---------------------------------------------------------------------------------------
+
+pub let gen_mesh_poly = (sides: i32, radius: f32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_poly(sides, radius) }) } else { None }
+
+/// A flat plane in the XZ plane, subdivided `res_x` by `res_z`.
+pub let gen_mesh_plane = (width: f32, length: f32, res_x: i32, res_z: i32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_plane(width, length, res_x, res_z) }) }
+  else { None }
+
+pub let gen_mesh_cube = (width: f32, height: f32, length: f32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_cube(width, height, length) }) } else { None }
+
+pub let gen_mesh_sphere = (radius: f32, rings: i32, slices: i32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_sphere(radius, rings, slices) }) } else { None }
+
+pub let gen_mesh_hemisphere = (radius: f32, rings: i32, slices: i32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_hemisphere(radius, rings, slices) }) }
+  else { None }
+
+pub let gen_mesh_cylinder = (radius: f32, height: f32, slices: i32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_cylinder(radius, height, slices) }) }
+  else { None }
+
+pub let gen_mesh_cone = (radius: f32, height: f32, slices: i32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_cone(radius, height, slices) }) } else { None }
+
+/// A torus: `radius` to the tube's centre, `size` the tube's thickness.
+pub let gen_mesh_torus = (radius: f32, size: f32, segments: i32, sides: i32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_torus(radius, size, segments, sides) }) }
+  else { None }
+
+/// A trefoil knot — the classic test shape for lighting, since it has no flat face.
+pub let gen_mesh_knot = (radius: f32, size: f32, segments: i32, sides: i32) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_knot(radius, size, segments, sides) }) }
+  else { None }
+
+/// Terrain from an image's brightness: white is `size.y` high, black is the floor.
+pub let gen_mesh_heightmap = (heightmap: Image, size: Vector3) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_heightmap(heightmap, size) }) } else { None }
+
+/// A level from an image: every white pixel becomes a cube of `cube_size`. What the old
+/// first-person dungeon demos were built from.
+pub let gen_mesh_cubicmap = (cubicmap: Image, cube_size: Vector3) -> Maybe<Mesh> =>
+  if window_ready() { Some(unsafe { rl_gen_mesh_cubicmap(cubicmap, cube_size) }) } else { None }
+
+// ---------------------------------------------------------------------------------------
+// Working with a mesh
+// ---------------------------------------------------------------------------------------
+
+/// Free a mesh's CPU data and GPU buffers. **Not** for a mesh a model has taken — see
+/// [model_from_mesh], whose `own` parameter is what stops that compiling.
+pub let unload_mesh = (mesh: Mesh) -> void => unsafe { rl_unload_mesh(mesh) }
+
+/// The box enclosing the mesh's vertices. Computed on the CPU from the vertex data.
+pub let mesh_bounding_box = (mesh: Mesh) -> BoundingBox =>
+  unsafe { rl_mesh_bounding_box(mesh) }
+
+/// Compute tangents from the normals and texture coordinates, which a normal map needs.
+pub let gen_tangents = (self: mut Mesh) -> void => unsafe { rl_gen_mesh_tangents(&mut self) }
+
+/// Upload a mesh built by hand. The `gen_mesh_*` functions already have; this is for a mesh
+/// whose vertex arrays were filled some other way. Does nothing with no window.
+pub let upload_mesh = (self: mut Mesh, dynamic: bool) -> void => {
+  if window_ready() {
+    unsafe { rl_upload_mesh(&mut self, if dynamic { 1 } else { 0 }) }
+  }
+}
+
+/// Overwrite part of one of the mesh's GPU buffers — `index` is the attribute slot
+/// (0 positions, 1 texcoords, 2 normals, …) and `offset` is in bytes. An empty array
+/// writes nothing; so does a call with no window.
+pub let update_mesh_buffer = (mesh: Mesh, index: i32, bytes: []u8, offset: i32) -> void => {
+  if bytes.len() > 0 && window_ready() {
+    var copy = bytes
+    unsafe { rl_update_mesh_buffer(mesh, index, copy.data(), i32(copy.len()), offset) }
+  }
+}
+
+/// Write a mesh out as OBJ, which [load_model] reads back.
+pub let export_mesh = (mesh: Mesh, path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_export_mesh(mesh, p) }) != 0
+
+/// Write a mesh out as a C header of vertex arrays.
+pub let export_mesh_as_code = (mesh: Mesh, path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_export_mesh_as_code(mesh, p) }) != 0
+
+/// Draw a mesh with a material, placed by a transform. [matrix_translation] builds the
+/// common one.
+pub let draw_mesh = (mesh: Mesh, material: Material, transform: Matrix) -> void =>
+  unsafe { rl_draw_mesh(mesh, material, transform) }
+
+/// One mesh drawn once per transform — a forest, a crowd, a field of asteroids. An empty
+/// list draws nothing.
+///
+/// **Batched only when the material's shader can instance**, and otherwise drawn one
+/// `draw_mesh` at a time — which is not a slow path but the only correct one. raylib's
+/// `DrawMeshInstanced` needs a shader with a per-instance transform attribute, and the
+/// default material's has none (its location is -1, measured); handed that shader, raylib
+/// draws **one mesh at the origin and ignores every transform**, with no error. The first
+/// screenshot of `examples/raylib/models.lyra` showed a single cube where there should
+/// have been nine. [material_supports_instancing] is the test, so a caller who needs the
+/// batching can tell whether it is getting it.
+pub let draw_mesh_instanced = (mesh: Mesh, material: Material, transforms: []Matrix) -> void => {
+  if transforms.len() == 0 { return }
+  if material_supports_instancing(material) {
+    unsafe { rl_draw_mesh_instanced(mesh, material, transforms.data(), i32(transforms.len())) }
+  } else {
+    for t in transforms { draw_mesh(mesh, material, t) }
+  }
+}
+
+/// Whether this material's shader can draw instances — whether it has the per-instance
+/// transform attribute [draw_mesh_instanced] batches through. The default material's does not.
+pub let material_supports_instancing = pure (material: Material) -> bool => {
+  if material.shader.locs == nullptr { return false }
+  unsafe { material.shader.locs.offset(SHADER_LOC_INSTANCE_TRANSFORM)^ } != 0 - 1
+}
+
+/// raylib's `SHADER_LOC_VERTEX_INSTANCETRANSFORM`: the slot in a shader's locations array
+/// that holds the instance-transform attribute, -1 where the shader has none. The array
+/// holds `RL_MAX_SHADER_LOCATIONS` (32) entries, so the index is in bounds.
+const SHADER_LOC_INSTANCE_TRANSFORM: i64 = 29
+
+/// Where a ray meets a mesh placed by `transform`, or `None`. The mesh counterpart of
+/// [ray_hits_box], through the same guard against hits behind the ray's origin.
+pub let ray_hits_mesh = (r: Ray, mesh: Mesh, transform: Matrix) -> Maybe<RayHit> =>
+  to_hit(unsafe { rl_ray_hits_mesh(r, mesh, transform) })
+
+// ---------------------------------------------------------------------------------------
+// Transforms
+//
+// **Lyra has no matrix arithmetic and raymath is a separate binding**, but a mesh cannot be
+// drawn without a `Matrix`, so the two a program needs first are written here in Lyra.
+// raylib's `Matrix` puts the translation in `m12`, `m13` and `m14` — checked by casting a
+// ray at a mesh translated along x and watching it miss.
+// ---------------------------------------------------------------------------------------
+
+/// The transform that changes nothing.
+pub let matrix_identity = pure () -> Matrix => Matrix {
+  m0: 1.0, m4: 0.0, m8: 0.0, m12: 0.0,
+  m1: 0.0, m5: 1.0, m9: 0.0, m13: 0.0,
+  m2: 0.0, m6: 0.0, m10: 1.0, m14: 0.0,
+  m3: 0.0, m7: 0.0, m11: 0.0, m15: 1.0,
+}
+
+/// A transform that moves by `offset` and does nothing else.
+pub let matrix_translation = pure (offset: Vector3) -> Matrix => Matrix {
+  m0: 1.0, m4: 0.0, m8: 0.0, m12: offset.x,
+  m1: 0.0, m5: 1.0, m9: 0.0, m13: offset.y,
+  m2: 0.0, m6: 0.0, m10: 1.0, m14: offset.z,
+  m3: 0.0, m7: 0.0, m11: 0.0, m15: 1.0,
+}
+
+// ---------------------------------------------------------------------------------------
+// Materials
+// ---------------------------------------------------------------------------------------
+
+/// raylib's default material — the default shader, a white texture. `None` with no window.
+pub let load_material_default = () -> Maybe<Material> => {
+  if !window_ready() { return None }
+  let m = unsafe { rl_load_material_default() }
+  if material_valid(m) { Some(m) } else { None }
+}
+
+// **`LoadMaterials` is deliberately unbound**, and it is a language limit rather than a
+// raylib one. It answers an array of `Material` raylib allocated, which must go back to
+// raylib's `MemFree` — declared in `files.lyra` as `(^u8) -> void`, since it frees any
+// buffer. Lyra has no pointer reinterpretation (a pointer comes from `&` or `nullptr` and
+// nothing else), so a `^Material` cannot be handed to it, and declaring `MemFree` a second
+// time with a `^Material` parameter is one C symbol with two signatures, which the backend
+// refuses by name. A single material is [load_material_default]; a model's materials come
+// with the model and are freed by [unload_model].
+
+pub let material_valid = (material: Material) -> bool =>
+  unsafe { rl_material_valid(material) } != 0
+
+pub let unload_material = (material: Material) -> void =>
+  unsafe { rl_unload_material(material) }
+
+/// Put a texture in one of the material's slots — one of the `MATERIAL_MAP_*` constants.
+pub let set_material_texture = (self: mut Material, map: i32, texture: Texture2D) -> void =>
+  unsafe { rl_set_material_texture(&mut self, map, texture) }
+
+// ---------------------------------------------------------------------------------------
+// A model's meshes and materials
+// ---------------------------------------------------------------------------------------
+//
+// Both are reached by index and never handed out: a `Mesh` or `Material` read out of a model
+// would be a second handle to buffers [unload_model] frees. Every index is bounds-checked
+// and **traps** on a bad one, as `xs[i]` does — reading past raylib's arrays is not a wrong
+// answer but a read of whatever memory follows.
+
+/// Whether mesh `mesh` carries vertex normals. **A glTF may omit them** — the Khronos Fox
+/// does — and raylib then feeds every vertex one constant default, so a lit shader shades
+/// every face alike. glTF asks a viewer to shade such a mesh flat instead, and this is how
+/// it can tell.
+pub let model_mesh_has_normals = pure (model: Model, mesh: i64) -> bool =>
+  unsafe { mesh_at(model, mesh)^.normals } != nullptr
+
+/// The index of the material mesh `mesh` is drawn with.
+pub let model_mesh_material = pure (model: Model, mesh: i64) -> i64 => {
+  let _ = mesh_at(model, mesh)
+  i64(unsafe { model.mesh_material.offset(mesh)^ })
+}
+
+/// Whether slot `map` of material `material` holds a texture — raylib's shared 1x1 default
+/// counts, since the slot is bound either way.
+pub let model_material_has_texture = pure (model: Model, material: i64, map: i32) -> bool =>
+  unsafe { slot_at(model, material, map)^.texture.id } != 0
+
+/// The colour raylib keeps beside a slot's texture. For a glTF material the albedo slot's is
+/// the base colour factor and the emission slot's the emissive factor.
+pub let model_material_color = pure (model: Model, material: i64, map: i32) -> Color =>
+  unsafe { slot_at(model, material, map)^.color }
+
+/// The number raylib keeps beside a slot's texture. For a glTF material the metalness slot's
+/// is the metallic factor and the roughness slot's the roughness factor.
+pub let model_material_value = pure (model: Model, material: i64, map: i32) -> f32 =>
+  unsafe { slot_at(model, material, map)^.value }
+
+/// Put a texture in a slot of one of the model's materials. **The model takes it** — hence
+/// `own` — and [unload_model] frees it with the rest. A texture the slot held before is freed
+/// here unless another slot of the model still holds it, or it is raylib's default.
+pub let set_model_material_texture =
+  (model: Model, material: i64, map: i32, texture: own Texture2D) -> void => {
+    let slot = slot_at(model, material, map)
+    let old = unsafe { slot^.texture.id }
+    // Freed before the slot is overwritten, so the texture is released from where it is
+    // held rather than copied out into a binding first.
+    if old != 0 && old != unsafe { rl_texture_id_default() } && texture_holders(model, old) == 1 {
+      unsafe { rl_unload_texture(slot^.texture) }
+    }
+    unsafe { slot^.texture = texture }
+  }
+
+/// Draw one of the model's meshes, with its own material, at a transform of its own.
+///
+/// How a model whose parts move independently is drawn — a glTF node animation turns one
+/// mesh and not the rest — since [draw_model] moves every mesh by the one model transform.
+/// raylib has already applied each mesh's place in the file's node tree to its vertices, so
+/// `transform` is applied on top of that.
+pub let draw_model_mesh = (model: Model, mesh: i64, transform: Matrix) -> void => {
+  let material = model_mesh_material(model, mesh)
+  unsafe { rl_draw_mesh(mesh_at(model, mesh)^, material_at(model, material)^, transform) }
+}
+
+/// [draw_model_mesh] as a wireframe in `color`, which [draw_model_wires] is for a whole
+/// model: the material's albedo colour is multiplied by `color` for the one draw and put back.
+pub let draw_model_mesh_wires = (model: Model, mesh: i64, transform: Matrix, color: Color) -> void => {
+  let slot = slot_at(model, model_mesh_material(model, mesh), MATERIAL_MAP_ALBEDO)
+  let saved = unsafe { slot^.color }
+  unsafe { slot^.color = tinted(saved, color) }
+  unsafe { rl_enable_wire_mode() }
+  draw_model_mesh(model, mesh, transform)
+  unsafe { rl_disable_wire_mode() }
+  unsafe { slot^.color = saved }
+}
+
+let tinted = pure (c: Color, by: Color) -> Color => Color {
+  r: u8(i64(c.r) * i64(by.r) / 255),
+  g: u8(i64(c.g) * i64(by.g) / 255),
+  b: u8(i64(c.b) * i64(by.b) / 255),
+  a: u8(i64(c.a) * i64(by.a) / 255),
+}
+
+/// Set what happens outside the bounds of the texture in one of a model's material slots —
+/// one of the `WRAP_*` constants. raylib's glTF loader leaves every texture repeating,
+/// whatever the file's sampler says.
+pub let set_model_material_texture_wrap = (model: Model, material: i64, map: i32, wrap: i32) -> void =>
+  unsafe { rl_set_texture_wrap(slot_at(model, material, map)^.texture, wrap) }
+
+/// Draw one of the model's materials with a shader of your own. **The shader is borrowed**:
+/// [unload_model] leaves it alone, so unload it after the last model drawn with it.
+pub let set_model_material_shader = (model: Model, material: i64, shader: Shader) -> void =>
+  unsafe { material_at(model, material)^.shader = shader }
+
+/// Put one of the model's materials back on raylib's default, unlit shader.
+pub let reset_model_material_shader = (model: Model, material: i64) -> void =>
+  unsafe {
+    material_at(model, material)^.shader =
+      Shader { id: rl_shader_id_default(), locs: rl_shader_locs_default() }
+  }
+
+/// raylib's `MAX_MATERIAL_MAPS`: how many slots each material's array holds.
+const MATERIAL_MAP_COUNT: i64 = 12
+
+let mesh_at = pure (model: Model, mesh: i64) -> ^Mesh => {
+  if mesh < 0 || mesh >= i64(model.mesh_count) {
+    panic("mesh index ${mesh} out of range for ${model.mesh_count} mesh(es)")
+  }
+  unsafe { model.meshes.offset(mesh) }
+}
+
+let material_at = pure (model: Model, material: i64) -> ^mut Material => {
+  if material < 0 || material >= i64(model.material_count) {
+    panic("material index ${material} out of range for ${model.material_count} material(s)")
+  }
+  unsafe { model.materials.offset(material) }
+}
+
+let slot_at = pure (model: Model, material: i64, map: i32) -> ^mut MaterialMap => {
+  if i64(map) < 0 || i64(map) >= MATERIAL_MAP_COUNT {
+    panic("material map ${map} out of range for ${MATERIAL_MAP_COUNT} slots")
+  }
+  unsafe { material_at(model, material)^.maps.offset(i64(map)) }
+}
+
+/// How many slots, across all of the model's materials, hold the texture `id`.
+let texture_holders = pure (model: Model, id: u32) -> i64 => {
+  var n = 0
+  for i in 0..<i64(model.material_count) {
+    for map in 0..<MATERIAL_MAP_COUNT {
+      if unsafe { model.materials.offset(i)^.maps.offset(map)^.texture.id } == id { n += 1 }
+    }
+  }
+  n
+}
+
+// ---------------------------------------------------------------------------------------
+// Animations
+// ---------------------------------------------------------------------------------------
+
+/// Every animation clip in a file (IQM, glTF, M3D), or `None` if it holds none.
+pub let load_animations = (path: string) -> Maybe<Animations> => {
+  // The count is an out-parameter, so it is taken outside any closure: `&mut` on a
+  // capture would address the closure's copy (lyra-E024), and the count would read 0.
+  // `found` rather than `count`, which is the prelude's and would draw W001.
+  var cpath = path.cstring()
+  var found: i32 = 0
+  let raw = unsafe { rl_load_model_animations(cpath.data(), &mut found) }
+  if raw == nullptr || found <= 0 { return None }
+  Some(Animations { list: raw, count: found })
+}
+
+pub let unload_animations = (anims: Animations) -> void =>
+  unsafe { rl_unload_model_animations(anims.list, anims.count) }
+
+/// A clip's name, as the file spells it.
+pub let animation_name = pure (anims: Animations, index: i64) -> string => {
+  let clip = clip_at(anims, index)
+  // `name` is a fixed 32-byte C string: read up to the first NUL, or all 32.
+  var bytes: []u8 = []
+  var i = 0
+  for i < 32 {
+    let b = clip.name[i]
+    if b == 0 { break }
+    bytes.push(b)
+    i += 1
+  }
+  bytes.decode_utf8()
+}
+
+/// How many keyframes a clip has — the range [update_animation]'s `frame` runs over.
+pub let animation_frame_count = pure (anims: Animations, index: i64) -> i64 =>
+  i64(clip_at(anims, index).keyframe_count)
+
+/// Pose a model at a frame of one clip. `frame` is fractional in raylib 6.0, so a clip
+/// plays smoothly at any frame rate rather than stepping.
+pub let update_animation = (model: Model, anims: Animations, index: i64, frame: f32) -> void =>
+  unsafe { rl_update_model_animation(model, clip_at(anims, index), frame) }
+
+/// Pose a model between two clips — `blend` 0.0 is all of the first, 1.0 all of the second.
+/// What a walk turning into a run is made of.
+pub let update_animation_blend =
+  (model: Model, anims: Animations, first: i64, first_frame: f32, second: i64,
+   second_frame: f32, blend: f32) -> void =>
+    unsafe {
+      rl_update_model_animation_ex(model, clip_at(anims, first), first_frame,
+                                   clip_at(anims, second), second_frame, blend)
+    }
+
+/// Whether a clip was made for this model's skeleton.
+pub let animation_valid = (model: Model, anims: Animations, index: i64) -> bool =>
+  unsafe { rl_model_animation_valid(model, clip_at(anims, index)) } != 0
+
+/// One clip, bounds-checked. **It traps on a bad index**, as `xs[i]` does: reading past the
+/// array raylib allocated is not a wrong answer but a read of whatever memory follows.
+let clip_at = pure (anims: Animations, index: i64) -> ModelAnimation => {
+  if index < 0 || index >= i64(anims.count) {
+    panic("animation index ${index} out of range for ${anims.count} clip(s)")
+  }
+  unsafe { anims.list.offset(index)^ }
+}
+
+// ---------------------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------------------
+
+/// Material texture slots, for [set_material_texture].
+pub const MATERIAL_MAP_ALBEDO: i32 = 0
+pub const MATERIAL_MAP_METALNESS: i32 = 1
+pub const MATERIAL_MAP_NORMAL: i32 = 2
+pub const MATERIAL_MAP_ROUGHNESS: i32 = 3
+pub const MATERIAL_MAP_OCCLUSION: i32 = 4
+pub const MATERIAL_MAP_EMISSION: i32 = 5
+pub const MATERIAL_MAP_HEIGHT: i32 = 6
+pub const MATERIAL_MAP_CUBEMAP: i32 = 7
+pub const MATERIAL_MAP_IRRADIANCE: i32 = 8
+pub const MATERIAL_MAP_PREFILTER: i32 = 9
+pub const MATERIAL_MAP_BRDF: i32 = 10
+/// raylib's older names for the first two slots, kept because its examples use them.
+pub const MATERIAL_MAP_DIFFUSE: i32 = 0
+pub const MATERIAL_MAP_SPECULAR: i32 = 1
+
+// ---------------------------------------------------------------------------------------
+// The externs
+// ---------------------------------------------------------------------------------------
+
+@symbol("LoadModel")
+unsafe extern rl_load_model: (path: ^u8) -> Model
+@symbol("LoadModelFromMesh")
+unsafe extern rl_load_model_from_mesh: (mesh: Mesh) -> Model
+@symbol("IsModelValid")
+unsafe extern rl_model_valid: (model: Model) -> u8
+@symbol("UnloadModel")
+unsafe extern rl_unload_model: (model: Model) -> void
+@symbol("GetModelBoundingBox")
+unsafe extern rl_model_bounding_box: (model: Model) -> BoundingBox
+@symbol("DrawModel")
+unsafe extern rl_draw_model: (model: Model, position: Vector3, scale: f32, tint: Color) -> void
+@symbol("DrawModelEx")
+unsafe extern rl_draw_model_ex:
+  (model: Model, position: Vector3, axis: Vector3, angle: f32, scale: Vector3,
+   tint: Color) -> void
+@symbol("DrawModelWires")
+unsafe extern rl_draw_model_wires:
+  (model: Model, position: Vector3, scale: f32, tint: Color) -> void
+@symbol("DrawModelWiresEx")
+unsafe extern rl_draw_model_wires_ex:
+  (model: Model, position: Vector3, axis: Vector3, angle: f32, scale: Vector3,
+   tint: Color) -> void
+@symbol("DrawBoundingBox")
+unsafe extern rl_draw_bounding_box: (box: BoundingBox, color: Color) -> void
+@symbol("SetModelMeshMaterial")
+unsafe extern rl_set_model_mesh_material:
+  (model: ^mut Model, mesh_id: i32, material_id: i32) -> void
+
+@symbol("GenMeshPoly")
+unsafe extern rl_gen_mesh_poly: (sides: i32, radius: f32) -> Mesh
+@symbol("GenMeshPlane")
+unsafe extern rl_gen_mesh_plane: (width: f32, length: f32, res_x: i32, res_z: i32) -> Mesh
+@symbol("GenMeshCube")
+unsafe extern rl_gen_mesh_cube: (width: f32, height: f32, length: f32) -> Mesh
+@symbol("GenMeshSphere")
+unsafe extern rl_gen_mesh_sphere: (radius: f32, rings: i32, slices: i32) -> Mesh
+@symbol("GenMeshHemiSphere")
+unsafe extern rl_gen_mesh_hemisphere: (radius: f32, rings: i32, slices: i32) -> Mesh
+@symbol("GenMeshCylinder")
+unsafe extern rl_gen_mesh_cylinder: (radius: f32, height: f32, slices: i32) -> Mesh
+@symbol("GenMeshCone")
+unsafe extern rl_gen_mesh_cone: (radius: f32, height: f32, slices: i32) -> Mesh
+@symbol("GenMeshTorus")
+unsafe extern rl_gen_mesh_torus: (radius: f32, size: f32, segments: i32, sides: i32) -> Mesh
+@symbol("GenMeshKnot")
+unsafe extern rl_gen_mesh_knot: (radius: f32, size: f32, segments: i32, sides: i32) -> Mesh
+@symbol("GenMeshHeightmap")
+unsafe extern rl_gen_mesh_heightmap: (heightmap: Image, size: Vector3) -> Mesh
+@symbol("GenMeshCubicmap")
+unsafe extern rl_gen_mesh_cubicmap: (cubicmap: Image, cube_size: Vector3) -> Mesh
+
+@symbol("UnloadMesh")
+unsafe extern rl_unload_mesh: (mesh: Mesh) -> void
+@symbol("GetMeshBoundingBox")
+unsafe extern rl_mesh_bounding_box: (mesh: Mesh) -> BoundingBox
+@symbol("GenMeshTangents")
+unsafe extern rl_gen_mesh_tangents: (mesh: ^mut Mesh) -> void
+@symbol("UploadMesh")
+unsafe extern rl_upload_mesh: (mesh: ^mut Mesh, dynamic: u8) -> void
+@symbol("UpdateMeshBuffer")
+unsafe extern rl_update_mesh_buffer:
+  (mesh: Mesh, index: i32, data: ^u8, size: i32, offset: i32) -> void
+@symbol("ExportMesh")
+unsafe extern rl_export_mesh: (mesh: Mesh, path: ^u8) -> u8
+@symbol("ExportMeshAsCode")
+unsafe extern rl_export_mesh_as_code: (mesh: Mesh, path: ^u8) -> u8
+@symbol("DrawMesh")
+unsafe extern rl_draw_mesh: (mesh: Mesh, material: Material, transform: Matrix) -> void
+@symbol("DrawMeshInstanced")
+unsafe extern rl_draw_mesh_instanced:
+  (mesh: Mesh, material: Material, transforms: ^Matrix, instances: i32) -> void
+@symbol("GetRayCollisionMesh")
+unsafe extern rl_ray_hits_mesh: (r: Ray, mesh: Mesh, transform: Matrix) -> RayCollision
+
+@symbol("LoadMaterialDefault")
+unsafe extern rl_load_material_default: () -> Material
+@symbol("IsMaterialValid")
+unsafe extern rl_material_valid: (material: Material) -> u8
+@symbol("UnloadMaterial")
+unsafe extern rl_unload_material: (material: Material) -> void
+@symbol("rlEnableWireMode")
+unsafe extern rl_enable_wire_mode: () -> void
+@symbol("rlDisableWireMode")
+unsafe extern rl_disable_wire_mode: () -> void
+@symbol("rlGetTextureIdDefault")
+unsafe extern rl_texture_id_default: () -> u32
+@symbol("SetMaterialTexture")
+unsafe extern rl_set_material_texture:
+  (material: ^mut Material, map: i32, texture: Texture2D) -> void
+
+@symbol("LoadModelAnimations")
+unsafe extern rl_load_model_animations: (path: ^u8, count: ^mut i32) -> ^ModelAnimation
+@symbol("UnloadModelAnimations")
+unsafe extern rl_unload_model_animations: (anims: ^ModelAnimation, count: i32) -> void
+@symbol("UpdateModelAnimation")
+unsafe extern rl_update_model_animation:
+  (model: Model, anim: ModelAnimation, frame: f32) -> void
+@symbol("UpdateModelAnimationEx")
+unsafe extern rl_update_model_animation_ex:
+  (model: Model, first: ModelAnimation, first_frame: f32, second: ModelAnimation,
+   second_frame: f32, blend: f32) -> void
+@symbol("IsModelAnimationValid")
+unsafe extern rl_model_animation_valid: (model: Model, anim: ModelAnimation) -> u8

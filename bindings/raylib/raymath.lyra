@@ -1,0 +1,75 @@
+module bindings.raylib
+//! A small part of raymath — the transforms a program needs to place and turn a model.
+//!
+//! raymath is a header of its own, but raylib builds it into the library and exports it
+//! (87 functions, measured), so these are ordinary externs like everything else here. Only
+//! what a mesh or model needs is bound: building rotation, scale and translation matrices
+//! and composing them. Vector arithmetic stays out — Lyra does that in Lyra.
+//!
+//! **Angles are `Degrees`**, as everywhere in these bindings, and converted to raymath's
+//! radians at the boundary. That conversion is a multiplication, which is why a language
+//! with no `sin`/`cos` can still turn a model: raylib does the trigonometry.
+
+/// Compose two transforms: the result applies `first`, then `second`.
+///
+/// raymath calls these `left` and `right`, which says where they sit in the product and not
+/// what the product does. The order was checked by moving and turning a cube and casting a
+/// ray at where each order should have put it.
+pub let matrix_multiply = pure (first: Matrix, second: Matrix) -> Matrix =>
+  unsafe { rl_matrix_multiply(first, second) }
+
+/// A rotation of `angle` about `axis`. The axis need not be normalised; raymath does it.
+pub let matrix_rotate = pure (axis: Vector3, angle: Degrees) -> Matrix =>
+  unsafe { rl_matrix_rotate(axis, radians(angle)) }
+
+pub let matrix_rotate_x = pure (angle: Degrees) -> Matrix =>
+  unsafe { rl_matrix_rotate_x(radians(angle)) }
+
+pub let matrix_rotate_y = pure (angle: Degrees) -> Matrix =>
+  unsafe { rl_matrix_rotate_y(radians(angle)) }
+
+/// Rotations about x, then y, then z — the Euler angles a viewer's drag produces.
+pub let matrix_rotate_xyz = pure (x: Degrees, y: Degrees, z: Degrees) -> Matrix =>
+  unsafe { rl_matrix_rotate_xyz(vec3(radians(x), radians(y), radians(z))) }
+
+/// A scale along each axis. `matrix_scale(s, s, s)` is a uniform zoom.
+pub let matrix_scale = pure (x: f32, y: f32, z: f32) -> Matrix =>
+  unsafe { rl_matrix_scale(x, y, z) }
+
+/// The inverse of `m`. A singular matrix — one that flattens space — has none, and raylib
+/// answers it unchanged rather than failing.
+pub let matrix_invert = pure (m: Matrix) -> Matrix => unsafe { rl_matrix_invert(m) }
+
+/// A rotation quaternion `(x, y, z, w)` as a matrix — glTF's order, and raylib's.
+pub let quaternion_to_matrix = pure (q: Vector4) -> Matrix => unsafe { rl_quaternion_to_matrix(q) }
+
+/// `q` scaled to unit length, which a rotation must be.
+pub let quaternion_normalize = pure (q: Vector4) -> Vector4 => unsafe { rl_quaternion_normalize(q) }
+
+/// The rotation `t` of the way from `a` to `b` along the shorter arc, `t` from 0 to 1.
+pub let quaternion_slerp = pure (a: Vector4, b: Vector4, t: f32) -> Vector4 =>
+  unsafe { rl_quaternion_slerp(a, b, t) }
+
+/// Degrees to raymath's radians. A multiplication, not trigonometry.
+let radians = pure (d: Degrees) -> f32 => f32(d) * 0.017453292519943295
+
+@symbol("MatrixInvert")
+unsafe extern pure rl_matrix_invert: (m: Matrix) -> Matrix
+@symbol("QuaternionToMatrix")
+unsafe extern pure rl_quaternion_to_matrix: (q: Vector4) -> Matrix
+@symbol("QuaternionNormalize")
+unsafe extern pure rl_quaternion_normalize: (q: Vector4) -> Vector4
+@symbol("QuaternionSlerp")
+unsafe extern pure rl_quaternion_slerp: (a: Vector4, b: Vector4, t: f32) -> Vector4
+@symbol("MatrixMultiply")
+unsafe extern pure rl_matrix_multiply: (left: Matrix, right: Matrix) -> Matrix
+@symbol("MatrixRotate")
+unsafe extern pure rl_matrix_rotate: (axis: Vector3, angle: f32) -> Matrix
+@symbol("MatrixRotateX")
+unsafe extern pure rl_matrix_rotate_x: (angle: f32) -> Matrix
+@symbol("MatrixRotateY")
+unsafe extern pure rl_matrix_rotate_y: (angle: f32) -> Matrix
+@symbol("MatrixRotateXYZ")
+unsafe extern pure rl_matrix_rotate_xyz: (angle: Vector3) -> Matrix
+@symbol("MatrixScale")
+unsafe extern pure rl_matrix_scale: (x: f32, y: f32, z: f32) -> Matrix

@@ -1,0 +1,115 @@
+module bindings.raylib
+//! Shaders — a GL program of your own, and the texture slots raylib feeds it.
+//!
+//! **raylib draws a model unlit unless it is given a shader.** The default one is
+//! `finalColor = texel * colDiffuse * vertexColor` — read out of the library itself — so
+//! there is no light at all, and the normal, occlusion, metallic-roughness and emission
+//! textures a glTF file carries are loaded into the material and then never sampled. A
+//! model looks flat, or wrong, for that reason alone. [set_model_material_shader] is how a
+//! program replaces it.
+//!
+//! **What raylib supplies without being asked.** `LoadShaderFromMemory` looks up a fixed
+//! set of names, and `DrawMesh` uploads each one it found: the attributes `vertexPosition`,
+//! `vertexTexCoord`, `vertexTexCoord2`, `vertexNormal`, `vertexTangent` and `vertexColor`;
+//! the matrices `mvp`, `matModel`, `matView`, `matProjection` and `matNormal`; the colour
+//! `colDiffuse`; and the samplers `texture0`, `texture1` and `texture2` for the albedo,
+//! metalness and normal slots. A shader written against those names needs nothing more.
+//! Any other slot needs [bind_shader_map] to say which sampler receives it.
+//!
+//! **Uniform values are not bound yet.** `SetShaderValue` takes a `const void *`, and a
+//! Lyra pointer comes from `&` or `nullptr` and nothing else, so no pointer reaches it —
+//! the language limit `LoadMaterials` also stops at. A per-material number goes in through
+//! a texture instead: a 1x1 one whose colour is the number.
+
+import std.ffi.{ with_cstrings }
+
+/// Compile a shader from GLSL source, or `None` if it did not compile and link — raylib
+/// logs the compiler's message — or there is no window.
+///
+/// **A failed compile does not look like a failure to raylib**: it answers the default
+/// shader in its place, a valid program that draws unlit. Testing for that is what makes
+/// the failure a `None` rather than a model that silently stayed flat.
+pub let load_shader_from_memory = (vertex: string, fragment: string) -> Maybe<Shader> => {
+  if !window_ready() { return None }
+  let s = with_cstrings(vertex, fragment, (v, f) => unsafe { rl_load_shader_from_memory(v, f) })
+  if s.id != 0 && s.id != unsafe { rl_shader_id_default() } { Some(s) } else { None }
+}
+
+/// Whether a shader is a live GPU program.
+pub let shader_valid = (shader: Shader) -> bool => unsafe { rl_shader_valid(shader) } != 0
+
+/// The location of a uniform, or `None` where the shader has none of that name — which
+/// includes one it declares and never reads, since GLSL drops those.
+pub let shader_location = (shader: Shader, uniform: string) -> Maybe<i32> => {
+  let loc = uniform.with_cstring((u) => unsafe { rl_shader_location(shader, u) })
+  if loc < 0 { None } else { Some(loc) }
+}
+
+/// Feed one of a material's texture slots — a `MATERIAL_MAP_*` constant — to the sampler
+/// named `uniform`. `false` where the shader has no such sampler.
+///
+/// raylib binds slot `i`'s texture to texture unit `i` and sets the sampler it finds at
+/// location `SHADER_LOC_MAP_ALBEDO + i`; only the first three have names it looks up
+/// itself (`texture0`..`texture2`), so occlusion, emission and the rest reach a shader only
+/// through this.
+pub let bind_shader_map = (shader: Shader, map: i32, uniform: string) -> bool => {
+  if i64(map) < 0 || i64(map) >= MATERIAL_MAP_COUNT {
+    panic("material map ${map} out of range for ${MATERIAL_MAP_COUNT} slots")
+  }
+  match shader_location(shader, uniform) {
+    Some(loc) => {
+      unsafe { shader.locs.offset(SHADER_LOC_MAP_ALBEDO + i64(map))^ = loc }
+      true
+    },
+    None => false,
+  }
+}
+
+/// Free a shader's GPU program. [unload_model] does not, since one shader is usually drawn
+/// with by several models: unload it after the last of them.
+pub let unload_shader = (shader: Shader) -> void => unsafe { rl_unload_shader(shader) }
+
+// ---------------------------------------------------------------------------------------
+// Render state
+// ---------------------------------------------------------------------------------------
+
+/// Whether triangles facing away from the camera are skipped — raylib's default, and right
+/// for a closed mesh. Off to draw a double-sided surface from behind: a glass pane, a leaf,
+/// a panel modelled as one sheet.
+pub let set_backface_culling = (on: bool) -> void =>
+  if on { unsafe { rl_enable_backface_culling() } } else { unsafe { rl_disable_backface_culling() } }
+
+/// Whether drawing writes depth. Off while drawing see-through surfaces over the opaque ones
+/// already drawn, so that one pane does not hide another or what lies behind it; the depth
+/// *test* still runs, so they stay behind anything nearer.
+pub let set_depth_write = (on: bool) -> void =>
+  if on { unsafe { rl_enable_depth_mask() } } else { unsafe { rl_disable_depth_mask() } }
+
+/// raylib's `SHADER_LOC_MAP_ALBEDO`: the first of the locations array's per-slot sampler
+/// entries, one for each `MATERIAL_MAP_*` in order.
+const SHADER_LOC_MAP_ALBEDO: i64 = 15
+
+// ---------------------------------------------------------------------------------------
+// Foreign declarations
+// ---------------------------------------------------------------------------------------
+
+@symbol("LoadShaderFromMemory")
+unsafe extern rl_load_shader_from_memory: (vertex: ^u8, fragment: ^u8) -> Shader
+@symbol("IsShaderValid")
+unsafe extern rl_shader_valid: (shader: Shader) -> u8
+@symbol("GetShaderLocation")
+unsafe extern rl_shader_location: (shader: Shader, uniform: ^u8) -> i32
+@symbol("UnloadShader")
+unsafe extern rl_unload_shader: (shader: Shader) -> void
+@symbol("rlEnableBackfaceCulling")
+unsafe extern rl_enable_backface_culling: () -> void
+@symbol("rlDisableBackfaceCulling")
+unsafe extern rl_disable_backface_culling: () -> void
+@symbol("rlEnableDepthMask")
+unsafe extern rl_enable_depth_mask: () -> void
+@symbol("rlDisableDepthMask")
+unsafe extern rl_disable_depth_mask: () -> void
+@symbol("rlGetShaderIdDefault")
+unsafe extern rl_shader_id_default: () -> u32
+@symbol("rlGetShaderLocsDefault")
+unsafe extern rl_shader_locs_default: () -> ^mut i32
