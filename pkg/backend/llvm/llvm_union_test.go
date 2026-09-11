@@ -696,3 +696,89 @@ let main = () -> void => {
 		t.Errorf("raylib 3D collision = %q; want %q", got, want)
 	}
 }
+
+// `bindings/raylib/files.lyra` — the data half is **hermetic**, since a digest of "abc" is
+// a published constant rather than something raylib gets to define, and the file half is a
+// round-trip under `/tmp`.
+//
+// The digests are the part worth having. raylib answers each as a pointer to a *static*
+// array of 32-bit words, and turning those into the familiar hex string means knowing that
+// **MD5's words are little-endian and the SHA family's are big-endian** — a convention
+// nothing states. Checking against the three published digests of "abc" is the only way to
+// know the binding got it right; a self-consistent round-trip would not notice.
+func TestExec_RaylibFiles(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ md5, sha1, sha256, crc32, compress, decompress,
+                         encode_base64, decode_base64,
+                         make_directory, write_file_bytes, read_file_bytes,
+                         write_file_text, read_file_text, file_length, file_exists,
+                         copy_file, move_file, remove_file, directory_exists,
+                         file_name, file_stem, file_extension, directory_of,
+                         find_in_file, list_directory_ex }
+
+// **Everything is computed first and printed in one line at the end**, because raylib
+// writes its own TRACELOG lines to stdout as files are touched — so anything printed
+// before the file work lands on a different line than what follows it, and the harness
+// reads the last line.
+let main = () -> void => {
+  let abc: []u8 = "abc".encode_utf8()
+  let digests = "${md5(abc)} ${sha1(abc)} ${sha256(abc)} ${crc32(abc)}"
+  let base64 = "${encode_base64(abc).unwrap_or("-")} ${decode_base64("YWJj").unwrap_or(abc).decode_utf8()}"
+
+  // DEFLATE of a very compressible input, round-tripped.
+  var src: []u8 = []
+  var i = 0
+  for i < 2000 { src.push(65) ; i += 1 }
+  let shrank = match compress(src) {
+    Some(c) => match decompress(c) {
+      Some(d) => c.len() < 100 && d.len() == 2000 && d[0] == 65 && d[1999] == 65,
+      None => false,
+    },
+    None => false,
+  }
+  // Path splitting is pure string work, and every one of these reads a static buffer the
+  // next call overwrites — so holding four answers at once is the thing being checked.
+  let p = "/tmp/lyra-fs/a.txt"
+  let paths = "${file_name(p)} ${file_stem(p)} ${file_extension(p).unwrap_or("-")} ${directory_of(p)}"
+
+  // A round-trip through the file system, cleaning up after itself.
+  let dir = "/tmp/lyra-raylib-fs-test"
+  let made = make_directory(dir) && directory_exists(dir)
+  let wrote = write_file_bytes("${dir}/b.bin", [1, 2, 3]) && file_length("${dir}/b.bin") == 3
+  let read = match read_file_bytes("${dir}/b.bin") {
+    Some(b) => b.len() == 3 && b[2] == 3,
+    None => false,
+  }
+  let text = write_file_text("${dir}/t.txt", "hello world") &&
+             read_file_text("${dir}/t.txt").unwrap_or("") == "hello world"
+  let found = find_in_file("${dir}/t.txt", "world").unwrap_or(0 - 1) == 6
+  let copied = copy_file("${dir}/t.txt", "${dir}/c.txt") && file_exists("${dir}/c.txt")
+  // move_file is copy+remove, because raylib's FileMove leaves the source behind.
+  let moved = move_file("${dir}/c.txt", "${dir}/m.txt") &&
+              !file_exists("${dir}/c.txt") && file_exists("${dir}/m.txt")
+  let listed = list_directory_ex(dir, ".txt", false).len() == 2
+  let removed = remove_file("${dir}/m.txt") && !remove_file("${dir}/nope")
+  let _ = remove_file("${dir}/b.bin")
+  let _ = remove_file("${dir}/t.txt")
+  println("${digests} ${base64} ${shrank} ${paths} ${made} ${wrote} ${read} ${text} ${found} ${copied} ${moved} ${listed} ${removed}")
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		t.Fatalf("running the raylib-files binary failed: %v", err)
+	}
+	want := "900150983cd24fb0d6963f7d28e17f72 " +
+		"a9993e364706816aba3e25717850c26c9cd0d89d " +
+		"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad " +
+		"891568578 YWJj abc true " +
+		"a.txt a .txt /tmp/lyra-fs " +
+		"true true true true true true true true true"
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if got := strings.TrimSpace(lines[len(lines)-1]); got != want {
+		t.Errorf("raylib files = %q;\n                want %q", got, want)
+	}
+}

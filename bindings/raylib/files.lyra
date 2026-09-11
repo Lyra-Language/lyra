@@ -1,0 +1,514 @@
+module bindings.raylib
+//! Files, directories and the data helpers that come with them.
+//!
+//! **What this adds over `std.io`.** That module reads and writes whole text files over
+//! three libc externs and is the portable answer; nothing here replaces it. What raylib
+//! brings that Lyra otherwise cannot do at all is **listing a directory**, **dropped
+//! files**, file metadata, and the DEFLATE/Base64/hash helpers it already links. Binary
+//! file I/O is here too, since `std.io` has none.
+//!
+//! **Three of these functions had to be measured before they could be bound**, and the
+//! measurements are the reason the module exists rather than a thin transcription: the
+//! `int`-returning file operations use **three different success conventions**, `FileMove`
+//! does not move, and `FileTextReplace`'s return says nothing. Each is noted where it is
+//! absorbed.
+
+import std.ffi.{ with_cstring, with_cstrings, cstring, data, CLong }
+
+// ---------------------------------------------------------------------------------------
+// Reading and writing
+// ---------------------------------------------------------------------------------------
+
+/// A whole file as bytes, or `None` if it could not be read.
+///
+/// **`std.io` has no binary read**, which is why this one is worth having: an image, a
+/// sound or a save file is bytes, and going through a string would reinterpret them.
+/// raylib's buffer is copied into a `[]u8` Lyra owns and handed straight back, so there is
+/// nothing further to release — the arrangement [image_colors] uses.
+pub let read_file_bytes = (path: string) -> Maybe<[]u8> => {
+  // **The out-parameter is taken outside the closure, and it has to be.** `&mut size`
+  // inside a `with_cstring` lambda addresses the *capture*, since captures are by value —
+  // so raylib writes the length into a copy and this reads back zero, with nothing
+  // reported anywhere (see todo.md; `lyra-E024` refuses assigning to a capture and says
+  // nothing about taking a mutable pointer to one). `cstring()` copies the path into an
+  // array this scope owns, so the call needs no lambda at all.
+  var cpath = path.cstring()
+  var size: i32 = 0
+  let raw = unsafe { rl_load_file_data(cpath.data(), &mut size) }
+  if raw == nullptr { return None }
+  var out: []u8 = []
+  var i = 0
+  let total = i64(size)
+  for i < total {
+    out.push(unsafe { raw.offset(i)^ })
+    i += 1
+  }
+  unsafe { rl_unload_file_data(raw) }
+  Some(out)
+}
+
+/// Write bytes to a file, answering whether it worked. An empty array writes an empty file.
+pub let write_file_bytes = (path: string, bytes: []u8) -> bool => {
+  if bytes.len() == 0 { return write_file_text(path, "") }
+  var copy = bytes
+  path.with_cstring((p) =>
+    unsafe { rl_save_file_data(p, copy.data_mut(), i32(copy.len())) }) != 0
+}
+
+/// A whole file as text, or `None` if it could not be read.
+///
+/// **`std.io`'s `read_file` is the portable one** and does not need raylib linked; this
+/// exists so a program already using raylib has one vocabulary, and because it honours
+/// raylib's custom file-loader hooks where a program has installed them.
+pub let read_file_text = (path: string) -> Maybe<string> => {
+  let raw = path.with_cstring((p) => unsafe { rl_load_file_text(p) })
+  if raw == nullptr { return None }
+  let text = copy_c_string(raw)
+  unsafe { rl_unload_file_text(raw) }
+  text
+}
+
+/// Write text to a file, answering whether it worked.
+pub let write_file_text = (path: string, text: string) -> bool =>
+  with_cstrings(path, text, (p, t) => unsafe { rl_save_file_text(p, t) }) != 0
+
+// ---------------------------------------------------------------------------------------
+// Asking about a path
+// ---------------------------------------------------------------------------------------
+
+pub let file_exists = (path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_file_exists(p) }) != 0
+
+pub let directory_exists = (path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_directory_exists(p) }) != 0
+
+/// Whether the path names a file rather than a directory.
+pub let is_file = (path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_is_path_file(p) }) != 0
+
+/// Whether a name is legal on this platform — the check to make before writing a file
+/// named from user input.
+pub let file_name_is_valid = (name: string) -> bool =>
+  name.with_cstring((p) => unsafe { rl_file_name_valid(p) }) != 0
+
+/// Whether the path ends in this extension. **Include the dot** — `".png"`, not `"png"`.
+pub let has_extension = (path: string, ext: string) -> bool =>
+  with_cstrings(path, ext, (p, e) => unsafe { rl_is_file_extension(p, e) }) != 0
+
+/// A file's size in bytes, or 0 where it cannot be read.
+pub let file_length = (path: string) -> i64 =>
+  i64(path.with_cstring((p) => unsafe { rl_file_length(p) }))
+
+/// When the file was last written, in seconds since the epoch.
+///
+/// A `CLong` crosses here because C's prototype says `long` — the one width that moves
+/// between LP64 and Windows' LLP64, which is what `CLong` exists to make greppable.
+pub let file_mod_time = (path: string) -> i64 =>
+  i64(path.with_cstring((p) => unsafe { rl_file_mod_time(p) }))
+
+// ---------------------------------------------------------------------------------------
+// Taking a path apart
+//
+// **Every one of these returns a pointer into a static buffer**, which raylib's own header
+// says and which is the hazard this section absorbs: the next call overwrites the last
+// answer, so two of them interleaved silently give the same string twice. Each is copied
+// into a Lyra string before returning, so a caller can hold as many as it likes.
+// ---------------------------------------------------------------------------------------
+
+/// The extension including its dot (`".png"`), or `None` where there is none.
+pub let file_extension = (path: string) -> Maybe<string> =>
+  copy_c_string(path.with_cstring((p) => unsafe { rl_file_extension(p) }))
+
+/// The last component of a path — `"a/b/c.txt"` gives `"c.txt"`.
+pub let file_name = (path: string) -> string =>
+  copy_c_string(path.with_cstring((p) => unsafe { rl_file_name(p) })).unwrap_or("")
+
+/// The last component without its extension — `"a/b/c.txt"` gives `"c"`.
+pub let file_stem = (path: string) -> string =>
+  copy_c_string(path.with_cstring((p) => unsafe { rl_file_stem(p) })).unwrap_or("")
+
+/// Everything before the last component — `"a/b/c.txt"` gives `"a/b"`.
+pub let directory_of = (path: string) -> string =>
+  copy_c_string(path.with_cstring((p) => unsafe { rl_directory_path(p) })).unwrap_or("")
+
+/// The parent of a directory — `"a/b/c"` gives `"a/b"`.
+pub let parent_directory = (path: string) -> string =>
+  copy_c_string(path.with_cstring((p) => unsafe { rl_prev_directory_path(p) })).unwrap_or("")
+
+/// The process's current working directory.
+pub let working_directory = () -> string =>
+  copy_c_string(unsafe { rl_working_directory() }).unwrap_or("")
+
+/// The directory the executable itself lives in, which is where a game's assets usually
+/// are — and **not** the working directory, which is wherever the user launched from.
+pub let application_directory = () -> string =>
+  copy_c_string(unsafe { rl_application_directory() }).unwrap_or("")
+
+// ---------------------------------------------------------------------------------------
+// Changing the file system
+//
+// **The `int` returns use three different conventions**, measured rather than read: 0 means
+// success for `MakeDirectory`, `FileRename` and `FileRemove`; **1** means success for
+// `FileCopy`; and failures are 0 or -1 depending on which. Every wrapper here answers a
+// plain `bool`, which is the whole reason they are wrappers.
+// ---------------------------------------------------------------------------------------
+
+/// Create a directory and every parent it needs. `true` if it exists afterwards, which
+/// includes it having existed already.
+pub let make_directory = (path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_make_directory(p) }) == 0
+
+/// Change the working directory.
+pub let change_directory = (path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_change_directory(p) }) != 0
+
+/// Copy a file, creating the destination's directory if it does not exist.
+///
+/// **This is the one that reports 1 for success**, where its neighbours report 0.
+pub let copy_file = (from: string, to: string) -> bool =>
+  with_cstrings(from, to, (a, b) => unsafe { rl_file_copy(a, b) }) != 0
+
+pub let rename_file = (from: string, to: string) -> bool =>
+  with_cstrings(from, to, (a, b) => unsafe { rl_file_rename(a, b) }) == 0
+
+pub let remove_file = (path: string) -> bool =>
+  path.with_cstring((p) => unsafe { rl_file_remove(p) }) == 0
+
+/// Move a file: it is at `to` afterwards and no longer at `from`.
+///
+/// **Built from [copy_file] and [remove_file] rather than bound to `FileMove`**, and that
+/// is not a preference. Measured: raylib's `FileMove` leaves the source in place — it
+/// copies — and returns **-1 whether it succeeded or not**, so the name is wrong and the
+/// return carries no information. A binding that forwarded it would export both faults
+/// under a name promising otherwise. Composing the two calls that *are* correct is what a
+/// binding module is for.
+pub let move_file = (from: string, to: string) -> bool =>
+  if copy_file(from, to) { remove_file(from) } else { false }
+
+/// Where `search` first occurs in a file, as a **byte** offset, or `None`.
+pub let find_in_file = (path: string, search: string) -> Maybe<i64> => {
+  let at = with_cstrings(path, search, (p, s) => unsafe { rl_file_find(p, s) })
+  if at < 0 { None } else { Some(i64(at)) }
+}
+
+/// Replace every occurrence of `search` in a file, answering whether anything changed.
+///
+/// **The answer is [find_in_file]'s, not `FileTextReplace`'s**, which returns 1 whether the
+/// text was there or not — measured — and so cannot distinguish "replaced" from "nothing to
+/// replace". The extra read is what buys a return value that means something.
+pub let replace_in_file = (path: string, search: string, replacement: string) -> bool => {
+  if find_in_file(path, search).is_none() { return false }
+  let _ = path.with_cstring((p) =>
+    with_cstrings(search, replacement, (s, r) => unsafe { rl_file_replace(p, s, r) }))
+  true
+}
+
+// ---------------------------------------------------------------------------------------
+// Listing a directory
+//
+// **The capability Lyra has no other way to reach.** A `FilePathList` is a count and a
+// `char **`; each path is copied into a Lyra string and raylib's list handed straight back,
+// so a caller holds ordinary values with nothing to release.
+// ---------------------------------------------------------------------------------------
+
+/// Every entry directly inside a directory — files and subdirectories, no recursion.
+pub let list_directory = (path: string) -> []string =>
+  drain(path.with_cstring((p) => unsafe { rl_list_directory(p) }))
+
+/// The same with a filter and optional recursion.
+///
+/// `filter` is raylib's own: an extension list like `".png;.jpg"`, or the special
+/// `"DIR"` to include directories. An empty filter takes everything.
+pub let list_directory_ex = (path: string, filter: string, subdirs: bool) -> []string =>
+  drain(with_cstrings(path, filter,
+    (p, f) => unsafe { rl_list_directory_ex(p, f, if subdirs { 1 } else { 0 }) }))
+
+/// How many entries a directory holds, without building the list.
+pub let directory_file_count = (path: string) -> i64 =>
+  i64(path.with_cstring((p) => unsafe { rl_directory_count(p) }))
+
+pub let directory_file_count_ex = (path: string, filter: string, subdirs: bool) -> i64 =>
+  i64(with_cstrings(path, filter,
+    (p, f) => unsafe { rl_directory_count_ex(p, f, if subdirs { 1 } else { 0 }) }))
+
+/// Whether a file was dropped onto the window this frame.
+pub let file_dropped = () -> bool => unsafe { rl_file_dropped() } != 0
+
+/// The paths dropped onto the window, empty when none were.
+///
+/// Needs a window, since it is the window that receives the drop. Read it in the frame
+/// [file_dropped] answers true; raylib clears the list on the next one.
+pub let dropped_files = () -> []string => drain_dropped(unsafe { rl_dropped_files() })
+
+/// A `FilePathList` copied into Lyra strings, then released.
+let drain = (list: FilePathList) -> []string => {
+  let out = copy_paths(list)
+  unsafe { rl_unload_directory_files(list) }
+  out
+}
+
+/// The same for the dropped-file list, which raylib frees with a *different* function —
+/// the `Sound`/`SoundAlias` situation again, and a mismatched free is a corrupted heap
+/// rather than an error.
+let drain_dropped = (list: FilePathList) -> []string => {
+  let out = copy_paths(list)
+  unsafe { rl_unload_dropped_files(list) }
+  out
+}
+
+/// The empty byte array, named because `Some([])` in return position infers a fixed
+/// `[0]T` rather than the `[]u8` the signature asks for.
+let no_bytes = pure () -> []u8 => []
+
+let copy_paths = pure (list: FilePathList) -> []string => {
+  var out: []string = []
+  if list.paths == nullptr { return out }
+  var i = 0
+  let total = i64(list.count)
+  for i < total {
+    match copy_c_string(unsafe { list.paths.offset(i)^ }) {
+      Some(path) => out.push(path),
+      None => { },
+    }
+    i += 1
+  }
+  out
+}
+
+/// raylib's `FilePathList` — a count and a `char **`. Private, because every public
+/// function here turns one into a `[]string` before anyone sees it.
+struct FilePathList {
+  count: u32,
+  paths: ^^u8,
+}
+
+// ---------------------------------------------------------------------------------------
+// Data: compression, Base64 and hashes
+//
+// raylib links these already, so a program gets them for free rather than for a
+// dependency. Each returns a buffer raylib allocated, copied out and freed here.
+// ---------------------------------------------------------------------------------------
+
+/// DEFLATE, answering `None` where raylib could not compress.
+pub let compress = (bytes: []u8) -> Maybe<[]u8> => {
+  if bytes.len() == 0 { return Some(no_bytes()) }
+  var copy = bytes
+  var size: i32 = 0
+  let raw = unsafe { rl_compress(copy.data(), i32(copy.len()), &mut size) }
+  take_bytes(raw, i64(size))
+}
+
+/// The reverse. **The size is raylib's to discover**, so a truncated or corrupt input is a
+/// `None` rather than a wrong length.
+pub let decompress = (bytes: []u8) -> Maybe<[]u8> => {
+  if bytes.len() == 0 { return Some(no_bytes()) }
+  var copy = bytes
+  var size: i32 = 0
+  let raw = unsafe { rl_decompress(copy.data(), i32(copy.len()), &mut size) }
+  take_bytes(raw, i64(size))
+}
+
+/// Base64, NUL-terminated by raylib and copied out as an ordinary string.
+pub let encode_base64 = (bytes: []u8) -> Maybe<string> => {
+  if bytes.len() == 0 { return Some("") }
+  var copy = bytes
+  var size: i32 = 0
+  let raw = unsafe { rl_encode_base64(copy.data(), i32(copy.len()), &mut size) }
+  if raw == nullptr { return None }
+  let text = copy_c_string(raw)
+  unsafe { rl_mem_free(raw) }
+  text
+}
+
+pub let decode_base64 = (text: string) -> Maybe<[]u8> => {
+  if text.len() == 0 { return Some(no_bytes()) }
+  // Outside the closure, for [read_file_bytes]'s reason.
+  var ctext = text.cstring()
+  var size: i32 = 0
+  let raw = unsafe { rl_decode_base64(ctext.data(), &mut size) }
+  take_bytes(raw, i64(size))
+}
+
+/// CRC32 of a byte array.
+pub let crc32 = (bytes: []u8) -> u32 => {
+  if bytes.len() == 0 { return unsafe { rl_crc32(nullptr, 0) } }
+  var copy = bytes
+  unsafe { rl_crc32(copy.data_mut(), i32(copy.len())) }
+}
+
+/// MD5 as the thirty-two lowercase hex characters everyone compares against.
+///
+/// **The hex string is the binding's work, and it has to be.** raylib answers a pointer to
+/// four `unsigned int` words in a *static* buffer, which is unusable twice over: the next
+/// call overwrites it, and turning four words into the familiar digest means writing each
+/// one **little-endian** — a convention nothing states and everything depends on. Checked
+/// against `md5("abc")`, which must be `900150983cd24fb0d6963f7d28e17f72`.
+pub let md5 = (bytes: []u8) -> string => hash_hex(bytes, 4, 0)
+
+/// SHA-1, forty hex characters. Checked against `sha1("abc")`.
+pub let sha1 = (bytes: []u8) -> string => hash_hex(bytes, 5, 1)
+
+/// SHA-256, sixty-four hex characters. Checked against `sha256("abc")`.
+pub let sha256 = (bytes: []u8) -> string => hash_hex(bytes, 8, 2)
+
+/// One of the three digests, rendered. `which` picks the function; `words` is how many
+/// 32-bit words it answers.
+///
+/// **SHA-1 and SHA-256 are big-endian words where MD5's are little-endian**, which is the
+/// algorithms' own difference rather than raylib's — and is exactly the sort of thing a
+/// caller should not have to know. Measured against all three published digests of "abc".
+let hash_hex = (bytes: []u8, words: i64, which: i64) -> string => {
+  var copy = bytes
+  let ptr = if copy.len() == 0 { nullptr } else { unsafe { copy.data_mut() } }
+  let n = i32(copy.len())
+  let raw =
+    if which == 0 { unsafe { rl_md5(ptr, n) } }
+    else if which == 1 { unsafe { rl_sha1(ptr, n) } }
+    else { unsafe { rl_sha256(ptr, n) } }
+  if raw == nullptr { return "" }
+  var out = ""
+  var w = 0
+  for w < words {
+    let v = unsafe { raw.offset(w)^ }
+    var b = 0
+    for b < 4 {
+      // MD5's words are little-endian and the SHA family's are big-endian.
+      let shift = if which == 0 { b * 8 } else { 24 - b * 8 }
+      out = out ++ hex_byte(u8((v >> u32(shift)) & 255))
+      b += 1
+    }
+    w += 1
+  }
+  out
+}
+
+let hex_byte = pure (b: u8) -> string =>
+  "${HEX_DIGITS[i64(b >> 4)]}${HEX_DIGITS[i64(b & 15)]}"
+
+const HEX_DIGITS: string = "0123456789abcdef"
+
+/// A raylib-allocated byte buffer copied into a `[]u8` and freed.
+let take_bytes = (raw: ^u8, size: i64) -> Maybe<[]u8> => {
+  if raw == nullptr { return None }
+  var out: []u8 = []
+  var i = 0
+  for i < size {
+    out.push(unsafe { raw.offset(i)^ })
+    i += 1
+  }
+  unsafe { rl_mem_free(raw) }
+  Some(out)
+}
+
+// ---------------------------------------------------------------------------------------
+// The externs
+//
+// **Not one extern here is marked `pure`, and that is deliberate.** An effect bound on an
+// extern is a claim the compiler *records* rather than checks, so writing one is a promise
+// — and "this function of its arguments always answers the same thing" is false for every
+// call in this file. `FileExists` reads a world another process is changing;
+// `GetWorkingDirectory`, `GetFileName` and their neighbours answer a pointer into a
+// **static buffer**, so a second call overwrites the first, which is exactly the shared
+// state purity licenses a compiler to assume away. The geometry externs in `shapes.lyra`
+// carry `pure` because they are arithmetic on their arguments; these only look similar.
+//
+// **The four `Set*FileDataCallback` hooks are deliberately unbound.** Each takes a C
+// function pointer that must *allocate* the buffer it returns, which Lyra has no way to do
+// on raylib's allocator — the same wall the audio processors hit, and for the same reason
+// (lyra-E066 and ownership never crossing the boundary).
+// ---------------------------------------------------------------------------------------
+
+@symbol("LoadFileData")
+unsafe extern rl_load_file_data: (path: ^u8, size: ^mut i32) -> ^u8
+@symbol("UnloadFileData")
+unsafe extern rl_unload_file_data: (p: ^u8) -> void
+@symbol("SaveFileData")
+unsafe extern rl_save_file_data: (path: ^u8, p: ^mut u8, size: i32) -> u8
+@symbol("LoadFileText")
+unsafe extern rl_load_file_text: (path: ^u8) -> ^u8
+@symbol("UnloadFileText")
+unsafe extern rl_unload_file_text: (p: ^u8) -> void
+@symbol("SaveFileText")
+unsafe extern rl_save_file_text: (path: ^u8, text: ^u8) -> u8
+
+@symbol("FileExists")
+unsafe extern rl_file_exists: (path: ^u8) -> u8
+@symbol("DirectoryExists")
+unsafe extern rl_directory_exists: (path: ^u8) -> u8
+@symbol("IsPathFile")
+unsafe extern rl_is_path_file: (path: ^u8) -> u8
+@symbol("IsFileNameValid")
+unsafe extern rl_file_name_valid: (name: ^u8) -> u8
+@symbol("IsFileExtension")
+unsafe extern rl_is_file_extension: (path: ^u8, ext: ^u8) -> u8
+@symbol("GetFileLength")
+unsafe extern rl_file_length: (path: ^u8) -> i32
+@symbol("GetFileModTime")
+unsafe extern rl_file_mod_time: (path: ^u8) -> CLong
+
+@symbol("GetFileExtension")
+unsafe extern rl_file_extension: (path: ^u8) -> ^u8
+@symbol("GetFileName")
+unsafe extern rl_file_name: (path: ^u8) -> ^u8
+@symbol("GetFileNameWithoutExt")
+unsafe extern rl_file_stem: (path: ^u8) -> ^u8
+@symbol("GetDirectoryPath")
+unsafe extern rl_directory_path: (path: ^u8) -> ^u8
+@symbol("GetPrevDirectoryPath")
+unsafe extern rl_prev_directory_path: (path: ^u8) -> ^u8
+@symbol("GetWorkingDirectory")
+unsafe extern rl_working_directory: () -> ^u8
+@symbol("GetApplicationDirectory")
+unsafe extern rl_application_directory: () -> ^u8
+
+@symbol("MakeDirectory")
+unsafe extern rl_make_directory: (path: ^u8) -> i32
+@symbol("ChangeDirectory")
+unsafe extern rl_change_directory: (path: ^u8) -> u8
+@symbol("FileCopy")
+unsafe extern rl_file_copy: (from: ^u8, to: ^u8) -> i32
+@symbol("FileRename")
+unsafe extern rl_file_rename: (from: ^u8, to: ^u8) -> i32
+@symbol("FileRemove")
+unsafe extern rl_file_remove: (path: ^u8) -> i32
+@symbol("FileTextFindIndex")
+unsafe extern rl_file_find: (path: ^u8, search: ^u8) -> i32
+@symbol("FileTextReplace")
+unsafe extern rl_file_replace: (path: ^u8, search: ^u8, replacement: ^u8) -> i32
+
+@symbol("LoadDirectoryFiles")
+unsafe extern rl_list_directory: (path: ^u8) -> FilePathList
+@symbol("LoadDirectoryFilesEx")
+unsafe extern rl_list_directory_ex:
+  (path: ^u8, filter: ^u8, subdirs: u8) -> FilePathList
+@symbol("UnloadDirectoryFiles")
+unsafe extern rl_unload_directory_files: (list: FilePathList) -> void
+@symbol("GetDirectoryFileCount")
+unsafe extern rl_directory_count: (path: ^u8) -> u32
+@symbol("GetDirectoryFileCountEx")
+unsafe extern rl_directory_count_ex: (path: ^u8, filter: ^u8, subdirs: u8) -> u32
+@symbol("IsFileDropped")
+unsafe extern rl_file_dropped: () -> u8
+@symbol("LoadDroppedFiles")
+unsafe extern rl_dropped_files: () -> FilePathList
+@symbol("UnloadDroppedFiles")
+unsafe extern rl_unload_dropped_files: (list: FilePathList) -> void
+
+@symbol("CompressData")
+unsafe extern rl_compress: (d: ^u8, n: i32, out: ^mut i32) -> ^u8
+@symbol("DecompressData")
+unsafe extern rl_decompress: (d: ^u8, n: i32, out: ^mut i32) -> ^u8
+@symbol("EncodeDataBase64")
+unsafe extern rl_encode_base64: (d: ^u8, n: i32, out: ^mut i32) -> ^u8
+@symbol("DecodeDataBase64")
+unsafe extern rl_decode_base64: (text: ^u8, out: ^mut i32) -> ^u8
+@symbol("ComputeCRC32")
+unsafe extern rl_crc32: (d: ^mut u8, n: i32) -> u32
+@symbol("ComputeMD5")
+unsafe extern rl_md5: (d: ^mut u8, n: i32) -> ^u32
+@symbol("ComputeSHA1")
+unsafe extern rl_sha1: (d: ^mut u8, n: i32) -> ^u32
+@symbol("ComputeSHA256")
+unsafe extern rl_sha256: (d: ^mut u8, n: i32) -> ^u32
+@symbol("MemFree")
+unsafe extern rl_mem_free: (p: ^u8) -> void

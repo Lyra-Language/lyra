@@ -9,6 +9,65 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — raylib's file system, three wrong conventions, and a silent capture
+
+`bindings/raylib/files.lyra`: 40 functions, **426 of 600**. Files, directories, dropped
+files, and the DEFLATE/Base64/hash helpers raylib already links. `std.io` stays the
+portable answer for text; what this adds that Lyra otherwise cannot do at all is listing a
+directory, file metadata, and binary file I/O.
+
+**Three of these could not be bound until they were measured**, which is what makes the
+module more than a transcription:
+
+- **The `int` returns use three different conventions.** 0 is success for `MakeDirectory`,
+  `FileRename` and `FileRemove`; **1** is success for `FileCopy`; failure is 0 or -1
+  depending on which. Reading the header would not have told you — the comments say
+  "returns 0 on success" for one of the five and nothing for the rest.
+- **`FileMove` does not move.** Measured: the source still exists afterwards *and* the
+  destination does, and it returns **-1 either way**, so the name is wrong and the return
+  carries no information. `move_file` is composed from `copy_file` and `remove_file`, which
+  both work and both report. A binding that forwarded `FileMove` would have exported two
+  faults under a name promising otherwise.
+- **`FileTextReplace` returns 1 whether the text was there or not**, so it cannot say
+  whether anything changed. `replace_in_file` asks `find_in_file` first and reports that
+  instead — one extra read for a return value that means something.
+
+**The hashes are hex strings, and the byte order is the whole reason.** raylib answers a
+pointer to a *static* array of 32-bit words; the familiar digest needs **MD5's words
+little-endian and the SHA family's big-endian**, which nothing states. Checked against the
+published digests of "abc" *and* against the system `md5`/`shasum` on a real file — a
+self-consistent round-trip would have agreed with itself and been wrong.
+
+**No extern in the file is marked `pure`**, and the W018 warnings are what asked the
+question. An effect bound on an extern is a claim the compiler records rather than checks,
+and "always answers the same thing" is false for every call here: `FileExists` reads a
+world another process is changing, and the path helpers answer pointers into a static
+buffer the next call overwrites — which is exactly the shared state purity licenses a
+compiler to assume away. `shapes.lyra`'s geometry externs carry `pure` because they are
+arithmetic on their arguments. The two only look alike, and copying the annotation across
+was the reflex to catch.
+
+**And it found a silent compiler bug** (todo.md): **`&mut x` on a captured binding writes
+to the capture.** Captures are by value, so an out-parameter taken inside a `with_cstring`
+lambda addresses the copy in the closure environment — `LoadFileData` wrote the length
+there and every binary read came back empty, with nothing reported anywhere. `lyra-E024`
+already refuses *assigning* to a captured binding for precisely this reason; taking a
+mutable pointer to one is the same act through a different spelling and is not refused.
+
+**The same shape was already shipping in `image.lyra`.** `paint_text` took `&mut self`
+inside a `with_cstring` lambda, and it *worked* — an `Image` is a struct whose `data` field
+is a pointer, so the copy addresses the same pixels. It would have failed silently the
+first time raylib reallocated the buffer. Both sites now take the pointer outside the
+closure, over `cstring()`. That is the shape to look for: **a by-value capture of an
+aggregate that owns a pointer hides the bug rather than exposing it.**
+
+`examples/raylib/files.lyra` is the example and **the only one here that never opens a
+window** — a command-line tool that lists directories and reports a file's size, extension
+and digests, with 44 checks under `--check`. One of those checks was wrong when written:
+comparing `working_directory()` to the path handed to `change_directory` fails on macOS,
+where `/tmp` resolves to `/private/tmp`. That is the platform's symlink policy, not the
+binding's business, and the check now asks what it meant to.
+
 ### 09/10/26 — raylib in three dimensions
 
 `bindings/raylib/shapes3d.lyra`: 41 functions, **382 of 600**. A `Camera3D`, the shapes

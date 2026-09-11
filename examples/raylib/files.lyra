@@ -1,0 +1,256 @@
+module main
+//! Files, directories and the data helpers, as a small tool rather than a gallery.
+//!
+//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
+//!   lyrac run examples/raylib/files.lyra -- --check       # 30 checks, exits 0 or 1
+//!   lyrac run examples/raylib/files.lyra -- <path> ...    # inspect paths, hash files
+//!   lyrac run examples/raylib/files.lyra                  # the current directory
+//!
+//! **No window.** Everything in `files.lyra` is CPU work, so this example is a command
+//! rather than a scene — which is the honest shape for it, and the reason it is the only
+//! raylib example here that never calls `init_window`.
+//!
+//! `--check` covers what has a knowable answer: the digests of "abc" are published
+//! constants, DEFLATE round-trips, and a scratch directory under `/tmp` is built and taken
+//! apart again. The rest of the program is the tool: given paths, it lists directories and
+//! reports each file's size, extension and hashes.
+
+import bindings.raylib.{
+  read_file_bytes, write_file_bytes, read_file_text, write_file_text,
+  file_exists, directory_exists, is_file, file_name_is_valid, has_extension,
+  file_length, file_mod_time,
+  file_extension, file_name, file_stem, directory_of, parent_directory,
+  working_directory, application_directory,
+  make_directory, change_directory, copy_file, rename_file, remove_file, move_file,
+  find_in_file, replace_in_file,
+  list_directory, list_directory_ex, directory_file_count, directory_file_count_ex,
+  compress, decompress, encode_base64, decode_base64, crc32, md5, sha1, sha256,
+}
+
+/// Where `--check` builds and destroys its scratch tree. Under `/tmp` so the example never
+/// writes into the repository it is run from.
+const SCRATCH: string = "/tmp/lyra-raylib-files-example"
+
+let main = () -> u8 => {
+  let args = arguments()
+  if wants_check(args) { return run_checks() }
+  if args.len() == 0 { report(working_directory()) } else { for a in args { report(a) } }
+  0
+}
+
+/// The program's own arguments, without its name at index 0.
+let arguments = () -> []string => {
+  var out: []string = []
+  var i = 1
+  let all = program_args()
+  for i < all.len() {
+    out.push(all[i])
+    i += 1
+  }
+  out
+}
+
+let wants_check = pure (args: []string) -> bool => {
+  var found = false
+  for a in args {
+    if a == "--check" { found = true }
+  }
+  found
+}
+
+// ---------------------------------------------------------------------------------------
+// The tool
+// ---------------------------------------------------------------------------------------
+
+/// What one path is, and what is in or of it.
+let report = (path: string) -> void => {
+  println("${path}")
+  if directory_exists(path) {
+    let entries = list_directory(path)
+    println("  directory, ${directory_file_count(path)} entries")
+    var shown = 0
+    for entry in entries {
+      if shown < 12 {
+        let mark = if is_file(entry) { "" } else { "/" }
+        println("    ${file_name(entry)}${mark}")
+        shown += 1
+      }
+    }
+    if entries.len() > 12 { println("    ... and ${entries.len() - 12} more") }
+    // The filtered form is what an asset loader actually wants.
+    let images = list_directory_ex(path, ".png;.jpg", false).len()
+    if images > 0 { println("  ${images} image(s)") }
+    return
+  }
+  if !file_exists(path) {
+    println("  does not exist")
+    return
+  }
+  println("  file, ${file_length(path)} bytes, modified ${file_mod_time(path)}")
+  println("  name ${file_name(path)}  stem ${file_stem(path)}  " ++
+          "ext ${file_extension(path).unwrap_or("(none)")}")
+  println("  in ${directory_of(path)}")
+  match read_file_bytes(path) {
+    Some(bytes) => {
+      println("  crc32  ${crc32(bytes)}")
+      println("  md5    ${md5(bytes)}")
+      println("  sha256 ${sha256(bytes)}")
+      match compress(bytes) {
+        Some(packed) => println("  deflate ${bytes.len()} -> ${packed.len()} bytes"),
+        None => println("  deflate failed"),
+      }
+    },
+    None => println("  could not be read"),
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The checks
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  // --- hashes, against the published digests of "abc" -----------------------------------
+  //
+  // **These are the strongest assertions in the file**, because the answers are not
+  // raylib's to define. raylib hands back 32-bit words in a static buffer and the hex form
+  // depends on knowing that MD5's are little-endian and the SHA family's are big-endian —
+  // a convention nothing states. A self-consistent round-trip would not have caught it.
+  let abc: []u8 = "abc".encode_utf8()
+  failures += check("md5(abc)", md5(abc), "900150983cd24fb0d6963f7d28e17f72")
+  failures += check("sha1(abc)", sha1(abc), "a9993e364706816aba3e25717850c26c9cd0d89d")
+  failures += check("sha256(abc)", sha256(abc),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+  failures += check("crc32(abc)", "${crc32(abc)}", "891568578")
+
+  // --- base64 and DEFLATE ---------------------------------------------------------------
+  failures += check("encode_base64", encode_base64(abc).unwrap_or("-"), "YWJj")
+  failures += check("decode_base64",
+    decode_base64("YWJj").unwrap_or(abc).decode_utf8(), "abc")
+
+  var runs: []u8 = []
+  var i = 0
+  for i < 2000 { runs.push(65) ; i += 1 }
+  match compress(runs) {
+    Some(packed) => {
+      failures += check("compress shrinks 2000 identical bytes", packed.len() < 100, true)
+      match decompress(packed) {
+        Some(back) => {
+          failures += check("decompress restores the length", "${back.len()}", "2000")
+          failures += check("decompress restores the bytes",
+            back[0] == 65 && back[1999] == 65, true)
+        },
+        None => failures += check("decompress", "None", "Some"),
+      }
+    },
+    None => failures += check("compress", "None", "Some"),
+  }
+
+  // --- taking a path apart --------------------------------------------------------------
+  //
+  // Four answers held at once, which is the point: each comes from a **static buffer** that
+  // the next call overwrites, so a binding that handed the pointer out would give the same
+  // string four times.
+  let p = "/tmp/lyra-fs/report.tar.gz"
+  failures += check("file_name", file_name(p), "report.tar.gz")
+  failures += check("file_stem", file_stem(p), "report.tar")
+  failures += check("file_extension", file_extension(p).unwrap_or("-"), ".gz")
+  failures += check("directory_of", directory_of(p), "/tmp/lyra-fs")
+  failures += check("parent_directory", parent_directory("/tmp/lyra-fs"), "/tmp")
+  failures += check("has_extension", has_extension(p, ".gz"), true)
+  failures += check("has_extension, wrong one", has_extension(p, ".png"), false)
+  failures += check("file_name_is_valid", file_name_is_valid("fine.txt"), true)
+
+  // --- the scratch tree -----------------------------------------------------------------
+  failures += check("make_directory creates the whole path",
+    make_directory("${SCRATCH}/deep") && directory_exists("${SCRATCH}/deep"), true)
+  failures += check("make_directory on an existing one is still true",
+    make_directory("${SCRATCH}/deep"), true)
+
+  failures += check("write_file_text",
+    write_file_text("${SCRATCH}/t.txt", "hello world"), true)
+  failures += check("read_file_text",
+    read_file_text("${SCRATCH}/t.txt").unwrap_or("-"), "hello world")
+  failures += check("file_length", "${file_length("${SCRATCH}/t.txt")}", "11")
+
+  failures += check("write_file_bytes",
+    write_file_bytes("${SCRATCH}/b.bin", [9, 8, 7]), true)
+  match read_file_bytes("${SCRATCH}/b.bin") {
+    Some(b) => failures += check("read_file_bytes",
+      "${b.len()},${b[0]},${b[2]}", "3,9,7"),
+    None => failures += check("read_file_bytes", "None", "Some"),
+  }
+  failures += check("read_file_bytes on a missing file",
+    read_file_bytes("${SCRATCH}/nope").is_none(), true)
+
+  failures += check("find_in_file",
+    "${find_in_file("${SCRATCH}/t.txt", "world").unwrap_or(0 - 1)}", "6")
+  failures += check("find_in_file, absent",
+    find_in_file("${SCRATCH}/t.txt", "zzz").is_none(), true)
+  // **`replace_in_file` answers `find_in_file`'s question**, because raylib's own return is
+  // 1 whether the text was there or not — measured, and useless as a success signal.
+  failures += check("replace_in_file", replace_in_file("${SCRATCH}/t.txt", "world", "there"), true)
+  failures += check("replace_in_file, nothing to replace",
+    replace_in_file("${SCRATCH}/t.txt", "zzz", "x"), false)
+  failures += check("the replacement happened",
+    read_file_text("${SCRATCH}/t.txt").unwrap_or("-"), "hello there")
+
+  failures += check("copy_file",
+    copy_file("${SCRATCH}/t.txt", "${SCRATCH}/c.txt") && file_exists("${SCRATCH}/c.txt"), true)
+  failures += check("copy_file with no source",
+    copy_file("${SCRATCH}/nope", "${SCRATCH}/x.txt"), false)
+  failures += check("rename_file",
+    rename_file("${SCRATCH}/c.txt", "${SCRATCH}/r.txt") && file_exists("${SCRATCH}/r.txt"), true)
+  // **The one that raylib gets wrong**: its `FileMove` copies and returns -1 either way,
+  // so the binding composes copy and remove instead. Both halves are checked.
+  failures += check("move_file leaves nothing behind",
+    move_file("${SCRATCH}/r.txt", "${SCRATCH}/deep/m.txt") &&
+      !file_exists("${SCRATCH}/r.txt") && file_exists("${SCRATCH}/deep/m.txt"), true)
+
+  failures += check("list_directory finds the files",
+    list_directory(SCRATCH).len() >= 3, true)
+  failures += check("list_directory_ex filters",
+    "${list_directory_ex(SCRATCH, ".txt", false).len()}", "1")
+  failures += check("directory_file_count_ex counts the same",
+    "${directory_file_count_ex(SCRATCH, ".txt", false)}", "1")
+
+  failures += check("is_file tells a file from a directory",
+    is_file("${SCRATCH}/t.txt") && !is_file(SCRATCH), true)
+
+  // change_directory and back, without disturbing where the program was run from.
+  let here = working_directory()
+  failures += check("change_directory", change_directory(SCRATCH), true)
+  // **Not `== SCRATCH`**, which is what this check said first and why it failed: macOS
+  // makes `/tmp` a symlink to `/private/tmp`, and `GetWorkingDirectory` answers the
+  // *resolved* path. Comparing it to the string handed to `change_directory` is testing
+  // the platform's symlink policy rather than the binding.
+  failures += check("working_directory follows it",
+    working_directory().ends_with("lyra-raylib-files-example"), true)
+  failures += check("and back", change_directory(here) && working_directory() == here, true)
+  failures += check("application_directory is non-empty", application_directory().len() > 0, true)
+
+  // Clean up, and check the removals while doing it.
+  failures += check("remove_file", remove_file("${SCRATCH}/deep/m.txt"), true)
+  failures += check("remove_file on a missing file", remove_file("${SCRATCH}/nope"), false)
+  let _ = remove_file("${SCRATCH}/t.txt")
+  let _ = remove_file("${SCRATCH}/b.bin")
+
+  if failures == 0 {
+    println("all file checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+let check<t> where t: Show = (name: string, got: t, want: t) -> i64 => {
+  if "${got}" == "${want}" {
+    println("  ok    ${name}")
+    0
+  } else {
+    println("  FAIL  ${name}: got ${got}, want ${want}")
+    1
+  }
+}

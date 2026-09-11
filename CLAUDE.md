@@ -1898,6 +1898,43 @@ manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`)
 fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
 pointer and a size of **0**, measured.
 
+**`bindings/raylib/files.lyra` is the seventh** (09/10) — 40 functions taking raylib to
+**426 of 600**: files, directories, and the DEFLATE/Base64/hash helpers raylib already
+links. **`std.io` stays the portable answer for text**; what this adds that Lyra otherwise
+cannot do at all is **listing a directory**, dropped files, file metadata, and binary file
+I/O.
+
+**Three things here had to be measured before they could be bound**, and they are the
+reason the module is not a thin transcription:
+
+- **The `int` returns use three different conventions.** 0 means success for
+  `MakeDirectory`, `FileRename` and `FileRemove`; **1** means success for `FileCopy`;
+  failure is 0 or -1 depending on which. Every wrapper answers a plain `bool`.
+- **`FileMove` does not move.** It leaves the source in place — it copies — and returns
+  **-1 whether it succeeded or not**, so both the name and the return are wrong.
+  `move_file` is composed from `copy_file` and `remove_file` instead, which is a binding
+  module doing its job rather than a preference.
+- **`FileTextReplace` returns 1 whether the text was there or not**, so `replace_in_file`
+  answers `find_in_file`'s question instead and costs one extra read for a return value
+  that means something.
+
+**The hashes are hex strings because the words are unusable**, and the byte order is the
+part a caller must not have to know: raylib answers a pointer to a *static* array of 32-bit
+words, and **MD5's are little-endian while the SHA family's are big-endian**. Checked
+against the published digests of "abc" and against `md5`/`shasum` on a real file — a
+self-consistent round-trip would not have caught it.
+
+**Not one extern in the file is marked `pure`**, deliberately: a bound on an extern is a
+claim the compiler records rather than checks, and "always answers the same thing" is false
+for every call here — `FileExists` reads a world another process is changing, and the path
+helpers answer pointers into a static buffer the next call overwrites. `shapes.lyra`'s
+geometry externs carry `pure` because they are arithmetic on their arguments; these only
+look similar.
+
+`examples/raylib/files.lyra` is the example and **the only one here that never opens a
+window** — it is a command-line tool: given paths it lists directories and reports each
+file's size, extension and digests, with 44 checks under `--check`.
+
 **`bindings/raylib/shapes3d.lyra` is the sixth** (09/10) — 41 functions taking raylib to
 **382 of 600**, and the first of the 3D surface: a `Camera3D`, the shapes raylib draws
 immediately, billboards, and ray casting. No meshes, models or materials, so nothing here

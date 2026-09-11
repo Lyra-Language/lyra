@@ -17,7 +17,7 @@ module bindings.raylib
 //! answering a *fresh* `Image` would leave the caller holding a freed one that
 //! `@must_release` would then insist on unloading.
 
-import std.ffi.{ with_cstring, data }
+import std.ffi.{ with_cstring, cstring, data }
 
 // ---------------------------------------------------------------------------------------
 // New images from an existing one
@@ -310,7 +310,13 @@ pub let paint_image = (self: mut Image, src: Image, source: Rectangle, dest: Rec
 pub let paint_text = (self: mut Image, text: string, x: i32, y: i32, size: i32,
                       color: Color) -> void => {
   if font_valid(default_font()) {
-    text.with_cstring((t) => unsafe { rl_image_draw_text(&mut self, t, x, y, size, color) })
+    // **`&mut self` must not be taken inside the lambda.** A `with_cstring` closure
+    // captures by value, so `&mut self` there addresses a *copy* of the `Image` struct.
+    // This one happened to work — raylib writes through `image->data`, and the copy holds
+    // the same pixel pointer — but it is an accident, and the first call here that
+    // reallocates the buffer would lose it silently. See todo.md.
+    var c = text.cstring()
+    unsafe { rl_image_draw_text(&mut self, c.data(), x, y, size, color) }
   }
 }
 
@@ -319,8 +325,9 @@ pub let paint_text_ex =
   (self: mut Image, font: Font, text: string, position: Vector2, size: f32, spacing: f32,
    tint: Color) -> void => {
     if font_valid(font) {
-      text.with_cstring((t) =>
-        unsafe { rl_image_draw_text_ex(&mut self, font, t, position, size, spacing, tint) })
+      // Outside the lambda, for [paint_text]'s reason.
+      var c = text.cstring()
+      unsafe { rl_image_draw_text_ex(&mut self, font, c.data(), position, size, spacing, tint) }
     }
   }
 
