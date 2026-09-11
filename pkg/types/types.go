@@ -118,6 +118,19 @@ func (NeverType) String() string  { return NeverType{}.GetName() }
 type UnresolvedType struct {
 	Name       string             // e.g., "Tree", "Point", "Maybe"
 	Allocation AllocationModifier // usage-site override; Unspecified = inherit from decl
+	// Key is the declaration this name resolved to, `<module>::<name>`, stamped on the
+	// *nested* names inside a declaration's own type — a struct's field types, a data
+	// type's payloads — where the declaring module is known and the reader's is not.
+	//
+	// It exists because a name is not program-wide: a field's type names the module that
+	// **declared** the struct, while the code walking those fields (a release, an
+	// equality, a layout) belongs to whichever module holds the value. Resolving from the
+	// reader crashed on a private field type from another module, and would have found
+	// the *wrong* declaration where the reader has a same-named type of its own.
+	//
+	// Like Allocation, it is NOT part of nominal identity: TypesEqual ignores it, and a
+	// name with no key resolves exactly as it did before.
+	Key string
 }
 
 func (UnresolvedType) typeNode()         {}

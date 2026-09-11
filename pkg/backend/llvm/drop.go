@@ -80,7 +80,7 @@ func (l *lowerer) resolveNamedType(t types.Type) types.Type {
 	if !ok {
 		return t
 	}
-	decl, ok := l.lookupTypeDecl(u.Name)
+	decl, ok := l.lookupTypeDeclKeyed(u.Key, u.Name)
 	if !ok {
 		return t
 	}
@@ -157,7 +157,10 @@ func (l *lowerer) dropFuncFor(t types.Type) (*ir.Func, error) {
 	// Key on the base, so a newtype and its base share one glue rather than
 	// generating two identical copies under different names.
 	t = l.stripNewtype(t)
-	key := t.String()
+	// **Identity, not spelling.** `t.String()` is the bare name, so two modules' private
+	// `Inner`s shared one cache entry and one glue function — whichever was generated
+	// first released the other's fields, which is a wrong layout rather than a leak.
+	key := l.dropKey(t)
 	if fn, ok := l.dropFns[key]; ok {
 		return fn, nil
 	}
@@ -179,6 +182,56 @@ func (l *lowerer) dropFuncFor(t types.Type) (*ir.Func, error) {
 	}
 	end.NewRet(nil)
 	return fn, nil
+}
+
+// dropKey identifies a type for the drop-glue cache.
+//
+// **The declaration is the identity, and the rendered type is the fallback.** The key was
+// the rendering alone, which is the bare name for a declared type — so two modules' private
+// `Inner`s shared one entry and one generated function, whichever was built first, which is
+// a wrong layout rather than a leak.
+//
+// Two things this has to get right at once, each learned from a failure:
+//
+//   - **One type, one key, however it arrives.** The same struct reaches here sometimes as a
+//     stamped `UnresolvedType` (a field's type) and sometimes as the resolved
+//     `NamedStructType`, so the key is taken from the *declaration* — `DeclKey`, computed
+//     from the declaration's own file — rather than from the stamp or from the asking
+//     module. Deriving it two ways gave one type two entries, two identical glue functions,
+//     and a release counted twice.
+//   - **Anonymous composites keep their rendering.** A tuple renders its elements and an
+//     anonymous one's "name" *is* that rendering, so keying by name alone collapsed every
+//     anonymous tuple in a program onto one entry, releasing another's fields.
+func (l *lowerer) dropKey(t types.Type) string {
+	switch v := t.(type) {
+	case types.UnresolvedType:
+		return l.namedDropKey(v.Key, v.Name)
+	case types.NamedStructType:
+		return l.namedDropKey("", v.Name)
+	case types.DataType:
+		return l.namedDropKey("", v.Name)
+	case types.UnionType:
+		return l.namedDropKey("", v.Name)
+	case types.TupleType:
+		// A *declared* tuple is a named type; an anonymous one is its elements.
+		if v.Name != "" && !types.IsAnonymousTupleName(v.Name) {
+			return l.namedDropKey("", v.Name)
+		}
+		return v.String()
+	default:
+		return t.String()
+	}
+}
+
+// namedDropKey is the cache key for a named type: the identity of the declaration it
+// resolves to, by its stamped key where it has one and as the module being lowered sees it
+// otherwise. A name that denotes no declaration — a generic instantiation's mangled symbol —
+// is its own identity already.
+func (l *lowerer) namedDropKey(key, name string) string {
+	if decl, ok := l.lookupTypeDeclKeyed(key, name); ok && decl != nil && l.res != nil && l.res.SymbolTable != nil {
+		return l.res.SymbolTable.DeclKey(decl)
+	}
+	return name
 }
 
 // dropFnName builds a unique, readable LLVM symbol for a type's drop glue. A counter

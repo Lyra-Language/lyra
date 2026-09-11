@@ -362,11 +362,30 @@ func resolveNamedType(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 	if !ok || symTable == nil {
 		return t
 	}
-	decl, ok := symTable.LookupTypeFrom(u.Name, loc)
+	decl, ok := lookupNamed(u, symTable, loc)
 	if !ok {
 		return t
 	}
 	return types.WithAllocation(decl.Type, u.Allocation)
+}
+
+// lookupNamed resolves a type name to its declaration: **by its stamped identity where it
+// has one**, and otherwise as `loc`'s module sees it.
+//
+// The key is what a name written *inside a declaration* carries (types.UnresolvedType.Key),
+// and this walk meets those constantly — it asks what a struct's fields own, from wherever
+// the value being copied or dropped happens to live. Asked by name, a field typed with the
+// declaring module's private `Inner` resolved to the *reader's* same-named type instead: a
+// `struct Inner { name: string }` in the reader made this pass call `lib.inner`'s all-i64
+// `Inner` managed, and the backend then released its first field as a pointer. Measured:
+// the program printed its answer and segfaulted on the way out.
+func lookupNamed(u types.UnresolvedType, symTable *symbols.SymbolTable, loc ast.Location) (*ast.TypeDeclStmt, bool) {
+	if u.Key != "" {
+		if decl, ok := symTable.LookupTypeByKey(u.Key); ok {
+			return decl, true
+		}
+	}
+	return symTable.LookupTypeFrom(u.Name, loc)
 }
 
 // SharesMutableState reports whether two copies of a value of type t can observe

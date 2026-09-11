@@ -257,6 +257,21 @@ func (st *SymbolTable) LookupType(name string) (*ast.TypeDeclStmt, bool) {
 	return decl, ok
 }
 
+// LookupTypeByKey answers the declaration registered under an identity key —
+// `<module>::<name>`, what TypeKey and DeclKey produce. It asks no scope and so needs no
+// referencing location: the key *is* the answer a lookup would have had to reach.
+//
+// For the backend, which meets such a key on a type name stamped inside a declaration
+// (types.UnresolvedType.Key) and must not re-resolve it as the module it happens to be
+// lowering.
+func (st *SymbolTable) LookupTypeByKey(key string) (*ast.TypeDeclStmt, bool) {
+	if st == nil || key == "" {
+		return nil, false
+	}
+	decl, ok := st.Types[key]
+	return decl, ok
+}
+
 func (st *SymbolTable) LookupTrait(name string) (*ast.TraitDeclStmt, bool) {
 	sym, ok := st.programWide(name)
 	if !ok {

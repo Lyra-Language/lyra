@@ -43,12 +43,6 @@ import bindings.raylib.{ Matrix, Vector3, Vector4, vec3, matrix_multiply, matrix
                          quaternion_normalize, quaternion_slerp, read_file_bytes, decode_base64,
                          directory_of }
 
-// **`AnimNode`, `AnimClip` and `AnimChannel` are `pub` only to dodge a compiler bug**
-// (todo.md, Known bugs 09/11): a public struct whose field is an array of a *private* struct
-// fails in the backend once a value of it is released from another module — the field's
-// element type is looked up from the using module rather than the declaring one. Nothing
-// outside this file should name them.
-
 /// A file's node animations, ready to be sampled with [pose].
 pub struct NodeAnimation {
   nodes: []AnimNode,
@@ -378,7 +372,7 @@ let mime_of_path = pure (uri: string) -> string =>
 // The scene tree
 // ---------------------------------------------------------------------------------------
 
-pub struct AnimNode {
+struct AnimNode {
   parent: i64,
   translation: Vector3,
   rotation: Vector4,
@@ -472,7 +466,7 @@ let mesh_nodes = pure (doc: JsonValue) -> []i64 => {
 // Clips and sampling
 // ---------------------------------------------------------------------------------------
 
-pub struct AnimClip {
+struct AnimClip {
   name: string,
   channels: []AnimChannel,
   duration: f32,
@@ -480,7 +474,7 @@ pub struct AnimClip {
 
 /// One animated property of one node: keyframe times, and the values at them — flattened,
 /// and under CUBICSPLINE three per key (in-tangent, value, out-tangent).
-pub struct AnimChannel {
+struct AnimChannel {
   node: i64,
   path: i64,
   interpolation: i64,

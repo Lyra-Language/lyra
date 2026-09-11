@@ -21,10 +21,22 @@ import (
 // `funcKey(name, loc)`. It has to be: a resolved `NamedStructType` reaching `lowerType`
 // carries only a name — the location where it was written is long gone — and lowerType is
 // reached from essentially every expression. What the backend does have is the item it is
-// currently lowering, which belongs to exactly one module, and every type reference in
-// that item is made *from* that module. So the module is set once per top-level item and
-// read by the key function, which then asks the symbol table — the same authority the
-// front end asks, so the two cannot disagree about which declaration a name means.
+// currently lowering, which belongs to exactly one module. So the module is set once per
+// top-level item and read by the key function, which then asks the symbol table — the same
+// authority the front end asks, so the two cannot disagree about which declaration a name
+// means.
+//
+// **The one place the ambient module is the wrong answer is a declaration's own field
+// types**, and that is what `types.UnresolvedType.Key` is for. `pub struct Outer { xs:
+// []Inner }` over a private `Inner` is walked — released, compared, sized — by whichever
+// module *holds* an `Outer`, and that module has no `Inner`: the lookup failed outright
+// (`unknown named type "Inner"`), and where the holder had an `Inner` of its own it found
+// that one and lowered `Outer` against the wrong layout. The typechecker stamps those
+// nested names with the declaration they resolve to (stampDeclaredNames), and every lookup
+// here prefers it: `lookupNamedTypeKeyed`, `lookupTypeDeclKeyed`, `declLocOfKeyed`, and
+// `dropKey` for the drop-glue cache, whose key was the bare name and so gave two modules'
+// same-named structs one glue function. A name written *outside* a declaration carries no
+// key and still means what the module being lowered says it means.
 
 // enterModuleOf sets the location lookups are made *from* — a position inside the item
 // being lowered — and returns a function restoring the previous one. Save/restore rather

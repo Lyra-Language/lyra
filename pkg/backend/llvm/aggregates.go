@@ -283,7 +283,9 @@ func (l *lowerer) namedStructFields(t types.Type) ([]types.StructField, bool) {
 		// order, established by the type, so the three cannot disagree.
 		return s.Fields, true
 	case types.UnresolvedType:
-		if decl, ok := l.lookupTypeDecl(s.Name); ok {
+		// By its stamped identity where it has one: this is a field's own type, which
+		// names the module that declared the struct rather than the one being lowered.
+		if decl, ok := l.lookupTypeDeclKeyed(s.Key, s.Name); ok {
 			if ns, ok := decl.Type.(types.NamedStructType); ok {
 				return ns.Fields, true
 			}

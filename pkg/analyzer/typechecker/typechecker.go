@@ -69,6 +69,10 @@ type TypeChecker struct {
 	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
 	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
 	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
+	// stampedDecls are the declarations whose nested type names have been given their
+	// resolved identity (stampDeclaredNames). Once each: the walk rewrites the
+	// declaration in place, and a second pass would be work with nothing to do.
+	stampedDecls map[*ast.TypeDeclStmt]bool
 	// circularNewtypes are newtypes whose base chain leads back to themselves, found up
 	// front by checkNewtypeCycles. Resolution refuses to hand one back, which is what
 	// makes every newtype-stripping walk in the compiler terminate — see that function.
@@ -109,6 +113,7 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		inferring:        make(map[ast.Expression]bool),
 		resolvingTypes:   make(map[string]bool),
 		circularNewtypes: make(map[string]bool),
+		stampedDecls:     make(map[*ast.TypeDeclStmt]bool),
 	}
 }
 
@@ -2311,11 +2316,126 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 	// A's to resolve, and continuing to ask as the referencing module would look
 	// for a `Pt` that module cannot see. That change of location is why this recurses
 	// through resolveType rather than through the walk's own `recur`.
+	// **Stamp the declaration's own nested names before anything reads them.** A struct,
+	// data or tuple declaration comes back from the walk above as it stands, its field
+	// types still bare `UnresolvedType`s — and those names belong to *this* declaration's
+	// module, not to whoever later walks the fields. Done in place on the declaration, so
+	// every consumer sees it: this cache, the generic-instantiation path that copies
+	// decl.Type, and the backend's own reads.
+	tc.stampDeclaredNames(decl)
 	resolved := tc.resolveType(decl.Type, decl.GetLocation())
 	delete(tc.resolvingTypes, key)
 
 	tc.resolvedTypes[key] = resolved
 	return types.WithAllocation(resolved, tt.Allocation)
+}
+
+// stampFields stamps a struct's fields or a union's members — both `[]StructField`.
+func (tc *TypeChecker) stampFields(fields []types.StructField, loc ast.Location) []types.StructField {
+	out := make([]types.StructField, len(fields))
+	copy(out, fields)
+	for i := range out {
+		out[i].Type = tc.stampNames(out[i].Type, loc)
+	}
+	return out
+}
+
+// stampDeclaredNames records, on every type name written *inside* a declaration, which
+// declaration that name means — `<module>::<name>`, as the declaring module resolves it
+// (types.UnresolvedType.Key).
+//
+// A declaration's field types are the one place where the name and the code that reads it
+// can belong to different modules: `pub struct Outer { xs: []Inner }` over a private
+// `Inner` is resolved by whoever holds an `Outer`, and that module has no `Inner` — the
+// backend crashed on exactly this, and would have picked the wrong declaration where the
+// reader had an `Inner` of its own. Stamping is idempotent and runs once per declaration.
+func (tc *TypeChecker) stampDeclaredNames(decl *ast.TypeDeclStmt) {
+	if decl == nil || tc.symTable == nil || tc.stampedDecls[decl] {
+		return
+	}
+	tc.stampedDecls[decl] = true
+	decl.Type = tc.stampNames(decl.Type, decl.GetLocation())
+}
+
+// stampNames walks a type and gives every UnresolvedType leaf the key `loc`'s module
+// resolves it to, leaving one that already carries a key alone.
+//
+// It descends through the composites *and* through an aggregate's members, which
+// resolveTypeWith deliberately does not: this is about the members.
+func (tc *TypeChecker) stampNames(t types.Type, loc ast.Location) types.Type {
+	switch v := t.(type) {
+	case types.UnresolvedType:
+		if v.Key == "" {
+			v.Key = tc.symTable.TypeKey(v.Name, loc)
+		}
+		return v
+	case types.StaticArrayType:
+		v.ElementType = tc.stampNames(v.ElementType, loc)
+		return v
+	case types.DynamicArrayType:
+		v.ElementType = tc.stampNames(v.ElementType, loc)
+		return v
+	case types.WeakType:
+		v.Inner = tc.stampNames(v.Inner, loc)
+		return v
+	case types.RawPointerType:
+		v.Pointee = tc.stampNames(v.Pointee, loc)
+		return v
+	case types.TupleType:
+		elements := make([]types.Type, len(v.Elements))
+		for i, e := range v.Elements {
+			elements[i] = tc.stampNames(e, loc)
+		}
+		v.Elements = elements
+		return v
+	case types.ParameterizedType:
+		args := make([]types.Type, len(v.TypeArguments))
+		for i, a := range v.TypeArguments {
+			args[i] = tc.stampNames(a, loc)
+		}
+		v.TypeArguments = args
+		return v
+	case types.NamedStructType:
+		v.Fields = tc.stampFields(v.Fields, loc)
+		return v
+	case types.UnionType:
+		v.Members = tc.stampFields(v.Members, loc)
+		return v
+	case types.AnonymousStructType:
+		v.Fields = tc.stampFields(v.Fields, loc)
+		return v
+	case types.DataType:
+		constructors := make([]types.DataTypeConstructor, len(v.Constructors))
+		copy(constructors, v.Constructors)
+		for i := range constructors {
+			params := make([]types.Type, len(constructors[i].Params))
+			for j, p := range constructors[i].Params {
+				params[j] = tc.stampNames(p, loc)
+			}
+			constructors[i].Params = params
+		}
+		v.Constructors = constructors
+		return v
+	case *types.ConstrainedType:
+		// Held by pointer and shared with every reference, so a copy is stamped rather
+		// than the declaration's own value — the reason resolveTypeWith copies a
+		// *LambdaType too.
+		stamped := *v
+		stamped.Type = tc.stampNames(v.Type, loc)
+		return &stamped
+	case *types.LambdaType:
+		stamped := *v
+		params := make([]types.ParameterType, len(v.Parameters))
+		copy(params, v.Parameters)
+		for i := range params {
+			params[i].Type = tc.stampNames(params[i].Type, loc)
+		}
+		stamped.Parameters = params
+		stamped.ReturnType.Type = tc.stampNames(v.ReturnType.Type, loc)
+		return &stamped
+	default:
+		return t
+	}
 }
 
 // resolveTypeIfKnown resolves an UnresolvedType only when the name is actually

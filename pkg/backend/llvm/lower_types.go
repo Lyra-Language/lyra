@@ -202,7 +202,7 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		if v.Allocation == types.Shared {
 			return t // a pointer; don't chase the referent (it may be recursive)
 		}
-		decl, ok := l.lookupTypeDecl(v.Name)
+		decl, ok := l.lookupTypeDeclKeyed(v.Key, v.Name)
 		if !ok {
 			return t // unknown name; SizeAndAlign will fail loudly downstream
 		}
@@ -385,7 +385,7 @@ func (l *lowerer) stripNewtype(t types.Type) types.Type {
 		if !ok || l.res.SymbolTable == nil {
 			return t
 		}
-		decl, ok := l.lookupTypeDecl(u.Name)
+		decl, ok := l.lookupTypeDeclKeyed(u.Key, u.Name)
 		if !ok {
 			return t
 		}
@@ -536,16 +536,55 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		// (`struct Line { a: Point }`) stays an UnresolvedType — the typechecker
 		// doesn't rewrite it to the concrete tuple/struct. Both declaration
 		// passes ran first, so the name resolves against structTypes.
-		return l.lookupNamedType(t.Name)
+		//
+		// **By its stamped key where it has one**: a field's type names the module that
+		// declared the struct, and this code belongs to whichever module holds the value
+		// (type_identity.go). Resolving the name from here crashed on a private field
+		// type from another module, and would have found a same-named declaration of the
+		// reader's own where it has one.
+		return l.lookupNamedTypeKeyed(t.Key, t.Name)
 	default:
 		return nil, fmt.Errorf("unknown type: %s", lyraType)
 	}
 }
 
-// lookupNamedType returns the LLVM struct type registered for a named tuple or
-// struct. It must already exist: every top-level type decl is declared (via
+// lookupNamedType returns the LLVM struct type registered for a named tuple or struct, as
+// the module being lowered sees the name — the ambient rule (type_identity.go). A name that
+// came from inside a declaration should go through lookupNamedTypeKeyed instead.
+//
+// It must already exist: every top-level type decl is declared (via
 // declareNamedStruct) before any definition is lowered, so a field/element
 // referencing another named type always resolves.
+// lookupNamedTypeKeyed answers the LLVM type for a name that carries its resolved identity
+// (types.UnresolvedType.Key), falling back to the ambient lookup for one that does not —
+// every name written *outside* a declaration, which means what the module being lowered
+// says it means.
+func (l *lowerer) lookupNamedTypeKeyed(key, name string) (lltypes.Type, error) {
+	if key != "" {
+		if st, ok := l.structTypes[key]; ok {
+			return st, nil
+		}
+		// A key that registers no LLVM type of its own is an alias or a newtype; the
+		// declaration it names says which, and the ambient path below expands it.
+		if decl, ok := l.lookupTypeDeclKeyed(key, name); ok && decl.IsAlias {
+			defer l.resolvingFrom(decl.GetLocation())()
+			return l.lowerType(decl.Type)
+		}
+	}
+	return l.lookupNamedType(name)
+}
+
+// lookupTypeDeclKeyed is the same rule for a declaration: the key identifies it outright,
+// and a name without one resolves as the module being lowered sees it.
+func (l *lowerer) lookupTypeDeclKeyed(key, name string) (*ast.TypeDeclStmt, bool) {
+	if key != "" && l.res != nil && l.res.SymbolTable != nil {
+		if decl, ok := l.res.SymbolTable.LookupTypeByKey(key); ok {
+			return decl, true
+		}
+	}
+	return l.lookupTypeDecl(name)
+}
+
 func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 	st, ok := l.structTypes[l.typeKey(name)]
 	if ok {
@@ -628,7 +667,7 @@ func (l *lowerer) lowerAnonymousTupleType(t types.TupleType) (*lltypes.StructTyp
 func (l *lowerer) resolveShape(t types.Type) types.Type {
 	switch v := t.(type) {
 	case types.UnresolvedType:
-		if decl, ok := l.lookupTypeDecl(v.Name); ok {
+		if decl, ok := l.lookupTypeDeclKeyed(v.Key, v.Name); ok {
 			return decl.Type
 		}
 	case types.ParameterizedType:
@@ -770,6 +809,14 @@ func (l *lowerer) resolvingFrom(loc ast.Location) func() {
 // declLocOf is where the named type is declared, as the current location resolves the name —
 // or the current location itself for a name the symbol table cannot place (an instantiation's
 // mangled symbol, say), which leaves resolution exactly as it was before.
+// declLocOfKeyed is declLocOf for a name that carries its resolved identity.
+func (l *lowerer) declLocOfKeyed(key, name string) ast.Location {
+	if decl, ok := l.lookupTypeDeclKeyed(key, name); ok && decl != nil {
+		return decl.GetLocation()
+	}
+	return l.currentLoc
+}
+
 func (l *lowerer) declLocOf(name string) ast.Location {
 	if decl, ok := l.lookupTypeDecl(name); ok && decl != nil {
 		return decl.GetLocation()
