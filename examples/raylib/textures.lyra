@@ -460,7 +460,6 @@ let loop_frames =
           draw_rectangle_lines(rect(420.0, 530.0, 260.0, 176.0), 2.0, DARKGRAY)
           draw_texture_pro(tex, rect(0.0, 0.0, f32(tex.width), f32(tex.height)),
             rect(422.0, 532.0, 256.0, 172.0), vec2(0.0, 0.0), 0.0, WHITE)
-          unload_texture(tex)
         },
         None => draw_text("press space", 420, 530, CAPTION, DARKGRAY),
       }
