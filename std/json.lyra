@@ -1,0 +1,420 @@
+module std.json
+//! JSON — [parse_json] turns text into a [JsonValue], and a handful of accessors read one.
+//!
+//! ```
+//! import std.json.{ parse_json, JsonNull, field, elements, as_number }
+//!
+//! match parse_json("{\"size\": [2, 3.5]}") {
+//!   Ok(doc) => for v in doc.field("size").unwrap_or(JsonNull).elements() {
+//!     println(v.as_number().unwrap_or(0.0))
+//!   },
+//!   Err(e) => println("${e.message} at byte ${e.offset}"),
+//! }
+//! ```
+//!
+//! **Every accessor answers something a chain can keep going through.** `field` and
+//! `element` answer a `Maybe`, and `elements` and `members` answer an empty array for
+//! anything that is not an array or object — so a document of known shape reads as one
+//! expression per value, with `unwrap_or(JsonNull)` bridging the `Maybe`, and a document of
+//! the wrong shape reads as empty rather than trapping. A caller that must tell "missing"
+//! from "empty" matches on the `Maybe`.
+//!
+//! **An object keeps its members in order, duplicates included**, as `[]JsonMember`. JSON
+//! only says names *should* be unique; [field] answers the last of a repeated name, which is
+//! what JavaScript does, and [members] shows them all.
+//!
+//! **Numbers are `f64`**, as JSON's own model has them. A number of at most 18 significant
+//! digits whose decimal exponent is within 22 converts exactly — one IEEE multiply or divide
+//! of two exact values — which covers every number a program writes by hand or a tool writes
+//! as a float's shortest form. Longer ones are scaled a digit at a time and may be an ulp
+//! or two from the correctly rounded value; there is no big-number arithmetic here.
+
+/// A JSON value.
+pub data JsonValue =
+  /// `null`.
+  JsonNull
+  /// `true` or `false`.
+  | JsonBool(bool)
+  /// A number — always a float, as JSON's own model has it.
+  | JsonNumber(f64)
+  /// A string, escapes decoded.
+  | JsonString(string)
+  /// An array.
+  | JsonArray([]JsonValue)
+  /// An object: its members in the order they were written.
+  | JsonObject([]JsonMember)
+
+/// One `"key": value` of an object.
+pub struct JsonMember {
+  /// The member's name, escapes decoded.
+  key: string,
+  /// The member's value.
+  value: JsonValue,
+}
+
+/// Why a text did not parse, and where: `offset` is a **byte** offset into the text.
+pub struct JsonError {
+  /// What was wrong, in a phrase: `unterminated string`, `trailing comma in an array`.
+  message: string,
+  /// The byte offset into the text where it was found.
+  offset: i64,
+}
+
+/// Parse a whole JSON text — one value, surrounded by nothing but whitespace.
+///
+/// # Errors
+///
+/// A [JsonError] naming the first thing wrong and the byte it was found at: an unexpected
+/// character, an unterminated string, a bad escape, a trailing comma, or anything after
+/// the value.
+pub let parse_json = pure (text: string) -> Result<JsonValue, JsonError> => {
+  let b = text.encode_utf8()
+  let (value, end) = parse_value(b, skip_space(b, 0))?
+  let rest = skip_space(b, end)
+  if rest < b.len() { return Err(fail("unexpected content after the value", rest)) }
+  Ok(value)
+}
+
+/// Member `key` of an object — the last, if the key repeats — or `None` for a missing key
+/// or a value that is not an object.
+pub let field = pure (self: JsonValue, key: string) -> Maybe<JsonValue> => match self {
+  JsonObject(ms) => {
+    var found: Maybe<JsonValue> = None
+    for m in ms { if m.key == key { found = Some(m.value) } }
+    found
+  },
+  _ => None,
+}
+
+/// Element `index` of an array, or `None` past its end or for a value that is not one.
+pub let element = pure (self: JsonValue, index: i64) -> Maybe<JsonValue> => match self {
+  JsonArray(xs) => if index >= 0 && index < xs.len() { Some(xs[index]) } else { None },
+  _ => None,
+}
+
+/// An array's elements, or none for a value that is not an array.
+pub let elements = pure (self: JsonValue) -> []JsonValue => {
+  let none: []JsonValue = []
+  match self {
+    JsonArray(xs) => xs,
+    _ => none,
+  }
+}
+
+/// An object's members in order, or none for a value that is not an object.
+pub let members = pure (self: JsonValue) -> []JsonMember => {
+  let none: []JsonMember = []
+  match self {
+    JsonObject(ms) => ms,
+    _ => none,
+  }
+}
+
+/// A number, or `None` for any other kind of value.
+pub let as_number = pure (self: JsonValue) -> Maybe<f64> => match self {
+  JsonNumber(n) => Some(n),
+  _ => None,
+}
+
+/// A number with no fractional part that an `i64` can hold, or `None`.
+pub let as_int = pure (self: JsonValue) -> Maybe<i64> => match self {
+  JsonNumber(n) => {
+    if n >= 0.0 - 9.0e18 && n <= 9.0e18 && n - f64(n.floor()) <= 0.0 { Some(n.floor()) } else { None }
+  },
+  _ => None,
+}
+
+/// A string, or `None` for any other kind of value — a number is not rendered as text.
+pub let as_text = pure (self: JsonValue) -> Maybe<string> => match self {
+  JsonString(s) => Some(s),
+  _ => None,
+}
+
+/// A `true` or `false`, or `None` for any other kind of value — there is no truthiness.
+pub let as_bool = pure (self: JsonValue) -> Maybe<bool> => match self {
+  JsonBool(v) => Some(v),
+  _ => None,
+}
+
+/// What kind of value this is — `"null"`, `"bool"`, `"number"`, `"string"`, `"array"` or
+/// `"object"` — for a message about a document of the wrong shape.
+pub let kind = pure (self: JsonValue) -> string => match self {
+  JsonNull => "null",
+  JsonBool(_) => "bool",
+  JsonNumber(_) => "number",
+  JsonString(_) => "string",
+  JsonArray(_) => "array",
+  JsonObject(_) => "object",
+}
+
+// ---------------------------------------------------------------------------------------
+// The parser
+// ---------------------------------------------------------------------------------------
+//
+// Recursive descent over the text's bytes, threading the position through: every step
+// answers the value it read and the offset after it. That keeps each step a pure function —
+// a parser object with a `mut` cursor would make every helper an impure call, and `pure`
+// refuses those even on a cursor the caller owns.
+
+let parse_value = pure (b: []u8, at: i64) -> Result<(JsonValue, i64), JsonError> => {
+  if at >= b.len() { return Err(fail("unexpected end of input", at)) }
+  let c = i64(b[at])
+  if c == 123 {                      // {
+    parse_object(b, at)
+  } else if c == 91 {                // [
+    parse_array(b, at)
+  } else if c == 34 {                // "
+    let (s, next) = parse_string(b, at)?
+    Ok((JsonString(s), next))
+  } else if c == 116 {
+    literal(b, at, "true", JsonBool(true))
+  } else if c == 102 {
+    literal(b, at, "false", JsonBool(false))
+  } else if c == 110 {
+    literal(b, at, "null", JsonNull)
+  } else if c == 45 || is_digit(c) { // - or a digit
+    parse_number(b, at)
+  } else {
+    Err(fail("unexpected character", at))
+  }
+}
+
+let parse_array = pure (b: []u8, open: i64) -> Result<(JsonValue, i64), JsonError> => {
+  var xs: []JsonValue = []
+  var i = skip_space(b, open + 1)
+  if byte_at(b, i) == 93 { return Ok((JsonArray(xs), i + 1)) }   // ]
+  // Every pass consumes at least one byte, so the bound is only ever met at the end of
+  // the input — which is then the error.
+  for i < b.len() {
+    let (v, next) = parse_value(b, i)?
+    xs.push(v)
+    i = skip_space(b, next)
+    let c = byte_at(b, i)
+    if c == 93 { return Ok((JsonArray(xs), i + 1)) }
+    if c != 44 { return Err(fail("expected `,` or `]` in an array", i)) }
+    i = skip_space(b, i + 1)
+    if byte_at(b, i) == 93 { return Err(fail("trailing comma in an array", i)) }
+  }
+  Err(fail("unexpected end of input in an array", i))
+}
+
+let parse_object = pure (b: []u8, open: i64) -> Result<(JsonValue, i64), JsonError> => {
+  var ms: []JsonMember = []
+  var i = skip_space(b, open + 1)
+  if byte_at(b, i) == 125 { return Ok((JsonObject(ms), i + 1)) }  // }
+  for i < b.len() {
+    if byte_at(b, i) != 34 { return Err(fail("expected a string key", i)) }
+    let (key, after_key) = parse_string(b, i)?
+    i = skip_space(b, after_key)
+    if byte_at(b, i) != 58 { return Err(fail("expected `:` after an object key", i)) }
+    let (v, next) = parse_value(b, skip_space(b, i + 1))?
+    ms.push(JsonMember { key: key, value: v })
+    i = skip_space(b, next)
+    let c = byte_at(b, i)
+    if c == 125 { return Ok((JsonObject(ms), i + 1)) }
+    if c != 44 { return Err(fail("expected `,` or `}` in an object", i)) }
+    i = skip_space(b, i + 1)
+    if byte_at(b, i) == 125 { return Err(fail("trailing comma in an object", i)) }
+  }
+  Err(fail("unexpected end of input in an object", i))
+}
+
+/// A string starting at the quote at `open`; answers the decoded text and the offset past
+/// the closing quote.
+let parse_string = pure (b: []u8, open: i64) -> Result<(string, i64), JsonError> => {
+  var out: []u8 = []
+  var i = open + 1
+  for i < b.len() {
+    let c = b[i]
+    if c == 34 { return Ok((out.decode_utf8(), i + 1)) }
+    if c < 32 { return Err(fail("control character in a string", i)) }
+    if c != 92 {
+      out.push(c)
+      i += 1
+    } else {
+      let e = byte_at(b, i + 1)
+      if e == 117 {                  // \uXXXX, and a surrogate pair's second half
+        let (cp, next) = parse_unicode_escape(b, i)?
+        for x in utf8_bytes(cp) { out.push(x) }
+        i = next
+      } else {
+        let decoded = simple_escape(e)
+        if decoded < 0 { return Err(fail("invalid escape", i)) }
+        out.push(u8(decoded))
+        i += 2
+      }
+    }
+  }
+  Err(fail("unterminated string", open))
+}
+
+/// The byte a one-character escape stands for, or -1 if `e` is not one.
+let simple_escape = pure (e: i64) -> i64 =>
+  if e == 34 || e == 92 || e == 47 { e }   // " \ /
+  else if e == 98 { 8 }                     // b
+  else if e == 102 { 12 }                   // f
+  else if e == 110 { 10 }                   // n
+  else if e == 114 { 13 }                   // r
+  else if e == 116 { 9 }                    // t
+  else { 0 - 1 }
+
+/// `\uXXXX` at `at`, joined with the low half that must follow a high surrogate. A lone
+/// surrogate decodes as U+FFFD, the replacement character, since it has no UTF-8 encoding.
+let parse_unicode_escape = pure (b: []u8, at: i64) -> Result<(i64, i64), JsonError> => {
+  let hi = match hex4(b, at + 2) {
+    Some(v) => v,
+    None => return Err(fail("invalid \\u escape", at)),
+  }
+  if hi >= 55296 && hi <= 56319 {                          // D800..DBFF
+    if byte_at(b, at + 6) == 92 && byte_at(b, at + 7) == 117 {
+      match hex4(b, at + 8) {
+        Some(lo) => {
+          if lo >= 56320 && lo <= 57343 {                  // DC00..DFFF
+            return Ok((65536 + (hi - 55296) * 1024 + (lo - 56320), at + 12))
+          }
+        },
+        None => { },
+      }
+    }
+    return Ok((65533, at + 6))
+  }
+  if hi >= 56320 && hi <= 57343 { return Ok((65533, at + 6)) }
+  Ok((hi, at + 6))
+}
+
+let hex4 = pure (b: []u8, at: i64) -> Maybe<i64> => {
+  var v = 0
+  for k in 0..<4 {
+    let d = hex_digit(byte_at(b, at + k))
+    if d < 0 { return None }
+    v = v * 16 + d
+  }
+  Some(v)
+}
+
+let hex_digit = pure (c: i64) -> i64 =>
+  if c >= 48 && c <= 57 { c - 48 }
+  else if c >= 97 && c <= 102 { c - 87 }
+  else if c >= 65 && c <= 70 { c - 55 }
+  else { 0 - 1 }
+
+/// A code point's UTF-8 encoding.
+let utf8_bytes = pure (cp: i64) -> []u8 => {
+  var out: []u8 = []
+  if cp < 128 {
+    out.push(u8(cp))
+  } else if cp < 2048 {
+    out.push(u8(192 | (cp >> 6)))
+    out.push(u8(128 | (cp & 63)))
+  } else if cp < 65536 {
+    out.push(u8(224 | (cp >> 12)))
+    out.push(u8(128 | ((cp >> 6) & 63)))
+    out.push(u8(128 | (cp & 63)))
+  } else {
+    out.push(u8(240 | (cp >> 18)))
+    out.push(u8(128 | ((cp >> 12) & 63)))
+    out.push(u8(128 | ((cp >> 6) & 63)))
+    out.push(u8(128 | (cp & 63)))
+  }
+  out
+}
+
+let parse_number = pure (b: []u8, start: i64) -> Result<(JsonValue, i64), JsonError> => {
+  var i = start
+  let negative = byte_at(b, i) == 45
+  if negative { i += 1 }
+  if !is_digit(byte_at(b, i)) { return Err(fail("expected a digit", i)) }
+  // The significant digits, at most 18 of them — an i64 holds those exactly — and the power
+  // of ten the mantissa stands short of the number by.
+  var mantissa = 0
+  var digits = 0
+  var scale = 0
+  if byte_at(b, i) == 48 {
+    i += 1
+    if is_digit(byte_at(b, i)) { return Err(fail("a number may not have a leading zero", i)) }
+  } else {
+    for is_digit(byte_at(b, i)) {
+      if digits < 18 {
+        mantissa = mantissa * 10 + (byte_at(b, i) - 48)
+        if mantissa > 0 { digits += 1 }
+      } else {
+        scale += 1
+      }
+      i += 1
+    }
+  }
+  if byte_at(b, i) == 46 {           // .
+    i += 1
+    if !is_digit(byte_at(b, i)) { return Err(fail("expected a digit after `.`", i)) }
+    for is_digit(byte_at(b, i)) {
+      if digits < 18 {
+        mantissa = mantissa * 10 + (byte_at(b, i) - 48)
+        if mantissa > 0 { digits += 1 }
+        scale -= 1
+      }
+      i += 1
+    }
+  }
+  let e = byte_at(b, i)
+  if e == 101 || e == 69 {           // e E
+    i += 1
+    var exp_negative = false
+    let sign = byte_at(b, i)
+    if sign == 43 || sign == 45 {
+      exp_negative = sign == 45
+      i += 1
+    }
+    if !is_digit(byte_at(b, i)) { return Err(fail("expected a digit in the exponent", i)) }
+    var exp = 0
+    for is_digit(byte_at(b, i)) {
+      if exp < 100000 { exp = exp * 10 + (byte_at(b, i) - 48) }
+      i += 1
+    }
+    if exp_negative { scale -= exp } else { scale += exp }
+  }
+  let magnitude = scaled(mantissa, scale)
+  Ok((JsonNumber(if negative { 0.0 - magnitude } else { magnitude }), i))
+}
+
+/// `m * 10^e`. Exact where both factors are — `m` below 2^53 and `|e|` at most 22, since
+/// every power of ten up to 10^22 is a double — and a digit at a time beyond that.
+let scaled = pure (m: i64, e: i64) -> f64 => {
+  var v = f64(m)
+  if m == 0 { return 0.0 }
+  if e >= 0 {
+    if e <= 22 { return v * pow10(e) }
+    for _ in 0..<min(e, 400) { v = v * 10.0 }
+  } else {
+    if 0 - e <= 22 { return v / pow10(0 - e) }
+    for _ in 0..<min(0 - e, 400) { v = v / 10.0 }
+  }
+  v
+}
+
+let pow10 = pure (e: i64) -> f64 => {
+  var p = 1.0
+  for _ in 0..<e { p = p * 10.0 }
+  p
+}
+
+let literal = pure (b: []u8, at: i64, word: string, value: JsonValue) -> Result<(JsonValue, i64), JsonError> => {
+  let w = word.encode_utf8()
+  for k in 0..<w.len() {
+    if byte_at(b, at + k) != i64(w[k]) { return Err(fail("expected `${word}`", at)) }
+  }
+  Ok((value, at + w.len()))
+}
+
+/// The byte at `i`, or -1 past the end — so a test at the end of input needs no guard.
+let byte_at = pure (b: []u8, i: i64) -> i64 => if i < b.len() { i64(b[i]) } else { 0 - 1 }
+
+let skip_space = pure (b: []u8, from: i64) -> i64 => {
+  var i = from
+  for is_space(byte_at(b, i)) { i += 1 }
+  i
+}
+
+let is_space = pure (c: i64) -> bool => c == 32 || c == 9 || c == 10 || c == 13
+let is_digit = pure (c: i64) -> bool => c >= 48 && c <= 57
+
+let fail = pure (message: string, at: i64) -> JsonError => JsonError { message: message, offset: at }
