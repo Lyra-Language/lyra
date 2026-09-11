@@ -248,13 +248,13 @@ write today:
   E is not convertible to … E"): the enclosing return type was compared as written against
   the operand's resolved one. Both are resolved now. Found writing `std.json`.
 
-- **[OPEN 09/11] A private struct in a public struct's field fails from another module.**
-  `pub struct Outer { xs: []Inner }` over a private `Inner` builds, but releasing an `Outer`
-  in `main` fails with `unknown named type "Inner"`: the backend's type lookup is ambient to
-  the item being lowered (type_identity.go), and a field's type names the *declaring*
-  module. With a same-named type in the user's module it would lower the wrong layout
-  silently. Central fix: stamp a resolved key on nested names. `examples/raylib/gltf.lyra`
-  works around it with `pub` types.
+- **[DONE 09/11] A private struct in a public struct's field failed from another module.**
+  `pub struct Outer { xs: []Inner }` over a private `Inner` built, but releasing an `Outer`
+  in `main` failed with `unknown named type "Inner"` — and with a same-named type in the
+  reader's module it lowered the wrong layout and segfaulted. Fixed by stamping the
+  resolved declaration on a name written inside a declaration
+  (`types.UnresolvedType.Key`), which the ownership walk and the backend's lookups now
+  prefer; see COMPLETED.md.
 
 - **[OPEN 09/11] `@must_release`'s view rule does not see through `unsafe`.** `let old =
   unsafe { slot^.texture }` reads a texture a model still holds, yet W022 demands it be

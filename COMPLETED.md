@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 09/11/26 — a name inside a declaration belongs to the declaring module
+
+`pub struct Outer { xs: []Inner }` over a **private** `Inner` built, and then failed the
+moment another module released an `Outer`: `llvm: unknown named type "Inner"`. The backend
+resolves a type name as the item it is currently lowering sees it — the ambient rule
+type_identity.go sets out, on the reasoning that "every type reference in that item is made
+*from* that module". A declaration's **field types** are the exception: they are references
+made from the module that declared the struct, and the code walking them (a release, an
+equality, a layout, a drop) belongs to whichever module holds the value.
+
+**The crash was the polite half.** Where the reader declares its own type of that name, the
+lookup *succeeds* and answers the wrong declaration: a `struct Inner { name: string }` in
+`main` made the ownership pass call the library's all-`i64` `Inner` managed, and the
+generated drop glue released its first field as a pointer — the program printed the right
+answer and segfaulted on the way out. A fallback keyed on the name could not have fixed
+that, which is why the name had to carry its identity (rule 9).
+
+**`types.UnresolvedType` now carries the declaration it resolved to** —
+`<module>::<name>`, stamped by the typechecker on the names written inside a declaration
+the first time it is resolved (`stampDeclaredNames`, in place, so the resolution cache, the
+generic-instantiation path that copies `decl.Type`, and the backend all see it). Like
+`Allocation` it is not part of nominal identity: `TypesEqual` compares the name alone, and
+a name with no key — every name written *outside* a declaration — resolves exactly as
+before. Four lookups prefer it (`lookupNamedTypeKeyed`, `lookupTypeDeclKeyed`,
+`declLocOfKeyed`, and `ownership.lookupNamed`, which the drop decision goes through).
+
+**One more collision came out of it.** The drop-glue cache was keyed on `t.String()`,
+which is the bare *name* for a declared type — so two modules' private `Inner`s shared one
+entry and one generated function, whichever was built first. `dropKey` keys a named type by
+its **declaration** now (`SymbolTable.DeclKey`, from the declaration's own file), and keeps
+the rendering for anonymous composites.
+
+Both halves of that sentence were paid for. Keying by the *name* alone collapsed every
+anonymous tuple in a program onto one entry — a tuple renders its elements, and an anonymous
+one's "name" is that rendering rather than a declaration — so three tuples shared one
+`lyra_drop` function that released another's fields, and four tests with nothing to do with
+modules (the prelude's `unwrap_or`, `sort`, a JSON walk under ASan, raylib's files)
+segfaulted at once. Deriving the key from the *asking* side instead gave one type two keys,
+since a struct arrives here sometimes as a stamped `UnresolvedType` and sometimes as the
+resolved `NamedStructType`: two identical glue functions, and every release inside them
+counted twice — which is what `TestEmit_RetainGlueMirrorsDropGlue` exists to catch. The
+declaration is the one identity both paths agree on.
+
+`examples/raylib/gltf.lyra`'s three internal structs are private again; they were `pub`
+only to dodge this.
+
 ### 09/11/26 — the textures raylib cannot decode
 
 "CesiumMan doesn't show any textures." Nothing in the model or the viewer was wrong:
