@@ -128,6 +128,18 @@ real failure, and none is local to one package.
      said was pure. Nothing reported it: the collision draws lyra-W016, which is about
      which declaration a *reference* means and says nothing about a bound going missing.
      A pass that cannot do a rule-4 lookup needs the table threaded in, not a local index.
+   - **Layout checks pay it too.** `hasCLayout` resolved each struct field's type with an
+     *empty* location, so a field whose type was private to the declaring module resolved
+     to nothing and the struct was refused as having "no C spelling" (lyra-E063) — which
+     is how `bindings/raylib`'s `Model`, holding a private `ModelSkeleton`, made twelve
+     externs fail (09/11). A struct's or union's fields are resolved from its own
+     declaration now (`declarationSite`). **The backend had the same bug in its own
+     copy** — `resolveForLayout` resolved each field from `l.currentLoc`, the code being
+     *lowered*, so the same struct held in a `[]T` in another module could not be sized
+     ("cannot size dynamic array element type"). It switches to the declaration's location
+     while resolving a declaration's fields (`resolvingFrom`/`declLocOf`). Fixing the
+     typechecker's copy is what let the example get far enough to reach the backend's: two
+     copies agreeing and both wrong, which rule 8 warns about.
    - The backend pays it too: `namespaceCallee` must not test membership with
      `DeclaringModule` and read `l.funcs[name]`, or a shadowed name called through a
      namespace (`seq.map(…)`) dies as `llvm: unsupported method call` on a program the
@@ -539,6 +551,32 @@ real failure, and none is local to one package.
     lower **branchlessly**, because a branching one returns a merge block, which is neither
     case `flushStmtTemps` handles — it released the string before the `match` consuming it.
     `<=>` is lowered branchlessly for the same reason.
+
+18. **A fact about a variable's value is only as good as the pass's knowledge of every write
+    to it — and the backend drops runtime checks on those facts.** The value-range pass
+    proves an index in bounds, an add non-overflowing or a divisor non-zero, and
+    `res.RangeSafety` then removes the trap outright (`arrays.go`, `arithmetic.go`). So a
+    stale interval is not a wrong warning; it is a **missing trap in safe code**.
+
+    Until 09/11 the pass did not know `&mut` existed. After `set(&mut i, 7)` it still
+    believed `i == 0`, and `xs[i]` read past the array, `x + 10` wrapped a u8 and `10 / d`
+    divided by zero, in programs whose only `unsafe` was the call doing the write. A name
+    whose address is taken with `&mut` is now **never tracked in that function**
+    (`tracked`, the one read of a stored interval), and flow-insensitively on purpose:
+    `let p = &mut i; i = 0; p^ = 7` re-establishes `i == 0` after any site-local havoc,
+    and the write through `p` stays invisible.
+
+    **`resolveConstantInt` had the same shape one pass over.** It folded *any* binding to
+    its initializer, so `var i = 5; i = 0; xs[i]` was refused as "index 5 out of range" — a
+    hard error on a correct program — and a tuple index through a `var` was typed by the
+    initializer whatever the binding had become. Only a binding that cannot change folds
+    (`!CanMutateInterior()`): a `var` can be reassigned, and a `let mut` can be written
+    through `&mut`.
+
+    **When adding a way to write a binding** — a new assignment form, a new pointer
+    operation, a callback that receives an out-parameter — check both: the range pass must
+    either model it or untrack the name, and constant folding must not treat the binding as
+    fixed.
 
 ## Documentation comments
 
@@ -1264,7 +1302,8 @@ The standard library's sources live in `std/` and are tracked. The prelude is `s
 **one module across several files** — `std/prelude/README.md` documents the constraints on
 what may go in it and why the split is within a module rather than into several.
 Beside it: `std/collections/` (`HashMap<k, v>` and the `Hash` trait — the workspace
-`CLAUDE.md` has the rules), `std/math/`, `std/tui/`, `std/ffi.lyra` and `std/io.lyra`
+`CLAUDE.md` has the rules), `std/json.lyra` (`parse_json` and its accessors — rules in the
+workspace `CLAUDE.md`), `std/math/`, `std/tui/`, `std/ffi.lyra` and `std/io.lyra`
 (`read_file`, over three libc externs), each an ordinary module a program imports by name.
 
 ## Testing
@@ -1710,6 +1749,11 @@ entirely.
   only handle, so there the arm must release and the report lands on the payload. Both
   halves are pinned by tests, and getting the first one backwards produced a false
   positive on the shape every program with a long-lived optional resource writes.
+- **Reading a stored place is a view too** (09/11): a field, element or deref —
+  `match o.anims { Some(a) => … }`, `var m = o.model` — names a resource something else
+  already holds, so the obligation stays with the holder (`isStoredPlaceRead`). Treating
+  either as an acquisition advised the program to release it twice. A call beside it is
+  still an acquisition.
 - **Escape is the default, and there is deliberately no list of construction kinds.** A
   held binding mentioned anywhere but a borrowing call argument escapes — returned,
   wrapped in a `Some`, put in a struct, captured, aliased. A whitelist of the two
@@ -1924,6 +1968,121 @@ the shapes module again but rasterising onto an `Image`; and the remaining image
 manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`) is a
 fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
 pointer and a size of **0**, measured.
+
+**`bindings/jpeg.lyra` is libjpeg-turbo** (09/11), and it exists because **raylib decodes
+only the image formats its build was compiled with**: Homebrew's raylib 6.0 has no
+`SUPPORT_FILEFORMAT_JPG`, so every JPEG logs `IMAGE: Data format not supported` and loads as
+an invalid image — 41 of the 145 Khronos sample models draw untextured, CesiumMan and
+DamagedHelmet among them. `decode_jpeg(bytes) -> Maybe<Jpeg>` answers **RGBA pixels a Lyra
+array owns** (TurboJPEG fills a buffer it is handed, so nothing here is C-allocated), and
+covers progressive JPEGs as well as baseline — two fifths of those files. The glTF viewer
+decodes what raylib could not and puts the texture back in its slot; the `Image` it hands
+raylib points at the Lyra buffer and is never `unload_image`d, since that would free Lyra's
+memory with raylib's allocator. Link with `-lturbojpeg` (`brew install jpeg-turbo`,
+Debian `libturbojpeg0-dev`), whose directory must be on `LIBRARY_PATH` beside raylib's.
+
+**`bindings/raylib/shaders.lyra` is the ninth** (09/11) — 4 functions taking raylib to
+**471 of 600**: a shader compiled from GLSL source, its uniform locations, and the texture
+slots a material feeds it. What it establishes:
+
+- **raylib draws every model unlit.** Its default shader, read out of the library, is
+  `texel * colDiffuse * vertexColor`: the normal, occlusion, metallic-roughness and emission
+  textures a glTF loads are never sampled. A lit picture needs a shader of the program's own.
+- **A failed compile is `None`, not the default shader.** raylib answers its default program
+  in place of one that did not compile, which draws — unlit — and looks like success.
+- **`bind_shader_map` is how a sampler gets a slot.** raylib looks up `texture0`..`texture2`
+  for the first three and nothing else; the rest are `locs[SHADER_LOC_MAP_ALBEDO + map]`,
+  which is why `Shader.locs` is a `^mut i32`.
+- **Uniform values are unbound**: `SetShaderValue` takes a `const void *` and no Lyra pointer
+  reaches one (the `LoadMaterials` limit). A per-material value goes in as a texture — the
+  viewer packs a material's floats into one row, a float per texel.
+- **`set_backface_culling` and `set_depth_write`** are raylib's rlgl state toggles, which a
+  see-through or double-sided glTF material needs.
+- **`Shader` is `@must_release(unload_shader)`**, and `unload_model` does not free one — a
+  shader is usually shared by several models.
+
+**`bindings/raylib/models.lyra` is the eighth** (09/11) — 46 functions taking raylib to
+**467 of 600**: meshes, models, materials and animations, the half of the 3D surface that
+loads and releases. What it establishes:
+
+- **Everything that touches the GPU is gated on `window_ready()`.** `GenMeshCube` with no
+  window does not fail — it warns twice and then **segfaults**, measured in a pure-C caller —
+  so every generator, `load_model`, `model_from_mesh` and `load_material_default` answers a
+  `Maybe`, the rule `image_text` set for the built-in font. **A hidden window
+  (`FLAG_WINDOW_HIDDEN`) is enough** to get a GL context, which is how the example's
+  `--check` and the backend test run the whole family without anything appearing.
+- **A model owns its meshes, so `model_from_mesh` takes `own Mesh`.** raylib keeps the
+  mesh's buffers and frees them in `UnloadModel`; unloading the mesh too is a double free,
+  measured (the C caller aborts). `own` is what the language already means by "this call
+  takes it", so `@must_release` treats the mesh as handed over and a later `unload_mesh` of
+  it is a use-after-move error.
+- **A model's meshes and materials are not handed out as values**, because a `Mesh` read out
+  of a model is a second handle to buffers the model frees. Picking goes through
+  `model_bounding_box` rather than `ray_hits_mesh` on a borrowed mesh.
+- **`Animations` is one handle for the whole array**, since raylib frees the clips together
+  (`UnloadModelAnimations(ptr, count)`); a `@must_release` per clip would demand releases
+  that do not exist. Clip access is bounds-checked and traps, as `xs[i]` does. **The animation
+  half is tested against a real model** — the Khronos glTF Fox sample, downloaded for
+  testing and not committed: three clips with the right names and frame counts, all valid
+  for its skeleton, stepped and blended.
+- **`draw_mesh_instanced` batches only when the shader can.** raylib's `DrawMeshInstanced`
+  needs a shader with a per-instance transform attribute, and the default material's has
+  none (location -1, measured in C); given that shader, raylib draws **one mesh at the origin
+  and ignores every transform**, with no error. The binding falls back to one `draw_mesh` per
+  transform, and `material_supports_instancing` says which a caller is getting. Found by the
+  example's first screenshot, which had one cube where there should have been nine.
+- **`matrix_identity` and `matrix_translation` are Lyra; the rest of the transforms are
+  raymath** (`raymath.lyra`), which raylib builds into the library and exports — 87
+  functions, of which the rotations, scale and `matrix_multiply` are bound, angles as
+  `Degrees`. That is how a language with no `sin`/`cos` turns a model: raylib does the
+  trigonometry. **`matrix_multiply(first, second)` applies `first` and then `second`**,
+  checked by moving and turning a cube and casting a ray where each order should have left
+  it. raylib's translation lives in `m12`/`m13`/`m14`, checked the same way.
+- **`model_valid` is not "did this load", and `load_model` does not use it.** raylib's
+  `IsModelValid` requires every vertex attribute with data to have a GPU buffer, and a model
+  raylib skins on the CPU — every animated glTF under the default shader — keeps its bone
+  indices and weights on the CPU with no buffer. So it answers false for a model that loads
+  and draws perfectly (measured on the Fox: vertices and texcoords uploaded, bone data with
+  no buffer). `load_model` tests what raylib's own loader reports, a model with no meshes,
+  and until 09/11 every animated glTF loaded as `None`.
+- **`unload_model` frees the model's textures**, which raylib's `UnloadModel` does not —
+  measured, the Fox's texture stayed on the GPU — and a Lyra program cannot, since a model's
+  materials are not handed out. Each distinct texture is freed once, raylib's shared 1x1
+  default never.
+- **A model's meshes and materials are reached by index** (`model_mesh_has_normals`,
+  `model_material_has_texture`, `set_model_material_texture`, `set_model_material_shader`,
+  …), bounds-checked and trapping, never handed out as values. A texture set on a model is
+  taken `own` and freed with it.
+- **A glTF may carry no normals** — the Fox has none — and raylib then feeds every vertex one
+  constant default, a unit vector a shader cannot tell from a real normal. The null
+  `normals` pointer on the CPU is the only reliable signal.
+- **`examples/raylib/gltf_viewer.lyra` opens any model raylib can load** — path arguments or
+  drag-and-drop — frames it from its bounding box, turns and zooms it, and plays and
+  crossfades its clips; `--check <path>` runs headlessly. **It lights what it draws**: its own
+  metallic-roughness shader, in a smooth and a flat variant (the flat one for a mesh with no
+  normals), with 1x1 textures filling every slot a material lacks. `--check` proves the
+  lighting reaches pixels by reading a lit sphere back off the screen. **It plays node
+  animations too**, which raylib does not, and **reads what raylib's loader drops from a
+  material** — both in `gltf.lyra`, a sibling module the viewer imports as `gltf` (so it
+  resolves from the viewer's own directory), over `std.json`. For animation it answers a
+  matrix per raylib mesh: raylib bakes each node's rest world transform into its mesh's
+  vertices (measured), so the matrix undoes that before applying the animated one, and meshes
+  are matched to nodes by raylib's order — nodes in file order, one mesh per triangle
+  primitive — which the viewer checks against the model's mesh count. For materials it reads
+  each texture's UV set, `KHR_texture_transform` and sampler wrap, the normal and occlusion
+  strengths, the factors, emissive strength, transmission, clearcoat and alpha mode; raylib's
+  material `i + 1` is the file's `i` (raylib puts a default at 0 — measured on CarConcept).
+  **Those reach the shader as a one-row texture of floats** (four bytes a texel, read back
+  with `texelFetch` + `uintBitsToFloat`), since uniform values cannot be set. See-through
+  materials are drawn after opaque ones with depth writes off, and back faces are drawn.
+- **`LoadMaterials` is unbound, and it is a language limit.** Its array must go back to
+  `MemFree`, declared once as `(^u8) -> void`; Lyra has no pointer reinterpretation, so a
+  `^Material` cannot reach it, and a second declaration with a `^Material` parameter is one C
+  symbol with two signatures, which the backend refuses by name.
+
+**Binding it found three compiler bugs**, the first a memory-safety miscompile — see rule 18
+and COMPLETED.md (09/11): the value-range pass ignored `&mut`, `resolveConstantInt` folded a
+`var` to its initializer, and `hasCLayout` could not see a private field type.
 
 **`bindings/raylib/files.lyra` is the seventh** (09/10) — 40 functions taking raylib to
 **426 of 600**: files, directories, and the DEFLATE/Base64/hash helpers raylib already

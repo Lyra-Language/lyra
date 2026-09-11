@@ -240,6 +240,34 @@ write today:
 
 ## Known bugs
 
+- **[OPEN 09/11] A compound assignment will not take an `if` expression.** `x = if c { 1 }
+  else { 2 }` parses; `x += if c { 1 } else { 2 }` is a syntax error. A grammar gap in the
+  compound-assignment rule's right-hand side; `std/json.lyra` writes the two branches out.
+
+- **[DONE 09/11] `?` refused every struct error type**, identical ones included ("error type
+  E is not convertible to … E"): the enclosing return type was compared as written against
+  the operand's resolved one. Both are resolved now. Found writing `std.json`.
+
+- **[OPEN 09/11] A private struct in a public struct's field fails from another module.**
+  `pub struct Outer { xs: []Inner }` over a private `Inner` builds, but releasing an `Outer`
+  in `main` fails with `unknown named type "Inner"`: the backend's type lookup is ambient to
+  the item being lowered (type_identity.go), and a field's type names the *declaring*
+  module. With a same-named type in the user's module it would lower the wrong layout
+  silently. Central fix: stamp a resolved key on nested names. `examples/raylib/gltf.lyra`
+  works around it with `pub` types.
+
+- **[OPEN 09/11] `@must_release`'s view rule does not see through `unsafe`.** `let old =
+  unsafe { slot^.texture }` reads a texture a model still holds, yet W022 demands it be
+  released — a stored place wrapped in an `unsafe` block is taken for an acquisition.
+  `set_model_material_texture` avoids binding one; `isStoredPlaceRead` should look through
+  the block and through a deref.
+
+- **[DONE 09/11] Three raw-pointer gaps, found binding a model's materials.** A deref was
+  not an assignment path element (`p.offset(i)^.shader = s` failed in the backend), and with
+  that closed two front-end holes opened: the path was checked against no `^mut` rule and
+  charged nothing by `pure`. And `let _ = p` on any raw pointer failed — the pattern path
+  took every pointer for a `shared` box. All pinned by tests (COMPLETED.md).
+
 - **[DONE 09/09] A closure over a named type did not lower in a file declaring a
   `module`.** `let cap = pure () -> u32 => s.a` over a `let s = Pt { a: 5 }` failed with
   `llvm: cannot lower captured binding "s": llvm: unknown named type "Pt"`; without the
@@ -3456,6 +3484,19 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
+### A tuple assignment does not give untyped literals its places' widths
+
+    var a: f32 = 1.0
+    var b: f32 = 2.0
+    a = 3.0                 // fine: the literal takes a's width
+    (a, b) = (4.0, 5.0)     // error: a: cannot assign f64 to f32
+
+The desugaring (`let (t0, t1) = rhs; a = t0; b = t1`) types its temporaries from the
+literals' own defaults, so an untyped float becomes f64 before it meets an f32 place. A plain
+assignment propagates the place's type into the literal; the tuple form should push each
+place's type into its element the same way. Found 09/11 writing
+`examples/raylib/gltf_viewer.lyra`, which assigns the reset view one field at a time instead.
+
 ### `default_font()` draws lyra-W022 advising a call raylib ignores
 
     let f = default_font()
@@ -3496,6 +3537,32 @@ texture half cannot be tested for.
   see COMPLETED.md for that, for the `image_text` segfault the binding gates, and for the
   `dither` packing that leaves an image in an invalid pixel format.
   `examples/raylib/painting.lyra` exercises all 36, with 49 pixel checks under `--check`.
+
+- **`bindings/raylib/models.lyra`** — **[DONE 09/11]**, 46 functions: meshes, models,
+  materials, animations. **467 of 600.** GPU calls gated on `window_ready()` (raylib
+  segfaults without one); `model_from_mesh` takes `own Mesh`. Animations tested against
+  the Khronos Fox sample (downloaded for testing, not committed). `LoadMaterials` unbound: no pointer
+  reinterpretation to reach `MemFree`. Found three compiler bugs, all fixed (COMPLETED.md).
+  `unload_model` also frees the material textures raylib's `UnloadModel` leaks.
+
+- **`bindings/raylib/shaders.lyra`** — **[DONE 09/11]**, 4 functions: load from memory,
+  valid, location, unload, plus `bind_shader_map`. **471 of 600.** **Uniform values
+  (`SetShaderValue*`) are unbound** — a `const void *` no Lyra pointer reaches; the viewer
+  passes per-material numbers as 1x1 textures and uses two shader variants for a switch.
+
+- **glTF node animation** — **[DONE 09/11]**, `examples/raylib/gltf.lyra` over the new
+  `std.json`: translation/rotation/scale, STEP/LINEAR/CUBICSPLINE. All 12 node-animated
+  Khronos samples load. **Not played: morph targets and `KHR_animation_pointer`**, and node
+  clips switch without crossfading.
+- **`bindings/jpeg.lyra`** — **[DONE 09/11]**, libjpeg-turbo: `decode_jpeg` answers RGBA a
+  Lyra array owns, baseline and progressive alike. raylib's build decodes no JPEG, so 41 of
+  the Khronos samples drew untextured; the viewer decodes those itself. **WebP and KTX2/Basis
+  textures are still undecoded** — one sample and the `*-KTX-BasisU` variants.
+
+- **glTF materials** — **[DONE 09/11]**, the same module: UV sets, texture transforms,
+  sampler wrap, factors, emissive strength, transmission (approximated, not refracted),
+  clearcoat, alpha modes. **Not read: `KHR_materials_variants`, iridescence, sheen, specular,
+  IOR, volume**, and see-through meshes are not sorted back to front.
 
 - **`bindings/raylib/files.lyra`** — **[DONE 09/10]**, 40 functions: files, directories,
   dropped files, DEFLATE, Base64 and the four hashes. **426 of 600.** `std.io` stays the

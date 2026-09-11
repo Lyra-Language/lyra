@@ -9,6 +9,315 @@ Newest first.
 
 ## Dated log
 
+### 09/11/26 — the textures raylib cannot decode
+
+"CesiumMan doesn't show any textures." Nothing in the model or the viewer was wrong:
+**raylib decodes only the image formats its build was compiled with**, and Homebrew's raylib
+6.0 has no `SUPPORT_FILEFORMAT_JPG` — its format list is PNG, BMP, GIF, QOI and DDS, and the
+binary carries no JPEG code at all. CesiumMan's one texture is a JPEG in the GLB's binary
+chunk, so raylib logged `IMAGE: Data format not supported` and handed back an invalid image,
+which draws as flat white. 41 of the 145 Khronos sample models are JPEG-textured.
+
+**`bindings/jpeg.lyra` is libjpeg-turbo**, five `extern`s over the TurboJPEG API: read the
+header for the dimensions, then decompress into RGBA. **The pixels stay Lyra's** — TurboJPEG
+fills a buffer it is handed rather than allocating one, so there is nothing to release and no
+C allocation to track, and `data_mut()` is what hands it over. It reads progressive JPEGs as
+well as baseline, which is why it is a binding rather than a decoder written here: 99 of the
+samples' 235 JPEGs are progressive, and a hand-written baseline decoder would have left those
+blank.
+
+The viewer asks the file which image feeds each material slot and what it is encoded in
+(`load_images`, also new), decodes the JPEGs itself, and uploads each one once however many
+slots use it — `unload_model` frees each distinct texture once, so sharing is safe. The
+`Image` handed to raylib points at the Lyra array and is **never** `unload_image`d: that
+would hand Lyra's memory to raylib's allocator.
+
+A test decodes a 16x8 fixture embedded in it as base64 — red left half, blue right half,
+alpha opaque — and refuses a buffer that is not a JPEG. Still undecoded: WebP, and the
+KTX2/Basis variants of the sample models.
+
+### 09/11/26 — what raylib drops from a glTF material, read back
+
+"CarConcept doesn't render correctly." Its paint came out blotchy and its glass opaque white,
+and neither was the lighting's fault: **raylib's glTF loader keeps a material's textures and
+base colour and drops almost everything else.** CarConcept samples occlusion on its second
+UV set, tiles its paint-flake normal map 30 times at 0.3 strength with
+`KHR_texture_transform`, makes its glass fully transmissive, and multiplies its lights'
+emission by up to 10 — so the flake map was stretched across the whole body at full
+strength, the occlusion landed on the wrong coordinates, and the glass drew as a white
+panel that hid the seats.
+
+**`gltf.lyra` (renamed from `gltf_anim.lyra`) now reads each material too**: every texture
+slot's UV set, transform and sampler wrap; normal and occlusion strength; the metallic,
+roughness and emissive factors; and `KHR_materials_emissive_strength`, `_transmission` and
+`_clearcoat`, and the alpha mode. raylib's material `i + 1` is the file's `i` — raylib puts
+a default at 0, measured on all 109 of CarConcept's meshes. **The numbers reach the shader as
+a texture**, since uniform values cannot be set: one row, each texel one float's four
+bytes, read back exactly with `texelFetch` and `uintBitsToFloat`. The viewer draws opaque
+meshes first and see-through ones after, with depth writes off, and back faces throughout.
+
+Checked against Khronos's own test models rather than against the car alone:
+TextureTransformTest's markers (offset, rotation direction, scale, all three, and the
+sampler's clamp), TextureCoordinateTest's corners, and AlphaBlendModeTest's opaque, blend
+and three cutoff columns all match their reference screenshots. The metals there showed a
+lighting flaw too: the ambient reflection faded out with roughness, so glTF's *default*
+material — a rough metal — drew nearly black; it is the split-sum approximation now. And TextureCoordinateTest's back plane exposed a colour-space slip: the shader decoded
+`texture × base colour factor` from sRGB as a whole, but only the texture is sRGB — glTF's
+factors and vertex colours are linear — so every factor was squared a second time, a 0.16
+grey came out at 0.018, and the car's 0.67 red at 0.41.
+
+Not read: `KHR_materials_variants` (the file's default assignment is drawn), iridescence,
+sheen, specular, IOR and volume; transmission is a see-through surface rather than
+refraction; and see-through meshes are drawn in file order rather than back to front.
+
+### 09/11/26 — node animations, `std.json`, and `?` on a struct error
+
+"BoxAnimated is supposed to be animated, but the viewer doesn't show any animations." raylib
+plays **skeletal** animation only: `LoadModelAnimations` builds clips for a skinned model and
+answers nothing for a file that animates its *nodes* — BoxAnimated rotates one node and slides
+another, and has no skin. `LoadModel` also flattens the node tree, baking each node's world
+transform into its mesh's vertices (measured: a node translated by 5 loads with its vertices
+at 5 and an identity model transform), so the node transforms are not there to animate.
+About a dozen of the 26 animated Khronos samples are like this.
+
+**The viewer now reads such a file's animations itself.** `examples/raylib/gltf_anim.lyra`
+parses the GLB's JSON with the new `std.json`, reads keyframes out of the binary chunk (or a
+`data:` URI, or a `.bin` beside a `.gltf`), samples translation, rotation and scale with STEP,
+LINEAR (slerp for rotation) and CUBICSPLINE, composes the node tree parents first, and answers
+per raylib mesh the matrix that undoes the rest transform raylib baked in and applies the
+animated one. The viewer draws a mesh at a time at `pose × framing`. Meshes are matched to
+nodes by raylib's order — every node with a mesh in file order, one mesh per triangle
+primitive — and the viewer drops the animation, saying so, if the counts disagree. Floats
+come out of the buffer through a C `union` of `u32` and `f32`, the one way Lyra reads memory
+as a type other than the one written. All 12 node-animated samples in the Khronos repository
+load with finite poses; a backend test writes its own GLB and checks the posed matrices
+against hand-worked values for all three interpolations.
+
+**`std.json` is new**, and general rather than glTF's: a recursive `data JsonValue`, a pure
+recursive-descent parser threading a byte offset, and accessors that answer a `Maybe` or an
+empty array so a chain keeps going. Numbers take the exact path for up to 18 digits and a
+decimal exponent within 22.
+
+**Two compiler bugs came with it.** `?` refused every struct error type — `Result<_, E>`
+propagated out of a function returning `Result<_, E>` was "E is not convertible to E",
+because the enclosing return type was compared as written against the operand's resolved
+one; both are resolved now. And a public struct whose field is an array of a *private*
+struct fails in the backend once another module releases a value of it: the backend resolves
+type names from the module being lowered, and a struct's field types name the module that
+declared them. That one is not fixed — with a same-named type in the using module it would
+silently lower the wrong layout, so it needs the name to carry its identity rather than a
+fallback — and is filed in todo.md with the reduction; `gltf_anim.lyra` makes its types
+`pub` meanwhile. A compound assignment also turned out not to accept an `if` expression
+(`x += if c { 1 } else { 2 }`), a grammar gap, filed.
+
+### 09/11/26 — the viewer lights its models, and three raw-pointer gaps
+
+"Some glTF models don't render correctly — no ambient occlusion, no normals." They did not,
+and not because of anything the viewer did wrong: **raylib draws every model unlit.** Its
+default model shader, read straight out of the library, is `texel * colDiffuse *
+vertexColor`, so the normal, occlusion, metallic-roughness and emission textures a glTF file
+carries are loaded into the material and never sampled.
+
+**The viewer now draws with its own shader** — a key and a fill light with GGX specular, a
+sky-to-ground ambient the occlusion map darkens, normal mapping from a cotangent frame built
+per pixel (no tangents needed, which many files do not ship), and emission. Two things it
+needed that are not obvious:
+
+- **Every slot is filled.** raylib binds a slot's texture only when there is one, so an empty
+  slot's sampler reads whatever the texture unit held last. The viewer fills each slot a
+  material lacks with a 1x1 texture of the neutral value — a flat normal, full occlusion, the
+  material's metallic and roughness factors in glTF's packing — which is also how a
+  per-material number reaches a shader when uniform values cannot be set (`SetShaderValue`
+  takes a `void *`).
+- **A mesh with no normals is shaded flat**, as glTF requires. The Fox has none; lit, every
+  face came out one shade, because raylib feeds such a mesh one constant *unit* default — a
+  length test in the shader cannot tell it from a real normal, which the first attempt found
+  out. The null `normals` pointer on the CPU is the signal, so the shader is compiled twice,
+  once with `FLAT_NORMALS` (the face normal from screen-space derivatives), and a material
+  drawn by a normal-less mesh gets that one.
+
+The first tone curve was per-channel ACES, which turned the Fox yellow — it squeezes a
+bright red much harder than its green. A luminance curve keeps the hue. `--check` now proves
+the lighting reaches pixels: it draws a white sphere lit and requires the side facing the key
+light to read brighter than the side facing away, which raylib's shader cannot pass. A
+generated test ball (a ridged normal map, a banded occlusion map) showed both maps in the
+picture and neither without the shader.
+
+**`unload_model` leaked every material texture.** raylib's `UnloadModel` frees the meshes and
+the slot arrays and leaves the textures; the log showed the Fox's 1024x1024 texture never
+unloaded, and a Lyra program had no way to reach it. It now frees each distinct texture,
+skipping raylib's shared default — and with it the viewer's fallbacks, which the model takes
+`own`.
+
+**Three raw-pointer gaps, all met writing a material through `materials.offset(i)^`:**
+
+- **A deref was not an assignment path element** — `p.offset(i)^.field = v` passed the front
+  end and the backend refused it. Its address is simply the pointer.
+- **Closing that opened two holes behind it.** `rootIdentifier` stops at a deref, so such a
+  path was checked against no mutability rule — `p.offset(1)^.b = 9` through a `^P` compiled —
+  and `pure` charged it nothing. The deref nearest the written place is now held to
+  `lyra-E061`, and purity charges the path as the pointer write it is.
+- **`let _ = p` on any raw pointer failed**: the pattern path unboxed its operand by LLVM shape,
+  taking every pointer for a `shared` box ("match scrutinee is a pointer to a non-box type"),
+  and a pointer to a struct with a box's field count would have been *read* as one. The Lyra
+  type decides now.
+
+### 09/11/26 — a glTF viewer, and a branch's temporaries freed before the branch was done
+
+`examples/raylib/gltf_viewer.lyra` opens any glTF/GLB (or OBJ, IQM, VOX, M3D — whatever
+raylib's loader takes) from the command line or by dropping a file on the window, frames it
+from its bounding box, turns it by drag and zooms by wheel, and plays and crossfades its
+animation clips. `--check <path>` loads a file headlessly and checks every clip against the
+model's skeleton. Tested against the Khronos Fox sample, downloaded for testing and not
+committed.
+
+**It found a use-after-free in safe code, and ASan named it in one run.** The windowed viewer
+trapped on its first frame in `with_cstring`: the clip line held an interior NUL, its first
+23 bytes zero — exactly the length of the left operand of
+
+    clip_line = "clip ${clip + 1}/${n}: ${animation_name(a, clip)}   frame " ++
+      "${f64(frame).floor()}/${f64(frames).round()}   ${state}"
+
+Eight reductions built *up* from the shape were clean; building the real program's IR with
+`sanitize_address` and running it windowed reported `heap-use-after-free` in the concat's
+memcpy, freed by `lyra_rc_release` in the same function. The two releases sat in the block
+that ends in the `floor()` guard's branch — before the concat, on the path that does not trap.
+
+The cause was `flushStmtTemps`' rule for a temporary whose production block does not dominate
+the statement's end: release it **in its production block**, on the reasoning that a value
+produced inside a branch is undefined on the other path. That is true and not sufficient —
+the branch can go on splitting after producing it, and here it did: `clip + 1`'s overflow
+check put the left operand in a third block, the float guard split the right operand, and the
+arm's tail temporaries were flushed by the enclosing `match` statement, whose end is the merge
+the `None` arm also reaches. Every reduction had missed one of the three — a constant `clip`
+lets range analysis delete the overflow check, so the operand lands in the start block and
+takes the fast path. Once seen it reduced to nine lines, and the value-position `let line =
+match …` form zeroed its bytes the same way.
+
+**The release now goes where control leaves the region the production block dominates**
+(`regionExits`): the last blocks the value is live in, always later than production and
+after every use. Two exits settle themselves and are skipped — a `break`/`continue` block,
+which `resolveExitReleases` handles, and a block with no successors (a trap, a `ret`, a `?`).
+An exit that is also an edge back into the region cannot take a release before its terminator
+without freeing the value for the inside edge, so that temporary leaks, the direction the
+file already takes everywhere else. A second fault came with it: the dominator tree was
+computed from the function's entry mid-lowering, when an enclosing block can still be
+unsealed, so a statement's blocks could look unreachable and every answer false — and false
+means the early free. It is rooted at the statement's start now (`newDomTreeFrom`); a
+statement is single-entry there and complete when it is flushed.
+
+**Two `@must_release` false positives, both advising a double free.** `match o.anims { Some(a)
+=> … }` treated the scrutinee as an acquisition and demanded the arm release `a`, and `var m =
+o.model` demanded `m` be unloaded — each a second release of a resource `o` still holds. Both
+read a **stored place** (a field, an element, a deref), which is a view exactly as a named
+binding's payload is: the obligation is the holder's. `isStoredPlaceRead` routes both through
+the view rule; a call is still an acquisition beside one, which a test pins.
+
+**The viewer is built around the language's current edges, and says so.** It never returns a
+`Model` — `draw_opened` and `framed_box` copy it internally — because a returned `@must_release`
+value is a fresh obligation at every call site; and it assigns its camera floats one at a time,
+since tuple assignment of untyped literals into `f32` places is refused (filed in todo.md).
+
+### 09/11/26 — raylib models, and a draw call that ignores its transforms
+
+`bindings/raylib/models.lyra`: 46 functions, meshes, models, materials and animations — the
+half of raylib's 3D that loads and releases. It found four compiler bugs, recorded in the
+entry below; this one records what it established about raylib.
+
+**Every GPU call is gated on `window_ready()`, because raylib segfaults without one.**
+`GenMeshCube` with no window warns twice that the GPU is not ready and then crashes — measured
+in a pure-C caller — and `IsWindowReady()` predicts it exactly. So every generator,
+`load_model`, `model_from_mesh` and `load_material_default` answers a `Maybe`. **A hidden
+window is enough** (`FLAG_WINDOW_HIDDEN` creates the GL context and shows nothing), which is
+how the example's `--check` and the backend test run the family without a window appearing,
+and why the test skips cleanly where there is no display at all.
+
+**A model owns its meshes, so `model_from_mesh` takes `own Mesh`.** Measured: the model holds
+the mesh's own vertex buffer, and unloading the mesh after the model aborts with a double free.
+`own` is what the language already means by "this call takes it", so `@must_release` treats
+the mesh as handed over and a later `unload_mesh` of it is a use-after-move error rather than
+a corrupted heap. For the same reason a model's meshes are never handed out as values.
+
+**`DrawMeshInstanced` draws one mesh and ignores every transform, when the shader cannot
+instance.** The example's first screenshot had a single white cube where a row of nine should
+have been. Measured in C: the default material's shader has no per-instance transform
+attribute (its location is -1), and handed that shader raylib draws the mesh once at the
+origin, with no error — a call that fails by drawing the wrong picture. `draw_mesh_instanced`
+falls back to one `draw_mesh` per transform when the shader cannot instance, which is not a
+slow path but the only correct one, and `material_supports_instancing` says which a caller is
+getting. The same screenshot caught the other two scene bugs — wireframes drawn unrotated
+beside rotated solids, and labels hanging over their models — none of which a pixel assertion
+would have seen.
+
+**What is not tested, and why.** `LoadMaterials` is unbound because its array must go back to
+`MemFree`, and Lyra has no pointer reinterpretation to hand a `^Material` to a `(^u8)`
+declaration. The animation half was first checked only against C's layouts, for want of an
+animated model file; it was then tested against a real one — see the glTF viewer entry.
+
+### 09/11/26 — four compiler bugs from one binding, the first a missing trap in safe code
+
+    let set = (p: ^mut i64, v: i64) -> void => unsafe { p^ = v }
+    let xs: [3]i64 = [10, 20, 30]
+    var i: i64 = 0
+    unsafe { set(&mut i, 7) }
+    println("${xs[i]}")          // printed 8458877552
+
+**A memory-safety miscompile in safe code.** The value-range pass proves operations safe, and
+the backend *removes the runtime check* for anything it proves (`res.RangeSafety`). The pass
+did not know `&mut` existed, so after the write it still believed `i == 0` — the bounds check
+was dropped and the program read past the array. The same held for every check it feeds:
+`x + 10` on a u8 holding 250 printed `4` instead of trapping, and `10 / d` with `d` set to 0
+printed garbage. The only `unsafe` in any of these programs is the call doing the write; the
+indexing, the add and the division are ordinary safe code.
+
+**Found by a false warning, which is worth recording.** Writing `bindings/raylib/models.lyra`,
+`lyra-W011` called `found <= 0` "always true" right after `load(..., &mut found)` filled it
+in. A warning that wrong about a value is a sign the pass believes something false, and the
+next question was what else believes it — the backend does, and acts on it.
+
+**The fix is a rule, not a case.** A name whose address is taken with `&mut` anywhere in a
+function is never tracked there. It is applied at `tracked`, the single read of a stored
+interval, so joins, widening and every later consumer see the name as ⊤ without each needing
+to know why. **Flow-insensitive, because a site-local havoc is not sound:** in
+`let p = &mut i; i = 0; p^ = 7` the reassignment re-establishes `i == 0` after the havoc,
+and the write through `p` is invisible. `&n` is untouched, since it cannot write.
+
+**Three things established the scope before any code changed.** A `mut` scalar argument is
+*not* a second hole — it is passed by value, so the callee cannot change the caller's binding.
+Every runtime check the language has is exposed (bounds, overflow, shift range, divide by
+zero, signed division overflow). And the aliasing case turned up a second, independent bug:
+
+**`resolveConstantInt` folded any binding to its initializer.** `var i = 5; i = 0; xs[i]` on a
+three-element array was refused as "index 5 out of range" — no `&mut` needed, a hard error on
+a correct program — and a tuple index through a `var` was typed by the initializer whatever the
+binding had become. Only a binding that cannot change folds now: a `var` can be reassigned,
+and a `let mut` can be written through `&mut` (measured: it prints the written value). The
+function has five callers — the array and negative-index checks, the slice-bound check and the
+tuple index — and all five are fixed by the one line.
+
+**And a third, rule 4 again.** `hasCLayout` resolved each struct field's type with an empty
+location, so `Model`'s private `ModelSkeleton` field resolved to nothing and twelve externs
+were refused as having "no C spelling". A struct's fields are resolved from its own
+declaration now. It needs a named module to show — the entry module's names resolve without
+context — so the regression test is a two-module program.
+
+**And a fourth, which the third was hiding: the backend's copy of the same bug.** With
+`hasCLayout` fixed, `examples/raylib/models.lyra` type-checked, reached the backend, and
+failed there — "cannot size dynamic array element type Placed", for a `[]Placed` whose
+element holds a `Model`. `resolveForLayout` resolved each field's named type from
+`l.currentLoc`, which is the code being *lowered*: from `main`, a type private to
+`bindings.raylib` cannot be found. The reduction needed no raylib at all — a private `Inner`
+inside a public `Outer`, held in a `[]T` in another module — and making the helper `pub`
+lowered it, which is what named the cause. A declaration's fields are now resolved from the
+declaration's own location, restored afterwards so a nested resolution cannot leak its
+context into the lowering that asked. **Rule 8's warning in its plainest form:** two
+copies of one question, agreeing and both wrong, where fixing one is what exposes the other.
+
+Each fix has tests that fail without it: four behavioural trap tests and two range tests for
+the first, four typechecker tests for the second (one of them the `let` case that must *still*
+fire), one driver test for the third, and a two-module CLI build for the fourth — a CLI test
+because the backend harness takes a single source string. The rule is CLAUDE.md's rule 18.
+
 ### 09/11/26 — `-o` now reaches the IR
 
     lyrac build --emit-llvm -o /tmp/out.ll examples/primes.lyra
