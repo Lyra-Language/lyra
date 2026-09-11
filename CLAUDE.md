@@ -1921,6 +1921,21 @@ establishes:
 `TestExec_RaylibImageEditingAndPainting` is the proof, and it is headless — which is what
 the image half was always able to have and the texture half was not.
 
+**`examples/raylib/input.lyra` is the input tester**, and it is the one example here whose
+*window* is the deliverable: live input cannot be checked by a machine. What `--check`
+covers instead is the half that can be wrong silently — the 154 generated constants — and
+it does so with **properties rather than a second copy of the table**: the printable key
+codes are derived from the letters themselves (raylib's are ASCII), the enum groups are
+checked for contiguity, and no two constants may share a value. Asserting `KEY_A == 65`
+would transcribe the same number twice and fail together with the first copy.
+
+It also pins that **every query answers a resting value with no window** rather than
+crashing, since `--check` runs before `init_window`; and it found `gamepad_name` answering
+`Some("")` for every index, connected or not, in range or not — raylib returns a non-NULL
+empty string there, so `to_maybe`'s NULL convention had nothing to act on and the `None`
+the binding documented never happened. It now gates on availability and on the name being
+non-empty.
+
 `examples/raylib/painting.lyra` is the example, on the two-programs-in-one-file plan: 49
 pixel checks under `--check` and a twelve-panel gallery. **Nothing in it is loaded from
 disk** — every picture is painted by Lyra onto an `Image` and uploaded once, which is what

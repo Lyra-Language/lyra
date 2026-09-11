@@ -131,8 +131,23 @@ pub let gamepad_available = pure (pad: i64) -> bool =>
   unsafe { rl_gamepad_available(i32(pad)) } != 0
 
 /// The gamepad's name, or `None` when none is connected there.
-pub let gamepad_name = (pad: i64) -> Maybe<string> =>
-  copy_c_string(unsafe { rl_gamepad_name(i32(pad)) })
+///
+/// **NULL is not the convention here, which is what the two guards are for.** raylib's
+/// `GetGamepadName` answers a non-NULL **empty string** for every index — connected or
+/// not, in range or not, `99` and `-1` included — so `to_maybe`'s rule finds nothing to
+/// act on and the `None` this promises would never have happened. Measured against C,
+/// after `examples/raylib/input.lyra` asserted the documented behaviour and failed.
+///
+/// So availability is asked first, and an empty name is `None` in its own right: a pad
+/// that reports no name has none, and a caller wanting a label writes
+/// `.unwrap_or("(unnamed)")` rather than rendering an empty box.
+pub let gamepad_name = (pad: i64) -> Maybe<string> => {
+  if !gamepad_available(pad) { return None }
+  match copy_c_string(unsafe { rl_gamepad_name(i32(pad)) }) {
+    Some(name) => if name.len() > 0 { Some(name) } else { None },
+    None => None,
+  }
+}
 
 pub let gamepad_pressed = pure (pad: i64, button: i32) -> bool =>
   unsafe { rl_gamepad_pressed(i32(pad), button) } != 0

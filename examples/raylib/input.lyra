@@ -1,0 +1,656 @@
+module main
+//! Every input `bindings.raylib` can read: keyboard, mouse, touch and gamepad.
+//!
+//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
+//!   lyrac run examples/raylib/input.lyra -- --check   # the constants, exits 0 or 1
+//!   lyrac run examples/raylib/input.lyra              # the tester, in a window
+//!
+//! **Live input cannot be checked by a machine**, which makes this the one example here
+//! whose window is the real deliverable — a tester you press things at. What `--check`
+//! covers instead is the half that *can* be wrong silently: the 154 generated constants.
+//! A wrong key code is a key that never fires, indistinguishable from a broken keyboard.
+//!
+//! **The checks are properties, not a second copy of the table.** Asserting `KEY_A == 65`
+//! transcribes the same number a second time and fails together with the first. So the
+//! expected codes are *derived* — from the letter itself, since raylib's printable keys
+//! are their ASCII values — and the rest is checked for the shape an enum has: contiguous
+//! runs, and no two constants sharing a value anywhere.
+//!
+//! **`ESC` does not close this window**, since a key tester that quits when you test one
+//! key is useless. `set_exit_key(KEY_NULL)` is what turns it off; close the window itself.
+
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps,
+  begin_drawing, end_drawing, clear_background,
+  vec2, rect, draw_text, measure_text, draw_rectangle, draw_rectangle_lines,
+  draw_circle, draw_line_ex,
+  key_pressed, key_pressed_repeat, key_down, key_released, key_up,
+  next_key_pressed, next_char_pressed, key_name, set_exit_key,
+  mouse_pressed, mouse_down, mouse_released, mouse_up, mouse_position, mouse_delta,
+  set_mouse_position, set_mouse_offset, set_mouse_scale, mouse_wheel, mouse_wheel_v,
+  set_mouse_cursor,
+  touch_count, touch_position, touch_id,
+  gamepad_available, gamepad_name, gamepad_pressed, gamepad_down, gamepad_released,
+  gamepad_up, last_gamepad_button, gamepad_axis_count, gamepad_axis,
+  set_gamepad_vibration, set_gamepad_mappings,
+  KEY_NULL, KEY_SPACE, KEY_ESCAPE, KEY_ENTER, KEY_BACKSPACE, KEY_TAB,
+  KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
+  KEY_LEFT_SHIFT, KEY_LEFT_CONTROL, KEY_LEFT_ALT, KEY_LEFT_SUPER,
+  KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K, KEY_L,
+  KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X,
+  KEY_Y, KEY_Z,
+  KEY_ZERO, KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE, KEY_SIX, KEY_SEVEN,
+  KEY_EIGHT, KEY_NINE,
+  KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9, KEY_F10,
+  KEY_F11, KEY_F12,
+  MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_SIDE,
+  MOUSE_BUTTON_EXTRA, MOUSE_BUTTON_FORWARD, MOUSE_BUTTON_BACK,
+  MOUSE_CURSOR_DEFAULT, MOUSE_CURSOR_ARROW, MOUSE_CURSOR_IBEAM, MOUSE_CURSOR_CROSSHAIR,
+  MOUSE_CURSOR_POINTING_HAND, MOUSE_CURSOR_RESIZE_ALL, MOUSE_CURSOR_NOT_ALLOWED,
+  GAMEPAD_BUTTON_UNKNOWN, GAMEPAD_BUTTON_LEFT_FACE_UP, GAMEPAD_BUTTON_LEFT_FACE_RIGHT,
+  GAMEPAD_BUTTON_LEFT_FACE_DOWN, GAMEPAD_BUTTON_LEFT_FACE_LEFT,
+  GAMEPAD_BUTTON_RIGHT_FACE_UP, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT,
+  GAMEPAD_BUTTON_RIGHT_FACE_DOWN, GAMEPAD_BUTTON_RIGHT_FACE_LEFT,
+  GAMEPAD_BUTTON_LEFT_TRIGGER_1, GAMEPAD_BUTTON_LEFT_TRIGGER_2,
+  GAMEPAD_BUTTON_RIGHT_TRIGGER_1, GAMEPAD_BUTTON_RIGHT_TRIGGER_2,
+  GAMEPAD_BUTTON_MIDDLE_LEFT, GAMEPAD_BUTTON_MIDDLE, GAMEPAD_BUTTON_MIDDLE_RIGHT,
+  GAMEPAD_BUTTON_LEFT_THUMB, GAMEPAD_BUTTON_RIGHT_THUMB,
+  GAMEPAD_AXIS_LEFT_X, GAMEPAD_AXIS_LEFT_Y, GAMEPAD_AXIS_RIGHT_X, GAMEPAD_AXIS_RIGHT_Y,
+  GAMEPAD_AXIS_LEFT_TRIGGER, GAMEPAD_AXIS_RIGHT_TRIGGER,
+  Color, RAYWHITE, WHITE, BLACK, PURPLE, DARKGRAY, LIGHTGRAY, rgb,
+}
+
+const LABEL: i32 = 20
+const BODY: i32 = 18
+
+/// Explanatory text under a reading. `LIGHTGRAY` is the panel border's colour and was too
+/// faint to read as prose — a hint nobody can read is a hint nobody wrote.
+let hint = pure () -> Color => rgb(135, 135, 135)
+const WIDTH: i64 = 1060
+const HEIGHT: i64 = 780
+
+let main = () -> u8 => {
+  if wants_check() { return run_checks() }
+  run_tester()
+  0
+}
+
+let wants_check = () -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == "--check" { found = true }
+  }
+  found
+}
+
+// ---------------------------------------------------------------------------------------
+// The headless half — the constant table, and what the queries answer at rest
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  // **The letters and digits derive their expected code from the character**, since
+  // raylib's printable key codes are ASCII. Writing `KEY_A == 65` would transcribe the
+  // same number a second time and pass whenever both copies are wrong the same way.
+  let letters: []i32 = [
+    KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K, KEY_L,
+    KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X,
+    KEY_Y, KEY_Z,
+  ]
+  failures += ascii_run("letters", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", letters)
+
+  let digits: []i32 = [
+    KEY_ZERO, KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE, KEY_SIX, KEY_SEVEN,
+    KEY_EIGHT, KEY_NINE,
+  ]
+  failures += ascii_run("digits", "0123456789", digits)
+
+  failures += check("KEY_SPACE is ASCII space", "${KEY_SPACE}", "${i32(rune(" "[0]))}")
+
+  // The non-printing keys have no ASCII to derive from, so what is checked is the shape
+  // an enum has: a contiguous run in declaration order.
+  let arrows: []i32 = [KEY_RIGHT, KEY_LEFT, KEY_DOWN, KEY_UP]
+  failures += contiguous("arrows", arrows)
+
+  let function_keys: []i32 = [
+    KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9, KEY_F10,
+    KEY_F11, KEY_F12,
+  ]
+  failures += contiguous("F1..F12", function_keys)
+
+  let mouse_buttons: []i32 = [
+    MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_SIDE,
+    MOUSE_BUTTON_EXTRA, MOUSE_BUTTON_FORWARD, MOUSE_BUTTON_BACK,
+  ]
+  failures += contiguous("mouse buttons", mouse_buttons)
+  failures += check("mouse buttons start at zero", "${mouse_buttons[0]}", "0")
+
+  let pad_buttons: []i32 = gamepad_button_codes()
+  failures += contiguous("gamepad buttons", pad_buttons)
+  failures += check("gamepad buttons start at UNKNOWN = 0", "${GAMEPAD_BUTTON_UNKNOWN}", "0")
+  failures += check("gamepad button count", "${pad_buttons.len()}", "18")
+
+  let pad_axes: []i32 = [
+    GAMEPAD_AXIS_LEFT_X, GAMEPAD_AXIS_LEFT_Y, GAMEPAD_AXIS_RIGHT_X, GAMEPAD_AXIS_RIGHT_Y,
+    GAMEPAD_AXIS_LEFT_TRIGGER, GAMEPAD_AXIS_RIGHT_TRIGGER,
+  ]
+  failures += contiguous("gamepad axes", pad_axes)
+  failures += check("gamepad axes start at zero", "${pad_axes[0]}", "0")
+
+  // **No two constants may share a value**, which is the copy-paste failure a generated
+  // table is still exposed to — and the one that would make two different keys the same
+  // key with nothing to notice.
+  var everything: []i32 = []
+  for k in letters { everything.push(k) }
+  for k in digits { everything.push(k) }
+  for k in arrows { everything.push(k) }
+  for k in function_keys { everything.push(k) }
+  for k in [KEY_NULL, KEY_SPACE, KEY_ESCAPE, KEY_ENTER, KEY_BACKSPACE, KEY_TAB,
+            KEY_LEFT_SHIFT, KEY_LEFT_CONTROL, KEY_LEFT_ALT, KEY_LEFT_SUPER] {
+    everything.push(k)
+  }
+  failures += check("every key constant is distinct", all_distinct(everything), true)
+  failures += check("every mouse button is distinct", all_distinct(mouse_buttons), true)
+  failures += check("every gamepad button is distinct", all_distinct(pad_buttons), true)
+
+  let cursors: []i32 = [
+    MOUSE_CURSOR_DEFAULT, MOUSE_CURSOR_ARROW, MOUSE_CURSOR_IBEAM, MOUSE_CURSOR_CROSSHAIR,
+    MOUSE_CURSOR_POINTING_HAND, MOUSE_CURSOR_RESIZE_ALL, MOUSE_CURSOR_NOT_ALLOWED,
+  ]
+  failures += check("every cursor shape is distinct", all_distinct(cursors), true)
+
+  // **Every query answers a resting value with no window, rather than crashing.** That is
+  // worth pinning: `--check` runs before `init_window`, and a binding that needed one
+  // would take this whole mode down instead of reporting.
+  failures += check("no key is down", key_down(KEY_A), false)
+  failures += check("no key was pressed", key_pressed(KEY_A), false)
+  failures += check("no key repeated", key_pressed_repeat(KEY_A), false)
+  failures += check("no key was released", key_released(KEY_A), false)
+  failures += check("every key is up", key_up(KEY_A), true)
+  failures += check("the key queue is empty", next_key_pressed().is_none(), true)
+  failures += check("the character queue is empty", next_char_pressed().is_none(), true)
+  failures += check("no mouse button is down", mouse_down(MOUSE_BUTTON_LEFT), false)
+  failures += check("every mouse button is up", mouse_up(MOUSE_BUTTON_LEFT), true)
+  failures += check("no mouse button was pressed", mouse_pressed(MOUSE_BUTTON_LEFT), false)
+  failures += check("no mouse button was released", mouse_released(MOUSE_BUTTON_LEFT), false)
+  failures += check("the wheel has not moved", "${mouse_wheel()}", "0")
+  failures += check("nothing is touching", "${touch_count()}", "0")
+
+  // An out-of-range pad index answers false rather than reading past the array — the
+  // reason to test it is that C would not have stopped it.
+  failures += check("gamepad 0 is unavailable with no window", gamepad_available(0), false)
+  failures += check("an out-of-range gamepad index is false", gamepad_available(99), false)
+  // raylib answers a non-NULL *empty string* for every index, so this is the binding's
+  // own guard rather than the NULL convention — see gamepad_name. It failed when written.
+  failures += check("an out-of-range gamepad has no name", gamepad_name(99).is_none(), true)
+  failures += check("a disconnected gamepad has no name", gamepad_name(0).is_none(), true)
+  failures += check("no gamepad button was pressed", last_gamepad_button().is_none(), true)
+
+  // An empty mapping string adds no mappings, and says so rather than crashing.
+  failures += check("empty gamepad mappings add none", "${set_gamepad_mappings("")}", "0")
+
+  if failures == 0 {
+    println("all constant checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+/// Every code in `codes` equals the ASCII value of the character at the same position.
+let ascii_run = (name: string, chars: string, codes: []i32) -> i64 => {
+  if chars.len() != codes.len() {
+    println("  FAIL  ${name}: ${codes.len()} codes for ${chars.len()} characters")
+    return 1
+  }
+  var bad = 0
+  for i, c in chars {
+    if i64(codes[i]) != i64(rune_code(c)) {
+      println("  FAIL  ${name}: '${c}' is ${codes[i]}, want ${rune_code(c)}")
+      bad += 1
+    }
+  }
+  if bad == 0 { println("  ok    ${name} match their ASCII codes") }
+  bad
+}
+
+/// A rune's code point as an i64, which is what a key constant is compared against.
+let rune_code = pure (c: rune) -> i64 => i64(i32(c))
+
+/// Each value is one more than the last — the shape a C enum has when nothing skips.
+let contiguous = (name: string, codes: []i32) -> i64 => {
+  var i = 1
+  var bad = 0
+  for i < codes.len() {
+    if codes[i] != codes[i - 1] + 1 {
+      println("  FAIL  ${name}: ${codes[i - 1]} is followed by ${codes[i]}")
+      bad += 1
+    }
+    i += 1
+  }
+  if bad == 0 { println("  ok    ${name} are contiguous") }
+  bad
+}
+
+/// Whether no two values are equal. Quadratic, over lists of at most a few dozen.
+let all_distinct = pure (codes: []i32) -> bool => {
+  var i = 0
+  var distinct = true
+  for i < codes.len() {
+    var j = i + 1
+    for j < codes.len() {
+      if codes[i] == codes[j] { distinct = false }
+      j += 1
+    }
+    i += 1
+  }
+  distinct
+}
+
+let check<t> where t: Show = (name: string, got: t, want: t) -> i64 => {
+  if "${got}" == "${want}" {
+    println("  ok    ${name}")
+    0
+  } else {
+    println("  FAIL  ${name}: got ${got}, want ${want}")
+    1
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The tester
+// ---------------------------------------------------------------------------------------
+
+let run_tester = () -> void => {
+  init_window(WIDTH, HEIGHT, "Lyra - raylib input tester")
+  set_target_fps(60)
+
+  // A key tester that quits when you press a key is not a key tester.
+  set_exit_key(KEY_NULL)
+
+  var typed = ""
+  var recent: []string = []
+  var space_pressed = 0
+  var space_released = 0
+  var repeats = 0
+  var wheel_total = 0.0
+  var cursor = 0
+  var transformed = false
+
+  for !should_close() {
+    // --- keyboard: the two queues, drained rather than sampled ---------------------------
+    for c in drain_chars() {
+      typed = typed ++ "${c}"
+      if typed.len() > 34 { typed = typed.slice(typed.len() - 34, typed.len()) }
+    }
+    for k in drain_keys() {
+      recent.push(describe_key(k))
+      if recent.len() > 9 { recent = recent.slice(1, recent.len()) }
+    }
+
+    // The three tenses, counted so the difference is visible rather than described.
+    if key_pressed(KEY_SPACE) { space_pressed += 1 }
+    if key_released(KEY_SPACE) { space_released += 1 }
+    if key_pressed_repeat(KEY_BACKSPACE) { repeats += 1 }
+    if key_down(KEY_BACKSPACE) && typed.len() > 0 && key_pressed_repeat(KEY_BACKSPACE) {
+      typed = typed.slice(0, typed.len() - 1)
+    }
+
+    // --- mouse: the calls that change what the other calls report -------------------------
+    wheel_total += f64(mouse_wheel())
+    if key_pressed(KEY_C) {
+      cursor = (cursor + 1) %% 11
+      set_mouse_cursor(i32(cursor))
+    }
+    if key_pressed(KEY_M) { set_mouse_position(WIDTH / 2, HEIGHT / 2) }
+    if key_pressed(KEY_T) {
+      transformed = !transformed
+      if transformed {
+        set_mouse_offset(40, 40)
+        set_mouse_scale(0.5, 0.5)
+      } else {
+        set_mouse_offset(0, 0)
+        set_mouse_scale(1.0, 1.0)
+      }
+    }
+
+    begin_drawing()
+    clear_background(RAYWHITE)
+    draw_text("raylib input tester - close the window to quit (ESC is disabled)",
+              24, 16, LABEL, DARKGRAY)
+
+    draw_keyboard(24, 56, typed, recent, space_pressed, space_released, repeats)
+    draw_mouse(384, 56, wheel_total, cursor, transformed)
+    draw_touch(384, 470)
+    draw_gamepads(716, 56)
+
+    end_drawing()
+  }
+  close_window()
+}
+
+/// Everything in the character queue this frame.
+///
+/// **Both queues must be drained, not sampled.** Reading one entry per frame loses a key
+/// whenever two arrive together, which is exactly what fast typing produces — so the
+/// symptom is dropped characters under load and nothing at all when tested slowly.
+let drain_chars = () -> []rune => {
+  var out: []rune = []
+  var going = true
+  for going {
+    match next_char_pressed() {
+      Some(c) => out.push(c),
+      None => { going = false },
+    }
+  }
+  out
+}
+
+let drain_keys = () -> []i32 => {
+  var out: []i32 = []
+  var going = true
+  for going {
+    match next_key_pressed() {
+      Some(k) => out.push(k),
+      None => { going = false },
+    }
+  }
+  out
+}
+
+/// A key as the layout spells it, falling back to its code.
+///
+/// **`None` is the common answer**, not the rare one: `key_name` comes from GLFW and
+/// answers only for keys that print something, so every arrow, function key and modifier
+/// lands in the fallback.
+let describe_key = (key: i32) -> string =>
+  match key_name(key) {
+    Some(name) => "${key} '${name}'",
+    None => "${key}",
+  }
+
+// ---------------------------------------------------------------------------------------
+// Panels
+// ---------------------------------------------------------------------------------------
+
+let draw_keyboard = (x: i32, y: i32, typed: string, recent: []string, pressed: i64,
+                     released: i64, repeats: i64) -> void => {
+  panel(x, y, 336, 690, "keyboard")
+  var row = y + 34
+
+  draw_text("type here:", x + 12, row, BODY, DARKGRAY)
+  row += 22
+  draw_rectangle(rect(f32(x + 12), f32(row), 312.0, 26.0), WHITE)
+  draw_rectangle_lines(rect(f32(x + 12), f32(row), 312.0, 26.0), 1.0, LIGHTGRAY)
+  draw_text(typed, x + 16, row + 5, BODY, BLACK)
+  row += 34
+  draw_text("next_char_pressed, backspace repeats", x + 12, row, 16, hint())
+  row += 30
+
+  draw_text("held (key_down):", x + 12, row, BODY, DARKGRAY)
+  row += 24
+  var col = x + 12
+  for pair in [("shift", KEY_LEFT_SHIFT), ("ctrl", KEY_LEFT_CONTROL),
+               ("alt", KEY_LEFT_ALT), ("cmd", KEY_LEFT_SUPER)] {
+    lamp(col, row, pair.0, key_down(pair.1))
+    col += 78
+  }
+  row += 34
+  col = x + 12
+  for pair in [("left", KEY_LEFT), ("right", KEY_RIGHT), ("up", KEY_UP), ("down", KEY_DOWN)] {
+    lamp(col, row, pair.0, key_down(pair.1))
+    col += 78
+  }
+  row += 34
+  col = x + 12
+  for pair in [("enter", KEY_ENTER), ("tab", KEY_TAB), ("esc", KEY_ESCAPE),
+               ("space", KEY_SPACE)] {
+    lamp(col, row, pair.0, key_down(pair.1))
+    col += 78
+  }
+  row += 44
+
+  draw_text("the three tenses, on SPACE:", x + 12, row, BODY, DARKGRAY)
+  row += 24
+  draw_text("pressed ${pressed}   released ${released}", x + 12, row, BODY, BLACK)
+  row += 22
+  draw_text("down right now: ${key_down(KEY_SPACE)}", x + 12, row, BODY, BLACK)
+  row += 22
+  draw_text("up right now:   ${key_up(KEY_SPACE)}", x + 12, row, BODY, BLACK)
+  row += 22
+  draw_text("backspace repeats: ${repeats}", x + 12, row, BODY, BLACK)
+  row += 34
+
+  draw_text("next_key_pressed queue:", x + 12, row, BODY, DARKGRAY)
+  row += 24
+  for name in recent {
+    draw_text(name, x + 20, row, BODY, BLACK)
+    row += 20
+  }
+}
+
+let draw_mouse = (x: i32, y: i32, wheel_total: f64, cursor: i64,
+                  transformed: bool) -> void => {
+  panel(x, y, 312, 396, "mouse")
+  let p = mouse_position()
+  let d = mouse_delta()
+  let w = mouse_wheel_v()
+  var row = y + 34
+
+  draw_text("position ${p.x.round()}, ${p.y.round()}", x + 12, row, BODY, BLACK)
+  row += 22
+  draw_text("delta    ${d.x.round()}, ${d.y.round()}", x + 12, row, BODY, BLACK)
+  row += 22
+  draw_text("wheel    ${w.x.round()}, ${w.y.round()}  total ${wheel_total.round()}",
+            x + 12, row, BODY, BLACK)
+  row += 30
+
+  draw_text("buttons (down):", x + 12, row, BODY, DARKGRAY)
+  row += 24
+  var col = x + 12
+  var i = 0
+  for pair in [("L", MOUSE_BUTTON_LEFT), ("R", MOUSE_BUTTON_RIGHT),
+               ("M", MOUSE_BUTTON_MIDDLE), ("side", MOUSE_BUTTON_SIDE),
+               ("extra", MOUSE_BUTTON_EXTRA), ("fwd", MOUSE_BUTTON_FORWARD),
+               ("back", MOUSE_BUTTON_BACK)] {
+    lamp(col, row, pair.0, mouse_down(pair.1))
+    col += 62
+    i += 1
+    if i %% 4 == 0 {
+      col = x + 12
+      row += 30
+    }
+  }
+  row += 40
+
+  // pressed/released are edge events, so they show as a flash rather than a state.
+  draw_text("left pressed ${mouse_pressed(MOUSE_BUTTON_LEFT)}   released ${mouse_released(MOUSE_BUTTON_LEFT)}",
+            x + 12, row, 16, DARKGRAY)
+  row += 20
+  draw_text("left up ${mouse_up(MOUSE_BUTTON_LEFT)}", x + 12, row, 16, DARKGRAY)
+  row += 28
+
+  draw_text("C: cursor shape ${cursor}", x + 12, row, BODY, PURPLE)
+  row += 22
+  draw_text("M: jump to centre", x + 12, row, BODY, PURPLE)
+  row += 22
+  draw_text("T: offset+scale ${transformed}", x + 12, row, BODY, PURPLE)
+  row += 20
+  draw_text("(T shifts and halves every reading)", x + 12, row, 16, hint())
+
+  // A crosshair at the reported position, which is what makes the T transform visible.
+  draw_circle(p, 6.0, rgb(240, 90, 60))
+}
+
+let draw_touch = (x: i32, y: i32) -> void => {
+  panel(x, y, 312, 254, "touch")
+  var row = y + 34
+  let n = touch_count()
+  draw_text("touch_count ${n}", x + 12, row, BODY, BLACK)
+  row += 26
+  if n == 0 {
+    draw_text("no touch points", x + 12, row, BODY, DARKGRAY)
+    row += 20
+    draw_text("a trackpad reports as the mouse,", x + 12, row, 16, hint())
+    row += 18
+    draw_text("not as touch, on a desktop build", x + 12, row, 16, hint())
+  } else {
+    var i = 0
+    for i < n {
+      let t = touch_position(i)
+      draw_text("id ${touch_id(i)} at ${t.x.round()}, ${t.y.round()}",
+                x + 12, row, BODY, BLACK)
+      draw_circle(t, 14.0, rgb(60, 150, 240))
+      row += 22
+      i += 1
+    }
+  }
+}
+
+/// Every connected pad, or the reason there is nothing to show.
+///
+/// **Four indices are polled rather than one**, because "no gamepad" and "a gamepad in
+/// slot 2" look identical from slot 0 — and a tester whose answer to a plugged-in
+/// controller is a blank panel teaches the wrong thing about the binding.
+let draw_gamepads = (x: i32, y: i32) -> void => {
+  panel(x, y, 320, 690, "gamepad")
+  var row = y + 34
+
+  var any = false
+  var pad = 0
+  for pad < 4 {
+    if gamepad_available(pad) { any = true }
+    pad += 1
+  }
+
+  if !any {
+    draw_text("no gamepad connected", x + 12, row, BODY, DARKGRAY)
+    row += 26
+    draw_text("polled slots 0-3.", x + 12, row, 16, hint())
+    row += 18
+    draw_text("plug one in - raylib picks it up", x + 12, row, 16, hint())
+    row += 18
+    draw_text("without a restart.", x + 12, row, 16, hint())
+    row += 30
+    draw_text("last button: ${button_text()}", x + 12, row, BODY, DARKGRAY)
+    return
+  }
+
+  pad = 0
+  for pad < 4 {
+    if gamepad_available(pad) {
+      row = draw_one_gamepad(x, row, pad)
+      row += 12
+    }
+    pad += 1
+  }
+  draw_text("last button: ${button_text()}", x + 12, row, BODY, DARKGRAY)
+}
+
+let draw_one_gamepad = (x: i32, y: i32, pad: i64) -> i32 => {
+  var row = y
+  let name = gamepad_name(pad).unwrap_or("(unnamed)")
+  draw_text("pad ${pad}: ${name}", x + 12, row, BODY, BLACK)
+  row += 24
+
+  // Rumble on any button, which is the only output an input tester has.
+  if gamepad_pressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) {
+    set_gamepad_vibration(pad, 0.6, 0.6, 0.2)
+  }
+
+  var col = x + 12
+  var i = 0
+  for code in gamepad_button_codes() {
+    if code != GAMEPAD_BUTTON_UNKNOWN {
+      lamp(col, row, "${code}", gamepad_down(pad, code))
+      col += 34
+      i += 1
+      if i %% 9 == 0 {
+        col = x + 12
+        row += 28
+      }
+    }
+  }
+  row += 36
+  draw_text("A pressed ${gamepad_pressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  released ${gamepad_released(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}",
+            x + 12, row, 16, DARKGRAY)
+  row += 18
+  draw_text("A up ${gamepad_up(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  (press A to rumble)",
+            x + 12, row, 16, DARKGRAY)
+  row += 24
+
+  let axes = gamepad_axis_count(pad)
+  draw_text("axes: ${axes}", x + 12, row, BODY, DARKGRAY)
+  row += 22
+  var a = 0
+  for a < axes {
+    let v = gamepad_axis(pad, i32(a))
+    draw_text(axis_name(i32(a)), x + 12, row, 16, DARKGRAY)
+    bar(x + 130, row, v)
+    draw_text("${f64(v).to_fixed(2)}", x + 250, row, 16, BLACK)
+    row += 22
+    a += 1
+  }
+  row
+}
+
+/// The eighteen button codes in declaration order, shared by `--check` and the tester so
+/// the two cannot come to disagree about how many there are.
+let gamepad_button_codes = pure () -> []i32 => [
+  GAMEPAD_BUTTON_UNKNOWN, GAMEPAD_BUTTON_LEFT_FACE_UP, GAMEPAD_BUTTON_LEFT_FACE_RIGHT,
+  GAMEPAD_BUTTON_LEFT_FACE_DOWN, GAMEPAD_BUTTON_LEFT_FACE_LEFT,
+  GAMEPAD_BUTTON_RIGHT_FACE_UP, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT,
+  GAMEPAD_BUTTON_RIGHT_FACE_DOWN, GAMEPAD_BUTTON_RIGHT_FACE_LEFT,
+  GAMEPAD_BUTTON_LEFT_TRIGGER_1, GAMEPAD_BUTTON_LEFT_TRIGGER_2,
+  GAMEPAD_BUTTON_RIGHT_TRIGGER_1, GAMEPAD_BUTTON_RIGHT_TRIGGER_2,
+  GAMEPAD_BUTTON_MIDDLE_LEFT, GAMEPAD_BUTTON_MIDDLE, GAMEPAD_BUTTON_MIDDLE_RIGHT,
+  GAMEPAD_BUTTON_LEFT_THUMB, GAMEPAD_BUTTON_RIGHT_THUMB,
+]
+
+let axis_name = pure (axis: i32) -> string =>
+  if axis == GAMEPAD_AXIS_LEFT_X { "left x" }
+  else if axis == GAMEPAD_AXIS_LEFT_Y { "left y" }
+  else if axis == GAMEPAD_AXIS_RIGHT_X { "right x" }
+  else if axis == GAMEPAD_AXIS_RIGHT_Y { "right y" }
+  else if axis == GAMEPAD_AXIS_LEFT_TRIGGER { "L trigger" }
+  else if axis == GAMEPAD_AXIS_RIGHT_TRIGGER { "R trigger" }
+  else { "axis ${axis}" }
+
+let button_text = () -> string =>
+  match last_gamepad_button() {
+    Some(b) => "${b}",
+    None => "none",
+  }
+
+// ---------------------------------------------------------------------------------------
+// Drawing helpers
+// ---------------------------------------------------------------------------------------
+
+let panel = (x: i32, y: i32, w: i32, h: i32, title: string) -> void => {
+  draw_rectangle_lines(rect(f32(x), f32(y), f32(w), f32(h)), 1.0, LIGHTGRAY)
+  draw_text(title, x + 12, y + 8, LABEL, DARKGRAY)
+}
+
+/// A named indicator, lit while its input is active.
+let lamp = (x: i32, y: i32, name: string, on: bool) -> void => {
+  let tone = if on { rgb(60, 190, 90) } else { rgb(235, 235, 235) }
+  let w = measure_text(name, 16) + 12
+  draw_rectangle(rect(f32(x), f32(y), f32(w), 22.0), tone)
+  draw_rectangle_lines(rect(f32(x), f32(y), f32(w), 22.0), 1.0, LIGHTGRAY)
+  draw_text(name, x + 6, y + 3, 16, if on { WHITE } else { DARKGRAY })
+}
+
+/// An axis as a bar centred on zero, since -1.0 to 1.0 is what an axis reports — and a
+/// trigger resting at -1.0 rather than 0.0 is the thing worth seeing.
+let bar = (x: i32, y: i32, value: f32) -> void => {
+  let w: f32 = 110.0
+  let mid = f32(x) + w / 2.0
+  draw_rectangle(rect(f32(x), f32(y + 4), w, 12.0), rgb(235, 235, 235))
+  draw_line_ex(vec2(mid, f32(y + 2)), vec2(mid, f32(y + 18)), 1.0, LIGHTGRAY)
+  let end = mid + value * (w / 2.0)
+  let lo = if end < mid { end } else { mid }
+  let hi = if end < mid { mid } else { end }
+  draw_rectangle(rect(lo, f32(y + 4), hi - lo, 12.0), rgb(60, 130, 220))
+}

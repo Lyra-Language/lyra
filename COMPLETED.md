@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — the raylib input tester, and a `Maybe` that was never `None`
+
+`examples/raylib/input.lyra` exercises all 35 of `input.lyra`'s functions: a live tester
+for keyboard, mouse, touch and gamepad, and 35 constant checks under `--check`.
+
+**This is the one example here whose window is the deliverable.** Geometry and pixels can
+be asserted; a keypress cannot. So `--check` covers the half that *can* be wrong silently —
+the 154 generated constants, where a wrong key code is a key that never fires and reads as
+a broken keyboard.
+
+**The checks are properties, not a second copy of the table**, and that is the decision
+worth keeping. `KEY_A == 65` transcribes the same number a second time and passes whenever
+both copies are wrong the same way. Instead the printable codes are *derived* — from the
+letters themselves, since raylib's printable keys are their ASCII values — the enum groups
+are checked for contiguity, and every constant is checked against every other for a shared
+value, which is the copy-paste failure a generated table is still exposed to. It also pins
+that every query answers a resting value **with no window**, since `--check` runs before
+`init_window` and a binding that needed one would take the whole mode down.
+
+**It found `gamepad_name` answering `Some("")` for every index.** raylib 6.0's
+`GetGamepadName` returns a non-NULL **empty string** whatever it is asked — index 0 with
+nothing plugged in, index 99, index -1 — so `to_maybe`'s NULL convention had nothing to act
+on and the `None` the binding's own doc promised could never happen. Measured against C
+after the example asserted the documented behaviour and failed. It now asks
+`gamepad_available` first and treats an empty name as no name, so a caller writes
+`.unwrap_or("(unnamed)")` rather than rendering an empty box. Third instance of the module's
+standing rule: **a C function can fail by succeeding, and the wrapper is where that stops.**
+
+**Two things the tester is shaped by**, both of which a smaller demo would have got wrong.
+`set_exit_key(KEY_NULL)` turns ESC off, because a key tester that quits when you test a key
+is not a key tester. And the two keyboard **queues are drained, not sampled**: reading one
+entry per frame loses a key whenever two arrive together, so the symptom is dropped
+characters under fast typing and nothing at all when tested slowly.
+
+**The gamepad panel was checked without a gamepad.** There is no controller on this
+machine, so the connected branch was forced on for one screenshot — 17 button lamps in two
+rows and six axis bars, with the triggers resting at -1.00, which is the surprise the
+binding's own doc names. A panel nobody can see until they plug something in is exactly the
+one to look at deliberately.
+
+**And a compiler bug fell out of the probe that did it** (todo.md): an `if` initialising an
+*unannotated* `let` does not unify its arms' float widths — one arm f32, the other's untyped
+literals taking their f64 default — so `check` passes and clang refuses a `phi` mixing
+`float` and `double`. Rule 5's line, crossed by the front end rather than the backend.
+
 ### 09/10/26 — raylib image editing and painting
 
 `bindings/raylib/image.lyra`: 36 functions over 37 externs — editing an image in place,
