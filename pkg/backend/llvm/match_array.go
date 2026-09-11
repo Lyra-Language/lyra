@@ -46,7 +46,7 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, box value.V
 	}
 
 	fn := block.Parent
-	merge := newMatchMerge(fn)
+	merge := newMatchMerge(fn, e.GetLocation())
 	lowerBody := func(b *ir.Block, body ast.Expression) error {
 		val, end, err := l.lowerBranchValue(b, body)
 		if err != nil {
@@ -145,7 +145,10 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, box value.V
 	if !sealed {
 		l.sealMatchFallthrough(current)
 	}
-	val, end := merge.value()
+	val, end, err := merge.value()
+	if err != nil {
+		return nil, nil, err
+	}
 	return val, end, nil
 }
 

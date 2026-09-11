@@ -140,6 +140,14 @@ real failure, and none is local to one package.
    yet is a hard error, never a guess — including where it must repeat a check the front end
    already made.
 
+   **A loud error also means one llir cannot turn into a panic — or a clang error.**
+   `ir.NewPhi` accepts incomings that do not share a type, and the module then fails at
+   *compile* time with `'%18' defined with type 'double' but expected 'float'`: a register
+   number in a temp `.ll` file, naming no expression and no line. `joinPhi` checks the
+   operands first and names the construct and its location, for both the `if` merge and the
+   match merge. It repeats a check the typechecker owns, which is exactly what this rule
+   asks for.
+
    **A loud error also means one llir cannot turn into a panic.** `ir.NewStore` refuses
    mismatched operands by panicking, so `aggregateSpill` took `lyrac build` down with a Go
    stack trace naming neither the argument nor the file — hazard 15's shape one layer down,
@@ -305,6 +313,16 @@ real failure, and none is local to one package.
      `iterableElementType`) have no pointer case and are right not to. So the family to
      check when adding a type kind is the walks that must reach *every* composite —
      resolution, layout, substitution, retain/drop — not every switch that mentions one.
+   - **Two sibling *constructs* are a pair as surely as two switches are.** `if` and
+     `match` both join their branches' types, and only `match` pushed the join back down
+     onto them (`propagateExpectedType`); `if` computed the common type, returned it, and
+     left a branch whose own type was still untyped holding its default width. So
+     `let x = if c { f32_value } else { 0.0 - 1.0 }` type-checked clean and the backend
+     built a `phi` out of a `float` and a `double`. A **bare literal** branch hid it for as
+     long as it existed, since literal propagation settles one of those from the binding —
+     only a *computed* untyped branch had nothing else to narrow it. Fixed 09/10; the two
+     are now tested as a pair (`TestExec_IfBranchesJoinTheirUntypedWidths` and its match
+     twin), which is the only thing that stops them drifting again.
    - **Paired walks must be fixed in one change** — and better still, stop being a pair.
      `emitRetainValue`/`emitDropValue` both lacked `ParameterizedType`, and fixing only the
      drop is an instant double free. Note *both* lacked it, and both lacked

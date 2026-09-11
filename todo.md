@@ -3491,29 +3491,6 @@ differently — here, not at all — but a `DefaultFont` would need unwrapping a
 taking a `Font`, which is worse than the warning. A `@must_release` type with a *borrowed*
 constructor is the shape the attribute does not have.
 
-### An `if` with no expected type does not unify its arms' float widths
-
-    let bar = (value: f32) -> f32 => value * 2.0
-    let pick = (a: i64) -> void => {
-      let v = if a < 4 { 0.35 - f32(a) * 0.3 } else { 0.0 - 1.0 }
-      println("${f64(bar(v))}")
-    }
-
-`lyrac check` **passes clean**. `lyrac build` fails in clang with
-*"'%11' defined with type 'double' but expected 'float'"* — invalid IR, caught by the C
-compiler rather than by this one, which is rule 5's line crossed.
-
-The then-arm is f32 (`f32(a)` forces it) and the else-arm's untyped literals take their f64
-default, because the `let` is **unannotated** and so supplies no expected type to push down.
-The backend then emits a `phi` mixing `float` and `double`. Annotating the binding
-(`let v: f32 = …`) fixes it, and so does a declared return type on an `if` in tail
-position — which is why this is invisible in most code.
-
-Two things to fix: the arms should unify (an untyped-float arm adopting the other arm's
-width is the same rule an untyped literal argument already follows), and failing that the
-backend must refuse rather than emit a phi it cannot type. Found 09/10 writing
-`examples/raylib/input.lyra`, in a scratch probe rather than in the example itself.
-
 ### `bindings/raylib/texture.lyra` — **[DONE 09/10]**
 
 46 functions: images (load, generate, edit in place, read pixels), textures (load, upload,

@@ -70,7 +70,7 @@ func (l *lowerer) lowerMatchLadder(
 	bind func(b *ir.Block, pat ast.Pattern) error,
 ) (value.Value, *ir.Block, error) {
 	fn := block.Parent
-	merge := newMatchMerge(fn)
+	merge := newMatchMerge(fn, e.GetLocation())
 
 	lowerArmInto := func(b *ir.Block, body ast.Expression) error {
 		// lowerBranchValue, not lowerExpr: an arm body is value-*optional*, exactly as
@@ -152,7 +152,10 @@ func (l *lowerer) lowerMatchLadder(
 	if !sealed {
 		l.sealMatchFallthrough(current)
 	}
-	val, end := merge.value()
+	val, end, err := merge.value()
+	if err != nil {
+		return nil, nil, err
+	}
 	return val, end, nil
 }
 
@@ -545,7 +548,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, whole value.
 		}
 	}
 
-	merge := newMatchMerge(fn)
+	merge := newMatchMerge(fn, e.GetLocation())
 	var cases []*ir.Case
 	var defaultBlock *ir.Block
 
@@ -640,7 +643,10 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, whole value.
 	}
 	block.NewSwitch(tag, defaultBlock, cases...)
 
-	phi, mergeBlock := merge.value()
+	phi, mergeBlock, err := merge.value()
+	if err != nil {
+		return nil, nil, err
+	}
 	if phi == nil {
 		return nil, mergeBlock, nil // every arm diverged (e.g. all `return`)
 	}

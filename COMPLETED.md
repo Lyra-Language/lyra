@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — `if` did not push its joined type back down onto its branches
+
+    let v = if a < 4 { f32_value } else { 0.0 - 1.0 }
+
+`lyrac check` passed clean and clang refused the module: *"'%18' defined with type 'double'
+but expected 'float'"*. One line in the typechecker, and the interesting part is what kept
+it hidden and what it turns out to be an instance of.
+
+**`match` had the fix and `if` did not.** Both compute a common type over their branches
+with `branchCommonType`; `checkMatchExpr` then calls `propagateExpectedType` on every arm
+so each lowers at the joined width, and `checkIfExpr` called only
+`pushSettledInstantiation`. `branchCommonType` answers what the branches *agree* on — it
+does not re-record either of them — so a branch whose own type was still untyped kept its
+default. Hazard 8 between two sibling **constructs** rather than two switches, which is a
+pair nothing was watching.
+
+**It is not about floats, which is how the todo entry had it.** Bisecting the shapes found
+`1 + 2` against a `u8` failing the same way (`i64` against `i8`), and — more usefully —
+that a **bare literal** branch works: `if c { a } else { 1.0 }` is fine, because literal
+propagation settles that one from the binding. Only a *computed* untyped branch had nothing
+else to narrow it. That is why the bug survived: the shape that exposes it is uncommon, and
+the shape that hides it is the one everybody writes.
+
+**The backend now refuses instead of leaving it to clang.** `ir.NewPhi` accepts mismatched
+incomings, so a front-end gap surfaced as a register number in a temp `.ll` file, naming no
+expression and no line — it took a bisection to place, which is the third time in two days
+a backend failure has cost that. `joinPhi` checks the operands and says *"if/else branches
+at 8:11 produce different types (float and double)"*, and both merges go through it. That
+path is unreachable from source now that the front end is right, so it has a unit test of
+its own: rule 3's point is that a dead error path is a live one after the next change, and
+this one was born exactly that way.
+
+Found writing `examples/raylib/input.lyra` — in a throwaway probe that forced the
+connected-gamepad branch on, not in the example itself.
+
 ### 09/10/26 — the raylib input tester, and a `Maybe` that was never `None`
 
 `examples/raylib/input.lyra` exercises all 35 of `input.lyra`'s functions: a live tester

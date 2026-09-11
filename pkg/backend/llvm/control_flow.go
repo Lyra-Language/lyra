@@ -988,10 +988,37 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 	if len(incomings) == 0 {
 		return nil, mergeBlock, nil
 	}
-	// The incoming values (when both reach) share an LLVM type — the typechecker's
-	// branchCommonType guarantees the branches are type-compatible; a width mismatch
-	// that slipped through yields invalid IR clang rejects (loud), not wrong code.
-	return mergeBlock.NewPhi(incomings...), mergeBlock, nil
+	// The incoming values share an LLVM type, the typechecker's branchCommonType having
+	// established that the branches agree — but "loud because clang rejects it" was not
+	// loud enough, so joinPhi checks it here and says which expression.
+	phi, err := joinPhi(mergeBlock, incomings, "if/else branches", e.GetLocation())
+	if err != nil {
+		return nil, nil, err
+	}
+	return phi, mergeBlock, nil
+}
+
+// joinPhi builds a merge phi, refusing operands that do not share a type.
+//
+// **This is rule 5 standing in front of clang.** `ir.NewPhi` accepts mismatched incomings
+// and the module fails at *compile* time with `'%18' defined with type 'double' but
+// expected 'float'` — a message naming an SSA register in a temp `.ll` file, which says
+// nothing about which expression in which source line produced it. A front-end gap
+// therefore surfaced as a register number and took a bisection to place (09/10: an `if`
+// did not push its joined type back down onto its branches, so a computed untyped branch
+// kept its default width).
+//
+// It repeats a check the typechecker owns, which rule 5 asks for explicitly: the backend
+// errors rather than emitting something that cannot be right.
+func joinPhi(block *ir.Block, incomings []*ir.Incoming, what string, loc ast.Location) (*ir.InstPhi, error) {
+	for _, in := range incomings[1:] {
+		if in.X.Type().Equal(incomings[0].X.Type()) {
+			continue
+		}
+		return nil, fmt.Errorf("llvm: %s at %s produce different types (%s and %s), so their values cannot be merged",
+			what, loc.Pretty(), incomings[0].X.Type(), in.X.Type())
+	}
+	return block.NewPhi(incomings...), nil
 }
 
 // isVoidResult reports whether v carries no usable value — either nothing at all, or a

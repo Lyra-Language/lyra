@@ -214,6 +214,18 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 				thenType, elseType)
 			return nil
 		}
+		// **Push the join back down onto both branches**, which is the other half of the
+		// same push the match arms get and was missing here until 09/10.
+		// `branchCommonType` answers what the two branches *agree* on; it does not
+		// re-record either of them, so a branch whose own type is still untyped kept it
+		// — and the backend then built a `phi` out of two widths. A bare literal arm
+		// survived by luck, since literal propagation settles one of those from the
+		// binding; a *computed* untyped arm (`0.0 - 1.0`, `1 + 2`) had nothing else to
+		// narrow it, so `let x = if c { a } else { 0.0 - 1.0 }` type-checked clean and
+		// clang refused the module. Hazard 8 between two sibling constructs rather than
+		// two switches: `match` had the call and `if` did not.
+		tc.propagateExpectedType(expr.Then, common)
+		tc.propagateExpectedType(expr.Else, common)
 		// The branch that contributed a bare declaration takes the instantiation its
 		// sibling solved — `if c { Some(v) } else { None }` — the same push the match
 		// arms get; a no-op when the join is not an instantiation.

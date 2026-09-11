@@ -197,11 +197,14 @@ type matchMerge struct {
 	// void `if` has none (lowerIf's "reaching branch is void" rule), rather than a
 	// phi over a nil operand.
 	void bool
+	// loc is the match expression's own span, carried only so a refusal in `value` can
+	// say which match it is about — a phi's operands name registers and nothing else.
+	loc ast.Location
 }
 
 // newMatchMerge creates the block the arms will converge on.
-func newMatchMerge(fn *ir.Func) *matchMerge {
-	return &matchMerge{block: fn.NewBlock("")}
+func newMatchMerge(fn *ir.Func, loc ast.Location) *matchMerge {
+	return &matchMerge{block: fn.NewBlock(""), loc: loc}
 }
 
 // arm records one lowered arm. `end` is the block its body finished in and `val` the
@@ -246,12 +249,12 @@ func (m *matchMerge) arm(val value.Value, end *ir.Block) {
 // Sealing an unreached merge with `unreachable` is what makes it say so. Every consumer
 // already tests `end.Term == nil` before continuing, so a diverging match now reads exactly
 // like the diverging `return` it is made of, with no case of its own anywhere.
-func (m *matchMerge) value() (value.Value, *ir.Block) {
+func (m *matchMerge) value() (value.Value, *ir.Block, error) {
 	if !m.void && len(m.incomings) == 0 {
 		// llir needs a terminator on a block it emits, and `unreachable` is the honest
 		// one: nothing branches here.
 		m.block.NewUnreachable()
-		return nil, m.block
+		return nil, m.block, nil
 	}
 	// A void arm means the match is a statement, so there is no value even though
 	// other arms may have produced one — mixing them into a phi would give the match
@@ -259,9 +262,15 @@ func (m *matchMerge) value() (value.Value, *ir.Block) {
 	// the arms agree; a mix here means the match is being used for effect and one arm
 	// happens to end in an expression.)
 	if m.void {
-		return nil, m.block
+		return nil, m.block, nil
 	}
-	return m.block.NewPhi(m.incomings...), m.block
+	// The arms agree by the typechecker's reckoning; joinPhi is rule 5 repeating the
+	// check so a gap there is reported here rather than by clang, naming a register.
+	phi, err := joinPhi(m.block, m.incomings, "match arms", m.loc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return phi, m.block, nil
 }
 
 // lowerScalarMatch lowers a `match` on a scalar scrutinee — a bool, a concrete
