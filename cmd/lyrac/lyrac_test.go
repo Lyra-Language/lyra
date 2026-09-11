@@ -375,3 +375,94 @@ func TestBuild_OptLevel(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// `-o` reaches the IR
+// ---------------------------------------------------------------------------
+//
+// One rule behind both modes: **the `.ll` is written beside the executable `-o` names**,
+// and under `--emit-llvm` — which links no executable at all — `-o` names the `.ll`
+// itself. Until 09/11 it reached neither, so a build wrote artifacts somewhere other than
+// where the flag said, silently. `run` refuses these flags outright to avoid exactly that.
+
+// `--emit-llvm -o` writes the IR where it was told and nowhere else.
+func TestBuild_EmitLLVM_OutNamesTheIR(t *testing.T) {
+	path := copyFixtureToTemp(t, "ok.lyra")
+	out := filepath.Join(t.TempDir(), "chosen.ll")
+	stdout, stderr, code := captureRun(t, "build", "--emit-llvm", "-o", out, path)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	assertIsIR(t, out)
+	if _, err := os.Stat(replaceExt(path, ".ll")); !os.IsNotExist(err) {
+		t.Errorf("nothing should be written beside the source (stat err = %v)", err)
+	}
+	if !strings.Contains(stdout, out) {
+		t.Errorf("stdout should report where the IR went:\n%s", stdout)
+	}
+}
+
+// **The hint must not name the `.ll` as the executable to build.** With `-o` naming the
+// IR, reporting it as the output would suggest compiling the file into itself — which is
+// what the old code printed, since it reused the executable path unconditionally.
+func TestBuild_EmitLLVM_HintDoesNotCompileTheIRIntoItself(t *testing.T) {
+	path := copyFixtureToTemp(t, "ok.lyra")
+	out := filepath.Join(t.TempDir(), "chosen.ll")
+	stdout, stderr, code := captureRun(t, "build", "--emit-llvm", "-o", out, path)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if strings.Contains(stdout, "-o "+out) {
+		t.Errorf("the hint offers the .ll as its own output:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "-o "+replaceExt(path, "")) {
+		t.Errorf("the hint should offer the name an ordinary build would produce:\n%s", stdout)
+	}
+}
+
+// `--keep-ll -o` puts **both** artifacts where they were asked for, which is what that
+// flag's own help has always promised ("beside the executable").
+func TestBuild_KeepLL_OutTakesTheIRAlong(t *testing.T) {
+	requireCC(t)
+	path := copyFixtureToTemp(t, "ok.lyra")
+	exe := filepath.Join(t.TempDir(), "prog")
+	stdout, stderr, code := captureRun(t, "build", "--keep-ll", "-o", exe, path)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	assertIsIR(t, exe+".ll")
+	if _, err := os.Stat(exe); err != nil {
+		t.Errorf("--keep-ll should still link an executable: %v", err)
+	}
+	if _, err := os.Stat(replaceExt(path, ".ll")); !os.IsNotExist(err) {
+		t.Errorf("the IR should not also land beside the source (stat err = %v)", err)
+	}
+	if !strings.Contains(stdout, "kept "+exe+".ll") {
+		t.Errorf("stdout should report where the IR was kept:\n%s", stdout)
+	}
+}
+
+// A plain build with `-o` still leaves no IR anywhere: the executable is the artifact.
+func TestBuild_OutLeavesNoIR(t *testing.T) {
+	requireCC(t)
+	path := copyFixtureToTemp(t, "ok.lyra")
+	exe := filepath.Join(t.TempDir(), "prog")
+	if _, stderr, code := captureRun(t, "build", "-o", exe, path); code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	for _, stray := range []string{exe + ".ll", replaceExt(path, ".ll")} {
+		if _, err := os.Stat(stray); !os.IsNotExist(err) {
+			t.Errorf("a plain build should leave no IR at %s (stat err = %v)", stray, err)
+		}
+	}
+}
+
+// Without `-o`, both modes are exactly as they were — the default is what most builds use
+// and the fix must not move it.
+func TestBuild_NoOutIsUnchanged(t *testing.T) {
+	path := copyFixtureToTemp(t, "ok.lyra")
+	if _, stderr, code := captureRun(t, "build", "--emit-llvm", path); code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	assertIsIR(t, replaceExt(path, ".ll"))
+}

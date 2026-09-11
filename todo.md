@@ -3456,19 +3456,6 @@ established by running the backend on thirteen of them.
 The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
 sealed (or not emitted), which is the same question `diverged()` answers for operands.
 
-### `lyrac build --emit-llvm` ignores `-o`
-
-    lyrac build --emit-llvm -o /tmp/out.ll examples/primes.lyra
-    examples/primes.lyra: wrote examples/primes.ll (llvm backend)
-      compile with: clang -O2 examples/primes.ll -lm -o /tmp/out.ll
-
-The IR lands beside the **source**, and `-o` is reported as the executable the hint would
-build — for a mode whose whole point is that it produces no executable. `--keep-ll` has the
-same question and the same answer, so whatever `-o` comes to mean it should mean in both.
-`-o` is refused rather than ignored for `run`, which is the call to copy: silently writing
-somewhere other than where the flag said is the one outcome to avoid. Found 09/10 building
-every example in a loop.
-
 ### `default_font()` draws lyra-W022 advising a call raylib ignores
 
     let f = default_font()

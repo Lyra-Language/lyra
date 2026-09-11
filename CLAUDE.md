@@ -1153,13 +1153,24 @@ artifact is `<name>` beside the source, not `<name>.ll`. The `-lm` is unconditio
 matching what the backend's behavioural tests compile with.
 
 ```bash
-lyrac build prog.lyra                 # -> ./prog, no IR left behind
-lyrac build -o build/prog prog.lyra   # executable elsewhere
-lyrac build --keep-ll prog.lyra       # executable *and* prog.ll
-lyrac build --emit-llvm prog.lyra     # prog.ll only; the one build needing no C compiler
-lyrac build -O0 prog.lyra             # optimization level; default -O2
-lyrac build --cc /path/to/clang …     # else $LYRA_CC, else clang on PATH
+lyrac build prog.lyra                        # -> ./prog, no IR left behind
+lyrac build -o build/prog prog.lyra          # executable elsewhere
+lyrac build --keep-ll prog.lyra              # executable *and* prog.ll
+lyrac build --keep-ll -o build/prog prog.lyra # -> build/prog and build/prog.ll
+lyrac build --emit-llvm prog.lyra            # prog.ll only; the one build needing no C compiler
+lyrac build --emit-llvm -o out.ll prog.lyra  # the IR, where you said
+lyrac build -O0 prog.lyra                    # optimization level; default -O2
+lyrac build --cc /path/to/clang …            # else $LYRA_CC, else clang on PATH
 ```
+
+**`-o` reaches the IR, and one rule covers both modes** (`llPath`): the `.ll` is written
+**beside the executable `-o` names**, and under `--emit-llvm` — which links no executable
+at all — `-o` names the `.ll` itself. Until 09/11 it reached neither: `--emit-llvm -o
+out.ll` wrote the IR beside the *source* and then reported `out.ll` as the executable its
+hint would build, and `--keep-ll -o build/prog` split the two artifacts between `build/`
+and the source tree, which that flag's own help already promised it would not. Writing
+somewhere other than where the flag said is the outcome `run` refuses these flags outright
+to avoid, so `build` should not do it quietly.
 
 **The default is `-O2`, not clang's `-O0`**, because this compiler does not face the usual
 tradeoff: it emits **no debug info at any level**, so shipping unoptimized buys no

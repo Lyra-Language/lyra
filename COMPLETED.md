@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 09/11/26 — `-o` now reaches the IR
+
+    lyrac build --emit-llvm -o /tmp/out.ll examples/primes.lyra
+    examples/primes.lyra: wrote examples/primes.ll (llvm backend)
+      compile with: clang -O2 examples/primes.ll -lm -o /tmp/out.ll
+
+Two faults in three lines: the IR landed beside the **source** rather than where `-o` said,
+and `-o` was then reported as the executable the hint would build — for the one mode whose
+whole point is that it links no executable. `--keep-ll -o build/prog` had the matching
+version, putting the executable in `build/` and the IR in the source tree, which that
+flag's own help already promised it would not ("keep the emitted `.ll` **beside the
+executable**").
+
+**One rule covers both** (`llPath`): the `.ll` is written beside the executable `-o` names,
+and under `--emit-llvm` `-o` names the `.ll` itself. The two modes differ because the
+number of artifacts does — with an executable *and* IR, `-o` can only name one, and the
+executable is the primary; with only IR there is nothing else for it to mean.
+
+The hint needed its own fix rather than falling out of that: with `-o` naming the IR,
+reusing the executable path would have printed `clang out.ll -o out.ll`, suggesting the
+file be compiled into itself. It now offers the name an ordinary build would have produced.
+
+**The argument for doing this at all is that `run` already refuses these flags**, and the
+reason it gives is precisely this one — a build that writes somewhere other than where the
+flag said. `build` should not do quietly what `run` refuses loudly.
+
+Five CLI tests, three of which fail without the change; the other two pin that a build with
+no `-o` is exactly as it was, since that is what most builds use.
+
 ### 09/10/26 — `&mut` on a capture is E024's write, one spelling further out
 
     let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }

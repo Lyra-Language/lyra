@@ -78,9 +78,10 @@ commands:
   doc     render the module's documentation as Markdown, one page per module
 
 build flags:
-  -o <path>     write the executable here (default: the source path without .lyra)
-  --emit-llvm   stop after emitting <name>.ll; do not link an executable
-  --keep-ll     keep the emitted <name>.ll beside the executable
+  -o <path>     write the executable here (default: the source path without .lyra).
+                Under --emit-llvm, which links no executable, it names the .ll
+  --emit-llvm   stop after emitting the .ll; do not link an executable
+  --keep-ll     keep the emitted .ll beside the executable
   -O<level>     optimization level passed to the C compiler (default: -O2).
                 -O0 for the fastest build; -Os for size. No debug info is emitted
                 at any level, so -O0 buys build time rather than debuggability.
@@ -239,7 +240,7 @@ func build(o buildOptions) int {
 	}
 	fmt.Printf("%s: wrote %s (llvm backend)\n", o.path, exe)
 	if o.keepLL {
-		fmt.Printf("  kept %s\n", replaceExt(o.path, ".ll"))
+		fmt.Printf("  kept %s\n", llPath(o))
 	}
 	return 0
 }
@@ -362,7 +363,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		return "", 1
 	}
 
-	llPath := replaceExt(o.path, ".ll")
+	llFile := llPath(o)
 	if !o.emitOnly && !o.keepLL {
 		// A throwaway .ll: the executable is the artifact, so the IR does not
 		// belong in the user's source tree. It still has to reach the compiler
@@ -373,17 +374,20 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 			return "", 1
 		}
 		defer os.RemoveAll(dir)
-		llPath = filepath.Join(dir, filepath.Base(replaceExt(o.path, ".ll")))
+		llFile = filepath.Join(dir, filepath.Base(replaceExt(o.path, ".ll")))
 	}
-	if err := os.WriteFile(llPath, ir, 0o644); err != nil {
+	if err := os.WriteFile(llFile, ir, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return "", 1
 	}
 
 	if o.emitOnly {
-		fmt.Printf("%s: wrote %s (%s backend)\n", o.path, llPath, be.Name())
-		fmt.Printf("  compile with: clang %s %s %s -o %s\n", o.opt, llPath, strings.Join(libs, " "), exePath(o))
-		return llPath, 0
+		// **Not `exePath(o)` in the hint.** With `-o` naming the IR, that would have
+		// suggested compiling the `.ll` into itself; there is no executable in this
+		// mode, so the name to offer is the one an ordinary build would have produced.
+		fmt.Printf("%s: wrote %s (%s backend)\n", o.path, llFile, be.Name())
+		fmt.Printf("  compile with: clang %s %s %s -o %s\n", o.opt, llFile, strings.Join(libs, " "), replaceExt(o.path, ""))
+		return llFile, 0
 	}
 
 	cc, err := findCC(o.cc)
@@ -393,14 +397,14 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		// exception — it promised to leave nothing behind, and a temp path in
 		// the message would name a file already deleted.
 		if !o.ephemeral {
-			fallback := replaceExt(o.path, ".ll")
-			if fallback != llPath {
+			fallback := llPath(o)
+			if fallback != llFile {
 				if werr := os.WriteFile(fallback, ir, 0o644); werr == nil {
-					llPath = fallback
+					llFile = fallback
 				}
 			}
 			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
-			fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s %s -o %s\n", llPath, o.opt, llPath, strings.Join(libs, " "), exePath(o))
+			fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s %s -o %s\n", llFile, o.opt, llFile, strings.Join(libs, " "), exePath(o))
 			return "", 1
 		}
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
@@ -412,11 +416,11 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	// here by name, with the IR kept for a compiler that can.
 	if err := llvm.CheckCoroutineSupport(ir, cc); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
-		fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s %s -o %s\n", llPath, o.opt, llPath, strings.Join(libs, " "), exePath(o))
+		fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s %s -o %s\n", llFile, o.opt, llFile, strings.Join(libs, " "), exePath(o))
 		return "", 1
 	}
 	exe := exePath(o)
-	cmd := exec.Command(cc, append(append([]string{o.opt, llPath}, libs...), "-o", exe)...)
+	cmd := exec.Command(cc, append(append([]string{o.opt, llFile}, libs...), "-o", exe)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s failed to compile the emitted IR: %v\n%s", cc, err, out)
 		return "", 1
@@ -452,6 +456,27 @@ func linkFlags(res *driver.Result) []string {
 
 // exePath is where the executable goes: -o if given, else the source path with
 // its .lyra extension dropped.
+// llPath is where this build's IR goes, and there is one rule behind both cases:
+// **the `.ll` is written beside the executable `-o` names**, and under `--emit-llvm` —
+// which links no executable at all — `-o` names the `.ll` itself.
+//
+// Until 09/11 `-o` reached neither. `--emit-llvm -o /tmp/out.ll` wrote the IR beside the
+// *source* and then reported `-o /tmp/out.ll` as the executable a hint would build, for a
+// mode whose whole point is that it produces none; `--keep-ll -o build/prog` put the
+// executable in `build/` and the IR in the source tree, which the flag's own help already
+// promised it would not ("keep the emitted <name>.ll beside the executable"). Writing
+// somewhere other than where the flag said is the outcome `run` refuses these flags
+// outright to avoid.
+func llPath(o buildOptions) string {
+	if o.emitOnly {
+		if o.out != "" {
+			return o.out
+		}
+		return replaceExt(o.path, ".ll")
+	}
+	return replaceExt(exePath(o), ".ll")
+}
+
 func exePath(o buildOptions) string {
 	if o.out != "" {
 		return o.out
