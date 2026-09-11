@@ -1,0 +1,89 @@
+@link("turbojpeg")
+module bindings.jpeg
+//! JPEG decoding, over libjpeg-turbo's TurboJPEG API.
+//!
+//! **raylib decodes what its build supports, and JPEG usually is not in it.** A raylib
+//! compiled without `SUPPORT_FILEFORMAT_JPG` — Homebrew's, measured — logs `IMAGE: Data
+//! format not supported` and hands back an invalid image, so a glTF whose textures are JPEG
+//! draws untextured. 41 of the 145 Khronos sample models are such files. This decodes them
+//! instead, and TurboJPEG reads progressive JPEGs as well as baseline, which two fifths of
+//! those files are.
+//!
+//! **It answers RGBA**, which is what raylib's `PIXELFORMAT_R8G8B8A8` wants, with alpha
+//! 0xFF — JPEG has no alpha channel. The pixels land in a `[]u8` **Lyra owns**: TurboJPEG
+//! fills a buffer it is handed rather than allocating one, so there is nothing here to
+//! release and no C allocation to track.
+//!
+//! Link with `-lturbojpeg`; on macOS that is `brew install jpeg-turbo`, on Debian
+//! `libturbojpeg0-dev`. The build needs its directory on `LIBRARY_PATH`:
+//! `pkg-config --variable=libdir libturbojpeg`.
+
+import std.ffi.{ data, data_mut }
+
+/// A decoded image: RGBA pixels, four bytes each, row by row from the top.
+pub struct Jpeg {
+  pixels: []u8,
+  width: i32,
+  height: i32,
+}
+
+/// Decode a JPEG, or `None` if it is not one, is damaged, or is larger than memory allows.
+///
+/// # Examples
+///
+/// ```
+/// match decode_jpeg(bytes) {
+///   Some(img) => println("${img.width}x${img.height}"),
+///   None => println("not a JPEG"),
+/// }
+/// ```
+pub let decode_jpeg = (bytes: []u8) -> Maybe<Jpeg> => {
+  if bytes.len() == 0 { return None }
+  let handle = unsafe { tj3_init(TJINIT_DECOMPRESS) }
+  if handle == nullptr { return None }
+  // The header first: it is what says how large the buffer must be, and it is also the
+  // test for "is this a JPEG at all" — every later call needs its answers.
+  if unsafe { tj3_decompress_header(handle, bytes.data(), bytes.len()) } != 0 {
+    unsafe { tj3_destroy(handle) }
+    return None
+  }
+  let width = unsafe { tj3_get(handle, TJPARAM_JPEGWIDTH) }
+  let height = unsafe { tj3_get(handle, TJPARAM_JPEGHEIGHT) }
+  if width <= 0 || height <= 0 {
+    unsafe { tj3_destroy(handle) }
+    return None
+  }
+  var pixels: []u8 = [0; i64(width) * i64(height) * 4]
+  let failed = unsafe { tj3_decompress8(handle, bytes.data(), bytes.len(), pixels.data_mut(),
+                                        width * 4, TJPF_RGBA) } != 0
+  unsafe { tj3_destroy(handle) }
+  if failed { None } else { Some(Jpeg { pixels: pixels, width: width, height: height }) }
+}
+
+/// Whether a MIME type names a JPEG, as a glTF's `mimeType` states it.
+pub let is_jpeg_mime = pure (mime: string) -> bool => mime == "image/jpeg" || mime == "image/jpg"
+
+/// `TJINIT_DECOMPRESS`, `TJPF_RGBA` and the two header parameters, by their position in
+/// TurboJPEG's enums — C enumerators, which carry no symbol to link against.
+const TJINIT_DECOMPRESS: i32 = 1
+const TJPF_RGBA: i32 = 7
+const TJPARAM_JPEGWIDTH: i32 = 5
+const TJPARAM_JPEGHEIGHT: i32 = 6
+
+// ---------------------------------------------------------------------------------------
+// Foreign declarations
+// ---------------------------------------------------------------------------------------
+
+// `tjhandle` is an opaque pointer, so it crosses as `^u8` and is only ever compared with
+// `nullptr` and handed back.
+@symbol("tj3Init")
+unsafe extern tj3_init: (init_type: i32) -> ^u8
+@symbol("tj3DecompressHeader")
+unsafe extern tj3_decompress_header: (handle: ^u8, jpeg: ^u8, size: i64) -> i32
+@symbol("tj3Get")
+unsafe extern tj3_get: (handle: ^u8, param: i32) -> i32
+@symbol("tj3Decompress8")
+unsafe extern tj3_decompress8:
+  (handle: ^u8, jpeg: ^u8, size: i64, out: ^mut u8, pitch: i32, pixel_format: i32) -> i32
+@symbol("tj3Destroy")
+unsafe extern tj3_destroy: (handle: ^u8) -> void

@@ -1,0 +1,806 @@
+module gltf
+//! What the viewer reads out of a glTF file that raylib's loader does not: node animations,
+//! and the material properties raylib drops.
+//!
+//! **Node animation.** raylib's `LoadModelAnimations` builds clips only for a **skinned**
+//! model, whose animation turns the bones of a skeleton. Many glTF files animate *nodes*
+//! instead — a wheel spins, a lid opens, a box slides — each moving part a node in the file's
+//! scene tree whose translation, rotation or scale is keyed over time. Those files load with
+//! every part in place and no clips at all. [load_node_animation] reads such a file's
+//! animations itself (the JSON, the binary buffers, the keyframes) and answers, for any clip
+//! and time, the transform to draw each of raylib's meshes with.
+//!
+//! **raylib has already placed every mesh.** `LoadModel` applies each node's world transform
+//! to its mesh's vertices and forgets the tree — measured: a node translated by 5 loads with
+//! its vertices at 5 and an identity model transform. So a mesh arrives in its *rest*
+//! position, and the transform [pose] answers first undoes that and then applies the
+//! animated one.
+//!
+//! **The meshes are matched in raylib's order**: every node that has a mesh, in the file's
+//! node order, one raylib mesh per triangle primitive. [node_mesh_count] says how many that
+//! makes; a caller compares it with the model's own count before trusting the match.
+//!
+//! **Materials.** raylib's loader keeps each material's textures and its base colour, but not
+//! which UV set a texture reads, its `KHR_texture_transform`, the normal map's strength, the
+//! occlusion strength, the metallic and roughness factors beside a texture, or any material
+//! extension — so a car's paint flakes stretch across the whole body and its glass turns
+//! opaque white. [load_material_params] reads those per material, in file order; raylib's
+//! material `i + 1` is the file's material `i` (raylib puts a default at 0 — measured).
+//!
+//! Read: translation, rotation and scale channels with STEP, LINEAR and CUBICSPLINE
+//! interpolation; float and normalized-integer accessors, interleaved or not; buffers in a
+//! GLB's binary chunk, in a `data:` URI, or in a file beside the `.gltf`; and the material
+//! properties above, with the `KHR_materials_emissive_strength`, `_transmission` and
+//! `_clearcoat` extensions. Not read: morph target weights, `KHR_animation_pointer`, sparse
+//! accessors, `KHR_materials_variants`, iridescence and the other material extensions — and
+//! a skinned file's animations, which raylib plays. **Malformed data never traps**: a channel
+//! whose accessor does not check out is skipped, and a file with nothing usable answers `None`.
+
+import std.json.{ parse_json, JsonValue, JsonNull, field, element, elements, as_number, as_int,
+                  as_text, as_bool, kind }
+import bindings.raylib.{ Matrix, Vector3, Vector4, vec3, matrix_multiply, matrix_invert,
+                         matrix_identity, matrix_translation, matrix_scale, quaternion_to_matrix,
+                         quaternion_normalize, quaternion_slerp, read_file_bytes, decode_base64,
+                         directory_of }
+
+// **`AnimNode`, `AnimClip` and `AnimChannel` are `pub` only to dodge a compiler bug**
+// (todo.md, Known bugs 09/11): a public struct whose field is an array of a *private* struct
+// fails in the backend once a value of it is released from another module — the field's
+// element type is looked up from the using module rather than the declaring one. Nothing
+// outside this file should name them.
+
+/// A file's node animations, ready to be sampled with [pose].
+pub struct NodeAnimation {
+  nodes: []AnimNode,
+  /// Every node index, each parent before its children.
+  order: []i64,
+  clips: []AnimClip,
+  /// For each of raylib's meshes, in raylib's order, the node it belongs to.
+  mesh_nodes: []i64,
+}
+
+/// The node animations in the file at `path`, or `None` if it has none this plays — no
+/// animations, only morph or pointer ones, a skin, or a file that will not read.
+pub let load_node_animation = (path: string) -> Maybe<NodeAnimation> => {
+  let file = match read_document(path) {
+    Some(f) => f,
+    None => return None,
+  }
+  let doc = file.json
+  if member(doc, "skins").elements().len() > 0 { return None }
+  let buffers = match load_buffers(doc, path, file.bin) {
+    Some(b) => b,
+    None => return None,
+  }
+  let nodes = read_nodes(doc)
+  var clips: []AnimClip = []
+  let animations = member(doc, "animations").elements()
+  for i in 0..<animations.len() {
+    let clip = read_clip(doc, buffers, animations[i], i, nodes.len())
+    if clip.channels.len() > 0 { clips.push(clip) }
+  }
+  if clips.len() == 0 { return None }
+  Some(NodeAnimation { nodes: nodes, order: parents_first(nodes), clips: clips,
+                       mesh_nodes: mesh_nodes(doc) })
+}
+
+pub let node_clip_count = pure (self: NodeAnimation) -> i64 => self.clips.len()
+
+/// A clip's name, or `animation N` for one the file left unnamed.
+pub let node_clip_name = pure (self: NodeAnimation, clip: i64) -> string => nth_clip(self, clip).name
+
+/// A clip's length in seconds: its last keyframe.
+pub let node_clip_duration = pure (self: NodeAnimation, clip: i64) -> f32 =>
+  nth_clip(self, clip).duration
+
+/// How many of raylib's meshes the node tree accounts for — to compare with the model's.
+pub let node_mesh_count = pure (self: NodeAnimation) -> i64 => self.mesh_nodes.len()
+
+/// The transform to draw each of raylib's meshes with, `seconds` into clip `clip`: the mesh
+/// as raylib loaded it, taken back out of its rest position and put where the animation has
+/// its node now. The model's own placement goes on after it.
+pub let pose = pure (self: NodeAnimation, clip: i64, seconds: f32) -> []Matrix => {
+  var ts: []Vector3 = []
+  var rs: []Vector4 = []
+  var ss: []Vector3 = []
+  for n in self.nodes {
+    ts.push(n.translation)
+    rs.push(n.rotation)
+    ss.push(n.scale)
+  }
+  for ch in nth_clip(self, clip).channels {
+    let v = sample(ch, seconds)
+    if ch.path == PATH_TRANSLATION {
+      ts[ch.node] = vec3(v.x, v.y, v.z)
+    } else if ch.path == PATH_ROTATION {
+      rs[ch.node] = v
+    } else {
+      ss[ch.node] = vec3(v.x, v.y, v.z)
+    }
+  }
+  var worlds: []Matrix = [matrix_identity(); self.nodes.len()]
+  for i in self.order {
+    let local = match self.nodes[i].matrix {
+      Some(m) => m,
+      None => trs(ts[i], rs[i], ss[i]),
+    }
+    let parent = self.nodes[i].parent
+    worlds[i] = if parent < 0 { local } else { matrix_multiply(local, worlds[parent]) }
+  }
+  var out: []Matrix = []
+  for n in self.mesh_nodes { out.push(matrix_multiply(self.nodes[n].unbake, worlds[n])) }
+  out
+}
+
+// ---------------------------------------------------------------------------------------
+// Materials
+// ---------------------------------------------------------------------------------------
+
+/// Where one of a material's textures samples: which UV set, and the `KHR_texture_transform`
+/// applied to it — scaled, then rotated, then offset, the extension's order.
+pub struct TexSlot {
+  uv: i64,
+  offset_x: f32,
+  offset_y: f32,
+  /// Radians.
+  rotation: f32,
+  scale_x: f32,
+  scale_y: f32,
+  /// What happens outside the texture's bounds, as raylib's `WRAP_*` constant: the file's
+  /// sampler says, and raylib's loader does not apply it. raylib sets one mode for both
+  /// axes, so a sampler whose axes differ reads as repeat.
+  wrap: i64,
+  /// Which of the file's images this slot's texture is, or -1 for an empty slot — what
+  /// [load_images] answers about, for a texture raylib itself could not decode.
+  image: i64,
+}
+
+/// What one glTF material says beyond what raylib keeps.
+pub struct MaterialParams {
+  /// The albedo, metallic-roughness, normal, occlusion and emission textures, in that order.
+  slots: []TexSlot,
+  normal_scale: f32,
+  occlusion_strength: f32,
+  metallic: f32,
+  roughness: f32,
+  emissive_r: f32,
+  emissive_g: f32,
+  emissive_b: f32,
+  /// `KHR_materials_emissive_strength`: how many times brighter than 1.0 the emission is.
+  emissive_strength: f32,
+  /// `KHR_materials_transmission`: how much light passes through, 0 to 1.
+  transmission: f32,
+  /// `KHR_materials_clearcoat`: the strength and roughness of a clear layer over the base.
+  clearcoat: f32,
+  clearcoat_roughness: f32,
+  /// [ALPHA_OPAQUE], [ALPHA_MASK] or [ALPHA_BLEND].
+  alpha_mode: i64,
+  alpha_cutoff: f32,
+}
+
+/// Alpha is ignored: the surface is fully opaque whatever its textures say.
+pub const ALPHA_OPAQUE: i64 = 0
+/// A pixel is drawn fully or not at all, by comparing its alpha with the cutoff.
+pub const ALPHA_MASK: i64 = 1
+/// Alpha blends with what is behind.
+pub const ALPHA_BLEND: i64 = 2
+
+/// The file's materials, in its order — raylib's material `i + 1` — or `None` for a file that
+/// is not glTF or will not read.
+pub let load_material_params = (path: string) -> Maybe<[]MaterialParams> => {
+  let file = match read_document(path) {
+    Some(f) => f,
+    None => return None,
+  }
+  var out: []MaterialParams = []
+  for m in member(file.json, "materials").elements() { out.push(material_from(file.json, m)) }
+  Some(out)
+}
+
+/// A material described by the few numbers a non-glTF file gives raylib: every texture on
+/// the first UV set untransformed, at full strength, with no extensions.
+pub let plain_material = pure (metallic: f32, roughness: f32, emissive_r: f32, emissive_g: f32,
+                               emissive_b: f32, blended: bool) -> MaterialParams => {
+  var slots: []TexSlot = []
+  for _ in 0..<5 { slots.push(plain_slot()) }
+  MaterialParams {
+    slots: slots, normal_scale: 1.0, occlusion_strength: 1.0, metallic: metallic,
+    roughness: roughness, emissive_r: emissive_r, emissive_g: emissive_g, emissive_b: emissive_b,
+    emissive_strength: 1.0, transmission: 0.0, clearcoat: 0.0, clearcoat_roughness: 0.0,
+    alpha_mode: if blended { ALPHA_BLEND } else { ALPHA_OPAQUE }, alpha_cutoff: 0.5,
+  }
+}
+
+let material_from = pure (doc: JsonValue, m: JsonValue) -> MaterialParams => {
+  let pbr = member(m, "pbrMetallicRoughness")
+  let ext = member(m, "extensions")
+  let emissive = member(m, "emissiveFactor")
+  let coat = member(ext, "KHR_materials_clearcoat")
+  var slots: []TexSlot = []
+  slots.push(slot_of(doc, member(pbr, "baseColorTexture")))
+  slots.push(slot_of(doc, member(pbr, "metallicRoughnessTexture")))
+  slots.push(slot_of(doc, member(m, "normalTexture")))
+  slots.push(slot_of(doc, member(m, "occlusionTexture")))
+  slots.push(slot_of(doc, member(m, "emissiveTexture")))
+  MaterialParams {
+    slots: slots,
+    normal_scale: number_or(member(member(m, "normalTexture"), "scale"), 1.0),
+    occlusion_strength: number_or(member(member(m, "occlusionTexture"), "strength"), 1.0),
+    metallic: number_or(member(pbr, "metallicFactor"), 1.0),
+    roughness: number_or(member(pbr, "roughnessFactor"), 1.0),
+    emissive_r: number_at(emissive, 0, 0.0),
+    emissive_g: number_at(emissive, 1, 0.0),
+    emissive_b: number_at(emissive, 2, 0.0),
+    emissive_strength: number_or(member(member(ext, "KHR_materials_emissive_strength"), "emissiveStrength"), 1.0),
+    transmission: number_or(member(member(ext, "KHR_materials_transmission"), "transmissionFactor"), 0.0),
+    clearcoat: number_or(member(coat, "clearcoatFactor"), 0.0),
+    clearcoat_roughness: number_or(member(coat, "clearcoatRoughnessFactor"), 0.0),
+    alpha_mode: alpha_mode_of(member(m, "alphaMode").as_text().unwrap_or("OPAQUE")),
+    alpha_cutoff: number_or(member(m, "alphaCutoff"), 0.5),
+  }
+}
+
+/// A texture reference's UV set, transform and wrap mode. The transform may name a UV set of
+/// its own, which then wins over the reference's.
+let slot_of = pure (doc: JsonValue, info: JsonValue) -> TexSlot => {
+  let xf = member(member(info, "extensions"), "KHR_texture_transform")
+  let uv = member(xf, "texCoord").as_int().unwrap_or(member(info, "texCoord").as_int().unwrap_or(0))
+  TexSlot {
+    uv: uv,
+    offset_x: number_at(member(xf, "offset"), 0, 0.0),
+    offset_y: number_at(member(xf, "offset"), 1, 0.0),
+    rotation: number_or(member(xf, "rotation"), 0.0),
+    scale_x: number_at(member(xf, "scale"), 0, 1.0),
+    scale_y: number_at(member(xf, "scale"), 1, 1.0),
+    wrap: wrap_of(doc, member(info, "index").as_int().unwrap_or(0 - 1)),
+    image: image_of(doc, member(info, "index").as_int().unwrap_or(0 - 1)),
+  }
+}
+
+/// The image behind texture `index`, or -1 where there is no such texture.
+let image_of = pure (doc: JsonValue, index: i64) -> i64 =>
+  member(member(doc, "textures").element(index).unwrap_or(JsonNull), "source")
+    .as_int().unwrap_or(0 - 1)
+
+/// The wrap mode of texture `index`'s sampler, as raylib's constant — repeat, glTF's default,
+/// for a texture with no sampler or one whose two axes disagree.
+let wrap_of = pure (doc: JsonValue, index: i64) -> i64 => {
+  let texture = member(doc, "textures").element(index).unwrap_or(JsonNull)
+  let sampler = member(doc, "samplers").element(member(texture, "sampler").as_int().unwrap_or(0 - 1))
+                  .unwrap_or(JsonNull)
+  let s = member(sampler, "wrapS").as_int().unwrap_or(GL_REPEAT)
+  let t = member(sampler, "wrapT").as_int().unwrap_or(GL_REPEAT)
+  if s != t { WRAP_REPEAT_MODE } else if s == GL_CLAMP_TO_EDGE { WRAP_CLAMP_MODE }
+  else if s == GL_MIRRORED_REPEAT { WRAP_MIRROR_MODE } else { WRAP_REPEAT_MODE }
+}
+
+// glTF names wrap modes by their OpenGL enums; raylib by its own `WRAP_*` constants.
+const GL_REPEAT: i64 = 10497
+const GL_CLAMP_TO_EDGE: i64 = 33071
+const GL_MIRRORED_REPEAT: i64 = 33648
+const WRAP_REPEAT_MODE: i64 = 0
+const WRAP_CLAMP_MODE: i64 = 1
+const WRAP_MIRROR_MODE: i64 = 2
+
+let plain_slot = pure () -> TexSlot =>
+  TexSlot { uv: 0, offset_x: 0.0, offset_y: 0.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0,
+            wrap: WRAP_REPEAT_MODE, image: 0 - 1 }
+
+let alpha_mode_of = pure (m: string) -> i64 =>
+  if m == "MASK" { ALPHA_MASK } else if m == "BLEND" { ALPHA_BLEND } else { ALPHA_OPAQUE }
+
+let number_or = pure (v: JsonValue, fallback: f32) -> f32 => match v.as_number() {
+  Some(n) => f32(n),
+  None => fallback,
+}
+
+/// One of the file's images: the bytes it is encoded in, and what it says they are.
+pub struct ImageBytes {
+  mime: string,
+  bytes: []u8,
+}
+
+/// The file's images, in its order — the order [TexSlot]'s `image` indexes — wherever they
+/// come from: a GLB's binary chunk, a `data:` URI, or a file beside a `.gltf`. An image that
+/// cannot be read is an empty one rather than a gap, so the indices still line up.
+///
+/// This exists because **raylib decodes only the formats its build supports**: a JPEG in a
+/// raylib without `SUPPORT_FILEFORMAT_JPG` loads as an invalid image, and the model draws
+/// untextured. A caller decodes those itself (`bindings/jpeg.lyra`) and puts them back.
+pub let load_images = (path: string) -> Maybe<[]ImageBytes> => {
+  let file = match read_document(path) {
+    Some(f) => f,
+    None => return None,
+  }
+  let doc = file.json
+  let buffers = match load_buffers(doc, path, file.bin) {
+    Some(b) => b,
+    None => return None,
+  }
+  var out: []ImageBytes = []
+  let empty: []u8 = []
+  for image in member(doc, "images").elements() {
+    let mime = member(image, "mimeType").as_text().unwrap_or("")
+    match member(image, "uri").as_text() {
+      Some(uri) => {
+        if uri.starts_with("data:") {
+          // `data:<mime>;base64,<bytes>` — the URI states the type where the image did not.
+          let stated = if mime == "" { data_uri_mime(uri) } else { mime }
+          match uri.index(",") {
+            Some(comma) => match decode_base64(uri.slice(comma + 1, uri.len())) {
+              Some(bytes) => out.push(ImageBytes { mime: stated, bytes: bytes }),
+              None => out.push(ImageBytes { mime: stated, bytes: empty }),
+            },
+            None => out.push(ImageBytes { mime: stated, bytes: empty }),
+          }
+        } else {
+          let stated = if mime == "" { mime_of_path(uri) } else { mime }
+          match read_file_bytes(directory_of(path) ++ "/" ++ uri) {
+            Some(bytes) => out.push(ImageBytes { mime: stated, bytes: bytes }),
+            None => out.push(ImageBytes { mime: stated, bytes: empty }),
+          }
+        }
+      },
+      None => out.push(ImageBytes { mime: mime, bytes: view_bytes(doc, buffers, member(image, "bufferView").as_int().unwrap_or(0 - 1)) }),
+    }
+  }
+  Some(out)
+}
+
+/// A buffer view's bytes, or none where it does not check out.
+let view_bytes = pure (doc: JsonValue, buffers: [][]u8, index: i64) -> []u8 => {
+  let empty: []u8 = []
+  let view = match member(doc, "bufferViews").element(index) {
+    Some(v) => v,
+    None => return empty,
+  }
+  let buffer = member(view, "buffer").as_int().unwrap_or(0 - 1)
+  if buffer < 0 || buffer >= buffers.len() { return empty }
+  let start = member(view, "byteOffset").as_int().unwrap_or(0)
+  let length = member(view, "byteLength").as_int().unwrap_or(0)
+  if start < 0 || length < 0 || start + length > buffers[buffer].len() { return empty }
+  buffers[buffer].slice(start, start + length)
+}
+
+let data_uri_mime = pure (uri: string) -> string =>
+  match uri.index(";") {
+    Some(semi) => uri.slice(5, semi),
+    None => "",
+  }
+
+let mime_of_path = pure (uri: string) -> string =>
+  if uri.ends_with(".jpg") || uri.ends_with(".jpeg") { "image/jpeg" }
+  else if uri.ends_with(".png") { "image/png" }
+  else if uri.ends_with(".webp") { "image/webp" }
+  else { "" }
+
+// ---------------------------------------------------------------------------------------
+// The scene tree
+// ---------------------------------------------------------------------------------------
+
+pub struct AnimNode {
+  parent: i64,
+  translation: Vector3,
+  rotation: Vector4,
+  scale: Vector3,
+  /// A node written as a matrix rather than as translation, rotation and scale. glTF does
+  /// not allow one to be animated, so it is used as it stands.
+  matrix: Maybe<Matrix>,
+  /// The inverse of the node's rest world transform — what raylib baked into its mesh.
+  unbake: Matrix,
+}
+
+let read_nodes = pure (doc: JsonValue) -> []AnimNode => {
+  let list = member(doc, "nodes").elements()
+  var nodes: []AnimNode = []
+  for j in list {
+    nodes.push(AnimNode {
+      parent: 0 - 1,
+      translation: vec3_of(member(j, "translation"), 0.0),
+      rotation: rotation_of(member(j, "rotation")),
+      scale: vec3_of(member(j, "scale"), 1.0),
+      matrix: matrix_of(member(j, "matrix")),
+      unbake: matrix_identity(),
+    })
+  }
+  for i in 0..<list.len() {
+    for c in member(list[i], "children").elements() {
+      let k = c.as_int().unwrap_or(0 - 1)
+      if k >= 0 && k < nodes.len() { nodes[k].parent = i }
+    }
+  }
+  var worlds: []Matrix = [matrix_identity(); nodes.len()]
+  for i in parents_first(nodes) {
+    let local = rest_local(nodes[i])
+    let parent = nodes[i].parent
+    worlds[i] = if parent < 0 { local } else { matrix_multiply(local, worlds[parent]) }
+    nodes[i].unbake = matrix_invert(worlds[i])
+  }
+  nodes
+}
+
+let rest_local = pure (n: AnimNode) -> Matrix => match n.matrix {
+  Some(m) => m,
+  None => trs(n.translation, n.rotation, n.scale),
+}
+
+/// Scale, then rotate, then translate — glTF's order — as one matrix. `matrix_multiply`
+/// applies its first argument first.
+let trs = pure (t: Vector3, r: Vector4, s: Vector3) -> Matrix =>
+  matrix_multiply(matrix_multiply(matrix_scale(s.x, s.y, s.z), quaternion_to_matrix(r)),
+                  matrix_translation(t))
+
+/// AnimNode indices with every parent before its children. A node caught in a cycle — which a
+/// valid file cannot have — is left out, and keeps an identity transform.
+let parents_first = pure (nodes: []AnimNode) -> []i64 => {
+  var order: []i64 = []
+  var placed: []bool = [false; nodes.len()]
+  for _ in 0..<nodes.len() {
+    for i in 0..<nodes.len() {
+      let parent = nodes[i].parent
+      if !placed[i] && (parent < 0 || placed[parent]) {
+        placed[i] = true
+        order.push(i)
+      }
+    }
+    if order.len() == nodes.len() { break }
+  }
+  order
+}
+
+/// The node behind each of raylib's meshes, in raylib's order: nodes in file order, and for
+/// each node with a mesh one entry per triangle primitive (mode 4, the default) — the only
+/// kind raylib loads.
+let mesh_nodes = pure (doc: JsonValue) -> []i64 => {
+  var out: []i64 = []
+  let meshes = member(doc, "meshes")
+  let nodes = member(doc, "nodes").elements()
+  for i in 0..<nodes.len() {
+    match member(nodes[i], "mesh").as_int() {
+      Some(m) => {
+        for p in member(meshes.element(m).unwrap_or(JsonNull), "primitives").elements() {
+          if member(p, "mode").as_int().unwrap_or(4) == 4 { out.push(i) }
+        }
+      },
+      None => { },
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------------------
+// Clips and sampling
+// ---------------------------------------------------------------------------------------
+
+pub struct AnimClip {
+  name: string,
+  channels: []AnimChannel,
+  duration: f32,
+}
+
+/// One animated property of one node: keyframe times, and the values at them — flattened,
+/// and under CUBICSPLINE three per key (in-tangent, value, out-tangent).
+pub struct AnimChannel {
+  node: i64,
+  path: i64,
+  interpolation: i64,
+  times: []f32,
+  values: []f32,
+}
+
+const PATH_TRANSLATION: i64 = 0
+const PATH_ROTATION: i64 = 1
+const PATH_SCALE: i64 = 2
+
+const STEP: i64 = 0
+const LINEAR: i64 = 1
+const CUBICSPLINE: i64 = 2
+
+let read_clip = pure (doc: JsonValue, buffers: [][]u8, anim: JsonValue, index: i64,
+                      node_count: i64) -> AnimClip => {
+  let samplers = member(anim, "samplers")
+  var channels: []AnimChannel = []
+  var duration: f32 = 0.0
+  for c in member(anim, "channels").elements() {
+    let target = member(c, "target")
+    let node = member(target, "node").as_int().unwrap_or(0 - 1)
+    let path = path_of(member(target, "path").as_text().unwrap_or(""))
+    let sampler = samplers.element(member(c, "sampler").as_int().unwrap_or(0 - 1)).unwrap_or(JsonNull)
+    let interpolation = interpolation_of(member(sampler, "interpolation").as_text().unwrap_or("LINEAR"))
+    let width = if path == PATH_ROTATION { 4 } else { 3 }
+    let per_key = if interpolation == CUBICSPLINE { 3 * width } else { width }
+    if node >= 0 && node < node_count && path >= 0 && interpolation >= 0 {
+      match read_floats(doc, buffers, member(sampler, "input").as_int().unwrap_or(0 - 1), 1) {
+        Some(times) => match read_floats(doc, buffers, member(sampler, "output").as_int().unwrap_or(0 - 1), width) {
+          Some(values) => {
+            if times.len() > 0 && values.len() >= times.len() * per_key {
+              channels.push(AnimChannel { node: node, path: path, interpolation: interpolation,
+                                      times: times, values: values })
+              let last = times[times.len() - 1]
+              if last > duration { duration = last }
+            }
+          },
+          None => { },
+        },
+        None => { },
+      }
+    }
+  }
+  AnimClip { name: member(anim, "name").as_text().unwrap_or("animation ${index + 1}"),
+         channels: channels, duration: duration }
+}
+
+let nth_clip = pure (self: NodeAnimation, clip: i64) -> AnimClip => {
+  if clip < 0 || clip >= self.clips.len() {
+    panic("node animation clip ${clip} out of range for ${self.clips.len()} clip(s)")
+  }
+  self.clips[clip]
+}
+
+let path_of = pure (p: string) -> i64 =>
+  if p == "translation" { PATH_TRANSLATION }
+  else if p == "rotation" { PATH_ROTATION }
+  else if p == "scale" { PATH_SCALE }
+  else { 0 - 1 }
+
+let interpolation_of = pure (i: string) -> i64 =>
+  if i == "LINEAR" { LINEAR }
+  else if i == "STEP" { STEP }
+  else if i == "CUBICSPLINE" { CUBICSPLINE }
+  else { 0 - 1 }
+
+/// A channel's value at `t` seconds: held at its first key before the clip and its last
+/// after it, and between two keys by the channel's interpolation — a rotation along the
+/// shorter arc under LINEAR.
+let sample = pure (ch: AnimChannel, t: f32) -> Vector4 => {
+  let n = ch.times.len()
+  let width = if ch.path == PATH_ROTATION { 4 } else { 3 }
+  if n == 1 || t <= ch.times[0] { return key(ch, 0, width) }
+  if t >= ch.times[n - 1] { return key(ch, n - 1, width) }
+  // The last key at or before t.
+  var lo = 0
+  var hi = n - 1
+  for hi - lo > 1 {
+    let mid = (lo + hi) / 2
+    if ch.times[mid] <= t { lo = mid } else { hi = mid }
+  }
+  let span = ch.times[hi] - ch.times[lo]
+  let s = if span > 0.0 { (t - ch.times[lo]) / span } else { 0.0 }
+  if ch.interpolation == STEP {
+    key(ch, lo, width)
+  } else if ch.interpolation == CUBICSPLINE {
+    hermite(ch, lo, s, span, width)
+  } else if width == 4 {
+    quaternion_slerp(key(ch, lo, 4), key(ch, hi, 4), s)
+  } else {
+    mix4(key(ch, lo, 3), key(ch, hi, 3), s)
+  }
+}
+
+/// Key `k`'s value — the middle of its three elements under CUBICSPLINE.
+let key = pure (ch: AnimChannel, k: i64, width: i64) -> Vector4 =>
+  element_of(ch, if ch.interpolation == CUBICSPLINE { 3 * k + 1 } else { k }, width)
+
+let element_of = pure (ch: AnimChannel, e: i64, width: i64) -> Vector4 => {
+  let at = e * width
+  Vector4 { x: ch.values[at], y: ch.values[at + 1], z: ch.values[at + 2],
+            w: if width == 4 { ch.values[at + 3] } else { 0.0 } }
+}
+
+/// glTF's cubic Hermite spline between key `k` and the next: the two values, key `k`'s
+/// out-tangent and the next key's in-tangent, the tangents scaled by the span between them.
+let hermite = pure (ch: AnimChannel, k: i64, s: f32, span: f32, width: i64) -> Vector4 => {
+  let p0 = element_of(ch, 3 * k + 1, width)
+  let m0 = scale4(element_of(ch, 3 * k + 2, width), span)
+  let m1 = scale4(element_of(ch, 3 * k + 3, width), span)
+  let p1 = element_of(ch, 3 * k + 4, width)
+  let s2 = s * s
+  let s3 = s2 * s
+  let v = add4(add4(scale4(p0, 2.0 * s3 - 3.0 * s2 + 1.0), scale4(m0, s3 - 2.0 * s2 + s)),
+               add4(scale4(p1, 3.0 * s2 - 2.0 * s3), scale4(m1, s3 - s2)))
+  if width == 4 { quaternion_normalize(v) } else { v }
+}
+
+let mix4 = pure (a: Vector4, b: Vector4, s: f32) -> Vector4 => add4(scale4(a, 1.0 - s), scale4(b, s))
+let add4 = pure (a: Vector4, b: Vector4) -> Vector4 =>
+  Vector4 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z, w: a.w + b.w }
+let scale4 = pure (a: Vector4, k: f32) -> Vector4 =>
+  Vector4 { x: a.x * k, y: a.y * k, z: a.z * k, w: a.w * k }
+
+// ---------------------------------------------------------------------------------------
+// Buffers and accessors
+// ---------------------------------------------------------------------------------------
+
+/// Every buffer's bytes: the GLB's binary chunk for a buffer with no URI, a `data:` URI's
+/// base64, or a file beside the one being read.
+let load_buffers = (doc: JsonValue, path: string, bin: []u8) -> Maybe<[][]u8> => {
+  var out: [][]u8 = []
+  let list = member(doc, "buffers").elements()
+  for i in 0..<list.len() {
+    match member(list[i], "uri").as_text() {
+      None => {
+        if i != 0 { return None }
+        out.push(bin)
+      },
+      Some(uri) => {
+        if uri.starts_with("data:") {
+          match uri.index(",") {
+            Some(comma) => match decode_base64(uri.slice(comma + 1, uri.len())) {
+              Some(bytes) => out.push(bytes),
+              None => return None,
+            },
+            None => return None,
+          }
+        } else {
+          match read_file_bytes(directory_of(path) ++ "/" ++ uri) {
+            Some(bytes) => out.push(bytes),
+            None => return None,
+          }
+        }
+      },
+    }
+  }
+  Some(out)
+}
+
+/// Accessor `index` as floats, `width` to an element, or `None` if it is not that shape or
+/// its bytes are not all there. Integers count only when `normalized`, which is the only
+/// way glTF lets animation data be integers.
+let read_floats = pure (doc: JsonValue, buffers: [][]u8, index: i64, width: i64) -> Maybe<[]f32> => {
+  let acc = match member(doc, "accessors").element(index) {
+    Some(a) => a,
+    None => return None,
+  }
+  if width_of(member(acc, "type").as_text().unwrap_or("")) != width { return None }
+  if kind(member(acc, "sparse")) != "null" { return None }
+  let ctype = member(acc, "componentType").as_int().unwrap_or(0)
+  let size = component_size(ctype)
+  if size == 0 { return None }
+  if ctype != FLOAT && !member(acc, "normalized").as_bool().unwrap_or(false) { return None }
+  let n = member(acc, "count").as_int().unwrap_or(0)
+  let view = match member(doc, "bufferViews").element(member(acc, "bufferView").as_int().unwrap_or(0 - 1)) {
+    Some(v) => v,
+    None => return None,
+  }
+  let buffer = member(view, "buffer").as_int().unwrap_or(0 - 1)
+  if buffer < 0 || buffer >= buffers.len() { return None }
+  let data = buffers[buffer]
+  let start = member(view, "byteOffset").as_int().unwrap_or(0) + member(acc, "byteOffset").as_int().unwrap_or(0)
+  let stride = member(view, "byteStride").as_int().unwrap_or(size * width)
+  if n < 0 || start < 0 || stride <= 0 { return None }
+  if n > 0 && start + (n - 1) * stride + size * width > data.len() { return None }
+  var out: []f32 = []
+  for i in 0..<n {
+    for c in 0..<width { out.push(component(data, start + i * stride + c * size, ctype)) }
+  }
+  Some(out)
+}
+
+const FLOAT: i64 = 5126
+
+let component_size = pure (ctype: i64) -> i64 =>
+  if ctype == FLOAT { 4 }
+  else if ctype == 5120 || ctype == 5121 { 1 }
+  else if ctype == 5122 || ctype == 5123 { 2 }
+  else { 0 }
+
+/// One component as a float; a normalized integer mapped to [0, 1] or [-1, 1] as glTF
+/// defines it.
+let component = pure (b: []u8, at: i64, ctype: i64) -> f32 =>
+  if ctype == FLOAT { f32_from_bits(u32_at(b, at)) }
+  else if ctype == 5121 { f32(b[at]) / 255.0 }
+  else if ctype == 5123 { f32(u16_at(b, at)) / 65535.0 }
+  else if ctype == 5120 { at_least(f32(signed(i64(b[at]), 256)) / 127.0, 0.0 - 1.0) }
+  else { at_least(f32(signed(u16_at(b, at), 65536)) / 32767.0, 0.0 - 1.0) }
+
+let width_of = pure (t: string) -> i64 =>
+  if t == "SCALAR" { 1 }
+  else if t == "VEC2" { 2 }
+  else if t == "VEC3" { 3 }
+  else if t == "VEC4" { 4 }
+  else if t == "MAT4" { 16 }
+  else { 0 }
+
+/// A float's 32 bits, reinterpreted — a C union is the one place Lyra reads memory as a type
+/// other than the one written.
+union F32Bits {
+  bits: u32,
+  value: f32,
+}
+
+let f32_from_bits = pure (bits: u32) -> f32 => unsafe { F32Bits { bits: bits }.value }
+
+let u32_at = pure (b: []u8, at: i64) -> u32 =>
+  u32(b[at]) | (u32(b[at + 1]) << 8) | (u32(b[at + 2]) << 16) | (u32(b[at + 3]) << 24)
+
+let u16_at = pure (b: []u8, at: i64) -> i64 => i64(b[at]) | (i64(b[at + 1]) << 8)
+
+/// `v` read as a two's-complement integer of `range` values.
+let signed = pure (v: i64, range: i64) -> i64 => if v >= range / 2 { v - range } else { v }
+
+let at_least = pure (v: f32, floor: f32) -> f32 => if v < floor { floor } else { v }
+
+// ---------------------------------------------------------------------------------------
+// GLB and JSON helpers
+// ---------------------------------------------------------------------------------------
+
+/// A glTF file's JSON, and a GLB's binary chunk (empty for a `.gltf`).
+struct Document {
+  json: JsonValue,
+  bin: []u8,
+}
+
+let read_document = (path: string) -> Maybe<Document> => {
+  let bytes = match read_file_bytes(path) {
+    Some(b) => b,
+    None => return None,
+  }
+  var text = ""
+  var bin: []u8 = []
+  if is_glb(bytes) {
+    match glb_json(bytes) {
+      Some(t) => { text = t },
+      None => return None,
+    }
+    bin = glb_bin(bytes)
+  } else {
+    text = bytes.decode_utf8()
+  }
+  match parse_json(text) {
+    Ok(d) => Some(Document { json: d, bin: bin }),
+    Err(_) => None,
+  }
+}
+
+/// A binary glTF starts with the magic `glTF`, then its version and length, then its chunks:
+/// the JSON first, and the binary one after it.
+let is_glb = pure (b: []u8) -> bool => b.len() >= 20 && u32_at(b, 0) == GLB_MAGIC
+
+let glb_json = pure (b: []u8) -> Maybe<string> => {
+  let length = i64(u32_at(b, 12))
+  if u32_at(b, 16) != CHUNK_JSON || 20 + length > b.len() { return None }
+  Some(b.slice(20, 20 + length).decode_utf8())
+}
+
+let glb_bin = pure (b: []u8) -> []u8 => {
+  let none: []u8 = []
+  let at = 20 + i64(u32_at(b, 12))
+  if at + 8 > b.len() || u32_at(b, at + 4) != CHUNK_BIN { return none }
+  let length = i64(u32_at(b, at))
+  if at + 8 + length > b.len() { return none }
+  b.slice(at + 8, at + 8 + length)
+}
+
+const GLB_MAGIC: u32 = 1179937895    // "glTF"
+const CHUNK_JSON: u32 = 1313821514   // "JSON"
+const CHUNK_BIN: u32 = 5130562       // "BIN\0"
+
+let member = pure (v: JsonValue, key: string) -> JsonValue => v.field(key).unwrap_or(JsonNull)
+
+let vec3_of = pure (v: JsonValue, fallback: f32) -> Vector3 =>
+  vec3(number_at(v, 0, fallback), number_at(v, 1, fallback), number_at(v, 2, fallback))
+
+let rotation_of = pure (v: JsonValue) -> Vector4 =>
+  Vector4 { x: number_at(v, 0, 0.0), y: number_at(v, 1, 0.0), z: number_at(v, 2, 0.0),
+            w: number_at(v, 3, 1.0) }
+
+/// A node's `matrix`, column-major as glTF writes it — which is also how raylib names its
+/// fields, `m12`..`m14` holding the translation.
+let matrix_of = pure (v: JsonValue) -> Maybe<Matrix> => {
+  if v.elements().len() != 16 { return None }
+  Some(Matrix {
+    m0: number_at(v, 0, 0.0), m1: number_at(v, 1, 0.0), m2: number_at(v, 2, 0.0), m3: number_at(v, 3, 0.0),
+    m4: number_at(v, 4, 0.0), m5: number_at(v, 5, 0.0), m6: number_at(v, 6, 0.0), m7: number_at(v, 7, 0.0),
+    m8: number_at(v, 8, 0.0), m9: number_at(v, 9, 0.0), m10: number_at(v, 10, 0.0), m11: number_at(v, 11, 0.0),
+    m12: number_at(v, 12, 0.0), m13: number_at(v, 13, 0.0), m14: number_at(v, 14, 0.0), m15: number_at(v, 15, 1.0),
+  })
+}
+
+let number_at = pure (v: JsonValue, i: i64, fallback: f32) -> f32 =>
+  match v.element(i) {
+    Some(x) => match x.as_number() {
+      Some(n) => f32(n),
+      None => fallback,
+    },
+    None => fallback,
+  }

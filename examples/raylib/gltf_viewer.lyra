@@ -1,0 +1,1151 @@
+module main
+//! A model viewer: open any glTF, OBJ, IQM, VOX or M3D file, turn it, and play its animations.
+//!
+//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
+//!   lyrac run examples/raylib/gltf_viewer.lyra -- path/to/model.glb
+//!   lyrac run examples/raylib/gltf_viewer.lyra                  # then drop a file on it
+//!   lyrac run examples/raylib/gltf_viewer.lyra -- --check path/to/model.glb
+//!
+//! **Drag to turn it, scroll to zoom.** Space plays and pauses an animated model, the arrow
+//! keys step between its clips — crossfading a skinned model's, which is what
+//! `update_animation_blend` is for — W toggles the wireframe, L the lighting, and R resets the view. Drop another file
+//! on the window to open that instead.
+//!
+//! **Models are lit, which raylib does not do by itself.** Its default shader draws the
+//! albedo texture and nothing else, so the normal, occlusion, metallic-roughness and
+//! emission textures a glTF carries load and are never looked at, and every model comes out
+//! flat. The viewer draws with a shader of its own instead — a key and a fill light with
+//! GGX specular, a sky-to-ground ambient that the occlusion map darkens, normal mapping, and
+//! emission — and fills any slot a material lacks with a 1x1 texture holding the neutral
+//! value (a flat normal, no occlusion, the material's own metallic and roughness factors),
+//! so one shader serves every material. A mesh the file gave no normals is shaded flat, as
+//! glTF asks. L switches back to raylib's shader to compare.
+//!
+//! **A texture raylib could not decode is decoded here.** raylib reads only the image
+//! formats its build supports, and a raylib without `SUPPORT_FILEFORMAT_JPG` — Homebrew's —
+//! loads every JPEG as an invalid image, so 41 of the Khronos samples draw untextured. The
+//! viewer decodes those itself (`bindings/jpeg.lyra`, over libjpeg-turbo) and puts them back
+//! in their slots.
+//!
+//! **It also reads what raylib's loader drops from a glTF material** (`gltf.lyra`): which
+//! UV set each texture reads, `KHR_texture_transform`, normal and occlusion strength, the
+//! metallic, roughness and emissive factors, emissive strength, transmission, clearcoat and
+//! alpha mode. See-through surfaces are drawn after the opaque ones, and back faces are drawn,
+//! since a glTF material may be double-sided.
+//!
+//! **Both kinds of glTF animation play.** raylib plays a *skinned* model's clips, which turn
+//! a skeleton's bones. A file that animates its *nodes* instead — a box that slides, a wheel
+//! that spins — gets no clips from raylib at all, so the viewer reads those itself
+//! (`gltf.lyra`, over `std.json`) and draws each mesh at its animated node's transform.
+//!
+//! **Any model is framed automatically**, because files disagree wildly about units: the
+//! Khronos Fox sample is 155 units long. The model's bounding box gives its centre and its
+//! largest extent, and its transform moves the centre to the origin, turns it, and scales
+//! it to a fixed size — so the camera never moves.
+//!
+//! **The turning is matrices, not trigonometry.** Lyra has no `sin` or `cos`; raylib's
+//! raymath does, and `matrix_rotate_y`/`matrix_rotate_x` are the binding's. The transform
+//! is composed with `matrix_multiply`, which applies its first argument and then its second.
+//!
+//! `--check` opens the model under a hidden window and reports what is in it — meshes,
+//! materials, size, and every animation clip — then steps each clip and checks that the
+//! framing transform really does centre it and scale it to size. Nothing is shown.
+
+import gltf.{ NodeAnimation, load_node_animation, node_clip_count, node_clip_name,
+              node_clip_duration, node_mesh_count, pose, MaterialParams, load_material_params,
+              plain_material, ALPHA_BLEND, ImageBytes, load_images }
+import bindings.jpeg.{ decode_jpeg, is_jpeg_mime }
+import std.ffi.{ data }
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps, set_config_flags, window_ready,
+  FLAG_WINDOW_HIDDEN, begin_drawing, end_drawing, clear_background, elapsed,
+  Model, Animations, Vector3, Matrix, BoundingBox, Degrees, vec3, camera_3d, begin_mode_3d, end_mode_3d,
+  load_model, unload_model, model_bounding_box, draw_model,
+  draw_model_mesh, draw_model_mesh_wires, update_texture, set_backface_culling, set_depth_write,
+  MATERIAL_MAP_HEIGHT, MATERIAL_MAP_ALBEDO, set_model_material_texture_wrap,
+  Image, Texture2D, PIXELFORMAT_R8G8B8A8,
+  gen_mesh_sphere, model_from_mesh, Shader, Color, load_shader_from_memory, bind_shader_map,
+  unload_shader, set_model_material_shader, reset_model_material_shader,
+  set_model_material_texture, model_material_has_texture, model_material_value,
+  model_material_color, model_mesh_has_normals, model_mesh_material, MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL, MATERIAL_MAP_ROUGHNESS,
+  MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION, gen_image_color, texture_from_image,
+  unload_image, image_from_screen, image_color_at,
+  load_animations, unload_animations, animation_name, animation_frame_count,
+  animation_valid, update_animation, update_animation_blend,
+  matrix_translation, matrix_multiply, matrix_rotate_x, matrix_rotate_y, matrix_scale,
+  mouse_down, mouse_delta, mouse_wheel, MOUSE_BUTTON_LEFT,
+  key_pressed, KEY_SPACE, KEY_LEFT, KEY_RIGHT, KEY_R, KEY_W, KEY_L,
+  file_dropped, dropped_files, file_name, has_extension,
+  draw_text, measure_text, WHITE, BLACK, DARKGRAY, rgb,
+}
+
+/// The size, in world units, every model is scaled to. The camera is placed for this.
+const FIT: f32 = 2.5
+
+/// Seconds a clip change crossfades over.
+const FADE: f32 = 0.3
+
+/// raylib samples a glTF animation at 60 frames a second, so a clip's frame count is its
+/// length in sixtieths.
+const CLIP_RATE: f32 = 60.0
+
+const TEXT: i32 = 20
+
+let main = () -> u8 => {
+  let args = arguments()
+  if contains_flag(args, "--check") {
+    let paths = without_flags(args)
+    if paths.len() == 0 {
+      println("usage: gltf_viewer -- --check path/to/model.glb")
+      return 1
+    }
+    return run_check(paths[0])
+  }
+  run_viewer(without_flags(args))
+  0
+}
+
+// ---------------------------------------------------------------------------------------
+// One opened model
+// ---------------------------------------------------------------------------------------
+
+/// A model and everything the viewer measured about it on opening.
+struct Opened {
+  path: string,
+  model: Model,
+  anims: Maybe<Animations>,
+  /// The file's node animations, when raylib found no skeletal clips to play.
+  nodes: Maybe<NodeAnimation>,
+  /// Per material, whether it is drawn see-through — blended, or transmitting light.
+  blend: []bool,
+  /// The centre of the bounding box, which the framing transform moves to the origin.
+  centre: Vector3,
+  /// The box's extent on each axis, in the file's own units.
+  dims: Vector3,
+}
+
+/// Open a model and its animations, or `None` if the file could not be loaded.
+let open = (path: string) -> Maybe<Opened> =>
+  match load_model(path) {
+    Some(model) => {
+      let params = material_params_for(path, model)
+      complete_materials(model, params)
+      recover_textures(path, model, params)
+      let b = model_bounding_box(model)
+      let anims = load_animations(path)
+      let nodes = if anims.is_some() { None } else { matching_nodes(path, model) }
+      Some(Opened {
+        path: path,
+        model: model,
+        anims: anims,
+        nodes: nodes,
+        blend: blended(params),
+        centre: vec3((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0,
+                     (b.min.z + b.max.z) / 2.0),
+        dims: vec3(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z),
+      })
+    },
+    None => None,
+  }
+
+/// The file's node animations, if it has any and they account for exactly raylib's meshes.
+/// The match is by order (`gltf_anim.lyra`), so a count that disagrees means the order does
+/// too, and drawing with it would move the wrong parts; it is dropped and said so.
+let matching_nodes = (path: string, model: Model) -> Maybe<NodeAnimation> =>
+  match load_node_animation(path) {
+    Some(n) => {
+      if node_mesh_count(n) == i64(model.mesh_count) {
+        Some(n)
+      } else {
+        println("node animation not shown: the file names ${node_mesh_count(n)} mesh(es), " ++
+                "raylib loaded ${model.mesh_count}")
+        None
+      }
+    },
+    None => None,
+  }
+
+/// Release a model and its clips.
+let close = (o: Opened) -> void => {
+  unload_model(o.model)
+  match o.anims {
+    Some(a) => unload_animations(a),
+    None => { },
+  }
+}
+
+/// The transform that frames a model: its centre to the origin, turned, then scaled so its
+/// largest extent is `FIT` — applied in that order, since `matrix_multiply` applies its
+/// first argument first.
+let framing = pure (o: Opened, yaw: Degrees, pitch: Degrees, zoom: f32) -> Matrix => {
+  let largest = max3(o.dims.x, o.dims.y, o.dims.z)
+  let s = if largest > 0.0 { FIT / largest * zoom } else { zoom }
+  let centred = matrix_translation(vec3(0.0 - o.centre.x, 0.0 - o.centre.y, 0.0 - o.centre.z))
+  let turned = matrix_multiply(matrix_multiply(centred, matrix_rotate_y(yaw)),
+                               matrix_rotate_x(pitch))
+  matrix_multiply(turned, matrix_scale(s, s, s))
+}
+
+/// Draw the model: every opaque mesh, then every see-through one over them.
+///
+/// **Mesh by mesh, in two passes.** A see-through surface has to be drawn after what lies
+/// behind it, with depth writes off so one pane does not hide another; raylib's `DrawModel`
+/// draws in file order, so a car's windscreen hid the seats. A node-animated mesh adds its
+/// pose before the framing. Back faces are drawn throughout, since a glTF material may be
+/// double-sided and the lighting shader turns a back face's normal round.
+let draw_opened = (o: Opened, transform: Matrix, wires: bool, posed: Maybe<[]Matrix>) -> void => {
+  set_backface_culling(false)
+  draw_pass(o, transform, wires, posed, false)
+  set_depth_write(false)
+  draw_pass(o, transform, wires, posed, true)
+  set_depth_write(true)
+  set_backface_culling(true)
+}
+
+let draw_pass = (o: Opened, transform: Matrix, wires: bool, posed: Maybe<[]Matrix>,
+                 see_through: bool) -> void => {
+  for i in 0..<i64(o.model.mesh_count) {
+    let material = model_mesh_material(o.model, i)
+    let drawn_through = material >= 0 && material < o.blend.len() && o.blend[material]
+    if drawn_through == see_through {
+      let at = match posed {
+        Some(ms) => matrix_multiply(ms[i], transform),
+        None => transform,
+      }
+      draw_model_mesh(o.model, i, at)
+      if wires { draw_model_mesh_wires(o.model, i, at, BLACK) }
+    }
+  }
+}
+
+/// The model's bounding box under a transform — raylib's box applies the model's own
+/// transform, so a copy with the framing set measures the framed model.
+let framed_box = (o: Opened, transform: Matrix) -> BoundingBox => {
+  var m = o.model
+  m.transform = transform
+  model_bounding_box(m)
+}
+
+/// How many clips a model has, 0 for none.
+let clip_count = pure (o: Opened) -> i64 =>
+  match o.anims {
+    Some(a) => i64(a.count),
+    None => 0,
+  }
+
+// ---------------------------------------------------------------------------------------
+// The check
+// ---------------------------------------------------------------------------------------
+
+let run_check = (path: string) -> u8 => {
+  set_config_flags(FLAG_WINDOW_HIDDEN)
+  init_window(64, 64, "gltf_viewer --check")
+  if !window_ready() {
+    println("skipped: no display to create a GL context on")
+    return 0
+  }
+  var failures = 0
+  let lit = load_lighting()
+  failures += check("both lighting shaders compile", lit.is_some(), true)
+  failures += check("a lit sphere is brighter on the side facing the light", sphere_lit(lit), true)
+  match open(path) {
+    Some(o) => {
+      println("${file_name(path)}")
+      println("  meshes ${o.model.mesh_count}, materials ${o.model.material_count}")
+      println("  size ${two(o.dims.x)} x ${two(o.dims.y)} x ${two(o.dims.z)}")
+      failures += check("it has at least one mesh", o.model.mesh_count > 0, true)
+      failures += check("every material has a texture in each slot the lighting reads",
+        slots_filled(o.model), true)
+      println("  ${meshes_without_normals(o.model)} mesh(es) without normals, shaded flat")
+      println("  ${count_true(o.blend)} material(s) drawn see-through")
+      apply_lighting(o.model, lit, true)
+      begin_drawing()
+      clear_background(BLACK)
+      begin_mode_3d(camera_3d(vec3(0.0, 0.8, 5.2), vec3(0.0, 0.0, 0.0), 45.0))
+      draw_opened(o, framing(o, Degrees(30.0), Degrees(15.0), 1.0), false, None)
+      end_mode_3d()
+      end_drawing()
+
+      // **The framing transform, measured on the real model.** raylib's bounding box
+      // applies the model's transform, so with no rotation the framed box must be centred
+      // on the origin with its largest extent exactly FIT. That is the composition order,
+      // checked against a file nobody built for the purpose.
+      let framed = framed_box(o, framing(o, Degrees(0.0), Degrees(0.0), 1.0))
+      let fx = framed.max.x - framed.min.x
+      let fy = framed.max.y - framed.min.y
+      let fz = framed.max.z - framed.min.z
+      failures += check("framed to size FIT", two(max3(fx, fy, fz)), two(FIT))
+      failures += check("framed on the origin",
+        near((framed.min.x + framed.max.x) / 2.0, 0.0) &&
+          near((framed.min.y + framed.max.y) / 2.0, 0.0) &&
+          near((framed.min.z + framed.max.z) / 2.0, 0.0), true)
+
+      match o.anims {
+        Some(a) => {
+          println("  ${a.count} animation clip(s)")
+          var i = 0
+          var first_valid = 0 - 1
+          for i < i64(a.count) {
+            let valid = animation_valid(o.model, a, i)
+            let frames = animation_frame_count(a, i)
+            println("    ${i}: ${animation_name(a, i)}  ${frames} frames  valid ${valid}")
+            if valid {
+              // Step the clip at its first, middle and last frame.
+              update_animation(o.model, a, i, 0.0)
+              update_animation(o.model, a, i, f32(frames / 2))
+              update_animation(o.model, a, i, f32(frames - 1))
+              if first_valid < 0 {
+                first_valid = i
+              } else {
+                update_animation_blend(o.model, a, first_valid, 0.0, i, 0.0, 0.5)
+              }
+            }
+            i += 1
+          }
+          failures += check("every clip belongs to this model's skeleton",
+            all_valid(o.model, a), true)
+        },
+        None => println("  no skeletal animation clips"),
+      }
+      match o.nodes {
+        Some(na) => {
+          println("  ${node_clip_count(na)} node animation clip(s)")
+          for c in 0..<node_clip_count(na) {
+            println("    ${c}: ${node_clip_name(na, c)}  ${two(node_clip_duration(na, c))}s")
+          }
+          failures += check("the node animation accounts for every mesh",
+            node_mesh_count(na), i64(o.model.mesh_count))
+          failures += check("every node clip poses finite transforms", poses_finite(na), true)
+        },
+        None => { },
+      }
+      close(o)
+    },
+    None => {
+      println("could not load ${path}")
+      failures += 1
+    },
+  }
+  match lit {
+    Some(l) => unload_lighting(l),
+    None => { },
+  }
+  close_window()
+  if failures == 0 {
+    println("all viewer checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+/// Whether every node clip, sampled at its start, a third, two thirds and its end, gives
+/// every mesh a transform with no NaN or infinity in it — which a zero-length quaternion
+/// or a bad accessor would.
+let poses_finite = pure (na: NodeAnimation) -> bool => {
+  var every = true
+  for c in 0..<node_clip_count(na) {
+    let d = node_clip_duration(na, c)
+    for t in [0.0, f64(d) / 3.0, f64(d) * 2.0 / 3.0, f64(d)] {
+      for m in pose(na, c, f32(t)) {
+        for x in [m.m0, m.m5, m.m10, m.m12, m.m13, m.m14] {
+          if !(x > 0.0 - 1.0e30 && x < 1.0e30) { every = false }
+        }
+      }
+    }
+  }
+  every
+}
+
+let count_true = pure (flags: []bool) -> i64 => {
+  var n = 0
+  for f in flags { if f { n += 1 } }
+  n
+}
+
+let all_valid = (model: Model, a: Animations) -> bool => {
+  var every = true
+  var i = 0
+  for i < i64(a.count) {
+    if !animation_valid(model, a, i) { every = false }
+    i += 1
+  }
+  every
+}
+
+// ---------------------------------------------------------------------------------------
+// The viewer
+// ---------------------------------------------------------------------------------------
+
+let run_viewer = (paths: []string) -> void => {
+  init_window(1000, 720, "Lyra - glTF viewer")
+  set_target_fps(60)
+  let lit = load_lighting()
+  var lighting = lit.is_some()
+
+  var viewing: Maybe<Opened> = None
+  var status = "drop a .glb, .gltf, .obj, .iqm, .vox or .m3d file on this window"
+  if paths.len() > 0 {
+    viewing = open(paths[0])
+    if viewing.is_none() { status = "could not load ${paths[0]}" }
+    relight(viewing, lit, lighting)
+  }
+
+  var yaw: f32 = 30.0
+  var pitch: f32 = 15.0
+  var zoom: f32 = 1.0
+  var wires = false
+  var playing = true
+  var clip = 0
+  var frame: f32 = 0.0
+  var prev_clip = 0
+  var prev_frame: f32 = 0.0
+  var fade: f32 = 0.0
+  var node_time: f32 = 0.0
+  var last = f32(elapsed())
+
+  // The camera never moves: the model is framed to size FIT at the origin instead.
+  let camera = camera_3d(vec3(0.0, 0.8, 5.2), vec3(0.0, 0.0, 0.0), 45.0)
+
+  for !should_close() {
+    let now = f32(elapsed())
+    let dt = now - last
+    last = now
+
+    // --- opening a dropped file -------------------------------------------------------
+    if file_dropped() {
+      for path in dropped_files() {
+        if is_model_file(path) {
+          match viewing {
+            Some(o) => close(o),
+            None => { },
+          }
+          viewing = open(path)
+          if viewing.is_none() { status = "could not load ${file_name(path)}" }
+          relight(viewing, lit, lighting)
+          // Separate assignments rather than one tuple assignment: an untyped float in a
+          // tuple takes its f64 default instead of the f32 place's width (todo.md).
+          yaw = 30.0
+          pitch = 15.0
+          zoom = 1.0
+          clip = 0
+          frame = 0.0
+          fade = 0.0
+          node_time = 0.0
+        }
+      }
+    }
+
+    // --- input ------------------------------------------------------------------------
+    if mouse_down(MOUSE_BUTTON_LEFT) {
+      let d = mouse_delta()
+      yaw += d.x * 0.4
+      pitch = clamp_f(pitch + d.y * 0.4, 0.0 - 89.0, 89.0)
+    }
+    zoom = clamp_f(zoom * (1.0 + mouse_wheel() * 0.1), 0.1, 10.0)
+    if key_pressed(KEY_R) {
+      yaw = 30.0
+      pitch = 15.0
+      zoom = 1.0
+    }
+    if key_pressed(KEY_W) { wires = !wires }
+    if key_pressed(KEY_L) && lit.is_some() {
+      lighting = !lighting
+      relight(viewing, lit, lighting)
+    }
+    if key_pressed(KEY_SPACE) { playing = !playing }
+
+    // --- animation --------------------------------------------------------------------
+    var clip_line = "no animation clips"
+    var posed: Maybe<[]Matrix> = None
+    match viewing {
+      Some(o) => match o.anims {
+        Some(a) => {
+          let n = i64(a.count)
+          if n > 0 {
+            if key_pressed(KEY_RIGHT) || key_pressed(KEY_LEFT) {
+              (prev_clip, prev_frame, fade) = (clip, frame, FADE)
+              let step = if key_pressed(KEY_RIGHT) { 1 } else { n - 1 }
+              clip = (clip + step) %% n
+              frame = 0.0
+            }
+            let frames = f32(animation_frame_count(a, clip))
+            if playing && frames > 0.0 {
+              frame = wrap_f(frame + dt * CLIP_RATE, frames)
+              prev_frame = wrap_f(prev_frame + dt * CLIP_RATE,
+                                  f32(animation_frame_count(a, prev_clip)))
+            }
+            if animation_valid(o.model, a, clip) {
+              if fade > 0.0 && animation_valid(o.model, a, prev_clip) {
+                // Crossfade from the clip that was playing to the one chosen.
+                update_animation_blend(o.model, a, prev_clip, prev_frame, clip, frame,
+                                       1.0 - fade / FADE)
+                fade -= dt
+              } else {
+                update_animation(o.model, a, clip, frame)
+              }
+            }
+            let state = if playing { "playing" } else { "paused" }
+            clip_line = "clip ${clip + 1}/${n}: ${animation_name(a, clip)}   frame " ++
+              "${f64(frame).floor()}/${f64(frames).round()}   ${state}"
+          }
+        },
+        None => match o.nodes {
+          // Node clips switch outright rather than crossfading: blending two poses of a
+          // node tree is a per-node slerp this does not do yet.
+          Some(na) => {
+            let n = node_clip_count(na)
+            if clip >= n { clip = 0 }
+            if key_pressed(KEY_RIGHT) || key_pressed(KEY_LEFT) {
+              let step = if key_pressed(KEY_RIGHT) { 1 } else { n - 1 }
+              clip = (clip + step) %% n
+              node_time = 0.0
+            }
+            let length = node_clip_duration(na, clip)
+            if playing { node_time = wrap_f(node_time + dt, length) }
+            posed = Some(pose(na, clip, node_time))
+            let state = if playing { "playing" } else { "paused" }
+            clip_line = "clip ${clip + 1}/${n}: ${node_clip_name(na, clip)}   " ++
+              "${two(node_time)}s / ${two(length)}s   ${state}"
+          },
+          None => { },
+        },
+      },
+      None => { },
+    }
+
+    // --- drawing ----------------------------------------------------------------------
+    begin_drawing()
+    clear_background(rgb(236, 238, 242))
+    match viewing {
+      Some(o) => {
+        begin_mode_3d(camera)
+        draw_opened(o, framing(o, Degrees(yaw), Degrees(pitch), zoom), wires, posed)
+        end_mode_3d()
+        draw_text(file_name(o.path), 20, 18, TEXT + 4, BLACK)
+        let shading = if lit.is_none() { "unlit (the lighting shader did not compile)" }
+          else if lighting { "lit" } else { "unlit" }
+        draw_text("meshes ${o.model.mesh_count}  |  materials ${o.model.material_count}  |  " ++
+                  "size ${two(o.dims.x)} x ${two(o.dims.y)} x ${two(o.dims.z)}  |  ${shading}",
+                  20, 50, TEXT, DARKGRAY)
+        draw_text(clip_line, 20, 76, TEXT, DARKGRAY)
+      },
+      None => {
+        let w = measure_text(status, TEXT)
+        draw_text(status, 500 - w / 2, 350, TEXT, DARKGRAY)
+      },
+    }
+    draw_text("drag: turn  |  wheel: zoom  |  space: play/pause  |  left/right: clip  |  " ++
+              "l: lighting  |  w: wireframe  |  r: reset  |  drop a file", 20, 690, 16, DARKGRAY)
+    end_drawing()
+  }
+
+  match viewing {
+    Some(o) => close(o),
+    None => { },
+  }
+  match lit {
+    Some(l) => unload_lighting(l),
+    None => { },
+  }
+  close_window()
+}
+
+// ---------------------------------------------------------------------------------------
+// Lighting
+// ---------------------------------------------------------------------------------------
+
+/// The lighting shader, twice: once shading with the mesh's own normals, and once shading
+/// flat for a mesh that has none. Two programs rather than one with a switch, because a
+/// switch would be a uniform and uniform values cannot be set yet (`shaders.lyra`).
+@must_release(unload_lighting)
+struct Lighting {
+  smooth: Shader,
+  flat: Shader,
+}
+
+/// Compile both lighting shaders and give each the two slots raylib has no names for.
+/// `None` if either fails, which leaves the viewer drawing unlit and saying so.
+let load_lighting = () -> Maybe<Lighting> =>
+  match load_shader_from_memory(lit_vertex(), lit_fragment(false)) {
+    Some(smooth) => match load_shader_from_memory(lit_vertex(), lit_fragment(true)) {
+      Some(flat) => {
+        if feeds_every_slot(smooth) && feeds_every_slot(flat) {
+          Some(Lighting { smooth: smooth, flat: flat })
+        } else {
+          unload_shader(smooth)
+          unload_shader(flat)
+          None
+        }
+      },
+      None => {
+        unload_shader(smooth)
+        None
+      },
+    },
+    None => None,
+  }
+
+let feeds_every_slot = (s: Shader) -> bool =>
+  bind_shader_map(s, MATERIAL_MAP_OCCLUSION, "occlusionMap") &&
+    bind_shader_map(s, MATERIAL_MAP_EMISSION, "emissionMap") &&
+    bind_shader_map(s, MATERIAL_MAP_HEIGHT, "paramsMap")
+
+let unload_lighting = (l: Lighting) -> void => {
+  unload_shader(l.smooth)
+  unload_shader(l.flat)
+}
+
+/// Draw every material of a model with the lighting, or put them back on raylib's shader.
+/// A material is shaded flat when any mesh drawn with it has no normals.
+let apply_lighting = (model: Model, lit: Maybe<Lighting>, on: bool) -> void => {
+  for i in 0..<i64(model.material_count) {
+    match lit {
+      Some(l) => {
+        if !on {
+          reset_model_material_shader(model, i)
+        } else if drawn_flat(model, i) {
+          set_model_material_shader(model, i, l.flat)
+        } else {
+          set_model_material_shader(model, i, l.smooth)
+        }
+      },
+      None => reset_model_material_shader(model, i),
+    }
+  }
+}
+
+let drawn_flat = pure (model: Model, material: i64) -> bool => {
+  var flat = false
+  for m in 0..<i64(model.mesh_count) {
+    if model_mesh_material(model, m) == material && !model_mesh_has_normals(model, m) {
+      flat = true
+    }
+  }
+  flat
+}
+
+let meshes_without_normals = pure (model: Model) -> i64 => {
+  var n = 0
+  for m in 0..<i64(model.mesh_count) {
+    if !model_mesh_has_normals(model, m) { n += 1 }
+  }
+  n
+}
+
+let relight = (viewing: Maybe<Opened>, lit: Maybe<Lighting>, on: bool) -> void =>
+  match viewing {
+    Some(o) => apply_lighting(o.model, lit, on),
+    None => { },
+  }
+
+/// Each material's parameters, as the file states them where it is glTF and raylib loaded
+/// its materials in the file's order — raylib's material `i + 1` is the file's `i` — and as
+/// raylib's own few numbers say otherwise.
+let material_params_for = (path: string, model: Model) -> []MaterialParams => {
+  let plain = plain_params_for(model)
+  match load_material_params(path) {
+    Some(from_file) => {
+      if from_file.len() + 1 != i64(model.material_count) {
+        println("material properties not applied: the file names ${from_file.len()} " ++
+                "material(s), raylib loaded ${model.material_count}")
+        return plain
+      }
+      var out: []MaterialParams = [plain[0]]
+      for p in from_file { out.push(p) }
+      out
+    },
+    None => plain,
+  }
+}
+
+/// Parameters from what raylib keeps: its metallic and roughness values, the emission colour,
+/// and the albedo colour's alpha for whether to blend. raylib leaves metallic and roughness
+/// at zero for a material that states neither — an OBJ, or the default — and roughness zero
+/// is a perfect mirror, so that pair is read as a plain, fairly rough non-metal instead.
+let plain_params_for = pure (model: Model) -> []MaterialParams => {
+  var out: []MaterialParams = []
+  for i in 0..<i64(model.material_count) {
+    let metal = model_material_value(model, i, MATERIAL_MAP_METALNESS)
+    let rough = model_material_value(model, i, MATERIAL_MAP_ROUGHNESS)
+    let e = model_material_color(model, i, MATERIAL_MAP_EMISSION)
+    let unset = metal <= 0.0 && rough <= 0.0
+    out.push(plain_material(if unset { 0.0 } else { metal }, if unset { 0.8 } else { rough },
+                            f32(e.r) / 255.0, f32(e.g) / 255.0, f32(e.b) / 255.0,
+                            model_material_color(model, i, MATERIAL_MAP_ALBEDO).a < 255))
+  }
+  out
+}
+
+let blended = pure (params: []MaterialParams) -> []bool => {
+  var out: []bool = []
+  for p in params { out.push(p.alpha_mode == ALPHA_BLEND || p.transmission > 0.0) }
+  out
+}
+
+/// Decode and put back the textures raylib could not read.
+///
+/// raylib decodes only the image formats its build supports: without `SUPPORT_FILEFORMAT_JPG`
+/// every JPEG loads as an invalid image and its material draws untextured. The file says which
+/// image feeds each slot and what it is encoded in, so a JPEG is decoded here and uploaded in
+/// its place. A file whose images raylib did read is untouched — this looks only at JPEGs.
+let recover_textures = (path: string, model: Model, params: []MaterialParams) -> void => {
+  let images = match load_images(path) {
+    Some(list) => list,
+    None => return,
+  }
+  // One upload per image, however many slots use it: raylib's `unload_model` frees each
+  // distinct texture once, so sharing one between slots is safe.
+  var uploaded: []Texture2D = []
+  var ready: []bool = []
+  for _ in 0..<images.len() {
+    uploaded.push(Texture2D { id: 0, width: 0, height: 0, mipmaps: 0, format: 0 })
+    ready.push(false)
+  }
+  var replaced = 0
+  let maps = [MATERIAL_MAP_ALBEDO, MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL,
+              MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION]
+  for i in 0..<i64(model.material_count) {
+    for k in 0..<5 {
+      let which = params[i].slots[k].image
+      if which >= 0 && which < images.len() && is_jpeg_mime(images[which].mime) {
+        if !ready[which] {
+          match upload_jpeg(images[which]) {
+            Some(t) => {
+              uploaded[which] = t
+              ready[which] = true
+            },
+            None => { },
+          }
+        }
+        if ready[which] {
+          set_model_material_texture(model, i, maps[k], uploaded[which])
+          replaced += 1
+        }
+      }
+    }
+  }
+  if replaced > 0 {
+    println("decoded ${replaced} JPEG texture(s) raylib could not read")
+  }
+}
+
+/// Decode a JPEG and upload it.
+///
+/// **The pixels stay Lyra's.** raylib's `LoadTextureFromImage` copies to the GPU and does not
+/// take the buffer, so the `Image` handed to it points at the decoded array and is never
+/// unloaded — `unload_image` would hand Lyra's memory to raylib's allocator. The array is
+/// still live at the call, and read again after it, which is what keeps it so.
+let upload_jpeg = (image: ImageBytes) -> Maybe<Texture2D> =>
+  match decode_jpeg(image.bytes) {
+    Some(decoded) => {
+      let texture = texture_from_image(Image {
+        data: unsafe { decoded.pixels.data() },
+        width: decoded.width,
+        height: decoded.height,
+        mipmaps: 1,
+        format: PIXELFORMAT_R8G8B8A8,
+      })
+      if decoded.pixels.len() > 0 { texture } else { None }
+    },
+    None => None,
+  }
+
+/// Give every material a texture in each slot the lighting shader samples, and its
+/// parameters.
+///
+/// A slot raylib left empty is not bound at all when the model is drawn, so the sampler
+/// would read whatever texture unit held last — another material's normal map, say. The 1x1
+/// fallbacks hold the neutral value: white for metallic-roughness and emission, which the
+/// material's factors then scale in the shader, a flat normal, and no occlusion. The model
+/// takes each texture and frees it in `unload_model`.
+///
+/// **The parameters go in as a texture**, since uniform values cannot be set yet
+/// (`shaders.lyra`): one row, each texel holding one float's four bytes, which the shader
+/// reads back exactly with `texelFetch` and `uintBitsToFloat`. It sits in the height slot,
+/// which nothing here uses. [param_floats] is the layout, and the shader's `param(i)` reads it.
+let complete_materials = (model: Model, params: []MaterialParams) -> void => {
+  for i in 0..<i64(model.material_count) {
+    fill_slot(model, i, MATERIAL_MAP_METALNESS, WHITE)
+    fill_slot(model, i, MATERIAL_MAP_NORMAL, rgb(128, 128, 255))
+    fill_slot(model, i, MATERIAL_MAP_OCCLUSION, WHITE)
+    fill_slot(model, i, MATERIAL_MAP_EMISSION, WHITE)
+    set_params(model, i, param_floats(params[i]))
+    // Each slot's wrap mode, which raylib's loader does not apply. The order is the
+    // params' slot order; a fallback texture is 1x1, so its mode changes nothing.
+    let maps = [MATERIAL_MAP_ALBEDO, MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL,
+                MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION]
+    for k in 0..<5 {
+      set_model_material_texture_wrap(model, i, maps[k], i32(params[i].slots[k].wrap))
+    }
+  }
+}
+
+let fill_slot = (model: Model, material: i64, map: i32, colour: Color) -> void => {
+  if model_material_has_texture(model, material, map) { return }
+  let image = gen_image_color(1, 1, colour)
+  match texture_from_image(image) {
+    Some(t) => set_model_material_texture(model, material, map, t),
+    None => { },
+  }
+  unload_image(image)
+}
+
+let set_params = (model: Model, material: i64, floats: []f32) -> void => {
+  var texels: []Color = []
+  for f in floats {
+    let bits = float_bits(f)
+    texels.push(Color { r: u8(bits & 255), g: u8((bits >> 8) & 255), b: u8((bits >> 16) & 255),
+                        a: u8((bits >> 24) & 255) })
+  }
+  let image = gen_image_color(i32(texels.len()), 1, BLACK)
+  match texture_from_image(image) {
+    Some(t) => {
+      if !update_texture(t, texels) { println("material ${material}: parameters not uploaded") }
+      set_model_material_texture(model, material, MATERIAL_MAP_HEIGHT, t)
+    },
+    None => { },
+  }
+  unload_image(image)
+}
+
+/// The floats the shader's `param(i)` reads, in its order: for each of the five texture
+/// slots its UV set, offset (2), rotation and scale (2) — 30 — then normal scale (30),
+/// occlusion strength, metallic, roughness, emissive colour (34..36), emissive strength,
+/// transmission (38), clearcoat, clearcoat roughness, alpha mode (41) and alpha cutoff.
+let param_floats = pure (p: MaterialParams) -> []f32 => {
+  var out: []f32 = []
+  for s in p.slots {
+    out.push(f32(s.uv))
+    out.push(s.offset_x)
+    out.push(s.offset_y)
+    out.push(s.rotation)
+    out.push(s.scale_x)
+    out.push(s.scale_y)
+  }
+  for v in [p.normal_scale, p.occlusion_strength, p.metallic, p.roughness, p.emissive_r,
+            p.emissive_g, p.emissive_b, p.emissive_strength, p.transmission, p.clearcoat,
+            p.clearcoat_roughness, f32(p.alpha_mode), p.alpha_cutoff] {
+    out.push(v)
+  }
+  out
+}
+
+/// A float's 32 bits — written as one member of a C union and read as the other.
+union Bits32 {
+  value: f32,
+  bits: u32,
+}
+
+let float_bits = pure (v: f32) -> u32 => unsafe { Bits32 { value: v }.bits }
+
+/// Draw a white sphere with the lighting shader and read two points of it back off the
+/// screen: the side facing the key light must come out clearly brighter than the side
+/// facing away. raylib's own shader draws both the same white, so this is what fails if the
+/// lighting is not reaching the pixels — a shader that compiles and a slot that is bound are
+/// not the same claim as a lit picture. The screen is read before `end_drawing`, while the
+/// frame just drawn is still the one in the buffer.
+let sphere_lit = (lit: Maybe<Lighting>) -> bool => {
+  var brighter = false
+  match gen_mesh_sphere(1.0, 32, 32) {
+    Some(mesh) => match model_from_mesh(mesh) {
+      Some(m) => {
+        complete_materials(m, plain_params_for(m))
+        apply_lighting(m, lit, true)
+        begin_drawing()
+        clear_background(BLACK)
+        begin_mode_3d(camera_3d(vec3(0.0, 0.0, 3.2), vec3(0.0, 0.0, 0.0), 45.0))
+        draw_model(m, vec3(0.0, 0.0, 0.0), 1.0, WHITE)
+        end_mode_3d()
+        match image_from_screen() {
+          Some(shot) => {
+            let toward = image_color_at(shot, shot.width * 35 / 100, shot.height * 35 / 100)
+            let away = image_color_at(shot, shot.width * 65 / 100, shot.height * 65 / 100)
+            brighter = channel_sum(toward) > channel_sum(away) + 60
+            unload_image(shot)
+          },
+          None => { },
+        }
+        end_drawing()
+        unload_model(m)
+      },
+      None => { },
+    },
+    None => { },
+  }
+  brighter
+}
+
+let channel_sum = pure (c: Color) -> i64 => i64(c.r) + i64(c.g) + i64(c.b)
+
+/// Whether every material has a texture in each slot the lighting shader samples.
+let slots_filled = pure (model: Model) -> bool => {
+  var every = true
+  for i in 0..<i64(model.material_count) {
+    for map in [MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL, MATERIAL_MAP_OCCLUSION,
+                MATERIAL_MAP_EMISSION, MATERIAL_MAP_HEIGHT] {
+      if !model_material_has_texture(model, i, map) { every = false }
+    }
+  }
+  every
+}
+
+/// The vertex shader: positions and normals into world space for the lighting, and both UV
+/// sets through to the fragment shader.
+let lit_vertex = pure () -> string => [
+  "#version 330",
+  "in vec3 vertexPosition;",
+  "in vec2 vertexTexCoord;",
+  "in vec2 vertexTexCoord2;",
+  "in vec3 vertexNormal;",
+  "in vec4 vertexColor;",
+  "uniform mat4 mvp;",
+  "uniform mat4 matModel;",
+  "uniform mat4 matNormal;",
+  "out vec3 fragPosition;",
+  "out vec2 fragTexCoord;",
+  "out vec2 fragTexCoord2;",
+  "out vec4 fragColor;",
+  "out vec3 fragNormal;",
+  "void main() {",
+  "  fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));",
+  "  fragTexCoord = vertexTexCoord;",
+  "  fragTexCoord2 = vertexTexCoord2;",
+  "  fragColor = vertexColor;",
+  "  fragNormal = vec3(matNormal * vec4(vertexNormal, 0.0));",
+  "  gl_Position = mvp * vec4(vertexPosition, 1.0);",
+  "}",
+].join("\n")
+
+/// The fragment shader: metallic-roughness shading under a key and a fill light, with a
+/// sky-to-ground ambient the occlusion map darkens, a clearcoat layer, and transmission.
+///
+/// **Every material number comes from `paramsMap`** ([set_params]), and every texture is
+/// sampled at its own UV set and transform (`slotUV`), since raylib binds the textures and
+/// nothing else.
+///
+/// **`flat` shades each face with its own normal**, for a mesh the file gave none — as glTF
+/// requires of a viewer. raylib hands such a mesh one constant default for every vertex, a
+/// unit vector indistinguishable in the shader from a real normal; the CPU side is where the
+/// absence shows (a null `normals` pointer), and it picks this variant.
+///
+/// **The normal map needs no tangents.** The tangent frame is rebuilt per pixel from
+/// screen-space derivatives of the position and the normal map's own UVs (Schüler's
+/// cotangent frame), which also handles mirrored and transformed UVs.
+///
+/// **Transmission is approximated**, not refracted: the diffuse part fades out, and the
+/// surface is drawn see-through, turning more opaque — more reflective — at grazing angles.
+/// **Clearcoat** is a second, sharper specular layer over the base, using the surface's own
+/// normal rather than the base's normal map, which is what makes car paint read as glossy
+/// over its flakes.
+///
+/// **The environment is a sky-to-ground gradient**, reflected through the analytic split-sum
+/// approximation (Karis's `EnvBRDFApprox`) and blurred toward its average as roughness rises.
+/// A rough metal reflects nothing but its environment, so the first, cruder term — which
+/// simply faded reflection out with roughness — drew glTF's default material, a rough metal,
+/// almost black.
+///
+/// **Only the texture is decoded from sRGB.** glTF's base colour factor and vertex colours are
+/// already linear; decoding the product squared every factor a second time, and a material
+/// coloured by its factor alone — 0.16 grey — came out at 0.018, nearly black.
+///
+/// **Tone mapping works on luminance, not per channel**, so it keeps hue; a per-channel
+/// curve turned the Fox yellow.
+let lit_fragment = pure (flat: bool) -> string =>
+  (if flat { "#version 330\n#define FLAT_NORMALS\n" } else { "#version 330\n" }) ++ [
+  "in vec3 fragPosition;",
+  "in vec2 fragTexCoord;",
+  "in vec2 fragTexCoord2;",
+  "in vec4 fragColor;",
+  "in vec3 fragNormal;",
+  "uniform sampler2D texture0;",
+  "uniform sampler2D texture1;",
+  "uniform sampler2D texture2;",
+  "uniform sampler2D occlusionMap;",
+  "uniform sampler2D emissionMap;",
+  "uniform sampler2D paramsMap;",
+  "uniform vec4 colDiffuse;",
+  "uniform mat4 matView;",
+  "out vec4 finalColor;",
+  "const float PI = 3.14159265;",
+  "const vec3 KEY_DIR = vec3(-0.45, 0.8, 0.55);",
+  "const vec3 KEY_COLOR = vec3(2.6, 2.55, 2.45);",
+  "const vec3 FILL_DIR = vec3(0.6, 0.25, -0.6);",
+  "const vec3 FILL_COLOR = vec3(0.45, 0.5, 0.6);",
+  "const vec3 SKY = vec3(0.55, 0.58, 0.66);",
+  "const vec3 GROUND = vec3(0.2, 0.18, 0.16);",
+  "float param(int i) {",
+  "  uvec4 b = uvec4(round(texelFetch(paramsMap, ivec2(i, 0), 0) * 255.0));",
+  "  return uintBitsToFloat(b.r | (b.g << 8u) | (b.b << 16u) | (b.a << 24u));",
+  "}",
+  "vec2 slotUV(int slot) {",
+  "  int k = slot * 6;",
+  "  vec2 uv = param(k) > 0.5 ? fragTexCoord2 : fragTexCoord;",
+  "  float r = param(k + 3);",
+  "  vec2 s = uv * vec2(param(k + 4), param(k + 5));",
+  "  return vec2(cos(r) * s.x + sin(r) * s.y, cos(r) * s.y - sin(r) * s.x) + vec2(param(k + 1), param(k + 2));",
+  "}",
+  "vec3 perturbNormal(vec3 n, vec3 p, vec2 uv, float strength) {",
+  "  vec3 m = texture(texture2, uv).xyz * 2.0 - 1.0;",
+  "  m.xy *= strength;",
+  "  vec3 dp1 = dFdx(p);",
+  "  vec3 dp2 = dFdy(p);",
+  "  vec2 duv1 = dFdx(uv);",
+  "  vec2 duv2 = dFdy(uv);",
+  "  vec3 dp2perp = cross(dp2, n);",
+  "  vec3 dp1perp = cross(n, dp1);",
+  "  vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;",
+  "  vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;",
+  "  float len2 = max(dot(t, t), dot(b, b));",
+  "  if (len2 < 1e-20) return n;",
+  "  float s = inversesqrt(len2);",
+  "  return normalize(mat3(t * s, b * s, n) * m);",
+  "}",
+  "float ggx(float nh, float a) {",
+  "  float a2 = a * a;",
+  "  float d = nh * nh * (a2 - 1.0) + 1.0;",
+  "  return a2 / (PI * d * d);",
+  "}",
+  "float smith(float nv, float nl, float r) {",
+  "  float k = (r + 1.0) * (r + 1.0) / 8.0;",
+  "  return nv / (nv * (1.0 - k) + k) * nl / (nl * (1.0 - k) + k);",
+  "}",
+  "vec3 fresnel(float c, vec3 f0) { return f0 + (1.0 - f0) * pow(1.0 - c, 5.0); }",
+  "vec3 sky(vec3 d) { return mix(GROUND, SKY, d.y * 0.5 + 0.5); }",
+  "vec3 skyBlurred(vec3 d, float rough) { return mix(sky(d), 0.5 * (SKY + GROUND), rough); }",
+  "vec3 envBRDF(vec3 f0, float rough, float nv) {",
+  "  vec4 r = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);",
+  "  float a = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;",
+  "  vec2 ab = vec2(-1.04, 1.04) * a + r.zw;",
+  "  return f0 * ab.x + ab.y;",
+  "}",
+  "vec3 shade(vec3 n, vec3 v, vec3 l, vec3 radiance, vec3 albedo, float metallic, float rough, vec3 f0, float diffuse) {",
+  "  vec3 h = normalize(v + l);",
+  "  float nl = max(dot(n, l), 0.0);",
+  "  float nv = max(dot(n, v), 1e-4);",
+  "  float nh = max(dot(n, h), 0.0);",
+  "  vec3 f = fresnel(max(dot(h, v), 0.0), f0);",
+  "  vec3 spec = ggx(nh, rough * rough) * smith(nv, nl, rough) * f / (4.0 * nv * max(nl, 1e-4));",
+  "  vec3 kd = (1.0 - f) * (1.0 - metallic) * diffuse;",
+  "  return (kd * albedo / PI + spec) * radiance * nl;",
+  "}",
+  "vec3 coat(vec3 n, vec3 v, vec3 l, vec3 radiance, float rough) {",
+  "  vec3 h = normalize(v + l);",
+  "  float nl = max(dot(n, l), 0.0);",
+  "  float nv = max(dot(n, v), 1e-4);",
+  "  float nh = max(dot(n, h), 0.0);",
+  "  vec3 f = fresnel(max(dot(h, v), 0.0), vec3(0.04));",
+  "  return ggx(nh, rough * rough) * smith(nv, nl, rough) * f / (4.0 * nv * max(nl, 1e-4)) * radiance * nl;",
+  "}",
+  "void main() {",
+  "  vec4 texel = texture(texture0, slotUV(0));",
+  "  vec4 base = vec4(pow(texel.rgb, vec3(2.2)), texel.a) * colDiffuse * fragColor;",
+  "  float mode = param(41);",
+  "  if (mode > 0.5 && mode < 1.5 && base.a < param(42)) discard;",
+  "  vec3 albedo = base.rgb;",
+  "  vec3 mr = texture(texture1, slotUV(1)).rgb;",
+  "  float rough = clamp(mr.g * param(33), 0.05, 1.0);",
+  "  float metallic = clamp(mr.b * param(32), 0.0, 1.0);",
+  "  float ao = 1.0 + param(31) * (texture(occlusionMap, slotUV(3)).r - 1.0);",
+  "  vec3 emission = pow(texture(emissionMap, slotUV(4)).rgb, vec3(2.2)) * vec3(param(34), param(35), param(36)) * param(37);",
+  "  float transmission = clamp(param(38), 0.0, 1.0);",
+  "#ifdef FLAT_NORMALS",
+  "  vec3 ng = normalize(cross(dFdx(fragPosition), dFdy(fragPosition)));",
+  "#else",
+  "  vec3 ng = normalize(fragNormal);",
+  "  if (!gl_FrontFacing) ng = -ng;",
+  "#endif",
+  "  vec3 n = perturbNormal(ng, fragPosition, slotUV(2), param(30));",
+  "  vec3 eye = inverse(matView)[3].xyz;",
+  "  vec3 v = normalize(eye - fragPosition);",
+  "  vec3 f0 = mix(vec3(0.04), albedo, metallic);",
+  "  float diffuse = 1.0 - transmission;",
+  "  vec3 color = shade(n, v, normalize(KEY_DIR), KEY_COLOR, albedo, metallic, rough, f0, diffuse)",
+  "            + shade(n, v, normalize(FILL_DIR), FILL_COLOR, albedo, metallic, rough, f0, diffuse);",
+  "  vec3 fa = envBRDF(f0, rough, max(dot(n, v), 1e-4));",
+  "  color += (sky(n) * albedo * (1.0 - metallic) * (1.0 - fa) * diffuse + skyBlurred(reflect(-v, n), rough) * fa) * ao;",
+  "  float cc = param(39);",
+  "  if (cc > 0.0) {",
+  "    float ccRough = clamp(param(40), 0.03, 1.0);",
+  "    float fc = 0.04 + 0.96 * pow(1.0 - max(dot(ng, v), 0.0), 5.0);",
+  "    vec3 layer = coat(ng, v, normalize(KEY_DIR), KEY_COLOR, ccRough) + coat(ng, v, normalize(FILL_DIR), FILL_COLOR, ccRough)",
+  "               + sky(reflect(-v, ng)) * fc * ao;",
+  "    color = color * (1.0 - cc * fc) + cc * layer;",
+  "  }",
+  "  color += emission;",
+  "  float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));",
+  "  color *= (1.0 + lum / 2.25) / (1.0 + lum);",
+  "  float alpha = mode < 0.5 ? 1.0 : base.a;",
+  "  float edge = 0.04 + 0.96 * pow(1.0 - max(dot(n, v), 0.0), 5.0);",
+  "  alpha = mix(alpha, 0.2 + 0.8 * edge, transmission);",
+  "  finalColor = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), alpha);",
+  "}",
+].join("\n")
+
+// ---------------------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------------------
+
+/// The formats raylib's `LoadModel` reads.
+let is_model_file = (path: string) -> bool =>
+  has_extension(path, ".glb") || has_extension(path, ".gltf") ||
+    has_extension(path, ".obj") || has_extension(path, ".iqm") ||
+    has_extension(path, ".vox") || has_extension(path, ".m3d")
+
+/// The program's own arguments, without its name.
+let arguments = () -> []string => {
+  var out: []string = []
+  let all = program_args()
+  var i = 1
+  for i < all.len() {
+    out.push(all[i])
+    i += 1
+  }
+  out
+}
+
+let contains_flag = pure (args: []string, flag: string) -> bool => {
+  var found = false
+  for a in args {
+    if a == flag { found = true }
+  }
+  found
+}
+
+let without_flags = pure (args: []string) -> []string => {
+  var out: []string = []
+  for a in args {
+    if !a.starts_with("--") { out.push(a) }
+  }
+  out
+}
+
+let max3 = pure (a: f32, b: f32, c: f32) -> f32 => {
+  let ab = if a > b { a } else { b }
+  if ab > c { ab } else { c }
+}
+
+let clamp_f = pure (v: f32, lo: f32, hi: f32) -> f32 =>
+  if v < lo { lo } else if v > hi { hi } else { v }
+
+/// `v` wrapped into `[0, n)`, for a looping clip's frame.
+let wrap_f = pure (v: f32, n: f32) -> f32 =>
+  if n <= 0.0 { 0.0 } else { v - n * f32(f64(v / n).floor()) }
+
+let near = pure (a: f32, b: f32) -> bool => {
+  let d = a - b
+  (if d < 0.0 { 0.0 - d } else { d }) < 0.01
+}
+
+let two = pure (v: f32) -> string => f64(v).to_fixed(2)
+
+let check<t> where t: Show = (name: string, got: t, want: t) -> i64 => {
+  if "${got}" == "${want}" {
+    println("  ok    ${name}")
+    0
+  } else {
+    println("  FAIL  ${name}: got ${got}, want ${want}")
+    1
+  }
+}
