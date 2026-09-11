@@ -323,6 +323,16 @@ real failure, and none is local to one package.
      only a *computed* untyped branch had nothing else to narrow it. Fixed 09/10; the two
      are now tested as a pair (`TestExec_IfBranchesJoinTheirUntypedWidths` and its match
      twin), which is the only thing that stops them drifting again.
+   - **A pass over the *merged* program sees every module's top level at once**, and one
+     that answers a name question from it is wrong by construction. `CheckShadowing`
+     accumulated every top-level declaration it walked past, so a local named `turns` was
+     reported against `bindings.raylib`'s `turns` in a file that never imported it — and
+     against other modules' **private** helpers, which no import can reach at all. One
+     `import lib.{ rgb }` was enough to make nine ordinary local names warn. It now takes
+     the `SymbolTable` and asks what the *file* can reach: its own module, the names its
+     imports admit (a namespace import admits none — `lib.f` is not `f`), and the prelude's
+     exports. `SymbolTable.ModuleExports` is the predicate, and its own comment had
+     already stated the rule for a different check.
    - **Paired walks must be fixed in one change** — and better still, stop being a pair.
      `emitRetainValue`/`emitDropValue` both lacked `ParameterizedType`, and fixing only the
      drop is an instant double free. Note *both* lacked it, and both lacked

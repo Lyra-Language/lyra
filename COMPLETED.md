@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — the shadowing check had no idea what modules are
+
+`lyra-W001` reported a local named `turns` in `examples/raylib/mandelbrot.lyra` as shadowing
+`bindings.raylib`'s `turns` — a name that file never imported, and which by the language's
+own boundary rule is not in scope there at all.
+
+**`CheckShadowing` took `*ast.Program` and nothing else.** That is the *merged* program, so
+its top level is every module's at once, and the walk simply accumulated every declaration
+it passed. Rule 4's shape once more: a pass answering a name question without asking which
+module is asking.
+
+**Two things established how wrong it was, and the second is the decisive one.** A name a
+module exports but the file did not import warned — and so did another module's **private**
+helper, which no import can reach under any spelling. One `import bindings.raylib.{ rgb }`
+was enough to make nine ordinary local names (`compress`, `blur`, `fill`, `contrast`, …)
+warn against that module's internals.
+
+The fix threads the `SymbolTable` in and asks what the **file** can reach: its own module
+across all its files, the names its imports actually admit — under the *local* name, since
+an alias renames what it binds — and the prelude's exports. A **namespace** import
+contributes nothing, because it binds `lib.f` rather than `f`.
+`SymbolTable.ModuleExports` is the predicate, and its own comment had already written the
+rule down for a different check: *"a private name never reached the importer, so declaring
+one of your own shadows nothing."*
+
+**A second bug fell out of the same rewrite.** The old walk accumulated names *in order*,
+so a local shadowing a top-level name declared **later** went unreported — and Lyra has no
+forward-declaration constraint, so that name is in scope throughout its module. The set is
+now complete rather than order-dependent, which costs about 13% more allocation on the
+analysis benchmark for no measurable change in time; a module's base set is shared by every
+file in it, since only selective imports make files differ.
+
+**The false positives were a class rather than a pile.** Across every example the count
+went from three to two, and both survivors are *correct*: `count` and `first` really are
+prelude exports, implicitly in scope everywhere. What changed is that the check can no
+longer be set off by a module's internals — which is what makes the remaining two worth
+reading.
+
+**Its own tests could not have caught it**, and that is the lesson to carry: they call the
+collector on a single source string with no symbol table, so there is one module and
+nothing to confuse. The regression tests live in `pkg/driver`, over real multi-file
+programs — including a **directory** module, since two flat files both saying `module main`
+are not one module but one module and one file nothing resolves. The prelude case has no
+test even there: that harness resolves with no prelude, so an assertion about `unwrap_or`
+would pass for the wrong reason.
+
 ### 09/10/26 — raylib's file system, three wrong conventions, and a silent capture
 
 `bindings/raylib/files.lyra`: 40 functions, **426 of 600**. Files, directories, dropped

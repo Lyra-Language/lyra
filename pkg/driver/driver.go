@@ -368,7 +368,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	res.Diagnostics = append(res.Diagnostics, checker.CheckInertBorrowModifiers(program)...)
 
 	// Shadowing is a warning and carries the prior declaration as related info.
-	for _, sw := range checker.CheckShadowing(program) {
+	for _, sw := range checker.CheckShadowing(program, symTable) {
 		d := diag.Diagnostic{
 			Severity: diag.SeverityWarning,
 			Code:     sw.Code,

@@ -21,7 +21,7 @@ func parseCollectAndCheckShadowing(t *testing.T, source string) []checker.Shadow
 	}
 	c := collector.NewCollector([]byte(source))
 	program, _, _, _ := c.Collect(tree.RootNode())
-	return checker.CheckShadowing(program)
+	return checker.CheckShadowing(program, nil)
 }
 
 func assertNoShadowingWarnings(t *testing.T, warns []checker.ShadowingWarning) {

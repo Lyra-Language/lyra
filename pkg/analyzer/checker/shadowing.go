@@ -5,6 +5,7 @@ import (
 	"maps"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
@@ -21,7 +22,19 @@ func (w ShadowingWarning) Error() string { return w.Message }
 
 // CheckShadowing analyzes the given program for declarations that shadow names
 // from enclosing scopes. It returns a (possibly empty) slice of warnings.
-func CheckShadowing(program *ast.Program) []ShadowingWarning {
+//
+// **`program` is the *merged* program, so the top level is every module's at once** — and
+// that is what this pass has to be careful about. A nested declaration shadows a top-level
+// name only when that name is actually in scope where it is written, which is the file's
+// own module, what the file **imported by name**, and the prelude. Until 09/10 the walk
+// simply accumulated every top-level declaration it passed, so a local named `turns` was
+// reported against `bindings.raylib`'s `turns` in a file that never imported it — and
+// against another module's *private* helpers, which no import can reach at all. Rule 4's
+// shape: a pass answering a name question without asking which module is asking.
+//
+// A nil `symTable` means "one module, everything visible", which is the single-file case
+// the tests and `driver.Analyze` on a snippet exercise.
+func CheckShadowing(program *ast.Program, symTable *symbols.SymbolTable) []ShadowingWarning {
 	c := &shadowChecker{}
 
 	stmts := make([]ast.Statement, 0, len(program.Statements))
@@ -30,8 +43,129 @@ func CheckShadowing(program *ast.Program) []ShadowingWarning {
 			stmts = append(stmts, stmt)
 		}
 	}
-	c.checkStatements(stmts, map[string]ast.Location{})
+
+	v := newTopLevelScopes(stmts, symTable)
+	for _, stmt := range stmts {
+		// A top-level declaration shadows nothing — there is no enclosing scope — so the
+		// outer set stays empty and only the *accumulated* set, which nested scopes see,
+		// carries the top-level names.
+		c.checkStmt(stmt, map[string]ast.Location{}, v.forFile(stmt.GetLocation().File))
+	}
 	return c.warnings
+}
+
+// topLevelScopes answers, per file, the top-level names in scope there.
+//
+// **Order is deliberately not part of it.** The previous walk accumulated names as it
+// passed them, so a local shadowing a top-level name declared *later* went unreported —
+// and Lyra has no forward-declaration constraint, so that name is in scope throughout.
+type topLevelScopes struct {
+	symTable *symbols.SymbolTable
+	// byModule holds each module's own top-level declarations, keyed by module path.
+	byModule map[string]map[string]ast.Location
+	// all is every top-level name, used when there is no module information.
+	all map[string]ast.Location
+	// cache memoises the per-file union, since files of one module share most of it.
+	cache map[string]map[string]ast.Location
+	// moduleBase memoises "this module's names plus the prelude's exports", which every
+	// file of a module shares outright when it has no selective imports.
+	moduleBase map[string]map[string]ast.Location
+}
+
+func newTopLevelScopes(stmts []ast.Statement, symTable *symbols.SymbolTable) *topLevelScopes {
+	v := &topLevelScopes{
+		symTable:   symTable,
+		byModule:   map[string]map[string]ast.Location{},
+		all:        map[string]ast.Location{},
+		cache:      map[string]map[string]ast.Location{},
+		moduleBase: map[string]map[string]ast.Location{},
+	}
+	for _, stmt := range stmts {
+		module := ""
+		if symTable != nil {
+			module = symTable.ModuleOfFile[stmt.GetLocation().File]
+		}
+		for _, nl := range directDeclaredNamesWithLocations(stmt) {
+			v.all[nl.Name] = nl.Location
+			if v.byModule[module] == nil {
+				v.byModule[module] = map[string]ast.Location{}
+			}
+			v.byModule[module][nl.Name] = nl.Location
+		}
+	}
+	return v
+}
+
+// forFile returns the top-level names a file can reach without qualification.
+//
+// **The module's base is shared, not copied per file.** Every nested scope copies the set
+// it inherits (`copyLocMap`), so the top-level map is the multiplier on this pass's whole
+// allocation — and a module's own names plus the prelude's exports are the same for every
+// file in it. Only a file with selective imports needs a map of its own.
+func (v *topLevelScopes) forFile(file string) map[string]ast.Location {
+	if v.symTable == nil {
+		return v.all
+	}
+	if got, ok := v.cache[file]; ok {
+		return got
+	}
+	module := v.symTable.ModuleOfFile[file]
+	base := v.baseFor(module)
+
+	// **An import's member list is the boundary**, so only the names it admits are added,
+	// under the local name the import binds them to. A *namespace* import binds no bare
+	// name at all — `lib.f` is not `f` — so it contributes nothing here.
+	var out map[string]ast.Location
+	for _, imp := range v.symTable.ImportsFor(file) {
+		if imp.IsNamespace() || imp.Path == module {
+			continue
+		}
+		for local, source := range imp.Members {
+			if !v.symTable.ModuleExports(imp.Path, source) {
+				continue
+			}
+			loc, ok := v.byModule[imp.Path][source]
+			if !ok {
+				continue
+			}
+			if out == nil {
+				out = make(map[string]ast.Location, len(base)+8)
+				maps.Copy(out, base)
+			}
+			out[local] = loc
+		}
+	}
+	if out == nil {
+		out = base
+	}
+	v.cache[file] = out
+	return out
+}
+
+// baseFor is a module's own top-level names plus the prelude's exports, memoised per
+// module since every file in it sees the same set.
+func (v *topLevelScopes) baseFor(module string) map[string]ast.Location {
+	if got, ok := v.moduleBase[module]; ok {
+		return got
+	}
+	out := make(map[string]ast.Location, len(v.byModule[module])+8)
+	maps.Copy(out, v.byModule[module])
+	// The prelude is implicitly imported everywhere, so its exports are in scope — but
+	// only its exports: a prelude-private helper is as unreachable as any other module's.
+	if prelude := v.symTable.PreludeModule; prelude != "" && prelude != module {
+		v.addExported(out, prelude)
+	}
+	v.moduleBase[module] = out
+	return out
+}
+
+// addExported copies a module's exported top-level names into out.
+func (v *topLevelScopes) addExported(out map[string]ast.Location, module string) {
+	for name, loc := range v.byModule[module] {
+		if v.symTable.ModuleExports(module, name) {
+			out[name] = loc
+		}
+	}
 }
 
 // shadowChecker accumulates shadowing warnings as it walks the AST.
