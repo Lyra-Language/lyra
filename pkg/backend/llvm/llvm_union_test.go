@@ -630,3 +630,69 @@ func pkgConfigLibDir(t *testing.T, lib string) string {
 	}
 	return dir
 }
+
+// `bindings/raylib/shapes3d.lyra` — the 3D collision half, which is pure geometry and so
+// **headless**, exactly as the image half is. The drawing half needs a GL context and
+// cannot have a test.
+//
+// It is also the widest aggregate workout in this tree. A `Vector3` is 12 bytes and goes in
+// registers; a `Matrix` is sixteen floats and is **not** an HFA on aarch64, since that rule
+// caps at four members, so it crosses through memory. And `RayCollision` leads with a C
+// `_Bool` — one byte at offset 0 with `distance` at 4 — so three bytes of padding have to
+// line up or every distance comes back as noise.
+//
+// Every expected answer follows from the numbers: spheres 5 apart with radii 3 and 3
+// overlap and with 2 and 2 do not, a ray from z=10 down -Z meets a unit sphere at the
+// origin after 9 units and the z=0 plane after 10.
+func TestExec_Raylib3DCollision(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ RayHit, vec3, ray, bounding_box, spheres_overlap, boxes_overlap,
+                         box_hits_sphere, ray_hits_sphere, ray_hits_box,
+                         ray_hits_triangle, ray_hits_quad }
+
+let two = pure (v: f32) -> string => f64(v).to_fixed(2)
+
+/// A hit rendered, or "miss" — so a wrong answer prints the numbers rather than "false".
+let hit = pure (h: Maybe<RayHit>) -> string =>
+  match h {
+    Some(c) => "${two(c.distance)}/${two(c.point.z)}/${two(c.normal.z)}",
+    None => "miss",
+  }
+
+let main = () -> void => {
+  let origin = vec3(0.0, 0.0, 0.0)
+  let unit = bounding_box(origin, vec3(10.0, 10.0, 10.0))
+  let shifted = bounding_box(vec3(5.0, 5.0, 5.0), vec3(15.0, 15.0, 15.0))
+  let far = bounding_box(vec3(100.0, 100.0, 100.0), vec3(110.0, 110.0, 110.0))
+  print("${spheres_overlap(origin, 3.0, vec3(5.0, 0.0, 0.0), 3.0)} ")
+  print("${spheres_overlap(origin, 2.0, vec3(5.0, 0.0, 0.0), 2.0)} ")
+  print("${boxes_overlap(unit, shifted)} ${boxes_overlap(unit, far)} ")
+  print("${box_hits_sphere(unit, vec3(5.0, 5.0, 5.0), 1.0)} ")
+  print("${box_hits_sphere(unit, vec3(50.0, 50.0, 50.0), 1.0)} ")
+
+  // Straight down -Z from ten units out.
+  let down = ray(vec3(0.0, 0.0, 10.0), vec3(0.0, 0.0, 0.0 - 1.0))
+  print("${hit(ray_hits_sphere(down, origin, 1.0))} ")
+  print("${hit(ray_hits_box(down, bounding_box(vec3(0.0 - 1.0, 0.0 - 1.0, 0.0 - 1.0), vec3(1.0, 1.0, 1.0))))} ")
+  print("${hit(ray_hits_triangle(down, vec3(0.0 - 2.0, 0.0 - 2.0, 0.0), vec3(2.0, 0.0 - 2.0, 0.0), vec3(0.0, 2.0, 0.0)))} ")
+  print("${hit(ray_hits_quad(down, vec3(0.0 - 2.0, 2.0, 0.0), vec3(0.0 - 2.0, 0.0 - 2.0, 0.0), vec3(2.0, 0.0 - 2.0, 0.0), vec3(2.0, 2.0, 0.0)))} ")
+
+  // A ray pointing away meets nothing, which is the None half of the Maybe.
+  println("${hit(ray_hits_sphere(ray(vec3(0.0, 0.0, 10.0), vec3(0.0, 1.0, 0.0)), origin, 1.0))}")
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := exec.Command(bin).Output()
+	if err != nil {
+		t.Fatalf("running the raylib-3d binary failed: %v", err)
+	}
+	want := "true false true false true false " +
+		"9.00/1.00/1.00 9.00/1.00/1.00 10.00/0.00/1.00 10.00/0.00/1.00 miss"
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if got := strings.TrimSpace(lines[len(lines)-1]); got != want {
+		t.Errorf("raylib 3D collision = %q; want %q", got, want)
+	}
+}

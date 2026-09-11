@@ -3510,6 +3510,16 @@ texture half cannot be tested for.
   `dither` packing that leaves an image in an invalid pixel format.
   `examples/raylib/painting.lyra` exercises all 36, with 49 pixel checks under `--check`.
 
+- **`bindings/raylib/shapes3d.lyra`** — **[DONE 09/10]**, 41 functions: `Camera3D`, the
+  immediate-mode 3D shapes, billboards and ray casting. 382 of 600. `RayCollision` becomes
+  a `Maybe<RayHit>`, and a negative distance is refused — `GetRayCollisionSphere` is a line
+  test where the box and triangle tests are ray tests. `examples/raylib/shapes3d.lyra` has
+  18 geometry checks and an orbiting scene.
+
+  **Still unbound in 3D**: meshes, models, materials and animations (~36), which need
+  `Mesh`, `Model`, `Material`, `BoneInfo` and `ModelAnimation` and are the half that loads
+  and releases. `GetRayCollisionMesh` waits on those.
+
 - **`examples/raylib/input.lyra`** — **[DONE 09/10]**, all 35 of `input.lyra`'s functions:
   a live tester for keyboard, mouse, touch and gamepad, plus 35 constant checks under
   `--check`. It found `gamepad_name` answering `Some("")` for every index, raylib returning

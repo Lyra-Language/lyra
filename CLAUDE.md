@@ -1898,6 +1898,36 @@ manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`)
 fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
 pointer and a size of **0**, measured.
 
+**`bindings/raylib/shapes3d.lyra` is the sixth** (09/10) — 41 functions taking raylib to
+**382 of 600**, and the first of the 3D surface: a `Camera3D`, the shapes raylib draws
+immediately, billboards, and ray casting. No meshes, models or materials, so nothing here
+is loaded or released — which is what makes it the 3D half a program can use before it has
+any assets, and `shapes.lyra`'s job one dimension up. The collision names mirror that
+module deliberately (`circles_overlap` → `spheres_overlap`), so the two read as one
+vocabulary.
+
+- **It is the widest aggregate workout in the tree.** A `Vector3` is 12 bytes and goes in
+  registers; a `Matrix` is sixteen floats and is **not** an HFA on aarch64, since that rule
+  caps at four members, so it crosses through memory. `Camera3D` is 44 bytes. All the
+  layouts were measured against C before anything was written.
+- **`RayCollision` becomes a `Maybe<RayHit>`**, because raylib's struct carries a `hit`
+  flag beside three fields that mean nothing when it is false. The flag stays on the
+  private struct (a C `_Bool` transcribed as `u8`, the rule `Music.looping` set) and never
+  reaches a caller.
+- **A negative distance is not a hit, and that guard is why the family is consistent.**
+  `GetRayCollisionSphere` is a *line* test: a sphere entirely behind the ray's origin comes
+  back `hit = true` at distance -11, where the box and triangle tests answer false for the
+  same geometry. The bound is `>= 0.0` and was measured, because `> 0.0` is wrong twice —
+  a ray starting **inside** a sphere reports a positive distance to the far wall, and one
+  starting **on** the surface reports 0.0.
+
+`examples/raylib/shapes3d.lyra` is the example, with 18 geometry checks under `--check` and
+an orbiting scene otherwise. **The shapes stand in a ring**, and that is a layout decision
+rather than a flourish: an orbital camera sees a *row* edge-on twice per revolution, and a
+row of spheres viewed edge-on is one sphere. Two versions of the scene did exactly that
+before the ring. It also draws its one `draw_triangle_3d` with **both windings**, since a
+3D triangle is one-sided and back-face culling makes a single one invisible half the time.
+
 **`bindings/raylib/image.lyra` is the fifth** (09/10) — 36 functions over 37 externs:
 editing an image in place, making new ones from old, and painting onto one. What it
 establishes:

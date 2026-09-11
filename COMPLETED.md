@@ -9,6 +9,53 @@ Newest first.
 
 ## Dated log
 
+### 09/10/26 — raylib in three dimensions
+
+`bindings/raylib/shapes3d.lyra`: 41 functions, **382 of 600**. A `Camera3D`, the shapes
+raylib draws immediately, billboards, and ray casting — no meshes, models or materials, so
+nothing here is loaded or released. That is the 3D half a program can use before it has any
+assets, and it is `shapes.lyra`'s job one dimension up; the collision names mirror that
+module on purpose, so `circles_overlap` and `spheres_overlap` read as one vocabulary rather
+than two libraries.
+
+**The widest aggregate workout so far, and it needed nothing new.** A `Vector3` is 12 bytes
+and goes in registers; a `Matrix` is sixteen floats and is **not** an HFA on aarch64, since
+that rule caps at four members, so it crosses through memory; `Camera3D` is 44 bytes and
+`RayCollision` 32. Every layout was measured against C first — `RayCollision` in particular
+leads with a `_Bool` at offset 0 with its floats starting at 4, so three bytes of padding
+have to line up or every distance is noise.
+
+**`RayCollision` becomes a `Maybe<RayHit>`.** raylib's struct carries a `hit` flag beside
+three fields that mean nothing when it is false, which is the shape `Maybe` exists for. The
+flag stays on a private struct — a C `_Bool` transcribed as `u8`, the rule `Music.looping`
+set — and never reaches a caller.
+
+**A negative distance is not a hit, and the bound was measured rather than guessed.**
+`GetRayCollisionSphere` turns out to be a *line* test: a sphere entirely behind the ray's
+origin comes back `hit = true` at distance **-11**, signalling "behind" only through the
+sign of a number a caller has no reason to read — while `GetRayCollisionBox` and
+`GetRayCollisionTriangle` answer false for the same geometry. So the three disagreed, and a
+picking program built on the sphere test would select things behind the camera. The obvious
+guard (`> 0.0`) is wrong twice: a ray starting **inside** a sphere reports a *positive*
+distance to the far wall, and one starting exactly **on** the surface reports 0.0. `>= 0.0`
+rejects the behind case and nothing else. Found by the example's `--check` asserting that a
+ray is not a line, and failing.
+
+**The scene's shapes stand in a ring, and that is the design.** An orbital camera sees a
+*row* edge-on twice per revolution, and a row of spheres viewed edge-on is one sphere — two
+versions of this scene did exactly that before the ring, and only a screenshot said so. A
+ring has no such angle. The same look found the other one: a lone `draw_triangle_3d` is
+invisible half the time, because raylib back-face culls and a 3D triangle is one-sided, so
+it is drawn with both windings. Neither would have failed a pixel assertion; both are
+obvious in a picture.
+
+The collision half is headless and has a standing test
+(`TestExec_Raylib3DCollision`); the drawing half needs a GL context and cannot.
+
+**Still unbound in 3D**: meshes, models, materials and animations — the half that loads and
+releases, needing `Mesh`, `Model`, `Material`, `BoneInfo` and `ModelAnimation`.
+`GetRayCollisionMesh` waits on those.
+
 ### 09/10/26 — `if` did not push its joined type back down onto its branches
 
     let v = if a < 4 { f32_value } else { 0.0 - 1.0 }

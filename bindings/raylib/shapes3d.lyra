@@ -1,0 +1,475 @@
+module bindings.raylib
+//! The third dimension: a camera, the shapes raylib draws in it, and ray casting.
+//!
+//! **Everything here is immediate-mode geometry** — no meshes, no models, no materials, so
+//! nothing has to be loaded or released. A program opens a window, sets up a [Camera3D],
+//! and draws cubes and spheres between [begin_mode_3d] and [end_mode_3d]. That is the half
+//! of raylib's 3D surface a program can use before it has any assets, and it is the half
+//! `shapes.lyra` is for two dimensions.
+//!
+//! **It is also where `pkg/abi` earns its keep again.** A `Camera3D` is 44 bytes of float
+//! and int, a `Matrix` is sixteen floats, and both cross by value — a `Matrix` is *not* an
+//! HFA on aarch64, since that rule caps at four members, so it goes through memory while a
+//! `Vector3` goes in registers. Nothing in this file says so.
+
+// ---------------------------------------------------------------------------------------
+// Types
+//
+// Every layout here was checked against C rather than reasoned about — 12, 64, 44, 24, 32
+// and 24 bytes, with `Camera3D`'s fields at 0/12/24/36/40 and `RayCollision`'s at
+// 0/4/8/20. A wrong offset at this boundary is not a mismatch but garbage geometry.
+// ---------------------------------------------------------------------------------------
+
+// `Vector3` and `vec3` are `shapes.lyra`'s and are visible here without an import: this is
+// one module across several files, so declaring them again is a duplicate definition
+// rather than two private copies. They live there because `Vector4` had to — `Color`'s
+// normalised form is one — and a coordinate type belongs beside the geometry either way.
+
+/// `Camera3D` — where the eye is, what it looks at, and how wide it sees.
+///
+/// `fovy` is the vertical field of view **in degrees** under `CAMERA_PERSPECTIVE`, and the
+/// near-plane height in world units under `CAMERA_ORTHOGRAPHIC` — two different quantities
+/// in one field, which is raylib's design and why this one is not a [Degrees].
+pub struct Camera3D {
+  position: Vector3,
+  target: Vector3,
+  up: Vector3,
+  fovy: f32,
+  projection: i32,
+}
+
+/// A perspective camera looking at a point, with `up` the usual +Y.
+pub let camera_3d = pure (position: Vector3, target: Vector3, fovy: f32) -> Camera3D =>
+  Camera3D {
+    position: position,
+    target: target,
+    up: vec3(0.0, 1.0, 0.0),
+    fovy: fovy,
+    projection: CAMERA_PERSPECTIVE,
+  }
+
+/// `Ray` — an origin and a direction. The direction should be normalised; nothing here
+/// checks it, and an unnormalised one makes every reported distance wrong by its length.
+pub struct Ray {
+  position: Vector3,
+  direction: Vector3,
+}
+
+pub let ray = pure (position: Vector3, direction: Vector3) -> Ray =>
+  Ray { position: position, direction: direction }
+
+/// `BoundingBox` — two opposite corners, minimum and maximum on every axis.
+pub struct BoundingBox {
+  min: Vector3,
+  max: Vector3,
+}
+
+pub let bounding_box = pure (min: Vector3, max: Vector3) -> BoundingBox =>
+  BoundingBox { min: min, max: max }
+
+/// Where a ray met something: how far along it, the point, and the surface normal there.
+///
+/// **This is not raylib's `RayCollision`**, which carries a `hit` flag beside the three
+/// numbers — a struct whose other fields mean nothing when the flag is false. That is the
+/// shape `Maybe` exists for, so the wrapper answers `Maybe<RayHit>` and the flag never
+/// reaches a caller. Same rule `to_maybe` applies to NULL, on a convention that is neither
+/// NULL nor an error code.
+pub struct RayHit {
+  distance: f32,
+  point: Vector3,
+  normal: Vector3,
+}
+
+/// `Matrix` — sixteen floats, column-major as OpenGL wants them.
+///
+/// Bound so [camera_matrix] has something to answer with. Lyra has no matrix arithmetic,
+/// so this is a value to pass along rather than one to compute with; `raymath.h` is a
+/// separate header and would be a separate binding.
+pub struct Matrix {
+  m0: f32, m4: f32, m8: f32, m12: f32,
+  m1: f32, m5: f32, m9: f32, m13: f32,
+  m2: f32, m6: f32, m10: f32, m14: f32,
+  m3: f32, m7: f32, m11: f32, m15: f32,
+}
+
+// ---------------------------------------------------------------------------------------
+// The 3D pass
+// ---------------------------------------------------------------------------------------
+
+/// Begin drawing in 3D through `camera`. Everything until [end_mode_3d] is projected.
+///
+/// **Nests inside [begin_drawing], not instead of it**: a frame is `begin_drawing`,
+/// then the 3D pass, then 2D overlay drawing, then `end_drawing`. Drawing 2D text between
+/// these two calls projects it into the scene, which is occasionally what you want and
+/// usually a surprise.
+pub let begin_mode_3d = (camera: Camera3D) -> void => unsafe { rl_begin_mode_3d(camera) }
+
+pub let end_mode_3d = () -> void => unsafe { rl_end_mode_3d() }
+
+// ---------------------------------------------------------------------------------------
+// Moving the camera
+// ---------------------------------------------------------------------------------------
+
+/// Let raylib drive the camera from the mouse and keyboard, in one of the `CAMERA_*` modes.
+///
+/// Takes `self: mut Camera3D` because raylib's parameter is a `Camera *` it writes through
+/// — the same rule the in-place image edits follow. `CAMERA_CUSTOM` does nothing, which is
+/// what a program driving its own camera passes.
+pub let update_camera = (self: mut Camera3D, mode: i32) -> void =>
+  unsafe { rl_update_camera(&mut self, mode) }
+
+/// Move and turn the camera by explicit amounts, bypassing the built-in modes.
+///
+/// `movement` is forward/right/up in world units and `rotation` is yaw/pitch/roll in
+/// **degrees**, which is why it is a [Degrees] triple rather than three bare floats — the
+/// unit mistake this binding set catches everywhere else.
+pub let update_camera_pro =
+  (self: mut Camera3D, movement: Vector3, yaw: Degrees, pitch: Degrees, roll: Degrees,
+   zoom: f32) -> void =>
+    unsafe {
+      rl_update_camera_pro(&mut self, movement,
+                           vec3(f32(yaw), f32(pitch), f32(roll)), zoom)
+    }
+
+/// The camera's view-projection matrix, which is what a shader uniform wants.
+pub let camera_matrix = pure (camera: Camera3D) -> Matrix =>
+  unsafe { rl_camera_matrix(camera) }
+
+/// Where a world point lands on screen — what a 3D program labels an object with.
+pub let world_to_screen = pure (position: Vector3, camera: Camera3D) -> Vector2 =>
+  unsafe { rl_world_to_screen(position, camera) }
+
+/// The same against a render target of your own size rather than the window's.
+pub let world_to_screen_ex =
+  pure (position: Vector3, camera: Camera3D, width: i32, height: i32) -> Vector2 =>
+    unsafe { rl_world_to_screen_ex(position, camera, width, height) }
+
+/// The ray under a screen position — picking, in one call.
+pub let screen_to_world_ray = pure (position: Vector2, camera: Camera3D) -> Ray =>
+  unsafe { rl_screen_to_world_ray(position, camera) }
+
+pub let screen_to_world_ray_ex =
+  pure (position: Vector2, camera: Camera3D, width: i32, height: i32) -> Ray =>
+    unsafe { rl_screen_to_world_ray_ex(position, camera, width, height) }
+
+// ---------------------------------------------------------------------------------------
+// Drawing
+//
+// The Vector3 spelling is the one bound, as `shapes.lyra` binds the Vector2 one: raylib
+// offers `DrawCube(position, w, h, l)` beside `DrawCubeV(position, size)` and a caller
+// already holds the size as a vector. `DrawSphere` is the exception in the other
+// direction — a sphere's size *is* one number.
+// ---------------------------------------------------------------------------------------
+
+pub let draw_line_3d = (start: Vector3, finish: Vector3, color: Color) -> void =>
+  unsafe { rl_draw_line_3d(start, finish, color) }
+
+pub let draw_point_3d = (position: Vector3, color: Color) -> void =>
+  unsafe { rl_draw_point_3d(position, color) }
+
+/// A circle in the plane perpendicular to `axis`, turned `angle` about it.
+pub let draw_circle_3d =
+  (center: Vector3, radius: f32, axis: Vector3, angle: Degrees, color: Color) -> void =>
+    unsafe { rl_draw_circle_3d(center, radius, axis, f32(angle), color) }
+
+pub let draw_triangle_3d = (v1: Vector3, v2: Vector3, v3: Vector3, color: Color) -> void =>
+  unsafe { rl_draw_triangle_3d(v1, v2, v3, color) }
+
+/// Triangles each sharing an edge with the last. An empty list draws nothing rather than
+/// trapping, the rule every array-taking call in these bindings follows.
+pub let draw_triangle_strip_3d = (points: []Vector3, color: Color) -> void => {
+  if points.len() > 0 {
+    unsafe { rl_draw_triangle_strip_3d(points.data(), i32(points.len()), color) }
+  }
+}
+
+pub let draw_cube = (position: Vector3, size: Vector3, color: Color) -> void =>
+  unsafe { rl_draw_cube_v(position, size, color) }
+
+pub let draw_cube_wires = (position: Vector3, size: Vector3, color: Color) -> void =>
+  unsafe { rl_draw_cube_wires_v(position, size, color) }
+
+pub let draw_sphere = (center: Vector3, radius: f32, color: Color) -> void =>
+  unsafe { rl_draw_sphere(center, radius, color) }
+
+/// A sphere at a chosen tessellation — fewer rings and slices is a visibly faceted ball,
+/// which is sometimes the look and always the cheaper draw.
+pub let draw_sphere_ex =
+  (center: Vector3, radius: f32, rings: i32, slices: i32, color: Color) -> void =>
+    unsafe { rl_draw_sphere_ex(center, radius, rings, slices, color) }
+
+pub let draw_sphere_wires =
+  (center: Vector3, radius: f32, rings: i32, slices: i32, color: Color) -> void =>
+    unsafe { rl_draw_sphere_wires(center, radius, rings, slices, color) }
+
+/// A cone or cylinder standing at `position`: equal radii give a cylinder, a zero top
+/// radius a cone, and unequal ones a frustum.
+pub let draw_cylinder =
+  (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
+   color: Color) -> void =>
+    unsafe { rl_draw_cylinder(position, radius_top, radius_bottom, height, slices, color) }
+
+/// The same shape given as the segment between two points, which is what a limb or a pipe
+/// is described by.
+pub let draw_cylinder_ex =
+  (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
+   color: Color) -> void =>
+    unsafe { rl_draw_cylinder_ex(start, finish, start_radius, end_radius, sides, color) }
+
+pub let draw_cylinder_wires =
+  (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
+   color: Color) -> void =>
+    unsafe {
+      rl_draw_cylinder_wires(position, radius_top, radius_bottom, height, slices, color)
+    }
+
+pub let draw_cylinder_wires_ex =
+  (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
+   color: Color) -> void =>
+    unsafe {
+      rl_draw_cylinder_wires_ex(start, finish, start_radius, end_radius, sides, color)
+    }
+
+/// A capsule — a cylinder with a hemisphere on each end, which is the collision shape
+/// almost every character controller uses.
+pub let draw_capsule =
+  (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
+   color: Color) -> void =>
+    unsafe { rl_draw_capsule(start, finish, radius, slices, rings, color) }
+
+pub let draw_capsule_wires =
+  (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
+   color: Color) -> void =>
+    unsafe { rl_draw_capsule_wires(start, finish, radius, slices, rings, color) }
+
+/// A flat quad in the XZ plane. **`size` is a `Vector2`**, since a plane has two extents
+/// and raylib says so.
+pub let draw_plane = (center: Vector3, size: Vector2, color: Color) -> void =>
+  unsafe { rl_draw_plane(center, size, color) }
+
+/// The ray itself, as a line — for seeing what a pick actually cast.
+pub let draw_ray = (r: Ray, color: Color) -> void => unsafe { rl_draw_ray(r, color) }
+
+/// The ground grid every 3D example opens with: `slices` squares each way, `spacing` apart.
+pub let draw_grid = (slices: i32, spacing: f32) -> void =>
+  unsafe { rl_draw_grid(slices, spacing) }
+
+/// A texture that always faces the camera — a tree, a particle, a health bar.
+pub let draw_billboard =
+  (camera: Camera3D, texture: Texture2D, position: Vector3, scale: f32,
+   tint: Color) -> void =>
+    unsafe { rl_draw_billboard(camera, texture, position, scale, tint) }
+
+/// A billboard from part of a texture, at a size in world units — a sprite sheet in 3D.
+pub let draw_billboard_rec =
+  (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
+   size: Vector2, tint: Color) -> void =>
+    unsafe { rl_draw_billboard_rec(camera, texture, source, position, size, tint) }
+
+/// The whole billboard: its own up vector, origin and rotation.
+pub let draw_billboard_pro =
+  (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
+   up: Vector3, size: Vector2, origin: Vector2, rotation: Degrees, tint: Color) -> void =>
+    unsafe {
+      rl_draw_billboard_pro(camera, texture, source, position, up, size, origin,
+                            f32(rotation), tint)
+    }
+
+// ---------------------------------------------------------------------------------------
+// Collision
+//
+// The names mirror `shapes.lyra`'s two-dimensional set — `circles_overlap` becomes
+// `spheres_overlap`, `rects_overlap` becomes `boxes_overlap` — so the two read as one
+// vocabulary rather than as two libraries.
+// ---------------------------------------------------------------------------------------
+
+pub let spheres_overlap =
+  pure (center1: Vector3, radius1: f32, center2: Vector3, radius2: f32) -> bool =>
+    unsafe { rl_spheres_overlap(center1, radius1, center2, radius2) } != 0
+
+pub let boxes_overlap = pure (a: BoundingBox, b: BoundingBox) -> bool =>
+  unsafe { rl_boxes_overlap(a, b) } != 0
+
+pub let box_hits_sphere = pure (box: BoundingBox, center: Vector3, radius: f32) -> bool =>
+  unsafe { rl_box_hits_sphere(box, center, radius) } != 0
+
+/// Where a ray meets a sphere, or `None`.
+pub let ray_hits_sphere = pure (r: Ray, center: Vector3, radius: f32) -> Maybe<RayHit> =>
+  to_hit(unsafe { rl_ray_hits_sphere(r, center, radius) })
+
+pub let ray_hits_box = pure (r: Ray, box: BoundingBox) -> Maybe<RayHit> =>
+  to_hit(unsafe { rl_ray_hits_box(r, box) })
+
+pub let ray_hits_triangle =
+  pure (r: Ray, p1: Vector3, p2: Vector3, p3: Vector3) -> Maybe<RayHit> =>
+    to_hit(unsafe { rl_ray_hits_triangle(r, p1, p2, p3) })
+
+/// Four corners in order around the quad; raylib tests it as two triangles.
+pub let ray_hits_quad =
+  pure (r: Ray, p1: Vector3, p2: Vector3, p3: Vector3, p4: Vector3) -> Maybe<RayHit> =>
+    to_hit(unsafe { rl_ray_hits_quad(r, p1, p2, p3, p4) })
+
+/// raylib's `RayCollision` as a `Maybe<RayHit>`, which is the only place its `hit` flag is
+/// read. The struct crossing the boundary keeps the flag because C's layout does; nothing
+/// above this line has to know that.
+///
+/// **A negative distance is not a hit, and that guard is why this family is consistent.**
+/// `GetRayCollisionSphere` is a *line* test: a sphere entirely **behind** the ray's origin
+/// comes back `hit = true` with a distance of -11, signalling "behind" only by the sign of
+/// a number a caller has no reason to look at. `GetRayCollisionBox` and
+/// `GetRayCollisionTriangle` answer `false` for the same geometry, so the three disagreed —
+/// and a picking program built on the sphere test would select things behind the camera.
+///
+/// The bound was measured rather than guessed, because the obvious guard (`> 0.0`) is
+/// wrong twice: a ray **starting inside** a sphere reports a *positive* distance to the far
+/// wall (raylib handles that case itself), and a ray whose origin is exactly **on** the
+/// surface reports 0.0, which is a real hit. So `>= 0.0` rejects the behind case and
+/// nothing else.
+let to_hit = pure (c: RayCollision) -> Maybe<RayHit> =>
+  if c.hit != 0 && c.distance >= 0.0 {
+    Some(RayHit { distance: c.distance, point: c.point, normal: c.normal })
+  } else {
+    None
+  }
+
+/// raylib's own `RayCollision`, private because its `hit` field is what [to_hit] removes.
+///
+/// **`hit` is a `u8`, not a `bool`**: C's `_Bool` is a byte and Lyra's `bool` is a bit, so
+/// the two may not cross (lyra-E063) — the same transcription `Music.looping` makes.
+struct RayCollision {
+  hit: u8,
+  distance: f32,
+  point: Vector3,
+  normal: Vector3,
+}
+
+// ---------------------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------------------
+
+/// Camera projections.
+pub const CAMERA_PERSPECTIVE: i32 = 0
+pub const CAMERA_ORTHOGRAPHIC: i32 = 1
+
+/// Camera modes for [update_camera]. `CAMERA_CUSTOM` leaves the camera alone.
+pub const CAMERA_CUSTOM: i32 = 0
+pub const CAMERA_FREE: i32 = 1
+pub const CAMERA_ORBITAL: i32 = 2
+pub const CAMERA_FIRST_PERSON: i32 = 3
+pub const CAMERA_THIRD_PERSON: i32 = 4
+
+// ---------------------------------------------------------------------------------------
+// The externs
+// ---------------------------------------------------------------------------------------
+
+@symbol("BeginMode3D")
+unsafe extern rl_begin_mode_3d: (camera: Camera3D) -> void
+@symbol("EndMode3D")
+unsafe extern rl_end_mode_3d: () -> void
+
+@symbol("UpdateCamera")
+unsafe extern rl_update_camera: (camera: ^mut Camera3D, mode: i32) -> void
+@symbol("UpdateCameraPro")
+unsafe extern rl_update_camera_pro:
+  (camera: ^mut Camera3D, movement: Vector3, rotation: Vector3, zoom: f32) -> void
+@symbol("GetCameraMatrix")
+unsafe extern pure rl_camera_matrix: (camera: Camera3D) -> Matrix
+@symbol("GetWorldToScreen")
+unsafe extern pure rl_world_to_screen: (position: Vector3, camera: Camera3D) -> Vector2
+@symbol("GetWorldToScreenEx")
+unsafe extern pure rl_world_to_screen_ex:
+  (position: Vector3, camera: Camera3D, width: i32, height: i32) -> Vector2
+@symbol("GetScreenToWorldRay")
+unsafe extern pure rl_screen_to_world_ray: (position: Vector2, camera: Camera3D) -> Ray
+@symbol("GetScreenToWorldRayEx")
+unsafe extern pure rl_screen_to_world_ray_ex:
+  (position: Vector2, camera: Camera3D, width: i32, height: i32) -> Ray
+
+@symbol("DrawLine3D")
+unsafe extern rl_draw_line_3d: (start: Vector3, finish: Vector3, color: Color) -> void
+@symbol("DrawPoint3D")
+unsafe extern rl_draw_point_3d: (position: Vector3, color: Color) -> void
+@symbol("DrawCircle3D")
+unsafe extern rl_draw_circle_3d:
+  (center: Vector3, radius: f32, axis: Vector3, angle: f32, color: Color) -> void
+@symbol("DrawTriangle3D")
+unsafe extern rl_draw_triangle_3d:
+  (v1: Vector3, v2: Vector3, v3: Vector3, color: Color) -> void
+@symbol("DrawTriangleStrip3D")
+unsafe extern rl_draw_triangle_strip_3d:
+  (points: ^Vector3, count: i32, color: Color) -> void
+@symbol("DrawCubeV")
+unsafe extern rl_draw_cube_v: (position: Vector3, size: Vector3, color: Color) -> void
+@symbol("DrawCubeWiresV")
+unsafe extern rl_draw_cube_wires_v:
+  (position: Vector3, size: Vector3, color: Color) -> void
+@symbol("DrawSphere")
+unsafe extern rl_draw_sphere: (center: Vector3, radius: f32, color: Color) -> void
+@symbol("DrawSphereEx")
+unsafe extern rl_draw_sphere_ex:
+  (center: Vector3, radius: f32, rings: i32, slices: i32, color: Color) -> void
+@symbol("DrawSphereWires")
+unsafe extern rl_draw_sphere_wires:
+  (center: Vector3, radius: f32, rings: i32, slices: i32, color: Color) -> void
+@symbol("DrawCylinder")
+unsafe extern rl_draw_cylinder:
+  (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
+   color: Color) -> void
+@symbol("DrawCylinderEx")
+unsafe extern rl_draw_cylinder_ex:
+  (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
+   color: Color) -> void
+@symbol("DrawCylinderWires")
+unsafe extern rl_draw_cylinder_wires:
+  (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
+   color: Color) -> void
+@symbol("DrawCylinderWiresEx")
+unsafe extern rl_draw_cylinder_wires_ex:
+  (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
+   color: Color) -> void
+@symbol("DrawCapsule")
+unsafe extern rl_draw_capsule:
+  (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
+   color: Color) -> void
+@symbol("DrawCapsuleWires")
+unsafe extern rl_draw_capsule_wires:
+  (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
+   color: Color) -> void
+@symbol("DrawPlane")
+unsafe extern rl_draw_plane: (center: Vector3, size: Vector2, color: Color) -> void
+@symbol("DrawRay")
+unsafe extern rl_draw_ray: (r: Ray, color: Color) -> void
+@symbol("DrawGrid")
+unsafe extern rl_draw_grid: (slices: i32, spacing: f32) -> void
+@symbol("DrawBillboard")
+unsafe extern rl_draw_billboard:
+  (camera: Camera3D, texture: Texture2D, position: Vector3, scale: f32,
+   tint: Color) -> void
+@symbol("DrawBillboardRec")
+unsafe extern rl_draw_billboard_rec:
+  (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
+   size: Vector2, tint: Color) -> void
+@symbol("DrawBillboardPro")
+unsafe extern rl_draw_billboard_pro:
+  (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
+   up: Vector3, size: Vector2, origin: Vector2, rotation: f32, tint: Color) -> void
+
+@symbol("CheckCollisionSpheres")
+unsafe extern pure rl_spheres_overlap:
+  (center1: Vector3, radius1: f32, center2: Vector3, radius2: f32) -> u8
+@symbol("CheckCollisionBoxes")
+unsafe extern pure rl_boxes_overlap: (a: BoundingBox, b: BoundingBox) -> u8
+@symbol("CheckCollisionBoxSphere")
+unsafe extern pure rl_box_hits_sphere:
+  (box: BoundingBox, center: Vector3, radius: f32) -> u8
+@symbol("GetRayCollisionSphere")
+unsafe extern pure rl_ray_hits_sphere:
+  (r: Ray, center: Vector3, radius: f32) -> RayCollision
+@symbol("GetRayCollisionBox")
+unsafe extern pure rl_ray_hits_box: (r: Ray, box: BoundingBox) -> RayCollision
+@symbol("GetRayCollisionTriangle")
+unsafe extern pure rl_ray_hits_triangle:
+  (r: Ray, p1: Vector3, p2: Vector3, p3: Vector3) -> RayCollision
+@symbol("GetRayCollisionQuad")
+unsafe extern pure rl_ray_hits_quad:
+  (r: Ray, p1: Vector3, p2: Vector3, p3: Vector3, p4: Vector3) -> RayCollision

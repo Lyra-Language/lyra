@@ -1,0 +1,346 @@
+module main
+//! Every shape `bindings.raylib` draws in three dimensions, and every ray cast it can do.
+//!
+//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
+//!   lyrac run examples/raylib/shapes3d.lyra -- --check   # the geometry, exits 0 or 1
+//!   lyrac run examples/raylib/shapes3d.lyra              # the scene, in a window
+//!
+//! `shapes.lyra`'s plan in three dimensions, and the same division of labour: the drawing
+//! cannot be checked by a machine and the geometry underneath it can, so `--check` runs
+//! every collision and ray cast against answers that follow from the numbers.
+//!
+//! **Move the mouse to pick.** The scene casts a ray from the cursor every frame and
+//! reports what it hit, which is what [screen_to_world_ray] and the `ray_hits_*` family
+//! are for — and the one part of a 3D program that is not just drawing.
+
+import bindings.raylib.{
+  init_window, close_window, should_close, set_target_fps,
+  begin_drawing, end_drawing, clear_background, elapsed,
+  Vector3, RayHit, Camera3D, vec2, vec3, rect, ray, bounding_box, camera_3d,
+  begin_mode_3d, end_mode_3d, update_camera, camera_matrix,
+  world_to_screen, screen_to_world_ray,
+  draw_line_3d, draw_point_3d, draw_circle_3d, draw_triangle_3d, draw_triangle_strip_3d,
+  draw_cube, draw_cube_wires, draw_sphere, draw_sphere_ex, draw_sphere_wires,
+  draw_cylinder, draw_cylinder_ex, draw_cylinder_wires, draw_cylinder_wires_ex,
+  draw_capsule, draw_capsule_wires, draw_plane, draw_ray, draw_grid,
+  draw_billboard, draw_billboard_rec, draw_billboard_pro,
+  spheres_overlap, boxes_overlap, box_hits_sphere,
+  ray_hits_sphere, ray_hits_box, ray_hits_triangle, ray_hits_quad,
+  gen_image_checked, unload_image, texture_from_image, unload_texture, Texture2D,
+  draw_text, measure_text, mouse_position, turns, Degrees,
+  CAMERA_ORBITAL,
+  RAYWHITE, WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY, LIGHTGRAY,
+  rgb,
+}
+
+/// Panel label size, as in the other galleries.
+const LABEL: i32 = 20
+
+let main = () -> u8 => {
+  if wants_check() { return run_checks() }
+  run_scene()
+  0
+}
+
+let wants_check = () -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == "--check" { found = true }
+  }
+  found
+}
+
+// ---------------------------------------------------------------------------------------
+// The headless half
+//
+// Pure geometry, so none of it needs a window — the same split the image bindings have.
+// The cases are chosen so the answer follows from the numbers: spheres five apart with
+// radii 3 and 3 overlap and with 2 and 2 do not; a ray from z=10 down -Z meets a unit
+// sphere at the origin after nine units and the z=0 plane after ten.
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+  let origin = vec3(0.0, 0.0, 0.0)
+
+  failures += check("spheres_overlap, touching",
+    spheres_overlap(origin, 3.0, vec3(5.0, 0.0, 0.0), 3.0), true)
+  failures += check("spheres_overlap, apart",
+    spheres_overlap(origin, 2.0, vec3(5.0, 0.0, 0.0), 2.0), false)
+
+  let unit = bounding_box(origin, vec3(10.0, 10.0, 10.0))
+  let shifted = bounding_box(vec3(5.0, 5.0, 5.0), vec3(15.0, 15.0, 15.0))
+  let far = bounding_box(vec3(100.0, 100.0, 100.0), vec3(110.0, 110.0, 110.0))
+  failures += check("boxes_overlap, overlapping", boxes_overlap(unit, shifted), true)
+  failures += check("boxes_overlap, disjoint", boxes_overlap(unit, far), false)
+  // Two boxes sharing only a corner touch, which raylib counts as overlapping.
+  let corner = bounding_box(vec3(10.0, 10.0, 10.0), vec3(20.0, 20.0, 20.0))
+  failures += check("boxes_overlap, touching at a corner", boxes_overlap(unit, corner), true)
+
+  failures += check("box_hits_sphere, inside",
+    box_hits_sphere(unit, vec3(5.0, 5.0, 5.0), 1.0), true)
+  failures += check("box_hits_sphere, outside",
+    box_hits_sphere(unit, vec3(50.0, 50.0, 50.0), 1.0), false)
+  // A sphere just outside a face still reaches it if its radius spans the gap.
+  failures += check("box_hits_sphere, reaching over the face",
+    box_hits_sphere(unit, vec3(11.0, 5.0, 5.0), 2.0), true)
+
+  // Straight down -Z from ten units out.
+  let down = ray(vec3(0.0, 0.0, 10.0), vec3(0.0, 0.0, 0.0 - 1.0))
+
+  failures += hit_is("ray_hits_sphere", ray_hits_sphere(down, origin, 1.0), 9.0, 1.0, 1.0)
+  let cube = bounding_box(vec3(0.0 - 1.0, 0.0 - 1.0, 0.0 - 1.0), vec3(1.0, 1.0, 1.0))
+  failures += hit_is("ray_hits_box", ray_hits_box(down, cube), 9.0, 1.0, 1.0)
+  failures += hit_is("ray_hits_triangle",
+    ray_hits_triangle(down, vec3(0.0 - 2.0, 0.0 - 2.0, 0.0), vec3(2.0, 0.0 - 2.0, 0.0),
+                      vec3(0.0, 2.0, 0.0)), 10.0, 0.0, 1.0)
+  failures += hit_is("ray_hits_quad",
+    ray_hits_quad(down, vec3(0.0 - 2.0, 2.0, 0.0), vec3(0.0 - 2.0, 0.0 - 2.0, 0.0),
+                  vec3(2.0, 0.0 - 2.0, 0.0), vec3(2.0, 2.0, 0.0)), 10.0, 0.0, 1.0)
+
+  // **The `None` half is the point of the `Maybe`.** raylib answers a `RayCollision`
+  // whose other three fields mean nothing when its `hit` flag is false; the binding turns
+  // that into a `None` so there is no way to read them by mistake.
+  let away = ray(vec3(0.0, 0.0, 10.0), vec3(0.0, 1.0, 0.0))
+  failures += check("a ray pointing away hits nothing",
+    ray_hits_sphere(away, origin, 1.0).is_none(), true)
+  failures += check("and misses the box too", ray_hits_box(away, cube).is_none(), true)
+  // **A ray is not a line, and the binding is what makes that true.**
+  // `GetRayCollisionSphere` reports a sphere *behind* the origin as a hit at a negative
+  // distance, where the box and triangle tests answer false for the same geometry; the
+  // shared `to_hit` guard rejects a negative distance so all three agree.
+  let behind = ray(vec3(0.0, 0.0, 10.0), vec3(0.0, 0.0, 1.0))
+  failures += check("a ray does not extend backwards",
+    ray_hits_sphere(behind, origin, 1.0).is_none(), true)
+  failures += check("nor for a box", ray_hits_box(behind, cube).is_none(), true)
+
+  // The two cases that must survive the guard, both measured against C: a ray starting
+  // *inside* a sphere reports a positive distance to the far wall, and one starting
+  // exactly on the surface reports zero. Neither is behind anything.
+  let inside = ray(origin, vec3(0.0, 0.0, 0.0 - 1.0))
+  failures += hit_is("a ray starting inside a sphere", ray_hits_sphere(inside, origin, 2.0),
+    2.0, 0.0 - 2.0, 1.0)
+  let touching = ray(vec3(0.0, 0.0, 2.0), vec3(0.0, 0.0, 0.0 - 1.0))
+  failures += check("a ray starting on the surface hits at zero",
+    ray_hits_sphere(touching, origin, 2.0).is_some(), true)
+
+  if failures == 0 {
+    println("all geometry checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+/// A hit against the distance, the z of the point and the z of the normal.
+///
+/// All three, because a wrong ABI classification gives a plausible distance with nonsense
+/// beside it — the `RayCollision` struct leads with a C `_Bool` at offset 0 and its floats
+/// start at 4, so three bytes of padding have to line up.
+let hit_is = (name: string, got: Maybe<RayHit>, distance: f32, point_z: f32,
+              normal_z: f32) -> i64 =>
+  match got {
+    Some(h) => check(name,
+      "${two(h.distance)},${two(h.point.z)},${two(h.normal.z)}",
+      "${two(distance)},${two(point_z)},${two(normal_z)}"),
+    None => check(name, "miss", "${two(distance)},${two(point_z)},${two(normal_z)}"),
+  }
+
+let two = pure (v: f32) -> string => f64(v).to_fixed(2)
+
+let check<t> where t: Show = (name: string, got: t, want: t) -> i64 => {
+  if "${got}" == "${want}" {
+    println("  ok    ${name}")
+    0
+  } else {
+    println("  FAIL  ${name}: got ${got}, want ${want}")
+    1
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The scene
+// ---------------------------------------------------------------------------------------
+
+/// What the cursor's ray can hit, so the pick has something to report.
+struct Target {
+  name: string,
+  center: Vector3,
+  radius: f32,
+}
+
+let run_scene = () -> void => {
+  init_window(1365, 1024, "Lyra - raylib 3D shapes")
+  set_target_fps(60)
+
+  // A checked texture for the billboards, generated rather than loaded — this example
+  // ships no assets, as `painting.lyra` does not.
+  let sheet = gen_image_checked(64, 64, 8, 8, rgb(250, 220, 90), rgb(230, 120, 60))
+  var billboard: Maybe<Texture2D> = texture_from_image(sheet)
+  unload_image(sheet)
+
+  // Back and high enough that the orbital camera never tucks one row behind another.
+  var camera = camera_3d(vec3(18.0, 13.0, 18.0), vec3(0.0, 1.0, 0.0), 50.0)
+
+  // **Three rows, well apart.** The first layout put everything within four units of the
+  // origin and an orbiting camera stacked half of it behind the other half — a gallery
+  // whose shapes occlude each other shows one shape. Spacing is the whole design here.
+  let targets: []Target = [
+    Target { name: "sphere", center: ring(0, 1.2), radius: 1.2 },
+    Target { name: "faceted sphere", center: ring(1, 1.2), radius: 1.2 },
+    Target { name: "cube", center: ring(3, 1.0), radius: 1.4 },
+    Target { name: "cone", center: ring(5, 1.2), radius: 1.4 },
+    Target { name: "capsule", center: ring(8, 1.7), radius: 1.5 },
+  ]
+
+  for !should_close() {
+    camera.update_camera(CAMERA_ORBITAL)
+    let t = f32(elapsed())
+    let cursor = mouse_position()
+    let pick = screen_to_world_ray(cursor, camera)
+
+    // The nearest target the cursor's ray meets, if any.
+    var nearest = "nothing"
+    var best = 1.0e30
+    for target in targets {
+      match ray_hits_sphere(pick, target.center, target.radius) {
+        Some(h) => if f64(h.distance) < best {
+          best = f64(h.distance)
+          nearest = target.name
+        },
+        None => { },
+      }
+    }
+
+    begin_drawing()
+    clear_background(rgb(102, 191, 255))   // raylib's SKYBLUE, which color.lyra does not ship
+
+    begin_mode_3d(camera)
+    draw_grid(30, 1.0)
+    draw_plane(vec3(0.0, 0.0 - 0.01, 0.0), vec2(30.0, 30.0), rgb(215, 230, 200))
+
+    // **The shapes stand in a ring, and that is the layout decision.** An orbital camera
+    // sees a *row* edge-on twice per revolution, and a row of spheres viewed edge-on is
+    // one sphere — the first two versions of this scene both did that. A ring has no such
+    // angle: whichever way the camera is, some of it is near and the rest is behind.
+    draw_sphere(ring(0, 1.2), 1.2, RED)
+    draw_sphere_ex(ring(1, 1.2), 1.2, 5, 6, ORANGE)
+    draw_sphere_wires(ring(2, 1.2), 1.2, 8, 10, DARKGRAY)
+
+    draw_cube(ring(3, 1.0), vec3(2.0, 2.0, 2.0), BLUE)
+    draw_cube_wires(ring(3, 1.0), vec3(2.0, 2.0, 2.0), BLACK)
+    draw_cube(ring(4, 0.75), vec3(1.5, 1.5, 3.0), PURPLE)
+
+    draw_cylinder(ring(5, 0.0), 0.0, 1.2, 2.5, 12, GREEN)
+    draw_cylinder_wires(ring(5, 0.0), 0.0, 1.2, 2.5, 12, DARKGRAY)
+    draw_cylinder_ex(ring(6, 0.2), raise(ring(6, 0.2), 2.4), 0.6, 0.2, 10, YELLOW)
+    draw_cylinder_wires_ex(ring(7, 0.2), raise(ring(7, 0.2), 2.4), 0.6, 0.2, 10, DARKGRAY)
+
+    draw_capsule(ring(8, 0.8), raise(ring(8, 0.8), 1.8), 0.7, 10, 6, rgb(90, 170, 230))
+    draw_capsule_wires(ring(9, 0.8), raise(ring(9, 0.8), 1.8), 0.7, 10, 6, DARKGRAY)
+
+    draw_circle_3d(ring(10, 1.6), 1.6, vec3(1.0, 0.0, 0.0), turns(wrap01(t * 0.15)), PURPLE)
+    // **A 3D triangle is one-sided**, and that is worth seeing rather than reading: raylib
+    // back-face culls, so a single `draw_triangle_3d` is invisible from behind — which
+    // with an orbiting camera means invisible half the time. Drawing it with both windings
+    // is the fix a two-sided quad needs, and the reason `draw_triangle_strip_3d` beside it
+    // does not have the problem is that its winding alternates by construction.
+    let a = ring(11, 0.05)
+    let b = raise(ring(11, 0.05), 2.4)
+    let c = offset_x(ring(11, 0.05), 2.0)
+    draw_triangle_3d(a, b, c, rgb(230, 100, 140))
+    draw_triangle_3d(a, c, b, rgb(230, 100, 140))
+
+    // The flat primitives lie inside the ring, where nothing occludes them.
+    draw_line_3d(vec3(0.0 - 5.0, 0.05, 0.0), vec3(5.0, 0.05, 0.0), BLACK)
+    var i = 0
+    for i < 11 {
+      draw_point_3d(vec3(0.0 - 5.0 + f32(i), 0.4, 0.0), BLACK)
+      i += 1
+    }
+    draw_triangle_strip_3d([vec3(0.0 - 3.0, 0.05, 2.0), vec3(0.0 - 3.0, 0.05, 4.0),
+                            vec3(0.0, 0.05, 2.0), vec3(0.0, 0.05, 4.0),
+                            vec3(3.0, 0.05, 2.0)],
+                           rgb(140, 200, 120))
+    // The empty-list guard, exercised rather than described.
+    let none_at_all: []Vector3 = []
+    draw_triangle_strip_3d(none_at_all, RED)
+
+    // Billboards — a texture that always faces the camera, in three spellings. Above three
+    // of the ring's slots, high enough to clear what stands there.
+    match billboard {
+      Some(tex) => {
+        draw_billboard(camera, tex, ring(0, 4.4), 2.0, WHITE)
+        draw_billboard_rec(camera, tex, rect(0.0, 0.0, 32.0, 32.0), ring(4, 4.4),
+                           vec2(1.8, 1.8), WHITE)
+        draw_billboard_pro(camera, tex, rect(0.0, 0.0, 64.0, 64.0), ring(8, 4.4),
+                           vec3(0.0, 1.0, 0.0), vec2(1.8, 1.8), vec2(0.9, 0.9),
+                           turns(wrap01(t * 0.1)), WHITE)
+      },
+      None => { },
+    }
+
+    // The cursor's ray, drawn so the pick is visible rather than only reported.
+    draw_ray(pick, rgb(255, 0, 0))
+    end_mode_3d()
+
+    // 2D overlay — outside the 3D pass, or it would be projected into the scene.
+    draw_text("raylib 3D shapes - orbital camera, move the mouse to pick",
+              24, 16, LABEL, DARKGRAY)
+    draw_text("cursor ray hits: ${nearest}", 24, 42, LABEL, BLACK)
+
+    // `world_to_screen` projects a scene point back to the window, which is how a label
+    // follows the thing it names as the camera orbits. Each sits above its shape.
+    label_at("sphere", ring(0, 2.8), camera)
+    label_at("cube", ring(3, 2.6), camera)
+    label_at("cone", ring(5, 3.1), camera)
+    label_at("capsule", ring(8, 3.4), camera)
+
+    let m = camera_matrix(camera)
+    draw_text("camera matrix m0 ${f64(m.m0).to_fixed(2)}  m15 ${f64(m.m15).to_fixed(2)}",
+              24, 680, 16, DARKGRAY)
+    end_drawing()
+  }
+
+  match billboard {
+    Some(tex) => unload_texture(tex),
+    None => { },
+  }
+  close_window()
+}
+
+/// A caption pinned to a point in the scene, centred on where that point projects to.
+let label_at = (text: string, at: Vector3, camera: Camera3D) -> void => {
+  let p = world_to_screen(at, camera)
+  // `draw_text` takes the *top* of the text, so a label placed at a shape's crown hangs
+  // down over it. Half the width left and a line's height up centres it above instead.
+  draw_text(text, i32(p.x.round()) - measure_text(text, 16) / 2,
+            i32(p.y.round()) - 18, 16, DARKGRAY)
+}
+
+/// Slot `n` of twelve around a circle of radius 9, at height `y`.
+///
+/// The coordinates are written out rather than computed: Lyra has no `cos`/`sin`, and a
+/// hand-rolled series in an example about *shapes* would be the thing a reader had to
+/// check before believing the picture.
+let ring = pure (n: i64, y: f32) -> Vector3 => {
+  let p = RING[n %% RING.len()]
+  vec3(p.0, y, p.1)
+}
+
+/// The twelve (x, z) pairs, thirty degrees apart at radius 9.
+const RING: [12](f32, f32) = [
+  (9.00, 0.00), (7.79, 4.50), (4.50, 7.79), (0.00, 9.00),
+  (0.0 - 4.50, 7.79), (0.0 - 7.79, 4.50), (0.0 - 9.00, 0.00), (0.0 - 7.79, 0.0 - 4.50),
+  (0.0 - 4.50, 0.0 - 7.79), (0.00, 0.0 - 9.00), (4.50, 0.0 - 7.79), (7.79, 0.0 - 4.50),
+]
+
+/// The same point `dy` higher — the far end of a capsule or a cone.
+let raise = pure (p: Vector3, dy: f32) -> Vector3 => vec3(p.x, p.y + dy, p.z)
+
+/// The same point `dx` along x, for a triangle's third corner.
+let offset_x = pure (p: Vector3, dx: f32) -> Vector3 => vec3(p.x + dx, p.y, p.z)
+
+/// The fractional part, so a clock becomes a phase in 0..1 for `turns`.
+let wrap01 = pure (v: f32) -> f32 => v - f32(f64(v).floor())
