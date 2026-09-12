@@ -2,8 +2,9 @@ import std.math.{ Complex }
 
 import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps,
-  begin_drawing, end_drawing, clear_background, draw_pixel,
-  rgb, BLACK,
+  begin_drawing, end_drawing, gen_image_color, unload_image,
+  rgb, mouse_position, mouse_wheel, draw_line, Vector2, Color,
+  texture_from_image, update_texture, draw_texture, unload_texture, WHITE, BLACK
 }
 
 const MAX_ITER = 100
@@ -47,36 +48,189 @@ const FADE_IN = 8.0
 /// it read as smooth rather than as jumping between preset magnifications.
 const ZOOM_STEP = 0.85
 
+/// Pixels per side of a preview block: one point computed per 4x4 square while the wheel
+/// is still moving, so a preview costs a **sixteenth** of a full render.
+///
+/// Zoom is the one thing in the program that cannot be cached — the whole set is new at
+/// every span — and a full pass is far too slow to run between two frames, so a sustained
+/// scroll would otherwise stutter along at the render's pace rather than the wheel's.
+/// A coarse frame is what keeps the gesture attached to the hand; the sharp one follows
+/// the moment the wheel stops.
+const PREVIEW_STEP = 4
+
+/// The fractal is drawn into a pixel buffer and uploaded to one texture, and the frame
+/// loop only draws that texture. Recomputing the set every frame is the expensive part —
+/// a million points, each iterated up to `MAX_ITER` times — and nothing about it changes
+/// while the view does not, so it is done once and repeated only when `needs_render` says
+/// the view moved. That is the flag a zoom sets.
+///
+/// **One texture, reused.** The pixels go up through [update_texture] rather than through
+/// a fresh [texture_from_image] per render: a new texture is a new GPU allocation, and the
+/// old one is only released if something remembers to, which is the shape a redraw loop
+/// leaks from.
 let main = () -> void => {
-  let window_width = f64(WINDOW_WIDTH)
-  let window_height = window_width * ASPECT_RATIO
-  init_window(WINDOW_WIDTH, window_height.floor(), "Lyra - raylib Mandelbrot Set")
+  let width = WINDOW_WIDTH
+  let height = (f64(WINDOW_WIDTH) * ASPECT_RATIO).floor()
+  init_window(width, height, "Lyra - raylib Mandelbrot Set")
   set_target_fps(60)
 
-  for !should_close() {
-    begin_drawing()
-    clear_background(BLACK)
+  // The scratch image exists only to give the texture its size and pixel format; the
+  // pixels themselves come from `buffer` afterwards, so it is released straight away.
+  var img = gen_image_color(i32(width), i32(height), BLACK)
+  let created = texture_from_image(img)
+  unload_image(img)
+  let Some(tex) = created else {
+    close_window()
+    println("could not upload the texture")
+    return
+  }
 
-    for py in 0..<=window_height.floor() {
-      for px in 0..<=window_width.floor() {
-        let c = Complex {
-          re: X_MIN + X_LEN * f64(px) / window_width,
-          im: Y_MIN + Y_LEN * f64(py) / window_height,
-        }
-        let color = shade(c, iter_limit(window_width))
-        draw_pixel(i32(px), i32(py), color)
-      }
+  var buffer: []Color = [BLACK; width * height]
+
+  // The view: its top-left corner and its width on the complex plane. The height follows
+  // from the aspect ratio, so pixels stay square at every depth.
+  var min_x = X_MIN
+  var min_y = Y_MIN
+  var span_x = X_LEN
+
+  // Two levels of owing a render, because they resolve at different moments: a preview is
+  // owed for *this* frame, and the full pass is owed for the first frame after the wheel
+  // goes quiet. The opening frame owes only the sharp one.
+  var needs_preview = false
+  var needs_full = true
+
+  for !should_close() {
+    let mouse_pos = mouse_position()
+
+    // **Zoom toward the pointer.** The point of the plane under the cursor is the one
+    // thing that must not move, so the new corner is derived from that point rather than
+    // from the old corner. Zooming about the centre instead makes whatever you were
+    // aiming at drift off the edge as you go in, and the gesture becomes
+    // chase-the-fractal.
+    let wheel = f64(mouse_wheel())
+    if wheel.abs() > 0.0 {
+      let fx = fraction(f64(mouse_pos.x), f64(width))
+      let fy = fraction(f64(mouse_pos.y), f64(height))
+      let anchor_x = min_x + span_x * fx
+      let anchor_y = min_y + span_x * ASPECT_RATIO * fy
+      span_x = span_x * zoom_factor(wheel)
+      min_x = anchor_x - span_x * fx
+      min_y = anchor_y - span_x * ASPECT_RATIO * fy
+      needs_preview = true
     }
+
+    // Coarse while the wheel is turning, sharp once it stops. The `else` is what makes
+    // that work: a frame the wheel moved in renders the preview *and* owes the full pass,
+    // and the first frame it does not move in is where that debt comes due.
+    if needs_preview {
+      render(buffer, width, height, min_x, min_y, span_x, PREVIEW_STEP)
+      update_texture(tex, buffer)
+      needs_preview = false
+      needs_full = true
+    } else if needs_full {
+      render(buffer, width, height, min_x, min_y, span_x, 1)
+      update_texture(tex, buffer)
+      needs_full = false
+    }
+
+    begin_drawing()
+    draw_texture(tex, 0, 0, WHITE)
+    draw_crosshairs(mouse_pos)
 
     end_drawing()
   }
 
+  unload_texture(tex)
   close_window()
   println("closed cleanly")
 }
 
-let iter_limit = pure (window_width: f64) -> i64 => {
-  let magnification = X_LEN / window_width
+/// Where a pointer coordinate falls across an extent, as 0.0 through 1.0.
+///
+/// **Clamped**, because the pointer is reported outside the window when a button is held
+/// and the cursor leaves it. An unclamped fraction would translate the view by the
+/// overshoot as well as scaling it, so a notch delivered from just off the edge would
+/// fling the picture sideways.
+let fraction = pure (position: f64, extent: f64) -> f64 => {
+  let f = position / extent
+  if f < 0.0 { 0.0 } else if f > 1.0 { 1.0 } else { f }
+}
+
+/// What one frame's wheel movement multiplies the span by.
+///
+/// **The movement is a proportion of a notch, clamped to one per frame.** A wheel reports
+/// whole notches, but a trackpad reports fractions of one — several per frame during a
+/// flick — and unclamped that arrives as one large value crossing several magnifications
+/// between two frames, with no rendered frame in between to see them.
+///
+/// **Zooming out is the exact reciprocal of zooming in**, so a notch back undoes a notch
+/// forward and the view returns to the span it came from. Scaling by `1.15` instead of by
+/// `1.0 / 0.85` is wrong by half a percent each way, which compounds over a few dozen
+/// notches into a view that no longer comes back.
+let zoom_factor = pure (wheel: f64) -> f64 => {
+  let amount = wheel.abs()
+  let notch = if amount > 1.0 { 1.0 } else { amount }
+  // 1.0 at no movement, ZOOM_STEP at a full notch.
+  let closer = 1.0 - notch * (1.0 - ZOOM_STEP)
+  if wheel > 0.0 { closer } else { 1.0 / closer }
+}
+
+/// Compute the set into `buffer`, one `Color` per pixel in row-major order — which is the
+/// order [update_texture] reads them in.
+///
+/// `step` is the block size: one point is computed per `step`-by-`step` square and its
+/// colour fills the square, so a step of 1 is the full picture and [PREVIEW_STEP] is the
+/// coarse one. **The buffer is filled either way** — a preview writes the same pixel count
+/// as a full render, it just computes a sixteenth as many of them — which is what keeps
+/// one texture, one length and one upload across both.
+let render = (buffer: mut []Color, width: i64, height: i64,
+              min_x: f64, min_y: f64, span_x: f64, step: i64) -> void => {
+  let span_y = span_x * ASPECT_RATIO
+  // The iteration limit is a property of the view, not of a point, so it is computed once
+  // per render rather than once per pixel.
+  let max_iter = iter_limit(span_x)
+  for block_y in 0..<height:step {
+    for block_x in 0..<width:step {
+      // The block's top-left corner is the point that stands for all of it.
+      let c = Complex {
+        re: min_x + span_x * f64(block_x) / f64(width),
+        im: min_y + span_y * f64(block_y) / f64(height),
+      }
+      let color = shade(c, max_iter)
+      // A trailing block is clipped rather than skipped, since the window's size is not
+      // obliged to divide by the step — and a skipped one would leave the right edge and
+      // the bottom row holding whatever the previous view left there.
+      let y_end = (block_y + step).min(height)
+      let x_end = (block_x + step).min(width)
+      for py in block_y..<y_end {
+        for px in block_x..<x_end {
+          buffer[py * width + px] = color
+        }
+      }
+    }
+  }
+}
+
+let draw_crosshairs = (pos: Vector2) => {
+  draw_line(
+    Vector2{ x: pos.x - 10, y: pos.y },
+    Vector2{ x: pos.x + 10, y: pos.y },
+    WHITE,
+  )
+  draw_line(
+    Vector2{ x: pos.x, y: pos.y - 10 },
+    Vector2{ x: pos.x, y: pos.y + 10 },
+    WHITE,
+  )
+}
+
+/// More iterations the further in the view is zoomed: a deeper view resolves finer
+/// filaments, and the points along them are exactly the ones that take longest to escape.
+///
+/// The magnification is measured against the **starting** span, so it is 1.0 before any
+/// zoom and grows as the span shrinks.
+let iter_limit = pure (span_x: f64) -> i64 => {
+  let magnification = X_LEN / span_x
   if magnification <= 1.0 {
     MAX_ITER
   } else {
