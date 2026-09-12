@@ -48,3 +48,49 @@ let main = () -> void => {
 		}
 	}
 }
+
+// A generic struct literal with a **bare-construction field** takes the missing argument
+// from its annotation. The literal's own solve records `Box<string, Maybe>` — a bare
+// `None` puts the bare declaration in the substitution, and parameterizedResult builds an
+// instantiation as soon as every parameter has *an* entry — and the annotation's stamp
+// then had no arm for a recorded ParameterizedType, so it reported
+// "cannot assign Box<string, Maybe> to Box<string, Maybe<string>>": a disagreement the
+// context had arrived to settle.
+func TestGenericStructLiteralWithABareFieldTakesItsAnnotation(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Maybe<t> = None | Some(t)
+struct Box<k, v> { key: k, value: v }
+let main = () -> void => {
+  let b: Box<string, Maybe<string>> = Box { key: "a", value: None }
+}
+`, false)
+	assertNoErrors(t, res)
+}
+
+// The spelling that always worked, beside it — a complete solve records an instantiation
+// that already matches, which is why this one never showed the bug.
+func TestGenericStructLiteralWithASolvedFieldStillWorks(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Maybe<t> = None | Some(t)
+struct Box<k, v> { key: k, value: v }
+let main = () -> void => {
+  let b: Box<string, Maybe<string>> = Box { key: "a", value: Some("s") }
+}
+`, false)
+	assertNoErrors(t, res)
+}
+
+// Stamping the context must still **check** rather than assume: a payload that genuinely
+// disagrees with the annotation is reported, not silently re-stamped.
+func TestGenericStructLiteralWithAMismatchedFieldIsStillReported(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Maybe<t> = None | Some(t)
+struct Box<k, v> { key: k, value: v }
+let main = () -> void => {
+  let b: Box<string, Maybe<string>> = Box { key: "a", value: Some(5) }
+}
+`, false)
+	if len(res.errors) == 0 {
+		t.Fatal("a payload disagreeing with the annotation should be reported")
+	}
+}

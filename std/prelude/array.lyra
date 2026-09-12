@@ -104,16 +104,16 @@ pub let sort_by<t> = (self: mut []t, cmp: (t, t) -> Ordering) -> void => {
 /// var xs: []i64 = [5, 3, 9, 1]
 /// xs.sort()      // [1, 3, 5, 9]
 /// ```
-pub let sort<t> where t: Ord = (self: mut []t) -> void => self.sort_by(pure (a: t, b: t) => a.compare(b))
+pub let sort<t> where t: Ord = (self: mut []t) -> void => self.sort_by(pure (a, b) => a.compare(b))
 
 /// `sort` under its algorithm's name — see [sort_by] for what it does.
-pub let quick_sort<t> where t: Ord = (self: mut []t) -> void => self.sort_by(pure (a: t, b: t) => a.compare(b))
+pub let quick_sort<t> where t: Ord = (self: mut []t) -> void => self.sort_by(pure (a, b) => a.compare(b))
 
 /// Sorts `self` in place, ascending by `t`'s `Ord`. Heapsort: O(n log n) in every case,
 /// no allocation, **not stable** — equal elements may change their relative order.
 /// `sort` is two to three times faster on typical input and falls back to this.
 pub let heap_sort<t> where t: Ord = (self: mut []t) -> void =>
-  heap_sort_range(self, pure (a: t, b: t) => a.compare(b), 0, self.len())
+  heap_sort_range(self, pure (a, b) => a.compare(b), 0, self.len())
 
 /// A **copy** of `self` sorted by `cmp`, which answers how its first argument orders
 /// against its second; `self` is untouched. **Stable**: elements `cmp` calls equal keep
@@ -186,7 +186,7 @@ pub let sorted_by<t> = pure (self: []t, cmp: (t, t) -> Ordering) -> []t => {
 /// ```
 /// let by_age = people.sorted()     // people is unchanged
 /// ```
-pub let sorted<t> where t: Ord = pure (self: []t) -> []t => self.sorted_by(pure (a: t, b: t) => a.compare(b))
+pub let sorted<t> where t: Ord = pure (self: []t) -> []t => self.sorted_by(pure (a, b) => a.compare(b))
 
 /// Sorts `self[start..<end]` by `cmp`. `budget` is the partition depth left before the
 /// range is handed to heapsort. The smaller side recurses and the larger side loops, so

@@ -33,7 +33,10 @@ import (
 //
 // Call it immediately *before* inferring expr, at any site that knows what it wants: an
 // annotated binding, an argument position, a return position.
-func (tc *TypeChecker) elaborateLambda(expr ast.Expression, want types.Type) {
+// plantable names the type variables that may be written onto the lambda even though
+// they are variables — see isConcreteEnoughToElaborate. A caller with no substitution in
+// hand passes nil, which is the original "fully concrete or nothing" rule.
+func (tc *TypeChecker) elaborateLambda(expr ast.Expression, want types.Type, plantable map[string]bool) {
 	lambda, ok := expr.(*ast.LambdaExpr)
 	if !ok {
 		return
@@ -53,11 +56,11 @@ func (tc *TypeChecker) elaborateLambda(expr ast.Expression, want types.Type) {
 		return
 	}
 	for i := range lambda.Parameters {
-		if lambda.Parameters[i].Type == nil && isConcreteEnoughToElaborate(sig.Parameters[i].Type) {
+		if lambda.Parameters[i].Type == nil && isConcreteEnoughToElaborate(sig.Parameters[i].Type, plantable) {
 			lambda.Parameters[i].Type = sig.Parameters[i].Type
 		}
 	}
-	if lambda.ReturnType.Type == nil && isConcreteEnoughToElaborate(sig.ReturnType.Type) {
+	if lambda.ReturnType.Type == nil && isConcreteEnoughToElaborate(sig.ReturnType.Type, plantable) {
 		lambda.ReturnType.Type = sig.ReturnType.Type
 	}
 }
@@ -73,13 +76,33 @@ func (tc *TypeChecker) elaborateLambda(expr ast.Expression, want types.Type) {
 //
 // The parameter side is unaffected: by the time the deferred pass runs, `(t) -> u`'s
 // parameter has already become `(i64) -> u`, so `x` is filled and only the return is left.
-func isConcreteEnoughToElaborate(t types.Type) bool {
+//
+// **`plantable` is the exception, and it is what makes a generic caller work.** Inside
+// `sort<t> where t: Ord`, `self.sort_by((a, b) => a.compare(b))` solves the callee's
+// variable to the *caller's* `t`, so the slot substitutes to `(t, t) -> Ordering` — still
+// mentioning a variable, so nothing was planted and the lambda reported
+// *undefined symbol "a"*. But that `t` is not unsolved: it is the enclosing declaration's
+// own parameter, a real type in every specialization, and writing it onto the lambda is
+// exactly what the author does by hand when they spell `(a: t, b: t)`.
+//
+// The set is the type variables the substitution's **values** mention (plantableVars), so
+// membership means "arrived from the caller's vocabulary". That is what keeps the `u`
+// counterexample refused: `u` is unsolved, appears in no value, and so is still left blank
+// for the body to solve. It also cannot be fooled by a name collision — a callee variable
+// that was solved is gone from the substituted type, so any variable still standing came
+// from a value or was never solved at all.
+func isConcreteEnoughToElaborate(t types.Type, plantable map[string]bool) bool {
 	if t == nil {
 		return false
 	}
 	vars := map[string]bool{}
 	collectTypeVars(t, vars)
-	return len(vars) == 0
+	for v := range vars {
+		if !plantable[v] {
+			return false
+		}
+	}
+	return true
 }
 
 // elaborateLambdaArgs fills the lambda-literal arguments of a call from the parameter types
@@ -94,7 +117,9 @@ func (tc *TypeChecker) elaborateLambdaArgs(params []types.ParameterType, args []
 		if i >= len(params) {
 			return
 		}
-		tc.elaborateLambda(arg, params[i].Type)
+		// No substitution here — these are a callee's declared types as written, so
+		// only a fully concrete one may be planted.
+		tc.elaborateLambda(arg, params[i].Type, nil)
 	}
 }
 
@@ -106,7 +131,7 @@ func (tc *TypeChecker) elaborateLambdaArgsFromParams(params []ast.Parameter, arg
 		if i >= len(params) {
 			return
 		}
-		tc.elaborateLambda(arg, params[i].Type)
+		tc.elaborateLambda(arg, params[i].Type, nil)
 	}
 }
 

@@ -311,12 +311,19 @@ write today:
   without sequences; bound to a `let` first it is fine. Presumably the `|` inside `${…}`
   or the nested brackets confuse the interpolation scanner.
 
-- **[OPEN 09/07] A struct literal's field is not a context for a call's type arguments.**
+- **[DONE 09/11] A struct literal's field is a context for a call's type arguments.**
   `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,
-  string>` reports "cannot infer type variables k, v" and names the turbofish, which is
-  what `std/collections/args.lyra` writes. An annotated `let`, a return and an argument
-  slot all reach `seedFromExpectedReturn`; the struct field pushes width and flavor
-  through `propagateExpectedType` but never seeds a generic call's variables.
+  string>` reported "cannot infer type variables k, v" and named the turbofish. An
+  annotated `let`, a return and an argument slot all reached `seedFromExpectedReturn` and
+  a field reached none of them, so a generic constructor — whose whole shape is "takes
+  nothing, answers the thing" — was uncallable in the one place a record of them is
+  assembled. **Three sibling positions had the identical gap** and were found by probing
+  rather than reading: a named-tuple element, a data-constructor payload and an
+  anonymous-struct field. The first two funnel through `solveDataTypeVars` only when the
+  declaration is *generic* — a non-generic one returns early, so its elements are first
+  inferred somewhere else entirely, which is why one push could not cover both. The
+  anonymous struct is different in kind: it has no declaration to read a field type from,
+  so its context is the ambient annotation narrowed by name. See COMPLETED.md.
 
 - **[DONE 09/07] A bare construction argument failed the solve when another argument had
   already bound its variable.** `m.insert(key, None)` on a `HashMap<string, Maybe<string>>`
@@ -328,30 +335,39 @@ write today:
   stamps the `None` with the settled instantiation. Pinned in
   `bare_construction_argument_test.go` and `TestExec_BareNoneArgumentAdoptsTheSolvedInstantiation`.
 
-- **[OPEN 09/07] A generic struct literal with a bare-construction field is refused under
-  its annotation.** `let b: Box<string, Maybe<string>> = Box { key: "a", value: None }`
-  reports "cannot assign Box<string, Maybe> to Box<string, Maybe<string>>": the literal's
-  own solve records the field as the bare `Maybe`, and the annotation's stamp
-  (`stampAggregate`) does not reach a struct-typed literal whose recorded *arguments*
-  disagree with the context's. `value: Some("s")` works, as does a `data` payload.
+- **[DONE 09/11] A generic struct literal with a bare-construction field takes its
+  annotation.** `let b: Box<string, Maybe<string>> = Box { key: "a", value: None }`
+  reported "cannot assign Box<string, Maybe> to Box<string, Maybe<string>>" — a
+  disagreement the context had arrived to settle. The literal records a
+  *ParameterizedType* once every parameter has an entry, and a bare field puts the bare
+  declaration in one, so `stampAggregate`'s `NamedStructType`-only arm never ran.
+  **The fix needed the gate `stampableDataType` already applies**: admitting every
+  ParameterizedType let the context re-stamp instantiations the program had genuinely
+  determined, and three tests caught it — `let b: Box<string> = Box { value: 5 }` stopped
+  reporting its mismatch. The predicate is "a type argument is still a bare generic
+  declaration". See COMPLETED.md.
 
-- **[OPEN 09/07] A lambda argument's parameters are not elaborated from a generic
-  callee's parameter type.** `self.sort_by((a, b) => a.compare(b))` inside
-  `sort<t> where t: Ord` reports *undefined symbol "a"* and then *cannot infer type
-  variable t*; `(a: t, b: t) => …` works, and so does the unannotated form when the receiver is
-  concrete (`pairs.sorted_by((a, b) => …)` in `examples/word_freq`), so the gap is a
-  receiver whose type is itself a type parameter. That receiver already fixes `t`, so the
-  lambda's slot type is known before the lambda is looked at. Found delegating the prelude's `Ord` sorts to
-  `sort_by`.
+- **[DONE 09/11] A lambda argument's parameters are elaborated from a generic callee's
+  parameter type.** `self.sort_by((a, b) => a.compare(b))` inside `sort<t> where t: Ord`
+  reported *undefined symbol "a"* and then *cannot infer type variable t*. The receiver
+  solves the callee's variable to the **caller's** `t`, so the slot substitutes to
+  `(t, t) -> Ordering` — still mentioning a variable, and `isConcreteEnoughToElaborate`
+  refused to plant one. But that `t` is not unsolved: it is the enclosing declaration's
+  own parameter, a real type in every specialization, and planting it writes down exactly
+  what `(a: t, b: t)` writes by hand. The plantable set is the variables the
+  substitution's **values** mention, so the `u`-solved-from-the-body counterexample stays
+  refused. The prelude's four `Ord` sorts no longer spell their comparators out. See
+  COMPLETED.md.
 
-- **[OPEN 09/07] A lambda calling a bound method is impure; the same call inline is
-  not.** `pure (self: []t) => self.sorted_by((a, b) => a.compare(b))` is `lyra-E007`
-  ("impure cmp argument"), while `min`'s body calls `self.compare(other)` from `pure`
-  code without complaint. `Ord::compare` is declared without `pure`, so the lambda's
-  inferred effect takes the trait's word and the direct call takes the dispatch ladder's.
-  One of the two is wrong; marking the lambda `pure` is the workaround, and whether the
-  trait should declare `compare` pure (every impl would then have to be) is the design
-  question underneath.
+- **[DONE 09/11] A lambda calling a bound method is impure; the same call inline is
+  not.** `pure (self: []t) => self.sorted_by((a, b) => a.compare(b))` drew `lyra-E007`
+  ("impure cmp argument") while `min`'s body called `self.compare(other)` from `pure` code
+  without complaint. **It was not a purity bug at all** — it was the elaboration entry
+  above wearing another face: the lambda failed to elaborate, its body never resolved, and
+  the unresolved-callee default charged `AllEffects`. Fixing the elaboration closed this
+  with nothing else changed, and the entry's own program now checks clean. The design
+  question it raised — whether `Ord` should declare `compare` pure, which every impl would
+  then have to honour — is untouched and was never what this reported.
 
 - **[DONE 09/07] A non-void function whose body ends in a loop is accepted with no value
   on the fall-through path.** Fixed the same day: a loop is now typed `never` when it
@@ -401,25 +417,33 @@ write today:
   method and a trait default the lambda's treatment. `std.collections`'s `hash_u128` is
   back below the impls that call it, where a private helper belongs.
 
-- **[OPEN 09/06] An array literal mixing a solved and an unsolved generic element ignores
-  the annotation's width.** `let xs: []Maybe<u8> = [Some(200), None]` is refused with
-  *"cannot assign StaticArray<Maybe, 2> to DynamicArray<Maybe<u8>>"*.
+- **[DONE 09/11] An array literal mixing a solved and an unsolved generic element takes
+  the annotation's width.** `let xs: []Maybe<u8> = [Some(200), None]` was refused with
+  *"cannot assign StaticArray<Maybe<i64>, 2> to DynamicArray<Maybe<u8>>"* — a type nobody
+  wrote. The literal's own type is settled from its elements before the annotation narrows
+  them, and that join is what the annotation was compared against.
 
-  The literal's **own** inferred type is settled from its elements before the annotation
-  narrows them: `Some(200)` solves `t` locally to the i64 default and `None` solves nothing,
-  and the join (since 09/07 `Maybe<i64>` rather than a bare `Maybe`) is what the annotation
-  is compared against — the element push marks the `None` provisional, but the literal's
-  StaticArray type is built from the join before the annotation reaches it. One step
-  earlier than the element-context fix of the same day (COMPLETED.md), which repaired the
-  *elements* and left the literal's type alone.
+  An array type is not a `ParameterizedType`, so an array context stopped at
+  `propagateInstantiation`'s guard. `propagateArrayInstantiation` recurses per element and
+  then **rebuilds the literal's own recorded type**, which is the half that mattered:
+  assignability and the backend both read the type recorded for the node, the same reason
+  the tuple arm re-records itself. One arm covered **seven** positions — binding (static
+  and dynamic), either element order, struct field, named-tuple element, argument, declared
+  return — because each already handed its element type to that function. The last two
+  needed `contextualType` adding to their check, which every other context site already ran.
 
-  Two shapes hide it, which is why it is not more visible: `[]Maybe<i64>` works because the
-  default happens to match the annotation, and `[None; n]` works because nothing solves
-  anything — and that repeat form is what a hash table actually uses to size itself, so the
-  gap blocks nothing today.
+  Two guards, the first learned the hard way: it runs only where the element type contains
+  an instantiation, since re-recording an ordinary `[1, 2]` against `[3]i64` restated the
+  elements as `i64` and made a *size* mismatch report the wrong difference; and the
+  re-record is conditional on every element now reading as the context's element type, so a
+  genuine mismatch stays one. The two shapes that always worked still do (`[]Maybe<i64>`,
+  `[None; n]`).
 
-  Deliberately left untested rather than pinned as correct; the comment beside the passing
-  repeat case in `llvm_generic_array_element_test.go` says so.
+  **Still open, and unrelated:** a nested literal whose inner arrays have *different
+  lengths* (`[][]Maybe<u8> = [[Some(200), None], [None]]`) is refused by the element join,
+  one step before any context is consulted — `[][]i64 = [[1, 2], [3]]` fails identically,
+  so it is a static-array join limit with nothing generic about it. Equal-length nesting
+  works, ragged solvedness included.
 
 - **[DONE 08/24] LSP latency: profiled first, and the profile disagreed with the audit.**
   Per keystroke the server re-resolves the document's import graph and re-analyzes every

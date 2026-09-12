@@ -34,8 +34,17 @@ import (
 // silence. So each payload element is re-checked against the field type the *context's*
 // substitution gives, and a mismatch is reported here.
 func (tc *TypeChecker) propagateInstantiation(expr ast.Expression, want types.Type) bool {
+	if expr == nil || want == nil {
+		return false
+	}
+	// An **array context reaches its elements**, before the ParameterizedType guard below
+	// — an array type is not one, so an array context used to be a dead end here and the
+	// literal kept whatever its elements had joined to.
+	if elem := arrayElementType(want); elem != nil {
+		return tc.propagateArrayInstantiation(expr, want, elem)
+	}
 	inst, ok := want.(types.ParameterizedType)
-	if !ok || expr == nil {
+	if !ok {
 		return false
 	}
 	switch e := expr.(type) {
@@ -58,8 +67,8 @@ func (tc *TypeChecker) propagateInstantiation(expr ast.Expression, want types.Ty
 		if !ok {
 			return false
 		}
-		st, isStruct := recorded.(types.NamedStructType)
-		if !isStruct || st.Name != inst.Name {
+		st, matched := tc.structShapeForInstantiation(recorded, inst, e.GetLocation())
+		if !matched {
 			return false
 		}
 		values := make([]ast.Expression, 0, len(e.Fields))
@@ -103,6 +112,140 @@ func (tc *TypeChecker) propagateInstantiation(expr ast.Expression, want types.Ty
 				tc.refreshBranchingRecord(e, []ast.Expression{es.Expression}, inst)
 				return reported
 			}
+		}
+	}
+	return false
+}
+
+// propagateArrayInstantiation pushes an array context's **element** instantiation onto an
+// array literal's elements, then rebuilds the literal's own recorded type from them.
+//
+// It is one step earlier than the element narrowing that already existed. A literal's type
+// is settled from its elements before any annotation is consulted — `[Some(200), None]`
+// joins to `StaticArray<Maybe<i64>, 2>`, the i64 being `Some(200)`'s own default — and
+// that join is what the annotation was compared against, so `[]Maybe<u8>` was refused
+// naming a type nobody wrote. Narrowing the elements alone does not fix it: assignability
+// and the backend both read the type recorded for the literal **node**, which is exactly
+// why the tuple arm re-records itself too.
+//
+// One arm covers every position, because each of them already hands its element type to
+// propagateInstantiation: an annotated binding, a declared return, an argument, a struct
+// field, a named-tuple element.
+//
+// **The re-record is conditional**, as refreshBranchingRecord's is and for the same
+// reason: an element the walk did not stamp — a plain `Maybe<i64>` binding, or a payload
+// that genuinely disagrees — stays what it was and must keep the mismatch it is, or the
+// context would stamp its way over a real error.
+func (tc *TypeChecker) propagateArrayInstantiation(expr ast.Expression, want, elem types.Type) bool {
+	al, ok := expr.(*ast.ArrayLiteralExpr)
+	if !ok {
+		return false
+	}
+	resolved := tc.resolveType(elem, expr.GetLocation())
+	if resolved == nil {
+		return false
+	}
+	// **Only an element type with an instantiation in it.** This arm exists to complete a
+	// partly solved element, so an ordinary `[1, 2]` against `[3]i64` has nothing here to
+	// do — and re-recording it anyway was a real regression rather than a tidy-up: it
+	// restated the literal's element type as `i64`, so a *size* mismatch was reported as
+	// "cannot assign StaticArray<i64, 2> to StaticArray<i64, 3>" where it had said
+	// `StaticArray<integer literal, 2>`. Same error, but the untyped-ness of the leaves is
+	// a fact those two tests are about. A nested array is admitted so `[][]Maybe<u8>`
+	// still reaches its instantiation one level down.
+	_, isInst := resolved.(types.ParameterizedType)
+	if !isInst && arrayElementType(resolved) == nil {
+		return false
+	}
+	reported := false
+	for _, el := range al.Elements {
+		// A spread contributes another array's elements rather than a construction to
+		// stamp, and it also decides the result's flavor — so the whole literal is left
+		// to the machinery that already knows that, rather than half-handled here.
+		if _, isSpread := el.(*ast.SpreadExpr); isSpread {
+			return false
+		}
+		reported = tc.propagateInstantiation(el, resolved) || reported
+	}
+	if reported {
+		return true
+	}
+	for _, el := range al.Elements {
+		t, ok := tc.typeTable.Get(el)
+		if !ok || t == nil || !isAssignable(t, resolved) {
+			return false
+		}
+	}
+	switch want.(type) {
+	case types.StaticArrayType:
+		tc.typeTable.Set(al, types.StaticArrayType{ElementType: resolved, Size: len(al.Elements)})
+	case types.DynamicArrayType:
+		tc.typeTable.Set(al, types.DynamicArrayType{ElementType: resolved})
+	}
+	return false
+}
+
+// structShapeForInstantiation answers the declared field list a struct literal's values
+// should be checked against while the context's instantiation is stamped onto it.
+//
+// **Two recordings reach here and only one used to be handled.** A literal that solved
+// none of its parameters records the bare `NamedStructType`. One that solved *some* of
+// them records a `ParameterizedType` — parameterizedResult builds one as soon as every
+// parameter has an entry in the substitution, and a field whose value is a bare
+// construction puts the bare *declaration* in that entry. So
+// `Box { key: "a", value: None }` records `Box<string, Maybe>`, hit no arm, and the
+// annotation's stamp never ran: "cannot assign Box<string, Maybe> to
+// Box<string, Maybe<string>>" — a disagreement the context had arrived to settle,
+// reported as though nothing could. `value: Some("s")` worked, because a complete solve
+// records an instantiation that already matches.
+//
+// The fields come from the **declaration** in that case, not from the recorded type: they
+// must still carry their type variables, since stampAggregate substitutes the context's
+// arguments through them.
+func (tc *TypeChecker) structShapeForInstantiation(
+	recorded types.Type, inst types.ParameterizedType, loc ast.Location,
+) (types.NamedStructType, bool) {
+	switch r := recorded.(type) {
+	case types.NamedStructType:
+		return r, r.Name == inst.Name
+	case types.ParameterizedType:
+		// **Only a partly solved instantiation may be completed by the context**, and this
+		// is the load-bearing half — stampableDataType's own gate, which this arm needs its
+		// own version of. An instantiation the program genuinely determined has already
+		// been compared against the context by ordinary assignability, so re-stamping it
+		// lets a real mismatch through: admitting every ParameterizedType made
+		// `let b: Box<string> = Box { value: 5 }` stop reporting "cannot assign Box<i64> to
+		// Box<string>" and report the field instead — which reads as the better message and
+		// is in fact the context overriding a decision the value had made for itself.
+		if r.Name != inst.Name || !tc.instantiationHasBareArgument(r, loc) {
+			return types.NamedStructType{}, false
+		}
+		decl, ok := tc.symTable.LookupTypeFrom(inst.Name, loc)
+		if !ok || decl == nil {
+			return types.NamedStructType{}, false
+		}
+		st, isStruct := decl.Type.(types.NamedStructType)
+		return st, isStruct
+	}
+	return types.NamedStructType{}, false
+}
+
+// instantiationHasBareArgument reports whether any of inst's type arguments is still a
+// **bare generic declaration** — `Maybe` rather than `Maybe<string>`.
+//
+// That is what "partly solved" means for an aggregate literal. A field whose value is a
+// bare construction contributes the bare declaration to the substitution, and
+// parameterizedResult builds an instantiation as soon as every parameter has *an* entry,
+// so `Box { key: "a", value: None }` records `Box<string, Maybe>` — an instantiation
+// carrying a hole. `instantiationIsSettled` is deliberately not the predicate: it asks
+// about untyped *literals*, and reads `Box<string, Maybe>` as settled.
+func (tc *TypeChecker) instantiationHasBareArgument(inst types.ParameterizedType, loc ast.Location) bool {
+	for _, arg := range inst.TypeArguments {
+		if tc.isBareGenericConstruction(arg, loc) {
+			return true
+		}
+		if nested, ok := arg.(types.ParameterizedType); ok && tc.instantiationHasBareArgument(nested, loc) {
+			return true
 		}
 	}
 	return false

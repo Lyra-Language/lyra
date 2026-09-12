@@ -76,6 +76,48 @@ let use = () -> i64 => or_else(Nil, () -> i64 => 42)`, false)
 	assertNoErrors(t, res)
 }
 
+// Inside a **generic** function the slot a lambda fills is not concrete: the receiver
+// solves the callee's variable to the *caller's* `t`, so `(t, t) -> Ordering` still
+// mentions a variable and nothing was planted — `undefined symbol "a"`, then "cannot
+// infer type variable t". Writing `(a: t, b: t)` by hand worked, which is the tell: `t`
+// is a perfectly good type here, and the elaboration was refusing to write down what the
+// author would have written.
+func TestContextualLambda_InsideAGenericCaller(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Ordering = Less | Equal | Greater
+trait Ordered { pure compare: (Self, Self) -> Ordering }
+let sort_by<t> = (self: mut []t, cmp: (t, t) -> Ordering) -> void => { }
+let mysort<t> where t: Ordered = (self: mut []t) -> void => self.sort_by((a, b) => a.compare(b))`, false)
+	assertNoErrors(t, res)
+}
+
+// The annotated spelling is what worked before and must keep working — the two are the
+// same call, and a fix that traded one for the other would be no fix.
+func TestContextualLambda_GenericCallerAnnotatedAndNotAgree(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Ordering = Less | Equal | Greater
+trait Ordered { pure compare: (Self, Self) -> Ordering }
+let sort_by<t> = (self: mut []t, cmp: (t, t) -> Ordering) -> void => { }
+let annotated<t> where t: Ordered = (self: mut []t) -> void => self.sort_by((a: t, b: t) => a.compare(b))
+let inferred<t> where t: Ordered = (self: mut []t) -> void => self.sort_by((a, b) => a.compare(b))`, false)
+	assertNoErrors(t, res)
+}
+
+// The counterexample must survive the relaxation, and this is its sharp form: a **generic
+// caller** whose own parameter is in scope, calling a callee with a variable solved only
+// by the lambda's own body. `u` arrives from no substitution value, so it is still left
+// blank — planting it would leave it unsolved forever.
+func TestContextualLambda_GenericCallerStillLeavesABodySolvedVariableBlank(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Opt<t> = Nil | Just(t)
+let map<t,u> = (m: Opt<t>, f: (t) -> u) -> Opt<u> => match m {
+  Just(v) => Just(f(v)),
+  Nil => Nil,
+}
+let outer<a> = (m: Opt<a>) -> Opt<a> => map(m, (x) => x)`, false)
+	assertNoErrors(t, res)
+}
+
 // An explicit annotation always wins: elaboration fills blanks, it does not overwrite. A
 // lambda whose written types disagree with the context is still an error.
 func TestContextualLambda_ExplicitAnnotationIsNotOverwritten(t *testing.T) {

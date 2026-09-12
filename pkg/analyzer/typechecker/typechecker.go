@@ -459,7 +459,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		// checkLambdaBody, which walks the body — after it, the body has already reported
 		// `undefined symbol "x"` and left the return width unset.
 		if decl.Type != nil {
-			tc.elaborateLambda(decl.Value, decl.Type)
+			tc.elaborateLambda(decl.Value, decl.Type, nil)
 		}
 		// Put this binding's `where` bounds in scope for its body, exactly as an impl's
 		// are (checkTraitImpl). Without it a bound was collected and then read by
@@ -3854,7 +3854,23 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 				// A data constructor resolves by name regardless of whether its
 				// payload type-checks (matching the previous data_constructor_expr
 				// behavior), so a failed element is simply skipped, not fatal.
+				//
+				// The declared payload is a context for the value, exactly as a struct
+				// field is. A **non-generic** data type never reaches solveDataTypeVars
+				// — it returns early with no parameters to solve — so this is the first
+				// and only place `Wrap(bag_new())` can be told what `Wrap` holds.
+				// Guarded on the substitution having left nothing open, so an unsolved
+				// variable is never offered as an expectation.
+				var restoreExpected func()
+				if i < len(declaredFields) {
+					if want := substituteGenerics(declaredFields[i], subst); mentionsNoTypeVar(want) {
+						restoreExpected = tc.pushExpectedType(want, elem.GetLocation())
+					}
+				}
 				t := tc.inferExprType(elem)
+				if restoreExpected != nil {
+					restoreExpected()
+				}
 				if t == nil {
 					continue
 				}
@@ -4139,7 +4155,18 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 
 	for i, declaredElem := range declType.Elements {
 		elemExpr := expr.Elements[i]
+		// The declared element type is a context for the value written in it, as a
+		// struct field is. A non-generic named tuple never reaches solveDataTypeVars,
+		// so this is the only place `Pair(bag_new(), 1)` can be told what its first
+		// position holds. Substituted first, and pushed only when nothing is left open.
+		var restoreExpected func()
+		if want := substituteGenerics(declaredElem, typeSubst); mentionsNoTypeVar(want) {
+			restoreExpected = tc.pushExpectedType(want, elemExpr.GetLocation())
+		}
 		actual := tc.inferExprType(elemExpr)
+		if restoreExpected != nil {
+			restoreExpected()
+		}
 		if actual == nil {
 			continue // failed to type-check; already reported
 		}
@@ -4154,6 +4181,13 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 			continue
 		}
 		expected := tc.resolveType(declaredElem, elemExpr.GetLocation())
+		// The declared element type completes the value's instantiation before it is
+		// judged, for the reason the struct-field arm above gives.
+		actualInContext, reportedByContext := tc.contextualType(elemExpr, expected, actual)
+		if reportedByContext {
+			continue
+		}
+		actual = actualInContext
 		if !tc.assignableValue(elemExpr, actual, expected) {
 			// Deferred to the context when the elements alone did not pin every
 			// parameter down: the binding this element implies may be the *wrong*
@@ -4415,7 +4449,31 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// as an UnresolvedType, which would otherwise never compare equal to the
 		// inferred NamedStructType of a nested struct literal (`Point{...}`).
 		expected = tc.resolveType(expected, f.Value.GetLocation())
+		// The declared field type is a **context for the value's inference**, not only
+		// something to check it against afterwards — the same push an annotated binding,
+		// a declared return and an argument slot each make (pushExpectedType). Without
+		// it a generic call whose variables no *argument* reaches had nothing to seed
+		// seedFromExpectedReturn: `Holder { b: bag_new() }` against a field declared
+		// `Bag<string>` reported "cannot infer type variable t" and named the turbofish,
+		// on a field whose declaration says exactly what it holds. It has to be pushed
+		// around the inference rather than applied to the result, because a generic call
+		// reports its own failure inside inferExprType — by the time the field type is
+		// consulted the error is already filed, which is the reason checkVarDecl gives
+		// for pushing the annotation there.
+		restoreExpected := tc.pushExpectedType(expected, f.Value.GetLocation())
 		actual := tc.resolveType(tc.inferExprType(f.Value), f.Value.GetLocation())
+		restoreExpected()
+		// The field's declared type also completes the value's *instantiation* before it
+		// is judged — the same contextualType an annotated binding, a declared return and
+		// an argument each run, and the one position that had never run it. Without it an
+		// array literal whose elements only partly solved (`[Some(200), None]` against a
+		// `[]Maybe<u8>` field) was compared against the join its elements made for
+		// themselves and refused, naming a type nobody wrote.
+		actualInContext, reportedByContext := tc.contextualType(f.Value, expected, actual)
+		if reportedByContext {
+			continue // the propagation named the offending value
+		}
+		actual = tc.resolveType(actualInContext, f.Value.GetLocation())
 		if actual != nil && !tc.assignableValue(f.Value, actual, expected) {
 			tc.addError(f.Value.GetLocation(), SeverityError, "%s.%s: cannot assign %s to %s", expr.Name, name, actual, expected)
 		} else if actual != nil {
@@ -4584,11 +4642,33 @@ func (tc *TypeChecker) inferAnonymousStructInstanceExpr(expr *ast.AnonymousStruc
 }
 
 func (tc *TypeChecker) convertAnonymousStructFieldsToTypeFields(fields []ast.StructField) []types.StructField {
+	// An anonymous struct has no declaration to read a field's type from, so its only
+	// context is the ambient one — the annotation an enclosing binding pushed. It is
+	// narrowed per field, by name, *before* the value is inferred, for the reason the
+	// named-struct, named-tuple and data-payload positions each do the same: a generic
+	// call reports its own failure inside inferExprType, so the context that arrives
+	// afterwards (propagateExpectedType's anonymous-struct arm) is too late to help. That
+	// arm narrows a literal's width, which survives being applied late; it cannot
+	// un-report an error.
+	want, _ := tc.currentExpectedType().(types.AnonymousStructType)
+	byName := make(map[string]types.Type, len(want.Fields))
+	for _, wf := range want.Fields {
+		byName[wf.Name] = wf.Type
+	}
 	structTypeFields := make([]types.StructField, len(fields))
 	for i, f := range fields {
+		var restoreExpected func()
+		if wf, ok := byName[f.Name]; ok && f.Value != nil {
+			if resolved := tc.resolveTypeIfKnown(wf, f.Value.GetLocation()); mentionsNoTypeVar(resolved) {
+				restoreExpected = tc.pushExpectedType(resolved, f.Value.GetLocation())
+			}
+		}
 		structTypeFields[i] = types.StructField{
 			Name: f.Name,
 			Type: tc.inferExprType(f.Value),
+		}
+		if restoreExpected != nil {
+			restoreExpected()
 		}
 	}
 	return structTypeFields

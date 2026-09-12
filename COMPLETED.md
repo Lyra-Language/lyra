@@ -9,6 +9,72 @@ Newest first.
 
 ## Dated log
 
+### 09/11/26 — a context reaches the value before it is judged
+
+Five open entries, filed separately over 09/06–09/07, were one sentence: **a context that
+knows what it wants must say so before the value is inferred, and must narrow itself as it
+descends into an aggregate.** Applied at each place that was missing it, they closed
+together — and one of the five turned out not to be its own bug at all.
+
+**A generic call's variables are seeded from the context** (`seedFromExpectedReturn`), and
+only three positions pushed one: an annotated binding, a declared return, an argument slot.
+A **struct field** pushed nothing, so `Holder { b: bag_new() }` against a field declared
+`Bag<string>` reported "cannot infer type variable t" and named the turbofish — a generic
+constructor, whose whole shape is "takes nothing, answers the thing", uncallable in the one
+place a record of them is assembled. Probing the siblings rather than reading the switches
+found **three more** with the identical gap: a named-tuple element, a data-constructor
+payload, and an anonymous-struct field. The first two funnel through `solveDataTypeVars`
+*only when the declaration is generic* — a non-generic one returns early with no parameters
+to solve, so its elements are first inferred somewhere else entirely, and one push could not
+have covered both. The anonymous struct is different in kind and needed its own answer: it
+has no declaration to read a field type from, so its context is the ambient annotation
+narrowed by field name.
+
+**A lambda literal could not be elaborated inside a generic function.** Within
+`sort<t> where t: Ord`, `self.sort_by((a, b) => a.compare(b))` reported *undefined symbol
+"a"*: the receiver solves the callee's variable to the **caller's** `t`, so the slot
+substitutes to `(t, t) -> Ordering`, still mentions a variable, and
+`isConcreteEnoughToElaborate` refused to plant one. The refusal is right for a variable the
+lambda's *own body* solves — `u` in `map(m, (x) => x * 2)` would never be solved again — but
+this `t` is not unsolved: it is the enclosing declaration's parameter, a real type in every
+specialization, and planting it writes down precisely what the author writes by hand. The
+plantable set is the variables the **substitution's values** mention, which means "arrived
+from the caller's vocabulary" and cannot be fooled by a name collision, since a callee
+variable that *was* solved is gone from the substituted type.
+
+**And that closed a fifth entry that was never a purity bug.** `pure (self: []t) =>
+self.sorted_by((a, b) => a.compare(b))` drew lyra-E007, "impure cmp argument", and the entry
+asked whether `Ord::compare` ought to declare `pure` — a real design question. It was not
+the cause: the lambda failed to elaborate, its body never resolved, and the
+unresolved-callee default charged `AllEffects`. The E007 went with the elaboration fix, and
+the design question is untouched because nothing was ever asking it. **The lesson is the
+filing, not the fix** — two symptoms of one cause, sitting adjacent in the list for four
+days, described as separate bugs because each was reported from where it surfaced.
+
+**An array context stopped at a type test.** `propagateInstantiation` guards on the want
+being a `ParameterizedType`, and an array type is not one, so `[Some(200), None]` under
+`[]Maybe<u8>` kept the join its elements made for themselves —
+`StaticArray<Maybe<i64>, 2>`, the i64 being `Some(200)`'s own default — and the annotation
+was compared against that. Narrowing the elements was not enough and never had been:
+assignability and the backend both read the type recorded for the **node**, which is exactly
+why the tuple arm re-records itself. One new arm covered **seven** positions, because each
+already handed its element type to that function.
+
+**Two self-inflicted regressions, both caught by the suite, both the same mistake — a fix
+claiming more ground than its bug.** Admitting every `ParameterizedType` to the struct stamp
+let the context re-stamp instantiations the *program* had determined, so
+`let b: Box<string> = Box { value: 5 }` stopped reporting its mismatch; the gate that was
+missing is the one `stampableDataType` already applies one type over, and the predicate here
+is "a type argument is still a bare generic declaration" (`instantiationIsSettled` is not it
+— it asks about untyped literals and reads `Box<string, Maybe>` as settled). And
+re-recording *every* array literal restated `[1, 2]`'s elements as `i64`, so a **size**
+mismatch reported the wrong difference. Both were caught because the existing tests assert
+diagnostic *text*, not just failure — the version of those tests that checked only "this is
+an error" would have passed.
+
+The prelude's four `Ord` sorts stopped spelling their comparators out, which is what the
+entries had recorded as the workaround.
+
 ### 09/11/26 — a compound assignment takes what `=` takes
 
 `x += if wide { 2 } else { 1 }` was a syntax error while `x = if wide { … } else { … }`

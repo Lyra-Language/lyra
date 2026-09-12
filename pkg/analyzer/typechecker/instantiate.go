@@ -52,6 +52,40 @@ func collectTypeVars(t types.Type, vars map[string]bool) {
 	types.CollectTypeVars(t, vars)
 }
 
+// mentionsNoTypeVar reports whether t is fully concrete — no type variable anywhere in
+// it. It is the predicate for "may this type be offered as a *context*": an expectation
+// still mentioning a variable is not an expectation, it is the question being asked, and
+// unifying a callee's return against it either fails harmlessly or binds the wrong thing.
+//
+// One answer, because three positions ask it — a data constructor's payload, a named
+// tuple's element, and whether a lambda's blank may be filled from its slot.
+func mentionsNoTypeVar(t types.Type) bool {
+	// The same walk isConcreteEnoughToElaborate performs with nothing plantable, rather
+	// than a second copy of it: "fully concrete" is one question, asked here about an
+	// expectation and there about a blank being filled in.
+	return isConcreteEnoughToElaborate(t, nil)
+}
+
+// plantableVars are the type variables a substitution's **values** mention — the caller's
+// own vocabulary, arrived through a solve.
+//
+// A variable in this set is not unsolved; it is an enclosing declaration's type parameter,
+// which is a real type in every specialization of that declaration. That is what lets a
+// lambda literal be elaborated inside a generic function, where the slot it fills is
+// `(t, t) -> Ordering` rather than anything concrete. A callee variable that is genuinely
+// unsolved appears in no value and so is absent, which is what keeps it blank for the
+// lambda's own body to solve.
+func plantableVars(subst map[string]types.Type) map[string]bool {
+	if len(subst) == 0 {
+		return nil
+	}
+	vars := map[string]bool{}
+	for _, v := range subst {
+		collectTypeVars(v, vars)
+	}
+	return vars
+}
+
 // resolveDeclaredParam is a parameter's annotation as unification must see it: type
 // aliases expanded, everything else as written. `offset: Index = 0` for
 // `type Index = i64` otherwise reaches unifyGenericTarget as an UnresolvedType, fails
@@ -170,7 +204,7 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		declared := tc.resolveDeclaredParam(lambda, i)
 		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
 		// and the lambda has something concrete to be elaborated against.
-		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst))
+		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst), plantableVars(subst))
 		// The parameter type is this argument's context, so a *nested* generic call whose
 		// variables its own arguments cannot reach — `take(empty())` — is solved from the
 		// parameter it is being passed to. Substituted through what is bound so far, so an
@@ -312,7 +346,21 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 		if i >= len(declaredFields) {
 			break
 		}
+		// A declared field mentioning none of *this declaration's* parameters is a
+		// context for the value written in it, the same push a struct field makes:
+		// `Wrap(bag_new())` against `Wrap(Bag<string>)` has to seed the callee's
+		// variables before the argument is inferred, because a generic call reports its
+		// own failure inside inferExprType. A field that does mention one (`Some(t)`) is
+		// what this loop exists to solve, so it has nothing to offer and pushing it
+		// would present an unsolved variable as an expectation.
+		var restoreExpected func()
+		if !mentionsGenericParam(declaredFields[i], vars) {
+			restoreExpected = tc.pushExpectedType(declaredFields[i], arg.GetLocation())
+		}
 		argType := tc.inferExprType(arg)
+		if restoreExpected != nil {
+			restoreExpected()
+		}
 		if argType == nil {
 			continue
 		}
@@ -372,7 +420,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		// only fill what was already known *before* this lambda's own body was inferred —
 		// its return type is precisely what the body solved, so it is filled here or not
 		// at all, and the backend needs it to lower the lambda as a value.
-		tc.elaborateLambda(arg, params[i])
+		tc.elaborateLambda(arg, params[i], plantableVars(subst))
 		argType := tc.inferExprType(arg)
 		if argType == nil || params[i] == nil {
 			continue

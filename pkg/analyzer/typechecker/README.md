@@ -189,6 +189,31 @@ context site goes through **`contextualType`**, which propagates *before* the as
 check, re-reads the record, and reports whether it already emitted a diagnostic so the
 caller suppresses its own coarser one.
 
+**An array context reaches its elements too** (09/11, `propagateArrayInstantiation`). An
+array type is not a `ParameterizedType`, so an array context used to stop at the guard and
+the literal kept whatever its elements had joined to: `[Some(200), None]` under `[]Maybe<u8>`
+joins to `StaticArray<Maybe<i64>, 2>` — the i64 being `Some(200)`'s own default — and *that*
+was compared against the annotation, refusing correct code while naming a type nobody wrote.
+The arm recurses per element and then rebuilds the literal's own recorded type, because
+assignability and the backend both read the type recorded for the **node** (the same reason
+the tuple arm re-records itself). One arm covers every position, since each already hands
+its element type here. Two guards: it runs only when the element type actually contains an
+instantiation — re-recording an ordinary `[1, 2]` against `[3]i64` restated its elements as
+`i64` and made a *size* mismatch report the wrong difference — and the re-record is
+conditional on every element now reading as the context's element type, so a genuine
+mismatch keeps being one.
+
+**A struct literal recorded as a partly solved instantiation is open to the context**
+(`structShapeForInstantiation`, 09/11), which the `NamedStructType`-only arm had missed:
+`Box { key: "a", value: None }` records `Box<string, Maybe>`, since a bare field contributes
+the bare declaration and `parameterizedResult` builds an instantiation as soon as every
+parameter has *an* entry. It needs the same gate `stampableDataType` applies — admitting
+every `ParameterizedType` let the context re-stamp instantiations the program had genuinely
+determined, and `let b: Box<string> = Box { value: 5 }` stopped reporting the mismatch it
+should. The predicate is "some type argument is still a **bare generic declaration**";
+`instantiationIsSettled` is deliberately not it, since it asks about untyped literals and
+reads `Box<string, Maybe>` as settled.
+
 ### `checkNode(node)`
 
 / `checkVarDecl` / `checkVarReassignment` / `checkExpressionStmt` — statement-level checks.
@@ -673,6 +698,21 @@ solved by the lambda's **own body** — `u` in `map(m, (x) => x * 2)` — would 
 written as its declared return and never solved. The consequence is that a lambda's return
 type can only be filled once solving finishes, which is why `inferGenericCall` elaborates
 again after `instantiateSignature`.
+
+**One class of variable *is* plantable, and without it a generic caller could not use a
+lambda at all** (09/11). Inside `sort<t> where t: Ord`, `self.sort_by((a, b) => a.compare(b))`
+solves the callee's variable to the **caller's** `t`, so the slot substitutes to
+`(t, t) -> Ordering` — still mentioning a variable, so nothing was planted and the lambda
+reported *undefined symbol "a"*. That `t` is not unsolved: it is the enclosing declaration's
+own parameter, a real type in every specialization, and planting it writes down exactly what
+the author writes by hand as `(a: t, b: t)`. `plantableVars(subst)` is the set — the variables
+the substitution's **values** mention, so membership means "arrived from the caller's
+vocabulary". `u` appears in no value and stays blank, which is what keeps the counterexample
+above refused; and a name collision cannot fool it, since a callee variable that *was* solved
+is gone from the substituted type. The prelude's `Ord` sorts stopped spelling their
+comparators out because of this, and the purity entry beside it in `todo.md`
+(*"a lambda calling a bound method is impure"*) turned out to be the same bug: the E007 was a
+consequence of the lambda failing to elaborate, and went with it.
 
 ## Multi-clause functions (`multi_clause.go`)
 
