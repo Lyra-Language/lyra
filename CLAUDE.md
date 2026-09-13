@@ -1344,6 +1344,12 @@ They compile emitted IR with clang and run it. Two things to know before touchin
 the `sanitize_address` attribute (rule 6) and the binary cache that keeps the package at
 ~2s warm. Both are explained in `pkg/backend/llvm/README.md`.
 
+**Run an ASan binary through `buildAndRunASan`/`buildAndRunASanWithPrelude`, never with a
+bare `exec.Command`.** The helpers set `detect_leaks=0`; LeakSanitizer is on by default on
+Linux and off on macOS, and `./asan.sh` sets the option for the whole container — so a test
+that skips the helper passes everywhere a developer looks and fails only on CI's runner, on
+leaks `todo.md` already tracks. Three did, from 09/11 to 09/13.
+
 Linux runs go through the workspace's `./asan.sh`, worth doing before pushing memory-model
 work: Debian's older clang uses *typed pointers* and so rejects IR type mismatches that
 Apple clang's opaque pointers cannot even represent.

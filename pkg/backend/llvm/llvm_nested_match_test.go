@@ -59,11 +59,10 @@ let main = () -> u8 => {
   }
   if total == 280 { 3 } else { 1 }
 }`
-	clang := lookClang(t)
 	if got := exitCodeOf(t, exec.Command(preludeBinary(t, src)).Run()); got != 3 {
 		t.Errorf("exited %d; want 3", got)
 	}
-	if got := exitCodeOf(t, exec.Command(compileCached(t, clang, instrumentForASan(emitWithPrelude(t, src)), "-fsanitize=address")).Run()); got != 3 {
+	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
 		t.Errorf("under ASan: exited %d; want 3", got)
 	}
 }

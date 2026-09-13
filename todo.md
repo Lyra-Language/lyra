@@ -318,6 +318,19 @@ write today:
   literal is still built as the fixed `[1]i64` it inferred. Found probing the nested-generic
   fix below.
 
+- **[OPEN 09/13] Three leaks LeakSanitizer finds, which CI's Linux runner surfaced.** CI
+  failed from 09/11 on three ASan tests that ran their binary without the harness's
+  `detect_leaks=0` — LSan is on by default on Linux and off on macOS, so nothing local
+  showed it. They go through `buildAndRunASanWithPrelude` now; the leaks are real and
+  predate 09/13 (identical at `7c980b8`), measured in `./asan.sh` with `detect_leaks=1`:
+  - `u8(program_args().len())` leaks the whole temporary array, 168 bytes in 3 objects
+    (the box, its buffer, the argv[0] string) — a managed receiver of a builtin method is
+    not released;
+  - `let a = program_args(); u8(a.len())` still leaks the 104-byte element buffer, so
+    the box is freed without the buffer `push` grew;
+  - `d.field("a").unwrap_or(JsonNull).as_text().unwrap_or("").len()` over `std.json`
+    leaks one 18-byte string.
+
 - **[DONE 09/11] A struct literal's field is a context for a call's type arguments.**
   `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,
   string>` reported "cannot infer type variables k, v" and named the turbofish. An

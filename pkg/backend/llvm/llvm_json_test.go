@@ -1,7 +1,6 @@
 package llvm
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -86,7 +85,7 @@ let main = () -> u8 => {
     Err(_) => 2,
   }
 }`
-	if got := exitCodeOf(t, exec.Command(compileCached(t, clang, instrumentForASan(emitWithPrelude(t, src)), "-fsanitize=address")).Run()); got != 3 {
+	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
 		t.Errorf("under ASan: exited %d; want 3", got)
 	}
 }

@@ -33,11 +33,10 @@ let main = () -> u8 => {
   if line == "clip 2: fox#1   frame 7/9" { 0 } else { 1 }
 }
 `
-	clang := lookClang(t)
 	if got := exitCodeOf(t, exec.Command(preludeBinary(t, src)).Run()); got != 0 {
 		t.Errorf("exited %d; want 0 (the line intact)", got)
 	}
-	if got := exitCodeOf(t, exec.Command(compileCached(t, clang, instrumentForASan(emitWithPrelude(t, src)), "-fsanitize=address")).Run()); got != 0 {
+	if got := buildAndRunASanWithPrelude(t, src); got != 0 {
 		t.Errorf("under ASan: exited %d; want 0", got)
 	}
 }
@@ -59,11 +58,10 @@ let main = () -> u8 => {
   if line == "clip 2: fox#3   frame 7/9" { 0 } else { 1 }
 }
 `
-	clang := lookClang(t)
 	if got := exitCodeOf(t, exec.Command(preludeBinary(t, src)).Run()); got != 0 {
 		t.Errorf("exited %d; want 0 (the line intact)", got)
 	}
-	if got := exitCodeOf(t, exec.Command(compileCached(t, clang, instrumentForASan(emitWithPrelude(t, src)), "-fsanitize=address")).Run()); got != 0 {
+	if got := buildAndRunASanWithPrelude(t, src); got != 0 {
 		t.Errorf("under ASan: exited %d; want 0", got)
 	}
 }
