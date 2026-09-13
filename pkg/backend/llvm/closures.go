@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/llir/llvm/ir"
@@ -100,15 +101,26 @@ func (l *lowerer) closureFnSignature(params []types.Type, ret types.Type) (lltyp
 // binding v (type t)"*, a `t` with no width because nothing had told it which one.
 func (l *lowerer) capturesOf(fn *ast.LambdaExpr) []captures.Capture {
 	caps := l.res.Captures.Of(fn)
-	if len(l.typeSubst) == 0 || len(caps) == 0 {
+	if len(caps) == 0 {
 		return caps
 	}
 	// A fresh slice: the table is shared across every specialization of this body, so
 	// substituting in place would leave the previous instantiation's bindings behind.
-	out := make([]captures.Capture, len(caps))
-	for i, c := range caps {
+	out := make([]captures.Capture, 0, len(caps))
+	expanded := false
+	for _, c := range caps {
+		// A captured **local generic** is not one value but one closure per instantiation,
+		// so it is captured as the ones this lambda calls (local_generic.go).
+		if values, isGeneric := l.localGenericCaptures(fn, c.Name); isGeneric {
+			out = append(out, values...)
+			expanded = true
+			continue
+		}
 		c.Type = l.applyTypeSubst(c.Type)
-		out[i] = c
+		out = append(out, c)
+	}
+	if expanded {
+		slices.SortFunc(out, func(x, y captures.Capture) int { return strings.Compare(x.Name, y.Name) })
 	}
 	return out
 }

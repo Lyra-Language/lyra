@@ -6,6 +6,7 @@ import (
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/value"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
@@ -28,11 +29,17 @@ import (
 //     a lambda inside a generic body is lifted under;
 //   - **the declaration**: one closure value per instantiation, built where the `let`
 //     stands, in a slot of its own and framed like any closure binding;
-//   - **the call**: the slot for the instantiation this call solved to.
+//   - **the call**: the slot for the instantiation this call solved to;
+//   - **a lambda calling one** captures those slots — one closure value per instantiation
+//     it calls (localGenericCaptures) — so the generic's own captures are read as they were
+//     at its declaration, as with any closure over a closure. A captureless one is not
+//     captured at all; its closure is built at the call.
 //
-// A local generic inside a *generic* function is refused by name: its body may mention the
-// enclosing function's variables as well as its own, and an instantiation carries only its
-// own.
+// **Inside a generic function** an instantiation also binds the enclosing function's
+// variables — the typechecker records them as identity bindings and composition settles
+// them per outer specialization (withEnclosingTypeVars) — so each outer specialization has
+// its own set, and a declaration builds only the ones consistent with the substitution in
+// force.
 
 // localGenericSlotName is the l.locals key of one instantiation's closure value. `<` cannot
 // appear in a Lyra identifier, so it cannot collide with a binding.
@@ -67,10 +74,6 @@ func (l *lowerer) collectLocalGenerics(program *ast.Program, entry *ast.LambdaEx
 			if len(lam.GenericParams) == 0 {
 				continue
 			}
-			if isGenericLambda(owner) {
-				return fmt.Errorf("llvm: a generic declared inside the generic function %q is not implemented yet (at %s) — declare it at the top level",
-					decl.Name, lam.GetLocation().Pretty())
-			}
 			l.localGenericExcluded[lam] = true
 			for _, inner := range nestedLambdasIn(lam) {
 				l.localGenericExcluded[inner] = true
@@ -82,57 +85,52 @@ func (l *lowerer) collectLocalGenerics(program *ast.Program, entry *ast.LambdaEx
 			l.localGenericInsts[inst.Func] = append(l.localGenericInsts[inst.Func], inst)
 		}
 	}
-	return l.refuseCapturedLocalGenerics(program)
-}
-
-// refuseCapturedLocalGenerics names the one shape this does not lower: a lambda calling a
-// local generic that **captures** something. The generic has no single closure value to
-// capture, and re-capturing its captures at the call would read a `var` as it is at the
-// call rather than as it was at the declaration — a change of meaning, so it is refused
-// instead. A captureless one is not a capture at all (captures.go).
-func (l *lowerer) refuseCapturedLocalGenerics(program *ast.Program) error {
-	for _, node := range program.Statements {
-		decl, ok := node.(*ast.VarDeclStmt)
-		if !ok {
-			continue
-		}
-		owner, ok := decl.Value.(*ast.LambdaExpr)
-		if !ok {
-			continue
-		}
-		generics := map[string]bool{}
-		for _, lam := range nestedLambdasIn(owner) {
-			if l.isLocalGeneric(lam) {
-				for _, name := range localGenericNames(owner, lam) {
-					generics[name] = true
-				}
-			}
-		}
-		if len(generics) == 0 {
-			continue
-		}
-		for _, lam := range append(nestedLambdasIn(owner), owner) {
-			for _, c := range l.res.Captures.Of(lam) {
-				if generics[c.Name] {
-					return fmt.Errorf("llvm: %q is a generic declared inside %q that captures a binding, and the lambda at %s calls it; that is not implemented yet — pass what it captures as an argument, or declare it at the top level",
-						c.Name, decl.Name, lam.GetLocation().Pretty())
-				}
-			}
-		}
-	}
 	return nil
 }
 
-// localGenericNames is the name(s) owner's body binds lam to.
-func localGenericNames(owner, lam *ast.LambdaExpr) []string {
-	var names []string
-	ast.WalkExprChildren(owner, func(s ast.Statement) bool {
-		if decl, ok := s.(*ast.VarDeclStmt); ok && decl.Value == ast.Expression(lam) {
-			names = append(names, decl.Name)
+// localGenericCaptures answers, for a capture named name in fn, whether that name is a local
+// generic — and if so, the closure values fn must capture in its place: one per
+// instantiation fn's body calls, under the name its declaration's slot has and the
+// signature that instantiation gives it.
+//
+// **This is what keeps a capture a capture.** A lambda calling a local generic that captures
+// a binding could instead re-capture that binding and rebuild the generic's closure at the
+// call, but then a `var` would be read as it is when the lambda is created rather than as it
+// was when the generic was declared — the same program meaning something else. Capturing the
+// closure values the declaration built is what an ordinary closure over an ordinary closure
+// does, and nesting composes: a lambda's unpacked captures are its locals, under the same
+// names, for a lambda inside it to capture in turn (09/13).
+func (l *lowerer) localGenericCaptures(fn *ast.LambdaExpr, name string) ([]captures.Capture, bool) {
+	seen := map[string]bool{}
+	var out []captures.Capture
+	isGeneric := false
+	ast.WalkExprChildren(fn, nil, func(e ast.Expression) bool {
+		call, ok := e.(*ast.FunctionCallExpr)
+		if !ok {
+			return true
 		}
+		ident, ok := call.Function.(*ast.IdentifierExpr)
+		if !ok || ident.Name != name {
+			return true
+		}
+		inst, ok := l.res.Instantiations.Get(call)
+		if !ok || !l.isLocalGeneric(inst.Func) {
+			return true
+		}
+		isGeneric = true
+		inst = inst.Substituted(l.typeSubst, types.Substitute)
+		slotName := localGenericSlotName(name, inst)
+		if seen[slotName] {
+			return true
+		}
+		seen[slotName] = true
+		out = append(out, captures.Capture{
+			Name: slotName,
+			Type: substituteTypeVars(localGenericSignature(inst.Func), inst.Subst),
+		})
 		return true
-	}, nil)
-	return names
+	})
+	return out, isGeneric
 }
 
 // isLocalGeneric reports whether fn is a generic declared inside a function.
@@ -237,6 +235,9 @@ func sortLambdasBySource(lams []*ast.LambdaExpr) {
 func (l *lowerer) lowerLocalGenericDecl(block *ir.Block, vds *ast.VarDeclStmt, lam *ast.LambdaExpr) (*ir.Block, error) {
 	entry := block.Parent.Blocks[0]
 	for _, inst := range l.localGenericInsts[lam] {
+		if !l.agreesWithSubst(inst) {
+			continue // another specialization of the enclosing generic function's
+		}
 		var v value.Value
 		var ty types.Type
 		err := l.withLocalInstantiation(inst, false, func() error {
@@ -259,6 +260,17 @@ func (l *lowerer) lowerLocalGenericDecl(block *ir.Block, vds *ast.VarDeclStmt, l
 		}
 	}
 	return block, nil
+}
+
+// agreesWithSubst reports whether inst binds every variable the substitution in force binds,
+// to the same type — whether it belongs to the specialization being lowered.
+func (l *lowerer) agreesWithSubst(inst typetable.Instantiation) bool {
+	for name, bound := range l.typeSubst {
+		if own, ok := inst.Subst[name]; ok && !types.TypesEqual(own, bound) {
+			return false
+		}
+	}
+	return true
 }
 
 // lowerLocalGenericCall calls the closure value of the instantiation this call solved to,
@@ -284,7 +296,7 @@ func (l *lowerer) lowerLocalGenericCall(block *ir.Block, e *ast.FunctionCallExpr
 			return nil, nil, err
 		}
 	} else {
-		return nil, nil, fmt.Errorf("llvm: the local generic %q is not in scope at %s", name, e.GetLocation().Pretty())
+		return nil, nil, fmt.Errorf("llvm: no closure for the local generic %q at %s — neither declared in this scope nor captured", name, e.GetLocation().Pretty())
 	}
 	lt, ok := substituteTypeVars(localGenericSignature(inst.Func), inst.Subst).(*types.LambdaType)
 	if !ok {

@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — the two local-generic shapes, and a closure capturing a closure
+
+Both shapes refused the day local generics first lowered now lower, and fixing the second
+found that **no closure could capture another closure at all**.
+
+**Inside a generic function**, a local generic's body may mention the enclosing function's
+variables, and its instantiation carried only its own — so it could neither lower that body
+nor tell `outer<i64>`'s specialization from `outer<string>`'s. The typechecker now records
+the enclosing function's variables as identity bindings (`{t: u, u: u}`, found by location
+since the checker does not track the enclosing function), and composition does the rest:
+inside `outer<u = i64>` it is `{t: i64, u: i64}`, a key per outer specialization and a
+substitution for the whole body, with no special case in the driver. A declaration builds only
+the instantiations that agree with the substitution in force. lyra-E031 had to learn the same
+scope: `let both<t> = (a: t, b: u) -> …` inside `outer<u>` mentions a `u` that is in scope,
+and was refused as undeclared.
+
+**A capturing local generic called from another lambda** was refused because the obvious
+lowering changes meaning: re-capturing the generic's own captures at the call reads a `var` as
+it is when the calling lambda is created rather than when the generic was declared. The
+calling lambda now captures **the closure values the declaration built**, one per
+instantiation it calls, under the slot names the declaration gave them — so nesting composes,
+since a lambda's unpacked captures are locals under those same names. The test pins the
+semantics with a `var` reassigned between the declaration, the calling lambda and a plain
+closure.
+
+**That needed a closure to capture a closure**, and it could not: `SizeAndAlign` had no case
+for a function type, so `let f = …` then `() -> i64 => f(1)` failed with "cannot size captured
+binding f". A function value is the `{ i8* fn, i8* env }` fat pointer; the case is two
+pointers. Nothing had ever captured one.
+
 ### 09/13/26 — a generic declared inside a function
 
 `let idf<t> = (a: t) -> t => a` in `main` checked clean and failed to build with *"type

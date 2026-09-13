@@ -477,8 +477,12 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 	// answer.
 	tc.checkGenericBounds(calleeName, lambda, call, subst)
 	tc.warnFloatEqualityAtInstantiation(calleeName, lambda, call, subst)
+	disc := tc.instantiationDisc(lambda, calleeName)
+	if disc != "" && strings.HasPrefix(disc, localDiscPrefix) {
+		subst = tc.withEnclosingTypeVars(lambda, subst)
+	}
 	tc.instantiations.Set(call, typetable.Instantiation{
-		Name: calleeName, Func: lambda, Disc: tc.instantiationDisc(lambda, calleeName), Subst: subst,
+		Name: calleeName, Func: lambda, Disc: disc, Subst: subst,
 		// The *call's* location, not the declaration's: the type arguments were resolved
 		// here, so this is the module a private type among them can be found in.
 		Site: call.GetLocation(),
@@ -507,7 +511,7 @@ func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr, name string) st
 	if fn, found := tc.symTable.LookupFunctionFrom(name, lambda.GetLocation()); !found || fn != lambda {
 		if !tc.isOverloadMember(lambda) {
 			loc := lambda.GetLocation()
-			return fmt.Sprintf("local_%d_%d", loc.StartLine, loc.StartCol)
+			return fmt.Sprintf("%s%d_%d", localDiscPrefix, loc.StartLine, loc.StartCol)
 		}
 	}
 	recv, ok := ast.ReceiverParam(lambda)
@@ -527,6 +531,67 @@ func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr, name string) st
 		}
 	}
 	return ""
+}
+
+// localDiscPrefix marks the discriminant of a generic declared inside a function.
+const localDiscPrefix = "local_"
+
+// withEnclosingTypeVars adds the type variables of the generic function enclosing a local
+// generic to its instantiation, each bound to itself: `{t: u}` becomes `{t: u, u: u}`.
+//
+// A local generic's body may mention the enclosing function's variables as well as its own —
+// a capture of type `u`, a parameter `(a: t, b: u)` — and an instantiation carrying only its
+// own could neither lower that body nor tell `outer<i64>`'s specialization of it from
+// `outer<string>`'s, which would share a key. The identity binding is a *template* binding,
+// so composition does the rest: inside `outer<u = i64>` it becomes `{t: i64, u: i64}`, which
+// is a key per outer specialization and a substitution covering the whole body (09/13).
+// A variable the local generic declares for itself shadows the enclosing one of that name.
+func (tc *TypeChecker) withEnclosingTypeVars(lambda *ast.LambdaExpr, subst map[string]types.Type) map[string]types.Type {
+	owner := tc.enclosingTopLevel(lambda)
+	if owner == nil {
+		return subst
+	}
+	vars := map[string]bool{}
+	for _, gp := range owner.GenericParams {
+		vars[gp.Name] = true
+	}
+	for _, p := range owner.Parameters {
+		types.CollectTypeVars(p.Type, vars)
+	}
+	types.CollectTypeVars(owner.ReturnType.Type, vars)
+	if len(vars) == 0 {
+		return subst
+	}
+	out := make(map[string]types.Type, len(subst)+len(vars))
+	for name, t := range subst {
+		out[name] = t
+	}
+	for name := range vars {
+		if _, own := out[name]; !own {
+			out[name] = types.GenericType{Name: name}
+		}
+	}
+	return out
+}
+
+// enclosingTopLevel is the top-level function whose body contains lambda, or nil.
+func (tc *TypeChecker) enclosingTopLevel(lambda *ast.LambdaExpr) *ast.LambdaExpr {
+	loc := lambda.GetLocation()
+	for _, owner := range tc.topLevelLambdas {
+		if owner != lambda && locationContains(owner.GetLocation(), loc) {
+			return owner
+		}
+	}
+	return nil
+}
+
+func locationContains(outer, inner ast.Location) bool {
+	if outer.File != inner.File {
+		return false
+	}
+	startsBefore := outer.StartLine < inner.StartLine || (outer.StartLine == inner.StartLine && outer.StartCol <= inner.StartCol)
+	endsAfter := outer.EndLine > inner.EndLine || (outer.EndLine == inner.EndLine && outer.EndCol >= inner.EndCol)
+	return startsBefore && endsAfter
 }
 
 // isOverloadMember reports whether lambda is one declaration of a receiver-overloaded name,

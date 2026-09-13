@@ -271,3 +271,19 @@ func TestGenericParams_NominalTypeParamsAreNotThisSignatures(t *testing.T) {
 	assertNoGenericParamDiags(t, `struct Box<t> { v: t }
 let unwrap = (b: Box<i64>) -> i64 => b.v`)
 }
+
+// A generic declared inside a generic function sees the enclosing function's variables:
+// `u` in `both`'s signature is `outer`'s, and naming it in `both`'s own list would declare a
+// second, different `u`. A variable neither list declares is still the typo it always was.
+func TestGenericParams_EnclosingFunctionsVariablesAreInScope(t *testing.T) {
+	diags := errorsOnly(checkGenericParams(t, `
+let outer<u> = (v: u) -> u => {
+  let both<t> = (a: t, b: u) -> u => b
+  let typo<t> = (a: t, b: w) -> t => a
+  v
+}
+`))
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, `"w"`) {
+		t.Errorf("want exactly the undeclared `w` reported, got %v", diags)
+	}
+}

@@ -46,33 +46,56 @@ let main = () -> u8 => {
 	}
 }
 
-// The two shapes still refused, each by name rather than by "type variable t has no
-// concrete type here": a local generic inside a *generic* function, whose body could mention
-// both functions' variables while an instantiation carries only its own; and a local
-// generic that captures a binding, called from inside another lambda.
-func TestEmit_LocalGenericRefusals(t *testing.T) {
+// The two shapes refused until the day after they were first lowered. A local generic inside
+// a *generic* function carries the enclosing function's variables in its instantiation, so
+// `outer<i64>` and `outer<string>` each get their own; and a local generic that captures a
+// binding is captured, by a lambda calling it, as the closure values its declaration built.
+//
+// The `var` is the semantic point of the second: `add` captured `k` when it was declared, so
+// every call sees 1 — directly or through `call` — exactly as an ordinary closure would, and
+// the plain closure created later sees the later value.
+func TestExec_LocalGenericsInsideGenericsAndCaptured(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ name, src, want string }{
-		{"inside a generic function", `
-let outer<u> = (v: u) -> u => {
+	src := `
+let outer<u> where u: Show = (v: u, n: i64) -> string => {
+  let tag = "<" ++ "${v}" ++ ">"
   let idf<t> = (a: t) -> t => a
-  idf(v)
+  let both<t> where t: Show = (a: t, b: u) -> string => "${a}/${b}${tag}"
+  let twice<t> where t: Show = (a: t) -> string => both(a, v) ++ both(idf(n), idf(v))
+  twice("x" ++ "y")
 }
-let main = () -> void => { println(outer(3)) }`, `a generic declared inside the generic function "outer"`},
-		{"a capturing one called from a lambda", `
-let main = () -> void => {
-  let k = 1
+let main = () -> u8 => {
+  var k = 1
   let add<t> where t: Show = (a: t) -> string => "${a}${k}"
-  let call = () -> string => add(2)
-  println(call())
-}`, `"add" is a generic declared inside "main" that captures a binding`},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := emitWithPreludeErr(t, c.src)
-			if err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Errorf("want an error containing %q, got %v", c.want, err)
-			}
-		})
+  k = 5
+  let call = () -> string => add(2) ++ add("s")
+  k = 9
+  let plain = (a: i64) -> string => "${a}${k}"
+  let nested = () -> string => { let inner = () -> string => call() ++ plain(4); inner() }
+  let line = outer(3, 1) ++ " " ++ outer("s" ++ "t", 2) ++ " " ++ nested() ++ " " ++ add(3)
+  println(line)
+  if line == "xy/3<3>1/3<3> xy/st<st>2/st<st> 21s149 31" { 3 } else { 1 }
+}`
+	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
+		out := buildAndRunWithPrelude(t, src, "")
+		t.Errorf("exited %d; want 3 — printed %q", got, strings.TrimSpace(out))
+	}
+}
+
+// A closure capturing another closure. It could not be done at all before: a function value
+// had no size, so "cannot size captured binding f" — found when a lambda first had to capture
+// a local generic's closures.
+func TestExec_AClosureCapturesAClosure(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> u8 => {
+  let s = "a" ++ "b"
+  let f = (x: i64) -> string => "${x}" ++ s
+  let g = () -> string => f(1) ++ f(2)
+  let h = () -> string => g() ++ "!"
+  if h() == "1ab2ab!" { 3 } else { 1 }
+}`
+	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
+		t.Errorf("exited %d; want 3", got)
 	}
 }

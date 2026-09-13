@@ -60,6 +60,15 @@ func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
 		if !ok {
 			continue
 		}
+		// **A binding nested inside a generic function sees that function's variables.**
+		// `let both<t> = (a: t, b: u) -> …` inside `outer<u>` mentions `u`, which is in
+		// scope — the enclosing function's — and naming it in `both`'s own list would make it
+		// a second, different `u`. Until 09/13 a local generic could not be lowered inside a
+		// generic function at all, so the question had not come up.
+		var enclosing map[string]bool
+		if top, ok := stmt.(*ast.VarDeclStmt); ok {
+			enclosing = typeVarsInScope(top)
+		}
 		ast.WalkStmt(stmt, func(s ast.Statement) bool {
 			decl, ok := s.(*ast.VarDeclStmt)
 			if !ok || len(decl.GenericParams) == 0 {
@@ -68,16 +77,37 @@ func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
 				// unchanged.
 				return true
 			}
-			diags = append(diags, checkBindingGenericParams(decl)...)
+			inScope := enclosing
+			if decl == stmt {
+				inScope = nil // a top-level binding's own variables are what is being checked
+			}
+			diags = append(diags, checkBindingGenericParams(decl, inScope)...)
 			return true
 		}, nil)
 	}
 	return diags
 }
 
+// typeVarsInScope is the type variables a top-level function binding brings into scope for
+// the bindings inside it: its written list, or — with none written — the variables its
+// signature mentions, which is what makes it generic in the first place.
+func typeVarsInScope(decl *ast.VarDeclStmt) map[string]bool {
+	vars := map[string]bool{}
+	for _, p := range decl.GenericParams {
+		vars[p.Name] = true
+	}
+	if lambda, ok := decl.Value.(*ast.LambdaExpr); ok && len(decl.GenericParams) == 0 {
+		for _, p := range lambda.Parameters {
+			types.CollectTypeVars(p.Type, vars)
+		}
+		types.CollectTypeVars(lambda.ReturnType.Type, vars)
+	}
+	return vars
+}
+
 // checkBindingGenericParams compares one binding's declared list against the
 // variables its signature mentions.
-func checkBindingGenericParams(decl *ast.VarDeclStmt) []diag.Diagnostic {
+func checkBindingGenericParams(decl *ast.VarDeclStmt, inScope map[string]bool) []diag.Diagnostic {
 	declared := make(map[string]bool, len(decl.GenericParams))
 	for _, p := range decl.GenericParams {
 		declared[p.Name] = true
@@ -98,7 +128,7 @@ func checkBindingGenericParams(decl *ast.VarDeclStmt) []diag.Diagnostic {
 
 	var diags []diag.Diagnostic
 	for _, name := range sortedNames(used) {
-		if declared[name] {
+		if declared[name] || inScope[name] {
 			continue
 		}
 		diags = append(diags, diag.Diagnostic{

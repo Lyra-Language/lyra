@@ -331,12 +331,13 @@ write today:
 - **[DONE 09/13] A generic declared inside a function lowers**, as one closure per
   instantiation. See COMPLETED.md.
 
-- **[OPEN 09/13] Two local-generic shapes are refused by the backend, not the checker.** A
-  generic declared inside a *generic* function, and a local generic that captures a binding
-  called from inside another lambda. Both name their reason, but both check clean first —
-  the refusals belong in a checker pass, or the shapes want building: the first needs an
-  instantiation to carry the enclosing substitution, the second a decision about when a
-  re-captured `var` is read.
+- **[DONE 09/13] Both refused local-generic shapes lower.** A local generic inside a generic
+  function, and a capturing one called from another lambda. See COMPLETED.md.
+
+- **[OPEN 09/13] lyra-E031 sees only the top-level function's type variables.** A generic
+  declared inside a local generic, whose signature mentions the middle one's variable, is
+  refused as undeclared. `typeVarsInScope` would need the chain of enclosing bindings rather
+  than the top-level one.
 
 - **[DONE 09/11] A struct literal's field is a context for a call's type arguments.**
   `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,

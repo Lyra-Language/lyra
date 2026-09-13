@@ -26,7 +26,8 @@ parameter, a capture, nor a global has nowhere to come from.
 **A generic declared inside a function is not captured when it captures nothing** (09/13).
 Its name is not a value — the backend emits one closure per instantiation and a call picks
 its own — so a lambda calling it builds that closure where the call stands. One that does
-capture stays a capture, and the backend refuses it by name (`local_generic.go`).
+capture stays a capture, which the backend expands into the closure values the declaration
+built, one per instantiation the lambda calls (`local_generic.go`).
 
 Captures are **by value**, copied when the closure is created, which is what lets a closure
 outlive the frame its captured bindings live in (the alternative, capturing the slot by

@@ -33,6 +33,7 @@ type TypeChecker struct {
 	// function this is, is the frame that set the return type.
 	enclosingFuncName string
 	traitImpls        []*ast.TraitImplStmt // every impl block in the program, collected up front by Check; see resolveTraitMethod
+	topLevelLambdas   []*ast.LambdaExpr    // every top-level function body, collected up front by Check; see enclosingTypeVars
 	genericBounds     map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 	publishing        map[string]bool      // impl-body candidate publications in progress, so a body reaching itself terminates; see publishImplBodyCandidates
 	// declOfFunc/inferring/checked back on-demand return inference: the declaration a
@@ -217,6 +218,11 @@ func (tc *TypeChecker) prepare(program *ast.Program) {
 	for _, stmt := range program.Statements {
 		if impl, ok := stmt.(*ast.TraitImplStmt); ok {
 			tc.traitImpls = append(tc.traitImpls, impl)
+		}
+		if decl, ok := stmt.(*ast.VarDeclStmt); ok {
+			if lam, ok := decl.Value.(*ast.LambdaExpr); ok {
+				tc.topLevelLambdas = append(tc.topLevelLambdas, lam)
+			}
 		}
 	}
 	// Before anything dispatches: two impls of one trait for one type make dispatch

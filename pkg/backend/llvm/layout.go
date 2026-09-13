@@ -274,6 +274,13 @@ func SizeAndAlign(t types.Type) (size, align int, ok bool) {
 	if _, ok := t.(types.DynamicArrayType); ok {
 		return pointerSize, pointerSize, true // a `[]T` value is a box pointer (dynarray.go)
 	}
+	if _, ok := t.(*types.LambdaType); ok {
+		// A function value is the closure fat pointer `{ i8* fn, i8* env }` (closures.go).
+		// Missing until 09/13, so no closure could capture another: `let f = …` then
+		// `() -> i64 => f(1)` failed to build with "cannot size captured binding f" — found
+		// when a lambda first needed to capture a local generic's closure values.
+		return 2 * pointerSize, pointerSize, true
+	}
 	switch v := t.(type) {
 	case types.PrimitiveType:
 		return primitiveSizeAndAlign(v.Name)
