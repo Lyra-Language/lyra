@@ -546,7 +546,8 @@ real failure, and none is local to one package.
 
 17. **A builtin returning an owned managed value needs two things the defaults get wrong.**
     `read_line` is the model: the ownership pass must know it owns its result
-    (`calleeIsOwningBuiltin`), because the unresolved-callee default treats a *result* as
+    (`calleeIsOwningBuiltin`, which must name **every** such builtin — `program_arg` was
+    missing until 09/13 and every `program_args()` leaked a string per argument), because the unresolved-callee default treats a *result* as
     borrowed and that direction leaks rather than being leak-safe; and its call site must
     lower **branchlessly**, because a branching one returns a merge block, which is neither
     case `flushStmtTemps` handles — it released the string before the `match` consuming it.

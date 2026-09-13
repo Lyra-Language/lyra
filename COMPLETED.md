@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — the leaks CI's runner could see, and what they were
+
+Three leaks were filed when CI turned out to be failing on LeakSanitizer — enabled by default
+on Linux, off on macOS, and off in `./asan.sh` — and they came from **two** causes; the third
+entry was the second cause wearing a `std.json` hat. Probing around them found a third family,
+fixed alongside. The probe was a throwaway test running snippets under ASan with
+`detect_leaks=1` in the Linux container, and every diagnosis below came out of it rather than
+out of reading the pass.
+
+**An owning builtin the ownership pass did not know.** `program_arg(i)` copies argv[i] into a
+fresh string, and `calleeIsOwningBuiltin` named only `read_line`, so the result fell to the
+unresolved-callee default — borrowed — and every `program_args()` leaked one string per
+argument. The first report read as a leaked *array buffer*; its 104 bytes were argv[0], the
+test binary's long cache path, as a string box.
+
+**A temporary receiver was never walked.** `call` visited a `.`-call's receiver only when the
+method consumed it, so `mk().len()`, `s(5).byte_len()` and `xs.join(",").len()` each leaked the
+value they were called on, while the same temporary as an argument or an index base was freed.
+**Walking every receiver was the obvious fix and it broke six tests**: a receiver rooted at a
+binding then counted as a use, which moved where Perceus drops the binding — `let w = n.weak()`
+became `n`'s last use, so the weak upgrade after it failed, and `xs.data()` freed `xs` under
+the pointer it had just returned. A receiver has never been a use; making it one is a liveness
+change, not a leak fix, so only a receiver not rooted at a binding is walked.
+
+**A literal aggregate in a borrowing position.** The tuple literal's arm marked a temporary
+for release — its note records the leak that taught it — and the struct literal, anonymous
+struct, array literal, repeat and comprehension did not, so `total([9, 9])` leaked the box and
+`total(W { xs: [9] })` the array inside. One rule, the tuple's, now in each.
+
+**What is left is recorded rather than chased.** With leak detection forced on in both ASan
+helpers, 11 tests failed before this and 5 after, each a different family (todo.md).
+`TestExec_TemporariesDoNotLeak` runs every shape above under LeakSanitizer through a new
+Linux-only helper, and 9 of its 10 cases fail against the old pass.
+
 ### 09/13/26 — a literal's flavor is a guess, wherever it sits
 
 Filed as one bug, `[Some([1]), None]` under `[]Maybe<[]i64>`, and probing the positions

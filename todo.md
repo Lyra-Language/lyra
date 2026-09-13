@@ -316,18 +316,19 @@ write today:
   `[[1], [2, 3]]` under `[][]i64`, `Some((1, 2))` under `Maybe<(u8, u8)>` and
   `m.unwrap_or([])`. See COMPLETED.md.
 
-- **[OPEN 09/13] Three leaks LeakSanitizer finds, which CI's Linux runner surfaced.** CI
-  failed from 09/11 on three ASan tests that ran their binary without the harness's
-  `detect_leaks=0` — LSan is on by default on Linux and off on macOS, so nothing local
-  showed it. They go through `buildAndRunASanWithPrelude` now; the leaks are real and
-  predate 09/13 (identical at `7c980b8`), measured in `./asan.sh` with `detect_leaks=1`:
-  - `u8(program_args().len())` leaks the whole temporary array, 168 bytes in 3 objects
-    (the box, its buffer, the argv[0] string) — a managed receiver of a builtin method is
-    not released;
-  - `let a = program_args(); u8(a.len())` still leaks the 104-byte element buffer, so
-    the box is freed without the buffer `push` grew;
-  - `d.field("a").unwrap_or(JsonNull).as_text().unwrap_or("").len()` over `std.json`
-    leaks one 18-byte string.
+- **[DONE 09/13] The three LeakSanitizer leaks, and the families behind them.** Two
+  causes, not three: `program_arg` was missing from the owning builtins, and a borrowed
+  temporary *receiver* was never walked (the `std.json` string was that too). Probing found a
+  third family — a literal array, repeat, comprehension or struct passed to a borrow — fixed
+  with them. `TestExec_TemporariesDoNotLeak` runs under LeakSanitizer on Linux. See
+  COMPLETED.md.
+
+- **[OPEN 09/13] Leaks still reported with leak detection forced on.** Every ASan helper
+  sets `detect_leaks=0`; switching both to `1` in `./asan.sh` fails five tests, each its own
+  family: `TestExec_SeqValuesManagedASan` and `TestExec_SeqManagedElementsASan` (sequence
+  coroutines), `TestExec_DerefAssignmentRetainsWhatItStores` (the `p^ = v` entry above),
+  `TestExec_HashMapStringChurnASan`, and `TestExec_TraitMethods/a method returning a managed
+  value`. When these are gone the helpers can turn leak detection on for good.
 
 - **[OPEN 09/13] A generic lambda declared inside a function does not lower.** `let main =
   () => { let idf<t> = (a: t) -> t => a; println(idf(5)) }` checks clean and fails the

@@ -47,9 +47,12 @@ computes the context-dependent adjustments the backend can't see locally:
   is **not** the binding's last use; a container element or a loop-body read is always a dup,
   since the container still owns (and drops) the element and a loop's back-edge re-runs the
   read;
-- `ReleaseTemp[expr]` — an owned temporary (a `++` result, an owned call result, or an
-  `if`/`match` merged value) flowing into a borrowing position (`==`/`!=`, a match scrutinee, a
-  `++` operand, a discarded statement, a borrowed arg) → release after the statement;
+- `ReleaseTemp[expr]` — an owned temporary (a `++` result, an owned call result, an
+  `if`/`match` merged value, or a literal aggregate — tuple, struct, array, repeat,
+  comprehension) flowing into a borrowing position (`==`/`!=`, a match scrutinee, a `++`
+  operand, a discarded statement, a borrowed arg, a borrowed receiver) → release after the
+  statement. **Every owned producer needs this arm**, and a missing one is a leak nothing
+  but LeakSanitizer reports: until 09/13 only the tuple literal of the aggregates had it;
 - `LastUseTransfer[expr]` / `LastUseDrop[expr]` — **Perceus last-use precision** (stage 1,
   scalars): `computeLastUse` finds each eligible managed binding's final textual reference
   (sound over-approx; a shadowed / parameter / reassigned / loop-referenced name is ineligible
@@ -160,6 +163,13 @@ callee had adopted — the caller's frame released a box the callee had already 
 ASan reports as a heap-use-after-free inside `lyra_rc_release`. The argument offset above had
 been right from the start; the receiver was simply a third place the same fact had to be
 written down.
+
+**A borrowed receiver that is a temporary is walked too** (09/13). Only the `own` arm visited
+the receiver, so `mk().len()` and `xs.join(",").len()` leaked the value they were called on.
+A receiver **rooted at a binding** (`xs.len()`, `h.xs.len()`) is still not walked, and that is
+deliberate: walking one records a use, which moves where Perceus drops the binding — `let w =
+n.weak()` became `n`'s last use and the upgrade then failed, and `xs.data()` freed `xs` under
+the pointer it returned (`rootedAtBinding`).
 
 **`own` on a trait parameter used to be rejected by the checker (`lyra-E030`, retired
 08/03)**, and this pass was the reason: it analyzed no trait-method *body*, so nothing

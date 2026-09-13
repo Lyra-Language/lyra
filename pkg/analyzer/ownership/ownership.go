@@ -1400,6 +1400,12 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.conditional = true
 		a.expr(e.Result, true)
 		a.conditional = savedCond
+		// A comprehension is an owned producer — one fresh box — so in a borrowing
+		// position it is a temporary like any other: `total([i in 0..<3 | i])` and
+		// `[i in xs | "${i}"].len()` leaked the array and everything in it until 09/13.
+		if !needOwned && a.ownsManaged(e) {
+			a.table.ReleaseTemp[e] = true
+		}
 
 	case *ast.TupleLiteralExpr:
 		// A newtype construction shares this node and is **not** an aggregate: the
@@ -1448,6 +1454,13 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		for i := range e.Fields {
 			a.expr(e.Fields[i].Value, true)
 		}
+		// A temporary in a borrowing position, like the tuple literal below: a struct or
+		// array built for a borrowed argument owns what was transferred into it — and a
+		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
+		// and `total(W { xs: [9, 9] })` leaked both allocations until 09/13.
+		if !needOwned && a.ownsManaged(e) {
+			a.table.ReleaseTemp[e] = true
+		}
 
 	case *ast.AnonymousStructInstanceExpr:
 		// The same transfer, and the arm that matters most of the three this type
@@ -1460,6 +1473,13 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		for i := range e.Fields {
 			a.expr(e.Fields[i].Value, true)
 		}
+		// A temporary in a borrowing position, the same rule as a struct literal: a struct or
+		// array built for a borrowed argument owns what was transferred into it — and a
+		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
+		// and `total(W { xs: [9, 9] })` leaked both allocations until 09/13.
+		if !needOwned && a.ownsManaged(e) {
+			a.table.ReleaseTemp[e] = true
+		}
 
 	case *ast.ArrayLiteralExpr:
 		// The array takes ownership of managed elements — transfer, like a tuple/
@@ -1469,6 +1489,13 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// whole story).
 		for _, el := range e.Elements {
 			a.expr(el, true)
+		}
+		// A temporary in a borrowing position, the same rule as a struct literal: a struct or
+		// array built for a borrowed argument owns what was transferred into it — and a
+		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
+		// and `total(W { xs: [9, 9] })` leaked both allocations until 09/13.
+		if !needOwned && a.ownsManaged(e) {
+			a.table.ReleaseTemp[e] = true
 		}
 
 	case *ast.ArrayRepeatExpr:
@@ -1481,6 +1508,13 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// transfer of the first, which is what `needOwned` does. Missing this arm sent
 		// the value to `default`, where a managed element's transfer went unrecorded.
 		a.expr(e.Value, true)
+		// A temporary in a borrowing position, the same rule as a struct literal: a struct or
+		// array built for a borrowed argument owns what was transferred into it — and a
+		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
+		// and `total(W { xs: [9, 9] })` leaked both allocations until 09/13.
+		if !needOwned && a.ownsManaged(e) {
+			a.table.ReleaseTemp[e] = true
+		}
 
 	case *ast.ForLoopExpr:
 		// A loop's value is discarded (it's a statement). Walk its parts so managed
@@ -1595,9 +1629,24 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	// caller's frame still drops a box the callee already released, which ASan reports
 	// as a heap-use-after-free inside `lyra_rc_release`. The arguments' offset was
 	// handled from the start; the receiver was not, because it is not in e.Arguments.
-	if member, isDot := e.Function.(*ast.MemberExpr); isDot && methodSig != nil && len(methodSig.Parameters) > 0 {
-		if paramOwnsArgument(methodSig.Parameters[0].Borrow) {
+	//
+	// **A borrowed receiver that is a temporary must be walked too**, or it is never
+	// released: only the consuming arm visited the receiver, so `mk().len()`,
+	// `s(5).byte_len()` and `xs.join(",").len()` each leaked the value they were called on,
+	// while the same temporary as an argument or an index base was freed (09/13, found by
+	// LeakSanitizer through `program_args().len()`).
+	//
+	// **A receiver rooted at a binding is deliberately not walked.** Walking one records a
+	// use, and that moves where Perceus drops the binding: `let w = n.weak()` became `n`'s
+	// last use, so `n` died before `w` was upgraded, and `xs.data()` freed `xs` under the
+	// pointer it had just handed out. A receiver has never been a use; making it one is a
+	// liveness change with its own consequences, not part of stopping a leak.
+	if member, isDot := e.Function.(*ast.MemberExpr); isDot {
+		switch {
+		case methodSig != nil && len(methodSig.Parameters) > 0 && paramOwnsArgument(methodSig.Parameters[0].Borrow):
 			a.expr(member.Object, true)
+		case !rootedAtBinding(member.Object):
+			a.expr(member.Object, false)
 		}
 	}
 
@@ -1649,6 +1698,26 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 		}
 	} else if needOwned {
 		a.table.Retain[e] = true
+	}
+}
+
+// rootedAtBinding reports whether e is a name, or a field, element or tuple-position path
+// that starts at one — storage something already holds, rather than a value this
+// expression produces.
+func rootedAtBinding(e ast.Expression) bool {
+	for {
+		switch v := e.(type) {
+		case *ast.IdentifierExpr:
+			return true
+		case *ast.MemberExpr:
+			e = v.Object
+		case *ast.IndexExpr:
+			e = v.Object
+		case *ast.TupleIndexExpr:
+			e = v.Object
+		default:
+			return false
+		}
 	}
 }
 
@@ -1761,12 +1830,18 @@ func calleeIsTransferringBuiltin(e *ast.FunctionCallExpr) bool {
 //
 // Callers gate this on the name not being shadowed by a user function (lam == nil),
 // matching the typechecker's and backend's resolution order.
+//
+// **Every free builtin answering a managed value belongs here**, and until 09/13 only
+// `read_line` did: `program_arg(i)` copies argv[i] into a fresh string, fell to the
+// borrowed-result default, and leaked one string per argument — which every program
+// calling `program_args()` did, invisibly, since only LeakSanitizer on Linux reports it.
+// The rest of the builtin free functions answer scalars.
 func calleeIsOwningBuiltin(e *ast.FunctionCallExpr) bool {
 	id, ok := e.Function.(*ast.IdentifierExpr)
 	if !ok {
 		return false
 	}
-	return id.Name == "read_line"
+	return id.Name == "read_line" || id.Name == "program_arg"
 }
 
 // paramOwnsArgument / isOwnedReturn mirror the typechecker's ownership predicates
