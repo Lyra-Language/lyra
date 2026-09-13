@@ -347,7 +347,7 @@ func instantiateDecl(p types.ParameterizedType, symTable *symbols.SymbolTable, l
 	if symTable == nil {
 		return nil, false
 	}
-	decl, ok := symTable.LookupTypeFrom(p.Name, loc)
+	decl, ok := symTable.LookupTypeRef(p.Name, p.Key, loc)
 	if !ok {
 		return nil, false
 	}
@@ -385,7 +385,7 @@ func lookupNamed(u types.UnresolvedType, symTable *symbols.SymbolTable, loc ast.
 			return decl, true
 		}
 	}
-	return symTable.LookupTypeFrom(u.Name, loc)
+	return symTable.LookupTypeRef(u.Name, u.Key, loc)
 }
 
 // SharesMutableState reports whether two copies of a value of type t can observe
@@ -543,7 +543,7 @@ func hasWritableField(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 		if symTable == nil {
 			return false
 		}
-		decl, ok := symTable.LookupTypeFrom(v.Name, loc)
+		decl, ok := symTable.LookupTypeRef(v.Name, v.Key, loc)
 		if !ok {
 			return false
 		}
@@ -846,7 +846,7 @@ func (a *analyzer) sharedDataName(e ast.Expression) (string, bool) {
 		return v.Name, true
 	case types.UnresolvedType:
 		if a.symTable != nil {
-			if decl, ok := a.symTable.LookupTypeFrom(v.Name, e.GetLocation()); ok {
+			if decl, ok := a.symTable.LookupTypeRef(v.Name, v.Key, e.GetLocation()); ok {
 				if dt, ok := decl.Type.(types.DataType); ok {
 					return dt.Name, true
 				}

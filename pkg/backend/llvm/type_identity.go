@@ -173,7 +173,10 @@ func (l *lowerer) instantiationSymbol(p types.ParameterizedType) string {
 		args[i] = l.resolveForLayout(a)
 	}
 	symbol := typetable.TypeSymbol(p.Name, args)
-	key := l.typeKey(p.Name)
+	key := p.Key
+	if _, ok := l.lookupTypeDeclKeyed(key, p.Name); key == "" || !ok {
+		key = l.typeKey(p.Name)
+	}
 	if key == p.Name || l.keyIsProgramWide(key, p.Name) {
 		return symbol
 	}

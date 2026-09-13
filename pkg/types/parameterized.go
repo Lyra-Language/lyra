@@ -10,6 +10,13 @@ type ParameterizedType struct {
 	Name          string
 	TypeArguments []Type
 	Allocation    AllocationModifier
+	// Key is the declaration Name resolved to, `<module>::<name>`, stamped on a generic
+	// reference written *inside* a declaration — `data Box<t> = Full(Pair<t>)` — for the
+	// reason UnresolvedType.Key exists: the name belongs to the declaring module, and the
+	// code reading the payload may be in a module where `Pair` is private, or means another
+	// type. Not part of nominal identity: TypesEqual ignores it, and an unkeyed reference
+	// resolves as it always did (SymbolTable.LookupTypeRef).
+	Key string
 }
 
 func (ParameterizedType) typeNode() {}

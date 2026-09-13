@@ -9,10 +9,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] A constructor's payload type is resolved at the *use* site.** `Mouse(m) =>
-  m.button` resolves `MouseEvent` from the matcher's module and works only because
-  `resolvedTypes` shares a `pub` type's key. Resolving from the declaration stack-overflows
-  `resolveForLayout` on a recursive `data` type, so a real fix must keep a lazy edge.
 - **[OPEN] `walkDestructuredPattern` has fallen behind the pattern kinds.** The other
   per-kind pattern dispatches (ownership, exhaustiveness, match lowering) are fine as
   dispatches; this one should be checked against `ast.WalkPattern`'s coverage.

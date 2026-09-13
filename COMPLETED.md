@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a constructor's payload means what its declaration says
+
+`Cons(n) => n.v` in an importer resolved the payload's type name — `Node` — from the
+*matcher's* module. That worked only when the payload was `pub`, since an exported type's key
+is shared: a private payload was "undefined" in every importer, and an importer with a `Node`
+of its own read the library's value through the wrong struct (`Node has no field "v"`). The
+second is the worse failure, being a type error about a type the program never mentioned.
+
+**The fix was already half-built.** `UnresolvedType.Key` exists for exactly this: a name
+written inside a declaration is stamped with the key it resolves to *there*. Two things kept
+it from working. Stamping was lazy — a declaration was stamped when first resolved, and a
+constructor read in another module came first — so `prepare()` now stamps every type
+declaration up front. And the two resolution leaves looked the name up from the use site
+regardless; `declaringSite` swaps in the declaration's own location when the stamp names one.
+
+The entry recorded that resolving from the declaration overflowed `resolveForLayout` on a
+recursive `data` type, so a fix "must keep a lazy edge". **The key is that edge**: it names
+the declaration without unfolding it, so `Node { next: shared List }` inside `List` resolves
+one step at a time, as any use does.
+
+A *generic* payload (`Full(Pair<t>)`) is a `ParameterizedType`, which had no key. It has one
+now, with the same rule — not part of identity, `TypesEqual` ignores it — and
+`SymbolTable.LookupTypeRef(name, key, loc)` is the lookup that prefers it, used by the
+typechecker's instantiation paths, ownership, and the backend's `instantiationSymbol` and
+generic layout. Without the backend half the program type-checked and then failed to lay out
+`Pair<i64>` against the importer's non-generic `Pair`.
+
 ### 09/13/26 — a struct literal gives each field one value
 
 `P { x: 1, x: 2, y: 3 }` built `x = 2` and type-checked, since each value fits the field: every

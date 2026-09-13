@@ -56,7 +56,7 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 	if _, err := l.lowerParameterizedType(p); err != nil {
 		return t, err
 	}
-	decl, ok := l.lookupTypeDecl(p.Name)
+	decl, ok := l.lookupTypeDeclKeyed(p.Key, p.Name)
 	if !ok {
 		if types.IsSeq(p) {
 			return t, nil // a sequence is its box pointer (lowerType); nothing to instantiate
@@ -116,7 +116,7 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	if l.res.SymbolTable == nil {
 		return nil, fmt.Errorf("llvm: cannot instantiate %s without a symbol table", p)
 	}
-	decl, ok := l.lookupTypeDecl(p.Name)
+	decl, ok := l.lookupTypeDeclKeyed(p.Key, p.Name)
 	if !ok {
 		if types.IsSeq(p) {
 			return seqBoxPtrType(), nil

@@ -226,7 +226,7 @@ func (tc *TypeChecker) structShapeForInstantiation(
 		if r.Name != inst.Name || !tc.instantiationHasBareArgument(r, loc) {
 			return types.NamedStructType{}, false
 		}
-		decl, ok := tc.symTable.LookupTypeFrom(inst.Name, loc)
+		decl, ok := tc.symTable.LookupTypeRef(inst.Name, inst.Key, loc)
 		if !ok || decl == nil {
 			return types.NamedStructType{}, false
 		}
@@ -342,7 +342,7 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 	if !ok {
 		return false
 	}
-	decl, ok := tc.symTable.LookupTypeFrom(inst.Name, node.GetLocation())
+	decl, ok := tc.symTable.LookupTypeRef(inst.Name, inst.Key, node.GetLocation())
 	if !ok || decl == nil || len(decl.GenericParams) != len(inst.TypeArguments) {
 		return false
 	}
@@ -463,7 +463,7 @@ func (tc *TypeChecker) stampableDataType(node ast.Expression, inst types.Paramet
 		}
 		// The constructors come from the declaration: an instantiation carries its
 		// type arguments, not its payload shapes.
-		decl, found := tc.symTable.LookupTypeFrom(r.Name, node.GetLocation())
+		decl, found := tc.symTable.LookupTypeRef(r.Name, r.Key, node.GetLocation())
 		if !found || decl == nil {
 			return types.DataType{}, false
 		}
@@ -523,7 +523,7 @@ func mentionsGenericParam(t types.Type, params map[string]bool) bool {
 // the recursion below exists for the other case: a field whose own value is itself a
 // partly solved construction, which the context can now complete.
 func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expression, names []string, declared []types.Type, inst types.ParameterizedType) bool {
-	decl, ok := tc.symTable.LookupTypeFrom(inst.Name, node.GetLocation())
+	decl, ok := tc.symTable.LookupTypeRef(inst.Name, inst.Key, node.GetLocation())
 	if !ok || decl == nil || len(decl.GenericParams) != len(inst.TypeArguments) {
 		return false
 	}

@@ -224,6 +224,14 @@ func (tc *TypeChecker) prepare(program *ast.Program) {
 				tc.topLevelLambdas = append(tc.topLevelLambdas, lam)
 			}
 		}
+		// **Every declaration's nested names are stamped before anything reads them.** It
+		// happened lazily, when something resolved the declaration's own name — but a data
+		// constructor is reached by *its* name, so `W(Inner { … })` and a `W(i)` pattern
+		// read the declaration before `Wrap` was ever resolved, got an unstamped `Inner`,
+		// and resolved it from the use site (declaringSite, 09/13).
+		if decl, ok := stmt.(*ast.TypeDeclStmt); ok {
+			tc.stampDeclaredNames(decl)
+		}
 	}
 	// Before anything dispatches: two impls of one trait for one type make dispatch
 	// depend on declaration order, which is not a property a program should have.
@@ -1117,7 +1125,7 @@ func (tc *TypeChecker) resolveGenericAggregate(t types.Type, loc ast.Location) t
 	if !ok {
 		return t
 	}
-	decl, ok := tc.symTable.LookupTypeFrom(p.Name, loc)
+	decl, ok := tc.symTable.LookupTypeRef(p.Name, p.Key, loc)
 	if !ok {
 		return t
 	}
@@ -2375,6 +2383,7 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 // resolveNameReporting is resolveType's leaf: resolve the name, and say so when it
 // cannot be resolved.
 func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Location) types.Type {
+	loc = tc.declaringSite(tt, loc)
 	// **The cache is keyed by the resolved identity, not by the bare name.** Two
 	// modules may each declare a private `Point`, and a module may declare its own
 	// `Maybe` over the prelude's; keyed by name, whichever resolved first would
@@ -2476,6 +2485,30 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 	return types.WithAllocation(resolved, tt.Allocation)
 }
 
+// declaringSite is where a type name should be resolved from: the declaration that wrote it,
+// when stampNames gave it that declaration's key, and the reference's location otherwise.
+//
+// **A name inside a declaration belongs to the declaring module**, which is what the stamp
+// records — and both resolution leaves ignored it, asking as the *use site* instead. So a
+// constructor's payload was resolved from wherever it was matched: `W(i) => i.n` over a `data
+// Wrap = W(Inner)` whose `Inner` is private to its module resolved `Inner` to nothing and
+// refused `i.n`, and in a module declaring an `Inner` of its own resolved it to *that* one,
+// giving `i` the wrong type (09/13). It had worked for a `pub` payload only because an
+// exported type's key is the same from every module.
+//
+// The stamp is the lazy edge a declaration-site resolution needs: the payload stays a name,
+// resolved when it is read, so a recursive `data` type does not unfold itself — which is how
+// eagerly resolving payloads at the declaration had overflowed the stack.
+func (tc *TypeChecker) declaringSite(tt types.UnresolvedType, loc ast.Location) ast.Location {
+	if tt.Key == "" || tc.symTable == nil {
+		return loc
+	}
+	if decl, ok := tc.symTable.LookupTypeByKey(tt.Key); ok && decl != nil {
+		return decl.GetLocation()
+	}
+	return loc
+}
+
 // stampFields stamps a struct's fields or a union's members — both `[]StructField`.
 func (tc *TypeChecker) stampFields(fields []types.StructField, loc ast.Location) []types.StructField {
 	out := make([]types.StructField, len(fields))
@@ -2535,6 +2568,9 @@ func (tc *TypeChecker) stampNames(t types.Type, loc ast.Location) types.Type {
 		v.Elements = elements
 		return v
 	case types.ParameterizedType:
+		if v.Key == "" {
+			v.Key = tc.symTable.TypeKey(v.Name, loc)
+		}
 		args := make([]types.Type, len(v.TypeArguments))
 		for i, a := range v.TypeArguments {
 			args[i] = tc.stampNames(a, loc)
@@ -2601,6 +2637,7 @@ func (tc *TypeChecker) resolveTypeIfKnown(t types.Type, loc ast.Location) types.
 // reports nothing and — unlike the reporting leaf — does not follow an alias chain
 // or write the cache. It answers with what the declaration holds, or the name itself.
 func (tc *TypeChecker) resolveNameIfKnown(tt types.UnresolvedType, loc ast.Location) types.Type {
+	loc = tc.declaringSite(tt, loc)
 	key := tc.symTable.TypeKey(tt.Name, loc)
 	if cached, ok := tc.resolvedTypes[key]; ok {
 		return types.WithAllocation(cached, tt.Allocation)
@@ -5249,7 +5286,7 @@ func (tc *TypeChecker) moduleScopeOf(node ast.AstNode) *symbols.Scope {
 // The constraints ride along unsubstituted: a `range(0..<=100)` bounds *values*, not
 // types, so it means the same at every instantiation.
 func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc ast.Location) (types.Type, bool) {
-	decl, ok := tc.symTable.LookupTypeFrom(p.Name, loc)
+	decl, ok := tc.symTable.LookupTypeRef(p.Name, p.Key, loc)
 	if !ok {
 		return nil, false
 	}

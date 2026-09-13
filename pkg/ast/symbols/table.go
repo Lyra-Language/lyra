@@ -272,6 +272,18 @@ func (st *SymbolTable) LookupTypeByKey(key string) (*ast.TypeDeclStmt, bool) {
 	return decl, ok
 }
 
+// LookupTypeRef resolves a type reference that may carry the key of the declaration that
+// wrote it (UnresolvedType.Key, ParameterizedType.Key): by the key when there is one that
+// names a declaration, and as loc's module sees name otherwise. It is the lookup for a
+// type read out of another declaration — a payload, a field — whose name belongs to the
+// declaring module rather than to the reader.
+func (st *SymbolTable) LookupTypeRef(name, key string, loc ast.Location) (*ast.TypeDeclStmt, bool) {
+	if decl, ok := st.LookupTypeByKey(key); ok && decl != nil {
+		return decl, true
+	}
+	return st.LookupTypeFrom(name, loc)
+}
+
 func (st *SymbolTable) LookupTrait(name string) (*ast.TraitDeclStmt, bool) {
 	sym, ok := st.programWide(name)
 	if !ok {
