@@ -128,12 +128,9 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// **here**, under the substitution, once per specialization. The program-wide pass
 	// deliberately skips a generic body for exactly this reason (collectNestedLambdas).
 	defer l.pushSpecKey(inst.Key())()
-	for _, lam := range nestedLambdasIn(inst.Func) {
-		// A generic declared in this body is lifted per its own instantiations, which
-		// carry this one's bindings too (local_generic.go).
-		if l.localGenericExcluded[lam] {
-			continue
-		}
+	// A generic declared in this body is lifted per its own instantiations, which carry
+	// this one's bindings too — and so is everything inside it (local_generic.go).
+	for _, lam := range l.ownNestedLambdas(inst.Func) {
 		if err := l.declareClosure(lam); err != nil {
 			return err
 		}
@@ -180,10 +177,7 @@ func (l *lowerer) defineSpecialization(inst typetable.Instantiation) error {
 	// explains. They see this instantiation's substitution *and* its ownership table,
 	// both of which are installed by the caller: a closure over a `t = string` is
 	// reference-counted where the same node at `t = i64` is not.
-	for _, lam := range nestedLambdasIn(inst.Func) {
-		if l.localGenericExcluded[lam] {
-			continue
-		}
+	for _, lam := range l.ownNestedLambdas(inst.Func) {
 		if err := l.defineClosure(lam); err != nil {
 			return err
 		}

@@ -546,19 +546,24 @@ const localDiscPrefix = "local_"
 // so composition does the rest: inside `outer<u = i64>` it becomes `{t: i64, u: i64}`, which
 // is a key per outer specialization and a substitution covering the whole body (09/13).
 // A variable the local generic declares for itself shadows the enclosing one of that name.
+//
+// **Every enclosing generic counts**, not only the top-level one: `inner` inside a local
+// `mid<m>` inside `outer<u>` may mention both `m` and `u`, and composition through `mid`'s
+// instantiation settles `m` exactly as composition through `outer`'s settles `u`.
 func (tc *TypeChecker) withEnclosingTypeVars(lambda *ast.LambdaExpr, subst map[string]types.Type) map[string]types.Type {
 	owner := tc.enclosingTopLevel(lambda)
 	if owner == nil {
 		return subst
 	}
 	vars := map[string]bool{}
-	for _, gp := range owner.GenericParams {
-		vars[gp.Name] = true
-	}
-	for _, p := range owner.Parameters {
-		types.CollectTypeVars(p.Type, vars)
-	}
-	types.CollectTypeVars(owner.ReturnType.Type, vars)
+	addSignatureTypeVars(owner, vars)
+	ast.WalkExprChildren(owner, nil, func(e ast.Expression) bool {
+		if mid, ok := e.(*ast.LambdaExpr); ok && mid != lambda && len(mid.GenericParams) > 0 &&
+			locationContains(mid.GetLocation(), lambda.GetLocation()) {
+			addSignatureTypeVars(mid, vars)
+		}
+		return true
+	})
 	if len(vars) == 0 {
 		return subst
 	}
@@ -572,6 +577,17 @@ func (tc *TypeChecker) withEnclosingTypeVars(lambda *ast.LambdaExpr, subst map[s
 		}
 	}
 	return out
+}
+
+// addSignatureTypeVars adds the type variables a function declares or its signature mentions.
+func addSignatureTypeVars(fn *ast.LambdaExpr, vars map[string]bool) {
+	for _, gp := range fn.GenericParams {
+		vars[gp.Name] = true
+	}
+	for _, p := range fn.Parameters {
+		types.CollectTypeVars(p.Type, vars)
+	}
+	types.CollectTypeVars(fn.ReturnType.Type, vars)
 }
 
 // enclosingTopLevel is the top-level function whose body contains lambda, or nil.

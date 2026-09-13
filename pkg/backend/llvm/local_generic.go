@@ -133,6 +133,26 @@ func (l *lowerer) localGenericCaptures(fn *ast.LambdaExpr, name string) ([]captu
 	return out, isGeneric
 }
 
+// ownNestedLambdas is the lambdas lifted with fn's own instantiations: those nested inside
+// it, except a local generic nested inside it and everything within that one, which is
+// lifted per *its* instantiations — `inner` inside a local `mid<m>` binds `m` as well as its
+// own variables, so lifting it under `mid`'s key alone would leave its own unsolved (09/13).
+func (l *lowerer) ownNestedLambdas(fn *ast.LambdaExpr) []*ast.LambdaExpr {
+	var out []*ast.LambdaExpr
+	ast.WalkExprChildren(fn, nil, func(e ast.Expression) bool {
+		lam, ok := e.(*ast.LambdaExpr)
+		if !ok {
+			return true
+		}
+		if l.isLocalGeneric(lam) {
+			return false
+		}
+		out = append(out, lam)
+		return true
+	})
+	return out
+}
+
 // isLocalGeneric reports whether fn is a generic declared inside a function.
 func (l *lowerer) isLocalGeneric(fn *ast.LambdaExpr) bool {
 	return len(fn.GenericParams) > 0 && l.localGenericExcluded[fn]
@@ -159,7 +179,7 @@ func (l *lowerer) declareLocalGenerics() error {
 				if err := l.declareClosure(inst.Func); err != nil {
 					return err
 				}
-				for _, inner := range nestedLambdasIn(inst.Func) {
+				for _, inner := range l.ownNestedLambdas(inst.Func) {
 					if err := l.declareClosure(inner); err != nil {
 						return err
 					}
@@ -182,7 +202,7 @@ func (l *lowerer) defineLocalGenerics() error {
 				if err := l.defineClosure(inst.Func); err != nil {
 					return err
 				}
-				for _, inner := range nestedLambdasIn(inst.Func) {
+				for _, inner := range l.ownNestedLambdas(inst.Func) {
 					if err := l.defineClosure(inner); err != nil {
 						return err
 					}

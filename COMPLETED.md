@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — every enclosing generic, not only the top-level one
+
+`inner<t>` declared inside a local `mid<m>` could not mention `m`. Filed as lyra-E031 seeing
+only the top-level function's variables, and that was the first of three places with the same
+blind spot — each had been written against "the enclosing generic function", which a local
+generic had just become another instance of.
+
+- **lyra-E031** walked every binding flat against the top-level function's variables. It now
+  recurses into each function binding with that binding's variables added, so the scope is
+  the chain of enclosing generics and a sibling's variables stay out of it.
+- **The typechecker's identity bindings** (`withEnclosingTypeVars`) came from the top-level
+  function alone, so `inner`'s instantiation bound no `m` and its body failed to lower as
+  *"type variable t has no concrete type here"*. It adds every enclosing generic's variables,
+  found by location as the top-level owner already was; composition through `mid`'s
+  instantiation settles `m` as composition through `outer`'s settles `u`.
+- **Lifting** gave a local generic every lambda nested inside it, `inner` included, under
+  its own key. `ownNestedLambdas` stops at a nested local generic, which is lifted per its own
+  instantiations — the same line the specialization of a top-level generic already needed
+  drawn, and now drawn by one function for both.
+
 ### 09/13/26 — the two local-generic shapes, and a closure capturing a closure
 
 Both shapes refused the day local generics first lowered now lower, and fixing the second

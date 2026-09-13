@@ -60,31 +60,54 @@ func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
 		if !ok {
 			continue
 		}
-		// **A binding nested inside a generic function sees that function's variables.**
-		// `let both<t> = (a: t, b: u) -> …` inside `outer<u>` mentions `u`, which is in
-		// scope — the enclosing function's — and naming it in `both`'s own list would make it
-		// a second, different `u`. Until 09/13 a local generic could not be lowered inside a
-		// generic function at all, so the question had not come up.
-		var enclosing map[string]bool
-		if top, ok := stmt.(*ast.VarDeclStmt); ok {
-			enclosing = typeVarsInScope(top)
-		}
-		ast.WalkStmt(stmt, func(s ast.Statement) bool {
-			decl, ok := s.(*ast.VarDeclStmt)
-			if !ok || len(decl.GenericParams) == 0 {
-				// No list written, so there is nothing to reconcile. A binding
-				// with type variables and no list is generic and legal,
-				// unchanged.
-				return true
-			}
-			inScope := enclosing
-			if decl == stmt {
-				inScope = nil // a top-level binding's own variables are what is being checked
-			}
-			diags = append(diags, checkBindingGenericParams(decl, inScope)...)
-			return true
-		}, nil)
+		diags = append(diags, checkGenericParamsIn(stmt, nil)...)
 	}
+	return diags
+}
+
+// checkGenericParamsIn checks every binding in stmt with the type variables of the bindings
+// that enclose it in scope.
+//
+// **A binding nested inside a generic function sees that function's variables** — and the
+// variables of every generic binding between it and the top level. `let both<t> = (a: t,
+// b: u) -> …` inside `outer<u>` mentions `u`, which is in scope, and naming it in `both`'s
+// own list would make it a second, different `u`. The chain matters one level down: `inner`
+// inside a local `mid<m>` inside `outer<u>` may mention both `m` and `u` (09/13). The walk
+// stops at a function binding and recurses into it with its variables added, so a sibling's
+// variables never leak into scope.
+func checkGenericParamsIn(stmt ast.Statement, inScope map[string]bool) []diag.Diagnostic {
+	var diags []diag.Diagnostic
+	ast.WalkStmt(stmt, func(s ast.Statement) bool {
+		decl, ok := s.(*ast.VarDeclStmt)
+		if !ok {
+			return true
+		}
+		if len(decl.GenericParams) > 0 {
+			// No list written means nothing to reconcile: a binding with type variables
+			// and no list is generic and legal, unchanged.
+			diags = append(diags, checkBindingGenericParams(decl, inScope)...)
+		}
+		lambda, isFunction := decl.Value.(*ast.LambdaExpr)
+		if !isFunction || lambda.Body == nil {
+			return true
+		}
+		// Its body sees its variables as well as the ones already in scope.
+		inner := make(map[string]bool, len(inScope))
+		for name := range inScope {
+			inner[name] = true
+		}
+		for name := range typeVarsInScope(decl) {
+			inner[name] = true
+		}
+		if block, isBlock := lambda.Body.(*ast.BlockExpr); isBlock {
+			for _, bodyStmt := range block.Statements {
+				diags = append(diags, checkGenericParamsIn(bodyStmt, inner)...)
+			}
+		} else {
+			diags = append(diags, checkGenericParamsIn(&ast.ExpressionStmt{Expression: lambda.Body}, inner)...)
+		}
+		return false
+	}, nil)
 	return diags
 }
 

@@ -82,6 +82,37 @@ let main = () -> u8 => {
 	}
 }
 
+// A generic declared inside a local generic, mentioning the middle one's variable and — in a
+// generic function — the outermost one's too. Its instantiation binds every enclosing
+// generic's variables, and it is lifted per its own instantiations rather than with the
+// middle one's lambdas. Before 09/13 lyra-E031 refused the `m`.
+func TestExec_LocalGenericInsideALocalGeneric(t *testing.T) {
+	t.Parallel()
+	src := `
+let outer<u> where u: Show = (v: u) -> string => {
+  let mid<m> where m: Show = (a: m) -> string => {
+    let inner<t> where t: Show = (x: t, y: m, z: u) -> string => "${x}${y}${z}"
+    inner(1, a, v) ++ inner("s", a, v)
+  }
+  mid(2) ++ mid("q")
+}
+let main = () -> u8 => {
+  let k = "k" ++ "!"
+  let mid<m> where m: Show = (a: m) -> string => {
+    let inner<t> where t: Show = (x: t, y: m) -> string => "${x}${y}${k}"
+    let call = () -> string => inner(0, a)
+    inner(1, a) ++ call()
+  }
+  let line = mid(7) ++ " " ++ mid("w") ++ " " ++ outer(3) ++ " " ++ outer("z")
+  println(line)
+  if line == "17k!07k! 1wk!0wk! 123s231q3sq3 12zs2z1qzsqz" { 3 } else { 1 }
+}`
+	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
+		out := buildAndRunWithPrelude(t, src, "")
+		t.Errorf("exited %d; want 3 — printed %q", got, strings.TrimSpace(out))
+	}
+}
+
 // A closure capturing another closure. It could not be done at all before: a function value
 // had no size, so "cannot size captured binding f" — found when a lambda first had to capture
 // a local generic's closures.

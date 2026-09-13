@@ -334,10 +334,9 @@ write today:
 - **[DONE 09/13] Both refused local-generic shapes lower.** A local generic inside a generic
   function, and a capturing one called from another lambda. See COMPLETED.md.
 
-- **[OPEN 09/13] lyra-E031 sees only the top-level function's type variables.** A generic
-  declared inside a local generic, whose signature mentions the middle one's variable, is
-  refused as undeclared. `typeVarsInScope` would need the chain of enclosing bindings rather
-  than the top-level one.
+- **[DONE 09/13] A generic inside a local generic may use its type variables.** lyra-E031,
+  the enclosing-variable bindings and the lifting all follow the whole chain of enclosing
+  generics now. See COMPLETED.md.
 
 - **[DONE 09/11] A struct literal's field is a context for a call's type arguments.**
   `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,

@@ -287,3 +287,23 @@ let outer<u> = (v: u) -> u => {
 		t.Errorf("want exactly the undeclared `w` reported, got %v", diags)
 	}
 }
+
+// The scope is the whole chain of enclosing generic bindings, not only the top-level one:
+// `inner` inside the local `mid<m>` inside `outer<u>` may mention both. A sibling's variable is
+// not in scope, and neither is one no binding declares.
+func TestGenericParams_EveryEnclosingGenericIsInScope(t *testing.T) {
+	diags := errorsOnly(checkGenericParams(t, `
+let outer<u> = (v: u) -> u => {
+  let mid<m> = (a: m) -> m => {
+    let inner<t> = (x: t, y: m, z: u) -> t => x
+    a
+  }
+  let sibling<s> = (a: s) -> s => a
+  let stray<t> = (x: t, y: m) -> t => x
+  v
+}
+`))
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, `"m"`) || !strings.Contains(diags[0].Message, `"stray"`) {
+		t.Errorf("want exactly `m` reported on `stray`, got %v", diags)
+	}
+}
