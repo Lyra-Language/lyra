@@ -169,7 +169,10 @@ because an untyped 7 defaults to i64, which is the expression's guess rather tha
 program's decision, and a guess must not outrank `let m: Maybe<u8> = Some 7`. That
 annotation was rejected with "cannot assign Maybe<i64> to Maybe<u8>" until such nodes were
 marked (`markDefaultedConstruction`) and the leaf left untyped for the context to narrow.
-Everything else stays closed, which is the load-bearing half: an instantiation the program
+`payloadIsAGuess` is the predicate, and since 09/13 it names two more guesses: an array
+literal recorded as a fixed array (its flavor is the context's to choose, so `Some([1])`
+fits `Maybe<[]i64>`) and an anonymous tuple literal holding a guess (`Some((1, 2))` under
+`Maybe<(u8, u8)>`). Everything else stays closed, which is the load-bearing half: an instantiation the program
 determined has already been checked by ordinary assignability, and overriding it would let
 a real mismatch through.
 
@@ -430,6 +433,18 @@ accepted only a `DynamicArrayType`, and `first_of([1, 2, 3])` reported "cannot i
 type variable t" although the same call with a `[]i64` binding worked. Reading the shape
 off the declaration is enough to unify; propagation then runs against the substituted
 `[]i64` and records the literal as dynamic.
+
+Where the parameter is a **bare** `t` there is no declared shape to read, so a fixed-array
+literal speaks last instead, beside untyped literals and bare constructions, and adopts a
+binding it can be built as (09/13): `m.unwrap_or([])` on a `Maybe<[]i64>`.
+
+**An array literal's elements take the element context before they are joined**
+(`elementTakesContext`, 09/13) — array literals, repeats, tuple literals and constructions,
+never a scalar leaf, whose narrowing is left to the site that pushed the context. That is
+what lets `[[1], [2, 3]]` under `[][]i64` join at all. Its diagnostics are kept, because
+narrowing is where an overflow is found and nothing later can see it; an element whose
+payload the context refused is recorded in `contextRefused`, so neither the join nor a
+second inference of a return body reports it again.
 
 **Only a literal is adapted, and that is a memory rule.** A `[N]T` *binding* is stack
 storage where `[]T` is a ref-counted box, so accepting one for the other is a

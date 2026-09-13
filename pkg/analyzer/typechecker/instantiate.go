@@ -196,6 +196,16 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 			untyped = append(untyped, untypedArg{index: i, typ: argType})
 			continue
 		}
+		// An **array literal passed to a bare variable** is the third such guess: its
+		// fixed `[N]T` is only the flavor it takes when nothing says otherwise, and here
+		// nothing has spoken yet. Unified first, `m.unwrap_or([])` on a `Maybe<[]i64>`
+		// bound `t` twice — `[]i64` from the receiver, `[0]?` from the literal — and
+		// reported "cannot infer type variable t" (09/13). A `[]t` parameter is
+		// arrayLiteralAsDeclared's case below and is not deferred.
+		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] && isFixedArrayLiteral(arg, argType) {
+			untyped = append(untyped, untypedArg{index: i, typ: argType})
+			continue
+		}
 		if !unifyGenericTarget(declared, arrayLiteralAsDeclared(arg, declared, promoteToDefault(argType)), vars, subst) {
 			return nil, false
 		}
@@ -236,7 +246,10 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		declared := tc.resolveDeclaredParam(lambda, u.index)
 		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] {
 			if bound, isBound := subst[g.Name]; isBound {
-				if !isAssignable(u.typ, bound) {
+				// assignableValue rather than isAssignable, so an array literal adopts a
+				// dynamic binding it can be built as; for a scalar literal or a bare
+				// construction the two agree.
+				if !tc.assignableValue(call.Arguments[u.index], u.typ, bound) {
 					return nil, false
 				}
 				continue
@@ -257,6 +270,17 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		}
 	}
 	return subst, true
+}
+
+// isFixedArrayLiteral reports whether arg is an array literal or a repeat whose recorded
+// type is the fixed array it infers on its own — a flavor its context may still change.
+func isFixedArrayLiteral(arg ast.Expression, argType types.Type) bool {
+	switch arg.(type) {
+	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
+		_, fixed := argType.(types.StaticArrayType)
+		return fixed
+	}
+	return false
 }
 
 // isBareGenericConstruction reports whether t is the bare form of a *generic* data

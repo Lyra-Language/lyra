@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a literal's flavor is a guess, wherever it sits
+
+Filed as one bug, `[Some([1]), None]` under `[]Maybe<[]i64>`, and probing the positions
+around it found four. The rule they break is the one arrays already state — **a literal's
+flavor is chosen by what it is used as** — which held for a literal standing alone and
+failed for one inside something else.
+
+**A construction's payload.** `let m: Maybe<[]i64> = Some([1])` was refused in *every*
+position: annotation, field, reassignment, argument, return, a user's own generic `data`.
+`Some([1])` solves `t` completely, and a complete solve reads as settled — only a payload
+whose type came from an untyped leaf's default was marked open to a context
+(`markDefaultedConstruction`). `Ok([1])` against a `Result<[]i64, e>` worked throughout,
+purely because `Ok` solves too little to settle, which is what said where to look.
+`payloadIsAGuess` adds the two missing guesses: an array literal or repeat recorded as a
+fixed array, and an anonymous tuple literal holding a guess (so `Some((1, 2))` under
+`Maybe<(u8, u8)>` works too). **Reassignment then needed `contextualType`** before its
+storability check, which `checkLValueAssignment` already had — an annotated `let` accepted
+what `r = Some([7, 8])` refused.
+
+**An array literal's elements were joined before any context arrived.** `[[1], [2, 3]]`
+under `[][]i64` was refused as two incompatible element types; `[Some([1]), Some([2, 3])]`
+the same. `inferArrayLiteralType` now pushes the context's *element* type while inferring
+each element and lets an element whose shape it can change take it before the join
+(`elementTakesContext`) — array literals, repeats, tuple literals and constructions only.
+**Scalars are excluded on evidence**: narrowing them early restated `[1, 2]`'s leaves as
+`i64` in a size mismatch against `[3]i64`, which three tests exist to keep saying
+`integer literal`. A fixed-array *binding* is not assignable to `[]T`, so it takes nothing
+and is still refused; that is the memory rule, not a scoping convenience.
+
+**Two things were got wrong on the way, and the tests pin both.** The element pass first
+discarded its diagnostics, on the theory that the enclosing site re-checks the literal —
+and `[Some([300])]` under `[]Maybe<[]u8>` **compiled**, since once the payload is recorded
+as `u8` nothing later can see the overflow. Narrowing is where a literal meets its width,
+so its errors stand. Keeping them then reported a wrong payload twice or three times: once
+by the element, again by the sibling join, and again when a return body is inferred a
+second time. An element its context refused is remembered (`contextRefused`, beside
+`overflowReported`), fails the literal as a bad spread does, and is skipped by the later
+stamp walk.
+
+**A generic call.** `m.unwrap_or([])` on a `Maybe<[]i64>` reported "cannot infer type
+variable t": the literal bound `t` to `[0]?` against the receiver's `[]i64`. An array
+literal passed to a bare type variable now speaks last, as an untyped literal and a bare
+construction already did, and adopts a binding it can be built as (`assignableValue` rather
+than `isAssignable`).
+
+Found beside it and filed rather than fixed: a generic lambda declared inside a function
+checks clean and does not lower.
+
 ### 09/13/26 — five small bugs, and two of them were filed under the wrong cause
 
 The short open entries in `todo.md`, re-run first as that file asks. All five reproduced;

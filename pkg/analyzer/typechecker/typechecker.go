@@ -84,6 +84,10 @@ type TypeChecker struct {
 	// overflowReported guards checkLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
+	// contextRefused is the same guard for an array element whose payload its element
+	// context refused (elementTakesContext): a return body is inferred more than once with
+	// its context pushed, and the refusal is one mistake.
+	contextRefused map[ast.Expression]bool
 	// constraintReported is that same guard for checkNewtypeConstraints, and it is
 	// needed for the same reason one layer up: the check now rides propagateExpectedType,
 	// which a generic call site reaches more than once for one argument (against the
@@ -1417,6 +1421,14 @@ func (tc *TypeChecker) checkStorable(
 func (tc *TypeChecker) checkAssignedValue(name string, value ast.Expression, target types.Type, loc ast.Location) types.Type {
 	rhsType := tc.inferExprType(value)
 	if rhsType == nil {
+		return nil
+	}
+	// The binding's type completes a construction before it is judged, as
+	// checkLValueAssignment's target does: `r = Some([7, 8])` on a `Maybe<[]i64>` was
+	// refused as a `Maybe<[2]i64>` that an annotated `let` of the same value accepted
+	// (09/13). A payload the context already reported is not reported twice.
+	rhsType, reported := tc.contextualType(value, target, rhsType)
+	if reported || rhsType == nil {
 		return nil
 	}
 	if !tc.checkStorable(value, rhsType, target, target, loc, name) {
@@ -3580,6 +3592,45 @@ func (tc *TypeChecker) recordUntypedValueNode(expr ast.Expression, expected type
 // currentTypeIsUntyped reports whether expr's currently recorded type is an
 // untyped literal type (so propagateExpectedType may overwrite it with a concrete
 // width). A leaf that already has a concrete type is left alone.
+// payloadIsAGuess reports whether a construction's payload got its type from this
+// expression's own defaults rather than from a decision the program made — so that a
+// context naming a different type may still override it (markDefaultedConstruction).
+//
+// Three kinds of guess, and the last two were missing until 09/13:
+//
+//   - an **untyped literal** leaf, or a payload that is itself a defaulted construction:
+//     `Some 7` is a `Maybe<i64>` only because 7 defaults to i64;
+//   - an **array literal or constant-count repeat recorded as a fixed array**: a literal's
+//     flavor is chosen by what it is used as, and `[1]` reads as `[1]i64` only because
+//     nothing has said otherwise. Without this, `let m: Maybe<[]i64> = Some([1])` was
+//     refused — in every position, not just an annotation — while `Ok([1])` against a
+//     `Result<[]i64, e>` worked, since `Ok` solves too little to be settled at all;
+//   - an **anonymous tuple literal holding a guess**, which is how `Some((1, 2))` against
+//     `Maybe<(u8, u8)>` and `Some(([1], 2))` against `Maybe<([]i64, i64)>` reach one.
+//
+// A named tuple is nominal and a binding has a type of its own, so neither is a guess.
+func (tc *TypeChecker) payloadIsAGuess(elem ast.Expression) bool {
+	if tc.currentTypeIsUntyped(elem) || tc.defaultedCtors[elem] {
+		return true
+	}
+	switch e := elem.(type) {
+	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
+		t, _ := tc.typeTable.Get(elem)
+		_, fixed := t.(types.StaticArrayType)
+		return fixed
+	case *ast.TupleLiteralExpr:
+		if !types.IsAnonymousTupleName(e.Name) {
+			return false
+		}
+		for _, el := range e.Elements {
+			if tc.payloadIsAGuess(el) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (tc *TypeChecker) currentTypeIsUntyped(expr ast.Expression) bool {
 	t, ok := tc.typeTable.Get(expr)
 	if !ok {
@@ -3624,6 +3675,15 @@ func isLiteralZero(expr ast.Expression) bool {
 func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.Type {
 	var elemType types.Type
 	spread := false
+	// **The context narrows as it descends, and reaches each element before the join.**
+	// Each element is inferred against the element type the literal is wanted as, then
+	// takes that type where it can (elementTakesContext) — so the join below compares
+	// what the context will build rather than each element's own guess. Without it
+	// `[[1], [2, 3]]` under `[][]i64` and `[Some([1]), Some([2, 3])]` under
+	// `[]Maybe<[]i64>` were refused as elements "not compatible" with each other, before
+	// the annotation that made them compatible was ever consulted (09/13).
+	elemContext := tc.arrayElementContext(expr.GetLocation())
+	contextFailed := false
 	for _, el := range expr.Elements {
 		var t types.Type
 		if sp, ok := el.(*ast.SpreadExpr); ok {
@@ -3640,7 +3700,22 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 				return nil
 			}
 		} else {
+			restoreExpected := func() {}
+			if elemContext != nil {
+				restoreExpected = tc.pushExpectedType(elemContext, el.GetLocation())
+			}
 			t = tc.inferExprType(el) // keep untyped (UntypedInt, etc.) so the annotation can widen
+			restoreExpected()
+			if t != nil && elemContext != nil {
+				var reported bool
+				t, reported = tc.elementTakesContext(el, t, elemContext)
+				// The element's payload is wrong for the context, and has said so. Give up
+				// on the literal, as a failed spread does: continuing would compare it
+				// against its siblings or the annotation and report the same mistake again.
+				if reported {
+					contextFailed = true
+				}
+			}
 		}
 		if t == nil {
 			continue
@@ -3650,6 +3725,9 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 			continue
 		}
 		common, ok := branchCommonType(elemType, t)
+		if !ok && contextFailed {
+			continue // a sibling already failed its context; this would restate it
+		}
 		if !ok {
 			tc.addError(el.GetLocation(), SeverityError,
 				"array literal: element type %s is not compatible with preceding element type %s",
@@ -3657,6 +3735,9 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 			return nil
 		}
 		elemType = common
+	}
+	if contextFailed {
+		return nil
 	}
 	// An element that contributed a bare declaration takes the instantiation its
 	// siblings solved — `[Some(1), None]` — the same push a match's arms get after
@@ -3678,6 +3759,75 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 		return types.DynamicArrayType{ElementType: elemType}
 	}
 	return types.StaticArrayType{ElementType: elemType, Size: len(expr.Elements)}
+}
+
+// arrayElementContext is the element type the innermost context wants an array literal's
+// elements to have, or nil where there is no array context or it still mentions a variable.
+func (tc *TypeChecker) arrayElementContext(loc ast.Location) types.Type {
+	want := tc.currentExpectedType()
+	if want == nil {
+		return nil
+	}
+	var elem types.Type
+	switch a := tc.stripNewtypeResolving(want, loc).(type) {
+	case types.DynamicArrayType:
+		elem = a.ElementType
+	case types.StaticArrayType:
+		elem = a.ElementType
+	default:
+		return nil
+	}
+	if elem == nil || !mentionsNoTypeVar(elem) {
+		return nil
+	}
+	return tc.resolveTypeIfKnown(elem, loc)
+}
+
+// elementTakesContext applies an array literal's element context to one element before
+// the elements are joined, and answers the element's type afterwards.
+//
+// Two ways an element takes it, and neither widens anything that is not a literal:
+//
+//   - **a literal that can be built as the element type** (assignableValue — so an array
+//     literal becomes the `[]T` its context asks for, a tuple literal takes its widths)
+//     is narrowed and re-recorded, which is what lets `[1]` and `[2, 3]` join as two
+//     `[]i64`s. A fixed-array *binding* is not assignable to `[]T` and is left alone;
+//   - **an open construction** (`Some([1])`, `None`) is stamped with the instantiation.
+//
+// **Their diagnostics are kept**, and that is load-bearing rather than tidy: narrowing
+// is where a literal meets the width it must fit, and once `[Some([300])]` has been
+// narrowed to `u8` no later check can see the overflow — discarding it here compiled the
+// program. reported says a construction's payload was refused for the context, which the
+// caller treats as the literal having failed, so the site that pushed the context does
+// not refuse it a second time. An element that simply cannot take the context keeps its
+// own type, and a genuine disagreement between elements is still the join's error.
+func (tc *TypeChecker) elementTakesContext(el ast.Expression, t, want types.Type) (types.Type, bool) {
+	if tc.contextRefused[el] {
+		return t, true
+	}
+	// **Only an element whose shape the context can change.** A scalar leaf is narrowed
+	// later, by the site that pushed the context; narrowing it here as well restated
+	// `[1, 2]`'s leaves as `i64` in a size mismatch against `[3]i64`, where the message
+	// had said `integer literal` — which is what those diagnostics are about.
+	switch el.(type) {
+	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr, *ast.TupleLiteralExpr, *ast.DataConstructorExpr:
+	default:
+		return t, false
+	}
+	if tc.assignableValue(el, t, want) {
+		tc.propagateExpectedType(el, want)
+	}
+	if reported := tc.propagateInstantiation(el, want); reported {
+		if tc.contextRefused == nil {
+			tc.contextRefused = map[ast.Expression]bool{}
+		}
+		tc.contextRefused[el] = true
+		return t, true
+	}
+	if recorded, ok := tc.typeTable.Get(el); ok && recorded != nil {
+		return recorded, false
+	}
+	return t, false
 }
 
 // inferSpreadElementType types `...xs` in element position: the operand must be an array,
@@ -3961,8 +4111,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					// node is marked so the context is allowed to (a complete solve
 					// otherwise reads as settled). With no context the guess stands and
 					// the leaf settles to the same default anyway.
-					if tc.fieldTakesWidthFromSolve(decl, declaredFields[i]) &&
-						(tc.currentTypeIsUntyped(elem) || tc.defaultedCtors[elem]) {
+					if tc.fieldTakesWidthFromSolve(decl, declaredFields[i]) && tc.payloadIsAGuess(elem) {
 						if complete {
 							tc.markDefaultedConstruction(expr)
 						}

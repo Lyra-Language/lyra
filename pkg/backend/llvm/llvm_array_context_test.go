@@ -1,6 +1,9 @@
 package llvm
 
-import "testing"
+import (
+	"os/exec"
+	"testing"
+)
 
 // An array literal mixing a **solved** and an **unsolved** generic element lowers at the
 // context's element width, not at the width its own elements joined to.
@@ -56,5 +59,36 @@ let main = () -> void => {
 }`, "")
 	if out != "19 1030" {
 		t.Fatalf("want %q, got %q", "19 1030", out)
+	}
+}
+
+// A literal payload's flavor comes from its context, and the managed `[]i64` a `Maybe`
+// then holds is retained and released correctly — run twice, the second time under ASan.
+// Every position that was refused until 09/13 is exercised: an annotation, an element
+// join with different lengths, a struct field, a reassignment, an argument, a return, and
+// a literal passed to a generic `t` another argument already bound (`unwrap_or([])`).
+func TestExec_ArrayPayloadTakesItsContextsFlavor(t *testing.T) {
+	t.Parallel()
+	src := `
+struct Holder { m: Maybe<[]i64> }
+let give = () -> Maybe<[]i64> => Some([4, 5, 6])
+let total = (m: Maybe<[]i64>) -> i64 => m.unwrap_or([]).len()
+let main = () -> u8 => {
+  let a: Maybe<[]i64> = Some([1])
+  let rows: []Maybe<[]i64> = [Some([1]), Some([2, 3]), None]
+  let grid: [][]i64 = [[1], [2, 3], []]
+  let h = Holder { m: Some([1, 2]) }
+  var r: Maybe<[]i64> = None
+  r = Some([7, 8])
+  var sum = total(a) + total(give()) + total(h.m) + total(r) + total(Some([9, 9]))
+  for row in rows { sum += row.unwrap_or([0, 0, 0, 0]).len() }
+  sum += grid[1][1] + grid[2].len()
+  u8(sum)   // 1 + 3 + 2 + 2 + 2, then 1 + 2 + 4, then 3 + 0
+}`
+	if got := exitCode(t, exec.Command(preludeBinary(t, src)).Run()); got != 20 {
+		t.Errorf("exited %d; want 20", got)
+	}
+	if got := buildAndRunASanWithPrelude(t, src); got != 20 {
+		t.Errorf("under ASan: exited %d; want 20", got)
 	}
 }

@@ -165,6 +165,12 @@ func (tc *TypeChecker) propagateArrayInstantiation(expr ast.Expression, want, el
 		if _, isSpread := el.(*ast.SpreadExpr); isSpread {
 			return false
 		}
+		// An element its context already refused has been reported once, while the
+		// literal was inferred (elementTakesContext); stamping it again restates it.
+		if tc.contextRefused[el] {
+			reported = true
+			continue
+		}
 		reported = tc.propagateInstantiation(el, resolved) || reported
 	}
 	if reported {

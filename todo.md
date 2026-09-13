@@ -311,12 +311,10 @@ write today:
   everywhere — the comprehension was reachable only from `expression`, not `_primary_expr`.
   Moved there, as `array_repeat_init` was (+7 states). See COMPLETED.md.
 
-- **[OPEN 09/13] An array literal inside a `Maybe` payload does not take its annotation's
-  flavor.** `let xs: []Maybe<[]i64> = [Some([1]), None]` is refused with *"cannot assign
-  StaticArray<Maybe<StaticArray<i64, 1>>, 2> to DynamicArray<Maybe<DynamicArray<i64>>>"*:
-  the 09/11 array-context arm narrows a generic element's instantiation, but the inner
-  literal is still built as the fixed `[1]i64` it inferred. Found probing the nested-generic
-  fix below.
+- **[DONE 09/13] A literal payload takes its context's flavor.** `[Some([1]), None]` under
+  `[]Maybe<[]i64>` was one of a family: `Some([1])` was refused in every position, as were
+  `[[1], [2, 3]]` under `[][]i64`, `Some((1, 2))` under `Maybe<(u8, u8)>` and
+  `m.unwrap_or([])`. See COMPLETED.md.
 
 - **[OPEN 09/13] Three leaks LeakSanitizer finds, which CI's Linux runner surfaced.** CI
   failed from 09/11 on three ASan tests that ran their binary without the harness's
@@ -330,6 +328,11 @@ write today:
     the box is freed without the buffer `push` grew;
   - `d.field("a").unwrap_or(JsonNull).as_text().unwrap_or("").len()` over `std.json`
     leaks one 18-byte string.
+
+- **[OPEN 09/13] A generic lambda declared inside a function does not lower.** `let main =
+  () => { let idf<t> = (a: t) -> t => a; println(idf(5)) }` checks clean and fails the
+  build: *"type variable "t" has no concrete type here"*. The same declaration at top level
+  works. Found probing the payload-flavor fix above.
 
 - **[DONE 09/11] A struct literal's field is a context for a call's type arguments.**
   `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,
