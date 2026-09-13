@@ -132,14 +132,13 @@ func (l *lowerer) lowerTupleIndexExpr(block *ir.Block, e *ast.TupleIndexExpr) (v
 // fields are keyed by name and built in the declared order (also the index each
 // insertvalue targets).
 //
-// Deferred with a loud error: record-update syntax (`P { base | f: v }`), a
-// missing field relying on a default value, and an inline-record data
-// constructor (which records the owning DataType, not a struct — that's the
-// data/tagged-union work).
+// **A record update** (`P { base | f: v }`) is the same construction with the base
+// supplying every field the literal does not: see lowerRecordBaseField.
+//
+// Deferred with a loud error: a missing field relying on a default value, and an
+// inline-record data constructor (which records the owning DataType, not a struct —
+// that's the data/tagged-union work).
 func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstanceExpr) (value.Value, *ir.Block, error) {
-	if e.BaseStruct != nil {
-		return nil, nil, fmt.Errorf("llvm: struct record-update syntax not implemented yet (%q)", e.Name)
-	}
 	recorded, ok := l.recordedType(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for struct instance %q", e.Name)
@@ -174,9 +173,24 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 		valueByName[name] = f.Value
 	}
 
+	var base value.Value
+	if e.BaseStruct != nil {
+		base, block, err = l.lowerExpr(block, e.BaseStruct)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	var agg value.Value = constant.NewUndef(structTy)
 	for i, declField := range structType.Fields {
 		valExpr, ok := valueByName[declField.Name]
+		if !ok && base != nil {
+			v, err := l.lowerRecordBaseField(block, base, i, structTy.Fields[i], declField.Type)
+			if err != nil {
+				return nil, nil, err
+			}
+			agg = block.NewInsertValue(agg, v, uint64(i))
+			continue
+		}
 		if !ok {
 			return nil, nil, fmt.Errorf("llvm: struct %s field %q has no value (default values not implemented yet)", structType.Name, declField.Name)
 		}
@@ -208,6 +222,38 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 		return boxed, block, err
 	}
 	return agg, block, nil
+}
+
+// lowerRecordBaseField reads field idx out of a record update's base — an inline struct, or
+// a `shared` one's box — for the new struct to keep.
+//
+// **The kept value is retained**, because the new struct owns what it holds and the base
+// still owns its own copy: `P { base | f: v }` is a copy of `base` with `f` replaced, and a
+// copy of a managed field is a +1. The base is a borrowed read (the ownership pass's
+// StructInstanceExpr arm), so a base whose last use this is is dropped after the statement,
+// which is what makes a record update that replaces the only reference cost one release
+// rather than leak one. Until 09/13 both forms type-checked and the backend refused them.
+func (l *lowerer) lowerRecordBaseField(block *ir.Block, base value.Value, idx int, fieldLL lltypes.Type, fieldType types.Type) (value.Value, error) {
+	var v value.Value
+	if ptr, isBox := base.Type().(*lltypes.PointerType); isBox {
+		boxTy, ok := ptr.ElemType.(*lltypes.StructType)
+		if !ok || len(boxTy.Fields) != boxPayloadField+1 {
+			return nil, fmt.Errorf("llvm: record update base is a non-box pointer %s", base.Type())
+		}
+		fieldPtr := block.NewGetElementPtr(boxTy, base, i32c(0), i32c(boxPayloadField), i32c(int64(idx)))
+		v = block.NewLoad(fieldLL, fieldPtr)
+	} else {
+		if _, isStruct := base.Type().(*lltypes.StructType); !isStruct {
+			return nil, fmt.Errorf("llvm: record update base is not a struct value (%s)", base.Type())
+		}
+		v = block.NewExtractValue(base, uint64(idx))
+	}
+	if l.needsDrop(fieldType) {
+		if err := l.deepRetain(block, v, fieldType); err != nil {
+			return nil, err
+		}
+	}
+	return v, nil
 }
 
 // lowerMemberExpr lowers struct field access (`node.value`) to an `extractvalue`
@@ -554,9 +600,6 @@ func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltype
 // for every literal of that type; here the *annotation* fixes it, and the literal is
 // free to disagree.
 func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.AnonymousStructInstanceExpr) (value.Value, *ir.Block, error) {
-	if e.BaseStruct != nil {
-		return nil, nil, fmt.Errorf("llvm: anonymous struct record-update syntax not implemented yet")
-	}
 	recorded, ok := l.recordedType(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for anonymous struct")
@@ -583,9 +626,24 @@ func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.Anony
 		valueByName[f.Name] = f.Value
 	}
 
+	var base value.Value
+	if e.BaseStruct != nil {
+		base, block, err = l.lowerExpr(block, e.BaseStruct)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	var agg value.Value = constant.NewUndef(structTy)
 	for i, declField := range structType.Fields {
 		valExpr, ok := valueByName[declField.Name]
+		if !ok && base != nil {
+			v, err := l.lowerRecordBaseField(block, base, i, structTy.Fields[i], declField.Type)
+			if err != nil {
+				return nil, nil, err
+			}
+			agg = block.NewInsertValue(agg, v, uint64(i))
+			continue
+		}
 		if !ok {
 			return nil, nil, fmt.Errorf("llvm: anonymous struct field %q has no value", declField.Name)
 		}

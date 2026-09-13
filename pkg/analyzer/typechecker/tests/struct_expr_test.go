@@ -257,10 +257,13 @@ func TestTypeCheck_AnonymousStructLiteral_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+// An update replaces fields the base has. It used to add one (`sex: "female"`) as well, and
+// "passed" only because nothing checked the anonymous form's base at all; an unknown field is
+// now refused, as the named form refuses it (TestAnonymousRecordUpdate).
 func TestTypeCheck_AnonymousStructUpdate_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let person = { name: "Alice", age: 30 }
-		let updated = { person | age: 31, sex: "female" }
+		let updated = { person | age: 31 }
 	`, false)
 	assertNoErrors(t, res)
 }

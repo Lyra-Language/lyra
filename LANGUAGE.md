@@ -31,7 +31,12 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 - **`never`** is the bottom type, the result of `panic(msg)`: assignable to every type, so `match m { Some(v) => v, None => panic("…") }` works. `panic` is EffectNone (legal in `pure`/`det`/`noalloc`).
 - **`i128`/`u128`** lower natively (LLVM `i128`): checked arithmetic, `match`, comparisons, conversions; division and `%%` via compiler-rt; `print` via `lyra_i128_to_str`. A literal's magnitude lives in a `big.Int` on the node (nil if it fits 64 bits) and stays untyped where both could hold it. Folding is arbitrary-precision (`ast.FoldBigExpr`; `FoldIntExpr` returns ok=false rather than wrapping). Value-range analysis leaves 128-bit (and `u64`) values untracked.
+- **An integer literal beside a float is a float**, whether the float is typed (`x < 1`, `x + 1`) or a literal (`5 < 5.0`, `5 == 5.0`, `5 * 2.5`), in every operator; a context still narrows the pair (`let f: f32 = 5 * 2.5`). A *typed* integer against a float is refused (`n < 2.0`; convert with `f64(n)`).
 - **Float narrowing is allowed and rounds to nearest** (`f32(x)`), as integer narrowing truncates (`u8(x)`). Refused: a compile-time constant that would become infinity (`f32(1.0e40)`). Precision loss is never an error.
+
+### Struct literals and record update
+
+`P { base | f: v }` is a copy of `base` with the listed fields replaced; `{ base | f: v }` is the anonymous form. The base must have the literal's type, each update must name one of its fields (no field is added), and a kept managed field is a copy with its own reference. There is no `...base` spread in a struct literal: `...` is an array literal's element (`lyra-E068`).
 
 ### Literals must fit
 
@@ -211,7 +216,7 @@ A `gen` function yields into a `Seq<t>`; combinators are Lyra in `std/prelude/se
 - **Consumed where written** (`for x in xs.seq().filter(p).map(f)`, or a terminal like `sum`): one fused loop, no allocation.
 - **Held as a value** (binding, argument, field): a cursor over an LLVM coroutine; `s.next()` steps it (`mut` receiver); copies share the cursor; the last reference destroys the coroutine.
 - `Seq<t>` is compiler-known by name, declared nowhere; a program's own `Seq` wins.
-- A `gen` function must declare `-> Seq<t>`; body is void; `yield e` checks `e: t`; `yield from s` lowers only for sequences (write the loop for arrays/ranges); `yield from (0..<3)` needs parentheses.
+- A `gen` function must declare `-> Seq<t>`; body is void; `yield e` checks `e: t`; `yield from s` lowers only for sequences (write the loop for arrays/ranges).
 - Consumers: `for-in` and comprehensions. Brackets make an array; there is no `collect`. Eager `map`/`filter` on `[]t` coexist via receiver-keyed overloading.
 - **Sequence values need clang ≥ 15** (coroutine splitting). `lyrac` probes once and refuses by name, keeping the `.ll`; backend tests skip.
 - Still refused by name: a plain function returning a sequence from a block body, a lambda literal inside a `gen` used as a value, a `mut` parameter on one, `yield from` over a non-sequence.

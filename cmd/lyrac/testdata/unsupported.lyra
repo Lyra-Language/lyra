@@ -1,7 +1,7 @@
-struct Pt { x: i64, y: i64 }
+let nums = pure gen () -> Seq<i64> => { yield from 0..<3 }
 
 let main = () -> u8 => {
-    let base = Pt { x: 1, y: 2 }
-    let moved = Pt { base | x: 5 }
-    u8(moved.x)
+    var total = 0
+    for x in nums() { total += x }
+    u8(total)
 }

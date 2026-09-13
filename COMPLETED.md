@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — `yield`'s precedence, two literals of different kinds, and record update
+
+Three known-bug entries, and **all three were described wrongly** once reproduced — which is
+the standing reason to re-run an entry before acting on it.
+
+**`yield from 0..<3` parsed as `(yield from 0) ..< 3`**, filed as a range quirk. The `yield`,
+`yield from` and `await` forms sat at precedence 250/251, above everything but postfix, so each
+stopped at the first operator looser than itself: `yield x ?? y` and `yield f ->> g` were broken
+the same way. Arithmetic happened to parse correctly, which is what hid the rest. They are the loosest-binding forms now (-10/-9, `yield from` one above so
+`from` is never an identifier). +168 states (7997 → 8165); the cost is the same at any level
+below 20, being the operand now reaching through the binary operators rather than the number.
+
+**`5 < 5.0` was filed as ordering being too loose**, and it was three answers to one question:
+`==` refused the pair, `<` passed the checker and crashed the backend (`i64` against `double`),
+and `let z = 5 * 2.5` compiled to an `i64` multiply over a `double` that clang rejected. An
+integer literal already took a *typed* float's width everywhere (`x < 1`, `let y: f64 = 1`); with
+a float literal on the other side the common type was the untyped float, which narrows nothing,
+so the integer leaf kept its i64 default. Decided: the pair is a float in every operator. The
+integer side is re-recorded as an untyped float (`floatifyUntypedIntOperands`), which the
+backend lowers as `double` and a context can still narrow (`let f: f32 = 5 * 2.5`); equality
+admits the pair. A typed integer against a float stays refused.
+
+**"Struct spread does not parse under a `module` header" was not a feature at all.** The
+header was a red herring — `Point { ...base }` fails everywhere but a top-level snippet — and the
+grammar never had a struct spread: `struct_shorthand` is two or more positional values, and each
+`...base` was an array spread in a value slot, which lyra-E068 refuses. The real feature was
+**record update**, `P { base | f: v }`, which type-checked and which the backend refused; its
+anonymous twin was not even checked, its type being the updates alone — and a test asserting
+that `{ person | age: 31, sex: "female" }` compiles was passing on that. Decided: record update
+only, one spelling. Both forms lower now (`lowerRecordBaseField`: a kept field is read out of the
+base — inline or `shared` — and retained; the base is a borrowed read), the anonymous form is
+checked against its base as the named one is, and an update adds no fields.
+
+Found beside it and filed: a struct literal may name a field twice, the last value winning.
+
 ### 09/13/26 — every enclosing generic, not only the top-level one
 
 `inner<t>` declared inside a local `mid<m>` could not mention `m`. Filed as lyra-E031 seeing

@@ -1464,6 +1464,12 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		}
 
 	case *ast.StructInstanceExpr:
+		// A record update's base is read, not consumed: the fields it keeps are copied
+		// out of it with a retain of their own (lowerRecordBaseField), and the binding
+		// keeps its value — so its read is a borrow, and a borrowing last use drops it.
+		if e.BaseStruct != nil {
+			a.expr(e.BaseStruct, false)
+		}
 		for i := range e.Fields {
 			a.expr(e.Fields[i].Value, true)
 		}
@@ -1483,6 +1489,9 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// use-after-free rather than the leak the missing retain/drop glue would cause,
 		// and neither ASan nor LeakSanitizer reported it — the freed bytes simply were
 		// not reused in between, which is exactly what makes this class expensive.
+		if e.BaseStruct != nil {
+			a.expr(e.BaseStruct, false) // a record update's base is borrowed, as above
+		}
 		for i := range e.Fields {
 			a.expr(e.Fields[i].Value, true)
 		}

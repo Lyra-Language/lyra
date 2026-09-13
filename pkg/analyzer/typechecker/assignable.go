@@ -774,7 +774,19 @@ func areEqualityCompatible(a, b types.Type) bool {
 	if bothUntypedInts(a, b) {
 		return true
 	}
+	// An integer literal and a float literal compare as floats, as ordering and arithmetic
+	// already treat them — see floatifyUntypedIntOperands.
+	if untypedIntAndFloat(a, b) || untypedIntAndFloat(b, a) {
+		return true
+	}
 	return isAssignable(a, b) || isAssignable(b, a)
+}
+
+// untypedIntAndFloat reports whether a is an un-pinned integer literal and b an un-pinned
+// float literal.
+func untypedIntAndFloat(a, b types.Type) bool {
+	bp, ok := b.(types.PrimitiveType)
+	return ok && bp.Name == types.UntypedFloat && isUntypedIntType(a)
 }
 
 // bothUntypedInts reports whether a and b are both un-pinned integer literals — the pair
@@ -920,4 +932,10 @@ func isAnyConcreteFloat(n types.PrimitiveTypeName) bool {
 func isUntypedNullPtr(t types.Type) bool {
 	p, ok := t.(types.PrimitiveType)
 	return ok && p.Name == types.UntypedNullPtr
+}
+
+// isUntypedIntType reports whether t is an un-pinned integer literal type, signed or not.
+func isUntypedIntType(t types.Type) bool {
+	p, ok := t.(types.PrimitiveType)
+	return ok && (p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt)
 }

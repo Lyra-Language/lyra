@@ -9,13 +9,8 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] Ordering accepts `5 < 5.0` while equality refuses `5 == 5.0`.** One of them is
-  wrong, probably ordering, since int/float separation is the written rule.
-- **[OPEN] `yield from 0..<3` parses as `(yield from 0) ..< 3`.** The `yield` forms sit at
-  `PREC.AWAIT`, above a range operator; parenthesize the range meanwhile.
-- **[OPEN] Struct spread `Point { ...base }` does not parse in a file with a `module`
-  header.** It has a grammar rule, collector and golden tests, but the golden harness uses
-  headerless snippets, so nothing caught it.
+- **[OPEN] A struct literal may name a field twice.** `P { x: 1, x: 2, y: 3 }` and `{ a: 1,
+  a: 2 }` compile, the last value winning; so does a repeated update in `P { b | y: 5, y: 6 }`.
 - **[OPEN] A constructor's payload type is resolved at the *use* site.** `Mouse(m) =>
   m.button` resolves `MouseEvent` from the matcher's module and works only because
   `resolvedTypes` shares a `pub` type's key. Resolving from the declaration stack-overflows

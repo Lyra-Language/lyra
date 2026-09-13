@@ -131,24 +131,23 @@ func TestEmit_StructInstanceIR(t *testing.T) {
 
 // TestEmit_StructRecordUpdate_Deferred: record-update syntax isn't lowered yet,
 // so it errors loudly rather than silently ignoring the base.
-func TestEmit_StructRecordUpdate_Deferred(t *testing.T) {
+// Record update lowers (09/13) — once the deferred form this test pinned. The full set of
+// shapes, ownership included, is TestExec_RecordUpdate.
+func TestExec_StructRecordUpdate(t *testing.T) {
 	t.Parallel()
-	src := `
+	got := buildAndRun(t, `
 	struct Node {
 		value: u8,
+		other: u8,
 	}
 	let main = () -> u8 => {
-		let a = Node { value: 1 }
+		let a = Node { value: 1, other: 40 }
 		let b = Node { a | value: 2 }
-		b.value
+		b.value + b.other
 	}
-	`
-	_, err := emitSource(t, src)
-	if err == nil {
-		t.Fatal("expected an error: record-update syntax is not implemented yet")
-	}
-	if !strings.Contains(err.Error(), "record-update") {
-		t.Errorf("expected a record-update error, got: %v", err)
+	`)
+	if got != 42 {
+		t.Errorf("exited %d; want 42", got)
 	}
 }
 

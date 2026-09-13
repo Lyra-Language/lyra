@@ -25,24 +25,17 @@ func TestTypeCheck_Inequality_TwoFloatLiterals_Warning(t *testing.T) {
 	assertWarningsAre(t, res, "operator !=: comparing float values with == or != may give unexpected results due to floating-point precision")
 }
 
-func TestTypeCheck_Equality_IntAndFloatLiterals_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, "5 == 5.0", false)
-	assertErrorsAre(t, res, "operator ==: incompatible types: integer literal and float literal")
-}
-
-func TestTypeCheck_Equality_FloatAndIntLiterals_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, "5.0 == 5", false)
-	assertErrorsAre(t, res, "operator ==: incompatible types: float literal and integer literal")
-}
-
-func TestTypeCheck_Inequality_IntAndFloatLiterals_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, "5 != 6.0", false)
-	assertErrorsAre(t, res, "operator !=: incompatible types: integer literal and float literal")
-}
-
-func TestTypeCheck_Inequality_FloatAndIntLiterals_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, "5.0 != 6", false)
-	assertErrorsAre(t, res, "operator !=: incompatible types: float literal and integer literal")
+// An integer literal beside a float literal compares as a float, as `x == 1` against a typed
+// float already does — so the pair draws the float-equality warning two float literals draw,
+// not the incompatible-types error it drew until 09/13, when ordering and arithmetic already
+// admitted the same pair (and then miscompiled it).
+func TestTypeCheck_Equality_IntAndFloatLiterals_CompareAsFloats(t *testing.T) {
+	for _, c := range []struct{ src, op string }{
+		{"5 == 5.0", "=="}, {"5.0 == 5", "=="}, {"5 != 6.0", "!="}, {"5.0 != 6", "!="},
+	} {
+		res := parseCollectAndCheck(t, c.src, false)
+		assertWarningsAre(t, res, "operator "+c.op+": comparing float values with == or != may give unexpected results due to floating-point precision")
+	}
 }
 
 // Equality - concrete typed identifiers
@@ -265,11 +258,16 @@ func TestTypeCheck_Equality_NegativeAndNonNegativeLiterals(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-// The widening this does *not* do. Equality's refusal of int/float mixing is deliberate,
-// and the numeric rule ordering uses is wider in that direction (`5 < 5.0` compiles), so
-// the untyped-integer case is admitted on its own rather than by adopting that rule
-// wholesale.
-func TestTypeCheck_Equality_StillRejectsIntAgainstFloat(t *testing.T) {
-	res := parseCollectAndCheck(t, "5 == 5.0", false)
-	assertErrorsAre(t, res, "operator ==: incompatible types: integer literal and float literal")
+// The widening this does *not* do. A *literal* takes a float's width; a typed integer does
+// not, in any operator — `i64` against a float literal is a width the program chose, and
+// converting it is `f64(n)`.
+func TestTypeCheck_TypedIntAgainstFloatLiteralIsStillRefused(t *testing.T) {
+	for _, op := range []string{"==", "<"} {
+		res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  let n: i64 = 2
+  let b = n `+op+` 2.0
+}`, false)
+		assertErrorsAre(t, res, "operator "+op+": incompatible types: i64 and float literal")
+	}
 }

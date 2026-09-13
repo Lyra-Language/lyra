@@ -50,3 +50,31 @@ func TestAnonymousStruct_MismatchesAreRefusedAndReadable(t *testing.T) {
 		assertHasErrorContaining(t, res, tc.want)
 	}
 }
+
+// An anonymous record update is checked against its base, as the named form is: the base must
+// be an anonymous struct, an update must name one of its fields with a value that field can
+// hold, and the result is the base's type — so a field the update does not list is still
+// there to read. Until 09/13 the base was ignored.
+func TestAnonymousRecordUpdate(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  let a: { x: i64, s: string } = { x: 1, s: "q" }
+  let b = { a | x: 9 }
+  let reads = b.s
+}`, false)
+	assertNoErrors(t, res)
+
+	for _, c := range []struct{ body, want string }{
+		{`let b = { a | z: 1 }`, `record update: { x: i64, s: string } has no field "z"`},
+		{`let b = { a | x: "s" }`, `field x: cannot assign string to i64`},
+		{`let n = 3
+  let b = { n | x: 1 }`, `record update: base has type i64, which is not an anonymous struct`},
+	} {
+		res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  let a: { x: i64, s: string } = { x: 1, s: "q" }
+  `+c.body+`
+}`, false)
+		assertHasErrorContaining(t, res, c.want)
+	}
+}

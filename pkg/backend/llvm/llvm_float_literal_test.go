@@ -98,3 +98,28 @@ func TestExec_IntLiteralInFloatAggregates(t *testing.T) {
 		t.Errorf("output = %q; want %q", out, want)
 	}
 }
+
+// An integer literal beside a float literal is a float, in every operator (09/13). Before,
+// `<` passed the checker and the backend refused a comparison of `i64` against `double`,
+// `let z = 5 * 2.5` emitted an `i64` multiply over a `double` that clang rejected, and `==`
+// refused the pair — three answers to one question. A context still narrows the pair:
+// `let f: f32 = 5 * 2.5` is an f32 multiply.
+func TestExec_IntLiteralBesideAFloatLiteralIsAFloat(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let z = 5 * 2.5
+  let f: f32 = 5 * 2.5
+  let m = 2.0 * (3 - 1)
+  var score = 0
+  if z == 12.5 { score += 1 }
+  if f == 12.5 { score += 2 }
+  if m == 4.0 { score += 4 }
+  if 5 < 5.5 && !(5 < 5.0) && 5 <= 5.0 && -1 < 2.5 { score += 8 }
+  if 5 == 5.0 && 5 != 5.5 && 5.0 > 4 { score += 16 }
+  u8(score)
+}`)
+	if got != 31 {
+		t.Errorf("exited %d; want 31 (each bit is one form that must hold)", got)
+	}
+}

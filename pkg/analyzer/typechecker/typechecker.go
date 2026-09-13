@@ -2111,8 +2111,54 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 	if common == nil {
 		return
 	}
+	tc.floatifyUntypedIntOperands(common, expr.Left, expr.Right)
 	tc.propagateExpectedType(expr.Left, common)
 	tc.propagateExpectedType(expr.Right, common)
+}
+
+// floatifyUntypedIntOperands makes an untyped integer operand an untyped *float* when the
+// operation it sits in is one: `5 < 5.0`, `5 == 5.0`, `5 * 2.5`.
+//
+// **An integer literal takes a float's width wherever a float is what it meets** — the rule
+// `x < 1` and `let y: f64 = 1` already follow for a typed float. With a float *literal* on
+// the other side there was nothing concrete to push, so the integer leaf kept its i64
+// default: `<` passed the checker and crashed the backend, `let z = 5 * 2.5` became an
+// `i64` multiply over a `double`, and `==` refused the pair outright (09/13). Re-recorded as
+// an untyped float, the leaf is still open to a context — `let f: f32 = 5 * 2.5` narrows it to
+// f32 — and settles to f64 otherwise, which is how the backend lowers an untyped float.
+func (tc *TypeChecker) floatifyUntypedIntOperands(result types.Type, operands ...ast.Expression) {
+	if p, ok := result.(types.PrimitiveType); !ok || p.Name != types.UntypedFloat {
+		return
+	}
+	for _, operand := range operands {
+		tc.floatifyUntypedInts(operand)
+	}
+}
+
+// floatifyUntypedInts re-records the untyped-integer literal leaves of e, and the
+// arithmetic over them, as untyped floats.
+func (tc *TypeChecker) floatifyUntypedInts(e ast.Expression) {
+	t, ok := tc.typeTable.Get(e)
+	if !ok || !isUntypedIntType(t) {
+		return
+	}
+	switch v := e.(type) {
+	case *ast.IntegerLiteralExpr:
+		if v.IsWide() {
+			return // a magnitude past 64 bits has no exact float; leave it to be reported
+		}
+	case *ast.NegationExpr:
+		tc.floatifyUntypedInts(v.Operand)
+	case *ast.MathBinaryOpExpr:
+		if v.Operator.IsShift() {
+			return // integers only; the operator check reports a float operand
+		}
+		tc.floatifyUntypedInts(v.Left)
+		tc.floatifyUntypedInts(v.Right)
+	default:
+		return
+	}
+	tc.typeTable.Set(e, types.PrimitiveType{Name: types.UntypedFloat})
 }
 
 // comparisonInstantiation is the instantiated generic type among two compared operands,
@@ -3105,6 +3151,7 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 			"operator %s: incompatible types: %s and %s", expr.Operator, left, right)
 		return nil
 	}
+	tc.floatifyUntypedIntOperands(result, expr.Left, expr.Right)
 
 	// Context-directed literal-width inference: if the operation resolved to a
 	// concrete numeric type (e.g. one operand was `i8`, the other an untyped
@@ -4870,12 +4917,56 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 }
 
 func (tc *TypeChecker) inferAnonymousStructInstanceExpr(expr *ast.AnonymousStructInstanceExpr) types.Type {
+	if expr.BaseStruct != nil {
+		return tc.inferAnonymousRecordUpdate(expr)
+	}
 	structTypeFields := tc.convertAnonymousStructFieldsToTypeFields(expr.Fields)
 	structType := types.AnonymousStructType{
 		Fields: structTypeFields,
 	}
 
 	return structType
+}
+
+// inferAnonymousRecordUpdate checks `{ base | f: v }`: the base must be an anonymous struct,
+// each update must name one of its fields with a value that field can hold, and the result
+// is the base's type. Until 09/13 the base was ignored and the result was the updates alone,
+// so `{ p | x: 9 }` had no `y` — the named form (`P { base | f: v }`) was checked, this one
+// was not.
+func (tc *TypeChecker) inferAnonymousRecordUpdate(expr *ast.AnonymousStructInstanceExpr) types.Type {
+	baseType := tc.inferExprType(expr.BaseStruct)
+	if baseType == nil {
+		return nil
+	}
+	base, ok := types.WithAllocation(baseType, types.Stack).(types.AnonymousStructType)
+	if !ok {
+		tc.addError(expr.BaseStruct.GetLocation(), SeverityError,
+			"record update: base has type %s, which is not an anonymous struct", baseType)
+		return nil
+	}
+	byName := make(map[string]types.Type, len(base.Fields))
+	for _, f := range base.Fields {
+		byName[f.Name] = f.Type
+	}
+	for _, f := range expr.Fields {
+		want, known := byName[f.Name]
+		if !known {
+			tc.addError(f.Value.GetLocation(), SeverityError,
+				"record update: %s has no field %q", baseType, f.Name)
+			continue
+		}
+		got := tc.inferExprType(f.Value)
+		if got == nil {
+			continue
+		}
+		if !tc.checkStorable(f.Value, got, want, want, f.Value.GetLocation(), "field "+f.Name) {
+			continue
+		}
+		tc.propagateExpectedType(f.Value, want)
+		tc.propagateInstantiation(f.Value, want)
+		tc.checkLiteralRange("field "+f.Name, f.Value, want)
+	}
+	return base
 }
 
 func (tc *TypeChecker) convertAnonymousStructFieldsToTypeFields(fields []ast.StructField) []types.StructField {
