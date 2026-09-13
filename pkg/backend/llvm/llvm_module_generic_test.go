@@ -102,3 +102,28 @@ let main = () -> void => {
 		t.Errorf("composed generic at a private struct = %q; want \"hearts spades\"", got)
 	}
 }
+
+// **A generic type argument** — `Slot<i64>` inside `Maybe<Slot<i64>>` — at a prelude
+// generic, directly and through a composed template. The fallback to the requesting site
+// covered a *bare* name argument only: `lookupNamedType` asked the site, while `typeKey`
+// and `lookupTypeDecl`, which a parameterized type goes through, did not. So `is_some` on
+// a `Maybe<Slot<i64>>` failed to lay out its own parameter — `cannot lay out data type
+// "Maybe"` — and a `pub struct Slot<v>` failed the same way, since an entry-module type is
+// no more visible from the prelude than a private one is (09/13).
+func TestExec_PreludeGenericAtAGenericPrivateType(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+struct Slot<v> { val: v }
+let has<v> = pure (xs: []Maybe<Slot<v>>, i: i64) -> bool => xs[i].is_some()
+let main = () -> void => {
+  let xs: []Maybe<Slot<i64>> = [Some(Slot { val: 4 }), None]
+  let direct = xs[0].is_some()
+  let first = xs[0].unwrap_or(Slot { val: 0 }).val
+  print("${direct} ${has(xs, 0)} ${has(xs, 1)} ${first}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "true true false 4" {
+		t.Errorf("prelude generic at a generic private struct = %q; want \"true true false 4\"", got)
+	}
+}

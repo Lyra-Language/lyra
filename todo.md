@@ -257,11 +257,11 @@ write today:
   (`types.UnresolvedType.Key`), which the ownership walk and the backend's lookups now
   prefer; see COMPLETED.md.
 
-- **[OPEN 09/11] `@must_release`'s view rule does not see through `unsafe`.** `let old =
-  unsafe { slot^.texture }` reads a texture a model still holds, yet W022 demands it be
-  released — a stored place wrapped in an `unsafe` block is taken for an acquisition.
-  `set_model_material_texture` avoids binding one; `isStoredPlaceRead` should look through
-  the block and through a deref.
+- **[DONE 09/13] `@must_release`'s view rule sees through `unsafe` and a deref.** `let old =
+  unsafe { slot^.texture }` was taken for an acquisition and told to release a texture a
+  model still held. `isStoredPlaceRead` now looks through a one-expression `unsafe` block
+  and treats any path through a `^` as a view; a call inside the block is still an
+  acquisition. See COMPLETED.md.
 
 - **[DONE 09/11] Three raw-pointer gaps, found binding a model's materials.** A deref was
   not an assignment path element (`p.offset(i)^.shader = s` failed in the backend), and with
@@ -306,10 +306,17 @@ write today:
   a C shim. Left until a program wants it: `examples/todo.lyra` rewrites the whole file,
   which is what add, done and remove each need anyway.
 
-- **[OPEN 09/08] A comprehension inside a string interpolation does not parse.**
-  `"${[x in xs | x].join(",")}"` is a syntax error at the file's first line, with or
-  without sequences; bound to a `let` first it is fine. Presumably the `|` inside `${…}`
-  or the nested brackets confuse the interpolation scanner.
+- **[DONE 09/13] A comprehension is a postfix head.** Filed as an interpolation bug and it
+  was not one: `"${[x in xs | x]}"` always parsed, and `[x in xs | x].join(",")` failed
+  everywhere — the comprehension was reachable only from `expression`, not `_primary_expr`.
+  Moved there, as `array_repeat_init` was (+7 states). See COMPLETED.md.
+
+- **[OPEN 09/13] An array literal inside a `Maybe` payload does not take its annotation's
+  flavor.** `let xs: []Maybe<[]i64> = [Some([1]), None]` is refused with *"cannot assign
+  StaticArray<Maybe<StaticArray<i64, 1>>, 2> to DynamicArray<Maybe<DynamicArray<i64>>>"*:
+  the 09/11 array-context arm narrows a generic element's instantiation, but the inner
+  literal is still built as the fixed `[1]i64` it inferred. Found probing the nested-generic
+  fix below.
 
 - **[DONE 09/11] A struct literal's field is a context for a call's type arguments.**
   `ProgramArgs { options: hashmap_new(), … }` against a field declared `HashMap<string,
@@ -403,12 +410,11 @@ write today:
   hashmap's `previous`/`removed` bindings lost their annotations. Pinned by
   `llvm_join_instantiation_test.go`.
 
-- **[OPEN 09/07] A prelude call on a nested generic inside a generic body fails the
-  build.** `let has<v> = (xs: []Maybe<Slot<v>>, i: i64) -> bool => xs[i].is_some()` is
-  refused by the backend with `cannot lay out data type "Maybe"` — the instantiation
-  `is_some<t = Slot<v>>` is a template composed at the caller's `v = i64`, and something
-  along that composition leaves a `Maybe` un-monomorphized. Found writing the join tests
-  above, which route around it with a `bool` parameter. A plain `Maybe<v>` receiver works.
+- **[DONE 09/13] A prelude generic at a *generic* caller type lays out.** Neither generic
+  bodies nor composition were involved: `xs[0].is_some()` on a `Maybe<Slot<i64>>` failed
+  directly in `main`. A type argument is resolved from the site that requested the
+  specialization, and only `lookupNamedType` asked it — `typeKey` and `lookupTypeDecl`, which
+  a parameterized argument goes through, did not. See COMPLETED.md.
 
 - **[DONE 09/07] A trait-impl method may not reference a top-level `let` declared below
   it** (`lyra-E002`) while a `let`'s lambda could. The use-before-declaration pass gave a
@@ -3495,32 +3501,18 @@ it, including a field read escaping its binding.
   and the check would accept it as the discharge. Waiting on a program that strains
   against the scoped-closure form (`with_cstring`) the language already has.
 
-### The backend refuses a `let … else` whose else is `if c { return } else { return }`
+### The backend refuses a `let … else` whose else is `if c { return } else { return }` — **[DONE 09/13]**
 
-`lowerElseDestructuring` decides divergence on whether the lowered Else block has a
-terminator, and the `if` lowering leaves its merge block without one even when **both**
-branches diverge. So that Else is refused although every path through it returns.
+`lowerIf` now seals a merge block neither branch reaches with `unreachable`, as
+`matchMerge.value` already did for a match, so the backend and lyra-E074 agree on all
+thirteen shapes. See COMPLETED.md.
 
-The front-end check (lyra-E074, landed 09/10) accepts it, deliberately — a front-end error
-says "this is not a legal program" and that program is legal — so the two disagree on this
-one shape and the backend is the one to fix. Every other shape agrees; the accept-set was
-established by running the backend on thirteen of them.
+### A tuple assignment gives untyped literals its places' widths — **[DONE 09/13]**
 
-The fix is in the `if` lowering rather than here: a merge block no branch reaches should be
-sealed (or not emitted), which is the same question `diverged()` answers for operands.
-
-### A tuple assignment does not give untyped literals its places' widths
-
-    var a: f32 = 1.0
-    var b: f32 = 2.0
-    a = 3.0                 // fine: the literal takes a's width
-    (a, b) = (4.0, 5.0)     // error: a: cannot assign f64 to f32
-
-The desugaring (`let (t0, t1) = rhs; a = t0; b = t1`) types its temporaries from the
-literals' own defaults, so an untyped float becomes f64 before it meets an f32 place. A plain
-assignment propagates the place's type into the literal; the tuple form should push each
-place's type into its element the same way. Found 09/11 writing
-`examples/raylib/gltf_viewer.lyra`, which assigns the reset view one field at a time instead.
+`(a, b) = (4.0, 5.0)` on f32 places now narrows as `a = 4.0` does, generic instantiations
+included (`(m, k) = (None, 1)`). The desugared `let` carries its assignments
+(`DestructuringDeclStmt.Assigns`) and the typechecker pushes each place's type into the
+matching element. See COMPLETED.md.
 
 ### `default_font()` draws lyra-W022 advising a call raylib ignores
 

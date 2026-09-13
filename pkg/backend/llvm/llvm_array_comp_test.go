@@ -27,6 +27,22 @@ let main = () -> u8 => {
 	}
 }
 
+// A comprehension is a postfix head, as the other two array forms are: a method, an index
+// and an interpolation all hang off one directly. `[x in xs | x].join(",")` was a syntax
+// error until 09/13 — reachable only from `expression`, never from `_primary_expr`.
+func TestExec_ArrayCompIsAPostfixHead(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+let main = () -> void => {
+  let xs: []i64 = [1, 2, 3]
+  let third = [x in xs | x * 10][2]
+  print("${[x in xs | x > 1 | "${x}"].join(",")} ${[x in xs | x].len()} ${third}")
+}`, "")
+	if got := strings.TrimSpace(out); got != "2,3 3 30" {
+		t.Errorf("got %q; want \"2,3 3 30\"", got)
+	}
+}
+
 // A guard filters, so the box's length is the survivor count and not the capacity it was
 // allocated at. This is the assertion that fails if the final length is ever written as the
 // capacity.

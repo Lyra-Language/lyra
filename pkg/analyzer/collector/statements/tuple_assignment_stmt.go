@@ -113,6 +113,7 @@ func CollectTupleAssignmentStmt(node *sitter.Node, ctx *collector_ctx.Ctx) ast.S
 			return nil
 		}
 		stmts = append(stmts, stmt)
+		decl.Assigns = append(decl.Assigns, stmt)
 	}
 
 	block := &ast.BlockExpr{

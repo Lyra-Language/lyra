@@ -424,8 +424,6 @@ let run_viewer = (paths: []string) -> void => {
           viewing = open(path)
           if viewing.is_none() { status = "could not load ${file_name(path)}" }
           relight(viewing, lit, lighting)
-          // Separate assignments rather than one tuple assignment: an untyped float in a
-          // tuple takes its f64 default instead of the f32 place's width (todo.md).
           yaw = 30.0
           pitch = 15.0
           zoom = 1.0

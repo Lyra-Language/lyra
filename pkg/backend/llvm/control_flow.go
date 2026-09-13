@@ -963,10 +963,21 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 		elseEnd.NewBr(mergeBlock)
 	}
 
-	// No value when a reaching branch is void (the `if` is a statement), or when
-	// neither branch reaches (both diverged — the merge is unreachable, terminated by
-	// downstream lowering). In value position the typechecker guarantees both
-	// branches produce a compatible value, so only the phi cases below remain.
+	// **Neither branch reaches: seal the merge**, as matchMerge.value does for a match
+	// whose every arm diverged. Left open, the merge read as a block control falls into,
+	// so `let Some(v) = m else { if c { return 1 } else { return 2 } }` was refused by
+	// the backend as an else that does not diverge — although every path through it
+	// returns, and lyra-E074 had accepted it (09/13). `unreachable` is the honest
+	// terminator — nothing branches here — and every consumer already tests
+	// `end.Term == nil`, so a diverging `if` now reads like the `return`s it is made of.
+	if !thenReaches && !elseReaches {
+		mergeBlock.NewUnreachable()
+		return nil, mergeBlock, nil
+	}
+
+	// No value when a reaching branch is void (the `if` is a statement). In value
+	// position the typechecker guarantees both branches produce a compatible value, so
+	// only the phi cases below remain.
 	//
 	// **"Void" has two spellings here and both have to be caught.** A branch that
 	// produces nothing hands back a nil, which is what a builtin like `set_raw_mode`

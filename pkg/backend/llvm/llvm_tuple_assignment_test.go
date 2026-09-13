@@ -53,6 +53,21 @@ func TestExec_TupleAssignment(t *testing.T) {
 		   (xs[idx(0)], xs[idx(1)]) = (xs[1], xs[0])
 		   calls * 100 + xs[0] * 5 + xs[1]   // 2 calls, xs is [6, 5]
 		 }`, 235},
+		// The places' types reach the right side's untyped literals, as a plain
+		// assignment's does: an f32 place takes `4.5` as an f32 rather than an f64 it
+		// then refuses, and a u8 field takes 200 as a u8 (09/13).
+		{"untyped literals take their places' widths", `struct Px { v: u8 }
+		 data Opt<t> = Empty | Full(t)
+		 let main = () -> u8 => {
+		   var a: f32 = 1.0
+		   var b: f32 = 2.0
+		   var p = Px { v: 0 }
+		   var m: Opt<i64> = Full(3)
+		   (a, b, p.v, m) = (4.5, 0.25, 200, Empty)
+		   let k: u8 = match m { Full(_) => 1, Empty => 0 }
+		   let sum: u8 = if a * 4.0 + b * 4.0 == 19.0 { 1 } else { 0 }
+		   p.v + sum + k   // 200 + 1 + 0
+		 }`, 201},
 		{"last statement of a void function", `let swap_first = (self: mut []u8) -> void => {
 		   (self[0], self[1]) = (self[1], self[0])
 		 }

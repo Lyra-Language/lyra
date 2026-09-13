@@ -943,13 +943,50 @@ func (c *mustRelease) acquiredBy(value ast.Expression) (resource, bool) {
 }
 
 // isStoredPlaceRead reports whether e reads storage something else owns — a field or element
-// path rooted at a name, `o.anims` or `xs[i].s` — rather than being a bare name or a value
-// some call produced. The one definition of "this is a view", shared by the `match`
-// scrutinee rule (beginUnwrap) and the binding-initializer rule (acquiredBy).
+// path rooted at a name, `o.anims` or `xs[i].s`, or any path through a deref, `slot^.texture`
+// — rather than being a bare name or a value some call produced. The one definition of "this
+// is a view", shared by the `match` scrutinee rule (beginUnwrap) and the binding-initializer
+// rule (acquiredBy).
+//
+// **It looks through an `unsafe` block**, since a read through a pointer is written inside
+// one: `let old = unsafe { slot^.texture }` is the view `let old = h.texture` is, and taking
+// the block for a temporary told a raylib binding to release a texture its model still held
+// (09/13). A deref ends the question wherever its operand came from — a pointee is storage
+// the pointer does not own, so copying out of it is a second handle, never an acquisition.
 func isStoredPlaceRead(e ast.Expression) bool {
+	e = unsafeBlockValue(e)
 	if _, isName := bareName(e); isName {
 		return false
 	}
-	_, isPlace := lvalueRootName(e)
-	return isPlace
+	for {
+		switch v := e.(type) {
+		case *ast.IdentifierExpr:
+			return true
+		case *ast.DerefExpr:
+			return true
+		case *ast.MemberExpr:
+			e = unsafeBlockValue(v.Object)
+		case *ast.IndexExpr:
+			e = unsafeBlockValue(v.Object)
+		default:
+			return false
+		}
+	}
+}
+
+// unsafeBlockValue is the expression an `unsafe { e }` block holding exactly that one
+// expression yields, or e itself. A block with statements before its value is left alone:
+// what those statements did is not a place read.
+func unsafeBlockValue(e ast.Expression) ast.Expression {
+	for {
+		u, ok := e.(*ast.UnsafeBlockExpr)
+		if !ok || u.Body == nil || len(u.Body.Statements) != 1 {
+			return e
+		}
+		s, ok := u.Body.Statements[0].(*ast.ExpressionStmt)
+		if !ok || s.Expression == nil {
+			return e
+		}
+		e = s.Expression
+	}
 }

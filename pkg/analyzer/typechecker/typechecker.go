@@ -641,6 +641,14 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		return
 	}
 
+	// A tuple assignment's places are its context, since the `let` it desugars into has no
+	// annotation to give one. See narrowToAssignedPlaces.
+	if decl.Type == nil && len(decl.Assigns) > 0 {
+		if narrowed := tc.narrowToAssignedPlaces(decl, inferredType); narrowed != nil {
+			inferredType = narrowed
+		}
+	}
+
 	// If there's a whole-expression type annotation, verify assignability.
 	if decl.Type != nil {
 		resolvedDeclType := tc.resolveType(decl.Type, decl.Location)
@@ -691,6 +699,68 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 			Type:        typ,
 		}
 	})
+}
+
+// narrowToAssignedPlaces pushes a tuple assignment's place types into its right side, and
+// answers the value's type afterwards (nil when nothing was pushed).
+//
+// `(a, b) = (4.0, 5.0)` desugars to `let (t0, t1) = (4.0, 5.0); a = t0; b = t1`, and
+// without a context the temporaries settle to the literals' defaults — so an f32 place was
+// handed an f64 and refused it, where `a = 4.0` narrows the literal. Each place is the
+// context its stand-alone assignment would give, width and generic instantiation alike, so
+// `(m, n) = (None, 1)` completes the `None` too.
+//
+// **An element is narrowed only where its own type is assignable to the place**, and
+// otherwise keeps the type it inferred. The tuple arm of propagateExpectedType re-records
+// the literal at the context's element types wholesale, so pushing a mismatched place
+// would record `"s"` as the f32 it is not and the assignment below would pass it through.
+// Left alone, that element reaches its place's assignment with its real type and is
+// refused there, by the message the stand-alone spelling gives.
+//
+// The places are inferred quietly: each is inferred again, and reported, by its own
+// assignment, and a place that cannot be typed simply gives no context.
+func (tc *TypeChecker) narrowToAssignedPlaces(decl *ast.DestructuringDeclStmt, valueType types.Type) types.Type {
+	tuple, ok := valueType.(types.TupleType)
+	if !ok || len(tuple.Elements) != len(decl.Assigns) {
+		return nil
+	}
+	errorCount := len(tc.errors)
+	expected := make([]types.Type, len(tuple.Elements))
+	for i, stmt := range decl.Assigns {
+		expected[i] = tuple.Elements[i]
+		place := tc.assignedPlaceType(stmt)
+		if place == nil || !isAssignable(tuple.Elements[i], place) {
+			continue
+		}
+		expected[i] = place
+	}
+	tc.errors = tc.errors[:errorCount]
+	context := types.TupleType{Name: tuple.Name, Elements: expected}
+	tc.propagateExpectedType(decl.Value, context)
+	tc.propagateInstantiation(decl.Value, context)
+	if t, ok := tc.typeTable.Get(decl.Value); ok && t != nil {
+		return t
+	}
+	return nil
+}
+
+// assignedPlaceType is the type of the place one of a tuple assignment's statements
+// writes, or nil. It may report errors; narrowToAssignedPlaces discards them.
+func (tc *TypeChecker) assignedPlaceType(stmt ast.Statement) types.Type {
+	switch s := stmt.(type) {
+	case *ast.VarReassignmentStmt:
+		return tc.inferExprType(&ast.IdentifierExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: s.GetLocation()}},
+			Name:     s.Name,
+		})
+	case *ast.LValueAssignmentStmt:
+		return tc.inferExprType(s.Target)
+	case *ast.DerefAssignmentStmt:
+		if p, ok := types.StripNewtype(tc.inferExprType(s.Target.Operand)).(types.RawPointerType); ok {
+			return tc.resolveTypeIfKnown(p.Pointee, s.GetLocation())
+		}
+	}
+	return nil
 }
 
 // checkIfDestructuringStmt type-checks `if let pat = v { Then } else { Else }`.

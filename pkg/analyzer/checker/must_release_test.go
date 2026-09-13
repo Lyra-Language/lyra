@@ -566,3 +566,42 @@ let peek = (h: Holder) -> void => {
 let main = () -> void => { }
 `, "fresh")
 }
+
+// A stored place read inside an `unsafe` block, or through a pointer, is the same view.
+// `let old = unsafe { slot^.texture }` reads a texture a model still holds; until 09/13 the
+// block hid the place and the check told a raylib binding to release it — a double free.
+func TestMustRelease_ReadingAPlaceThroughAPointerInsideUnsafeIsAView(t *testing.T) {
+	assertClean(t, `
+struct Holder { s: Sound }
+let peek = (slot: ^Holder) -> void => {
+  let old = unsafe { slot^.s }
+  play_sound(old)
+}
+let main = () -> void => { }
+`)
+}
+
+// The view rule looks through the block, not past what is inside it: a call answering a
+// resource from inside `unsafe` is still an acquisition.
+func TestMustRelease_ACallInsideUnsafeIsStillAnAcquisition(t *testing.T) {
+	assertLeaks(t, `
+let peek = () -> void => {
+  let fresh = unsafe { load_sound(2) }
+  play_sound(fresh)
+}
+let main = () -> void => { }
+`, "fresh")
+}
+
+// Matching on a place reached through a pointer unwraps a view too.
+func TestMustRelease_MatchingThroughAPointerIsAView(t *testing.T) {
+	assertClean(t, `
+struct Holder { res: Maybe<Sound> }
+let peek = (h: ^Holder) -> void =>
+  match unsafe { h^.res } {
+    Some(s) => play_sound(s),
+    None => { },
+  }
+let main = () -> void => { }
+`)
+}

@@ -156,6 +156,29 @@ func TestExec_DestructuringStatements(t *testing.T) {
 			7,
 		},
 		{
+			// An else that diverges down both arms of an `if`. lyra-E074 accepted it and
+			// the backend refused it until 09/13, because the `if` left its merge block
+			// open although neither branch reached it. Both arms are exercised.
+			"let else, an if whose arms both return",
+			`data Maybe = Some(i64) | None
+			 let pick = (m: Maybe, c: bool) -> i64 => {
+			   let Some(v) = m else { if c { return 20 } else { return 30 } }
+			   v
+			 }
+			 let main = () -> u8 => u8(pick(Some(1), true) + pick(None, true) + pick(None, false))`,
+			51,
+		},
+		{
+			// The same `if` as an ordinary statement: code after it is unreachable, and a
+			// sealed merge must not stop the function from lowering.
+			"an if whose arms both return, as a function's last statement",
+			`let sign = (n: i64) -> i64 => {
+			   if n < 0 { return -1 } else { return 1 }
+			 }
+			 let main = () -> u8 => u8(sign(-4) + sign(9) + 5)`,
+			5,
+		},
+		{
 			// An if-let inside a loop body, over a value built per iteration.
 			"if let inside a loop body",
 			`data Maybe = Some(i64) | None

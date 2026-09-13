@@ -13,6 +13,16 @@ type DestructuringDeclStmt struct {
 	Pattern Pattern
 	Type    types.Type
 	Value   Expression
+	// Assigns is set only on the `let` a tuple assignment desugars into: the statements
+	// that write its names out to the places, in order. The typechecker reads each one's
+	// place type as the context for the matching element of Value, so `(a, b) = (4.0,
+	// 5.0)` narrows to f32 places as `a = 4.0` does.
+	//
+	// Statements rather than their targets, because a rewrite replaces an expression slot
+	// in place and a copied target would go stale. They are also the enclosing block's own
+	// statements, so no walker descends through this field and none should — nor the
+	// golden printer, which would print each assignment twice.
+	Assigns []Statement `print:"-"`
 }
 
 func (d *DestructuringDeclStmt) statementNode() {}

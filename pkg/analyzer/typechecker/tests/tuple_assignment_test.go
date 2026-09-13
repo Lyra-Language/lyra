@@ -32,6 +32,44 @@ let f = () -> void => {
 	assertErrorsAre(t, res, "b: cannot assign string to i64")
 }
 
+// An untyped literal takes its place's width, as `a = 3.0` does. The temporaries the
+// desugaring binds used to settle to the literals' defaults first, so an f32 place was
+// handed an f64 (09/13).
+func TestTupleAssignment_LiteralsTakeThePlacesWidths(t *testing.T) {
+	source := `
+struct Pt { x: u8, y: u8 }
+let f = () -> void => {
+    var a: f32 = 1.0
+    var b: f32 = 2.0
+    (a, b) = (4.0, 5.0)
+    var p = Pt { x: 0, y: 0 }
+    (p.x, p.y) = (200, 1)
+    var n: u8 = 0
+    unsafe {
+      let pn = &mut n
+      (pn^, a) = (255, 0.5)
+    }
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// A literal that does not fit its place is still refused, at the place — the context
+// narrows the width, it does not wave the value through.
+func TestTupleAssignment_LiteralOutOfItsPlacesRange(t *testing.T) {
+	source := `
+let f = () -> void => {
+    var a: u8 = 0
+    var b: f32 = 0.0
+    (a, b) = (300, "s")
+}`
+	res := parseCollectAndCheck(t, source, false)
+	if len(res.errors) == 0 {
+		t.Fatalf("expected errors for 300 into a u8 and a string into an f32")
+	}
+	assertHasErrorContaining(t, res, "string to f32")
+}
+
 func TestTupleAssignment_ImmutablePlace(t *testing.T) {
 	source := `
 let f = () -> void => {

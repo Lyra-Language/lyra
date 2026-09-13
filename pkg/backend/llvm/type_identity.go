@@ -53,23 +53,40 @@ func (l *lowerer) enterModuleOf(loc ast.Location) func() {
 }
 
 // typeKey is the key a named type is registered and found under, as the code currently
-// being lowered sees it.
+// being lowered sees it — and, where that module has no such name, as the module that
+// requested the specialization being lowered sees it (specSiteKey).
 func (l *lowerer) typeKey(name string) string {
 	if l.res == nil || l.res.SymbolTable == nil {
 		return name
 	}
-	return l.res.SymbolTable.TypeKey(name, l.currentLoc)
+	key := l.res.SymbolTable.TypeKey(name, l.currentLoc)
+	if key == name {
+		// The resolver's pass-through: nothing the current module can see declares it.
+		if site := l.specSiteKey(name); site != "" {
+			return site
+		}
+	}
+	return key
 }
 
 // specSiteKey is the key `name` has in the module that requested the specialization
 // currently being lowered, or "" when there is none to ask about — outside a
-// specialization, or when it agrees with the key already tried.
+// specialization, or when it resolves nothing there either.
+//
+// **A type argument's names belong to the caller.** Lowering a specialization enters the
+// generic function's module, so the names in its own signature resolve; a type argument
+// is substituted in from the call site, and a declaration there may be invisible from the
+// callee's module — private, or an entry-module type no library imports. A bare name
+// argument is found by lookupNamedType's fallback; a *generic* one (`Slot<i64>` inside
+// `Maybe<Slot<i64>>`) goes through typeKey and lookupTypeDecl instead, which had no
+// fallback, so the prelude's `is_some` on a `Maybe<Slot<i64>>` could not lay out its
+// parameter (09/13). All three now ask the site second, so they cannot disagree.
 func (l *lowerer) specSiteKey(name string) string {
 	if l.res == nil || l.res.SymbolTable == nil || l.specSite.File == "" {
 		return ""
 	}
 	key := l.res.SymbolTable.TypeKey(name, l.specSite)
-	if key == l.typeKey(name) {
+	if key == name || key == l.res.SymbolTable.TypeKey(name, l.currentLoc) {
 		return ""
 	}
 	return key
@@ -112,7 +129,15 @@ func (l *lowerer) lookupTypeDecl(name string) (*ast.TypeDeclStmt, bool) {
 	if l.res == nil || l.res.SymbolTable == nil {
 		return nil, false
 	}
-	return l.res.SymbolTable.LookupTypeFrom(name, l.currentLoc)
+	if decl, ok := l.res.SymbolTable.LookupTypeFrom(name, l.currentLoc); ok {
+		return decl, true
+	}
+	// Second, as typeKey does: a type argument's declaration lives where the
+	// specialization was requested. See specSiteKey.
+	if l.specSite.File != "" {
+		return l.res.SymbolTable.LookupTypeFrom(name, l.specSite)
+	}
+	return nil, false
 }
 
 // instantiationSymbol is the name a generic instantiation is registered under —

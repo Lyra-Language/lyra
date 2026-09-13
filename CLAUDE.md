@@ -1665,12 +1665,12 @@ nothing bound. `checker.CheckLetElseDiverges` reports it, after typechecking bec
 - **The accept-set was measured, not read.** Divergence in the backend is a property of
   the *lowered* block's terminator, which the AST does not show, so thirteen shapes were
   compiled and their verdicts recorded first. Two surprises came out of it: an all-arms
-  `match` is accepted, and `if c { return } else { return }` is **refused**.
-- **The one disagreement is deliberate and one-directional.** The front end accepts that
-  `if`; the backend's `if` lowering leaves the merge block without a terminator, which is
-  its gap (todo.md). Twelve of thirteen shapes agree exactly and the thirteenth is the
-  front end being *more* permissive — there is no shape where `check` refuses what the
-  backend would have built, which is the only direction that breaks working code.
+  `match` is accepted, and `if c { return } else { return }` was **refused** (fixed below).
+- **All thirteen shapes agree.** The thirteenth, `if c { return } else { return }`, was the
+  backend's gap until 09/13: `lowerIf` left a merge neither branch reached open, so the
+  else read as falling through. It seals that merge with `unreachable` now, as
+  `matchMerge.value` does. If the two disagree again, the front end must stay the more
+  permissive side — `check` refusing what the backend would build breaks working code.
 - **Two passes depend on this rule**, which is why it belongs here and runs before them:
   `CheckUseAfterMove.letElse` and `CheckMustRelease.letElse` both discard the else block's
   effects as unreachable. Before 09/10 the backend's comment claimed the typechecker
@@ -1753,7 +1753,9 @@ entirely.
   `match o.anims { Some(a) => … }`, `var m = o.model` — names a resource something else
   already holds, so the obligation stays with the holder (`isStoredPlaceRead`). Treating
   either as an acquisition advised the program to release it twice. A call beside it is
-  still an acquisition.
+  still an acquisition. **The rule looks through a one-expression `unsafe` block**, since
+  that is where a read through a pointer is written: `let old = unsafe { slot^.texture }`
+  is the same view (09/13).
 - **Escape is the default, and there is deliberately no list of construction kinds.** A
   held binding mentioned anywhere but a borrowing call argument escapes — returned,
   wrapped in a `Some`, put in a struct, captured, aliased. A whitelist of the two

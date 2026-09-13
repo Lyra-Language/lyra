@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — five small bugs, and two of them were filed under the wrong cause
+
+The short open entries in `todo.md`, re-run first as that file asks. All five reproduced;
+**two reproduced for reasons other than the ones written down**, which is the part worth
+keeping.
+
+**A comprehension was not a postfix head.** Filed as *"a comprehension inside a string
+interpolation does not parse"*, with a guess at the scanner. The interpolation was
+innocent — `"${[x in xs | x]}"` always parsed — and `[x in xs | x].join(",")` failed in any
+position. `array_comp_expr` was reachable from `expression` only, never from `_primary_expr`,
+the head of every postfix form. It **moved** there, as `array_repeat_init` did on 08/28, so
+it keeps one derivation path: +7 states (7990 → 7997), corpus 524/524. The entry's example
+happened to be the one spelling that put both suspects on one line.
+
+**A prelude generic could not lay out a *generic* caller type.** Filed as a failure
+*"inside a generic body"*, blamed on composing `is_some<t = Slot<v>>` at the caller's
+`v`. Neither was involved: `xs[0].is_some()` on a `Maybe<Slot<i64>>` failed directly in
+`main`, and a `pub struct Slot<v>` failed the same way. A specialization is lowered in the
+generic's module, and a type argument that module cannot see is found through the site that
+requested it — but only `lookupNamedType` asked that site. `typeKey` and `lookupTypeDecl`,
+which a *parameterized* argument goes through, did not, so a bare `Slot` argument worked and
+`Slot<i64>` did not. All three ask the site second now. Probing it also found an unrelated
+gap, filed: `[Some([1]), None]` under `[]Maybe<[]i64>` keeps the inner literal a fixed array.
+
+**`if c { return } else { return }` sealed nothing.** `lowerIf` left a merge block that
+neither branch reached without a terminator, so a `let … else` whose else was that `if`
+was refused by the backend while lyra-E074 accepted it — the one shape of thirteen where
+the two disagreed. `matchMerge.value` already sealed the same situation with
+`unreachable`; `if` does now too, and the pair is tested together.
+
+**A tuple assignment's places are its right side's context.** `(a, b) = (4.0, 5.0)` on
+f32 places was refused as f64, because the desugared `let (t0, t1) = rhs` has no
+annotation and its temporaries settled to the literals' defaults. The `let` now records the
+assignments it feeds (`DestructuringDeclStmt.Assigns`, statements rather than targets so a
+rewrite cannot leave a stale copy, and `print:"-"` so goldens do not print them twice), and
+the typechecker pushes each place's type into the matching element — width and
+instantiation, so `(m, k) = (None, 1)` works as well. **An element is narrowed only where
+its own type is assignable to its place**: the tuple arm of `propagateExpectedType`
+re-records the literal at the context's types wholesale, so pushing a mismatched place
+would have recorded `"s"` as an f32 and let the assignment through. Places are inferred with
+their errors discarded, since each assignment infers and reports its own.
+
+**`@must_release`'s view rule looks through `unsafe`.** `let old = unsafe { slot^.texture }`
+reads a texture a model still holds, and W022 told the raylib binding to release it — a
+double free, the harm the view rule exists to prevent. `isStoredPlaceRead` now unwraps a
+one-expression `unsafe` block and treats any path through a deref as a view, whatever the
+pointer came from; a call inside the block is still an acquisition, which a test pins.
+
 ### 09/11/26 — a context reaches the value before it is judged
 
 Five open entries, filed separately over 09/06–09/07, were one sentence: **a context that
