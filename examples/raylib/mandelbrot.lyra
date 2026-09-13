@@ -4,7 +4,8 @@ import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps,
   begin_drawing, end_drawing, gen_image_color, unload_image,
   rgb, mouse_position, mouse_wheel, draw_line, Vector2, Color,
-  texture_from_image, update_texture, draw_texture, unload_texture, WHITE, BLACK
+  texture_from_image, update_texture, draw_texture, unload_texture, WHITE, BLACK,
+  mouse_down, mouse_delta, MOUSE_BUTTON_LEFT
 }
 
 const MAX_ITER = 100
@@ -18,7 +19,7 @@ const Y_LEN = Y_MAX - Y_MIN
 
 const ASPECT_RATIO = Y_LEN / X_LEN
 
-const WINDOW_WIDTH = 1080
+const WINDOW_WIDTH = 1440
 
 const ESCAPE = 65536.0
 // Colour is computed rather than looked up, now that the terminal takes 24-bit values:
@@ -33,8 +34,20 @@ const ESCAPE = 65536.0
 // Black is still the set, and the far field still fades to black, but by *value* now
 // rather than by landing on a dark palette entry.
 
-/// Escape iterations per full turn of the hue circle.
-const COLOR_CYCLE = 64.0
+/// How far the escape time must travel, in log space, for one full turn of the hue circle.
+///
+/// **The sweep is logarithmic**, so a turn is a fixed *ratio* rather than a fixed count:
+/// at 2.5 the hue comes round once per factor of e^2.5, about 12x. That is what keeps
+/// detail legible at depth. The escape counts in a filament spread wider and wider as the
+/// view descends — hundreds of iterations between one pixel and its neighbour — and under
+/// a fixed count per turn those neighbours land on unrelated points of the circle, which
+/// is the confetti the boundary dissolves into. A ratio compresses exactly where the
+/// spread grows, so the same structure reads as bands of colour instead of noise.
+///
+/// It also leaves the colouring **fixed under zoom**: the turn count depends on the escape
+/// time alone and not on `max_iter`, so descending does not slowly rotate every hue in the
+/// picture the way normalising against the iteration limit would.
+const COLOR_CYCLE = 2.5
 
 /// Escape iterations over which the colour fades up from black.
 ///
@@ -57,6 +70,24 @@ const ZOOM_STEP = 0.85
 /// A coarse frame is what keeps the gesture attached to the hand; the sharp one follows
 /// the moment the wheel stops.
 const PREVIEW_STEP = 4
+
+/// Sample points per side within a pixel on the full pass: 2 means 4 points averaged.
+///
+/// **What is left after the colouring is fixed is not a colour problem.** Deep in the
+/// boundary the structure is finer than the pixel grid, so a pixel that stands for one
+/// point is reporting a sample of something it cannot resolve, and its neighbour reports
+/// a different one — real detail, aliased. Averaging four points over the pixel's area
+/// answers with what is actually there.
+///
+/// **The order the two changes go in matters.** Supersampling the old linear hue sweep
+/// made the picture worse: neighbouring samples landed on unrelated points of the colour
+/// wheel, and averaging unrelated hues gives grey, so the filaments turned to mush. It is
+/// only worth doing once neighbouring samples are near-neighbours in colour too.
+///
+/// **The full pass only.** It costs 4x, which a preview cannot afford — and a preview is
+/// already averaging over a 4x4 block by standing one point in for it, so the aliasing
+/// this fixes is not what limits a coarse frame.
+const SUPERSAMPLE = 2
 
 /// The fractal is drawn into a pixel buffer and uploaded to one texture, and the frame
 /// loop only draws that texture. Recomputing the set every frame is the expensive part —
@@ -113,9 +144,28 @@ let main = () -> void => {
       let fy = fraction(f64(mouse_pos.y), f64(height))
       let anchor_x = min_x + span_x * fx
       let anchor_y = min_y + span_x * ASPECT_RATIO * fy
-      span_x = span_x * zoom_factor(wheel)
+      span_x *= zoom_factor(wheel)
       min_x = anchor_x - span_x * fx
       min_y = anchor_y - span_x * ASPECT_RATIO * fy
+      needs_preview = true
+    }
+
+    // **Pan by dragging**, and a dragged point stays under the cursor exactly, which is
+    // the invariant the zoom already keeps. What one pixel is worth is the view's span
+    // over the window's pixels — a *ratio* of the two, so no constant can stand in for
+    // the divisor: it makes the drag right at one window size and one depth and wrong
+    // everywhere else.
+    //
+    // **Each axis divides by its own extent**, which is what [render] does, and matching
+    // it is what makes the grab exact rather than nearly exact. The two very nearly
+    // agree — the window is sized `width * ASPECT_RATIO` and the view's height is its
+    // span times the same — but the window's height is a whole number of pixels and 979
+    // is not 979.27, so one figure for both axes drags vertically 0.03% off and the point
+    // under the cursor creeps.
+    let { x: delta_x, y: delta_y } = mouse_delta()
+    if mouse_down(MOUSE_BUTTON_LEFT) && (f64(delta_x).abs() + f64(delta_y).abs()) > 0.0 {
+      min_x -= f64(delta_x) * span_x / f64(width)
+      min_y -= f64(delta_y) * span_x * ASPECT_RATIO / f64(height)
       needs_preview = true
     }
 
@@ -123,12 +173,12 @@ let main = () -> void => {
     // that work: a frame the wheel moved in renders the preview *and* owes the full pass,
     // and the first frame it does not move in is where that debt comes due.
     if needs_preview {
-      render(buffer, width, height, min_x, min_y, span_x, PREVIEW_STEP)
+      render(buffer, width, height, min_x, min_y, span_x, PREVIEW_STEP, 1)
       update_texture(tex, buffer)
       needs_preview = false
       needs_full = true
     } else if needs_full {
-      render(buffer, width, height, min_x, min_y, span_x, 1)
+      render(buffer, width, height, min_x, min_y, span_x, 1, SUPERSAMPLE)
       update_texture(tex, buffer)
       needs_full = false
     }
@@ -178,25 +228,51 @@ let zoom_factor = pure (wheel: f64) -> f64 => {
 /// Compute the set into `buffer`, one `Color` per pixel in row-major order — which is the
 /// order [update_texture] reads them in.
 ///
-/// `step` is the block size: one point is computed per `step`-by-`step` square and its
-/// colour fills the square, so a step of 1 is the full picture and [PREVIEW_STEP] is the
-/// coarse one. **The buffer is filled either way** — a preview writes the same pixel count
-/// as a full render, it just computes a sixteenth as many of them — which is what keeps
-/// one texture, one length and one upload across both.
+/// The two knobs are how much ground one colour covers and how many points decide it.
+///
+/// `step` is the block size: one colour per `step`-by-`step` square of pixels, so a step
+/// of 1 is the full picture and [PREVIEW_STEP] is the coarse one. `samples` is how many
+/// points that colour is the average of, `samples` per side — 1 for a preview and
+/// [SUPERSAMPLE] for the full pass. **The buffer is filled either way** — a preview writes
+/// the same pixel count as a full render, it just computes a sixteenth as many points —
+/// which is what keeps one texture, one length and one upload across both.
+///
+/// The sample points are spread evenly across the block and each sits at the **centre** of
+/// its share of it, which is why the offset carries a half. A preview therefore stands the
+/// block's middle in for the block rather than its top-left corner, so a coarse frame sits
+/// where the sharp one will rather than two pixels up and to the left of it.
 let render = (buffer: mut []Color, width: i64, height: i64,
-              min_x: f64, min_y: f64, span_x: f64, step: i64) -> void => {
+              min_x: f64, min_y: f64, span_x: f64, step: i64, samples: i64) -> void => {
   let span_y = span_x * ASPECT_RATIO
   // The iteration limit is a property of the view, not of a point, so it is computed once
   // per render rather than once per pixel.
   let max_iter = iter_limit(span_x)
+  let per_side = f64(samples)
+  let taken = samples * samples
   for block_y in 0..<height:step {
     for block_x in 0..<width:step {
-      // The block's top-left corner is the point that stands for all of it.
-      let c = Complex {
-        re: min_x + span_x * f64(block_x) / f64(width),
-        im: min_y + span_y * f64(block_y) / f64(height),
+      var sum_r = 0
+      var sum_g = 0
+      var sum_b = 0
+      for sample_y in 0..<samples {
+        for sample_x in 0..<samples {
+          let at_x = f64(block_x) + f64(step) * (f64(sample_x) + 0.5) / per_side
+          let at_y = f64(block_y) + f64(step) * (f64(sample_y) + 0.5) / per_side
+          let c = Complex {
+            re: min_x + span_x * at_x / f64(width),
+            im: min_y + span_y * at_y / f64(height),
+          }
+          let sample = shade(c, max_iter)
+          sum_r += i64(sample.r)
+          sum_g += i64(sample.g)
+          sum_b += i64(sample.b)
+        }
       }
-      let color = shade(c, max_iter)
+      // Averaged channel by channel as stored, which is not the same as averaging light —
+      // the channels are what a display will gamma-decode. For a palette invented to make
+      // structure legible there is no true colour to be wrong about, and the alternative
+      // costs a pow per sample.
+      let color = rgb(u8(sum_r / taken), u8(sum_g / taken), u8(sum_b / taken))
       // A trailing block is clipped rather than skipped, since the window's size is not
       // obliged to divide by the step — and a skipped one would leave the right edge and
       // the bottom row holding whatever the previous view left there.
@@ -254,18 +330,23 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> Color => {
   } else {
     // Smooth escape time, `n + 1 - log2(log|z|)`: the integer iteration count alone
     // draws visible contours, since every point escaping on the same step gets the same
-    // colour. The smooth value is used **linearly** here — the logarithmic mapping this
-    // replaced existed to spend a single fixed ramp sensibly, and a cycle has no ramp to
-    // exhaust.
+    // colour.
     let smooth = f64(iter) + 1.0 - mag2.sqrt().log().log2()
     // The correction is worth about -1.5, so a point escaping immediately lands below
-    // zero — and a negative feeds a negative into the remainder below, which would index
-    // backwards off the palette.
+    // zero — and a negative would run the hue backwards round the circle.
     let s = if smooth < 0.0 { 0.0 } else { smooth }
 
     // The fractional part of the turn count is the position on the hue circle, so the
     // colour wraps with no seam however many times it goes round.
-    let turns = s / COLOR_CYCLE
+    //
+    // **The turn count is logarithmic** — see [COLOR_CYCLE]. This is a logarithm the
+    // file used to have and gave up: back when the palette was a single ramp, the log
+    // was there to spend a fixed number of colours sensibly, and switching to a cycle
+    // retired that reason. It comes back for a different one. A cycle has no colours to
+    // run out of, but it can still turn faster than the pixel grid can follow, and at
+    // depth a linear sweep does. The `1.0 +` is what keeps `log` away from zero, where a
+    // point escaping on the first iteration would otherwise send the hue to -inf.
+    let turns = (1.0 + s).log() / COLOR_CYCLE
     let hue = 6.0 * (turns - f64(turns.floor()))
     let value = if s >= FADE_IN { 1.0 } else { s / FADE_IN }
     hue_rgb(hue, value)
