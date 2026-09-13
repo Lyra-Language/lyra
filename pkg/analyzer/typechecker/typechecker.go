@@ -1505,6 +1505,8 @@ func (tc *TypeChecker) checkLValueWritable(target ast.Expression) {
 			if !paramAllowsInteriorMutation(mod) {
 				tc.addParamImmutableError(root.GetLocation(), root.Name, mod)
 			}
+		} else if tc.patternBound[root.Name] {
+			tc.addPatternBindingImmutableError(root.GetLocation(), root.Name)
 		} else if sym, ok := tc.scope.Lookup(root.Name); ok {
 			if decl, ok := sym.(*ast.VarDeclStmt); ok && !decl.CanMutateInterior() {
 				tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
@@ -1707,6 +1709,17 @@ func (tc *TypeChecker) addInteriorImmutableError(loc ast.Location, name string, 
 	}
 	tc.addError(loc, SeverityError,
 		"%s: `let` binding is deeply immutable; its interior cannot be mutated (use `let mut` to allow interior mutation, or `var` to also allow reassignment)", name)
+}
+
+// addPatternBindingImmutableError reports mutating the interior of a match-arm or `if let`
+// binding. Such a name **borrows from the value being matched**, which is why reassigning
+// it is already lyra-E025 — and until 09/13 its interior was the gap beside that rule:
+// `W(h) => { h.s = "x" }` and `&mut s` were both accepted, a write into storage the
+// scrutinee's owner still counts. The pointer form mattered most, since releasing the value
+// a `p^ = v` overwrites is sound only because every `&mut` root owns what it holds.
+func (tc *TypeChecker) addPatternBindingImmutableError(loc ast.Location, name string) {
+	tc.addError(loc, SeverityError,
+		"%s: a pattern binding borrows from the value being matched; its interior cannot be mutated (copy it into a binding of its own to mutate it: `let mut copy = %s`)", name, name)
 }
 
 // paramAllowsInteriorMutation reports whether a parameter with the given
@@ -5090,6 +5103,9 @@ func (tc *TypeChecker) rootBindingIsMutable(root *ast.IdentifierExpr) bool {
 	// first (mirroring IdentifierExpr resolution).
 	if mod, ok := tc.paramMods[root.Name]; ok {
 		return paramAllowsInteriorMutation(mod)
+	}
+	if tc.patternBound[root.Name] {
+		return false
 	}
 	if sym, ok := tc.scope.Lookup(root.Name); ok {
 		if decl, ok := sym.(*ast.VarDeclStmt); ok {

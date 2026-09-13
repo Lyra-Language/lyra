@@ -93,6 +93,15 @@ func (l *lowerer) lowerDerefAssignment(block *ir.Block, stmt *ast.DerefAssignmen
 	// its default width, and storing an i64 through a pointer to i8 is a module clang
 	// refuses.
 	pointee, ok := l.recordedType(&stmt.Target)
+	if !ok {
+		// The typechecker checks a pointer write without inferring the deref node itself
+		// (checkDerefWrite), so its type is usually the operand's pointee.
+		if pt, isPtr := l.recordedType(stmt.Target.Operand); isPtr {
+			if rp, isRaw := types.StripNewtype(pt).(types.RawPointerType); isRaw && rp.Pointee != nil {
+				pointee, ok = l.resolveForLayout(rp.Pointee), true
+			}
+		}
+	}
 	if ok {
 		llType, err := l.lowerType(pointee)
 		if err != nil {
@@ -100,6 +109,21 @@ func (l *lowerer) lowerDerefAssignment(block *ir.Block, stmt *ast.DerefAssignmen
 		}
 		if v, err = l.coerceAggregateElem(block, v, llType, stmt.Value); err != nil {
 			return nil, err
+		}
+		// **The value the slot held is released**, as `xs[i] = v` releases through an
+		// owning root. It leaked until 09/13, on the reasoning that a raw pointer carries
+		// no provenance and so might address a slot that does not own its value. The
+		// front end is what supplies the provenance: `&mut` needs a root whose interior
+		// may be mutated — a `var` or `let mut`, a `mut` or `own` parameter — each of which
+		// holds a +1 on what it holds, and `data_mut()` addresses a box's own elements.
+		// The one root that did not own, a match-arm or `if let` binding borrowing from
+		// its scrutinee, is refused with the rest of its interior mutations. Loaded after
+		// the new value is computed, so `p^ = p^ ++ "!"` reads the old value first.
+		if l.needsDrop(pointee) {
+			old := block.NewLoad(llType, ptr)
+			if err := l.deepRelease(block, old, pointee); err != nil {
+				return nil, err
+			}
 		}
 	}
 	block.NewStore(v, ptr)

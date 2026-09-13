@@ -9,7 +9,6 @@ import (
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -57,7 +56,7 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	// — which reads the old element — is safe.
 	if l.releaseOldTarget(loc, stmt.Target) {
 		old := block.NewLoad(targetLL, loc.ptr)
-		if err := l.lowerManagedRelease(block, old, loc.ty); err != nil {
+		if err := l.deepRelease(block, old, loc.ty); err != nil {
 			return nil, err
 		}
 	}
@@ -110,8 +109,15 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 // owned (the third and nastiest shape of the original use-after-free, since the
 // aliasing copy was the parameter passing itself and so invisible in the source).
 // That refusal leaked instead, which is the leak this closes.
+//
+// **Any slot that owns a reference qualifies, not only a box.** The test was
+// `IsManaged` until 09/13, which answers for a `string` or a `[]T` and not for an inline
+// aggregate *holding* one — so `slots[i] = Some(Entry { key, value })` in `std.collections`
+// released nothing and every overwritten or removed entry leaked its key and value. The
+// ownership argument above never depended on the slot being a box, only on the slot owning
+// what it holds; `deepRelease` walks an aggregate's managed fields.
 func (l *lowerer) releaseOldTarget(loc lvalueLoc, target ast.Expression) bool {
-	if !ownership.IsManaged(loc.ty) {
+	if !l.needsDrop(loc.ty) {
 		return false
 	}
 	return loc.viaBox || l.lvalueRootIsOwning(target)
@@ -137,6 +143,10 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 			e = t.Object
 		case *ast.IndexExpr:
 			e = t.Object
+		case *ast.DerefExpr:
+			// A path through a pointer (`p^.s = v`) ends at storage `&mut` or `data_mut()`
+			// addressed, and both require an owning root — see lowerDerefAssignment.
+			return true
 		default:
 			return false // unrecognized root: assume borrowed, i.e. leak rather than dangle
 		}

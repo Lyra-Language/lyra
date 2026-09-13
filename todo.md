@@ -323,12 +323,10 @@ write today:
   with them. `TestExec_TemporariesDoNotLeak` runs under LeakSanitizer on Linux. See
   COMPLETED.md.
 
-- **[OPEN 09/13] Leaks still reported with leak detection forced on.** Every ASan helper
-  sets `detect_leaks=0`; switching both to `1` in `./asan.sh` fails five tests, each its own
-  family: `TestExec_SeqValuesManagedASan` and `TestExec_SeqManagedElementsASan` (sequence
-  coroutines), `TestExec_DerefAssignmentRetainsWhatItStores` (the `p^ = v` entry above),
-  `TestExec_HashMapStringChurnASan`, and `TestExec_TraitMethods/a method returning a managed
-  value`. When these are gone the helpers can turn leak detection on for good.
+- **[DONE 09/13] No test leaks with leak detection on, and it is on.** The last five
+  families are fixed — a trait method's result, a method reached only through a bound, `p^ =
+  v`, an overwritten aggregate slot, and sequences — and the ASan helpers now report leaks on
+  Linux (`asanOptions`). See COMPLETED.md.
 
 - **[OPEN 09/13] A generic lambda declared inside a function does not lower.** `let main =
   () => { let idf<t> = (a: t) -> t => a; println(idf(5)) }` checks clean and fails the
@@ -658,7 +656,13 @@ write today:
   parameter at all, which is why it could not; threading one in is the fix, and it also
   removes the "needs symbol-table backing" caveat blocking method-level purity inference.
 
-- **`p^ = v` does not release the value the pointee slot held.** The write mints a retain for
+- **[DONE 09/13] `p^ = v` releases the value the pointee slot held.** The provenance the
+  entry below says a pointer lacks is supplied by the front end: every root `&mut` accepts
+  owns its value, once a pattern binding's interior was refused like its reassignment. What
+  follows is the reasoning as it stood before, kept because the aliasing argument is still
+  the one `releaseOldTarget` rests on. See COMPLETED.md.
+
+  The write mints a retain for
   the new value (fixed 08/24 — without it the box had one reference and two owners, an
   ASan-confirmed use-after-free), but the old value is dropped on the floor and leaks.
 

@@ -385,8 +385,9 @@ func TestEmit_OwnershipIR(t *testing.T) {
 var asanRunSlots = make(chan struct{}, 4)
 
 // buildAndRunASan emits IR for src, compiles it with -fsanitize=address, runs the
-// binary, and returns its exit code. detect_leaks is off (macOS has no LSan, and
-// deliberate leaks remain), so this checks only memory-safety violations.
+// binary, and returns its exit code. Leaks are reported where LeakSanitizer exists
+// (asanOptions), so on Linux — CI and ./asan.sh — a leak fails the test as a
+// use-after-free does.
 func buildAndRunASan(t *testing.T, clang, src string) int {
 	t.Helper()
 	ir, err := emitSource(t, src)
@@ -394,7 +395,7 @@ func buildAndRunASan(t *testing.T, clang, src string) int {
 		t.Fatalf("emit: %v", err)
 	}
 	cmd := exec.Command(compileCached(t, clang, instrumentForASan(ir), "-fsanitize=address"))
-	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0")
+	cmd.Env = append(os.Environ(), asanOptions())
 	asanRunSlots <- struct{}{}
 	defer func() { <-asanRunSlots }()
 	if err := cmd.Run(); err != nil {

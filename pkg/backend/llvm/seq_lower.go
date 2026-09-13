@@ -272,7 +272,7 @@ func (l *lowerer) seqCallee(call *ast.FunctionCallExpr) (lambda *ast.LambdaExpr,
 func (l *lowerer) inlineSeqCall(block *ir.Block, call *ast.FunctionCallExpr, lambda *ast.LambdaExpr, subst map[string]types.Type, key string, site ast.Location) (value.Value, *ir.Block, error) {
 	// A producer in value position is a sequence *value*: a coroutine (stage 2).
 	if lambda.IsGenerator || (lambda.ReturnType.Type != nil && isSeqType(lambda.ReturnType.Type)) {
-		return l.lowerSeqValue(block, call)
+		return l.lowerSeqValueNoHooks(block, call)
 	}
 	return l.inlineCallee(block, call, lambda, subst, key, site, nil)
 }
@@ -316,6 +316,15 @@ func (l *lowerer) inlineCallee(block *ir.Block, call *ast.FunctionCallExpr, lamb
 		return nil, nil, err
 	}
 	defer restore()
+	// **The arguments' temporaries belong to the caller's statement, not to the consumer.**
+	// The consumer's base was taken when it was set up, before these arguments were lowered,
+	// so a `break` in it — `take`'s, after twelve elements of `merge(multiples(3),
+	// multiples(5))` — released the argument boxes on its edge and then fell into the
+	// statement's own flush, which released them again (09/13, a double free glibc caught
+	// on Linux, from the day a sequence argument's box began to be released at all).
+	if y != nil && len(l.pendingReleases) > y.tempBase {
+		y.tempBase = len(l.pendingReleases)
+	}
 
 	// The callee's return type, under its substitution: what a `return v` stores and
 	// what the exit block loads. A gen body has no result, and neither does a void one.

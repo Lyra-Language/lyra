@@ -1,33 +1,36 @@
 package llvm
 
 import (
-	"os"
-	"os/exec"
 	"runtime"
 	"testing"
 )
 
-// buildAndRunLSanWithPrelude is buildAndRunASanWithPrelude with **leak detection on**, for
-// the tests that exist to say a shape does not leak. Every other ASan helper turns it off,
-// because the ownership model still leaks in known places and a suite failing on those
-// would bury the faults ASan is there for — so without this nothing checks a leak fix stays
-// fixed. Linux only: LeakSanitizer is not available with Apple's clang, and CI runs Linux.
+// asanOptions is the environment every ASan run in this package uses, and it turns
+// **leak detection on wherever LeakSanitizer exists**: Linux, which is CI and ./asan.sh.
+// Apple's clang has no LeakSanitizer and its ASan runtime refuses `detect_leaks=1`, so on
+// macOS a run still checks memory safety and nothing more.
 //
+// Leaks were off everywhere until 09/13, because the ownership model still leaked in
+// known places and a suite failing on those would have buried the faults ASan is there
+// for. Turning it on had to wait for the last of those, and waiting cost something: a
+// test skipping the helper had been failing CI on leaks for two days while every
+// developer-facing run passed.
+func asanOptions() string {
+	if runtime.GOOS == "linux" {
+		return "ASAN_OPTIONS=detect_leaks=1"
+	}
+	return "ASAN_OPTIONS=detect_leaks=0"
+}
+
+// buildAndRunLSanWithPrelude is buildAndRunASanWithPrelude for a test that exists to say a
+// shape does not leak, so it skips rather than passing vacuously where leaks cannot be seen.
 // A leak exits 1, so a program under test answers something else.
 func buildAndRunLSanWithPrelude(t *testing.T, src string) int {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("LeakSanitizer runs on Linux only; ./asan.sh runs this test there")
 	}
-	clang := lookClang(t)
-	if !asanAvailable(t, clang) {
-		t.Skip("ASan runtime not available; skipping")
-	}
-	cmd := exec.Command(compileCached(t, clang, instrumentForASan(emitWithPrelude(t, src)), "-fsanitize=address"))
-	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=1")
-	asanRunSlots <- struct{}{}
-	defer func() { <-asanRunSlots }()
-	return exitCode(t, cmd.Run())
+	return buildAndRunASanWithPrelude(t, src)
 }
 
 // Temporaries that were never released, found by LeakSanitizer once CI's Linux runner ran a
@@ -75,6 +78,82 @@ let main = () -> u8 => match parse_json("{\"a\": \"xyz\"}") {
 }`, 3},
 		{"a literal default inside a callee", `let total = (m: Maybe<[]i64>) -> i64 => m.unwrap_or([]).len()
 let main = () -> u8 => u8(total(Some([9, 9]))) + 1`, 3},
+		// The five that were still failing with leak detection forced on, and what fixing
+		// them turned up (09/13).
+		{"a trait method's owned result", `struct Tag { n: i64 }
+trait Speak { say: (Self) -> string }
+impl Speak for Tag { say = (self) => "hi" ++ "!" }
+let main = () -> u8 => { let t = Tag { n: 1 }; if t.say() == "hi!" { 3 } else { 1 } }`, 3},
+		{"a bound call to a method returning a field", `struct H { s: string }
+trait Named { name: (Self) -> string }
+impl Named for H { name = (self) => self.s }
+let shout<t> where t: Named = (v: t) -> string => v.name() ++ "?"
+let main = () -> u8 => { let h = H { s: "a" ++ "b" }; u8(shout(h).len()) }`, 3},
+		{"a write through a pointer releases what it overwrote", `struct H { s: string }
+let main = () -> u8 => {
+  var t: string = "x" ++ "y"
+  var h = H { s: "a" ++ "b" }
+  unsafe {
+    let p = &mut t
+    p^ = p^ ++ "!"
+    let q = &mut h
+    q^.s = "c" ++ "de"
+    q^ = H { s: "f" ++ "g" }
+  }
+  u8(t.len() + h.s.len())
+}`, 5},
+		{"a swap through pointers", `let main = () -> u8 => {
+  var a = "a" ++ "1"
+  var b = "b" ++ "22"
+  unsafe {
+    let pa = &mut a
+    let pb = &mut b
+    (pa^, pb^) = (pb^, pa^)
+  }
+  u8(a.len() * 10 + b.len())
+}`, 32},
+		{"an overwritten aggregate element and field", `struct In { s: string }
+struct Out { inner: In, n: i64 }
+let main = () -> u8 => {
+  var o = Out { inner: In { s: "a" ++ "b" }, n: 1 }
+  let keep = o
+  o.inner = In { s: "c" ++ "d" ++ "e" }
+  var xs: [](string, i64) = [("a" ++ "b", 1)]
+  xs[0] = ("e" ++ "fg", 3)
+  u8(o.inner.s.len() * 10 + keep.inner.s.len() + xs[0].0.len())
+}`, 35},
+		{"hashmap churn", `module main
+import std.collections.{ HashMap, hashmap_new, insert, replace, remove, len }
+let main = () -> u8 => {
+  var m: HashMap<string, string> = hashmap_new()
+  for i in 0..<40 { m.insert("k" ++ "${i %% 10}", "v" ++ "${i}") }
+  let _ = m.remove("k" ++ "3")
+  let _ = m.replace("k" ++ "4", "again")
+  u8(m.len())
+}`, 9},
+		{"a yielded temporary, held and inlined", `module main
+let names = pure gen () -> Seq<string> => { for i in 0..<3 { yield "name-" ++ "${i}" } }
+let main = () -> u8 => {
+  var t = 0
+  for s in names() { t += s.len() }
+  let held = names().map((s) => s ++ "!")
+  for s in held { t += s.len() }
+  u8(t)
+}`, 39},
+		{"a sequence argument, stepped and broken out of", `module main
+let multiples = pure gen (k: i64) -> Seq<i64> => { var n = k; for { yield n; n += k } }
+let pair = pure gen (a: Seq<i64>, b: Seq<i64>) -> Seq<i64> => {
+  var xs = a
+  var ys = b
+  for { match (xs.next(), ys.next()) { (Some(x), Some(y)) => { yield x + y }, _ => { break } } }
+}
+let main = () -> u8 => {
+  var total = 0
+  for v in pair(multiples(1), multiples(2)).take(3) { total += v }
+  var st = multiples(5).filter((n) => n > 5)
+  let first = st.next().unwrap_or(0)
+  u8(total + first)
+}`, 28},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

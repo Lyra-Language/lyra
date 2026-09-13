@@ -159,6 +159,13 @@ func (l *lowerer) defineSeqCoroutine(w coroWork) error {
 	if !ok {
 		return fmt.Errorf("llvm: %s is a gen function whose return is not a Seq", w.name)
 	}
+	// The declaration's element type, so a generic producer's is still its variable —
+	// `u` in `map<t,u>`. lowerType substitutes for itself and needsDrop does not, so the
+	// yield's retain for the consumer was silently skipped at `u = string`; the call
+	// result's own +1 happened to stand in for it until that result was released like any
+	// other temporary, and then every element a held `map` produced was freed under its
+	// consumer (09/13).
+	elemLyra = l.applyTypeSubst(elemLyra)
 	elemLL, err := l.lowerType(elemLyra)
 	if err != nil {
 		return err
@@ -285,7 +292,39 @@ func (l *lowerer) lowerCoroYield(block *ir.Block, v value.Value) (*ir.Block, err
 
 // lowerSeqValue lowers a `Seq`-typed expression to its box: a call to a `gen`
 // creates the coroutine; anything else already is a value.
+//
+// **A coroutine created here gets the ownership pass's retain and release**, as any value
+// lowerExpr produces does. A `Seq` argument, a pulled loop source and an inlined sequence
+// argument all reach this directly rather than through lowerExpr, so a fresh box in a
+// borrowing position — `ident(names())`, `lits().map(f)` — was never released: the callee
+// retained it on entry and dropped that reference on exit, and the caller's own stood
+// forever, keeping the inner coroutine and its frame alive (09/13). inlineSeqCall is the
+// one caller that arrives *through* lowerExpr, which applies them itself, so it takes
+// lowerSeqValueNoHooks.
 func (l *lowerer) lowerSeqValue(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
+	v, end, err := l.lowerSeqValueNoHooks(block, expr)
+	if err != nil || v == nil {
+		return v, end, err
+	}
+	if call, ok := expr.(*ast.FunctionCallExpr); ok {
+		if lambda, _, _, _, isGen := l.seqCallee(call); isGen && lambda.IsGenerator {
+			ty, _ := l.recordedType(expr)
+			if l.ownership().ShouldRetain(expr) {
+				if err := l.deepRetain(end, v, ty); err != nil {
+					return nil, nil, err
+				}
+			}
+			if l.ownership().ShouldReleaseTemp(expr) {
+				l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end, ty})
+			}
+		}
+	}
+	return v, end, nil
+}
+
+// lowerSeqValueNoHooks is lowerSeqValue without the retain and release — for a caller that
+// is itself inside lowerExpr, which applies them to the same node.
+func (l *lowerer) lowerSeqValueNoHooks(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	if call, ok := expr.(*ast.FunctionCallExpr); ok {
 		if lambda, subst, key, site, ok := l.seqCallee(call); ok && lambda.IsGenerator {
 			return l.emitSeqCoroutineCall(block, call, lambda, subst, key, site)

@@ -392,3 +392,34 @@ let main = () -> void => {
 }`, false)
 	assertHasErrorContaining(t, res, "cannot assign ^i64 to ^mut i64")
 }
+
+// A match-arm or `if let` binding borrows from the value being matched, so its interior is
+// as immutable as a reassignment of it (lyra-E025) already said. Both spellings were
+// accepted until 09/13: `h.s = "x"` wrote into storage the scrutinee's owner still counts,
+// and `&mut s` handed out a pointer to it — which mattered once a write through a pointer
+// released the value it overwrote, since that release is sound only for an owning root.
+func TestPatternBindingInteriorIsImmutable(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Maybe<t> = None | Some(t)
+struct H { s: string }
+data B = W(H)
+let f = (b: B) -> void => match b { W(h) => { h.s = "x" } }
+let g = (m: Maybe<string>) -> void => match m {
+  Some(s) => unsafe { let p = &mut s; p^ = "y" },
+  None => { },
+}
+`, false)
+	assertErrorsAre(t, res,
+		"h: a pattern binding borrows from the value being matched; its interior cannot be mutated (copy it into a binding of its own to mutate it: `let mut copy = h`)",
+		"s: a pattern binding borrows from the value being matched; its interior cannot be mutated (copy it into a binding of its own to mutate it: `let mut copy = s`)")
+}
+
+// The advice compiles: a copy of its own is an ordinary mutable binding.
+func TestPatternBindingCopyIsMutable(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct H { s: string }
+data B = W(H)
+let f = (b: B) -> string => match b { W(h) => { let mut copy = h; copy.s = "x"; copy.s } }
+`, false)
+	assertNoErrors(t, res)
+}

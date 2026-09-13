@@ -456,6 +456,14 @@ func (t *MethodTable) DispatchedImpls() []DispatchedImpl {
 // ten calls at `t = i64` are one function. Sorted by key so a caller iterating this
 // produces the same output every run, which matters for both the emitted module and the
 // tables built from it.
+//
+// **Both kinds of resolution are reached**: a call resolved to one impl, and every
+// candidate a `where`-bound call publishes for its specializations. Until 09/13 only the
+// first was walked, so a method reached *only* through a bound got no ownership table and
+// lowered with no retains or releases — `impl Named for H { name = (self) => self.s }`
+// called as `v.name()` inside `where t: Named` returned its field un-retained, which was
+// invisible while the caller also took the result as borrowed, and a use-after-free the
+// moment the caller was taught otherwise.
 func (t *MethodTable) Specializations() []Resolution {
 	if t == nil {
 		return nil
@@ -464,6 +472,15 @@ func (t *MethodTable) Specializations() []Resolution {
 	for _, r := range t.resolutions {
 		if key := r.SpecKey(); key != "" {
 			unique[key] = r
+		}
+	}
+	for _, byType := range t.boundCandidates {
+		for _, r := range byType {
+			if key := r.SpecKey(); key != "" {
+				if _, seen := unique[key]; !seen {
+					unique[key] = r
+				}
+			}
 		}
 	}
 	keys := make([]string, 0, len(unique))

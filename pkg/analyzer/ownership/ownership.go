@@ -1178,6 +1178,18 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.table.Retain[e] = true
 		}
 
+	case *ast.DerefExpr:
+		// `p^` reads out of the storage the pointer addresses — a field read one spelling
+		// further out, and the same rule: a managed pointee read into an owning position is
+		// duplicated, since that storage still owns it. It sat with the borrow-only forms
+		// until 09/13 on the premise that its result is a number, a bool or a pointer, which
+		// `^string` is not; `(pa^, pb^) = (pb^, pa^)` then built its tuple from unretained
+		// copies, and releasing what a write through a pointer overwrote freed one of them.
+		a.expr(e.Operand, false)
+		if needOwned && a.ownsManaged(e) {
+			a.table.Retain[e] = true
+		}
+
 	case *ast.IndexExpr:
 		// Indexing borrows out of the container (array / dynamic array), exactly like
 		// a field read out of an aggregate. A managed *element* read into an owning
@@ -1341,7 +1353,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 
 	case *ast.BooleanBinaryOpExpr, *ast.MathBinaryOpExpr, *ast.MathAssignOpExpr,
 		*ast.BitwiseNotExpr, *ast.NegationExpr, *ast.NotBooleanExpr,
-		*ast.AddressOfExpr, *ast.DerefExpr, *ast.RangeExpr, *ast.GuardExpr:
+		*ast.AddressOfExpr, *ast.RangeExpr, *ast.GuardExpr:
 		// **Borrow-only forms**: the operation owns nothing itself — its result is a
 		// number, a bool or a raw pointer — so every child sits in a borrowing
 		// position. Recursing is still required, because a managed value can sit
@@ -1357,7 +1369,8 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		//
 		// The last five kinds were still reaching the default until this case gathered
 		// them: `!consume(p)`, `&mut p.name`, `q^`, `a..<consume(n)` and a match arm's
-		// guard each recorded nothing at all. `&x` borrowing is not merely the
+		// guard each recorded nothing at all. (`q^` has since left for an arm of its own:
+		// its result is a managed value whenever its pointee is.) `&x` borrowing is not merely the
 		// conservative choice but the correct one — a raw pointer is not an owner
 		// (ownership never crosses the FFI boundary), so taking one must not retain.
 		//
@@ -1551,6 +1564,16 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.block(e.Body, false)
 		a.conditional = savedCond
 
+	case *ast.YieldExpr:
+		// `yield e` **borrows** e: an inlined producer hands it to a consumer that binds
+		// it unframed, and a coroutine retains it into the promise for whoever resumes it
+		// (lowerCoroYield) — so either way the yield statement's temporaries are its own
+		// to release, after the consumer has run. This arm was due "in the same change
+		// that lowers it" and sequences shipped without it, so every value a producer
+		// built to yield leaked — `yield "name-" ++ "${i}"` two strings per element, and
+		// a producer's own locals when a yield read them (09/13).
+		a.expr(e.Value, false)
+
 	// **What legitimately reaches here, and why nothing else may.** Recording nothing
 	// is sound only for a form with no managed value *anywhere beneath it* — a stronger
 	// condition than "this form's own value isn't managed", which is what the arithmetic
@@ -1565,9 +1588,11 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 	//     applied spelling collects to a named TupleLiteralExpr and the backend rejects
 	//     a payload-carrying one outright. So it has no child to walk, and it is a fresh
 	//     value already at +1.
-	//   - AwaitExpr, YieldExpr, YieldFromExpr, ComposeExpr — no backend case exists, so
-	//     a program containing one fails to lower before ownership matters. Each needs
-	//     an arm here in the same change that lowers it, not later.
+	//   - AwaitExpr, ComposeExpr — no backend case exists, so a program containing one
+	//     fails to lower before ownership matters. Each needs an arm here in the same
+	//     change that lowers it, not later — YieldExpr is what happens otherwise.
+	//   - YieldFromExpr — its operand is a sequence consumed in place, never a value
+	//     this statement holds, so there is nothing of its own to release.
 	//
 	// **UnsafeBlockExpr used to be here**, and getting it out took a rule rather than a
 	// case. `unsafe { … }` is its body, so the arm is obvious — and adding it alone broke
@@ -1682,6 +1707,14 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	if lam == nil && calleeType != nil {
 		resultOwned = isOwnedReturn(calleeType.ReturnType.TypeModifier)
 	}
+	// A **trait method** has neither: its callee is an impl clause the typechecker resolved,
+	// and its conventions are the trait's declared signature — the same one the argument
+	// loop above already reads modes from. Reading the parameters and not the return is
+	// how `t.show()` leaked its string wherever it went, bound, compared or printed (09/13):
+	// a fresh +1 taken for a borrow is never released.
+	if lam == nil && calleeType == nil && methodSig != nil {
+		resultOwned = isOwnedReturn(methodSig.ReturnType.TypeModifier)
+	}
 	// A compiler-provided builtin has neither a LambdaExpr nor a LambdaType, so it
 	// lands on the "unresolved callee" default above — *borrowed*. That default is
 	// the leak-safe one for arguments, but for a **result** it is the unsafe
@@ -1728,11 +1761,28 @@ func rootedAtBinding(e ast.Expression) bool {
 // method argument fell to the conservative transfer below — leak-safe, and correct while
 // trait signatures could not express a mode, but wrong the moment one says `own`.
 func (a *analyzer) methodSignature(e *ast.FunctionCallExpr) *types.LambdaType {
-	res, ok := a.mt.GetResolution(e)
-	if !ok {
+	if res, ok := a.mt.GetResolution(e); ok {
+		return res.Signature
+	}
+	// A call dispatched through a `where` bound has no resolution — the receiver is a type
+	// variable, so no one impl is picked here — but its conventions are still the declaring
+	// trait's signature, and every candidate impl is held to them. Without this a bound
+	// call's owned result was taken for a borrow and leaked in every specialization (09/13).
+	// The trait is resolved from the call's location, never looked up by bare name (rule 4).
+	ref, ok := a.mt.GetBound(e)
+	if !ok || a.symTable == nil {
 		return nil
 	}
-	return res.Signature
+	trait, found := a.symTable.LookupTraitFrom(ref.Trait, e.GetLocation())
+	if !found || trait == nil {
+		return nil
+	}
+	for i := range trait.Methods {
+		if trait.Methods[i].Name.Value == ref.Method {
+			return trait.Methods[i].Signature
+		}
+	}
+	return nil
 }
 
 // calleeLambdaType returns the callee's static function type when the call goes

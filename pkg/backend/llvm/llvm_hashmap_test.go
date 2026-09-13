@@ -72,7 +72,7 @@ func buildAndRunASanWithPrelude(t *testing.T, src string) int {
 	t.Helper()
 	ir := instrumentForASan(emitWithPrelude(t, src))
 	cmd := exec.Command(compileCached(t, lookClang(t), ir, "-fsanitize=address"))
-	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0")
+	cmd.Env = append(os.Environ(), asanOptions())
 	asanRunSlots <- struct{}{}
 	defer func() { <-asanRunSlots }()
 	return exitCode(t, cmd.Run())

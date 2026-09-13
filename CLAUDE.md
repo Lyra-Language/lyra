@@ -493,6 +493,13 @@ real failure, and none is local to one package.
     the typechecker's spelling. Use `candidateKey` for the lookup and `methodParams` for
     the modes.
 
+    **The third half is a method reached *only* through a bound**, and it was a leak that
+    became a use-after-free: `MethodTable.Specializations()` walked resolutions and not
+    bound candidates, so such a method got no ownership table and lowered with no retains,
+    and the ownership pass read neither a bound call's result mode nor its parameters'. Both
+    now ask — `Specializations()` includes the candidates, and `methodSignature` falls back
+    from the resolution to the declaring trait's signature (09/13).
+
     **The module header is what makes the second one visible**, which is why it survived:
     every reproduction small enough to paste has no `module` line, and every real program
     has one. When a bug's trigger is a header, snippet-sized testing is structurally
@@ -1346,10 +1353,13 @@ the `sanitize_address` attribute (rule 6) and the binary cache that keeps the pa
 ~2s warm. Both are explained in `pkg/backend/llvm/README.md`.
 
 **Run an ASan binary through `buildAndRunASan`/`buildAndRunASanWithPrelude`, never with a
-bare `exec.Command`.** The helpers set `detect_leaks=0`; LeakSanitizer is on by default on
-Linux and off on macOS, and `./asan.sh` sets the option for the whole container — so a test
-that skips the helper passes everywhere a developer looks and fails only on CI's runner, on
-leaks `todo.md` already tracks. Three did, from 09/11 to 09/13.
+bare `exec.Command`.** The helpers take their environment from `asanOptions`, which turns
+**leak detection on wherever LeakSanitizer exists** — Linux, so CI and `./asan.sh` — and
+off on macOS, whose ASan runtime refuses it. A leak therefore fails the suite on Linux as a
+use-after-free does, and passes unseen on a Mac; a bare `exec.Command` inherits whatever the
+environment says, which is how three tests failed CI for two days while every developer run
+passed (09/11–09/13). `buildAndRunLSanWithPrelude` is for a test that exists to say a shape
+does not leak: it skips off Linux rather than passing vacuously.
 
 Linux runs go through the workspace's `./asan.sh`, worth doing before pushing memory-model
 work: Debian's older clang uses *typed pointers* and so rejects IR type mismatches that

@@ -164,6 +164,15 @@ ASan reports as a heap-use-after-free inside `lyra_rc_release`. The argument off
 been right from the start; the receiver was simply a third place the same fact had to be
 written down.
 
+**A `.`-call's conventions come from the trait signature on both sides** (09/13): the result's
+ownership as well as the parameters' modes, and for a call through a `where` bound — which
+has no resolution — from the declaring trait's signature (`methodSignature`). A trait
+method's owned result read as borrowed was a leak at every call.
+
+**`p^` is a read out of storage, not a borrow-only form** (09/13): a managed pointee read
+into an owning position is retained, like a field or element read. **`yield e` borrows `e`**,
+so a producer's temporaries are released after the consumer runs.
+
 **A borrowed receiver that is a temporary is walked too** (09/13). Only the `own` arm visited
 the receiver, so `mk().len()` and `xs.join(",").len()` leaked the value they were called on.
 A receiver **rooted at a binding** (`xs.len()`, `h.xs.len()`) is still not walked, and that is

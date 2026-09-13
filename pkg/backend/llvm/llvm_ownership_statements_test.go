@@ -22,8 +22,8 @@ import (
 // names hold one box with one reference between them.
 //
 // This is the one that was memory-unsafe. ASan reports a heap-use-after-free inside
-// `lyra_rc_release` — the second release of a box the first already freed — and the emitted
-// module carries two `lyra_rc_release` calls for one live value where it should carry one.
+// `lyra_rc_release` — the second release of a box the first already freed. The release
+// count below pins it: one per allocation, now that the overwritten value is released too.
 func TestExec_DerefAssignmentRetainsWhatItStores(t *testing.T) {
 	t.Parallel()
 	const src = `let main = () -> u8 => {
@@ -56,9 +56,14 @@ func TestExec_DerefAssignmentRetainsWhatItStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(ir, "call void @lyra_rc_release"); got != 1 {
-		t.Errorf("%d releases; want 1 — two means the value written through the pointer "+
-			"is released by both the binding it came from and the slot it went into", got)
+	// Two allocations, two releases: the string `t` held, released as `p^ = a` overwrites
+	// it (since 09/13 — before that it leaked), and `t` at scope exit, which by then holds
+	// what `a` had. `a` itself releases nothing, its last use having transferred into the
+	// slot. Three would mean `a`'s value is released by both the binding and the slot.
+	if got := strings.Count(ir, "call void @lyra_rc_release"); got != 2 {
+		t.Errorf("%d releases; want 2 — the overwritten value and the slot at scope exit; "+
+			"three means the value written through the pointer is released by both the "+
+			"binding it came from and the slot it went into", got)
 	}
 }
 

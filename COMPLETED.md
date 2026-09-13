@@ -9,6 +9,53 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — the last five leaks, and leak detection on for good
+
+Forcing `detect_leaks=1` into the ASan helpers failed five tests, each a different family.
+All five are fixed and the helpers now report leaks on Linux, which is CI and `./asan.sh`
+(`asanOptions`). Four of the fixes exposed a second bug behind the first, and in three of
+those the second bug was memory-unsafe — which is the argument for having left a leak alone
+until its neighbours were understood, and for probing each fix under ASan rather than
+trusting the leak report to have gone quiet.
+
+**A trait method's result was read as borrowed.** `call` took a result's ownership from a
+resolved function or a function type, never from the trait signature it was already reading
+parameter modes out of, so `t.show()` leaked wherever it went. Reading the return mode was
+the fix — and for a call through a `where` bound it had nothing to read, since a bound call
+has no resolution. Giving it the declaring trait's signature turned a leak into a
+**use-after-free**: `MethodTable.Specializations()` walked resolutions and not bound
+candidates, so a method reached *only* through a bound had no ownership table and returned
+`self.s` without a retain. Caller and callee had been wrong in matching directions.
+
+**`p^ = v` left the old value behind**, filed 08/24 as needing provenance a pointer does not
+carry. The front end supplies it: `&mut` requires a root whose interior may be mutated, and
+each of those owns what it holds — except one, found by listing what `&mut` accepts: a
+**match-arm binding**, a borrow of its scrutinee, was accepted by `&mut s` and by `h.s = v`
+although reassigning it was already lyra-E025. That hole is closed in all three mutability
+ladders (`checkLValueWritable`, `requireMutableRoot`, `rootBindingIsMutable` — three copies,
+all missing the same case). The release then made a pointer swap **double free**: the
+ownership pass counted `DerefExpr` among the borrow-only forms, "a number, a bool or a raw
+pointer", so `(pa^, pb^) = (pb^, pa^)` built its tuple from unretained copies.
+
+**An overwritten aggregate slot released nothing.** `releaseOldTarget` asked `IsManaged`, true
+of a `string` or a `[]T` and false of an inline aggregate holding one, so
+`slots[i] = Some(Entry { key, value })` in `std.collections` leaked every replaced and removed
+entry. The ownership argument never depended on the slot being a box; `needsDrop` and
+`deepRelease` now decide it.
+
+**Sequences had no ownership arm for `yield`**, deferred "to the change that lowers it" and
+not added when that change came, so every value a producer built to yield leaked. Adding it
+broke two things. A generic producer's element type was its unsubstituted variable, so the
+yield's retain for the consumer was skipped at `u = string` — invisible while the call
+result's own +1 stood in for it, a use-after-free once that result was released like any
+temporary. And a coroutine created as a `Seq` argument never went through `lowerExpr`, so the
+caller's box was never released; routing it through the hooks then made `take`'s `break`
+release the argument boxes on its edge and again at the statement's flush, because the
+consumer's temporary base predated the arguments. **That one only glibc saw** — `malloc():
+unaligned tcache chunk detected` in `examples/sequences.lyra` on Linux, nothing on macOS.
+
+`TestExec_TemporariesDoNotLeak` grew a case for each family.
+
 ### 09/13/26 — the leaks CI's runner could see, and what they were
 
 Three leaks were filed when CI turned out to be failing on LeakSanitizer — enabled by default
