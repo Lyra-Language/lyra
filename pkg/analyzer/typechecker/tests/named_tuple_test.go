@@ -301,7 +301,7 @@ let (x, y) = pair`,
 let n = match p {
   ((a, b), c) => a + b + c,
 }`,
-		`data Opt = None | Some(i64)
+		`data Opt = Some(i64)
 let f = (Some(x): Opt) -> i64 => x`,
 	} {
 		res := parseCollectAndCheck(t, source, false)

@@ -266,16 +266,30 @@ func TestExec_DestructuringManagedPayload(t *testing.T) {
 // this is the backend's own "never emit wrong code" guard.)
 func TestEmit_RefutablePlainDestructuring_Error(t *testing.T) {
 	t.Parallel()
-	_, err := emitSource(t, `data Maybe = Some(i64) | None
+	// The typechecker's refusal since 09/13 (lyra-E077), so `lyrac check` agrees with
+	// `lyrac build`; the backend's own refusal stays behind it as the backstop.
+	errs := analyzeWithPreludeErrors(t, `module main
 	 let main = () -> u8 => {
 	   let m = Some(5)
 	   let Some(v) = m
 	   u8(v)
 	 }`)
-	if err == nil {
-		t.Fatal("expected an error for a refutable pattern in a plain `let` destructuring")
+	if !strings.Contains(errs, "needs an `else` branch") {
+		t.Errorf("expected the error to point at `let … else`; got: %q", errs)
 	}
-	if !strings.Contains(err.Error(), "needs an `else` branch") {
-		t.Errorf("expected the error to point at `let … else`; got: %v", err)
+}
+
+// A one-constructor `data` pattern cannot fail, so a plain `let` takes it. The backend
+// tested the tag anyway until 09/13 and refused it as refutable.
+func TestExec_SingleConstructorDataInAPlainLet(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+data Wrap = W(i64, string)
+let main = () -> void => {
+  let W(n, s) = W(5, "five")
+  println("${n} ${s}")
+}`, "")
+	if got := strings.TrimSpace(out); got != "5 five" {
+		t.Errorf("got %q; want \"5 five\"", got)
 	}
 }

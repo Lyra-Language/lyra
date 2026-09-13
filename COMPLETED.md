@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a refutable `let` is the typechecker's, and a payload counts toward coverage
+
+**A pattern that can fail in a position with no failure path is `lyra-E077`**, for a plain
+`let` and a parameter. Only the backend had refused either, so `lyrac check` and the editor
+passed what `lyrac build` rejected — for a struct pattern, with a Go struct dump for its name,
+since `StructPattern.GetName` formatted its field slice with `%v`. The check is typed
+(`patternCoversType`) rather than `patternIsIrrefutable`'s shape test, because the shape test
+cannot see the case that matters: a one-constructor `data` pattern cannot fail. The backend
+could not see it either and tested the tag anyway, so `let W(x) = w` was refused as refutable;
+it now skips a tag test when there is one tag. Ten tests had written `let Some(x) = m` to test
+what a destructuring binds, and use `let … else` now.
+
+**A `data` match covers a constructor only where it covers that constructor's payloads.**
+Coverage had been a set of constructor names, so `Some(0) => …, None => …` compiled and trapped
+on `Some(5)` — a `data` gap is an *error* precisely because the set is closed, and this was the
+one way to leave it open. Each constructor is now the tuple check's pattern matrix specialized by
+it, and the report names the difference: *missing constructors* for one no arm names, *not every
+payload of Some is matched* for one named too narrowly.
+
+Two changes to the matrix came with it. It **specializes a column only when every constructor
+heads some row** and otherwise takes the default matrix — Maranget's rule, and also what makes
+it terminate on a recursive type, where specializing a wildcard row of `List` by `Cons` yields
+another `List` column indefinitely. And **a tuple or struct column is one constructor** whose
+fields are its elements: left unexpanded while only tuple matches used the matrix, it would
+have made `Some((a, Some(b)))` beside `Some((a, None))` a false error once `data` matches did.
+
+The LSP's "Add missing match arms" action had its own constructor-name walk, and so offered
+nothing for a constructor named too narrowly — nor for any generic scrutinee, which its private
+`resolveDataType` could not resolve. It now asks `typechecker.MatchGaps`, a checker built over
+the finished analysis running the check's own computation, and appends a `Ctor _ => todo()` arm
+for partial constructors as for missing ones: after the existing arms, the only place such an
+arm catches exactly what they leave.
+
 ### 09/13/26 — patterns mean one thing at every depth, and tuple rest works
 
 Checking `walkDestructuredPattern` against the pattern kinds found it silent on five of

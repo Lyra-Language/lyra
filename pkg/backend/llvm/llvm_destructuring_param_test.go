@@ -230,14 +230,6 @@ func TestEmit_DestructuringParameterRefused(t *testing.T) {
 		want string
 	}{
 		{
-			// The typechecker admits a value-testing sub-pattern in a parameter, and
-			// there is nowhere for the failing path to go — no `else`, no next arm.
-			"a refutable parameter pattern",
-			`let f = ((1, b): (i64, i64)) -> i64 => b
-			 let main = () -> u8 => u8(f((1, 2)))`,
-			"parameter pattern must match every value of its type",
-		},
-		{
 			// `mut` is a mutable borrow: the bindings would be copies, so a write
 			// could not reach the caller. That is the whole content of `mut`, so
 			// lowering it would be a borrow that silently is not one.
@@ -262,6 +254,19 @@ func TestEmit_DestructuringParameterRefused(t *testing.T) {
 				t.Errorf("%s: error %q does not mention %q", c.name, err, c.want)
 			}
 		})
+	}
+}
+
+// A value-testing sub-pattern in a parameter has nowhere for its failing path to go — no
+// `else`, no next arm. The typechecker refuses it since 09/13 (lyra-E077); it had been the
+// backend's refusal, so `lyrac check` passed a program `lyrac build` rejected.
+func TestCheck_RefutableParameterPatternRefused(t *testing.T) {
+	t.Parallel()
+	errs := analyzeWithPreludeErrors(t, `module main
+let f = ((1, b): (i64, i64)) -> i64 => b
+let main = () -> u8 => u8(f((1, 2)))`)
+	if !strings.Contains(errs, "parameter pattern (1, b) can fail to match") {
+		t.Errorf("want the refutable-parameter error, got %q", errs)
 	}
 }
 

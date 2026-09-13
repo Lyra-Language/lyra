@@ -61,9 +61,14 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 		}
 		if p.Type != nil {
 			resolved := tc.resolveType(p.Type, p.GetLocation())
+			before := len(tc.errors)
 			tc.walkDestructuredPattern(p.Pattern, resolved, func(name string, typ types.Type) {
 				tc.paramTypes[name] = typ
 			})
+			if !tc.addedErrorSince(before) {
+				tc.requireIrrefutable(p.Pattern, resolved,
+					"parameter pattern %s can fail to match, and a function cannot decline to be called; bind the parameter plainly and `match` on it in the body")
+			}
 		}
 	}
 	tc.enterScope(lambda, fn)

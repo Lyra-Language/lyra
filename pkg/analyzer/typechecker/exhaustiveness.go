@@ -1,6 +1,9 @@
 package typechecker
 
 import (
+	"slices"
+	"strings"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -79,6 +82,14 @@ func (tc *TypeChecker) matrixIsExhaustive(rows [][]ast.Pattern, colTypes []types
 		return len(rows) > 0
 	}
 	ctors, finite := tc.constructorSet(colTypes[0], loc)
+	// **Specialize only when column 0 names every constructor**; otherwise the rows that
+	// bind it whole are all that can cover a constructor none of them names, which is
+	// the default matrix. Beyond being Maranget's rule, this is what terminates on a
+	// recursive type: specializing a wildcard row of `List` by `Cons` hands back another
+	// `List` column, forever.
+	if finite && !headsNameEvery(rows, ctors) {
+		finite = false
+	}
 	if !finite {
 		// A column whose values cannot be enumerated (an integer, a string, a nested
 		// aggregate) is covered only by rows that bind it whole. Testing one — `(0, …)`
@@ -101,13 +112,60 @@ func (tc *TypeChecker) matrixIsExhaustive(rows [][]ast.Pattern, colTypes []types
 type constructor struct {
 	name   string
 	fields []types.Type
+	// fieldNames is set for a struct, whose single constructor's fields a pattern names
+	// rather than lists; kind says which of the aggregate shapes this is.
+	fieldNames []string
+	kind       constructorKind
+}
+
+type constructorKind int
+
+const (
+	dataOrBoolConstructor constructorKind = iota
+	tupleConstructor
+	structConstructor
+)
+
+// headsNameEvery reports whether some row's column-0 pattern is headed by each constructor.
+func headsNameEvery(rows [][]ast.Pattern, ctors []constructor) bool {
+	for _, c := range ctors {
+		named := false
+		for _, row := range rows {
+			if headNames(row[0], c) {
+				named = true
+				break
+			}
+		}
+		if !named {
+			return false
+		}
+	}
+	return true
+}
+
+// headNames reports whether pat is headed by ctor rather than binding the column whole.
+func headNames(pat ast.Pattern, ctor constructor) bool {
+	switch p := ast.UnwrapBinding(pat).(type) {
+	case *ast.DataPattern:
+		return ctor.kind == dataOrBoolConstructor && p.Name == ctor.name
+	case *ast.LiteralPattern:
+		s, isStr := p.Value.(string)
+		return ctor.kind == dataOrBoolConstructor && isStr && s == ctor.name
+	case *ast.TuplePattern:
+		return ctor.kind == tupleConstructor
+	case *ast.StructPattern:
+		return ctor.kind == structConstructor
+	}
+	return false
 }
 
 // constructorSet enumerates a type's alternatives, reporting false when they cannot be
 // enumerated — an integer, a string, a rune, an array, or a type that does not resolve.
-// Nested tuples and structs are deliberately in that group: they are irrefutable-or-nothing
-// here, and expanding them would mean threading their own column shapes through the matrix
-// for no case the language's own code hits.
+//
+// A tuple or struct is **one** constructor whose fields are its elements. They were left
+// unexpanded while only a tuple match used the matrix; since 09/13 a `data` match does
+// too, and `Some((a, None))` beside `Some((a, Some(x)))` is a nested tuple the language's
+// own code can write.
 func (tc *TypeChecker) constructorSet(t types.Type, loc ast.Location) ([]constructor, bool) {
 	if types.IsBoolean(t) {
 		return []constructor{{name: "true"}, {name: "false"}}, true
@@ -118,6 +176,18 @@ func (tc *TypeChecker) constructorSet(t types.Type, loc ast.Location) ([]constru
 			out = append(out, constructor{name: c.Name, fields: c.FieldTypes()})
 		}
 		return out, len(out) > 0
+	}
+	resolved := tc.resolveGenericAggregate(tc.resolveType(t, loc), loc)
+	if tt, ok := resolved.(types.TupleType); ok {
+		return []constructor{{name: "()", fields: tt.Elements, kind: tupleConstructor}}, true
+	}
+	if fields, ok := structFields(resolved); ok {
+		c := constructor{name: "{}", kind: structConstructor}
+		for _, f := range fields {
+			c.fields = append(c.fields, f.Type)
+			c.fieldNames = append(c.fieldNames, f.Name)
+		}
+		return []constructor{c}, true
 	}
 	return nil, false
 }
@@ -154,10 +224,27 @@ func specializeHead(pat ast.Pattern, ctor constructor) ([]ast.Pattern, bool) {
 	case *ast.BindingPattern:
 		return specializeHead(p.Pattern, ctor)
 	case *ast.DataPattern:
-		if p.Name != ctor.name {
+		if ctor.kind != dataOrBoolConstructor || p.Name != ctor.name {
 			return nil, false
 		}
 		return payloadColumns(p.Pattern, len(ctor.fields))
+	case *ast.TuplePattern:
+		if ctor.kind != tupleConstructor {
+			return nil, false
+		}
+		positions, fits := ast.MatchPositions(p.Elements, len(ctor.fields))
+		return positions.Columns, fits
+	case *ast.StructPattern:
+		if ctor.kind != structConstructor {
+			return nil, false
+		}
+		cols := make([]ast.Pattern, len(ctor.fields))
+		for _, f := range p.Fields {
+			if i := slices.Index(ctor.fieldNames, f.Name); i >= 0 {
+				cols[i] = f.Pattern // a shorthand field is nil, which binds the column whole
+			}
+		}
+		return cols, true
 	case *ast.LiteralPattern:
 		// bool's two values are spelled as literals rather than constructors.
 		if s, isStr := p.Value.(string); isStr && s == ctor.name {
@@ -229,4 +316,44 @@ func unguardedArms(arms []ast.MatchArm) []ast.MatchArm {
 		}
 	}
 	return out
+}
+
+// dataMatchCoverage splits the constructors of dt a match fails to cover into the ones no
+// arm names (missing) and the ones an arm names for only some payloads (partial).
+//
+// **The second group did not exist until 09/13**: coverage was a set of constructor names,
+// so `match m { Some(0) => …, None => … }` on a `Maybe<i64>` was exhaustive to the checker
+// and trapped on `Some(5)` at run time. Each constructor is now the matrix specialized by
+// it, which asks of its payload columns what the tuple check asks of a tuple's.
+func (tc *TypeChecker) dataMatchCoverage(arms []ast.MatchArm, dt types.DataType, loc ast.Location) (missing, partial []string) {
+	var rows [][]ast.Pattern
+	for _, arm := range arms {
+		if arm.Guard == nil {
+			rows = append(rows, []ast.Pattern{arm.Pattern})
+		}
+	}
+	ctors, _ := tc.constructorSet(dt, loc)
+	for _, c := range ctors {
+		sub, subTypes := specialize(rows, []types.Type{dt}, c)
+		switch {
+		case len(sub) == 0:
+			missing = append(missing, c.name)
+		case !tc.matrixIsExhaustive(sub, subTypes, loc):
+			partial = append(partial, c.name)
+		}
+	}
+	return missing, partial
+}
+
+// dataCoverageMessage is lyra-E009's text for a `data` match: the constructors no arm names,
+// then those named for only some payloads, with the arm that would close each.
+func dataCoverageMessage(dt types.DataType, missing, partial []string) string {
+	var parts []string
+	if len(missing) > 0 {
+		parts = append(parts, "missing constructors: "+strings.Join(missing, ", "))
+	}
+	for _, name := range partial {
+		parts = append(parts, "not every payload of "+name+" is matched (add `"+name+" _ => …`)")
+	}
+	return "match on " + dt.Name + " is not exhaustive: " + strings.Join(parts, "; ")
 }

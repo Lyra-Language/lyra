@@ -10,7 +10,6 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -82,18 +81,18 @@ func matchArmsAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, 
 	if m == nil {
 		return nil
 	}
-	st, ok := analysis.typeTable.Get(m.Scrutinee)
+	gaps, ok := typechecker.MatchGaps(analysis.symTable, analysis.scopeTable, analysis.typeTable, m)
 	if !ok {
 		return nil
 	}
-	dt, ok := resolveDataType(st, analysis.symTable, ast.Location{})
-	if !ok {
-		return nil
-	}
-	missing := typechecker.MissingMatchConstructors(m.MatchArms, dt)
+	// A partly covered constructor gets the same `Ctor _` arm as a missing one. Appended
+	// after the arms that are there, it catches exactly the payloads they leave — which is
+	// the only order that works, since before them it would shadow each one.
+	missing := append(append([]string(nil), gaps.Missing...), gaps.Partial...)
 	if len(missing) == 0 {
 		return nil
 	}
+	dt := gaps.DataType
 
 	// Param counts let us emit `Ctor _` for constructors that carry a payload
 	// (a single wildcard matches the whole payload) and bare `Ctor` otherwise.
@@ -309,25 +308,6 @@ func deleteLinesRange(source string, loc ast.Location) lsp.Range {
 		}
 	}
 	return lsp.Range{Start: start, End: end}
-}
-
-// resolveDataType returns the DataType underlying t, following an UnresolvedType
-// name through the symbol table. Returns (_, false) when t is not a data type.
-func resolveDataType(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) (types.DataType, bool) {
-	if t == nil {
-		return types.DataType{}, false
-	}
-	if dt, ok := t.(types.DataType); ok {
-		return dt, true
-	}
-	if u, ok := t.(types.UnresolvedType); ok {
-		if decl, exists := symTable.LookupTypeFrom(u.Name, loc); exists {
-			if dt, ok := decl.Type.(types.DataType); ok {
-				return dt, true
-			}
-		}
-	}
-	return types.DataType{}, false
 }
 
 // --- AST collection / lookup helpers ---

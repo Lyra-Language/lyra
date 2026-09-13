@@ -191,3 +191,34 @@ func titles(actions []lsp.CodeAction) []string {
 	}
 	return out
 }
+
+// **A constructor named for only some payloads gets an arm too.** lyra-E009 has refused
+// `Some(0)` beside `None` since 09/13, and until the action shared the check's computation
+// (typechecker.MatchGaps) it offered nothing for it — its own walk only listed constructors
+// no arm named. The scrutinee is generic, which that walk also could not resolve.
+func TestCodeAction_PartlyCoveredConstructor(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+	data Opt<t> = Some t | None | Other
+	let f = (m: Opt<i64>) -> i64 => match m {
+	    Some(0) => 1,
+	    None => 2,
+	}`
+	diags := openAndDiags(t, h, src)
+	actions := requestActions(t, h, diags)
+
+	a := findAction(actions, "Add missing match arms")
+	if a == nil {
+		t.Fatalf("no match-arms action; actions=%v diags=%v", titles(actions), diags)
+	}
+	_, text := editText(t, a)
+	if !strings.Contains(text, "Other => todo()") {
+		t.Errorf("expected the missing constructor's arm, got: %q", text)
+	}
+	if !strings.Contains(text, "Some _ => todo()") {
+		t.Errorf("expected a `Some _` arm for the partly covered constructor, got: %q", text)
+	}
+	if !strings.Contains(a.Title, "Other, Some") {
+		t.Errorf("title should list missing then partial, got %q", a.Title)
+	}
+}

@@ -201,11 +201,11 @@ let f = (p: Pair) -> i64 => {
 func TestDestructuring_ArrayDeclBindsNames(t *testing.T) {
 	for _, source := range []string{
 		`let f = (arr: [3]i64) -> i64 => {
-    let [a, b, c] = arr
+    let [a, b, c] = arr else { return 0 }
     a + b + c
 }`,
 		`let f = (arr: []i64) -> i64 => {
-    let [a, b] = arr
+    let [a, b] = arr else { return 0 }
     a + b
 }`,
 	} {
@@ -219,19 +219,19 @@ func TestDestructuring_ArrayDeclBindsNames(t *testing.T) {
 func TestDestructuring_ArrayDeclNamedRestBindsArrayType(t *testing.T) {
 	source := `
 let f = (arr: [3]i64) -> i64 => {
-    let [a, ...rest] = arr
+    let [a, ...rest] = arr else { return 0 }
     a
 }`
 	res := parseCollectAndCheck(t, source, false)
 	assertNoErrors(t, res)
 }
 
-// TestDestructuring_ArrayParamBindsNames: a destructured array parameter
-// binds each name to the element type.
-func TestDestructuring_ArrayParamBindsNames(t *testing.T) {
+// TestDestructuring_ArrayParamIsRefutable: an array pattern tests a length, so as a
+// parameter — where there is no failure path — it is lyra-E077 (09/13).
+func TestDestructuring_ArrayParamIsRefutable(t *testing.T) {
 	source := `let f = ([a, b]: [2]i64) -> i64 => a + b`
 	res := parseCollectAndCheck(t, source, false)
-	assertNoErrors(t, res)
+	assertErrorsAre(t, res, "parameter pattern [a, b] can fail to match, and a function cannot decline to be called; bind the parameter plainly and `match` on it in the body")
 }
 
 // TestDestructuring_ArrayDeclNonArray_Errors: destructuring a non-array value
@@ -256,7 +256,7 @@ func TestDestructuring_DataDeclParenPayloadBindsName(t *testing.T) {
 	source := `
 data Maybe<t> = Some t | None
 let f = (m: Maybe<i64>) -> i64 => {
-    let Some(x) = m
+    let Some(x) = m else { return 0 }
     x
 }`
 	res := parseCollectAndCheck(t, source, false)
@@ -269,7 +269,7 @@ func TestDestructuring_DataDeclBarePayloadBindsName(t *testing.T) {
 	source := `
 data Maybe<t> = Some t | None
 let f = (m: Maybe<i64>) -> i64 => {
-    let Some x = m
+    let Some x = m else { return 0 }
     x
 }`
 	res := parseCollectAndCheck(t, source, false)
@@ -282,7 +282,7 @@ func TestDestructuring_DataDeclVarIsMutable(t *testing.T) {
 	source := `
 data Maybe<t> = Some t | None
 let f = (m: Maybe<i64>) -> i64 => {
-    var Some(x) = m
+    var Some(x) = m else { return 0 }
     x = 5
     x
 }`
@@ -294,7 +294,7 @@ func TestDestructuring_DataDeclLetIsImmutable(t *testing.T) {
 	source := `
 data Maybe<t> = Some t | None
 let f = (m: Maybe<i64>) -> i64 => {
-    let Some(x) = m
+    let Some(x) = m else { return 0 }
     x = 5
     x
 }`
@@ -323,7 +323,7 @@ func TestDestructuring_DataDeclZeroArgConstructor_NoBinding(t *testing.T) {
 	source := `
 data Maybe<t> = Some t | None
 let f = (m: Maybe<i64>) -> i64 => {
-    let None = m
+    let None = m else { return 1 }
     0
 }`
 	res := parseCollectAndCheck(t, source, false)
@@ -352,7 +352,7 @@ func TestDestructuring_DataDeclNestedPattern(t *testing.T) {
 	source := `
 data Maybe<t> = Some t | None
 let f = (m: Maybe<(i64, i64)>) -> i64 => {
-    let Some((a, b)) = m
+    let Some((a, b)) = m else { return 0 }
     a + b
 }`
 	res := parseCollectAndCheck(t, source, false)
@@ -384,16 +384,34 @@ let f = (p: Pair<i64, string>) -> i64 => {
 // (`_tuple_name`, `_primary_expr`, `data_pattern`) in grammar.js.
 func TestDestructuring_DataParamBindsName(t *testing.T) {
 	for _, source := range []string{
-		`data Maybe<t> = Some t | None
-let f = (Some(x): Maybe<i64>) -> i64 => x`,
-		`data Maybe<t> = Some t | None
-let f = (Some(x): Maybe<i64>) -> i64 => {
+		`data Boxed<t> = Wrap t
+let f = (Wrap(x): Boxed<i64>) -> i64 => x`,
+		`data Boxed<t> = Wrap t
+let f = (Wrap(x): Boxed<i64>) -> i64 => {
     x
 }`,
 	} {
 		res := parseCollectAndCheck(t, source, false)
 		assertNoErrors(t, res)
 	}
+}
+
+// A constructor of a type with more than one is refutable, and a parameter has no failure
+// path (lyra-E077); a plain `let` names `let … else` (09/13).
+func TestDestructuring_RefutablePatternsNeedAFailurePath(t *testing.T) {
+	res := parseCollectAndCheck(t, `data Maybe<t> = Some t | None
+let f = (Some(x): Maybe<i64>) -> i64 => x`, false)
+	assertErrorsAre(t, res, "parameter pattern Some(x) can fail to match, and a function cannot decline to be called; bind the parameter plainly and `match` on it in the body")
+	res = parseCollectAndCheck(t, `data Maybe<t> = Some t | None
+struct Pt { x: i64, y: i64 }
+let f = (m: Maybe<i64>, p: Pt) -> i64 => {
+    let Some(x) = m
+    let Pt { x: a, y: 0 } = p
+    x + a
+}`, false)
+	assertErrorsAre(t, res,
+		"`let Some(x) = …` can fail to match, so it needs an `else` branch (`let … = … else { … }`)",
+		"`let Pt { x: a, y: 0 } = …` can fail to match, so it needs an `else` branch (`let … = … else { … }`)")
 }
 
 // TestDestructuring_DataParamTuplePayloadConstructor: a data parameter whose

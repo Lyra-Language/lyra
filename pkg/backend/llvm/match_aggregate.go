@@ -272,9 +272,15 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 		if !ok {
 			return nil, fmt.Errorf("llvm: data value did not lower to a struct (%s)", val.Type())
 		}
-		tagTy := unionSt.Fields[0].(*lltypes.IntType)
-		tag := block.NewExtractValue(val, 0)
-		cond := value.Value(block.NewICmp(enum.IPredEQ, tag, constant.NewInt(tagTy, int64(idx))))
+		// A type with one constructor has one tag, so testing it tests nothing — and a
+		// test that is not nil makes `let W(x) = w` look refutable to the destructuring
+		// paths, which then refused a pattern that cannot fail (09/13).
+		var cond value.Value
+		if len(dt.Constructors) > 1 {
+			tagTy := unionSt.Fields[0].(*lltypes.IntType)
+			tag := block.NewExtractValue(val, 0)
+			cond = block.NewICmp(enum.IPredEQ, tag, constant.NewInt(tagTy, int64(idx)))
+		}
 
 		fieldPatterns, err := payloadFieldPatterns(p, ctor)
 		if err != nil {

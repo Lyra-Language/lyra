@@ -229,10 +229,13 @@ deferred receiver is `Arguments[0]` and adopts by the untyped-argument rule.
   tuples, structs) → warning. The backend traps on fall-through.
 - **Struct**: exhaustive when an unguarded arm is irrefutable (`patternIsIrrefutable`/
   `aggregateMatchIsExhaustive`), mirroring the backend's `aggPatternTest` nil condition.
-- **Tuple** (`exhaustiveness.go`): Maranget pattern matrix — specialize by each constructor of
-  column 0 and recurse. Enumerable columns: `data`, `bool`. An uninterpretable pattern drops its
-  row (over-warns, never goes quiet). Guarded arms never count. Needed because every
-  multi-clause function desugars to a tuple match.
+- **Tuple and `data`** (`exhaustiveness.go`): Maranget pattern matrix — when column 0's rows
+  name every constructor, specialize by each and recurse; otherwise the default matrix (which is
+  also what terminates on a recursive type). Enumerable columns: `data`, `bool`, and a tuple or
+  struct as one constructor. An uninterpretable pattern drops its row (over-warns, never goes
+  quiet). Guarded arms never count. A tuple match needs it because every multi-clause function
+  desugars to one; a `data` match (`dataMatchCoverage`) reports constructors no arm names apart
+  from those named for only some payloads.
 - **Array**: a union over lengths — `[e1..en]` covers n, `[…, ...rest]` covers ≥ n; only arms
   with all-irrefutable elements contribute.
 - **Rune**: char-literal arms plus a required catch-all (`checkRuneMatchArm`).

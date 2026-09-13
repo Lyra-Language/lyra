@@ -281,7 +281,11 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 	case *ast.VarDeclStmt:
 		tc.checkVarDecl(n)
 	case *ast.DestructuringDeclStmt:
-		tc.checkDestructuringDecl(n)
+		before := len(tc.errors)
+		if t := tc.checkDestructuringDecl(n); t != nil && !tc.addedErrorSince(before) {
+			tc.requireIrrefutable(n.Pattern, t,
+				"`let %s = …` can fail to match, so it needs an `else` branch (`let … = … else { … }`)")
+		}
 	case *ast.IfDestructuringStmt:
 		tc.checkIfDestructuringStmt(n)
 	case *ast.ElseDestructuringStmt:
@@ -615,9 +619,10 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 // block, so nested/sibling blocks stay correctly isolated, unlike a flat
 // ad-hoc map would. `var`/`let mut` are threaded through so interior-mutation
 // and purity checks treat a destructured name the same as any other binding.
-func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
+// It answers the type the pattern was walked against, or nil when it was not walked.
+func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) types.Type {
 	if decl.Value == nil {
-		return
+		return nil
 	}
 	inferredType := tc.inferExprType(decl.Value)
 	if inferredType == nil {
@@ -636,7 +641,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		// cause is elsewhere entirely. When the cause is a callee whose return type is
 		// inferred rather than declared, say so and name the annotation.
 		tc.reportDestructureOfInferredReturn(decl)
-		return
+		return nil
 	}
 	// Upgrading a `weak` reference: `if let strong = w` binds a **`shared T`**, not
 	// the `weak T` being tested. The whole point of the form is that the branch runs
@@ -650,7 +655,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		if !isIdent {
 			tc.addError(decl.GetLocation(), SeverityError,
 				"upgrading a `weak` reference binds a plain name (`if let s = w`), not a pattern")
-			return
+			return nil
 		}
 		if ident.Name != "_" {
 			tc.scope.Symbols[ident.Name] = &ast.VarDeclStmt{
@@ -659,7 +664,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 				Type:    types.WithAllocation(wt.Inner, types.Shared),
 			}
 		}
-		return
+		return nil
 	}
 
 	// A tuple assignment's places are its context, since the `let` it desugars into has no
@@ -674,7 +679,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 	if decl.Type != nil {
 		resolvedDeclType := tc.resolveType(decl.Type, decl.Location)
 		if !tc.checkStorable(decl.Value, inferredType, resolvedDeclType, decl.Type, decl.GetLocation(), "") {
-			return
+			return nil
 		}
 		inferredType = resolvedDeclType
 	}
@@ -720,6 +725,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 			Type:        typ,
 		}
 	})
+	return inferredType
 }
 
 // narrowToAssignedPlaces pushes a tuple assignment's place types into its right side, and
@@ -1075,6 +1081,85 @@ func (tc *TypeChecker) reportPositionalArity(loc ast.Location, what, against str
 		return
 	}
 	tc.addError(loc, SeverityError, "%s has %d element(s) but %s has %d", what, len(elems), against, n)
+}
+
+// requireIrrefutable reports lyra-E077 when pat can fail to match a value of type t, in a
+// position with no failure path — a plain `let` or a parameter. The message is a format
+// with one %s, the pattern.
+//
+// Until 09/13 only the backend refused these, so `lyrac check` and the editor passed a
+// program `lyrac build` then rejected — and rejected with a Go struct dump for a struct
+// pattern's name.
+func (tc *TypeChecker) requireIrrefutable(pat ast.Pattern, t types.Type, format string) {
+	if !tc.patternCoversType(pat, t, pat.GetLocation()) {
+		tc.addErrorCode(pat.GetLocation(), SeverityError, diag.CodeRefutablePattern, format, pat.GetName())
+	}
+}
+
+// patternCoversType reports whether pat matches every value of type t: a binding, wildcard or
+// rest does; a literal, range, regex or array pattern (a length test) does not; a tuple or
+// struct pattern does when each part does; and a `data` pattern does when its type has
+// **one** constructor and the payload is covered. It is the typed counterpart of
+// patternIsIrrefutable, which cannot see that last case — `let W(x) = w` on `data Wrap = W(i64)`
+// can no more fail than `let (x) = t`.
+//
+// A shape the walk already refused answers true, so one mistake is not reported twice.
+func (tc *TypeChecker) patternCoversType(pat ast.Pattern, t types.Type, loc ast.Location) bool {
+	if t == nil {
+		return true
+	}
+	t = tc.resolveType(t, loc)
+	switch p := pat.(type) {
+	case nil, *ast.WildcardPattern, *ast.IdentifierPattern, *ast.RestPattern:
+		return true
+	case *ast.BindingPattern:
+		return tc.patternCoversType(p.Pattern, t, loc)
+	case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern, *ast.ArrayPattern:
+		return false
+	case *ast.TuplePattern:
+		tt, ok := tc.resolveGenericAggregate(t, loc).(types.TupleType)
+		if !ok {
+			return true
+		}
+		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
+		if !fits {
+			return true
+		}
+		for i, col := range positions.Columns {
+			if !tc.patternCoversType(col, tt.Elements[i], loc) {
+				return false
+			}
+		}
+		return true
+	case *ast.StructPattern:
+		fields := structFieldTypes(tc.resolveGenericAggregate(t, loc))
+		for _, f := range p.Fields {
+			if ft, ok := fields[f.Name]; ok && !tc.patternCoversType(f.Pattern, ft, loc) {
+				return false
+			}
+		}
+		return true
+	case *ast.DataPattern:
+		dt, ok := tc.resolveToDataType(t, loc)
+		if !ok || len(dt.Constructors) == 0 {
+			return true
+		}
+		if len(dt.Constructors) != 1 {
+			return false
+		}
+		flat := dt.Constructors[0].FieldTypes()
+		cols, ok := payloadColumns(p.Pattern, len(flat))
+		if !ok {
+			return true
+		}
+		for i, col := range cols {
+			if !tc.patternCoversType(col, flat[i], loc) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
 }
 
 // isConstIdentifier mirrors the grammar's `const_identifier`, `/[A-Z][A-Z0-9_]*/`

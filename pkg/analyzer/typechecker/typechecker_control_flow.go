@@ -11,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/regex"
 	"github.com/Lyra-Language/lyra/pkg/types"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 func hasUnguardedCatchAll(arms []ast.MatchArm) bool {
@@ -441,10 +443,8 @@ func (tc *TypeChecker) matchKindOf(scrutineeType, kindType types.Type, expr *ast
 		return matchKind{
 			checkArm: func(p ast.Pattern) { tc.checkDataMatchArm(p, dt) },
 			exhaustive: func() (bool, string) {
-				exhaustive, missing := dataMatchIsExhaustive(arms, dt)
-				return exhaustive, fmt.Sprintf(
-					"match on %s is not exhaustive: missing constructors: %s",
-					dt.Name, strings.Join(missing, ", "))
+				missing, partial := tc.dataMatchCoverage(arms, dt, expr.GetLocation())
+				return len(missing) == 0 && len(partial) == 0, dataCoverageMessage(dt, missing, partial)
 			},
 			severity: SeverityError,
 		}, true
@@ -863,49 +863,34 @@ func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType)
 	}
 }
 
-// MissingMatchConstructors returns the constructors of dt that the match arms
-// leave uncovered, in declaration order — the exact set the exhaustiveness
-// check (lyra-E009) reports. Returns nil when the match is already exhaustive.
-// Exported so the LSP's "Add missing match arms" code action can reuse the same
-// computation rather than re-deriving it.
-func MissingMatchConstructors(arms []ast.MatchArm, dt types.DataType) []string {
-	_, missing := dataMatchIsExhaustive(arms, dt)
-	return missing
+// DataMatchGaps is what a `match` on a `data` value leaves uncovered: the constructors no arm
+// names, and those an arm names for only some payloads (`Some(0)` beside `None`).
+type DataMatchGaps struct {
+	DataType types.DataType
+	Missing  []string
+	Partial  []string
 }
 
-// dataMatchIsExhaustive reports whether the match arms fully cover all
-// constructors of dt. Returns (true, nil) when a wildcard or unguarded
-// identifier is present. Returns (true, nil) when every constructor has at
-// least one unguarded DataPattern arm. Otherwise returns (false, missingNames)
-// where missingNames lists the uncovered constructors in declaration order.
-func dataMatchIsExhaustive(arms []ast.MatchArm, dt types.DataType) (bool, []string) {
-	// A wildcard or unguarded identifier catches every possible value.
-	if hasUnguardedCatchAll(arms) {
-		return true, nil
+// MatchGaps computes a match's gaps as lyra-E009 does, for a caller holding a finished
+// analysis rather than a checker — the LSP's "Add missing match arms" action. It reports
+// false when the scrutinee is not a `data` value.
+//
+// **One computation, not a copy.** The action used a constructor-name walk of its own until
+// 09/13, which agreed with the check only while the check was that walk too; once payloads
+// counted, a match the check refused offered no fix. A checker built over the analysis's
+// tables resolves exactly what the check resolved, and its diagnostics are discarded.
+func MatchGaps(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, m *ast.MatchExpr) (DataMatchGaps, bool) {
+	st, ok := typeTable.Get(m.Scrutinee)
+	if !ok {
+		return DataMatchGaps{}, false
 	}
-
-	// Collect constructor names that are covered by unguarded DataPattern arms.
-	covered := make(map[string]bool, len(dt.Constructors))
-	for _, arm := range arms {
-		if arm.Guard != nil {
-			continue
-		}
-		// Unwrapped, or `w @ Box(n)` covers nothing: a binding pattern binds and tests
-		// nothing, so what an arm *matches* is always what is inside it. Asserting on the
-		// arm's pattern directly reported an exhaustive match as missing the very
-		// constructor it covered.
-		if dp, ok := ast.UnwrapBinding(arm.Pattern).(*ast.DataPattern); ok {
-			covered[dp.Name] = true
-		}
+	tc := New(symTable, scopeTable, typeTable)
+	dt, ok := tc.resolveToDataType(st, m.GetLocation())
+	if !ok {
+		return DataMatchGaps{}, false
 	}
-
-	var missing []string
-	for _, ctor := range dt.Constructors {
-		if !covered[ctor.Name] {
-			missing = append(missing, ctor.Name)
-		}
-	}
-	return len(missing) == 0, missing
+	missing, partial := tc.dataMatchCoverage(m.MatchArms, dt, m.GetLocation())
+	return DataMatchGaps{DataType: dt, Missing: missing, Partial: partial}, true
 }
 
 // checkStringMatchArm validates one arm's pattern against a `string`

@@ -37,7 +37,9 @@ const (
 	// CodeNonExhaustiveMatch: a match on a closed type (`bool` or a `data`/sum
 	// type) leaves cases uncovered. Error rather than warning because the set of
 	// cases is finite and known — the author can still write an explicit `_ =>`
-	// to opt out. Open types (wide integers, strings) stay a warning.
+	// to opt out. Open types (wide integers, strings) stay a warning. A `data`
+	// constructor named for only some payloads (`Some(0)` beside `None`) is uncovered
+	// too, since 09/13; before that coverage was a set of constructor names.
 	CodeNonExhaustiveMatch = "lyra-E009"
 
 	// CodeUninitializedDeclaration: a `let`/`var` binding has no initializer.
@@ -929,6 +931,15 @@ const (
 	// where it was until 09/13. Two rests in one pattern leave the split between them
 	// undetermined in either.
 	CodeMisplacedRestPattern = "lyra-E076"
+
+	// CodeRefutablePattern: a pattern that can fail to match, in a position with no failure
+	// path — a plain `let` (`let Some(v) = m`, which wants `let … else`) or a parameter
+	// (which wants a plain name and a `match` in the body).
+	//
+	// A one-constructor `data` pattern is not refutable: `let W(x) = w` cannot fail. Until
+	// 09/13 the backend was the only thing that refused either, and it also refused that
+	// case, since it tested the tag anyway.
+	CodeRefutablePattern = "lyra-E077"
 
 	// ── Warnings ──────────────────────────────────────────────────────────────
 

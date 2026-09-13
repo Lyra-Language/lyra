@@ -90,11 +90,27 @@ type StructPattern struct {
 }
 
 func (p *StructPattern) patternNode() {}
+
+// GetName renders the pattern as source: `Pt { x, y: 0 }`. It formatted the field slice
+// with %v until 09/13, which printed Go's view of it — locations and pointers — into
+// diagnostics that name a pattern.
 func (p *StructPattern) GetName() string {
-	if p.Name != "" {
-		return fmt.Sprintf("%s{%v}", p.Name, p.Fields)
+	parts := make([]string, 0, len(p.Fields))
+	for _, f := range p.Fields {
+		switch {
+		case f.Name == "..." && f.Pattern != nil:
+			parts = append(parts, f.Pattern.GetName())
+		case f.Pattern == nil:
+			parts = append(parts, f.Name)
+		default:
+			parts = append(parts, f.Name+": "+f.Pattern.GetName())
+		}
 	}
-	return fmt.Sprintf("{%v}", p.Fields)
+	body := "{ " + strings.Join(parts, ", ") + " }"
+	if p.Name != "" {
+		return p.Name + " " + body
+	}
+	return body
 }
 
 type StructPatternField struct {
@@ -112,8 +128,20 @@ type DataPattern struct {
 	Pattern Pattern
 }
 
-func (p *DataPattern) patternNode()    {}
-func (p *DataPattern) GetName() string { return p.Name }
+func (p *DataPattern) patternNode() {}
+
+// GetName renders the pattern as source — `Some(v)`, `Some v`, `None` — so a diagnostic
+// naming it shows what was written rather than only the constructor.
+func (p *DataPattern) GetName() string {
+	switch inner := p.Pattern.(type) {
+	case nil:
+		return p.Name
+	case *TuplePattern:
+		return p.Name + inner.GetName()
+	default:
+		return p.Name + " " + inner.GetName()
+	}
+}
 
 type RestPattern struct {
 	PatternBase
