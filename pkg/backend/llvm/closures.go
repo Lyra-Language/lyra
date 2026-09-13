@@ -665,6 +665,13 @@ func (l *lowerer) lowerIndirectCall(block *ir.Block, e *ast.FunctionCallExpr, lt
 	if err != nil {
 		return nil, nil, err
 	}
+	return l.lowerIndirectCallOn(block, e, callee, lt)
+}
+
+// lowerIndirectCallOn is lowerIndirectCall on a callee value already in hand — for a call
+// whose callee is not the value its identifier names, which is a local generic's: one
+// closure per instantiation, chosen by the call (local_generic.go).
+func (l *lowerer) lowerIndirectCallOn(block *ir.Block, e *ast.FunctionCallExpr, callee value.Value, lt *types.LambdaType) (value.Value, *ir.Block, error) {
 	if !isClosureLLVMType(callee.Type()) {
 		return nil, nil, fmt.Errorf("llvm: callee is not a function value (%s)", callee.Type())
 	}

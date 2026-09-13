@@ -786,6 +786,9 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 }
 
 func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block, error) {
+	if lam, ok := vds.Value.(*ast.LambdaExpr); ok && l.isLocalGeneric(lam) {
+		return l.lowerLocalGenericDecl(block, vds, lam)
+	}
 	init, block, err := l.lowerExpr(block, vds.Value)
 	if err != nil {
 		return nil, err

@@ -478,7 +478,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 	tc.checkGenericBounds(calleeName, lambda, call, subst)
 	tc.warnFloatEqualityAtInstantiation(calleeName, lambda, call, subst)
 	tc.instantiations.Set(call, typetable.Instantiation{
-		Name: calleeName, Func: lambda, Disc: tc.instantiationDisc(lambda), Subst: subst,
+		Name: calleeName, Func: lambda, Disc: tc.instantiationDisc(lambda, calleeName), Subst: subst,
 		// The *call's* location, not the declaration's: the type arguments were resolved
 		// here, so this is the module a private type among them can be found in.
 		Site: call.GetLocation(),
@@ -494,9 +494,24 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 // what makes `map` on a `Maybe` a different function from `map` on a `[]t`. A name with one
 // declaration gets no discriminant at all, which keeps every existing key and emitted
 // symbol byte-for-byte what it was.
-func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr) string {
+//
+// **A generic declared inside a function gets one too**, naming where it is declared: its
+// name is a local binding's, so `idf<t=i64>` in `main` and a top-level `idf<t=i64>` — or
+// two functions' own local `idf`s — would otherwise share a key, a symbol and an ownership
+// table (09/13). The backend reads the discriminant's presence as "this is a local
+// generic" only through the key; what decides locality there is the declaration itself.
+func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr, name string) string {
+	if tc.symTable == nil {
+		return ""
+	}
+	if fn, found := tc.symTable.LookupFunctionFrom(name, lambda.GetLocation()); !found || fn != lambda {
+		if !tc.isOverloadMember(lambda) {
+			loc := lambda.GetLocation()
+			return fmt.Sprintf("local_%d_%d", loc.StartLine, loc.StartCol)
+		}
+	}
 	recv, ok := ast.ReceiverParam(lambda)
-	if !ok || tc.symTable == nil {
+	if !ok {
 		return ""
 	}
 	// Membership is asked by **identity**, not by name: a lambda's own GetName is not the
@@ -512,6 +527,19 @@ func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr) string {
 		}
 	}
 	return ""
+}
+
+// isOverloadMember reports whether lambda is one declaration of a receiver-overloaded name,
+// which a by-name lookup does not return as itself.
+func (tc *TypeChecker) isOverloadMember(lambda *ast.LambdaExpr) bool {
+	for _, set := range tc.symTable.OverloadSets {
+		for _, member := range set.Lambdas() {
+			if member == lambda {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // typeVarList renders a signature's type variables for a diagnostic, in a stable

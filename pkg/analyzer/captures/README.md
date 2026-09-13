@@ -23,6 +23,11 @@ shadows it) and errors in the backend if no enclosing binding exists, while miss
 capture errors too — a lifted body starts with an empty local set, so a name that is neither a
 parameter, a capture, nor a global has nowhere to come from.
 
+**A generic declared inside a function is not captured when it captures nothing** (09/13).
+Its name is not a value — the backend emits one closure per instantiation and a call picks
+its own — so a lambda calling it builds that closure where the call stands. One that does
+capture stays a capture, and the backend refuses it by name (`local_generic.go`).
+
 Captures are **by value**, copied when the closure is created, which is what lets a closure
 outlive the frame its captured bindings live in (the alternative, capturing the slot by
 reference, is a dangling pointer the moment that frame returns, and Lyra has no escape analysis

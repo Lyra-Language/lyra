@@ -496,6 +496,13 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	// name is hazard 9 in its plainest form: the shadow made every such call an
 	// indirect one through a value that is not callable, and the whole module stopped
 	// lowering with a message naming neither the call nor the file.
+	// A generic declared inside this function: one closure per instantiation, and this
+	// call's is the one the typechecker solved (local_generic.go).
+	if inst, ok := l.res.Instantiations.Get(e); ok && l.isLocalGeneric(inst.Func) {
+		// Composed with the substitution in force, as specializedFuncFor does: a call
+		// inside another generic body records a template in that body's variables.
+		return l.lowerLocalGenericCall(block, e, ident.Name, inst.Substituted(l.typeSubst, types.Substitute))
+	}
 	if _, isLocal := l.locals[ident.Name]; isLocal && !l.calleeIsDeclared(e) {
 		return l.lowerCallThroughValue(block, e)
 	}

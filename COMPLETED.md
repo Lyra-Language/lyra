@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a generic declared inside a function
+
+`let idf<t> = (a: t) -> t => a` in `main` checked clean and failed to build with *"type
+variable t has no concrete type here"*. It is two things the backend already lowered, never
+composed: a generic with no single representation, and a local lambda that may capture. The
+typechecker was already recording an instantiation per call; the backend lifted the lambda
+once, as an ordinary closure, at its unsolved variables.
+
+**One closure per instantiation** now (`local_generic.go`): lifted under the instantiation's
+substitution and ownership table with the instantiation's key — the same `closureKey` a
+lambda inside a generic body is lifted under — built as a closure value in a framed slot of
+its own where the `let` stands, and chosen at a call by the instantiation that call solved.
+The typechecker gives a local generic's instantiations a discriminant naming its declaration,
+since the key was the bare name and `main`'s `idf<t=i64>` would have shared a symbol and an
+ownership table with a top-level `idf` or another function's.
+
+**A call from inside another lambda** needed the captures pass to stop recording the name as
+a capture: a local generic is not a value, and one that captures nothing has a closure any
+call site can build — the lifted function and the pinned empty environment. A call inside
+another generic body records a template, composed with the substitution in force exactly as
+`specializedFuncFor` composes one.
+
+**Two shapes are refused by name**, in the backend: a local generic inside a *generic*
+function, since an instantiation carries only its own variables and the body may mention the
+enclosing function's; and a *capturing* local generic called from another lambda, since
+re-capturing its captures at the call would read a `var` as it is then rather than as it was
+at the declaration — a change of meaning rather than an implementation gap. Moving both into
+the checker is open.
+
 ### 09/13/26 — the last five leaks, and leak detection on for good
 
 Forcing `detect_leaks=1` into the ASan helpers failed five tests, each a different family.

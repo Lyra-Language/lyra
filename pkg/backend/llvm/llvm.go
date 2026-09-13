@@ -102,6 +102,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/backend"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/types"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 // Backend is the LLVM IR code generator.
@@ -239,11 +240,22 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	// can reference one. Their bodies are lowered last, after every enclosing
 	// function — never re-entrantly at the creation site, which would mean saving
 	// and restoring the whole per-function lowering state mid-expression.
-	nested := collectNestedLambdas(res.Program, entry.Lambda)
+	if err := l.collectLocalGenerics(res.Program, entry.Lambda); err != nil {
+		return nil, err
+	}
+	var nested []*ast.LambdaExpr
+	for _, fn := range collectNestedLambdas(res.Program, entry.Lambda) {
+		if !l.localGenericExcluded[fn] {
+			nested = append(nested, fn)
+		}
+	}
 	for _, fn := range nested {
 		if err := l.declareClosure(fn); err != nil {
 			return nil, err
 		}
+	}
+	if err := l.declareLocalGenerics(); err != nil {
+		return nil, err
 	}
 	// One function per distinct instantiation of a generic one (monomorphize.go),
 	// declared alongside the rest so a call resolves before any body exists.
@@ -267,6 +279,9 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		}
 	}
 	if err := l.defineSpecializations(); err != nil {
+		return nil, err
+	}
+	if err := l.defineLocalGenerics(); err != nil {
 		return nil, err
 	}
 	// Last, because everything above can queue one: a trait method is emitted on first
@@ -485,13 +500,18 @@ type lowerer struct {
 	// rather than as Lyra's boxed closure, for the duration of one extern declaration.
 	externSignature bool
 
-	closures       map[closureKey]*ir.Func
-	closureThunks  map[string]*ir.Func
-	envDropFns     map[string]*ir.Func
-	closureEnvDrop *ir.Func
-	emptyEnvPtr    value.Value
-	closureCount   int
-	envDropCount   int
+	closures map[closureKey]*ir.Func
+	// localGenericInsts and localGenericExcluded are the generics declared inside a
+	// function — each one's instantiations, and every lambda that must not be lifted
+	// generically. See local_generic.go.
+	localGenericInsts    map[*ast.LambdaExpr][]typetable.Instantiation
+	localGenericExcluded map[*ast.LambdaExpr]bool
+	closureThunks        map[string]*ir.Func
+	envDropFns           map[string]*ir.Func
+	closureEnvDrop       *ir.Func
+	emptyEnvPtr          value.Value
+	closureCount         int
+	envDropCount         int
 
 	// eqFns caches the per-type structural equality glue (equality.go), keyed the same
 	// way dropFns is — on the base type, so a newtype shares its base's function.

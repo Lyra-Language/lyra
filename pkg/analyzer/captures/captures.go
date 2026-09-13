@@ -79,10 +79,11 @@ func (t *Table) Of(fn *ast.LambdaExpr) []Capture {
 // neither a parameter, a capture, nor a global has nowhere to come from.
 func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable) *Table {
 	a := &analyzer{
-		table:   &Table{byLambda: map[*ast.LambdaExpr][]Capture{}},
-		globals: globalNames(program, symTable),
-		outer:   map[string]bool{},
-		tt:      tt,
+		table:         &Table{byLambda: map[*ast.LambdaExpr][]Capture{}},
+		globals:       globalNames(program, symTable),
+		outer:         map[string]bool{},
+		outerGenerics: map[string]*ast.LambdaExpr{},
+		tt:            tt,
 	}
 	for _, node := range program.Statements {
 		switch n := node.(type) {
@@ -104,7 +105,14 @@ type analyzer struct {
 	// closure, and only the enclosing binders say which one a read inside that
 	// closure means. See capturesOf.
 	outer map[string]bool
-	tt    *typetable.TypeTable
+	// outerGenerics is the subset of outer that names a **generic declared inside a
+	// function** — `let idf<t> = …` — mapped to its lambda. Such a name is not a value: the
+	// backend emits one closure per instantiation and a call picks its own. So a lambda
+	// calling one does not capture it when it captures nothing itself, since the call can
+	// build that closure where it stands; one that does capture stays a capture, and the
+	// backend refuses it by name (local_generic.go).
+	outerGenerics map[string]*ast.LambdaExpr
+	tt            *typetable.TypeTable
 }
 
 func (a *analyzer) onStmt(ast.Statement) bool { return true }
@@ -127,14 +135,19 @@ func (a *analyzer) onExpr(expr ast.Expression) bool {
 	// a second traversal written by hand is how a binder kind comes to be missing from
 	// one copy and present in the other.
 	a.table.byLambda[fn] = a.capturesOf(fn)
-	saved := a.outer
+	saved, savedGenerics := a.outer, a.outerGenerics
 	a.outer = make(map[string]bool, len(saved))
 	for name := range saved {
 		a.outer[name] = true
 	}
 	directBinders(fn, a.outer)
+	a.outerGenerics = make(map[string]*ast.LambdaExpr, len(savedGenerics))
+	for name, lam := range savedGenerics {
+		a.outerGenerics[name] = lam
+	}
+	directGenericBinders(fn, a.outerGenerics)
 	ast.WalkExprChildren(fn, a.onStmt, a.onExpr)
-	a.outer = saved
+	a.outer, a.outerGenerics = saved, savedGenerics
 	return false
 }
 
@@ -152,6 +165,24 @@ func directBinders(fn *ast.LambdaExpr, bound map[string]bool) {
 		}
 	}
 	collectInto(bodyOf(fn), bound, nil, false)
+}
+
+// directGenericBinders adds the generics fn declares in its own body — `let g<t> = lambda`
+// not inside a nested lambda — keyed by name.
+func directGenericBinders(fn *ast.LambdaExpr, into map[string]*ast.LambdaExpr) {
+	for _, body := range bodyOf(fn) {
+		ast.WalkExpr(body, func(s ast.Statement) bool {
+			if decl, ok := s.(*ast.VarDeclStmt); ok {
+				if lam, ok := decl.Value.(*ast.LambdaExpr); ok && len(lam.GenericParams) > 0 {
+					into[decl.Name] = lam
+				}
+			}
+			return true
+		}, func(e ast.Expression) bool {
+			_, isLambda := e.(*ast.LambdaExpr)
+			return !isLambda
+		})
+	}
 }
 
 // capturesOf computes one lambda's captures: names read inside it, minus names
@@ -185,6 +216,12 @@ func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 		// same module to declare the name, which is why it resisted reduction.
 		if a.globals[name] && !a.outer[name] {
 			continue
+		}
+		// A captureless local generic is called where it stands; see outerGenerics.
+		if g, isGeneric := a.outerGenerics[name]; isGeneric && g != fn {
+			if caps, analyzed := a.table.byLambda[g]; analyzed && len(caps) == 0 {
+				continue
+			}
 		}
 		var t types.Type
 		if a.tt != nil {

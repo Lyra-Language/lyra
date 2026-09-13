@@ -47,7 +47,16 @@ import (
 // type here". The driver has already composed each template against every specialization
 // that reaches it and added the results here, so the concrete set is complete.
 func (l *lowerer) specializations() []typetable.Instantiation {
-	return l.res.Instantiations.Concrete()
+	all := l.res.Instantiations.Concrete()
+	out := all[:0:0]
+	for _, inst := range all {
+		// A generic declared inside a function is emitted as closures instead
+		// (local_generic.go): it may capture, and a specialization has no environment.
+		if l.localGenericInsts[inst.Func] == nil {
+			out = append(out, inst)
+		}
+	}
+	return out
 }
 
 // declareSpecializations emits the signature of every specialization before any
