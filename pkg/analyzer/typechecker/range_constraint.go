@@ -138,8 +138,8 @@ func (tc *TypeChecker) scheduleRuntimeConstraintCheck(value ast.Expression, ct *
 //
 // It is a **TupleLiteralExpr**, not a FunctionCallExpr: `Percent(n)` parses as a
 // named tuple literal, which is the same node `tuple Rgb(u8, u8, u8)` constructs
-// with (see inferNewtypeConstruction, and the parenthesised-operand note in the
-// workspace CLAUDE.md). Testing for a call matched nothing and left the duplicate in
+// with (see inferNewtypeConstruction, and the constructor-head corpus note in
+// tree-sitter-lyra/CLAUDE.md). Testing for a call matched nothing and left the duplicate in
 // place — worth stating here, since "constructor" reads like "call" everywhere else.
 func isNewtypeConstructorCall(value ast.Expression, ct *types.ConstrainedType) bool {
 	tup, ok := value.(*ast.TupleLiteralExpr)

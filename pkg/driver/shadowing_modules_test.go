@@ -180,5 +180,5 @@ let main = () -> void => println("${f(1)} ${later(1)}")
 // empty and `unwrap_or` is not in the program at all — a test asserting it would pass for
 // the wrong reason. The behaviour is kept by `forFile` adding the prelude's *exports*, and
 // was checked against the real standard library: a local named `unwrap_or` still warns.
-// CLAUDE.md makes the general point — a test that needs the prelude belongs where the
+// lyra/CLAUDE.md's Testing section makes the general point — a test that needs the prelude belongs where the
 // prelude is real.

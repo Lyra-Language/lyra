@@ -1,87 +1,54 @@
 # `data` / sum-type layout (LLVM lowering)
 
-How Lyra `data` (sum) types lower to LLVM. Companion to ALLOCATION.md: this fixes
-the **payload** representation of a `data` value; the `stack`/`shared` flavor
-(ALLOCATION.md) independently decides whether that payload sits inline or behind a
-ref-counted `ptr`.
+Fixes the **payload** representation of a `data` value. The `stack`/`shared` flavor
+(ALLOCATION.md) independently decides whether that payload sits inline or behind a box
+pointer; the two compose.
 
-## Model (from `pkg/types`)
+## Model (`pkg/types`)
 
-`DataType` = `Name` + `Constructors []DataTypeConstructor`; each
-`DataTypeConstructor` = `Name` + `Params []Type` (its payload fields, in order).
-Variant kinds are just different `Params` shapes:
+`DataType` = `Name` + `Constructors []DataTypeConstructor`; each constructor = `Name` +
+`Params []Type`. Variant kinds are `Params` shapes:
 
-- **nullary** — `Params` empty (`None`, `Red`)
-- **positional** — `Params = [i64]` / `[i64, i64]` (`C i64`, `C (i64, i64)`)
-- **inline record** — `Params = [AnonymousStructType{…}]` (`C { x: T }`)
-- **struct-reference** — `Params = [NamedStructType]` (`C MyStruct`)
-
-## Decision summary
-
-A `data` value is a **tagged union**: `%T = type { iTAG, <payload blob> }`.
-
-- **tag** = the smallest unsigned integer that holds the variant count (`i8` for
-  ≤256 variants, which is all realistic cases), placed first. Tags are assigned in
-  declaration order (0, 1, 2, …).
-- **payload** = a blob sized/aligned to the **largest** variant payload, accessed
-  as the active variant's payload struct via a typed load/store at the payload
-  offset (field 1).
-
-The tagged union is the payload; the allocation flavor wraps it — `stack data` is
-the union **inline**, `shared data` is a **`ptr`** to a ref-counted box whose
-payload is the union (see ALLOCATION.md). The two decisions compose and are
-orthogonal.
+- **nullary** — empty (`None`, `Red`)
+- **positional** — `[i64]`, `[i64, i64]`. The collector wraps positional fields in one
+  anonymous tuple; read the flat list via `DataTypeConstructor.FieldTypes()`.
+- **inline record** — `[AnonymousStructType{…}]`
+- **struct-reference** — `[NamedStructType]`
 
 ## Layout
 
-- A variant's **payload type** is the struct of its `Params` in order: nullary →
-  `{}` (zero-size); inline-record → the anonymous struct; struct-ref → a field of
-  that struct (in its own flavor); positional → `{ p0, p1, … }`.
-- **Union size/align** = the max size and max alignment across all variant payload
-  structs.
-- Emit `%T = type { iTAG, [N x i8] }` where `[N x i8]` is over-aligned to the union
-  alignment (or, equivalently, use the largest-payload struct as the storage member
-  so it carries the alignment). With opaque pointers, variant access is: `getelementptr`
-  to field 1, then `load`/`store` typed as that variant's payload struct.
+`%T = type { iTAG, [K x iA] }` (`DataUnionType`):
 
-## Construction
+- **tag** — smallest unsigned int holding the variant count (`i8` in practice), first;
+  assigned in declaration order. Read the index with `findConstructor`, never hard-code it.
+- **payload blob** — sized to the largest variant payload and carrying the largest
+  alignment. A variant's payload type is the struct of its `Params` in order (nullary →
+  `{}`). An all-nullary enum is just `{ i8 }`.
+- A by-value named type in a payload is sized by resolving it first (`resolveForLayout`,
+  which also normalizes a `ParameterizedType` via `resolveInstantiation`).
 
-- `Cons(1, tail)` → materialize `%T` (stack slot or `lyra_rc_alloc` box per flavor);
-  `store` tag = index(`Cons`); GEP the payload; `store` the payload struct `{ 1, tail }`.
-- `None` → store the tag; leave the payload undefined (or zero it).
+## Construction and match
 
-## Match / destructuring
-
-- `load` the tag, `switch` on it; per arm, GEP the payload and `load` it typed as
-  that variant's payload struct, then extract the bound fields. The front-end already
-  guarantees exhaustiveness (`lyra-E009`), so a well-typed `match` needs no default —
-  emit an `unreachable` default defensively.
+- **Construct** (`lowerDataConstruction`) goes through memory: alloca the union, store the
+  tag, GEP field 1, bitcast to the variant's payload-struct pointer, store the payload,
+  load the union back. A nullary variant stores only the tag; its blob is undef.
+- **Match** loads the tag and `switch`es; each arm reinterprets the blob as its variant's
+  payload struct the same way. Exhaustiveness is `lyra-E009`; the default block still
+  traps (`sealMatchFallthrough`).
 
 ## Drop
 
-- A generated drop function `switch`es on the tag and drops the **active** variant's
-  payload fields (release for `shared` fields, recurse into aggregates). A data type
-  whose payloads are all trivial (no `shared`/string/array) needs no drop.
+Generated drop glue switches on the tag and drops only the **live** variant's fields
+(`emitOwnedValue`, owned_walk.go), so a nullary variant's undefined blob is never read. A type whose
+payloads own nothing gets no glue.
 
-## Recursive & `shared`
+## Recursion and generics
 
-- A recursive occurrence must be `shared` (`lyra-E014`), i.e. a `ptr` in the payload,
-  so the union has finite size. Allocation is a use-site flavor (there is no
-  declaration-level modifier), so the recursion is broken on the recursive *field*:
-  `data List = Nil | Cons(i64, shared List)` — the `Cons` payload is `{ i64, ptr }`,
-  and a `shared List` value is a `ptr` to a box of the union.
-
-## Generics
-
-- **Monomorphize per instantiation** (chosen — value semantics, layout-friendly,
-  matches the packed/`fixed` goals): `Box<i64>` and `Box<f32>` get distinct `%T`s,
-  same as generic structs. (Type-erased/boxed generics are the alternative; not
-  chosen.)
+- A recursive occurrence must be `shared` (`lyra-E014`) — a pointer in the payload — so
+  the union is finite: `data List = Nil | Cons(i64, shared List)` has payload `{ i64, ptr }`.
+- **Monomorphized per instantiation**: `Box<i64>` and `Box<f32>` are distinct `%T`s.
 
 ## Deferred
 
-- **Niche / tag-fold optimization** (Rust-style: drop the tag when a variant has a
-  spare bit-pattern) — most valuable for `Maybe<shared T>` / `Maybe<ptr>` (None =
-  null) and for `Result`, which are hot. Deferred; always emit an explicit tag first.
-- Sub-byte tag packing, field reordering to cut padding, and C-ABI union
-  compatibility are later optimizations.
+- Niche / tag folding (e.g. `Maybe<shared T>` as a nullable pointer).
+- Sub-byte tag packing, field reordering to cut padding.

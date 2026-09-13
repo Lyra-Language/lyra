@@ -14,7 +14,7 @@ import (
 // The grammar admits more than the language means — order, duplicates, the modifiers that
 // say nothing about a foreign function, and an `unsafe` written *after* `extern` — because
 // one `fn_modifiers` is four times cheaper in parser states than stacked optionals (the
-// measurement is in the grammar repo's CLAUDE.md). This is where the difference is paid:
+// measurement is in the grammar repo's CLAUDE.md, under Parser Size). This is where the difference is paid:
 // each of those is reported here, with a message naming the fix, rather than as a syntax
 // error pointing at whichever token failed to shift. Same trade `let` makes.
 func CollectExternDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ExternDeclStmt {

@@ -69,7 +69,7 @@ let use = () -> i64 => apply(unbox, B(Pt { x: 7 }))`,
 // Maybe<weak Node>".
 //
 // This is the fifth instance of the hazard and the second in this one file, which is
-// what the rule in lyra/CLAUDE.md means by "these travel in pairs": fixing a switch
+// what rule 8 in lyra/CLAUDE.md means by checking a switch's siblings: fixing a switch
 // means checking its twin, not only its neighbours.
 func TestResolveTypeIfKnown_NamedTypeInsideReturnAnnotation(t *testing.T) {
 	for _, source := range []string{
@@ -100,8 +100,8 @@ let mk = () -> (Pt) -> i64 => (p: Pt) -> i64 => p.x`,
 // been two copies of the same ~120-line recursion differing only at the unknown-name
 // leaf, which is how the drift above happened twice; they now share
 // `resolveTypeWith`, parameterized by that leaf, so a composite added later reaches
-// both or neither. `lyra/CLAUDE.md` hazard 8 named this pair as its outstanding
-// instance of "the durable fix is to stop having more than one of it".
+// both or neither. That is `lyra/CLAUDE.md` hazard 8's durable fix: stop having more
+// than one of it.
 //
 // The cases below put a named type inside *every* composite the walk handles, in
 // return position — the half resolved by the quiet twin, and so the half that was

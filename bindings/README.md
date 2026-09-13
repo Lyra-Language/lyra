@@ -1,0 +1,103 @@
+# Binding modules (`bindings/`)
+
+A binding module is a per-library Lyra module that owns its `extern`s and exports Lyra over
+them (Rust's `*-sys` pattern). It needs nothing new from the language. Compiler-side FFI
+notes are in [`pkg/backend/FFI.md`](../pkg/backend/FFI.md); language rules are in
+[`LANGUAGE.md`](../LANGUAGE.md).
+
+## Conventions for every binding
+
+- **Externs are private; the module exports Lyra.** There is no `pub extern`, so the
+  wrapper is where `unsafe` stops, NULL becomes a `Maybe`, and untagged C unions become
+  `data` types. An example using a binding should contain no `unsafe` and no `extern`.
+- **`@link("lib")` goes on the `module` header**, once. `@link` cannot say *where* — a
+  Homebrew install needs e.g. `LIBRARY_PATH=$(pkg-config --variable=libdir sdl3)`.
+- **Not `vendor/`**: that name at a Go module root is Go's own and breaks every `go` command.
+- **Resolution**: `bindings.sdl3` → `<root>/bindings/sdl3/`. `build.sh` links `bindings`
+  beside `std` in `build/`; `go run ./cmd/lyrac` still needs `LYRA_STD`.
+- **A C function can fail by succeeding; the wrapper stops that.** Gate on the library's
+  validity check (`IsSoundValid`, `IsWaveValid`, …) and answer a `Maybe` — `to_maybe`'s rule
+  applied to conventions that are not NULL.
+- **An out-parameter becomes a `Maybe`** (`lines_intersect` → `Maybe<Vector2>`); the `^mut`
+  never leaves the wrapper.
+- **An empty array does nothing rather than trapping** (`xs.data()` traps on empty); array
+  predicates answer `false`.
+- **Bind one spelling per capability**: the Vector2/Rectangle form, not raylib's loose-`int`
+  twins (single deliberate exception: `draw_pixel` beside `draw_pixel_v`).
+- **Unloading is the caller's** — Lyra has no destructors. Mark resource structs
+  `@must_release(unload_x)` (`lyra-W022`). A function that takes over a resource takes it
+  `own` (`model_from_mesh(own Mesh)`), so a later unload is a use-after-move error.
+- **An in-place C edit takes `self: mut T`** (the modifier binds to the type, after the
+  colon). raylib's `ImageResize` frees the old buffer, so a form returning a new value would
+  leave the caller holding a freed one.
+- **Mark an extern `pure` only when it is arithmetic on its arguments** (collision tests,
+  spline getters). An extern bound is recorded, not checked; anything reading the world or
+  returning a pointer into a static buffer (all of `files.lyra`) stays unmarked.
+- **`rec` is a reserved word** (a function modifier) — use `rect`.
+- Angles are `Degrees` (`bindings/raylib/angle.lyra`), a deliberately **unconstrained**
+  newtype over f32: literals convert implicitly, a computed `f32` must say `Degrees(x)` or
+  `from_radians(x)` (`lyra-E046`). A range constraint would refuse real angles like 370.
+  `turns(fraction)` is the animation form. No operator impls; read out with `f32(d)`.
+- **A binding that will not lower is evidence about the compiler**, not the library — a
+  whole-module failure over one untouched file is what a by-name lookup in the wrong scope
+  looks like (see `CLAUDE.md` rule 9).
+
+## `bindings/sdl3/`
+
+SDL3; `@link("SDL3")` on the header. `SDL_Event` is a Lyra `union` exposed as a `data` type.
+`examples/SDL3/basic.lyra` is the use.
+
+## `bindings/raylib/`
+
+Needs struct-by-value (`pkg/abi`); nothing in the binding mentions registers.
+
+| file | gotchas |
+|---|---|
+| `audio.lyra` | `Sound` (40 B) / `Wave` (24 B) return via `sret`. Both `@must_release`. `LoadWaveFromMemory` wants the extension **with a dot** and silently answers an all-zero `Wave` without one; `wave_from_memory` normalises it. |
+| `shapes.lyra` | Named colours are `pub const` structs. `DrawRectangleGradientV`/`H` unbound (they are `…Ex` with a repeated colour). |
+| `texture.lyra` | `Image`/`Texture2D` are `@must_release`. The image half is headless; a `Texture2D` needs `init_window` (without it raylib answers an invalid texture → `None`). `image_colors` copies into `[]Color` and frees raylib's buffer. `LoadImageFromMemory` has the same dot trap. `ExportImageToMemory` unbound: it answers size 0. `LoadTextureCubemap` waits on 3D. |
+| `image.lyra` | Painting is `paint_*`: screen `draw_*` has no receiver, and receiver-keyed overloading needs every declaration to have one. `gen_mipmaps` is a cross-file overload (`mut Image` / `mut Texture2D`). `image_text` answers `Maybe` — with no window the default font's glyph array is NULL and raylib segfaults; `font_valid` predicts it. A convolution kernel is a `[]f32` of perfect-square length, and a kernel not summing to 1 changes alpha too. `dither` answers `bool`: only 5-6-5, 5-5-5-1, 4-4-4-4 exist, and a narrower packing leaves the image in pixel format 0. Loose-int twins and `ImageRotateCW`/`CCW` unbound. |
+| `text.lyra` | `Font`, `GlyphInfo`, measuring, `draw_text_ex`/`draw_text_pro` (a `Degrees`). |
+| `shapes3d.lyra` | `Camera3D` (44 B), billboards, rays. `Matrix` (16 floats) is not an HFA on aarch64 and crosses in memory. `RayCollision` → `Maybe<RayHit>`; its C `_Bool` is transcribed `u8`. **A negative distance is not a hit**: `GetRayCollisionSphere` is a line test and reports spheres behind the origin; the guard is `>= 0.0` (inside a sphere reports positive, on its surface 0.0). Names mirror 2D (`circles_overlap` → `spheres_overlap`). |
+| `files.lyra` | Directory listing, dropped files, metadata, binary I/O, DEFLATE/Base64/hashes (`std.io` stays the text answer). Every `int` return becomes `bool`: 0 is success for `MakeDirectory`/`FileRename`/`FileRemove`, 1 for `FileCopy`. **`FileMove` copies and always returns -1**, so `move_file` is `copy_file` + `remove_file`. `FileTextReplace` always returns 1, so `replace_in_file` answers `find_in_file`'s question. Hashes are hex strings: raylib returns a static word array, **MD5 little-endian, SHA big-endian**. |
+| `models.lyra` | **Everything touching the GPU is gated on `window_ready()`** — `GenMeshCube` with no window segfaults. A hidden window (`FLAG_WINDOW_HIDDEN`) gives a GL context for headless checks. A model owns its meshes; meshes/materials are reached by bounds-checked index, never handed out as values. `Animations` is one handle for the whole array. `draw_mesh_instanced` falls back to per-transform `draw_mesh` when the shader lacks an instance-transform attribute (raylib otherwise draws one mesh at the origin); `material_supports_instancing` says which. **`model_valid` answers false for CPU-skinned models** (bone data has no GPU buffer), so `load_model` tests "has meshes" instead. `unload_model` also frees the model's distinct textures (raylib's does not), never the shared 1x1 default; a texture set on a model is taken `own`. A glTF may carry no normals — a null `normals` pointer is the only reliable signal. `LoadMaterials` unbound: its array goes back to `MemFree(^u8)` and Lyra has no pointer reinterpretation. |
+| `raymath.lyra` | Rotations, scale, `matrix_multiply` (angles as `Degrees`); `matrix_identity`/`matrix_translation` are Lyra. `matrix_multiply(first, second)` applies `first` then `second`; translation is in `m12`/`m13`/`m14`. |
+| `shaders.lyra` | raylib's default shader is unlit. A failed compile is `None` (raylib substitutes its default). `bind_shader_map` gives a sampler a slot (`texture0..2` by name, the rest via `locs[SHADER_LOC_MAP_ALBEDO + map]`, hence `Shader.locs: ^mut i32`). Uniform values are unbound (`const void *`); pass per-material values as a texture. `set_backface_culling`/`set_depth_write`. `Shader` is `@must_release(unload_shader)`; `unload_model` does not free it. |
+
+## `bindings/jpeg.lyra`
+
+libjpeg-turbo, because Homebrew's raylib is built without JPEG support. `decode_jpeg(bytes)
+-> Maybe<Jpeg>` answers RGBA pixels in a Lyra-owned array (baseline and progressive). An
+`Image` pointed at that buffer must **never** be `unload_image`d. Link `-lturbojpeg` (`brew
+install jpeg-turbo`, Debian `libturbojpeg0-dev`), on `LIBRARY_PATH` beside raylib.
+
+## Examples and galleries (`examples/raylib/`)
+
+- **Two programs in one file**: a window, plus a `--check` mode verifying everything a
+  machine can (geometry, image pixels, asset sizes, constants). `--check` runs before
+  `init_window`, so queries must answer resting values with no window.
+- `input.lyra` checks its 154 generated constants by **properties** (ASCII-derived key codes,
+  contiguous enum groups, no duplicates), never by transcribing the table twice.
+  `gamepad_name` gates on availability and non-empty (raylib returns `""`, not NULL).
+- `textures.lyra` draws committed PNGs from `assets/`, generated by `assets/generate.py`;
+  `--check` verifies their sizes. It finds `assets/` from the repo root or `examples/raylib/`.
+- `painting.lyra` loads nothing from disk. `files.lyra` never opens a window.
+- `shapes3d.lyra` stands shapes in a ring (an orbiting camera sees a row edge-on) and draws
+  its 3D triangle with both windings (culling).
+- `gltf_viewer.lyra` opens any model (args or drag-and-drop), lights it with its own
+  metallic-roughness shader (smooth and flat variants), plays node animations and reads
+  material fields raylib drops, via sibling module `gltf.lyra` over `std.json`. raylib bakes
+  each node's rest transform into mesh vertices, and meshes match nodes in file order, one per
+  triangle primitive; raylib's material `i + 1` is the file's `i`. Material floats reach the
+  shader as a one-row float texture (`texelFetch` + `uintBitsToFloat`). `--check <path>` runs
+  headlessly.
+- `breakout.lyra` is the game: synthesised tones, `audio_ready()` gates audio.
+- Galleries size labels from a `LABEL` constant (22px; default font ≈ 0.55em/char).
+- **Look at a gallery**: copy it to `/tmp`, replace the `should_close` loop with a fixed tick
+  count, screenshot with `image_from_screen` + `export_image`, read the PNG. A foreground run
+  opens a window; a detached background process cannot. Also compute extents — the two find
+  different things.
+- There are no direct-extern examples; that proof lives in `TestExec_UnionAgainstSDL3`,
+  `TestExec_ByValueAgainstRaylib` (skip when the library is absent) and
+  `TestExec_FFIFixture_UnionLayoutMatchesC`. Headless raylib tests:
+  `TestExec_RaylibImageBindings`, `TestExec_RaylibImageEditingAndPainting`.

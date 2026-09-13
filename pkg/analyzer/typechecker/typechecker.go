@@ -2214,9 +2214,8 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 // resolveType grew `*LambdaType` and `ParameterizedType` cases (assignability
 // rejecting a type against *itself*, "cannot assign `Box<Pt>` to `Box<Pt>`") and its
 // twin did not, which produced the identical self-rejection in *return* position on
-// 08/03 — "expected `Maybe<weak Node>`, got `Maybe<weak Node>`". CLAUDE.md hazard 8
-// names this pair as its outstanding instance and prescribes the fix taken here: one
-// walk parameterized by the leaf, so a composite added later cannot reach one
+// 08/03 — "expected `Maybe<weak Node>`, got `Maybe<weak Node>`". lyra/CLAUDE.md hazard 8
+// prescribes the fix taken here: one walk parameterized by the leaf, so a composite added later cannot reach one
 // resolver and miss the other.
 //
 // Each composite case is here for a failure of its own, all the same shape — an

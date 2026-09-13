@@ -191,7 +191,7 @@ var declarationKinds = []string{
 // every consumer test passing vacuously.
 //
 // The definition it checks against is **carrying a `Doc` field**: documentation attaches to
-// declarations and to nothing else (see CLAUDE.md), so a statement node with one is a
+// declarations and to nothing else (see lyra/LANGUAGE.md), so a statement node with one is a
 // declaration by the language's own rule rather than by this file's opinion.
 func TestDeclarationKindsAreComplete(t *testing.T) {
 	listed := map[string]bool{}

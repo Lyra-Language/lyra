@@ -1,730 +1,281 @@
 # `pkg/analyzer/checker` — standalone AST passes
 
-Standalone AST-level semantic passes. Most (e.g. `use_before_declaration.go`, `shadowing.go`,
-`unused_variables.go`) run after collection but before typechecking and only need the AST.
-**`purity.go` is the exception** — `CheckPurity` takes the typechecker's
-`*typetable.MethodTable` (nil-safe) so a pure function/method calling a trait method can be
-checked against the method it actually dispatches to; it must run *after* `typechecker.Check`,
-not before (see `cmd/lyra-lsp/main.go`'s ordering).
+Semantic passes outside the typechecker. Language semantics are in
+[LANGUAGE.md](../../../LANGUAGE.md).
 
-It also takes the **`*symbols.SymbolTable`**, and that is a correctness requirement rather
-than a convenience: an impl inherits its trait's declared effect bound, so the pass must
-resolve a trait name the way the module writing the impl sees it (`LookupTraitFrom`, rule 4).
-Until 08/24 it built its own `map[traitName]` by walking the merged program, which is
-last-writer-wins — two modules each declaring a trait of one name meant an impl inherited
-whichever was walked last, and a `pure` its own trait declared went silently unenforced.
-
+- **Pre-typecheck, AST-only**: `use_before_declaration.go`, `shadowing.go`, `unused_variables.go`,
+  `effect_bounds.go`, `generic_params.go`, `type_names.go`, `inert_borrow_modifier.go`.
+- **Post-typecheck** (need `TypeTable`/`MethodTable`): `purity.go`, `use_after_move.go`,
+  `range_analysis.go`, `array_repeat_alias.go`, must-release, let-else divergence. A pass lives
+  post-typecheck when it needs the *settled* type the backend lowers, not the inferred one.
+- **Every pass returns `[]diag.Diagnostic`**, carrying its own severity; the driver loops over
+  them. `typechecker.TypeError` is the one exception (`TypeError.Diagnostic()` bridges it).
 
 ## `use_before_declaration.go`
 
-`CheckUseBeforeDeclaration(program) []UseBeforeDeclarationError`
-  Two-pass algorithm: collect all names declared directly in a block, then walk in order
-flagging any use of a not-yet-seen name. A lambda body is checked with its **parameters
-pre-seeded as already in scope** (`checkStatementsInScope`, 07/30) — a parameter is declared by
-the signature, so a `let` of the same name *shadows* it rather than using it early. Without
-that, `(s: string) => { let s = s ++ "!"  s }` was flagged, which mattered because shadowing is
-the replacement for reassigning a borrowed parameter (`lyra-E025`).
+`CheckUseBeforeDeclaration(program)`: collect a block's names, then walk in order flagging early
+uses. Lambda bodies are checked with **parameters pre-seeded** (`checkStatementsInScope`), so
+`let s = s ++ "!"` shadows rather than uses early.
 
 ## `purity.go`
 
-`CheckPurity` returns **two** results — the `pure` violations, and the missing-bound
-warnings from `missing_pure_bound.go` (documented below), which ride along because they
-read the same fixpoint. It enforces `pure` (lambdas and, since 06/24/26, trait-impl methods): no captured
-mutation, no calls to non-pure functions/methods, no `await`. Both `CheckPurity` and the
-call-site "non-pure method" check consult `inferImpurity`'s bottom-up fixpoint (not just the
-explicit `pure` flag) for whether a callee is actually pure — it runs over free functions and
-trait-impl methods jointly (`collectMethodImpls`), since either can call the other.
-`InferredPureFunctions(program)` separately exposes that result by name for top-level functions
-only (a name-keyed map can't disambiguate methods across impls). Method-to-method calls are now
-tracked: `checkTraitImplMethodBody` (`typechecker_traits.go`) type-checks each impl method body
-— verifying it against the trait's declared return type (Self and the trait's own params
-substituted, mirroring `checkLambdaBody`) and populating `MethodTable` with any `.`-calls
-inside, so `methodEffects` finds them in the fixpoint.
+`CheckPurity` must run **after** `typechecker.Check` (see `cmd/lyra-lsp/main.go`). It takes the
+`*typetable.MethodTable` (nil-safe), the `TypeTable`, the captures table, the `*symbols.ScopeTable`,
+and the **`*symbols.SymbolTable`** — required, because an impl inherits its trait's bound and the
+trait must be resolved as the impl's module sees it (`LookupTraitFrom`, rule 4). Never build a
+local `map[traitName]`.
 
-## `missing_pure_bound.go`
+Returns two results: `pure` violations (`lyra-E007`) and missing-bound warnings (`lyra-W018`,
+`missing_pure_bound.go`). `InferredEffects`/`InferredPureFunctions` expose the fixpoint by name
+(top-level functions only).
 
-`missingPureBounds` is `CheckPurity` inverted, and it is why that function returns two
-results rather than one: the enforcement half reads an annotation and checks the body
-against it, this half reads the body and asks whether the annotation is missing
-(`lyra-W018`). Both consume the one effect fixpoint, so nothing is re-derived — it is a
-method on `purityChecker` for exactly that reason.
+### One walk
 
-**The obvious justification for it is false in this compiler, and the code says so.**
-"An unmarked callee blocks a `pure` caller" is what a reader expects, and purity here is
-*inferred* whole-program: a `pure` function may call an unannotated free function or impl
-method whose body the fixpoint found effect-free, and nothing is refused. The missing bound
-costs on the **next edit**:
+- `inferImpurity` is a set-monotonic fixpoint over free functions **and** trait-impl methods
+  jointly (`collectMethodImpls`), recomputing every callable each round (no "already impure"
+  early-out).
+- **`bodyEffects` over a `callable`** is the *only* body walk. `callable` describes what differs:
+  frame, capture stack, `mut` params (nil for methods), parameter positions, allocation-site
+  recording, declared-bound reading, body walker. Enforcement re-runs the same walk with
+  `callable.reportPure` set, so the arm that charges a bit words the diagnostic. Do not
+  reintroduce a separate reporting mirror (the old split inferred a pure-through-trait-method
+  call wrong).
+- `exprVisitor` is orchestration only: find callables, check `det`/`noalloc` against the inferred
+  row, re-run the walk for `pure` bodies, check declared callback bounds.
+- Reporting-only arm: a nested lambda's parameter defaults are held to the enclosing bound at the
+  definition (inference bills the call sites via the default-args desugar).
+- Tables live in embedded **`inference`**, shared by fixpoint and enforcement.
+- Method-to-method chains work because `checkTraitImplMethodBody` populates `MethodTable` inside
+  impl bodies.
 
-```lyra
-let helper = (n: i64) -> i64 => { println("added later"); n * 2 }
-let caller = pure (n: i64) -> i64 => helper(n)
-```
+### Memoized per-callable inputs
 
-The `println` is reported at `caller` — the only thing in the program that promised
-anything. Write `pure` on `helper` and it is reported at the `println` too, in the function
-being edited. So the bound is where the *blame* goes when a body changes, which is
-`generic_params.go`'s "the diagnostic lands somewhere else" one rung up.
+| fact | cached as |
+|---|---|
+| body scope frame | `frames.forLambda` |
+| `mut` parameters | `frames.mutBorrowsFor` |
+| parameter positions (incl. match aliases) | `frames.paramsFor` |
+| method frame / params | `frames.forMethod` / `methodParamsFor` |
 
-Scope was chosen against measurements over `std/` and `examples/`, not from taste:
+**The maps are shared: nothing may write to one after its builder** (`buildLambdaFrame`,
+`addScopeSymbols`, `directScopeBindingsForClause`, `addMatchAliases`). `funcScope.isLocal` tests
+key presence, not value. `TestPurity_IsIdempotent` is the standing check.
 
-- **`pure` only.** `det` and `noalloc` come off the same fixpoint and were counted on the
-  same code: `det` fires on ~1/6 of all functions and `noalloc` on ~2/5, and nearly every
-  `det` candidate is a terminal-escape wrapper (`cursor_hide`, `move_to`) that qualifies
-  only because `det` permits `EffectOutput` by design. Reporting them buries the `pure`
-  half, which fires a handful of times per file and names real pure helpers.
-- **Declarations only.** The fixpoint covers every lambda including inline closure
-  arguments; `(x) => x * 2` inside an `xs.map(…)` is an expression, not an interface. A
-  nested named `let` is excluded on the weaker version of the same point — its callers are
-  in the body around it.
-- **`main` never warns.** Nothing calls it, so there is no caller for blame to move to.
-- **A trait-declared bound counts as annotated.** `effectiveMethodBounds` is shared with
-  `checkTraitMethodBounds` so the two cannot disagree; warning at an impl whose trait
-  already says `pure` would be advice to restate what is already enforced.
+Lambda scopes come from the collector's `ScopeTable` (`scopeFrames.forLambda`, pruned at nested
+function scopes). Trait-method clauses still re-walk (`directScopeBindingsForClause`) because
+`CollectLambdaClause` pushes no scope. Impurity of imported functions is open (`todo.md`).
 
-A higher-order function *is* reported: a callback's effects are charged to the call site
-that supplies it, so marking one `pure` does not forbid impure callbacks — which is how the
-prelude's `map`/`filter`/`flat_map` are `pure noalloc` today.
+### Resolving callees
 
-**Landing it required marking the standard library**, and that is the real cost of the
-feature rather than an incidental chore. `std/prelude` was diagnostic-clean before this and
-drew 97 warnings after — every one a trait-impl method (`Add::+` and friends per numeric
-width, `Show::show`, `Signed::abs`, `Ord::compare`, `Needle::found_at`) — which would have
-appeared on *every user compile*, about code the user did not write. They were marked at the
-impl rather than by declaring the traits' methods `pure`, which would have been one edit
-instead of 97: a bound on the trait binds every implementer, including a user's, and
-deciding that no `impl Show for MyType` may ever print is a language decision, not a
-cleanup. `std/math`, `std/tui` and `examples/` were marked the same way.
+- **Scope first, then the builtin table** (`isImpureCallee` and the walk's call cases) — a user
+  `print`/`panic` is the user's function.
+- **Namespace-qualified callee** (`resolveCallee`): `maybe.map` resolves through its last segment,
+  only when the object segment names no binding (mirrors backend `namespaceCallee`).
+- **Unresolvable callee** → `AllEffects` (`PurityEffects | EffectAlloc`).
+- **Callee the typechecker refused** (`typetable.SetUnresolvedCallee`) → charged nothing,
+  reported nowhere (no cascade). Don't re-derive this locally: "resolves nowhere here" also matches
+  merely-unseeable callees.
+- Overloaded/UFCS callees: read `TypeTable.Callee` first.
 
 ## `effects.go`
 
-`checker.Effect`, a bitmask generalizing the old impure/pure bool (`EffectMut`,
-`EffectInput`/`EffectOutput` — the split of the old `EffectIO`, kept as their `Input|Output`
-alias — `EffectAlloc`, `EffectRand`, `EffectTime`; `EffectNone` = pure). `inferImpurity`
-accumulates this per function/method (set-monotonic fixpoint) instead of a bool;
-`InferredEffects(program)` exposes it by name. Two named-bound masks over the row:
-**`PurityEffects = Mut|Input|Output|Rand|Time`** (everything but Alloc — `pure` and
-`InferredPureFunctions` are defined against it, so `EffectAlloc` is *orthogonal*, a `pure`
-function may allocate) and **`DetEffects = Input|Rand|Time`** (⊆ PurityEffects, so `pure` ⟹
-`det`; `det` forbids only the non-determinism sources, permitting Mut/Alloc/Output — the
-input-vs-output IO split is what lets `det` allow logging). `EffectAlloc` detection
-(`purity.go`'s `allocContext`/`buildAllocContext`): a value-**producing** expression whose
-recorded `TypeTable` type is **heap-represented**. Two ways to be heap-represented, and
-they are different questions (`heapRepresented`):
+`checker.Effect` bitmask: `EffectMut`, `EffectInput`, `EffectOutput` (`EffectIO` = both),
+`EffectAlloc`, `EffectRand`, `EffectTime`; `EffectNone` = pure.
 
-- a **`shared` flavor** — a use-site property, so an annotated binding
-  `let n: shared Node = Node{…}` records the flavor onto the construction via `checkVarDecl`
-  and `allocContext.allocates` reads it via `AllocationOf`. The producing forms are
-  `StructInstanceExpr`/`TupleLiteralExpr`/`DataConstructorExpr`;
-- a **dynamic array** (`ArrayLiteralExpr` recorded as `[]T`, `ArrayCompExpr`) — heap-boxed by
-  its own nature, since `lowerType` maps `[]T` to a ref-counted box *before* the flavor is
-  consulted. Added 08/04, when array `map`/`filter` reached the prelude as comprehensions and
-  `noalloc` could be claimed by a function allocating per element. The **same literal** as a
-  fixed `[N]T` is stack storage and does not count — the rule reads the recorded type, not
-  the syntax.
+- **`PurityEffects = Mut|Input|Output|Rand|Time`** — Alloc is orthogonal to `pure`.
+- **`DetEffects = Input|Rand|Time`** ⊆ PurityEffects.
+- **`builtinEffects`**: `print`/`println`/`set_raw_mode` → Output; `read_line`/`read_key`/
+  `terminal_size`/`wait_for_key_ms`/`await` → Input; `random_seed` → Rand; `wall_clock_nanos` →
+  Time; **`panic` → None** (every integer op can already trap from `pure` code). Only *ambient*
+  sources carry Rand/Time; a threaded RNG is ordinary `mut` data. Every new builtin needs an entry.
 
-It is asked of producing forms rather than of every expression on purpose: a `[]T`
-*identifier* is heap-represented and allocates nothing, so a type-only rule would charge
-every mention of an array to its enclosing function.
+### Allocation (`allocContext`/`buildAllocContext`)
 
-**Strings are charged by *form*, not by type** (`allocatesByForm`, 08/04): `StringConcatExpr`
-and `InterpolatedStringExpr` each build a fresh ref-counted box, while a string **literal**
-interns as a pinned static box and allocates nothing. The type cannot make that distinction
-— all three are `string` — which is the exact opposite of the array case, where the type is
-what does. The two predicates stay separate for that reason; one covering both would mean
-"the type says so" in one case and "the syntax says so" in the other. `allocatesByForm` is
-gated on the `TypeTable` anyway, even though it never reads one, so the AST-only
-`InferredEffects` keeps its all-or-nothing contract instead of reporting strings alone.
+Asked of value-**producing** forms only (a `[]T` identifier allocates nothing):
 
-`CheckPurity` is threaded the `TypeTable` and the **captures table** for this; the AST-only
-`InferredEffects` helper has neither and so never sets `EffectAlloc`. A **closure
-construction is charged by capture** (08/12): a nested lambda that captures heap-boxes its
-environment per construction and sets `EffectAlloc`, while a capture-free one is the
-backend's shared pinned static and stays free — exact against the shipped lowering, and a
-rule Lambda Set Specialization can only loosen (see the closure-lowering entry in
-`todo.md`). A `shared` construction in a return/argument position (flavor not yet recorded
-on the construction node) is deferred to a future layout/escape pass — see `todo.md`.
+- **`heapRepresented`** (by recorded type): a `shared` construction (`AllocationOf`;
+  `StructInstanceExpr`/`TupleLiteralExpr`/`DataConstructorExpr`), or a dynamic array
+  (`ArrayLiteralExpr`/`ArrayRepeatExpr` recorded as `[]T`, `ArrayCompExpr`). A fixed `[N]T` literal
+  does not count.
+- **`allocatesByForm`** (by syntax): `StringConcatExpr`, `InterpolatedStringExpr`; string literals
+  are static. Kept separate from the type rule. Gated on having a `TypeTable` so AST-only
+  `InferredEffects` never sets Alloc.
+- **Closures**: a capturing nested lambda allocates; a capture-free one is a static.
+- **Builtin methods**: `SetBuiltinMethod(call, allocates)` from the typechecker (e.g. `slice`).
+- `shared` constructions in return/argument position without a recorded flavor are deferred
+  (`todo.md`). `with` is refused (`lyra-E050`); any future arena discharge needs escape analysis.
 
-**There used to be a `with`-arena discharge here, and removing it (08/13) is the reason
-to read this paragraph.** Every expression lexically inside a `with` body was marked
-discharged and all three allocation predicates consulted the mark, so wrapping a `shared`
-construction in `with a = 42 { … }` switched `noalloc` off — for a statement that has no
-lowering, whose arena expression nothing type-checked, and whose canonical `Arena.new(…)`
-spelling had been unspellable since `lyra-E035`. That is the `slice` hole's shape a third
-time: a bound that silently stops binding. `with` is refused outright now (`lyra-E050`).
-Deleting the discharge was **half** the fix — allocation is a use-site property this pass
-reads off the `TypeTable`, so a body the typechecker never visited is one whose `shared`
-constructions are invisible here regardless; the typechecker checks `with` bodies now,
-which needed `WithStmt.Body` to become a `*BlockExpr` (see the E050 entry in
-`COMPLETED.md`). If arenas are built, the discharge returns **with an escape analysis** —
-a `shared` value built inside a block and returned out escapes, and "everything lexically
-inside" was always the approximation standing in for that analysis. A **callee this pass cannot see through** (no local lambda, parameter, builtin, or type
-conversion — a binding whose value came from a call, say) conservatively taints
-`AllEffects` (`PurityEffects | EffectAlloc`) — everything, including Alloc, so `noalloc`
-flags it too (we can't verify it doesn't allocate). **A callee the *typechecker* refused
-is the exception** (08/28): it is already reported as undefined and cannot happen, so it
-is charged nothing and reported nowhere — otherwise one undefined name cascades up every
-caller, and the report that explains the cascade comes out last. The typechecker
-publishes that verdict (`typetable.SetUnresolvedCallee`) rather than this pass
-re-deriving a weaker version of it, because "resolves nowhere" *here* also matches the
-merely-unseeable callee above, and staying quiet about those would be a soundness hole.
-`builtinEffects`: print/println→Output, `read_line`/`read_key`/`terminal_size`/
-`wait_for_key_ms`→Input, `set_raw_mode`→Output, `await`→Input, `random_seed()`→Rand,
-`wall_clock_nanos()`→Time, **`panic`→None**. Only *ambient* rand/time sources
-carry the bit — a threaded RNG's `rng.next()` or a passed-in `tick` (reached through a local
-binding) is ordinary `mut`/`own` data, which is what lets `det` permit seeded randomness and
-sim-time. User surface is the `pure`/`det`/`noalloc` ladder — see `todo.md` FP/Imperative #5.
+### Effect polymorphism over callbacks
 
-**`panic` is EffectNone**, so it is callable from `pure`, `det` and `noalloc` alike. It writes
-to stderr and exits, which argues for Output — but *every integer operation in this language
-can already panic*: `a + b` traps on overflow, `xs[i]` out of bounds, a non-exhaustive match on
-fallthrough, all from inside `pure` functions, all writing the same message to the same fd and
-exiting with the same code. Classifying the explicit form as impure while the implicit ones are
-free would make `pure` mean "cannot panic *on purpose*". The rule taken instead: purity is about
-what a function returns and mutates, not whether it terminates. (Koka, which tracks `exn`/`div`
-as effects in their own right, takes the other road — worth revisiting if a catchable panic or a
-totality guarantee is ever wanted, since both need that bit.)
+- A function's stored effect = **base** + **callback parameters** (`callableParams`, tracked in the
+  same fixpoint). A call pays base ∪ supplied arguments' effects (`callEffect`/`argumentEffect`).
+- An annotation constrains the function's **own** body; an impure callback is rejected at the call
+  site, naming the argument. Callbacks passed onward stay polymorphic.
+- `callableParams` also maps names a body-level `match` binds them to (`addMatchAliases`) —
+  required because multi-clause functions are desugared matches that may rename parameters. Only
+  whole-value bindings alias (not `Some v`'s payload).
+- **Trait-impl methods**: `methodEffects`/`methodCallEffect`; parameter types come from the trait
+  declaration via `collectMethodSignatures`; bounds via `signatureBound`.
+- **Receiver offset hazard**: trait signature index i is `Arguments[i-1]` (`methodArgumentAt`).
+  Off-by-one is silent; a two-callback test guards it.
+- Still conservative (charged `AllEffects`): callbacks via struct field, call result, array element.
 
-**Effect polymorphism over function-typed parameters.** A higher-order function's effects are
-not a property of the function alone — what `unwrap_or_else(m, f)` does depends entirely on
-`f`. A function's stored effect is therefore its **base** (what its own body does) plus its
-**callback parameters** (`callableParams` — the function-typed ones it calls, tracked in the
-same fixpoint as the effects, since finding one changes a caller's effect and finding an effect
-can reveal one a round later). A call site pays base ∪ the effects of the arguments actually
-supplied for those parameters (`callEffect`/`argumentEffect`), so one definition gives
-`unwrap_or_else(m, () -> i64 => 0)` pure and `unwrap_or_else(m, () -> i64 => log())` impure.
+### Declared callback bounds (`f: pure () -> t`)
 
-Before this, a call through a parameter hit the unresolvable-callee branch and tainted
-`AllEffects`, which spread to every caller: **no callback-taking function was callable from
-`pure` code at all**, which is the entire prelude combinator layer.
+- `types.LambdaType.IsPure/IsDet/IsNoAlloc`. A bounded parameter is **not** polymorphic:
+  `declaredBound`/`boundEffect` charge exactly what the bound permits.
+- `checkDeclaredCallbackBounds` runs at **every** call site and compares the argument's
+  **inferred** effect (lambda literals need no annotation).
+- `isAssignable` ignores bound differences between function types (so the message is about
+  effects); `TypesEqual` distinguishes them.
+- A bounded parameter forwarded to a bounded slot satisfies it from its declared type; an
+  unbounded one cannot.
+- The standard library leaves combinators unbounded on purpose.
 
-`callableParams` maps the declared parameter names *and* the names a body-level `match` binds
-them to (`addMatchAliases`). That second half is not an extra: a **multi-clause function is a
-match on its parameters** by the time this runs (`typechecker/multi_clause.go` desugars it, and
-clears `LambdaClauses`), so a clause that renames a parameter — `(self: …, predicate: …)`
-destructured as `(Some v, pred)` — reaches this pass as an arm binding. Without the aliases the
-call through `pred` is an unresolvable callee and the whole function is charged `AllEffects`;
-with them it is the parameter it destructures, and its declared bound is enforced under the new
-name too. Only a *whole-value* binding aliases the argument — the `v` of `Some v` is the
-payload, and charging a call through it against that position would consult the wrong
-parameter's bound. See COMPLETED.md, 08/06, for the prelude breakage that found this.
+### `det` / `noalloc` / trait-method bounds
 
-Two consequences that are the point rather than side effects:
+- `checkBoundedEffects` (`lyra-E016`): whole inferred set — `det` vs `DetEffects`, `noalloc` vs
+  `EffectAlloc` — reported once at the callable. `pure` keeps per-op reporting (`lyra-E007`).
+- `checkTraitMethodBounds`: an impl is checked against its own annotation OR the trait's
+  (`effectiveMethodBounds`, shared with `missingPureBounds`).
+- `checkTraitDefaultBounds`: a default body is held to its trait's bound, reported **on the
+  default**. `collectMethodImpls` takes defaults from `ast.TraitMethod.DefaultImpl()` — the
+  pointer-keyed single instance; a copy would leave calls charged `AllEffects`.
 
-- **An annotation constrains a function's own body.** `pure` on a higher-order function claims
-  "contributes no effects of its own", not "no effect can occur through me" — the second is not
-  the function's to promise without constraining its callback — that is what the declared half
-  below (`f: pure () -> t`) is for. This is what lets the prelude annotate
-  `unwrap_or_else` `pure noalloc` without constraining its callers; a caller passing an impure callback is still rejected, at the
-  call site, with the diagnostic naming the **argument** rather than the innocent callee.
-- **A callback passed onward stays polymorphic**: `(f) => or_else(m, f)` is polymorphic in `f`
-  too, so combinators built from combinators are not poisoned by the hand-off.
+## `missing_pure_bound.go` (`lyra-W018`)
 
-**Trait-impl methods are polymorphic too.** `methodEffects` returns a base effect plus callback
-parameters exactly as `lambdaEffects` does, and `methodCallEffect` charges a call site for the
-arguments it supplies. Their parameter *types* live only in the trait declaration (an impl binds
-patterns, not typed parameters), so `collectMethodSignatures` maps each impl method to its
-declared signature — which is also what makes a bound written in a trait signature
-(`apply: (Self, pure () -> i64) -> i64`) enforceable, via `signatureBound`.
+`missingPureBounds`, a method on `purityChecker` reading the same fixpoint: a declaration with no
+observable effect that doesn't say `pure`.
 
-**The receiver offset is the hazard in that path.** A trait signature counts `Self` as parameter
-0, but `x.foo(a)` puts the receiver *outside* `call.Arguments`, so signature index i is
-`Arguments[i-1]` (`methodArgumentAt`). Reading `Arguments[i]` instead checks every callback
-against the argument one place to its right — silently, because two function-typed arguments
-type-check against each other's parameters perfectly well. A test with two callbacks in
-different positions is what makes that observable, and there is one.
+- `pure` only (`det`/`noalloc` measured too noisy).
+- Top-level declarations and impl methods only; not inline closures or nested named `let`s.
+- Never `main`.
+- A trait-declared bound counts as written (`effectiveMethodBounds`).
+- Higher-order functions *are* reported (callback effects are charged at call sites).
+- Standard library impl methods are marked `pure` at the **impl**, not the trait (a trait bound
+  would bind user impls).
 
-Deliberately still conservative: a callback reached through a struct field, a call result or an
-array element, and multi-clause lambdas (per-clause patterns give no index to match an argument
-against).
+## `effect_bounds.go` (`lyra-E015`)
 
-**The declared half: `f: pure () -> t`.** A parameter's *type* may carry the same
-`pure`/`det`/`noalloc` modifiers a lambda value does (`tree-sitter-lyra`'s `lambda_type`),
-collected onto `types.LambdaType`'s `IsPure`/`IsDet`/`IsNoAlloc`. A parameter carrying one is
-**not** effect-polymorphic: what calling it can do is known from the signature, so
-`declaredBound`/`boundEffect` charge exactly what the bound still permits and the enclosing
-function is pure *for every caller* rather than at the call sites that happen to pass a pure
-callback. That is the claim a signature could not make before, since purity was not part of a
-function type at all.
+`CheckEffectBounds(program)`: `pure` + `det` together on a lambda, impl method or trait method
+declaration. `noalloc` is never flagged. AST-only, pre-typecheck.
 
-`checkDeclaredCallbackBounds` enforces it at **every** call site, not only inside `pure`
-functions: the bound is a property of the callee's signature, so an impure program may not
-quietly hand an impure callback to a `pure`-declared slot. What it compares is the argument's
-**inferred** effect, not its annotation — requiring the word `pure` on every lambda literal a
-program writes would cost more than the bound is worth, and inference is precisely what this
-pass has and the typechecker does not. That is also why `isAssignable` deliberately lets two
-function types differing only in bounds through in either direction: a shape mismatch there
-would report "cannot assign `() -> i64` to `pure () -> i64`", which explains nothing, instead
-of "this argument mutates state outside itself". `TypesEqual` *does* distinguish them, so
-identity questions (trait-signature matching) still see two types.
+## `try_outside_result.go` (`lyra-E008`)
 
-A bound composes through a forward — a constrained parameter satisfies a constrained slot from
-its own declared type, since a parameter has no body to inspect — and an **unconstrained one
-cannot**: it promises nothing, so `strict(g)` with `g: () -> i64` is rejected with a message
-saying to declare it. A bound the compiler cannot check is not a bound.
+`CheckTryOutsideResult(program, symTable)`: `?` whose enclosing function doesn't return a canonical
+Result/Maybe, via `canonicalKindOfName` (read side of the collector's `resolveCanonicalTypes`). A
+same-named user `data Result` is not canonical.
 
-Note what this does *not* change: an unbounded parameter keeps the inferred behaviour, so
-adding the declared half did not make every callback-taking function strict. The standard
-library deliberately leaves its combinators unbounded — `unwrap_or_else` with a `pure` bound
-would forbid a logging fallback, which is a legitimate use — and relies on the inferred half
-to keep pure callers pure.
+## `use_after_move.go` (`lyra-E019`)
 
-**A namespace-qualified callee resolves through its last segment** (`resolveCallee`). `maybe.map`
-had no resolution at all, so *every* cross-module call from a `pure` function was reported
-impure — module paths are merged into one program before this pass, and a `pub` name is
-program-wide unique, so the last segment is the same lambda. The fallback is taken only when the
-object segment names no binding, mirroring the backend's `namespaceCallee`: with a local `math`
-in scope, `math.double` is a field read, and resolving it to another module's `double` would
-attribute the wrong body's effects.
+`CheckUseAfterMove(program, symTable, tt)`, post-typecheck.
 
-**Resolution order: scope, then the builtin table** — in `isImpureCallee` and in both
-`lambdaEffects`/`methodEffects` call cases, matching how the typechecker resolves a call
-(`print`/`println`/`panic` are consulted only when scope resolution misses). Consulting the
-table first classified a *user's own* function by the builtin's entry: a user `print` that was
-pure got reported impure, and — once `panic` was in the table as EffectNone — a user `panic`
-that mutated would have been waved through. The name is not the callee.
+- A **move** is only a bare identifier of a managed value (`ownership.IsManaged`) passed to an `own`
+  parameter. Scalars/stack aggregates copy; field arguments (partial moves) don't count.
+- Flow-sensitive: `if`/`match` branches **union**; a loop body is seeded with every move inside it;
+  a declaration or reassignment clears. Control flow is explicit, everything else via
+  `ast.WalkStmt`/`WalkExpr` with pruning.
+- **`let … else` is not a branch** (`letElse`): the payload binds in the enclosing scope; the else
+  diverges.
+- Conservative toward silence: unresolvable callees record no move. Reports dedupe by
+  (binding, move site).
+- Impl and default method bodies each start fresh. Not covered: moves through a nested lambda's
+  captures.
+- Not a memory-safety fix (ownership retains defensively); it enforces `own` and exposes the
+  reuse perf cliff.
 
-## `try_outside_result.go`
+## `captured_assignment.go` (`lyra-E024`)
 
-`CheckTryOutsideResult(program, symTable)` (`lyra-E008`) flags a `?` whose nearest enclosing
-function doesn't return a canonical Result/Maybe. It reads the same canonical identity the
-typechecker uses via `canonicalKindOfName` (the read side of the collector's
-`resolveCanonicalTypes` stamp), so the context check and the typechecker's operand/kind checks
-agree — a function returning a same-named-but-differently-shaped `data Result` is *not* a valid
-`?` context.
+`CheckCapturedAssignment(program, capturesTable)`: a lambda writing a binding it captured (by
+value, so the write is lost). Covers `n = …`, `n += …`, path writes (walked to the root), and
+`&mut` on a captured binding (own message: take the pointer outside the closure). Only names the
+capture pass recorded. Runs after captures.
 
-## `effect_bounds.go`
+## `inert_borrow_modifier.go` (`lyra-W010`)
 
-`CheckEffectBounds(program)` (`lyra-E015`) errors when a lambda, a trait-impl method, or a
-**trait method declaration** (`trait X { pure det foo: … }`) carries both `pure` and `det`: two
-rungs of the same correctness axis (`pure` ⊆ `det`), so annotating both is contradictory.
-`noalloc` is an orthogonal resource bound and is never flagged. AST-only, wired into the LSP
-before typechecking. **`det`/`noalloc` enforcement** lives in `purity.go`'s
-`checkBoundedEffects` (run inside `CheckPurity`, `lyra-E016`): it checks each callable's full
-inferred (transitive) effect set — `det` against `DetEffects`, `noalloc` against `EffectAlloc` —
-reporting once at the callable's location (`pure` keeps its fine-grained per-op walk,
-`lyra-E007`). **Per-trait-method bounds are a contract:** a trait method may be declared
-`pure`/`det`/`noalloc` (`TraitMethod.IsPure/IsDet/IsNoAlloc`); `checkTraitMethodBounds`
-(`purity.go`) checks each impl of it against the *effective* bound — the impl method's own
-annotation OR the trait's — so an impl of a `pure`-declared method is enforced pure even without
-its own `pure` marker, and a `where t: Show` bound to a `pure`-method trait carries that
-guarantee.
+`CheckInertBorrowModifiers(program)`: `own`/`ref`/`mut` on a copied scalar (numeric, `bool`,
+`rune`). Predicate is **`types.IsCopiedScalar`, shared with the backend's `paramIsByRef`** — must
+stay one predicate or `mut` miscompiles. Warning, not error (generic `own t`, scalar newtypes).
+Excludes `string` (`types.IsString`), `GenericType`, aggregates. Scoped to
+`LambdaExpr.Parameters`.
 
-## `use_after_move.go`
+## `array_repeat_alias.go` (`lyra-W019`)
 
-`CheckUseAfterMove(program, symTable, tt)` (`lyra-E019`) flags reading a binding after its value
-was moved into an `own` parameter — the definite-move analysis of `todo.md` FP/Imperative #6 /
-borrow-model #8(a). A **move** is exactly one thing: a bare identifier naming a *managed* value
-(string or `shared`, via `ownership.IsManaged`) passed to an `own` param. An `own` scalar or
-stack aggregate is copied by value, and a field argument (`p.name`) would be a *partial* move
-(its own design question), so neither counts. The analysis is flow-sensitive per function body
-over a name→move-site map: an `if`/`match` analyzes each branch from the join point and takes
-the **union** (moved in either branch → moved after, matching Rust); a loop body is seeded with
-every move found anywhere inside it, so a move on one iteration is visible to the next
-iteration's reads (the message says so); a `let`/`var` declaration or reassignment of the name
-clears the move. Control-flow nodes are handled explicitly and everything else routes children
-back through the same walker via `ast.WalkStmt`/`WalkExpr` with pruning, so straight-line
-coverage is total without enumerating every node kind. Conservative in the report-nothing
-direction — an unresolvable callee (a method call, a call through a local) records no move, so a
-hard error can't fire on a shape the analysis doesn't model; reports dedupe by (binding, move
-site). Runs **after** typechecking (it needs the `TypeTable` to identify managed values),
-alongside `CheckPurity`. **Note on framing:** this is not a memory-safety fix — the ownership
-pass retains a managed value flowing into a non-last-use `own` argument, so use-after-move is
-safe today (ASan-verified). It enforces the `own` contract and surfaces the otherwise-silent
-reuse/FBIP **perf cliff** (the defensive retain leaves rc = 2, so `lyra_rc_drop_reuse` reports
-the box shared and reuse stops firing), and is the prerequisite for dropping that retain to make
-`own` a true move. Trait-impl method bodies (and trait default methods) are covered, each
-analyzed from a fresh state so a move in one method can't flag a read in the next. Not covered:
-moves through a variable captured by a nested lambda, which is analyzed independently (whether a
-closure body runs once, later, or never is exactly what captures make uncertain, so threading
-the outer state in would risk false positives).
+`CheckArrayRepeatAliasing(program, symTable, tt)`: `[v; n]` whose slots share mutable state.
 
-## `captured_assignment.go`
+- **Must run post-typecheck**: under `[][]rune` the inner repeat *infers* as fixed `[W]rune` and only
+  propagation widens it to a shared `[]rune`.
+- Predicate `ownership.SharesMutableState`; message path from `SharedMutablePath` (struct fields
+  only).
+- A count folding to 0 or 1 is silent; a runtime count is assumed plural.
 
-`CheckCapturedAssignment(program, capturesTable)` (`lyra-E024`) rejects a lambda that assigns to
-a binding it captured. A closure captures **by value** (see `pkg/analyzer/captures`), so the
-write reaches the closure's own copy and nothing else: `var n = 5; let bump = () -> i64 => { n =
-n + 1  n }` leaves the outer `n` at 5. Compiling that silently is the same failure the by-value
-`mut` parameter had — a write that vanishes with no diagnostic either way — and the other
-reading (capture by reference, so the write lands) is unavailable without escape analysis
-proving the frame outlives the closure, where being wrong is a dangling pointer rather than a
-lost update. Covers all three assignment forms (`n = …`, `n += …`, and a path write like `p.x =
-…`, walked down to its root binding), and fires only for a name the capture pass recorded, so a
-lambda writing to its own local or parameter is untouched. Runs after the capture pass in the
-driver.
+## Unused loop bindings (`lyra-W020`)
 
-## `inert_borrow_modifier.go`
+`checkLoopBindings`: a `for-in` binding never read; fix is `_`. Separate from `lyra-W003` because a
+loop binding can't be deleted. `_`-prefixed names exempt. Shares `referencedNames` with the
+unused-local check (writes count as reads; walks into nested lambdas). **Reported at
+`ForInLoopExpr.KeyLocation`/`ValueLocation`** — a zero Location escapes per-file filtering.
 
-`CheckInertBorrowModifiers(program)` (`lyra-W010`) warns when an `own`/`ref`/`mut` modifier sits
-on a parameter whose type is a copied scalar primitive (a numeric type, `bool`, or `rune`).
-Those modifiers are conventions over a *reference* — `own` transfers ownership, `ref`/`mut`
-borrow — but a scalar is passed by value with no interior to borrow and no reference to
-transfer, so the modifier collapses to a plain parameter and only misleads a reader into
-expecting move/borrow semantics (the same inert-annotation class as an unused param, or
-`pure`+`det`). Since 07/29 the predicate lives in `types.IsCopiedScalar` and is **shared with
-the backend's by-reference `mut` lowering** (`paramIsByRef`): a `mut` this warning calls inert
-must stay by value, and one it stays silent about must be passed by reference — reading one
-predicate is what keeps those two from drifting into a silent miscompile. A **warning**, not an
-error (decided 07/21 over allow-silently and forbid): the code is correct, and hard-erroring
-would wall off two real cases — a generic `own t` (which must stay uniform; at monomorphization
-it may be managed) and a scalar-repr newtype used for API intent. Excluded: `string` (a
-`PrimitiveType` but managed, so `own string` is a real move — via `types.IsString`); generic
-type params (a `GenericType`, not a `PrimitiveType`); aggregates (can own managed fields).
-Scoped to `LambdaExpr.Parameters` (every free function + nested lambda). AST-only; wired into
-the driver's lint block.
+## `type_names.go` (`lyra-W009`)
 
-## Trait default bodies in the purity pass
+`CheckTypeNames(program)`: a SCREAMING_CASE **struct** name lexes as `const_identifier`, so
+`NAME { … }` can't parse. Structs only (data/named tuples construct by call).
 
-`collectMethodImpls` gathers an impl's clauses **and** every trait method's default
-(`ast.TraitMethod.DefaultImpl()`), because a default is a body like any other and is
-dispatched to exactly as an impl's is. It is taken from that accessor rather than built
-here: the effect map is keyed by pointer and the typechecker's resolutions name that same
-instance, so a second one would leave every call to a default charged the unresolved-callee
-default (`AllEffects`) while the body it actually runs sat in the map unread.
+## `generic_params.go` (`lyra-E031`, `lyra-W013`)
 
-`checkTraitDefaultBounds` then holds each default to the bound its trait declares, as
-`checkTraitMethodBounds` does for an impl's clause. **The diagnostic lands on the default**,
-which is the body that is wrong, rather than on every impl that inherited it — the default
-is the one body the trait's author controls, and blaming implementers would blame code that
-wrote nothing. Before defaults were dispatchable the bound was enforced on every *override*
-and not on the thing being overridden.
+`CheckGenericParams(program)`, AST-only, pre-typecheck. A written generic list must agree with the
+signature's variables: a mentioned variable missing from the list is `lyra-E031`, a listed one
+never mentioned is `lyra-W013`. The list stays optional. Catches typo'd lowercase type names
+(which silently become new variables) and bounds on the wrong variable.
 
-## `array_repeat_alias.go`
-
-`CheckArrayRepeatAliasing(program, symTable, tt)` (`lyra-W019`) warns when `[v; n]` fills its
-slots with a value the program can mutate through the reference they all share.
-`[[' '; WIDTH]; HEIGHT]` is the shape it exists for: one row referenced HEIGHT times, so every
-`grid[py][px] = c` writes the same place and every row prints identically — found in
-`examples/mandelbrot.lyra`, where a uniform image read as bad arithmetic and outlived the two
-genuine arithmetic bugs it was hiding behind. The semantics are right and unchanged (`[v; n]`
-evaluates its value once, which is what makes `[expensive(); 1000]` one call), so the fix is a
-diagnostic. A **warning**, on `missing_pure_bound.go`'s reasoning: the code is correct, a
-deliberate alias is a real thing to want, and with no `#[allow]`-shaped suppression an error
-would leave that intention nothing to write.
-
-**It runs after typechecking, and it has to.** The element's type at *inference* time is not
-the type it is lowered at: under a `[][]rune` annotation the inner `[' '; WIDTH]` infers as the
-fixed `[WIDTH]rune` — copied per slot, sharing nothing — and only propagation widens it to the
-heap-boxed `[]rune` that does. A check inside `inferArrayRepeatType` would have cleared the
-exact program that motivated it, so this reads the `TypeTable` for the settled type the backend
-will lower. That is the whole reason it is a standalone pass rather than an arm of the
-typechecker.
-
-The element predicate is `ownership.SharesMutableState`, deliberately narrower than "managed" —
-see that package's README for the two measurements that shaped it. A count folding to 0 or 1
-fills no second slot and is silent; a **runtime** count is assumed plural, since `[buf; n]` sized
-from a window resize is exactly the case the author cannot see the number for either. The
-message names the struct field it reaches the sharing through (`SharedMutablePath`), and nothing
-for a tuple or `data` payload, whose own spelling already prints what they hold.
-
-### Unused loop bindings (`lyra-W020`)
-
-`checkLoopBindings` reports a `for-in` binding the body never reads, naming `_` as the fix.
-A separate code from `lyra-W003` because the fix differs and the difference is the point: an
-unused local can be deleted, a loop binding cannot — the loop still has to iterate.
-
-**It could not have existed before `for _ in` parsed** (08/18); until then the advice would
-have named a spelling the parser rejects. The two-name form is where it earns its keep —
-`for k, v in xs` reading only `v` is the case `for _, v in xs` exists for. A name already
-starting with `_` is exempt, matching the unused-local rule.
-
-Both halves of the pass share `referencedNames`, because "is this name referenced" is one
-question about two kinds of declaration; two copies would drift about exactly the cases that
-make it conservative (a write counts as a read; the walk descends into nested lambdas, so a
-captured name is not reported).
-
-**The warning is reported at `ForInLoopExpr.KeyLocation`/`ValueLocation`, not at the loop.**
-Beyond precision, this is load-bearing: the loop node had no Location at all until this
-landed, and a diagnostic with a zero Location escapes the driver's per-file filtering — the
-two prelude instances appeared on every file compiled, which is how the gap was found.
-
-## `type_names.go`
-
-`CheckTypeNames(program)` (`lyra-W009`) warns when a **struct** is declared with an
-all-uppercase (SCREAMING_CASE) name: such a name matches the `const_identifier` lexer rule
-(`[A-Z][A-Z0-9_]*`) instead of `user_defined_type_name`, so a struct literal `NAME { … }` won't
-parse — the struct can be referenced but never *constructed*, and the failure otherwise surfaces
-far away as a confusing "undefined symbol" at the use site. A warning (not an error) since the
-type is still usable by reference; scoped to structs only (a `data` type constructs via its
-constructors and a named tuple via `Name(…)`, so a SCREAMING_CASE name works there). Returns
-`[]diag.Diagnostic`; wired into the driver alongside the other lint passes.
-
-## `generic_params.go`
-
-`CheckGenericParams(program)` reconciles a binding's **written** generic parameter list against
-the type variables its signature actually mentions, in both directions: a signature variable
-missing from the list is an error (`lyra-E031`), a declared parameter the signature never
-mentions is a warning (`lyra-W013`). AST-only, and wired in *before* typechecking — reporting at
-the declaration is the whole point.
-
-**The list stays optional; written, it is authoritative.** Type variables are lexical (a
-lowercase type name is a variable wherever it appears), so `let unbox = (b: Box<t>, fb: t) -> t`
-is generic with no list at all and stays legal — that follows from the lexical rule. What did
-not follow is the list being *unchecked when written*: before this pass, `let mismatch<t> = (a:
-u) -> u => a` compiled and ran, declaring `t` while being generic in `u`.
-
-*The hazard is a typo, and it is a Pit-of-Success inversion.* A misspelled lowercase type name
-does not fail — it silently becomes a *new* type variable, and the function becomes generic in
-something its author never meant. The signature still type-checks; what changes is that callers
-must now solve a variable that should have been a fixed type, so the diagnostic (if any) lands
-at the call site, or the error surfaces only in the backend. That is how the prelude's
-`ok`/`err` shipped without their `<t, e>` and drew no diagnostic at all. Uppercase names never
-had the hole: an unknown one is an `UnresolvedType`, reported at the declaration.
-
-**Why an error and not just a warning** (option (b) of the three in `todo.md`, over (a) warn on
-both and (c) require the list outright). A warning also gives the typo somewhere to be caught;
-what only an error buys is that a bound cannot be quietly inert. The list is the only place a
-bound can be written (`<t: Show>`), so a list that need not agree with its signature means a
-constraint can silently constrain nothing — which is what makes this worth settling *before*
-bound enforcement rather than after: an unenforced bound and a bound on the wrong variable look
-identical from outside, and only one of them stops being a problem when enforcement lands. (c)
-was rejected as the least ML-ish of the three, buying little over (b).
-
-The `where`-clause half is enforced in the collector, not here — `Collector.MergeWhereConstraints`
-merges a `where u: Show` into the matching list entry, and *discarded* a name that matched
-nothing, so by the time there is an AST the constraint no longer exists to check. It now reports
-the same `lyra-E031` at the point the name is still visible.
-
-**The variable walk is `types.CollectTypeVars`, shared not copied.** This pass is the third
-consumer of "which variables does this signature mention?", after the typechecker's
-`lambdaTypeVars` and the backend's `mentionsTypeVar` — and those two had already drifted (the
-backend's was missing `ParameterizedType`, the 07/30 build failure). Adding a third switch was
-the one thing `todo.md` asked whoever took this not to do, so all three now call one walker in
-`pkg/types/typevars.go`; hazard 8 in `lyra/CLAUDE.md` covers the class. Unifying them turned up
-two composites *neither* copy had, `AnonymousStructType` and `RangeType`.
-
-Deliberately not walked: nominal types (`NamedStructType`, `DataType`). A `struct Box<t>` binds
-its own `t`, so a function taking a `Box<i64>` mentions no variable of its own — descending into
-the declaration would report `t` as a use and make every function touching a generic type
-spuriously generic.
-
-**Not covered** (unchanged behaviour, same defect class): the generic parameter lists on *type*
-declarations, traits, and impls. Those are reconciled by nothing today either; the arity of a
-type declaration's list is at least load-bearing at instantiation, which a binding's is not.
+- The `where` half is in the collector (`Collector.MergeWhereConstraints` reports `lyra-E031`).
+- Variable walk is **`types.CollectTypeVars`**, shared with the typechecker (`lambdaTypeVars`) and
+  backend (`mentionsTypeVar`). Nominal types (`NamedStructType`, `DataType`) are not descended.
+- Not covered: generic lists on type declarations, traits, impls.
 
 ## `range_analysis.go`
 
-`CheckIntegerRanges(program, tt)` (`lyra-E020` / `lyra-E021` / `lyra-E022` / `lyra-E023` /
-`lyra-W011`), a **flow-sensitive value-range (interval) analysis** over each function body. It
-tracks each integer variable's interval `[lo, hi]` at every program point (a `rangeEnv` map + a
-`reachable` flag, cloned per branch, unioned at joins) and reports a **definite integer
-overflow** (`lyra-E020` — an `+`/`-`/`*`/unary-`-` whose operand ranges prove the result can't
-fit its type on *any* path — `if x > 100 { x + 100 }` on an i8, which the literal-only
-`checkIntegerLiteralRange` can't catch because it needs the branch refinement), a **definite
-divide-by-zero** (`lyra-E021` — a `/`/`%`/`%%` whose *identifier* divisor is proven `[0,0]` on a
-reachable path, `if b == 0 { a / b }`; a literal/folded-constant `5 / 0` stays the typechecker's
-own constant-fold check, so E021 adds only the non-constant flow-proven case, avoiding a double
-report), a **definite out-of-bounds index** (`lyra-E022` — an `xs[i]` whose index range is
-*non-singleton* and entirely outside `[-size, size)`, `if i >= size { xs[i] }`; a single
-constant index stays the typechecker's own range check, and a non-singleton range guarantees
-that check — which resolves only a single constant — didn't fire, so again no double report), a
-**range-constraint violation** (`lyra-E023` — a non-constant value proven entirely outside a
-range-constrained newtype's range, `if x > 100 { let p: Percent = x }`, via
-`checkConstraintViolation`; the flow-sensitive twin of the typechecker's constant-value
-`checkRangeConstraints`, scoped to an *identifier* value assigned to an annotated `let` — the
-typechecker stamps the target `*ConstrainedType` onto the value node, and folds the literal case
-itself, so no double report), and an **always-true/false integer comparison** (`lyra-W011`).
-Runs **after** typechecking (needs the TypeTable for each expression's width/signedness). **Zero
-false positives is the bar:** anything not precisely trackable *widens* to ⊤ (the type's full
-range), which can only miss a diagnostic, never invent one — an absent variable is ⊤; a
-float-adapted int literal (`let a: f64 = 5` records the literal at the float type) is untracked,
-since an integer interval built from a float's source text can be *wrong*, not just imprecise
-(f32 rounds 16777217); interval math that would overflow int64 is ⊤ (`addI`/`subI`/`mulI`/`negI`
-are all int64-overflow-guarded, so i8..u32 are precise and i64 is mostly ⊤; **u64 is tracked
-with a `+∞` upper sentinel** since its true max 2^64-1 doesn't fit int64 — the exact lower bound
-of 0 is load-bearing (`x < 0` always-false, a refined `x >= size` index → E022, a proven-below-0
-subtraction → E020 underflow) while the fake upper only ever causes conservative untracking;
-`compareConst` has sentinel guards so `x > MaxInt64` on a u64 is *not* wrongly folded to
-always-false); a C-style **`for` loop is analyzed with a widening/narrowing fixpoint**
-(`evalForLoop`) so its counter is tracked *precisely* inside the body (`for var i: u8 = 0; i <
-3; i += 1` → i ∈ [0,2]): the body is analyzed *silently* (the `rangeChecker.silent` flag gates
-`report`+safe-marking) to find the loop-head invariant — widen unstable bounds to ±∞ for fast
-convergence, then narrow them back with the guard — then once *loudly* with that invariant, so
-diagnostics/elision key off the precise ranges; an accumulator (no bounding guard) still widens
-to ⊤, the after-loop state havocs (sound under `break`); a **`for … in` over a numeric range**
-binds its loop variable to the range interval (`forInRangeKey` — the for-in analogue of the
-counter, no fixpoint since the range gives the bounds directly), but only when the range is
-*provably non-empty* (`start.hi < end.lo` for `..<`) so a body diagnostic is genuinely definite
-rather than a maybe-empty false positive — a maybe-empty / stepped / two-variable / non-range
-iterable still havocs. A contradictory branch refinement marks that branch **unreachable**
-(diagnostics suppressed); on block exit the env keeps every change to a pre-existing outer
-variable — a reassignment **and** a *havoc* (a name a loop / untrackable reassignment deleted →
-⊤) — and drops the block's own local declarations (a shadowed outer name restored to its
-pre-block value). It's built from the block's *inner* (post-body) env, **not** the pre-block
-snapshot: the latter (copying-forward only names still present) silently reverted a havoc done
-inside a nested block/branch, which then unsoundly elided a downstream safety check on the stale
-interval — a miscompile, fixed 07/27 (`TestRange_Safety_HavocInNestedBlockNotElided`). **Branch
-refinement** (`refine`, pure — no diagnostics, since `eval` already emitted them once for the
-condition) narrows a variable against a comparison with a *pure* constant side (literal /
-negated literal / another tracked variable, on either operand), threads `&&` into the
-then-branch and `||` into the else, and swaps for `!`. **Match-arm refinement**
-(`evalMatch`/`refineScrutinee`) is the `match` analogue: when the scrutinee is a tracked integer
-variable, each arm narrows it to the values its pattern matches (a literal or a numeric range
-via `patternInterval`, mirroring the typechecker's exhaustiveness reader), so `match x {
-100..<=127 => x + 100 }` on an i8 is a definite overflow and an arm whose pattern can't overlap
-the scrutinee's range is unreachable/skipped; a catch-all/identifier arm refines nothing. A
-*possible* overflow (`a + b` on two full-range i8s) is deliberately left to the runtime trap. A
-compound assign (`v += k`) is typed `void`, so its overflow bound is read off the RHS (which
-carries the target's propagated width). **Diagnostics-first by design**: validating the engine
-as a front-end diagnostic before trusting it to *remove* a runtime safety check, where an
-unsound narrowing would be a miscompile. **Trap elision landed on top**: `CheckIntegerRanges`
-also returns a **`SafetyTable`** — the operations the pass proved can't hit a given runtime trap
-on any path — stored on `driver.Result.RangeSafety`, so the backend emits the plain instruction
-/ bare load instead of the checked form. Four facts, keyed by the AST expression node (a pointer
-match — both passes walk one `*ast.Program`): **`NoOverflow`** (`+`/`-`/`*` (and `+=`-style)
-whose result fits its type, from `checkArith`'s "result entirely within the type" branch →
-`applyIntMathOp` drops the `with.overflow`+trap, via `emitWrappingOp`); **`NoDivZero`** /
-**`NoDivOverflow`** (from `checkDivision`, which also emits E021: a `/`/`%`/`%%` with a
-provably-nonzero divisor / no signed `INT_MIN÷-1` → `emitCheckedDivOp` drops the divide-by-zero
-/ overflow guard; unsigned division is always `NoDivOverflow`); and **`IndexInBounds`** (from
-`evalIndex`, which also emits E022: `xs[i]` with the index provably in `[0, size)` →
-`lowerIndexExpr` drops the bounds trap *and* the negative-from-end adjustment; a loop counter is
-proven via the widening fixpoint, a refined param via branch refinement). Sound by construction
-(only *proven*-safe ops are present; a nil table / absent entry reports false, so a real fault
-is never elided) — **provided the pass sees every write to a variable it tracks**, which until
-09/11 it did not. `&mut x` was invisible: after `set(&mut i, 7)` the pass still believed
-`i == 0`, proved `xs[i]` in bounds, and the backend dropped the trap, so safe code read past
-the array (and wrapped an add, and divided by zero). **A name whose address is taken with
-`&mut` anywhere in a function is never tracked there** — `mutAddressTaken` collects the set at
-each function entry (`analyzeBody`), and `tracked`, the single read of a stored interval,
-answers ⊤ for any name in it. Flow-insensitive because a havoc at the `&mut` site is undone
-by a later reassignment the pass *can* see while the write through the pointer stays
-invisible (`let p = &mut i; i = 0; p^ = 7`). `&x` cannot write and keeps tracking. See
-CLAUDE.md rule 18. The analysis's original deferred list is now cleared — diagnostics + elision
-across overflow / divide-by-zero / bounds, all integer widths (i8–u64), `if`-branch +
-`match`-arm + C-style-loop + for-in-range refinement, and `RangeConstraint` enforcement both
-ways (the typechecker's `range_constraint.go` for a constant value, this pass's
-`checkConstraintViolation` for a flow-proven one). A remaining precision item: a
-*variable-length* for-in range (`for i in 0..<n`) isn't provably non-empty, so it still havocs
-(sound).
+`CheckIntegerRanges(program, tt)`, post-typecheck, flow-sensitive interval analysis
+(`rangeEnv` + `reachable`, cloned per branch, unioned at joins).
 
-
-## Purity — current state
-
-The FP/Imperative purity work (`pkg/analyzer/checker/purity.go`) is the active area now. Purity
-inference (bottom-up, no `pure` keyword required) covers both free functions and trait-impl
-methods via one joint fixpoint (`inferImpurity`), including method-to-method call chains:
-`checkTraitImpl` (`typechecker_traits.go`) now calls `checkTraitImplMethodBody` on each impl
-method body, which sets up a param scope from the trait signature, checks the body against the
-declared return type, and infers the body so any `.`-call inside is dispatched into
-`MethodTable` — making the purity fixpoint's `methodTable.Get` lookups in `methodEffects`
-produce correct results for method-to-method chains. **Phase 2 landed for lambdas + free
-functions (07/10/26):** the purity checker now *consumes* the collector's `ScopeTable` rather
-than re-walking the AST — `scopeFrames.forLambda` (`purity.go`) flattens a lambda's recorded
-`ScopeFunction` subtree (pruning at nested function scopes) into the per-lambda `scopeBindings`
-frame, deriving mutability from declaring nodes and reconciling two collector quirks
-(`with`-arena handles read mutable, `for … in` loop vars skipped) for bit-for-bit fidelity.
-`CheckPurity`/`InferredEffects`/`InferredPureFunctions` take a `*symbols.ScopeTable`
-accordingly. **Still open:** impurity of imported functions; and the *trait-method* path
-(`directScopeBindingsForClause`) still re-walks — method clauses have no recorded scope
-(`CollectLambdaClause` pushes none), so converting them needs a collector change reconciled with
-`checkTraitImplMethodBody`. See `todo.md`'s FP/Imperative #3.
-
-## Effect inference is one walk, and why that matters
-
-`inferImpurity` runs a fixpoint over an effect *set*: each round asks every callable what
-its body does, ORs in anything newly found, and stops when nothing changes. The question
-"what does this body do" used to be asked by **two** functions — `lambdaEffects` for a free
-function and `methodEffects` for a trait-impl method — at ~200 near-identical lines each.
-Both carried comments saying the other had to stay in step. One line did not.
-
-A call resolving to a trait-impl method charged `impureMethods[method]` on the lambda side
-and `methodCallEffect(...)` on the method side, and only the second adds the effects of the
-arguments supplied for that method's **callback** parameters. So:
-
-```lyra
-trait Runner { run: (Self, () -> i64) -> i64 }
-impl Runner for Runbox { run = (self, f) => f() + self.n }
-
-let noisy = () -> i64 => { println("noise") 42 }
-let mid   = (r: Runbox) -> i64 => r.run(noisy)     // inferred pure — wrong
-let outer = pure (r: Runbox) -> i64 => mid(r)      // accepted, and prints
-```
-
-`outer` promised purity, checked clean, and printed. The *reporting* walk (`exprVisitor`)
-had used `methodCallEffect` all along, so the diagnostic machinery was right and the table
-it consults was wrong — which is exactly why nothing caught it, and why a test asserting
-"this program is rejected" was the only thing that could have.
-
-There is now one walk, full stop. `bodyEffects` takes a **`callable`**, the descriptor of
-what the two entry points actually differ in: the body's own frame, the capture stack, the
-`mut` parameters (nil for a method, which has no modifier syntax yet — and a nil map reads
-false, which is precisely what the method walk did by omitting the test), the parameter
-positions, where to record an allocation site, how to read a declared bound on a parameter,
-and how to walk the body. Everything else is shared, so a divergence now requires editing
-the one walk into disagreeing with itself.
-
-**Enforcement is that same walk re-run with a reporting sink** (08/27): a `callable` may
-carry `reportPure`, and each arm that charges a purity-violating bit reports the site — the
-tailored message included — in the same breath. The old `exprVisitor` mirror, which
-re-derived the whole call-resolution ladder and every mutation predicate purely to attach
-messages, is gone; `exprVisitor` is now orchestration only (find every callable, run
-`det`/`noalloc` against the inferred row, re-run the walk for `pure` bodies, check declared
-callback bounds at call sites). Collapsing it also removed a double report: the program
-walk descends into every trait-method body and `checkTraitMethodBounds` used to walk a pure
-method's body again, so a violating pure lambda nested in a pure method was reported twice
-(`TestPurity_NestedLambdaInPureMethodReportsOnce`). One deliberate reporting-only arm
-remains, marked as such in the walk: a nested lambda's parameter defaults are held to the
-*enclosing* bound at the definition, while inference leaves them uncharged there because
-the default-args desugar bills each call site that omits the argument.
-
-The tables the walk reads live in **`inference`**, which `purityChecker` embeds rather than
-copying field by field. That is the second half of the same lesson: enforcement and the
-fixpoint answer the same questions, so they should not be reading two sets of maps.
-
-## The fixpoint's per-callable facts are memoized
-
-`inferImpurity` recomputes every callable's effect on every round — it has to, since a
-function found to allocate early may still gain an io bit from a callee resolved later, and
-a "skip the ones already impure" early-out would miss that. What it does *not* have to
-recompute is the **inputs** each body walk needs:
-
-| fact | what it costs | cached as |
+| Code | Definite fault | Avoids double report with |
 |---|---|---|
-| the body's scope frame | a walk of the collector's scope subtree, plus two maps | `frames.forLambda` |
-| its `mut` parameters | a parameter scan | `frames.mutBorrowsFor` |
-| its parameter positions | a parameter scan **plus** the body-level match-alias walk | `frames.paramsFor` |
-| a method's frame / parameters | the same, per impl method | `frames.forMethod` / `methodParamsFor` |
+| `lyra-E020` | overflow of `+ - *`, unary `-` | `checkIntegerLiteralRange` (literals) |
+| `lyra-E021` | divide-by-zero with an *identifier* divisor proven `[0,0]` | typechecker constant fold |
+| `lyra-E022` | out-of-bounds index with a *non-singleton* range | typechecker constant index check |
+| `lyra-E023` | identifier assigned to a range newtype, proven outside (`checkConstraintViolation`) | `checkRangeConstraints` |
+| `lyra-W011` | always-true/false integer comparison | — |
 
-Each is a pure function of the AST and the scope tree, both immutable once collection has
-finished, so caching them per `CheckPurity` run is sound. Measured on the pass in isolation
-(`BenchmarkCheckPurity_*`, over the real prelude): **~27–30% faster, ~35% fewer
-allocations**. End to end it is ~2–4%, because parsing and collection dominate the pipeline
-so completely that `CheckPurity` does not appear in a CPU profile of
-`BenchmarkAnalyze_Large` at all — which is the honest way to read both numbers.
+**Zero false positives**: anything imprecise widens to ⊤.
 
-**The maps are handed out shared, so nothing may write to one after it is built.** That
-invariant is what makes the caching safe rather than merely fast, and it holds by
-construction today: every write to a frame or parameter map happens inside its builder
-(`buildLambdaFrame`, `addScopeSymbols`, `directScopeBindingsForClause`, and
-`addMatchAliases` on its own map), and every other use is a read. `TestPurity_IsIdempotent`
-is the standing check — running the pass twice over one program must agree with itself.
+- Absent variable → ⊤. A float-adapted int literal is untracked (float source can be *wrong*).
+- Interval math overflowing int64 → ⊤ (`addI`/`subI`/`mulI`/`negI` guarded). **u64 uses a `+∞`
+  upper sentinel**; `compareConst` has sentinel guards. i128/u128 are ⊤.
+- **C-style `for`** (`evalForLoop`): widening/narrowing fixpoint, body analyzed silently
+  (`rangeChecker.silent`) then once loudly. After-loop state havocs.
+- **`for … in` range** (`forInRangeKey`): binds the interval only when provably non-empty; stepped,
+  two-variable, variable-length, or maybe-empty ranges havoc.
+- **Block exit** builds from the *inner* env: keeps reassignments **and havocs** of outer names,
+  drops locals, restores shadowed names (a pre-block snapshot reverted havocs — a miscompile;
+  `TestRange_Safety_HavocInNestedBlockNotElided`).
+- **`refine`** (pure, no diagnostics): comparison against a constant or tracked variable, `&&` into
+  then, `||` into else, `!` swaps. Contradiction → unreachable.
+- **`evalMatch`/`refineScrutinee`**: arms narrow a tracked scrutinee via `patternInterval`; a
+  non-overlapping arm is unreachable.
+- Compound assign is `void`-typed; its bound comes from the RHS's propagated width.
+- Possible (not definite) overflow is left to the runtime trap.
 
-The same rule is why `funcScope.isLocal` tests **key presence** rather than the mapped
-value. A frame's `mutable` map records mutability under each name, while "is this name
-declared in this body" is a different question; three call sites used to copy the key set
-into a fresh all-true map so a value test would work, once per round per callable. The
-presence test lets them share the frame's own map, and those copies are gone.
+**Trap elision**: also returns a **`SafetyTable`** (`driver.Result.RangeSafety`), keyed by AST node:
 
-## Every pass reports `diag.Diagnostic`
+| Fact | Source | Backend effect |
+|---|---|---|
+| `NoOverflow` | `checkArith` | `applyIntMathOp` → `emitWrappingOp` |
+| `NoDivZero` / `NoDivOverflow` | `checkDivision` | `emitCheckedDivOp` drops guards |
+| `IndexInBounds` | `evalIndex` | `lowerIndexExpr` drops bounds trap |
 
-Ten passes each declared their own error struct — `AwaitOutsideAsyncError`,
-`ReturnOutsideFunctionError`, `PurityError` and seven more — and all ten were
-`{Code, Message string; Location ast.Location}` with an identical `Error()`. The driver
-then unpacked each one back into a `diag.Diagnostic`, field by field, in ten identical
-three-line loops.
+A nil table / absent entry means "not safe". **Soundness requires seeing every write to a tracked
+variable** — a stale interval is a missing trap in safe code (rule 18):
 
-They return `[]diag.Diagnostic` now, which half the package already did
-(`CheckGenericParams`, `CheckUseAfterMove`, `CheckUnreachableCode`, and the warnings half of
-`CheckPurity`). The driver's ladder is one loop over a slice of results.
-
-**The severity moves with the diagnostic**, which is what makes the loop possible. Before,
-the driver stamped `SeverityError` on everything coming out of these passes, and
-`CheckGenericParams` had to be appended separately because it alone reports both — an
-undeclared type variable is an error, a declared-but-unmentioned one a warning. A pass that
-wants to report a warning no longer needs the driver to learn about it.
-
-`typechecker.TypeError` keeps its own type, because it genuinely differs: it carries the
-typechecker's own two-valued `Severity` rather than `diag`'s. That one mapping is now
-`TypeError.Diagnostic()`, beside the two types it bridges, rather than six fields copied
-across in the driver — so a field added to `TypeError` cannot silently fail to reach the
-output.
+- **`&mut x` anywhere in a function untracks `x` there** (`mutAddressTaken` in `analyzeBody`;
+  `tracked` is the single read and answers ⊤). Flow-insensitive on purpose. `&x` keeps tracking.
+- Any new way to write a binding must be modelled or untrack the name.

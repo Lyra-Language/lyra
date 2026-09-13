@@ -17,8 +17,8 @@ import (
 // retain.go and drop.go are the two halves of one invariant: a copy of an aggregate must
 // add a reference to **exactly** the managed values its death removes one from. Miss a
 // field on the retain side and it leaks; miss it on the drop side and it is freed while a
-// copy still points at it. CLAUDE.md rule 8 states the consequence — "paired walks must be
-// fixed in one change" — and the history is that they were not:
+// copy still points at it. lyra/CLAUDE.md rule 8 states the consequence — "paired walks are
+// fixed in one change, or merged" — and the history is that they were not:
 //
 //   - `AnonymousStructType` was missing from both until 08/08, so `{ m: string }` leaked
 //     one reference per value;

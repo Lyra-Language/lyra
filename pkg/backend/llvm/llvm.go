@@ -9,9 +9,8 @@
 // lived here and drifted until it was actively wrong, announcing default parameters,
 // destructuring parameters, string interpolation and higher-order calls as "deferred
 // with loud errors" long after each of them lowered, and describing Emit as a skeleton
-// that emits a placeholder body. That is the same drift the workspace CLAUDE.md records
-// against its own duplicated copy of the package map, with the same fix: one home for
-// the inventory, and a pointer from everywhere else.
+// that emits a placeholder body. The fix is the one every doc in this project follows: one home
+// for the inventory, and a pointer from everywhere else.
 //
 // Two invariants hold across every file here, and both are load-bearing:
 //

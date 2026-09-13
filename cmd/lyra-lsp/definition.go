@@ -309,8 +309,8 @@ func cursorOnName(loc ast.Location, name string, line, col int) bool {
 //
 // Now it walks with `ast.WalkStmt`/`ast.WalkExpr` — the canonical children — and keeps the
 // **narrowest** recorded scope whose node contains the position. Same rule findExprAtPos
-// uses, and it retires three mirrors (CLAUDE.md rule 8: a registered mirror is second best,
-// retiring one is the real fix).
+// uses, and it retires three mirrors (lyra/CLAUDE.md rule 8: better than registering a mirror
+// is deleting it).
 func findScopeAtPos(program *ast.Program, scopeTable *symbols.ScopeTable, fileScope *symbols.Scope, line, col int) *symbols.Scope {
 	if program == nil || scopeTable == nil {
 		return fileScope

@@ -87,7 +87,7 @@ func signedTypeMinMagnitude(name types.PrimitiveTypeName) (int64, bool) {
 // constant or targetType is not a concrete number. The variable name is used in the
 // message.
 //
-// **Fifteen call sites funnel here**, which is what makes the workspace CLAUDE.md's claim
+// **Fifteen call sites funnel here**, which is what makes lyra/LANGUAGE.md's claim
 // — "a literal that cannot hold its value is a compile error in every position" — true
 // rather than aspirational: an annotation, an argument, a return, a struct field, an array
 // element, a repeat, a compound assignment, a generic instantiation. Adding a numeric kind

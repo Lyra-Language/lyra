@@ -68,8 +68,8 @@ func typeDeclarationAt(analysis *docAnalysis, line, col int) (*ast.TypeDeclStmt,
 		}
 	}
 	// A **declaration's own name**, which is neither an expression nor a pattern: a
-	// `VarDeclStmt` holds its name as a bare string, so no walk sees it (CLAUDE.md rule 8's
-	// "a field that is a bare string is invisible to every walk"). Asking from a `let` what
+	// `VarDeclStmt` holds its name as a bare string, so no walk sees it (lyra/CLAUDE.md rule 8:
+	// "a bare `string` field is invisible to every walk"). Asking from a `let` what
 	// type it holds is an ordinary thing to want, and rename already walks declaration names
 	// for the same reason.
 	if decl, ok := declAtNamePos(analysis, line, col); ok {

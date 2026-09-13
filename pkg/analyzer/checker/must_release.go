@@ -145,8 +145,8 @@ type resource struct {
 	// fix is a different one: `unload_sound(chime)` does not compile when `chime` is
 	// a `Maybe`, and a diagnostic naming a call the reader cannot write is worse than
 	// one naming none. This codebase has made that exact mistake before and wrote it
-	// down (CLAUDE.md, trait default methods: the message advised `where Self: A`,
-	// which is not syntax this language has).
+	// down (the trait-default-method diagnostic advised `where Self: A`, which is not
+	// syntax this language has; see the typechecker README).
 	wrapped bool
 }
 

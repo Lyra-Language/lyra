@@ -207,7 +207,7 @@ func TestTypeCheck_Overflow_F64_NoCheck(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-// The workspace CLAUDE.md's claim is that "a literal that cannot hold its value is a
+// lyra/LANGUAGE.md's claim is that "a literal that cannot hold its value is a
 // compile error in **every position**". That held for integers only until 09/10: a float
 // literal too large for its target was silently `inf` in an annotation, an argument, a
 // return, a struct field and an array element alike.

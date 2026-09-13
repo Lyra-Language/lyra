@@ -15,8 +15,8 @@ import (
 // It is a *CLI* test because `to_runes` is a **prelude** function: neither the typechecker's
 // harness nor the backend's has a prelude, so both refuse this program with
 // `string has no method "to_runes"` — a failure about the harness, not about the advice.
-// The rule from CLAUDE.md, restated: a test for a diagnostic whose fix names a
-// standard-library function belongs where the standard library is real.
+// The rule from lyra/CLAUDE.md's Testing section: a test for a diagnostic whose fix names
+// a standard-library function belongs where the standard library is real.
 func TestSpreadAdvice_ToRunesCompilesAndRuns(t *testing.T) {
 	root := repoRoot(t)
 	t.Setenv("LYRA_STD", root)

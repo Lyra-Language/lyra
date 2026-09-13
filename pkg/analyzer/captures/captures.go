@@ -408,7 +408,7 @@ func globalNames(program *ast.Program, symTable *symbols.SymbolTable) map[string
 			// that is not one, and the backend failed with "no type recorded for
 			// captured binding" on a program the front end had checked clean. Hazard 8,
 			// and the *third* switch over top-level declaration kinds to be missing this
-			// one — see the note in CLAUDE.md.
+			// one — see rule 8's declaration-kinds note in lyra/CLAUDE.md.
 			out[v.Name] = true
 		}
 	}

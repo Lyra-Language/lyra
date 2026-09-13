@@ -65,7 +65,7 @@ func TestNullPtr_CannotBeBoundAsAVarOrConst(t *testing.T) {
 // grammar, refused at every import with lyra-E028, and the diagnostic told the author to
 // add a `pub` that was already there.
 //
-// It is the `pub let` bug again, in exactly the shape CLAUDE.md's field-label rule warns
+// It is the `pub let` bug again, in exactly the shape tree-sitter-lyra/CLAUDE.md's field-label rule warns
 // about — reading an unlabelled child by field name returns nil *silently*, so the mistake
 // reads as "this declaration is never public" rather than as an error. Found writing
 // `bindings/sdl3`, where every opaque C handle is a `pub newtype` over a raw pointer.

@@ -1,0 +1,430 @@
+# Lyra Language Semantics
+
+The reference for Lyra's semantics as implemented. Compiler internals live in `lyra/CLAUDE.md` and the package `README.md`s; the reasoning behind decisions is in `lyra/COMPLETED.md`.
+
+**Contents**
+
+1. [Types and Literals](#1-types-and-literals) — primitives, literal checking, ranges, newtypes
+2. [Operators and Assignment](#2-operators-and-assignment) — bitwise, overflow, compound and tuple assignment, overloading
+3. [Collections and Strings](#3-collections-and-strings) — arrays, sorting, strings, HashMap, JSON, lazy sequences
+4. [Traits, Generics and Dispatch](#4-traits-generics-and-dispatch) — supertraits, defaults, UFCS, Show, type arguments
+5. [Effects](#5-effects)
+6. [Modules and Documentation](#6-modules-and-documentation)
+7. [I/O and Runtime Builtins](#7-io-and-runtime-builtins) — console, files, args, terminal, randomness, float math, clock
+8. [FFI and Unsafe](#8-ffi-and-unsafe) — raw pointers, `nullptr`, unions, aggregates, `@must_release`, `@symbol`
+
+**Builtin vs. prelude rule:** anything expressible in Lyra goes in the prelude (`std/prelude/*.lyra`); a compiler builtin exists only for what is genuinely primitive (libc, argv, libm, allocation).
+
+---
+
+## 1. Types and Literals
+
+### Primitives
+
+| Kind | Types | Notes |
+|---|---|---|
+| Signed int | `i8` `i16` `i32` `i64` `i128` | no platform `int`/`uint`; untyped int literal defaults to `i64` |
+| Unsigned int | `u8` `u16` `u32` `u64` `u128` | |
+| Float | `f16` `f32` `f64` | no bare `float`; untyped float literal defaults to `f64` |
+| Other | `bool`, `string`, `rune` | `rune` is a Unicode code point (i32) |
+| Internal | `never`, `untyped_int`, `untyped_signed_int`, `untyped_float` | no syntax |
+
+- **`never`** is the bottom type, the result of `panic(msg)`: assignable to every type, so `match m { Some(v) => v, None => panic("…") }` works. `panic` is EffectNone (legal in `pure`/`det`/`noalloc`).
+- **`i128`/`u128`** lower natively (LLVM `i128`): checked arithmetic, `match`, comparisons, conversions; division and `%%` via compiler-rt; `print` via `lyra_i128_to_str`. A literal's magnitude lives in a `big.Int` on the node (nil if it fits 64 bits) and stays untyped where both could hold it. Folding is arbitrary-precision (`ast.FoldBigExpr`; `FoldIntExpr` returns ok=false rather than wrapping). Value-range analysis leaves 128-bit (and `u64`) values untracked.
+- **Float narrowing is allowed and rounds to nearest** (`f32(x)`), as integer narrowing truncates (`u8(x)`). Refused: a compile-time constant that would become infinity (`f32(1.0e40)`). Precision loss is never an error.
+
+### Literals must fit
+
+A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a newtype constraint, a return-position `() -> u8 => 300` (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
+
+### Ranges
+
+| Operator | Direction | End |
+|---|---|---|
+| `..<` | ascending | exclusive |
+| `..<=` | ascending | inclusive |
+| `..>` | descending | exclusive |
+| `..>=` | descending | inclusive |
+
+- **Direction is the operator's, never the bounds'**: `5..<1` is an empty ascending range.
+- Step: `0..<10:2`, a **magnitude**. Negative literal step is an error; a non-positive step known only at run time traps (`lyra: range step must be positive`). A comprehension with a degenerate step yields an empty array.
+- `for-in` **terminates at the type's edge**: `0..<=hi` with `hi` at the type max visits max and exits; a large step cannot leap an exclusive end.
+- As a match pattern or newtype constraint a range is a set: `..>`/`..>=` there are `lyra-E034`.
+
+### Newtypes
+
+`newtype Meters = f64` gives nominal identity to a **structural** base: scalars, `string`, arrays, raw pointers, function types. `lyra-E041` refuses a `struct`, `data`, named tuple or anonymous tuple (suggest `tuple Rgb(u8, u8, u8)`).
+
+- **Constructor:** `Cents(150)` or juxtaposed `Cents 150` (same node); lowers to its operand. Generic: `Boxed(5)` is `Boxed<i64>`, `Boxed::<u8>(200)` binds explicitly. Malformed forms: `lyra-E044`.
+- **Into (`lyra-E046`):** an untyped literal converts implicitly (`let c: Cents = 150`, `let xs: []Percent = [10, 20]`); a typed value needs the constructor. An array literal/repeat written in place converts implicitly (a typed *binding* holding one does not). A lambda literal converts implicitly to a function-type newtype, including in argument position; its parameters are elaborated from the base and the signature checked. Scalar/string operations (`x + y`, `a ++ b`) still need the constructor.
+- **Out (`lyra-E047`):** always explicit — base name where it has one (`i64(c)`, `string(e)`, `bool(f)`; these exist only for this, no stringification/truthiness), else `base(v)`. `base` strips exactly one layer; newtype→newtype has no path. Conversions look through a newtype (`u8(cents)` = `u8(plain_i64)`). `base` is a builtin resolved after scope (a user binding shadows it); later passes recognise it via `TypeTable.IsBaseReadout`, never by spelling.
+- **Constraints** (`range(...)`, `step(...)`, `pattern(...)`) are checked wherever the newtype flows and through the constructor (`lyra-E023`). `values(...)` is `lyra-E045`. `step` measures from the range start (`range(5..<=95), step(10)` accepts 15, refuses 10: `lyra-E053`). Unprovable values trap at construction (`lyra: value violates its newtype's constraint`); only unsettled sites pay a compare.
+- **Transparent to the base's methods** (builtins and prelude `self:` functions), tried after every other rung, so a newtype's own method wins. A function-type newtype is callable (`h(5)`) in every position.
+- **Except** `wrapping_*`/`saturating_*`/`checked_*` (`lyra-E043`): use an operator impl or convert to the base. Float `floor`/`ceil`/`round` stay transparent. `println(c)` is refused — write `impl Show for Cents`.
+
+### Regex literals
+
+`r"…"` is one engine everywhere: a DFA compiled **at compile time** (RE2 discipline, O(n), no backtracking/allocation; flattened tables + one shared driver).
+
+- Used as a newtype `pattern(...)` argument or as a **`match` arm on a string** (`w @ r"^[a-z]+$" => …`). Regex arms never make a match exhaustive.
+- `lyra-E054`: lookbehind or DFA past `regex.MaxTableStates`. As a value (`let re = r"…"`) it is `lyra-E052`.
+- There is no `regex` type: `(re: regex)` declares a type variable.
+
+---
+
+## 2. Operators and Assignment
+
+### Bitwise
+
+`&`, `|`, `~` (**xor** — `^` is pointer syntax), `<<`, `>>`, prefix `~` (complement), plus compound forms. Integers only.
+
+- Precedence is not C's: bitwise binds **tighter than comparison** (`flags & MASK == 0` does what it reads as) and looser than arithmetic; shifts bind above addition.
+- An out-of-range shift amount **traps**. A shift's count is typed independently; the **target's** signedness picks the shift (`u8` 200 `>>= 1` is 100).
+
+### Overflow
+
+Integer `+ - * /` **trap** on overflow. Explicit alternatives, builtin on every concrete width, all `pure noalloc`:
+
+| Family | Methods | Result |
+|---|---|---|
+| `wrapping_*` | `add` `sub` `mul` | modular two's complement |
+| `saturating_*` | `add` `sub` `mul` | clamped |
+| `checked_*` | `add` `sub` `mul` `div` | `Maybe<T>`; `checked_div` is `None` on zero divisor and `INT_MIN / -1` |
+
+No `checked_rem` yet (ambiguous between `%` and `%%`).
+
+### Compound assignment
+
+`+= -= *= /= %= &= |= ~= <<= >>=` target any place `=` accepts (`counts[i].n += 1`) under the same writability rules. **Not a desugaring**: the address is computed once, so `xs[idx()] += 5` calls `idx` once. An overloaded operator is reached through it.
+
+### Tuple assignment
+
+`(a, b) = (b, a)`, `(q, r) = divmod(n, d)`.
+
+- Targets are places (name, `p.x`, `xs[i]`, `p^`); anything else is refused by the collector, a constructor target by name. `a, b = b, a` is not a form.
+- **RHS evaluated to a tuple first, then places written left to right**; each address computed once, after the RHS.
+- Collector desugaring (not a statement kind): `{ let (t0, t1) = rhs; p0 = t0; p1 = t1 }` with position-stamped names in their own scope. Later passes never see it. The target parses as `tuple_literal` (a place-tuple rule would be a reduce-reduce conflict).
+- Places are the RHS's context: `(a, b) = (4.0, 0.5)` on f32 narrows both. The desugared `let` records its assignments in `DestructuringDeclStmt.Assigns` for this. A mismatch is reported with the stand-alone assignment's message.
+- Any tuple destructuring arity mismatch reports once; unpaired names are bound untyped (no cascading "undefined identifier").
+
+### Operator overloading
+
+Arithmetic/bitwise overload; comparisons do not.
+
+```lyra
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x, y: self.y + o.y } }
+```
+
+- `+ - * / % << >> & | ~`, prefix `-`/`~`, and compound assignments dispatch by **method name**; the trait name is the author's. Two traits providing one operator for one type is an ambiguity at the operator.
+- `Eq`/`Ord` own the comparisons (`<` and `<=>` must agree); `(_==_)` as a method name is `lyra-E039`. The prelude marks them `@builtin(Eq)`/`@builtin(Ord)` — found by identity, so a user `trait Ord` is ordinary.
+- A primitive (unstripped) is never routed through an impl: `impl Add for i64` is inert; a newtype over a scalar **is** routed.
+- An operator is a call for `pure`/`det`/`noalloc`.
+- Inert with a warning: `&&`/`||`, `!`, `**`, suffix `_++`/`_--`.
+- A type-parameter operand resolves via a `where` bound: `let sum<t> where t: Add = (a: t, b: t) -> t => a + b`.
+- Parses: `Cents(150) + Cents(275)`, `(a + b).x`. Each node has exactly one derivation path (grammar partition rule).
+
+### `min` / `max` / `clamp`
+
+Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps `self` on a tie, `max` takes `other`. `clamp` traps on `lo > hi`. Prelude implements `Ord` for integer widths and `rune` so the bound is satisfiable (`3 < 5` stays a machine compare). **Floats excluded** (NaN): `min(1.5, 2.5)` is a compile error.
+
+---
+
+## 3. Collections and Strings
+
+### Arrays
+
+- **Literal flavour is decided by context, wherever it sits**: `[1, 2, 3]` is a fixed `[3]T`; under a `[]T` context it is a heap dynamic array (`noalloc` refuses that one). Applies to constructor payloads (`Some([1])` as `Maybe<[]i64>`), nested literals (`[[1], [2, 3]]` as `[][]i64`), generic arguments already solved (`m.unwrap_or([])`), and **receivers** (`[1, 2, 3].map(f)`).
+- **A fixed-array binding never widens**: `let xs = [1, 2, 3]; xs.map(f)` is refused, naming the annotation as the fix.
+- Elements: any type but `void` (tuples, raw pointers, anonymous structs), optionally with one allocation or `weak` modifier (`[]shared Node`).
+- Layout `{rc, weak, len, cap, T*}`: elements behind a pointer so growth cannot move the box (one extra load per access).
+- `xs.push(v)`: amortized doubling, `mut` receiver (same diagnostic as `xs[i] = v`), `noalloc` refuses.
+- `xs.slice(start, end)`: half-open, **always `[]T`** even from `[N]T`, **copies** (`noalloc` refuses). `end == len` legal, `start == end` empty; negative, past-length or inverted bounds trap.
+
+**Spread `[...xs, v]`**
+- Operand is any postfix expression (`...f(x)`, `...h.xs`).
+- Result is **always `[]T`**, even if all operands are fixed.
+- Allocates once, sized from operand lengths; each operand evaluated once in order.
+- Only inside an array literal (`lyra-E068`); `f(...xs)` refused. Non-array operand refused by name (`[..."ab"]` names `to_runes()`).
+
+**Repeat `[v; n]`**
+- Value evaluated **once**; each slot retains it.
+- Count must fold for `[N]T` (const chains work); any expression for `[]T`.
+- **`lyra-W019`**: repeating a value with shared mutable structure aliases it — `[[' '; W]; H]` is one row H times. Fires for a `[]T`, a `shared` aggregate with a writable field, or a struct/tuple/`data`/`[N]T` containing one. Silent for strings and `shared` scalars. `readonly` does not prevent the sharing. See `examples/life.lyra`.
+
+**Sorting** (all ordinary Lyra in `std/prelude/array.lyra`):
+
+| Method | Bound | In place | Stable | Allocates |
+|---|---|---|---|---|
+| `sort()` | `t: Ord` | yes (`mut`) | no | no |
+| `sort_by(cmp)` | none | yes | no | no |
+| `sorted()` | `t: Ord` | no, `pure` | yes | twice |
+| `sorted_by(cmp)` | none | no | yes | twice |
+
+- `sort` is an introsort: median-of-three Hoare quicksort, insertion sort under 16, falls to `heap_sort` past depth 2·log2(n) (never quadratic). `sorted` is bottom-up merge sort over a scratch buffer.
+- `cmp: (t, t) -> Ordering` — the way to sort floats, by one field, or reversed. The `Ord` forms delegate with `pure (a, b) => a.compare(b)`.
+
+**Destructuring `let` names own their values** (`let (x, y) = (b, a)` retains each managed leaf); match arm and `if let` names borrow.
+
+### Strings
+
+UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**.
+
+- A **NUL sits at `data[byte_len]`**, never read by the language (interior NULs are legal), so `s.cstring_ptr()` (`unsafe`, `^u8`, checks for interior NUL) hands C a pointer without copying. Literal bytes are read-only — C writing through it faults.
+- `s[i]` is the i-th code point (O(i)); `s.len()` is the rune count, O(1). **Use `for i, c in s`**, not `for i in 0..<s.len() { s[i] }` (O(n²)).
+- `s.slice(start, end)`: half-open rune range, **allocates** (so `noalloc` refuses `slice` and `trim`). `trim`/`trim_start`/`trim_end` strip the five ASCII whitespace chars only.
+- **Negative index traps**; provable negative is `lyra-E022` (naming `from_end`; for `slice` naming `slice(0, len() - 1)`). `from_end(k)` is 1-based end-relative for strings and arrays. `s[n]` is not an index; `slice(n, n)` is `""`.
+- `starts_with`/`ends_with`: byte-level over `byte_len()` + `compare_bytes_at(offset, other)` (memcmp; `== 0` is a prefix test); exact because UTF-8 is prefix-free. `pure noalloc`.
+- `index(needle, offset = 0) -> Maybe<i64>`: naive scan, offset and result in **rune** indices.
+- `index`/`contains`/`split` are generic over `pub trait Needle` (`found_at` returns an `(Index, Length)` span), implemented for `rune` and `string`. `split` on an empty separator traps, naming `to_runes() -> []rune`.
+- `split` keeps empty parts (`"a,,b"` → 3); `split_when(pred)` **collapses** runs of boundaries and drops leading/trailing empties.
+- `s.byte_offset(i) -> Maybe<i64>`: rune position → byte offset; end position answers `Some(byte_len)`; negative is `None`.
+- ASCII classifiers (name is the boundary): `is_ascii_upper`, `_lower`, `_alpha`, `_digit`, `_punctuation`, `_printable` (space..`~`, not "not a control code"), `_control_code`, `is_ascii_space`. `is_ascii_alpha` splits `héllo`; use `is_ascii_space` for non-ASCII text.
+- `to_ascii_lower`/`to_ascii_upper`: total (identity on non-letters), on both `rune` and `string`. ASCII only.
+- **Bytes ↔ text** (builtins; both copy):
+  - `bytes.decode_utf8() -> string` — **does not validate** (rune count = non-continuation bytes, like `read_line`).
+  - `s.encode_utf8() -> []u8` — the only way to read a string's bytes.
+  - `p.decode_utf8(byte_len)` on a `^u8` — `unsafe`; negative length traps, too-large cannot be caught. `std.ffi`'s `CBuffer.decode_utf8` is the checked form.
+- A literal or constructor call is a postfix head: `"abc".len()`, `["x"; 3].join("-")`, `1.wrapping_add(2)`, `Some(1).unwrap_or(0)`.
+
+### HashMap (`std.collections`)
+
+`HashMap<k, v>` in `lyra/std/collections/hashmap.lyra`: one `[]Maybe<Entry<k, v>>`, open addressing, linear probing, power-of-two capacity, load ≤ 3/4, backward-shift deletion. Iteration order changes on growth — sort `keys()` if order matters.
+
+- Key implements `Hash` (`hash: (Self) -> u64`; provided for ints, `rune`, `bool`, `string`). Invariant: `==`-equal values hash alike. Combine fields with `hash_combine`; the map finalizes every hash. No `Eq` bound (structural `==` works on type variables).
+- `insert` returns nothing; `replace` returns the displaced value; `remove` returns the value (`let _ = m.remove(k)`) — avoids `lyra-W006` on discarded `Maybe`.
+- Constructors `hashmap_new`, `hashmap_with_capacity` take type arguments from annotation or turbofish.
+
+### JSON (`std.json`)
+
+`parse_json(text) -> Result<JsonValue, JsonError>` in `lyra/std/json.lyra`. `JsonValue` = `JsonNull | JsonBool | JsonNumber(f64) | JsonString | JsonArray([]JsonValue) | JsonObject([]JsonMember)`; `JsonError` has a message and **byte** offset.
+
+- Accessors never trap: `field`/`element`/`as_number`/`as_int`/`as_text`/`as_bool` → `Maybe`; `elements`/`members` → empty for the wrong shape. `doc.field("nodes").unwrap_or(JsonNull).elements()`.
+- Objects keep members in order with duplicates; `field` answers the last.
+- Numbers are `f64`: exact up to 18 significant digits with exponent within 22; longer may be an ulp or two off.
+- Parser is `pure` (threads a byte offset).
+
+### Lazy sequences
+
+A `gen` function yields into a `Seq<t>`; combinators are Lyra in `std/prelude/seq.lyra` (`seq`, `map`, `filter`, `take`, `take_while`, `zip`, `to_array`, `sum`, `count`, `first`).
+
+- **Consumed where written** (`for x in xs.seq().filter(p).map(f)`, or a terminal like `sum`): one fused loop, no allocation.
+- **Held as a value** (binding, argument, field): a cursor over an LLVM coroutine; `s.next()` steps it (`mut` receiver); copies share the cursor; the last reference destroys the coroutine.
+- `Seq<t>` is compiler-known by name, declared nowhere; a program's own `Seq` wins.
+- A `gen` function must declare `-> Seq<t>`; body is void; `yield e` checks `e: t`; `yield from s` lowers only for sequences (write the loop for arrays/ranges); `yield from (0..<3)` needs parentheses.
+- Consumers: `for-in` and comprehensions. Brackets make an array; there is no `collect`. Eager `map`/`filter` on `[]t` coexist via receiver-keyed overloading.
+- **Sequence values need clang ≥ 15** (coroutine splitting). `lyrac` probes once and refuses by name, keeping the `.ll`; backend tests skip.
+- Still refused by name: a plain function returning a sequence from a block body, a lambda literal inside a `gen` used as a value, a `mut` parameter on one, `yield from` over a non-sequence.
+- `examples/primes.lyra` is the target program.
+
+---
+
+## 4. Traits, Generics and Dispatch
+
+### Supertraits
+
+`trait B: A`: every implementer of `B` must implement `A` (`lyra-E040`, at each `impl`), and a `where t: B` bound reaches `A`'s methods and satisfies `where u: A`. Cycles are legal (always implemented together). Bodies are optional:
+
+```lyra
+trait Arithmetic: Add + Sub + Mul + Div
+impl Arithmetic for Vec2      // still required; missing Mul is refused here
+```
+
+### Default methods
+
+```lyra
+trait Named {
+  pure name: (Self) -> string
+  pure shout: (Self) -> string = (self) => self.name() ++ "!"
+}
+```
+
+- A default is generic code: `Self` is a type variable bounded by the trait; checked once, compiled per implementer. It may call only methods of the trait or its supertraits.
+- An impl's own clause wins; a default calling another default reaches that method's override.
+- The trait's declared bound (e.g. `pure`) is enforced and reported **at the default**, not at inheriting impls.
+- A bound the default needs goes on the trait as a supertrait (`trait Doubled: Show`).
+
+### Calling on a receiver
+
+Opt in by naming the first parameter `self`.
+
+- **UFCS:** `m.unwrap_or(0)` → `unwrap_or(m, 0)`, rewritten before anything downstream. `own` receivers refused. A type-parameter receiver resolves against functions generic in their receiver (`a.max(b)` under `where t: Ord`).
+- **Receiver-keyed overloading:** one module may declare a name several times if each takes `self` with a different receiver type head (`Maybe<t>` vs `Result<t,e>`); a second `Maybe<…>` is refused. A name still may not be exported by two modules.
+- Method calls resolve against the receiver's type and need no import of the underlying free function.
+
+### Show
+
+`print` and `"${…}"` choose a formatter per concrete type; a type-parameter value needs `where t: Show`:
+
+```lyra
+let describe<t> where t: Show = (v: t) -> string => "value ${v}"
+```
+
+- Trait and scalar impls are Lyra in `std/prelude/show.lyra`. The operand is rewritten to `v.show()`.
+- Recognised **by method** (any in-scope bound declaring `show`); diagnostics suggest `Show`.
+- A concrete type with a `show` impl prints through it; printable primitives always use the built-in formatter. `impl Show for Pt { show = (self) => "${self}" }` is refused (would recurse).
+
+### A call's type arguments
+
+Solved from argument types first, then:
+- **Turbofish** `f::<i64>()` — positional, declaration order; beats context.
+- **Context** (annotation, declared return type, parameter slot) — binds **only variables no parameter mentions**, and only on declarations that declare their `<…>` list. This is what makes `hashmap_with_capacity<k,v>(cap)` callable.
+
+### Local generics
+
+`let idf<t> = (a: t) -> t => a` inside a function is a full generic (turbofish, `where` bounds), may capture enclosing bindings, and may nest inside generic functions at any depth, mentioning outer type variables. Emitted as one closure per instantiation; a lambda calling it captures those closures (a captured `var` is read as at the declaration). Not a value: passing `idf` as a function is a type error.
+
+### Calling on a type name
+
+There isn't any. `Rng.seeded(42)` is **`lyra-E035`** (constructors are bare: `rng_seeded`). A trait gets its own message, since `Trait::method(…)` is valid.
+
+---
+
+## 5. Effects
+
+`pure`, `det` and `noalloc` are **written** bounds a caller relies on; the compiler also infers the same facts whole-program.
+
+- **`lyra-W018`**: a top-level function or trait-impl method with no observable effect that does not say `pure`. Nothing is refused: a `pure` function may call an unannotated one inferred clean. The bound decides **where blame lands** when an effect is later added — at the `println` in a marked helper, versus at the `pure` caller of an unmarked one.
+- Only `pure` warns (`det`/`noalloc` candidates are too common to be useful). Not warned: inline closures, `main`, impl methods whose trait declares the bound. No `#[allow]` exists.
+- Effect classes referenced elsewhere: `EffectInput` (stdin, `program_arg*`, `read_key`, `wait_for_key_ms`, `terminal_size`), `EffectOutput` (`set_raw_mode`; `det`-legal), `EffectRand` (`random_seed`), `EffectTime` (`wall_clock_nanos`), `EffectMut` (mutating own receiver; `det`-legal). `det` permits output.
+
+---
+
+## 6. Modules and Documentation
+
+### A module is a file or a directory
+
+`std.prelude` is `std/prelude.lyra` **or** every `*.lyra` directly in `std/prelude/` — identical semantics (one path, namespace, scope), so splitting a file changes nothing (overloading, `pub` and shadowing are keyed on the module).
+- Every file in a module directory must declare the module; a single-file module needs no header.
+- A subdirectory is a child module. Both forms in one root is an error.
+- Compiling one file of a multi-file module brings its siblings.
+
+### Imports
+
+- `import lib.{ listed }` admits `listed` only — no other exports, no types.
+- `import lib` binds `lib.x` and no bare names. An alias binds only its local name.
+- Resolution: **own scope → imports → prelude**. Using an export you didn't import names the fix (`add import lib.{ … }`), distinct from a missing `pub`.
+
+### Shadowing
+
+A local declaration of an imported (or prelude) name wins every bare reference in that module and warns **`lyra-W016`**; the import stays reachable as `seq.map`. Still an error: two modules exporting one name, including a re-export.
+
+### Documentation comments
+
+`///` documents the declaration below; `//!` documents the module. Body is Markdown, **no `@param`/`@returns`**.
+
+- Recognised headings (case-insensitive, singular): `# Examples`, `# Panics`, `# Errors`. Headings inside fenced code don't count.
+- Documentable: top-level `let`/`var`/`const`, `type`, `trait`, `impl`, and members (struct fields, data constructors, trait method signatures, impl methods). Field docs live on the declaration (`TypeDeclStmt.MemberDocs`), never on `types.StructField`.
+- **Attachment is adjacency**; an unattached doc warns **`lyra-W017`** (blank line before the declaration, EOF, local `let`, `//!` after the first declaration). Put implementation `//` notes **above** the doc block, never between it and the declaration.
+- `//!` goes at file top or directly under `module`; multiple files join in file order into `SymbolTable.ModuleDocs`. `////` is an ordinary comment.
+- Surfaced in LSP hover and rendered by `lyrac doc` (Markdown + Starlight frontmatter):
+
+```bash
+lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference --strict
+```
+
+  Flags: `--private`, `--deps`, `--prelude`, `--strict` (fail on gaps). Undocumented public declarations are still listed. `pkg/docgen` renders source syntax, and a test re-parses every generated signature.
+
+---
+
+## 7. I/O and Runtime Builtins
+
+### Console, arguments, files
+
+| API | Kind | Notes |
+|---|---|---|
+| `print`/`println` | builtin | polymorphic over printable scalars |
+| `read_line() -> Maybe<string>` | builtin | strips `\n` (and `\r`); `None` at EOF (distinct from `""`) |
+| `line.parse_i64() -> Maybe<i64>` | prelude (`parse.lyra`) | strict: `None` on blank, lone sign, trailing garbage, whitespace, out of range |
+| `program_args() -> []string` | prelude over `program_arg_count()`/`program_arg(i)` | index 0 is program name; `program_arg` traps out of range; EffectInput. `main` is emitted as `main(argc, argv)` |
+| `read_file(path) -> Maybe<string>` | `std.io`, over `extern` `open`/`read`/`close` | `None` if unopenable; no UTF-8 validation; `open` declared variadic |
+| `read_stdin()` | `std.io` | shares the chunked reader |
+| `write_file(path, contents) -> bool` | `std.io`, over `creat` | loops on short writes |
+
+- **Use `creat`, never `open` with flags**: `O_CREAT`/`O_TRUNC`/`O_APPEND` differ between macOS and Linux (only `O_RDONLY` = 0 is portable). No `append_file` until the compiler supplies per-target constants (as `tui.go` does `TIOCGWINSZ`). `examples/todo.lyra`, `examples/word_freq` show the shapes.
+
+### Terminal
+
+| Builtin | Effect | Behaviour |
+|---|---|---|
+| `set_raw_mode(on: bool)` | Output | echo/line-buffering/signals off; saves original termios on first enable, restores it on disable |
+| `read_key() -> Maybe<rune>` | Input | one **code point**; no escape decoding (arrow = ESC, `[`, `A`); `None` at EOF |
+| `terminal_size() -> (i64, i64)` | Input | **(columns, rows)**; 80x24 with no window |
+| `wait_for_key_ms(timeout) -> bool` | Input | readable within timeout; closed fd reports readable; negative clamps to 0 |
+
+- ANSI output is plain `print` (`\e` = `\x1b`). Everything above these four is Lyra in `std.tui`: `frame.lyra` (row-level diff, one cursor move per consecutive run), `box.lyra`, `status.lyra` (`status_bar`/`status_split`).
+- **Mouse** needs no builtin, but must use **SGR mode** (`\e[?1006h`); X10's raw bytes break `read_key`'s decoding past column 95.
+- **`std.tui` coordinates are 0-based** (`MouseEvent.col/row`, `move_to(col, row)`); only `mouse_event` and `move_to` convert.
+
+### Randomness
+
+`random_seed() -> u64` is the only builtin; `std/prelude/rand.lyra` has `rng_seeded(seed)`, `rng_from_entropy()`, `rng.next_u64()`, `rng.below(bound)` (half-open, unbiased via rejection), `rng.between(lo, hi)` (inclusive), and ambient `random_below`/`random_between`. xorshift64* — **not cryptographic**. A seeded draw is `EffectMut` (so `det`-legal); anything reaching `random_seed` is `EffectRand` (`det` refuses).
+
+### Float math
+
+- `floor`/`ceil`/`round` → **i64** (the fix for refused `i64(x)` on a float). Out-of-range or NaN **traps**.
+- `log`, `log2`, `log10`, `sqrt` → the receiver's own width (builtins; no libm access otherwise). Out of domain gives IEEE values (`log(0)` = `-inf`, `sqrt(-1)` = NaN).
+- `x.to_fixed(places)` (`std/prelude/format.lyra`): fixed decimals, never scientific. `print` writes the shortest round-trip form.
+
+### Clock
+
+`wall_clock_nanos() -> i64` = `clock_gettime(CLOCK_REALTIME)`; everything else is prelude. `EffectTime`, so `pure`/`det` refuse ambient reads; pass a timestamp as a parameter instead.
+
+---
+
+## 8. FFI and Unsafe
+
+### Raw pointers
+
+| Syntax | Meaning | Needs |
+|---|---|---|
+| `&x` | `^T` | `unsafe` |
+| `&mut x` | `^mut T` | `unsafe`; **x** mutable |
+| `p^` | read | `unsafe` |
+| `p^ = v`, `p^.x = v`, `p.offset(i)^.y = v`, `p^.n += 1` | write | `unsafe`; nearest deref through `^mut T` (`lyra-E061`) |
+
+- `unsafe { … }` block or `unsafe` function (`lyra-E011`); does not cross lambda boundaries. The block is its body (has a value; scopes its bindings). Calling an `unsafe` function also needs it.
+- `^mut T` may be copied into a `let`; `^T` may point at a `var`.
+- `p^ = v` **releases** the old value (as `xs[i] = v` does). Match-arm / `if let` bindings borrow, so `&mut s` and `h.s = v` on them are refused, as reassigning them already is (`lyra-E025`) — copy into a binding first.
+- `&mut` on a closure-captured binding is **`lyra-E024`** (captures are by value). Watch for `s.with_cstring((p) => f(p, &mut size))` — take the pointer outside. `&n` is fine.
+- Only storage has an address: `&f()` is `lyra-E059`; `^` on a non-pointer is `lyra-E060`.
+- Arithmetic is `p.offset(n) -> ^T` only (elements, signed, preserves mutability). No `p[i]`.
+- **`nullptr`**: safe (no `unsafe`) along with `==`/`!=` on pointers. Untyped with **no default** — context must pin the pointee (annotation, parameter, return, other side of `==`), else **`lyra-E069`**. Fills `^T` and `^mut T`; a mismatched pair pins to immutable. No `<` on pointers. `let nullptr = 5` is **`lyra-E070`** (collector).
+- The only ways to make a pointer are `&` and `nullptr`.
+
+**`std.ffi` helpers** (`unsafe` appears once in the library, not at call sites; *`unsafe` marks handing a pointer out to keep, not lending one for a call*):
+- `CBuffer { ptr, len }` with bounds-checked `buf.get(i)`.
+- `s.cstring()` — NUL-terminated `[]u8`; keep it alive while using its pointer.
+- `xs.data()` / `xs.data_mut()` (`mut` receiver) — base address, no copy; trap on empty; dynamic arrays only.
+- `with_cstring(s, f)` (`pure noalloc`, not `unsafe`), `with_cstrings(a, b, f)`.
+- `is_null`, `to_maybe` — convert C's NULL convention to `Maybe` after the `extern` (a `Maybe` cannot cross: `lyra-E063`).
+
+### Unions
+
+`union` is an **untagged C union** (e.g. `SDL_Event`), distinct from `data` (tagged).
+- All members at offset 0; size = largest member rounded to alignment (a `padding[128]` member counts).
+- Reading a member is `unsafe` (`lyra-E011`).
+- A literal names exactly one member (`Ev { kind: 7 }`); the rest is **zeroed**.
+- Every member needs a C layout (`lyra-E071`; arrays and structs allowed — wider than `lyra-E063`). Hence a union owns nothing managed.
+- No equality; no `readonly` or default on members (`lyra-E072`). Self-reference is `lyra-E014`.
+- Crosses by value or pointer. Proof: `TestExec_UnionAgainstSDL3` (headless; skips without SDL3).
+
+### Aggregates at the C boundary
+
+A struct, union, tuple or fixed array crosses **by value**; a `data` type never does (its tag has no C type).
+- Layout matches C; the per-target calling convention comes from **`pkg/abi`**, verified against clang for every shape, target and position. Targets disagree (e.g. `{i32 × 4}` is `[2 x i64]` on aarch64 but two `i64` parameters on x86-64 SysV; `{double × 3}` is registers vs. memory).
+- On a target with no classifier the **backend** refuses by name; `lyrac check` answers the same on every machine.
+- `examples/raylib/basic.lyra` is the proof.
+
+### `@must_release(fn)`
+
+On a `struct`: the value names a foreign resource released by `fn`. A binding leaving scope without that call is **`lyra-W022`**. Lyra has no destructors (would break `pure`/`det` and cross FFI ownership).
+- **A borrow is not a discharge**; only passing to the named function discharges. Passing to an `own` parameter, returning, or storing untrackably is an escape.
+- `Maybe<Sound>` carries the obligation; the unwrapping alternative that sees the value must discharge. Tracked: `match` arm, `if let`, `let … else`, destructuring `let` (incl. `let Some(v) = load_sound(p) else { return }`). Patterns binding more than one name are not tracked.
+- Field reads are borrows.
+- Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
+- `struct` only (`newtype Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
+
+### `@symbol("Name")`
+
+On an `extern`, names the C symbol verbatim (one per declaration); needed because Lyra identifiers are lowercase-leading (`SDL_PollEvent`). Without it the extern's name is the symbol. The backend dedupes `declare`s by symbol.

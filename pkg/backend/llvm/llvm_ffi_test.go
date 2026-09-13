@@ -413,7 +413,7 @@ let main = () -> void => {
 	// magnitude. C says the result is negative, zero or positive and nothing more: Apple
 	// libc happens to answer the byte difference (`'c' - 'd'` is -1) while glibc on arm64
 	// answers -32, so asserting "-1 0 -1" made `./asan.sh` fail on Linux for a reason
-	// having nothing to do with memory — and a gate CLAUDE.md tells you to run before
+	// having nothing to do with memory — and a gate lyra/CLAUDE.md tells you to run before
 	// pushing memory-model work is worth less than nothing when it is red on a clean tree.
 	//
 	// What the test is actually for survives intact: that the bytes Lyra hands over are

@@ -1,1082 +1,398 @@
 # `pkg/analyzer/typechecker` — inference and checking
 
-Walks the collected AST and infers/verifies types, writing results into a `TypeTable`.
-
-**Entry point:** `typechecker.New(symTable, scopeTable, typeTable)` → `tc.Check(program)
-[]TypeError`
-
-**`TypeError`** has `Message string`, `Location ast.Location`, `Severity` (`SeverityError` /
-`SeverityWarning`).
-
-## Key methods
-
-### `inferExprType(expr)`
-
-Returns the `types.Type` for an expression and records it in the `TypeTable`
-
-### `propagateExpectedType(expr, concrete)`
-
-**context-directed literal-width inference.** Bottom-up inference computes each expression's
-result type but leaves an untyped literal (`5`, `3`) recorded as `untyped_int` until context
-fixes its width. This helper pushes a concrete numeric width *down* onto untyped int/float
-literal leaves, recursing through width-preserving arithmetic (`+ - * / % %%`, unary `-`),
-through the branch bodies of an `if`/`match`/block (each arm/branch/last-statement is the
-value), and — against a `TupleType` context — **element-wise into a tuple literal** (`(20, 22)`
-vs `(u8, u8)` narrows each leaf, recursing into a nested tuple), **re-recording an anonymous
-literal's own type** at the context's element widths as the array case does (fixed 07/30:
-narrowing the leaves alone left the tuple *node* recorded at the untyped default, and the
-backend builds the aggregate from that — so `f((10, 40))` against a `(u8, u8)` parameter emitted
-`call i8 @f({ i64, i64 })` into a `{ i8, i8 }` parameter. Invalid IR, invisible to a modern
-clang: opaque pointers make the two function types indistinguishable and arm64 passes small
-structs in registers, so it produced the right answer anyway. Found by `./asan.sh`, whose older
-typed-pointer clang rejects it. Anonymous only — a named tuple is nominal and already recorded
-against its declaration, possibly as a generic instantiation), and stopping at
-identifiers/calls/conversions (a conversion `i8(x)` is exactly where a new width begins). It
-narrows a leaf **only when the value fits** the target width — a literal that doesn't (`i8(x) <
-300`) is left untyped, so overflow surfaces loudly (the fold-based `checkIntegerLiteralRange`,
-or a backend width mismatch) rather than silently wrapping, and propagation never double-reports
-the overflow the range check owns. An int literal in a **float** context (`let x: f64 = 5`, an
-argument against a float param, a float field/payload/return) is recorded at the float type the
-same way — the backend then lowers it as a float constant (fixed 07/29: this case previously
-bailed as "handled by assignability", so the leaf fell back to i64 and put an integer value in a
-float slot — `print` showed garbage and float arithmetic emitted invalid IR only clang caught).
-**Exception — a signed type's minimum written as a negated literal**
-(`-128`/`-32768`/`-2147483648` for i8/i16/i32): the operand's positive magnitude `2^(bits-1)`
-doesn't fit as a positive value, but the *negation* is exactly the type's min, so the
-`NegationExpr` case narrows the operand leaf directly (via `signedTypeMinMagnitude`,
-`overflow.go`) instead of bailing to i64 — the narrow-width analogue of `inferNegationExpr`'s
-i64-min handling (i64's `2^63` overflows int64 and stays on that Unsigned path). Without it `let
-a: i8 = -128` lowered an i64 value into an i8 slot and emitted invalid IR in typed arithmetic.
-**A newtype context propagates its base** (07/29): `newtype Percent = u8` is nominal only, so
-`let p: Percent = 40 + 2` narrows its leaves to u8 exactly as an annotated u8 would — without it
-the leaves stayed untyped, the arithmetic lowered at the signed i64 default, and `let s: Small =
-200 + 100` silently produced 44 where the same expression against a bare u8 traps. Called from
-nine context sites: annotated `let` (`checkVarDecl`), a `MathBinaryOp` with a concrete result
-(`inferMathBinaryExpr`, via `propagateOperandType` — which skips an operand that already *is*
-the result type, since a nested arithmetic node's own inference already narrowed its subtree;
-without it a deep/flat `a + b + … + z` chain re-descended at every level, quadratically),
-numeric comparisons/`==` (`propagateComparisonWidth`, using the operands' common type since a
-comparison's own result is bool), `var` reassignment (`checkVarReassignment`), the lambda/entry
-return body (`checkLambdaBody`/`checkBlockReturn`), a call argument against its resolved
-parameter type (`inferLambdaCall`), a named-tuple literal's element against its declared element
-type (`inferNamedTupleLiteralExpr`), a struct literal's field value against its declared field
-type (`inferStructInstanceExpr`), a data-constructor argument against its declared payload-field
-type (`inferTupleLiteralExpr`'s data-constructor branch, via
-`types.DataTypeConstructor.FieldTypes()`), and each `match` arm body against the arms' common
-type (`checkMatchExpr`, so a bare `0` arm adapts to a concrete sibling or the match's outer
-context rather than defaulting to i64). The backend reads these recorded leaf widths.
-
-### Allocation flavor rides the same walk
-
-Since 08/27 there is no separate flavor propagator: `propagateExpectedType` also stamps the
-context's `shared` flavor onto every *construction* leaf its recursion reaches (a data
-constructor, struct instance, tuple literal — the applied-constructor spelling included — or
-either array construction form), via `stampSharedConstruction`/`WithAllocation`. Allocation is
-a use-site flavor, so only a construction — whose flavor is context-determined — is stamped;
-an identifier or call already carries its own definite flavor. Because the flavor rides the
-full expected type rather than a pre-extracted modifier, an array's *element* flavor
-(`[]shared T`) reaches each element through the ordinary element recursion — including an
-element built inside a `match`/`if` arm, which the old side channel through the recorded type
-never reached. The former twins (`propagateLiteralType` + `propagateAllocation`) were called
-pairwise at each context site, and the pairing is what drifted: the argument context got the
-width call without the flavor one (a segfault, fixed 08/26). A context site now makes one call
-and cannot take one half without the other; every site that pushes a width — reassignment,
-match-arm common types, struct fields, data payloads, generic and operator arguments — pushes
-the flavor with it.
-- `inferTupleLiteralExpr` / `inferNamedTupleLiteralExpr` — a `TupleLiteralExpr` (`(1, 2)` or
-  `Point(1, 2)`, both the same AST node — call syntax on a capitalized name is the only
-  applied-constructor form, see the grammar notes below) splits three ways: a data-constructor
-  name (`Some(42)`) resolves to the owning `DataType` via `findDataTypeByConstructor`; `Name ==
-  "?"` (the collector's placeholder for no leading name) is a plain anonymous tuple, structural
-  as always — its element leaves are left **untyped** (not eagerly promoted to i64/f64),
-  mirroring `inferArrayLiteralType`, so a surrounding context (a tuple annotation, a
-  data-ctor/struct tuple field) can narrow them via `propagateExpectedType`; with no such context
-  they settle to their defaults at the no-annotation site (`promoteToDefault` now has a
-  `TupleType` case). This is what makes `let a: (i32, i32) = (1, 2)` and a tuple-typed data
-  payload (`Wrapped((20, 22))`) narrow correctly; `isAssignable` gained a structural
-  anonymous-tuple→anonymous-tuple case so the widened literal is accepted. any other name is a
-  **named tuple**, which is nominal (`todo.md` Pit-of-Success #8: "positional nominal", matching
-  `NamedStructType`) and is delegated to `inferNamedTupleLiteralExpr`. That function requires
-  the name to resolve to a declared `tuple Point(i32, i32)` in `symTable.Types` (mirroring
-  `inferStructInstanceExpr` for structs — construction is validated against the declaration, not
-  synthesized freely from the literal), then checks arity and each element positionally against
-  the declared (turbofish-substituted, or left-unconstrained-if-still-generic) element type —
-  propagating that declared type onto an untyped literal element (`propagateExpectedType`) before
-  checking assignability, the same treatment `inferLambdaCall` gives a call argument. **Not yet
-  done:** per-position generic *inference* when no turbofish is given (structs infer a field's
-  generic param from the supplied value; named tuples don't attempt the positional analogue yet
-  — an unbound generic-typed position is just left unconstrained). `types.TypesEqual`'s
-  `TupleType` case mirrors this split: a named tuple (`!types.IsAnonymousTupleName(t.Name)` on
-  either side) compares by name alone; both anonymous compares structurally (element-wise) as
-  before.
-- `inferTupleIndexExprType` — positional tuple access (`pair.0`, the `TupleIndexExpr` node from
-  the grammar's `tuple_index_expr`). Resolves the object to a `TupleType` (via `resolveType`,
-  since a tuple-typed binding may be recorded as an `UnresolvedType`), bounds-checks the
-  (zero-based) index against the arity, and returns the indexed element's resolved type — the
-  positional counterpart to `inferMemberExprType`. Works for both named and anonymous tuples
-  (both carry `Elements`). Errors: index out of range, or access on a non-tuple.
-- **Declared types that *name* a type are resolved where they are read out** (07/29) — a call's
-  declared return type (`inferLambdaCall`/`inferLambdaCallFromType`, via `resolveTypeIfKnown`,
-  matching how each parameter type was already resolved) and a struct field's declared type
-  (`inferMemberExprType`). Both were returned raw, and a raw `UnresolvedType` compares unequal
-  to the same type resolved from an annotation, so a named type could not survive a round trip
-  through a function or a field read: `let p: Point = mk()` reported the tell-tale **"cannot
-  assign Point to Point"**, and the newtype analogue made a newtype unusable across any call
-  boundary. Distinctness is unaffected — resolving both sides is what lets `TypesEqual` compare
-  them at all, so a `Meters`-returning call is still rejected against a `Feet` annotation.
-- **`resolveTypeIfKnown` is `resolveType`'s twin, and since 08/05 they are one walk.**
-  It exists only to skip the "unknown type" diagnostic where a caller would duplicate it
-  (the return annotation in `checkLambdaBody`), so any composite the one walks the other
-  must too — and it had drifted by `ParameterizedType` and `*LambdaType`, the argument-list
-  pair hazard 8 names, with the same tell-tale self-rejection confined to return position:
-  **"return type mismatch: expected `Maybe<weak Node>`, got `Maybe<weak Node>`"** (08/03).
-  Both now delegate to **`resolveTypeWith(t, loc, leaf)`**, which owns the composite
-  recursion, so a composite added later cannot reach one and miss the other. The leaves are
-  where they genuinely differ, and by more than whether they report: the reporting leaf also
-  follows alias chains, caches by resolved identity, checks visibility and guards
-  circularity, none of which the quiet one does. `tests/named_type_in_composite_test.go`
-  covers both, including every composite in return position as a guard on the fold.
-
-### `propagateInstantiation(expr, want)`
-
-The generic-type analogue of the two above: pushes a context's `ParameterizedType` down
-onto the construction leaves that produce the value, through the same match/if/block arm
-structure. It exists because a construction only evaluates to an instantiation when it
-solves **every** type parameter itself — `Some(v)` fixes `t`, but `None` fixes nothing
-and `Ok(v)` fixes `t` and not `e`, so both stay the bare declaration (deliberately:
-inventing an instantiation from a partial substitution would claim precision the
-construction did not supply). Before this they lowered only under an annotated `let`, the
-one site that stamped its type onto the value wholesale, so `-> Maybe<i64> => None`
-failed the build with `unknown named type "Maybe"` and the prelude's `Result` was
-unusable in a return position. Called from the annotated `let`, the three return-body
-sites, the concrete call-argument site, and the *generic* call's argument site
-(`instantiate.go`) — the last is what makes `unwrap_or(None, 42)` work, since the
-parameter is only `Maybe<i64>` once another argument has solved `t`.
-
-**It checks rather than assumes.** A partly solved construction's payload was not
-verified against the context at all, so `let r: Result<i64, string> = Ok("x")` passed the
-front end and was caught only by the backend refusing to store a string into an i64
-payload — a type error in the wrong layer, which survived only because the value could
-not lower. Each payload element is re-checked under the context's substitution, and the
-node is left bare on a mismatch so a wrong payload can never lower as that instantiation.
-Three guards decide whether the stamp applies: the node must be **open** to a context, it
-must be the same declaration the context names, and the arities must agree.
-
-**Open means one of two things** (`stampableDataType`), and the second was missing until
-08/03. The bare declaration is open, as above. So is an instantiation the construction
-reached *by defaulting an untyped payload literal* — `Some 7` is a `Maybe<i64>` only
-because an untyped 7 defaults to i64, which is the expression's guess rather than the
-program's decision, and a guess must not outrank `let m: Maybe<u8> = Some 7`. That
-annotation was rejected with "cannot assign Maybe<i64> to Maybe<u8>" until such nodes were
-marked (`markDefaultedConstruction`) and the leaf left untyped for the context to narrow.
-`payloadIsAGuess` is the predicate, and since 09/13 it names two more guesses: an array
-literal recorded as a fixed array (its flavor is the context's to choose, so `Some([1])`
-fits `Maybe<[]i64>`) and an anonymous tuple literal holding a guess (`Some((1, 2))` under
-`Maybe<(u8, u8)>`). Everything else stays closed, which is the load-bearing half: an instantiation the program
-determined has already been checked by ordinary assignability, and overriding it would let
-a real mismatch through.
-
-The line runs through the **declared field**, not through the payload
-(`fieldTakesWidthFromSolve`): a field that is a type variable takes its width from the
-substitution and may be deferred, while a concrete one (`Wrapped(u8)`) takes it from the
-declaration and must be narrowed on the spot. Deferring both was the first version of that
-fix, and it type-checked fine — the symptom appeared in the backend, storing an i64 into a
-u8 slot. A narrowed literal is also range-checked against what it was narrowed *to*, since
-assignability cannot catch a 300 that has just been given the type u8. (Tuple and array
-narrowing still skip that check — see `todo.md`'s Known bugs.) Covers data constructors, generic **structs** and named **tuples**. The aggregates needed a
-second pass because they fail differently: a bare `DataType` is assignable to any
-instantiation of itself (so a partly solved data construction reached the backend), while a
-bare `NamedStructType`/`TupleType` is not (so a partly solved one was rejected up front with
-"return type mismatch … got Tagged", a spurious error on correct code). That is why every
-context site goes through **`contextualType`**, which propagates *before* the assignability
-check, re-reads the record, and reports whether it already emitted a diagnostic so the
-caller suppresses its own coarser one.
-
-**An array context reaches its elements too** (09/11, `propagateArrayInstantiation`). An
-array type is not a `ParameterizedType`, so an array context used to stop at the guard and
-the literal kept whatever its elements had joined to: `[Some(200), None]` under `[]Maybe<u8>`
-joins to `StaticArray<Maybe<i64>, 2>` — the i64 being `Some(200)`'s own default — and *that*
-was compared against the annotation, refusing correct code while naming a type nobody wrote.
-The arm recurses per element and then rebuilds the literal's own recorded type, because
-assignability and the backend both read the type recorded for the **node** (the same reason
-the tuple arm re-records itself). One arm covers every position, since each already hands
-its element type here. Two guards: it runs only when the element type actually contains an
-instantiation — re-recording an ordinary `[1, 2]` against `[3]i64` restated its elements as
-`i64` and made a *size* mismatch report the wrong difference — and the re-record is
-conditional on every element now reading as the context's element type, so a genuine
-mismatch keeps being one.
-
-**A struct literal recorded as a partly solved instantiation is open to the context**
-(`structShapeForInstantiation`, 09/11), which the `NamedStructType`-only arm had missed:
-`Box { key: "a", value: None }` records `Box<string, Maybe>`, since a bare field contributes
-the bare declaration and `parameterizedResult` builds an instantiation as soon as every
-parameter has *an* entry. It needs the same gate `stampableDataType` applies — admitting
-every `ParameterizedType` let the context re-stamp instantiations the program had genuinely
-determined, and `let b: Box<string> = Box { value: 5 }` stopped reporting the mismatch it
-should. The predicate is "some type argument is still a **bare generic declaration**";
-`instantiationIsSettled` is deliberately not it, since it asks about untyped literals and
-reads `Box<string, Maybe>` as settled.
-
-### `checkNode(node)`
-
-/ `checkVarDecl` / `checkVarReassignment` / `checkExpressionStmt` — statement-level checks.
-**Assignment to a parameter** goes through the same path: `checkAssignToBinding` resolves
-`tc.paramTypes` *before* the scope lookup (a parameter is not a `VarDeclStmt` in scope, and
-shadows any outer binding of that name), then shares `checkAssignedValue` with the variable path
-so both apply identical rules. Before 07/29 it bailed at the failed scope lookup, which left `n
-= …` on a parameter **completely unchecked** — no assignability or literal-range check, and,
-since the RHS was never inferred, not even an undefined-identifier report, plus no recorded
-types for the backend: `n = n + 1` then failed the build with "type not found for
-*ast.IdentifierExpr" (only integer arithmetic tripped it — a literal RHS needs no recorded type
-and the float path doesn't consult signedness) and `n = "s"` on an `i64` parameter **panicked**
-the backend on a mismatched store. **Reassignment is permitted only for `own` and `mut`
-parameters** (`lyra-E025`, 07/30): `own` transfers the value to the callee, so rebinding its own
-copy is meaningful, and `mut` is a reference to the caller's storage, which is what that
-modifier means (a `mut` *scalar* stays by value and so doesn't propagate — exactly the case
-`lyra-W010` flags as inert). A **borrowed** parameter — no modifier, or `ref` — is rejected: the
-caller still owns the value, so the write could only reach the callee's copy and vanish, the
-same lost-write class as assigning to a captured binding (`lyra-E024`) and the by-value `mut`
-parameter that silently dropped its writes. It was also inconsistent with the binding model,
-since `let x = 5; x = 6` is an error while a bare parameter accepted exactly that — making a
-parameter the most permissive rung with no syntax for the immutable one (Swift removed `var`
-parameters over the same confusion, SE-0003; Rust requires opt-in and keeps it local). The
-replacement is **shadowing** (`let s = s ++ "!"`), which required teaching the
-use-before-declaration checker that a parameter is in scope for the whole body
-(`checkStatementsInScope`) — without that the derived form read as a use before declaration. The
-same rule and code cover a **pattern binding** (a match-arm or `if let` name), which borrows
-from the value being matched; it gets its own wording, since calling it a parameter would name
-something the source doesn't contain. Removing this also **deleted a leak**: a borrowed
-parameter reassigned to a managed value left the new value unreleased, and that program no
-longer compiles. **Sequential-rebind self-reference:** the collector's `RedefineVariable`
-overwrites a same-scope binding, so inside `let x = x + 1` the name `x` resolves in scope to the
-declaration being defined (itself, not yet typed). To type the RHS against the *prior* value,
-the collector records the replaced binding as `VarDeclStmt.Shadows`, and `checkVarDecl` sets
-`tc.currentVarDecl` around inferring the initializer; the `IdentifierExpr` case redirects a
-lookup that lands on `currentVarDecl` to its `.Shadows`. Without this the RHS inferred nil —
-silently masked elsewhere by nil-guards, but it broke any consumer that *reads* the recorded
-type (e.g. the LLVM backend's `getIntSignedness`).
-- `checkIfDestructuringStmt` / `checkElseDestructuringStmt` — type-check `if let`/`let … else`
-  bodies, reusing `checkDestructuringDecl` to bind pattern names with the right scope (if-let's
-  names are local to `Then`, entered via `enterScope` against a scope the collector pushed and
-  recorded against the `*ast.IfDestructuringStmt` node itself; let-else's persist in the
-  enclosing scope, like a plain `let`)
-- `assignable.go` — `effectiveType` and unification logic for type compatibility
-
-**Destructuring parameters** — `((a, b): (i64, i64))`, `({ x, y }: Pt)` — bind their names in
-`withParamScope`, which walks the pattern against the parameter's *annotation* with
-`walkDestructuredPattern`, the same walker `checkDestructuringDecl` uses. Statically, so it
-happens up front rather than lazily during body-checking. An **unannotated** one is skipped and
-its names stay undefined, which is the honest outcome for a free function: there is no type to
-destructure against. The exception is a **trait-impl method** (`checkTraitImplMethodBody`),
-where the trait's signature supplies the type, so `total = ({ x, y }) => x + y` binds without
-the impl writing an annotation the trait already gave. Before 07/31 that path bound identifier
-patterns only, and reported every destructured name undefined.
-
-### `resolveTraitMethod(receiverType, methodName, requiredTrait)`
-
-(`typechecker_trait_dispatch.go`) — finds every impl whose target type matches `receiverType`
-(`implTargetMatches`) providing that method, optionally restricted to one trait; multiple
-matches with no `requiredTrait` is the "two traits, same method name" ambiguity a
-fully-qualified `Trait::method(...)` call resolves. Drives both `inferMemberCall`'s fallback
-(after struct-field lookup fails) and `inferTraitMethodPathCall`. Records each resolution in
-`tc.MethodTable()` for the purity checker. **Generic impls dispatch** (`impl Show<t> for
-Box<t>`): a target containing lowercase `GenericType`s (Lyra's implicit type variables — an
-uppercase name is concrete) matches when it *unifies* with the receiver (`unifyGenericTarget`),
-each variable binding to the receiver's corresponding subterm, with binding-consistency
-(`Pair<t,t>` accepts `Pair<i64,i64>`, rejects `Pair<i64,string>`); targets can be parameterized,
-array, or tuple. `Self` is substituted with the concrete receiver, so a Show/Debug/Hash-style
-method (signature in terms of Self + concrete types) type-checks against the instantiation.
-**Bounded impls are constraint-checked:** for `impl Ord<t> for Box<t> where t: Ord` dispatched
-on `Box<Widget>`, `unifyGenericTarget` binds `t`→Widget and `checkImplConstraints` verifies each
-`where` bound holds for the binding (via `typeImplementsTrait`, itself an `implTargetMatches`
-search) — Widget with no `Ord` impl errors; `Box<i64>` with `impl Ord for i64` is accepted. The
-bound check is single-level (a satisfying impl's *own* `where` bounds aren't recursively
-re-verified). **Generic struct field access** works via `resolveGenericStruct`
-(`typechecker.go`): member access on a `ParameterizedType` naming a generic struct resolves it
-to the struct with its type arguments substituted into the field types (`substituteGenerics`) —
-`Box<i64>.value` → `i64`, and `self.value` inside a generic impl body → the parameter `t`. This
-is applied only to the field-lookup side of member access; trait dispatch keeps the original
-`ParameterizedType` (the unifier needs its type arguments). The struct's generic-parameter
-*names* are read from `decl.GenericParams` (the `TypeDeclStmt`), since
-`NamedStructType.GenericParams` is not populated by the collector. **Bounded polymorphism in
-method bodies** (`dispatchViaGenericBound`): calling a trait method on a value whose type is a
-bare parameter (`self.value.show()`, `self.value : t`) dispatches through the parameter's
-in-scope `where` bound. `checkTraitImpl` loads the impl's `where` constraints into
-`tc.genericBounds` (param name → trait names) around its body checks; `inferMemberCall`, on a
-`GenericType` receiver, looks up a bound trait declaring the method and type-checks the call
-against that trait's signature with Self = the parameter (so a Self-returning bound method
-yields `t`). This is *abstract* dispatch — no concrete impl exists here (it's chosen when the
-enclosing generic is instantiated, where `checkImplConstraints` has already verified the bound).
-It's recorded in the MethodTable as a `BoundMethodRef` (trait + method name) via
-`SetBound`/`GetBound`, so the purity checker scores it as the **join over every impl of the
-bound method** (`boundCallEffect` in `purity.go`: pure/det only if *all* impls are — the bound
-admits any of them) rather than as an unverifiable external call. No bound → an actionable
-error. **A trait's own type parameters are bound** (`trait Get<e> { get: (self) -> e }`, `impl
-Get<t> for Box<t>`, `box.get()` on `Box<i64>` → `i64`): the impl's trait arguments (`Get<t>` →
-`[t]`) are collected into `TraitImplStmt.TraitArgs`, and `resolveTraitMethod` builds a
-substitution from each trait param (`e`) to the impl's positional arg (`t`) resolved through the
-receiver bindings (`{t: i64}`), applying it to the method signature via `substituteSigGenerics`
-(params and return). So `-> e` becomes `-> i64`, and an `e`-typed parameter is checked against
-the concrete arg. (Note: the impl's `<…>` grammar field labels every child with one field name,
-so `TraitArgs` is collected with `FieldNameForChild` iteration; `impl.GenericParams` stays empty
-— it expects `generic_parameter` nodes — and the target's own type variables are read off the
-target itself. The `where`-clause bounds are in `impl.Constraints`.)
-
-**Builtin methods** (`builtins.go`): compiler-provided methods on primitive receivers, e.g.
-`x.wrapping_add(y)` on integers. `builtinMethodSignature(recv, name)` returns a `*LambdaType`
-specialized to the receiver (parameters are the *call* args only — `self` is the implicit
-receiver), consulted by `inferMemberCall` **last**, after struct-field and trait-method
-resolution miss, so a user type or trait impl always shadows a builtin. Currently registered:
-the integer overflow-arithmetic ops `wrapping_{add,sub,mul}` / `saturating_{add,sub,mul}`
-(`(self: T, other: T) -> T` for a concrete integer T) — the "somewhere to live" for
-Pit-of-Success #2, a registry (NOT a prelude). A primitive is therefore a valid method receiver;
-a missing method on one reports `T has no method "x"`. These are the explicit escape hatches
-from checked-by-default arithmetic and **lower in the backend** (`wrapping.go`): wrapping = raw
-two's-complement `add`/`sub`/`mul`; saturating add/sub = `llvm.{s,u}{add,sub}.sat`; saturating
-mul = a `with.overflow` multiply + a `select` to the bound (LLVM has no plain `{s,u}mul.sat`).
-Signedness comes from the receiver's type. Also registered: `floatRoundingOps` —
-`floor`/`ceil`/`round`, float-receiver-only, zero call args, fixed `i64` return type (mirrors
-the untyped-literal-default pattern rather than inferring a narrower width from context — narrow
-further via the existing explicit int conversion, `i32(x.floor())`). This is the explicit escape
-hatch `inferTypeConversion`'s float→int rejection points callers to; the backend lowers each to
-a lazily-declared `llvm.<op>.<width>` intrinsic (`rounding.go`, reached through
-`builtin_methods.go`'s one dispatcher) + `fptosi`. Also registered:
-**`len`** on any array receiver (fixed-size or dynamic) → i64, no args; the backend
-`lowerArrayLen` (`dynarray.go`) returns the compile-time size for a `[N]T` and loads the box's
-`len` field for a `[]T`. `checked_*` and the `truncate`/`saturate`/`narrow` conversions are not
-registered yet (see `todo.md` #2/#5) — they share the rounding builtins' still-open "return type
-from context" problem.
-
-**Builtin functions** (`builtins.go` `isBuiltinPrintFn`/`isPrintableType`, resolution in
-`typechecker_functions.go` `inferPrintCall`): the free-function analogue of the builtin methods
-— compiler-provided functions resolved by name in `inferIdentifierCall` **only after** scope
-resolution misses, so a user `let print = …` shadows them. `print`/`println` are **polymorphic
-over the printable scalar types** (string, any integer/float, bool, rune → void) rather than a
-single `LambdaType`, so `inferPrintCall` checks the one argument against `isPrintableType` and
-settles an untyped numeric literal to its default width (`propagateExpectedType(arg,
-promoteToDefault(argType))`) so the backend has a concrete type to format. Effect classification
-`EffectOutput` lives separately in `checker/effects.go`'s `builtinEffects` — allowed in `det`,
-forbidden in `pure`. The backend lowers per-type formatting to libc `write`/`snprintf` + a rune
-UTF-8 encoder (see `pkg/backend/llvm`). Aggregates aren't printable (no Show/Display trait yet).
-
-**Newtype constraint enforcement**: a value assigned/annotated to a constrained newtype
-(`*ConstrainedType`) is checked against its constraints at the assignment sites (`checkVarDecl`,
-`checkVarReassignment`, and the member-assign path). `checkPatternConstraints` tests a **string
-literal** against a `PatternConstraint` (regex membership — the constraint stores the regex
-literal's full source text, which `regexPatternBody` strips of its `r"…"` delimiters before
-compiling; the syntax changed from `r/…/` on 07/29 to kill an ambiguity with division, see
-`tree-sitter-lyra/CLAUDE.md`); **`checkRangeConstraints`** (`range_constraint.go`, `lyra-E023`)
-tests a **compile-time numeric constant** (int or float literal, incl. negation / a folded
-arithmetic constant) against a `RangeConstraint` — inclusive start, `..<` exclusive / `..<=`
-inclusive end, either bound optional (`0..`, `..<=100`); bounds are folded from the constraint's
-literal/negated-literal `MathConstraintExpr` (`foldConstraintInt`/`Float`, an unfoldable
-identifier/compound bound leaves that side unenforced). Both are compile-time, definite-only
-checks over constants; a non-constant value proven out of range by flow is caught by the range
-analysis's `checkConstraintViolation` (`lyra-E023`, same code), which scopes to *identifier*
-values so the two never double-report. `checkIntegerLiteralRange` **checks a newtype against its
-base** — a Percent value is a u8 and cannot hold 300 either — but only when the newtype declares
-no `range(…)` of its own, in which case `checkRangeConstraints` owns the report (the constraint
-is ⊆ the base, so a range violation subsumes base overflow and reporting both would double up on
-one mistake). Before 07/29 it skipped a `*ConstrainedType` outright, so an *unconstrained*
-newtype — the common `newtype Meters = i64` shape — had no range check at all and an
-out-of-range constant reached codegen to be silently truncated into the base's width.
-
-"Compile-time, definite-only" above is the literal truth and worth reading as a
-*limit*: a value nothing can prove — an opaque parameter, `Percent(n)` inside
-`(n: u8) -> Percent` — is accepted unchecked by both constraint kinds, so `mk(200)`
-builds and runs. Whether a constructor should instead emit a runtime check and trap is
-open (`todo.md`, Known bugs); the workspace CLAUDE.md read as a stronger promise until
-08/13.
-
-A regex literal is a constraint's argument and **nothing else** as of 08/13: a regex
-*value* and a regex *match pattern* are both `lyra-E052` (unimplemented — a runtime
-engine is what they need, and the runtime is C shims with no FFI). Only
-`PatternConstraint` consumes regex now, exactly as described above, and it is
-unaffected because it never produces a value. Syntax validation lives here alone for
-the same reason — reporting a malformed pattern *and* "not implemented" on a construct
-with no meaning is one mistake twice.
-
-Files split by concern: `typechecker.go` (core + var decls + expressions),
-`typechecker_control_flow.go` (if/match), `typechecker_functions.go` (lambda/call/member-call
-dispatch), `typechecker_trait_dispatch.go` (trait-method resolution), `typechecker_traits.go`
-(impl conformance), `builtins.go` (builtin methods on primitives), `range_constraint.go`
-(`RangeConstraint` value enforcement, `lyra-E023`), `errors.go` (error helpers), `assignable.go`
-(type compatibility).
-
-## Generic functions (instantiation + monomorphization)
-A generic function declares lowercase type variables in its signature (`let identity = (x: t) ->
-t => x`; the collector turns a lowercase type name into a `types.GenericType`, an uppercase one
-into a concrete `UnresolvedType`). Two halves make it work, and both landed 07/29 — before this
-a generic function did not even type-check, since a declared `t` is assignable from nothing
-until it is bound.
-
-**Instantiation** (`typechecker/instantiate.go`): at a call site, each declared parameter type
-is unified against the argument's inferred type to solve the variables (`unifyGenericTarget` —
-the *same* unifier trait dispatch uses, so "what does this type variable match" has one
-definition), the call is checked against the substituted signature, and the result is the
-substituted return type. An **untyped literal** argument settles to its default width before
-binding (`identity(7)` gives `t = i64`), because a type variable is a real type in the
-specialization — it decides an alloca's width and an instruction's signedness — so leaving it
-untyped would push an unresolved literal type into codegen; a narrower width is reached by
-saying so at the call (`identity(u8(7))`). Every variable in the signature must be solved: one
-appearing only in the *return* type is reported at the call rather than discovered during
-lowering. Arity is checked first, since a missing argument is exactly a variable with nothing to
-bind it.
-
-An **array literal** argument gets its shape from the declaration
-(`arrayLiteralAsDeclared`, 08/13), because it is the one expression whose
-*representation* its context chooses — `[1, 2, 3]` is a fixed `[3]T` or a heap `[]T` by
-what it is used as — and the usual way to make that choice, propagating the target onto
-the literal, has nothing concrete to push when the target is `[]t` and `t` is what is
-being solved. So the literal inferred `[3]i64`, the unifier's `DynamicArrayType` arm
-accepted only a `DynamicArrayType`, and `first_of([1, 2, 3])` reported "cannot infer
-type variable t" although the same call with a `[]i64` binding worked. Reading the shape
-off the declaration is enough to unify; propagation then runs against the substituted
-`[]i64` and records the literal as dynamic.
-
-Where the parameter is a **bare** `t` there is no declared shape to read, so a fixed-array
-literal speaks last instead, beside untyped literals and bare constructions, and adopts a
-binding it can be built as (09/13): `m.unwrap_or([])` on a `Maybe<[]i64>`.
-
-**An array literal's elements take the element context before they are joined**
-(`elementTakesContext`, 09/13) — array literals, repeats, tuple literals and constructions,
-never a scalar leaf, whose narrowing is left to the site that pushed the context. That is
-what lets `[[1], [2, 3]]` under `[][]i64` join at all. Its diagnostics are kept, because
-narrowing is where an overflow is found and nothing later can see it; an element whose
-payload the context refused is recorded in `contextRefused`, so neither the join nor a
-second inference of a return body reports it again.
-
-**Only a literal is adapted, and that is a memory rule.** A `[N]T` *binding* is stack
-storage where `[]T` is a ref-counted box, so accepting one for the other is a
-misinterpretation of memory — which the non-generic path does today, via `isAssignable`'s
-static→dynamic rule — **fixed the same day**, see below. Generic calls refuse the binding
-too, and a test pins that refusal.
-
-**`isAssignable` vs `assignableValue`** (08/13). `isAssignable` answers about *types*
-alone. `assignableValue` is it plus the one widening that depends on **what the
-expression is**: an array literal is *built* in whichever shape its context asks for, so
-`[1, 2, 3]` satisfies a `[]T` slot as readily as a `[3]T` one. Every site checking a
-value against a type uses the second; a site holding only two types uses the first and
-correctly refuses a static array where a dynamic one belongs.
-
-The split is a memory rule, not a tidiness one. `[N]T` is stack storage and `[]T` a
-ref-counted box, so a `[3]i64` **binding** reaching a `[]i64` slot is a
-misinterpretation of memory — it segfaulted — while a *literal* has not been built yet.
-One type-level rule served both until 08/13, with a comment reading "a static array
-*literal*" above code that tested only `StaticArrayType`. Deleting that rule and reading
-the suite's failures is what established the boundary: every failure was a literal.
-
-The allowance **walks the expression alongside the type**, because nesting demands it —
-`[[1, 2], [3, 4]]` and `[y1, y2]` (two `[2]i64` bindings) share the type `[2][2]i64`, so
-only the expressions separate the legal case from the crashing one. It descends through
-array literals and their elements, the repeat form, a newtype target, and a tuple
-literal's elements; the tuple arm re-checks the tuple's *name*, since a nominal check
-must not have a second path around it. It never converts a *built* array: an implicit
-stack→box copy would be a hidden allocation, which this language does not do.
-
-**Monomorphization** (`backend/llvm/monomorphize.go`): one emitted function per distinct
-instantiation (`identity$i64`, `identity$boolean`), keyed by the instantiation's stable `Key()`
-so two call sites solving to the same bindings share one function; the bare generic name is
-never emitted, and an uninstantiated generic function costs nothing. It works **by substitution,
-not by cloning the AST**: the same shared body is lowered once per binding set with a
-substitution installed on the lowerer, consulted by the two accessors every lowering decision
-already funnels through — `lowerType` for a type written in the source, `recordedType` for one
-read off the TypeTable. That is enough to make the whole body concrete, including its locals'
-widths and its arithmetic's signedness. Cloning per instantiation would mean deep-copying every
-node and then re-typechecking each copy or hand-patching a parallel TypeTable — far more
-machinery, and two ways for a specialization to disagree with the body it came from.
-`defineFunctionInto` is shared with the ordinary function path so parameter binding, `own`-param
-framing, and the void/typed return split cannot drift between a generic function and a plain
-one.
-
-**A managed type argument works**, because the **ownership pass runs once per instantiation**
-(`ownership.AnalyzeLambda`, `driver.Result.OwnershipBySpec`, keyed by the instantiation's
-`Key()`). That is not an optimization but a correctness requirement: every decision that pass
-makes turns on whether a value is reference-counted, which is a property of the type *argument*.
-Analyzed generically, a type variable is not managed, so `pick(a: t, b: t) -> t` recorded no
-retain on its result and no release for the caller's temporaries — correct at `t = i64`, a
-double free at `t = string` (measured: an ASan abort, 2 allocations against 3 releases). The
-tables **cannot be merged**: they are keyed by AST node, and the same node carries different
-annotations per instantiation — which is exactly the information one shared table could not
-hold. The backend reads them through one accessor (`l.ownership()`), which returns the
-specialization's table inside a generic body and the program-wide one elsewhere; the pass itself
-applies the substitution at its single type lookup (`analyzer.typeOf`).
-
-**The one remaining boundary is deliberate:** an **unbounded** type variable supports only what
-every type supports — being passed, returned, stored. `x + x` on a `t` is rejected, correctly,
-since `t` could be `bool`; arithmetic needs bounded polymorphism over an operator trait (`where
-t: Add`), which does not exist. Still deferred: a generic function calling another at a
-variable-dependent instantiation. (Multi-clause generic functions *do* work as of 07/31 —
-they are desugared into a single-body match before instantiation, so nothing downstream sees
-a clause list.)
-
-## Generic types (`Box<t>`, `Maybe<t>`, `List<t>`)
-Landed 07/29, and they **compose** with generic functions — `let wrap = (x: t) -> Box<t> => Box
-{ value: x }` works, the two monomorphizers cooperating. All three aggregate shapes are covered:
-a generic `struct`, a generic `data` type (including a recursive one), and a generic named
-`tuple`.
-
-**Front end.** The substitution was already being solved to check a construction's fields and
-then *discarded*, which is what made a generic type unusable from both ends: the raw declaration
-keeps `value: t`, so a field read returned the type *variable* ("cannot convert t to u8") and an
-annotated binding compared the declaration against the annotation and reported the tell-tale
-**"cannot assign Box to Box"**. A construction now evaluates to *that instantiation* — a
-`types.ParameterizedType` carrying the solved arguments (`parameterizedResult`) — for all three
-shapes: a struct infers each parameter from the field values, while a **data constructor** and a
-**named tuple** solve theirs *positionally* from the supplied payload/elements
-(`solveDataTypeVars`, reusing the same `unifyGenericTarget` a generic call and trait dispatch
-use, with an untyped literal settled to its default width first for the same reason). The
-named-tuple case had been deferred on the grounds that positions carry no field names to key
-inference on; a data constructor is positional too, so the rule was already well defined. A
-*partly* solved substitution deliberately does **not** become an instantiation — fabricating one
-would claim precision the call site didn't supply, and the missing argument is what a turbofish
-is for. `resolveGenericAggregate` (generalized from the struct-only `resolveGenericStruct`)
-substitutes an instantiation's arguments into whichever member list applies, so field access,
-tuple indexing, and method lookup all read concrete types; all three shapes go through one
-function rather than a resolver each, which is what keeps them from disagreeing about what an
-instantiation means. `ParameterizedType.String()` renders the applied form (`Box<i64>`), without
-which a mismatch between two instantiations of one generic reads as nonsense.
-
-**Backend** (`generic_types.go`). One emitted LLVM type per distinct instantiation (`%Box$i64`,
-`%Box$boolean`, `%Maybe$string`), named by `typetable.TypeSymbol` — but materialized **lazily**,
-on first use, rather than from a table of instantiations collected up front. Lazily because,
-unlike a call, there is no single syntactic site that "uses" a type: `Box<i64>` can arrive as a
-construction, a parameter, a return, a field of another type, an array element, or a type
-argument of another generic, and every one of those already funnels through `lowerType`;
-collecting instantiations separately would mean re-deriving that set from the AST *and* the
-TypeTable and keeping the two in agreement, while materializing what `lowerType` is handed
-cannot fall out of sync with what the program actually uses. An uninstantiated generic type
-therefore costs nothing, exactly as an uninstantiated generic function does. The generic
-*declaration* registers no type at all (`lowerTypeDecl` skips it — it has no single layout, and
-registering it eagerly is what produced "unknown type: t"). The **declare-then-define split** is
-load-bearing rather than inherited habit: the placeholder is registered *before* the fields are
-lowered, so a recursive `shared List<t>` tail re-enters `lowerType` for the same instantiation,
-finds the placeholder, and takes a pointer to it instead of recursing forever.
-`resolveInstantiation` is the choke point that keeps generic types out of the rest of the
-backend: it normalizes a `ParameterizedType` into the substituted declaration *renamed to the
-mangled name* (so the fields satisfy every site that reads an aggregate's shape, and the name
-resolves to this instantiation's LLVM struct), and it is applied in `recordedType` alongside the
-newtype strip — a dozen construction/access/match/glue/layout sites switch on
-`NamedStructType`/`TupleType`/`DataType` and would otherwise each need a case to keep in
-agreement.
-
-**A managed type argument** (`Box<string>`, `Maybe<string>`, `List<string>`) works, and getting
-it wrong was a **double free**, not a leak. `ownership.OwnsManaged` had no `ParameterizedType`
-case, so the two halves of the model read the type through different paths: the pass (which
-decides where a +1 is minted) saw the raw `ParameterizedType` and judged `Box<string>` to own
-nothing — the declaration's field type is the variable `t`, which owns nothing — and recorded no
-retain for a copy, while the backend (which decides where a reference is released) reads types
-through `recordedType` and so framed and deep-released *both* bindings. Drop twice, dup never.
-`parameterizedOwnsManaged` fixes it at the root by substituting the declaration's parameters and
-asking the same question of the result, restoring the invariant that one predicate serves both
-sides. It terminates on the same grounds the backend's layout resolution does: a recursive type
-must break its cycle with a `shared`/`weak` field (lyra-E014), and both are managed outright, so
-`IsManaged` cuts the cycle first. **macOS ASan did not report the double free** — the regression
-test compares the generic against the equivalent *concrete* declaration's retain/drop-glue
-counts instead (`TestEmit_GenericManagedMatchesConcrete`), which is both the detector that
-actually caught it and one that keeps its meaning as the ownership model gets more precise.
-
-**Still open:** a `where` bound on a generic type's parameter is collected but not enforced at
-the instantiation; **`Maybe<weak T>`** — the cycle-breaking use `weak` is waiting on — does not
-*parse*, since the grammar won't take a `weak` type inside type arguments (a `tree-sitter-lyra`
-change); and a trait-impl **method** on a generic type doesn't lower, which is not a generics
-gap at all — trait-method calls don't lower for a non-generic receiver either (`llvm:
-unsupported method call`).
-
-
-## Match exhaustiveness
-
-Match exhaustiveness is done for all scrutinee kinds today: numbers (range patterns), strings,
-`runes` (char-literal arms + required catch-all, `checkRuneMatchArm`/`isRuneType`), `data`,
-arrays, `bool`, tuples, and structs (`pkg/analyzer/typechecker/typechecker_control_flow.go`,
-`*MatchIsExhaustive` functions; tests in `pkg/analyzer/typechecker/tests/match_expr_*.go`).
-**Severity is by design** (`diag.CodeNonExhaustiveMatch`): a *closed* scrutinee (`bool`, `data`)
-is a hard **error** — the case set is finite and known, and `_ =>` is always available to opt
-out — while an *open* one (numbers, strings, runes, arrays, tuples, structs) is a **warning**,
-since no arm list can enumerate the domain. Every one of them carries the `lyra-E009` code (the
-warnings defaulted to the generic `lyra-E001` until 07/29), and the backend now traps on the
-fall-through, so the warning is backed by defined runtime behavior rather than UB. A **struct**
-match counts as exhaustive when any unguarded arm is *irrefutable* — every sub-pattern binds
-rather than tests (`patternIsIrrefutable`/`aggregateMatchIsExhaustive`) — so
-`match p { {x, y} => … }` is complete and no longer demands an unreachable wildcard; this
-mirrors the backend's `aggPatternTest` returning a nil condition for exactly those patterns.
-
-A **tuple** match is checked as a *pattern matrix* instead (`exhaustiveness.go`), because the
-per-arm test cannot see coverage spread across arms: `(Some v, pred) => …, (None, _) => …`
-covers every value while no single arm is irrefutable. That is the shape **every multi-clause
-function desugars to**, so until 08/06 the prelude's own combinators each drew a false
-`lyra-E009` — and a warning that fires on correct code is worse than none, since it trains the
-reader to ignore the class. Checking columns *independently* would be unsound the other way
-(`(Some v, None)` beside `(None, Some x)` covers both constructors in both columns and still
-leaves `(Some, Some)` unmatched), so the check is Maranget's: specialize the matrix by each
-constructor of column 0 and recurse, concluding coverage only from rows that agree on every
-column to the left. Enumerable columns are `data` types and `bool`; anything else is covered
-only by a row binding it whole. A pattern the matrix cannot interpret drops its row, which can
-only make the answer "not exhaustive" — the direction that over-warns, never the one that goes
-quiet on a match that can trap. A guarded arm never counts (the guard may fail).
-
-An **array** match is over *lengths*, so a
-*union* of arms can be exhaustive where no single arm is: `[e1..en]` covers exactly n and
-`[e1..en, ...rest]` covers every length ≥ n, so `[] => …, [h, ...t] => …` — the recursive list
-idiom — is complete and no longer warns. Only arms whose element sub-patterns are all
-irrefutable contribute (a `[1, ...rest]` matches just the arrays starting with 1, so it proves
-nothing about coverage), and without an open-ended arm infinitely many lengths are unmatched.
-
-Two rules sit beside the kind checks (both 08/13). **Kind dispatch strips a newtype to its
-base** (`types.StripNewtype` in `checkMatchExpr`) — a newtype scrutinee used to match *no*
-kind branch, so its arms went unpoliced and its match untested for exhaustiveness, silently;
-the data/tuple/struct branches keep the unstripped type, which `lyra-E041` (no newtype over
-nominal types) makes sufficient. And **every arm's integer literals are value-checked against
-the type they are compared to** (`pattern_literals.go`, `lyra-E048`) *before* kind dispatch —
-width and newtype range constraint both — because patterns lower at the scrutinee's width, so
-an unchecked `300` on a u8 was not a dead arm but a live arm for 44. That walk is a
-conservative mirror of `walkDestructuredPattern`'s pairing, deliberately separate:
-`withPatternBindings` runs the real walk with errors discarded, which is exactly where these
-reports must not vanish. An exclusive range end checks its bound minus one (`0..<256` on u8
-is the full range); anything the mirror cannot pair is skipped, so a miss degrades to a lost
-diagnostic, never a false one.
-
-## Generic aggregate inference
-
-A generic struct's type arguments are solved from its field *values* by `unifyGenericTarget`
-— the same unifier data constructors and generic calls use — rather than by matching only
-fields declared as a *bare* parameter. A field declared `Maybe<t>`, `[3]t` or `(t, i64)`
-pins `t` down just as surely as one declared `t`, and matching only the bare form left
-`struct Wrapper<t> { inner: Maybe<t> }` unsolvable from its own fields.
-
-The declared field types are then substituted structurally too. Looking the field's type
-*name* up in the solution silently accepted a wrong value: `Holder { tag: 1, inner:
-Just("x") }` compared against the raw `Opt<t>`, which the "still generic, check leniently"
-guard swallowed, while the surrounding instantiation looked complete because the other
-field had solved `t`. That guard is `mentionsGenericParam`, which walks the type rather
-than testing its name, so a partly-substituted `Maybe<t>` counts as incomplete exactly as a
-bare `t` does — and what it defers, `propagateInstantiation` re-checks once the context
-arrives.
-
-## Unifying through a function type
-
-`unifyGenericTarget` and `substituteGenerics` both handle `*types.LambdaType`, which is
-what lets a higher-order generic be solved: `(m: Maybe<t>, f: () -> t) -> t` called with a
-`() -> i64` binds `t` from the callback's signature, and the declared parameter is then
-substituted to `() -> i64` for the assignability check. Missing either half makes every
-callback-taking combinator uncallable — the first reports "cannot infer type variable t",
-the second "cannot assign () -> i64 to () -> t".
-
-Parameters unify in the same direction as the return type. A function type is
-contravariant in its parameters, but this is unification against a *pattern*, not a
-subtyping test: both sides are concrete apart from the variables being solved, so
-direction only decides which side a variable may be read from. The substitution returns a
-**copy**, since `LambdaType` is the one type here held by pointer and rewriting in place
-would mutate the declaration every other call site shares.
-
-## Contextual typing for lambda literals (`contextual_lambda.go`)
-
-A lambda literal takes its missing parameter and return annotations from the type its context
-expects — `elaborateLambda` fills the blanks **on the AST node**, before the body is inferred.
-Everything downstream then sees a fully annotated lambda: `withParamScope` seeds the
-parameters, `checkLambdaBody` checks and width-propagates the body, and the backend (which
-reads `ast.Parameter.Type`) needs nothing. Before this, `(x) => x` reported `undefined symbol
-"x"` and `() => 7` would not satisfy `() -> i64`, so every standard-library call site had to
-restate types the signature already gave.
-
-Two properties keep it honest: it only ever fills what was **left blank**, so an explicit
-annotation wins and is still diagnosed if wrong; and it runs **before** the body is inferred,
-which is the ordering bottom-up inference cannot give.
-
-**Return-type inference is the same elaboration from the other direction** (`checkLambdaBody`
-→ `inferLambdaReturnType`, 07/31/26): a function written without `-> T` has its return type
-filled in from the body, *after* the body is walked rather than before. Same reason for
-writing it onto the node — everything downstream reads `ReturnType`, and before this the
-program type-checked and then failed the build with "needs a return type annotation".
-
-Scoped to a body whose value is the return: an explicit `return` is refused with a
-diagnostic, since inferring across several `return`s means joining candidates and deciding
-what a disagreement or a diverging arm means. Recursion resolves whenever a non-recursive
-branch fixes the type (an `if` takes its type from the first arm), and reports otherwise.
-
-The one consumer that must distinguish a *written* signature from an inferred one is the
-**entry point**: `let main = () => { 0 }` is a documented spelling of void, so
-`ast.LambdaExpr.ReturnTypeInferred` lets `ResolveEntryPoint` discard the inferred type and
-keep it void. Nothing else should read that flag.
-
-Wired at the three sites that know what they want — an annotated binding (in the
-*lambda-valued* branch of `checkVarDecl`, which returns before the general path), a direct
-call's arguments, and a generic call's.
-
-**The generic path has an ordering constraint worth knowing before touching it.** A bare
-lambda cannot be inferred until it knows what is expected, but `(t) -> u` is not concrete
-until the other arguments solve `t` — so `solveTypeVars` defers *incomplete* lambdas to a
-second pass (`needsContextualTypes`). A fully annotated lambda is deliberately not deferred:
-it can solve variables from its own signature, and deferring it would lose that. A type still
-mentioning a variable is never planted (`isConcreteEnoughToElaborate`), because a variable
-solved by the lambda's **own body** — `u` in `map(m, (x) => x * 2)` — would otherwise be
-written as its declared return and never solved. The consequence is that a lambda's return
-type can only be filled once solving finishes, which is why `inferGenericCall` elaborates
-again after `instantiateSignature`.
-
-**One class of variable *is* plantable, and without it a generic caller could not use a
-lambda at all** (09/11). Inside `sort<t> where t: Ord`, `self.sort_by((a, b) => a.compare(b))`
-solves the callee's variable to the **caller's** `t`, so the slot substitutes to
-`(t, t) -> Ordering` — still mentioning a variable, so nothing was planted and the lambda
-reported *undefined symbol "a"*. That `t` is not unsolved: it is the enclosing declaration's
-own parameter, a real type in every specialization, and planting it writes down exactly what
-the author writes by hand as `(a: t, b: t)`. `plantableVars(subst)` is the set — the variables
-the substitution's **values** mention, so membership means "arrived from the caller's
-vocabulary". `u` appears in no value and stays blank, which is what keeps the counterexample
-above refused; and a name collision cannot fool it, since a callee variable that *was* solved
-is gone from the substituted type. The prelude's `Ord` sorts stopped spelling their
-comparators out because of this, and the purity entry beside it in `todo.md`
-(*"a lambda calling a bound method is impure"*) turned out to be the same bug: the E007 was a
-consequence of the lambda failing to elaborate, and went with it.
-
-## Multi-clause functions (`multi_clause.go`)
-
-A multi-clause function *is* a match on its parameters, so it is desugared into one rather
-than given a lowering of its own:
-
-```
-let fib = (n: i64, a: i64, b: i64) -> i64 {
-  (0, a, _) => a,
-  (n, a, b) => fib(n - 1, b, a + b),
-}
-```
-
-becomes `… -> i64 => match (n, a, b) { (0, a, _) => …, (n, a, b) => … }`, built from the
-parameter names the head declares. The grammar, collector and typechecker always accepted the
-clause form; only the backend refused it, and the match machinery it needed — the ladder,
-tuple destructuring, guards, the sealed fall-through — was already there and tested.
-
-**It must happen in the front end.** The backend reads every type by AST-node identity
-(`recordedType`), so a match synthesized *there* would have no entry for any of its nodes.
-Synthesizing it in `checkLambdaBody`, before the body is walked, means the typechecker types
-it like any other match and the ownership, capture and lowering passes need no changes.
-
-Details worth knowing:
-
-- **One parameter is matched directly**, not wrapped in a one-element tuple, so it reaches the
-  scalar ladder rather than an aggregate that exists only in the desugaring.
-- **The clauses are consumed** (`LambdaClauses = nil`). Leaving them would make
-  `checkLambdaBody` check every clause body a second time — one mistake, two diagnostics.
-- **Arity is checked here**, with the counts named. Left to the synthesized match it surfaces
-  as a tuple-shape mismatch about a tuple the programmer never wrote.
-- **No clause matching traps** rather than being undefined: the desugared match's
-  fall-through is sealed like any other, so a function-clause error exits 101 with
-  `lyra: match not exhaustive`.
-- **Generic multi-clause functions work**, because the body is ordinary afterwards — the
-  backend's `declareSpecialization` refusal is unreachable once every multi-clause lambda
-  arrives desugared.
-
-## Default parameter values (`default_args.go`)
-
-`let add = (a: i64, b: i64 = 10) -> i64 => a + b` called as `add(5)`. The grammar, collector
-and arity check already understood defaults; what was missing is that the **call site never
-received them**, so the backend saw a call shorter than the parameter list and refused the
-function outright.
-
-`applyDefaultArguments` appends the declaration's default expressions for any trailing
-arguments the call omits, before arity is counted or the generic path is taken. The rest of
-the pipeline then sees a call that passes everything explicitly — the defaults are
-type-checked against their parameters like any other argument, widths propagate, and the
-backend needs no notion of defaults at all. Filling is idempotent, which matters because the
-typechecker revisits nodes: after one pass the counts match, so a second adds nothing.
-
-**The appended expression is the same AST node as the declaration's default, not a copy**, so
-two call sites that both omit an argument share it. That is sound for everything keyed by
-node — the recorded type is the parameter's type at every site, and a default is evaluated
-against that type rather than varying by caller — and cloning would need a deep AST copy,
-which this compiler avoids everywhere else. The case that would expose a problem, a
-heap-allocating default at several call sites, is covered by an exec test.
-
-`checkDefaultsAreTrailing` rejects a defaulted parameter followed by an undefaulted one.
-Positional arguments fill left to right, so `(a: i64 = 1, b: i64)` cannot be called usefully —
-and it used to be silently *accepted*, because the arity check counts required parameters
-without checking their order, so `f(5)` bound 5 to `a` and left `b` unfilled.
-
-**One place still refuses**: a default on a lambda used as a *value*. Defaults are filled from
-the callee's declaration, and an indirect call has none — a `types.LambdaType` records *that*
-a parameter has a default, not what it is. Named arguments, if they ever exist, would be the
-other half of this feature and would lift the trailing rule.
-
-## On-demand return inference (`typechecker_on_demand.go`)
-
-Lyra has no declare-before-use requirement and the house style puts helpers *below* the
-function that calls them, so an un-annotated helper is normally checked after its caller.
-That is fine almost everywhere, because a call's type can be deferred — the binding takes
-whatever the callee turns out to return.
-
-**A destructure is the one position that cannot defer.** `let (w, h) = viewport()` needs
-the element types where the pattern is walked, since each name's type comes from
-decomposing the value there and then and nothing revisits it. So `forceCheckDestructureCallee`
-checks that declaration now, and `checkDestructuringDecl` retries.
-
-Three properties hold it together:
-
-- **Memoized by declaration.** `checkVarDecl` consults `checkedDecls` and returns, so a
-  body checked early is not checked again by the main pass — "checked early" and "checked
-  in order" are one event. Without it every diagnostic in a hoisted body appears twice.
-- **Cycle-guarded.** `inferringRet` breaks mutual recursion between two un-annotated
-  functions that destructure each other's results; there is no fixed point, so the caller
-  falls back to `lyra-E058`, which asks for the annotation that resolves it. Same shape as
-  `resolveType`'s `resolvingTypes` guard.
-- **Checked at the top level** (`atTopLevel`), which is the subtle one. `withParamScope`
-  *copies* an enclosing lambda's parameters into a nested one's — right for a nested
-  lambda, which is lexically inside its enclosing one — so a hoisted **top-level** function
-  would otherwise resolve names belonging to the caller's parameters. That is a false
-  accept, the direction that does not announce itself. The parameter scope, enclosing
-  return, `where` bounds and impl/trait context are all cleared and restored.
-
-It deliberately does **not** infer every call's return type early. Only the destructure
-asks, because only the destructure cannot wait; eager inference everywhere is a different
-design with a much larger blast radius, for a problem nothing else has.
+Walks the collected AST, infers and verifies types, and writes results into a `TypeTable`.
+Language semantics are in [LANGUAGE.md](../../../LANGUAGE.md); this file covers the
+implementation.
+
+- **Entry:** `typechecker.New(symTable, scopeTable, typeTable)` → `tc.Check(program) []TypeError`.
+- **`TypeError`**: `Message`, `Location`, `Severity` (`SeverityError`/`SeverityWarning`);
+  `TypeError.Diagnostic()` maps it to `diag.Diagnostic`.
+
+| File | Concern |
+|---|---|
+| `typechecker.go` | core, var decls, expressions |
+| `typechecker_control_flow.go` | if/match, exhaustiveness |
+| `typechecker_functions.go` | lambda/call/member-call dispatch, `inferPrintCall` |
+| `typechecker_trait_dispatch.go` | `resolveTraitMethod`, `closeOverSupertraits` |
+| `typechecker_traits.go` | impl conformance, `checkTraitImplMethodBody` |
+| `typechecker_trait_default.go` | trait default methods |
+| `typechecker_ufcs.go` / `typechecker_overload.go` | UFCS, receiver-keyed overloading |
+| `typechecker_on_demand.go` | on-demand return inference for destructures |
+| `instantiate.go` | generic call instantiation |
+| `contextual_lambda.go` | lambda parameter/return elaboration |
+| `multi_clause.go` / `default_args.go` | clause and default-argument desugars |
+| `exhaustiveness.go` / `pattern_literals.go` | tuple pattern matrix, pattern literal range (`lyra-E048`) |
+| `builtins.go` | builtin methods and functions |
+| `range_constraint.go` | `RangeConstraint` enforcement (`lyra-E023`) |
+| `assignable.go` | `isAssignable`, `assignableValue`, `effectiveType` |
+| `errors.go` | error helpers |
+
+## Pushing a context down: `propagateExpectedType(expr, concrete)`
+
+The **one** walk that pushes a context type onto a value — literal width *and* `shared`
+flavor together. Bottom-up inference leaves untyped literals as `untyped_int`/`untyped_float`;
+this narrows them.
+
+- **Recurses** through width-preserving arithmetic (`+ - * / % %%`, unary `-`), `if`/`match`/
+  block result positions, anonymous tuple literals element-wise, and array elements. **Stops**
+  at identifiers, calls and conversions (`i8(x)` begins a new width).
+- **Re-records a composite literal's own node type** (anonymous tuple, array) at the context's
+  widths — the backend builds the aggregate from the node's recorded type, so narrowing only
+  the leaves emits invalid IR (visible only to `./asan.sh`'s typed-pointer clang).
+- **Narrows a leaf only if the value fits**; otherwise leaves it untyped so
+  `checkIntegerLiteralRange` reports it once.
+- **Int literal in a float context** is recorded at the float type.
+- **Signed minimum as negated literal** (`-128` on i8): `NegationExpr` narrows the operand via
+  `signedTypeMinMagnitude` (`overflow.go`).
+- **A newtype context propagates its base.**
+- **Flavor**: stamps the context's `shared` flavor onto every *construction* leaf reached
+  (`stampSharedConstruction`/`WithAllocation`) — never onto identifiers/calls, which carry
+  their own. An element flavor (`[]shared T`) reaches elements through the ordinary recursion.
+  Never split this back into separate width/flavor walks: the pairing drifted before
+  (segfault).
+- `propagateOperandType` skips an operand already of the result type (avoids quadratic
+  re-descent on long `a + b + … + z` chains).
+
+**Context sites:** annotated `let` (`checkVarDecl`), `MathBinaryOp` result
+(`inferMathBinaryExpr`), comparisons (`propagateComparisonWidth`, operands' common type),
+reassignment (`checkVarReassignment`), return bodies (`checkLambdaBody`/`checkBlockReturn`),
+call arguments (`inferLambdaCall`), named-tuple elements, struct fields, data-constructor
+payloads (`DataTypeConstructor.FieldTypes()`), and match arms against the arms' common type
+(`checkMatchExpr`). `if` must join and push back like `match` — the two are a tested pair.
+
+## Tuples
+
+- `inferTupleLiteralExpr`: `TupleLiteralExpr` covers `(1, 2)` and `Point(1, 2)`. Three cases:
+  a data-constructor name (`findDataTypeByConstructor`); `Name == "?"` = anonymous tuple, leaves
+  **left untyped** for context (`promoteToDefault` has a `TupleType` case); any other name = a
+  **named tuple** (nominal), delegated to `inferNamedTupleLiteralExpr`, which validates against
+  the declaration and propagates each declared element type. Named tuples don't yet infer
+  generic params positionally without a turbofish.
+- `types.TypesEqual`: named tuple compares by name (`!types.IsAnonymousTupleName`), anonymous
+  structurally.
+- `inferTupleIndexExprType`: `pair.0`, resolves via `resolveType`, bounds-checks.
+
+## Resolving declared types
+
+- **Resolve a declared type where it is read out** — a call's return type (`resolveTypeIfKnown`)
+  and a struct field's type (`inferMemberExprType`). A raw `UnresolvedType` compares unequal to
+  the resolved one; tell-tale: *"cannot assign Point to Point"*.
+- `resolveType` (reports) and `resolveTypeIfKnown` (quiet) both delegate to
+  **`resolveTypeWith(t, loc, leaf)`**, which owns composite recursion. Only the leaves differ:
+  the reporting leaf also follows alias chains, caches, checks visibility, guards circularity.
+  Covered by `tests/named_type_in_composite_test.go`.
+- `stripNewtypeResolving` is the one way to see through a newtype (resolve between strips).
+
+## `propagateInstantiation(expr, want)`
+
+Pushes a context's `ParameterizedType` onto construction leaves (through match/if/block arms).
+A construction is an instantiation only if it solves **every** parameter itself (`None`,
+`Ok(v)` don't); this supplies the rest from context. Called from annotated `let`, the three
+return-body sites, concrete call arguments, and generic call arguments (`instantiate.go` —
+what makes `unwrap_or(None, 42)` work).
+
+- **Checks, doesn't assume**: each payload element is re-checked under the substitution; on
+  mismatch the node stays bare so it can't lower as that instantiation.
+- **Guards**: node must be *open*, same declaration, same arity.
+- **Open** (`stampableDataType`): the bare declaration, or an instantiation reached only by a
+  guess (`markDefaultedConstruction`, predicate `payloadIsAGuess`): a defaulted untyped
+  literal, an array literal recorded fixed, an anonymous tuple holding a guess. Everything else
+  is closed — overriding a program-determined instantiation would let a real mismatch through.
+- **`fieldTakesWidthFromSolve`**: a type-variable field takes width from the substitution and may
+  defer; a concrete field (`Wrapped(u8)`) must be narrowed on the spot. A narrowed literal is
+  range-checked against its new type (tuple/array narrowing still skip this — `todo.md`).
+- Covers data constructors, generic structs and named tuples. A bare `DataType` is assignable to
+  any instantiation while bare struct/tuple types are not, so every context site goes through
+  **`contextualType`**: propagate *before* the assignability check, re-read the record, and
+  report whether a diagnostic was already emitted.
+- **Arrays** (`propagateArrayInstantiation`): recurses per element, then re-records the literal's
+  type. Runs only when the element type contains an instantiation, and re-records only if every
+  element now reads as the context's element type.
+- **Partly solved struct literal** (`structShapeForInstantiation`): open when some type argument
+  is still a bare generic declaration. Not `instantiationIsSettled`, which asks about untyped
+  literals.
+
+## Statements and assignment
+
+`checkNode` / `checkVarDecl` / `checkVarReassignment` / `checkExpressionStmt`.
+
+- **Assignment to a parameter**: `checkAssignToBinding` resolves `tc.paramTypes` *before* scope
+  lookup, then shares `checkAssignedValue` with the variable path. Only `own`/`mut` parameters
+  may be reassigned (`lyra-E025`); the same rule and code cover pattern bindings (own wording).
+  Shadowing (`let s = s ++ "!"`) is the replacement, which is why use-before-declaration seeds
+  parameters (`checkStatementsInScope`).
+- **Sequential rebind** `let x = x + 1`: the collector's `RedefineVariable` overwrites the
+  binding and records `VarDeclStmt.Shadows`; `checkVarDecl` sets `tc.currentVarDecl` so the
+  `IdentifierExpr` case redirects to `.Shadows`. Without it the RHS type is nil.
+- `checkIfDestructuringStmt` (names scoped to `Then`, scope keyed on the `*IfDestructuringStmt`)
+  / `checkElseDestructuringStmt` (names persist in the enclosing scope); both reuse
+  `checkDestructuringDecl`.
+- **Destructuring parameters** bind in `withParamScope` via `walkDestructuredPattern` against the
+  annotation. Unannotated ones stay undefined, except in a trait-impl method
+  (`checkTraitImplMethodBody`), where the trait signature supplies the type.
+
+### Storing a value into a slot
+
+Five positions: annotated `let`, destructuring value, reassignment, member/index assignment,
+`return`. They share only `checkStorable` (assignable + allocation agreement); everything else
+differs deliberately — do not fold into one options-bag function. `checkLValueAssignment` does
+no literal propagation (open question, commented).
+
+- `shown`: the target as written (`cannot assign string to Alias`, not the resolved `i64`).
+- `subject`: binding-name prefix (`x: cannot assign …`), empty for lvalue paths.
+
+## Trait dispatch: `resolveTraitMethod(receiverType, methodName, requiredTrait)`
+
+Finds every impl whose target matches (`implTargetMatches`) and provides the method; several
+matches with no `requiredTrait` is the ambiguity `Trait::method(...)` resolves. Drives
+`inferMemberCall`'s fallback and `inferTraitMethodPathCall`; records into `tc.MethodTable()`.
+`resolveTraitMethodNamed` is the shared scan behind `.method()`, operators, `==`/`<`
+(`dispatchEq`/`dispatchOrdCompare`).
+
+- **Generic impls**: lowercase `GenericType`s in the target unify with the receiver
+  (`unifyGenericTarget`) with binding consistency; `Self` is substituted with the receiver.
+- **Bounded impls**: `checkImplConstraints` checks each `where` bound via `typeImplementsTrait`
+  (single level — a satisfying impl's own bounds are not re-verified).
+- **Generic field access**: `resolveGenericAggregate` substitutes type arguments into
+  struct fields/tuple elements/data payloads (`substituteGenerics` → `types.Substitute`). Field
+  lookup only; dispatch keeps the `ParameterizedType`. Param names come from
+  `decl.GenericParams`, since `NamedStructType.GenericParams` is not populated.
+- **Bound dispatch** (`dispatchViaGenericBound`): a call on a bare type parameter resolves through
+  `tc.genericBounds`, typed against the trait signature with `Self` = the parameter. Recorded as a
+  `BoundMethodRef` (`SetBound`); purity joins over all impls. Candidates per implementing type are
+  published via `SetBoundCandidates`.
+- **Trait type parameters** (`impl Get<t> for Box<t>`): `TraitImplStmt.TraitArgs` maps trait
+  params to impl args, applied by `substituteSigGenerics`. `TraitArgs` is collected with
+  `FieldNameForChild` iteration; `impl.GenericParams` stays empty; bounds are in
+  `impl.Constraints`.
+- **Supertraits**: `closeOverSupertraits` expands at the two writers of `tc.genericBounds`
+  (`pushGenericBounds`, `checkTraitImpl`); cycle-safe by visited set.
+
+**Cost:** `boundCandidatesByType` looks quadratic but filters by trait name before the expensive
+compare (indexing by trait measured at zero gain). `implTargetMatches` must not allocate
+`bindings` on the no-match path. Benchmark with `BenchmarkDispatch_*` in `pkg/driver` — it must
+use generic bodies with `where` bounds; concrete callers measure nothing.
 
 ## Trait default methods (`typechecker_trait_default.go`)
 
-A trait method's default body — `pure shout: (Self) -> string = (self) => self.name() ++ "!"` —
-is the body an impl inherits by writing nothing. It parsed and collected from the start and
-was dispatched to by nobody.
+- `checkTraitDefaultMethods` runs once per default with `self: types.GenericType{"Self"}` and
+  `tc.genericBounds["Self"]` = the declaring trait closed over supertraits, then calls
+  `checkTraitImplMethodBody` (same path as an impl clause). Backend needs nothing.
+- Must run **after** `tc.traitImpls` is collected, or candidate sets are empty and the body won't
+  lower.
+- `resolveTraitMethodNamed` tries impl clauses first, `defaultMatch` last. `Self` **joins** the
+  impl's own bindings (`t→i64` and `Self→Box<i64>`).
+- `publishDefaultBodyCandidates` mirrors `publishImplBodyCandidates`, with the same re-entry
+  guard.
+- Inside a default (`tc.currentDefaultTrait`), a missing method names the trait/supertrait fix,
+  not `where Self: …` (unwritable).
+- It is a setup pass, so it must install the module scope itself (`moduleScopeOf`).
 
-**It is checked as generic code.** `checkTraitDefaultMethods` runs once per default, with
-`self` typed `types.GenericType{"Self"}` and `tc.genericBounds["Self"]` set to the declaring
-trait closed over its supertraits, then hands the body to `checkTraitImplMethodBody` — the
-same function an impl's clause goes through, so a default and an override cannot be checked
-by two rules that disagree. Everything that follows is the generic path already in place:
-`dispatchViaGenericBound` types `self.name()`, `publishBoundCandidates` names one concrete
-impl per implementing type, and the backend substitutes `Resolution.Bindings` per
-specialization. The backend needed no change.
+## Builtins (`builtins.go`)
 
-It runs **after** `tc.traitImpls` is collected: a call inside a default publishes one
-candidate per implementing type, and a set gathered before the impls were known would be
-empty, so the body would type-check and then fail to lower.
+- **Methods**: `builtinMethodSignature(recv, name)` returns a receiver-specialized
+  `*LambdaType` (call args only). Consulted **last** in `inferMemberCall`, so user fields, impls
+  and UFCS shadow builtins. Includes overflow arithmetic (lowered in `backend/llvm/wrapping.go`),
+  `floatRoundingOps` (`floor`/`ceil`/`round` → `i64`, `rounding.go`), `len` on arrays
+  (`lowerArrayLen`). `SetBuiltinMethod(call, allocates)` records the resolution for purity.
+  Overflow builtins are refused on a newtype receiver (`lyra-E043`).
+- **Functions** (`isBuiltinPrintFn`/`isPrintableType`, `inferPrintCall`): resolved in
+  `inferIdentifierCall` only after scope misses, so user `print` shadows. `print`/`println` are
+  polymorphic over printable scalars and settle an untyped argument via
+  `propagateExpectedType(arg, promoteToDefault(argType))`. Effects live in
+  `checker/effects.go`'s `builtinEffects`.
 
-`resolveTraitMethodNamed` tries an impl's own clauses first and calls `defaultMatch` only
-when they match nothing — an override is therefore an override rather than an ambiguity,
-the same last-rung shape the newtype method fallback has. `Self` **joins** the impl's own
-bindings rather than replacing them, so a generic impl's variables survive: a default
-running for `impl Show for Box<t>` at `Box<i64>` needs both `t→i64` and `Self→Box<i64>`.
+### Untyped literal receivers
 
-`publishDefaultBodyCandidates` is `publishImplBodyCandidates` for a default: that one walks
-the impl's `where` constraints, and a default has exactly one bound to walk — `Self`, at its
-trait. It carries the same re-entry guard, since a default reaching another default on the
-same type re-enters it.
+`inferMemberCall` promotes an untyped receiver for *matching*, but writing it to the node is
+deferred: `pinReceiver` is called by the rung taken, and the UFCS rung calls it only when the
+candidate's `self` mentions no type variable (otherwise `200.min(w)` on u8 binds `t = i64`). A
+deferred receiver is `Arguments[0]` and adopts by the untyped-argument rule.
 
-**One diagnostic is specific to this context.** `self.nonexistent()` in a default would
-otherwise report *"type parameter Self has no method; add a `where Self: Trait` bound"* —
-advice naming a clause no program can write, `Self` being a variable the compiler introduced.
-Inside a default (`tc.currentDefaultTrait`) it names the trait instead.
+## Newtype constraints
 
-### An untyped literal receiver is promoted for matching, pinned only where the rung needs it
+- `checkPatternConstraints`: a string literal against a `PatternConstraint`; `regexPatternBody`
+  strips `r"…"`. Regex syntax validation happens once, here.
+- `checkRangeConstraints` (`range_constraint.go`, `lyra-E023`): a compile-time numeric constant
+  (literal, negation, folded arithmetic) against a `RangeConstraint`; bounds folded by
+  `foldConstraintInt`/`Float` (unfoldable bound → unenforced side).
+- Flow-proven identifier values are `checker`'s `checkConstraintViolation` (same code, no
+  double report). Sites that can't settle statically are published for a runtime trap.
+- `checkIntegerLiteralRange` checks a newtype against its base **only when it has no
+  `range(…)`** — otherwise `checkRangeConstraints` owns the report.
 
-`inferMemberCall` promotes an untyped receiver to its default before any rung runs — that is
-what lets a rung *match* through a literal, and why `(2.5).abs()` and `1.wrapping_add(2)`
-resolve at all. Writing that type to the **node** is a separate act, and it settles the
-receiver before the call is solved: for a callee generic in its own receiver that bound the
-type variable to the literal's default, so `200.min(w)` on a `u8` reported *"cannot infer
-type variable t"* while `w.min(200)` worked (fixed 08/26).
+## Match exhaustiveness (`typechecker_control_flow.go`)
 
-The promoted type is still what every rung matches against. `pinReceiver` is a closure the
-rung that was *taken* calls, and the UFCS rung calls it only when the candidate's `self` does
-not mention a type variable. A deferred receiver is `Arguments[0]` after the desugar, so it
-adopts by the untyped-literal-argument rule that already existed — no new rule about
-receivers. The two things the unconditional pin was guaranteeing still hold: with nothing to
-adopt from, the default applies (so nothing untyped reaches codegen), and the literal must
-still fit the width it adopted.
+`*MatchIsExhaustive` functions; tests in `tests/match_expr_*.go`. Code `lyra-E009`.
 
-## UFCS — method syntax for free functions (`typechecker_ufcs.go`)
+- **Severity**: closed scrutinee (`bool`, `data`) → error; open (numbers, strings, runes, arrays,
+  tuples, structs) → warning. The backend traps on fall-through.
+- **Struct**: exhaustive when an unguarded arm is irrefutable (`patternIsIrrefutable`/
+  `aggregateMatchIsExhaustive`), mirroring the backend's `aggPatternTest` nil condition.
+- **Tuple** (`exhaustiveness.go`): Maranget pattern matrix — specialize by each constructor of
+  column 0 and recurse. Enumerable columns: `data`, `bool`. An uninterpretable pattern drops its
+  row (over-warns, never goes quiet). Guarded arms never count. Needed because every
+  multi-clause function desugars to a tuple match.
+- **Array**: a union over lengths — `[e1..en]` covers n, `[…, ...rest]` covers ≥ n; only arms
+  with all-irrefutable elements contribute.
+- **Rune**: char-literal arms plus a required catch-all (`checkRuneMatchArm`).
+- **Kind dispatch strips newtypes** (`types.StripNewtype` in `checkMatchExpr`); data/tuple/struct
+  branches keep the unstripped type (E041 makes that sufficient).
+- **Pattern literals are value-checked first** (`pattern_literals.go`, `lyra-E048`), width and
+  newtype range, since patterns lower at the scrutinee's width. It is a deliberate separate mirror
+  of `walkDestructuredPattern` (whose errors `withPatternBindings` discards); unpairable → skipped.
+  An exclusive range end checks bound − 1.
 
-`m.unwrap_or(0)` resolves to the free function `unwrap_or(m, 0)` when that function opts in
-by **naming its first parameter `self`**. Everything else stays call-only, so adding a helper
-to a module cannot change what `x.f()` means elsewhere in it. The rung sits in
-`inferMemberCall`, giving the ladder **field → trait method → UFCS → builtin**: a real impl
-wins, and a `self` function may shadow a compiler-provided method the way user code does
-everywhere else.
+## Generic functions
 
-**A bare type parameter reaches the rung too** (08/26), through `callViaUFCS` in the
-generic-receiver branch — below the `where` bound, so UFCS never competes with it, and above
-the branch's own errors, since a match means there was nothing to report. `receiverAccepts`
-is the whole of what makes that sound: the candidate's declared `self` is unified against the
-receiver with the *candidate's* type variables as wildcards, so `self: t` binds a type
-variable and `self: string` does not. Only a function generic in its own receiver is
-reachable there, which is exactly the prelude's `min`/`max`/`clamp`. Before it, `best.max(x)`
-inside `where t: Ord` reported *"type parameter t has no method max; add a `where t: Trait`
-bound"* while `max(best, x)` compiled — one call whose two spellings disagreed, and a
-diagnostic asking for a bound already written.
+A lowercase type name is a `types.GenericType`; uppercase is `UnresolvedType`.
 
-**A matching call is rewritten in place** (`desugarUFCSCall`): the receiver becomes
-`Arguments[0]` and the callee an ordinary `IdentifierExpr`. Everything after this point —
-generic solving, purity, ownership, captures, the backend — sees a direct call, and none of
-them knows UFCS exists. The two spellings emit byte-identical IR, which is the test that says
-so.
+**Instantiation** (`instantiate.go`): unify each parameter against the argument
+(`unifyGenericTarget` — one unifier shared with trait dispatch), check against the substituted
+signature, return the substituted return type.
 
-**That rewrite is the design, not a shortcut.** The alternative — keeping the member shape and
-teaching each consumer about an implicit receiver — has a failure mode with no diagnostic. The
-purity pass indexes arguments *positionally* against the declaration's parameters
-(`callableParams`), so a receiver outside `Arguments` shifts every index by one and each
-callback is checked against the declared bound of the parameter to its right; a function-typed
-argument satisfies the wrong function-typed parameter quietly, so the bound simply stops being
-enforced. Trait methods, whose receiver genuinely is implicit, pay exactly that tax through
-`methodArgumentAt`. Desugaring means the two line up by construction, and
-`checker/ufcs_bounds_test.go` fails loudly if that is ever traded away.
+- Arity first. An untyped literal argument settles to its default before binding (a type
+  variable decides widths in codegen). Every variable must be solved — a return-only one is
+  reported at the call unless a context or turbofish binds it.
+- **Array literal against `[]t`** (`arrayLiteralAsDeclared`): shape read from the declaration.
+  Against a bare `t`, a fixed-array literal speaks last and adopts a binding it can be built as.
+- **Elements take element context before joining** (`elementTakesContext`): array/repeat/tuple
+  literals and constructions, never scalar leaves. Refused payloads go in `contextRefused` so
+  they aren't reported twice.
+- **Only a literal is adapted**: a `[N]T` binding is stack storage, `[]T` a box.
 
-Mutating a call mid-check has precedent in `applyDefaultArguments` above, for the same reason:
-so that the checker and the backend both see a call that passes everything explicitly. It is
-structurally idempotent — once `Function` is an `IdentifierExpr` this rung is unreachable for
-that node — and the passes that run *before* typechecking see the un-desugared form, which is
-fine because none of them resolves a method name.
+**`isAssignable` vs `assignableValue`**: `isAssignable` is types only and refuses static→dynamic
+arrays. `assignableValue` adds the one expression-dependent widening — an array literal (walking
+expression and type together through array literals, repeats, newtype targets, tuple elements,
+re-checking tuple names) may fill a `[]T`. Never convert a *built* array (hidden allocation;
+a binding reaching a `[]T` slot segfaulted). Value-vs-type sites use the second, type-vs-type
+the first.
 
-**Candidates are gathered by name, not resolved to one** (`ufcsFunction`, over
-`SymbolTable.FunctionsNamed`). This is the part that is easy to get wrong, because the wrong
-version removes methods without saying so. A name resolves through a single key, and the
-candidates for a method call can live in different modules: when the prelude gained a `map`
-for `Result`, it took the bare key, `std.maybe`'s `map` for `Maybe` moved to a
-module-qualified one, and every `m.map(f)` in every program started reporting "member access
-on non-struct type Maybe<i64>". Nothing was ambiguous and nothing was shadowed in a sense the
-reader would recognise — one lookup simply could not see the other declaration. So every
-declaration of the name is collected and filtered by the three things that decide the call:
-it takes a `self` receiver, the file can reach it (`ufcsImportedIn` — imports still gate
-this), and it accepts this receiver. A file's own module wins a tie; a surviving tie is
-reported with a qualifier the reader can type, since the candidates come from a map and
-"whichever came first" would not be stable between runs.
+**Function types**: `unifyGenericTarget` and `substituteGenerics` handle `*types.LambdaType`;
+parameters unify in the same direction as the return (pattern unification, not subtyping).
+Substitution returns a **copy** — `LambdaType` is held by pointer and shared.
 
-Checking a candidate otherwise reuses rather than reinvents: `unifyGenericTarget`
-(the same predicate trait dispatch uses to match an impl against a receiver, so the function's
-type variables act as wildcards — `self: Maybe<t>` accepts a `Maybe<i64>` receiver and binds
-`t` from it). The `self` test is on the **declared parameter**, never on whether the function
-has clauses: a multi-clause head must bind plain names, so it can name one `self`, and testing
-`LambdaClauses` would make membership depend on *when* the check runs, since `desugarClauses`
-consumes them.
+**Generic aggregate inference**: struct type arguments are solved from field values by
+`unifyGenericTarget` (so `inner: Maybe<t>` pins `t`), and declared field types are substituted
+structurally. `mentionsGenericParam` walks the type, so a partly substituted `Maybe<t>` counts as
+incomplete; `propagateInstantiation` re-checks what it defers.
 
-Two rules that are decisions rather than mechanics:
+**Unbounded type variables** support only pass/return/store; operators need a `where` bound.
 
-- **An import is required.** A file's own module and the prelude need none; anything else must
-  be named in that file's imports. What a file may call stays a property of its own import
-  list, rather than of what some unrelated file happened to import. The cost is that the
-  syntactic unused-import check cannot see such a use — a UFCS call never writes the module's
-  name — so `UFCSModules()` carries the fact to it. **`DispatchedTraits()` is the other half**
-  (08/26): a trait-method or operator dispatch never writes the *trait's* name either, and
-  the import is what brought the impl into the compile. It is keyed by the trait's declared
-  name where the UFCS half is keyed by module, since a member list is per-name and sparing
-  the whole import would silence its other members; and it is derived from
-  `MethodTable.DispatchedImpls()` rather than noted at each of the ten dispatch sites.
-  Without either, the warning advises deleting
-  the import that makes the program compile.
-- **An `own` receiver is refused**, with its own error naming the call form. `own` transfers,
-  and the receiver syntax hides the transfer; use-after-move catches a later read either way,
-  so this is about the move staying legible. The refusal does not fall through to "has no
-  method", which would give the reader two answers, one of them wrong.
+### Monomorphization (backend)
 
-`UFCSCallable` exports the predicate for the language server, so completion after `.` offers
-exactly the calls that will compile.
+- `backend/llvm/monomorphize.go`: one function per instantiation (`identity$i64`), keyed by
+  `Key()`/`SpecKey()`; bare generic never emitted. **By substitution, not AST cloning**: the
+  substitution is consulted by `lowerType` and `recordedType`. `defineFunctionInto` is shared with
+  plain functions.
+- **Ownership runs per instantiation** (`ownership.AnalyzeLambda`, `driver.Result.OwnershipBySpec`)
+  — a correctness requirement (generically, `t` isn't managed → double free at `t = string`).
+  Tables are keyed by AST node and cannot be merged. Backend reads via `l.ownership()`; the pass
+  substitutes in `analyzer.typeOf`.
+
+## Generic types (`Box<t>`, `Maybe<t>`, `List<t>`)
+
+- **Front end**: a construction evaluates to a `ParameterizedType` (`parameterizedResult`). Structs
+  infer from field values; data constructors and named tuples solve positionally
+  (`solveDataTypeVars`). A partly solved substitution does **not** become an instantiation.
+  `resolveGenericAggregate` serves all three shapes. `ParameterizedType.String()` renders `Box<i64>`.
+- **Backend** (`generic_types.go`): one LLVM type per instantiation (`%Box$i64`, named by
+  `typetable.TypeSymbol`), materialized **lazily** in `lowerType`. The generic declaration
+  registers nothing (`lowerTypeDecl` skips it). Declare-then-define: the placeholder is registered
+  before fields lower so a recursive `shared List<t>` tail terminates. `resolveInstantiation` is
+  the choke point (applied in `recordedType` beside the newtype strip) — it needs an arm for every
+  shape a parameterized type can expand to, including `*ConstrainedType`.
+- **Managed type arguments**: `ownership.OwnsManaged` → `parameterizedOwnsManaged` substitutes and
+  re-asks, so pass and backend use one predicate (mismatch was a double free). macOS ASan missed
+  it; `TestEmit_GenericManagedMatchesConcrete` compares retain/drop counts to a concrete twin.
+- Open: a `where` bound on a generic type's parameter is not enforced at instantiation.
+
+## Contextual typing for lambdas (`contextual_lambda.go`)
+
+- `elaborateLambda` fills missing parameter/return annotations **on the AST node**, before the
+  body is inferred. Only fills blanks; explicit annotations win and are still checked. Wired at
+  an annotated binding (lambda branch of `checkVarDecl`), direct call arguments, generic call
+  arguments.
+- **Return inference** (`checkLambdaBody` → `inferLambdaReturnType`) writes the body's type onto
+  `ReturnType`. Refused with an explicit `return`. `ast.LambdaExpr.ReturnTypeInferred` exists only
+  for `ResolveEntryPoint` (`let main = () => { 0 }` stays void) — nothing else reads it.
+- **Generic path ordering**: `solveTypeVars` defers *incomplete* lambdas (`needsContextualTypes`);
+  fully annotated ones are not deferred. A type still mentioning an unsolved variable is never
+  planted (`isConcreteEnoughToElaborate`), and `inferGenericCall` elaborates again after
+  `instantiateSignature`.
+- **`plantableVars(subst)`**: variables mentioned by the substitution's *values* — the caller's own
+  type parameters (e.g. `t` inside `sort<t>`) — may be planted. A variable solved only by the
+  lambda's body (`u` in `map`) appears in no value and stays blank.
+
+## Multi-clause functions (`multi_clause.go`)
+
+`desugarClauses` in `checkLambdaBody` (front end, because the backend reads types by node
+identity) rewrites clauses into `match (p0, p1) { … }`.
+
+- One parameter is matched directly, not as a 1-tuple.
+- Clauses are consumed (`LambdaClauses = nil`) so bodies aren't checked twice.
+- Arity checked here with counts named.
+- No matching clause traps (sealed fall-through, exit 101).
+- A clause may rename a parameter; downstream name-keyed passes must use `addMatchAliases`.
+
+## Default arguments (`default_args.go`)
+
+- `applyDefaultArguments` appends declaration defaults for omitted trailing arguments before
+  arity/generic handling. Idempotent. The appended expression is the **same AST node** as the
+  declaration's default (shared across call sites; sound because its type is the parameter's).
+- `checkDefaultsAreTrailing` rejects a defaulted parameter before an undefaulted one.
+- A default on a lambda used as a *value* is refused — `LambdaType` records that a default exists,
+  not what it is.
+
+## On-demand return inference (`typechecker_on_demand.go`)
+
+A destructure (`let (w, h) = viewport()`) is the one position that can't defer a callee's type, so
+`forceCheckDestructureCallee` checks that declaration now and `checkDestructuringDecl` retries.
+
+- **Memoized** by `checkedDecls` (else duplicate diagnostics).
+- **Cycle-guarded** by `inferringRet`; fallback `lyra-E058` asks for an annotation.
+- **Checked at top level** (`atTopLevel`): parameter scope, enclosing return, `where` bounds and
+  impl/trait context are cleared and restored — `withParamScope` copies enclosing params, which
+  would otherwise leak the caller's names in (false accept).
+- Only destructures trigger it; no eager inference elsewhere.
+
+## UFCS (`typechecker_ufcs.go`)
+
+`m.unwrap_or(0)` → `unwrap_or(m, 0)` when the function's first parameter is named `self`. Ladder in
+`inferMemberCall`: **field → trait method → UFCS → builtin**.
+
+- **Desugared in place** (`desugarUFCSCall`): receiver becomes `Arguments[0]`, callee an
+  `IdentifierExpr`. Downstream passes never see UFCS; both spellings emit identical IR. Required,
+  not a shortcut: purity indexes arguments positionally (`checker/ufcs_bounds_test.go` guards it).
+  Idempotent; pre-typecheck passes see the un-desugared form.
+- **Type-parameter receivers**: `callViaUFCS` in the generic-receiver branch, below the `where`
+  bound. `receiverAccepts` unifies the candidate's `self` with the *candidate's* variables as
+  wildcards, so only functions generic in their receiver match.
+- **Candidates gathered by name** (`ufcsFunction` over `SymbolTable.FunctionsNamed`) and filtered:
+  takes `self`, reachable (`ufcsImportedIn`), accepts the receiver. Own module wins a tie; a
+  remaining tie is reported with a typeable qualifier. Resolving through one key silently hides
+  candidates in other modules.
+- The `self` test is on the declared parameter, never on `LambdaClauses` (consumed by the desugar).
+- **Import required** (own module and prelude exempt). `UFCSModules()` and `DispatchedTraits()`
+  (from `MethodTable.DispatchedImpls()`, keyed by trait name) feed the unused-import check so it
+  doesn't advise deleting a needed import.
+- **`own` receiver refused** with its own error (not "has no method").
+- `UFCSCallable` is exported for LSP completion.
 
 ## Receiver-keyed overloading (`typechecker_overload.go`)
 
-A name may be declared **more than once in one module** when every declaration takes a `self`
-receiver and their receivers have different type *heads* — the type constructor with its
-arguments dropped (`types.HeadName`). So the prelude declares `unwrap_or` twice, once for
-`Maybe<t>` and once for `Result<t,e>`, and the two types get the same vocabulary instead of
-the second one being given a name it did not need.
+One name may be declared several times in a module when every declaration takes `self` and the
+receiver heads (`types.HeadName`) differ.
 
-This is the declaration-side half of what UFCS did for call sites. UFCS already dispatched
-`m.map(f)` on the receiver's type; what it could not do is let two `map`s be *written* in one
-module, since a second `let map` was a redeclaration. That is why the standard library split
-`maybe.map` from `result.map` into separate modules — a split this removes the need for.
-
-**Resolution happens in one place, because the desugar already normalized the two spellings.**
-`m.f(x)` becomes `f(m, x)` before anything picks a member, so the receiver is argument 0
-whichever way the call was written, and `receiverAccepts` — `unifyGenericTarget` again, the
-predicate trait dispatch and UFCS both use — is asked from exactly two sites: the bare-call
-path (`inferOverloadedCall`) and the UFCS rung. The rung has to resolve *before* desugaring,
-since it decides whether `m.f` is a method call at all; asking an arbitrary member would
-answer "no method" for a receiver some other member accepts.
-
-Three consequences worth knowing:
-
-- **Overlap is refused where it is written, not at each call.** Two members with one head
-  could both match, and ranking them needs a specificity ordering the language does not have.
-  `ast.OverloadableWith` refuses the pair once, with a message naming the shared receiver,
-  rather than every call site reporting an ambiguity the author cannot resolve. A bare type
-  variable (`self: t`) has no head at all — it accepts everything, so it can never be one
-  candidate among several.
-- **An overloaded name is absent from `SymbolTable.Functions`.** That map answers "which
-  declaration does this name mean", and for a set the honest answer is "not decidable from a
-  name". Leaving a member under the bare key would make every pass reading it silently pick
-  one; leaving it empty makes them report the callee unresolved and take their conservative
-  path. The set lives in `OverloadSets`, and a scope holds an `ast.OverloadSet` in place of
-  the single declaration — so a pass that type-asserts to `*VarDeclStmt` fails rather than
-  taking a member it had no business choosing.
-- **The resolved callee is published** (`typetable.TypeTable.SetCallee`). Ownership, the
-  use-after-move check, the purity pass and the backend all resolved a callee by name in
-  order to read its parameter modes; that question has no answer here, so the pass that did
-  resolve it records the answer, exactly as `MethodTable` does for trait dispatch. Each
-  consumer reads it first and falls back to name lookup, which leaves every non-overloaded
-  call resolving as it did.
-
-A name used as a *value* rather than called (`let f = unwrap_or`) is an error: the members
-have different signatures, so there is no one type to hand back.
-
-**A bare call resolves like a method call** (`receiverFallback`, `bareCalleeFor`, 08/04).
-The two spellings used different machinery: a method call gathers every reachable
-declaration and picks by receiver, while a bare call resolves a *name* through the scope
-chain (module → prelude → global) and stops at the first hit. With a `map` for `Box` in an
-imported module, `b.map(f)` resolved and `map(b, f)` did not — the prelude's scope sits
-nearer than the global one an import exports into. A bare call still tries the scope chain
-first, so a local declaration wins as before; only when the name it lands on takes a `self`
-receiver it does *not* accept does it gather candidates and pick by receiver. Additive: only
-calls that were errors change meaning, and a plain non-receiver function whose first
-argument does not fit is still an ordinary argument-type error.
-
-One consequence reaches the backend: a call resolved this way finds its callee by
-**identity**, and that callee is usually an ordinary singly-declared function rather than an
-overload member — so every user function is recorded by declaration (`recordByDecl`), not
-just the overloads.
-
-## What dispatch actually costs
-
-`resolveTraitMethodNamed` is the single scan behind every `.method()` call, every
-overloaded operator, and every `==` / `<` (those route through `dispatchEq` /
-`dispatchOrdCompare` before the structural rule). It walks `tc.traitImpls` — 108 entries
-from the prelude alone — and asks `implTargetMatches` of each.
-
-Two things about its cost are easy to get wrong, and both were:
-
-- **`boundCandidatesByType` looks quadratic and is not the problem.** It calls
-  `resolveTraitMethodNamed` once per impl of a trait, and that scans every impl again — but
-  the trait-name filter is applied *before* the expensive comparison, so the inner scan does
-  cheap string compares and the same number of real comparisons either way. Indexing
-  `traitImpls` by trait name was tried and measured at zero (see COMPLETED.md, 08/24).
-- **The cost was `implTargetMatches` allocating a map it usually threw away.** Most calls
-  are a concrete impl that does not match the receiver, and `bindings` was allocated before
-  the equality test that returns. That single line was 82% of the function. It is allocated
-  on the paths that can fill it now, and the no-match path returns nil.
-
-`BenchmarkDispatch_*` in `pkg/driver` is what makes this measurable: it puts the pipeline on
-generic bodies with `where` bounds, which is where bound dispatch fires. A concrete caller
-of a generic function pays none of it — the candidates were published once, at the bound
-call site inside the generic body — so a benchmark built from concrete callers measures
-nothing, which was the first version of it.
-
-## Storing a value into a slot
-
-Five positions store a value somewhere: an annotated `let`, a destructuring's whole value, a
-reassignment, an assignment through a member or index path, and a `return`. They look like
-one ladder repeated five times, and they are not.
-
-What they genuinely share is two checks — the value must be **assignable** to the target,
-and the two must **agree about allocation** — which is `checkStorable`. Beyond that they
-diverge in nearly every step: which push a literal's width down onto its leaves, which
-record the annotation on the value node, which run the implicit-newtype conversion and
-read-out rules, whether allocation compatibility is checked first or last, and whether it is
-checked at all (a `return` checks it only when the return is owned).
-
-Some of those differences are open questions rather than oversights.
-`checkLValueAssignment` does no literal propagation, deliberately and with a comment saying
-the other two paths do and that whether it should is a separate question. Folding the five
-into one function with a bag of options would turn that visible difference into a flag, and
-a reader would have to decode the flags to learn what any one position does.
-
-**Two details in `checkStorable` are load-bearing.** `shown` is what the message names the
-target as, which is not always the target: the two annotated sites print the annotation *as
-written*, so `let a: Alias = "no"` reads `cannot assign string to Alias` rather than naming
-the `i64` it resolves to — the diagnostic reads back as the source. And `subject` prefixes
-the message with a binding's name where there is one and is empty where there is not, which
-is why an lvalue assignment says `cannot assign …` with no prefix while a reassignment says
-`x: cannot assign …`.
+- Resolution is `receiverAccepts`, asked from exactly two sites: `inferOverloadedCall` (bare call)
+  and the UFCS rung (before desugaring).
+- Overlap is refused at the declaration (`ast.OverloadableWith`). A `self: t` has no head and can't
+  be an overload member.
+- **An overloaded name is absent from `SymbolTable.Functions`**; the set is in `OverloadSets` and a
+  scope holds an `ast.OverloadSet`, so a pass asserting `*VarDeclStmt` fails instead of guessing.
+- **The resolved callee is published** (`TypeTable.SetCallee`); consumers read it first, then fall
+  back to lookup.
+- Using an overloaded name as a value is an error.
+- **Bare calls fall back like method calls** (`receiverFallback`, `bareCalleeFor`): scope chain
+  first; only if the hit takes a `self` it doesn't accept are candidates gathered. So every user
+  function is recorded by declaration (`recordByDecl`) for the backend.

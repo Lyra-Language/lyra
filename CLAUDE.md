@@ -1,24 +1,20 @@
 # lyra (Go) — Project Context
 
-This is the main compiler infrastructure for the Lyra programming language. It contains the
-parser, AST, type system, collector, typechecker, a standalone semantic checker, and the LSP
-server.
+The Lyra compiler: parser, AST, type system, collector, typechecker, standalone checker
+passes, LLVM backend, LSP server and CLI. Go module `github.com/Lyra-Language/lyra`.
 
-Never create a git commit or push to remote unless the user explicitly asks in their current message.
+Never create a git commit or push unless the user explicitly asks in their current message.
 
-Go module: `github.com/Lyra-Language/lyra`
+**This file is a map and records rules, not history.**
 
-**This file is a map, and it records rules rather than history.** Each package's depth lives
-in a `README.md` beside its code; the sections here say what a package is and where to read
-further. What must be obeyed regardless of which package you are in is under
-[Rules and hazards](#rules-and-hazards) — read that first.
+- What the language *does*: [`LANGUAGE.md`](LANGUAGE.md).
+- Open work: `todo.md`. Finished work and the reasoning behind it: `COMPLETED.md` (an item
+  citing "the Completed entry" means that file).
+- Package depth: the `README.md` beside each package (see [Package map](#package-map)).
+- Read [Rules and hazards](#rules-and-hazards) first.
 
-Open work is in `todo.md`; finished work, with the reasoning behind it, in `COMPLETED.md`.
-A dated account of why something ended up the way it did belongs there, not here.
-
-The tree-sitter grammar is a local dependency via a `replace` directive pointing to
-`../tree-sitter-lyra`. After regenerating the grammar (`npx tree-sitter generate` in that
-directory), always run `go clean -cache` before `go test` — otherwise Go's build cache serves
+The grammar is a local dependency (`replace` → `../tree-sitter-lyra`). After
+`npx tree-sitter generate` there, **always `go clean -cache` before `go test`**, or Go serves
 the stale compiled C parser.
 
 ## Data Flow
@@ -31,2262 +27,474 @@ source text
   → pkg/analyzer/typechecker          AST → *typetable.TypeTable + []TypeError
 ```
 
-The LSP server (`cmd/lyra-lsp`) runs this full pipeline on every document change and publishes
-diagnostics from all three analysis stages.
+The full pipeline is `pkg/driver` (below). The LSP runs it on every change.
 
 ## Rules and hazards
 
-Violating any of these produces something that looks like it works. Each was learned from a
-real failure, and none is local to one package.
+Each of these produces something that looks like it works. Other docs cite them by number.
 
-1. **After changing `tree-sitter-lyra/grammar.js`: regenerate, then `go clean -cache`,
-   then test.** Go's build cache does not hash `#include`d sources, so the compiled C
-   parser goes stale and the suite silently runs against the *old* grammar. Push the
-   grammar repo before the `lyra` code that depends on it — CI regenerates from the remote.
+1. **After changing `grammar.js`: regenerate, `go clean -cache`, then test.** Go does not hash
+   `#include`d sources. Push the grammar repo before `lyra` code depending on it — CI
+   regenerates from the remote.
 
-2. **Never call an accessor on the result of an optional field lookup without a nil check.**
-   `node.ChildByFieldName(…)` returns a genuine Go `nil` `*sitter.Node` for an absent
-   optional grammar field, and calling `ChildCount`/`Child`/`Kind` on it **hangs inside the
-   go-tree-sitter CGO binding instead of panicking**. See `pkg/analyzer/collector/README.md`.
+2. **Nil-check an optional field lookup before calling anything on it.**
+   `ChildByFieldName`/`cst.Field` return a real nil for an absent optional field, and
+   `ChildCount`/`Child`/`Kind` on it **hang inside the CGO binding** rather than panic. See
+   `pkg/analyzer/collector/README.md`.
 
-3. **Never return a nil expression node into the AST.** A collector hitting an
-   unrecoverable value error must emit a diagnostic *and* return a placeholder node. A
-   `nil` returned as an `ast.Expression` is a *typed nil* — it slips past `expr == nil` and
-   crashes a later pass on the first field access. The statement analogue: a block skips a
-   child that collects to nil, because a block's value is its final statement.
-
-   **An error path that cannot fire today still has to obey this.** `collectCharacterLiteralExpr`
-   returned nil on a bad escape for as long as the rune literal existed, and never crashed,
-   because the grammar's escape set made an illegal escape fail to *parse* — the path was
-   dead. Broadening that token to improve the message (08/30) woke it, and the compiler
-   segfaulted on `'\q'`. A dead error path is a live one after the next grammar change, and
-   the change that wakes it will look unrelated to the crash it causes.
-
-   The placeholder earns its keep twice over: it is also what keeps one mistake to one
-   diagnostic. A literal that collects to nothing leaves its declaration uninitialized, so a
-   single bad escape reported the escape, then the unused binding, then the missing
-   initializer.
-
-   **The crash itself is now closed structurally, and the rule survives it.** The three
-   dispatchers that turn a concrete collector result into an interface —
-   `CollectExpression`, `CollectStatement`, `CollectPattern` — pass everything through
-   `ast.TrueNil`, so a typed nil cannot escape any of the thirty-odd collectors that can
-   return one, including collectors written after this was. An audit on 08/30 found twenty
-   of them with the crash shape and none reachable, for a reason worth knowing: tree-sitter
-   recovers from a syntax error by emitting an `ERROR` node, **not** a partial named node, so
-   a guard on a missing required field never fires on anything a user can type. What woke the
-   rune literal was the opposite case — a node structurally valid but semantically
-   unparseable — which is what a token whose *content* the collector validates produces.
-   `pkg/driver/malformed_input_test.go` is the standing check.
-
-   `TrueNil` prevents the crash; it does not make the nil good. A placeholder is still the
-   better answer wherever there is a sensible one to return, because it is what keeps the
-   diagnostics honest.
+3. **Never return a nil expression node into the AST.** On an unrecoverable value error, emit
+   a diagnostic *and* return a placeholder (it also keeps one mistake to one diagnostic). A
+   nil `ast.Expression` is a typed nil that slips past `== nil`. A block skips nil statements.
+   - `CollectExpression`/`CollectStatement`/`CollectPattern` pass results through
+     `ast.TrueNil`, so the crash is closed structurally — but a placeholder is still the
+     right answer.
+   - **A dead error path is live after the next grammar change.** tree-sitter recovers with an
+     `ERROR` node, not a partial named node, so missing-required-field guards rarely fire;
+     what does reach them is a structurally valid token whose *content* the collector
+     validates (e.g. a broadened escape token). `pkg/driver/malformed_input_test.go` is the
+     standing check.
 
 4. **Resolve top-level names only through the `Lookup*` accessors**, never by indexing
-   `SymbolTable.Types`/`.Functions`/`.Traits`. Which declaration a name means depends on
-   *which module is asking*, and a lookup scattered over dozens of sites cannot be taught
-   that. Same reason `recordedType`, `types.StripNewtype`, `slotIsOwning`,
-   `types.IsCopiedScalar` and `types.CollectTypeVars` exist: one predicate, so two passes
-   cannot drift apart.
+   `SymbolTable.Types`/`.Functions`/`.Traits`. Same reason `recordedType`,
+   `types.StripNewtype`, `slotIsOwning`, `types.IsCopiedScalar`, `types.CollectTypeVars` exist:
+   one predicate so passes cannot drift.
+   - All three maps are keyed `<module>::<name>` (`DeclKey`; entry module is `::name`).
+     `declKey(name, loc)` resolves: the asking module's own, an import (aliases followed), the
+     prelude's export, then any program-wide export. A *written* unimported type name is
+     refused via `ResolvedReachably` + TypeRefs. Unresolvable names pass through unchanged
+     (the backend's `Maybe$i64` relies on it).
+   - Prefer `LookupTypeFrom`/`LookupTraitFrom`/`LookupFunctionFrom(name, loc)`. Bare
+     `LookupType(name)` answers the program-wide meaning and is wrong inside a module that
+     declares its own.
+   - A key is not a source name — user-facing text reads `decl.Name`.
+   - A `pub` check asks about the declaration a reference *resolved to* (`declVisibility`);
+     inside the table use `BindingIn(module, name)`, not `BindingOf(name)`.
+     `DeclaringModule` is last-writer-wins.
+   - Traits too: `checkImplCoherence` keys on the resolved `*ast.TraitDeclStmt`. **A pass
+     with no symbol table must have one threaded in**, never build a local by-name index (the
+     purity pass did, and impls inherited another module's trait's effect bound).
+   - Layout resolves a struct/union's field types from **its declaration's** location:
+     `declarationSite` in the typechecker (`hasCLayout`), `resolvingFrom`/`declLocOf` in the
+     backend (`resolveForLayout`), not the site being lowered.
+   - Backend `namespaceCallee` must not test membership with `DeclaringModule` and read
+     `l.funcs[name]`.
+   - A comment asserting "a top-level name is program-wide unique" is a bug waiting.
 
-   **All three maps are keyed uniformly by `<module>::<name>`** (the entry module's empty
-   path gives `::name`) — identity, from the declaration's own file (`DeclKey`). Resolution
-   is a separate function: `declKey(name, loc)` answers with the identity key of the
-   declaration the name means at `loc` — the asking module's own, an imported one (aliases
-   followed to the source), the prelude's export, then any program-wide export (the rung
-   that lets a value's type resolve past the import boundary; a *written* unimported type
-   name is refused via `ResolvedReachably` + the TypeRefs written-occurrence test). An
-   unresolvable name passes through unchanged, which the backend's synthetic instantiation
-   symbols (`Maybe$i64`) depend on. Until 08/27 the key itself encoded visibility (bare
-   when exported or entry-module), so a lookup asked with the wrong context *usually*
-   worked — the soil the four corollaries below grew in. *Which* accessor you use is still
-   a correctness question: prefer `LookupTypeFrom`/`LookupTraitFrom`/
-   `LookupFunctionFrom(name, loc)`, which resolve as the file at `loc` sees it; bare
-   `LookupType(name)` answers for the program-wide meaning of a context-free name
-   (prelude's export, then any module's, then the entry module's declaration), and asking
-   it from inside a module that declares its own returns that other declaration.
+5. **The backend errors loudly rather than emitting wrong code** — including repeating checks
+   the front end made. "Loudly" also means no llir panic and no clang error: `ir.NewPhi`
+   accepts mismatched incomings (checked in `joinPhi`, for `if` and `match` merges) and
+   `ir.NewStore` panics on mismatch (checked in `aggregateSpill`). Any site building an
+   instruction from another pass's value owes a check naming the construct and location.
 
-   Four corollaries, each of which has already bitten:
-
-   - A map key is **not** a source name, so anything user-facing (an LSP completion label,
-     a "declared names" set) must read `decl.Name` rather than the key.
-   - A `pub` check must ask about the declaration a reference *resolved to*
-     (`declVisibility`), never look one up by name; and inside the symbol table use
-     `BindingIn(module, name)` rather than falling through to `BindingOf(name)`.
-     `DeclaringModule` is last-writer-wins, and reported a module's own type as private to
-     another module that happened to declare the same name.
-   - The same applies to a **trait**: `checkImplCoherence` keys duplicate impls on the
-     resolved `*ast.TraitDeclStmt` (via `LookupTraitFrom`), not on `impl.TraitName`, or a
-     program's own `trait Add` plus `impl Add for i64` is reported as a duplicate of the
-     prelude's. **The purity pass had the same bug and kept it two months longer**, because
-     it was not indexing the symbol table wrongly — it had *no symbol table at all* and
-     built its own `map[traitName]*TraitDeclStmt` by walking the merged program, which is
-     last-writer-wins by construction. An impl inherits its trait's effect bound through
-     that map, so with two modules each declaring a `Speak`, an impl of the one declaring
-     `pure say` inherited the other's absent bound and printed from a method its contract
-     said was pure. Nothing reported it: the collision draws lyra-W016, which is about
-     which declaration a *reference* means and says nothing about a bound going missing.
-     A pass that cannot do a rule-4 lookup needs the table threaded in, not a local index.
-   - **Layout checks pay it too.** `hasCLayout` resolved each struct field's type with an
-     *empty* location, so a field whose type was private to the declaring module resolved
-     to nothing and the struct was refused as having "no C spelling" (lyra-E063) — which
-     is how `bindings/raylib`'s `Model`, holding a private `ModelSkeleton`, made twelve
-     externs fail (09/11). A struct's or union's fields are resolved from its own
-     declaration now (`declarationSite`). **The backend had the same bug in its own
-     copy** — `resolveForLayout` resolved each field from `l.currentLoc`, the code being
-     *lowered*, so the same struct held in a `[]T` in another module could not be sized
-     ("cannot size dynamic array element type"). It switches to the declaration's location
-     while resolving a declaration's fields (`resolvingFrom`/`declLocOf`). Fixing the
-     typechecker's copy is what let the example get far enough to reach the backend's: two
-     copies agreeing and both wrong, which rule 8 warns about.
-   - The backend pays it too: `namespaceCallee` must not test membership with
-     `DeclaringModule` and read `l.funcs[name]`, or a shadowed name called through a
-     namespace (`seq.map(…)`) dies as `llvm: unsupported method call` on a program the
-     front end checked clean.
-
-   When a premise like "a top-level name is program-wide unique" is written into a comment,
-   it is a bug waiting for the feature that retires it.
-
-5. **The backend errors loudly rather than emitting wrong code.** A form that does not lower
-   yet is a hard error, never a guess — including where it must repeat a check the front end
-   already made.
-
-   **A loud error also means one llir cannot turn into a panic — or a clang error.**
-   `ir.NewPhi` accepts incomings that do not share a type, and the module then fails at
-   *compile* time with `'%18' defined with type 'double' but expected 'float'`: a register
-   number in a temp `.ll` file, naming no expression and no line. `joinPhi` checks the
-   operands first and names the construct and its location, for both the `if` merge and the
-   match merge. It repeats a check the typechecker owns, which is exactly what this rule
-   asks for.
-
-   **A loud error also means one llir cannot turn into a panic.** `ir.NewStore` refuses
-   mismatched operands by panicking, so `aggregateSpill` took `lyrac build` down with a Go
-   stack trace naming neither the argument nor the file — hazard 15's shape one layer down,
-   and the way a front-end bug in another pass presents at the C boundary. It checks the
-   value against the slot first and names which argument of which C function lowered to
-   what. Any site building an instruction from a value another pass produced owes the same
-   check.
-
-6. **ASan only works because the test harness adds the `sanitize_address` attribute** to
-   every `define` in the emitted module. Without it the instrumentation pass rewrites
-   nothing and the ASan tests pass vacuously — which they did, swallowing three real faults.
-   See `pkg/backend/llvm/README.md`.
+6. **ASan works only because the test harness adds `sanitize_address`** to every `define`.
+   Without it the ASan tests pass vacuously. See `pkg/backend/llvm/README.md`.
 
 7. **`build/std` is a symlink, not a copy**, and the std root is the directory *containing*
-   `std/`, not `std/` itself. Every staleness failure this project has hit presented as a
-   behaviour difference rather than as staleness, which is what makes them expensive.
+   `std/`. Staleness here presents as a behaviour difference.
 
-8. **A `switch` over AST node kinds or composite types must have a case for every one
-   that can hold a child — a missing case is silent and its symptom is remote.** This has
-   bitten more than a dozen times across a dozen switches, and never looked like what it
-   was: assignability rejecting a type against *itself*; a generic function emitted under
-   its bare name and failing in layout; `pure` silently accepting an impure `noisy().0`;
-   a quiet leak of one reference per call to any multi-clause function. **When adding a
-   node kind or a composite type, grep for the switches over it; when fixing one, check
-   the others in the same file, since these travel in pairs.**
+8. **A `switch` over AST node kinds or composite types needs a case for every one that can
+   hold a child — a missing case is silent and its symptom remote.** When adding a node or
+   type kind, grep the switches over it; when fixing one, check its siblings in the same file.
+   - **Copies drift even at two, and can agree and be wrong together** (all purity ladders
+     charged builtin methods nothing, wrong for allocating `slice`). Copies that disagree can
+     be a soundness hole: purity now has **one** walk, `bodyEffects` over a `callable`, with
+     enforcement re-running it through `callable.reportPure`.
+   - **Two switches can disagree about a case neither names** (`nominalHead` lacked
+     `*ConstrainedType` while `types.HeadName` gives a newtype a head).
+   - **Adding an expression kind: grep for the kind it is a variant of.** List every file
+     mentioning `ArrayLiteralExpr` and check each for `ArrayRepeatExpr` (eight past misses).
+   - **A binder is its own family** — parameters, `match` arms, loop variables,
+     destructurings, comprehension generators. A binder a walk doesn't know reads as a capture.
+   - **A bare `string` field is invisible to every walk** (`VarReassignmentStmt.Name` hid a
+     write-only capture → backend nil deref).
+   - **Declaration kinds**: `pkg/ast/exhaustive_test.go` parses switches and checks registered
+     mirrors of `walkExprChildren`/`walkStmtChildren` and every `declarationConsumers` switch
+     against `declarationKinds` (a statement with a `Doc` field is a declaration). An
+     exclusion is a claim written beside its reason. Registering a new *consumer* is still
+     manual. Better than registering a mirror: delete it (`ast.RewriteStmt`, `ast.WalkStmt`).
+   - **Type kinds have no checklist.** The walks that must reach *every* composite are
+     resolution (`resolveTypeWith`), layout (`SizeAndAlign`, `resolveForLayout`),
+     substitution (`Substitute`, `CollectTypeVars`, `mentionsGenericParam`, ownership's
+     `substituteTypeVars`), retain/drop (`emitOwnedValue`), `mentionsTypeVar`, and
+     `resolveInstantiation` (`backend/llvm/generic_types.go`). Container-shaped switches
+     (`elementType`, `isByteArray`, `iterableElementType`) rightly lack pointer cases.
+     **Probe behaviours** (put the type in a struct, array, closure, comparison, match,
+     generic) rather than reading switches — most switch-list hits are false leads.
+   - **Every rung reading a value's type strips newtypes itself, resolving between strips**:
+     `stripNewtypeResolving`. A binding's type may arrive as a bare declared name, and a
+     generic newtype's base must be resolved to see the next wrapper. Annotated array
+     bindings keep the wrapper recorded; indexing and assignability both depend on it.
+   - **Sibling constructs are a pair**: `if` and `match` both push their join down via
+     `propagateExpectedType`, tested together (`TestExec_IfBranchesJoinTheirUntypedWidths`
+     and its match twin).
+   - **A pass over the merged program sees every module's top level at once**; name
+     questions go through the `SymbolTable` (`CheckShadowing` uses
+     `SymbolTable.ModuleExports`: own module, admitted imports, prelude exports).
+   - **Paired walks are fixed in one change, or merged**: retain/drop are one
+     `emitOwnedValue(…, retainWalk|dropWalk)` (`owned_walk.go`). Equality is a different walk.
+   - **A copy that admits it is a copy is still a copy** — call `types.Substitute`.
+   - **A memory-safety test can pass because the code does nothing** (a weak-cycle test
+     passed by leaking).
+   - **A construct two passes misread is the construct's fault.** When a pass mirrors
+     another, check the original (`let … else` in `CheckUseAfterMove` and `CheckMustRelease`).
 
-   Six lessons the instances add, none of which follows from "add the arm":
-
-   - **A second copy is enough** — the drift does not need three.
-   - **Copies can agree and be wrong together.** The purity ladders all charged a builtin
-     method no effect, which is right for scalar arithmetic and wrong for `s.slice(a, b)`,
-     the first that allocates: `pure noalloc … => s.trim()` type-checked clean. A shared
-     answer is a shared *assumption*, and it fails with no divergence to notice.
-   - **…and copies that disagree can be a soundness hole rather than a wrong message.**
-     There were three of those ladders: two *inference* walks (a free function's,
-     a trait method's) and the *reporting* walk. The two inference walks differed on one
-     line — a call to a trait-impl method charged only the method's base effect on the
-     lambda side, and its base **plus the effects of the callbacks supplied at this site**
-     on the method side. A `pure` function passing an impure callback through a trait
-     method was therefore inferred pure, checked clean, and printed. The reporting walk had
-     the right rule all along, which is why the diagnostic never fired: the machinery was
-     correct and the table it consults was wrong. There is now **one** walk (`bodyEffects`
-     over a `callable`) — inference runs it bare, and enforcement re-runs it over each
-     `pure` body with a reporting sink (`callable.reportPure`), so the arm that charges a
-     bit is the arm that words the diagnostic and no mirror remains to drift.
-   - **Two switches can disagree about a case neither one names**, which grepping will not
-     find — `nominalHead` lacked `*ConstrainedType` while `types.HeadName` one layer up
-     gives a newtype a head, so a method written *for* a newtype was silently unreachable.
-   - **When adding an expression kind, grep for the kind it is a variant of.** The purity
-     pass's allocation walk names allocating *forms*, not types, so `ArrayRepeatExpr` was
-     missed in five places `ArrayLiteralExpr` appeared in — and two more on 08/24, in
-     `isSyntacticLiteral` (so `let n: Nums = [7; 3]` over a newtype was refused while
-     `[7, 7, 7]` was not) and `firstNonConstant` (so `const XS = [7; 3]` was "not a
-     compile-time constant"), and an eighth on 08/27 in the typechecker's flavor walk
-     — since merged into `propagateExpectedType` — (so `let xs: shared [3]i64 = [7; 3]`
-     did not build while `[7, 7, 7]` did). **Eight instances of one omission.** The sweep that finds them
-     is mechanical and takes a minute: list every file mentioning `ArrayLiteralExpr` and check
-     each for `ArrayRepeatExpr`; the node and collector definitions correctly have their own,
-     everything else is a candidate. The second 08/24 instance was found that way, having been
-     invisible to the bug report that produced the first. **A *binder* is its own such
-     family**, and the captures pass proves it: its free-variable walk binds a `for-in`
-     variable and a C-style loop counter — with a comment explaining that a binder it does
-     not know reads as a capture — and had no case for a comprehension's generator, so a
-     comprehension inside a closure could not be compiled at all. Anything that introduces a
-     name is a binder: parameters, `match` arms, loop variables, destructurings, generators.
-   - **A field that is a bare `string` rather than a node is invisible to every walk.**
-     `VarReassignmentStmt.Name` is the one assignment target with no `IdentifierExpr` behind
-     it (`n += 1` has one in `Left`, `p.x = v` an expression path), so the captures pass
-     never saw a write-only capture — and the symptom was not a missing diagnostic but a
-     **nil deref in the backend**, since the closure environment had no slot for a name
-     nothing had recorded. When a walk's contract is "every mention of a name", a plain
-     string field is a hole in it that grepping for node kinds will never find.
-   - **A new *declaration kind* has no checklist, and pays for it repeatedly.**
-     `ExternDeclStmt` landed on 08/18 and by 08/19 had been found missing from ten
-     switches over top-level declaration kinds — `declIsPublic` (two modules each
-     declaring `extern abs` collided on a program-wide name), `attachDoc` and `docOf`
-     (every `///` above an extern reported as documenting nothing), `captures.globalNames`
-     (a closure calling an extern failed to lower), plus docgen and five LSP surfaces.
-     None of them shares a file or a package with the others, so grepping for one kind
-     finds them only if you know to grep. All ten are fixed (08/20); the sweep that found
-     the last six is the thing to repeat, not the list.
-
-     **`UnsafeBlockExpr` cost the same tax on the expression side**, and worse: `hover.go`'s
-     `findExprAtPos` and `definition.go`'s `scopeInExpr` had no case for it, so hover,
-     go-to-definition, rename and document-highlight all returned *nothing* inside an
-     `unsafe` block — which is the whole of a program's FFI and raw-pointer code. The
-     symptom of a missing case in a position lookup is an editor doing nothing, which
-     reads as "unsupported" rather than as a bug, so it sat from 08/18 to 08/20.
-
-     **`pkg/ast/exhaustive_test.go` is that checklist**, written 08/20. It parses the
-     switches rather than reflecting on types — the question is about *code*, and
-     reflection can say what fields a node has and never what a switch does with it. Two
-     halves: registered mirrors of `walkExprChildren`/`walkStmtChildren` must cover every
-     case the canonical walker has, and every switch in `declarationConsumers` must cover
-     every kind in `declarationKinds` — a list guarded in turn by "a statement with a
-     `Doc` field is a declaration", so a new declaration node fails there first with a
-     message naming what to do.
-
-     An omission is a bug; an **exclusion is a claim**, written next to its reason. It
-     found thirteen more expression kinds missing from the LSP walker on its first run,
-     including both loop forms, which had made navigation dead inside every loop body in
-     every program. What it cannot do is find a switch nobody registered; adding an entry
-     when you add a *consumer* is still manual, and adding a *node* is not.
-
-     **A registered mirror is second best, and retiring one is the real fix** (08/23).
-     Two hand-copied walkers were deleted rather than registered — the collector's
-     constructor rewriter, now `ast.RewriteStmt`, and the LSP's position lookup, now
-     `ast.WalkStmt`. Each had been written because the canonical walker could not do the
-     job: one needed to *replace* a slot, which a visitor cannot, and the other to find
-     the innermost node containing a position. Both are ordinary uses of a walker once
-     the walker offers them, and the drift they had already suffered was invisible
-     precisely where a test was absent — the LSP's *expression* switch was registered and
-     in step, while its *statement* switch, which nothing watched, sat eight kinds behind
-     and made navigation dead inside every trait-impl body in every program.
-   - **A new *type* kind pays the same tax as a new declaration kind, and has no
-     checklist.** `RawPointerType` landed 08/18 and was found missing from **two**
-     composite-type switches on 08/22, each with a symptom nowhere near the cause:
-     `SizeAndAlign`, where it was not "a pointer has no size" but *any aggregate
-     containing one* failing to lay out (`std.ffi`'s `CBuffer` could not be captured by a
-     closure or held in a `[]T`); and `resolveTypeWith`, where an unresolved *pointee*
-     made `^mut CULong` and `^mut u64` different types, so a type alias could not be used
-     for a C in/out parameter — which is what a pointer at the boundary is.
-     `exhaustive_test.go` enumerates *declaration* kinds; nothing enumerates the switches
-     over composite types, which is the family `emitRetainValue`/`emitDropValue` and
-     `mentionsTypeVar` also belong to.
-
-     **Every rung that reads a value's type must strip newtypes *itself*, and resolve
-     between strips.** `stripNewtypeResolving` is the one answer — used by the read-out
-     conversion, indexing and the method fallback. Two things make a plain
-     `types.StripNewtype` insufficient: a binding's type can arrive as the bare declared name
-     rather than a resolved `*ConstrainedType` (which is how a pattern-bound `d: Meters`
-     reached the conversion check and was refused), and a **generic** newtype's base is a
-     `ParameterizedType` that has to be resolved before the wrapper under it is visible, so
-     `newtype Outer<t> = Inner<t>` over `newtype Inner<t> = []t` stops one layer short.
-
-     This became load-bearing on 08/24. Literal propagation re-recorded an annotated *array*
-     binding's root with the base's shape, so `let b: Bag = ["x"]` read as
-     `DynamicArray<string>` — which made indexing work **by accident** and made the value fail
-     assignability the moment it crossed a call boundary. Two needs were resting on one
-     recorded type, and the first attempt at the fix (restore the wrapper, change nothing
-     else) broke indexing and two tests. It is both halves or neither.
-
-     **A newtype is the same tax, and `*ConstrainedType` is its `RawPointerType`.**
-     `resolveInstantiation` (backend/llvm/generic_types.go) is the choke point that turns a
-     `ParameterizedType` into the shape it denotes precisely so a dozen downstream switches
-     need no generic case — and it had arms for NamedStructType, TupleType and DataType and
-     none for the wrapper a parameterized newtype expands to, so `newtype Sorted<t> = []t`
-     checked clean and failed the build. A *scalar* base hid it: no drop glue is generated,
-     so nothing asks for the instantiation.
-
-     **Sweeping the family by reading switches is the wrong move; probing behaviours is the
-     right one.** 35 switches mention two or more of the composite kinds and 19 have no
-     ConstrainedType arm — but most are container-shaped and correctly lack it, so the list is
-     mostly false leads. Seven small programs putting a newtype in each position that matters
-     (in a struct, in an array, captured by a closure, compared, matched, nested in a generic)
-     found the one real second bug in minutes: the read-out conversion `i64(c)` was refused
-     for a *pattern-bound* binding, having been resolved only after the first strip.
-
-     **The sweep, when it was run, found only those two**: the type-variable walks
-     (`Substitute`, `CollectTypeVars`, `mentionsGenericParam`, ownership's
-     `substituteTypeVars`) already handle pointers, because generics over `^t` landed with
-     the feature on 08/19. The container-shaped switches (`elementType`, `isByteArray`,
-     `iterableElementType`) have no pointer case and are right not to. So the family to
-     check when adding a type kind is the walks that must reach *every* composite —
-     resolution, layout, substitution, retain/drop — not every switch that mentions one.
-   - **Two sibling *constructs* are a pair as surely as two switches are.** `if` and
-     `match` both join their branches' types, and only `match` pushed the join back down
-     onto them (`propagateExpectedType`); `if` computed the common type, returned it, and
-     left a branch whose own type was still untyped holding its default width. So
-     `let x = if c { f32_value } else { 0.0 - 1.0 }` type-checked clean and the backend
-     built a `phi` out of a `float` and a `double`. A **bare literal** branch hid it for as
-     long as it existed, since literal propagation settles one of those from the binding —
-     only a *computed* untyped branch had nothing else to narrow it. Fixed 09/10; the two
-     are now tested as a pair (`TestExec_IfBranchesJoinTheirUntypedWidths` and its match
-     twin), which is the only thing that stops them drifting again.
-   - **A pass over the *merged* program sees every module's top level at once**, and one
-     that answers a name question from it is wrong by construction. `CheckShadowing`
-     accumulated every top-level declaration it walked past, so a local named `turns` was
-     reported against `bindings.raylib`'s `turns` in a file that never imported it — and
-     against other modules' **private** helpers, which no import can reach at all. One
-     `import lib.{ rgb }` was enough to make nine ordinary local names warn. It now takes
-     the `SymbolTable` and asks what the *file* can reach: its own module, the names its
-     imports admit (a namespace import admits none — `lib.f` is not `f`), and the prelude's
-     exports. `SymbolTable.ModuleExports` is the predicate, and its own comment had
-     already stated the rule for a different check.
-   - **Paired walks must be fixed in one change** — and better still, stop being a pair.
-     `emitRetainValue`/`emitDropValue` both lacked `ParameterizedType`, and fixing only the
-     drop is an instant double free. Note *both* lacked it, and both lacked
-     `AnonymousStructType` too: two copies can agree and be wrong, which is the failure a
-     side-by-side reading cannot find. They are now one walk over
-     `emitOwnedValue(…, retainWalk|dropWalk)` (`owned_walk.go`), differing only at a
-     managed leaf, so a copy and its death cover the same fields by construction.
-     **Equality is deliberately not folded in with them**: it looks like a third copy but
-     stops at a different place (it descends *into* a managed value to compare it) and
-     nothing breaks if it visits a different set — that makes it a different walk, not a
-     third copy of this one.
-   - **A copy that admits it is a copy is still a copy.** The typechecker's
-     `substituteGenerics` said in its own comment that it walked only "the handful of
-     compound type shapes a data constructor's payload realistically takes today" — and
-     `types.Substitute` beside it said in *its* comment that it exists so there is one
-     walker. A generic over `^t` solved `t` and then compared the argument against an
-     un-substituted `^t`. The local copy is now a one-line call to the real one.
-   - **A memory-safety test can pass because the code under it does nothing** — a weak-cycle
-     test was green *by leaking* before the glue walked the field at all.
-
-   **The durable fix for a switch with more than one caller is to stop having more than one
-   of it.** Established single answers, to use rather than re-derive:
+   Single answers — use, don't re-derive:
 
    | question | the one answer |
    |---|---|
-   | which type variables does this type mention? | `types.CollectTypeVars` |
+   | type variables a type mentions | `types.CollectTypeVars` |
    | resolve a type (reporting or quiet) | `resolveTypeWith`, behind `resolveType`/`resolveTypeIfKnown` |
    | is this tail a value or a statement? | `checkExprForEffect` |
-   | did this expression produce a value? | `isVoidResult` (a nil **and** a void-typed `ir.Call`) |
+   | did this expression produce a value? | `isVoidResult` (nil **and** void-typed `ir.Call`) |
    | does this value transitively own a reference? | `ownership.OwnsManaged` |
    | is that sharing observable? | `ownership.SharesMutableState` |
-   | substitute type variables in a type | `types.Substitute` |
-   | what are this node's children? | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` to skip the node itself) |
-   | does this statement carry an expression ownership must see? | `ownership.analyzer.stmt` — **all** statement kinds, not the five that were obvious |
+   | substitute type variables | `types.Substitute` |
+   | a node's children | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` skips the node) |
+   | statement expressions ownership must see | `ownership.analyzer.stmt` — **all** statement kinds |
    | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
-   | see through a newtype to its base | `stripNewtypeResolving` (typechecker) |
-   | where is the expression at this position? | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
-   | bind a generic type's arguments to its parameters | `ast.BindGenericParams` |
-   | what does a value of this type hold inline? | `ownership.eachComponent` |
+   | see through a newtype | `stripNewtypeResolving` (typechecker) |
+   | expression at a position | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
+   | bind a generic type's arguments | `ast.BindGenericParams` |
+   | what a value holds inline | `ownership.eachComponent` |
    | retain or release what a value owns | `emitOwnedValue` (`backend/llvm/owned_walk.go`) |
+   | push a context type onto a value (width + `shared` flavor) | `propagateExpectedType` |
    | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
    | is this CST node a comment? | `cst.IsComment` |
 
-    **A construct that two passes both misread is the construct's fault, not the pass's.**
-    `let … else` was analyzed as a branch by `CheckUseAfterMove` and nearly by
-    `CheckMustRelease` — the payload binds in the *enclosing* scope and the else is the
-    diverging path that never sees it. Two passes asking mirror-image questions over one
-    AST ("read after a move?" / "released before it died?") will misread the same node the
-    same way, because the node is what is confusing. **When a pass is built by mirroring
-    another, point the mirror back**: writing the second one's `letElse` is what exposed
-    the first one's bug, which had been shipping a hard error on correct code.
+9. **A name does not identify a declaration, or even one function.** Keys are
+   module-qualified (rule 4) and a receiver-overloaded name maps to several declarations. To
+   answer "what does this call call?" read `TypeTable.Callee(call)` first, then
+   `LookupFunctionFrom`. Backend: `l.funcs` keys overloads by declaration with the receiver
+   head in the symbol; `l.globals` slots are keyed by funcKey, named per module, resolved by
+   `slotFor`.
+   - **A by-name set consulted where the enclosing scope is the question fails silently.**
+     `l.locals` must not decide a desugared UFCS callee (`data.data()` on a parameter named
+     `data`) — ask `Callee` first (`calleeIsDeclared`). `captures.globalNames` subtracts a
+     global only where `analyzer.outer` (the enclosing binders) doesn't shadow it.
+   - A trigger may need a *sibling file of the same module*. When reductions keep failing,
+     stop reducing and instrument.
+   - **Allocation flavor rides the expected type**: `propagateExpectedType` is the one walk
+     pushing width and `shared` flavor from every context (binding, return, argument,
+     reassignment, field, payload, element). A new context is one call to it.
 
-9. **A name does not identify a declaration, and may not even identify one function.**
-   Every *key* is module-qualified (rule 4), and a
-   **receiver-overloaded** name maps to several declarations at once, told apart only by
-   the receiver's type. So any pass answering "what does this call call?" by looking the
-   name up is wrong in one of two quiet ways: it gets another module's function, or it gets
-   whichever overload was registered last. Read `typetable.TypeTable.Callee(call)` first —
-   the typechecker publishes the member it picked — and fall back to `LookupFunctionFrom`.
-   The backend pays the same tax: `l.funcs` cannot hold two functions of one name, so an
-   overload is keyed by its *declaration* and its emitted symbol carries the receiver head
-   — and `l.globals` paid it too (08/28): keyed by bare name, two modules' private globals
-   collided in clang; slots are keyed by funcKey and named per module, with `slotFor`
-   resolving from the referencing location.
+10. **Positional argument indexing is one AST shape from wrong.** Purity reads
+    `call.Arguments[idx]` against `callableParams`; a receiver outside `Arguments` shifts every
+    index and silently disables effect bounds. Trait methods use `methodArgumentAt`; UFCS
+    desugars the receiver into `Arguments`. Prefer the desugar.
 
-   **A by-name set consulted where the enclosing scope is the question is the same bug,
-   and it fails silently in both directions.** Two instances, both 09/10, both from one
-   afternoon's raylib work and neither reported by any pass:
+11. **A desugaring can rebind a parameter.** `desugarClauses` turns multi-clause functions
+    into `match (p0, p1)`, and a clause may rename a parameter; `addMatchAliases` maps arm
+    bindings back to positions. Fix at the produced construct; distrust name-keyed analysis
+    downstream of binding rewrites.
 
-   - **`l.locals` decided a desugared UFCS callee.** A method name is resolved against the
-     *receiver's* type, so `data.data()` on a parameter named `data` is `std.ffi`'s free
-     function; the typechecker rewrites the call to `data(data)` and the backend then found
-     the parameter in `l.locals` and lowered a call through a `[]u8`. Ask
-     `TypeTable.Callee` first (`calleeIsDeclared`) — a genuine local closure has no entry,
-     which is what tells the two apart.
-   - **`captures.globalNames` decided a free variable.** It is every top-level name in the
-     program, subtracted from each lambda's reads with no notion of what the *enclosing*
-     lambda binds — so a closure over a parameter whose name any top-level declaration
-     happened to share carried no slot for it, and the backend lowered the read as a
-     reference to that declaration. `bindings/raylib`'s `draw_text_ex` passed the `tint`
-     **function** where a `Color` belonged. `analyzer.outer` is the enclosing binders, and
-     a global is subtracted only where nothing shadows it.
+12. **A box's `drop_fn` may free the box it runs on** (via a cycle dropping the last weak
+    ref). Strong owners hold **one implicit weak reference**, taken in `lyra_rc_alloc` and
+    dropped after the glue returns. Do not "simplify" to a `weak == 0` test — ASan-confirmed
+    double free.
 
-   **The second one needed a *sibling file of the same module* to declare the name**, which
-   is why four rounds of reduction failed and the diagnosis in todo.md was a confident,
-   wrong story about aarch64 register exhaustion. When a reduction keeps failing, that is
-   evidence about the *scope* of the cause: stop reducing and instrument. One `Fprintf` in
-   the argument loop, naming the expression and its lowered type, answered it in a minute.
+13. **A bound-dispatched call is resolved in two places; ask both.** The typechecker resolves
+    abstractly and publishes one candidate per implementing type. Use `candidateKey` for the
+    lookup (the table uses the typechecker's spelling, not module-prefixed
+    `recordedType(...).String()`) and `methodParams` for borrow modes (the resolution table
+    has no entry). A method reached *only* through a bound: `Specializations()` includes
+    bound candidates, and `methodSignature` falls back to the trait's signature.
+    - **Wrong-scope resolution disappears in a one-module program** — the backend suite
+      prepends `module main` for that reason. **A pass checking a body outside
+      `checkInModule` must install the module scope itself**; test it where the prelude is
+      real.
 
-    **Allocation is context-determined, and the flavor rides the expected type.** A
-    construction leaf has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed
-    depending on what it is used *as* — and the context's flavor reaches it through
-    `propagateExpectedType`, the **one** walk that pushes a context type down onto a value:
-    literal width and `shared` flavor together, from every context site (an annotated
-    binding, a declared return, an argument, a reassignment, a struct field, a data
-    payload, an array element). It used to be two walks called pairwise per context
-    (`propagateLiteralType` + `propagateAllocation`), and the pairing is what drifted: the
-    argument context got the width call without the flavor one — the struct passed *by
-    value* to a callee expecting a box pointer, a segfault on macOS and on Linux the
-    typed-pointer error `'@take' defined with type 'i64 ({…}*)*' but expected
-    'i64 (%Node)*'` (08/26) — and the flavor walk received only a pre-extracted *modifier*,
-    so an array's element flavor (`[]shared Node`) needed a side channel through the
-    recorded type, a nested `[][]shared T` failed the build, and a construction reassigned
-    to a `shared` var panicked the compiler. Merged 08/27 (COMPLETED.md): a new context is
-    one `propagateExpectedType` call that cannot take one half without the other, and any
-    position the recursion reaches — an element, a `match`/`if` arm, a nested container —
-    carries the flavor of the expected type at that position.
+14. **A diagnostic with no Location appears on every file** (`diagnosticsFor` keeps
+    location-less diagnostics as program-level). Set a new node's span; check the node you
+    report against has one.
 
-10. **A pass that indexes a call's arguments positionally is one AST shape away from
-    being silently wrong.** Purity reads `call.Arguments[idx]` against the *declaration's*
-    parameter at `idx` (`callableParams`), so any call form whose receiver sits outside
-    `Arguments` shifts every index by one — and a function-typed argument satisfies the
-    wrong function-typed parameter without complaint, so a declared effect bound simply
-    stops being enforced with nothing reported. Trait methods pay this with
-    `methodArgumentAt`; UFCS avoids it by desugaring the receiver *into* `Arguments` before
-    any later pass runs. Prefer the desugar.
+15. **A diverging operand lowers to a nil, and every consumer must stop.** `panic` is
+    `never` and fits anywhere; test with `diverged(v, block)`. llir accepts the nil and dies at
+    `m.String()`. `coerceAggregateElem` rejects a nil with rule 5's loud error.
 
-11. **A desugaring can rebind a parameter, so a later pass must not assume a body refers
-    to one by its declared name.** `desugarClauses` turns a multi-clause function into
-    `match (p0, p1) { … }`, and a clause is free to name a parameter something else. When
-    `callableParams` knew only the declared names, a call through the rename resolved to
-    nothing and took the unresolved-callee default (`AllEffects`) — and it *worked* whenever
-    a clause happened to reuse the declared name, so correctness was contingent on a
-    coincidence of spelling, which review cannot see. `addMatchAliases` maps arm bindings
-    back to the parameter position they destructure. Fix such a thing at the construct the
-    desugaring *produces*, and be suspicious of any name-keyed analysis downstream of a pass
-    that rewrites bindings.
+16. **A comment is a named node.** Comments are `extras` and can sit inside any list, so
+    `IsNamed()` does not mean "element" — use `cst.IsComment` in every list collector.
 
-12. **A box's `drop_fn` may free the box it is running on.** `lyra_rc_release` decrements
-    strong, runs the payload's drop glue, then decides whether to free — and that glue is
-    arbitrary user code which, through a cycle, can drop the last **weak** reference to the
-    same box. `lyra_rc_weak_release` then frees the memory and the outer release frees it
-    again. The strong owners therefore hold **one implicit weak reference**, taken in
-    `lyra_rc_alloc` and dropped after the glue returns, so the count cannot reach zero
-    mid-drop; Rust's `Arc` does the same, for the same reason. Do not "simplify" that back
-    into a `weak == 0` test — it reads as equivalent and is an ASan-confirmed double free.
+17. **A builtin returning an owned managed value** must be named in
+    `calleeIsOwningBuiltin` (the unresolved default treats a result as borrowed → leak) and
+    lower **branchlessly** (a merge block defeats `flushStmtTemps`). `read_line` is the model;
+    `<=>` is branchless for the same reason.
 
-13. **A bound-dispatched call is resolved in two places, and both must be asked.** The
-    typechecker resolves it *abstractly* — the receiver is a type variable there — and
-    publishes one concrete candidate per implementing type; only a specialization names a
-    function. Two faults came of forgetting the second half, and neither was diagnosable:
-    reading borrow modes from the **resolution** table (which a bound call has no entry
-    in) passed a `mut` receiver by value into a method expecting a pointer, a wild load
-    rather than a mismatch; and looking a candidate up by `recordedType(...).String()`
-    asked under the *instantiated* name — module-prefixed — while the table is keyed in
-    the typechecker's spelling. Use `candidateKey` for the lookup and `methodParams` for
-    the modes.
+18. **A value-range fact is only as good as the pass's knowledge of every write — and the
+    backend drops traps on it** (`res.RangeSafety` in `arrays.go`, `arithmetic.go`). A stale
+    interval is a missing trap in safe code.
+    - A name whose address is taken with `&mut` is never tracked in that function
+      (`tracked`), flow-insensitively.
+    - `resolveConstantInt` folds only a binding that cannot change (`!CanMutateInterior()`).
+    - **Adding a way to write a binding**: the range pass must model it or untrack the name,
+      and constant folding must not treat the binding as fixed.
 
-    **The third half is a method reached *only* through a bound**, and it was a leak that
-    became a use-after-free: `MethodTable.Specializations()` walked resolutions and not
-    bound candidates, so such a method got no ownership table and lowered with no retains,
-    and the ownership pass read neither a bound call's result mode nor its parameters'. Both
-    now ask — `Specializations()` includes the candidates, and `methodSignature` falls back
-    from the resolution to the declaring trait's signature (09/13).
+## Feature implementation notes
 
-    **The module header is what makes the second one visible**, which is why it survived:
-    every reproduction small enough to paste has no `module` line, and every real program
-    has one. When a bug's trigger is a header, snippet-sized testing is structurally
-    blind to it — the backend suite prepends `module main` for exactly this reason.
+Semantics are in `LANGUAGE.md`; these are the compiler-side traps.
 
-    **The general shape is a name resolved from the wrong scope, and its tell is that the
-    bug disappears in a one-module program.** A second instance, 08/26: trait default
-    bodies are checked by a *setup* pass, before the per-statement loop that installs each
-    statement's module scope — so `tc.scope` was the **global** scope, which holds only
-    what modules export, and a bare reference to the module's own top-level name resolved
-    to nothing. With no prelude the global scope happens to hold the program's own
-    declarations, so it worked in every small reproduction *and* in the typechecker's own
-    test harness, which has no prelude. The rule that follows: **a pass that checks a body
-    outside `checkInModule` must install the module scope itself**, and a test for one
-    belongs where the prelude is real.
+**Documentation comments**
+- `ast.Doc` (`pkg/ast/doc.go`): body, `Summary`, classified `Sections`. `NewDoc` returns nil
+  for an empty comment.
+- Docs attach to declarations: field docs are `TypeDeclStmt.MemberDocs` (`MemberDoc(name)`),
+  never `types.StructField`. A new documentable declaration gets a Doc field on its AST node.
+- Attachment is `ctx.DocFor(node)` (`collector_ctx/docs.go`); top-level stamping is
+  `walkProgram`'s `attachDoc`. `DocFor` absorbs two CST quirks: an extra before a node's first
+  token attaches to the enclosing node, and a separator (`|`) may sit between doc and node
+  (`IncludingTheFirst` tests in `collector/tests/doc_comment_test.go`).
+- `lyra-W017` is `ctx.ReportStrayDocs`, a post-pass; claims keyed by start byte, reset per
+  file (`ctx.ResetDocs`).
+- `collector/tests/prelude_docs_test.go` is the coverage guard (every prelude declaration
+  documented, `# Panics` exactly on trapping functions). `lyrac check` exits 0 on W017.
 
-14. **A diagnostic with no Location is not merely imprecise — it appears on every file.**
-    `diagnosticsFor` keeps a location-less diagnostic deliberately, on the grounds that it
-    is program-level and has nowhere else to go (a missing `main`), so a *per-node* warning
-    whose node has a zero Location attaches itself to whatever the user is compiling. Two
-    warnings on prelude loops showed up on a file with no loop in it, which is how the
-    missing `Location` on `ForInLoopExpr` was found — it had never had one. When adding a
-    node, set its span; when adding a diagnostic, check that the node you report against
-    has one.
+**Operator dispatch**
+- Comparisons are the compiler's: `Eq`/`Ord` found by `@builtin(Eq)`/`@builtin(Ord)`, with
+  candidate impls filtered by resolved *declaration*. `(_==_)` is `lyra-E039`.
+- Arithmetic/bitwise dispatch keys on the **method name**; inert operators warn `lyra-W015`.
+- "Primitive" is the receiver **unstripped** (stripping first makes scalar newtypes
+  operator-dead). Overflow builtins on a newtype are `lyra-E043`.
+- Resolution is `resolveTraitMethodNamed`, shared with `.method()` calls. Purity charges
+  operators via `operatorImplEffect`.
 
-15. **A diverging operand hands back a nil, and every consumer must stop.** `panic(msg)`
-    has type `never`, so the typechecker accepts it anywhere — a struct field's value, an
-    array element, a call argument. Lowering it terminates the block and returns a **nil**
-    value; `diverged(v, block)` is the test, and a consumer that skips it builds an
-    instruction around the nil.
+**Supertraits**
+- Obligation `lyra-E040` in `checkTraitImpl`. Use: `closeOverSupertraits`
+  (`typechecker_trait_dispatch.go`), a transitive closure at the **two writers** of
+  `tc.genericBounds` — `pushGenericBounds` and `checkTraitImpl`. A new reader is correct for
+  free; a new writer must close too.
+- Cycle-safe by a visited set (a DAG assumption hangs the editor). The backend needs nothing.
+- A bodiless trait: `declarations/trait_decl.go` reads the body with `cst.Field` + nil check,
+  not `MustField` (which would drop the trait → `unknown trait` at every impl).
+- `std/prelude/math.lyra` ships `Add`/`Sub`/`Mul`/`Div`/`Arithmetic` impls for all numeric
+  widths so bounds are satisfiable.
 
-    llir accepts that operand when the instruction is built and dies at **module
-    serialization**, so the stack trace is one frame in the emitter at `m.String()`, naming
-    neither the expression nor the pass. Thirteen sites consume such a value; **four had the
-    guard and nine did not**, and the four were exactly those a bug report had once landed
-    on — which is the shape to expect from a protocol enforced by convention rather than by
-    a type. `coerceAggregateElem` is the funnel for the aggregate half and now rejects a nil
-    with rule 5's loud error naming the expression, so a site added later fails legibly
-    instead of at serialization.
+**Trait default methods**
+- `Self` is `types.GenericType{"Self"}` bounded by the trait; checked once
+  (`checkTraitDefaultMethods`), monomorphized per implementer via `SetBoundCandidates` and
+  `Resolution.Bindings`.
+- **`ast.TraitMethod.DefaultImpl()` is the one instance** — many caches key on its pointer.
+- Dispatch tries the impl's clauses first, then the default.
+- `publishDefaultBodyCandidates` publishes the body's inner bound calls at the concrete
+  receiver.
+- An unsatisfied bound in a default body advises a supertrait (`reportUnboundTypeParameter`);
+  its test applies the advice and compiles.
+- `checkOneDefaultMethod` → `moduleScopeOf` installs the module scope (rule 13). A generic
+  call there records `callee<t=Self>`; `closeInstantiations` seeds from
+  `MethodTable.Specializations()`.
+- Deep-copying defaults into impls was rejected: no cloner exists, and a missed case is a
+  silently shared subtree.
 
-16. **A comment is a *named* node, so `child.IsNamed()` does not mean "an element".**
-    All three comment kinds are grammar `extras`, free to sit between any two tokens —
-    including inside a comma-separated list, which is ordinary formatting in a multi-line
-    call. Every list collector told an element from a comma by asking `IsNamed()`, so seven
-    of them collected the comment as an element: a nil `ast.Expression`, which is rule 3's
-    typed nil. `f(1, /*a comment*/ 2)` was reported as *"expected 2 argument(s), got 3"* and
-    `[1, /*a comment*/ 2]` type-checked clean and died in the backend. `for … in` was worse
-    than either — it assigned the iterable from any named child, so a comment **overwrote**
-    it with nil. Use `cst.IsComment`; blocks had survived by discarding nil *statements*,
-    which is the symptom rather than the cause and does not generalize to an expression list.
+**Raw pointers** (`typechecker_pointers.go`, `backend/llvm/pointers.go`)
+- `lyra-E011` runs in `driver.go`; its unsafe-call half and `requireUnsafeBuiltin`
+  (`p.offset(n)`, needs the receiver's type) are in the typechecker.
+- `&mut` on a captured binding is `lyra-E024` via `checker/captured_assignment.go`.
+- Mutability is two checks: `requireMutableRoot` (reuses `checkLValueAssignment`'s rule) and
+  the pointer's `IsMut` in `checkDerefWrite`.
+- **`UnsafeBlockExpr.Body` is a pointer** — by value, the scope table's key would be a copy.
+- `^mut T` → `^T` is assignable (`isAssignable`); `TypesEqual` still distinguishes them.
+- `offset` lowers to `getelementptr` on the pointee type.
+- **`nullptr`**: `NullPtrExpr.GetType` is the `untyped_nullptr` placeholder (a
+  `PrimitiveType` name, not a new type kind); the context pins it in `propagateExpected`, and
+  the backend reads the TypeTable — clang 15's typed pointers make `i8* null` ≠ `i64* null`.
+  `lyra-E069` is a sweep at the end of `checkRange` (`checkUnpinnedNullPtrs`). `lyra-E070` is
+  in the collector.
+- **Pointer `==` keys on the Lyra type** (`isRawPointerExpr`) — a `shared` aggregate is also
+  an LLVM pointer and compares by value (`TestExec_SharedAggregateEquality`, `TestExec_NullPtr`).
 
-17. **A builtin returning an owned managed value needs two things the defaults get wrong.**
-    `read_line` is the model: the ownership pass must know it owns its result
-    (`calleeIsOwningBuiltin`, which must name **every** such builtin — `program_arg` was
-    missing until 09/13 and every `program_args()` leaked a string per argument), because the unresolved-callee default treats a *result* as
-    borrowed and that direction leaks rather than being leak-safe; and its call site must
-    lower **branchlessly**, because a branching one returns a merge block, which is neither
-    case `flushStmtTemps` handles — it released the string before the `match` consuming it.
-    `<=>` is lowered branchlessly for the same reason.
+**Lazy sequences** (`typechecker_yield.go`, `seqElementType`, `backend/llvm/seq_lower.go`,
+`seq_coro.go`)
+- `Seq<t>` is `typechecker.SeqTypeName`. A consumed producer is inlined at its consumer.
+- `mentionsSeq` is the skip: such functions are never declared/specialized;
+  `lowerFunctionCallExpr` inlines first. A `Seq` reaching `lowerType` is `errSeqNotLowered`.
+- Every inlined body runs in a `seqEnv`; anything a body's lowering depends on beyond the
+  shared frame/temp stacks belongs there (`pendingBase`).
+- `emitReturn` honours `inlineRet`; nothing else may emit `ret`.
+- A consumer's `loopCtx` carries the consumer's depths.
+- A sequence *value* is a coroutine: a `shared` box with `lyra_seq_drop` glue and a
+  `{ i1 has, t value }` promise via `llvm.coro.promise`. Bodies are emitted after everything
+  else (`defineSeqCoroutines`). `yieldValueTo` picks inline vs suspend. Managed parameters
+  are retained and framed. `CheckCoroutineSupport` gates clang < 15 — any new consumer of
+  emitted IR must ask it.
+- **Pass a drop function to the release shim as `i8*`**, never the `*ir.Func` (Linux
+  typed-pointer error).
 
-18. **A fact about a variable's value is only as good as the pass's knowledge of every write
-    to it — and the backend drops runtime checks on those facts.** The value-range pass
-    proves an index in bounds, an add non-overflowing or a divisor non-zero, and
-    `res.RangeSafety` then removes the trap outright (`arrays.go`, `arithmetic.go`). So a
-    stale interval is not a wrong warning; it is a **missing trap in safe code**.
+**`let … else` (`lyra-E074`)** — `checker.CheckLetElseDiverges`, after typechecking (reads
+`never`). The backend check in `lowerElseDestructuring` stays (rule 5). `lowerIf` seals an
+unreached merge with `unreachable`, as `matchMerge.value` does; if front and back end
+disagree, the front end must stay the more permissive. `CheckUseAfterMove.letElse` and
+`CheckMustRelease.letElse` rely on it (payload in the enclosing scope, else unreachable).
 
-    Until 09/11 the pass did not know `&mut` existed. After `set(&mut i, 7)` it still
-    believed `i == 0`, and `xs[i]` read past the array, `x + 10` wrapped a u8 and `10 / d`
-    divided by zero, in programs whose only `unsafe` was the call doing the write. A name
-    whose address is taken with `&mut` is now **never tracked in that function**
-    (`tracked`, the one read of a stored interval), and flow-insensitively on purpose:
-    `let p = &mut i; i = 0; p^ = 7` re-establishes `i == 0` after any site-local havoc,
-    and the write through `p` stays invisible.
+**Leading `-`/`(`/`[` (`lyra-W023`, `lyra-W024`)** — `checker.CheckLeadingMinusContinuation`.
+Fires only when the previous statement is a discarded pure value (`discardedValue`, a short
+list defaulting to silence). The negation is found on the **left spine**. A parenthesized
+single expression is erased from the AST, so `(` is detected by **column** (statement span
+starts one before its expression).
 
-    **`resolveConstantInt` had the same shape one pass over.** It folded *any* binding to
-    its initializer, so `var i = 5; i = 0; xs[i]` was refused as "index 5 out of range" — a
-    hard error on a correct program — and a tuple index through a `var` was typed by the
-    initializer whatever the binding had become. Only a binding that cannot change folds
-    (`!CanMutateInterior()`): a `var` can be reassigned, and a `let mut` can be written
-    through `&mut`.
+**`@must_release` (`lyra-W022`)** — `checker.CheckMustRelease`, `must_release_test.go`.
+- The attribute argument is an `identifier`, resolved from the **type declaration's**
+  location; discharge is matched against the resolved declaration, name as fallback. An
+  unrecognized call shape never manufactures a warning.
+- Branch join is **intersection** (use-after-move's is union).
+- Unwrapping: `match`/`if let`/destructuring share `arm` over an `unwrapper`; `let … else` is
+  handled like a `VarDeclStmt`. `beginUnwrap` also treats an obligation-producing scrutinee
+  expression. A payload is seeded only when the pattern binds exactly one name.
+- Views, not handovers: a named binding's unwrapped payload; field/element/deref reads
+  (`isStoredPlaceRead`, looking through a one-expression `unsafe` block); `MemberExpr`/
+  `IndexExpr`/`TupleIndexExpr` over a name. A temporary scrutinee's payload *is* the handle.
+- **Escape is the default** — no list of construction kinds (rule 8).
+- An under-reporting pass is silent when broken: keep must-fire tests (`assertLeaks`) and check
+  against real programs using `bindings/raylib`.
 
-    **When adding a way to write a binding** — a new assignment form, a new pointer
-    operation, a callback that receives an out-parameter — check both: the range pass must
-    either model it or untrack the name, and constant folding must not treat the binding as
-    fixed.
+**Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 
-## Documentation comments
+**Sweeping for surfaces nothing reads** — to find AST fields no pass consumes, enumerate
+exported `pkg/ast` fields and grep for readers **outside `pkg/ast`, `pkg/printer` (reads all
+by reflection) and tests**. The AST is rarely where phantoms live; check effect tables
+(`builtinEffects`), glue switches and grammar rules with no collector consumer.
 
-`///` documents the declaration below it, `//!` the module the file belongs to. The
-language-level rules are in the workspace `CLAUDE.md`; what matters inside this project:
-
-- **`ast.Doc`** (`pkg/ast/doc.go`) holds the Markdown body, the first-paragraph
-  `Summary`, and the `#`-heading `Sections` with `# Examples`/`# Panics`/`# Errors`
-  classified. `NewDoc` returns **nil** for an empty comment, so "documented with
-  nothing" is not a state any consumer has to handle.
-- **Docs attach to declarations, not to types.** A struct field's doc is in
-  `TypeDeclStmt.MemberDocs` (read it through `MemberDoc(name)`), never in
-  `types.StructField` — `pkg/types` knows nothing about documentation. If you add a
-  documentable declaration, the Doc field goes on the AST node.
-- **Attachment is `ctx.DocFor(node)`** (`collector_ctx/docs.go`), one helper for every
-  site, because a doc comment is an `extra` and so is a *sibling* of what it documents
-  at whatever level of the tree that lives. Top-level declarations are stamped in
-  `walkProgram`'s `attachDoc` — that loop *is* the set of top-level declarations, so
-  "only a top-level binding is documentable" holds with no per-site test.
-- **Two CST placement rules `DocFor` absorbs**, both of which fail by documenting every
-  member except one: an extra before a node's first token attaches to the *enclosing* node
-  (so the first method in a `trait`/`impl` body sits one level up), and a separator token
-  may sit between the doc and its node (the `|` of the leading-bar `data` style). Pinned by
-  the `IncludingTheFirst` tests in `pkg/analyzer/collector/tests/doc_comment_test.go`.
-- **A doc that attaches to nothing is `lyra-W017`**, reported by `ctx.ReportStrayDocs`
-  as a post-pass over the file's tree — after the walk, because whether a `///` was
-  claimed is only knowable once every collector that might have claimed it has run. The
-  claim set is keyed by start byte and reset per file (`ctx.ResetDocs`).
-- **A request handler's prologue is `handler.go`'s**: `defer recoverHandler(name, &result,
-  &retErr)` for the panic guard, `h.docFor(uri)` for the analysis and source under one lock,
-  and `h.cursorAt(uri, pos)` for those plus the cursor already converted into
-  ast.Location's terms. Thirteen handlers spelled those twenty lines out. The guard is the
-  one to be careful with: an LSP server must not die on a single bad request, and
-  `recover()` reports a panic only when called *by the deferred function itself* — so
-  wrapping `recoverHandler` in a closure silently disables it. `TestRecoverHandler_*` is
-  what notices.
-- **Every position-based feature starts at `findExprAtPos`** (`hover.go`), and
-  `definition.go`'s `scopeInExpr` is its twin for scopes. `findExprAtPos` **no longer
-  switches on node kinds** — it walks with `ast.WalkStmt`/`ast.WalkExpr` and keeps the
-  narrowest span containing the position — so only the twin can now fall behind, and a
-  kind missing from it means the expression is found and its name resolved in the wrong
-  scope. It deliberately does **not** prune at a node failing to contain the position: a
-  node with an unset `Location` (hazard 14) would otherwise take its whole subtree out of
-  reach.
-- **LSP hover** renders the doc under the type (`cmd/lyra-lsp/hoverdoc.go`).
-  `resolveDoc` mirrors `resolveDefinition` case for case; keep them in step, or hover
-  shows one symbol's docs above another symbol's type. **A typeless expression may still
-  be documented** and `Hover` must not bail on the type alone: the method name of a UFCS
-  call is a callee `desugarUFCSCall` synthesized, so it has no recorded type — and that is
-  the spelling the whole standard library is written for. That position renders the doc
-  with no signature block.
-- **The prelude is the coverage guard**
-  (`pkg/analyzer/collector/tests/prelude_docs_test.go`): it collects the real
-  `std/prelude` as the multi-file module it is and asserts every declaration and member is
-  documented, that `# Panics` sections sit on exactly the functions that trap, and that the
-  module doc joins across files. `lyrac check` alone will *not* catch a detached doc —
-  W017 is a warning, so the exit code stays 0.
-
-## Operators that dispatch
-
-Three groups, and which one an operator is in is a design decision rather than an
-implementation state:
-
-- **The comparisons are the compiler's.** `==`/`!=` are structural, overridden by the
-  prelude's `Eq`; `<`/`<=`/`>`/`>=`/`<=>` all derive from `Ord::compare`. A `(_==_)`
-  method name is refused (`lyra-E039`), because a second mechanism would be a coherence
-  question with no answer and declaring them one at a time is how `<` comes to disagree
-  with `<=>`. Both traits are found by **`@builtin(Ord)`/`@builtin(Eq)`**, not by the
-  spelling, and dispatch filters candidate impls by the resolved *declaration* — filtering
-  by name is what let a user's own `trait Ord` be taken for the prelude's.
-- **Arithmetic and bitwise are the author's.** `+ - * / % << >> & | ~`, prefix `-` and `~`,
-  and the compound assignments dispatch to a trait method named for the operator — keyed on
-  the **method name**, with the trait whatever the author declared. `+` on a matrix and `+`
-  on a duration share no invariant, so nothing is bought by insisting they come from one
-  trait; two traits providing one operator for one type is an ambiguity reported at the
-  operator. An operand that is a **type parameter** resolves through a `where` bound, the
-  same abstract dispatch a bound `.method()` call takes.
-- **The rest are inert, each for its own reason**, and the warning says which
-  (`lyra-W015`): `&&`/`||` cannot short-circuit through a call, `!` is boolean negation,
-  `**` is a spelling with no operator, the suffix forms name operators that do not exist.
-
-Two rules hold across all of it. **A primitive is never routed through an impl** — `1 + 1`
-is a machine add whatever a program declares — where "primitive" is the receiver
-**unstripped**: a newtype over a scalar is not the scalar, so `impl Add for Cents`
-dispatches while `impl Add for i64` stays inert. (Stripping first makes a scalar newtype
-operator-dead from both sides, silently. Beside it, the overflow-arithmetic builtins are
-refused on a newtype receiver, `lyra-E043`: they are the operators' escape hatches, so the
-method fallback must not hand out what the operator rule withholds.) And the resolution is
-`resolveTraitMethodNamed`, the *same* function the identifier path uses with a full
-`MethodName` key, so an operator and a `.method()` call cannot come to disagree about
-generic impls or `where` bounds. An operator is a call, so the purity ladders charge it as
-one (`operatorImplEffect`), which both of them reach through the shared `inference`.
-
-## Supertraits
-
-`trait B: A` means both halves:
-
-- **The obligation** (`lyra-E040`, `checkTraitImpl`): `impl B for T` requires an
-  `impl A for T`. Declaration order does not matter — the impls are gathered up front.
-- **The use** (`closeOverSupertraits` in `typechecker_trait_dispatch.go`): a `where t: B`
-  bound reaches `A`'s methods, and satisfies a callee's `where u: A`.
-
-The second is a **transitive closure taken where a bound set enters scope**, not a rule
-each consumer applies. Four sites read `tc.genericBounds` — bound dispatch, the
-generic-argument check, operator overloading, the `Show` desugar — and expanding at the
-two write sites (`pushGenericBounds` for a binding, `checkTraitImpl` for an impl) is what
-keeps them from needing to agree about anything. **If you add a fifth reader, it is already
-correct; if you add a third writer, it is not.** Those two writers are twins: a bound that
-reaches `A`'s methods when written on a binding and not when written on an impl means
-different things depending on where it is written.
-
-Two properties worth not breaking. The closure is **cycle-safe by a visited set** —
-`trait A: B` alongside `trait B: A` is legal, meaning the two are always implemented
-together, which is precisely what E040 then requires of every implementer; assuming a DAG
-hangs the typechecker, which presents as a frozen editor. And the **backend needs nothing**:
-dispatch publishes candidates for the trait that *declares* the method, so a supertrait
-call resolves to that trait's impls like any other.
-
-**An umbrella trait** — `trait Arithmetic: Add + Sub + Mul + Div`, with or without a `{}` —
-needs a trait body to be optional, braces and all. The collector reads the field with
-`cst.Field` + a nil check rather than `MustField` (`declarations/trait_decl.go`): an absent
-list is an empty method list, **not** a dropped declaration. `MustField` returns nil, which
-would erase the trait and then report `unknown trait` at every impl of it — a diagnostic
-pointing everywhere except at the declaration.
-
-**The prelude ships `Add`/`Sub`/`Mul`/`Div` and the `Arithmetic` umbrella**
-(`std/prelude/math.lyra`), with impls for all ten integer widths and three float widths.
-They exist so a **bound** can be satisfied, not so a call can dispatch — without them
-`where t: Arithmetic` is undemandable of a number, and every generic numeric function is
-unwritable. `impl Add for f64 { (_+_) = (self, o) => self + o }` is not recursion, by the
-primitive rule above.
-
-## Trait default methods
-
-A trait method may carry a body an impl inherits by writing nothing and overrides by
-writing a clause. **`Self` is a type variable in that body** — `types.GenericType{"Self"}`,
-bounded by the declaring trait — so it is checked once (`checkTraitDefaultMethods`) and
-monomorphized per implementing type, which is what a generic function already is. The
-backend needed nothing: `dispatchViaGenericBound` types the body's calls,
-`SetBoundCandidates` publishes one concrete impl per implementing type, and `recordedType`
-substitutes `Resolution.Bindings` at each specialization.
-
-The name is unforgeable — a type variable is lowercase by lexer rule, so no program can
-declare one called `Self`.
-
-Five things to know before touching it:
-
-- **`ast.TraitMethod.DefaultImpl()` is the one instance**, cached on the AST rather than
-  per pass. Dispatch, the MethodTable, the purity fixpoint, the ownership table and the
-  backend's emitted-method cache all key on the pointer, so a second instance means the
-  body is emitted once per call site. One per trait *method*, not per impl — the impl is
-  what `SpecKey` varies over.
-- **Dispatch tries the impl's own clauses first**, and falls back to the default only when
-  they match nothing. That is what makes an override an override rather than an ambiguity.
-- **The body's inner bound calls need publishing at the concrete receiver**
-  (`publishDefaultBodyCandidates`). Without it the body type-checks — the bound is
-  abstract — and then cannot be lowered, because the candidate table would hold only what
-  `boundCandidatesByType` keys by the impl's *declared* target.
-- **An unsatisfied bound in a default body is told to use a supertrait**, not a `where`
-  clause (`reportUnboundTypeParameter`). `Self` is a type variable no program declares and a
-  trait method has no `where` clause to constrain it on, so `trait B: A` is the only
-  spelling that exists — the old message advised `where Self: A` and sent a reader looking
-  for syntax the language does not have. A test **takes the advice** and checks the program
-  then compiles, which is the only way to know a diagnostic's fix is real rather than
-  plausible; one asserting the wording alone would have passed for as long as the message
-  was wrong.
-- **It is checked by a setup pass, so it must install the module scope itself**
-  (`checkOneDefaultMethod` → `moduleScopeOf`). The per-statement loop wraps each top-level
-  statement in `checkInModule`; this pass runs before that loop, so `tc.scope` is the
-  *global* scope, which holds only what modules export. Without it a bare reference to the
-  declaring module's own top-level name resolved to nothing — **silently**, since the
-  "undefined function" arm is guarded by a visibility check that answers *found but private*
-  for a name the global scope cannot see — and the program failed three passes later with
-  `llvm: call to unknown function`. Any setup pass that checks a body has this obligation.
-  And a **generic call** in that body records `callee<t=Self>`, a template, which
-  `closeInstantiations` composes only because it seeds from `MethodTable.Specializations()`
-  as well as from the instantiation table.
-
-The alternative considered and rejected was deep-copying the default clause into every
-impl that lacks it. That needs a full expression/statement cloner this compiler does not
-have, and a missing case in one is a silently *shared* subtree — hazard 8 with a
-miscompile at the end of it.
-
-## Raw pointers
-
-`&x`/`&mut x`, `p^`, `p^ = v` and `unsafe { … }` (`typechecker_pointers.go`,
-`backend/llvm/pointers.go`). The language-level rules are in the workspace `CLAUDE.md`;
-inside this project, three things:
-
-- **`lyra-E011` is wired in again** (`driver.go`). Its policy — a raw-pointer op or a call
-  to an `unsafe` function needs an enclosing `unsafe` block or function, and unsafe-ness
-  does not leak across a lambda boundary — was written and tested throughout but *not run*
-  between 08/13 and 08/18, because the block it recommended was itself an unknown
-  expression.
-- **`&mut` on a *captured* binding is `lyra-E024`**, the same check that refuses assigning
-  to one (`checker/captured_assignment.go`). It is the same write with the store one call
-  further out, so it shares the code rather than minting one — only the message differs,
-  since the usual cause is an out-parameter taken inside a lending closure and the fix is to
-  move the call out of it. Three spellings were covered and the fourth was not, which cost
-  a real bug in `bindings/raylib/files.lyra` (09/10).
-- **Mutability is two checks, deliberately.** `requireMutableRoot` reuses the binding rule
-  `checkLValueAssignment` applies, so a `&mut` cannot outrun the assignment rule; the
-  pointer's own `IsMut` is what `checkDerefWrite` tests. Neither implies the other.
-- **`UnsafeBlockExpr.Body` is a pointer**, and that is load-bearing rather than a style
-  choice: stored by value the collector's `Body: *body` kept a *copy*, whose address
-  differed from the node the scope table was keyed on, so every binding declared inside an
-  `unsafe` block resolved nowhere. Invisible while the block was refused before anything
-  looked inside it.
-- **`^mut T` is assignable to `^T` and not the reverse** (`isAssignable`), while
-  `TypesEqual` keeps telling them apart — the same split the effect-bound rule draws, and
-  for the same reason: identity is a different question from what may be passed. The
-  pointee stays invariant. The downgrade is *real*, so writing through a binding annotated
-  `^T` is still lyra-E061 whatever the pointer came from.
-- **`p.offset(n)` is a builtin method, and its unsafe-context check is in the
-  typechecker** — `requireUnsafeBuiltin`, beside `requireUnsafeCall` and for the same
-  reason: the question needs the **receiver's type**. `p.offset(n)` and `xs.offset(n)` are
-  the same three tokens, so the syntactic pass could only refuse both or neither. It
-  lowers to a `getelementptr` with the pointee's type, so "in elements" is what LLVM
-  already means and no scaling is written by hand.
-- **`nullptr` is an untyped literal, so the *pointee* is a recorded fact, not a node
-  property** (`typechecker/nullptr.go`, `backend/llvm/pointers.go`). `NullPtrExpr.GetType`
-  is the `untyped_nullptr` placeholder and the backend never reads it: a context pins the
-  pointer type in `propagateExpected` and the backend takes it from the TypeTable, because
-  clang 15 still uses **typed** pointers and `i8* null` is a different constant from
-  `i64* null`. Modelled as a `PrimitiveType` name rather than a new type *kind*, which is
-  what keeps rule 8's tax at zero — no switch over composite types gained a case.
-- **`lyra-E069` is a sweep, not a per-site check** (`checkUnpinnedNullPtrs`, run at the end
-  of `checkRange`). Every other untyped literal has a default, so each site can settle its
-  own leaf; a `nullptr` is settled by whichever of several contexts happens to reach it,
-  and no single site knows whether another already did. Only once the statement is finished
-  does "unpinned" mean what it says.
-- **Pointer `==` is keyed on the Lyra type, never the LLVM one** (`isRawPointerExpr`). A
-  `shared` aggregate is *also* an LLVM pointer — to its box — and compares by value, so
-  keying the address arm on `left.Type()` turned every `shared` equality into an address
-  comparison and two boxes with equal payloads answered false.
-  `TestExec_SharedAggregateEquality` is what caught it, which is the argument for keeping
-  both it and `TestExec_NullPtr`.
-- **`lyra-E070` is in the collector because the grammar cannot hold it.** tree-sitter lexes
-  against the tokens valid in the current parse state, so `nullptr` in *name* position is an
-  ordinary identifier and `let nullptr = 5` parses. The same context-sensitivity
-  deliberately keeps `let type = 5` and `let extern = 5` legal — the difference is that
-  those leave a binding that can still be read, and this one leaves one that cannot, since
-  every later mention lexes as the literal.
-
-## Lazy sequences
-
-`Seq<t>` is compiler-known by name (`typechecker.SeqTypeName`) and declared nowhere; the
-typechecker rung is `typechecker_yield.go` plus `seqElementType`, one function every
-consumer shares. **The backend never represents one** (`backend/llvm/seq_lower.go`): a
-producer is lowered at its consumer, with each `yield` becoming the consumer's body, and
-a terminal is an inlined call. Four things to know before touching it:
-
-- **`mentionsSeq` is the skip.** A function that is a `gen`, or names a `Seq` in its
-  signature, is never declared, defined or specialized; `lowerFunctionCallExpr` inlines a
-  call to one before the specialization and overload tables are consulted. A `Seq<t>`
-  reaching `lowerType` anyway — a field, an element — is `errSeqNotLowered`.
-- **Every body runs in a `seqEnv`**, and anything a body's lowering depends on that is
-  not the shared frame and temporary *stacks* belongs in it. `pendingBase` was the
-  omission that bit: a body flushing from another statement's base frees that
-  statement's temporaries.
-- **`emitReturn` honours `inlineRet`** — a `return` inside an inlined body stores and
-  branches rather than `ret`s, releasing only the frames above the inline's base — so
-  `?` inside a terminal would take the same path. Nothing else may emit a `ret`.
-- **A consumer's `loopCtx` carries the consumer's depths**, so its `break` releases
-  what the producer had live; the producer's own loops sit above it while its body
-  lowers, which is what keeps `take`'s `break` aimed at the producer it consumes.
-- **A sequence *value* is an LLVM coroutine** (`seq_coro.go`): a box around the handle,
-  managed as a `shared` box with `lyra_seq_drop` as its glue, and a `{ i1 has, t value }`
-  promise the consumer reads through `llvm.coro.promise`. Coroutine bodies are queued
-  and emitted after every other function (`defineSeqCoroutines`), never re-entrantly.
-  `yieldValueTo` picks the form: a handler means inline, none inside a coroutine means
-  suspend. A managed parameter is retained on entry and framed, because the frame
-  outlives the call. `CheckCoroutineSupport` refuses a compiler that cannot split one
-  (older than LLVM 15) — `lyrac` errors by name, the harness's `compileCached` skips,
-  and a third consumer of emitted IR must ask it too.
-- **Pass a drop function to the release shim as an `i8*`**, never as the `*ir.Func`: the
-  shim's parameter is `i8*`, opaque pointers hide the mismatch on macOS, and the Linux
-  container reports it as a function-type error. `lyra_seq_drop` was the instance.
-
-## Sweeping for surfaces nothing reads
-
-Features that parse, collect, and are consumed by nobody look implemented and do nothing,
-which costs more than an absent feature does. Known instances, all now closed: `wallClock`, a binding's `where` bounds,
-`@derive`, operator-named trait methods, trait default methods.
-
-The sweep that finds the AST half: enumerate every exported field of every struct in
-`pkg/ast`, then grep for a reader **outside `pkg/ast`, outside `pkg/printer`, and outside
-tests**. Excluding the printer is the part that matters — it reads every field by
-reflection, so it makes everything look consumed. Excluding the declaring package matters
-too, or a field read only by its own accessors (`SymbolTable.Traits`) reports as dead.
-
-A full run over 119 fields found 2 genuine phantoms. The conclusion worth keeping is that
-the AST surface is *not* where this problem lives — the phantoms were in effect tables
-(`builtinEffects`), in glue switches missing a case, and in grammar rules with no collector
-consumer. Those need their own sweeps, and a field-level one will not find them.
+**Module exports are per file** — a name overloaded only in a later file of a multi-file
+module was already exported bare; `exportToGlobal` lets a set supersede a global binding
+that is one of its members. The prelude branch discards duplicate-definition errors, so test
+such changes on a user module.
 
 ## Package map
 
 | Package | What it is | Depth |
 |---|---|---|
-| `pkg/parser` | CGO wrapper around tree-sitter; `Parse(source) (*sitter.Tree, error)` | — |
-| `pkg/cst` | CST accessors — `cst.Field`, the one way to read a grammar field | below |
-| `pkg/ast` | AST node definitions; `AstNode` / `Named` / `Statement` / `Expression` / `Pattern` | — |
-| `pkg/ast/symbols` | `SymbolTable` + the `Scope` tree; per-module name resolution | [README](pkg/ast/symbols/README.md) |
-| `pkg/types` | The `Type` interface and every implementation; allocation flavors | [README](pkg/types/README.md) |
-| `pkg/typetable` | `ast.Expression` → resolved type; the method/instantiation tables | below |
+| `pkg/parser` | CGO wrapper around tree-sitter; `Parse(source)` | — |
+| `pkg/cst` | CST accessors | below |
+| `pkg/ast` | AST nodes | below |
+| `pkg/ast/symbols` | `SymbolTable` + `Scope` tree; per-module resolution | [README](pkg/ast/symbols/README.md) |
+| `pkg/types` | `Type` and implementations; allocation flavors | [README](pkg/types/README.md) |
+| `pkg/typetable` | expression → type; method/instantiation tables | below |
 | `pkg/analyzer/collector` | CST → `*ast.Program` + `*SymbolTable` | [README](pkg/analyzer/collector/README.md) |
-| `pkg/analyzer/checker` | Standalone AST passes — purity, effects, use-after-move, value ranges | [README](pkg/analyzer/checker/README.md) |
-| `pkg/analyzer/typechecker` | Inference and checking; generics; trait dispatch | [README](pkg/analyzer/typechecker/README.md) |
-| `pkg/analyzer/captures` | Each lambda's free variables, for the closure environment | [README](pkg/analyzer/captures/README.md) |
-| `pkg/analyzer/ownership` | Where the backend must retain/release; Perceus | [README](pkg/analyzer/ownership/README.md) |
-| `pkg/modules` | Import resolution (a module is a file *or* a directory), namespacing, the implicit prelude | [README](pkg/modules/README.md) |
-| `pkg/driver` | The one reusable front-end pipeline | below |
-| `pkg/abi` | C calling conventions: how an aggregate crosses, per target | below |
-| `pkg/backend/llvm` | The LLVM IR backend | [README](pkg/backend/llvm/README.md) |
-| `pkg/docgen` | AST → per-module documentation; the Markdown renderer | below |
-| `pkg/printer` | Reflection-based AST printer, for golden tests | — |
-| `cmd/lyra-lsp` | LSP server over stdio | below |
-| `cmd/lyrac` | Compiler CLI (`check` / `build` / `run` / `doc`) | below |
+| `pkg/analyzer/checker` | Standalone passes — purity, effects, use-after-move, value ranges | [README](pkg/analyzer/checker/README.md) |
+| `pkg/analyzer/typechecker` | Inference, checking, generics, trait dispatch | [README](pkg/analyzer/typechecker/README.md) |
+| `pkg/analyzer/captures` | Lambda free variables | [README](pkg/analyzer/captures/README.md) |
+| `pkg/analyzer/ownership` | Retain/release placement; Perceus | [README](pkg/analyzer/ownership/README.md) |
+| `pkg/modules` | Import resolution, namespacing, implicit prelude | [README](pkg/modules/README.md) |
+| `pkg/driver` | The reusable front-end pipeline | below |
+| `pkg/abi` | C calling conventions per target | below |
+| `pkg/backend` | `Backend` interface; FFI notes | [FFI.md](pkg/backend/FFI.md) |
+| `pkg/backend/llvm` | LLVM IR backend | [README](pkg/backend/llvm/README.md) |
+| `pkg/docgen` | AST → per-module docs; Markdown renderer | below |
+| `pkg/printer` | Reflection AST printer for golden tests | below |
+| `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
+| `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, raylib, jpeg) | [README](bindings/README.md) |
 
-### `pkg/cst`
+**`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
+semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
+Benchmark with `pkg/driver`'s `BenchmarkAnalyze_*`.
 
-`cst.Field(node, "name")` is **the** way to read a grammar field, and the collector uses
-nothing else. It answers exactly what `node.ChildByFieldName` did, nil included — so the
-nil-node hazard (rule 2) is unchanged — but resolves the field name to a grammar id once
-instead of allocating a C string, calling into C and freeing it on every lookup.
+**`pkg/ast`** — `AstNode` (`GetLocation()`), `Named`, and `Statement`/`Expression`/`Pattern`.
+Nodes embed `AstBase` with a 1-based `Location`. Files by kind (`expr_math.go`,
+`stmt_for_loop.go`, `decl_trait.go`).
 
-That matters more than it reads: `ChildByFieldName` was **~26% of all samples** in an
-analysis run, because the collector asks at nearly every node, and the cached id made the
-whole pipeline **~25% faster** end to end. Measure with `pkg/driver`'s `BenchmarkAnalyze_*`,
-which run the real pipeline over the real prelude — the LSP re-runs all of it on every
-keystroke, so this is per-keystroke cost.
+**`pkg/typetable`**
+- `TypeTable`: `Set`/`Get`. `SetCallee`/`Callee` (`calleetable.go`) records only
+  receiver-overloaded calls — read it first, then fall back.
+- `MethodTable`: call → `*ast.TraitMethodImpl`; nil-receiver-safe `Get`. `SetBound`/`GetBound`
+  record abstract bound dispatch (`BoundMethodRef`); purity joins over all impls.
+- `SetBuiltinMethod(call, allocates)`: read by purity's body walk.
+- `SetBoundCandidates`: one resolution per implementing type; the backend picks by
+  substituted receiver. **Impl matching stays in the typechecker.** Unsatisfied bound is
+  `lyra-E036` at the instantiation.
+- `Resolution.SpecKey()` names a specialization (symbol, method cache, ownership table).
 
-### `pkg/ast`
+**`pkg/driver`** — `driver.Analyze(source)` / `AnalyzeUnits(units)`: parse → collect →
+`checker.Check*` → `typechecker.Check` → `captures.Analyze` → `checker.CheckPurity` →
+`ownership.Analyze`, returning `Result{Program, SymbolTable, ScopeTable, TypeTable,
+MethodTable, Ownership, Captures, RangeSafety, Diagnostics}` with all errors as
+`[]diagnostic.Diagnostic` (CST positions converted to 1-based). `HasErrors()`/`Errors()`.
+- A check whose answer depends on the *settled* type (after propagation) reads the TypeTable
+  post-typecheck and lives here (e.g. `CheckArrayRepeatAliasing`, `lyra-W019`).
+- **The generic instantiation set is closed before per-specialization ownership runs**
+  (`instantiations.go`); otherwise composed specializations get the generic ownership table
+  and a `t = string` body emits no retains/releases.
+- **An instantiation carries its request site**: lowering enters the generic's module, but
+  type arguments resolve from the site — `lookupNamedType` falls back to the site's key after
+  the current module's. Composed specializations take the outer site.
+- `driver.ResolveEntryPoint(res)` (`entrypoint.go`): top-level `let main`, zero parameters,
+  returning `u8` or void. Build-time only, not part of `Analyze`.
 
-All AST node definitions. Key interfaces: `AstNode` (`node()`, `GetLocation()`), `Named`
-(adds `GetName()`), and the supertypes `Statement`, `Expression`, `Pattern` — every node
-implements one. All concrete nodes embed `AstBase`, which holds a 1-based `Location`
-(`Pretty()` formats a compact `line:col`). Files are organized by node kind:
-`expr_math.go`, `stmt_for_loop.go`, `decl_trait.go`.
+**`pkg/backend`** — `backend.Backend{Name(); Emit(res, entry)}`, called only on error-free
+analysis. `backend/llvm/tui.go` is the **only** `runtime.GOOS` consumer (`TIOCGWINSZ`), sound
+because `lyrac` compiles for its host.
 
-### `pkg/typetable`
+**`pkg/abi`** — `Classify(target, aggregate, isReturn)` for AAPCS64 and SysV AMD64.
+`abi_diff_test.go` checks against clang (19 shapes × 3 targets). AAPCS64 register-passes an
+HFA of any size and has asymmetric param/return widths; SysV can change arity, so
+classification reaches call lowering. `DetectTarget(cc)` / `HostTarget()`. **Windows is
+`Unknown`** — refused at the crossing, never guessed.
 
-- `TypeTable` — `ast.Expression` → resolved `types.Type`. Populated by the typechecker;
-  read by later passes. `Set(expr, typ)` / `Get(expr)`.
-- `MethodTable` — a `*ast.FunctionCallExpr` resolved to a trait-impl method → the matched
-  `*ast.TraitMethodImpl`. Populated during dispatch; read by the purity checker so it does
-  not re-derive dispatch. `Get` is nil-receiver-safe, so a caller with no typechecker pass
-  can pass `nil`.
-- `TypeTable.SetCallee`/`Callee` (`calleetable.go`) is the same arrangement one rung down,
-  for **receiver-keyed overloading**. Only overloaded calls are recorded — every other
-  callee still resolves by lookup, and a second answer to a settled question can disagree —
-  so a consumer reads this first and falls back.
-- A second map on `MethodTable` records **abstract bound dispatch** (a call on a bare type
-  parameter resolved through a `where` bound): `SetBound`/`GetBound` associate the call with
-  a `BoundMethodRef{Trait, Method}`. There is no single concrete impl, so the purity checker
-  joins over all impls of that trait method.
-- `SetBuiltinMethod(call, allocates)` records what a builtin method resolved to, because
-  only the typechecker still has the receiver's type. The purity pass's one body walk
-  reads it, for inference and enforcement alike.
-- `SetBoundCandidates` is how a bound-dispatched call **lowers**: the typechecker publishes
-  one resolution per implementing type and the backend picks by the receiver's substituted
-  type. **Impl matching stays in the typechecker** — a second copy in codegen is exactly the
-  drift `Resolution` exists to prevent. An unsatisfied bound is `lyra-E036`, reported at the
-  *instantiation*, the only point where the question has an answer.
+**`pkg/docgen`** — `Collect(res, opts) []Module` + `RenderMarkdown(m)`; the model knows nothing
+of Markdown.
+- Pages group by receiver (`pageSections`, `Module.Partition`): types/traits, impls, free
+  functions, `## Methods on \`T\``, values. Group on `types.HeadName`, display `typeName`
+  (not the same string); borrow modifiers are not part of a group.
+- **Signatures are re-rendered from the AST in source syntax** — never sliced from source or
+  via `Type.GetName()`. Member names use `ast.MethodName.Key()`. Guard:
+  `TestSignature_RoundTripsThroughTheParser` (covers `Decl.Signature`; trait `Members` need
+  their own).
+- Doc bodies are heading-shifted before embedding; `ast.ShiftHeadings` and
+  `ast.TagBareFences` share `ast.walkDocLines`, the single fence tracker.
 
-### `pkg/driver`
-
-The single reusable entry point to the whole front-end. `driver.Analyze(source []byte)
-*Result` runs parse → collect → the standalone `checker.Check*` passes → `typechecker.Check`
-→ `captures.Analyze` → `checker.CheckPurity` → `ownership.Analyze` and returns a
-`Result{Program, SymbolTable, ScopeTable, TypeTable, MethodTable, Ownership, Captures,
-RangeSafety, Diagnostics}`. Every pass's errors are normalized to
-`[]diagnostic.Diagnostic` (CST parse errors converted from tree-sitter's 0-based positions
-to 1-based `ast.Location`). `Result.HasErrors()` / `Result.Errors()` filter by severity.
-This is where a backend, or any tool needing a typed program, starts.
-
-**A post-typecheck pass may be there for the *settled* type, not only for the MethodTable.**
-`checker.CheckArrayRepeatAliasing` (lyra-W019) is the clearest case: under a `[][]rune`
-annotation the inner `[' '; WIDTH]` *infers* as a fixed `[WIDTH]rune`, which is copied per
-slot, and only propagation widens it to the `[]rune` that every slot then shares — so a
-check written inside inference would clear the exact program it exists for. When a check's
-answer depends on what the backend will lower rather than on what inference first said, it
-reads the `TypeTable` and lives here.
-
-One ordering is load-bearing rather than incidental: **the generic instantiation set is
-closed before the per-specialization ownership pass runs** (`instantiations.go`). A generic
-body calling another generic records a *template* — bindings written in the enclosing body's
-own type variables — and composing those into real specializations is what lets
-`unwrap<t> = expect(self, …)` compile. Doing it later would leave the discovered
-specializations with no ownership table of their own, falling back to the program-wide one;
-that table is analyzed generically, where a type variable is not reference-counted, so a
-`t = string` body would emit neither retains nor releases.
-`typetable.Resolution.SpecKey()` is the one name for a specialization, shared by the symbol,
-the emitted-method cache and that table.
-
-**An instantiation carries the *site* it was requested from**, and that is a second module
-rather than a detail. Lowering a specialization enters the **generic function's** module, so
-the names in its own signature resolve; a **type argument** comes from the caller, and a
-private declaration is keyed `<module>::<name>` — so one location cannot answer both, and
-`Some(card).unwrap_or(x)` on a private `struct Card` failed as `unknown named type`.
-`lookupNamedType` falls back to the site's key, *after* the current module's, so it can only
-turn an error into a success. When a generic calls a generic the composed specialization
-takes the **outer** instantiation's site, since that is where the substituted bindings were
-resolved.
-
-`driver.AnalyzeUnits(units)` is the multi-module form, with `Analyze` as its single-unit
-case; both user-facing tools go through it, since both resolve an import graph first.
-`Analyze` remains for a caller with a snippet and no file — a test, or an unsaved editor
-buffer — and its units carry no file, which is why the LSP's per-file filtering treats an
-empty file name as "this one".
-
-`driver.ResolveEntryPoint(res)` (`entrypoint.go`) finds and validates the entry function: a
-top-level `let main` that is a zero-parameter function returning `u8` (the process exit
-code) or `void`/no annotation. `u8`, not a wider int — the OS truncates an exit code to its
-low 8 bits regardless (even C's `return 300` exits 44), so a wider return type only adds the
-silent-truncation surprise Lyra rejects elsewhere. It is a **build-time** requirement, so it
-is intentionally not part of `Analyze` — only `lyrac build` calls it.
-
-### `pkg/backend`
-
-The seam between the front-end and code generation. `backend.Backend` is the interface a
-code generator implements: `Name() string` and `Emit(res *driver.Result, entry
-*driver.EntryPoint) ([]byte, error)`. `Emit` is called only after analysis is error-free and
-the entry point resolves, so an implementation may assume a well-typed program.
-
-`pkg/backend/llvm/tui.go` is **the only file that consults `runtime.GOOS`**, for one
-constant (`TIOCGWINSZ` differs between the targets), and it is sound only because `lyrac`
-compiles for its own host. The other terminal builtins avoid the question by going through
-`cfmakeraw`, so `struct termios`'s genuinely-different layout is never indexed, only carried.
-
-### `pkg/abi`
-
-`Classify(target, aggregate, isReturn)` answers how a struct crosses the C boundary:
-AAPCS64 and System V AMD64, the two conventions this project's three platforms use.
-
-**Nothing in it is inferred from first principles.** `abi_diff_test.go` compiles each shape
-with clang and demands the package agree — a differential test rather than a table, because
-a table records what clang did the day someone looked, while this keeps holding when a
-clang release legitimately changes its mind. 19 shapes × 3 targets, parameter and return
-each; the shapes are every aggregate raylib passes by value plus every branch of both
-classifiers.
-
-Two facts worth carrying, both read off clang rather than reasoned to: AAPCS64 passes an
-HFA in float registers **however large it is** (`{double×3}` is 24 bytes and still
-register-passed, where a 24-byte integer struct is memory), and its parameter/return widths
-are **asymmetric** — `{u8,u8}` is passed as an `i64` and returned as an `i16`. SysV's
-per-eightbyte rule changes the *arity*, which is why classification reaches call lowering
-and not declarations alone.
-
-`DetectTarget(cc)` asks the C compiler; `HostTarget()` is the GOARCH-derived default.
-**Windows is deliberately `Unknown`** — its x64 convention is neither of these, so calling
-it SysV would emit exactly the silently-wrong code this package exists to prevent. An
-unknown target is a refusal at the crossing, never a guess.
-
-### `pkg/docgen`
-
-`Collect(res, opts) []Module` builds the documentation model; `RenderMarkdown(m) []byte`
-renders one module as a Starlight page. Backing `lyrac doc`.
-
-The split is the design: nothing about Markdown reaches the model, so a terminal `go doc`
-view or a JSON dump is a new renderer beside this one rather than a second walk of the AST
-that can disagree with it about what a module contains.
-
-**A page is organised by receiver, not alphabetically** (`pageSections`,
-`Module.Partition`): types and traits first, then impls, then free functions, then one
-section per `self` type — `## Methods on \`Maybe<t>\`` — and values last. That follows the
-language rather than decorating it: with UFCS there is no separate method declaration, so
-`self` is the only thing that says `trim` belongs to `string`. It also resolves
-receiver-keyed overloads, which used to render as two adjacent `### unwrap_or` headings with
-nothing to tell them apart.
-
-Grouping keys on `types.HeadName` and displays `typeName` — **not the same string**:
-HeadName is an identity never shown to a user, answering `boolean` for `bool` and `[]` for a
-dynamic array. The borrow modifier is not part of a group either, or a type's methods would
-split in two by whether each mutates. A generic receiver heads as nothing and stays a free
-function, exactly as it cannot be an overload.
-
-Two rules hold here and are easy to break:
-
-- **Signatures are re-rendered from the AST, in source syntax.** Not sliced from the source
-  text — a declaration's span runs to the end of its *body* — and not `Type.GetName()`,
-  which is the diagnostic spelling. The page is read as the code to write, so a name on it
-  the parser rejects is a broken promise: `DynamicArray<string>`/`[]string`,
-  `boolean`/`bool`, `AnonymousTuple(a, b)`/`(a, b)`, and `ParameterizedType.GetName()`
-  returning `Maybe` for `Maybe<t>` — a type that exists and is the wrong one.
-  **The rule reaches members too**: a method's name on a page is `ast.MethodName.Key()`,
-  never `GetName()`, which is the bare `Value` and erases *kind* — prefix `-` and binary `-`
-  both render as `-` although they are different methods.
-  **`TestSignature_RoundTripsThroughTheParser` is the guard that matters**: every generated
-  signature is fed back through the parser, which is what caught `(mut self: Rng)` — the
-  modifier binds to the type, after the colon — a spelling that looks entirely plausible on
-  a page and does not compile. It covers `Decl.Signature`; a trait's `Members` need their
-  own test.
-- **A doc body is shifted before it is embedded.** A doc comment is written standalone, so
-  its `# Panics` is an h1; nested under a declaration that breaks the outline and every
-  table of contents built from it. `ast.ShiftHeadings` and `ast.TagBareFences` both go
-  through `ast.walkDocLines`, the single fence tracker, so no consumer can come to a
-  different conclusion about whether a `#` line is a heading or a comment inside an example.
-
-### `pkg/printer`
-
-Reflection-based AST printer used only in tests. `printer.PrintAST(program)` walks exported
-struct fields; zero/nil/empty values are omitted. `printer.NewPrinter().Print(node)`
-pretty-prints a raw tree-sitter CST node (useful for debugging).
-
-### `cmd/lyra-lsp`
-
-LSP server over stdio (`github.com/owenrumney/go-lsp`). On every `didOpen`/`didChange`:
-apply incremental edits to an in-memory doc store; resolve the document's **import graph**
-and run `driver.AnalyzeUnits` over the whole unit set (`units.go`), persisting the returned
-`docAnalysis` for hover/definition/etc.; map this document's diagnostics to LSP and publish.
-
-**The server analyzes a program, not a buffer** (`analyzeDocument`, `units.go`). Analyzing
-the single open file is not a smaller version of the real thing but a *different program*:
-it has no prelude, so `Maybe`, `Some`, `Ok` and every other standard-library name is
-undefined in the editor on files `lyrac check` compiles cleanly. Roots and prelude selection
-come from `modules.DefaultRoots`/`DefaultOptions`, so the server and `lyrac` cannot disagree
-about where the standard library is.
-
-Two things follow from being an editor rather than a compiler, and both are load-bearing:
-
-- **The buffer is not the file.** Every open document is passed to the resolver as an
-  `Options.Overlay`, so analysis sees unsaved text — including a file that has never been
-  saved and has no on-disk content to read.
-- **Only this document's half of the result may be used.** `diagnosticsFor` filters
-  diagnostics by file (one naming none is kept — it is program-level and has nowhere else to
-  go) and `docProgram` narrows the AST to this file's top-level statements. Every
-  position-based handler walks that narrowed program: a line and column alone do not say
-  which file they came from, so the prelude's line 40 would otherwise answer a request about
-  the user's line 40. For the same reason a definition resolving into another file is
-  returned against *that* file's URI (`locationIn`), and a rename whose declaration lives in
-  another file is declined rather than applied at those coordinates in this buffer.
-
-**Per keystroke the server re-resolves and re-analyzes the whole import graph**, and that —
-not the user's file — is the cost. Measured on a small file with the standard prelude: 20.1 ms
-total, of which the edited file is 0.09 ms. The other 99% is 11 prelude files that cannot have
-changed.
-
-Two caches address the half of that which is cacheable, and both are keyed on *content*:
-
-- **`modules.Options.ParseCache`** (opt-in; the Handler owns one, `lyrac` passes nil) reuses a
-  file's syntax tree when its bytes are unchanged — Resolve 8.4 ms → 1.7 ms. Keyed on bytes
-  rather than path or mtime because the file is read either way and only the parse is skipped,
-  so a stale tree is unreachable: a git checkout under a running server misses instead of
-  serving the old parse.
-- **`position.go`'s line index** makes a byte-column → UTF-16 conversion a slice read instead
-  of a scan from the top of the file. A Range costs two conversions, so this was O(N·L) —
-  93 ms for 2000 conversions over 5000 lines, now 0.18 ms.
-
-The line index is keyed on the source's **data pointer and length, not its contents**: string
-equality falls through to `runtime.memequal` over the whole text, which on a large file cost
-more than the scan it replaced (94% of the profile). Equal pointer and length means the same
-bytes, so a hit is sound; equal contents in distinct storage misses and pays one rebuild.
-
-- **`driver.CollectCache`** (opt-in; the Handler owns one, `lyrac` passes nil) reuses the
-  *collection* of every unit but the last — collection is ~75% of analysis and folds all 12
-  units into one Program and SymbolTable every time. End to end: **19.9 ms → 4.9 ms per
-  keystroke**.
-
-Reuse is by **clone, not restore**: `SymbolTable.Clone` copies the table's own state and the
-master is never mutated, so each keystroke starts from a fresh copy. A copy has to be right
-once; an undo has to be right every time, and a slightly wrong undo is analysis that drifts as
-a session runs. `TestClone_MentionsEverySymbolTableField` parses the clone's literal and fails
-if a field is added without being copied — a shared field leaks between keystrokes and is
-reported nowhere.
-
-**The AST is shared, and that is checked rather than assumed.** It cannot be copied —
-ScopeTable, TypeTable and MethodTable are all keyed by AST pointer — and it *is* mutated after
-collection: `desugarClauses` replaces a multi-clause body with a match and clears the clauses.
-What makes sharing safe is that re-analyzing one collected AST is idempotent, which
-`TestZZDiff`-style re-analysis over the real prelude establishes directly. Note the shape of
-that finding: reading the code said "blocker", and the code reading was right about the
-mutation and wrong about its consequence.
-
-The snapshot's key covers the prelude path and the **import graph** as well as the prefix's
-bytes, because `SetPreludeModule` and `SetImports` are applied before the first file is walked
-and both change how a declaration is keyed. Editing an `import` line invalidates the snapshot,
-which is correct: it changes how every name in the program resolves.
-
-A file's **imports** are extracted once at load and cached beside its tree (`Unit.Imports`),
-because two passes want them — resolution follows them, the driver builds the import graph
-from them — and each used to walk the CST for itself.
-
-- **`typechecker.Snapshot`** carries the typechecking of that same prefix, in the same cache
-  and under the same key — two caches keyed identically are two chances to invalidate one and
-  not the other. It holds the four output tables and the error list and nothing else: `Check`
-  is four whole-program setup passes and then a per-statement loop, the setup is under 1% and
-  re-runs, and the loop is where the ~1.0 ms goes. The prefix can be skipped because the
-  prelude cannot see user code.
-
-Per keystroke, end to end: **17.3 ms with no cache, 2.68 ms with all of them.**
-
-`Finish` is 3% of a cached run, worth recording because it was predicted to be the bottleneck
-and was not — the import-graph rebuild was, and it was duplicated work rather than analysis.
-What is left is purity, ownership and shadowing, each whole-program, with no duplicated work
-and no CGO in the path.
-
-Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
-
-### `cmd/lyrac`
-
-Compiler CLI, built on `pkg/driver`. `lyrac check <file>` (parse + typecheck, exit 1 on any
-error), `lyrac build <file>` (check, resolve the entry point, hand the typed program to the
-backend, link an executable), `lyrac run <file>` (build into a temp directory and execute)
-and `lyrac doc <file>` (render the module's documentation as Markdown). Diagnostics print as
-`path:line:col: severity[code]: message`, the `line:col` omitted for a program-level error
-with no location.
-
-`build` emits IR to a temp file and links with `clang <ir> -lm -o <exe>`, so the default
-artifact is `<name>` beside the source, not `<name>.ll`. The `-lm` is unconditional,
-matching what the backend's behavioural tests compile with.
-
-```bash
-lyrac build prog.lyra                        # -> ./prog, no IR left behind
-lyrac build -o build/prog prog.lyra          # executable elsewhere
-lyrac build --keep-ll prog.lyra              # executable *and* prog.ll
-lyrac build --keep-ll -o build/prog prog.lyra # -> build/prog and build/prog.ll
-lyrac build --emit-llvm prog.lyra            # prog.ll only; the one build needing no C compiler
-lyrac build --emit-llvm -o out.ll prog.lyra  # the IR, where you said
-lyrac build -O0 prog.lyra                    # optimization level; default -O2
-lyrac build --cc /path/to/clang …            # else $LYRA_CC, else clang on PATH
-```
-
-**`-o` reaches the IR, and one rule covers both modes** (`llPath`): the `.ll` is written
-**beside the executable `-o` names**, and under `--emit-llvm` — which links no executable
-at all — `-o` names the `.ll` itself. Until 09/11 it reached neither: `--emit-llvm -o
-out.ll` wrote the IR beside the *source* and then reported `out.ll` as the executable its
-hint would build, and `--keep-ll -o build/prog` split the two artifacts between `build/`
-and the source tree, which that flag's own help already promised it would not. Writing
-somewhere other than where the flag said is the outcome `run` refuses these flags outright
-to avoid, so `build` should not do it quietly.
-
-**The default is `-O2`, not clang's `-O0`**, because this compiler does not face the usual
-tradeoff: it emits **no debug info at any level**, so shipping unoptimized buys no
-debuggability — only build time. `-O0` costs about 3x on ordinary code for roughly 50 ms of
-extra link time on a 2000-line module, and the whole backend suite passes at `-O1`, `-O2`,
-`-O3` and `-Os`. The level is matched loosely (`-O` plus anything) and passed through
-unexamined, so an unknown one is clang's error to report in its own words rather than a
-staler copy of clang's list kept here. Both "compile it with" hints carry the level, or they
-would describe a different build than the one they stand in for.
-
-The compiler must accept a `.ll` as input, so plain `cc` is deliberately not a fallback —
-gcc would reject the IR with a confusing error instead of a clear one. When none is found
-the build fails (exit 1) but **writes `<name>.ll` next to the source anyway** and prints the
-`clang` line: that IR is all the user has to compile once they install one.
-
-**`--` ends lyrac's arguments and the rest are the program's**: `lyrac run prog.lyra --
---verbose input.txt`, reachable through `program_args()` with the program's own name at
-index 0 as in C. A separator is needed where `go run` manages without one, and the reason
-is `parseBuildArgs` accepting flags on **either side** of the source path: "everything
-after the file is the program's" would silently reclaim `lyrac run prog.lyra --cc clang`,
-which today means the compiler's. Taking arguments must not change what an existing
-command line means. `build` refuses them rather than dropping them, the call this parser
-already makes for `-o` under `run`.
-
-`run` is that same pipeline with every artifact in a temp directory
-(`buildOptions.ephemeral`), then `exec` with the child inheriting stdio. Two consequences to
-keep: **it prints no build summary** (so `lowerAndEmit` returns the executable's path and
-leaves reporting to its caller — `lyrac run prog.lyra | grep …` should see the program's
-output, not the compiler's), and **the program's exit status is the command's**, so an exit
-1 from a program is indistinguishable from a compile failure, the same trade `go run` makes.
-`ephemeral` also suppresses the missing-compiler `.ll` fallback, since the temp path it
-would name is deleted by the time the message is read. `-o`/`--emit-llvm`/`--keep-ll` are
-refused for `run` rather than ignored.
-
-`doc` renders one Markdown page per module into `-o` (default `./docs`), with Starlight
-frontmatter so it drops into `lyra-website/src/content/docs/reference/`. `--private`
-includes unexported declarations, `--deps` follows imports, `--prelude` adds the standard
-library (implies `--deps`), `--strict` exits non-zero on a gap. Four decisions in it, each
-of which had an obvious wrong answer:
-
-- **It refuses a program that does not type-check.** A signature is rendered from resolved
-  types, so documenting a broken program prints `?` where a type failed to resolve and
-  publishes it as though it were the API.
-- **An undocumented public declaration is listed anyway**, with its signature. Dropping it
-  makes the page silently misrepresent the module's surface. Coverage prints on *every* run.
-- **The prelude needs its own opt-in even under `--deps`**, or every project's docs contain
-  a copy of the standard library. It is still documented when it *is* the entry module.
-- **An impl's methods are not counted as gaps.** The contract lives on the trait; an impl
-  method's doc says what *this* implementation does differently, so having none is usually
-  correct rather than missing.
-
-The pages are `std-prelude.md`, not `std.prelude.md`: a site generator derives a URL slug
-from the file name and strips dots, so the dotted form publishes at `/reference/stdprelude/`.
-The page's title is still the real dotted path.
-
-Codegen is pre-release but no longer minimal — closures, generics, strings, arrays, `match`,
-traits, `?` and Perceus all lower; that package's README is the current inventory, and
-`todo.md` the gaps. A form that does not lower yet is a hard error, so a non-trivial `main`
-may still hit one rather than being lowered incorrectly. Build with `go build ./cmd/lyrac`.
+**`pkg/printer`** — `printer.PrintAST(program)` (omits zero/nil/empty);
+`printer.NewPrinter().Print(node)` dumps a CST node.
 
 ## Building
 
 ```bash
-./build.sh          # build/{lyrac,lyra-lsp} with std -> ../std
+./build.sh          # build/{lyrac,lyra-lsp}, with std -> ../std, bindings -> ../bindings
 ```
 
-The binaries go in `build/` with `std` beside them, because that is where `lyrac` looks for
-the standard library: the directory containing its own executable, or wherever `LYRA_STD`
-points. It is the beside-the-executable convention Rust, Zig and Go use for a sysroot, and
-building this way means the resolution path is exercised daily rather than only at release.
-
-Two details that are easy to get wrong and were:
-
-- **The root is the directory *containing* `std/`, not `std/` itself.** A module path
-  resolves beneath a root, so `std.prelude` is `<root>/std/prelude/`; returning the `std`
-  directory looked for `std/std/prelude` and silently found no prelude.
-- **`build/std` is a symlink, not a copy.** A copy drifts: you would edit
-  `std/prelude/maybe.lyra`, rebuild, and still get the old prelude. A real install would
-  copy; development must not.
-
-`stdRoot` resolves symlinks before taking the executable's directory, since `os.Executable`
-does not do so consistently (Linux reads the already-resolved `/proc/self/exe`; macOS can
-return the link's own path). Without it, a compiler symlinked onto `PATH` looks for the
-library beside the *link*.
-
-`build/` is gitignored as a directory rather than binary-by-binary, so a new command cannot
-land in the source tree unnoticed, and a stale compiler is one `rm -rf build` away. The VS
-Code extension's `lyra.languageServerPath` should point at `build/lyra-lsp`.
-
-The standard library's sources live in `std/` and are tracked. The prelude is `std/prelude/`,
-**one module across several files** — `std/prelude/README.md` documents the constraints on
-what may go in it and why the split is within a module rather than into several.
-Beside it: `std/collections/` (`HashMap<k, v>` and the `Hash` trait — the workspace
-`CLAUDE.md` has the rules), `std/json.lyra` (`parse_json` and its accessors — rules in the
-workspace `CLAUDE.md`), `std/math/`, `std/tui/`, `std/ffi.lyra` and `std/io.lyra`
-(`read_file`, over three libc externs), each an ordinary module a program imports by name.
+- `lyrac` finds the standard library beside its executable, or at `LYRA_STD`.
+- **The root is the directory containing `std/`** (rule 7); returning `std/` itself silently
+  finds no prelude.
+- **`build/std` is a symlink** — a copy drifts from edited prelude sources.
+- `stdRoot` resolves symlinks before taking the executable's directory (`os.Executable`
+  differs between Linux and macOS).
+- `build/` is gitignored as a directory. Point VS Code's `lyra.languageServerPath` at
+  `build/lyra-lsp`.
+- `std/prelude/` is one module across several files (constraints in
+  `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
+  `std/tui/`, `std/ffi.lyra`, `std/io.lyra`.
 
 ## Testing
-
-### Collector golden tests (`pkg/analyzer/collector/tests/`)
-
-```bash
-go test ./pkg/analyzer/collector/tests/...                  # run golden tests
-UPDATE_GOLDEN=1 go test ./pkg/analyzer/collector/tests/...  # regenerate .golden files
-```
-
-```go
-func TestSomething(t *testing.T) {
-    source := `let x = 42`
-    runGoldenTest(t, source, "golden_file_name")  // no extension
-}
-```
-
-Golden files live in `testdata/*.golden`. First run with a new file creates it and fails;
-re-run to confirm. The printer omits zero/nil/empty fields, so only populated fields appear.
-`parseAndCollect(t, source)` is the lower-level helper when you want `program` and `table`
-directly without a golden file.
-
-### Typechecker assertion tests (`pkg/analyzer/typechecker/tests/`)
-
-```go
-res := parseCollectAndCheck(t, source, false)
-assertNoErrors(t, res)
-// or
-assertErrorsAre(t, res, "expected error message 1", "expected error message 2")
-```
-
-`res` exposes `res.program`, `res.symTable`, `res.typeTable` and `res.errors`.
-
-### Backend behavioural tests (`pkg/backend/llvm/`)
-
-They compile emitted IR with clang and run it. Two things to know before touching them —
-the `sanitize_address` attribute (rule 6) and the binary cache that keeps the package at
-~2s warm. Both are explained in `pkg/backend/llvm/README.md`.
-
-**Run an ASan binary through `buildAndRunASan`/`buildAndRunASanWithPrelude`, never with a
-bare `exec.Command`.** The helpers take their environment from `asanOptions`, which turns
-**leak detection on wherever LeakSanitizer exists** — Linux, so CI and `./asan.sh` — and
-off on macOS, whose ASan runtime refuses it. A leak therefore fails the suite on Linux as a
-use-after-free does, and passes unseen on a Mac; a bare `exec.Command` inherits whatever the
-environment says, which is how three tests failed CI for two days while every developer run
-passed (09/11–09/13). `buildAndRunLSanWithPrelude` is for a test that exists to say a shape
-does not leak: it skips off Linux rather than passing vacuously.
-
-Linux runs go through the workspace's `./asan.sh`, worth doing before pushing memory-model
-work: Debian's older clang uses *typed pointers* and so rejects IR type mismatches that
-Apple clang's opaque pointers cannot even represent.
-
-### Running all tests
 
 ```bash
 go test ./...
 go test -run TestFunctionName ./pkg/...
+UPDATE_GOLDEN=1 go test ./pkg/analyzer/collector/tests/...   # regenerate goldens
 ```
 
-**A test file's *name* can silently exclude it.** Go applies an implicit build constraint
-from a filename's last underscore-separated segment when that segment is a GOOS or GOARCH,
-so `match_unreachable_arm_test.go` is ARM-only — on arm64 it is not compiled, and
-`go test ./...` prints `ok` with every test in it missing. The failure mode is the bad one:
-a test that never runs looks exactly like a test that passes. `arm`, `ios`, `js`, `plan9`,
-`android`, `wasm`, `mips`, `s390x` and `windows` are all plausible endings for a test about
-a *match arm*, a JS target, or Windows paths.
-
-`go list -f '{{.IgnoredGoFiles}}' ./...` names anything being skipped, and a non-empty
-answer on this repo is a bug — nothing here is meant to be platform-gated by filename. Worth
-running after adding a test file whose name ends in a word that could be a platform.
-
-## Foreign functions
-
-**Built, front to back**: an `extern` declares, type-checks, is charged effects, lowers to
-a `declare`, and `@link` reaches the link line. Four things about the shape of it, then
-the language rules:
-
-- **`ExternDeclStmt.Func()` is the body-less function an extern *is*.** Registered in
-  `SymbolTable.Functions`, so a call resolves, type-checks and is charged effects by the
-  machinery every other call goes through — the arrangement `TraitMethod.DefaultImpl()`
-  has, for the same reason. `LambdaExpr.IsExtern` marks it, because two passes must not
-  read it as an ordinary lambda that happens to be empty: the purity fixpoint would charge
-  no effect and call a foreign function *pure*, and the backend would emit a `define` with
-  no blocks.
-- **An extern's effects are its bound's** (`externEffects`), defaulting to `AllEffects` —
-  the same conservatism the unresolved-callee rule already encodes.
-- **`lyra-E011`'s "calling an unsafe function" half is in the typechecker**, not in the
-  syntactic pass that owns the raw-pointer half. That pass could only match the callee's
-  *name*, and a name does not identify a declaration (rule 9) — an `extern f` made every
-  `f(…)` in the prelude report as an unsafe call.
-- **An extern is private to its module and its symbol is global**, which are not in
-  tension — they are the two halves of one arrangement. There is no `pub extern`
-  (`declIsPublic` returns false for one), so two modules may each declare `strlen`, which
-  is what two libraries *using* `strlen` looks like; the backend keys `l.externs` by the C
-  symbol and emits one `declare`. What a module exports is the Lyra wrapper it puts over
-  an extern, which is the whole division of labour `std.ffi` rests on.
-
-**An extern names its parameters** (`lyra-E067`, 08/26): `(dest: ^mut u8, destLen: ^mut
-CULong, source: ^u8, sourceLen: CULong)`. The argument is that an extern is a *declaration*
-standing in for a C prototype, not a type — it substitutes for a `let`, and a `let` names its
-parameters — and the boundary is where a positional mistake links cleanly and computes
-garbage. The information exists in the header being transcribed, and was being pasted into a
-doc comment beside a signature that could not carry it. A plain function *type* is refused
-the other way, since a shape has no parameters to name; a **callback's own** signature is a
-type, so its parameters stay unnamed even inside an extern.
-
-**The name is documentation the compiler cannot check** — nothing compares it to the header,
-so a wrong name is as silent as none. What it buys is a transcription a reader can verify by
-eye, and `argument 2 (destLen)` where the numbered fallback said `argument 2 (arg1)`.
-
-**Integer widths at the boundary are Lyra's fixed ones**, with no C-shaped aliases: the
-compiler already hardcodes LP64 in three places — `layout.go`'s `pointerSize`, `clock.go`'s
-`struct timespec` as `[2 x i64]` (a C `long` written as `i64`, in a shipped builtin), and
-`i128`'s 16/16 ABI — so `extern` inherits that commitment rather than making it.
-`pointerSize` is where the assumption lives; everything else should reference it.
-
-| C | Lyra | C | Lyra |
-|---|---|---|---|
-| `char` | `i8` | `long`, `long long` | `i64` (`CLong` for `long`) |
-| `unsigned char` | `u8` | `unsigned long` | `u64` (`CULong`) |
-| `short` | `i16` | `size_t`, `uintptr_t` | `u64` |
-| `int` | `i32` | `float` | `f32` |
-| `unsigned int` | `u32` | `double` | `f64` |
-| `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
-| `NULL` | `nullptr` | `...` | `...` (extern only) |
-
-**`...` declares a C variadic** — `unsafe extern printf: (^u8, ...) -> i32` — and it is the
-only place the marker is legal (`lyra-E065`), because **Lyra has no variadic functions of
-its own**. Two features share the spelling and only one is needed: calling a C variadic
-requires nothing from the language, since every argument is known at the call site, while
-defining one would need an argument pack nothing else here would use.
-
-Three rules, of which the third is the reason the feature exists:
-
-- **The arity gains a floor, not a ceiling.** C needs the named parameters (they are how a
-  `va_list` starts), so `(...)` alone is refused and `...` must come last.
-- **A variadic argument is still FFI-safe or nothing.** `...` widens the arity, not the set
-  of types that cross.
-- **The compiler owes C's default argument promotions.** An integer narrower than `int`
-  widens to `int` — *signed by the Lyra type*, since an i16 and a u16 are the same `i16` in
-  the IR — and a `float` widens to `double`. `checkVariadicArguments` decides them and
-  publishes them (`TypeTable.VariadicPromotion`); the backend emits the sext/zext/fpext and
-  keeps no table of its own.
-
-Declaring one at **fixed arity** is what this replaces, and it was the worst failure the FFI
-had: it compiled, linked, and printed garbage, because Apple aarch64 passes variadic
-arguments on the stack while the fixed convention passes them in registers. Named arguments
-were fine; only those landing in the `...` part were wrong.
-
-**This makes the ABI right, not the call safe.** A format-string mismatch is undetectable
-without parsing format strings, which would be a second language embedded in this one;
-`unsafe` already covers that claim.
-
-`_Bool` is absent deliberately (`lyra-E063`): Lyra's `bool` is one bit and C's is a byte.
-So is a borrow modifier — `mut`/`ref` is Lyra's own by-reference passing, which at the
-boundary is either inert or an ABI mismatch. `long` is the one type that moves off LP64
-(Windows x64 is LLP64: 64-bit pointers, 32-bit `long`), which is what `CLong`/`CULong`
-exist to make a grep target rather than an audit.
-
-The design is **settled** in `todo.md` (Foreign functions — `extern`); the summary a reader
-needs before touching anything nearby:
-
-- **An extern carries `AllEffects` unless a bound is written, and writing one is `unsafe`.**
-  For Lyra code a bound is a promise the compiler checks; for an extern it is a promise the
-  compiler *records*, so the keyword marks the unverifiable claim. Declaring is safe;
-  narrowing is not. Calling one needs an `unsafe` block, which `lyra-E011` already covers.
-- **Only FFI-safe types cross**: the scalars, `^T`, `void`. `string`, `[]T`, closures,
-  tuples, `data` types and anything `shared` are refused at the signature, so there is no
-  implicit conversion and therefore no nul-termination policy to get wrong. `std.ffi`
-  supplies `s.cstring()` and `xs.data()` as ordinary Lyra.
-- **An aggregate with a C layout crosses by value** (09/09), classified per target by
-  `pkg/abi`. A struct, a union, a tuple and a fixed array all cross; a `data` type does
-  not, and E063's hint says why — its tag exists only in Lyra, so there is no C type for
-  those bytes to be. The front end admits an aggregate **unconditionally** and the backend
-  refuses on a target with no classifier, because `lyrac check` must not change its answer
-  according to which clang is installed.
-
-  `pkg/abi` decides *what* a struct becomes and `backend/llvm/abi_lower.go` emits it. The
-  split is deliberate: the decision is the part that fails silently, so it is made in one
-  place and validated against clang shape by shape (`abi_diff_test.go`, 19 shapes × 3
-  targets, parameter and return). **Only `extern` takes this path** — Lyra's own calling
-  convention is Lyra's, `declareFunctionAs` is untouched, and an extern with no aggregate
-  gets no plan. Coercion goes through memory (alloca, store, bitcast, load the parts)
-  because the bytes are being reinterpreted as registers, which LLVM cannot say about an
-  SSA value.
-
-  **`planExtern` must enter the extern's module** before resolving anything in its
-  signature — `declareExterns` walks from the top level, and without it a named type stays
-  unresolved, the classifier is skipped, and the declaration comes out as `%main__Big`. The
-  third instance of the rule below, and invisible without a `module` header.
-- **A callback crosses as a bare function pointer, and only a top-level function is one**
-  (08/26). A function type in an extern's *parameter* position is C's `int (*)(…)`, with
-  every type in its own signature checked by the same FFI-safe predicate; in *return*
-  position it is still refused, since a bare code address is not a Lyra closure and could
-  not be called. It works on a coincidence worth knowing: `declareFunctionAs` lowers a
-  function's parameters directly, with no environment word, so `@lyra.main.cmp(i8*, i8*)`
-  *is* the C signature. A closure is `{code, env}` and has no such word — `lyra-E066`
-  refuses one, including a **local binding that shadows a top-level function**, which the
-  backend would otherwise resolve by name to the wrong symbol. What a capture would have
-  carried travels through the callback's own `void *` context instead, as a `^u8`.
-  `pushExternSignature` is what makes `lowerType` read a function type as C's for the
-  duration of one declaration; the call site recognises the slot by its lowered type.
-- **Ownership never crosses.** Neither side adopts the other's buffer; both directions
-  would need the other to understand the rc header. A `^T` into a live array dangles at the
-  next `push`.
-- **A link requirement rides the module, or the extern that needs it** — `@link("m")` on
-  the `module` header or on the declaration, unioned across every module in the compile,
-  sorted and deduplicated, emitted as `-l` (`lyrac`'s `linkFlags`, which every "compile
-  with" hint prints too). Not a CLI flag (a module's requirement would not compose) and not
-  a manifest (this compiler has deliberately never had one). It needs no `unsafe`: a wrong
-  library name fails loudly at link time, which is exactly what an effect bound does not do.
-
-  **The module form is the one a binding module wants**, and it exists because the fact is
-  the module's: `bindings/sdl3` carried fourteen `@link("SDL3")` lines for one library.
-  The per-extern form stays, because a lone `extern` in a module-less program has no header
-  to put it on. `@symbol` deliberately has no module form — a symbol is one declaration's C
-  name and a module has no single one, so it is refused on a header by name rather than
-  ignored.
-
-**A `union` is a type kind, not a declaration kind**, so it rides `TypeDeclStmt` and pays
-rule 8's *type* tax only (`types.UnionType`, `typechecker/union.go`,
-`backend/llvm/union.go`). What that tax actually came to, since the rule says the family
-to check is the walks that must reach every composite:
-
-- `SizeAndAlign` → `unionSizeAndAlign`, **max over members rather than a sum**, and the
-  one function that has to know a union is not a struct. A too-small union is a stack
-  smash rather than a wrong value, which is why `TestExec_FFIFixture_UnionLayoutMatchesC`
-  compares every number against C's own `sizeof`/`_Alignof`/`offsetof`.
-- `Substitute`, `TypesEqual` (nominal, by name), `HeadName`, `resolveForLayout`, and
-  ownership's `eachComponent`/`hasWritableField` each gained an arm.
-  `CollectTypeVars` correctly gained **none** — a union is nominal, so its parameters are
-  its declaration's — and that exclusion is written next to the reason, as rule 8 asks.
-- **`lowerUnionDef` resolves before it measures**, which the struct path never has to do:
-  a struct's LLVM body is its field list and each field resolves as it is lowered, while a
-  union's body is computed *from* its size. An unresolved member has no size, and the
-  first SDL3 binding written against it found this immediately.
-- **Two bugs the probes found, and neither would have come from reading switches** — which
-  is rule 8's own advice, followed: a **recursive union** checked clean and would have
-  recursed forever in `unionSizeAndAlign` (`recursive_type.go` had no arm), and **equality**
-  fell through to a backend "not implemented" rather than being refused where it should be.
-
-**A union lowers to memory, not to an SSA aggregate**, and that is forced: members sit at
-offset 0, so reading one written as another is a *reinterpretation*, which LLVM cannot say
-about an SSA value. `alloca`, then bitcast the address to a pointer to the member's own
-type — the shape `buildDataValue` already uses for a `data` payload blob. Its LLVM body is
-`{ <widest-aligned member>, [pad x i8] }`: a real member carries the alignment (an
-`[N x i8]` blob would be align 1 and every load through it under-aligned), and the padding
-carries the size.
-
-**`@symbol("…")` names the C symbol** (`ExternDeclStmt.Symbol`, read through `CSymbol()`).
-The backend keys `l.externs` by the **symbol**, not the Lyra name — two Lyra names for one
-C function are the same function and must collapse to one `declare`, and it is the symbol
-that shares a namespace with the compiler's own libc declarations.
-
-**`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`/`with_cstring`/
-`with_cstrings`/`data`/`data_mut`/`is_null`/`to_maybe`/`CLong`/`CULong`** — and every
-piece of it ordinary Lyra over the primitives.
-
-`is_null` and `to_maybe` (09/08) are the null-return direction, one line each over
-`nullptr` and `==`. **Neither is marked `unsafe`**, which is the module's standing line
-rather than an exception to it: `data` is marked because it hands a pointer *out to keep*
-and `cstring_len` because the terminator is a promise nothing can check, while these
-dereference nothing at all. `to_maybe` is where C's convention becomes the language's —
-a `Maybe` cannot cross the boundary (lyra-E063), so an `extern` stays a transcription of
-the C prototype and the `Maybe` goes on after, the same split `read_line`/`parse_i64`
-draws. Neither makes the pointer *valid*: a dangling pointer is non-null and answers
-`Some`.
-`cstring` is the out direction for a string and is a plain `[]u8` — option A, chosen over a
-`CString` type because the dangling shape is already `lyra-E059`, because a struct storing
-the pointer dangles for real on the next `push` (measured), and because the wrapper that
-would help is the scoped `with_cstring`, not a name. It traps on an interior NUL.
-
-**`xs.data()`/`xs.data_mut()` are the out direction for a buffer**, and they copy nothing:
-a `[]T`'s elements already live behind a contiguous `T*` in its box, so the pointer C wants
-is the one Lyra is holding. **Two functions, because `&x` and `&mut x` are two spellings**
-and a method call has nowhere to put the word — `data_mut` takes a `mut` receiver, the rule
-`push` and `xs[i] = v` already follow. Both are `unsafe pure noalloc`, both trap on an empty
-array with their own message rather than the index check's, and both are **dynamic arrays
-only**: a `[N]T` carries its size in its type, so it cannot be a generic parameter until
-const generics exist.
-
-**A C buffer comes back in one copy** (08/26): `p.decode_utf8(byte_len)` is the `^u8`
-spelling of the array method — the same operation on memory Lyra does *not* own, which is
-the only kind a raw pointer can address. `std.ffi`'s `CBuffer.decode_utf8` is one line over
-it, where it used to be a bounds-checked `get` and a capacity-checked `push` per byte into a
-`[]u8` and then that array's own copy: **548 µs → 256 µs** over 400 KB, against 254 µs for
-the array builtin, which is the floor (one memcpy, one count pass). The length is an
-argument because a pointer carries none, which is also why it is `unsafe`; a negative one
-traps, and a too-large one cannot be caught at all.
-
-**A string crosses without a copy** (08/26): every string carries a NUL past its own bytes
-(`pkg/backend/llvm/STRING_LAYOUT.md`), so `s.cstring_ptr()` — an `unsafe` builtin — checks
-for an interior NUL with one `memchr` and yields `data` itself. `with_cstring` is one line
-over it and is `pure noalloc`; measured at **146 ns → 8 ns** per crossing. `cstring()` still
-copies, because it hands out an owned `[]u8` the caller keeps. The pointer is a `^u8` and a
-*literal*'s bytes live in a read-only global, so a C function that writes through one
-faults — which is what turned a latent UB in the `strtoul` FFI test (passing `p` for its
-`char**` endptr) into a visible segfault.
-
-**`with_cstring(s, f)` is the scoped string form, and it is deliberately *not* marked
-`unsafe`.** The rule it establishes: **`unsafe` marks handing a pointer out to keep
-(`data`), not lending one for the duration of a call.** Marking it would have made the
-safer shape the more ceremonious one, since `unsafe` does not cross a lambda boundary — an
-outer block for the call plus an inner one for the foreign call, against the *one* block
-the unscoped `cstring()` spelling costs. The scope is not a lifetime, so
-`s.with_cstring((p) => p)` still compiles; what holds is that the escaped pointer cannot be
-used without `unsafe` at the use site. `with_cstrings(a, b, f)` is the flat two-string
-form — a free function, because neither string is the receiver.
-
-**`CLong`/`CULong` are `pub type` aliases, not newtypes.** They name the one C type whose
-width moves between LP64 and Windows' LLP64. An alias, because changing this one line to
-`i32` already fails every site that passes an `i64`, naming `CLong` in the message —
-nominal identity would tax every crossing on every target to prevent a mixup that is
-either harmless or already a width error.
-
-**Both directions work.** A buffer goes *out* as `xs.data_mut()` plus a length, which is
-what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
-`std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above).
-
-**The boundary is tested in two layers, and the split is deliberate.** `llvm_extern_test.go`
-calls **libc and libm**, because a library nobody wrote for Lyra is the thing most worth
-proving and those need no package on either platform;
-`pkg/backend/llvm/testdata/ffi_fixture.c` covers what libc's i32/i64/f64-and-pointers
-surface cannot reach — the narrow widths, `float`, mixed register classes, a spilling
-argument list, `CLong`/`CULong`, out-parameters, a struct by pointer, `data()`/`data_mut()`.
-What they have in common is that **each links cleanly when it is wrong**, so the failure is
-a wrong answer rather than a build error. Two rules if you add to it: the expected value
-must come from `testdata/ffi_oracle.c`, a pure-C caller, since a value read off Lyra's own
-output asserts only that Lyra agrees with itself; and the compile cache must stay salted
-with the fixture's bytes, since its key otherwise names the *path*.
-
-**And zlib is the third layer, run rather than only compiled** (08/26):
-`TestExample_ZlibRoundTrips` builds and runs `examples/zlib.lyra` through the **CLI**, since
-the backend harness hardcodes `-lm` and `@link("z")` reaching `-lz` is part of what it
-proves. It self-skips when zlib is absent, which is safe only because `asan.Dockerfile` and
-the CI workflow both install `zlib1g-dev` — the reason is written beside each `apt-get` line,
-since a package whose purpose is undocumented is one a future cleanup removes.
-
-**An `extern` and the compiler's own libc use name one symbol space.** LLVM permits one
-declaration per symbol, and the backend kept two tables — `l.externs` and `l.libc` — so
-`extern write` beside any `print` emitted a second `declare @write` and clang refused the
-module on a program the front end had checked clean (09/08, found writing
-`std.io.write_file`). Both tables now consult the other and share the declaration;
-disagreeing signatures are refused by name, which `declareExtern` can return and
-`declareLibc` cannot — it has no error to return and ten call sites ignore one, so it
-records the conflict in `l.symbolConflict` and `emitModule` fails on it. **When adding a
-libc function the compiler calls for itself, that symbol becomes unavailable to nobody —
-but its signature becomes a claim a program's own `extern` must match.**
-
-**A libc function that Lyra can express is written in Lyra, not bound.** `cstring_len` is
-`strlen` in prelude-style code, because scanning for a zero byte stopped needing C the
-moment `offset` existed — the `read_line`/`parse_i64` division, applied at the boundary.
-There is deliberately **no `std.libc`**: an extern cannot be exported anyway, and a shared
-bindings module re-creates the libc shim layer FFI was built to dissolve. The shape that
-works is a per-library binding module owning its own externs, which needs nothing new.
-
-## `let … else` must diverge (`lyra-E074`)
-
-The payload binds in the **enclosing** scope, so the statement after the form reads it;
-the else runs when the pattern did not match, so falling through reaches that read with
-nothing bound. `checker.CheckLetElseDiverges` reports it, after typechecking because
-`panic(…)` is recognised by its recorded `never` type rather than by name.
-
-- **The backend check stays** (`lowerElseDestructuring`), per rule 5, and its message now
-  says it should have been caught as E074 — if it fires, it is reporting a hole here
-  rather than a user error.
-- **The accept-set was measured, not read.** Divergence in the backend is a property of
-  the *lowered* block's terminator, which the AST does not show, so thirteen shapes were
-  compiled and their verdicts recorded first. Two surprises came out of it: an all-arms
-  `match` is accepted, and `if c { return } else { return }` was **refused** (fixed below).
-- **All thirteen shapes agree.** The thirteenth, `if c { return } else { return }`, was the
-  backend's gap until 09/13: `lowerIf` left a merge neither branch reached open, so the
-  else read as falling through. It seals that merge with `unreachable` now, as
-  `matchMerge.value` does. If the two disagree again, the front end must stay the more
-  permissive side — `check` refusing what the backend would build breaks working code.
-- **Two passes depend on this rule**, which is why it belongs here and runs before them:
-  `CheckUseAfterMove.letElse` and `CheckMustRelease.letElse` both discard the else block's
-  effects as unreachable. Before 09/10 the backend's comment claimed the typechecker
-  enforced divergence and no pass did — a premise written in a comment, believed by later
-  code, and checked nowhere near where it was relied on.
-
-## A leading `-`, `(` or `[` is not a continuation (`lyra-W023`, `lyra-W024`)
-
-	x - x * x2 / 6.0 + x * x2 * x2 / 120.0
-	  - x * x2 * x2 * x2 / 5040.0
-
-is **two statements**, and the block evaluates to the second — so the function returns its
-last term. `checker.CheckLeadingMinusContinuation` reports it.
-
-- **The asymmetry is the whole reason it exists.** The grammar deliberately keeps `-`, `(`,
-  `[` and `*` off the continuation set, since each can begin a statement; that is the right
-  call. But the same mistake written with a leading `+` is a *type error* — there is no
-  unary plus — so `+` is caught by the compiler and `-` is silent. It compiles, runs, and
-  is wrong.
-- **Two conditions, because the first alone has honest uses.** The statement must begin
-  with a unary minus **and** the statement before it must be a pure value expression whose
-  value is discarded. `{ log(); -x }` is an ordinary body that prints and answers a
-  negation; `{ a + b; -c }` throws away a computation, which nobody writes on purpose.
-- **The negation is a leaf, not the root.** `- x * x / 6.0` parses as `(((-x) * x) / 6.0)`,
-  so the pass walks the **left spine**; testing the root finds nothing.
-- **`discardedValue`'s list is short and defaults to silence** — an expression kind added
-  later does not start firing this warning until someone decides it should, which is the
-  direction a warning with no suppression syntax has to err in.
-
-**`(` and `[` are the same misparse with a different fix**, which is why they are
-`lyra-W024` rather than more of W023: an operator moves to the *end* of the previous line,
-while a bracket moves *up* to close the gap — `f(` with the arguments on the next line is
-one call, since a newline inside the brackets is not a terminator. `add` then `(1, 2)` is a
-discarded name and a tuple; `xs` then `[0]` is a discarded name and an array literal.
-
-**One of the three tokens is invisible to the AST**, and that decided how the check works.
-A negation, a tuple literal and the array forms all carry their own opening token, so they
-are recognised by *kind*. Parentheses around a **single** expression are erased — `(x)`
-collects to a bare `IdentifierExpr` with nothing to say they were there — so that case is
-caught by **column**: the statement's span still covers the paren, so a statement beginning
-one column before its own expression began with a `(`. That is the commonest spelling of
-the mistake, a one-argument call split across two lines, and a kind-based check misses it
-entirely.
-
-`*` needs nothing — it cannot begin a statement, so the mistake is a syntax error.
-
-## Releasing a foreign resource (`@must_release`)
-
-`@must_release(unload_sound) struct Sound { … }`, enforced by
-`checker.CheckMustRelease` (`lyra-W022`). The language-level rules are in the workspace
-`CLAUDE.md`; inside this project:
-
-- **The attribute argument is an `identifier`, and that cost nothing.** `attribute_args`
-  gained `$.identifier` beside the number, type name and string — **zero new states**,
-  since `identifier` is lowercase-leading and `user_defined_type_name` capital-leading,
-  so the two are lexically disjoint. It is spelled as a name rather than as a string
-  because it names something in *Lyra's* namespace: `@link("SDL3")` and
-  `@symbol("SDL_Free")` are text handed to the linker verbatim, and a Lyra name that
-  resolves would be lying about itself as a string.
-- **The name is resolved from the type declaration's location, not the use site.** In a
-  binding module the release function is often unexported; looking it up from the using
-  module would answer for whatever that module can see, or for nothing.
-- **A discharge is tested against the resolved declaration, not the spelling** (rule 9),
-  with the name as the fallback for a callee too dynamic to resolve — a dispatched
-  method, a call through a local. An unrecognized call shape must never manufacture a
-  warning.
-- **The join is the *intersection*, where `CheckUseAfterMove`'s is the union.** The two
-  passes answer mirror-image questions and should be read together, but this is the line
-  where copying the other one is wrong: a use-after-move reports on what a branch *adds*,
-  so union is its conservative direction; this reports on what is *left over*, so
-  intersection is. Flipping it makes every early return a false positive.
-- **A named binding's unwrapped payload is a *view*, not a handover.** `match held {
-  Some(t) => draw(t), … }` borrows: the binding keeps the claim and answers for it at its
-  own scope end, and only releasing *or escaping* through the view discharges it. Where
-  the scrutinee is a **temporary** (`if let Some(v) = load(…)`) the payload really is the
-  only handle, so there the arm must release and the report lands on the payload. Both
-  halves are pinned by tests, and getting the first one backwards produced a false
-  positive on the shape every program with a long-lived optional resource writes.
-- **Reading a stored place is a view too** (09/11): a field, element or deref —
-  `match o.anims { Some(a) => … }`, `var m = o.model` — names a resource something else
-  already holds, so the obligation stays with the holder (`isStoredPlaceRead`). Treating
-  either as an acquisition advised the program to release it twice. A call beside it is
-  still an acquisition. **The rule looks through a one-expression `unsafe` block**, since
-  that is where a read through a pointer is written: `let old = unsafe { slot^.texture }`
-  is the same view (09/13).
-- **Escape is the default, and there is deliberately no list of construction kinds.** A
-  held binding mentioned anywhere but a borrowing call argument escapes — returned,
-  wrapped in a `Some`, put in a struct, captured, aliased. A whitelist of the two
-  positions that *keep* an obligation cannot suffer rule 8's tax; a switch over
-  `ArrayLiteralExpr`/`StructInstanceExpr`/`TupleLiteralExpr`/… would, and that family is
-  the one that already cost this compiler eight instances of one omission.
-
-**Four constructs unwrap a resource, and three of them share one runner** (`arm`, over an
-`unwrapper`): a `match` arm, an `if let` branch, `let … else`, and a plain destructuring
-`let`. The rules that were not obvious:
-
-- **`let … else` is not a branch.** It is Rust's `let … else`: the payload binds in the
-  **enclosing** scope and lives past the statement, while the else block is the diverging
-  path that never sees it. It is handled like a `VarDeclStmt`, not like `if let`.
-  Verified against the compiler rather than assumed, because the obvious reading is the
-  opposite one — and **`CheckUseAfterMove` had taken it**, which cost `lyra-E019` on two
-  shapes of correct code until 09/10. Both passes now have a `letElse`; if a third pass
-  ever walks this node, it is the shape to check first.
-- **The scrutinee is usually not a binding.** `let Some(v) = load_sound(p) else { return }`
-  acquires and unwraps in one statement, so `beginUnwrap` asks whether the *expression*
-  produced an obligation as well as whether a bare name is holding one. This is the shape
-  the idiom takes, not a corner.
-- **The payload is seeded only when the pattern binds exactly one name.** A pattern
-  binding is an `IdentifierPattern`, not an expression, so the TypeTable has no per-name
-  type; matching a pattern's shape against the scrutinee's type positionally would be a
-  new structural walk over both, with a case missing for every pattern kind added later.
-  One name is unambiguous and covers every wrapper unwrap. A multi-binding pattern falls
-  through to the escape default and stays silent.
-- **Reading a field or an element is a borrow.** `MemberExpr`/`IndexExpr`/`TupleIndexExpr`
-  over a bare name do not escape it. Without that, one `println("${w.frame_count}")`
-  silences the check for any resource with a readable field.
-
-**Four bugs, every one found by probing behaviour rather than by reading the code** —
-rule 8's own advice, and the entry below it is the reason to keep taking it:
-
-1. **The check was blind to `Maybe<Sound>`** — and so to every real acquisition, since a
-   binding module's constructors all answer a `Maybe`. Found by deleting an
-   `unload_sound` from `examples/raylib/breakout.lyra` and getting no warning at all.
-2. **The `match`-arm handling was dead code.** The scrutinee was walked through `expr`
-   before the arm seeding read it, so the escape default had already dropped the binding.
-3. **`let … else` was analyzed as a branch**, binding the payload where it is not in scope.
-4. **A field read escaped the binding**, which gutted the feature for `Wave`. Found on a
-   program written in the if-let style against the real bindings — not on a fixture.
-
-All four are the same shape: **a pass that under-reports is silent when it is broken**, so
-its tests must include cases that *must* fire, and its fixtures must be checked against a
-real program. The `assertLeaks` half of `must_release_test.go` is there for the first;
-`/tmp`-scratch programs against `bindings/raylib` are what caught (1) and (4), which no
-fixture had.
-
-## Binding modules (`bindings/`)
-
-`bindings/sdl3/` is SDL3, and the shape `todo.md` has called for since the FFI landed: a
-per-library module owning its `extern`s and exporting Lyra over them, Rust's `*-sys`
-pattern. It needed nothing new from the language.
-
-- **The externs are private and that is structural.** There is no `pub extern` — precisely
-  so two libraries both declaring `strlen` cannot collide on a program-wide name — so what
-  a binding module exports is always the Lyra it puts over them. That is where `unsafe`
-  stops, where NULL becomes a `Maybe`, and where the untagged `SDL_Event` becomes a `data`
-  type a `match` can be exhaustive over. **`examples/SDL3/basic.lyra` contains no
-  `unsafe` and no `extern`.**
-- **`@link("SDL3")` sits on the `module` header**, once, and covers all fourteen externs;
-  a program importing the module links the library by saying nothing. What `@link` still
-  cannot say is *where* — a search path is the build system's problem, so a Homebrew SDL3
-  needs `LIBRARY_PATH=$(pkg-config --variable=libdir sdl3)`.
-- **Not `vendor/`**, the conventional name: this directory is inside a Go module, and
-  `vendor/` at a Go module root is Go's own — creating one breaks every `go` command in
-  the repo until it is removed.
-- **Resolution is `bindings.sdl3` → `<root>/bindings/sdl3/`**, the same rule that makes
-  `std.prelude` `<root>/std/prelude/`. **`build.sh` links `bindings` beside `std`**, so the
-  built compiler resolves it with no environment set up — that link was missed when the
-  directory was added, and the symptom was that the example compiled only under
-  `LYRA_STD=$(pwd)`, which is not how anyone runs the compiler. `go run ./cmd/lyrac` still
-  needs `LYRA_STD`, for the same reason it does for the prelude: it builds into a temp
-  directory with neither beside it.
-
-`bindings/raylib/` is the second, and it is the one that needs **struct-by-value**:
-`draw_circle(Vector2, f32, Color)` passes two structs and `mouse_position()` returns one.
-Its module reads like ordinary Lyra precisely because the hard part is in `pkg/abi` — a
-`Vector2` is a `struct`, passed as one, and nothing in the binding mentions registers.
-
-**`Sound` and `Wave` carry `@must_release`**, and this module is that feature's first
-user — the note below about unloading being the caller's is what prompted it.
-
-`bindings/raylib/audio.lyra` is the third aggregate case and the one where the *aggregates
-are large*: `Sound` is 40 bytes and `Wave` 24, so both come back through an `sret` buffer
-rather than in registers. It needed nothing new — which is the point of having validated
-`pkg/abi` against clang before wiring it.
-
-**Two rules the audio module establishes for a binding:**
-
-- **Unloading is the caller's, and there is no alternative.** Lyra has no destructors, so a
-  `Sound` cannot free itself; a managed box with a `drop_fn` over raylib's memory is the
-  ownership crossing the FFI refuses in both directions. `unload_sound`/`unload_wave` are
-  exported and the program calls them, as C does — and `@must_release` is what makes
-  forgetting a warning rather than a silent leak.
-- **A C function can fail by succeeding, and the wrapper is where that stops.**
-  `LoadWaveFromMemory` wants the extension **with a dot** and answers an all-zero `Wave`
-  without one — no error, no log line. `wave_from_memory` normalises the extension and
-  gates on `IsWaveValid`, returning a `Maybe<Wave>`; `load_sound`/`sound_from_wave` gate on
-  `IsSoundValid`. That is `to_maybe`'s rule applied to a convention that is not NULL.
-
-Two things it ran into that the SDL3 module did not:
-
-- **A `const` may hold a struct** as of 09/09, so raylib's named colours are `pub const`.
-  They were nullary `pure` functions before that, working around a rule that made a struct
-  literal less constant than an array literal.
-- **`rec` is a reserved word**, one of the function modifiers, so raylib's own parameter
-  name for a rectangle cannot be used and the wrapper says `rect`.
-
-**`bindings/raylib/shapes.lyra` is complete** as of 09/10 — 61 public functions over 59
-externs, covering every shape raylib draws and every collision it tests. Three rules
-shaped it:
-
-- **The Vector2/Rectangle form is the one bound.** raylib offers most calls twice, once in
-  loose `int` coordinates and once taking an aggregate; binding both gives one capability
-  two spellings for no gain, since a Lyra caller already holds a `Vector2`. The single
-  deliberate duplicate is `draw_pixel` beside `draw_pixel_v`. raylib's `DrawRectangleGradientV`
-  and `…H` are left out for the same reason — they are `DrawRectangleGradientEx` with a
-  colour repeated, and only in loose coordinates.
-- **An empty array draws nothing rather than trapping.** `xs.data()` traps on an empty
-  array, correctly — there is no first element to address — but "draw no triangles" is the
-  obvious meaning of an empty point list, and absorbing that is what a binding module is
-  for. Every array-taking call here does it, and `point_in_poly` answers `false`.
-- **An out-parameter becomes a `Maybe`.** `CheckCollisionLines` reports the crossing
-  through a `Vector2 *`, which is C's way of returning two things; `lines_intersect`
-  answers `Maybe<Vector2>` and the `^mut` never leaves the wrapper. Same rule as
-  `to_maybe` for NULL.
-
-The **query externs carry `pure`** — the collision tests, the spline-point getters and
-`GetCollisionRec` compute and nothing else. An extern's bound is a claim the compiler
-records rather than checks, which is why narrowing one is `unsafe`; these are already
-`unsafe`, and without the bound a `pure` wrapper cannot call them at all.
-
-`examples/raylib/shapes.lyra` is the gallery, and it is **two programs in one file**: the
-window, and a `--check` mode that runs every collision and spline-point binding against
-geometry whose answer follows from the numbers. 61 of 61 public functions are exercised.
-The split exists because a drawing demo cannot be checked by a machine and the geometry
-underneath it can — the lesson breakout learned, applied at the start this time.
-
-`examples/raylib/textures.lyra` is its example, on `shapes.lyra`'s two-programs-in-one-file
-plan: a `--check` mode covering the image half against answers that follow from the numbers
-(33 cases), and a gallery for the six drawing calls. All **48** public functions are
-exercised.
-
-**It draws committed PNGs from `examples/raylib/assets/`**, generated by `generate.py`
-beside them — a standard-library rasteriser, so the artwork is reproducible and reviewable
-rather than opaque binaries that arrived somehow. 12 KB for the three. The first version
-generated flat colour instead, and that was wrong twice over: bilinear filtering has
-nothing to show against a hard-edged disc, and a nine-patch's whole point is invisible
-without a border worth preserving. **An example that demonstrates a *visual* feature needs
-artwork the feature can act on.**
-
-The assets are checked in `--check` — loading an `Image` needs no window — against the
-sizes `generate.py` writes, so a missing or resized file fails there rather than showing up
-as a blank rectangle in a window nobody is watching. The example looks for `assets/` from
-the repository root and from `examples/raylib/`, so it runs from either.
-
-`update_texture` is exercised on the real artwork rather than a fill: the scene is read
-back with `image_from_texture`, warmed pixel by pixel in Lyra, and uploaded to a second
-texture, with `update_texture_rect` patching one corner.
-
-**`Degrees` is a newtype over f32** (`bindings/raylib/angle.lyra`), and every one of the
-eleven angle parameters across `shapes.lyra` and `texture.lyra` takes one. raylib measures
-in degrees and an `f32` does not say so, so a radians value crossed the boundary silently
-and drew a shape rotated by a fifty-seventh of what was meant — a wrong picture rather than
-an error.
-
-- **It costs nothing at a literal call site.** An untyped literal converts implicitly, so
-  `draw_poly(centre, 6, 30.0, 45.0, GREEN)` is unchanged. A **computed** `f32` is refused
-  (`lyra-E046`) and must say `Degrees(x)` or `from_radians(x)` — which is exactly the case
-  worth catching, and exactly the nine sites the examples had.
-- **Deliberately unconstrained.** A `where range(0..<360)` states something true of the
-  canonical representative and false of angles: 370 degrees is a real angle, a sweep may
-  run to 720, a rotation may be negative. Worse, a range constraint refuses a *literal* at
-  compile time (`lyra-E023`), so `Degrees(370.0)` would not build while raylib is happy to
-  take it. Nominal identity catches the unit mistake; range is a different question.
-- **`turns(fraction)` is the form an animation wants**, since a clock produces a phase:
-  `turns(wrap01(t * 0.15))` rather than `Degrees(360.0 * wrap01(t * 0.15))`, which is the
-  same thing with a constant to get wrong.
-- No arithmetic impls: operators on a newtype are opt-in (`lyra-E043`) and nothing here
-  needs to add two angles. Read one out with `f32(d)`.
-
-**`bindings/raylib/texture.lyra` is the third module** (09/10) — 46 functions covering the
-whole pipeline from pixels to screen: **6 of 6** drawing calls, **3 of 3** configuration,
-and 9 of 10 loading (`LoadTextureCubemap` wants the 3D module). What it establishes:
-
-- **`Image` and `Texture2D` are the first `@must_release` types that are not audio**, and
-  the check composes exactly as designed — it caught a leak in the module's own probe
-  program, in a `match` arm that unwrapped a texture and forgot to unload it.
-- **An in-place edit takes `self: mut Image`**, not a fresh return. raylib's `ImageResize`
-  frees the old pixel buffer and installs a new one, so a form answering a *new* `Image`
-  would leave the caller holding a freed one that `@must_release` would then insist on
-  unloading — a double free the type system would have argued for. `(self: mut Image)` —
-  the modifier binds to the **type**, after the colon — makes `img.resize(16, 8)` one
-  image and one unload.
-- **The image half is headless and the texture half is not.** An `Image` is CPU pixels;
-  a `Texture2D` is a GL object and every call taking one needs `init_window` first. That
-  is what `TestExec_RaylibImageBindings` can cover and why nothing tests the drawing half.
-  Without a context raylib warns and answers an invalid texture, which the `Maybe` turns
-  into `None` — it degrades rather than crashing, which was worth checking.
-- **`image_colors` copies into a `[]Color` and hands raylib's buffer straight back**, so
-  there is nothing further to release. A raw `^Color` would be faster and would put a
-  lifetime nothing tracks into the caller's hands.
-- `LoadImageFromMemory` has **the same dot trap as `LoadWaveFromMemory`** — raylib's header
-  documents both identically — so `image_from_memory` normalises the extension the same way.
-
-Three families are deliberately unbound and each is its own job: the ~17 colour utilities
-(`ColorLerp`, `Fade`, `ColorToHSV`) belong in `color.lyra`; the ~20 `ImageDraw*` calls are
-the shapes module again but rasterising onto an `Image`; and the remaining image
-manipulation (`ImageCopy`, `ImageBlurGaussian`, `ImageDither`, `ImageAlphaMask`) is a
-fourth. `ExportImageToMemory` is left out because it does not work: it answers a non-null
-pointer and a size of **0**, measured.
-
-**`bindings/jpeg.lyra` is libjpeg-turbo** (09/11), and it exists because **raylib decodes
-only the image formats its build was compiled with**: Homebrew's raylib 6.0 has no
-`SUPPORT_FILEFORMAT_JPG`, so every JPEG logs `IMAGE: Data format not supported` and loads as
-an invalid image — 41 of the 145 Khronos sample models draw untextured, CesiumMan and
-DamagedHelmet among them. `decode_jpeg(bytes) -> Maybe<Jpeg>` answers **RGBA pixels a Lyra
-array owns** (TurboJPEG fills a buffer it is handed, so nothing here is C-allocated), and
-covers progressive JPEGs as well as baseline — two fifths of those files. The glTF viewer
-decodes what raylib could not and puts the texture back in its slot; the `Image` it hands
-raylib points at the Lyra buffer and is never `unload_image`d, since that would free Lyra's
-memory with raylib's allocator. Link with `-lturbojpeg` (`brew install jpeg-turbo`,
-Debian `libturbojpeg0-dev`), whose directory must be on `LIBRARY_PATH` beside raylib's.
-
-**`bindings/raylib/shaders.lyra` is the ninth** (09/11) — 4 functions taking raylib to
-**471 of 600**: a shader compiled from GLSL source, its uniform locations, and the texture
-slots a material feeds it. What it establishes:
-
-- **raylib draws every model unlit.** Its default shader, read out of the library, is
-  `texel * colDiffuse * vertexColor`: the normal, occlusion, metallic-roughness and emission
-  textures a glTF loads are never sampled. A lit picture needs a shader of the program's own.
-- **A failed compile is `None`, not the default shader.** raylib answers its default program
-  in place of one that did not compile, which draws — unlit — and looks like success.
-- **`bind_shader_map` is how a sampler gets a slot.** raylib looks up `texture0`..`texture2`
-  for the first three and nothing else; the rest are `locs[SHADER_LOC_MAP_ALBEDO + map]`,
-  which is why `Shader.locs` is a `^mut i32`.
-- **Uniform values are unbound**: `SetShaderValue` takes a `const void *` and no Lyra pointer
-  reaches one (the `LoadMaterials` limit). A per-material value goes in as a texture — the
-  viewer packs a material's floats into one row, a float per texel.
-- **`set_backface_culling` and `set_depth_write`** are raylib's rlgl state toggles, which a
-  see-through or double-sided glTF material needs.
-- **`Shader` is `@must_release(unload_shader)`**, and `unload_model` does not free one — a
-  shader is usually shared by several models.
-
-**`bindings/raylib/models.lyra` is the eighth** (09/11) — 46 functions taking raylib to
-**467 of 600**: meshes, models, materials and animations, the half of the 3D surface that
-loads and releases. What it establishes:
-
-- **Everything that touches the GPU is gated on `window_ready()`.** `GenMeshCube` with no
-  window does not fail — it warns twice and then **segfaults**, measured in a pure-C caller —
-  so every generator, `load_model`, `model_from_mesh` and `load_material_default` answers a
-  `Maybe`, the rule `image_text` set for the built-in font. **A hidden window
-  (`FLAG_WINDOW_HIDDEN`) is enough** to get a GL context, which is how the example's
-  `--check` and the backend test run the whole family without anything appearing.
-- **A model owns its meshes, so `model_from_mesh` takes `own Mesh`.** raylib keeps the
-  mesh's buffers and frees them in `UnloadModel`; unloading the mesh too is a double free,
-  measured (the C caller aborts). `own` is what the language already means by "this call
-  takes it", so `@must_release` treats the mesh as handed over and a later `unload_mesh` of
-  it is a use-after-move error.
-- **A model's meshes and materials are not handed out as values**, because a `Mesh` read out
-  of a model is a second handle to buffers the model frees. Picking goes through
-  `model_bounding_box` rather than `ray_hits_mesh` on a borrowed mesh.
-- **`Animations` is one handle for the whole array**, since raylib frees the clips together
-  (`UnloadModelAnimations(ptr, count)`); a `@must_release` per clip would demand releases
-  that do not exist. Clip access is bounds-checked and traps, as `xs[i]` does. **The animation
-  half is tested against a real model** — the Khronos glTF Fox sample, downloaded for
-  testing and not committed: three clips with the right names and frame counts, all valid
-  for its skeleton, stepped and blended.
-- **`draw_mesh_instanced` batches only when the shader can.** raylib's `DrawMeshInstanced`
-  needs a shader with a per-instance transform attribute, and the default material's has
-  none (location -1, measured in C); given that shader, raylib draws **one mesh at the origin
-  and ignores every transform**, with no error. The binding falls back to one `draw_mesh` per
-  transform, and `material_supports_instancing` says which a caller is getting. Found by the
-  example's first screenshot, which had one cube where there should have been nine.
-- **`matrix_identity` and `matrix_translation` are Lyra; the rest of the transforms are
-  raymath** (`raymath.lyra`), which raylib builds into the library and exports — 87
-  functions, of which the rotations, scale and `matrix_multiply` are bound, angles as
-  `Degrees`. That is how a language with no `sin`/`cos` turns a model: raylib does the
-  trigonometry. **`matrix_multiply(first, second)` applies `first` and then `second`**,
-  checked by moving and turning a cube and casting a ray where each order should have left
-  it. raylib's translation lives in `m12`/`m13`/`m14`, checked the same way.
-- **`model_valid` is not "did this load", and `load_model` does not use it.** raylib's
-  `IsModelValid` requires every vertex attribute with data to have a GPU buffer, and a model
-  raylib skins on the CPU — every animated glTF under the default shader — keeps its bone
-  indices and weights on the CPU with no buffer. So it answers false for a model that loads
-  and draws perfectly (measured on the Fox: vertices and texcoords uploaded, bone data with
-  no buffer). `load_model` tests what raylib's own loader reports, a model with no meshes,
-  and until 09/11 every animated glTF loaded as `None`.
-- **`unload_model` frees the model's textures**, which raylib's `UnloadModel` does not —
-  measured, the Fox's texture stayed on the GPU — and a Lyra program cannot, since a model's
-  materials are not handed out. Each distinct texture is freed once, raylib's shared 1x1
-  default never.
-- **A model's meshes and materials are reached by index** (`model_mesh_has_normals`,
-  `model_material_has_texture`, `set_model_material_texture`, `set_model_material_shader`,
-  …), bounds-checked and trapping, never handed out as values. A texture set on a model is
-  taken `own` and freed with it.
-- **A glTF may carry no normals** — the Fox has none — and raylib then feeds every vertex one
-  constant default, a unit vector a shader cannot tell from a real normal. The null
-  `normals` pointer on the CPU is the only reliable signal.
-- **`examples/raylib/gltf_viewer.lyra` opens any model raylib can load** — path arguments or
-  drag-and-drop — frames it from its bounding box, turns and zooms it, and plays and
-  crossfades its clips; `--check <path>` runs headlessly. **It lights what it draws**: its own
-  metallic-roughness shader, in a smooth and a flat variant (the flat one for a mesh with no
-  normals), with 1x1 textures filling every slot a material lacks. `--check` proves the
-  lighting reaches pixels by reading a lit sphere back off the screen. **It plays node
-  animations too**, which raylib does not, and **reads what raylib's loader drops from a
-  material** — both in `gltf.lyra`, a sibling module the viewer imports as `gltf` (so it
-  resolves from the viewer's own directory), over `std.json`. For animation it answers a
-  matrix per raylib mesh: raylib bakes each node's rest world transform into its mesh's
-  vertices (measured), so the matrix undoes that before applying the animated one, and meshes
-  are matched to nodes by raylib's order — nodes in file order, one mesh per triangle
-  primitive — which the viewer checks against the model's mesh count. For materials it reads
-  each texture's UV set, `KHR_texture_transform` and sampler wrap, the normal and occlusion
-  strengths, the factors, emissive strength, transmission, clearcoat and alpha mode; raylib's
-  material `i + 1` is the file's `i` (raylib puts a default at 0 — measured on CarConcept).
-  **Those reach the shader as a one-row texture of floats** (four bytes a texel, read back
-  with `texelFetch` + `uintBitsToFloat`), since uniform values cannot be set. See-through
-  materials are drawn after opaque ones with depth writes off, and back faces are drawn.
-- **`LoadMaterials` is unbound, and it is a language limit.** Its array must go back to
-  `MemFree`, declared once as `(^u8) -> void`; Lyra has no pointer reinterpretation, so a
-  `^Material` cannot reach it, and a second declaration with a `^Material` parameter is one C
-  symbol with two signatures, which the backend refuses by name.
-
-**Binding it found three compiler bugs**, the first a memory-safety miscompile — see rule 18
-and COMPLETED.md (09/11): the value-range pass ignored `&mut`, `resolveConstantInt` folded a
-`var` to its initializer, and `hasCLayout` could not see a private field type.
-
-**`bindings/raylib/files.lyra` is the seventh** (09/10) — 40 functions taking raylib to
-**426 of 600**: files, directories, and the DEFLATE/Base64/hash helpers raylib already
-links. **`std.io` stays the portable answer for text**; what this adds that Lyra otherwise
-cannot do at all is **listing a directory**, dropped files, file metadata, and binary file
-I/O.
-
-**Three things here had to be measured before they could be bound**, and they are the
-reason the module is not a thin transcription:
-
-- **The `int` returns use three different conventions.** 0 means success for
-  `MakeDirectory`, `FileRename` and `FileRemove`; **1** means success for `FileCopy`;
-  failure is 0 or -1 depending on which. Every wrapper answers a plain `bool`.
-- **`FileMove` does not move.** It leaves the source in place — it copies — and returns
-  **-1 whether it succeeded or not**, so both the name and the return are wrong.
-  `move_file` is composed from `copy_file` and `remove_file` instead, which is a binding
-  module doing its job rather than a preference.
-- **`FileTextReplace` returns 1 whether the text was there or not**, so `replace_in_file`
-  answers `find_in_file`'s question instead and costs one extra read for a return value
-  that means something.
-
-**The hashes are hex strings because the words are unusable**, and the byte order is the
-part a caller must not have to know: raylib answers a pointer to a *static* array of 32-bit
-words, and **MD5's are little-endian while the SHA family's are big-endian**. Checked
-against the published digests of "abc" and against `md5`/`shasum` on a real file — a
-self-consistent round-trip would not have caught it.
-
-**Not one extern in the file is marked `pure`**, deliberately: a bound on an extern is a
-claim the compiler records rather than checks, and "always answers the same thing" is false
-for every call here — `FileExists` reads a world another process is changing, and the path
-helpers answer pointers into a static buffer the next call overwrites. `shapes.lyra`'s
-geometry externs carry `pure` because they are arithmetic on their arguments; these only
-look similar.
-
-`examples/raylib/files.lyra` is the example and **the only one here that never opens a
-window** — it is a command-line tool: given paths it lists directories and reports each
-file's size, extension and digests, with 44 checks under `--check`.
-
-**`bindings/raylib/shapes3d.lyra` is the sixth** (09/10) — 41 functions taking raylib to
-**382 of 600**, and the first of the 3D surface: a `Camera3D`, the shapes raylib draws
-immediately, billboards, and ray casting. No meshes, models or materials, so nothing here
-is loaded or released — which is what makes it the 3D half a program can use before it has
-any assets, and `shapes.lyra`'s job one dimension up. The collision names mirror that
-module deliberately (`circles_overlap` → `spheres_overlap`), so the two read as one
-vocabulary.
-
-- **It is the widest aggregate workout in the tree.** A `Vector3` is 12 bytes and goes in
-  registers; a `Matrix` is sixteen floats and is **not** an HFA on aarch64, since that rule
-  caps at four members, so it crosses through memory. `Camera3D` is 44 bytes. All the
-  layouts were measured against C before anything was written.
-- **`RayCollision` becomes a `Maybe<RayHit>`**, because raylib's struct carries a `hit`
-  flag beside three fields that mean nothing when it is false. The flag stays on the
-  private struct (a C `_Bool` transcribed as `u8`, the rule `Music.looping` set) and never
-  reaches a caller.
-- **A negative distance is not a hit, and that guard is why the family is consistent.**
-  `GetRayCollisionSphere` is a *line* test: a sphere entirely behind the ray's origin comes
-  back `hit = true` at distance -11, where the box and triangle tests answer false for the
-  same geometry. The bound is `>= 0.0` and was measured, because `> 0.0` is wrong twice —
-  a ray starting **inside** a sphere reports a positive distance to the far wall, and one
-  starting **on** the surface reports 0.0.
-
-`examples/raylib/shapes3d.lyra` is the example, with 18 geometry checks under `--check` and
-an orbiting scene otherwise. **The shapes stand in a ring**, and that is a layout decision
-rather than a flourish: an orbital camera sees a *row* edge-on twice per revolution, and a
-row of spheres viewed edge-on is one sphere. Two versions of the scene did exactly that
-before the ring. It also draws its one `draw_triangle_3d` with **both windings**, since a
-3D triangle is one-sided and back-face culling makes a single one invisible half the time.
-
-**`bindings/raylib/image.lyra` is the fifth** (09/10) — 36 functions over 37 externs:
-editing an image in place, making new ones from old, and painting onto one. What it
-establishes:
-
-- **Painting is `paint_*` because `draw_*` was already taken, and the reason is a rule
-  rather than a clash.** `shapes.lyra`'s `draw_circle` draws on the *screen* and takes no
-  receiver, so it cannot become a receiver-keyed overload of one taking `self: mut Image` —
-  that rule needs **every** declaration of the name to have a receiver. The alternative was
-  an `image_` prefix that reads as noise at a call site; `canvas.paint_circle(c, 8, RED)`
-  says which surface without one.
-- **`gen_mipmaps` *is* an overload**, across two files of one module: `self: mut Image`
-  beside `self: mut Texture2D`. That is the first cross-file receiver-keyed overload in
-  this tree and it needed nothing — worth knowing, since the module system's export set is
-  built per file (see the hazard at the end of this document).
-- **`image_text` answers a `Maybe` because the alternative is a segfault.** raylib loads
-  its built-in font in `InitWindow`, so with no window `GetFontDefault()` hands back a font
-  whose glyph array is NULL — and `ImageText` walks it unchecked. Measured: a pure-C caller
-  exits 139. `font_valid` predicts it exactly, so the gate costs one call. The void members
-  of the family (`paint_text`, `paint_text_ex`) paint nothing instead, on the rule an empty
-  point list already follows. **This is the one call in the image half that is not
-  headless**, which is why it is worth stating.
-- **A convolution kernel is a `[]f32` whose length must be a perfect square.** raylib takes
-  the element *count* and derives the side — confirmed against C, not read off the header
-  comment — so the array carries the count and there is no second argument to disagree
-  with it. **A kernel that does not sum to 1 changes the alpha channel too**, since raylib
-  convolves all four: a Laplacian drives an opaque image to fully transparent, which reads
-  as a broken binding rather than as an edge detector.
-- **`dither` answers a `bool` because raylib has exactly three packings** — `5-6-5`,
-  `5-5-5-1`, `4-4-4-4`. Wider than sixteen bits it warns about and ignores, harmlessly;
-  **narrower it warns about and then leaves the image in pixel format 0**, measured — an
-  image whose width and height are intact and which nothing can upload, with no error
-  anywhere until the upload fails. The binding refuses a packing that does not exist and
-  says whether it applied. Found by writing the example, which printed *"could not upload
-  dither"* and nothing else.
-- **Six loose-int twins and `ImageRotateCW`/`CCW` are deliberately unbound**, the same rule
-  that left `DrawRectangleGradientV`/`H` out of the shapes module: the Vector2/Rectangle
-  spelling is the one bound, and a rotate by a constant is `rotate(±90)`.
-
-`TestExec_RaylibImageEditingAndPainting` is the proof, and it is headless — which is what
-the image half was always able to have and the texture half was not.
-
-**`examples/raylib/input.lyra` is the input tester**, and it is the one example here whose
-*window* is the deliverable: live input cannot be checked by a machine. What `--check`
-covers instead is the half that can be wrong silently — the 154 generated constants — and
-it does so with **properties rather than a second copy of the table**: the printable key
-codes are derived from the letters themselves (raylib's are ASCII), the enum groups are
-checked for contiguity, and no two constants may share a value. Asserting `KEY_A == 65`
-would transcribe the same number twice and fail together with the first copy.
-
-It also pins that **every query answers a resting value with no window** rather than
-crashing, since `--check` runs before `init_window`; and it found `gamepad_name` answering
-`Some("")` for every index, connected or not, in range or not — raylib returns a non-NULL
-empty string there, so `to_maybe`'s NULL convention had nothing to act on and the `None`
-the binding documented never happened. It now gates on availability and on the name being
-non-empty.
-
-`examples/raylib/painting.lyra` is the example, on the two-programs-in-one-file plan: 49
-pixel checks under `--check` and a twelve-panel gallery. **Nothing in it is loaded from
-disk** — every picture is painted by Lyra onto an `Image` and uploaded once, which is what
-the module makes possible and what keeps the example one file with nothing to fetch. The
-text panel is the pair to the `--check` half: `image_text` answers `None` headlessly and
-renders in the window, because `init_window` is what loads the built-in font.
-
-**`bindings/raylib/text.lyra` is the fourth**, and it is where the captures bug above was
-found. `Font`, `GlyphInfo`, loading, glyph metrics, measuring, and drawing — including
-`draw_text_ex` and `draw_text_pro`, which were unbound for a day because the *compiler*
-crashed on them and not because raylib is awkward. `draw_text_pro` takes a `Degrees` like
-every other angle here. The note worth keeping: **a binding module that will not lower is
-evidence about the compiler, not about the library**, and the whole-module symptom — every
-program importing `bindings.raylib` failing over one file it does not touch — is what a
-by-name lookup consulted in the wrong scope looks like from the outside.
-
-**Both galleries size their labels from a named `LABEL` constant** (22px) and are laid out
-to suit it — the cell width is what caps a label's length, since raylib's default font runs
-about 0.55em per character.
-
-**A gallery can be looked at from here, and should be.** A *foreground* run opens a window
-fine; it is only a detached background process that cannot. So the way to check one is to
-copy it to `/tmp`, replace the `should_close` loop with a fixed tick count, screenshot with
-`image_from_screen` + `export_image`, and read the PNG. That found in one look what an
-extent calculation had missed — three labels overlapping their neighbours and a fourth off
-the window edge — because the calculation cannot know how wide a *string* renders.
-
-Compute extents as well, for what a screenshot cannot show: a one-pixel overlap between a
-panel's bottom and the label below it. The two checks find different things and neither
-replaces the other.
-
-`examples/raylib/breakout.lyra` is what the pair is *for*: a playable game — paddle, ball, a
-`[]Brick` grid, lives, score, sound, and a `data GameState` a `match` covers exhaustively —
-with no `unsafe` and no `extern` in it. Its tones are **synthesised in Lyra** rather than
-shipped, so the example is one file with nothing to fetch, and `audio_ready()` gates every
-audio call so it still runs where there is no sound card. It is also the honest test of the ABI work, since a
-misclassified `Vector2` there is a ball that passes through bricks rather than a crash.
-
-**The direct-extern examples are gone deliberately**, and the proof they carried lives in
-tests instead: `TestExec_UnionAgainstSDL3` and `TestExec_ByValueAgainstRaylib` call the real
-libraries and skip where they are absent, and `TestExec_FFIFixture_UnionLayoutMatchesC`
-checks the layout hermetically against C's own numbers. A test runs in the suite; an example
-dense with `unsafe` only ran when somebody remembered. What `examples/` keeps is what the
-binding modules look like *in use* — none of them containing an `unsafe` or an `extern`.
+**Collector golden tests** (`pkg/analyzer/collector/tests/`): `runGoldenTest(t, source,
+"name")` (no extension) against `testdata/*.golden`; a new golden is created and fails on
+first run. `parseAndCollect(t, source)` returns `program` and `table` directly.
+
+**Typechecker tests** (`pkg/analyzer/typechecker/tests/`):
+`res := parseCollectAndCheck(t, source, false)`, then `assertNoErrors(t, res)` or
+`assertErrorsAre(t, res, "msg1", …)`; `res` has `program`, `symTable`, `typeTable`, `errors`.
+This harness has **no prelude** (see rule 13): a test that needs it — including one for a
+diagnostic whose fix names a standard-library function — belongs where the prelude is real
+(`cmd/lyrac` tests, or the backend's `…WithPrelude` helpers).
+
+**Backend tests** (`pkg/backend/llvm/`) compile and run IR; see its README for
+`sanitize_address` (rule 6) and the binary cache.
+- **Run ASan binaries through `buildAndRunASan`/`buildAndRunASanWithPrelude`, never a bare
+  `exec.Command`.** `asanOptions` enables leak detection where LeakSanitizer exists (Linux: CI
+  and `./asan.sh`) and disables it on macOS, so a leak fails on Linux only.
+  `buildAndRunLSanWithPrelude` is for leak-specific tests and skips off Linux.
+- Run `./asan.sh` (workspace root) before pushing memory-model work: clang-15's typed
+  pointers reject mismatches Apple clang cannot see.
+
+**A test file's name can silently exclude it.** A final `_arm`, `_ios`, `_js`, `_plan9`,
+`_android`, `_wasm`, `_mips`, `_s390x`, `_windows` (any GOOS/GOARCH) segment is a build
+constraint — `match_unreachable_arm_test.go` never runs on arm64 and `go test` prints `ok`.
+`go list -f '{{.IgnoredGoFiles}}' ./...` must be empty on this repo.
 
 ## Current Development Focus
 
-The typechecker is the active area — match exhaustiveness (see
-`pkg/analyzer/typechecker/README.md`) and the FP/imperative purity work (see
-`pkg/analyzer/checker/README.md`).
-
-`todo.md` is the **open** backlog; `COMPLETED.md` is the dated record of what landed and
-why — the constraint that forced a design, the measurement that disproved a diagnosis. An
-item citing "the Completed entry" means that file.
-
-One module-system hazard worth carrying here, because it is a *timing* variant of rule 8:
-exports are recorded per **file**, so a name that becomes overloaded only in a later file of
-a multi-file module has already been exported as a bare declaration, and the set built when
-the second file is walked collides with it (`symbol "area" already defined`).
-`exportToGlobal` lets a set supersede a global binding that is one of its own members. Two
-things had hidden it — within one file the merge happens before either member exports, so
-both export the same set object; and the prelude branch of that function discards
-duplicate-definition errors, so the shipped prelude worked while a user module doing the
-same thing did not.
+The typechecker — match exhaustiveness (`pkg/analyzer/typechecker/README.md`) and the
+FP/imperative purity work (`pkg/analyzer/checker/README.md`). Codegen is pre-release but
+broad (closures, generics, strings, arrays, `match`, traits, `?`, Perceus); the backend
+README is the inventory and `todo.md` the gaps.

@@ -135,7 +135,7 @@ let f = (xs: []i64) -> string => {
 // empty and `implTargetMatches` returned false before unification was ever attempted. The
 // symptom named neither: `member access on non-struct type ^i64`.
 //
-// It is CollectTypeVars now (CLAUDE.md rule 8's "one answer" table), which is also why
+// It is CollectTypeVars now (lyra/CLAUDE.md rule 8's single-answers table), which is also why
 // `weak t`, `{ v: t }`, a range and a constrained target now reach unification — those
 // need arms in `unifyGenericTarget` before they dispatch, but they are no longer rejected
 // one step earlier for a different reason.

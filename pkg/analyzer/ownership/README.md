@@ -1,269 +1,121 @@
 # `pkg/analyzer/ownership` — retain/release placement
 
-Computes where the backend must **retain** and **release** reference-counted ("managed") values
-so each is freed exactly once (evolving toward Perceus — see ALLOCATION.md).
-`ownership.Analyze(program, symTable, typeTable) *Table` runs after typechecking, and
-`ownership.AnalyzeLambda(lam, symTable, tt, subst)` runs it again per **generic instantiation**
-with that instantiation's type arguments substituted — managed-ness is a property of the type
-argument, so a generic body analyzed once records decisions that are wrong at a managed
-instantiation (see the generic-functions section). It (it reads the TypeTable to identify
-managed types) and produces no diagnostics — the backend consumes the `Table`. Managed types are
-`string`, `[]T`, any **function value** (a closure's environment is a ref-counted box —
-closures.go), and any `shared`-flavored value (`IsManaged`) — plus, for the deep `OwnsManaged`
-question, any **instantiation of a generic type** whose *substituted* contents own something
-managed (`parameterizedOwnsManaged`: `Box<string>` owns a string, `Box<i64>` owns nothing, and
-the declaration alone cannot answer it since its field type is the variable `t`; missing this
-case was a double free, see the generic-types section) — read through the *base* of any newtype
-(`types.StripNewtype`), since `newtype Email = string` is a string box wearing a name;
-`OwnsManaged` has the matching `*ConstrainedType` case for the wrapper that arrives as an
-`UnresolvedType` (a field declared `Email`). A nested `*ast.LambdaExpr` is an **owned producer**
-(creating a closure allocates its environment) whose *body* is analyzed as a function in its own
-right — its own last-use map, its own frames — while its **captures are not analyzed at the
-creation site at all**: a capture is a copy, and the backend mints the environment's +1 on each
-managed one, so recording a retain here too would double it. An **indirect call** reads its
-conventions off the callee's static `LambdaType` (`calleeLambdaType`) rather than falling back
-to the unknown-callee defaults: its parameters are borrows (a function type cannot express
-`own`), and its result follows the declared return convention — treating a closure's owned
-result as borrowed leaked the returned value at every call. **Ownership is deep** (07/29): every
-*owning-position* decision uses `OwnsManaged(t, symTable)` — "does this value transitively own
-anything refcounted?" — not `IsManaged`, so a `struct Person { name: string }` counts as owning
-even though the struct itself is not a box. The backend's `needsDrop` delegates to
-`OwnsManaged`, so the pass (which decides where a +1 is minted) and the backend (which decides
-where one is released) cannot drift apart. A managed value stored in an aggregate *field* is
-released by the backend's per-type **drop glue** (`pkg/backend/llvm/drop.go`) — run as a box's
-`drop_fn`, and (since deep-retain-on-copy) also called directly at a stack-aggregate binding's
-scope exit; the pass's side of that is simply that an aggregate field is an owning position (the
-+1 transfers to the aggregate). **Copying** an aggregate is symmetrically an owning position: it
-goes through the mirroring per-type **retain glue** (`pkg/backend/llvm/retain.go`), so a copy
-holds its own +1 on each managed value it duplicates. Before that, a stack-aggregate copy was
-unretained — not merely a leak but two ASan-confirmed use-after-frees (assignment through one
-copy; and reading an aggregate out of a box whose drop glue then freed its fields). The model is
-ARC over managed values: a binding / `own` param holds one owning reference, and the pass
-computes the context-dependent adjustments the backend can't see locally:
-- `Retain[expr]` — a borrowed value (an identifier / field / index read — including a container
-  element read via `xs[i]` or `pair.0`, and any managed read reached inside a loop body, both of
-  which the pass now walks) flowing into an owning position (a binding init, an owned `return`,
-  an `own` arg) → dup to mint a fresh +1. For an ordinary binding read this fires only when it
-  is **not** the binding's last use; a container element or a loop-body read is always a dup,
-  since the container still owns (and drops) the element and a loop's back-edge re-runs the
-  read;
-- `ReleaseTemp[expr]` — an owned temporary (a `++` result, an owned call result, an
-  `if`/`match` merged value, or a literal aggregate — tuple, struct, array, repeat,
-  comprehension) flowing into a borrowing position (`==`/`!=`, a match scrutinee, a `++`
-  operand, a discarded statement, a borrowed arg, a borrowed receiver) → release after the
-  statement. **Every owned producer needs this arm**, and a missing one is a leak nothing
-  but LeakSanitizer reports: until 09/13 only the tuple literal of the aggregates had it;
-- `LastUseTransfer[expr]` / `LastUseDrop[expr]` — **Perceus last-use precision** (stage 1,
-  scalars): `computeLastUse` finds each eligible managed binding's final textual reference
-  (sound over-approx; a shadowed / parameter / reassigned / loop-referenced name is ineligible
-  and keeps scope-exit release). At that last use the reference either *transfers* (owning
-  position — no dup; only when the use is unconditional, i.e. not inside a branch, so it happens
-  on every path) or *drops* (borrowing last use — released there instead of at scope exit).
+Computes where the backend must **retain** and **release** reference-counted ("managed") values so
+each is freed exactly once (Perceus — see
+[`ALLOCATION.md`](../../backend/llvm/ALLOCATION.md)). Produces no diagnostics; the backend
+consumes the `Table`.
 
-An `if`/`match` is treated as producing one merged owned value (each branch coerced to +1) so
-its release is a single drop of the phi, never per-branch. Ownership per position mirrors the
-typechecker's predicates (`paramOwnsArgument`/`isOwnedReturn`: only `own` params consume;
-bare/`ref`/`mut` borrow; bare/`own` returns transfer). **Safety bias:** every uncertain case (an
-unresolvable callee's args, a value entering an aggregate, an ineligible or conditional last
-use) is biased toward *transfer to the scope-exit frame* (a leak — memory-safe), never toward an
-early release (which would double-free/dangle). **That bias only applies to nodes the pass
-actually visits** — *skipping* a node is not a conservative choice at all, because a missed
-retain at an owning position dangles rather than leaks. The arithmetic forms
-(`MathBinaryOpExpr`/`MathAssignOpExpr`/`NegationExpr`) were skipped on the reasoning that
-arithmetic has no managed operands, which is true of the operation but not of what sits *inside*
-it: `consume(p.name) + 1` passes a managed field to an `own` parameter, and with no retain
-recorded the callee freed a box the struct still held (ASan-confirmed use-after-free, fixed
-07/29). `TryExpr` was the same omission with the same cause (fixed 08/01): `?` looked like
-control flow rather than a value, so it was never visited, and `parse(name)?` left the managed
-value *inside* its operand unannotated. It is now modelled as what it is — the operand borrowed
-like a match scrutinee, the payload read out of it duplicated in an owning position — and the
-propagating path's re-wrap, which has no node of its own to mark, is retained by the backend
-(`pkg/backend/llvm/try.go`). When adding an expression kind, recurse into every sub-expression
-that can hold a value.
-The backend half is `pkg/backend/llvm`'s `ownership_lower.go` (the managed-frame stack) + the
-retain/temp-release/last-use hooks in `lowerExpr`/`emitReturn`. Both last-use kinds are
-**fused** (stage 2 — no scope-exit release, no sentinel): a **transfer** removes the binding
-from its frame at the move (`retireManagedSlot`); a **drop** is emitted by `dropLastUsesInStmt`,
-which `lowerBlockStmts` runs after each statement — it walks the statement for last-use-borrow
-nodes and releases+retires each current-scope binding in the statement's end block
-(post-dominating the statement, so a conditional last use is freed on every path). A statement
-that sealed (early return) is skipped, so the seal's frame release frees its bindings on that
-path; the frame is the leak-safe backstop for anything not fused.
+- `ownership.Analyze(program, symTable, typeTable) *Table` runs after typechecking.
+- `ownership.AnalyzeLambda(lam, symTable, tt, subst)` re-runs per **generic instantiation** with
+  type arguments substituted — managed-ness depends on the type argument.
+- Trait-method bodies are analyzed per specialization (`driver.OwnershipByMethod`, keyed by
+  `Resolution.SpecKey`).
 
-Correspondingly, a field a `match` arm binds is **duplicated, never moved**: the scrutinee's box
-drops its own fields when it dies, so a moved field would be freed twice (most sharply when the
-box is shared and survives drop-reuse). Eliding that dup/drop pair when the box is known unique
-is Perceus stage 4; it costs refcount traffic, not allocations.
+## What is managed
 
-**Reuse / FBIP (stage 3, `shared` values)** — the pass also decides where the backend can
-reclaim a matched box in place instead of freeing-then-allocating. `ReuseMatch[m]` marks a
-`match` whose scrutinee is an owned binding (`let`/`var` or `own` param, via
-`computeOwnedLastRef`) at its **last use**, whose type is a `shared data`, whose arms are a
-plain tag switch (`plainTagSwitch` — no guards or value-test payloads, mirroring the backend's
-switch path), and where ≥1 arm's tail is a construction of the *same* type; `ReuseTarget[c]`
-marks each such construction (a value that consumes the reclaimed box). The scrutinee's ordinary
-drop is still marked but the backend retires its slot at the drop-reuse point, suppressing it. A
-**borrowed** scrutinee is never a reuse source (the caller still owns the structure). The
-backend half is `pkg/backend/llvm`'s `lyra_rc_drop_reuse` (runtime.go), `lowerBoxSharedReuse`
-(shared.go), the token threading in `lowerDataMatch`, and `dropReclaimedPayload` — the reclaimed
-shell's *old* payload is dropped at the match's merge block, past every arm, guarded on the
-token being non-null (dropping it at reclaim time would free a field an arm hasn't duplicated
-yet); the typechecker's `propagateExpectedType` stamps `shared` onto construction leaves inside
-match arms so the arm's value is heap-boxed. See ALLOCATION.md.
+`IsManaged`: `string`, `[]T`, any function value (a closure environment is a box), any `shared`
+value, `weak T` (weak count only), a held `Seq` — read through a newtype's base (`types.StripNewtype`).
 
-## A third predicate: `SharesMutableState`
+`OwnsManaged(t, symTable)` is the **deep** question — does the value transitively own a reference —
+and every owning-position decision uses it, so `struct Person { name: string }` owns. It covers
+generic instantiations by substituted contents (`parameterizedOwnsManaged`: `Box<string>` owns,
+`Box<i64>` doesn't) and a `*ConstrainedType` arriving as an `UnresolvedType`. The backend's
+`needsDrop` delegates to it, so minting and releasing cannot drift.
 
-`IsManaged` and `OwnsManaged` both answer questions the *runtime* asks — is this a
-ref-counted reference, and does copying it duplicate one, so refcounting must run.
-`SharesMutableState(t, symTable, loc)` (08/18) answers the one a *program* asks: is that
-duplication **observable**? A string is managed and copying one shares its box, so both of
-the first two say yes; a string is immutable, so there is nothing to mutate through it and
-this says no.
+Aggregate fields are released by the backend's **drop glue** (`drop.go`) and copies go through
+**retain glue** (`retain.go`); for this pass, an aggregate field and an aggregate copy are both
+owning positions.
 
-That gap is the reason it exists. `lyra-W019` (`checker/array_repeat_alias.go`) warns that
-`[v; n]` fills every slot with one value, and built on `IsManaged` it would have fired
-mostly on `["hi"; 3]` — correct, unremarkable code and the commoner spelling by far. What
-answers yes is a `[]T` (its elements live behind the shared box pointer), a `shared`
-aggregate with a **writable** field, or any struct / tuple / `data` payload / `[N]T` / generic
-instantiation containing one; the copy is shallow, so `struct Row { cells: []i64 }` shares
-its cells.
+## The table
 
-Two rungs were measured rather than reasoned from the layout, and both came out against the
-obvious guess. `readonly` is **not** honoured on the way down: it stops the direct write
-(`fs[0].cells[0] = 7` is lyra-E001) and not the two-line launder that gets the same effect
-(`let mut c = fs[0].cells` then `c[0] = 7`), so a frozen field whose type shares still
-shares. And a `shared` **scalar** does not share at all, since assigning to the binding
-rebinds it rather than writing the box — which is why the test is a writable field and not
-the allocation flavor.
+A binding / `own` parameter holds one owning reference. The pass records:
 
-`SharedMutablePath` is the implementation and `SharesMutableState` its boolean face: it
-returns the chain of struct-field names down to the sharing part, so the diagnostic that
-explains *why* a `Row` aliases comes from the same walk that decided it does — the
-single-definition rule `OwnsManaged` follows, applied to a message. It carries a `seen` set
-where `OwnsManaged` needs none: `OwnsManaged` answers `shared` outright, so lyra-E014's
-"a cycle must pass through a `shared` field" cuts every recursion, while this walk can
-decline a `shared` aggregate and keep descending.
+- **`Retain[expr]`** — a borrowed value (identifier, field, index, `pair.0`, `p^`) flowing into an
+  owning position (binding init, owned `return`, `own` arg, aggregate field). For a plain binding
+  only when not its last use; a container element or loop-body read always dups.
+- **`ReleaseTemp[expr]`** — an owned temporary (`++` result, owned call result, `if`/`match` merged
+  value, tuple/struct/array/repeat/comprehension literal) flowing into a
+  borrowing position (`==`, match scrutinee, `++` operand, discarded statement, borrowed arg or
+  receiver) — released after the statement. **Every owned producer needs this arm**; a missing one
+  is a leak only LeakSanitizer reports.
+- **`LastUseTransfer` / `LastUseDrop`** — Perceus last use. `computeLastUse` finds an eligible
+  binding's final textual reference (shadowed, parameter, reassigned, loop-referenced and
+  address-taken names are ineligible). An owning last use *transfers* only if unconditional; a
+  borrowing one *drops* there. The backend fuses both (`retireManagedSlot`,
+  `dropLastUsesInStmt`); the managed frame is the leak-safe backstop.
+- **`ReuseMatch[m]` / `ReuseTarget[c]`** — FBIP reuse: a `match` on an owned binding
+  (`computeOwnedLastRef`) at its last use, of a `shared data` type, with a plain tag switch
+  (`plainTagSwitch`) and ≥1 arm constructing the same type. A borrowed scrutinee is never a reuse
+  source. Backend: `lyra_rc_drop_reuse`, `lowerBoxSharedReuse`, `lowerDataMatch`,
+  `dropReclaimedPayload` (old payload dropped at the merge, not at reclaim).
 
-## Trait-method parameter modes
+Rules:
 
-A `.`-call's modes come from the **trait's declared signature**, resolved through the
-`MethodTable` (`methodSignature`) — an impl binds patterns, not typed parameters, so there is
-nowhere else they live. `resolveCallee` returns nil for a method call, so before this every
-method argument fell to the conservative transfer: leak-safe, and correct while a trait
-signature could not express a mode, but wrong the moment one says `own`.
+- An `if`/`match` produces **one merged owned value**; its release is one drop of the phi.
+- A field bound by a `match` arm is **duplicated, never moved** (the box drops its own fields).
+- Modes mirror the typechecker (`paramOwnsArgument`/`isOwnedReturn`): only `own` params consume;
+  bare/`ref`/`mut` borrow; bare/`own` returns transfer.
+- **Safety bias**: uncertain cases transfer to the scope-exit frame (a leak), never release early.
+  **This only holds for nodes the pass visits** — skipping a node misses a retain, which dangles.
+  When adding an expression kind, recurse into every sub-expression (arithmetic and `?` were both
+  skipped once, both use-after-frees).
+- `TryExpr`: operand borrowed like a scrutinee, payload duplicated; the propagating re-wrap is
+  retained by the backend (`try.go`).
+- A nested **lambda** is an owned producer whose body is analyzed as its own function; its
+  **captures are not analyzed at the creation site** (the backend mints the environment's +1).
+- An **indirect call** reads conventions from the callee's `LambdaType` (`calleeLambdaType`):
+  params borrow, result follows the declared return.
+- **`yield e` borrows `e`.**
 
-**The receiver is signature parameter 0 and the arguments start at 1.** Reading the modes at
-the wrong offset takes each argument's mode from the parameter to its left, which for `own`
-is a double free or a leak rather than a type error — so the offset is written out rather
-than folded into a loop index.
+## Method calls
 
-**The receiver is also transferred when parameter 0 is `own`** (08/03). It is not in
-`e.Arguments`, so the argument loop never saw it, and the caller went on lending a value the
-callee had adopted — the caller's frame released a box the callee had already freed, which
-ASan reports as a heap-use-after-free inside `lyra_rc_release`. The argument offset above had
-been right from the start; the receiver was simply a third place the same fact had to be
-written down.
+A `.`-call's parameter modes **and result ownership** come from the trait's declared signature via
+the `MethodTable` (`methodSignature`); a bound-dispatched call with no resolution falls back to the
+declaring trait's signature.
 
-**A `.`-call's conventions come from the trait signature on both sides** (09/13): the result's
-ownership as well as the parameters' modes, and for a call through a `where` bound — which
-has no resolution — from the declaring trait's signature (`methodSignature`). A trait
-method's owned result read as borrowed was a leak at every call.
+- **The receiver is signature parameter 0; arguments start at 1.** The offset is written out, since
+  an off-by-one is a double free or leak, not a type error.
+- **The receiver is transferred when parameter 0 is `own`** — it is not in `e.Arguments`.
+- **A borrowed receiver that is a temporary is walked** (`mk().len()` must release). A receiver
+  **rooted at a binding** (`xs.len()`, `h.xs.len()`) is deliberately **not** walked
+  (`rootedAtBinding`): recording a use moves Perceus's drop (`n.weak()` then failing, `xs.data()`
+  freeing under its pointer).
+- `checker/use_after_move.go` must resolve method callees too, or `own` through a method goes
+  unchecked.
 
-**`p^` is a read out of storage, not a borrow-only form** (09/13): a managed pointee read
-into an owning position is retained, like a field or element read. **`yield e` borrows `e`**,
-so a producer's temporaries are released after the consumer runs.
+## The expression switch's `default:`
 
-**A borrowed receiver that is a temporary is walked too** (09/13). Only the `own` arm visited
-the receiver, so `mk().len()` and `xs.join(",").len()` leaked the value they were called on.
-A receiver **rooted at a binding** (`xs.len()`, `h.xs.len()`) is still not walked, and that is
-deliberate: walking one records a use, which moves where Perceus drops the binding — `let w =
-n.weak()` became `n`'s last use and the upgrade then failed, and `xs.data()` freed `xs` under
-the pointer it returned (`rootedAtBinding`).
+`analyzer.expr` records nothing for an unhandled kind, which is **not** safe (a missed retain
+dangles). Borrow-only kinds (result is a number, bool or raw pointer) share one case walking
+children with `ast.WalkExprChildren`; `ArrayCompExpr` has a real arm (owning, analyzed under
+`conditional`). Still in `default`, deliberately:
 
-**`own` on a trait parameter used to be rejected by the checker (`lyra-E030`, retired
-08/03)**, and this pass was the reason: it analyzed no trait-method *body*, so nothing
-recorded that a returned `own` parameter was transferred rather than dropped —
-`take: (Self, own string) -> string` was a heap-use-after-free, measured under ASan on 07/31.
-Method bodies are now analyzed per specialization (`driver.OwnershipByMethod`, keyed by
-`Resolution.SpecKey`), which is what the restriction named as its condition for lifting.
+- `DataConstructorExpr` — always nullary, already a fresh +1.
+- `AwaitExpr`, `ComposeExpr` — no backend case; each owes an arm in the change that lowers it.
+- `YieldFromExpr` — its operand is a sequence consumed in place; nothing to release.
 
-What the restriction did *not* name, and what made lifting it more than deleting a check:
-**two other passes could not resolve a method callee either**. Use-after-move
-(`checker/use_after_move.go`) resolved an identifier callee only, so the caller's side of a
-transfer went unchecked — the diagnostic that makes `own` safe never fired through a method
-call. And this pass had the receiver gap above. Both are the same shape as the offset already
-documented here, which is the argument for treating "a method call is a call whose first
-parameter is the receiver" as one fact with several readers rather than a special case each
-pass discovers for itself.
-
-## What the expression switch's `default:` still catches
-
-`analyzer.expr` records nothing for a node kind it has no arm for, and the comment there
-is emphatic that this is **not** a safe default: a missed *release* leaks, but a missed
-*retain* at an owning position dangles. Twelve kinds were reaching it until 08/23. Ten are
-now one multi-type **borrow-only** case — the operation's own result is a number, a bool or
-a raw pointer, so every child is borrowed, and it walks them with `ast.WalkExprChildren`
-rather than naming each one's fields — and `ArrayCompExpr` got a real arm (its result is an
-owning position, analyzed under `conditional` because it runs once per iteration).
-
-Five kinds are still there, each deliberately:
-
-- **`DataConstructorExpr`** is nullary and only ever nullary (the applied spelling collects
-  to a named `TupleLiteralExpr`), so it has no child and is already a fresh `+1`.
-- **`AwaitExpr`, `YieldExpr`, `YieldFromExpr`, `ComposeExpr`** have no backend case, so a
-  program containing one fails to lower first. Each owes an arm in the change that lowers
-  it.
-`UnsafeBlockExpr` used to be on that list, and getting it off took a rule rather than a
-case — see below.
+A shared traversal can say what a node's children are; only a per-kind arm can say whether a
+position **owns**.
 
 ## Taking an address pins the binding
 
-`unsafe { … }` is its body, so `a.block(e.Body, needOwned)` is the obvious arm. It broke
-every FFI test until `noteAddressTaken` existed, and the two landed together (08/24).
+`unsafe { … }` is `a.block(e.Body, needOwned)`, paired with `noteAddressTaken`: an address-taken
+binding is excluded from last use in **both** `computeLastUse` and `computeOwnedLastRef`, pinning
+the **root** of the place (`&xs[0]` pins `xs`). A raw pointer keeps storage alive without counting
+as a reference, so otherwise `CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` frees `xs`.
 
-**Perceus rests on a premise `&` breaks.** Last-use says a binding's final *textual mention*
-is its final *use*, so the reference can be transferred rather than duplicated, or dropped
-there rather than at scope exit. Taking an address separates the two: a raw pointer keeps
-storage alive without counting as a reference to it. In `std.ffi`'s own shape —
-`CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` — `&xs[0]` is the last mention of `xs`, and the
-array was freed there while the pointer still named it.
+Remove the pin → use-after-free. Remove the arm → double free for a value shared out of the block
+(`TestExec_UnsafeBlockRetainsWhatItShares`).
 
-`noteAddressTaken` excludes an address-taken binding from last-use in **both** walks
-(`computeLastUse` and `computeOwnedLastRef`), exactly as `loopUsed` excludes a
-loop-referenced one. It pins the **root** of the place, since `&xs[0]` is an element's
-address and `xs` is what dies. Pinning is the conservative direction — the binding falls
-back to a scope-exit release, which is where it was before Perceus — and it costs precision
-only in functions that take an address.
+## `SharesMutableState` and the shared fold
 
-**The two halves fail differently**, which is worth knowing before touching either. Remove
-the pin and it is a use-after-free: a read through the pointer in a later statement returns
-0. Remove the arm and it is a double free, but *only* for a value shared out of the block —
-a missing drop defers to scope exit, where the managed frame is a leak-safe backstop, while
-a missing retain has no backstop. The whole test suite passed with the arm removed until
-`TestExec_UnsafeBlockRetainsWhatItShares` existed to catch it.
+`SharesMutableState(t, symTable, loc)` asks whether copying a value's shared reference is
+**observable** (used by `lyra-W019`, `checker/array_repeat_alias.go`). Yes for `[]T`, a `shared`
+aggregate with a writable field, or any struct/tuple/`data`/`[N]T`/instantiation containing one; no
+for a string (immutable). `readonly` does **not** stop it; a `shared` scalar does not share.
+`SharedMutablePath` is the implementation and returns the field-name path for the diagnostic.
 
-The general lesson, since it is why the default could not just be turned into a borrow-walk
-of children: a shared traversal can say what a node's children *are*, and only a per-kind
-arm can say whether a position **owns**. Borrowing a comprehension's result records a
-last-use drop on `[i in 0..<2 | t]`, freeing `t` inside the loop while the array keeps both
-pointers — an immediate double free in place of a latent one.
-
-## One fold, two predicates
-
-`OwnsManaged` ("does this value transitively own a reference?") and `SharedMutablePath`
-("is that sharing observable, and by what path?") ask different questions of the same tree,
-and both used to spell out the same seven-arm switch over composite types. They now share
-`eachComponent`, which yields every structural component of a type with its field name
-where it has one and `""` where the position is positional — a tuple element, a `data`
-payload, an array element, a newtype's base. That is why the path a struct reports is
-prefixed and a tuple's is not: the caller prefixes when it is handed a name.
-
-**The generic-instantiation arm is deliberately not shared**, and the difference is the
-interesting part. Both substitute a declaration's parameters and recurse
-(`instantiateDecl`), but `SharedMutablePath` carries a `seen` set keyed on the type's name
-and `OwnsManaged` does not need one: a recursive type must break its cycle with a `shared`
-or `weak` field (lyra-E014), and both are managed outright, so `IsManaged` answers them
-before `OwnsManaged` can recurse. `SharedMutablePath` keeps looking *past* a shared value
-that has no writable field — which is exactly the shape that can come back around to
-itself. That asymmetry used to sit inside forty lines of otherwise identical arms; it is now
-the only thing the two do not share, with the reason next to it.
+`OwnsManaged` and `SharedMutablePath` share `eachComponent` (component plus field name, `""` when
+positional). The generic-instantiation arm (`instantiateDecl`) is **not** shared:
+`SharedMutablePath` needs a `seen` set because it descends past a `shared` value with no writable
+field, while `OwnsManaged` stops at `shared`/`weak` (which lyra-E014 guarantees break every cycle).
