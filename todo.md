@@ -9,8 +9,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] A struct literal may name a field twice.** `P { x: 1, x: 2, y: 3 }` and `{ a: 1,
-  a: 2 }` compile, the last value winning; so does a repeated update in `P { b | y: 5, y: 6 }`.
 - **[OPEN] A constructor's payload type is resolved at the *use* site.** `Mouse(m) =>
   m.button` resolves `MouseEvent` from the matcher's module and works only because
   `resolvedTypes` shares a `pub` type's key. Resolving from the declaration stack-overflows

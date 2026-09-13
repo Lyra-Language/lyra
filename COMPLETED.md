@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a struct literal gives each field one value
+
+`P { x: 1, x: 2, y: 3 }` built `x = 2` and type-checked, since each value fits the field: every
+literal form reads its fields by name, so the later value won silently. The same held for the
+anonymous form, record update, an inline-record data constructor and a `const` initializer —
+and a struct *pattern* naming a field twice (`P { x, x: y }`) was accepted too, binding one
+value two ways. The declaration's own duplicate had always been refused; this is its
+counterpart at the use.
+
+**lyra-E075, in the collector**, since it is a question about the source and nothing more: one
+check in `collectStructFields`, the funnel every literal form reads its fields through, and one
+in `collectStructPatternFields`, which skips `_` and `...` as not being field names. Reported
+at the second occurrence, naming the first. No program in `std`, the bindings or the examples
+had written one.
+
 ### 09/13/26 — `yield`'s precedence, two literals of different kinds, and record update
 
 Three known-bug entries, and **all three were described wrongly** once reproduced — which is

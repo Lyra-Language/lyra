@@ -100,13 +100,34 @@ func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Struct
 	if node == nil {
 		return fields
 	}
+	firstAt := map[string]*sitter.Node{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
-		if child.Kind() == "struct_field" {
-			fields = append(fields, collectStructInstanceField(child, ctx))
+		if child.Kind() != "struct_field" {
+			continue
 		}
+		field := collectStructInstanceField(child, ctx)
+		if first, seen := firstAt[field.Name]; seen {
+			reportDuplicateField(ctx, child, first, field.Name, "is given a value twice in this literal", "a field takes one value")
+		} else {
+			firstAt[field.Name] = child
+		}
+		fields = append(fields, field)
 	}
 	return fields
+}
+
+// reportDuplicateField reports lyra-E075 at a field's second occurrence, naming its first.
+// Shared by struct literals — every literal form reads its fields here — and struct patterns.
+func reportDuplicateField(ctx *collector_ctx.Ctx, second, first *sitter.Node, name, what, rule string) {
+	at := ctx.NodeLocation(first)
+	ctx.AddErrorCoded(second, diag.SeverityError, diag.CodeDuplicateStructField,
+		"field %q %s (first at %d:%d); %s", name, what, at.StartLine, at.StartCol, rule)
+}
+
+// ReportDuplicateField is reportDuplicateField for the collector's pattern code.
+func ReportDuplicateField(ctx *collector_ctx.Ctx, second, first *sitter.Node, name, what, rule string) {
+	reportDuplicateField(ctx, second, first, name, what, rule)
 }
 
 func collectStructInstanceField(node *sitter.Node, ctx *collector_ctx.Ctx) ast.StructField {

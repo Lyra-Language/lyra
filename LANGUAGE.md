@@ -36,7 +36,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 ### Struct literals and record update
 
-`P { base | f: v }` is a copy of `base` with the listed fields replaced; `{ base | f: v }` is the anonymous form. The base must have the literal's type, each update must name one of its fields (no field is added), and a kept managed field is a copy with its own reference. There is no `...base` spread in a struct literal: `...` is an array literal's element (`lyra-E068`).
+`P { base | f: v }` is a copy of `base` with the listed fields replaced; `{ base | f: v }` is the anonymous form. The base must have the literal's type, each update must name one of its fields (no field is added), and a kept managed field is a copy with its own reference. A literal gives each field one value, and a struct pattern names each field once (`lyra-E075`). There is no `...base` spread in a struct literal: `...` is an array literal's element (`lyra-E068`).
 
 ### Literals must fit
 

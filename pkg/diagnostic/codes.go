@@ -906,6 +906,17 @@ const (
 	// errors rather than emitting wrong code even where the front end has looked.
 	CodeLetElseMustDiverge = "lyra-E074"
 
+	// CodeDuplicateStructField: a struct literal gives one field two values, or a struct
+	// pattern names one field twice.
+	//
+	// A literal's fields are keyed by name wherever they are read, so the later value
+	// silently won: `P { x: 1, x: 2, y: 3 }` built `x = 2`, and `P { base | y: 5, y: 6 }` the
+	// same — a mistake that type-checks perfectly, since each value fits the field. A pattern
+	// naming a field twice binds or tests one value two ways, which is either redundant or two
+	// names for one value. Reported at the second occurrence, naming the first; the
+	// declaration's own duplicate was always refused, and this is its counterpart at the use.
+	CodeDuplicateStructField = "lyra-E075"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

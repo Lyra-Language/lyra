@@ -1292,12 +1292,22 @@ func (c *Collector) collectStructPattern(node *sitter.Node) ast.Pattern {
 
 func (c *Collector) collectStructPatternFields(node *sitter.Node) []ast.StructPatternField {
 	fields := []ast.StructPatternField{}
+	firstAt := map[string]*sitter.Node{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		field := c.collectStructPatternField(child)
-		if field != nil {
-			fields = append(fields, *field)
+		if field == nil {
+			continue
 		}
+		// `_` and `...` are not field names, and may each appear where they appear.
+		if field.Name != "_" && field.Name != "..." {
+			if first, seen := firstAt[field.Name]; seen {
+				expressions.ReportDuplicateField(c.ctx, child, first, field.Name, "is matched twice in this pattern", "match it once, with a sub-pattern if it needs more than a name")
+			} else {
+				firstAt[field.Name] = child
+			}
+		}
+		fields = append(fields, *field)
 	}
 	return fields
 }
