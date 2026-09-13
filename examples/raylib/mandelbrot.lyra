@@ -5,7 +5,9 @@ import bindings.raylib.{
   begin_drawing, end_drawing, gen_image_color, unload_image,
   rgb, mouse_position, mouse_wheel, draw_line, Vector2, Color,
   texture_from_image, update_texture, draw_texture, unload_texture, WHITE, BLACK,
-  mouse_down, mouse_delta, MOUSE_BUTTON_LEFT
+  mouse_down, mouse_delta, MOUSE_BUTTON_LEFT, Texture2D,
+  set_config_flags, set_window_min_size, window_resized, screen_width, screen_height,
+  toggle_borderless, key_pressed, FLAG_WINDOW_RESIZABLE, KEY_F
 }
 
 const MAX_ITER = 100
@@ -19,7 +21,7 @@ const Y_LEN = Y_MAX - Y_MIN
 
 const ASPECT_RATIO = Y_LEN / X_LEN
 
-const WINDOW_WIDTH = 1440
+const WINDOW_WIDTH = 800
 
 const ESCAPE = 65536.0
 // Colour is computed rather than looked up, now that the terminal takes 24-bit values:
@@ -56,7 +58,7 @@ const COLOR_CYCLE = 2.5
 /// few iterations to black is what keeps the boundary the brightest thing on screen.
 const FADE_IN = 8.0
 
-/// How much one wheel notch scales the span. Zoom is **multiplicative**, not a level
+/// How much one wheel notch multiplies the scale by. Zoom is **multiplicative**, not a level
 /// counter: a fixed step feels like the same movement at every depth, which is what makes
 /// it read as smooth rather than as jumping between preset magnifications.
 const ZOOM_STEP = 0.85
@@ -65,7 +67,7 @@ const ZOOM_STEP = 0.85
 /// is still moving, so a preview costs a **sixteenth** of a full render.
 ///
 /// Zoom is the one thing in the program that cannot be cached — the whole set is new at
-/// every span — and a full pass is far too slow to run between two frames, so a sustained
+/// every scale — and a full pass is far too slow to run between two frames, so a sustained
 /// scroll would otherwise stutter along at the render's pace rather than the wheel's.
 /// A coarse frame is what keeps the gesture attached to the hand; the sharp one follows
 /// the moment the wheel stops.
@@ -84,45 +86,57 @@ const PREVIEW_STEP = 4
 /// wheel, and averaging unrelated hues gives grey, so the filaments turned to mush. It is
 /// only worth doing once neighbouring samples are near-neighbours in colour too.
 ///
-/// **The full pass only.** It costs 4x, which a preview cannot afford — and a preview is
-/// already averaging over a 4x4 block by standing one point in for it, so the aliasing
-/// this fixes is not what limits a coarse frame.
+/// **The full pass only, and only where it shows** — see [refine_edges]. Averaging every
+/// pixel costs 4x, and most pixels sit in smooth gradient or inside the set, where four
+/// points answer what one did. A preview never supersamples: standing one point in for a
+/// 4x4 block is already coarser than the aliasing this fixes.
 const SUPERSAMPLE = 2
+
+/// How far apart two neighbouring pixels' colours must be, in the largest channel out of
+/// 255, before both are supersampled.
+///
+/// Measured rather than chosen: at 16, a 50,000x view refines about a fifth of its pixels
+/// and lands within 16 of supersampling everything on all but one of 1.9 million, in about
+/// 60% of the time. Lower buys nothing visible; higher starts missing the thinnest
+/// filaments at depth, where a sub-pixel feature changes a colour by less than it should.
+const EDGE_CONTRAST = 16
 
 /// The fractal is drawn into a pixel buffer and uploaded to one texture, and the frame
 /// loop only draws that texture. Recomputing the set every frame is the expensive part —
 /// a million points, each iterated up to `MAX_ITER` times — and nothing about it changes
-/// while the view does not, so it is done once and repeated only when `needs_render` says
-/// the view moved. That is the flag a zoom sets.
+/// while the view does not, so it is done once and repeated only when the view moves or
+/// the window changes size.
 ///
 /// **One texture, reused.** The pixels go up through [update_texture] rather than through
 /// a fresh [texture_from_image] per render: a new texture is a new GPU allocation, and the
 /// old one is only released if something remembers to, which is the shape a redraw loop
 /// leaks from.
 let main = () -> void => {
-  let width = WINDOW_WIDTH
-  let height = (f64(WINDOW_WIDTH) * ASPECT_RATIO).floor()
+  var width = WINDOW_WIDTH
+  var height = (f64(WINDOW_WIDTH) * ASPECT_RATIO).floor()
+  set_config_flags(FLAG_WINDOW_RESIZABLE)
   init_window(width, height, "Lyra - raylib Mandelbrot Set")
+  set_window_min_size(320, 240)
   set_target_fps(60)
 
-  // The scratch image exists only to give the texture its size and pixel format; the
-  // pixels themselves come from `buffer` afterwards, so it is released straight away.
-  var img = gen_image_color(i32(width), i32(height), BLACK)
-  let created = texture_from_image(img)
-  unload_image(img)
-  let Some(tex) = created else {
+  let Some(first_texture) = blank_texture(width, height) else {
     close_window()
     println("could not upload the texture")
     return
   }
-
+  var tex = first_texture
   var buffer: []Color = [BLACK; width * height]
 
-  // The view: its top-left corner and its width on the complex plane. The height follows
-  // from the aspect ratio, so pixels stay square at every depth.
+  // **The view is a corner and a scale**: the plane point at the window's top-left pixel,
+  // and how much of the plane one pixel covers. Not a corner and a span, which is how it
+  // began — a span has to be divided by the window's size to mean anything, so a window
+  // that can change shape would stretch every pixel the moment it did. A scale per pixel
+  // is square by construction, whatever the window's proportions.
+  //
+  // It opens with the whole set across the width and centred top to bottom.
+  var scale = X_LEN / f64(width)
   var min_x = X_MIN
-  var min_y = Y_MIN
-  var span_x = X_LEN
+  var min_y = (Y_MIN + Y_MAX) / 2.0 - scale * f64(height) / 2.0
 
   // Two levels of owing a render, because they resolve at different moments: a preview is
   // owed for *this* frame, and the full pass is owed for the first frame after the wheel
@@ -131,6 +145,47 @@ let main = () -> void => {
   var needs_full = true
 
   for !should_close() {
+    // **`f` toggles fullscreen**, borderless rather than exclusive: the window grows to
+    // cover the screen instead of the display switching video modes. Measured on this
+    // machine, both cover the screen exactly, so the one that leaves the display alone
+    // wins.
+    //
+    // A toggle is then simply a resize, and needs nothing of its own: raylib reports it
+    // through [window_resized] on the same frame, exactly as it reports a dragged edge.
+    if key_pressed(KEY_F) {
+      toggle_borderless()
+    }
+
+    // **A resize keeps the plane point at the window's centre where it is, and keeps the
+    // scale.** The window is a hole onto the plane: making it bigger shows more around what
+    // you were looking at, rather than stretching it or re-framing the whole set. Keeping
+    // the scale is also what keeps the iteration limit, since detail per pixel is what did
+    // not change.
+    //
+    // The buffer and the texture are both sized to the window, so both are replaced — and
+    // the render owed is a preview, because a dragged edge resizes on every frame of the
+    // drag, which is the same shape as a turning wheel.
+    if window_resized() {
+      let new_width = screen_width()
+      let new_height = screen_height()
+      if new_width > 0 && new_height > 0 {
+        min_x += scale * f64(width - new_width) / 2.0
+        min_y += scale * f64(height - new_height) / 2.0
+        width = new_width
+        height = new_height
+
+        unload_texture(tex)
+        let Some(resized) = blank_texture(width, height) else {
+          close_window()
+          println("could not upload a ${width}x${height} texture")
+          return
+        }
+        tex = resized
+        buffer = [BLACK; width * height]
+        needs_preview = true
+      }
+    }
+
     let mouse_pos = mouse_position()
 
     // **Zoom toward the pointer.** The point of the plane under the cursor is the one
@@ -140,32 +195,24 @@ let main = () -> void => {
     // chase-the-fractal.
     let wheel = f64(mouse_wheel())
     if wheel.abs() > 0.0 {
-      let fx = fraction(f64(mouse_pos.x), f64(width))
-      let fy = fraction(f64(mouse_pos.y), f64(height))
-      let anchor_x = min_x + span_x * fx
-      let anchor_y = min_y + span_x * ASPECT_RATIO * fy
-      span_x *= zoom_factor(wheel)
-      min_x = anchor_x - span_x * fx
-      min_y = anchor_y - span_x * ASPECT_RATIO * fy
+      // The pointer in pixels, clamped to the window.
+      let at_x = f64(width) * fraction(f64(mouse_pos.x), f64(width))
+      let at_y = f64(height) * fraction(f64(mouse_pos.y), f64(height))
+      let anchor_x = min_x + scale * at_x
+      let anchor_y = min_y + scale * at_y
+      scale *= zoom_factor(wheel)
+      min_x = anchor_x - scale * at_x
+      min_y = anchor_y - scale * at_y
       needs_preview = true
     }
 
     // **Pan by dragging**, and a dragged point stays under the cursor exactly, which is
-    // the invariant the zoom already keeps. What one pixel is worth is the view's span
-    // over the window's pixels — a *ratio* of the two, so no constant can stand in for
-    // the divisor: it makes the drag right at one window size and one depth and wrong
-    // everywhere else.
-    //
-    // **Each axis divides by its own extent**, which is what [render] does, and matching
-    // it is what makes the grab exact rather than nearly exact. The two very nearly
-    // agree — the window is sized `width * ASPECT_RATIO` and the view's height is its
-    // span times the same — but the window's height is a whole number of pixels and 979
-    // is not 979.27, so one figure for both axes drags vertically 0.03% off and the point
-    // under the cursor creeps.
+    // the invariant the zoom already keeps: a pixel of movement is one pixel's worth of
+    // plane. That worth is the scale, and the same on both axes because a pixel is square.
     let { x: delta_x, y: delta_y } = mouse_delta()
     if mouse_down(MOUSE_BUTTON_LEFT) && (f64(delta_x).abs() + f64(delta_y).abs()) > 0.0 {
-      min_x -= f64(delta_x) * span_x / f64(width)
-      min_y -= f64(delta_y) * span_x * ASPECT_RATIO / f64(height)
+      min_x -= f64(delta_x) * scale
+      min_y -= f64(delta_y) * scale
       needs_preview = true
     }
 
@@ -173,12 +220,13 @@ let main = () -> void => {
     // that work: a frame the wheel moved in renders the preview *and* owes the full pass,
     // and the first frame it does not move in is where that debt comes due.
     if needs_preview {
-      render(buffer, width, height, min_x, min_y, span_x, PREVIEW_STEP, 1)
+      render(buffer, width, height, min_x, min_y, scale, PREVIEW_STEP)
       update_texture(tex, buffer)
       needs_preview = false
       needs_full = true
     } else if needs_full {
-      render(buffer, width, height, min_x, min_y, span_x, 1, SUPERSAMPLE)
+      render(buffer, width, height, min_x, min_y, scale, 1)
+      refine_edges(buffer, width, height, min_x, min_y, scale)
       update_texture(tex, buffer)
       needs_full = false
     }
@@ -195,6 +243,18 @@ let main = () -> void => {
   println("closed cleanly")
 }
 
+/// A texture of the given size in the pixel format [update_texture] writes, or `None` if
+/// the GPU would not take one.
+///
+/// The image exists only to give the texture its size and format — the pixels come from
+/// the buffer afterwards — so it is released before this returns.
+let blank_texture = (width: i64, height: i64) -> Maybe<Texture2D> => {
+  var img = gen_image_color(i32(width), i32(height), BLACK)
+  let created = texture_from_image(img)
+  unload_image(img)
+  created
+}
+
 /// Where a pointer coordinate falls across an extent, as 0.0 through 1.0.
 ///
 /// **Clamped**, because the pointer is reported outside the window when a button is held
@@ -206,7 +266,7 @@ let fraction = pure (position: f64, extent: f64) -> f64 => {
   if f < 0.0 { 0.0 } else if f > 1.0 { 1.0 } else { f }
 }
 
-/// What one frame's wheel movement multiplies the span by.
+/// What one frame's wheel movement multiplies the scale by.
 ///
 /// **The movement is a proportion of a notch, clamped to one per frame.** A wheel reports
 /// whole notches, but a trackpad reports fractions of one — several per frame during a
@@ -214,7 +274,7 @@ let fraction = pure (position: f64, extent: f64) -> f64 => {
 /// between two frames, with no rendered frame in between to see them.
 ///
 /// **Zooming out is the exact reciprocal of zooming in**, so a notch back undoes a notch
-/// forward and the view returns to the span it came from. Scaling by `1.15` instead of by
+/// forward and the view returns to the scale it came from. Scaling by `1.15` instead of by
 /// `1.0 / 0.85` is wrong by half a percent each way, which compounds over a few dozen
 /// notches into a view that no longer comes back.
 let zoom_factor = pure (wheel: f64) -> f64 => {
@@ -228,51 +288,27 @@ let zoom_factor = pure (wheel: f64) -> f64 => {
 /// Compute the set into `buffer`, one `Color` per pixel in row-major order — which is the
 /// order [update_texture] reads them in.
 ///
-/// The two knobs are how much ground one colour covers and how many points decide it.
+/// `step` is the block size: one point per `step`-by-`step` square of pixels, its colour
+/// filling the square, so a step of 1 is the full picture and [PREVIEW_STEP] is the coarse
+/// one. **The buffer is filled either way** — a preview writes the same pixel count as a
+/// full render, it just computes a sixteenth as many points — which is what keeps one
+/// texture, one length and one upload across both.
 ///
-/// `step` is the block size: one colour per `step`-by-`step` square of pixels, so a step
-/// of 1 is the full picture and [PREVIEW_STEP] is the coarse one. `samples` is how many
-/// points that colour is the average of, `samples` per side — 1 for a preview and
-/// [SUPERSAMPLE] for the full pass. **The buffer is filled either way** — a preview writes
-/// the same pixel count as a full render, it just computes a sixteenth as many points —
-/// which is what keeps one texture, one length and one upload across both.
-///
-/// The sample points are spread evenly across the block and each sits at the **centre** of
-/// its share of it, which is why the offset carries a half. A preview therefore stands the
-/// block's middle in for the block rather than its top-left corner, so a coarse frame sits
-/// where the sharp one will rather than two pixels up and to the left of it.
+/// The point sits at the block's **centre**, which is why the offset carries a half. A
+/// preview's block is therefore stood in for by its middle rather than its top-left
+/// corner, so a coarse frame sits where the sharp one will rather than two pixels up and
+/// to the left of it.
 let render = (buffer: mut []Color, width: i64, height: i64,
-              min_x: f64, min_y: f64, span_x: f64, step: i64, samples: i64) -> void => {
-  let span_y = span_x * ASPECT_RATIO
+              min_x: f64, min_y: f64, scale: f64, step: i64) -> void => {
   // The iteration limit is a property of the view, not of a point, so it is computed once
   // per render rather than once per pixel.
-  let max_iter = iter_limit(span_x)
-  let per_side = f64(samples)
-  let taken = samples * samples
+  let max_iter = iter_limit(scale)
   for block_y in 0..<height:step {
     for block_x in 0..<width:step {
-      var sum_r = 0
-      var sum_g = 0
-      var sum_b = 0
-      for sample_y in 0..<samples {
-        for sample_x in 0..<samples {
-          let at_x = f64(block_x) + f64(step) * (f64(sample_x) + 0.5) / per_side
-          let at_y = f64(block_y) + f64(step) * (f64(sample_y) + 0.5) / per_side
-          let c = Complex {
-            re: min_x + span_x * at_x / f64(width),
-            im: min_y + span_y * at_y / f64(height),
-          }
-          let sample = shade(c, max_iter)
-          sum_r += i64(sample.r)
-          sum_g += i64(sample.g)
-          sum_b += i64(sample.b)
-        }
-      }
-      // Averaged channel by channel as stored, which is not the same as averaging light —
-      // the channels are what a display will gamma-decode. For a palette invented to make
-      // structure legible there is no true colour to be wrong about, and the alternative
-      // costs a pow per sample.
-      let color = rgb(u8(sum_r / taken), u8(sum_g / taken), u8(sum_b / taken))
+      let at_x = f64(block_x) + f64(step) * 0.5
+      let at_y = f64(block_y) + f64(step) * 0.5
+      let c = Complex { re: min_x + scale * at_x, im: min_y + scale * at_y }
+      let color = shade(c, max_iter)
       // A trailing block is clipped rather than skipped, since the window's size is not
       // obliged to divide by the step — and a skipped one would leave the right edge and
       // the bottom row holding whatever the previous view left there.
@@ -285,6 +321,106 @@ let render = (buffer: mut []Color, width: i64, height: i64,
       }
     }
   }
+}
+
+/// Supersample, in place, the pixels of a one-sample render that need it: [SUPERSAMPLE]
+/// points per side, averaged, but only where the picture has an edge.
+///
+/// **An edge is where two neighbouring pixels disagree** by more than [EDGE_CONTRAST].
+/// Aliasing is a pixel reporting one point of something finer than itself, and a
+/// neighbour that reports a very different point is the evidence of it. In smooth
+/// gradient and inside the set the neighbours agree, and four points would only have
+/// repeated the one — which is most of the picture, and why this is cheaper than
+/// supersampling all of it.
+///
+/// **The detected edge is then grown by one pixel**, because a contrast test can only see
+/// what one sample per pixel already resolved. Where the set's boundary passes through a
+/// pixel whose centre and whose four neighbours' centres all land inside, all five are
+/// black and nothing disagrees, yet its corners escape. Such a pixel is always beside one
+/// that *was* caught, so growing the mask reaches it. Measured on the top view, the grown
+/// mask cut the pixels still visibly off from 936 to 82, for 5% more time.
+///
+/// Detection reads only the one-sample picture: every pair is judged before any pixel is
+/// replaced, so a refined pixel cannot make its neighbour look like an edge that was not.
+///
+/// The sample points are placed exactly as a whole-picture supersample would place them, so
+/// a refined pixel's colour is bit-for-bit what it would have been.
+let refine_edges = (buffer: mut []Color, width: i64, height: i64,
+                    min_x: f64, min_y: f64, scale: f64) -> void => {
+  let max_iter = iter_limit(scale)
+
+  // Mark both pixels of every neighbouring pair that disagree — right and down from each
+  // pixel, which visits every pair once.
+  var edge: []bool = [false; width * height]
+  for py in 0..<height {
+    for px in 0..<width {
+      let i = py * width + px
+      if px + 1 < width && color_distance(buffer[i], buffer[i + 1]) > EDGE_CONTRAST {
+        edge[i] = true
+        edge[i + 1] = true
+      }
+      if py + 1 < height && color_distance(buffer[i], buffer[i + width]) > EDGE_CONTRAST {
+        edge[i] = true
+        edge[i + width] = true
+      }
+    }
+  }
+
+  // Grow the edge by one pixel. Into a second mask, since growing in place would let a
+  // freshly marked pixel mark its own neighbours further along the same scan.
+  var refine: []bool = [false; width * height]
+  for py in 0..<height {
+    for px in 0..<width {
+      let i = py * width + px
+      if edge[i] {
+        refine[i] = true
+        if px > 0 { refine[i - 1] = true }
+        if px + 1 < width { refine[i + 1] = true }
+        if py > 0 { refine[i - width] = true }
+        if py + 1 < height { refine[i + width] = true }
+      }
+    }
+  }
+
+  let per_side = f64(SUPERSAMPLE)
+  let taken = SUPERSAMPLE * SUPERSAMPLE
+  for py in 0..<height {
+    for px in 0..<width {
+      if refine[py * width + px] {
+        var sum_r = 0
+        var sum_g = 0
+        var sum_b = 0
+        for sample_y in 0..<SUPERSAMPLE {
+          for sample_x in 0..<SUPERSAMPLE {
+            // Each sample sits at the centre of its share of the pixel.
+            let at_x = f64(px) + (f64(sample_x) + 0.5) / per_side
+            let at_y = f64(py) + (f64(sample_y) + 0.5) / per_side
+            let c = Complex { re: min_x + scale * at_x, im: min_y + scale * at_y }
+            let sample = shade(c, max_iter)
+            sum_r += i64(sample.r)
+            sum_g += i64(sample.g)
+            sum_b += i64(sample.b)
+          }
+        }
+        // Averaged channel by channel as stored, which is not the same as averaging
+        // light — the channels are what a display will gamma-decode. For a palette
+        // invented to make structure legible there is no true colour to be wrong about,
+        // and the alternative costs a pow per sample.
+        buffer[py * width + px] = rgb(u8(sum_r / taken), u8(sum_g / taken), u8(sum_b / taken))
+      }
+    }
+  }
+}
+
+/// How different two colours look, as the largest difference in any one channel.
+///
+/// The largest rather than a sum, so a change confined to one channel — red to magenta
+/// is blue alone — counts as much as it looks.
+let color_distance = pure (a: Color, b: Color) -> i64 => {
+  let dr = (i64(a.r) - i64(b.r)).abs()
+  let dg = (i64(a.g) - i64(b.g)).abs()
+  let db = (i64(a.b) - i64(b.b)).abs()
+  dr.max(dg).max(db)
 }
 
 let draw_crosshairs = (pos: Vector2) => {
@@ -303,10 +439,13 @@ let draw_crosshairs = (pos: Vector2) => {
 /// More iterations the further in the view is zoomed: a deeper view resolves finer
 /// filaments, and the points along them are exactly the ones that take longest to escape.
 ///
-/// The magnification is measured against the **starting** span, so it is 1.0 before any
-/// zoom and grows as the span shrinks.
-let iter_limit = pure (span_x: f64) -> i64 => {
-  let magnification = X_LEN / span_x
+/// The magnification is measured against the **starting** scale — the whole set across the
+/// window as it first opens — so it is 1.0 before any zoom and grows as the scale shrinks.
+/// It is keyed on the scale rather than on how much of the plane is visible, so resizing
+/// or going fullscreen shows more of the picture without changing how hard each pixel of
+/// it works.
+let iter_limit = pure (scale: f64) -> i64 => {
+  let magnification = X_LEN / f64(WINDOW_WIDTH) / scale
   if magnification <= 1.0 {
     MAX_ITER
   } else {
@@ -315,6 +454,11 @@ let iter_limit = pure (span_x: f64) -> i64 => {
 }
 
 let shade = pure (c: Complex<f64>, max_iter: i64) -> Color => {
+  // A point inside either of the two largest regions never escapes, so iterating it is
+  // `max_iter` steps spent learning an answer a formula gives in five multiplies. Those
+  // are also the most expensive points in any view that shows them.
+  if in_main_bulbs(c) { return BLACK }
+
   var z = Complex { re: 0.0, im: 0.0 }
   var mag2 = 0.0
   var iter = 0
@@ -351,6 +495,23 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> Color => {
     let value = if s >= FADE_IN { 1.0 } else { s / FADE_IN }
     hue_rgb(hue, value)
   }
+}
+
+/// Whether `c` lies inside the main cardioid or the period-2 bulb — the two largest regions
+/// of the set, and the only two with closed-form boundaries.
+///
+/// The cardioid is `q * (q + x - 1/4) <= y^2 / 4`, where `q = (x - 1/4)^2 + y^2`; the bulb
+/// is the disc of radius 1/4 about -1. Neither can say a point is in the set when it is
+/// not, so skipping the iteration changes no pixel. It only helps where the view shows
+/// them: 2.7x on the top view, nothing in a deep view of the boundary, which is mostly
+/// points that escape.
+let in_main_bulbs = pure (c: Complex<f64>) -> bool => {
+  let x = c.re - 0.25
+  let y2 = c.im * c.im
+  let q = x * x + y2
+  let in_cardioid = q * (q + x) <= 0.25 * y2
+  let in_bulb = (c.re + 1.0) * (c.re + 1.0) + y2 <= 0.0625
+  in_cardioid || in_bulb
 }
 
 /// A hue at full saturation and the given value, packed.
