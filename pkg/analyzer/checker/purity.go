@@ -430,10 +430,14 @@ func armPatterns(pat ast.Pattern, n int) []ast.Pattern {
 		return []ast.Pattern{pat}
 	}
 	tuple, ok := pat.(*ast.TuplePattern)
-	if !ok || len(tuple.Elements) != n {
+	if !ok {
 		return nil
 	}
-	return tuple.Elements
+	positions, fits := ast.MatchPositions(tuple.Elements, n)
+	if !fits {
+		return nil
+	}
+	return positions.Columns
 }
 
 // wholeArgumentAlias returns the name a pattern binds to the *entire* matched value, or ""

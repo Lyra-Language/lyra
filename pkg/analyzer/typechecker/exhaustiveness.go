@@ -63,10 +63,11 @@ func tupleRow(pat ast.Pattern, width int) ([]ast.Pattern, bool) {
 	case *ast.BindingPattern:
 		return tupleRow(p.Pattern, width)
 	case *ast.TuplePattern:
-		if len(p.Elements) != width {
+		positions, fits := ast.MatchPositions(p.Elements, width)
+		if !fits {
 			return nil, false
 		}
-		return p.Elements, true
+		return positions.Columns, true
 	}
 	return nil, false
 }
@@ -148,7 +149,7 @@ func specialize(rows [][]ast.Pattern, colTypes []types.Type, ctor constructor) (
 // reports false when the pattern cannot match that constructor.
 func specializeHead(pat ast.Pattern, ctor constructor) ([]ast.Pattern, bool) {
 	switch p := pat.(type) {
-	case nil, *ast.WildcardPattern, *ast.IdentifierPattern:
+	case nil, *ast.WildcardPattern, *ast.IdentifierPattern, *ast.RestPattern:
 		return make([]ast.Pattern, len(ctor.fields)), true
 	case *ast.BindingPattern:
 		return specializeHead(p.Pattern, ctor)
@@ -183,10 +184,11 @@ func payloadColumns(payload ast.Pattern, arity int) ([]ast.Pattern, bool) {
 	case *ast.BindingPattern:
 		return payloadColumns(p.Pattern, arity)
 	case *ast.TuplePattern:
-		if len(p.Elements) != arity {
+		positions, fits := ast.MatchPositions(p.Elements, arity)
+		if !fits {
 			return nil, false
 		}
-		return p.Elements, true
+		return positions.Columns, true
 	}
 	return nil, false
 }

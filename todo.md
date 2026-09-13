@@ -9,9 +9,12 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] `walkDestructuredPattern` has fallen behind the pattern kinds.** The other
-  per-kind pattern dispatches (ownership, exhaustiveness, match lowering) are fine as
-  dispatches; this one should be checked against `ast.WalkPattern`'s coverage.
+- **[OPEN] A refutable `let` or parameter pattern passes `lyrac check`.** `let Some(v) = m`
+  without `else`, or `((x, 5): (i64, i64))`, is refused only by the backend. The typechecker's
+  `patternIsIrrefutable` is too coarse to take over (it calls a one-constructor `data` refutable).
+- **[OPEN] `data` exhaustiveness ignores a refutable payload.** `match m { Some(0) => …, None => … }`
+  on a `Maybe<i64>` is accepted and traps at run time; `dataMatchIsExhaustive` counts constructors
+  rather than running the tuple matrix over payload columns.
 - **[OPEN] `default_font()` draws lyra-W022 advising `unload_font`.** raylib's `UnloadFont`
   ignores the default font, so it is noise rather than harm. The fix wants a
   `@must_release` type with a *borrowed* constructor, which the attribute cannot express.

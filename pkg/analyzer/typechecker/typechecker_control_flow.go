@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,8 +50,9 @@ func hasUnguardedCatchAll(arms []ast.MatchArm) bool {
 // length), regex, and a `name @ inner` binding whose inner pattern is refutable.
 func patternIsIrrefutable(pat ast.Pattern) bool {
 	switch p := pat.(type) {
-	case nil, *ast.WildcardPattern, *ast.IdentifierPattern:
-		// nil is a struct shorthand field (`{ x }`) — a binding leaf.
+	case nil, *ast.WildcardPattern, *ast.IdentifierPattern, *ast.RestPattern:
+		// nil is a struct shorthand field (`{ x }`) — a binding leaf. A rest binds or
+		// skips what it covers and tests nothing.
 		return true
 	case *ast.TuplePattern:
 		for _, elem := range p.Elements {
@@ -287,6 +289,34 @@ func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType ty
 	tc.patternBound = oldBound
 }
 
+// checkNestedArmPattern checks everything inside an arm's pattern that the per-kind arm
+// check does not reach, by walking it as a destructuring would.
+//
+// The arm checks are one level deep — a tuple's arity, a struct's field names, a
+// constructor's name — and withPatternBindings discards the walk's errors so as not to
+// repeat theirs. Together that left every *nested* leaf unchecked: until 09/13
+// `Some(5)` on a `Maybe<string>`, `Pt { name: 5 }` and `(x, 0..<3)` against a string
+// element all type-checked clean and failed in the backend, and a nested regex the DFA
+// cannot table (lyra-E054) was not refused at all. Run once per arm, and only when the
+// arm check passed — past a shallow error the walk would report its consequences — with
+// anything the arm check already said dropped, since both reach the same scalar checks
+// for a top-level leaf.
+func (tc *TypeChecker) checkNestedArmPattern(pattern ast.Pattern, scrutineeType types.Type) {
+	before := len(tc.errors)
+	tc.walkingArm = true
+	tc.walkDestructuredPattern(pattern, scrutineeType, func(string, types.Type) {})
+	tc.walkingArm = false
+	kept := tc.errors[:before]
+	for _, e := range tc.errors[before:] {
+		if !slices.ContainsFunc(kept, func(k TypeError) bool {
+			return k.Location == e.Location && k.Message == e.Message
+		}) {
+			kept = append(kept, e)
+		}
+	}
+	tc.errors = kept
+}
+
 // checkMatchArmGuard checks an arm's `if` guard, which must be a bool.
 //
 // Called with the pattern's bindings already in scope, since a guard may reference them
@@ -475,7 +505,11 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	kindType := types.StripNewtype(scrutineeType)
 	if k, ok := tc.matchKindOf(scrutineeType, kindType, expr); ok {
 		for _, arm := range expr.MatchArms {
+			before := len(tc.errors)
 			k.checkArm(arm.Pattern)
+			if !tc.addedErrorSince(before) {
+				tc.checkNestedArmPattern(arm.Pattern, scrutineeType)
+			}
 		}
 		if exhaustive, missing := k.exhaustive(); !exhaustive {
 			tc.addErrorCode(expr.GetLocation(), k.severity, diag.CodeNonExhaustiveMatch, "%s", missing)
@@ -1223,13 +1257,12 @@ func (tc *TypeChecker) checkTupleMatchArm(pattern ast.Pattern, tt types.TupleTyp
 	case *ast.BindingPattern:
 		tc.checkTupleMatchArm(p.Pattern, tt)
 	case *ast.TuplePattern:
-		if len(p.Elements) != len(tt.Elements) {
-			tc.addError(p.GetLocation(), SeverityError,
-				"tuple pattern has %d element(s) but scrutinee has %d",
-				len(p.Elements), len(tt.Elements))
+		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
+		if !fits {
+			tc.reportPositionalArity(p.GetLocation(), "tuple pattern", "scrutinee", p.Elements, len(tt.Elements))
 			return
 		}
-		for i, elem := range p.Elements {
+		for i, elem := range positions.Columns {
 			tc.checkTuplePatternElement(elem, tt.Elements[i])
 		}
 	default:

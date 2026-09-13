@@ -203,7 +203,7 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 	switch p := pat.(type) {
 	case nil, *ast.WildcardPattern, *ast.IdentifierPattern:
 		return nil, nil // binding leaves impose no test
-	case *ast.LiteralPattern, *ast.RangePattern:
+	case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern:
 		prim, ok := valType.(types.PrimitiveType)
 		if !ok {
 			return nil, fmt.Errorf("llvm: literal pattern on non-scalar value of type %s", valType)
@@ -235,13 +235,14 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 		if !ok {
 			return nil, fmt.Errorf("llvm: tuple pattern on non-tuple value of type %s", valType)
 		}
+		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
+		if !fits {
+			return nil, fmt.Errorf("llvm: tuple pattern %s does not fit %s", p.GetName(), valType)
+		}
 		var cond value.Value
-		for i, el := range p.Elements {
+		for i, el := range positions.Columns {
 			if isBindingLeaf(el) {
 				continue
-			}
-			if i >= len(tt.Elements) {
-				return nil, fmt.Errorf("llvm: tuple pattern element %d out of range", i)
 			}
 			c, err := l.aggPatternTest(block, block.NewExtractValue(val, uint64(i)), el, tt.Elements[i])
 			if err != nil {
@@ -321,7 +322,7 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 			l.bindValue(block, p.Name, val)
 		}
 		return l.aggPatternBind(block, val, p.Pattern, valType)
-	case nil, *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern:
+	case nil, *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern:
 		return nil // no binding
 	case *ast.StructPattern:
 		st, ok := l.resolveStructType(valType)
@@ -348,15 +349,11 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 		if !ok {
 			return fmt.Errorf("llvm: tuple pattern on non-tuple value of type %s", valType)
 		}
-		for i, el := range p.Elements {
-			if i >= len(tt.Elements) {
-				return fmt.Errorf("llvm: tuple pattern element %d out of range", i)
-			}
-			if err := l.aggPatternBind(block, block.NewExtractValue(val, uint64(i)), el, tt.Elements[i]); err != nil {
-				return err
-			}
+		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
+		if !fits {
+			return fmt.Errorf("llvm: tuple pattern %s does not fit %s", p.GetName(), valType)
 		}
-		return nil
+		return l.bindPositions(block, val, positions, tt.Elements)
 	case *ast.DataPattern:
 		// Reached only on the taken path (aggPatternTest's tag check already held),
 		// so bind the payload: reinterpret it as the variant's payload struct and
@@ -369,27 +366,64 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 		if !ok {
 			return fmt.Errorf("llvm: %q is not a constructor of %s", p.Name, dt.Name)
 		}
-		fieldPatterns, err := payloadFieldPatterns(p, ctor)
+		positions, err := payloadPositions(p, ctor)
 		if err != nil {
 			return err
 		}
-		if len(fieldPatterns) == 0 {
+		if len(positions.Columns) == 0 && positions.Rest == nil {
 			return nil // nullary variant
 		}
 		payload, err := l.extractDataPayload(block, val, ctor)
 		if err != nil {
 			return err
 		}
-		fieldTypes := ctor.FieldTypes()
-		for i, fp := range fieldPatterns {
-			if err := l.aggPatternBind(block, block.NewExtractValue(payload, uint64(i)), fp, fieldTypes[i]); err != nil {
-				return err
-			}
-		}
-		return nil
+		return l.bindPositions(block, payload, positions, ctor.FieldTypes())
 	default:
 		return fmt.Errorf("llvm: match sub-pattern %T binding not implemented yet", pat)
 	}
+}
+
+// bindPositions binds each positional column of agg — a tuple, or a constructor's payload
+// struct — and a named rest to a fresh tuple of the positions it covers, matching the type
+// the typechecker gave it (TypeChecker.bindPositions). A copy of those elements rather than
+// a view, since a tuple is a value; like every other name a pattern binds, it borrows.
+func (l *lowerer) bindPositions(block *ir.Block, agg value.Value, positions ast.Positions, elemTypes []types.Type) error {
+	for i, col := range positions.Columns {
+		if err := l.aggPatternBind(block, block.NewExtractValue(agg, uint64(i)), col, elemTypes[i]); err != nil {
+			return err
+		}
+	}
+	r := positions.Rest
+	if r == nil || r.Identifier == "" || r.Identifier == "_" {
+		return nil
+	}
+	restVal, err := l.restTuple(block, agg, positions, elemTypes)
+	if err != nil {
+		return err
+	}
+	l.bindValue(block, r.Identifier, restVal)
+	return nil
+}
+
+// restTuple builds the tuple a rest covers out of agg's elements.
+func (l *lowerer) restTuple(block *ir.Block, agg value.Value, positions ast.Positions, elemTypes []types.Type) (value.Value, error) {
+	restType := restTupleType(positions, elemTypes)
+	llT, err := l.lowerType(restType)
+	if err != nil {
+		return nil, err
+	}
+	var out value.Value = constant.NewUndef(llT)
+	for i := positions.RestFrom; i < positions.RestTo; i++ {
+		out = block.NewInsertValue(out, block.NewExtractValue(agg, uint64(i)), uint64(i-positions.RestFrom))
+	}
+	return out, nil
+}
+
+// restTupleType is the anonymous tuple of the positions a rest covers.
+func restTupleType(positions ast.Positions, elemTypes []types.Type) types.TupleType {
+	covered := make([]types.Type, positions.RestTo-positions.RestFrom)
+	copy(covered, elemTypes[positions.RestFrom:positions.RestTo])
+	return types.TupleType{Elements: covered}
 }
 
 // bindValue stores val into a fresh entry-block alloca and records it under name
@@ -703,14 +737,14 @@ func (l *lowerer) dropReclaimedPayload(block *ir.Block, token value.Value, scrut
 // the tag switch, which can't also test the payload and fall through to another
 // arm (see patternHasTest).
 func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor types.DataTypeConstructor, slot value.Value, unionTy *lltypes.StructType) error {
-	fieldPatterns, err := payloadFieldPatterns(p, ctor)
+	positions, err := payloadPositions(p, ctor)
 	if err != nil {
 		return err
 	}
-	if len(fieldPatterns) == 0 {
+	if len(positions.Columns) == 0 && positions.Rest == nil {
 		return nil // nullary variant — nothing to bind
 	}
-	for _, fp := range fieldPatterns {
+	for _, fp := range positions.Columns {
 		if patternHasTest(fp) {
 			return fmt.Errorf("llvm: a value-testing payload sub-pattern (%T) in a `data` match arm is not implemented yet", fp)
 		}
@@ -722,14 +756,7 @@ func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor t
 	blobPtr := armBlock.NewGetElementPtr(unionTy, slot, i32c(0), i32c(1))
 	typedPtr := armBlock.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
 	payload := armBlock.NewLoad(payloadStructTy, typedPtr)
-
-	fieldTypes := ctor.FieldTypes()
-	for i, fp := range fieldPatterns {
-		if err := l.aggPatternBind(armBlock, armBlock.NewExtractValue(payload, uint64(i)), fp, fieldTypes[i]); err != nil {
-			return err
-		}
-	}
-	return nil
+	return l.bindPositions(armBlock, payload, positions, ctor.FieldTypes())
 }
 
 // extractDataPayload reinterprets a first-class data value's payload blob as the
@@ -760,7 +787,7 @@ func (l *lowerer) extractDataPayload(block *ir.Block, val value.Value, ctor type
 // tag-switch `data` arm can't test-and-fall-through on.
 func patternHasTest(pat ast.Pattern) bool {
 	switch p := pat.(type) {
-	case *ast.LiteralPattern, *ast.RangePattern, *ast.DataPattern:
+	case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern, *ast.DataPattern:
 		return true
 	case *ast.StructPattern:
 		return slices.ContainsFunc(p.Fields, func(f ast.StructPatternField) bool {
@@ -783,21 +810,29 @@ func patternHasTest(pat ast.Pattern) bool {
 // `[i64]`) and bare single (`Some x`) are supported; tuple-payload destructuring
 // (`MkPair((x, y))`) is deferred.
 func payloadFieldPatterns(p *ast.DataPattern, ctor types.DataTypeConstructor) ([]ast.Pattern, error) {
+	positions, err := payloadPositions(p, ctor)
+	return positions.Columns, err
+}
+
+// payloadPositions is payloadFieldPatterns with the rest kept: a `...rest` in the payload
+// (`Tri(a, ...more)`) lines up as it does in a tuple, and the sites that bind need to know
+// what it covers.
+func payloadPositions(p *ast.DataPattern, ctor types.DataTypeConstructor) (ast.Positions, error) {
 	flat := ctor.FieldTypes()
 	if p.Pattern == nil {
 		if len(flat) != 0 {
-			return nil, fmt.Errorf("llvm: constructor %q has a payload but the pattern binds none", p.Name)
+			return ast.Positions{}, fmt.Errorf("llvm: constructor %q has a payload but the pattern binds none", p.Name)
 		}
-		return nil, nil
+		return ast.Positions{}, nil
 	}
 	if tp, ok := p.Pattern.(*ast.TuplePattern); ok {
-		if len(tp.Elements) == len(flat) {
-			return tp.Elements, nil
+		if positions, fits := ast.MatchPositions(tp.Elements, len(flat)); fits {
+			return positions, nil
 		}
-		return nil, fmt.Errorf("llvm: tuple-payload destructuring for %q not implemented yet", p.Name)
+		return ast.Positions{}, fmt.Errorf("llvm: tuple-payload destructuring for %q not implemented yet", p.Name)
 	}
 	if len(flat) == 1 {
-		return []ast.Pattern{p.Pattern}, nil
+		return ast.Positions{Columns: []ast.Pattern{p.Pattern}}, nil
 	}
 	// A bare `_` standing for a whole multi-field payload (`Rect _`) expands to one
 	// wildcard per field. A wildcard binds nothing and tests nothing, so the expansion
@@ -812,12 +847,12 @@ func payloadFieldPatterns(p *ast.DataPattern, ctor types.DataTypeConstructor) ([
 		for i := range out {
 			out[i] = &ast.WildcardPattern{PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: p.GetLocation()}}}
 		}
-		return out, nil
+		return ast.Positions{Columns: out}, nil
 	}
 	// What is left is a single *binding* for a multi-field payload (`Rect pair`), which
 	// would bind the payload tuple as one value. That is a real feature and not this
 	// one, so it keeps the honest error rather than being guessed at.
-	return nil, fmt.Errorf("llvm: binding a whole multi-field payload as one value (%q) is not implemented yet; "+
+	return ast.Positions{}, fmt.Errorf("llvm: binding a whole multi-field payload as one value (%q) is not implemented yet; "+
 		"name the fields instead, as %s(…)", p.Name, p.Name)
 }
 

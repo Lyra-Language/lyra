@@ -917,6 +917,19 @@ const (
 	// declaration's own duplicate was always refused, and this is its counterpart at the use.
 	CodeDuplicateStructField = "lyra-E075"
 
+	// CodeMisplacedRestPattern: a `...rest` where it cannot say what it covers — a second
+	// one in the same tuple, array or payload pattern, or one before the end of an array
+	// pattern.
+	//
+	// A tuple's rest may sit anywhere, since its arity is in the type and the positions
+	// after it count from the end (`(a, ...mid, z)`). An array's rest is the tail
+	// (`[h, ...t]`): the array match is a length test plus indexing from the front, and a
+	// rest before the end would need the positions after it indexed from a run-time
+	// length, which nothing lowers — so it is refused here rather than by the backend,
+	// where it was until 09/13. Two rests in one pattern leave the split between them
+	// undetermined in either.
+	CodeMisplacedRestPattern = "lyra-E076"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

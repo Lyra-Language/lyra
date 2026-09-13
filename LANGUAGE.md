@@ -71,7 +71,7 @@ A literal that cannot hold its value is a compile error **in every position, flo
 
 `r"…"` is one engine everywhere: a DFA compiled **at compile time** (RE2 discipline, O(n), no backtracking/allocation; flattened tables + one shared driver).
 
-- Used as a newtype `pattern(...)` argument or as a **`match` arm on a string** (`w @ r"^[a-z]+$" => …`). Regex arms never make a match exhaustive.
+- Used as a newtype `pattern(...)` argument or as a **pattern against a string** at any depth — an arm (`w @ r"^[a-z]+$" => …`), a tuple element, a struct field, an array element, a payload (`Some(r"a.*")`). It matches the whole string. Regex arms never make a match exhaustive.
 - `lyra-E054`: lookbehind or DFA past `regex.MaxTableStates`. As a value (`let re = r"…"`) it is `lyra-E052`.
 - There is no `regex` type: `(re: regex)` declares a type variable.
 
@@ -111,6 +111,14 @@ No `checked_rem` yet (ambiguous between `%` and `%%`).
 - Collector desugaring (not a statement kind): `{ let (t0, t1) = rhs; p0 = t0; p1 = t1 }` with position-stamped names in their own scope. Later passes never see it. The target parses as `tuple_literal` (a place-tuple rule would be a reduce-reduce conflict).
 - Places are the RHS's context: `(a, b) = (4.0, 0.5)` on f32 narrows both. The desugared `let` records its assignments in `DestructuringDeclStmt.Assigns` for this. A mismatch is reported with the stand-alone assignment's message.
 - Any tuple destructuring arity mismatch reports once; unpaired names are bound untyped (no cascading "undefined identifier").
+
+### Patterns
+
+- **One meaning in every position** — a `match` arm, `if let`, `let`, `let … else` and a parameter. A literal, range or regex at any depth is checked against the type in its position by the rule a `match` on that type applies.
+- **Tuple rest**: `(a, ...mid, z)` — positions after the rest count from the end, and `mid` binds a **tuple** of what it covers, whatever the count (one position is a one-element tuple, none is `()`). The same in a constructor payload: `Tri(i, ...more)`.
+- **Array rest is the tail**: `[h, ...t]`. A rest before the end of an array pattern, or a second rest in any pattern, is `lyra-E076`.
+- `Rect _` stands for `Rect(_, _)`; `Rect pair` (one name for a multi-field payload) is refused, naming `Rect(…)`.
+- A capitalized name in a pattern is a constructor. Comparing against a `const` is a guard: `v if v == LIMIT` (`lyra-E057`).
 
 ### Operator overloading
 

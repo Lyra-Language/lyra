@@ -1241,9 +1241,11 @@ func (c *Collector) collectRegexPattern(patternNode *sitter.Node, loc ast.Locati
 
 func (c *Collector) collectTuplePattern(patternNode *sitter.Node) ast.Pattern {
 	loc := c.ctx.NodeLocation(patternNode)
+	elements := c.collectPatternElements(patternNode)
+	c.checkRestPlacement(patternNode, elements, false)
 	return &ast.TuplePattern{
 		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
-		Elements:    c.collectPatternElements(patternNode),
+		Elements:    elements,
 	}
 }
 
@@ -1251,9 +1253,37 @@ func (c *Collector) collectArrayPattern(patternNode *sitter.Node) ast.Pattern {
 	loc := c.ctx.NodeLocation(patternNode)
 	// An empty `[]` pattern (no elements) is valid — the base case of a list match
 	// (`match xs { [] => …, [a, ...rest] => … }`).
+	elements := c.collectPatternElements(patternNode)
+	c.checkRestPlacement(patternNode, elements, true)
 	return &ast.ArrayPattern{
 		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
-		Elements:    c.collectPatternElements(patternNode),
+		Elements:    elements,
+	}
+}
+
+// checkRestPlacement reports lyra-E076 for a `...rest` that cannot say what it covers: a
+// second one in the same list, or one that is not the last element of an array pattern. A
+// tuple's rest may sit anywhere (ast.MatchPositions).
+func (c *Collector) checkRestPlacement(node *sitter.Node, elements []ast.Pattern, isArray bool) {
+	var rests []*sitter.Node
+	for i := uint(0); i < node.ChildCount(); i++ {
+		if child := node.Child(i); child.Kind() == "rest_pattern" {
+			rests = append(rests, child)
+		}
+	}
+	lastIsRest := false
+	if n := len(elements); n > 0 {
+		_, lastIsRest = elements[n-1].(*ast.RestPattern)
+	}
+	for i, rest := range rests {
+		switch {
+		case i > 0:
+			c.ctx.AddErrorCoded(rest, diag.SeverityError, diag.CodeMisplacedRestPattern,
+				"a pattern has at most one `...rest`, since two leave the split between them undetermined")
+		case isArray && (len(rests) > 1 || !lastIsRest):
+			c.ctx.AddErrorCoded(rest, diag.SeverityError, diag.CodeMisplacedRestPattern,
+				"`...rest` must be the last element of an array pattern; match the tail as `[h, ...t]`")
+		}
 	}
 }
 
@@ -1273,7 +1303,10 @@ func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
 	switch node.Kind() {
 	case "rest_pattern":
 		return c.collectRestPattern(node)
-	case "identifier", "literal_pattern", "pattern",
+	// Every kind the grammar's `pattern` choice offers. `regex_pattern` was missing until
+	// 09/13, so `(x, r"^a$")` collected as the one-element `(x)` and was then reported as
+	// an arity mismatch against a pattern the author never wrote.
+	case "identifier", "literal_pattern", "regex_pattern", "pattern",
 		"tuple_pattern", "array_pattern", "struct_pattern", "data_pattern",
 		"range_pattern", "wildcard_pattern", "binding_pattern":
 		return c.CollectPattern(node)

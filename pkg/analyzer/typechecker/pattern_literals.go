@@ -84,13 +84,14 @@ func (tc *TypeChecker) checkPatternLiterals(pat ast.Pattern, t types.Type) {
 
 	case *ast.TuplePattern:
 		tt, ok := t.(types.TupleType)
-		if !ok || len(p.Elements) != len(tt.Elements) {
+		if !ok {
 			return
 		}
-		for i, el := range p.Elements {
-			if _, isRest := el.(*ast.RestPattern); isRest {
-				continue
-			}
+		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
+		if !fits {
+			return
+		}
+		for i, el := range positions.Columns {
 			tc.checkPatternLiterals(el, tt.Elements[i])
 		}
 
@@ -140,9 +141,10 @@ func (tc *TypeChecker) checkPatternLiterals(pat ast.Pattern, t types.Type) {
 		// flat positional, a sole tuple-typed param destructured whole, and the
 		// bare single-payload `Some 300`.
 		if tp, isTuple := p.Pattern.(*ast.TuplePattern); isTuple {
+			positions, fits := ast.MatchPositions(tp.Elements, len(flat))
 			switch {
-			case len(tp.Elements) == len(flat):
-				for i, el := range tp.Elements {
+			case fits:
+				for i, el := range positions.Columns {
 					tc.checkPatternLiterals(el, flat[i])
 				}
 			case len(tp.Elements) == 1 && len(ctor.Params) == 1:

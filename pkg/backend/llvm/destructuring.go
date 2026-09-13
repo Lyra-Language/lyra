@@ -141,14 +141,18 @@ func (l *lowerer) ownDestructuredNames(block *ir.Block, pat ast.Pattern, t types
 		if !ok {
 			return nil
 		}
-		for i, el := range p.Elements {
-			if _, isRest := el.(*ast.RestPattern); isRest {
-				return nil // positions after a rest count from the end; nothing binds there today
+		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
+		if !fits {
+			return nil
+		}
+		for i, col := range positions.Columns {
+			if err := l.ownDestructuredNames(block, col, tt.Elements[i]); err != nil {
+				return err
 			}
-			if i < len(tt.Elements) {
-				if err := l.ownDestructuredNames(block, el, tt.Elements[i]); err != nil {
-					return err
-				}
+		}
+		if r := positions.Rest; r != nil {
+			if err := l.ownDestructuredName(block, r.Identifier, restTupleType(positions, tt.Elements)); err != nil {
+				return err
 			}
 		}
 	case *ast.StructPattern:

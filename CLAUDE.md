@@ -387,7 +387,9 @@ Benchmark with `pkg/driver`'s `BenchmarkAnalyze_*`.
 
 **`pkg/ast`** — `AstNode` (`GetLocation()`), `Named`, and `Statement`/`Expression`/`Pattern`.
 Nodes embed `AstBase` with a 1-based `Location`. Files by kind (`expr_math.go`,
-`stmt_for_loop.go`, `decl_trait.go`).
+`stmt_for_loop.go`, `decl_trait.go`). The pattern rules every pass shares live here:
+`WalkPattern`/`EachPatternBinding` (walk_pattern.go) and `MatchPositions` (which element of a
+tuple or payload pattern matches which position, `...rest` included).
 
 **`pkg/typetable`**
 - `TypeTable`: `Set`/`Get`. `SetCallee`/`Callee` (`calleetable.go`) records only

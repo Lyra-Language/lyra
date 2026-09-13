@@ -242,6 +242,10 @@ deferred receiver is `Arguments[0]` and adopts by the untyped-argument rule.
   newtype range, since patterns lower at the scrutinee's width. It is a deliberate separate mirror
   of `walkDestructuredPattern` (whose errors `withPatternBindings` discards); unpairable → skipped.
   An exclusive range end checks bound − 1.
+- **Nested kinds are the walk's**: an arm check is one level deep, so once it passes
+  `checkNestedArmPattern` runs `walkDestructuredPattern` for its errors — every scalar leaf goes
+  through `checkScalarPattern`, the same per-kind checkers. Positions (tuple rest included) come
+  from `ast.MatchPositions`, the one pairing rule every pass shares.
 
 ## Generic functions
 

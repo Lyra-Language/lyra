@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — patterns mean one thing at every depth, and tuple rest works
+
+Checking `walkDestructuredPattern` against the pattern kinds found it silent on five of
+eleven — a literal, range, regex, wildcard or rest fell through its switch unchecked — and
+that this mattered more than it looked, because **it was the only nested check a match arm
+had**. The per-kind arm checks are one level deep, and `withPatternBindings` discarded the
+walk's errors so as not to repeat theirs. So `Some(5)` on a `Maybe<string>`, `Pt { name: 5 }`
+and `(x, 0..<3)` against a string all type-checked clean and failed in the backend, and a
+nested regex the DFA cannot table was not refused anywhere. A `let … else` and a parameter had
+no check at all.
+
+The walk now lists every kind, checking a scalar leaf through the checker a `match` on that
+scalar uses (`checkScalarPattern`), and a match arm runs it once after its shallow check passes
+(`checkNestedArmPattern`). Running it exposed where the walk itself had lagged the match path,
+invisible while its errors were thrown away: a generic struct or tuple nested in a pattern was
+never instantiated, and `Rect _` for a multi-field payload was refused. `Rect pair` is now
+refused by the typechecker rather than the backend.
+
+Three passes had the same drift from the other side. The collector's element list omitted
+`regex_pattern`, so `(x, r"^a$")` collected as `(x)` and reported an arity error for a pattern
+nobody wrote; the backend had no test or bind for a regex below the top of an arm; and the
+ownership pass's mirror of `patternHasTest` did not know a regex tests anything.
+
+**Tuple rest had parsed from the start and worked nowhere.** The name was never bound, an
+element after it paired with the wrong position (`(a, ...r, z)` put `z` at index 2), the
+backend refused it and a match arm called it an arity error — while two collector golden tests
+and two typechecker tests asserted it was fine. Implemented rather than refused, at the user's
+call: `ast.MatchPositions` is the one rule for which element matches which position, and all
+nine consumers ask it. A named rest binds a tuple of what it covers, always a tuple, so its
+type follows the pattern's shape rather than how many elements were left. An array's rest
+stays the tail — a rest before the end would need indexing from a run-time length, which
+nothing lowers — and that, like a second rest anywhere, is now `lyra-E076` in the collector
+rather than the backend's refusal.
+
+Two findings were left open (todo.md): a refutable `let` still reaches the backend before
+anyone refuses it, and `data` exhaustiveness counts constructors while ignoring a refutable
+payload, so `Some(0), None` compiles and traps.
+
 ### 09/13/26 — a constructor's payload means what its declaration says
 
 `Cons(n) => n.v` in an importer resolved the payload's type name — `Node` — from the

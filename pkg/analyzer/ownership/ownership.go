@@ -891,7 +891,7 @@ func dataPatternBindsOnly(p *ast.DataPattern) bool {
 // one). Mirrors the backend's patternHasTest so the analysis and lowering agree.
 func patternHasValueTest(pat ast.Pattern) bool {
 	switch p := pat.(type) {
-	case *ast.LiteralPattern, *ast.RangePattern, *ast.DataPattern:
+	case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern, *ast.DataPattern:
 		return true
 	case *ast.StructPattern:
 		return slices.ContainsFunc(p.Fields, func(f ast.StructPatternField) bool {

@@ -16,17 +16,20 @@ import (
 )
 
 type TypeChecker struct {
-	symTable      *symbols.SymbolTable
-	scopeTable    *symbols.ScopeTable
-	typeTable     *typetable.TypeTable
-	methodTable   *typetable.MethodTable
-	scope         *symbols.Scope
-	errors        []TypeError
-	paramTypes    map[string]types.Type         // non-nil only while checking a function body
-	paramMods     map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
-	patternBound  map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
-	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
-	enclosingRet  *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
+	symTable     *symbols.SymbolTable
+	scopeTable   *symbols.ScopeTable
+	typeTable    *typetable.TypeTable
+	methodTable  *typetable.MethodTable
+	scope        *symbols.Scope
+	errors       []TypeError
+	paramTypes   map[string]types.Type         // non-nil only while checking a function body
+	paramMods    map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
+	patternBound map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
+	// walkingArm is set while checkNestedArmPattern walks a match arm, where a capitalized
+	// name is a pattern the author meant to match rather than a binding they misspelled.
+	walkingArm    bool
+	resolvedTypes map[string]types.Type // cache for resolveType to avoid duplicate "unknown type" errors
+	enclosingRet  *types.ReturnType     // declared return type of the lambda body currently being checked; nil at top level
 	// enclosingFuncName names that same lambda, for the diagnostic checkReturnValue
 	// builds. It rides alongside enclosingRet rather than being looked up, because by
 	// the time a *nested* return is reached the only thing that still knows which
@@ -871,23 +874,19 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		tc.walkDestructuredPattern(p.Pattern, t, bind)
 
 	case *ast.TuplePattern:
-		tt, ok := t.(types.TupleType)
+		// A generic named tuple (`Pair<i64>`) is its declaration's elements, substituted —
+		// resolved here rather than above, so a binding of the whole value keeps the
+		// instantiation's name. Missing until 09/13, and invisible while a match arm threw
+		// this walk's errors away: `(Pair(a, b), n)` bound nothing.
+		tt, ok := tc.resolveGenericAggregate(t, p.GetLocation()).(types.TupleType)
 		if !ok {
 			tc.addError(p.GetLocation(), SeverityError,
 				"cannot destructure %s with a tuple pattern", t)
 			return
 		}
-		hasRest := false
-		for _, el := range p.Elements {
-			if _, ok := el.(*ast.RestPattern); ok {
-				hasRest = true
-				break
-			}
-		}
-		if !hasRest && len(p.Elements) != len(tt.Elements) {
-			tc.addError(p.GetLocation(), SeverityError,
-				"tuple pattern has %d element(s) but tuple has %d",
-				len(p.Elements), len(tt.Elements))
+		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
+		if !fits {
+			tc.reportPositionalArity(p.GetLocation(), "tuple pattern", "tuple", p.Elements, len(tt.Elements))
 			// Still bind every name: the ones that pair up with their element's type,
 			// the rest with none. An unbound name reported "undefined identifier" at
 			// each later use — a second diagnostic per use, pointing at the wrong line,
@@ -896,7 +895,7 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 			// silent. This matters twice over for a tuple assignment, whose names are
 			// synthesized and would have surfaced in those cascading messages.
 			for i, el := range p.Elements {
-				if i < len(tt.Elements) {
+				if _, isRest := el.(*ast.RestPattern); !isRest && i < len(tt.Elements) {
 					tc.walkDestructuredPattern(el, tt.Elements[i], bind)
 				} else {
 					ast.EachPatternBinding(el, func(b ast.PatternBinding) { bind(b.Name, nil) })
@@ -904,11 +903,7 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 			}
 			return
 		}
-		for i, el := range p.Elements {
-			if i < len(tt.Elements) {
-				tc.walkDestructuredPattern(el, tt.Elements[i], bind)
-			}
-		}
+		tc.bindPositions(positions, tt.Elements, bind)
 
 	case *ast.ArrayPattern:
 		elemType := arrayElementType(t)
@@ -928,7 +923,8 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		}
 
 	case *ast.StructPattern:
-		fields := structFieldTypes(t)
+		// A generic struct is its declaration's fields, substituted; see the tuple arm.
+		fields := structFieldTypes(tc.resolveGenericAggregate(t, p.GetLocation()))
 		if fields == nil {
 			tc.addError(p.GetLocation(), SeverityError,
 				"cannot destructure %s with a struct pattern", t)
@@ -997,7 +993,88 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 			return
 		}
 		tc.bindDataPatternPayload(p, ctor, bind)
+
+	case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern:
+		// A test rather than a binding, so it binds nothing — but it is still checked
+		// against the type in its position, by the same per-kind rule a `match` arm on a
+		// scalar applies. Until 09/13 these fell through the switch unchecked, which a
+		// match arm never noticed (its own checkArm runs first) and every other position
+		// did: `let (x, 5) = (1, "s") else { … }` type-checked clean and the backend then
+		// failed with *expected a quoted string pattern*.
+		tc.checkScalarPattern(p, t)
+
+	case *ast.WildcardPattern:
+		// Matches anything and binds nothing.
+
+	case *ast.RestPattern:
+		// A rest is an element of an array or struct pattern, and those arms consume it
+		// before recursing; reaching one here means it sat somewhere else. The collector
+		// refuses that position, so there is nothing further to report.
+
+	case *ast.StructPatternField:
+		// Only ever a member of StructPattern.Fields, which the struct arm walks itself.
+
+	default:
+		tc.addError(pat.GetLocation(), SeverityError,
+			"internal: pattern kind %T is not handled by destructuring", pat)
 	}
+}
+
+// checkScalarPattern checks a literal, range or regex pattern against the scalar type in
+// its position, through the checker a `match` on that type uses — so one rule decides
+// which of the three a bool, a number, a string or a rune admits, wherever the pattern is
+// written. A non-scalar position admits none of them.
+func (tc *TypeChecker) checkScalarPattern(p ast.Pattern, t types.Type) {
+	kind := types.StripNewtype(t)
+	switch {
+	case types.IsBoolean(kind):
+		tc.checkBoolMatchArm(p)
+	case types.IsNumeric(kind):
+		tc.checkNumericMatchArm(p, kind)
+	case types.IsString(kind):
+		tc.checkStringMatchArm(p)
+	case isRuneType(kind):
+		tc.checkRuneMatchArm(p)
+	default:
+		tc.addError(p.GetLocation(), SeverityError,
+			"pattern %s cannot match a value of type %s", p.GetName(), t)
+	}
+}
+
+// bindPositions walks each positional column against its type, and binds a named rest to
+// the tuple of the positions it covers — `(a, ...r, z)` against `(i64, string, f64, bool)`
+// binds `r: (string, f64)`. Always a tuple, whatever it covers: one position is a
+// one-element tuple and none is `()`, so `r`'s type is decided by the pattern's shape
+// rather than by how many elements happened to be left over.
+func (tc *TypeChecker) bindPositions(positions ast.Positions, elemTypes []types.Type, bind func(name string, typ types.Type)) {
+	for i, col := range positions.Columns {
+		tc.walkDestructuredPattern(col, elemTypes[i], bind)
+	}
+	if r := positions.Rest; r != nil && r.Identifier != "" && r.Identifier != "_" {
+		covered := make([]types.Type, positions.RestTo-positions.RestFrom)
+		copy(covered, elemTypes[positions.RestFrom:positions.RestTo])
+		bind(r.Identifier, types.TupleType{Elements: covered})
+	}
+}
+
+// reportPositionalArity reports a positional pattern list that cannot line up against n
+// positions (ast.MatchPositions): an exact count without a rest, a minimum with one.
+func (tc *TypeChecker) reportPositionalArity(loc ast.Location, what, against string, elems []ast.Pattern, n int) {
+	rests := 0
+	for _, el := range elems {
+		if _, ok := el.(*ast.RestPattern); ok {
+			rests++
+		}
+	}
+	if rests > 1 {
+		return // lyra-E076, the collector's; no count would be the right one to name
+	}
+	if rests == 1 {
+		tc.addError(loc, SeverityError, "%s needs at least %d element(s) but %s has %d",
+			what, ast.MinPositions(elems), against, n)
+		return
+	}
+	tc.addError(loc, SeverityError, "%s has %d element(s) but %s has %d", what, len(elems), against, n)
 }
 
 // isConstIdentifier mirrors the grammar's `const_identifier`, `/[A-Z][A-Z0-9_]*/`
@@ -1024,6 +1101,14 @@ func isConstIdentifier(name string) bool {
 // The two halves differ because the fixes do: `const` takes the SCREAMING_CASE spelling
 // and only that, so it is the answer for `RAMP` and a syntax error for `Foo`.
 func (tc *TypeChecker) reportCapitalizedBindingName(p *ast.DataPattern) {
+	if tc.walkingArm {
+		// In a match arm the name was meant as a value to compare against, and `const`
+		// advice would tell the author to write the declaration they already have.
+		tc.addErrorCode(p.GetLocation(), SeverityError, diag.CodeCapitalizedBindingName,
+			"%q is not a constructor, and a match pattern cannot compare against a named value; bind a name and test it in a guard, as `v if v == %s`",
+			p.Name, p.Name)
+		return
+	}
 	if isConstIdentifier(p.Name) {
 		tc.addErrorCode(p.GetLocation(), SeverityError, diag.CodeCapitalizedBindingName,
 			"%q is spelled as a constant, so it is matched here rather than bound; write `const %s = ...` to declare a constant",
@@ -1055,11 +1140,10 @@ func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, ctor *types.Da
 	}
 	if tp, ok := p.Pattern.(*ast.TuplePattern); ok {
 		// Flat positional: `Rect(w, h)` against the flat field types `[i64, i64]`
-		// (and `Circle(r)` against `[i64]`).
-		if len(tp.Elements) == len(flat) {
-			for i, el := range tp.Elements {
-				tc.walkDestructuredPattern(el, flat[i], bind)
-			}
+		// (and `Circle(r)` against `[i64]`), with a `...rest` lining up as it does in a
+		// tuple — `Tri(a, ...more)` binds `more: (i64, i64)`.
+		if positions, fits := ast.MatchPositions(tp.Elements, len(flat)); fits {
+			tc.bindPositions(positions, flat, bind)
 			return
 		}
 		// A single tuple-typed param destructured as a whole: `MkPair((x, y))` for
@@ -1069,6 +1153,11 @@ func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, ctor *types.Da
 			tc.walkDestructuredPattern(tp.Elements[0], ctor.Params[0], bind)
 			return
 		}
+		if ast.HasRest(tp.Elements) {
+			tc.addError(p.GetLocation(), SeverityError,
+				"%s takes %d argument(s) but the pattern needs at least %d", p.Name, len(flat), ast.MinPositions(tp.Elements))
+			return
+		}
 		tc.addError(p.GetLocation(), SeverityError,
 			"%s takes %d argument(s) but the pattern has %d", p.Name, len(flat), len(tp.Elements))
 		return
@@ -1076,6 +1165,19 @@ func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, ctor *types.Da
 	// Bare single-payload with no parens: `Some x`.
 	if len(flat) == 1 {
 		tc.walkDestructuredPattern(p.Pattern, flat[0], bind)
+		return
+	}
+	// A bare `_` stands for a whole multi-field payload — `Rect _` is `Rect(_, _)`, since
+	// a wildcard binds and tests nothing (the backend's payloadFieldPatterns expands it).
+	if _, isWildcard := p.Pattern.(*ast.WildcardPattern); isWildcard {
+		return
+	}
+	// A single *name* for a multi-field payload (`Rect pair`) would bind the payload as one
+	// tuple, which is a feature the language does not have (todo.md).
+	if _, isName := p.Pattern.(*ast.IdentifierPattern); isName {
+		tc.addError(p.GetLocation(), SeverityError,
+			"%s takes %d argument(s), and binding a whole multi-field payload as one value is not supported; name the fields instead, as %s(…)",
+			p.Name, len(flat), p.Name)
 		return
 	}
 	tc.addError(p.GetLocation(), SeverityError,

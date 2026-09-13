@@ -200,7 +200,7 @@ func (l *lowerer) lowerArrayPatternMatch(current, next *ir.Block, p *ast.ArrayPa
 		var t value.Value
 		var err error
 		switch test.(type) {
-		case *ast.LiteralPattern, *ast.RangePattern:
+		case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern:
 			t, err = l.scalarMatchTest(afterLen, elemAt(afterLen, int64(i)), test, isBool, signed)
 			if err != nil {
 				return nil, err
