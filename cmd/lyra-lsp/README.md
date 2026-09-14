@@ -46,6 +46,9 @@ prelude come from `modules.DefaultRoots`/`DefaultOptions`, shared with `lyrac`.
   `definition.go`'s `scopeInExpr` is its twin and still switches on kinds — a missing kind
   resolves names in the wrong scope. A missing case in a position lookup shows up as the
   editor doing nothing.
+- **A pattern binding resolves through `patternBindingAt`** (`rename.go`), from the name's own
+  span (`ast.PatternBinding.Loc`), and its declaration's span through `bindingNameLoc`, never
+  `namedNameLoc` alone: a destructured name's entry spans the whole statement.
 - **Hover docs** (`hoverdoc.go`): `resolveDoc` mirrors `resolveDefinition` case for case —
   keep them in step. A typeless expression may still be documented (a UFCS method name is a
   synthesized callee with no recorded type), so `Hover` must not bail on a missing type.

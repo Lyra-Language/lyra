@@ -74,7 +74,7 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 	}
 
 	if params.Context.IncludeDeclaration {
-		add(declLoc)
+		add(bindingNameLoc(decl, ident.Name))
 	}
 	sortLocations(out)
 
@@ -114,6 +114,30 @@ func (h *Handler) patternReferences(uri, source string, analysis *docAnalysis, l
 		}
 	}
 
+	// A **binding** — `w` in `Rect(w, h)`, `more` in `...more`, `rr` in `rr @ …`, a struct
+	// shorthand — resolves through patternBindingAt, the path rename takes from the same
+	// cursor, so the two answer about the same declaration. Its uses are identifiers, found
+	// by the walk the identifier path uses, matched on the scope rather than on the name: a
+	// same-named binding in a sibling arm resolves elsewhere and is not this one.
+	if b, named, ok := patternBindingAt(analysis, line, col); ok {
+		declLoc := named.GetLocation()
+		walkExprs(analysis.program, func(e ast.Expression) {
+			name, loc, ok := referenceOccurrence(e)
+			if !ok || name != b.Name {
+				return
+			}
+			if dl, ok := resolveDeclLocation(name, loc.StartLine, loc.StartCol, analysis); ok && dl == declLoc {
+				add(loc)
+			}
+		})
+		if includeDecl {
+			add(b.Loc)
+		}
+		sortLocations(out)
+		log.Printf("references: pattern binding %q resolved to %d occurrence(s)", b.Name, len(out))
+		return out, true
+	}
+
 	switch p := pat.(type) {
 	case *ast.DataPattern:
 		if !cursorOnName(p.GetLocation(), p.Name, line, col) {
@@ -133,46 +157,6 @@ func (h *Handler) patternReferences(uri, source string, analysis *docAnalysis, l
 		log.Printf("references: constructor %q resolved to %d occurrence(s)", p.Name, len(out))
 		return out, true
 
-	case *ast.IdentifierPattern:
-		// The identity is taken from the **scope**, not from the pattern node, and the two
-		// are not the same thing: what a scope binds for `m` is whatever the collector
-		// registered, which is not this `*ast.IdentifierPattern`. Comparing against the
-		// pattern's own location matched nothing, so the binding answered with itself and
-		// none of its uses — a "find references" that is confidently wrong. Asking
-		// resolveDeclLocation at the binding's own position makes both sides of the
-		// comparison come from one function.
-		declLoc, ok := resolveDeclLocation(p.Name, p.GetLocation().StartLine, p.GetLocation().StartCol, analysis)
-		if !ok {
-			// **A `match` arm registers nothing.** Arms create no scope and their pattern
-			// bindings are never entered in the symbol table, so `m` in `Mouse(m) => …` is
-			// invisible to every scope-based question — which is why the identifier path
-			// finds nothing at `m.button` either. Declined rather than answered from the
-			// pattern alone: matching by name within the arm would over-report a shadowing
-			// binding, and answering with the binding *itself* and none of its uses is a
-			// result a reader takes as complete. Definition still answers here, since a
-			// binding resolves to itself without needing a scope.
-			//
-			// The fix is in the collector — push a scope per arm and register what the
-			// pattern binds — and is recorded in todo.md.
-			return nil, false
-		}
-		walkExprs(analysis.program, func(e ast.Expression) {
-			name, loc, ok := referenceOccurrence(e)
-			if !ok || name != p.Name {
-				return
-			}
-			// Scope-matched exactly as the identifier path is: a same-named binding in a
-			// sibling or nested arm resolves elsewhere and is not this one.
-			if dl, ok := resolveDeclLocation(name, loc.StartLine, loc.StartCol, analysis); ok && dl == declLoc {
-				add(loc)
-			}
-		})
-		if includeDecl {
-			add(declLoc)
-		}
-		sortLocations(out)
-		log.Printf("references: pattern binding %q resolved to %d occurrence(s)", p.Name, len(out))
-		return out, true
 	}
 	return nil, false
 }

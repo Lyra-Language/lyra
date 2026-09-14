@@ -659,9 +659,10 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) t
 		}
 		if ident.Name != "_" {
 			tc.scope.Symbols[ident.Name] = &ast.VarDeclStmt{
-				AstBase: ast.AstBase{Location: decl.GetLocation()},
-				Name:    ident.Name,
-				Type:    types.WithAllocation(wt.Inner, types.Shared),
+				AstBase:      ast.AstBase{Location: decl.GetLocation()},
+				Name:         ident.Name,
+				NameLocation: ident.GetLocation(),
+				Type:         types.WithAllocation(wt.Inner, types.Shared),
 			}
 		}
 		return nil
@@ -717,12 +718,20 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) t
 		// this name; later identifier references then resolve to the leaf's
 		// type. Genuine name conflicts are already reported by the collector's
 		// collectPatternDeclaration, so no duplicate error is raised here.
+		// NameLocation is the name's own span within the pattern: this entry is the
+		// declaration every editor feature resolves the name to, and the statement's span
+		// is what a rename would otherwise replace.
+		var nameLoc ast.Location
+		if b, ok := ast.PatternBindingNamed(decl.Pattern, name); ok {
+			nameLoc = b.Loc
+		}
 		tc.scope.Symbols[name] = &ast.VarDeclStmt{
-			AstBase:     ast.AstBase{Location: decl.GetLocation()},
-			BindingKind: bindingKind,
-			IsMut:       decl.IsMut,
-			Name:        name,
-			Type:        typ,
+			AstBase:      ast.AstBase{Location: decl.GetLocation()},
+			BindingKind:  bindingKind,
+			IsMut:        decl.IsMut,
+			Name:         name,
+			NameLocation: nameLoc,
+			Type:         typ,
 		}
 	})
 	return inferredType

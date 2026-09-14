@@ -289,51 +289,22 @@ func redeclarationMessage(existing ast.Named, name string) string {
 	return fmt.Sprintf("%s is already declared in this scope", name)
 }
 
-// destructuringPatternBoundNames returns all variable names introduced by a
-// destructuring pattern. Wildcard "_" bindings are excluded since they are
-// intentional discard slots.
+// destructuringPatternBoundNames returns the names a destructuring pattern introduces, less
+// the `_` discard slots.
+//
+// Through ast.PatternBoundNames, the one answer to what a pattern binds. This was a copy of
+// it with no case for `name @ pattern` or a constructor's payload, so `let Rect(w, _) = s
+// else { … }` and `if let r @ Some(_) = m` entered nothing into scope: the program still
+// type-checked (the typechecker binds on its own walk), and every editor feature asking the
+// scope about `w` found nothing.
 func destructuringPatternBoundNames(pat ast.Pattern) []string {
-	if pat == nil {
-		return nil
-	}
-	switch p := pat.(type) {
-	case *ast.IdentifierPattern:
-		if p.Name == "_" {
-			return nil
-		}
-		return []string{p.Name}
-	case *ast.TuplePattern:
-		var names []string
-		for _, el := range p.Elements {
-			names = append(names, destructuringPatternBoundNames(el)...)
-		}
-		return names
-	case *ast.ArrayPattern:
-		var names []string
-		for _, el := range p.Elements {
-			names = append(names, destructuringPatternBoundNames(el)...)
-		}
-		return names
-	case *ast.StructPattern:
-		var names []string
-		for _, f := range p.Fields {
-			if f.Pattern == nil {
-				// Shorthand `{a}` binds the field name itself; a rename or nested
-				// pattern (`{a: b}`, `{a: [x, y]}`) carries its bindings in Pattern.
-				if f.Name != "" && f.Name != "_" {
-					names = append(names, f.Name)
-				}
-				continue
-			}
-			names = append(names, destructuringPatternBoundNames(f.Pattern)...)
-		}
-		return names
-	case *ast.RestPattern:
-		if p.Identifier != "" {
-			return []string{p.Identifier}
+	var names []string
+	for _, name := range ast.PatternBoundNames(pat) {
+		if name != "_" {
+			names = append(names, name)
 		}
 	}
-	return nil
+	return names
 }
 
 // collectDeclarationAttributes reads the attributes on a `let`/`var`/`const` declaration.

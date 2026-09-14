@@ -70,14 +70,21 @@ func WalkPatternChildren(p Pattern, onPattern func(Pattern) bool) {
 // PatternsOf returns the patterns a statement or expression holds directly.
 //
 // The other half of the walk: patterns hang off ordinary nodes, so reaching them means
-// walking statements and expressions as usual and asking each one. Four node kinds hold
-// them — a destructuring declaration, a match arm's expression, a lambda's parameters and
-// a multi-clause lambda's clauses — and that list is the thing to extend when a fifth
-// appears.
+// walking statements and expressions as usual and asking each one. The node kinds that hold
+// them — a destructuring declaration (bare, `if let`, `let … else`), a match arm's
+// expression, a lambda's parameters and a multi-clause lambda's clauses — are the list to
+// extend when another appears.
 func PatternsOf(node AstNode) []Pattern {
 	switch n := node.(type) {
 	case *DestructuringDeclStmt:
 		return []Pattern{n.Pattern}
+	case *IfDestructuringStmt:
+		// The declaration is held **by value**, so the statement walk never visits it as a
+		// DestructuringDeclStmt of its own; missing these made an `if let` pattern
+		// invisible to every pattern-position editor feature.
+		return []Pattern{n.DestructuringStatement.Pattern}
+	case *ElseDestructuringStmt:
+		return []Pattern{n.DestructuringStatement.Pattern}
 	case *MatchExpr:
 		var out []Pattern
 		for _, arm := range n.MatchArms {
@@ -132,6 +139,11 @@ func RangeBounds(node AstNode) []*IdentifierExpr {
 // pattern's shorthand (`{ x }` binds the field) and a rest pattern's `...xs` each name
 // something the pattern spells rather than a sub-pattern. A caller that needs a `Named` —
 // the collector, entering these into a scope — uses `At` for those.
+//
+// Loc is the span of the **name**, not of the pattern spelling it: `rr` in `rr @ Rect(_, _)`,
+// `more` in `...more`. It is the declaration's position wherever a binding is one — the span
+// a rename edits — and the whole pattern there made a rename replace `rr @ Rect(_, _)`, or
+// drop the dots of `...more`.
 type PatternBinding struct {
 	Name string
 	Node Named
@@ -180,10 +192,10 @@ func EachPatternBinding(p Pattern, fn func(PatternBinding)) {
 			fn(PatternBinding{Name: b.Name, Node: b, Loc: b.GetLocation()})
 		case *BindingPattern:
 			// The name *and* whatever the inner pattern binds, so the walk continues.
-			fn(PatternBinding{Name: b.Name, Loc: b.GetLocation()})
+			fn(PatternBinding{Name: b.Name, Loc: leadingName(b.GetLocation(), b.Name)})
 		case *RestPattern:
 			if b.Identifier != "" {
-				fn(PatternBinding{Name: b.Identifier, Loc: b.GetLocation()})
+				fn(PatternBinding{Name: b.Identifier, Loc: trailingName(b.GetLocation(), b.Identifier)})
 			}
 		case *StructPatternField:
 			if b.Pattern == nil {
@@ -192,6 +204,32 @@ func EachPatternBinding(p Pattern, fn func(PatternBinding)) {
 		}
 		return true
 	})
+}
+
+// leadingName narrows loc to the name that begins it (`rr` of `rr @ Rect(_, _)`).
+func leadingName(loc Location, name string) Location {
+	loc.EndLine, loc.EndCol = loc.StartLine, loc.StartCol+len(name)
+	return loc
+}
+
+// trailingName narrows loc to the name that ends it (`more` of `...more`). From the end
+// rather than past three dots, because a rest the typechecker synthesized for `Rect pair`
+// spans only the name.
+func trailingName(loc Location, name string) Location {
+	loc.StartLine, loc.StartCol = loc.EndLine, loc.EndCol-len(name)
+	return loc
+}
+
+// PatternBindingNamed is the first binding of name in p.
+func PatternBindingNamed(p Pattern, name string) (PatternBinding, bool) {
+	var out PatternBinding
+	found := false
+	EachPatternBinding(p, func(b PatternBinding) {
+		if !found && b.Name == name {
+			out, found = b, true
+		}
+	})
+	return out, found
 }
 
 // PatternBoundNames is EachPatternBinding's names, in source order.

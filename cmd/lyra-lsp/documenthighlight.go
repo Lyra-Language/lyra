@@ -30,10 +30,11 @@ func (h *Handler) DocumentHighlight(_ context.Context, params *lsp.DocumentHighl
 		return nil, nil
 	}
 
-	declLoc, ok := resolveDeclLocation(ident.Name, line, col, analysis)
+	decl, ok := resolveDeclNamed(ident.Name, line, col, analysis)
 	if !ok {
 		return nil, nil
 	}
+	declLoc := decl.GetLocation()
 
 	kindText := lsp.DocumentHighlightKindText
 	seen := map[ast.Location]bool{}
@@ -48,8 +49,8 @@ func (h *Handler) DocumentHighlight(_ context.Context, params *lsp.DocumentHighl
 		})
 	}
 
-	// Always include the declaration.
-	add(declLoc)
+	// Always include the declaration — its name, not the whole statement.
+	add(bindingNameLoc(decl, ident.Name))
 
 	walkExprs(analysis.program, func(e ast.Expression) {
 		name, loc, ok := referenceOccurrence(e)

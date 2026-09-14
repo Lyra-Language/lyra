@@ -254,7 +254,7 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 		// second copy is what makes an `extern` — whose declaration starts at an
 		// `@link` or `unsafe` token several lines above its name — land on the name
 		// like every other declaration does.
-		loc := namedNameLoc(named)
+		loc := bindingNameLoc(named, e.Name)
 		return &loc
 
 	case *ast.StructInstanceExpr:

@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — rename and references on a pattern binding
+
+Filed as "rename from a binding answers nothing". Probing every binding form from both the
+binding and a use found worse: starting from a *use*, rename corrupted the source. The
+declaration's edit replaced whatever span the scope held for the name:
+- a destructuring `let`, `if let` or `let … else`: the **whole statement**, because the
+  typechecker's typed entry per name carried the statement's span and no `NameLocation`;
+- `rr @ Rect(_, _)`: the whole binding pattern;
+- `...more`: the name *and* its dots.
+
+The spans are now the name's own, fixed at the source rather than in the editor:
+`ast.PatternBinding.Loc` narrows a `name @` and a rest, and the typechecker's entry takes
+its `NameLocation` from the binding. From the binding itself, rename and references resolve
+through `patternBindingAt`. It accepts a scope answer only when that answer lands back on
+the binding under the cursor. A struct shorthand renames as `Pt { x: new }`, keeping the
+field.
+
+Two rule-8 misses turned up on the way. `ast.PatternsOf` had no case for `if let` or
+`let … else`: both hold their declaration by value, so the statement walk never visits it,
+and no pattern walk reached those patterns. The collector's `destructuringPatternBoundNames`
+was a hand copy of `ast.PatternBoundNames` with no case for `name @` or a constructor
+payload, so `let Rect(w, _) = s else …` put nothing in scope for the editor (the typechecker
+binds on its own walk, which is why programs compiled). It now calls the shared walk.
+
+The test applies each rename and re-analyzes the result, since "an edit came back" is what
+the corrupting versions also satisfied.
+
 ### 09/13/26 — one name binds a whole multi-field payload
 
 `Rect pair` was refused, twice over: the typechecker's destructuring walk reported it, and

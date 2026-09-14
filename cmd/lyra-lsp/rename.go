@@ -47,6 +47,13 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		}
 	}
 
+	// A **pattern binding** under the cursor: `w` in `Rect(w, h) =>`, `more` in `...more`.
+	if name == "" {
+		if b, n, ok := patternBindingAt(analysis, line, col); ok {
+			name, named, cursorLoc = b.Name, n, b.Loc
+		}
+	}
+
 	// Slow path: cursor is on a declaration name — walk all statements and check
 	// each NameLocation against the cursor position.
 	if name == "" {
@@ -160,7 +167,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		name:      name,
 		exported:  isExportedDecl(named),
 		declLoc:   named.GetLocation(),
-		nameLoc:   namedNameLoc(named),
+		nameLoc:   bindingNameLoc(named, name),
 		named:     named,
 		cursorLoc: cursorLoc,
 	}
@@ -241,6 +248,88 @@ func namedNameLoc(named ast.Named) ast.Location {
 	return named.GetLocation()
 }
 
+// bindingNameLoc is the span of name at its declaration: namedNameLoc, narrowed for a
+// **destructuring declaration**, which binds several names and is registered for each of
+// them as the whole statement until the typechecker replaces the entry with a VarDeclStmt
+// carrying the name's own span. Without either, a rename from a use of `a` replaced all of
+// `let (a, b) = pair` with the new name — the same for `if let` and `let … else`.
+func bindingNameLoc(named ast.Named, name string) ast.Location {
+	if d, ok := named.(*ast.DestructuringDeclStmt); ok {
+		if b, found := ast.PatternBindingNamed(d.Pattern, name); found {
+			return b.Loc
+		}
+	}
+	return namedNameLoc(named)
+}
+
+// patternBindingAt resolves the pattern binding whose **name** is under the cursor — in a
+// `match` arm, `if let`, `let … else`, a destructuring `let` or a parameter, at any depth —
+// to its declaration.
+//
+// The cursor on a binding is where a rename is most often started, and no path reached it:
+// a binding is a pattern, and every lookup began from an expression. The resolution goes
+// through the scope at the binding's own position and is accepted only when it lands back
+// on this binding, so a name the scope does not hold (or holds as some other declaration)
+// answers nothing rather than something else.
+func patternBindingAt(analysis *docAnalysis, line, col int) (ast.PatternBinding, ast.Named, bool) {
+	var hit ast.PatternBinding
+	found := false
+	consider := func(node ast.AstNode) {
+		for _, p := range ast.PatternsOf(node) {
+			ast.EachPatternBinding(p, func(b ast.PatternBinding) {
+				if !found && b.Name != "_" && containsPos(b.Loc, line, col) {
+					hit, found = b, true
+				}
+			})
+		}
+	}
+	for _, node := range analysis.program.Statements {
+		if stmt, ok := node.(ast.Statement); ok {
+			ast.WalkStmt(stmt, func(s ast.Statement) bool {
+				consider(s)
+				return !found
+			}, func(e ast.Expression) bool {
+				consider(e)
+				return !found
+			})
+		}
+	}
+	if !found {
+		return ast.PatternBinding{}, nil, false
+	}
+	named, ok := resolveDeclNamed(hit.Name, hit.Loc.StartLine, hit.Loc.StartCol, analysis)
+	if !ok || bindingNameLoc(named, hit.Name) != hit.Loc {
+		return ast.PatternBinding{}, nil, false
+	}
+	return hit, named, true
+}
+
+// isShorthandField reports whether loc is a struct pattern's shorthand field binding name.
+func isShorthandField(program *ast.Program, loc ast.Location, name string) bool {
+	found := false
+	consider := func(node ast.AstNode) {
+		for _, p := range ast.PatternsOf(node) {
+			ast.EachPatternBinding(p, func(b ast.PatternBinding) {
+				if f, ok := b.Node.(*ast.StructPatternField); ok && f.Pattern == nil && b.Name == name && b.Loc == loc {
+					found = true
+				}
+			})
+		}
+	}
+	for _, node := range program.Statements {
+		if stmt, ok := node.(ast.Statement); ok {
+			ast.WalkStmt(stmt, func(s ast.Statement) bool {
+				consider(s)
+				return !found
+			}, func(e ast.Expression) bool {
+				consider(e)
+				return !found
+			})
+		}
+	}
+	return found
+}
+
 // paramBodyScope returns the scope that holds a lambda's parameters. Parameters
 // are registered in the body BlockExpr's scope, which is directly accessible
 // via the ScopeTable without needing a position inside the block.
@@ -304,6 +393,7 @@ func (h *Handler) Rename(ctx context.Context, params *lsp.RenameParams) (result 
 	}
 
 	newName := params.NewName
+	var addEditText func(loc ast.Location, text string)
 	seen := map[ast.Location]bool{}
 	changes := map[lsp.DocumentURI][]lsp.TextEdit{}
 	unreadable := ""
@@ -313,6 +403,9 @@ func (h *Handler) Rename(ctx context.Context, params *lsp.RenameParams) (result 
 	// program would stop compiling with no indication of where — so one such file declines
 	// the whole rename below.
 	addEdit := func(loc ast.Location) {
+		addEditText(loc, newName)
+	}
+	addEditText = func(loc ast.Location, text string) {
 		if seen[loc] {
 			return
 		}
@@ -329,12 +422,19 @@ func (h *Handler) Rename(ctx context.Context, params *lsp.RenameParams) (result 
 		key := lsp.DocumentURI(editURI)
 		changes[key] = append(changes[key], lsp.TextEdit{
 			Range:   locToRange(editSource, loc),
-			NewText: newName,
+			NewText: text,
 		})
 	}
 
-	// Edit the declaration name span (not the whole-stmt location).
-	addEdit(anchor.nameLoc)
+	// Edit the declaration name span (not the whole-stmt location). A struct pattern's
+	// **shorthand** (`Pt { x, y }`) spells the field and the binding with one name, so
+	// renaming the binding keeps the field: `Pt { x: renamed, y }`. Replacing the name
+	// alone would ask for a field `renamed` the struct does not have.
+	if isShorthandField(analysis.program, anchor.nameLoc, anchor.name) {
+		addEditText(anchor.nameLoc, anchor.name+": "+newName)
+	} else {
+		addEdit(anchor.nameLoc)
+	}
 
 	// Every file of the program, widened to the importers of an exported name, whose
 	// uses are the rest of the rename (importers.go). Found from the declaring module,
