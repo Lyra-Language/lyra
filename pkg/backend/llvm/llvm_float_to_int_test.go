@@ -62,3 +62,52 @@ func TestExec_FloatToIntAcceptsWhatFits(t *testing.T) {
 		})
 	}
 }
+
+// **A conversion the value-range pass proves in range has no guard** (09/13), and computes
+// the same answer the guarded one did — negative values, `round`'s half-away-from-zero, an
+// f32, and a float binding included. The IR assertion is what shows the guard is gone; the
+// output is what shows nothing else went with it.
+func TestExec_ProvablyInRangeRoundingHasNoGuard(t *testing.T) {
+	t.Parallel()
+	src := `let scaled = (i: u8) -> i64 => (f64(i) / 10.0 - 12.0).floor()
+let halves = (i: i16) -> i64 => (f64(i) * 0.5).round()
+let narrow = (i: u16) -> i64 => { let u: f32 = f32(f64(i) * 0.25)
+  u.ceil() }
+let main = () -> void => {
+  println("${scaled(0)} ${scaled(125)} ${scaled(255)}")
+  println("${halves(-3)} ${halves(3)} ${halves(-32768)}")
+  println("${narrow(1)} ${narrow(65535)}")
+}
+`
+	ir := emitWithPrelude(t, src)
+	for _, fn := range []string{"scaled", "halves", "narrow"} {
+		start := strings.Index(ir, "@lyra."+fn+"(")
+		if start < 0 {
+			t.Fatalf("no definition of %s in the IR", fn)
+		}
+		body := ir[start:]
+		body = body[:strings.Index(body, "\n}\n")]
+		if strings.Contains(body, "lyra_panic_float_to_int") {
+			t.Errorf("%s: a provably in-range conversion still carries its guard", fn)
+		}
+	}
+	want := "-12 0 13\n-2 2 -16384\n1 16384"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
+// And a value the pass cannot bound keeps it: a match arm's payload shadowing a bounded
+// outer binding of the same name must trap, not convert poison.
+func TestExec_ShadowedFloatStillTraps(t *testing.T) {
+	t.Parallel()
+	out, code := runPreludeCombined(t, `let main = () -> void => {
+  let x = 2.0
+  let m: Maybe<f64> = Some(1.0e300)
+  match m { Some(x) => println(x.floor()), None => println(x.floor()) }
+}
+`)
+	if code != 101 || !strings.Contains(out, "out of range for an integer") {
+		t.Errorf("want the float-to-int trap, got exit %d and %q", code, out)
+	}
+}

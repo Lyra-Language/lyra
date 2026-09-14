@@ -387,7 +387,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 
 ### Float math
 
-- `floor`/`ceil`/`round` → **i64** (the fix for refused `i64(x)` on a float). Out-of-range or NaN **traps**.
+- `floor`/`ceil`/`round` → **i64** (the fix for refused `i64(x)` on a float). Out-of-range or NaN **traps**; the check is dropped where the compiler proves the value finite and in range (`(f64(i) / 10.0).floor()` for a `u8` `i`).
 - `log`, `log2`, `log10`, `sqrt` → the receiver's own width (builtins; no libm access otherwise). Out of domain gives IEEE values (`log(0)` = `-inf`, `sqrt(-1)` = NaN).
 - `x.to_fixed(places)` (`std/prelude/format.lyra`): fixed decimals, never scientific. `print` writes the shortest round-trip form.
 

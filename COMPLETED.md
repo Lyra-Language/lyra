@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — the float→int guard is elided where it cannot fire, and two binders stop leaking
+
+**A soundness bug first, found on the way in.** The value-range pass drops runtime checks it
+proves unnecessary, so a stale interval is a missing trap in safe code. Two binders never
+cleared the names they bound: a `match` arm's pattern and a comprehension's generator. So
+`let i = 0` followed by `match m { Some(i) => xs[i] }` — or `[i in big | xs[i]]` — proved the
+index in bounds from the *outer* `i`, the backend dropped the check, and a payload of a million
+printed `-16` out of memory past a three-element array. Each now forgets what it binds for its
+body and restores the outer name after, as a block already did; `with`, refused today, does
+the same.
+
+**Float intervals.** `x.floor()`/`.ceil()`/`.round()` answer an i64 through `fptosi`, which is
+poison out of range, so each is guarded by two compares and a branch. The pass tracked only
+integers, so the guard stayed on `(f64(i) / 10.0).floor()` for a bounded counter, and the
+integer it produced was untracked, taking later checks with it. Float bindings now carry
+bounds beside integer ones, over literals, integer→float conversions, negation and `+ - * /`.
+
+**The arithmetic is exact and rounded outward**, and the first version was not. It computed
+bounds in f64 and widened each by one representable value to cover f32 rounding and a fused
+multiply-add; that was sound but made `0.0`'s lower bound `-5e-324`, whose floor is `-1`, so
+`xs[(f64(i) / 10.0).floor()]` could never be proven in bounds. Each corner is now computed
+exactly with `math/big` — a quotient that does not fit 1024 bits steps outward first, by its
+accuracy — and rounded down or up to the program's width. Monotonicity of the exact operation,
+plus rounding-to-nearest lying between rounding down and up, is the whole argument, and it
+covers fused arithmetic too. A brute-force test checks it against f32 and f64 operations.
+
+Only finite bounds within 1e30 are kept, and a divisor interval must exclude zero, which is
+what lets a finite interval promise the value is not NaN; a float bound that changes across a
+loop iteration is dropped rather than widened. A conversion is marked safe inside ±2^62. No
+diagnostic changed anywhere in `std`, the bindings or the examples.
+
 ### 09/13/26 — generic lists on types and traits are reconciled with their bodies
 
 E031 and W013 checked a *binding's* written list against its signature and nothing else, so

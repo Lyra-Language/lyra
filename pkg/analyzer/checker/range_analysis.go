@@ -116,6 +116,9 @@ type SafetyTable struct {
 	noDivOverflow   map[ast.Expression]bool
 	inBounds        map[ast.Expression]bool
 	noShiftOverflow map[ast.Expression]bool
+	// noFloatToIntTrap — `x.floor()`/`.ceil()`/`.round()` whose receiver is provably
+	// finite and well inside i64's range (drops the conversion's guard; range_float.go).
+	noFloatToIntTrap map[ast.Expression]bool
 }
 
 func newSafetyTable() *SafetyTable {
@@ -125,6 +128,8 @@ func newSafetyTable() *SafetyTable {
 		noDivOverflow:   map[ast.Expression]bool{},
 		inBounds:        map[ast.Expression]bool{},
 		noShiftOverflow: map[ast.Expression]bool{},
+
+		noFloatToIntTrap: map[ast.Expression]bool{},
 	}
 }
 
@@ -148,6 +153,10 @@ func (t *SafetyTable) IndexInBounds(e ast.Expression) bool { return t.has(t.inBo
 // [0, width) — so the amount check drops. The backend already folds away a constant
 // count on its own; this is what covers a *variable* one the analysis can bound.
 func (t *SafetyTable) NoShiftOverflow(e ast.Expression) bool { return t.has(t.noShiftOverflow, e) }
+
+// NoFloatToIntTrap reports whether e is a rounding call whose float→int conversion cannot
+// fail — so its range guard drops.
+func (t *SafetyTable) NoFloatToIntTrap(e ast.Expression) bool { return t.has(t.noFloatToIntTrap, e) }
 
 func (t *SafetyTable) has(m map[ast.Expression]bool, e ast.Expression) bool {
 	if t == nil || m == nil {
@@ -276,18 +285,63 @@ func (iv interval) single() (int64, bool) { return iv.lo, iv.lo == iv.hi }
 // (its type's full range); an unreachable env (a contradictory refinement)
 // suppresses all diagnostics.
 type rangeEnv struct {
-	vars      map[string]interval
+	vars map[string]interval
+	// floats holds a float binding's bounds, keyed by name as vars is. A name is in at
+	// most one of the two maps, and **every forget goes through forget**, which clears
+	// both: a stale float interval is what lets the backend drop a float→int trap, and
+	// `fptosi` out of range is poison rather than a wrong number.
+	floats    map[string]floatInterval
 	reachable bool
 }
 
-func newEnv() rangeEnv { return rangeEnv{vars: map[string]interval{}, reachable: true} }
+func newEnv() rangeEnv {
+	return rangeEnv{vars: map[string]interval{}, floats: map[string]floatInterval{}, reachable: true}
+}
+
+// emptyEnv is newEnv with the given reachability, for the joins that build a result.
+func emptyEnv(reachable bool) rangeEnv {
+	return rangeEnv{vars: map[string]interval{}, floats: map[string]floatInterval{}, reachable: reachable}
+}
 
 func (e rangeEnv) clone() rangeEnv {
-	out := rangeEnv{vars: make(map[string]interval, len(e.vars)), reachable: e.reachable}
+	out := emptyEnv(e.reachable)
 	for k, v := range e.vars {
 		out.vars[k] = v
 	}
+	for k, v := range e.floats {
+		out.floats[k] = v
+	}
 	return out
+}
+
+// forget makes name untracked (⊤), whichever kind of interval it held.
+func (e rangeEnv) forget(name string) {
+	delete(e.vars, name)
+	delete(e.floats, name)
+}
+
+// setInt records an integer interval for name, clearing any float one.
+func (e rangeEnv) setInt(name string, iv interval) {
+	e.vars[name] = iv
+	delete(e.floats, name)
+}
+
+// setFloat records a float interval for name, clearing any integer one.
+func (e rangeEnv) setFloat(name string, fv floatInterval) {
+	e.floats[name] = fv
+	delete(e.vars, name)
+}
+
+// restoreFrom puts name back to what outer knew about it — the end of a scope that bound
+// it afresh.
+func (e rangeEnv) restoreFrom(outer rangeEnv, name string) {
+	e.forget(name)
+	if iv, ok := outer.vars[name]; ok {
+		e.vars[name] = iv
+	}
+	if fv, ok := outer.floats[name]; ok {
+		e.floats[name] = fv
+	}
 }
 
 // mergeEnv is the join of two branch outcomes (an if/match). An unreachable side
@@ -300,10 +354,15 @@ func mergeEnv(a, b rangeEnv) rangeEnv {
 	if !b.reachable {
 		return a
 	}
-	out := rangeEnv{vars: map[string]interval{}, reachable: true}
+	out := emptyEnv(true)
 	for name, av := range a.vars {
 		if bv, ok := b.vars[name]; ok {
 			out.vars[name] = interval{minI(av.lo, bv.lo), maxI(av.hi, bv.hi)}
+		}
+	}
+	for name, af := range a.floats {
+		if bf, ok := b.floats[name]; ok {
+			out.floats[name] = floatInterval{math.Min(af.lo, bf.lo), math.Max(af.hi, bf.hi)}
 		}
 	}
 	return out
@@ -328,7 +387,7 @@ func mergeEnv(a, b rangeEnv) rangeEnv {
 func (c *rangeChecker) evalDestructuring(st rangeEnv, d *ast.DestructuringDeclStmt) rangeEnv {
 	_, _, st = c.eval(st, d.Value)
 	for _, n := range patternBoundNames(d.Pattern) {
-		delete(st.vars, n)
+		st.forget(n)
 	}
 	return st
 }
@@ -340,7 +399,7 @@ func (c *rangeChecker) forgetAssigned(st rangeEnv, body *ast.BlockExpr) rangeEnv
 		return st
 	}
 	for n := range assignedNames(body) {
-		delete(st.vars, n)
+		st.forget(n)
 	}
 	return st
 }
@@ -379,20 +438,36 @@ func (c *rangeChecker) evalStmt(st rangeEnv, s ast.Statement) rangeEnv {
 			if lo, hi, ok := c.intBoundsOf(v.Value); ok {
 				iv = interval{maxI(iv.lo, lo), minI(iv.hi, hi)}
 			}
-			st.vars[v.Name] = iv
+			st.setInt(v.Name, iv)
+		} else if fv, ok := c.floatIntervalOf(st, v.Value); ok {
+			st.setFloat(v.Name, fv)
 		} else {
-			delete(st.vars, v.Name) // untracked initializer → ⊤
+			st.forget(v.Name) // untracked initializer → ⊤
 		}
 		return st
 	case *ast.VarReassignmentStmt:
 		iv, tracked, after := c.eval(st, v.Value)
 		st = after
 		if tracked {
-			st.vars[v.Name] = iv
+			st.setInt(v.Name, iv)
+		} else if fv, ok := c.floatIntervalOf(st, v.Value); ok {
+			st.setFloat(v.Name, fv)
 		} else {
-			delete(st.vars, v.Name)
+			st.forget(v.Name)
 		}
 		return st
+	case *ast.WithStmt:
+		// `with name = arena { … }` binds name for its body alone, as a block does.
+		_, _, st = c.eval(st, v.Arena)
+		inner := st.clone()
+		if v.Name != "" {
+			inner.forget(v.Name)
+		}
+		_, _, inner = c.eval(inner, v.Body)
+		if v.Name != "" {
+			inner.restoreFrom(st, v.Name)
+		}
+		return inner
 	case *ast.ExpressionStmt:
 		_, _, after := c.eval(st, v.Expression)
 		return after
@@ -536,7 +611,7 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 			// the operation's integer type and is the divisor. The new value of x isn't
 			// tracked → ⊤.
 			c.checkDivision(e, v.Right, v.Right, lv, lt, rv, rt)
-			delete(st.vars, rootIdentName(v.Left))
+			st.forget(rootIdentName(v.Left))
 			return interval{}, false, st
 		}
 		if binOp, isBin := v.Operator.BinaryOp(); isBin && binOp.IsBitwise() && lt && rt {
@@ -549,11 +624,11 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 				// on the node the backend will ask about — the assignment itself.
 				c.markShiftInRange(e, v.Right, binOp, rv, rt)
 				if r, ok := bitwiseI(binOp, lv, rv, tyIv); ok {
-					st.vars[rootIdentName(v.Left)] = clampToType(r, tyIv)
+					st.setInt(rootIdentName(v.Left), clampToType(r, tyIv))
 					return interval{}, false, st
 				}
 			}
-			delete(st.vars, rootIdentName(v.Left))
+			st.forget(rootIdentName(v.Left))
 			return interval{}, false, st
 		}
 		if lt && rt {
@@ -572,12 +647,12 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 				// identifier isn't recorded; the RHS carries the target's (propagated)
 				// width, so use it for the overflow bounds.
 				if res, resOK := c.checkArith(e, v.Right, r); resOK {
-					st.vars[rootIdentName(v.Left)] = res
+					st.setInt(rootIdentName(v.Left), res)
 					return interval{}, false, st
 				}
 			}
 		}
-		delete(st.vars, rootIdentName(v.Left)) // couldn't track the new value → ⊤
+		st.forget(rootIdentName(v.Left)) // couldn't track the new value → ⊤
 		return interval{}, false, st
 
 	case *ast.BooleanBinaryOpExpr:
@@ -617,6 +692,14 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 	case *ast.LambdaExpr:
 		c.analyzeLambda(v) // nested lambda: its own scope, outer state doesn't flow in
 		return interval{}, false, st
+
+	case *ast.ArrayCompExpr:
+		return c.evalArrayComp(st, v)
+
+	case *ast.FunctionCallExpr:
+		if c.isBuiltinRounding(v) {
+			return c.evalRounding(st, v)
+		}
 	}
 
 	// Any other expression (call, member, index, string, …): walk its children for
@@ -629,6 +712,39 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		return false
 	})
 	return c.typeIntervalIn(e, st)
+}
+
+// evalArrayComp evaluates a comprehension with its generator variables bound afresh.
+//
+// The generators' sources are evaluated where the comprehension is written; the guards and
+// the result see each generator's variable as an element of its source, which this pass does
+// not track — so the variable is **forgotten**, not inherited from an outer binding of the
+// same name. Before 09/13 the comprehension fell to the default walk, which bound nothing:
+// `let i = 0` then `[i in big | xs[i]]` checked `xs[i]` against the outer `i` and dropped
+// its bounds check. The body may run no times, so what it did is joined with what was known
+// before it.
+func (c *rangeChecker) evalArrayComp(st rangeEnv, v *ast.ArrayCompExpr) (interval, bool, rangeEnv) {
+	inner := st.clone()
+	var bound []string
+	for i := range v.Generators {
+		_, _, inner = c.eval(inner, v.Generators[i].Value)
+		if name := v.Generators[i].Identifier; name != "" {
+			inner.forget(name)
+			bound = append(bound, name)
+		}
+	}
+	outer := inner.clone()
+	for _, n := range bound {
+		outer.restoreFrom(st, n)
+	}
+	for _, g := range v.Guards {
+		_, _, inner = c.eval(inner, g)
+	}
+	_, _, inner = c.eval(inner, v.Result)
+	for _, n := range bound {
+		inner.restoreFrom(st, n)
+	}
+	return interval{}, false, mergeEnv(outer, inner)
 }
 
 func (c *rangeChecker) evalIf(st rangeEnv, v *ast.IfExpr) (interval, bool, rangeEnv) {
@@ -700,11 +816,8 @@ func (c *rangeChecker) evalBlock(st rangeEnv, v *ast.BlockExpr) (interval, bool,
 	out := inner.clone()
 	out.reachable = inner.reachable
 	for name := range declared {
-		if savedIV, ok := saved.vars[name]; ok {
-			out.vars[name] = savedIV // shadowed an outer binding → restore it
-		} else {
-			delete(out.vars, name) // purely block-local → drop it
-		}
+		// Restored when it shadowed an outer binding, dropped when it was block-local.
+		out.restoreFrom(saved, name)
 	}
 	return lastVal, lastTracked, out
 }
@@ -722,13 +835,23 @@ func (c *rangeChecker) evalMatch(st rangeEnv, v *ast.MatchExpr) (interval, bool,
 	// range). A pattern that can't overlap the scrutinee's range makes the arm
 	// unreachable and it's skipped (contributing no value, env, or diagnostics).
 	scrutID, _ := v.Scrutinee.(*ast.IdentifierExpr)
-	result := rangeEnv{reachable: false}
+	result := emptyEnv(false)
 	var val interval
 	allTracked := true
 	first := true
 	for i := range v.MatchArms {
 		arm := v.MatchArms[i]
 		armEnv := st.clone()
+		// **A name the pattern binds is a fresh binding**, not the outer one it shadows.
+		// Until 09/13 an arm kept whatever the environment knew about the name, so
+		// `let i = 0` followed by `match m { Some(i) => xs[i] }` proved the index in
+		// bounds from the *outer* `i`, the backend dropped the check, and a payload of a
+		// million read past the array. Forgotten before the scrutinee is refined, and put
+		// back after the arm, since the binding ends with it.
+		bound := patternBoundNames(arm.Pattern)
+		for _, n := range bound {
+			armEnv.forget(n)
+		}
 		if scrutID != nil {
 			if lo, hi, ok := patternInterval(arm.Pattern); ok {
 				c.refineScrutinee(&armEnv, scrutID, lo, hi)
@@ -741,6 +864,9 @@ func (c *rangeChecker) evalMatch(st rangeEnv, v *ast.MatchExpr) (interval, bool,
 			_, _, armEnv = c.eval(armEnv, arm.Guard.Condition)
 		}
 		av, at, aAfter := c.eval(armEnv, arm.Body)
+		for _, n := range bound {
+			aAfter.restoreFrom(st, n)
+		}
 		result = mergeEnv(result, aAfter)
 		if !at {
 			allTracked = false
@@ -769,7 +895,7 @@ func (c *rangeChecker) refineScrutinee(env *rangeEnv, id *ast.IdentifierExpr, lo
 		env.reachable = false
 		return
 	}
-	env.vars[id.Name] = n
+	env.setInt(id.Name, n)
 }
 
 // patternInterval returns the inclusive [lo, hi] integer interval a match pattern
@@ -949,7 +1075,7 @@ func narrowInterval(old, next interval) interval {
 }
 
 func widenEnv(old, joined rangeEnv) rangeEnv {
-	out := rangeEnv{vars: make(map[string]interval, len(joined.vars)), reachable: joined.reachable}
+	out := emptyEnv(joined.reachable)
 	for name, jv := range joined.vars {
 		if ov, ok := old.vars[name]; ok {
 			out.vars[name] = widenInterval(ov, jv)
@@ -957,11 +1083,18 @@ func widenEnv(old, joined rangeEnv) rangeEnv {
 			out.vars[name] = jv
 		}
 	}
+	// A float bound that moved has no infinity to jump to that would still be finite, and
+	// only a finite bound is any use; so a changed one is dropped, which converges at once.
+	for name, jf := range joined.floats {
+		if of, ok := old.floats[name]; !ok || of == jf {
+			out.floats[name] = jf
+		}
+	}
 	return out
 }
 
 func narrowEnv(old, recomputed rangeEnv) rangeEnv {
-	out := rangeEnv{vars: make(map[string]interval, len(old.vars)), reachable: recomputed.reachable}
+	out := emptyEnv(recomputed.reachable)
 	for name, ov := range old.vars {
 		if rv, ok := recomputed.vars[name]; ok {
 			out.vars[name] = narrowInterval(ov, rv)
@@ -969,15 +1102,23 @@ func narrowEnv(old, recomputed rangeEnv) rangeEnv {
 			out.vars[name] = ov
 		}
 	}
+	for name, of := range old.floats {
+		out.floats[name] = of
+	}
 	return out
 }
 
 func envEqual(a, b rangeEnv) bool {
-	if a.reachable != b.reachable || len(a.vars) != len(b.vars) {
+	if a.reachable != b.reachable || len(a.vars) != len(b.vars) || len(a.floats) != len(b.floats) {
 		return false
 	}
 	for name, av := range a.vars {
 		if bv, ok := b.vars[name]; !ok || av != bv {
+			return false
+		}
+	}
+	for name, af := range a.floats {
+		if bf, ok := b.floats[name]; !ok || af != bf {
 			return false
 		}
 	}
@@ -1000,7 +1141,7 @@ func (c *rangeChecker) evalForIn(st rangeEnv, v *ast.ForInLoopExpr) rangeEnv {
 	// variable havoc'd.
 	body := havoc(st.clone(), assigned)
 	if kv, ok := c.forInRangeKey(st, v); ok {
-		body.vars[v.Key] = kv
+		body.setInt(v.Key, kv)
 	}
 	_, _, _ = c.eval(body, v.Body)
 	return havoc(st, assigned)
@@ -1102,7 +1243,7 @@ func (c *rangeChecker) applyRefine(env *rangeEnv, id *ast.IdentifierExpr, op ast
 		env.reachable = false
 		return
 	}
-	env.vars[id.Name] = n
+	env.setInt(id.Name, n)
 }
 
 // narrow returns cur restricted to the values satisfying `x op k`.
@@ -1490,7 +1631,7 @@ func (c *rangeChecker) report(e ast.Expression, sev diag.Severity, code, msg str
 // havoc drops the given variables from env (widening each to ⊤ / its type range).
 func havoc(env rangeEnv, names map[string]bool) rangeEnv {
 	for n := range names {
-		delete(env.vars, n)
+		env.forget(n)
 	}
 	return env
 }

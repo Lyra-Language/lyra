@@ -266,7 +266,17 @@ never mentioned is `lyra-W013`. The list stays optional. Catches typo'd lowercas
 - **`refine`** (pure, no diagnostics): comparison against a constant or tracked variable, `&&` into
   then, `||` into else, `!` swaps. Contradiction → unreachable.
 - **`evalMatch`/`refineScrutinee`**: arms narrow a tracked scrutinee via `patternInterval`; a
-  non-overlapping arm is unreachable.
+  non-overlapping arm is unreachable. **A name the arm's pattern binds is forgotten** for the arm
+  and restored after it, as a comprehension's generator variables are (`evalArrayComp`) and a
+  `with` binding is — inheriting the shadowed outer interval dropped bounds checks
+  (`TestRange_Safety_ShadowingBindersDoNotInherit`).
+- **Floats** (`range_float.go`): `rangeEnv.floats` holds float bindings' bounds beside `vars`;
+  **`forget`/`setInt`/`setFloat`/`restoreFrom` are the only writes**, and clear both maps. Bounds
+  are exact `math/big` arithmetic rounded outward to the program's width (f32/f64; f16 is ⊤) over
+  literals, int→float conversions, `+ - * /` (divisor excluding 0) and negation, capped at 1e30.
+  A float bound that changes across a loop iteration is dropped. `evalRounding` marks
+  `floor`/`ceil`/`round` and tracks the i64 result. Soundness is brute-forced
+  (`range_float_internal_test.go`).
 - Compound assign is `void`-typed; its bound comes from the RHS's propagated width.
 - Possible (not definite) overflow is left to the runtime trap.
 
@@ -277,6 +287,7 @@ never mentioned is `lyra-W013`. The list stays optional. Catches typo'd lowercas
 | `NoOverflow` | `checkArith` | `applyIntMathOp` → `emitWrappingOp` |
 | `NoDivZero` / `NoDivOverflow` | `checkDivision` | `emitCheckedDivOp` drops guards |
 | `IndexInBounds` | `evalIndex` | `lowerIndexExpr` drops bounds trap |
+| `NoFloatToIntTrap` | `evalRounding` (receiver within ±2^62) | `lowerFloatMathMethod` drops `guardFloatToInt` |
 
 A nil table / absent entry means "not safe". **Soundness requires seeing every write to a tracked
 variable** — a stale interval is a missing trap in safe code (rule 18):

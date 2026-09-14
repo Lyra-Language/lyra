@@ -95,7 +95,12 @@ func (l *lowerer) lowerFloatMathMethod(block *ir.Block, call *ast.FunctionCallEx
 		// integer conversion is what traps, and that is the right place for it.
 		return result, block, nil
 	}
-	block = l.guardFloatToInt(block, result, fT)
+	// The guard drops where the value-range pass proved the receiver finite and well inside
+	// i64's range (checker/range_float.go) — the float counterpart of every other trap it
+	// elides.
+	if !l.res.RangeSafety.NoFloatToIntTrap(call) {
+		block = l.guardFloatToInt(block, result, fT)
+	}
 	// The builtin's fixed return type is i64 (builtins.go's floatRoundingOps);
 	// narrow further with an explicit int conversion, e.g. i32(x.floor()).
 	return block.NewFPToSI(result, lltypes.I64), block, nil

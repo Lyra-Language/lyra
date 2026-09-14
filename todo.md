@@ -26,8 +26,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 - **[PARTIAL] Closure lowering is tiered.** Dev (boxed closures) is in; release = Lambda Set
   Specialization, gated on the monomorphizer. LSS can only loosen `noalloc`'s closure rule,
   never tighten it.
-- **[OPEN] The float→int range trap is never elided.** The value-range pass tracks only
-  integers, so a float bounded by construction still pays a compare and branch.
 
 ### Modules and tooling
 
