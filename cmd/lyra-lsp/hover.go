@@ -45,11 +45,7 @@ func findExprAtPos(program *ast.Program, line, col int) ast.Expression {
 		}
 		return true
 	}
-	for _, node := range program.Statements {
-		if stmt, ok := node.(ast.Statement); ok {
-			ast.WalkStmt(stmt, nil, onExpr)
-		}
-	}
+	walkProgramExprs(program, onExpr)
 	return best
 }
 
@@ -58,8 +54,8 @@ func findExprAtPos(program *ast.Program, line, col int) ast.Expression {
 // expressions, so go-to-definition on a constructor in a `match` arm did nothing.
 //
 // Worse than nothing, in fact, which is why this is a lookup of its own rather than a
-// fallback on the expression one: patterns hold no expressions and expressions no patterns,
-// but their *spans overlap*, so asking `findExprAtPos` about a position inside a pattern
+// fallback on the expression one: patterns hold no expressions (bar a range's `const`
+// bounds, which walkProgramExprs supplies) and expressions no patterns, but their *spans overlap*, so asking `findExprAtPos` about a position inside a pattern
 // returns whatever expression encloses the arm — a nearby tuple literal, in the reported
 // case. Answering from the wrong node is how a feature comes to be confidently wrong rather
 // than silent.

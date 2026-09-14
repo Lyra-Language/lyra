@@ -1454,7 +1454,7 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 	// A `const_identifier` bound is the only name the grammar admits here.
 	for _, bound := range []ast.Expression{pattern.Start, pattern.End} {
 		if id, isName := bound.(*ast.IdentifierExpr); isName {
-			pattern.ConstNames = append(pattern.ConstNames, id.Name)
+			pattern.ConstBounds = append(pattern.ConstBounds, id)
 		}
 	}
 	return pattern

@@ -369,13 +369,35 @@ func collectVarDecls(program *ast.Program) []*ast.VarDeclStmt {
 
 // walkExprs visits every expression in the program.
 func walkExprs(program *ast.Program, fn func(ast.Expression)) {
-	onExpr := func(e ast.Expression) bool {
+	walkProgramExprs(program, func(e ast.Expression) bool {
 		fn(e)
 		return true
+	})
+}
+
+// walkProgramExprs visits every expression in program, **the `const` bounds of range
+// patterns included** (`LOW` in `LOW..<=HIGH`).
+//
+// Those are expressions no AST walk reaches: patterns are outside the expression walk, and
+// the typechecker folds each bound to a literal in place, so the name survives only in
+// RangePattern.ConstBounds. The position features all find a name through this walk, so
+// without it renaming a const left every pattern bound naming one that no longer existed.
+// They are fed to the callback as ordinary identifiers, which is what they were written as.
+func walkProgramExprs(program *ast.Program, onExpr func(ast.Expression) bool) {
+	bounds := func(n ast.AstNode) {
+		for _, id := range ast.RangeBounds(n) {
+			onExpr(id)
+		}
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
-			ast.WalkStmt(stmt, nil, onExpr)
+			ast.WalkStmt(stmt, func(s ast.Statement) bool {
+				bounds(s)
+				return true
+			}, func(e ast.Expression) bool {
+				bounds(e)
+				return onExpr(e)
+			})
 		}
 	}
 }

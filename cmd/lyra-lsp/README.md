@@ -38,7 +38,10 @@ prelude come from `modules.DefaultRoots`/`DefaultOptions`, shared with `lyrac`.
   called by the deferred function itself** — wrapping `recoverHandler` in a closure silently
   disables the panic guard. `TestRecoverHandler_*` guards it.
 - **Position lookups start at `findExprAtPos`** (`hover.go`), which walks with
-  `ast.WalkStmt`/`ast.WalkExpr` and keeps the narrowest containing span. It does **not** prune
+  `walkProgramExprs` (`codeaction.go`) and keeps the narrowest containing span. That walk adds
+  the `const` bounds of range patterns (`RangePattern.ConstBounds`), which no AST walk reaches
+  and the typechecker has folded to literals; expression walks go through it, not a bare
+  `ast.WalkStmt`. It does **not** prune
   at a node failing to contain the position (a zero `Location` would hide its subtree).
   `definition.go`'s `scopeInExpr` is its twin and still switches on kinds — a missing kind
   resolves names in the wrong scope. A missing case in a position lookup shows up as the

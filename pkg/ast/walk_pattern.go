@@ -106,15 +106,24 @@ func PatternsOf(node AstNode) []Pattern {
 // a bound warned as unused (lyra-W004), advising the deletion of a name the program needs.
 func RangeBoundNames(node AstNode) []string {
 	var names []string
+	for _, id := range RangeBounds(node) {
+		names = append(names, id.Name)
+	}
+	return names
+}
+
+// RangeBounds is RangeBoundNames with the nodes as written, locations included.
+func RangeBounds(node AstNode) []*IdentifierExpr {
+	var ids []*IdentifierExpr
 	for _, p := range PatternsOf(node) {
 		WalkPattern(p, func(sub Pattern) bool {
 			if rp, ok := sub.(*RangePattern); ok {
-				names = append(names, rp.ConstNames...)
+				ids = append(ids, rp.ConstBounds...)
 			}
 			return true
 		})
 	}
-	return names
+	return ids
 }
 
 // PatternBinding is one name a pattern introduces, and the node to attribute it to.

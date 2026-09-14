@@ -37,8 +37,9 @@ nested positions.
 
 The rewrite erases the name, and passes that collect names *after* the typechecker then
 reported false positives: an import used only as a bound was `lyra-W004`, a local const
-`lyra-W003`. The collector now records the written names in `RangePattern.ConstNames`, read
-through `ast.RangeBoundNames`. Probing also turned up an older gap that const bounds make
+`lyra-W003`. The collector now records the written bounds in `RangePattern.ConstBounds`, read
+through `ast.RangeBoundNames`; the LSP's expression walks feed the same nodes to hover,
+definition, references, rename and highlight. Probing also turned up an older gap that const bounds make
 easy to hit: a float bound on an integer scrutinee (`0.5..` on i64) passed the typechecker
 and failed in the backend. It is now refused where the arm is checked.
 

@@ -264,7 +264,7 @@ let main = () => println(1)
 
 // An import used only as a range-pattern bound is used. The expression walk does not enter
 // patterns, and after the typechecker the bound is a literal, so the name is read from
-// RangePattern.ConstNames.
+// RangePattern.ConstBounds.
 func TestUnusedImport_NoDiag_UsedAsRangePatternBound(t *testing.T) {
 	src := `
 import limits.{ LOW, HIGH }

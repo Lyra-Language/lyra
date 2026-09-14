@@ -48,6 +48,9 @@ func (tc *TypeChecker) foldRangeBound(bound ast.Expression) ast.Expression {
 			"a range-pattern bound must be a number or a `const`; %s is not a `const`", id.Name)
 		return bound
 	}
+	// Record the name's type before it is replaced: the node lives on in
+	// RangePattern.ConstBounds, where hover finds it as the use of the const it is.
+	tc.inferExprType(id)
 	if n, ok := ast.FoldBigExpr(id, tc.constInitializer); ok {
 		if lit, fits := integerLiteralOf(n, loc); fits {
 			return lit

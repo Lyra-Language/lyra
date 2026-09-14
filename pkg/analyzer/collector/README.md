@@ -97,5 +97,5 @@ grammar shape (`rangeBounds` in `tree-sitter-lyra/include/helpers.js`) and these
 A nil `Start`/`End` on a `RangePattern` means an **open** range, never a malformed one; consumers
 (backend match lowering, exhaustiveness's `armIntInterval`, range analysis) treat it as the type's
 own limit. A `const` bound is collected as an `IdentifierExpr` and its name also recorded in
-`ConstNames`; the typechecker folds the bound to a literal, so that list is where later
+`ConstBounds`; the typechecker folds the bound to a literal, so that list is where later
 name-reading passes find it.

@@ -159,15 +159,15 @@ func (p *RestPattern) GetName() string { return fmt.Sprintf("...%s", p.Identifie
 // is rejected at collection (lyra-E032) rather than defaulting to inclusive.
 //
 // A bound may be written as a `const` (`LOW..<=HIGH`). The typechecker folds such a bound
-// to its literal in place, so every later reader of Start/End sees a number; ConstNames
-// keeps the names as written, for the passes that ask which names a program reads
-// (RangeBoundNames).
+// to its literal in place, so every later reader of Start/End sees a number; ConstBounds
+// keeps the names as written, with their locations, for the passes that ask which names a
+// program reads (RangeBoundNames) and the editor features that ask what is at a position.
 type RangePattern struct {
 	PatternBase
 	Start       Expression
 	End         Expression
 	EndOperator string
-	ConstNames  []string
+	ConstBounds []*IdentifierExpr
 }
 
 func (p *RangePattern) patternNode() {}
