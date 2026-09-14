@@ -183,6 +183,9 @@ func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
 			noteType(sig.ReturnType.Type)
 		}
 		ast.WalkStmt(stmt, func(s ast.Statement) bool {
+			for _, name := range ast.RangeBoundNames(s) {
+				refs[name] = true
+			}
 			switch st := s.(type) {
 			case *ast.VarDeclStmt:
 				noteType(st.Type)
@@ -225,6 +228,9 @@ func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
 			}
 			return true
 		}, func(e ast.Expression) bool {
+			for _, name := range ast.RangeBoundNames(e) {
+				refs[name] = true
+			}
 			switch ex := e.(type) {
 			case *ast.IdentifierExpr:
 				refs[ex.Name] = true

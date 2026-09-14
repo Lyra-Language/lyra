@@ -272,3 +272,14 @@ let main = () -> void => {
   println("${n}")
 }`)
 }
+
+// A local `const` read only as a range-pattern bound is used.
+func TestUnused_NoDiag_ConstUsedAsRangePatternBound(t *testing.T) {
+	src := `
+let f = (n: i64) => {
+    const LIM = 3
+    print(match n { 0..<LIM => "lo", _ => "hi" })
+}
+`
+	assertNoUnused(t, parseAndCheckUnused(t, src))
+}

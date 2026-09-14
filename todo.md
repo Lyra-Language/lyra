@@ -36,9 +36,9 @@ Package management, versioning and separate compilation are out of scope by deci
 
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
-- **[OPEN] A `const` cannot be a range-pattern bound** (`LOW..<=HIGH`). Admitting
-  `const_identifier` makes every all-caps data constructor pattern misparse, since the
-  lexer cannot tell it from a type name; needs the same grammar work as all-caps names.
+- **[OPEN] Editor features don't see a `const` range-pattern bound.** Hover, definition,
+  references and rename skip `LOW` in `LOW..<=HIGH`, so renaming the const leaves the
+  pattern stale; `RangePattern.ConstNames` has the names but no location.
 - **[OPEN] Binding a whole multi-field payload as one value (`Rect pair`)** is refused;
   `Rect _` works.
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as

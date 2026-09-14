@@ -97,6 +97,26 @@ func PatternsOf(node AstNode) []Pattern {
 	return nil
 }
 
+// RangeBoundNames returns the `const` names the range patterns node holds were written
+// with (`LOW` and `HIGH` in `LOW..<=HIGH`), at any depth.
+//
+// **Patterns otherwise hold no names a program reads**, so a pass collecting references
+// by walking expressions misses these twice over: the walk does not enter patterns, and
+// after the typechecker the bounds are literals anyway. Without it an import used only as
+// a bound warned as unused (lyra-W004), advising the deletion of a name the program needs.
+func RangeBoundNames(node AstNode) []string {
+	var names []string
+	for _, p := range PatternsOf(node) {
+		WalkPattern(p, func(sub Pattern) bool {
+			if rp, ok := sub.(*RangePattern); ok {
+				names = append(names, rp.ConstNames...)
+			}
+			return true
+		})
+	}
+	return names
+}
+
 // PatternBinding is one name a pattern introduces, and the node to attribute it to.
 //
 // Node is nil where the language binds a name that no node carries on its own: a struct

@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a `const` may bound a range pattern
+
+`LOW..<=HIGH` did not parse, and the blocker was the lexer, not a missing alternative:
+`const_identifier` and `user_defined_type_name` match `LOUD` identically, and once a constant
+is legal in a state the lexer picks it, so admitting a const bound turned every all-caps
+constructor pattern into a range with a MISSING `..`. The fix gives `data_pattern` a
+`const_identifier` constructor of its own. Its payload is parenthesized only (`CD(x)`), because
+a juxtaposed payload would read `LOW ..<5` as `LOW` applied to an open range. `CD x` worked
+before and no longer parses. Nothing in std, examples or bindings wrote it, and `CD 5` was
+already refused in expression position.
+
+Two grammar attempts failed quietly, which is why the conflicts are declared as they are:
+- A bare `const_identifier` in the bound is *shifted* on `..`, while `(LOW..<HIGH)` as an
+  expression needs it reduced. Static precedence settled that at generation, and the
+  expression reading vanished with no conflict reported. A hidden `_constant_bound` rule
+  makes both readings reduce, so the fork can be declared.
+- A shared hidden rule for the constructor name parsed every repro, but it changed the CST
+  and broke `(Some(x): Maybe<i64>) -> i64` in the corpus.
+
+**The typechecker rewrites the bound to its literal**, as `arrayRepeatCount` does for
+`[v; N]`. Five readers consume a bound (the value check, exhaustiveness/overlap, the
+value-range pass, both backend lowerings) and every one folds a literal; one rewrite in the
+pattern's own scope beats five copies of const resolution in passes with no scope. It runs
+in the `match` loop and in the destructuring walk, which covers `if let`, `let … else` and
+nested positions.
+
+The rewrite erases the name, and passes that collect names *after* the typechecker then
+reported false positives: an import used only as a bound was `lyra-W004`, a local const
+`lyra-W003`. The collector now records the written names in `RangePattern.ConstNames`, read
+through `ast.RangeBoundNames`. Probing also turned up an older gap that const bounds make
+easy to hit: a float bound on an integer scrutinee (`0.5..` on i64) passed the typechecker
+and failed in the backend. It is now refused where the arm is checked.
+
 ### 09/13/26 — the "flaky" completion test was the developer's environment
 
 `TestCompletion_UFCSFiltersByReceiverType` failed twice in full `go test ./...` runs and never

@@ -1007,6 +1007,7 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		// match arm never noticed (its own checkArm runs first) and every other position
 		// did: `let (x, 5) = (1, "s") else { … }` type-checked clean and the backend then
 		// failed with *expected a quoted string pattern*.
+		tc.foldPatternConstants(p)
 		tc.checkScalarPattern(p, t)
 
 	case *ast.WildcardPattern:

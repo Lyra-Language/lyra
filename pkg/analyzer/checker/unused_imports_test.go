@@ -261,3 +261,17 @@ trait Scales { pure scale: (Self, Complex<f64>) -> Self }
 let main = () => println(1)
 `))
 }
+
+// An import used only as a range-pattern bound is used. The expression walk does not enter
+// patterns, and after the typechecker the bound is a literal, so the name is read from
+// RangePattern.ConstNames.
+func TestUnusedImport_NoDiag_UsedAsRangePatternBound(t *testing.T) {
+	src := `
+import limits.{ LOW, HIGH }
+let f = (n: i64) -> i64 => match n {
+  LOW..<=HIGH => 1,
+  _ => 0,
+}
+`
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, src))
+}

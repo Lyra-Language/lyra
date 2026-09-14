@@ -494,6 +494,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	// worst, so the reachability pass sits out when this match has an error in it.
 	errorsBefore := len(tc.errors)
 	for _, arm := range expr.MatchArms {
+		tc.foldPatternConstants(arm.Pattern) // `LOW..<=HIGH` → literals, before anything reads them
 		tc.checkPatternLiterals(arm.Pattern, scrutineeType)
 	}
 	// The per-kind checks and exhaustiveness dispatch on the newtype's *base*
@@ -1158,10 +1159,24 @@ func integerIntervalsExhaustive(arms []ast.MatchArm, typeMin, typeMax int64) boo
 func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType types.Type) {
 	// This checks *kind* only (an int literal where an int belongs). The *value* —
 	// does 300 fit a u8, is 200 inside Percent's range — is checkPatternLiterals's
-	// (lyra-E048), which runs for every arm before the kind dispatch; a RangePattern's
-	// bounds are number literals by grammar, so kind needs nothing here and value is
-	// checked there.
+	// (lyra-E048), which runs for every arm before the kind dispatch.
 	switch p := pattern.(type) {
+	case *ast.RangePattern:
+		// A bound is a number literal or a folded `const` (range_pattern_consts.go), so
+		// its kind can still be wrong: `0.5..` on an integer has no integer to compare
+		// against, and reached the backend as an unsupported bound. A float scrutinee
+		// takes an integer bound — a whole number is a float value.
+		if !isIntType(scrutineeType) {
+			return
+		}
+		for _, bound := range []ast.Expression{p.Start, p.End} {
+			if _, isInt := extractIntFromExpr(bound); bound != nil && !isInt {
+				if _, isNum := constNumericFromExpr(bound); isNum {
+					tc.addError(bound.GetLocation(), SeverityError,
+						"range pattern bound is not an integer, but the scrutinee is %s", scrutineeType)
+				}
+			}
+		}
 	case *ast.RegexPattern:
 		tc.addError(p.GetLocation(), SeverityError,
 			"regex patterns are not allowed on a numeric scrutinee")

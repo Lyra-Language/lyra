@@ -123,6 +123,8 @@ A place is what `=` writes and `&` addresses: a binding, a field `p.x`, an eleme
 - **Array rest is the tail**: `[h, ...t]`. A rest before the end of an array pattern, or a second rest in any pattern, is `lyra-E076`.
 - `Rect _` stands for `Rect(_, _)`; `Rect pair` (one name for a multi-field payload) is refused, naming `Rect(…)`.
 - A capitalized name in a pattern is a constructor. Comparing against a `const` is a guard: `v if v == LIMIT` (`lyra-E057`).
+- **A range bound may be a `const`**: `LOW..<=HIGH`, `..<LIMIT`. It is the folded value, so exhaustiveness, overlap and `lyra-E048` read the number. The `const` must be in scope unqualified (import it by name) and fold to an integer, or a float for a float scrutinee; a float bound on an integer scrutinee is an error.
+- An all-caps constructor takes its payload in parentheses in a pattern: `CD(x)`, not `CD x`.
 - **A plain `let` and a parameter take only a pattern that cannot fail** (`lyra-E077`): `let Some(v) = m` needs `let … else`, and a parameter wants a plain name and a `match`. A literal, range, regex or array pattern can fail; a one-constructor `data` pattern cannot (`let W(x) = w`).
 - **A `data` match covers a constructor only where it covers its payloads** (`lyra-E009`): `Some(0) => …, None => …` is not exhaustive. Coverage may be spread across arms at any depth, nested tuples and structs included.
 
