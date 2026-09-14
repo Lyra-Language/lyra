@@ -174,6 +174,31 @@ func TestExec_TraitMethods(t *testing.T) {
 			// 21 + 5 + 20 + 5 + 9
 			60,
 		},
+		{
+			// A method's own type variable is solved per call and the impl body is emitted
+			// once per solution: `mapv` at `b = i64`, at `b = bool` and at `b = []i64` (a
+			// managed result), `pair` on a generic impl at two `b`s. `Pair`'s method variable
+			// is named `t` like the impl's; conflated, the second `pair` stored a `Box<i64>`
+			// into a `Box<string>` slot and llir panicked.
+			"a method's own type variables",
+			`struct Box<t> { v: t }
+			 trait Mapper { mapv: (Self, (i64) -> b) -> b }
+			 impl Mapper for i64 { mapv = (self, f) => f(self) }
+			 trait Pair { pair: (Self, t) -> (Self, t) }
+			 impl Pair for Box<t> { pair = (self, x) => (self, x) }
+			 let main = () -> u8 => {
+			   let a = 3.mapv((x) => x * 2)
+			   let b = if 3.mapv((x) => x > 2) { 10 } else { 0 }
+			   let xs = 4.mapv((x) => [x, x, x])
+			   let p = Box { v: 7 }.pair(true)
+			   let q = Box { v: true }.pair(20)
+			   let c = if p.1 { p.0.v } else { 0 }
+			   let d = if q.0.v { q.1 } else { 0 }
+			   u8(a + b + xs.len() + c + d)
+			 }`,
+			// 6 + 10 + 3 + 7 + 20
+			46,
+		},
 	}
 	clang := lookClang(t)
 	for _, c := range cases {

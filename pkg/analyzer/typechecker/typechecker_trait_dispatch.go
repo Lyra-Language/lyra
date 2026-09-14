@@ -101,7 +101,7 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 				// Substitute Self with the concrete receiver (not impl.Type,
 				// which for a generic impl still holds the `<t>` placeholder),
 				// then bind the trait's own type parameters.
-				sig = substituteSelf(traitMethod.Signature, receiverType)
+				sig = substituteSelf(tc.methodSignatureForImpl(trait, traitMethod.Signature, impl), receiverType)
 				sig = substituteSigGenerics(sig, traitSubst)
 			}
 			matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: bindings})
@@ -471,6 +471,17 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		// the one that type-checked the call, which is the drift Resolution exists to
 		// prevent.
 		tc.publishBoundCandidates(call, traitName, methodName)
+		// A method generic in a variable of its own is solved per call at a concrete
+		// receiver (solveMethodTypeVars), but not here: a bound call is lowered once per
+		// specialization through candidates that carry no per-call solution. Refused by
+		// name rather than checked against an unsolved `b`, which read as an argument
+		// mismatch the programmer could not fix.
+		if own := methodOwnTypeVars(trait, tm.Signature); len(own) > 0 {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s::%s: a method generic in its own %s cannot yet be called through a `where` bound; call it on a concrete receiver",
+				traitName, methodName, typeVarList(own))
+			return nil, true
+		}
 		sig := substituteSelf(tm.Signature, recv)
 		// `recv` is the enclosing declaration's own variable, so a slot mentioning it —
 		// `(t) -> t` for `ap: (Self, (Self) -> Self) -> Self` — may be planted on a lambda.
@@ -519,6 +530,10 @@ func traitNamesOf(matches []resolvedTraitMethod) string {
 // a fully-qualified call (`Show::show(n)`), where the receiver is already an
 // ordinary call.Arguments[0] and the whole parameter list lines up directly.
 func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match resolvedTraitMethod, call *ast.FunctionCallExpr, receiver ast.Expression) types.Type {
+	match, ok := tc.solveMethodTypeVars(calleeName, match, call, receiver)
+	if !ok {
+		return nil
+	}
 	tc.checkImplConstraints(match, call.GetLocation())
 	// A concrete dispatch onto a generic impl is an instantiation, and the impl's body
 	// has bound-dispatched sites of its own — the operator path does the same after
@@ -552,6 +567,66 @@ func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match res
 	// A generic impl's bindings name the caller's types, and any variable in them is the
 	// caller's own (a `Box<u>` receiver inside `<u>`), so it may be planted.
 	return tc.inferDotCallFromType(calleeName, match.Signature, call, plantableVars(match.Bindings))
+}
+
+// solveMethodTypeVars solves a trait method's **own** type variables from a call's arguments:
+// the `b` of `mapv: (Self, (i64) -> b) -> b`, which no impl and no receiver binds.
+//
+// Dispatch substitutes `Self`, the trait's parameters and a generic impl's variables; what
+// is left in the signature is either the caller's vocabulary (a variable in the impl's
+// bindings' values — a `Box<u>` receiver inside `<u>`) or the method's own. The latter are
+// solved exactly as a generic function's are (solveArgumentTypeVars), substituted into the
+// signature, and added to the bindings, which is what the backend specializes the impl body
+// at — one emitted function per binding set, `b` included.
+//
+// Before this they were never solved: the call answered a type mentioning `b` and every
+// argument was checked against it, so `3.mapv((x: i64) -> i64 => x)` was refused as
+// `cannot assign (i64) -> i64 to (i64) -> b`.
+func (tc *TypeChecker) solveMethodTypeVars(calleeName string, match resolvedTraitMethod, call *ast.FunctionCallExpr, receiver ast.Expression) (resolvedTraitMethod, bool) {
+	sig := match.Signature
+	if sig == nil {
+		return match, true
+	}
+	vars := map[string]bool{}
+	for _, p := range sig.Parameters {
+		collectTypeVars(p.Type, vars)
+	}
+	collectTypeVars(sig.ReturnType.Type, vars)
+	for v := range plantableVars(match.Bindings) {
+		delete(vars, v)
+	}
+	if len(vars) == 0 {
+		return match, true
+	}
+	params := sig.Parameters
+	if receiver != nil && len(params) > 0 {
+		params = params[1:] // a `.`-call's receiver is implicit, never in call.Arguments
+	}
+	if len(call.Arguments) != len(params) {
+		return match, true // an arity mismatch, which the argument check reports
+	}
+	declared := func(i int) types.Type {
+		if params[i].Type == nil {
+			return nil
+		}
+		return tc.resolveTypeIfKnown(params[i].Type, call.GetLocation())
+	}
+	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, nil)
+	if !ok {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))
+		return match, false
+	}
+	bindings := make(map[string]types.Type, len(match.Bindings)+len(subst))
+	for k, v := range match.Bindings {
+		bindings[k] = v
+	}
+	for k, v := range subst {
+		bindings[k] = v
+	}
+	match.Signature = substituteSigGenerics(sig, subst)
+	match.Bindings = bindings
+	return match, true
 }
 
 // inferDotCallFromType is inferLambdaCallFromType's counterpart for a

@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a trait method's own type variables are solved at a call
+
+`trait Mapper { mapv: (Self, (i64) -> b) -> b }` declared and implemented fine, and no call
+could use it. Dispatch substitutes `Self`, the trait's parameters and a generic impl's
+variables, then checks the arguments. Nothing solved `b`, so
+`3.mapv((x: i64) -> string => …)` was refused as `cannot assign (i64) -> string to
+(i64) -> b`. LANGUAGE.md said methods may be generic in their own variables; that was true
+only of `lyra-W013`.
+
+**The solve is the generic function's, not a copy.** `solveTypeVars` read its declaration only
+for the parameter count and each parameter's resolved type, so its body moved to
+`solveArgumentTypeVars`, which takes those two. `solveMethodTypeVars` calls it from
+`inferResolvedTraitMethodCall`, then substitutes the result into the signature and adds it to
+the bindings. The deferred-lambda pass, untyped-literal adoption and "cannot infer type variable
+b" all come with it. The own variables are what the substituted signature still mentions,
+minus the caller's (`plantableVars(Bindings)`). The bindings are what the backend specializes an
+impl body under, so `mapv` at `b = bool` and at `b = []i64` are two functions with no backend
+change.
+
+**Solving exposed a name clash that had been unreachable.** `trait Pair { pair: (Self, t) ->
+(Self, t) }` with `impl Pair for Box<t>` puts two `t`s in one bindings map. The second call's
+solve overwrote the impl's `t`, and the body lowered with a `Box<i64>` stored into a
+`Box<string>` slot, an llir panic (rule 5). `methodSignatureForImpl` primes a clashing method
+variable (`t'`). The impl check and dispatch both build the signature through it, so the name
+the body was checked under is the key the backend reads. Defaults are not renamed: their body is
+checked once with no impl in sight.
+
+**Two parts were not built, both filed:**
+- **`where` bound.** `v.mapv(f)` has no single resolution to carry a solution. The backend picks
+  a candidate per specialization, and threading a per-call solution into those candidates, the
+  specialization's substitution and their ownership tables is its own change. It is refused by
+  name instead of as an argument mismatch.
+- **`Self<a>`.** What it means for `impl … for Result<t, e>` is a language decision.
+
+Probing also found that a concrete trait call on a generic impl inside a generic function never
+lowered, method variables or not (`type variable "u" has no concrete type`), also filed.
+
 ### 09/14/26 — an untyped lambda argument to a trait method
 
 `3.apply((x) => x * 7)` reported `undefined symbol "x"`, while the same lambda passed to a

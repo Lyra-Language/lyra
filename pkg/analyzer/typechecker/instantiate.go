@@ -130,6 +130,15 @@ func (tc *TypeChecker) resolveDeclaredParam(lambda *ast.LambdaExpr, i int) types
 // so an unresolved literal type reaching codegen is the same class of bug as an int
 // literal in a float slot. The default still applies — one pass later.
 func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type) (map[string]types.Type, bool) {
+	declared := func(i int) types.Type { return tc.resolveDeclaredParam(lambda, i) }
+	return tc.solveArgumentTypeVars(len(lambda.Parameters), declared, call, vars, seed)
+}
+
+// solveArgumentTypeVars is solveTypeVars over parameter types given by position rather than
+// read off a declaration: a trait method's call has only its dispatched signature, whose
+// own variables (`mapv: (Self, (i64) -> b) -> b`) are solved by exactly these rules.
+// declaredParam(i) is the resolved type of the parameter call.Arguments[i] fills.
+func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(i int) types.Type, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type) (map[string]types.Type, bool) {
 	subst := map[string]types.Type{}
 	// Pre-bindings the *context* supplied, for variables the arguments cannot reach
 	// (seedFromExpectedReturn). Installed before the passes below so a parameter written
@@ -156,10 +165,10 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 	}
 	var untyped []untypedArg
 	for i, arg := range call.Arguments {
-		if i >= len(lambda.Parameters) {
+		if i >= paramCount {
 			break
 		}
-		declared := tc.resolveDeclaredParam(lambda, i)
+		declared := declaredParam(i)
 		if declared == nil {
 			continue
 		}
@@ -211,7 +220,7 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		}
 	}
 	for _, i := range deferred {
-		declared := tc.resolveDeclaredParam(lambda, i)
+		declared := declaredParam(i)
 		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
 		// and the lambda has something concrete to be elaborated against.
 		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst), plantableVars(subst))
@@ -243,7 +252,7 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 	// let the call type as `bool` and produced two errors: an argument mismatch plus
 	// whatever the wrongly-typed *result* then broke.
 	for _, u := range untyped {
-		declared := tc.resolveDeclaredParam(lambda, u.index)
+		declared := declaredParam(u.index)
 		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] {
 			if bound, isBound := subst[g.Name]; isBound {
 				// assignableValue rather than isAssignable, so an array literal adopts a

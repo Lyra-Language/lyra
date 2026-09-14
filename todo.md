@@ -9,10 +9,10 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] A trait method's own type variables are unusable.** `trait Mapper { mapv: (Self,
-  (i64) -> b) -> b }` declares (LANGUAGE.md: "A method may be generic in variables of its
-  own"), but a call leaves `b` unsolved (`cannot assign (i64) -> i64 to (i64) -> b`), and
-  `map: (Self<a>, (a) -> b) -> Self<b>` refuses its own impl.
+- **[OPEN] A concrete trait call on a generic impl inside a generic function does not lower.**
+  `let g<u> = (b: Box<u>) -> i64 => b.get()` against `impl Get for Box<t>` type-checks, then
+  the backend reports `type variable "u" has no concrete type`: a resolution's bindings
+  mention the caller's `u` and nothing composes them with the specialization.
 
 ## In progress
 
@@ -30,6 +30,15 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 - **[PARTIAL] Closure lowering is tiered.** Dev (boxed closures) is in; release = Lambda Set
   Specialization, gated on the monomorphizer. LSS can only loosen `noalloc`'s closure rule,
   never tighten it.
+
+### Traits: a method's own type variables
+
+- **[OPEN] Through a `where` bound.** `v.mapv(f)` under `where t: Mapper` is refused by name.
+  Needs the per-call solution carried into each bound candidate's bindings and composed with
+  the specialization in `lowerBoundMethodCall`, with ownership tables for the result.
+- **[OPEN] `Self<a>`.** `map: (Self<a>, (a) -> b) -> Self<b>` collects but means
+  nothing (its impl is refused). Decide what `Self<x>` is for `impl … for Result<t, e>`
+  before building it.
 
 ### Modules and tooling
 

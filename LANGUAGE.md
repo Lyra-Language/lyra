@@ -308,7 +308,7 @@ A lowercase type name is a type variable wherever it appears. What a written `<�
 
 - **A binding** (`let f<t> = …`): the list is optional; written, it is authoritative. A signature variable missing from it is `lyra-E031`, a listed one the signature never mentions is `lyra-W013`.
 - **A type** (struct, `data`, named tuple, newtype, union): every variable its body mentions must be in its list (`lyra-E031`) — the list is how `Box<i64>` gives one a type, so there is no list-less generic type. An **unused** parameter is fine: `struct Id<t> { n: i64 }` is a phantom type. A type alias takes no list, so its body can mention no variable.
-- **A trait**: a parameter no method mentions is `lyra-W013`. A method may be generic in variables of its own (`map: (Self<a>, (a) -> b) -> Self<b>`), since there is no method-level list to declare them in — though such a method cannot yet be implemented or called (todo.md, Known bugs).
+- **A trait**: a parameter no method mentions is `lyra-W013`. A method may be generic in variables of its own (`mapv: (Self, (i64) -> b) -> b`), since there is no method-level list to declare them in. A call at a concrete receiver solves them from its arguments like a generic function's call; through a `where` bound it is refused. One named like the impl's variable is a different variable. `Self<a>` (`map: (Self<a>, (a) -> b) -> Self<b>`) has no meaning yet.
 - **An impl** has no written list; its variables are lexical.
 
 ### Local generics

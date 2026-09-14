@@ -96,7 +96,7 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 			continue
 		}
 
-		traitSig := substituteSelf(traitMethod.Signature, impl.Type)
+		traitSig := substituteSelf(tc.methodSignatureForImpl(trait, traitMethod.Signature, impl), impl.Type)
 		// Bind the trait's own type parameters to the impl's trait arguments
 		// (`Get<e>`'s `e` → `impl Get<t>`'s `t`), so the signature — in particular
 		// the return type — is expressed in the impl's own variables and matches
@@ -258,6 +258,61 @@ func substituteSigGenerics(sig *types.LambdaType, subst map[string]types.Type) *
 		Parameters: params,
 		ReturnType: types.ReturnType{Type: substituteGenerics(sig.ReturnType.Type, subst)},
 	}
+}
+
+// methodSignatureForImpl is a trait method's signature as one impl sees it: the method's
+// **own** type variables — those neither `Self` nor the trait's parameters, the `b` of
+// `mapv: (Self, (i64) -> b) -> b` — renamed away from the impl's variables.
+//
+// Both kinds of variable meet in one namespace. The impl's body is checked with them side by
+// side (`impl Pair for Box<t>`'s `self.v: t` beside a method's `t`), and a call's bindings map
+// holds the impl's solved `t` and the method's solved `t` under one key, so the second
+// overwrote the first and the body lowered at the wrong type (an llir store panic). A
+// clashing method variable gets a prime (`t'`) until it is free. The impl check and dispatch
+// both build the signature through this, so the renamed variable the body was checked with is
+// the key the backend specializes it under.
+func (tc *TypeChecker) methodSignatureForImpl(trait *ast.TraitDeclStmt, sig *types.LambdaType, impl *ast.TraitImplStmt) *types.LambdaType {
+	if sig == nil {
+		return nil
+	}
+	implVars := map[string]bool{}
+	collectTypeVars(impl.Type, implVars)
+	for _, a := range impl.TraitArgs {
+		collectTypeVars(a, implVars)
+	}
+	if len(implVars) == 0 {
+		return sig
+	}
+	sigVars := methodOwnTypeVars(trait, sig)
+	rename := map[string]types.Type{}
+	for v := range sigVars {
+		if !implVars[v] {
+			continue
+		}
+		fresh := v + "'"
+		for implVars[fresh] || sigVars[fresh] {
+			fresh += "'"
+		}
+		rename[v] = types.GenericType{Name: fresh}
+	}
+	return substituteSigGenerics(sig, rename)
+}
+
+// methodOwnTypeVars is the type variables a trait method's signature mentions that are its own
+// — neither `Self` (a SelfType, never collected) nor one of the trait's parameters.
+func methodOwnTypeVars(trait *ast.TraitDeclStmt, sig *types.LambdaType) map[string]bool {
+	vars := map[string]bool{}
+	if sig == nil {
+		return vars
+	}
+	for _, p := range sig.Parameters {
+		collectTypeVars(p.Type, vars)
+	}
+	collectTypeVars(sig.ReturnType.Type, vars)
+	for _, gp := range trait.GenericParams {
+		delete(vars, gp.Name)
+	}
+	return vars
 }
 
 // substituteSelf replaces every SelfType occurrence in sig with concreteType, at any depth
