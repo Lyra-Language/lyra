@@ -1,0 +1,158 @@
+// A config loader — the program that drives conversion traits.
+//
+//   lyrac build -o config examples/config/config.lyra
+//   ./config examples/config/server.json       # loads
+//   ./config examples/config/bad_port.json     # a field of the wrong kind
+//   ./config examples/config/malformed.json    # not JSON at all
+//   ./config examples/config/nowhere.json      # no such file
+//
+// Loading a config composes two error types: `std.json`'s `JsonError` and this program's
+// own `ConfigError`. Both halves of this file are written the way Lyra allows today, with
+// the spelling that is wanted beside each workaround, marked `WANTED`. Each marked line is
+// refused by the compiler as of 09/14/26, with the message quoted beside it.
+//
+// 1. `?` across error types needs a conversion (`From`). `parse_json(text)?` inside a
+//    function answering `Result<_, ConfigError>` is refused — JsonError is not
+//    ConfigError — so every such call is a hand-written `match`. `?` knows both types
+//    (the operand's error, the enclosing declaration's), so this half needs only a
+//    direct impl lookup, not general inference.
+//
+// 2. Typed field decoding needs return-type-directed dispatch. `FromJson`'s method takes
+//    no `self`, so the impl can only be chosen from the type the caller expects:
+//    `let port: i64 = required(json, "port")?`. Lyra dispatches on a receiver and
+//    nothing else, so today there is one helper per field type instead. Writing the wanted
+//    form also meets two smaller gaps on the way (below), which fall before dispatch.
+
+import std.collections.{ parse_args }
+import std.io.{ read_file }
+import std.json.{ JsonError, JsonValue, parse_json }
+
+let main = () -> u8 => {
+  let args = parse_args([])
+  if args.positional.len() != 1 {
+    println("usage: config <file.json>")
+    return 2
+  }
+  match load(args.positional[0]) {
+    Ok(c) => {
+      println("${c}")
+      0
+    },
+    Err(problem) => {
+      println("config: ${problem}")
+      1
+    },
+  }
+}
+
+/// A server's settings, every field required.
+struct Config {
+  host: string,
+  port: i64,
+  tls: bool,
+  workers: i64,
+}
+
+impl Show for Config {
+  show = pure (self) => {
+    let scheme = if self.tls { "https" } else { "http" }
+    "${scheme}://${self.host}:${self.port} with ${self.workers} workers"
+  }
+}
+
+/// Everything that can go wrong loading a config — one type, so a caller can tell the cases
+/// apart and `load` has one error to answer.
+data ConfigError =
+  /// The file could not be read.
+  Unreadable(string)
+  /// The file is not JSON; carries the parser's own error unchanged.
+  | Malformed(JsonError)
+  /// A required field is absent.
+  | MissingField(string)
+  /// A field is present but holds the wrong kind of value: name, wanted kind, found kind.
+  | WrongKind(string, string, string)
+
+impl Show for ConfigError {
+  show = pure (self) => match self {
+    Unreadable(path) => "cannot read ${path}",
+    Malformed(e) => "not valid JSON at byte ${e.offset}: ${e.message}",
+    MissingField(name) => "missing field \"${name}\"",
+    WrongKind(name, want, got) => "field \"${name}\" should be ${want}, found ${got}",
+  }
+}
+
+// WANTED (half 1): the conversion `?` would apply on its own.
+//
+//   impl From<JsonError> for ConfigError {
+//     from = (e) => Malformed(e)
+//   }
+
+/// The file at `path` as a `Config`, or the first thing wrong with it.
+let load = (path: string) -> Result<Config, ConfigError> => {
+  let text = read_file(path).ok_or(Unreadable(path))?
+
+  // WANTED (half 1): let json = parse_json(text)?
+  //   refused: error type JsonError is not convertible to the enclosing function's error
+  //   type ConfigError. `map_err` does not exist either, so the conversion is a match.
+  let json = match parse_json(text) {
+    Ok(value) => value,
+    Err(e) => return Err(Malformed(e)),
+  }
+
+  // WANTED (half 2): one generic helper, the field's type chosen by the annotation.
+  //   let host: string = required(json, "host")?
+  //   let port: i64 = required(json, "port")?
+  //   let tls: bool = required(json, "tls")?
+  //   let workers: i64 = required(json, "workers")?
+  //   refused: `required: cannot infer type variable t from these arguments`. The
+  //   annotation does not reach through `?` to the call's `t`; without the `?`
+  //   (`let r: Result<i64, ConfigError> = required(…)`) it does, and `required::<i64>` works.
+  let host = required_text(json, "host")?
+  let port = required_int(json, "port")?
+  let tls = required_bool(json, "tls")?
+  let workers = required_int(json, "workers")?
+  Ok(Config { host: host, port: port, tls: tls, workers: workers })
+}
+
+// WANTED (half 2): a trait whose method has no receiver, one impl per decodable type, and
+// a helper generic in the result.
+//
+//   trait FromJson { from_json: (JsonValue) -> Maybe<Self> }
+//   impl FromJson for i64 { from_json = (v) => v.as_int() }
+//   impl FromJson for string { from_json = (v) => v.as_text() }
+//   impl FromJson for bool { from_json = (v) => v.as_bool() }
+//
+//   let required<t> where t: FromJson = (obj: JsonValue, name: string) -> Result<t, ConfigError> => {
+//     let value = obj.field(name).ok_or(MissingField(name))?
+//     FromJson::from_json(value).ok_or(WrongKind(name, kind_name::<t>(), value.kind()))
+//   }
+//
+// Refused in three places:
+//   - each impl: `from_json: return type mismatch: expected Maybe<Self>, got Maybe<i64>`.
+//     `Self` nested in a return type is not replaced by the implementing type — a bug that
+//     hits receiver methods too (`(Self) -> []Self`), not a missing feature.
+//   - the call: `no implementation of FromJson::from_json for JsonValue`. The first argument
+//     is taken as the receiver, so the impl is looked up on the argument's type.
+//   - with no argument at all (`trait Zero { zero: () -> Self }`):
+//     `Zero::zero: expected a receiver argument`.
+//
+// Even the wanted form has a gap: naming `t` in the message ("should be a number") is a
+// question about a type, not a value — see `size_of::<t>()` under Target introspection.
+
+/// Field `name` of `obj`, which must be a string.
+let required_text = pure (obj: JsonValue, name: string) -> Result<string, ConfigError> => {
+  let value = obj.field(name).ok_or(MissingField(name))?
+  value.as_text().ok_or(WrongKind(name, "a string", value.kind()))
+}
+
+/// Field `name` of `obj`, which must be a whole number.
+let required_int = pure (obj: JsonValue, name: string) -> Result<i64, ConfigError> => {
+  let value = obj.field(name).ok_or(MissingField(name))?
+  value.as_int().ok_or(WrongKind(name, "a whole number", value.kind()))
+}
+
+/// Field `name` of `obj`, which must be `true` or `false`.
+let required_bool = pure (obj: JsonValue, name: string) -> Result<bool, ConfigError> => {
+  let value = obj.field(name).ok_or(MissingField(name))?
+  value.as_bool().ok_or(WrongKind(name, "a bool", value.kind()))
+}

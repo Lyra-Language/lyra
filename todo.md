@@ -7,6 +7,13 @@ Tags: **[OPEN]** not started · **[PARTIAL]** landed in part · **[DECIDED]** se
 built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberately later.
 Entries rot: re-run an open entry's own reproduction before acting on it.
 
+## Known bugs
+
+- **[OPEN] `Self` nested in a trait method's return type is not substituted.** `trait Dup
+  { dup: (Self) -> []Self }` refuses `impl Dup for i64 { dup = (self) => [self, self] }`
+  (`expected DynamicArray<Self>`); same for `Maybe<Self>`, `(Self, Self)`, `Result<Self, e>`.
+  A bare `Self` works. Repro in `examples/config/config.lyra` (half 2).
+
 ## In progress
 
 ### Backend — LLVM IR
@@ -50,8 +57,8 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Standard library and bindings
 
-- **[IDEA] `Result.map_err`.** Let the first program composing two error types decide the
-  signature.
+- **[IDEA] `Result.map_err`.** `examples/config/config.lyra` is the first program composing
+  two error types (`JsonError` into `ConfigError`); it writes a `match` per call site today.
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
@@ -86,7 +93,8 @@ Package management, versioning and separate compilation are out of scope by deci
 ## Pit of Success
 
 - **[OPEN] Declared error conversion for `?`** (From-style), once a conversion trait exists.
-  `?` is assignability-only today.
+  `?` is assignability-only today. Driven by `examples/config/config.lyra` (half 1); `?` knows
+  both types, so this needs an impl lookup, not return-type dispatch.
 - **[OPEN] `checked_rem`.** A naming decision (`%` vs `%%`), not a lowering one.
 - **[IDEA] Overflow policy on a `newtype`** (`where wrapping` / `saturating`), so a hash
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
@@ -211,8 +219,11 @@ existing inferred `pure det`, with no new syntax; results must be emittable cons
   arithmetic does to the parameters; blocked on const generics. Add `fixed_point_type` to
   both highlight query files when built.
 - **[OPEN] Return-type-directed dispatch.** `trait Zero { zero: () -> Self }` cannot be
-  resolved, so `Zero`/`Default` are unwritable. Reopen when `From`/`Into` is wanted;
-  settle where the expected type comes from, the no-context case, and E035's interaction.
+  resolved, so `Zero`/`Default` are unwritable; settle where the expected type comes from,
+  the no-context case, and E035's interaction. Driven by `examples/config/config.lyra`
+  (half 2, `FromJson`), which first needs the nested-`Self` bug fixed and the next entry.
+- **[OPEN] An expected type does not reach through `?`.** `let v: i64 = make(1)?` with
+  `make<t>(…) -> Result<t, e>` cannot infer `t`; without `?` the annotation infers it.
 - **[OPEN] Overlapping impls** (`impl Show for Box<t>` beside `Box<i64>`) are not ranked;
   only identical targets are refused (`lyra-E037`).
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
