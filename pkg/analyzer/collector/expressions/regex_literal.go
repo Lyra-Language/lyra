@@ -11,7 +11,8 @@ func collectRegexLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 	raw := ctx.NodeText(node) // e.g. r"[0-9]+"
 	if len(raw) < 3 || raw[:2] != `r"` || raw[len(raw)-1] != '"' {
 		ctx.AddError(node, diag.SeverityError, "collectRegexLiteralExpr: malformed regex literal %q", raw)
-		return nil
+		// A placeholder, never nil (hazard 3).
+		return &ast.RegexLiteralExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}}}
 	}
 	return &ast.RegexLiteralExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},

@@ -107,6 +107,9 @@ func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Struct
 			continue
 		}
 		field := collectStructInstanceField(child, ctx)
+		if field.Value == nil {
+			continue // see appendCollected
+		}
 		if first, seen := firstAt[field.Name]; seen {
 			reportDuplicateField(ctx, child, first, field.Name, "is given a value twice in this literal", "a field takes one value")
 		} else {
@@ -141,11 +144,11 @@ func collectStructShorthandFields(node *sitter.Node, ctx *collector_ctx.Ctx) []a
 	fields := []ast.StructField(nil)
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
-		if child.Kind() == "field_value" {
-			fields = append(fields, ast.StructField{
-				Name:  "",
-				Value: CollectExpression(child, ctx),
-			})
+		if child.Kind() != "field_value" {
+			continue
+		}
+		if value := CollectExpression(child, ctx); value != nil { // see appendCollected
+			fields = append(fields, ast.StructField{Name: "", Value: value})
 		}
 	}
 	return fields

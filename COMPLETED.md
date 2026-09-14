@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a value error inside a call argument no longer crashes the typechecker
+
+`f("a\u{0}b")` panicked in `checkNamedArgument`. `collectStringLiteralExpr` reported the bad
+escape and returned nil. `ast.TrueNil` turned that into a true nil, which is exactly what
+`collectArgumentList` then appended. `TrueNil` promises "the kind of nil the code already checks
+for", and that holds only where the code checks. An expression slot checks, but nothing checks
+a list's elements. The existing malformed-input case, `let s = "\q"`, sits in the one position
+that does, so it never showed this.
+
+**The fix is at the source, with a backstop.** The string literal now returns an empty-string
+placeholder on every error path, as the rune literal has since 08/30, so the user sees only the
+escape error. The regex literal's (unreachable) malformed path does the same. A position probe
+over about 40 shapes found one more live nil that is not an escape. The compound-assignment place
+refusal accepts any expression on the left, so `f(1 += 2)` and `Pt { n: 1 += 2 }` crashed the
+same way. It now returns the operand. A `MathAssignOpExpr` placeholder would be refused twice
+more, as an unwritable place and as void in value position. Struct field values crashed in
+`inferStructInstanceExpr`.
+
+The backstop is `appendCollected`: argument lists, array and tuple literals, comprehension
+guards and struct fields drop a nil. Dropping is safe because a collector returns nil only on an
+error path. It is only a backstop, though. With the placeholder removed, the crash is gone
+but `f: expected 1 argument(s), got 0` / `missing field` appears on top, which is why the
+placeholder stays the answer. Tuple-assignment places were left alone. They are paired
+index-for-index with their CST nodes, so dropping one would misalign them.
+
+`TestValueErrorInAListReportsOnlyItself` asserts exactly one error for eight positions. Six of
+them panicked before the change.
+
 ### 09/14/26 — `std.io.append_file`
 
 Filed as needing a per-target constant from the compiler (the way `tui.go` supplies

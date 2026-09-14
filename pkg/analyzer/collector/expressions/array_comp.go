@@ -93,7 +93,7 @@ func collectGuards(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expression {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "comprehension_guard" {
-			guards = append(guards, CollectExpression(child, ctx))
+			guards = appendCollected(guards, CollectExpression(child, ctx))
 		}
 	}
 	return guards

@@ -13,7 +13,7 @@ func collectArrayLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.IsNamed() && !cst.IsComment(child) {
-			elements = append(elements, CollectExpression(child, ctx))
+			elements = appendCollected(elements, CollectExpression(child, ctx))
 		}
 	}
 	return &ast.ArrayLiteralExpr{

@@ -46,8 +46,12 @@ Each of these produces something that looks like it works. Other docs cite them 
    a diagnostic *and* return a placeholder (it also keeps one mistake to one diagnostic). A
    nil `ast.Expression` is a typed nil that slips past `== nil`. A block skips nil statements.
    - `CollectExpression`/`CollectStatement`/`CollectPattern` pass results through
-     `ast.TrueNil`, so the crash is closed structurally — but a placeholder is still the
-     right answer.
+     `ast.TrueNil`, and list sites (call arguments, array/tuple elements, comprehension
+     guards, struct field values) drop a nil (`appendCollected`) — but a placeholder is still
+     the right answer: a dropped element costs a second, misleading arity diagnostic.
+   - **A value error inside an expression is live in every position an expression is**, not
+     just the `let` it was tested in. `TestValueErrorInAListReportsOnlyItself` pins "one
+     error, no crash" for list positions.
    - **A dead error path is live after the next grammar change.** tree-sitter recovers with an
      `ERROR` node, not a partial named node, so missing-required-field guards rarely fire;
      what does reach them is a structurally valid token whose *content* the collector

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 )
 
@@ -59,6 +60,10 @@ func TestAnalyzeDoesNotPanicOnMalformedInput(t *testing.T) {
 		"rune, dangling backslash":     `let c: rune = '\`,
 		"rune, empty":                  "let c: rune = ''",
 		"string, illegal escape":       `let s = "\q"`,
+		"string, bad escape in a lambda call": "let f = (s: string) -> i64 => s.len()\n" +
+			`let main = () -> void => { println(f("a\u{0}b")) }`,
+		"compound refusal in a call": "let f = (n: i64) -> i64 => n\n" +
+			"let main = () -> void => { println(f(1 += 2)) }",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -76,6 +81,49 @@ func TestAnalyzeDoesNotPanicOnMalformedInput(t *testing.T) {
 				fmt.Fprintf(&sb, "%v", d)
 			}
 			_ = sb.String()
+		})
+	}
+}
+
+// A value error inside an expression that sits in a list — a call argument, an array or tuple
+// element, a struct field value — reports that error and nothing else. The first two shapes
+// panicked (09/14): the collector returned nil for the literal and the list kept it, and
+// `checkNamedArgument` / `inferStructInstanceExpr` dereferenced it. The rest are the siblings.
+// "Nothing else" is the point: the placeholder keeps the list's shape, so no arity or
+// missing-field error follows from the first one.
+func TestValueErrorInAListReportsOnlyItself(t *testing.T) {
+	t.Parallel()
+	const badString = `"a\u{0}b"`
+	const escape = "invalid string literal"
+	const place = "left side of compound assignment"
+	cases := []struct{ name, src, want string }{
+		{"lambda call argument", "let f = (s: string) -> i64 => s.len()\n" +
+			"let main = () -> void => { println(f(" + badString + ")) }", escape},
+		{"struct field value", "struct Pt { s: string }\n" +
+			"let main = () -> void => { let p = Pt { s: " + badString + " }; println(p.s) }", escape},
+		{"array element", "let main = () -> void => { let xs = [" + badString + `, "b"]; println(xs[0]) }`, escape},
+		{"tuple element", "let main = () -> void => { let t = (" + badString + ", 1); println(t.1) }", escape},
+		{"second argument", "let g = (n: i64, s: string) -> i64 => n + s.len()\n" +
+			"let main = () -> void => { println(g(1, " + badString + ")) }", escape},
+		{"interpolated literal chunk", "let f = (s: string) -> i64 => s.len()\n" +
+			"let main = () -> void => { let n = 1; println(f(\"\\q${n}\")) }", escape},
+		{"compound refusal as an argument", "let f = (n: i64) -> i64 => n\n" +
+			"let main = () -> void => { println(f(1 += 2)) }", place},
+		{"compound refusal as a field value", "struct Pt { n: i64 }\n" +
+			"let main = () -> void => { let p = Pt { n: 1 += 2 }; println(p.n) }", place},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var errs []string
+			for _, d := range driver.Analyze([]byte(tc.src)).Diagnostics {
+				if d.Severity == diag.SeverityError {
+					errs = append(errs, d.Message)
+				}
+			}
+			if len(errs) != 1 || !strings.Contains(errs[0], tc.want) {
+				t.Fatalf("want exactly one error containing %q, got %d: %q", tc.want, len(errs), errs)
+			}
 		})
 	}
 }

@@ -32,7 +32,11 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	default:
 		ctx.AddError(leftNode, diag.SeverityError,
 			"left side of compound assignment must be a binding, field or element")
-		return nil
+		// The operand stands in, never nil (hazard 3): the grammar accepts any expression
+		// on the left, so this refusal is live wherever an expression is — `f(1 += 2)`, a
+		// struct field value. A placeholder MathAssignOpExpr would be refused again as an
+		// unwritable place and, in value position, as void; the operand is inert.
+		return left
 	}
 
 	var operator ast.MathAssignOp

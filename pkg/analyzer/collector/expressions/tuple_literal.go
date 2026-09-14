@@ -23,7 +23,7 @@ func collectTupleLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "tuple_value" {
-			elements = append(elements, CollectExpression(child.Child(0), ctx))
+			elements = appendCollected(elements, CollectExpression(child.Child(0), ctx))
 		}
 	}
 	return &ast.TupleLiteralExpr{

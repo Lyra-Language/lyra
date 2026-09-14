@@ -35,6 +35,22 @@ func collectGenericArgs(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Type 
 	return args
 }
 
+// appendCollected appends a collected expression to a list, dropping a nil.
+//
+// ast.TrueNil turns a typed nil into the nil the typechecker checks for — but only where it
+// checks: a nil *inside* an argument list, array or tuple literal, or a struct literal's
+// fields is dereferenced unguarded (`inferLambdaCall` → `checkNamedArgument`). A collector
+// returns nil only on an error path (a diagnostic, or a syntax error behind it), so dropping
+// it cannot make a wrong program compile; at worst the list's length earns a second
+// diagnostic. A collector that hits a value error should still return a placeholder
+// (hazard 3) — this is the backstop for one that does not.
+func appendCollected(list []ast.Expression, expr ast.Expression) []ast.Expression {
+	if expr == nil {
+		return list
+	}
+	return append(list, expr)
+}
+
 func collectGuard(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.GuardExpr {
 	guardExpression := CollectExpression(cst.Field(node, "guard_expression"), ctx)
 	if guardExpression == nil {

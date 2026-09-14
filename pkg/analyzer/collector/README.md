@@ -36,8 +36,12 @@ errors)`.
 An expression collector hitting an unrecoverable error (e.g. an `int64`-overflowing literal) must
 report **and return a placeholder** (a zero-valued literal). A nil returned as `ast.Expression` is
 a typed nil that slips past `expr == nil` and crashes a later pass. `CollectExpression`,
-`CollectStatement` and `CollectPattern` pass results through `ast.TrueNil` as a backstop, but the
-placeholder is still what keeps one mistake to one diagnostic.
+`CollectStatement` and `CollectPattern` pass results through `ast.TrueNil` as a backstop, and the
+list sites — `collectArgumentList`, array and tuple literals, comprehension guards, struct field
+values — drop a nil (`appendCollected`), since a true nil *inside* a list is still dereferenced
+unguarded. The placeholder is still what keeps one mistake to one diagnostic: a dropped argument
+earns an arity error on top. A value validated after the parse (an escape, a compound-assignment
+place) is reachable in every expression position, so its error path is never dead.
 
 Statement analogue: `CollectBlockExpr` skips a child that collects to nil (`isNilStmt`), because a
 block's value is its final statement — a trailing comment would otherwise become it. A

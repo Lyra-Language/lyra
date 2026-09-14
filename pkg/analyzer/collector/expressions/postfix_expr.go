@@ -41,7 +41,7 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expres
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.IsNamed() && !cst.IsComment(child) {
-			arguments = append(arguments, CollectExpression(child, ctx))
+			arguments = appendCollected(arguments, CollectExpression(child, ctx))
 		}
 	}
 	return arguments

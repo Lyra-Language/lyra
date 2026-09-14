@@ -28,6 +28,14 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 	innerStart := node.StartByte() + 1 // just past the opening quote
 	innerEnd := node.EndByte() - 1     // just before the closing quote
 
+	// On any error the whole literal becomes an empty string, never nil (hazard 3): the
+	// escape is validated here, after a successful parse, so this path is live on any
+	// program — and a nil call argument, array element or struct field value crashes
+	// the typechecker. The diagnostic keeps the program from compiling.
+	placeholder := func() ast.Expression {
+		return &ast.StringLiteralExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}}}
+	}
+
 	newLiteralChunk := func(start, end uint) (*ast.StringLiteralExpr, bool) {
 		content, err := unescapeStringContent(string(ctx.Source[start:end]))
 		if err != nil {
@@ -51,7 +59,7 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 	if len(interps) == 0 {
 		lit, ok := newLiteralChunk(innerStart, innerEnd)
 		if !ok {
-			return nil
+			return placeholder()
 		}
 		return lit
 	}
@@ -63,18 +71,18 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 		if start := interp.StartByte(); start > cursor {
 			lit, ok := newLiteralChunk(cursor, start)
 			if !ok {
-				return nil
+				return placeholder()
 			}
 			segments = append(segments, lit)
 		}
 		exprNode := interp.NamedChild(0)
 		if exprNode == nil {
 			ctx.AddError(interp, diag.SeverityError, "empty string interpolation")
-			return nil
+			return placeholder()
 		}
 		expr := CollectExpression(exprNode, ctx)
 		if expr == nil {
-			return nil
+			return placeholder()
 		}
 		segments = append(segments, expr)
 		cursor = interp.EndByte() // resume just past the closing `}`
@@ -83,7 +91,7 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 	if innerEnd > cursor {
 		lit, ok := newLiteralChunk(cursor, innerEnd)
 		if !ok {
-			return nil
+			return placeholder()
 		}
 		segments = append(segments, lit)
 	}

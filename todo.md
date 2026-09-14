@@ -7,12 +7,6 @@ Tags: **[OPEN]** not started · **[PARTIAL]** landed in part · **[DECIDED]** se
 built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberately later.
 Entries rot: re-run an open entry's own reproduction before acting on it.
 
-## Known bugs
-
-- **[OPEN] Invalid string escape in a call argument panics the typechecker.**
-  `f("a\u{0}b")`: the collector reports the escape and returns nil, and
-  `checkNamedArgument` dereferences it.
-
 ## In progress
 
 ### Backend — LLVM IR
