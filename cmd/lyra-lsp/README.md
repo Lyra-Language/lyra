@@ -19,9 +19,14 @@ prelude come from `modules.DefaultRoots`/`DefaultOptions`, shared with `lyrac`.
   diagnostic with no file is kept — so a per-node diagnostic with a zero Location appears on
   every file, rule 14). `docProgram` narrows the AST to this file's top-level statements, and
   every position handler walks that, since a line/column does not name a file. A definition
-  in another file returns that file's URI (`locationIn`); a rename whose declaration lives in
-  another file is declined. `Analyze` units carry no file name, so an empty name means "this
-  one".
+  in another file returns that file's URI (`locationIn`). `Analyze` units carry no file name,
+  so an empty name means "this one".
+- **References and rename span every file** (`crossfile.go`). `programViews` splits the whole
+  program (`docAnalysis.fullProgram`) into one view per file over the shared tables, widened to
+  an exported name's importers (`importerAnalysis`, keyed on the *declaring* file); occurrences
+  are resolved per view and matched by declaration. A binding's uses include namespace members,
+  UFCS calls (by recorded callee) and `import m.{ name }` members. Rename routes each edit to
+  its file and declines only a standard-library declaration or an unreadable file.
 
 ## Handler conventions
 

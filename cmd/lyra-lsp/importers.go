@@ -137,11 +137,18 @@ func skipDir(_, name string) bool {
 // private one cannot, so it has no importers and the walk is pure cost — which matters,
 // since the walk is tens of milliseconds against the microseconds the rest of a lookup
 // takes.
-func (h *Handler) importerAnalysis(analysis *docAnalysis, source string, exported bool) *docAnalysis {
+//
+// declFile is the file the name is declared in, whose module is the one searched for: a
+// rename may start from a use in an importer, and it is the *declaring* module's importers
+// that hold the other uses.
+func (h *Handler) importerAnalysis(analysis *docAnalysis, source string, exported bool, declFile string) *docAnalysis {
 	if !exported || analysis.file == "" || analysis.symTable == nil {
 		return analysis
 	}
-	module := analysis.symTable.ModuleOfFile[analysis.file]
+	if declFile == "" {
+		declFile = analysis.file
+	}
+	module := analysis.symTable.ModuleOfFile[declFile]
 	if module == "" {
 		return analysis
 	}
@@ -175,7 +182,15 @@ func (h *Handler) importerAnalysis(analysis *docAnalysis, source string, exporte
 		return analysis
 	}
 	log.Printf("importers: %s is imported by %d file(s); index spans %d unit(s)", module, len(importers), len(units))
+	// Every table from the one result, since the scope table is keyed by node identity:
+	// pairing this analysis's scopes with the document's own statements would resolve
+	// nothing. `program` is re-narrowed from the same result for that reason.
 	widened := *analysis
 	widened.symTable = res.SymbolTable
+	widened.scopeTable = res.ScopeTable
+	widened.typeTable = res.TypeTable
+	widened.fullProgram = res.Program
+	widened.program = docProgram(res.Program, analysis.file)
+	widened.moduleScope = moduleScopeOf(res.SymbolTable, analysis.file)
 	return &widened
 }

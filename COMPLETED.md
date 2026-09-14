@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — references and rename on a binding reach every file
+
+Types were cross-file from the start, because the collector indexes every written type name
+with its file. A binding has no index — its uses are identifier expressions — and the server
+walked only the open document for them. So references on a function listed one file, renaming
+a function used by a sibling file edited that file alone and left the rest of the program
+calling a name that no longer existed, and a rename started from a use of another file's
+function declined without saying why.
+
+**The single-file walk now runs once per file.** `programViews` splits the analysed program
+into a view per file — that file's statements over the shared tables — so each position
+resolves exactly as it would were that file the open document, and an occurrence is kept only
+when it resolves to the cursor's declaration (another module's same-named function is not
+one). An exported name widens the program to its importers, found from the *declaring*
+module, since a rename may start in an importer. Rename routes each edit to its own file.
+
+Three spellings of a use are not identifiers, and a rename that missed any of them breaks the
+program: `import shapes.{ double }` (the member, narrowed to the name so an alias survives),
+`shapes.double(n)` through a namespace — which the typechecker resolves without recording a
+callee, so it is matched by the namespace import's module — and `n.double()`, matched by the
+recorded callee. Struct literals and constructors of a type, the one occurrence kind a
+cross-file type rename could not reach, go through the same views.
+
+Only a standard-library declaration still declines, since no rename of one could be complete.
+On the 1,149-line glTF viewer with its whole import graph, references and rename each take
+about 10 ms.
+
 ### 09/13/26 — a large fixed `[v; n]` is a loop, as a dynamic one already was
 
 The dynamic repeat got `repeatUnrollLimit` on 08/14, after `[0; 200000]` produced 43 MB of IR

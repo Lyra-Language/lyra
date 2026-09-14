@@ -45,10 +45,11 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 
 	// The declaration the cursor resolves to is the identity every other
 	// occurrence is matched against.
-	declLoc, ok := resolveDeclLocation(ident.Name, line, col, analysis)
+	decl, ok := resolveDeclNamed(ident.Name, line, col, analysis)
 	if !ok {
 		return nil, nil
 	}
+	declLoc := decl.GetLocation()
 
 	var out []lsp.Location
 	seen := map[ast.Location]bool{}
@@ -65,19 +66,17 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 		}
 	}
 
-	walkExprs(analysis.program, func(e ast.Expression) {
-		name, loc, ok := referenceOccurrence(e)
-		if !ok || name != ident.Name {
-			return
-		}
-		if dl, ok := resolveDeclLocation(name, loc.StartLine, loc.StartCol, analysis); ok && dl == declLoc {
-			add(loc)
-		}
-	})
+	// **Every file of the program**, and the importers of an exported name besides — a
+	// function's uses are in its callers' files, not the one open (crossfile.go).
+	indexed := h.importerAnalysis(analysis, source, isExportedDecl(decl), declLoc.File)
+	for _, loc := range bindingOccurrences(programViews(indexed), ident.Name, decl) {
+		add(loc)
+	}
 
 	if params.Context.IncludeDeclaration {
 		add(declLoc)
 	}
+	sortLocations(out)
 
 	log.Printf("references: %q resolved to %d occurrence(s)", ident.Name, len(out))
 	return out, nil
@@ -261,7 +260,7 @@ func (h *Handler) typeReferences(uri, source string, analysis *docAnalysis, line
 	// built — and "find every use" is exactly the upward question (importers.go). Done
 	// here rather than in the analysis every keystroke runs, because it walks the
 	// workspace and this is an explicit action.
-	indexed := h.importerAnalysis(analysis, source, exported)
+	indexed := h.importerAnalysis(analysis, source, exported, declLoc.File)
 
 	var out []lsp.Location
 	seen := map[ast.Location]bool{}
@@ -281,7 +280,7 @@ func (h *Handler) typeReferences(uri, source string, analysis *docAnalysis, line
 		}
 	}
 
-	for _, loc := range typeExprOccurrences(analysis, name, declLoc) {
+	for _, loc := range typeExprOccurrences(programViews(indexed), name, declLoc) {
 		add(loc)
 	}
 
@@ -306,21 +305,24 @@ func (h *Handler) typeReferences(uri, source string, analysis *docAnalysis, line
 // `Point { x: 1 }` behind after renaming the type, and the program would stop compiling
 // with the editor showing the operation as successful.
 //
-// This document only: it is the one program the server has walked. The index half reaches
-// every file, so a cross-file *literal* is the one occurrence kind that does not — which
-// is why rename declines when the declaration is not local (see resolveRenameAnchor).
-func typeExprOccurrences(analysis *docAnalysis, name string, declLoc ast.Location) []ast.Location {
+// Every file of views (programViews), since 09/13: a literal in a sibling module or an
+// importer is as much a use as one here, and it was the one occurrence kind a cross-file
+// type rename could not reach. An `import m.{ Point }` member naming the declaration is one
+// too.
+func typeExprOccurrences(views []*docAnalysis, name string, declLoc ast.Location) []ast.Location {
 	var out []ast.Location
-	walkExprs(analysis.program, func(e ast.Expression) {
-		exprName, loc, ok := typeExprOccurrence(e)
-		if !ok || exprName != name {
-			return
-		}
-		if decl, ok := analysis.symTable.LookupTypeFrom(exprName, loc); ok && namedNameLoc(decl) == declLoc {
-			out = append(out, loc)
-		}
-	})
-	return out
+	for _, v := range views {
+		walkExprs(v.program, func(e ast.Expression) {
+			exprName, loc, ok := typeExprOccurrence(e)
+			if !ok || exprName != name {
+				return
+			}
+			if decl, ok := v.symTable.LookupTypeFrom(exprName, loc); ok && namedNameLoc(decl) == declLoc {
+				out = append(out, loc)
+			}
+		})
+	}
+	return append(out, importMemberOccurrences(views, name, declLoc.File)...)
 }
 
 // typeExprOccurrence reports whether expr names a *type* in expression position, and the
@@ -384,12 +386,15 @@ func typeAnchorAt(analysis *docAnalysis, line, col int) (string, ast.Location, b
 	return name, loc, exported, name != ""
 }
 
-// isExportedDecl reports whether a type or trait declaration is visible outside its module.
+// isExportedDecl reports whether a declaration — a type, a trait or a top-level binding — is
+// visible outside its module.
 func isExportedDecl(named ast.Named) bool {
 	switch d := named.(type) {
 	case *ast.TypeDeclStmt:
 		return d.IsPublic
 	case *ast.TraitDeclStmt:
+		return d.IsPublic
+	case *ast.VarDeclStmt:
 		return d.IsPublic
 	}
 	return false

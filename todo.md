@@ -39,9 +39,6 @@ Package management, versioning and separate compilation are out of scope by deci
 - **[OPEN] A module re-exporting a name it imports collides** (`symbol "map" already
   defined`). Needs qualified `pub` keys with importer-aware bare lookups; nothing shipped
   needs it.
-- **[OPEN] Find-references and rename on an *identifier* are single-file.** Types and
-  traits already search every unit; identifiers should walk every unit's program keyed by
-  `Location.File`. Rename of a cross-file declaration currently declines silently.
 - **[OPEN] Importers outside the workspace root are invisible to rename.** If it bites,
   report what was searched rather than searching harder.
 - **[OPEN] A crashed or killed language server leaves its diagnostics on screen.** VS Code

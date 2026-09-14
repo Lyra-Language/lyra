@@ -35,6 +35,9 @@ type docAnalysis struct {
 	typeTable   *typetable.TypeTable
 	file        string         // filesystem path, "" for a buffer with no file
 	moduleScope *symbols.Scope // the scope of the module this file declares
+	// fullProgram is every unit's statements, which the cross-file walks split back into
+	// one view per file (programViews). Never walked by position: see `program`.
+	fullProgram *ast.Program
 }
 
 // fileScope is the scope a top-level position in this document resolves in. A file
@@ -310,6 +313,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 			typeTable:   res.TypeTable,
 			file:        file,
 			moduleScope: moduleScopeOf(res.SymbolTable, file),
+			fullProgram: res.Program,
 		}
 		h.mu.Unlock()
 	}

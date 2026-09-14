@@ -20,6 +20,11 @@ type renameAnchor struct {
 	exported bool
 	declLoc  ast.Location // whole-decl location: identity key for reference matching
 	nameLoc  ast.Location // name-only span: the range to replace at the declaration site
+	named    ast.Named    // the declaration itself
+	// cursorLoc is the span of the occurrence the rename started from, in this document —
+	// what PrepareRename highlights when the declaration is in another file, where nameLoc's
+	// line and column mean nothing in this buffer.
+	cursorLoc ast.Location
 }
 
 // resolveRenameAnchor returns the rename anchor for the symbol at (line, col).
@@ -29,6 +34,7 @@ type renameAnchor struct {
 func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bool) {
 	var name string
 	var named ast.Named
+	var cursorLoc ast.Location
 
 	// Fast path: cursor is on an expression-position identifier (a usage).
 	if ident, ok := findExprAtPos(analysis.program, line, col).(*ast.IdentifierExpr); ok {
@@ -36,6 +42,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		if n, ok := scope.Lookup(ident.Name); ok {
 			name = ident.Name
 			named = n
+			cursorLoc = ident.GetLocation()
 		}
 	}
 
@@ -70,6 +77,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 				if n, ok2 := scope.Lookup(sName); ok2 {
 					name = sName
 					named = n
+					cursorLoc = sNameLoc
 				}
 				return false // found; stop walking
 				// **Descend into expressions**, or this walk never reaches a *local*
@@ -110,6 +118,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 				if n, ok2 := scope.Lookup(ip.Name); ok2 {
 					name = ip.Name
 					named = n
+					cursorLoc = ip.GetLocation()
 				}
 				break
 			}
@@ -123,7 +132,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 	if name == "" && analysis.symTable != nil {
 		if ref, ok := analysis.symTable.TypeRefs.At(analysis.file, line, col); ok {
 			if n, ok := lookupTypeOrTrait(analysis, ref); ok {
-				name, named = ref.Name, n
+				name, named, cursorLoc = ref.Name, n, ref.Loc
 			}
 		}
 	}
@@ -136,7 +145,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		if e := findExprAtPos(analysis.program, line, col); e != nil {
 			if exprName, span, ok := typeExprOccurrence(e); ok && locationContains(span, line, col) {
 				if decl, ok := analysis.symTable.LookupTypeFrom(exprName, span); ok {
-					name, named = exprName, decl
+					name, named, cursorLoc = exprName, decl, span
 				}
 			}
 		}
@@ -147,20 +156,24 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 	}
 
 	anchor := renameAnchor{
-		name:     name,
-		exported: isExportedDecl(named),
-		declLoc:  named.GetLocation(),
-		nameLoc:  namedNameLoc(named),
+		name:      name,
+		exported:  isExportedDecl(named),
+		declLoc:   named.GetLocation(),
+		nameLoc:   namedNameLoc(named),
+		named:     named,
+		cursorLoc: cursorLoc,
 	}
 
-	// A name can now resolve into another file — the prelude, or another module of
-	// the program — and this server renames within one document. Editing the
-	// declaration's span in *this* buffer would splice the new name in at the other
-	// file's line and column, so a cross-file declaration declines the rename instead.
-	// (Doing it properly means collecting occurrences across every unit and returning
-	// a multi-file WorkspaceEdit; see todo.md.)
-	if !sameFile(anchor.nameLoc.File, analysis.file) {
-		log.Printf("rename: %q is declared in %s, not this document — declining", name, anchor.nameLoc.File)
+	// **A declaration in another file renames there**, since 09/13: the edit is routed to
+	// the file each occurrence is in (Rename). Until then a cross-file declaration declined
+	// the rename, because editing its span in *this* buffer would have spliced the new name
+	// in at the other file's line and column.
+	//
+	// The standard library still declines. Every program on the machine depends on it and
+	// none of them is in the workspace being searched, so the rename could never be
+	// complete — and a partial rename is worse than none.
+	if isStdFile(analysis, anchor.nameLoc.File) {
+		log.Printf("rename: %q is declared in the standard library (%s) — declining", name, anchor.nameLoc.File)
 		return renameAnchor{}, false
 	}
 
@@ -291,15 +304,30 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 
 	newName := params.NewName
 	seen := map[ast.Location]bool{}
-	var edits []lsp.TextEdit
+	changes := map[lsp.DocumentURI][]lsp.TextEdit{}
+	unreadable := ""
 
+	// addEdit routes an occurrence to the file it is in. A file that cannot be read cannot
+	// be edited, and a rename carried out partially is worse than one declined — the
+	// program would stop compiling with no indication of where — so one such file declines
+	// the whole rename below.
 	addEdit := func(loc ast.Location) {
 		if seen[loc] {
 			return
 		}
 		seen[loc] = true
-		edits = append(edits, lsp.TextEdit{
-			Range:   locToRange(source, loc),
+		editURI, editSource := uri, source
+		if loc.File != "" && !sameFile(loc.File, analysis.file) {
+			otherURI, otherSource, ok := h.sourceOf(loc.File)
+			if !ok {
+				unreadable = loc.File
+				return
+			}
+			editURI, editSource = otherURI, otherSource
+		}
+		key := lsp.DocumentURI(editURI)
+		changes[key] = append(changes[key], lsp.TextEdit{
+			Range:   locToRange(editSource, loc),
 			NewText: newName,
 		})
 	}
@@ -307,69 +335,42 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 	// Edit the declaration name span (not the whole-stmt location).
 	addEdit(anchor.nameLoc)
 
-	// Collect every usage that resolves to the same declaration.
-	walkExprs(analysis.program, func(e ast.Expression) {
-		name, loc, ok := referenceOccurrence(e)
-		if !ok || name != anchor.name {
-			return
-		}
-		if dl, ok := resolveDeclLocation(name, loc.StartLine, loc.StartCol, analysis); ok && dl == anchor.declLoc {
-			addEdit(loc)
-		}
-	})
+	// Every file of the program, widened to the importers of an exported name, whose
+	// uses are the rest of the rename (importers.go). Found from the declaring module,
+	// since a rename may start from a use in one of its importers.
+	indexed := h.importerAnalysis(analysis, source, anchor.exported, anchor.nameLoc.File)
+	views := programViews(indexed)
 
-	// Keyed by file, and this document's entry is written *after* the loop below: addEdit
-	// reassigns the `edits` slice, so a map entry taken before the last append holds a
-	// stale header and silently loses edits.
-	changes := map[lsp.DocumentURI][]lsp.TextEdit{}
-
-	// A **type or trait** is also written in signatures, and those live in the index
-	// rather than in the expression tree — and in *other files*, since the index covers
-	// the whole import graph. This is the multi-file WorkspaceEdit the single-file note
-	// on this function said doing it properly would need; it is affordable here only
-	// because the index already holds every occurrence with its file.
-	//
-	// The declaration must still be in this document (checked in resolveRenameAnchor),
-	// so renaming a prelude type from a use site is still declined. What changes is that
-	// renaming *your own* type now reaches its uses in your other modules instead of
-	// silently editing one file and leaving the program broken.
-	indexed := h.importerAnalysis(analysis, source, anchor.exported)
-	if indexed.symTable != nil {
-		for _, ref := range indexed.symTable.TypeRefs.Named(anchor.name) {
-			named, ok := lookupTypeOrTrait(indexed, ref)
-			if !ok || namedNameLoc(named) != anchor.nameLoc {
-				continue
-			}
-			if sameFile(ref.Loc.File, analysis.file) {
-				addEdit(ref.Loc)
-				continue
-			}
-			otherURI, otherSource, ok := h.sourceOf(ref.Loc.File)
-			if !ok {
-				// A file that cannot be read cannot be edited, and a rename that is
-				// carried out partially is worse than one declined: the program would
-				// stop compiling with no indication of where. Decline the whole thing.
-				log.Printf("rename: cannot read %s — declining rather than editing partially", ref.Loc.File)
-				return nil, nil
-			}
-			key := lsp.DocumentURI(otherURI)
-			changes[key] = append(changes[key], lsp.TextEdit{
-				Range:   locToRange(otherSource, ref.Loc),
-				NewText: newName,
-			})
-		}
-	}
-
-	// The expression-position uses — a struct literal, a constructor — which the index
-	// does not hold. **Renaming without these produces a broken program**: the type would
-	// be renamed everywhere except where it is constructed, and the editor would report
-	// success. The same walk `references` uses, so the two cannot come to disagree about
-	// what a use is.
-	for _, loc := range typeExprOccurrences(analysis, anchor.name, anchor.nameLoc) {
+	// The binding's uses: identifiers, calls through a namespace or UFCS, and import
+	// members. The walk references uses, so the two cannot disagree about what a use is.
+	for _, loc := range bindingOccurrences(views, anchor.name, anchor.named) {
 		addEdit(loc)
 	}
 
-	changes[lsp.DocumentURI(uri)] = edits
+	// A **type or trait** is also written in signatures, and those live in the index
+	// rather than in the expression tree — in every file, since the index covers the whole
+	// import graph.
+	if indexed.symTable != nil {
+		for _, ref := range indexed.symTable.TypeRefs.Named(anchor.name) {
+			named, ok := lookupTypeOrTrait(indexed, ref)
+			if ok && namedNameLoc(named) == anchor.nameLoc {
+				addEdit(ref.Loc)
+			}
+		}
+	}
+
+	// The expression-position uses of a type — a struct literal, a constructor — which the
+	// index does not hold. **Renaming without these produces a broken program**: the type
+	// would be renamed everywhere except where it is constructed, and the editor would
+	// report success.
+	for _, loc := range typeExprOccurrences(views, anchor.name, anchor.nameLoc) {
+		addEdit(loc)
+	}
+
+	if unreadable != "" {
+		log.Printf("rename: cannot read %s — declining rather than editing partially", unreadable)
+		return nil, nil
+	}
 
 	total := 0
 	for _, e := range changes {
@@ -400,8 +401,12 @@ func (h *Handler) PrepareRename(_ context.Context, params *lsp.PrepareRenamePara
 		return nil, nil
 	}
 
+	span := anchor.nameLoc
+	if span.File != "" && !sameFile(span.File, analysis.file) {
+		span = anchor.cursorLoc
+	}
 	return &lsp.PrepareRenameResult{
-		Range:       locToRange(source, anchor.nameLoc),
+		Range:       locToRange(source, span),
 		Placeholder: anchor.name,
 	}, nil
 }
