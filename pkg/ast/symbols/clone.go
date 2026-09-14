@@ -49,6 +49,7 @@ func (st *SymbolTable) Clone() (*SymbolTable, map[*Scope]*Scope) {
 		ImportScopes:    cloneScopeMap(st.ImportScopes, seen),
 		Imports:         cloneImports(st.Imports),
 		OverloadSets:    cloneMap(st.OverloadSets),
+		SharedExports:   cloneMapOfSlice(st.SharedExports),
 		TypeRefs:        st.TypeRefs.clone(),
 	}
 	return out, seen

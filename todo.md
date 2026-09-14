@@ -9,6 +9,10 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
+- **[OPEN] Another module's type as a generic argument fails in the backend.** `Has(two.make())`
+  with `data Opt<t> = Has(t)` in `app` reports *unknown named type "Point"* (or stores into the
+  wrong layout when `app` has its own `Point`): a resolved `NamedStructType` carries no
+  declaration key, and `Opt$Point` is mangled from the bare name. Private or exported alike.
 
 ## In progress
 
@@ -31,9 +35,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
-- **[OPEN] A module re-exporting a name it imports collides** (`symbol "map" already
-  defined`). Needs qualified `pub` keys with importer-aware bare lookups; nothing shipped
-  needs it.
 - **[OPEN] Importers outside the workspace root are invisible to rename.** If it bites,
   report what was searched rather than searching harder.
 - **[OPEN] A crashed or killed language server leaves its diagnostics on screen.** VS Code

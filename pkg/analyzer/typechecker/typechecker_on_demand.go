@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -176,10 +177,32 @@ func (tc *TypeChecker) unimportedHint(name string, loc ast.Location) string {
 	if tc.symTable == nil {
 		return ""
 	}
-	module, ok := tc.symTable.ExportingModule(name)
-	if !ok || module == tc.symTable.ModuleOfFile[loc.File] {
-		return ""
+	here := tc.symTable.ModuleOfFile[loc.File]
+	var modules []string
+	for _, m := range tc.symTable.ExportingModules(name) {
+		if m != here {
+			modules = append(modules, m)
+		}
 	}
-	return fmt.Sprintf(" — module %q exports it, but this file does not import it; add `import %s.{ %s }`",
-		module, module, name)
+	switch len(modules) {
+	case 0:
+		return ""
+	case 1:
+		return fmt.Sprintf(" — module %q exports it, but this file does not import it; add `import %s.{ %s }`",
+			modules[0], modules[0], name)
+	}
+	return fmt.Sprintf(" — modules %s export it, but this file imports it from none of them; add `import %s.{ %s }` for the one you mean",
+		quoteList(modules), modules[0], name)
+}
+
+// quoteList renders names as `"a", "b" and "c"`.
+func quoteList(names []string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = fmt.Sprintf("%q", n)
+	}
+	if len(quoted) == 1 {
+		return quoted[0]
+	}
+	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
 }

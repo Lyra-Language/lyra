@@ -127,36 +127,43 @@ let main = () -> u8 => u8(seq.pub_fn() + helper())`,
 	}
 }
 
-// The genuine cross-module duplicate stays an error. Two modules exporting one name,
-// neither importing the other, is not something a shadowing rule can resolve: a bare
-// reference from a third module could mean either, and neither has a local declaration
-// that is obviously meant to win.
-func TestModules_UnrelatedDuplicateExportsStillCollide(t *testing.T) {
+// **The conflict that remains is one module importing a shared name from both exporters**:
+// a bare `helper` there could mean either, and nothing else says which. Reported at the
+// second import, naming the first and the two ways out.
+func TestModules_ImportingOneNameFromTwoModulesIsAnError(t *testing.T) {
 	root := buildTree(t, map[string]string{
-		"app.lyra": "import one\nimport two\nlet main = () -> u8 => u8(one.helper())",
+		"app.lyra": "import one.{ helper }\nimport two.{ helper }\nlet main = () -> u8 => u8(helper())",
 		"one.lyra": "module one\npub let helper = () -> i64 => 1",
 		"two.lyra": "module two\npub let helper = () -> i64 => 2",
 	})
 	res := analyze(t, root)
-	if !errorsContaining(res, `function "helper" is already defined`) {
-		t.Errorf("expected the cross-module duplicate to stay an error; got %v", res.Errors())
+	if !errorsContaining(res, `"helper" is imported from both "one" and "two"`) {
+		t.Errorf("expected the import clash; got %v", res.Errors())
+	}
+
+	// An alias is one way out.
+	root = buildTree(t, map[string]string{
+		"app.lyra": "import one.{ helper }\nimport two.{ helper as other }\nlet main = () -> u8 => u8(helper() + other())",
+		"one.lyra": "module one\npub let helper = () -> i64 => 1",
+		"two.lyra": "module two\npub let helper = () -> i64 => 2",
+	})
+	if errs := analyze(t, root).Errors(); len(errs) != 0 {
+		t.Errorf("an aliased import resolves the clash; got %v", errs)
 	}
 }
 
-// The shadow rule keys a declaration apart from the imported one; it does not withdraw
-// the *export*. A module that re-exports a name it also imports is claiming the
-// program-wide name a second time, which is the duplicate above wearing an import.
-func TestModules_ReExportingAnImportedNameStillCollides(t *testing.T) {
+// **A module may re-export under a name it imports**: its own declaration shadows the
+// import (lyra-W016) and reaches the imported one through the namespace.
+func TestModules_ReExportingAnImportedName(t *testing.T) {
 	root := buildTree(t, map[string]string{
 		"app.lyra":      "import util.wrap\nlet main = () -> u8 => u8(wrap.map(1))",
 		"util/seq.lyra": "module util.seq\npub let map = (n: i64) -> i64 => n * 2",
 		"util/wrap.lyra": `module util.wrap
 import util.seq
-pub let map = (n: i64) -> i64 => n + 1`,
+pub let map = (n: i64) -> i64 => seq.map(n) + 1`,
 	})
-	res := analyze(t, root)
-	if !errorsContaining(res, `function "map" is already defined`) {
-		t.Errorf("expected a re-export of an imported name to be reported; got %v", res.Errors())
+	if errs := analyze(t, root).Errors(); len(errs) != 0 {
+		t.Errorf("a re-export of an imported name must be legal; got %v", errs)
 	}
 }
 

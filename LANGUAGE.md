@@ -332,7 +332,9 @@ There isn't any. `Rng.seeded(42)` is **`lyra-E035`** (constructors are bare: `rn
 
 ### Shadowing
 
-A local declaration of an imported (or prelude) name wins every bare reference in that module and warns **`lyra-W016`**; the import stays reachable as `seq.map`. Still an error: two modules exporting one name, including a re-export.
+A local declaration of an imported (or prelude) name wins every bare reference in that module and warns **`lyra-W016`**; the import stays reachable as `seq.map`.
+
+**Several modules may export one name**, and a module may re-export a name it imports (`pub let map = (n) => seq.map(n) + 1`). A bare name reaches a module only through its own member list, so the importer chooses; importing one name from two modules is an error, fixed with an alias (`import two.{ helper as other }`) or the namespace.
 
 ### Documentation comments
 

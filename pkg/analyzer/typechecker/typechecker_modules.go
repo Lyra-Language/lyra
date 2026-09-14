@@ -176,8 +176,10 @@ func (tc *TypeChecker) reportPrivateType(name string, loc ast.Location) bool {
 	// apart here, since an exported type always resolved; now the commoner of the two
 	// would otherwise be reported as the rarer, telling an author to add a `pub` that is
 	// already there.
-	if exporter, ok := tc.symTable.ExportingModule(name); ok && exporter != from {
-		return false
+	for _, exporter := range tc.symTable.ExportingModules(name) {
+		if exporter != from {
+			return false
+		}
 	}
 	for _, module := range tc.symTable.DeclaringModulesOf(name) {
 		if module == from {

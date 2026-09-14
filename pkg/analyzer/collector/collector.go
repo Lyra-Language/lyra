@@ -217,7 +217,12 @@ func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic b
 		_ = c.table.PreludeScope.Define(decl)
 		return
 	}
-	if existing, bound := c.table.GlobalScope.LookupLocal(decl.GetName()); bound {
+	name := decl.GetName()
+	if exporters, shared := c.table.SharedExports[name]; shared {
+		c.table.SharedExports[name] = append(exporters, decl)
+		return
+	}
+	if existing, bound := c.table.GlobalScope.LookupLocal(name); bound {
 		if existing == decl {
 			// Already exported. Reachable only for an overload set, which arrives here
 			// once per member — the same set object each time, so this is not the name
@@ -238,19 +243,19 @@ func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic b
 			c.table.GlobalScope.Symbols[decl.GetName()] = set
 			return
 		}
-		// Two modules exporting the same name: a bare reference could mean either, so
-		// it is a genuine clash rather than something privacy can resolve. This is the
-		// **only** place the program-wide claim is enforced — the lookup maps are keyed
-		// per module, so two exports of one name coexist there without meeting — which
-		// is why the message carries the declaration's kind rather than leaning on
-		// Scope.Define's generic "symbol".
-		c.errors = append(c.errors, diag.Diagnostic{
-			Location: decl.GetLocation(),
-			Severity: diag.SeverityError,
-			Message: fmt.Sprintf("%s %q is already defined at %s:%s",
-				exportKind(existing), decl.GetName(),
-				existing.GetLocation().File, existing.GetLocation().Pretty()),
-		})
+		// **Two modules exporting one name is legal** (09/13). It was an error while a `pub`
+		// declaration was visible everywhere, when a bare reference in a third module could
+		// have meant either. Since imports restrict visibility (08/18) a bare name reaches a
+		// module only through that module's own member list, which names where it comes from
+		// — so the choice is the importer's, and the one conflict left is a module importing
+		// the name from both, which PopulateImportScopes reports.
+		//
+		// The name leaves GlobalScope for SharedExports: a context-free lookup has no single
+		// answer for it any more, and must miss rather than pick one.
+		if c.table.ModuleOfFile[existing.GetLocation().File] != modulePath {
+			delete(c.table.GlobalScope.Symbols, name)
+			c.table.SharedExports[name] = []ast.Named{existing, decl}
+		}
 		return
 	}
 	_ = c.table.GlobalScope.Define(decl)
@@ -394,7 +399,15 @@ func (c *Collector) Finish() (*ast.Program, *symbols.SymbolTable, *symbols.Scope
 	c.checkOperatorMethodNames()
 	// Last, and it has to be: a module's imports resolve against other modules' exports,
 	// and exports are recorded per file as each is walked.
-	c.table.PopulateImportScopes()
+	for _, clash := range c.table.PopulateImportScopes() {
+		c.errors = append(c.errors, diag.Diagnostic{
+			Location: clash.Second.Loc,
+			Severity: diag.SeverityError,
+			Message: fmt.Sprintf(
+				"%q is imported from both %q and %q (at %s), and a bare name can mean only one of them — import one under another name (`import %s.{ %s as … }`), or reach it through its namespace",
+				clash.Name, clash.First.Path, clash.Second.Path, clash.First.Loc.Pretty(), clash.Second.Path, clash.Name),
+		})
+	}
 	return c.ast, c.table, c.scopeTable, c.errors
 }
 

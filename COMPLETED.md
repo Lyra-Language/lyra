@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — several modules may export one name
+
+`pub let map` in two modules was `function "map" is already defined`, and so was a module
+re-exporting a name it imports under that name. The rule dated from when every `pub`
+declaration sat on every module's scope chain, so a bare `map` in a third module could have
+meant either. That stopped being true on 08/18, when imports began restricting visibility: a
+bare name reaches a module only through that module's own member list, which names where it
+comes from. The keys had been per-module since 08/27, so the only thing still enforcing a
+program-wide claim was `GlobalScope`, which held one declaration per exported name.
+
+A name a second module exports now moves from `GlobalScope` to `SymbolTable.SharedExports`.
+The rungs that answer a *context-free* lookup miss for it rather than pick an exporter, and
+every reference with a context resolves as before — including a value whose type is a shared
+name its file never imported, since that type is resolved from the declaring function. The
+conflict that remains is **one module importing the name from both**, now reported at the
+second import with the alias and namespace fixes; the "exported but not imported" hint lists
+every exporter. The four tests that pinned the old error now pin the new behaviour.
+
+Writing the compile-and-run test found a backend bug that predates this: another module's
+type used as a *generic argument* fails, private or exported, because a resolved named type
+carries no declaration key and instantiation symbols are mangled from the bare name. It fails
+loudly rather than miscompiling, and is recorded in todo.md rather than folded in.
+
 ### 09/13/26 — the float→int guard is elided where it cannot fire, and two binders stop leaking
 
 **A soundness bug first, found on the way in.** The value-range pass drops runtime checks it

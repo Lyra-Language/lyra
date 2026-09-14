@@ -43,36 +43,47 @@ func errorsContaining(res *driver.Result, want string) bool {
 	return false
 }
 
-// Two modules defining the same function is an error, not a coin flip.
-//
-// RegisterFunction used to overwrite silently — harmless in a single file, where a
-// redeclaration is caught earlier by the scope's own Define, but with modules it meant
-// the program built and called whichever was registered last. The collector also
-// dropped the error on the floor, so both halves had to be fixed.
-func TestModules_DuplicateFunctionAcrossModulesIsAnError(t *testing.T) {
+// **Two modules may each export one name** (09/13). It was an error while every `pub`
+// declaration was visible to every module, when a bare `helper` in a third module could
+// have meant either. A bare name now reaches a module only through that module's own
+// import member list, so the importer says which — and one that imports neither is told
+// both exist.
+func TestModules_TwoModulesMayExportOneName(t *testing.T) {
 	root := buildTree(t, map[string]string{
+		"app.lyra": "import one.{ helper }\nimport two\nlet main = () -> u8 => u8(helper() + two.helper())",
+		"one.lyra": "module one\npub let helper = () -> i64 => 1",
+		"two.lyra": "module two\npub let helper = () -> i64 => 2",
+	})
+	if errs := analyze(t, root).Errors(); len(errs) != 0 {
+		t.Errorf("two modules exporting one name must be legal; got %v", errs)
+	}
+
+	root = buildTree(t, map[string]string{
 		"app.lyra": "import one\nimport two\nlet main = () -> u8 => u8(helper())",
 		"one.lyra": "module one\npub let helper = () -> i64 => 1",
 		"two.lyra": "module two\npub let helper = () -> i64 => 2",
 	})
-	res := analyze(t, root)
-	if !errorsContaining(res, `function "helper" is already defined`) {
-		t.Errorf("expected a duplicate-function error; got %v", res.Errors())
+	if res := analyze(t, root); !errorsContaining(res, `modules "one" and "two" export it`) {
+		t.Errorf("an unimported shared name should name both exporters; got %v", res.Errors())
 	}
 }
 
-// The same for types, which were already rejected — pinned so the message keeps
-// naming the *other* file, without which a bare line:col reads as a position in the
-// file being reported on.
-func TestModules_DuplicateTypeNamesTheOtherFile(t *testing.T) {
+// The same for types: two exported `Point`s are two types, each reached through the import
+// that names it.
+func TestModules_TwoModulesMayExportOneTypeName(t *testing.T) {
 	root := buildTree(t, map[string]string{
-		"app.lyra": "import one\nimport two\nlet main = () -> u8 => 0",
+		"app.lyra": `import one.{ Point }
+import two
+let main = () -> u8 => {
+  let a = Point { x: 1 }
+  let b = two.make()
+  u8(a.x + b.y)
+}`,
 		"one.lyra": "module one\npub struct Point { x: i64 }",
-		"two.lyra": "module two\npub struct Point { x: i64 }",
+		"two.lyra": "module two\npub struct Point { y: i64 }\npub let make = () -> Point => Point { y: 2 }",
 	})
-	res := analyze(t, root)
-	if !errorsContaining(res, "one.lyra") {
-		t.Errorf("expected the duplicate-type error to name the other file; got %v", res.Errors())
+	if errs := analyze(t, root).Errors(); len(errs) != 0 {
+		t.Errorf("two modules exporting one type name must be legal; got %v", errs)
 	}
 }
 

@@ -165,6 +165,14 @@ type SymbolTable struct {
 	// both — see overload.go for why an overloaded name is kept out of Functions
 	// rather than being represented there by one of its members.
 	OverloadSets map[string]*ast.OverloadSet
+
+	// SharedExports holds every name more than one module exports, with each exporter in
+	// the order it was collected. Such a name is **absent from GlobalScope**, which answers
+	// only for a name one module owns: a context-free lookup of a shared name has no single
+	// answer, and the program-wide rungs (declKeyIn's last, programWide) miss rather than
+	// pick one. A reference with a context is unaffected — it resolves through its module's
+	// own scope and imports, and an import names the module it takes the name from.
+	SharedExports map[string][]ast.Named
 }
 
 func NewSymbolTable() *SymbolTable {
@@ -178,8 +186,9 @@ func NewSymbolTable() *SymbolTable {
 		// module's chain, so an import's member list restricted nothing.
 		//
 		// GlobalScope is still written (exportToGlobal) and still read, but for a
-		// different question: it is the program-wide name registry that makes two modules
-		// exporting one name an error, and the map ImportScopeFor draws from.
+		// different question: it is the registry of names exactly one module exports, which
+		// is what a context-free lookup and an "exported but not imported" hint ask about.
+		// A name two modules export moves to SharedExports.
 		PreludeScope: NewScope(nil, ScopePrelude),
 		TypeRefs:     NewTypeRefTable(),
 		Types:        make(map[string]*ast.TypeDeclStmt),
@@ -193,6 +202,8 @@ func NewSymbolTable() *SymbolTable {
 		PreludeNames: make(map[string]bool),
 		OverloadSets: make(map[string]*ast.OverloadSet),
 		ModuleDocs:   make(map[string]*ast.Doc),
+
+		SharedExports: make(map[string][]ast.Named),
 
 		ImportedModules: make(map[string][]string),
 	}
@@ -1069,50 +1080,78 @@ func (st *SymbolTable) ImportScopeFor(module string) *Scope {
 // reported here: this runs inside the collector, where a missing import member is already
 // the import checker's to report, and a second message about the same line would be worse
 // than the one that names it precisely.
-func (st *SymbolTable) PopulateImportScopes() {
+func (st *SymbolTable) PopulateImportScopes() []ImportClash {
 	if st == nil {
-		return
+		return nil
 	}
+	var clashes []ImportClash
 	for module, imports := range st.Imports {
 		scope := st.ImportScopeFor(module)
+		from := map[string]Import{} // the import each local name was bound by
 		for _, imp := range imports {
 			if imp.IsNamespace() {
 				continue
 			}
-			from, ok := st.ModuleScopes[imp.Path]
-			if !ok || from == nil {
+			source, ok := st.ModuleScopes[imp.Path]
+			if !ok || source == nil {
 				continue
 			}
-			for local, source := range imp.Members {
-				sym, found := from.LookupLocal(source)
+			for _, local := range sortedKeys(imp.Members) {
+				sym, found := source.LookupLocal(imp.Members[local])
 				if !found || !declIsPublic(sym) {
 					continue
 				}
+				if existing, bound := scope.Symbols[local]; bound && existing != sym {
+					clashes = append(clashes, ImportClash{Name: local, First: from[local], Second: imp})
+					continue
+				}
 				scope.Symbols[local] = sym
+				from[local] = imp
 			}
 		}
 	}
+	return clashes
 }
 
-// ExportingModule reports the module that exports name, for a name that did not resolve
-// where it was written. Empty when nothing exports it.
+// ImportClash is one bare name a module imports from two modules, which now that several
+// modules may export one name is the place the choice between them has to be made.
+type ImportClash struct {
+	Name          string
+	First, Second Import
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// ExportingModules reports the modules that export name, for a name that did not resolve
+// where it was written — one module, or several when the name is shared. Empty when nothing
+// exports it.
 //
 // This is what GlobalScope is *for* now that it is off every module's parent chain: it is
 // the program-wide registry of exported names, so it can answer "this name exists, you did
 // not ask for it" — which is the difference between a useful diagnostic and "undefined".
-func (st *SymbolTable) ExportingModule(name string) (string, bool) {
+func (st *SymbolTable) ExportingModules(name string) []string {
 	if st == nil || st.GlobalScope == nil {
-		return "", false
+		return nil
 	}
-	sym, ok := st.GlobalScope.LookupLocal(name)
-	if !ok {
-		return "", false
+	var out []string
+	if sym, ok := st.GlobalScope.LookupLocal(name); ok {
+		if module := st.ModuleOfFile[sym.GetLocation().File]; module != "" {
+			out = append(out, module)
+		}
 	}
-	module := st.ModuleOfFile[sym.GetLocation().File]
-	if module == "" {
-		return "", false
+	for _, sym := range st.SharedExports[name] {
+		if module := st.ModuleOfFile[sym.GetLocation().File]; module != "" {
+			out = append(out, module)
+		}
 	}
-	return module, true
+	return out
 }
 
 // EntryScope is the scope of the file a compile started from — the module with no

@@ -75,9 +75,11 @@ The lookup chain is **module → imports → prelude**, and stops.
 
 - `SymbolTable.ImportScopeFor(module)` holds what a module's imports bring in, filled by
   `PopulateImportScopes` in `Collector.Finish` (the earliest point — exports are per file).
-- `PreludeScope.Parent` is **nil**. `GlobalScope` is the program-wide export registry: it makes
-  two modules exporting one name an error, and `ExportingModule` uses it to say "module `lib`
-  exports it, but this file does not import it".
+- `PreludeScope.Parent` is **nil**. `GlobalScope` holds each name **one** module exports; a name
+  several modules export moves to `SharedExports`, so a context-free lookup misses rather than
+  picking one. `ExportingModules` reads both to say "module `lib` exports it, but this file does
+  not import it". The remaining conflict — one module importing a name from two — is an
+  `ImportClash` from `PopulateImportScopes`, reported by the collector.
 - Only a selective import binds a bare name; an alias binds only its local name.
 - **Types need their own gate**: values are gated structurally by the scope chain, but types go
   through `declKey`-keyed maps, so `importedAt` checks the module of the declaration's **file**
