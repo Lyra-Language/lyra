@@ -26,7 +26,10 @@ prelude come from `modules.DefaultRoots`/`DefaultOptions`, shared with `lyrac`.
   an exported name's importers (`importerAnalysis`, keyed on the *declaring* file); occurrences
   are resolved per view and matched by declaration. A binding's uses include namespace members,
   UFCS calls (by recorded callee) and `import m.{ name }` members. Rename routes each edit to
-  its file and declines only a standard-library declaration or an unreadable file.
+  its file and declines only a standard-library declaration or an unreadable file. When the
+  importer search for an exported name had no workspace folder to root it (`searchRoot` fell back
+  to the document's directory), rename shows a `window/showMessage` warning naming the directory
+  searched, rather than walking further up.
 
 ## Handler conventions
 

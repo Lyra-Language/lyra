@@ -134,3 +134,55 @@ func TestCrossFile_APreludeFunctionIsDeclined(t *testing.T) {
 		t.Errorf("references to a prelude function should still answer: %v %v", locs, err)
 	}
 }
+
+// **A rename whose importer search could not cover a workspace says so** (09/13). With no
+// workspace folder the search root is the document's own directory, so an importer in a
+// parent directory is never seen — the one importer here — and the rename leaves it naming
+// something that no longer exists. The server reports what it searched rather than guessing
+// at a project boundary to walk.
+func TestRename_WarnsWhenTheImporterSearchHadNoWorkspace(t *testing.T) {
+	t.Setenv("LYRA_STD", stdRootDir(t))
+	h := servertest.New(t, newHandler())
+	dir := t.TempDir()
+	writeFile(t, dir, "app.lyra", "import lib.shapes.{ double }\nlet main = () -> void => println(double(2))\n")
+	src := "module lib.shapes\npub let double = pure (n: i64) -> i64 => n * 2\n"
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uri := openFileAndWait(t, h, filepath.Join(dir, "lib"), "shapes.lyra", src)
+
+	if we, err := h.Rename(uri, 1, colOf(t, src, "double", 1), "twice"); err != nil || we == nil {
+		t.Fatalf("Rename: %v %v", we, err)
+	}
+	msgs := h.Messages()
+	if len(msgs) != 1 || msgs[0].Type != lsp.MessageTypeWarning ||
+		!strings.Contains(msgs[0].Message, "searched for only under "+filepath.Join(dir, "lib")) {
+		t.Errorf("want one warning naming the directory searched, got %+v", msgs)
+	}
+}
+
+// With the workspace opened at the project root the same rename reaches the importer and
+// says nothing: a message on every rename is a message nobody reads.
+func TestRename_NoWarningInsideTheWorkspace(t *testing.T) {
+	t.Setenv("LYRA_STD", stdRootDir(t))
+	dir := t.TempDir()
+	root := lsp.DocumentURI(pathToURI(dir))
+	h := servertest.New(t, newHandler(), servertest.WithInitializeParams(&lsp.InitializeParams{RootURI: &root}))
+	writeFile(t, dir, "app.lyra", "import lib.shapes.{ double }\nlet main = () -> void => println(double(2))\n")
+	src := "module lib.shapes\npub let double = pure (n: i64) -> i64 => n * 2\n"
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uri := openFileAndWait(t, h, filepath.Join(dir, "lib"), "shapes.lyra", src)
+
+	we, err := h.Rename(uri, 1, colOf(t, src, "double", 1), "twice")
+	if err != nil || we == nil {
+		t.Fatalf("Rename: %v %v", we, err)
+	}
+	if got := editsIn(we); len(got["app.lyra"]) != 2 {
+		t.Errorf("the importer should be renamed (import member and call), got %v", got)
+	}
+	if msgs := h.Messages(); len(msgs) != 0 {
+		t.Errorf("a workspace-rooted rename should say nothing, got %+v", msgs)
+	}
+}

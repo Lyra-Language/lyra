@@ -9,6 +9,19 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a rename says where it looked for importers, when that was not a workspace
+
+The server finds an exported name's importers by walking a root, and with no workspace folder
+opened — or a document outside it — that root is the document's own directory. An importer in a
+parent or sibling directory is then never seen, and the rename leaves it naming something that
+no longer exists, with nothing in the editor to say so. The entry's own instruction was to
+report what was searched rather than search harder, and that is what landed: walking up would
+be guessing at a project boundary, possibly a home directory.
+
+A rename of an exported name whose search fell back shows a warning naming the directory it
+searched and the fix, opening the project's folder. A private name has no importers and a
+workspace-rooted search covers what can be covered, so neither says anything.
+
 ### 09/13/26 — two modules' types of one name are two types
 
 `let p: Point = two.make()` type-checked in a module with its own `Point`, and with identical

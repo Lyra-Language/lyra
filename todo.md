@@ -31,8 +31,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
-- **[OPEN] Importers outside the workspace root are invisible to rename.** If it bites,
-  report what was searched rather than searching harder.
 - **[OPEN] A crashed or killed language server leaves its diagnostics on screen.** VS Code
   disposes them with the client; confirm what Zed does before assuming there is work.
 

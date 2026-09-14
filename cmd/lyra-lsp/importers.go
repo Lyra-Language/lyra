@@ -31,18 +31,27 @@ import (
 // what the user opened; a document outside it (or a client that sent none) falls back to
 // the document's own directory, which is also what the module resolver treats as a root.
 func (h *Handler) workspaceRoot(docPath string) string {
+	root, _ := h.searchRoot(docPath)
+	return root
+}
+
+// searchRoot is workspaceRoot with whether the answer is the client's workspace. False means
+// the search fell back to the document's own directory — no workspace was opened, or the
+// document is outside it — which is the case a rename has to own up to: an importer in a
+// sibling or parent directory exists and was never looked for.
+func (h *Handler) searchRoot(docPath string) (string, bool) {
 	h.mu.Lock()
 	root := h.rootPath
 	h.mu.Unlock()
 	if root != "" && docPath != "" {
 		if rel, err := filepath.Rel(root, docPath); err == nil && !strings.HasPrefix(rel, "..") {
-			return root
+			return root, true
 		}
 	}
 	if root != "" && docPath == "" {
-		return root
+		return root, true
 	}
-	return filepath.Dir(docPath)
+	return filepath.Dir(docPath), false
 }
 
 // importerFiles returns every file under the workspace root whose `import` statements name

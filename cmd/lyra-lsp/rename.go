@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/owenrumney/go-lsp/lsp"
@@ -285,7 +286,7 @@ func locationContains(loc ast.Location, line, col int) bool {
 // shadowed or sibling same-named bindings are excluded. The declaration site
 // itself is always included in the edits. The go-lsp library registers this
 // capability automatically via the RenameHandler interface.
-func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *lsp.WorkspaceEdit, retErr error) {
+func (h *Handler) Rename(ctx context.Context, params *lsp.RenameParams) (result *lsp.WorkspaceEdit, retErr error) {
 	defer recoverHandler("rename", &result, &retErr)
 
 	uri := string(params.TextDocument.URI)
@@ -377,6 +378,7 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 		total += len(e)
 	}
 	log.Printf("rename: %q → %q, %d edit(s) across %d file(s)", anchor.name, newName, total, len(changes))
+	h.reportPartialImporterSearch(ctx, anchor, analysis, len(changes))
 	return &lsp.WorkspaceEdit{Changes: changes}, nil
 }
 
@@ -409,4 +411,32 @@ func (h *Handler) PrepareRename(_ context.Context, params *lsp.PrepareRenamePara
 		Range:       locToRange(source, span),
 		Placeholder: anchor.name,
 	}, nil
+}
+
+// reportPartialImporterSearch tells the user where importers were searched for, when the
+// rename was of an exported name and that search could not cover the workspace.
+//
+// **Reported rather than searched harder.** The server finds a module's importers by walking a
+// root (importers.go), and with no workspace folder — or a document outside the one opened —
+// the root is the document's own directory. A module importing the renamed name from a
+// sibling or parent directory is then never seen, and the rename leaves it naming something
+// that no longer exists. Walking further up would guess at a project boundary and could walk a
+// home directory; saying what was searched lets the user open the right folder instead.
+//
+// A private name has no importers and a workspace-rooted search covers what can be covered,
+// so both stay silent — a message on every rename is a message nobody reads.
+func (h *Handler) reportPartialImporterSearch(ctx context.Context, anchor renameAnchor, analysis *docAnalysis, files int) {
+	if !anchor.exported || h.client == nil {
+		return
+	}
+	root, fromWorkspace := h.searchRoot(analysis.file)
+	if fromWorkspace {
+		return
+	}
+	msg := fmt.Sprintf(
+		"Renamed %q in %d file(s). No workspace folder contains this file, so modules importing %q were searched for only under %s; one anywhere else still names %q. Open the project's folder to rename across all of it.",
+		anchor.name, files, anchor.name, root, anchor.name)
+	if err := h.client.ShowMessage(ctx, &lsp.ShowMessageParams{Type: lsp.MessageTypeWarning, Message: msg}); err != nil {
+		log.Printf("rename: could not show the partial-search warning: %v", err)
+	}
 }
