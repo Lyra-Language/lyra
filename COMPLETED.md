@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — two modules' types of one name are two types
+
+`let p: Point = two.make()` type-checked in a module with its own `Point`, and with identical
+layouts it ran: nominal equality compared declaration keys only where both types had one, and
+`app`'s `Point`, being program-wide, had none. The previous change had recorded it as the hole
+it left.
+
+**The comparison is now exact**, and the reason it can be is the rule that made the hole: only
+a type whose name is *not* program-wide carries a key. So an unkeyed type is the program-wide
+declaration of its name, and a keyed type is never that declaration — equal keys, empty or not,
+is precisely "the same declaration". The worry was an unkeyed copy of a keyed type built
+somewhere without the declaration in hand; nothing in the suite, `std`, the bindings or the
+examples produced one.
+
+"cannot assign Point to Point" names the mistake and hides it, so a mismatch between two types
+that render identically now spells each with its module (`mismatchNames`) — at an assignment,
+an argument, a return, a struct field and an array element.
+
 ### 09/13/26 — another module's type as a generic argument
 
 `Has(two.make())` with `data Opt<t> = Has(t) | Gone` failed in the backend: *unknown named type

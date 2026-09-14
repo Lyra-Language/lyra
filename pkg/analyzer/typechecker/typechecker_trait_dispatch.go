@@ -601,9 +601,10 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		// declared return types started resolving.
 		paramType := tc.resolveType(param.Type, arg.GetLocation())
 		if !tc.assignableValue(arg, argType, paramType) {
+			got, want, _ := mismatchNames(argType, paramType)
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s",
-				calleeName, i+1, argType, paramType)
+				calleeName, i+1, got, want)
 			continue
 		}
 		// The borrow modes a trait signature declares are checked exactly as a free

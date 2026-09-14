@@ -203,10 +203,12 @@ func TypesEqual(a, b Type) bool {
 	return false
 }
 
-// keysAgree compares two nominal types' declaration keys where both are known. A type
-// without one — built somewhere the declaration was not in hand — compares by name, as
-// every nominal type did before keys existed; two known keys that differ are two modules'
-// declarations of one name, which are different types.
+// keysAgree compares two nominal types' declaration keys, **exactly**. Only a type whose
+// name is not program-wide carries one (SymbolTable.KeyAmbiguousTypes), so an unkeyed type is
+// the program-wide declaration of its name and a keyed one never is: `two`'s private `Point`
+// is not `app`'s. Comparing keys only where both were set let exactly that pair through until
+// 09/13 — a value of one module's type assignable to another module's type of the same name,
+// silently where the layouts matched.
 func keysAgree(a, b string) bool {
-	return a == "" || b == "" || a == b
+	return a == b
 }

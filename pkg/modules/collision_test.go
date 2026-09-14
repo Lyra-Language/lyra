@@ -293,3 +293,31 @@ pub let helper = () -> i64 => 100`,
 		t.Errorf("expected a clean program; got %v", errs)
 	}
 }
+
+// **A value of another module's type is not a value of a same-named local type** (09/13).
+// `app`'s own `Point` is program-wide and two's is private, and nominal equality let the
+// pair through, so this compiled and — with identical layouts — ran. The message spells the
+// two with their modules, since "cannot assign Point to Point" names nothing.
+func TestModules_AnotherModulesTypeIsNotALocalTypeOfTheSameName(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra": `import two
+struct Point { y: i64, z: i64 }
+let take = (p: Point) -> i64 => p.y
+let back = () -> Point => two.make()
+let main = () -> u8 => {
+  let p: Point = two.make()
+  u8(take(two.make()) + p.y)
+}`,
+		"two.lyra": "module two\nstruct Point { y: i64, z: i64 }\npub let make = () -> Point => Point { y: 1, z: 2 }",
+	})
+	res := analyze(t, root)
+	for _, want := range []string{
+		"p: cannot assign two.Point to Point",
+		"argument 1 (p): cannot assign two.Point to Point",
+		"return type mismatch: expected Point, got two.Point",
+	} {
+		if !errorsContaining(res, want) {
+			t.Errorf("want an error containing %q; got %v", want, res.Errors())
+		}
+	}
+}

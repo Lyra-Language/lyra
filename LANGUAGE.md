@@ -336,6 +336,8 @@ A local declaration of an imported (or prelude) name wins every bare reference i
 
 **Several modules may export one name**, and a module may re-export a name it imports (`pub let map = (n) => seq.map(n) + 1`). A bare name reaches a module only through its own member list, so the importer chooses; importing one name from two modules is an error, fixed with an alias (`import two.{ helper as other }`) or the namespace.
 
+**Two modules' types of one name are different types**, wherever a value carries one: `let p: Point = two.make()` is refused when `Point` here is not two's, and the message spells them `two.Point` and `Point`.
+
 ### Documentation comments
 
 `///` documents the declaration below; `//!` documents the module. Body is Markdown, **no `@param`/`@returns`**.

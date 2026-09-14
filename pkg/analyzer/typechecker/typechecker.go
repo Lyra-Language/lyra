@@ -1605,10 +1605,14 @@ func (tc *TypeChecker) checkStorable(
 	value ast.Expression, valueType, target types.Type, shown any, loc ast.Location, subject string,
 ) bool {
 	if !tc.assignableValue(value, valueType, target) {
+		var got any = valueType
+		if g, w, qualified := mismatchNames(valueType, target); qualified {
+			got, shown = g, w
+		}
 		if subject != "" {
-			tc.addError(loc, SeverityError, "%s: cannot assign %s to %s", subject, valueType, shown)
+			tc.addError(loc, SeverityError, "%s: cannot assign %s to %s", subject, got, shown)
 		} else {
-			tc.addError(loc, SeverityError, "cannot assign %s to %s", valueType, shown)
+			tc.addError(loc, SeverityError, "cannot assign %s to %s", got, shown)
 		}
 		return false
 	}
@@ -4706,7 +4710,7 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 			// it and reports there, so reporting here too would be one mistake twice.
 			if len(typeSubst) == len(decl.GenericParams) {
 				tc.addError(elemExpr.GetLocation(), SeverityError,
-					"%s: element %d: cannot assign %s to %s", name, i+1, actual, expected)
+					"%s: element %d: cannot assign %s to %s", name, i+1, mismatchExpected(expected, actual), mismatchExpected(actual, expected))
 			}
 			continue
 		}
@@ -4984,7 +4988,8 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		}
 		actual = tc.resolveType(actualInContext, f.Value.GetLocation())
 		if actual != nil && !tc.assignableValue(f.Value, actual, expected) {
-			tc.addError(f.Value.GetLocation(), SeverityError, "%s.%s: cannot assign %s to %s", expr.Name, name, actual, expected)
+			got, want, _ := mismatchNames(actual, expected)
+			tc.addError(f.Value.GetLocation(), SeverityError, "%s.%s: cannot assign %s to %s", expr.Name, name, got, want)
 		} else if actual != nil {
 			// Assignable: push the declared field width onto an untyped literal
 			// leaf (context-directed literal-width propagation — the same treatment
@@ -5619,4 +5624,27 @@ func tupleParamList(t types.TupleType) string {
 		parts = append(parts, fmt.Sprintf("%s", e))
 	}
 	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// mismatchNames is how a type-mismatch message names its two types: as String renders them,
+// unless they render **identically** while being different types — two modules' `Point`s —
+// in which case each is spelled with its module (types.IdentityString). "cannot assign Point
+// to Point" names the mistake and hides it; "cannot assign two.Point to Point" is the fix.
+// qualified reports which happened, for a caller that otherwise names a side its own way.
+func mismatchNames(got, want types.Type) (g, w any, qualified bool) {
+	if got == nil || want == nil || got.String() != want.String() {
+		return got, want, false
+	}
+	gs, ws := types.IdentityString(got), types.IdentityString(want)
+	if gs == ws {
+		return got, want, false
+	}
+	return gs, ws, true
+}
+
+// mismatchExpected is one side of mismatchNames, for a message that names the two types in
+// the other order: t as it should be named beside other.
+func mismatchExpected(other, t types.Type) any {
+	_, named, _ := mismatchNames(other, t)
+	return named
 }

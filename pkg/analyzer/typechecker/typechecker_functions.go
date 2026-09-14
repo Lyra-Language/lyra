@@ -389,7 +389,7 @@ func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, l
 	}
 	if !tc.assignableValue(value, valueType, declaredReturn) {
 		tc.addError(loc, SeverityError,
-			"%s: return type mismatch: expected %s, got %s", funcName, declaredReturn, valueType)
+			"%s: return type mismatch: expected %s, got %s", funcName, mismatchExpected(valueType, declaredReturn), mismatchExpected(declaredReturn, valueType))
 		return
 	}
 	// A literal return value must fit the declared width — `() -> u8 => 300` had
@@ -569,9 +569,10 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 			continue
 		}
 		if !tc.assignableValue(arg, argType, param.Type) {
+			got, want, _ := mismatchNames(argType, param.Type)
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s",
-				calleeName, i+1, argType, param.Type)
+				calleeName, i+1, got, want)
 			continue
 		}
 		// A call *through a function-typed value* is still an argument position, and a
@@ -1571,9 +1572,13 @@ func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter
 		return // already named the offending value
 	}
 	if !tc.assignableValue(arg, argType, resolvedParamType) {
+		got, want, qualified := mismatchNames(argType, resolvedParamType)
+		if !qualified {
+			want = param.Type // the parameter as written, unless the two need telling apart
+		}
 		tc.addError(arg.GetLocation(), SeverityError,
 			"%s: argument %d (%s): cannot assign %s to %s",
-			calleeName, i+1, paramName, argType, param.Type)
+			calleeName, i+1, paramName, got, want)
 	} else {
 		// The parameter type is the argument's context: push its width onto
 		// untyped literal args so the backend lowers `add(200)` at the param's

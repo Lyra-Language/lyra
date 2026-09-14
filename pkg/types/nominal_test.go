@@ -29,7 +29,11 @@ func TestIdentityString(t *testing.T) {
 	if TypesEqual(two, NamedStructType{Name: "Point", Key: "one::Point"}) {
 		t.Error("two modules' Points with known keys are different types")
 	}
-	if !TypesEqual(two, NamedStructType{Name: "Point"}) {
-		t.Error("an unkeyed Point compares by name, as before keys existed")
+	// An unkeyed Point is the program-wide one, which a keyed Point never is.
+	if TypesEqual(two, NamedStructType{Name: "Point"}) {
+		t.Error("a keyed Point is not the program-wide Point")
+	}
+	if !TypesEqual(wide, NamedStructType{Name: "Pos"}) {
+		t.Error("two unkeyed types of one name are the one program-wide declaration")
 	}
 }

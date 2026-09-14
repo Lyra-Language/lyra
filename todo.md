@@ -9,11 +9,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] A value of another module's type is assignable to a same-named local type.**
-  `let p: Point = two.make()`, with `app` declaring its own `Point`, type-checks: `app`'s `Point`
-  is program-wide and so carries no declaration key, and nominal equality compares keys only when
-  both have one (`types.keysAgree`). The layouts usually differ, so it fails later rather than
-  silently.
 
 ## In progress
 

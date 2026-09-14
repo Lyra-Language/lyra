@@ -454,8 +454,9 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 			continue // already named the offending value
 		}
 		if !tc.assignableValue(arg, argType, params[i]) {
+			got, want, _ := mismatchNames(argType, params[i])
 			tc.addError(arg.GetLocation(), SeverityError,
-				"%s: argument %d: cannot assign %s to %s", calleeName, i+1, argType, params[i])
+				"%s: argument %d: cannot assign %s to %s", calleeName, i+1, got, want)
 			continue
 		}
 		// The solved parameter type is the argument's context, exactly as a concrete
