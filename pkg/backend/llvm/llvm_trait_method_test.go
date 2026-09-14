@@ -114,6 +114,40 @@ func TestExec_TraitMethods(t *testing.T) {
 			 }`,
 			5,
 		},
+		{
+			// `Self` nested in a signature is the receiver's type at every depth: an array,
+			// a tuple, a data payload, a callback, a generic impl, a default method. The
+			// typechecker used to replace only a top-level `Self`, so none of these built.
+			"Self nested in the signature",
+			`data Opt<t> = Nothing | Just(t)
+			 struct Box<t> { value: t }
+			 trait Dup { dup: (Self) -> []Self }
+			 impl Dup for i64 { dup = (self) => [self, self + 1] }
+			 impl Dup for Box<t> { dup = (self) => [self, self] }
+			 trait Two { two: (Self) -> (Self, Self) }
+			 impl Two for i64 { two = (self) => (self, self * 2) }
+			 trait Dec { dec: (Self) -> Opt<Self> }
+			 impl Dec for i64 { dec = (self) => if self > 0 { Just(self - 1) } else { Nothing } }
+			 trait Apply { apply: (Self, (Self) -> Self) -> Self }
+			 impl Apply for i64 { apply = (self, f) => f(self) }
+			 trait Wrap {
+			   one: (Self) -> Self
+			   wrap: (Self) -> []Self = (self) => [self.one()]
+			 }
+			 impl Wrap for i64 { one = (self) => self * 3 }
+			 let main = () -> u8 => {
+			   let d = 4.dup()
+			   let bs = Box { value: 7 }.dup()
+			   let p = 5.two()
+			   let n = match 6.dec() { Just(v) => v, Nothing => 0 }
+			   let z = match 0.dec() { Just(v) => v, Nothing => 100 }
+			   let a = 2.apply((x: i64) -> i64 => x + 1)
+			   let w = 2.wrap()
+			   u8(d[0] + d[1] + bs[1].value + p.0 + p.1 + n + z + a + w[0])
+			 }`,
+			// 4+5 + 7 + 5+10 + 5 + 100 + 3 + 6
+			145,
+		},
 	}
 	clang := lookClang(t)
 	for _, c := range cases {

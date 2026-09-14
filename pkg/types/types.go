@@ -73,6 +73,10 @@ func IsBoolean(t Type) bool {
 	return primitive.Name == Boolean
 }
 
+// SelfVar is the substitution key `Substitute` binds a SelfType under — also the name a
+// trait's default methods give `Self` as a type variable.
+const SelfVar = "Self"
+
 type SelfType struct {
 	GenericParams []string
 }

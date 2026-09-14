@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — `Self` nested in a trait signature
+
+`trait Dup { dup: (Self) -> []Self }` refused every impl (`expected DynamicArray<Self>, got
+StaticArray<i64, 2>`), and a call answered a type still mentioning `Self`, so `p.0 + p.1` on
+a `(Self, Self)` result was "operands must be numeric". Found by writing
+`examples/config/config.lyra`'s `FromJson`, whose `from_json` answers `Maybe<Self>`.
+
+`substituteSelf` walked each parameter and the return with its own one-level check: replace
+the type if it *is* `SelfType`, else leave it. Hazard 8's "a copy that admits it is a copy is
+still a copy" in miniature. It now calls `types.Substitute`, which gained a `SelfType` case
+bound under `types.SelfVar`. That is the name default-method checking already used for `Self`
+as a type variable (`selfVar` now aliases it), so a default's `Maybe<Self>` becomes
+`Maybe<Self-the-variable>` through the same walk. `SelfType` is its own type rather than a
+`GenericType`, which is why no existing case caught it. Nothing in std declared a nested
+`Self`, which is how it stayed hidden. The backend needed nothing: it lowers from the
+typechecker's substituted signatures.
+
+Probing the callback shape turned up an unrelated gap, filed: an untyped lambda passed to a
+trait method is not typed from its slot.
+
 ### 09/14/26 — a value error inside a call argument no longer crashes the typechecker
 
 `f("a\u{0}b")` panicked in `checkNamedArgument`. `collectStringLiteralExpr` reported the bad

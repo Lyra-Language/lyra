@@ -45,7 +45,7 @@ import (
 
 // selfVar is the type variable a default method's `Self` is checked as. Unforgeable by a
 // user program, since a type variable is lowercase-leading.
-const selfVar = "Self"
+const selfVar = types.SelfVar
 
 // checkTraitDefaultMethods type-checks every trait default-method body in the program,
 // once each, with Self abstract.

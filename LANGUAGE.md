@@ -243,6 +243,8 @@ A `gen` function yields into a `Seq<t>`; combinators are Lyra in `std/prelude/se
 
 ## 4. Traits, Generics and Dispatch
 
+In a trait method's signature `Self` is the implementing type at any depth: `(Self) -> []Self`, `Maybe<Self>`, `(Self, Self)` and a callback's `(Self) -> Self` all mean it, in the impl and at the call.
+
 ### Supertraits
 
 `trait B: A`: every implementer of `B` must implement `A` (`lyra-E040`, at each `impl`), and a `where t: B` bound reaches `A`'s methods and satisfies `where u: A`. Cycles are legal (always implemented together). Bodies are optional:

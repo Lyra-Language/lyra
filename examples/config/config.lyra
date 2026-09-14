@@ -21,7 +21,7 @@
 //    no `self`, so the impl can only be chosen from the type the caller expects:
 //    `let port: i64 = required(json, "port")?`. Lyra dispatches on a receiver and
 //    nothing else, so today there is one helper per field type instead. Writing the wanted
-//    form also meets two smaller gaps on the way (below), which fall before dispatch.
+//    form also meets a smaller gap on the way (below), which falls before dispatch.
 
 import std.collections.{ parse_args }
 import std.io.{ read_file }
@@ -127,10 +127,8 @@ let load = (path: string) -> Result<Config, ConfigError> => {
 //     FromJson::from_json(value).ok_or(WrongKind(name, kind_name::<t>(), value.kind()))
 //   }
 //
-// Refused in three places:
-//   - each impl: `from_json: return type mismatch: expected Maybe<Self>, got Maybe<i64>`.
-//     `Self` nested in a return type is not replaced by the implementing type — a bug that
-//     hits receiver methods too (`(Self) -> []Self`), not a missing feature.
+// Refused in two places (the impls themselves are accepted since 09/14/26, when `Self`
+// nested in `Maybe<Self>` began to mean the implementing type):
 //   - the call: `no implementation of FromJson::from_json for JsonValue`. The first argument
 //     is taken as the receiver, so the impl is looked up on the argument's type.
 //   - with no argument at all (`trait Zero { zero: () -> Self }`):

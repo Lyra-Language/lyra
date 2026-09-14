@@ -9,10 +9,9 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] `Self` nested in a trait method's return type is not substituted.** `trait Dup
-  { dup: (Self) -> []Self }` refuses `impl Dup for i64 { dup = (self) => [self, self] }`
-  (`expected DynamicArray<Self>`); same for `Maybe<Self>`, `(Self, Self)`, `Result<Self, e>`.
-  A bare `Self` works. Repro in `examples/config/config.lyra` (half 2).
+- **[OPEN] An untyped lambda passed to a trait method gets no parameter types.**
+  `3.apply((x) => x * 7)` against `apply: (Self, (i64) -> i64) -> i64` reports `undefined
+  symbol "x"`; the same lambda to a free or `self` function is typed from the slot.
 
 ## In progress
 
@@ -221,7 +220,7 @@ existing inferred `pure det`, with no new syntax; results must be emittable cons
 - **[OPEN] Return-type-directed dispatch.** `trait Zero { zero: () -> Self }` cannot be
   resolved, so `Zero`/`Default` are unwritable; settle where the expected type comes from,
   the no-context case, and E035's interaction. Driven by `examples/config/config.lyra`
-  (half 2, `FromJson`), which first needs the nested-`Self` bug fixed and the next entry.
+  (half 2, `FromJson`), which first needs the next entry.
 - **[OPEN] An expected type does not reach through `?`.** `let v: i64 = make(1)?` with
   `make<t>(…) -> Result<t, e>` cannot infer `t`; without `?` the annotation infers it.
 - **[OPEN] Overlapping impls** (`impl Show for Box<t>` beside `Box<i64>`) are not ranked;

@@ -260,15 +260,17 @@ func substituteSigGenerics(sig *types.LambdaType, subst map[string]types.Type) *
 	}
 }
 
-// substituteSelf replaces every SelfType occurrence in sig with concreteType.
+// substituteSelf replaces every SelfType occurrence in sig with concreteType, at any depth
+// (`[]Self`, `Maybe<Self>`, a callback's `(Self) -> Self`).
 func substituteSelf(sig *types.LambdaType, concreteType types.Type) *types.LambdaType {
 	if sig == nil {
 		return nil
 	}
+	subst := map[string]types.Type{types.SelfVar: concreteType}
 	params := make([]types.ParameterType, len(sig.Parameters))
 	for i, p := range sig.Parameters {
 		params[i] = types.ParameterType{
-			Type:         substituteTypeInSig(p.Type, concreteType),
+			Type:         types.Substitute(p.Type, subst),
 			DefaultValue: p.DefaultValue,
 			Modifier:     p.Modifier,
 			Borrow:       p.Borrow,
@@ -276,18 +278,8 @@ func substituteSelf(sig *types.LambdaType, concreteType types.Type) *types.Lambd
 	}
 	return &types.LambdaType{
 		Parameters: params,
-		ReturnType: types.ReturnType{Type: substituteTypeInSig(sig.ReturnType.Type, concreteType)},
+		ReturnType: types.ReturnType{Type: types.Substitute(sig.ReturnType.Type, subst)},
 	}
-}
-
-func substituteTypeInSig(t types.Type, concreteType types.Type) types.Type {
-	if t == nil {
-		return nil
-	}
-	if _, ok := t.(types.SelfType); ok {
-		return concreteType
-	}
-	return t
 }
 
 type traitMethodKey struct {

@@ -17,7 +17,9 @@ package types
 // DataType's fields, because those are bound by the declaration rather than by the
 // signature mentioning it, while Substitute *does*, because building an instantiation's
 // layout is precisely rewriting `struct Box<t> { v: t }` at `t = i64`. Both are right;
-// they are answering different questions about the same tree.
+// they are answering different questions about the same tree. `SelfType` is the other
+// difference: Substitute binds it (under SelfVar) and CollectTypeVars does not report it,
+// because `Self` is fixed by the impl, never solved from a call's arguments.
 
 // Substitute replaces every type variable in t with its binding from subst, leaving any
 // variable the map does not mention untouched. t is not modified: each composite is
@@ -30,6 +32,14 @@ func Substitute(t Type, subst map[string]Type) Type {
 	switch tt := t.(type) {
 	case GenericType:
 		if concrete, ok := subst[tt.Name]; ok {
+			return concrete
+		}
+		return tt
+	case SelfType:
+		// A trait signature's `Self`, bound under SelfVar. It is a type of its own rather
+		// than a GenericType, so without this case it was replaced only where a caller
+		// checked for it at the top — `(Self) -> Self` worked and `(Self) -> []Self` did not.
+		if concrete, ok := subst[SelfVar]; ok {
 			return concrete
 		}
 		return tt
