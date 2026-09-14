@@ -4,6 +4,7 @@ type DataType struct {
 	Name         string // uppercase letter optionally followed by any number of letters or numbers
 	Constructors []DataTypeConstructor
 	Allocation   AllocationModifier
+	Key          string `print:"-"` // the declaration's identity; see NominalKey
 }
 
 func (DataType) typeNode() {}

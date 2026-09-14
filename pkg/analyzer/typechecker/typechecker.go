@@ -1332,6 +1332,7 @@ func (tc *TypeChecker) resolveGenericAggregate(t types.Type, loc ast.Location) t
 			Fields:        fields,
 			GenericParams: d.GenericParams,
 			Allocation:    d.Allocation,
+			Key:           d.Key,
 		}, p.Allocation)
 	case types.TupleType:
 		elems := make([]types.Type, len(d.Elements))

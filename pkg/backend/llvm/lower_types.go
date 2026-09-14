@@ -209,7 +209,7 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		defer l.resolvingFrom(decl.GetLocation())()
 		return l.resolveForLayout(types.WithAllocation(decl.Type, v.Allocation))
 	case types.NamedStructType:
-		defer l.resolvingFrom(l.declLocOf(v.Name))()
+		defer l.resolvingFrom(l.declLocOfKeyed(v.Key, v.Name))()
 		fields := make([]types.StructField, len(v.Fields))
 		for i, f := range v.Fields {
 			f.Type = l.resolveForLayout(f.Type)
@@ -218,7 +218,7 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		v.Fields = fields
 		return v
 	case types.UnionType:
-		defer l.resolvingFrom(l.declLocOf(v.Name))()
+		defer l.resolvingFrom(l.declLocOfKeyed(v.Key, v.Name))()
 		members := make([]types.StructField, len(v.Members))
 		for i, m := range v.Members {
 			m.Type = l.resolveForLayout(m.Type)
@@ -508,11 +508,15 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		if types.IsAnonymousTupleName(t.Name) {
 			return l.lowerAnonymousTupleType(t)
 		}
-		return l.lookupNamedType(t.Name)
+		return l.lookupNamedTypeKeyed(t.Key, t.Name)
 	case types.NamedStructType:
-		return l.lookupNamedType(t.Name)
+		// **By the declaration key where the type carries one** — a type whose name is not
+		// program-wide (SymbolTable.KeyAmbiguousTypes). A value of another module's private
+		// or shadowed type reaches this module's code under a name that means something
+		// else here, or nothing; until 09/13 it was looked up by that name.
+		return l.lookupNamedTypeKeyed(t.Key, t.Name)
 	case types.UnionType:
-		return l.lookupNamedType(t.Name)
+		return l.lookupNamedTypeKeyed(t.Key, t.Name)
 	case types.AnonymousStructType:
 		// Structural, exactly like an anonymous tuple: there is no declaration to have
 		// registered a named type, so the LLVM struct is built from the fields on the
@@ -522,7 +526,7 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		return l.lowerAnonymousStructType(t)
 	case types.DataType:
 		// A `data` value resolves to its registered tagged-union struct.
-		return l.lookupNamedType(t.Name)
+		return l.lookupNamedTypeKeyed(t.Key, t.Name)
 	case types.ParameterizedType:
 		// One instantiation of a generic type, materialized on first use.
 		return l.lowerParameterizedType(t)

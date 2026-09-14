@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — another module's type as a generic argument
+
+`Has(two.make())` with `data Opt<t> = Has(t) | Gone` failed in the backend: *unknown named type
+"Point"* when `app` had no `Point` of its own, and a store of two's `Point` into app's layout when
+it did. It predated shared exports — a private type did the same — and writing their test found
+it. A resolved `NamedStructType` held only its name, and the name means something else, or
+nothing, once a value carries the type into another module; `Opt$Point` was mangled from that
+name too, so two modules' `Point`s would also have shared one instantiation.
+
+**The declaration key now rides on the type**, for the four nominal kinds, and the backend
+lowers a keyed type by its key. Instantiation keys and symbols spell a keyed type with its
+module (`types.IdentityString`, used by every renderer in `typetable/instantiation.go`).
+
+**Only a type whose name is not program-wide carries a key**, and the first attempt found out
+why. Keying every declaration split `Maybe<[]MaterialParams>` in the glTF bindings into two
+symbols — one named from the resolved type, qualified, and one from a still-unresolved reference,
+which cannot know a key — and llir panicked on the mismatched store. A program-wide name means
+one declaration from anywhere, so its bare spelling is already an identity and both paths agree;
+a private, shadowing or shared name is the case that never worked by name, and so the only one
+that needs the key. `SymbolTable.KeyAmbiguousTypes` decides once every export is known, from
+`Collector.Finish`.
+
+The same limit leaves one hole, recorded in todo.md: nominal equality compares keys only when
+both sides have one, so a value of two's `Point` is still assignable to app's own, program-wide
+`Point`.
+
 ### 09/13/26 — several modules may export one name
 
 `pub let map` in two modules was `function "map" is already defined`, and so was a module

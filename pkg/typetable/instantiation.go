@@ -1,7 +1,6 @@
 package typetable
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -51,7 +50,7 @@ func (i Instantiation) Key() string {
 	sort.Strings(names)
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
-		parts = append(parts, fmt.Sprintf("%s=%s", n, i.Subst[n]))
+		parts = append(parts, n+"="+identity(i.Subst[n]))
 	}
 	return i.Name + i.discSuffix() + "<" + strings.Join(parts, ",") + ">"
 }
@@ -83,7 +82,7 @@ func (i Instantiation) Symbol() string {
 		parts = append(parts, mangleTypeName(i.Disc))
 	}
 	for _, n := range names {
-		parts = append(parts, mangleTypeName(i.Subst[n].String()))
+		parts = append(parts, mangleTypeName(identity(i.Subst[n])))
 	}
 	return strings.Join(parts, "$")
 }
@@ -103,7 +102,7 @@ func TypeSymbol(name string, args []types.Type) string {
 			parts = append(parts, "_")
 			continue
 		}
-		parts = append(parts, mangleTypeName(a.String()))
+		parts = append(parts, mangleTypeName(identity(a)))
 	}
 	return strings.Join(parts, "$")
 }
@@ -122,7 +121,7 @@ func TypeSymbol(name string, args []types.Type) string {
 func MonoTypeKey(t types.Type) string {
 	pt, ok := t.(types.ParameterizedType)
 	if !ok || len(pt.TypeArguments) == 0 {
-		return t.String()
+		return identity(t)
 	}
 	parts := make([]string, 0, len(pt.TypeArguments)+1)
 	parts = append(parts, pt.Name)
@@ -276,4 +275,13 @@ func (t *InstantiationTable) All() []Instantiation {
 		out = append(out, unique[k])
 	}
 	return out
+}
+
+// identity renders a type for an instantiation's key or symbol, where two modules' types of
+// one name must stay apart (types.IdentityString). A nil binding renders as `%s` did.
+func identity(t types.Type) string {
+	if t == nil {
+		return "%!s(<nil>)"
+	}
+	return types.IdentityString(t)
 }

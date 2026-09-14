@@ -13,6 +13,9 @@ type TupleType struct {
 	// Allocation is never declared on the type (there are no declaration-level
 	// modifiers) — it's a property of the value's storage, read via AllocationOf.
 	Allocation AllocationModifier
+	// Key is a named tuple's declaration identity (see NominalKey); empty for an
+	// anonymous tuple, which has none.
+	Key string `print:"-"`
 }
 
 func (TupleType) typeNode() {}

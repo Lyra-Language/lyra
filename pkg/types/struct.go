@@ -7,6 +7,10 @@ type NamedStructType struct {
 	Fields        []StructField
 	GenericParams []GenericType
 	Allocation    AllocationModifier
+	// Key is the declaration's identity, `<module>::<name>` (see NominalKey). Never
+	// rendered: it is what tells two modules' `Point` apart once the type has travelled
+	// away from the module that declared it.
+	Key string `print:"-"`
 }
 
 func (NamedStructType) typeNode() {}

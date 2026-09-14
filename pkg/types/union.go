@@ -27,6 +27,7 @@ type UnionType struct {
 	Name          string
 	Members       []StructField
 	GenericParams []GenericType
+	Key           string `print:"-"` // the declaration's identity; see NominalKey
 }
 
 func (UnionType) typeNode() {}

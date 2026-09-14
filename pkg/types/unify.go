@@ -67,14 +67,14 @@ func TypesEqual(a, b Type) bool {
 		return TypesEqual(at.ReturnType.Type, bt.ReturnType.Type)
 	case NamedStructType:
 		bt, ok := b.(NamedStructType)
-		return ok && at.Name == bt.Name
+		return ok && at.Name == bt.Name && keysAgree(at.Key, bt.Key)
 	case UnionType:
 		// Nominal, by name alone, exactly as a NamedStructType is: a union declares
 		// its own identity, and two unions with identical members but different names
 		// are different types — which is the whole reason to declare one rather than
 		// reach for an anonymous shape.
 		bt, ok := b.(UnionType)
-		return ok && at.Name == bt.Name
+		return ok && at.Name == bt.Name && keysAgree(at.Key, bt.Key)
 	case AnonymousStructType:
 		bt, ok := b.(AnonymousStructType)
 		if !ok {
@@ -112,7 +112,7 @@ func TypesEqual(a, b Type) bool {
 			// sound here (a name-vs-anonymous or differing-name pair is simply
 			// unequal, same as the two branches below never needing a separate
 			// case).
-			return at.Name == bt.Name
+			return at.Name == bt.Name && keysAgree(at.Key, bt.Key)
 		}
 		// Both anonymous: structural (element-wise) equality, as before.
 		if len(at.Elements) != len(bt.Elements) {
@@ -126,7 +126,7 @@ func TypesEqual(a, b Type) bool {
 		return true
 	case DataType:
 		if bt, ok := b.(DataType); ok {
-			return at.Name == bt.Name
+			return at.Name == bt.Name && keysAgree(at.Key, bt.Key)
 		}
 	case *ConstrainedType:
 		// ConstrainedType uses the pointer convention: it is constructed as
@@ -201,4 +201,12 @@ func TypesEqual(a, b Type) bool {
 		return false
 	}
 	return false
+}
+
+// keysAgree compares two nominal types' declaration keys where both are known. A type
+// without one — built somewhere the declaration was not in hand — compares by name, as
+// every nominal type did before keys existed; two known keys that differ are two modules'
+// declarations of one name, which are different types.
+func keysAgree(a, b string) bool {
+	return a == "" || b == "" || a == b
 }

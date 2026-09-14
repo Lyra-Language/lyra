@@ -1264,3 +1264,30 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 	}
 	return nil, false
 }
+
+// KeyAmbiguousTypes puts the declaration key on the declared type of every type whose name
+// is **not** program-wide — a private declaration, one shadowing another module's or the
+// prelude's, or a name several modules export — and clears it from the rest. It must run
+// once every module's exports are known, which is why the collector calls it from Finish.
+//
+// The key rides on the type so that every copy of it — resolved, substituted, carried by a
+// value into a module where the name means something else — still names its declaration,
+// and so that an instantiation over it (`Opt<Point>`) is named apart from one over another
+// module's `Point` (types.IdentityString).
+//
+// **A program-wide name carries none**, deliberately. Such a name means one declaration
+// from anywhere, so the bare name already identifies it — and an instantiation named from
+// a still-unresolved reference to it (which cannot know a key) must agree with one named
+// from the resolved type. Keying those too split `Maybe<[]MaterialParams>` into two symbols.
+func (st *SymbolTable) KeyAmbiguousTypes() {
+	if st == nil {
+		return
+	}
+	for key, decl := range st.Types {
+		if wide, ok := st.LookupType(decl.Name); ok && wide == decl {
+			decl.Type = types.WithNominalKey(decl.Type, "")
+			continue
+		}
+		decl.Type = types.WithNominalKey(decl.Type, key)
+	}
+}

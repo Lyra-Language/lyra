@@ -9,10 +9,11 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] Another module's type as a generic argument fails in the backend.** `Has(two.make())`
-  with `data Opt<t> = Has(t)` in `app` reports *unknown named type "Point"* (or stores into the
-  wrong layout when `app` has its own `Point`): a resolved `NamedStructType` carries no
-  declaration key, and `Opt$Point` is mangled from the bare name. Private or exported alike.
+- **[OPEN] A value of another module's type is assignable to a same-named local type.**
+  `let p: Point = two.make()`, with `app` declaring its own `Point`, type-checks: `app`'s `Point`
+  is program-wide and so carries no declaration key, and nominal equality compares keys only when
+  both have one (`types.keysAgree`). The layouts usually differ, so it fails later rather than
+  silently.
 
 ## In progress
 

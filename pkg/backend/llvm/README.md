@@ -265,6 +265,12 @@ matching the symbol table's `<module>::<name>` keys; `lookupTypeDecl(name)` is t
 - **An instantiation carries the site it was requested from**: a specialization enters the
   *generic's* module, but a type argument may be private to the caller's.
   `lookupNamedType` falls back to the site's key after the current module's.
+- **A resolved nominal type whose name is not program-wide carries its declaration key**
+  (`NamedStructType.Key` et al., set by `SymbolTable.KeyAmbiguousTypes`): `lowerType` and
+  `resolveForLayout` look it up by that key first, and `types.IdentityString` spells it
+  module-qualified in instantiation keys and symbols (`Opt$two_Point`). A program-wide type
+  carries none and keeps its bare spelling, so an unresolved reference to it names the same
+  instantiation a resolved one does.
 - **Bugs here only reproduce with a `module` header**; the suite prepends `module main`.
 
 ### `data` construction

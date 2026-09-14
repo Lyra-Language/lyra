@@ -399,7 +399,9 @@ func (c *Collector) Finish() (*ast.Program, *symbols.SymbolTable, *symbols.Scope
 	c.checkOperatorMethodNames()
 	// Last, and it has to be: a module's imports resolve against other modules' exports,
 	// and exports are recorded per file as each is walked.
-	for _, clash := range c.table.PopulateImportScopes() {
+	importClashes := c.table.PopulateImportScopes()
+	c.table.KeyAmbiguousTypes()
+	for _, clash := range importClashes {
 		c.errors = append(c.errors, diag.Diagnostic{
 			Location: clash.Second.Loc,
 			Severity: diag.SeverityError,
