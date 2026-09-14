@@ -9,9 +9,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] `default_font()` draws lyra-W022 advising `unload_font`.** raylib's `UnloadFont`
-  ignores the default font, so it is noise rather than harm. The fix wants a
-  `@must_release` type with a *borrowed* constructor, which the attribute cannot express.
 
 ## In progress
 

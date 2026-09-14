@@ -333,6 +333,10 @@ starts one before its expression).
   location; discharge is matched against the resolved declaration, name as fallback. An
   unrecognized call shape never manufactures a warning.
 - Branch join is **intersection** (use-after-move's is union).
+- A call to a `@borrowed` function (`LambdaExpr.ReturnsBorrowed`, set by the collector's
+  `collectDeclarationAttributes`) is tracked with `resource.borrowedFrom` set: `report` skips
+  it, and `discharge` or a direct argument to its release function reports `lyra-W025`. It is
+  marked in `resourceOf`, so every acquisition path sees it.
 - Unwrapping: `match`/`if let`/destructuring share `arm` over an `unwrapper`; `let … else` is
   handled like a `VarDeclStmt`. `beginUnwrap` also treats an obligation-producing scrutinee
   expression. A payload is seeded only when the pattern binds exactly one name.

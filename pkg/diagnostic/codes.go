@@ -1186,4 +1186,13 @@ const (
 	// arguments on the next line is one call, since a newline inside the parentheses is
 	// not a terminator.
 	CodeSplitCallOrIndex = "lyra-W024"
+
+	// CodeReleasedBorrowedResource: a value a `@borrowed` function answered is passed to its
+	// type's release function — `unload_font(default_font())`.
+	//
+	// W022's mirror. `@borrowed` says the resource belongs to something else, so releasing
+	// it frees what its owner still uses; raylib documents `UnloadFont` on the built-in font
+	// as exactly that mistake. A warning for W022's reasons: the analysis follows the value
+	// only through a binding, an unwrap and a direct argument, and says nothing it cannot see.
+	CodeReleasedBorrowedResource = "lyra-W025"
 )

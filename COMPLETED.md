@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — `@borrowed`, for a resource a function hands out without handing over
+
+`let font = default_font()` drew lyra-W022 advising `unload_font` — the one call raylib
+documents as wrong on its built-in font, which is static data inside the library. The check
+was right by its own rule, since the obligation is keyed on the *type*, and the rule had no
+way to say that one function answers a `Font` the caller does not own. `bindings/raylib`
+wrote the gate in `image_text` inline to avoid a binding, with a paragraph explaining why.
+
+**The fix is on the function, not the type**, because the type is the same: a loaded and a
+built-in `Font` are one struct passed to the same drawing calls, so a second type would split
+every signature for a distinction only the release cares about. `@borrowed` above a
+declaration sets `LambdaExpr.ReturnsBorrowed`, and `resourceOf` answers "nothing acquired"
+for a call to such a function — which covers a binding, an `if let`/`match` on the call and a
+call inside an `unsafe` block, since all of them ask there. On a function whose declared result
+carries no obligation it is an error rather than a no-op.
+
+Adding it exposed that **every attribute on a `let` had been dropped silently**: the grammar
+has accepted an attribute list on a declaration from the start and the collector never read
+one, so a misspelled `@borowed` would have left the warning in place with no sign why. An
+unknown one is now an error, as on an extern and a module.
+
+**Releasing one is `lyra-W025`**, the misuse the binding's doc comment warns about. A borrowed
+result is not dropped from the pass's state but kept, marked with the function that lent it:
+never reported as unreleased, and reported when it reaches its type's release function — as
+the argument itself, through a binding, through an unwrap or out of an `unsafe` block — at the
+release call, since that is the line to delete. W023 and W024 were already taken; the codes
+test caught the collision.
+
 ### 09/13/26 — a refutable `let` is the typechecker's, and a payload counts toward coverage
 
 **A pattern that can fail in a position with no failure path is `lyra-E077`**, for a plain

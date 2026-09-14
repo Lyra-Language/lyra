@@ -148,6 +148,10 @@ type resource struct {
 	// down (the trait-default-method diagnostic advised `where Self: A`, which is not
 	// syntax this language has; see the typechecker README).
 	wrapped bool
+	// borrowedFrom names the `@borrowed` function the value came from, "" for one this
+	// function owns. A borrowed entry is tracked so that releasing it can be reported
+	// (lyra-W025), and is never itself reported as unreleased — there is nothing to release.
+	borrowedFrom string
 }
 
 // heldState maps a binding name to the resource it still holds. Absent means it holds
@@ -180,6 +184,7 @@ func mergeHeld(a, b heldState) heldState {
 // holds at the end. A nested lambda is analyzed on its own, as CheckUseAfterMove does:
 // whether a closure runs once, later or never is the question captures raise.
 func (c *mustRelease) lambda(lam *ast.LambdaExpr) {
+	c.checkBorrowedAttribute(lam)
 	run := func(body ast.Expression) {
 		if body == nil {
 			return
@@ -194,6 +199,26 @@ func (c *mustRelease) lambda(lam *ast.LambdaExpr) {
 	}
 }
 
+// checkBorrowedAttribute refuses `@borrowed` on a function whose declared result carries no
+// obligation, where it would say nothing and read as though it said something. A function
+// with no declared return type is left alone: its result is known only once inferred, and
+// an attribute that errs quiet is this pass's direction everywhere else.
+func (c *mustRelease) checkBorrowedAttribute(lam *ast.LambdaExpr) {
+	if !lam.ReturnsBorrowed || lam.ReturnType.Type == nil {
+		return
+	}
+	if _, carries := c.obligationOf(lam.ReturnType.Type, lam.GetLocation()); carries {
+		return
+	}
+	c.diagnostics = append(c.diagnostics, diag.Diagnostic{
+		Location: lam.GetLocation(),
+		Severity: diag.SeverityError,
+		Message: fmt.Sprintf(
+			"`@borrowed` says the caller need not release this function's result, but %s is not a `@must_release` type",
+			lam.ReturnType.Type),
+	})
+}
+
 // report emits one warning per binding left holding a resource.
 func (c *mustRelease) report(st heldState) {
 	names := make([]string, 0, len(st))
@@ -203,6 +228,9 @@ func (c *mustRelease) report(st heldState) {
 	sort.Strings(names)
 	for _, name := range names {
 		r := st[name]
+		if r.borrowedFrom != "" {
+			continue
+		}
 		fix := fmt.Sprintf("call `%s(%s)`", r.release, name)
 		if r.wrapped {
 			fix = fmt.Sprintf(
@@ -455,7 +483,7 @@ func (c *mustRelease) call(st heldState, e *ast.FunctionCallExpr) heldState {
 	if recv != nil {
 		offset = 1
 		if name, ok := bareName(recv); ok {
-			c.discharge(st, name, calleeFn, calleeName, params, 0)
+			c.discharge(st, name, recv.GetLocation(), calleeFn, calleeName, params, 0)
 		} else {
 			st = c.expr(st, recv)
 		}
@@ -467,8 +495,13 @@ func (c *mustRelease) call(st heldState, e *ast.FunctionCallExpr) heldState {
 		// seen. Anything else is an expression to walk, and a held binding inside
 		// it escapes, as it should — `f(Some(s))` puts s somewhere this cannot see.
 		if name, ok := bareName(arg); ok {
-			c.discharge(st, name, calleeFn, calleeName, params, i+offset)
+			c.discharge(st, name, arg.GetLocation(), calleeFn, calleeName, params, i+offset)
 			continue
+		}
+		// `unload_font(default_font())` — the borrowed value released without ever being
+		// bound. resourceOf answers the obligation it would carry and who lent it.
+		if r, ok := c.resourceOf(arg); ok && r.borrowedFrom != "" && !r.wrapped && releases(r, calleeFn, calleeName) {
+			c.reportBorrowedRelease(arg.GetLocation(), r, calleeName, "")
 		}
 		st = c.expr(st, arg)
 	}
@@ -480,6 +513,7 @@ func (c *mustRelease) call(st heldState, e *ast.FunctionCallExpr) heldState {
 func (c *mustRelease) discharge(
 	st heldState,
 	name string,
+	at ast.Location,
 	calleeFn *ast.LambdaExpr,
 	calleeName string,
 	params []ast.Parameter,
@@ -489,25 +523,55 @@ func (c *mustRelease) discharge(
 	if !held {
 		return
 	}
-	released := false
-	switch {
-	case r.releaseFn != nil && calleeFn != nil:
-		// Both resolved: compare declarations, so another module's same-named
-		// function cannot discharge this obligation.
-		released = calleeFn == r.releaseFn
-	case calleeName != "" && calleeName == r.release:
-		// One side did not resolve — a call through a local, a dispatched method.
-		// Fall back to the spelling rather than reporting: an unrecognized call
-		// shape must not manufacture a warning.
-		released = true
-	}
-	if released {
+	if releases(r, calleeFn, calleeName) {
+		if r.borrowedFrom != "" {
+			c.reportBorrowedRelease(at, r, calleeName, name)
+		}
 		c.clear(st, name)
 		return
 	}
 	if pos < len(params) && params[pos].TypeModifier == types.Own {
 		delete(st, name)
 	}
+}
+
+// releases reports whether a call to calleeFn (written calleeName) is r's release function.
+func releases(r resource, calleeFn *ast.LambdaExpr, calleeName string) bool {
+	switch {
+	case r.releaseFn != nil && calleeFn != nil:
+		// Both resolved: compare declarations, so another module's same-named
+		// function cannot discharge this obligation.
+		return calleeFn == r.releaseFn
+	case calleeName != "" && calleeName == r.release:
+		// One side did not resolve — a call through a local, a dispatched method.
+		// Fall back to the spelling rather than reporting: an unrecognized call
+		// shape must not manufacture a warning.
+		return true
+	}
+	return false
+}
+
+// reportBorrowedRelease emits lyra-W025 for a release of a borrowed resource, at loc — the
+// released argument, which is the line to delete the call from. name is the binding, "" when
+// the argument is the borrowing call itself.
+func (c *mustRelease) reportBorrowedRelease(loc ast.Location, r resource, calleeName, name string) {
+	what := fmt.Sprintf("the %s `%s()` answers", r.typName, r.borrowedFrom)
+	if name != "" {
+		what = fmt.Sprintf("%q, which holds the %s `%s()` answered", name, r.typName, r.borrowedFrom)
+	}
+	release := calleeName
+	if release == "" {
+		release = r.release
+	}
+	c.diagnostics = append(c.diagnostics, diag.Diagnostic{
+		Location: loc,
+		Severity: diag.SeverityWarning,
+		Code:     diag.CodeReleasedBorrowedResource,
+		Message: fmt.Sprintf(
+			"`%s` releases %s; `%s` is marked `@borrowed`, so the resource belongs to something else, "+
+				"which still uses it. Remove the `%s` call",
+			release, what, r.borrowedFrom, release),
+	})
 }
 
 // clear discharges a binding **and whatever it is a view of**. One resource can be held
@@ -564,11 +628,30 @@ func (c *mustRelease) resourceOf(e ast.Expression) (resource, bool) {
 	if !ok {
 		return resource{}, false
 	}
+	r, carries := c.obligationOf(t, e.GetLocation())
+	if !carries {
+		return resource{}, false
+	}
+	// **A `@borrowed` function's result is someone else's**, so nothing was acquired —
+	// but it is still tracked, marked, so that releasing it is seen (lyra-W025). raylib's
+	// `default_font()` answers its own static `Font`, and the warning this pass gave a
+	// binding of one advised the exact call raylib documents as wrong on it.
+	if call, ok := unsafeBlockValue(e).(*ast.FunctionCallExpr); ok {
+		if fn, name := c.callee(call); fn != nil && fn.ReturnsBorrowed {
+			r.borrowedFrom = name
+		}
+	}
+	return r, true
+}
+
+// obligationOf is resourceOf's answer for a type as seen from loc: the obligation a value
+// of it carries, directly or through a canonical wrapper's payload.
+func (c *mustRelease) obligationOf(t types.Type, loc ast.Location) (resource, bool) {
 	name, hasHead := types.HeadName(t)
 	if !hasHead || name == "" {
 		return resource{}, false
 	}
-	decl, ok := c.symTable.LookupTypeFrom(name, e.GetLocation())
+	decl, ok := c.symTable.LookupTypeFrom(name, loc)
 	if !ok || decl == nil {
 		return resource{}, false
 	}
@@ -583,7 +666,7 @@ func (c *mustRelease) resourceOf(e ast.Expression) (resource, bool) {
 	// unrelated `Maybe` is not treated as a wrapper and the prelude's is found however
 	// it was reached.
 	if decl.MustRelease == "" && decl.CanonicalKind != "" {
-		if inner, found := c.wrappedResource(t, e); found {
+		if inner, found := c.wrappedResource(t, loc); found {
 			return inner, true
 		}
 	}
@@ -631,7 +714,7 @@ func (c *mustRelease) callee(e *ast.FunctionCallExpr) (*ast.LambdaExpr, string) 
 // wrappedResource answers the obligation carried by a canonical wrapper's payload —
 // the `Sound` inside a `Maybe<Sound>`. Every type argument is tried, so a
 // `Result<Sound, string>` is found as readily as a `Maybe<Sound>`.
-func (c *mustRelease) wrappedResource(t types.Type, e ast.Expression) (resource, bool) {
+func (c *mustRelease) wrappedResource(t types.Type, loc ast.Location) (resource, bool) {
 	pt, ok := t.(types.ParameterizedType)
 	if !ok {
 		return resource{}, false
@@ -641,7 +724,7 @@ func (c *mustRelease) wrappedResource(t types.Type, e ast.Expression) (resource,
 		if !hasHead || name == "" {
 			continue
 		}
-		decl, ok := c.symTable.LookupTypeFrom(name, e.GetLocation())
+		decl, ok := c.symTable.LookupTypeFrom(name, loc)
 		if !ok || decl == nil || decl.MustRelease == "" {
 			continue
 		}

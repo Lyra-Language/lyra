@@ -51,12 +51,6 @@ pub let image_channel = (image: Image, channel: i32) -> Image =>
 /// caller exits 139. [font_valid] predicts it exactly, so the gate costs one call and
 /// turns a crash into a `None`, which is `to_maybe`'s rule applied to a convention that is
 /// neither NULL nor an error code.
-///
-/// The gate is written inline rather than as `let font = default_font()`, and that is not
-/// style: `Font` carries `@must_release(unload_font)`, so binding one draws lyra-W022
-/// advising `unload_font` — a call raylib documents as invalid on the *shared* built-in
-/// font. See todo.md; the check is right by its own rule and the rule does not fit a
-/// borrowed handle.
 pub let image_text = (text: string, size: i32, color: Color) -> Maybe<Image> => {
   if !font_valid(default_font()) { None }
   else { Some(text.with_cstring((t) => unsafe { rl_image_text(t, size, color) })) }

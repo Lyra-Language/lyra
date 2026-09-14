@@ -85,6 +85,8 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 		}
 	}
 
+	collectDeclarationAttributes(node, initExpr, ctx)
+
 	// Lift the declaration's `where` bounds onto the lambda, for the same reason the
 	// modifiers above are lifted: they are written on the *binding* while every
 	// consumer downstream holds only the LambdaExpr. Without this the bounds were
@@ -227,6 +229,7 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 	}
 
 	value := ctx.CollectExpr(cst.Field(node, "value"))
+	collectDeclarationAttributes(node, nil, ctx)
 
 	decl := &ast.DestructuringDeclStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
@@ -331,4 +334,45 @@ func destructuringPatternBoundNames(pat ast.Pattern) []string {
 		}
 	}
 	return nil
+}
+
+// collectDeclarationAttributes reads the attributes on a `let`/`var`/`const` declaration.
+// There is one: `@borrowed`, on a function, lifted onto its lambda (ReturnsBorrowed).
+// value is the declaration's initializer, or nil for a destructuring declaration, which
+// can carry none.
+//
+// **An unknown attribute is an error**, as it is on an extern and a module. The grammar has
+// accepted an attribute list here from the start and the collector never read it, so
+// `@anything` above a `let` was silently nothing — which is exactly how a misspelled
+// `@borowed` would have left a warning in place with no sign why.
+func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *collector_ctx.Ctx) {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		list := node.Child(i)
+		if list.Kind() != "attribute_list" {
+			continue
+		}
+		for j := uint(0); j < list.NamedChildCount(); j++ {
+			attr := list.NamedChild(j)
+			nameNode := cst.Field(attr, "name")
+			if nameNode == nil {
+				continue
+			}
+			name := ctx.NodeText(nameNode)
+			if name != "borrowed" {
+				ctx.AddError(attr, diag.SeverityError,
+					"unknown attribute `@%s` on a declaration; the only one is `@borrowed`, on a function", name)
+				continue
+			}
+			if cst.Field(attr, "args") != nil {
+				ctx.AddError(attr, diag.SeverityError, "`@borrowed` takes no arguments")
+			}
+			lambda, ok := value.(*ast.LambdaExpr)
+			if !ok {
+				ctx.AddError(attr, diag.SeverityError,
+					"`@borrowed` marks a function whose result the caller does not own, so it goes on a function declaration")
+				continue
+			}
+			lambda.ReturnsBorrowed = true
+		}
+	}
 }

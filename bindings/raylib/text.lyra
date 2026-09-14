@@ -77,8 +77,10 @@ pub struct Font {
 /// raylib's built-in bitmap font, which needs no loading and no unloading.
 ///
 /// **Do not pass it to [unload_font]** — it is raylib's own static data, not something
-/// this program allocated. It is deliberately not `Maybe`-wrapped and deliberately not
-/// tracked by `@must_release`, because the value never came from a loader.
+/// this program allocated. It is deliberately not `Maybe`-wrapped, and it is `@borrowed`,
+/// so a binding of it carries none of `Font`'s `@must_release` obligation: the value never
+/// came from a loader.
+@borrowed
 pub let default_font = () -> Font => unsafe { rl_default_font() }
 
 /// Load a font at raylib's default size, or `None` if the file could not be read.

@@ -440,6 +440,8 @@ On a `struct`: the value names a foreign resource released by `fn`. A binding le
 - Field reads are borrows.
 - Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
 - `struct` only (`newtype Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
+- **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It is the only attribute a `let` takes; any other is an error.
+- **Releasing a borrowed resource is `lyra-W025`** — `unload_font(default_font())`, directly or through a binding or an unwrap: it frees what the lender still uses.
 
 ### `@symbol("Name")`
 

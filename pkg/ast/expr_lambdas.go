@@ -28,13 +28,20 @@ type LambdaExpr struct {
 	// are: every consumer that matters has the lambda and not the declaration, and the
 	// call path is the one that needs it (an "at least N arguments" arity rule, and C's
 	// default argument promotions on the rest).
-	IsVariadic  bool
-	IsUnsafe    bool
-	IsPure      bool
-	IsDet       bool
-	IsNoAlloc   bool
-	IsAsync     bool
-	IsGenerator bool
+	IsVariadic bool
+	// ReturnsBorrowed is `@borrowed` on the declaration this lambda is the value of: the
+	// `@must_release` resource it answers belongs to someone else, so the caller holds no
+	// obligation to release it. raylib's `default_font()` is the case — its `Font` is
+	// raylib's static data, and `unload_font` on it is documented as wrong. Lifted here
+	// from the binding for the reason the modifiers are: the pass that reads it has the
+	// callee's lambda, not its declaration.
+	ReturnsBorrowed bool
+	IsUnsafe        bool
+	IsPure          bool
+	IsDet           bool
+	IsNoAlloc       bool
+	IsAsync         bool
+	IsGenerator     bool
 	// GenericBounds are the `where` bounds of the declaration this lambda is the
 	// value of, keyed by type-parameter name — lifted here by the collector exactly
 	// as the leading modifiers are, because the bounds are written on the *binding*
