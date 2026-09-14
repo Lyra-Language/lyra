@@ -273,8 +273,13 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 	// the backend as a type with no representation. A variable that appears only in
 	// the *return* type cannot be solved from arguments at all, which is why that is
 	// reported here rather than discovered during lowering.
+	//
+	// **A nil binding is not a solve.** A lambda literal whose parameter nothing could type
+	// infers as `(?) -> string`, and unifying that against `(a) -> b` binds `a` to the `?` —
+	// a nil. Counted as solved, `app2((x) => "s")` type-checked and reached the backend as
+	// `unknown type: <nil>`; through a trait method it panicked in describeBindings.
 	for name := range vars {
-		if _, ok := subst[name]; !ok {
+		if bound, ok := subst[name]; !ok || bound == nil {
 			return nil, false
 		}
 	}

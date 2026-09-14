@@ -33,39 +33,72 @@ package types
 // CollectTypeVars adds every type variable in t to vars, descending through every
 // structural type constructor a signature can be built from. vars must be
 // non-nil.
+//
+// `Self<a>`'s `a` is one: in a trait method's signature it is the method's own variable,
+// written as an argument to `Self` rather than to a named type. `Self` itself is not — the
+// impl fixes it, and no call solves it.
 func CollectTypeVars(t Type, vars map[string]bool) {
+	walkSignature(t, func(t Type) {
+		switch tt := t.(type) {
+		case GenericType:
+			vars[tt.Name] = true
+		case SelfType:
+			for _, p := range tt.GenericParams {
+				vars[p] = true
+			}
+		}
+	})
+}
+
+// SelfApplications adds the argument count of every applied `Self<…>` in t to arities — the
+// 1 of `Self<a>`. A bare `Self` adds nothing. The same walk as CollectTypeVars, asked a
+// different question, so an impl's `Self<…>` check reaches every position a variable does.
+func SelfApplications(t Type, arities map[int]bool) {
+	walkSignature(t, func(t Type) {
+		if st, ok := t.(SelfType); ok && len(st.GenericParams) > 0 {
+			arities[len(st.GenericParams)] = true
+		}
+	})
+}
+
+// walkSignature calls visit on t and on every type structurally inside it — the one
+// traversal behind CollectTypeVars and SelfApplications. What it descends into, and what it
+// deliberately does not (a nominal type's own fields), is the file comment above.
+func walkSignature(t Type, visit func(Type)) {
+	if t == nil {
+		return
+	}
+	visit(t)
 	switch tt := t.(type) {
-	case GenericType:
-		vars[tt.Name] = true
 	case StaticArrayType:
-		CollectTypeVars(tt.ElementType, vars)
+		walkSignature(tt.ElementType, visit)
 	case DynamicArrayType:
-		CollectTypeVars(tt.ElementType, vars)
+		walkSignature(tt.ElementType, visit)
 	case TupleType:
 		for _, e := range tt.Elements {
-			CollectTypeVars(e, vars)
+			walkSignature(e, visit)
 		}
 	case AnonymousStructType:
 		// Structural, unlike a NamedStructType: `(p: { v: t }) -> t` writes the
 		// field types out in the signature, so `t` is this signature's variable.
 		for _, f := range tt.Fields {
-			CollectTypeVars(f.Type, vars)
+			walkSignature(f.Type, visit)
 		}
 	case WeakType:
-		CollectTypeVars(tt.Inner, vars)
+		walkSignature(tt.Inner, visit)
 	case RawPointerType:
-		CollectTypeVars(tt.Pointee, vars)
+		walkSignature(tt.Pointee, visit)
 	case ParameterizedType:
 		// `Maybe<t>`: the variable is in the type arguments, never at the leaf.
 		// The type's *own* parameters are its declaration's business; only what
 		// this signature applied it to is ours.
 		for _, a := range tt.TypeArguments {
-			CollectTypeVars(a, vars)
+			walkSignature(a, visit)
 		}
 	case RangeType:
-		CollectTypeVars(tt.Start, vars)
-		CollectTypeVars(tt.End, vars)
-		CollectTypeVars(tt.Step, vars)
+		walkSignature(tt.Start, visit)
+		walkSignature(tt.End, visit)
+		walkSignature(tt.Step, visit)
 	case *LambdaType:
 		// A function-typed parameter, e.g. `f: (t) -> u` — the callback's own
 		// signature is as much a part of this signature as any other parameter.
@@ -73,14 +106,14 @@ func CollectTypeVars(t Type, vars map[string]bool) {
 			return
 		}
 		for _, p := range tt.Parameters {
-			CollectTypeVars(p.Type, vars)
+			walkSignature(p.Type, visit)
 		}
-		CollectTypeVars(tt.ReturnType.Type, vars)
+		walkSignature(tt.ReturnType.Type, visit)
 	case *ConstrainedType:
 		if tt == nil {
 			return
 		}
-		CollectTypeVars(tt.Type, vars)
+		walkSignature(tt.Type, visit)
 	}
 }
 

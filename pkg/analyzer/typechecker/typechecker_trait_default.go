@@ -65,6 +65,15 @@ func (tc *TypeChecker) checkTraitDefaultMethods(program *ast.Program) {
 			if tm.DefaultMethod == nil || tm.Signature == nil {
 				continue
 			}
+			// A default is checked once with `Self` a plain variable, which has no head to
+			// apply `Self<b>` to — the body would be checked against a type that means
+			// nothing. Refused by name until a variable can take arguments.
+			if arities := selfApplicationsOf(tm.Signature); len(arities) > 0 {
+				tc.addError(tm.DefaultMethod.GetLocation(), SeverityError,
+					"%s::%s: a default method cannot write Self with type arguments yet; implement it in each impl",
+					trait.Name, tm.Name.GetName())
+				continue
+			}
 			tc.checkOneDefaultMethod(trait, tm)
 		}
 	}
@@ -148,4 +157,14 @@ func (tc *TypeChecker) publishDefaultBodyCandidates(trait *ast.TraitDeclStmt, tm
 	tc.publishing[key] = true
 	defer delete(tc.publishing, key)
 	tc.publishCandidatesAt(&ast.LambdaExpr{Body: tm.DefaultMethod.Body}, trait.Name, concrete)
+}
+
+// selfApplicationsOf is the arities of `Self<…>` a trait method's signature writes.
+func selfApplicationsOf(sig *types.LambdaType) map[int]bool {
+	arities := map[int]bool{}
+	for _, p := range sig.Parameters {
+		types.SelfApplications(p.Type, arities)
+	}
+	types.SelfApplications(sig.ReturnType.Type, arities)
+	return arities
 }

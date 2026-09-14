@@ -36,9 +36,9 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 - **[OPEN] Through a `where` bound.** `v.mapv(f)` under `where t: Mapper` is refused by name.
   Needs the per-call solution carried into each bound candidate's bindings and composed with
   the specialization in `lowerBoundMethodCall`, with ownership tables for the result.
-- **[OPEN] `Self<a>`.** `map: (Self<a>, (a) -> b) -> Self<b>` collects but means
-  nothing (its impl is refused). Decide what `Self<x>` is for `impl … for Result<t, e>`
-  before building it.
+- **[OPEN] `Self<…>` beyond an exact match.** Only a target applied to as many distinct
+  variables as `Self<…>` has arguments is accepted; `impl Functor for Result<t, e>` (which
+  argument?) and a default method writing `Self<…>` are refused until decided.
 
 ### Modules and tooling
 

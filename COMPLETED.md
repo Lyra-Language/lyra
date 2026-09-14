@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — `Self<a>` means the impl target at new arguments
+
+`trait Functor { map: (Self<a>, (a) -> b) -> Self<b> }` collected and meant nothing. `Self<a>`
+was replaced by the bare target, so `impl Functor for Box<t>` was refused against its own body.
+
+**The rule is the refusal, by the user's call.** `Self<x1…xn>` is the target's head at
+x1…xn (`types.ApplySelf`). It is accepted only for a target applied to exactly n **distinct
+type variables** (`types.SelfApplicable`): `Box<t>`, `Pair<k, v>`. Every other target is
+refused at the impl by name:
+- **`i64`** has no head.
+- **`Box<i64>`** and **`Pair<t, t>`** would make `Self<b>` forget what the impl fixed.
+- **`Result<t, e>` for `Self<a>`** could mean either argument. Choosing one now would bind every
+  later rule to that choice; refusing can be relaxed without breaking anything.
+
+A default method writing `Self<…>` is refused too, because its body is checked with `Self` a
+bare variable, which has no head.
+
+**The receiver solves `a`.** Nothing but the receiver says what `a` is, so
+`solveMethodTypeVars` now seeds the solve by unifying the receiver's parameter
+(`Self<a>` → `Box<a>`) with the receiver's type.
+
+**Finding every `Self<…>` needed a walk, and there already was one.** `CollectTypeVars`'s
+switch became `walkSignature`, a visitor. `CollectTypeVars` and the new `SelfApplications` are
+two questions asked through it, so they cannot drift. `CollectTypeVars` now reports a
+`Self<a>`'s `a`, which is the method's own variable. Nothing collected it before because
+nothing used `Self<a>`.
+
+**Rename through `Self<…>`.** The clash rename (`a` → `a'` when the impl is `Box<a>`) reached
+`(a) -> b` but not `Self<a>`, whose arguments are names rather than types. `Substitute`'s
+`SelfType` case now renames them. It applies concrete bindings only after the head is applied,
+so a rename is not applied twice.
+
+**A solver bug from before today, found on the way.** An untyped lambda nothing could type
+infers as `(?) -> string`, and unifying it bound `a` to nil, which the final "every variable
+solved" check counted as solved. For a generic function, `app2((x) => "s")` type-checked and
+failed in the backend as `unknown type: <nil>`. Through a trait method it panicked in
+`describeBindings`. A nil binding is now unsolved.
+
 ### 09/14/26 — a trait method's own type variables are solved at a call
 
 `trait Mapper { mapv: (Self, (i64) -> b) -> b }` declared and implemented fine, and no call

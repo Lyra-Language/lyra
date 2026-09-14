@@ -599,8 +599,19 @@ func (tc *TypeChecker) solveMethodTypeVars(calleeName string, match resolvedTrai
 		return match, true
 	}
 	params := sig.Parameters
+	// A `.`-call's receiver is implicit, never in call.Arguments — but it can still be what
+	// solves a variable: `Self<a>` is `Box<a>` for a `Box<i64>` receiver, and nothing else in
+	// `map: (Self<a>, (a) -> b) -> Self<b>` says what `a` is. It seeds the solve.
+	var seed map[string]types.Type
 	if receiver != nil && len(params) > 0 {
-		params = params[1:] // a `.`-call's receiver is implicit, never in call.Arguments
+		if recvType := tc.inferExprType(receiver); recvType != nil && params[0].Type != nil {
+			seed = map[string]types.Type{}
+			declaredRecv := tc.resolveTypeIfKnown(params[0].Type, call.GetLocation())
+			if !unifyGenericTarget(declaredRecv, recvType, vars, seed) {
+				seed = nil
+			}
+		}
+		params = params[1:]
 	}
 	if len(call.Arguments) != len(params) {
 		return match, true // an arity mismatch, which the argument check reports
@@ -611,7 +622,7 @@ func (tc *TypeChecker) solveMethodTypeVars(calleeName string, match resolvedTrai
 		}
 		return tc.resolveTypeIfKnown(params[i].Type, call.GetLocation())
 	}
-	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, nil)
+	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, seed)
 	if !ok {
 		tc.addError(call.GetLocation(), SeverityError,
 			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))

@@ -199,6 +199,29 @@ func TestExec_TraitMethods(t *testing.T) {
 			// 6 + 10 + 3 + 7 + 20
 			46,
 		},
+		{
+			// `Self<b>` is the impl target's head at `b`: `map` emits once per (a, b), on a
+			// struct and on a data type, chained, and `swap` exchanges two arguments. `Box<a>`
+			// names its variable like `map`'s own `a`, which must stay two variables.
+			"Self applied to type arguments",
+			`struct Box<a> { v: a }
+			 data Opt<t> = No | Yes(t)
+			 struct Pair<k, v> { a: k, b: v }
+			 trait Functor { map: (Self<a>, (a) -> b) -> Self<b> }
+			 impl Functor for Box<a> { map = (self, f) => Box { v: f(self.v) } }
+			 impl Functor for Opt<t> { map = (self, f) => match self { Yes(v) => Yes(f(v)), No => No } }
+			 trait Swap { swap: (Self<a, b>) -> Self<b, a> }
+			 impl Swap for Pair<k, v> { swap = (self) => Pair { a: self.b, b: self.a } }
+			 let main = () -> u8 => {
+			   let b = Box { v: 3 }.map((x) => x > 2).map((y) => if y { 30 } else { 0 })
+			   let o = match Yes(4).map((x) => [x, x]) { Yes(xs) => xs.len(), No => 0 }
+			   let p = Pair { a: true, b: 5 }.swap()
+			   let q = if p.b { p.a } else { 0 }
+			   u8(b.v + o + q)
+			 }`,
+			// 30 + 2 + 5
+			37,
+		},
 	}
 	clang := lookClang(t)
 	for _, c := range cases {

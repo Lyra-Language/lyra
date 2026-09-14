@@ -18,7 +18,7 @@ each type are in [`LANGUAGE.md`](../../LANGUAGE.md); this file covers representa
 | `WeakType` | `weak T` (`pointer.go`); pointer-sized, breaks a size cycle like `shared`. Managed with the **weak** half of the refcount protocol only. |
 | `GenericType` | a type variable — a **lowercase** name; uppercase is an `UnresolvedType`. Reaching codegen unsubstituted is a loud error |
 | `ParameterizedType` | a generic type applied (`Box<i64>`); two instantiations stay distinct; one LLVM type per instantiation |
-| `SelfType`, `VoidType`, `NeverType` | `Self` in impls (`Substitute` binds it under `SelfVar`, at any depth); `void`; the bottom type of `panic` |
+| `SelfType`, `VoidType`, `NeverType` | `Self` in impls (`Substitute` binds it under `SelfVar`, at any depth; `Self<a>` applies the target's head, `ApplySelf`/`SelfApplicable`); `void`; the bottom type of `panic` |
 | `UnresolvedType` | a named type not yet resolved; `Key` is stamped on names nested in a declaration's own type, since those resolve from the **declaring** module, not the reader's |
 | `RangeType`, `FixedPointType` | range values; `fixed<i,f>` |
 

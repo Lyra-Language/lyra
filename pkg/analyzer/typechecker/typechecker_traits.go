@@ -96,6 +96,9 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 			continue
 		}
 
+		if !tc.checkSelfApplications(impl, traitMethod) {
+			continue
+		}
 		traitSig := substituteSelf(tc.methodSignatureForImpl(trait, traitMethod.Signature, impl), impl.Type)
 		// Bind the trait's own type parameters to the impl's trait arguments
 		// (`Get<e>`'s `e` → `impl Get<t>`'s `t`), so the signature — in particular
@@ -296,6 +299,29 @@ func (tc *TypeChecker) methodSignatureForImpl(trait *ast.TraitDeclStmt, sig *typ
 		rename[v] = types.GenericType{Name: fresh}
 	}
 	return substituteSigGenerics(sig, rename)
+}
+
+// checkSelfApplications refuses an impl whose target cannot stand for a `Self<…>` its method's
+// signature writes, and reports whether the method may be checked further.
+//
+// `map: (Self<a>, (a) -> b) -> Self<b>` means the target's head at new arguments, which has
+// one reading only for a target applied to exactly that many distinct type variables
+// (types.SelfApplicable): `impl Functor for Box<t>` makes `Self<b>` `Box<b>`. For
+// `Result<t, e>` it could be `Result<b, e>` or `Result<t, b>`, and for `i64` it is nothing, so
+// those are refused rather than given a meaning a later rule would have to break. Skipping the
+// body keeps the refusal the one diagnostic.
+func (tc *TypeChecker) checkSelfApplications(impl *ast.TraitImplStmt, traitMethod ast.TraitMethod) bool {
+	ok := true
+	for n := range selfApplicationsOf(traitMethod.Signature) {
+		if types.SelfApplicable(impl.Type, n) {
+			continue
+		}
+		tc.addError(impl.GetLocation(), SeverityError,
+			"impl of %s for %s: method %q writes Self with %d type argument(s), so the target must be a generic type applied to %d distinct type variable(s), like Box<t>",
+			impl.TraitName, impl.Type, traitMethod.Name.GetName(), n, n)
+		ok = false
+	}
+	return ok
 }
 
 // methodOwnTypeVars is the type variables a trait method's signature mentions that are its own
