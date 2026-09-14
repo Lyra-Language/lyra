@@ -62,7 +62,37 @@ func (tc *TypeChecker) elaborateLambda(expr ast.Expression, want types.Type, pla
 	}
 	if lambda.ReturnType.Type == nil && isConcreteEnoughToElaborate(sig.ReturnType.Type, plantable) {
 		lambda.ReturnType.Type = sig.ReturnType.Type
+		tc.reflavorArrayLiteralReturn(lambda)
 	}
+}
+
+// reflavorArrayLiteralReturn brings an already-inferred lambda into line with the return type
+// just planted on it, for the one case a solve can plant a different one: a fixed array
+// literal the solve settled as dynamic (settleArrayLiteralGuess). `(x) => [x]` was recorded
+// as `(i64) -> [1]i64`, with its literal fixed; planted `[]i64`, the literal is re-recorded
+// through the ordinary context push — the one an annotated return gets — and the lambda's
+// record rebuilt, so the argument check and the backend both see `(i64) -> []i64`.
+//
+// Anything else is left alone: a lambda not yet inferred has nothing to correct, and one whose
+// record disagrees in some other way is a real mismatch the argument check reports.
+func (tc *TypeChecker) reflavorArrayLiteralReturn(lambda *ast.LambdaExpr) {
+	recorded, ok := tc.typeTable.Get(lambda)
+	if !ok {
+		return
+	}
+	lt, ok := recorded.(*types.LambdaType)
+	if !ok || lt == nil {
+		return
+	}
+	static, fixed := lt.ReturnType.Type.(types.StaticArrayType)
+	planted, isDynamic := tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation()).(types.DynamicArrayType)
+	if !fixed || !isDynamic || !types.TypesEqual(promoteToDefault(static.ElementType), planted.ElementType) {
+		return
+	}
+	tc.propagateExpectedType(lambda.Body, planted)
+	updated := *lt
+	updated.ReturnType.Type = planted
+	tc.typeTable.Set(lambda, &updated)
 }
 
 // isConcreteEnoughToElaborate reports whether a type from the expected signature can be

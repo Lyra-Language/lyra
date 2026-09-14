@@ -9,6 +9,11 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
+- **[OPEN] A statement inside an `if` branch sees the enclosing return as its context.** In
+  `-> Maybe<i64> => if c { let q = make(); None } else { None }`, `make<t>() -> Maybe<t>`
+  solves `t` from the function's return instead of reporting "cannot infer t", as the same
+  `let` in a block does.
+
 - **[OPEN] A concrete trait call on a generic impl inside a generic function does not lower.**
   `let g<u> = (b: Box<u>) -> i64 => b.get()` against `impl Get for Box<t>` type-checks, then
   the backend reports `type variable "u" has no concrete type`: a resolution's bindings
@@ -33,10 +38,9 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ### Traits: a method's own type variables
 
-- **[OPEN] A lambda's array literal solves a variable as a fixed array.** `app(n, (x) => [x])`
-  against `app<b>(n: i64, f: (i64) -> b) -> b` in a `-> []i64` function solves `b = [1]i64` and
-  fails the return; same through a trait method. The expected return does not seed a variable a
-  parameter mentions (seedFromExpectedReturn).
+- **[OPEN] A lambda's array literal takes the context's flavor only for an exact match.**
+  Untyped elements (`(x) => [1, 2]` for `[]u8`) and a wrapped literal (`(x) => Some([x])` for
+  `Maybe<[]i64>`) still solve the fixed default; see settleArrayLiteralGuess.
 - **[OPEN] `Self<…>` beyond an exact match.** Only a target applied to as many distinct
   variables as `Self<…>` has arguments is accepted; `impl Functor for Result<t, e>` (which
   argument?) and a default method writing `Self<…>` are refused until decided.

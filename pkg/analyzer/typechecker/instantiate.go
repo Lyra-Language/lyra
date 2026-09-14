@@ -131,16 +131,48 @@ func (tc *TypeChecker) resolveDeclaredParam(lambda *ast.LambdaExpr, i int) types
 // literal in a float slot. The default still applies — one pass later.
 func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type) (map[string]types.Type, bool) {
 	declared := func(i int) types.Type { return tc.resolveDeclaredParam(lambda, i) }
-	return tc.solveArgumentTypeVars(len(lambda.Parameters), declared, call, vars, seed, nil)
+	ret := tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())
+	return tc.solveArgumentTypeVars(len(lambda.Parameters), declared, call, vars, argumentSolve{
+		seed:           seed,
+		expectedReturn: tc.expectedReturnBindings(ret, vars),
+	})
+}
+
+// argumentSolve is what a call's context contributes to solving its type variables, beyond
+// the arguments themselves.
+type argumentSolve struct {
+	// seed pre-binds variables no parameter reaches, from the context (seedFromExpectedReturn).
+	seed map[string]types.Type
+	// callerVars are the enclosing body's variables a lambda literal may be given — a bound
+	// receiver's `t` — beyond those the solve's own values bring (plantableVars).
+	callerVars map[string]bool
+	// expectedReturn is what the context binds each variable to through the callee's return
+	// (expectedReturnBindings). It **settles a guess** and nothing else: an array literal a
+	// lambda returns, whose fixed flavor is only its default (see settleArrayLiteralGuess).
+	expectedReturn map[string]types.Type
+}
+
+// expectedReturnBindings unifies a callee's declared return with the call's context, for
+// every variable in vars. Unlike seedFromExpectedReturn this reaches variables a parameter
+// mentions, which is why it is only ever consulted to break a tie the arguments leave open.
+func (tc *TypeChecker) expectedReturnBindings(declaredReturn types.Type, vars map[string]bool) map[string]types.Type {
+	want := tc.currentExpectedType()
+	if want == nil || declaredReturn == nil || len(vars) == 0 {
+		return nil
+	}
+	bindings := map[string]types.Type{}
+	if !unifyGenericTarget(declaredReturn, want, vars, bindings) {
+		return nil
+	}
+	return bindings
 }
 
 // solveArgumentTypeVars is solveTypeVars over parameter types given by position rather than
 // read off a declaration: a trait method's call has only its dispatched signature, whose
 // own variables (`mapv: (Self, (i64) -> b) -> b`) are solved by exactly these rules.
-// declaredParam(i) is the resolved type of the parameter call.Arguments[i] fills. callerVars
-// are variables of the enclosing body a slot may mention and a lambda literal may be given —
-// a bound receiver's `t` — beyond those the solve's own values bring (plantableVars).
-func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(i int) types.Type, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type, callerVars map[string]bool) (map[string]types.Type, bool) {
+// declaredParam(i) is the resolved type of the parameter call.Arguments[i] fills.
+func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(i int) types.Type, call *ast.FunctionCallExpr, vars map[string]bool, ctx argumentSolve) (map[string]types.Type, bool) {
+	seed, callerVars := ctx.seed, ctx.callerVars
 	subst := map[string]types.Type{}
 	// Pre-bindings the *context* supplied, for variables the arguments cannot reach
 	// (seedFromExpectedReturn). Installed before the passes below so a parameter written
@@ -166,6 +198,7 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		typ   types.Type
 	}
 	var untyped []untypedArg
+	var guesses []untypedArg
 	for i, arg := range call.Arguments {
 		if i >= paramCount {
 			break
@@ -245,7 +278,19 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		if argType == nil {
 			return nil, false
 		}
+		// A lambda returning an array literal has guessed its flavor, the way a bare
+		// array-literal argument has (the first pass defers those). It speaks after the
+		// other lambdas, so they get no say in it either.
+		if arrayLiteralLambdaGuess(call.Arguments[i], argType) {
+			guesses = append(guesses, untypedArg{index: i, typ: argType})
+			continue
+		}
 		if !unifyGenericTarget(declared, promoteToDefault(argType), vars, subst) {
+			return nil, false
+		}
+	}
+	for _, g := range guesses {
+		if !tc.settleArrayLiteralGuess(declaredParam(g.index), g.typ, vars, subst, ctx.expectedReturn) {
 			return nil, false
 		}
 	}
@@ -306,6 +351,89 @@ func isFixedArrayLiteral(arg ast.Expression, argType types.Type) bool {
 		return fixed
 	}
 	return false
+}
+
+// arrayLiteralLambdaGuess reports whether arg is a lambda literal with no written return
+// whose inferred return is a fixed array built by an array literal as its value — `(x) =>
+// [x]`. That `[1]i64` is a default, not a statement: the same literal against a `[]i64`
+// return is a dynamic array, and solving a variable from the default made `app(n, (x) =>
+// [x])` in a `-> []i64` function fail its own return (`expected DynamicArray<i64>, got
+// StaticArray<i64, 1>`), where a non-generic callee gets `[]i64` planted before inference.
+func arrayLiteralLambdaGuess(arg ast.Expression, argType types.Type) bool {
+	lambda, ok := arg.(*ast.LambdaExpr)
+	if !ok || lambda.ReturnType.Type != nil || lambda.Body == nil {
+		return false
+	}
+	lt, ok := argType.(*types.LambdaType)
+	if !ok || lt == nil {
+		return false
+	}
+	if _, fixed := lt.ReturnType.Type.(types.StaticArrayType); !fixed {
+		return false
+	}
+	switch valueExpr(lambda.Body).(type) {
+	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
+		return true
+	}
+	return false
+}
+
+// valueExpr is the expression that supplies a body's value: a block's final expression,
+// followed through nested blocks, or the body itself.
+func valueExpr(body ast.Expression) ast.Expression {
+	for {
+		block, ok := body.(*ast.BlockExpr)
+		if !ok || len(block.Statements) == 0 {
+			return body
+		}
+		last, ok := block.Statements[len(block.Statements)-1].(*ast.ExpressionStmt)
+		if !ok {
+			return body
+		}
+		body = last.Expression
+	}
+}
+
+// settleArrayLiteralGuess unifies a guessed lambda (arrayLiteralLambdaGuess) into the solve.
+//
+// The dynamic flavor wins only when the context asked for exactly it: unified as `(…) ->
+// []E` instead, the lambda must bind some variable the call's context (expectedReturn)
+// binds to the same type. Anything less keeps the fixed default. The strictness is what
+// keeps a **stale** context harmless — the expected-type stack can still hold an enclosing
+// return inside a branch's statement — since agreeing with it exactly can change only the
+// flavor of an array the lambda builds anyway, never introduce a type error.
+//
+// The lambda itself is re-flavored when the argument check plants the solved return onto it
+// (elaborateLambda → reflavorArrayLiteralReturn).
+func (tc *TypeChecker) settleArrayLiteralGuess(declared, argType types.Type, vars map[string]bool, subst, expectedReturn map[string]types.Type) bool {
+	lt := argType.(*types.LambdaType)
+	static := lt.ReturnType.Type.(types.StaticArrayType)
+	if len(expectedReturn) > 0 {
+		dynamic := *lt
+		dynamic.ReturnType.Type = types.DynamicArrayType{ElementType: promoteToDefault(static.ElementType)}
+		trial := make(map[string]types.Type, len(subst))
+		for k, v := range subst {
+			trial[k] = v
+		}
+		if unifyGenericTarget(declared, promoteToDefault(&dynamic), vars, trial) {
+			asked := false
+			for v, bound := range trial {
+				if _, before := subst[v]; before {
+					continue
+				}
+				if want, ok := expectedReturn[v]; ok && types.TypesEqual(want, bound) {
+					asked = true
+				}
+			}
+			if asked {
+				for k, v := range trial {
+					subst[k] = v
+				}
+				return true
+			}
+		}
+	}
+	return unifyGenericTarget(declared, promoteToDefault(argType), vars, subst)
 }
 
 // isBareGenericConstruction reports whether t is the bare form of a *generic* data

@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a lambda's array literal takes the context's flavor
+
+`app(n, (x) => [x])` against `app<b>(n: i64, f: (i64) -> b) -> b`, in a `-> []i64` function,
+failed its own return: `expected DynamicArray<i64>, got StaticArray<i64, 1>`. The same happened
+through a trait method. A non-generic callee never showed it, because its slot plants `[]i64`
+on the lambda before the body is inferred. A generic slot is `(i64) -> b` with `b` unsolved,
+so the body was inferred bare, and `[x]` took its default: fixed.
+
+**A fixed array literal is a guess, and the solver already treated it as one**, for a bare
+argument (`m.unwrap_or([])`, 09/13). A lambda whose value is an array literal is the same guess
+one level in. `arrayLiteralLambdaGuess` marks it, and it is settled after every other argument
+(`settleArrayLiteralGuess`).
+
+**The context is consulted with suspicion, because it can be stale.** Probing found that a
+statement inside an `if` branch still sees the enclosing function's return as its expected
+type. That bug predates this change and is filed. So the context wins only when it asks for
+*exactly* the dynamic array: re-unified as `(…) -> []E`, the lambda must bind a variable to the
+same type the context binds it to (`expectedReturnBindings`). A stale context can then change
+only the flavor of an array the lambda builds anyway, never create an error. An untyped element
+(`[1, 2]` for `[]u8`) or a wrapped literal (`Some([x])`) keeps the default, and is filed.
+
+**Re-flavoring happens where the return is planted.** The lambda was already inferred and cached
+as `(i64) -> [1]i64`. When `elaborateLambda` later plants the solved `[]i64`,
+`reflavorArrayLiteralReturn` pushes it through the ordinary context walk, which re-records the
+literal and block tails, then rebuilds the lambda's record. One place serves generic functions,
+trait methods and bound calls.
+
+The solver's extra inputs became `argumentSolve` (seed, caller variables, expected return)
+rather than a sixth and seventh positional parameter.
+
 ### 09/14/26 — a method's own type variables through a `where` bound
 
 `v.mapv(f)` under `where t: Mapper` was refused by name, because a bound call has no single

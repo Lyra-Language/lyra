@@ -199,3 +199,51 @@ impl Apply for i64 { apply = (self, f) => f(self) }
 let a = () -> i64 => 3.apply((x) => "no")`, false)
 	assertErrorsAre(t, res, "lambda: return type mismatch: expected i64, got string")
 }
+
+// A lambda returning an array literal has guessed the literal's flavor, and a type variable
+// solved from it used to take the guess as fact: in a `-> []i64` function, `app(n, (x) =>
+// [x])` solved `b = [1]i64` and failed the return. The context settles the guess when it asks
+// for exactly the dynamic array; otherwise the fixed default stands.
+func TestContextualLambda_ArrayLiteralReturnTakesTheContextsFlavor(t *testing.T) {
+	t.Parallel()
+	const app = `
+let app<b> = (n: i64, f: (i64) -> b) -> b => f(n)
+trait Mapper { mapv: (Self, (i64) -> b) -> b }
+impl Mapper for i64 { mapv = (self, f) => f(self) }
+`
+	cases := map[string]string{
+		"generic function, return":      app + `let w = (n: i64) -> []i64 => app(n, (x) => [x, x])`,
+		"generic function, annotation":  app + `let w = (n: i64) -> i64 => { let xs: []i64 = app(n, (x) => [x]); xs.len() }`,
+		"repeat and block tail":         app + `let w = (n: i64) -> []i64 => app(n, (x) => { let y = x; [y; 3] })`,
+		"trait method":                  app + `let w = (n: i64) -> []i64 => n.mapv((x) => [x])`,
+		"trait method through a bound":  app + `let w<t> where t: Mapper = (v: t) -> []i64 => v.mapv((x) => [x])`,
+		"the result is a dynamic array": app + `let w = (n: i64) -> i64 => { var xs: []i64 = app(n, (x) => [x]); xs.push(2); xs.len() }`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertNoErrors(t, parseCollectAndCheck(t, src, false))
+		})
+	}
+}
+
+// Without a context asking for exactly that dynamic array the default stands: no context
+// leaves it fixed, and a context with another element type is a mismatch, as before.
+func TestContextualLambda_ArrayLiteralReturnKeepsItsDefault(t *testing.T) {
+	t.Parallel()
+	const app = `
+let app<b> = (n: i64, f: (i64) -> b) -> b => f(n)
+`
+	cases := map[string]struct{ src, want string }{
+		"no context": {app + `let w = () -> i64 => { var xs = app(1, (x) => [x]); xs.push(2); 0 }`,
+			"member access on non-struct type StaticArray<i64, 1>"},
+		"another element type": {app + `let w = (n: i64) -> []string => app(n, (x) => [x])`,
+			"w: return type mismatch: expected DynamicArray<string>, got StaticArray<i64, 1>"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertErrorsAre(t, parseCollectAndCheck(t, tc.src, false), tc.want)
+		})
+	}
+}

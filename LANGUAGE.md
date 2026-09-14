@@ -301,6 +301,7 @@ Solved from argument types first, then:
 - Only blanks are filled; a written annotation wins and is checked.
 - A slot type mentioning a variable the call has not solved (the `u` of `(t) -> u`) is left blank for the body to solve; the enclosing declaration's own variable (`(t) -> t` inside `<t>`) is filled in.
 - An arity mismatch fills nothing.
+- A lambda whose value is an array literal (`(x) => [x]`, a block ending in one) solves the slot's variable as a fixed array unless the call's context — a declared return, an annotation — wants exactly `[]E` for it, with the same element type; then it builds `[]E`. `app(n, (x) => [x])` in a `-> []i64` function is `[]i64`; bare, it is `[1]i64`.
 
 ### Generic parameter lists
 

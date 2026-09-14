@@ -196,3 +196,33 @@ let main = () -> u8 => u8(f().pair.0 + f().pair.1)`,
 		})
 	}
 }
+
+// A lambda's array literal takes the context's flavor when a type variable is solved from it:
+// `app(n, (x) => [x])` in a `-> []string` function lowers a dynamic array, so the caller can
+// push onto the result. It used to solve the literal's fixed default and fail the return.
+// Managed elements, so ASan sees a literal whose record and emission disagree.
+func TestExec_ArrayLiteralLambdaTakesContextFlavor(t *testing.T) {
+	t.Parallel()
+	src := `let app<b> = (n: i64, f: (i64) -> b) -> b => f(n)
+trait Mapper { mapv: (Self, (i64) -> b) -> b }
+impl Mapper for i64 { mapv = (self, f) => f(self) }
+let names = (n: i64) -> []string => app(n, (x) => ["a".slice(0, 1) ++ "b", "c"])
+let viaTrait = (n: i64) -> []i64 => n.mapv((x) => [x; 3])
+let viaBound<t> where t: Mapper = (v: t) -> []i64 => v.mapv((x) => { let y = x + 1; [y, y] })
+let main = () -> u8 => {
+  var ns = names(1)
+  ns.push("dd")
+  var ts = viaTrait(4)
+  ts.push(5)
+  let bs = viaBound(6)
+  u8(ns.len() + ns[0].len() + ns[2].len() + ts.len() + ts[3] + bs.len() + bs[1])
+}`
+	// 3 + 2 + 2 + 4 + 5 + 2 + 7
+	const want = 25
+	if got := buildAndRun(t, src); got != want {
+		t.Errorf("exited %d; want %d", got, want)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != want {
+		t.Errorf("under ASan: exited %d; want %d", got, want)
+	}
+}
