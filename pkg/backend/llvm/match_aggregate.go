@@ -855,11 +855,10 @@ func payloadPositions(p *ast.DataPattern, ctor types.DataTypeConstructor) (ast.P
 		}
 		return ast.Positions{Columns: out}, nil
 	}
-	// What is left is a single *binding* for a multi-field payload (`Rect pair`), which
-	// would bind the payload tuple as one value. That is a real feature and not this
-	// one, so it keeps the honest error rather than being guessed at.
-	return ast.Positions{}, fmt.Errorf("llvm: binding a whole multi-field payload as one value (%q) is not implemented yet; "+
-		"name the fields instead, as %s(…)", p.Name, p.Name)
+	// What is left is a single *binding* for a multi-field payload (`Rect pair`). The
+	// typechecker rewrites that to `Rect(...pair)` (bindDataPatternPayload), so reaching
+	// here means a pattern it never walked — refused loudly (rule 5) rather than guessed at.
+	return ast.Positions{}, fmt.Errorf("llvm: the whole-payload binding of %q was not rewritten to a rest pattern", p.Name)
 }
 
 // unreachableDataArms reports which arms repeat a constructor an earlier arm already

@@ -58,24 +58,3 @@ let main = () -> void => {
 		t.Errorf("got %q; want %q", got, want)
 	}
 }
-
-// What is *not* fixed, and says so: a single **binding** for a multi-field payload
-// (`Rect pair`) would bind the payload tuple as one value. That is a real feature and a
-// different one, so it keeps an honest error naming the spelling that works — rather
-// than the old message, which said "not implemented" about a form that was.
-//
-// Refused by the **typechecker** since 09/13, where it had been the backend's refusal: a
-// match arm's nested pattern is now walked as a destructuring is, and that walk is where
-// a payload's arity is checked.
-func TestExec_BindingAWholeMultiFieldPayloadStillErrors(t *testing.T) {
-	t.Parallel()
-	const src = `
-module main
-data Shape = Rect(i64, i64) | Dot
-let f = (s: Shape) -> i64 => match s { Rect pair => 1, Dot => 0 }
-let main = () -> void => { println("${f(Dot)}") }
-`
-	if errs := analyzeWithPreludeErrors(t, src); !strings.Contains(errs, "name the fields instead") {
-		t.Errorf("the message should name the working spelling, got: %q", errs)
-	}
-}

@@ -36,8 +36,8 @@ Package management, versioning and separate compilation are out of scope by deci
 
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
-- **[OPEN] Binding a whole multi-field payload as one value (`Rect pair`)** is refused;
-  `Rect _` works.
+- **[OPEN] Rename from a pattern binding answers nothing**, and references from a rest
+  binding (`...more`, and so `Rect pair`) find nothing. Both work from a use.
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
   `Empty(-1)`. Contrived; if it bites, lint it rather than change the grammar.
 - **[IDEA] Warn on `Some - 1` with spaces on both sides**, which reads as subtraction.

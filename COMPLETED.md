@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — one name binds a whole multi-field payload
+
+`Rect pair` was refused, twice over: the typechecker's destructuring walk reported it, and
+the backend's `payloadPositions` kept its own refusal behind that. The meaning was never in
+doubt, because the language already had it: a tuple rest that covers every position binds a
+tuple of them, so `Rect(...pair)` was a working spelling of exactly this. The walk now
+rewrites the bare name to that rest pattern in place, and everything downstream (coverage,
+ownership, both lowerings) takes the rest's existing path rather than learning a second
+shape. The rewrite lives in `bindDataPatternPayload`, the first point that knows the
+constructor's arity. `Some x` must stay a plain binding of the one field, and `Dot x` stays
+an arity error rather than binding `()`.
+
+The backend refusal stays as a guard (rule 5): reaching it now means a pattern the
+typechecker never walked. Checking the editor side showed that a rest binding was already
+invisible to references from the binding itself, and rename from any pattern binding
+already answered nothing. `Rect pair` inherits both, and they are filed together in todo.md.
+
 ### 09/13/26 — a `const` may bound a range pattern
 
 `LOW..<=HIGH` did not parse, and the blocker was the lexer, not a missing alternative:

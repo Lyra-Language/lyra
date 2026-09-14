@@ -1258,12 +1258,22 @@ func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, ctor *types.Da
 	if _, isWildcard := p.Pattern.(*ast.WildcardPattern); isWildcard {
 		return
 	}
-	// A single *name* for a multi-field payload (`Rect pair`) would bind the payload as one
-	// tuple, which is a feature the language does not have (todo.md).
-	if _, isName := p.Pattern.(*ast.IdentifierPattern); isName {
-		tc.addError(p.GetLocation(), SeverityError,
-			"%s takes %d argument(s), and binding a whole multi-field payload as one value is not supported; name the fields instead, as %s(…)",
-			p.Name, len(flat), p.Name)
+	// A single *name* for a multi-field payload (`Rect pair`) binds the payload as one tuple,
+	// and is **rewritten to the rest pattern that already means that**: `Rect(...pair)`.
+	// A rest covering every position binds a tuple of them, so the two spellings are one
+	// pattern — and rewriting, rather than teaching the payload walks a second shape, is
+	// what gives coverage, ownership and both lowerings the answer they already have for
+	// the rest. Only here is the arity known; `Some x` (one field) stays a plain binding.
+	if id, isName := p.Pattern.(*ast.IdentifierPattern); isName && len(flat) > 1 {
+		loc := id.GetLocation()
+		p.Pattern = &ast.TuplePattern{
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
+			Elements: []ast.Pattern{&ast.RestPattern{
+				PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
+				Identifier:  id.Name,
+			}},
+		}
+		tc.bindDataPatternPayload(p, ctor, bind)
 		return
 	}
 	tc.addError(p.GetLocation(), SeverityError,

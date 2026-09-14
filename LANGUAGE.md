@@ -121,7 +121,7 @@ A place is what `=` writes and `&` addresses: a binding, a field `p.x`, an eleme
 - **One meaning in every position** — a `match` arm, `if let`, `let`, `let … else` and a parameter. A literal, range or regex at any depth is checked against the type in its position by the rule a `match` on that type applies.
 - **Tuple rest**: `(a, ...mid, z)` — positions after the rest count from the end, and `mid` binds a **tuple** of what it covers, whatever the count (one position is a one-element tuple, none is `()`). The same in a constructor payload: `Tri(i, ...more)`.
 - **Array rest is the tail**: `[h, ...t]`. A rest before the end of an array pattern, or a second rest in any pattern, is `lyra-E076`.
-- `Rect _` stands for `Rect(_, _)`; `Rect pair` (one name for a multi-field payload) is refused, naming `Rect(…)`.
+- `Rect _` stands for `Rect(_, _)`, and `Rect pair` for `Rect(...pair)`: one name for a multi-field payload binds it as a tuple of the fields. With one field, `Some x` binds the field itself.
 - A capitalized name in a pattern is a constructor. Comparing against a `const` is a guard: `v if v == LIMIT` (`lyra-E057`).
 - **A range bound may be a `const`**: `LOW..<=HIGH`, `..<LIMIT`. It is the folded value, so exhaustiveness, overlap and `lyra-E048` read the number. The `const` must be in scope unqualified (import it by name) and fold to an integer, or a float for a float scrutinee; a float bound on an integer scrutinee is an error.
 - An all-caps constructor takes its payload in parentheses in a pattern: `CD(x)`, not `CD x`.
