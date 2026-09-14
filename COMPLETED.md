@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — raw strings compile; `/* glsl */` highlights embedded shaders
+
+Asked for GLSL highlighting of the shaders in `examples/raylib/gltf_viewer.lyra`. They were
+arrays of quoted lines joined with `\n`, and no editor can treat that as one GLSL document.
+They had to become raw strings. That surfaced that raw strings **parsed but never compiled**:
+the collector had no case for `raw_string_literal`, so `` let s = `…` `` reported lyra-E010
+as if uninitialized. It now lowers to a `StringLiteralExpr` sliced between the delimiters.
+
+**The marker is a comment, `/* glsl */`, not content sniffing.** Detecting `#version`
+misses shader fragments and `lit_fragment`, whose `#version` comes from a separate
+conditional prefix. The comment is the JS-template convention, and the compiler ignores it.
+
+**The grammar splits the raw string into three tokens** so `raw_string_content` is a node.
+Zed's injection queries have no `#offset!`: injecting the whole token hands GLSL its
+backticks. The opener's `#` count became scanner state. While it is set the scanner answers
+before anything else, because the newline and block-comment branches would otherwise lex
+inside the string.
+
+**VS Code's `#function-parameters` never included raw strings.** Every `(…)` is scoped by
+it, so a raw-string argument went unpainted, and a `)` inside one closed the parens. It was
+found because `` load_shader(/* glsl */ `…`) `` is the obvious way to write the call.
+
 ### 09/13/26 — rename and references on a pattern binding
 
 Filed as "rename from a binding answers nothing". Probing every binding form from both the

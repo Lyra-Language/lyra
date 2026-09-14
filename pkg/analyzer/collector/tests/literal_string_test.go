@@ -25,6 +25,19 @@ func TestCollectStringLiteralExprWithHashEscape(t *testing.T) {
 	runGoldenTest(t, `let s = "Phone \#: not an interp"`, "string_literal_expr_with_hash_escape")
 }
 
+func TestCollectRawStringLiteralExpr(t *testing.T) {
+	// No escapes and no interpolation: every byte between the backticks is the value.
+	runGoldenTest(t, "let s = `C:\\new ${name}`", "raw_string_literal_expr")
+}
+
+func TestCollectRawStringLiteralExprWithHashes(t *testing.T) {
+	runGoldenTest(t, "let s = ##`a ` and `# inside`##", "raw_string_literal_expr_with_hashes")
+}
+
+func TestCollectEmptyRawStringLiteralExpr(t *testing.T) {
+	runGoldenTest(t, "let s = ``", "empty_raw_string_literal_expr")
+}
+
 func TestCollectInterpolatedStringExprSimple(t *testing.T) {
 	runGoldenTest(t, `let greeting = "Hello, ${name}!"`, "interpolated_string_expr_simple")
 }

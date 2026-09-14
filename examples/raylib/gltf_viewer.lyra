@@ -891,30 +891,29 @@ let slots_filled = pure (model: Model) -> bool => {
 
 /// The vertex shader: positions and normals into world space for the lighting, and both UV
 /// sets through to the fragment shader.
-let lit_vertex = pure () -> string => [
-  "#version 330",
-  "in vec3 vertexPosition;",
-  "in vec2 vertexTexCoord;",
-  "in vec2 vertexTexCoord2;",
-  "in vec3 vertexNormal;",
-  "in vec4 vertexColor;",
-  "uniform mat4 mvp;",
-  "uniform mat4 matModel;",
-  "uniform mat4 matNormal;",
-  "out vec3 fragPosition;",
-  "out vec2 fragTexCoord;",
-  "out vec2 fragTexCoord2;",
-  "out vec4 fragColor;",
-  "out vec3 fragNormal;",
-  "void main() {",
-  "  fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));",
-  "  fragTexCoord = vertexTexCoord;",
-  "  fragTexCoord2 = vertexTexCoord2;",
-  "  fragColor = vertexColor;",
-  "  fragNormal = vec3(matNormal * vec4(vertexNormal, 0.0));",
-  "  gl_Position = mvp * vec4(vertexPosition, 1.0);",
-  "}",
-].join("\n")
+let lit_vertex = pure () -> string => /* glsl */ `#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+in vec2 vertexTexCoord2;
+in vec3 vertexNormal;
+in vec4 vertexColor;
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matNormal;
+out vec3 fragPosition;
+out vec2 fragTexCoord;
+out vec2 fragTexCoord2;
+out vec4 fragColor;
+out vec3 fragNormal;
+void main() {
+  fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+  fragTexCoord = vertexTexCoord;
+  fragTexCoord2 = vertexTexCoord2;
+  fragColor = vertexColor;
+  fragNormal = vec3(matNormal * vec4(vertexNormal, 0.0));
+  gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+`
 
 /// The fragment shader: metallic-roughness shading under a key and a fill light, with a
 /// sky-to-ground ambient the occlusion map darkens, a clearcoat layer, and transmission.
@@ -951,135 +950,135 @@ let lit_vertex = pure () -> string => [
 /// **Tone mapping works on luminance, not per channel**, so it keeps hue; a per-channel
 /// curve turned the Fox yellow.
 let lit_fragment = pure (flat: bool) -> string =>
-  (if flat { "#version 330\n#define FLAT_NORMALS\n" } else { "#version 330\n" }) ++ [
-  "in vec3 fragPosition;",
-  "in vec2 fragTexCoord;",
-  "in vec2 fragTexCoord2;",
-  "in vec4 fragColor;",
-  "in vec3 fragNormal;",
-  "uniform sampler2D texture0;",
-  "uniform sampler2D texture1;",
-  "uniform sampler2D texture2;",
-  "uniform sampler2D occlusionMap;",
-  "uniform sampler2D emissionMap;",
-  "uniform sampler2D paramsMap;",
-  "uniform vec4 colDiffuse;",
-  "uniform mat4 matView;",
-  "out vec4 finalColor;",
-  "const float PI = 3.14159265;",
-  "const vec3 KEY_DIR = vec3(-0.45, 0.8, 0.55);",
-  "const vec3 KEY_COLOR = vec3(2.6, 2.55, 2.45);",
-  "const vec3 FILL_DIR = vec3(0.6, 0.25, -0.6);",
-  "const vec3 FILL_COLOR = vec3(0.45, 0.5, 0.6);",
-  "const vec3 SKY = vec3(0.55, 0.58, 0.66);",
-  "const vec3 GROUND = vec3(0.2, 0.18, 0.16);",
-  "float param(int i) {",
-  "  uvec4 b = uvec4(round(texelFetch(paramsMap, ivec2(i, 0), 0) * 255.0));",
-  "  return uintBitsToFloat(b.r | (b.g << 8u) | (b.b << 16u) | (b.a << 24u));",
-  "}",
-  "vec2 slotUV(int slot) {",
-  "  int k = slot * 6;",
-  "  vec2 uv = param(k) > 0.5 ? fragTexCoord2 : fragTexCoord;",
-  "  float r = param(k + 3);",
-  "  vec2 s = uv * vec2(param(k + 4), param(k + 5));",
-  "  return vec2(cos(r) * s.x + sin(r) * s.y, cos(r) * s.y - sin(r) * s.x) + vec2(param(k + 1), param(k + 2));",
-  "}",
-  "vec3 perturbNormal(vec3 n, vec3 p, vec2 uv, float strength) {",
-  "  vec3 m = texture(texture2, uv).xyz * 2.0 - 1.0;",
-  "  m.xy *= strength;",
-  "  vec3 dp1 = dFdx(p);",
-  "  vec3 dp2 = dFdy(p);",
-  "  vec2 duv1 = dFdx(uv);",
-  "  vec2 duv2 = dFdy(uv);",
-  "  vec3 dp2perp = cross(dp2, n);",
-  "  vec3 dp1perp = cross(n, dp1);",
-  "  vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;",
-  "  vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;",
-  "  float len2 = max(dot(t, t), dot(b, b));",
-  "  if (len2 < 1e-20) return n;",
-  "  float s = inversesqrt(len2);",
-  "  return normalize(mat3(t * s, b * s, n) * m);",
-  "}",
-  "float ggx(float nh, float a) {",
-  "  float a2 = a * a;",
-  "  float d = nh * nh * (a2 - 1.0) + 1.0;",
-  "  return a2 / (PI * d * d);",
-  "}",
-  "float smith(float nv, float nl, float r) {",
-  "  float k = (r + 1.0) * (r + 1.0) / 8.0;",
-  "  return nv / (nv * (1.0 - k) + k) * nl / (nl * (1.0 - k) + k);",
-  "}",
-  "vec3 fresnel(float c, vec3 f0) { return f0 + (1.0 - f0) * pow(1.0 - c, 5.0); }",
-  "vec3 sky(vec3 d) { return mix(GROUND, SKY, d.y * 0.5 + 0.5); }",
-  "vec3 skyBlurred(vec3 d, float rough) { return mix(sky(d), 0.5 * (SKY + GROUND), rough); }",
-  "vec3 envBRDF(vec3 f0, float rough, float nv) {",
-  "  vec4 r = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);",
-  "  float a = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;",
-  "  vec2 ab = vec2(-1.04, 1.04) * a + r.zw;",
-  "  return f0 * ab.x + ab.y;",
-  "}",
-  "vec3 shade(vec3 n, vec3 v, vec3 l, vec3 radiance, vec3 albedo, float metallic, float rough, vec3 f0, float diffuse) {",
-  "  vec3 h = normalize(v + l);",
-  "  float nl = max(dot(n, l), 0.0);",
-  "  float nv = max(dot(n, v), 1e-4);",
-  "  float nh = max(dot(n, h), 0.0);",
-  "  vec3 f = fresnel(max(dot(h, v), 0.0), f0);",
-  "  vec3 spec = ggx(nh, rough * rough) * smith(nv, nl, rough) * f / (4.0 * nv * max(nl, 1e-4));",
-  "  vec3 kd = (1.0 - f) * (1.0 - metallic) * diffuse;",
-  "  return (kd * albedo / PI + spec) * radiance * nl;",
-  "}",
-  "vec3 coat(vec3 n, vec3 v, vec3 l, vec3 radiance, float rough) {",
-  "  vec3 h = normalize(v + l);",
-  "  float nl = max(dot(n, l), 0.0);",
-  "  float nv = max(dot(n, v), 1e-4);",
-  "  float nh = max(dot(n, h), 0.0);",
-  "  vec3 f = fresnel(max(dot(h, v), 0.0), vec3(0.04));",
-  "  return ggx(nh, rough * rough) * smith(nv, nl, rough) * f / (4.0 * nv * max(nl, 1e-4)) * radiance * nl;",
-  "}",
-  "void main() {",
-  "  vec4 texel = texture(texture0, slotUV(0));",
-  "  vec4 base = vec4(pow(texel.rgb, vec3(2.2)), texel.a) * colDiffuse * fragColor;",
-  "  float mode = param(41);",
-  "  if (mode > 0.5 && mode < 1.5 && base.a < param(42)) discard;",
-  "  vec3 albedo = base.rgb;",
-  "  vec3 mr = texture(texture1, slotUV(1)).rgb;",
-  "  float rough = clamp(mr.g * param(33), 0.05, 1.0);",
-  "  float metallic = clamp(mr.b * param(32), 0.0, 1.0);",
-  "  float ao = 1.0 + param(31) * (texture(occlusionMap, slotUV(3)).r - 1.0);",
-  "  vec3 emission = pow(texture(emissionMap, slotUV(4)).rgb, vec3(2.2)) * vec3(param(34), param(35), param(36)) * param(37);",
-  "  float transmission = clamp(param(38), 0.0, 1.0);",
-  "#ifdef FLAT_NORMALS",
-  "  vec3 ng = normalize(cross(dFdx(fragPosition), dFdy(fragPosition)));",
-  "#else",
-  "  vec3 ng = normalize(fragNormal);",
-  "  if (!gl_FrontFacing) ng = -ng;",
-  "#endif",
-  "  vec3 n = perturbNormal(ng, fragPosition, slotUV(2), param(30));",
-  "  vec3 eye = inverse(matView)[3].xyz;",
-  "  vec3 v = normalize(eye - fragPosition);",
-  "  vec3 f0 = mix(vec3(0.04), albedo, metallic);",
-  "  float diffuse = 1.0 - transmission;",
-  "  vec3 color = shade(n, v, normalize(KEY_DIR), KEY_COLOR, albedo, metallic, rough, f0, diffuse)",
-  "            + shade(n, v, normalize(FILL_DIR), FILL_COLOR, albedo, metallic, rough, f0, diffuse);",
-  "  vec3 fa = envBRDF(f0, rough, max(dot(n, v), 1e-4));",
-  "  color += (sky(n) * albedo * (1.0 - metallic) * (1.0 - fa) * diffuse + skyBlurred(reflect(-v, n), rough) * fa) * ao;",
-  "  float cc = param(39);",
-  "  if (cc > 0.0) {",
-  "    float ccRough = clamp(param(40), 0.03, 1.0);",
-  "    float fc = 0.04 + 0.96 * pow(1.0 - max(dot(ng, v), 0.0), 5.0);",
-  "    vec3 layer = coat(ng, v, normalize(KEY_DIR), KEY_COLOR, ccRough) + coat(ng, v, normalize(FILL_DIR), FILL_COLOR, ccRough)",
-  "               + sky(reflect(-v, ng)) * fc * ao;",
-  "    color = color * (1.0 - cc * fc) + cc * layer;",
-  "  }",
-  "  color += emission;",
-  "  float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));",
-  "  color *= (1.0 + lum / 2.25) / (1.0 + lum);",
-  "  float alpha = mode < 0.5 ? 1.0 : base.a;",
-  "  float edge = 0.04 + 0.96 * pow(1.0 - max(dot(n, v), 0.0), 5.0);",
-  "  alpha = mix(alpha, 0.2 + 0.8 * edge, transmission);",
-  "  finalColor = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), alpha);",
-  "}",
-].join("\n")
+  (if flat { "#version 330\n#define FLAT_NORMALS\n" } else { "#version 330\n" }) ++ /* glsl */ `
+in vec3 fragPosition;
+in vec2 fragTexCoord;
+in vec2 fragTexCoord2;
+in vec4 fragColor;
+in vec3 fragNormal;
+uniform sampler2D texture0;
+uniform sampler2D texture1;
+uniform sampler2D texture2;
+uniform sampler2D occlusionMap;
+uniform sampler2D emissionMap;
+uniform sampler2D paramsMap;
+uniform vec4 colDiffuse;
+uniform mat4 matView;
+out vec4 finalColor;
+const float PI = 3.14159265;
+const vec3 KEY_DIR = vec3(-0.45, 0.8, 0.55);
+const vec3 KEY_COLOR = vec3(2.6, 2.55, 2.45);
+const vec3 FILL_DIR = vec3(0.6, 0.25, -0.6);
+const vec3 FILL_COLOR = vec3(0.45, 0.5, 0.6);
+const vec3 SKY = vec3(0.55, 0.58, 0.66);
+const vec3 GROUND = vec3(0.2, 0.18, 0.16);
+float param(int i) {
+  uvec4 b = uvec4(round(texelFetch(paramsMap, ivec2(i, 0), 0) * 255.0));
+  return uintBitsToFloat(b.r | (b.g << 8u) | (b.b << 16u) | (b.a << 24u));
+}
+vec2 slotUV(int slot) {
+  int k = slot * 6;
+  vec2 uv = param(k) > 0.5 ? fragTexCoord2 : fragTexCoord;
+  float r = param(k + 3);
+  vec2 s = uv * vec2(param(k + 4), param(k + 5));
+  return vec2(cos(r) * s.x + sin(r) * s.y, cos(r) * s.y - sin(r) * s.x) + vec2(param(k + 1), param(k + 2));
+}
+vec3 perturbNormal(vec3 n, vec3 p, vec2 uv, float strength) {
+  vec3 m = texture(texture2, uv).xyz * 2.0 - 1.0;
+  m.xy *= strength;
+  vec3 dp1 = dFdx(p);
+  vec3 dp2 = dFdy(p);
+  vec2 duv1 = dFdx(uv);
+  vec2 duv2 = dFdy(uv);
+  vec3 dp2perp = cross(dp2, n);
+  vec3 dp1perp = cross(n, dp1);
+  vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+  float len2 = max(dot(t, t), dot(b, b));
+  if (len2 < 1e-20) return n;
+  float s = inversesqrt(len2);
+  return normalize(mat3(t * s, b * s, n) * m);
+}
+float ggx(float nh, float a) {
+  float a2 = a * a;
+  float d = nh * nh * (a2 - 1.0) + 1.0;
+  return a2 / (PI * d * d);
+}
+float smith(float nv, float nl, float r) {
+  float k = (r + 1.0) * (r + 1.0) / 8.0;
+  return nv / (nv * (1.0 - k) + k) * nl / (nl * (1.0 - k) + k);
+}
+vec3 fresnel(float c, vec3 f0) { return f0 + (1.0 - f0) * pow(1.0 - c, 5.0); }
+vec3 sky(vec3 d) { return mix(GROUND, SKY, d.y * 0.5 + 0.5); }
+vec3 skyBlurred(vec3 d, float rough) { return mix(sky(d), 0.5 * (SKY + GROUND), rough); }
+vec3 envBRDF(vec3 f0, float rough, float nv) {
+  vec4 r = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+  float a = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
+  vec2 ab = vec2(-1.04, 1.04) * a + r.zw;
+  return f0 * ab.x + ab.y;
+}
+vec3 shade(vec3 n, vec3 v, vec3 l, vec3 radiance, vec3 albedo, float metallic, float rough, vec3 f0, float diffuse) {
+  vec3 h = normalize(v + l);
+  float nl = max(dot(n, l), 0.0);
+  float nv = max(dot(n, v), 1e-4);
+  float nh = max(dot(n, h), 0.0);
+  vec3 f = fresnel(max(dot(h, v), 0.0), f0);
+  vec3 spec = ggx(nh, rough * rough) * smith(nv, nl, rough) * f / (4.0 * nv * max(nl, 1e-4));
+  vec3 kd = (1.0 - f) * (1.0 - metallic) * diffuse;
+  return (kd * albedo / PI + spec) * radiance * nl;
+}
+vec3 coat(vec3 n, vec3 v, vec3 l, vec3 radiance, float rough) {
+  vec3 h = normalize(v + l);
+  float nl = max(dot(n, l), 0.0);
+  float nv = max(dot(n, v), 1e-4);
+  float nh = max(dot(n, h), 0.0);
+  vec3 f = fresnel(max(dot(h, v), 0.0), vec3(0.04));
+  return ggx(nh, rough * rough) * smith(nv, nl, rough) * f / (4.0 * nv * max(nl, 1e-4)) * radiance * nl;
+}
+void main() {
+  vec4 texel = texture(texture0, slotUV(0));
+  vec4 base = vec4(pow(texel.rgb, vec3(2.2)), texel.a) * colDiffuse * fragColor;
+  float mode = param(41);
+  if (mode > 0.5 && mode < 1.5 && base.a < param(42)) discard;
+  vec3 albedo = base.rgb;
+  vec3 mr = texture(texture1, slotUV(1)).rgb;
+  float rough = clamp(mr.g * param(33), 0.05, 1.0);
+  float metallic = clamp(mr.b * param(32), 0.0, 1.0);
+  float ao = 1.0 + param(31) * (texture(occlusionMap, slotUV(3)).r - 1.0);
+  vec3 emission = pow(texture(emissionMap, slotUV(4)).rgb, vec3(2.2)) * vec3(param(34), param(35), param(36)) * param(37);
+  float transmission = clamp(param(38), 0.0, 1.0);
+#ifdef FLAT_NORMALS
+  vec3 ng = normalize(cross(dFdx(fragPosition), dFdy(fragPosition)));
+#else
+  vec3 ng = normalize(fragNormal);
+  if (!gl_FrontFacing) ng = -ng;
+#endif
+  vec3 n = perturbNormal(ng, fragPosition, slotUV(2), param(30));
+  vec3 eye = inverse(matView)[3].xyz;
+  vec3 v = normalize(eye - fragPosition);
+  vec3 f0 = mix(vec3(0.04), albedo, metallic);
+  float diffuse = 1.0 - transmission;
+  vec3 color = shade(n, v, normalize(KEY_DIR), KEY_COLOR, albedo, metallic, rough, f0, diffuse)
+            + shade(n, v, normalize(FILL_DIR), FILL_COLOR, albedo, metallic, rough, f0, diffuse);
+  vec3 fa = envBRDF(f0, rough, max(dot(n, v), 1e-4));
+  color += (sky(n) * albedo * (1.0 - metallic) * (1.0 - fa) * diffuse + skyBlurred(reflect(-v, n), rough) * fa) * ao;
+  float cc = param(39);
+  if (cc > 0.0) {
+    float ccRough = clamp(param(40), 0.03, 1.0);
+    float fc = 0.04 + 0.96 * pow(1.0 - max(dot(ng, v), 0.0), 5.0);
+    vec3 layer = coat(ng, v, normalize(KEY_DIR), KEY_COLOR, ccRough) + coat(ng, v, normalize(FILL_DIR), FILL_COLOR, ccRough)
+               + sky(reflect(-v, ng)) * fc * ao;
+    color = color * (1.0 - cc * fc) + cc * layer;
+  }
+  color += emission;
+  float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  color *= (1.0 + lum / 2.25) / (1.0 + lum);
+  float alpha = mode < 0.5 ? 1.0 : base.a;
+  float edge = 0.04 + 0.96 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+  alpha = mix(alpha, 0.2 + 0.8 * edge, transmission);
+  finalColor = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), alpha);
+}
+`
 
 // ---------------------------------------------------------------------------------------
 // Helpers

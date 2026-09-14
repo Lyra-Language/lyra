@@ -191,6 +191,7 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 
 UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**.
 
+- **Raw strings** — `` `…` ``, `` #`…`# ``, `` ##`…`## `` — take every byte between the delimiters as the value: newlines, `\`, `${`, no escapes, no interpolation, no indentation stripping. Add a `#` pair to hold a backtick. A `/* glsl */` comment right before one is an editor marker (both extensions highlight the content as GLSL); the compiler ignores it.
 - A **NUL sits at `data[byte_len]`**, never read by the language (interior NULs are legal), so `s.cstring_ptr()` (`unsafe`, `^u8`, checks for interior NUL) hands C a pointer without copying. Literal bytes are read-only — C writing through it faults.
 - `s[i]` is the i-th code point (O(i)); `s.len()` is the rune count, O(1). **Use `for i, c in s`**, not `for i in 0..<s.len() { s[i] }` (O(n²)).
 - `s.slice(start, end)`: half-open rune range, **allocates** (so `noalloc` refuses `slice` and `trim`). `trim`/`trim_start`/`trim_end` strip the five ASCII whitespace chars only.

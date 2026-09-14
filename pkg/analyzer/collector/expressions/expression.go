@@ -50,6 +50,8 @@ func collectExpressionByKind(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expr
 		return collectRegexLiteralExpr(node, ctx, loc)
 	case "string_literal":
 		return collectStringLiteralExpr(node, ctx, loc)
+	case "raw_string_literal":
+		return collectRawStringLiteralExpr(node, ctx, loc)
 	case "array_literal":
 		return collectArrayLiteralExpr(node, ctx, loc)
 	case "array_repeat_init":
