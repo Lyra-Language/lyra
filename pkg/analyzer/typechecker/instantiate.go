@@ -398,10 +398,11 @@ func valueExpr(body ast.Expression) ast.Expression {
 //
 // The dynamic flavor wins only when the context asked for exactly it: unified as `(…) ->
 // []E` instead, the lambda must bind some variable the call's context (expectedReturn)
-// binds to the same type. Anything less keeps the fixed default. The strictness is what
-// keeps a **stale** context harmless — the expected-type stack can still hold an enclosing
-// return inside a branch's statement — since agreeing with it exactly can change only the
-// flavor of an array the lambda builds anyway, never introduce a type error.
+// binds to the same type. Anything less keeps the fixed default. The strictness is what keeps
+// a context that is not quite this call's harmless — one reached through an `if`'s tail is
+// the whole `if`'s, say — since agreeing with it exactly can change only the flavor of an
+// array the lambda builds anyway, never introduce a type error. (Until 09/14 the stack also
+// leaked into statements inside a branch; withoutExpectedType closed that.)
 //
 // The lambda itself is re-flavored when the argument check plants the solved return onto it
 // (elaborateLambda → reflavorArrayLiteralReturn).
@@ -907,6 +908,22 @@ func (tc *TypeChecker) pushExpectedType(t types.Type, loc ast.Location) func() {
 	}
 	tc.expectedTypes = append(tc.expectedTypes, resolved)
 	return func() { tc.expectedTypes = tc.expectedTypes[:len(tc.expectedTypes)-1] }
+}
+
+// withoutExpectedType runs check with no context in force — a barrier on the stack, which a
+// nil pushExpectedType deliberately is not.
+//
+// A context belongs to a *value*, and a value reaches through the expressions that pass it
+// on: an `if`'s branches, a block's tail, a match arm. It does not reach a **statement**
+// nested in one. `-> Maybe<i64> => if c { let q = make(); None } else { None }` pushed
+// `Maybe<i64>` around the whole `if`, so the `let` inside the branch — whose initializer has
+// no annotation and so pushes nothing — still saw it, and `make<t>() -> Maybe<t>` solved `t`
+// from the function's return rather than reporting it unsolvable, as the same `let` in a
+// plain block body does. Every statement a block walks is checked behind this.
+func (tc *TypeChecker) withoutExpectedType(check func()) {
+	tc.expectedTypes = append(tc.expectedTypes, nil)
+	defer func() { tc.expectedTypes = tc.expectedTypes[:len(tc.expectedTypes)-1] }()
+	check()
 }
 
 // currentExpectedType is the innermost context, or nil where there is none.

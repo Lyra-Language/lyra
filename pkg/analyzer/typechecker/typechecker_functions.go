@@ -437,13 +437,15 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					// A non-final expression statement is evaluated for effect and
 					// its value discarded; run the full statement check so dropped
 					// Result/Maybe values (must-use) and other diagnostics surface.
-					tc.checkExpressionStmt(s)
+					tc.withoutExpectedType(func() { tc.checkExpressionStmt(s) })
 				}
 			default:
 				// Type-check non-return, non-expression statements (e.g. VarDeclStmt)
 				// so their initializer types are recorded in the TypeTable before
-				// they may be referenced by later expressions in the same block.
-				tc.checkNode(stmt)
+				// they may be referenced by later expressions in the same block. No
+				// context: a statement is not the body's value (withoutExpectedType) —
+				// this walk is checkBlock's twin, so the two keep the rule together.
+				tc.withoutExpectedType(func() { tc.checkNode(stmt) })
 			}
 		}
 	})

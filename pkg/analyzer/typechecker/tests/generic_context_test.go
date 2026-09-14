@@ -212,3 +212,43 @@ let s: string = g(mk)`,
 		})
 	}
 }
+
+// A context belongs to a value, and reaches a value through the expressions that pass it on —
+// an `if`'s branches, a block's tail, a match arm — but not a statement nested in one. The `let`
+// inside the branch used to see the function's `Maybe<i64>` return and solve `make`'s return-only
+// `t` from it, where the same `let` directly in the body reported it unsolvable.
+func TestGenericContext_StatementInABranchHasNoContext(t *testing.T) {
+	t.Parallel()
+	const make = `
+data Maybe<t> = None | Some(t)
+let make<t> = () -> Maybe<t> => None
+`
+	const want = "make: cannot infer type variable t from these arguments; name them explicitly with ::<t>"
+	cases := map[string]string{
+		"a block body":   make + `let f = () -> Maybe<i64> => { let q = make(); None }`,
+		"an if branch":   make + `let f = (c: bool) -> Maybe<i64> => if c { let q = make(); None } else { None }`,
+		"a match arm":    make + `let f = (n: i64) -> Maybe<i64> => match n { 0 => { let q = make(); None }, _ => None }`,
+		"a nested block": make + `let f = (c: bool) -> Maybe<i64> => if c { { let q = make(); None } } else { None }`,
+		"an expression statement": make + `
+let take = (m: Maybe<string>) -> i64 => 0
+let f = (c: bool) -> Maybe<i64> => if c { make(); None } else { None }`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			res := parseCollectAndCheck(t, src, false)
+			assertHasErrorContaining(t, res, want)
+		})
+	}
+}
+
+// …while the value itself still takes it: a branch's tail is the function's return.
+func TestGenericContext_BranchTailStillHasContext(t *testing.T) {
+	t.Parallel()
+	res := parseCollectAndCheck(t, `
+data Maybe<t> = None | Some(t)
+let make<t> = () -> Maybe<t> => None
+let f = (c: bool) -> Maybe<i64> => if c { let q = 1; make() } else { match q2() { _ => { let z = 2; make() } } }
+let q2 = () -> i64 => 0`, false)
+	assertNoErrors(t, res)
+}

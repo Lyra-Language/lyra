@@ -293,7 +293,7 @@ let describe<t> where t: Show = (v: t) -> string => "value ${v}"
 
 Solved from argument types first, then:
 - **Turbofish** `f::<i64>()` — positional, declaration order; beats context.
-- **Context** (annotation, declared return type, parameter slot) — binds **only variables no parameter mentions**, and only on declarations that declare their `<…>` list. This is what makes `hashmap_with_capacity<k,v>(cap)` callable.
+- **Context** (annotation, declared return type, parameter slot) — binds **only variables no parameter mentions**, and only on declarations that declare their `<…>` list. This is what makes `hashmap_with_capacity<k,v>(cap)` callable. A context reaches the value through an `if`'s branches, a block's tail and a match arm, never a statement inside them: `let q = make()` in a branch of a `-> Maybe<i64>` body is unsolvable, as it is in the body itself.
 
 ### A lambda literal's missing annotations
 

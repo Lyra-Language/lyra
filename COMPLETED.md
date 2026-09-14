@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a statement inside a branch no longer inherits the value's context
+
+`-> Maybe<i64> => if c { let q = make(); None } else { None }` compiled, with `make<t>() ->
+Maybe<t>` solving `t = i64` from the function's return. The same `let` directly in a block body
+correctly reported `t` unsolvable. Found while settling a lambda's array literal against its
+context, whose safety argument had to assume the context might be stale.
+
+`checkReturnValue` pushes the declared return around the whole value. For a block body,
+`checkBlockReturn` pushes only around the tail, but an `if` value is one expression, so its
+branch blocks, and every statement in them, were inferred under the push. An unannotated `let`
+pushes nothing (`pushExpectedType(nil)` deliberately inherits), so its initializer saw
+`Maybe<i64>`.
+
+**The inheritance is right for expressions and wrong for statements.** A branch's tail, a
+block's tail and a match arm *are* the value and must keep the context; `TestGenericContext_
+BranchTailStillHasContext` pins that. A statement is not the value. `withoutExpectedType` pushes a
+real barrier (a nil entry), and both block walks, `checkBlock` and its function-body twin
+`checkBlockReturn`, check every non-value statement behind it.
+
+Filed from the probe, unrelated to statements: an `if` whose branches end in array literals is
+refused against a `[]E` return, because the branch literals are not re-flavored the way a bare
+literal tail is.
+
 ### 09/14/26 — a lambda's array literal takes the context's flavor
 
 `app(n, (x) => [x])` against `app<b>(n: i64, f: (i64) -> b) -> b`, in a `-> []i64` function,

@@ -152,7 +152,9 @@ func (tc *TypeChecker) checkBlock(block *ast.BlockExpr, onValue func(*ast.Expres
 					continue
 				}
 			}
-			tc.checkNode(stmt) // type-check every statement, not just the last
+			// Every statement, not just the last — and without the block's context, which
+			// is its value's (withoutExpectedType).
+			tc.withoutExpectedType(func() { tc.checkNode(stmt) })
 		}
 	})
 }
