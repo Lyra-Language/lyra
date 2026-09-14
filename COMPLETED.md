@@ -31,6 +31,12 @@ inside the string.
 it, so a raw-string argument went unpainted, and a `)` inside one closed the parens. It was
 found because `` load_shader(/* glsl */ `…`) `` is the obvious way to write the call.
 
+**Both extensions bundle GLSL.** An injection with no GLSL grammar installed paints nothing —
+which is what the first try looked like — and neither editor ships GLSL. Zed's copy pins
+tree-sitter-glsl at the commit of Zed's own GLSL extension and claims no file suffixes. VS
+Code's is private-scoped (`source.glsl.lyra`), so neither can take over `.glsl` files or
+fight an installed GLSL extension.
+
 ### 09/13/26 — rename and references on a pattern binding
 
 Filed as "rename from a binding answers nothing". Probing every binding form from both the
