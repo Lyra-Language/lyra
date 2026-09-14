@@ -376,8 +376,9 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `read_file(path) -> Maybe<string>` | `std.io`, over `extern` `open`/`read`/`close` | `None` if unopenable; no UTF-8 validation; `open` declared variadic |
 | `read_stdin()` | `std.io` | shares the chunked reader |
 | `write_file(path, contents) -> bool` | `std.io`, over `creat` | loops on short writes |
+| `append_file(path, contents) -> bool` | `std.io`, over `fopen(path, "a")` + `fileno` | creates if missing; shares `write_file`'s loop |
 
-- **Use `creat`, never `open` with flags**: `O_CREAT`/`O_TRUNC`/`O_APPEND` differ between macOS and Linux (only `O_RDONLY` = 0 is portable). No `append_file` until the compiler supplies per-target constants (as `tui.go` does `TIOCGWINSZ`). `examples/todo.lyra`, `examples/word_freq` show the shapes.
+- **Never `open` with flags beyond `O_RDONLY`**: `O_CREAT`/`O_TRUNC`/`O_APPEND` differ between macOS and Linux (only `O_RDONLY` = 0 is portable). Spell the combination with something portable instead — `creat` for overwrite, an `fopen` mode string for append. `examples/todo.lyra`, `examples/word_freq` show the shapes.
 
 ### Terminal
 

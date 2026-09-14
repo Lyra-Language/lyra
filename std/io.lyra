@@ -11,7 +11,7 @@ module std.io
 //! address-of each, so nothing is lost.
 //!
 //! ```
-//! import std.io.{ read_file, write_file, read_stdin }
+//! import std.io.{ read_file, write_file, append_file, read_stdin }
 //!
 //! match read_file("notes.txt") {
 //!   Some(text) => print(text),
@@ -70,13 +70,7 @@ let read_all = (fd: i32) -> string => {
 /// left holding however much got through, which is what any writer that does not write
 /// to a temporary and rename can promise.
 ///
-/// **Every write loops.** `write` is permitted to take fewer bytes than it was offered,
-/// and a single call that assumed otherwise would truncate a large file at whatever
-/// boundary the kernel chose — silently, and only for files past some size.
-///
-/// The bytes are the string's UTF-8, copied once into a buffer this can take the address
-/// of. The copy is what makes an interior NUL ordinary: a string may hold one, and the
-/// no-copy path to a string's bytes (`cstring_ptr`) is the one that refuses them.
+/// Short writes are retried and an interior NUL is written like any other byte.
 ///
 /// ```
 /// if !write_file("notes.txt", "one\ntwo\n") { println("could not write notes.txt") }
@@ -84,6 +78,43 @@ let read_all = (fd: i32) -> string => {
 pub let write_file = (path: string, contents: string) -> bool => {
   let fd = unsafe { creat(path.cstring_ptr(), FILE_MODE) }
   if fd < 0 { return false }
+  let landed = write_all(fd, contents)
+  unsafe { close(fd) }
+  landed
+}
+
+/// `contents` added to the end of the file at `path`, answering whether all of it landed.
+///
+/// The file is created if it does not exist — mode 0666 before the process umask, which is
+/// what `fopen` gives, so usually `rw-r--r--` like `write_file`'s. `false` means as it does
+/// there: the path could not be opened, or the write was cut short and the file holds
+/// however much got through.
+///
+/// **Every write lands at the end**, even with another process appending to the same file,
+/// since the descriptor is opened for appending rather than positioned at the end once.
+///
+/// ```
+/// if !append_file("log.txt", "started\n") { println("could not write log.txt") }
+/// ```
+pub let append_file = (path: string, contents: string) -> bool => {
+  let file = unsafe { fopen(path.cstring_ptr(), APPEND_MODE.cstring_ptr()) }
+  if file == nullptr { return false }
+  let landed = write_all(unsafe { fileno(file) }, contents)
+  unsafe { fclose(file) }
+  landed
+}
+
+// Writes all of `contents` to `fd`, answering whether every byte was taken. The writer for
+// both `write_file` and `append_file`.
+//
+// **Every write loops.** `write` is permitted to take fewer bytes than it was offered, and
+// a single call that assumed otherwise would truncate a large file at whatever boundary the
+// kernel chose — silently, and only for files past some size.
+//
+// The bytes are the string's UTF-8, copied once into a buffer this can take the address of.
+// The copy is what makes an interior NUL ordinary: a string may hold one, and the no-copy
+// path to a string's bytes (`cstring_ptr`) is the one that refuses them.
+let write_all = (fd: i32, contents: string) -> bool => {
   var bytes = contents.encode_utf8()
   var written = 0
   let total = bytes.len()
@@ -92,7 +123,6 @@ pub let write_file = (path: string, contents: string) -> bool => {
     if n <= 0 { break }
     written += n
   }
-  unsafe { close(fd) }
   written == total
 }
 
@@ -105,6 +135,10 @@ const O_RDONLY: i32 = 0
 /// `rw-r--r--`, the mode a new file is created with, before the process umask narrows it.
 /// Written in octal's value because Lyra has no octal literal: 0644 is 6*64 + 4*8 + 4.
 const FILE_MODE: u32 = 420
+
+/// `fopen`'s mode for appending. A mode *string* is the one spelling of append that is the
+/// same on every target; the `O_APPEND` flag behind it is not (see the externs below).
+const APPEND_MODE = "a"
 
 /// Standard input's descriptor.
 const STDIN: i32 = 0
@@ -120,9 +154,11 @@ const STDIN: i32 = 0
 // that opens successfully and does something else. `creat(path, mode)` is defined as
 // `open(path, O_WRONLY|O_CREAT|O_TRUNC, mode)` and carries no number to get wrong.
 //
-// Appending has no such spelling, so `append_file` waits for a program that wants it —
-// and will need the flags, which means either a per-target constant the compiler supplies
-// (the way `tui.go` supplies `TIOCGWINSZ`) or a C shim.
+// **Appending goes through `fopen(path, "a")`**, which is `open` with `O_WRONLY|O_CREAT|
+// O_APPEND` behind a mode string that is the same everywhere. The `FILE *` is used only to
+// reach its descriptor (`fileno`) and to close it; nothing is written through stdio, so
+// there is no buffer to flush. `FILE` stays opaque, carried as `^u8` and tested against
+// `nullptr`.
 //
 // `mode_t` is 16 bits on macOS and 32 on Linux, so the parameter is written as the wider
 // one: the value fits either, and aarch64 passes both in the same register with the
@@ -132,3 +168,6 @@ unsafe extern creat: (path: ^u8, mode: u32) -> i32
 unsafe extern read: (fd: i32, buf: ^mut u8, count: u64) -> i64
 unsafe extern write: (fd: i32, buf: ^u8, count: u64) -> i64
 unsafe extern close: (fd: i32) -> i32
+unsafe extern fopen: (path: ^u8, mode: ^u8) -> ^u8
+unsafe extern fileno: (file: ^u8) -> i32
+unsafe extern fclose: (file: ^u8) -> i32

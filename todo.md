@@ -9,6 +9,9 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
+- **[OPEN] Invalid string escape in a call argument panics the typechecker.**
+  `f("a\u{0}b")`: the collector reports the escape and returns nil, and
+  `checkNamedArgument` dereferences it.
 
 ## In progress
 
@@ -55,8 +58,6 @@ Package management, versioning and separate compilation are out of scope by deci
 
 - **[IDEA] `Result.map_err`.** Let the first program composing two error types decide the
   signature.
-- **[OPEN] `std.io` cannot append.** `O_APPEND`/`O_CREAT` differ per target, so it needs a
-  compiler-supplied per-target constant (as `tui.go` does `TIOCGWINSZ`) or a C shim.
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute

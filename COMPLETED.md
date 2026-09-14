@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — `std.io.append_file`
+
+Filed as needing a per-target constant from the compiler (the way `tui.go` supplies
+`TIOCGWINSZ`) or a C shim, since `O_APPEND` is 8 on macOS and 1024 on Linux. Neither was
+needed. `fopen(path, "a")` spells `O_WRONLY|O_CREAT|O_APPEND` with a mode string that is the
+same on every target, the way `creat` already spells overwrite.
+
+What had ruled `fopen` out was the old note in `std/io.lyra` that a raw pointer cannot be
+tested for null. `nullptr` and pointer `==` have since landed, so a `FILE *` carried as
+`^u8` is checkable. The `FILE` is used only for `fileno` and `fclose`; the bytes go through
+the same `write` loop as `write_file`, now shared as `write_all`, so nothing is buffered in
+stdio. The test runs unchanged under `asan.sh`'s Linux container, which is the half of the
+claim macOS cannot show.
+
+The first test program crashed the typechecker: a call argument holding an invalid escape
+(`"\u{0}"`) reaches `checkNamedArgument` as nil. That predates this work and is filed
+under Known bugs.
+
 ### 09/14/26 — hover and definition on a pattern binding's own name
 
 Re-running the entry found hover worse than filed. In a `match` arm it answered with the
