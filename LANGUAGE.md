@@ -286,6 +286,15 @@ Solved from argument types first, then:
 - **Turbofish** `f::<i64>()` — positional, declaration order; beats context.
 - **Context** (annotation, declared return type, parameter slot) — binds **only variables no parameter mentions**, and only on declarations that declare their `<…>` list. This is what makes `hashmap_with_capacity<k,v>(cap)` callable.
 
+### Generic parameter lists
+
+A lowercase type name is a type variable wherever it appears. What a written `<…>` list must agree with depends on what declares it:
+
+- **A binding** (`let f<t> = …`): the list is optional; written, it is authoritative. A signature variable missing from it is `lyra-E031`, a listed one the signature never mentions is `lyra-W013`.
+- **A type** (struct, `data`, named tuple, newtype, union): every variable its body mentions must be in its list (`lyra-E031`) — the list is how `Box<i64>` gives one a type, so there is no list-less generic type. An **unused** parameter is fine: `struct Id<t> { n: i64 }` is a phantom type. A type alias takes no list, so its body can mention no variable.
+- **A trait**: a parameter no method mentions is `lyra-W013`. A method may be generic in variables of its own (`map: (Self<a>, (a) -> b) -> Self<b>`), since there is no method-level list to declare them in.
+- **An impl** has no written list; its variables are lexical.
+
 ### Local generics
 
 `let idf<t> = (a: t) -> t => a` inside a function is a full generic (turbofish, `where` bounds), may capture enclosing bindings, and may nest inside generic functions at any depth, mentioning outer type variables. Emitted as one closure per instantiation; a lambda calling it captures those closures (a captured `var` is read as at the declaration). Not a value: passing `idf` as a function is a type error.

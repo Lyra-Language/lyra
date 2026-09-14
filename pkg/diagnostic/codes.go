@@ -248,6 +248,10 @@ const (
 	//
 	// Uppercase names never had this hole — an unknown one is an UnresolvedType
 	// and is reported. This closes the lowercase half.
+	//
+	// A **type declaration** has it too, without the optional list: a type is
+	// instantiated only through its list, so any variable its body mentions must be
+	// in it (`struct Box<t> { v: u }`, 09/13).
 	CodeUndeclaredTypeVariable = "lyra-E031"
 
 	// CodeMissingRangeEndOperator: a range pattern with an end bound but no end
@@ -1001,6 +1005,9 @@ const (
 	// only place a *bound* can be written, so `<u: Show>` on a variable the
 	// signature never mentions is a constraint that silently constrains nothing —
 	// the reading a programmer is least likely to expect.
+	//
+	// It covers a **trait** parameter no method mentions as well (09/13). Not a type
+	// declaration's: an unused type parameter is a phantom type, `Id<User>`.
 	CodeUnusedTypeParameter = "lyra-W013"
 
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,

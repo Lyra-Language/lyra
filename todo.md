@@ -26,9 +26,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 - **[PARTIAL] Closure lowering is tiered.** Dev (boxed closures) is in; release = Lambda Set
   Specialization, gated on the monomorphizer. LSS can only loosen `noalloc`'s closure rule,
   never tighten it.
-- **[OPEN] Reconcile generic parameter lists on types, traits and impls** with their bodies,
-  as `lyra-E031`/`W013` do for bindings. Needs the "is a struct's own field its signature"
-  question answered per declaration kind.
 - **[OPEN] The float→int range trap is never elided.** The value-range pass tracks only
   integers, so a float bounded by construction still pays a compare and branch.
 

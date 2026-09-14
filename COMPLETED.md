@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — generic lists on types and traits are reconciled with their bodies
+
+E031 and W013 checked a *binding's* written list against its signature and nothing else, so
+`struct Box<t> { v: u }`, `data Opt<t> = Has(u) | Gone`, `tuple Pair<t>(t, u)` and
+`newtype Wrap<t> = []u` all compiled — the error arrived at a use, as a field "of type u" an
+integer could not be assigned to — and `type Lst = []t` crashed the backend. The entry had
+waited on one question per declaration kind: is its body its signature? The answers:
+
+**A type's body must use only what its list declares, list or not.** A binding with no list is
+generic in what its signature mentions because a call solves those variables; a type has no
+call, and `Box<i64>` is the only way a variable in it is ever given a type. An alias takes no
+list, so its body may mention none.
+
+**An unused type parameter draws nothing** — the user's call, and the reason is that a type's
+list is its interface: every use writes the argument, so `struct Id<t> { n: i64 }` is a
+phantom type rather than a slip. W013 exists for a binding's unused variable, which is solved
+by nothing and can carry a bound that constrains nothing; neither is true of `Id<User>`.
+
+**A trait parameter no method mentions warns (W013); a method's own variables are left
+lexical** — also the user's call. `map: (Self<a>, (a) -> b) -> Self<b>` is generic in `a` and
+`b` with no list to put them in, so treating a written trait list as authoritative for every
+method would make a generic trait's methods unable to be generic themselves. **An impl has no
+written list**, so it has nothing to reconcile.
+
+Nothing in `std`, the bindings or the examples drew either diagnostic.
+
 ### 09/13/26 — references and rename on a binding reach every file
 
 Types were cross-file from the start, because the collector indexes every written type name

@@ -231,7 +231,12 @@ never mentioned is `lyra-W013`. The list stays optional. Catches typo'd lowercas
 - The `where` half is in the collector (`Collector.MergeWhereConstraints` reports `lyra-E031`).
 - Variable walk is **`types.CollectTypeVars`**, shared with the typechecker (`lambdaTypeVars`) and
   backend (`mentionsTypeVar`). Nominal types (`NamedStructType`, `DataType`) are not descended.
-- Not covered: generic lists on type declarations, traits, impls.
+- **Type declarations** (`checkTypeDeclGenericParams`): every variable the body mentions must be
+  listed (E031, list or not; an alias gets its own message); an unused parameter is a phantom
+  type and draws nothing. `collectDeclBodyTypeVars` descends one level into the declaration's
+  own struct/union/data body, then uses `CollectTypeVars`.
+- **Traits** (`checkTraitGenericParams`): a parameter no method signature mentions is W013; a
+  method's own variables are not checked (no method-level list exists). Impls have no list.
 
 ## `range_analysis.go`
 

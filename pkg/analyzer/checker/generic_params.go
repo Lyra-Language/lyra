@@ -61,8 +61,137 @@ func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
 			continue
 		}
 		diags = append(diags, checkGenericParamsIn(stmt, nil)...)
+		if decl, ok := stmt.(*ast.TypeDeclStmt); ok {
+			diags = append(diags, checkTypeDeclGenericParams(decl)...)
+		}
+		if trait, ok := stmt.(*ast.TraitDeclStmt); ok {
+			diags = append(diags, checkTraitGenericParams(trait)...)
+		}
 	}
 	return diags
+}
+
+// checkTypeDeclGenericParams reports a type variable a type declaration's body mentions and
+// its list does not declare (lyra-E031) — `struct Box<t> { v: u }`, `tuple Pair<t>(t, u)`,
+// `type Lst = []t`.
+//
+// **For a type the list is not optional.** A binding with no list is generic in whatever its
+// signature mentions, because a call solves the variables from its arguments. A type has no
+// call: it is instantiated only by writing `Box<i64>`, and the list is what pairs that argument
+// with a variable. So a variable missing from it can never receive a type. Until 09/13 each
+// of these compiled, and the error surfaced at a use as a field "of type u" nothing could be
+// assigned to — or, for an alias, as a backend crash.
+//
+// **An unused parameter is not reported.** A type's list is its interface — every use writes
+// the argument — so `struct Id<t> { n: i64 }` is a phantom type (a `User` id that is not an
+// `Order` id), which is a pattern rather than a slip. That is where types and bindings part:
+// a binding's unused variable is solved by nothing and can carry a bound that constrains
+// nothing.
+func checkTypeDeclGenericParams(decl *ast.TypeDeclStmt) []diag.Diagnostic {
+	declared := make(map[string]bool, len(decl.GenericParams))
+	for _, p := range decl.GenericParams {
+		declared[p.Name] = true
+	}
+	used := map[string]bool{}
+	collectDeclBodyTypeVars(decl.Type, used)
+
+	var diags []diag.Diagnostic
+	for _, name := range sortedNames(used) {
+		if declared[name] {
+			continue
+		}
+		msg := fmt.Sprintf(
+			"type variable %q is not declared in %q's generic parameter list — add it (`%s<%s>`), or write a concrete type if %q is a misspelling. A type is instantiated only through its list, so a variable missing from it can never be given a type",
+			name, decl.Name, decl.Name, strings.Join(withVar(decl.GenericParams, name), ", "), name)
+		if decl.IsAlias {
+			msg = fmt.Sprintf(
+				"type alias %q mentions the type variable %q, but an alias takes no parameters, so nothing can ever give %q a type — write a concrete type",
+				decl.Name, name, name)
+		}
+		diags = append(diags, diag.Diagnostic{
+			Location: typeDeclNameLocation(decl),
+			Severity: diag.SeverityError,
+			Code:     diag.CodeUndeclaredTypeVariable,
+			Message:  msg,
+		})
+	}
+	return diags
+}
+
+// collectDeclBodyTypeVars collects the type variables a declaration's own body mentions: a
+// struct's or union's fields, a data type's constructor payloads, and anything else through
+// CollectTypeVars — which stops at a nominal type, since in a *signature* that is another
+// declaration's business. Here the nominal type is the declaration itself, one level down.
+func collectDeclBodyTypeVars(t types.Type, vars map[string]bool) {
+	switch body := t.(type) {
+	case types.NamedStructType:
+		for _, f := range body.Fields {
+			types.CollectTypeVars(f.Type, vars)
+		}
+	case types.UnionType:
+		for _, m := range body.Members {
+			types.CollectTypeVars(m.Type, vars)
+		}
+	case types.DataType:
+		for _, c := range body.Constructors {
+			for _, p := range c.Params {
+				collectDeclBodyTypeVars(p, vars)
+			}
+		}
+	default:
+		types.CollectTypeVars(t, vars)
+	}
+}
+
+// checkTraitGenericParams reports a trait parameter no method signature mentions
+// (lyra-W013).
+//
+// **The other direction is not checked for a trait**, deliberately: a method may be generic in
+// a variable of its own — `map: (Self<a>, (a) -> b) -> Self<b>` — and there is no syntax for a
+// method-level list to declare it in, so a variable absent from the trait's list is the only
+// way to write one. A trait parameter that no method mentions is a different matter: an impl
+// binds it (`impl Conv<i64> for X`) and nothing can use what it was bound to.
+func checkTraitGenericParams(trait *ast.TraitDeclStmt) []diag.Diagnostic {
+	if len(trait.GenericParams) == 0 {
+		return nil
+	}
+	used := map[string]bool{}
+	for _, m := range trait.Methods {
+		if m.Signature != nil {
+			types.CollectTypeVars(m.Signature, used)
+		}
+	}
+	var diags []diag.Diagnostic
+	for _, p := range trait.GenericParams {
+		if used[p.Name] {
+			continue
+		}
+		msg := fmt.Sprintf("generic parameter %q of trait %q is never mentioned in any of its methods; remove it", p.Name, trait.Name)
+		if len(p.Constraints) > 0 {
+			msg = fmt.Sprintf(
+				"generic parameter %q of trait %q is never mentioned in any of its methods, so its bound (%s) constrains nothing; use %q in a method or remove the parameter",
+				p.Name, trait.Name, strings.Join(p.Constraints, " + "), p.Name)
+		}
+		loc := p.Location
+		if loc.StartLine == 0 {
+			loc = trait.NameLocation
+		}
+		diags = append(diags, diag.Diagnostic{
+			Location: loc,
+			Severity: diag.SeverityWarning,
+			Code:     diag.CodeUnusedTypeParameter,
+			Message:  msg,
+			Tags:     []diag.Tag{diag.TagUnnecessary},
+		})
+	}
+	return diags
+}
+
+func typeDeclNameLocation(decl *ast.TypeDeclStmt) ast.Location {
+	if decl.NameLocation.StartLine != 0 {
+		return decl.NameLocation
+	}
+	return decl.GetLocation()
 }
 
 // checkGenericParamsIn checks every binding in stmt with the type variables of the bindings
