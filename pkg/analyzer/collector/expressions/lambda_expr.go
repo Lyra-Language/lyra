@@ -43,6 +43,13 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		} else if err := ctx.RegisterParameter(&parameters[i]); err != nil {
 			ctx.AddError(parametersNode, diag.SeverityError, "failed to register parameter %q: %v", pName, err)
 		}
+		// A **destructured** parameter is registered above under its pattern's spelling,
+		// `(a, b)`, which no use can name — so its bound names are entered one by one, as a
+		// match arm's are. The typechecker binds them by its own walk, which is why a
+		// program using them compiled while the editor resolved none of them.
+		if _, plain := parameters[i].Pattern.(*ast.IdentifierPattern); !plain {
+			definePatternBindings(parameters[i].Pattern, ctx)
+		}
 	}
 
 	bodyNode := cst.Field(node, "body")

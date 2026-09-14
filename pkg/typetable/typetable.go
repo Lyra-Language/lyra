@@ -29,6 +29,12 @@ type TypeTable struct {
 	// disagree with the one the diagnostics were written against. Only a *promoted*
 	// argument is recorded, so a miss means "passed as it is".
 	variadicPromotions map[ast.Expression]types.Type
+	// bindings is the type of each name a pattern binds, keyed by the **name's span**
+	// (ast.PatternBinding.Loc) — for a binding the editor asks about with no use in hand.
+	// An arm's bindings otherwise live only in the checker's paramTypes while the arm is
+	// checked, and `rest`, `name @` and a struct shorthand have no node of their own to key
+	// by, so the span is the one key every binding form has.
+	bindings map[ast.Location]types.Type
 }
 
 func New() *TypeTable {
@@ -56,6 +62,26 @@ func (t *TypeTable) VariadicPromotion(arg ast.Expression) (types.Type, bool) {
 	}
 	p, ok := t.variadicPromotions[arg]
 	return p, ok
+}
+
+// SetBinding records the type of the pattern binding whose name spans loc.
+func (t *TypeTable) SetBinding(loc ast.Location, typ types.Type) {
+	if t == nil || typ == nil {
+		return
+	}
+	if t.bindings == nil {
+		t.bindings = make(map[ast.Location]types.Type)
+	}
+	t.bindings[loc] = typ
+}
+
+// Binding returns the type of the pattern binding whose name spans loc.
+func (t *TypeTable) Binding(loc ast.Location) (types.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	typ, ok := t.bindings[loc]
+	return typ, ok
 }
 
 func (t *TypeTable) Set(expr ast.Expression, typ types.Type) {

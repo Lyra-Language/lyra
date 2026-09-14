@@ -32,6 +32,7 @@ func (t *TypeTable) Clone() *TypeTable {
 		variadicPromotions: cloneMap(t.variadicPromotions),
 		baseReadouts:       cloneMap(t.baseReadouts),
 		unresolvedCallees:  cloneMap(t.unresolvedCallees),
+		bindings:           cloneMap(t.bindings),
 	}
 }
 
@@ -134,6 +135,11 @@ func (t *TypeTable) Absorb(other *TypeTable) {
 	for call := range other.unresolvedCallees {
 		t.SetUnresolvedCallee(call)
 	}
+	for loc, typ := range other.bindings {
+		if _, ok := t.bindings[loc]; !ok {
+			t.SetBinding(loc, typ)
+		}
+	}
 }
 
 // Fingerprint renders the table's contents in a form comparable **across runs**.
@@ -147,13 +153,16 @@ func (t *TypeTable) Fingerprint() []string {
 	if t == nil {
 		return nil
 	}
-	out := make([]string, 0, len(t.entries))
+	out := make([]string, 0, len(t.entries)+len(t.bindings))
 	for _, v := range t.entries {
 		if v == nil {
 			out = append(out, "<nil>")
 			continue
 		}
 		out = append(out, v.String())
+	}
+	for _, v := range t.bindings {
+		out = append(out, "binding:"+v.String())
 	}
 	sort.Strings(out)
 	return out

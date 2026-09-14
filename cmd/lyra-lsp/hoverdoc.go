@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/owenrumney/go-lsp/lsp"
 	"strings"
 
@@ -112,14 +113,32 @@ func renderHover(signature string, doc *ast.Doc) string {
 	return b.String()
 }
 
+// hoverPatternBinding answers for a cursor on a name a pattern binds, with the type the
+// typechecker bound it at — the same `name: type` a use of it shows. It resolves through
+// patternBindingAt, the path rename and references take from the same cursor.
+func hoverPatternBinding(analysis *docAnalysis, line, col int) *lsp.Hover {
+	b, named, ok := patternBindingAt(analysis, line, col)
+	if !ok {
+		return nil
+	}
+	typ, ok := analysis.typeTable.Binding(b.Loc)
+	if !ok {
+		// A declaration the checker typed but never walked as a pattern still carries it.
+		v, isVar := named.(*ast.VarDeclStmt)
+		if !isVar || v.Type == nil {
+			return nil
+		}
+		typ = v.Type
+	}
+	content := fmt.Sprintf("```lyra\n%s: %s\n```", b.Name, typ)
+	return &lsp.Hover{Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content}}
+}
+
 // hoverPatternReference renders a constructor named in a pattern: which data type it
 // belongs to, and that type's documentation.
 //
-// It answers for the constructor and not for a **binding**: `m` in `Mouse(m)` has a type
-// the typechecker knows and nothing records, since the TypeTable is keyed by *expression*
-// and a pattern is not one. Showing a name with no type would be worse than showing
-// nothing — hover is read as "here is what this is" — so the binding case is left to the
-// definition jump, which does answer for it.
+// It answers for the constructor, not for a **binding** (`m` in `Mouse(m)`), which
+// hoverPatternBinding answers from the type the checker records at the name's span.
 func hoverPatternReference(analysis *docAnalysis, line, col int) *lsp.Hover {
 	pat := findPatternAtPos(analysis.program, line, col)
 	if pat == nil || analysis.symTable == nil {

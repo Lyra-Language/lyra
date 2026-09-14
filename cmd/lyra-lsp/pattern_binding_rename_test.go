@@ -44,6 +44,10 @@ func TestPatternBindingRename(t *testing.T) {
 			"ww", "  if let Rect(zz, _) = s { return zz }"},
 		{"let else", "  let Rect(ww, _) = s else { return 0 }\n  ww\n}",
 			"ww", "  let Rect(zz, _) = s else { return 0 }"},
+		{"tuple parameter", "  0\n}\nlet g = ((aa, b): (i64, i64)) -> i64 => aa + b",
+			"aa", "let g = ((zz, b): (i64, i64)) -> i64 => zz + b"},
+		{"struct shorthand parameter", "  0\n}\nlet g = (Pt { x, y }: Pt) -> i64 => x + y",
+			"x", "let g = (Pt { x: zz, y }: Pt) -> i64 => zz + y"},
 	}
 	for _, c := range cases {
 		src := head + c.body

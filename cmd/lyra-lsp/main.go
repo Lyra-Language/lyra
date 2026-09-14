@@ -480,6 +480,13 @@ func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp
 		return hov, nil
 	}
 
+	// A **pattern binding's own name** — `w` in `Rect(w, h) =>`, `more` in `...more`. The
+	// enclosing `match` is an expression with a type, so falling through answered with
+	// *its* type (`i64` on `rr` in `rr @ Rect(_, _)`), and a `let` pattern answered nothing.
+	if hov := hoverPatternBinding(analysis, line, col); hov != nil {
+		return hov, nil
+	}
+
 	// A **pattern**, checked first for the same reason: a constructor in a `match` arm is
 	// not an expression, and the arm around it is — so falling through would answer with
 	// whatever encloses the pattern rather than with the pattern.

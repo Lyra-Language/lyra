@@ -24,8 +24,17 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 
 	log.Printf("definition: request at %s line=%d col=%d", uri, line, col)
 
+	// A **pattern binding** is its own declaration, and is checked before the expression
+	// walk: a `...more`, a whole payload or a struct shorthand has no pattern node of the
+	// name's own, so the fallbacks below found nothing for them.
+	var loc *ast.Location
+	if b, _, ok := patternBindingAt(analysis, line, col); ok {
+		loc = &b.Loc
+	}
 	expr := findExprAtPos(analysis.program, line, col)
-	loc := resolveDefinition(expr, line, col, analysis)
+	if loc == nil {
+		loc = resolveDefinition(expr, line, col, analysis)
+	}
 	if loc == nil {
 		// **A type in a type position is not an expression**, so the walk above cannot
 		// reach it however far it descends — `Node { … }` resolved while `(n: Node)`,

@@ -48,7 +48,10 @@ prelude come from `modules.DefaultRoots`/`DefaultOptions`, shared with `lyrac`.
   editor doing nothing.
 - **A pattern binding resolves through `patternBindingAt`** (`rename.go`), from the name's own
   span (`ast.PatternBinding.Loc`), and its declaration's span through `bindingNameLoc`, never
-  `namedNameLoc` alone: a destructured name's entry spans the whole statement.
+  `namedNameLoc` alone: a destructured name's entry spans the whole statement. **Hover and
+  definition try it before the expression walk** — the enclosing `match` is an expression
+  with a type, and answered for the binding. A binding's type is `TypeTable.Binding(b.Loc)`,
+  recorded by the typechecker at every binding site (`recordBindingType`).
 - **Hover docs** (`hoverdoc.go`): `resolveDoc` mirrors `resolveDefinition` case for case —
   keep them in step. A typeless expression may still be documented (a UFCS method name is a
   synthesized callee with no recorded type), so `Hover` must not bail on a missing type.

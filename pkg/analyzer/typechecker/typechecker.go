@@ -725,6 +725,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) t
 		if b, ok := ast.PatternBindingNamed(decl.Pattern, name); ok {
 			nameLoc = b.Loc
 		}
+		tc.recordBindingType(decl.Pattern, name, typ)
 		tc.scope.Symbols[name] = &ast.VarDeclStmt{
 			AstBase:      ast.AstBase{Location: decl.GetLocation()},
 			BindingKind:  bindingKind,

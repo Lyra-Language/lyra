@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — hover and definition on a pattern binding's own name
+
+Re-running the entry found hover worse than filed. In a `match` arm it answered with the
+*enclosing* expression's type, a bare `i64` on every binding: `rr` in `rr @ Rect(_, _)` is a
+`Shape`, `...more` an array. In a `let` pattern it answered nothing. Definition answered
+nothing for a rest, a whole payload and a struct shorthand, which have no pattern node of the
+name's own. From a use, both were right.
+
+**The type had nowhere to live.** An arm's bindings exist only in the checker's `paramTypes`
+while the arm is checked, and the TypeTable is keyed by expression. It now has a `bindings`
+map keyed by the name's span (`ast.PatternBinding.Loc`). That is the one key every binding
+form has, since a rest and `name @` have no node. The checker records into it at every
+binding site: arms, destructuring declarations, parameters. Hover and definition try
+`patternBindingAt` before the expression walk, since the expression walk always has an
+answer here, and it is the wrong one.
+
+**Destructured parameters were never in scope by name.** The collector registered
+`(a, b): (i64, i64)` under its pattern's spelling, `(a, b)`, so neither name resolved. Hover,
+definition, references and rename all answered nothing, from the binding or from a use. It
+compiled because the typechecker binds by its own walk. Parameters now define each bound
+name as a match arm does.
+
 ### 09/14/26 — raw strings compile; `/* glsl */` highlights embedded shaders
 
 Asked for GLSL highlighting of the shaders in `examples/raylib/gltf_viewer.lyra`. They were

@@ -154,6 +154,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
    | see through a newtype | `stripNewtypeResolving` (typechecker) |
    | expression at a position | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
+   | a pattern binding's type (no use in hand) | `TypeTable.Binding(loc)`, via `recordBindingType` |
    | bind a generic type's arguments | `ast.BindGenericParams` |
    | what a value holds inline | `ownership.eachComponent` |
    | retain or release what a value owns | `emitOwnedValue` (`backend/llvm/owned_walk.go`) |

@@ -56,6 +56,7 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 			delete(tc.patternBound, ip.Name) // a parameter shadowing a pattern binding is a parameter
 			if p.Type != nil {
 				tc.paramTypes[ip.Name] = tc.resolveType(p.Type, p.GetLocation())
+				tc.recordBindingType(ip, ip.Name, tc.paramTypes[ip.Name])
 			}
 			continue
 		}
@@ -64,6 +65,7 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 			before := len(tc.errors)
 			tc.walkDestructuredPattern(p.Pattern, resolved, func(name string, typ types.Type) {
 				tc.paramTypes[name] = typ
+				tc.recordBindingType(p.Pattern, name, typ)
 			})
 			if !tc.addedErrorSince(before) {
 				tc.requireIrrefutable(p.Pattern, resolved,

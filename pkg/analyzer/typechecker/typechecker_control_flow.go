@@ -284,11 +284,23 @@ func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType ty
 	tc.walkDestructuredPattern(pattern, scrutineeType, func(name string, typ types.Type) {
 		tc.paramTypes[name] = typ
 		tc.patternBound[name] = true
+		tc.recordBindingType(pattern, name, typ)
 	})
 	tc.errors = tc.errors[:errCount]
 	fn()
 	tc.paramTypes = old
 	tc.patternBound = oldBound
+}
+
+// recordBindingType publishes a pattern binding's type for the editor, at the name's own
+// span (typetable.SetBinding). Every walkDestructuredPattern caller that binds calls it:
+// an arm, a destructuring declaration (`let`, `if let`, `let … else`), a parameter.
+// A name is bound once per pattern — the collector refuses a repeat — so looking it up by
+// name finds this binding.
+func (tc *TypeChecker) recordBindingType(pattern ast.Pattern, name string, typ types.Type) {
+	if b, ok := ast.PatternBindingNamed(pattern, name); ok {
+		tc.typeTable.SetBinding(b.Loc, typ)
+	}
 }
 
 // checkNestedArmPattern checks everything inside an arm's pattern that the per-kind arm
