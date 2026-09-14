@@ -43,7 +43,15 @@ let y = x.
 
 // A receiver whose type does not fit the `self` parameter offers nothing, for the same
 // reason: the call would be rejected.
+//
+// **Without the prelude, explicitly.** The assertion is that nothing is offered, which holds
+// only when `widen` is the one candidate there is: with the standard library in reach a
+// string has `trim`, `split` and a dozen more, all correctly offered. Whether the prelude
+// loaded used to depend on the developer's shell — `LYRA_STD` exported, and this failed
+// "intermittently" under a full `go test ./...` run that happened to follow an export
+// (09/13) — so the test states the configuration it asserts about.
 func TestCompletion_UFCSFiltersByReceiverType(t *testing.T) {
+	t.Setenv("LYRA_NO_PRELUDE", "1")
 	h := servertest.New(t, newHandler())
 	src := `
 struct Buf { n: i64 }

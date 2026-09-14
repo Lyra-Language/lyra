@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — the "flaky" completion test was the developer's environment
+
+`TestCompletion_UFCSFiltersByReceiverType` failed twice in full `go test ./...` runs and never
+alone, so it was filed as a timing race between an analysis and the diagnostics a test waits on.
+No amount of load reproduced it. Both failing runs, reread, had `LYRA_STD` exported earlier in
+the same shell; none of the passing ones did. With `LYRA_STD` set the prelude loads, and `s.` on
+a string correctly offers `trim`, `split` and thirteen more — against a test asserting that
+nothing is offered. It failed 100% of the time with the variable set and never without it.
+
+The analysis path had no race to find: `DidOpen` analyses synchronously and stores the result
+before publishing, so a completion after the first publish always reads the finished analysis.
+
+The test now sets `LYRA_NO_PRELUDE` — the configuration its assertion is about, which keeps the
+assertion as strict as it was — and `cmd/lyra-lsp` and `cmd/lyrac` clear both variables in a
+`TestMain`, since the mirror image was waiting in the other package: exporting
+`LYRA_NO_PRELUDE` failed seven of `cmd/lyrac`'s example tests. The whole suite now passes with
+both variables unset and with both set to hostile values.
+
+### 09/13/26 — a tuple position is a place
+
+`p.0 = v` was a syntax error while `p.x = v` on a struct was not. The grammar has a statement
+form per place kind — `member_assignment`, `index_assignment` — and none for a
+`tuple_index_expr`; the compound form parsed and the collector refused it, and a tuple
+assignment refused one as a target element.
+
+The grammar gained `tuple_index_assignment`, which collects to the same `LValueAssignmentStmt`
+the other two do, and the backend a `tupleElemAddress` beside `memberFieldAddress` (a gep into
+the object's storage, or through the box for a `shared` tuple). The rest was finding every walk
+that follows a place back to its root — writability, the pointer-path check, readonly fields,
+the captured-write and address-taken checks, purity, ownership, the must-release view test,
+the backend's owning-root test — and **none of them knew a tuple index**. Each stepped through a
+field and an element with its own two-case switch, which is how a third kind was missing from
+eight at once. `ast.PlaceObject` is now the one definition of a step, and they go through it;
+`ast.RootIdentifier`'s own comment had named this as the change that would need it.
+
+**`&mut p.0` is accepted as a consequence**, and deliberately kept. It was lyra-E059, on the
+grounds that a tuple index names no storage — and once a position is written in place it plainly
+does; the address-of check asks the same root helper, and the pointer works.
+
 ### 09/13/26 — a crashed language server's diagnostics in Zed: confirmed, and not ours to fix
 
 The entry asked what Zed does before assuming there was work. From Zed's source

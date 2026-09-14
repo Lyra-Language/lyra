@@ -493,6 +493,13 @@ diagnostic whose fix names a standard-library function — belongs where the pre
 - Run `./asan.sh` (workspace root) before pushing memory-model work: clang-15's typed
   pointers reject mismatches Apple clang cannot see.
 
+**A test must not depend on the shell's `LYRA_STD` or `LYRA_NO_PRELUDE`.** Both change what
+resolution finds, so `cmd/lyra-lsp` and `cmd/lyrac` clear them in `TestMain` and each test that
+needs the standard library sets `t.Setenv("LYRA_STD", …)` (or `LYRA_NO_PRELUDE`) itself. A
+package that resolves modules through `modules.DefaultRoots`/`DefaultOptions` and lacks such a
+`TestMain` passes in CI and fails wherever a developer exported one — which once read as a
+flaky race for a day.
+
 **A test file's name can silently exclude it.** A final `_arm`, `_ios`, `_js`, `_plan9`,
 `_android`, `_wasm`, `_mips`, `_s390x`, `_windows` (any GOOS/GOARCH) segment is a build
 constraint — `match_unreachable_arm_test.go` never runs on arm64 and `go test` prints `ok`.
