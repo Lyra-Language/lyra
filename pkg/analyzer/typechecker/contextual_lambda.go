@@ -106,20 +106,24 @@ func isConcreteEnoughToElaborate(t types.Type, plantable map[string]bool) bool {
 }
 
 // elaborateLambdaArgs fills the lambda-literal arguments of a call from the parameter types
-// the callee declares, before any of them is inferred.
+// of the callee's signature, before any of them is inferred — the signature-typed call paths
+// (inferLambdaCallFromType, inferDotCallFromType), where a trait method, a bound method and a
+// function-typed field are checked. plantable is as for elaborateLambda.
 //
 // Separate from the per-argument loops that follow it because the *order* matters: a
 // contextually-typed lambda has to be elaborated before the argument walk begins, since that
 // walk infers each argument as it goes and a lambda inferred without its parameter types has
 // already reported `undefined symbol` by the time the loop reaches the comparison.
-func (tc *TypeChecker) elaborateLambdaArgs(params []types.ParameterType, args []ast.Expression) {
+//
+// It sat uncalled from the day it was written (2165d1d) until 09/14/26: the declaration-typed
+// twin below was wired into direct calls, and every signature-typed path went on inferring
+// `3.apply((x) => x * 7)` bottom-up.
+func (tc *TypeChecker) elaborateLambdaArgs(params []types.ParameterType, args []ast.Expression, plantable map[string]bool) {
 	for i, arg := range args {
 		if i >= len(params) {
 			return
 		}
-		// No substitution here — these are a callee's declared types as written, so
-		// only a fully concrete one may be planted.
-		tc.elaborateLambda(arg, params[i].Type, nil)
+		tc.elaborateLambda(arg, params[i].Type, plantable)
 	}
 }
 

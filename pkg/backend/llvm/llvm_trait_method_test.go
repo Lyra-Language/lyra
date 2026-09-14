@@ -148,6 +148,32 @@ func TestExec_TraitMethods(t *testing.T) {
 			// 4+5 + 7 + 5+10 + 5 + 100 + 3 + 6
 			145,
 		},
+		{
+			// An unannotated lambda argument takes its types from the method's slot, and the
+			// planted types are what the backend lowers its parameters at — including `t`
+			// planted at a bound receiver inside a generic function, lowered per specialization.
+			"untyped lambda arguments",
+			`struct Box<t> { v: t }
+			 trait Apply { apply: (Self, (i64) -> i64) -> i64 }
+			 impl Apply for i64 { apply = (self, f) => f(self) }
+			 trait Ap { ap: (Self, (Self) -> Self) -> Self }
+			 impl Ap for i64 { ap = (self, f) => f(self) }
+			 trait Get<e> { get: (Self, (e) -> e) -> e }
+			 impl Get<t> for Box<t> { get = (self, f) => f(self.v) }
+			 struct S { f: (i64, (i64) -> i64) -> i64 }
+			 let twice<t> where t: Ap = (v: t) -> t => v.ap((x) => x.ap((y) => y))
+			 let main = () -> u8 => {
+			   let s = S { f: (n: i64, h: (i64) -> i64) -> i64 => h(n) }
+			   let a = 3.apply((x) => x * 7)
+			   let b = 4.ap((x) => x + 1)
+			   let c = Box { v: 10 }.get((x) => x * 2)
+			   let d = s.f(6, (x) => x - 1)
+			   let e = twice(9)
+			   u8(a + b + c + d + e)
+			 }`,
+			// 21 + 5 + 20 + 5 + 9
+			60,
+		},
 	}
 	clang := lookClang(t)
 	for _, c := range cases {

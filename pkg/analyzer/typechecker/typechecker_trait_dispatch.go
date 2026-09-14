@@ -472,7 +472,10 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		// prevent.
 		tc.publishBoundCandidates(call, traitName, methodName)
 		sig := substituteSelf(tm.Signature, recv)
-		return tc.inferDotCallFromType(traitName+"::"+methodName, sig, call), true
+		// `recv` is the enclosing declaration's own variable, so a slot mentioning it —
+		// `(t) -> t` for `ap: (Self, (Self) -> Self) -> Self` — may be planted on a lambda.
+		plantable := map[string]bool{recv.Name: true}
+		return tc.inferDotCallFromType(traitName+"::"+methodName, sig, call, plantable), true
 	}
 	return nil, false
 }
@@ -546,15 +549,18 @@ func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match res
 	if receiver == nil {
 		return tc.inferLambdaCallFromType(calleeName, match.Signature, call)
 	}
-	return tc.inferDotCallFromType(calleeName, match.Signature, call)
+	// A generic impl's bindings name the caller's types, and any variable in them is the
+	// caller's own (a `Box<u>` receiver inside `<u>`), so it may be planted.
+	return tc.inferDotCallFromType(calleeName, match.Signature, call, plantableVars(match.Bindings))
 }
 
 // inferDotCallFromType is inferLambdaCallFromType's counterpart for a
 // `.`-call whose receiver is implicit: lambdaType.Parameters[0] (Self) has no
 // corresponding entry in call.Arguments — already confirmed to match by the
 // TypesEqual check in resolveTraitMethod — so only Parameters[1:] is checked
-// against call.Arguments.
-func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types.LambdaType, call *ast.FunctionCallExpr) types.Type {
+// against call.Arguments. plantable names the type variables a lambda-literal argument may
+// be given (see isConcreteEnoughToElaborate).
+func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types.LambdaType, call *ast.FunctionCallExpr, plantable map[string]bool) types.Type {
 	if len(lambdaType.Parameters) == 0 {
 		// A trait method signature normally always has Self as its first
 		// parameter; a malformed zero-param signature has no receiver slot to
@@ -585,6 +591,7 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
 	}
 
+	tc.elaborateLambdaArgs(rest, call.Arguments, plantable)
 	for i, arg := range call.Arguments {
 		param := rest[i]
 		if param.Type == nil {

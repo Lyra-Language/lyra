@@ -561,6 +561,8 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 		return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
 	}
 
+	// A signature reaching here is already substituted, so only a concrete slot is planted.
+	tc.elaborateLambdaArgs(lambdaType.Parameters, call.Arguments, nil)
 	for i, arg := range call.Arguments {
 		param := lambdaType.Parameters[i]
 		if param.Type == nil {

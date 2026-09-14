@@ -295,13 +295,20 @@ Solved from argument types first, then:
 - **Turbofish** `f::<i64>()` — positional, declaration order; beats context.
 - **Context** (annotation, declared return type, parameter slot) — binds **only variables no parameter mentions**, and only on declarations that declare their `<…>` list. This is what makes `hashmap_with_capacity<k,v>(cap)` callable.
 
+### A lambda literal's missing annotations
+
+`(x) => x * 7` takes its missing parameter and return types from the function type its context expects: an annotated binding, a return position, or an argument slot of any call — a function, a trait method (`3.apply((x) => x * 7)`), a method through a `where` bound, a function-typed field.
+- Only blanks are filled; a written annotation wins and is checked.
+- A slot type mentioning a variable the call has not solved (the `u` of `(t) -> u`) is left blank for the body to solve; the enclosing declaration's own variable (`(t) -> t` inside `<t>`) is filled in.
+- An arity mismatch fills nothing.
+
 ### Generic parameter lists
 
 A lowercase type name is a type variable wherever it appears. What a written `<…>` list must agree with depends on what declares it:
 
 - **A binding** (`let f<t> = …`): the list is optional; written, it is authoritative. A signature variable missing from it is `lyra-E031`, a listed one the signature never mentions is `lyra-W013`.
 - **A type** (struct, `data`, named tuple, newtype, union): every variable its body mentions must be in its list (`lyra-E031`) — the list is how `Box<i64>` gives one a type, so there is no list-less generic type. An **unused** parameter is fine: `struct Id<t> { n: i64 }` is a phantom type. A type alias takes no list, so its body can mention no variable.
-- **A trait**: a parameter no method mentions is `lyra-W013`. A method may be generic in variables of its own (`map: (Self<a>, (a) -> b) -> Self<b>`), since there is no method-level list to declare them in.
+- **A trait**: a parameter no method mentions is `lyra-W013`. A method may be generic in variables of its own (`map: (Self<a>, (a) -> b) -> Self<b>`), since there is no method-level list to declare them in — though such a method cannot yet be implemented or called (todo.md, Known bugs).
 - **An impl** has no written list; its variables are lexical.
 
 ### Local generics

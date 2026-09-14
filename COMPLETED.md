@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — an untyped lambda argument to a trait method
+
+`3.apply((x) => x * 7)` reported `undefined symbol "x"`, while the same lambda passed to a
+free function was typed from its slot. Contextual lambda typing (2165d1d) elaborates a
+lambda's blank annotations onto the AST from the expected function type, and was wired into
+the declaration-typed call path (`elaborateLambdaArgsFromParams`). It also wrote a
+signature-typed twin, `elaborateLambdaArgs`, that **nothing ever called**. Every call checked
+against a `types.LambdaType` went on inferring arguments bottom-up. `inferDotCallFromType`
+covers trait methods, defaults, generic impls and bound dispatch;
+`inferLambdaCallFromType` covers function-typed fields and qualified trait calls. A probe of
+eleven shapes found nine failing, and the two that worked (a function-typed `let`, an
+already-annotated lambda) never go through those paths.
+
+Both now call it before their argument loop. Which type variables may be planted is decided
+per site, following `isConcreteEnoughToElaborate`:
+- **Bound dispatch** plants the receiver's variable. `ap: (Self, (Self) -> Self)` at a
+  `t`-typed receiver gives `(t) -> t`, and that `t` is the enclosing declaration's own, as in
+  the `sort_by` case.
+- **Concrete dispatch** plants the variables in the impl's bindings (`plantableVars`).
+- **`inferLambdaCallFromType`** plants nothing: its signatures are already substituted.
+
+The run test builds the bound case: `twice<t>`'s lambda lowers per specialization at the
+planted `t`.
+
+Probing turned up an older gap, filed rather than fixed: a trait method's *own* type
+variables (`mapv: (Self, (i64) -> b) -> b`) are never solved at a call, annotated lambda or
+not. LANGUAGE.md's "a method may be generic in variables of its own" is true only of the
+`lyra-W013` declaration check.
+
 ### 09/14/26 — `Self` nested in a trait signature
 
 `trait Dup { dup: (Self) -> []Self }` refused every impl (`expected DynamicArray<Self>, got

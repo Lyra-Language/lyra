@@ -139,3 +139,63 @@ let bad = () -> i64 => takes((x, y) => 1)`, false)
 		t.Fatal("an arity mismatch should be reported")
 	}
 }
+
+// The signature-typed call paths — a trait method, a bound method in a generic body, a
+// function-typed struct field — are contexts too. They infer each argument against a
+// `types.LambdaType` rather than the callee's declaration, and none of them elaborated:
+// `3.apply((x) => x * 7)` reported `undefined symbol "x"` while the same lambda to a free
+// function was typed from its slot.
+func TestContextualLambda_AtSignatureTypedCalls(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"trait method": `
+trait Apply { apply: (Self, (i64) -> i64) -> i64 }
+impl Apply for i64 { apply = (self, f) => f(self) }
+let a = () -> i64 => 3.apply((x) => x * 7)`,
+		"Self in the slot": `
+trait Ap { ap: (Self, (Self) -> Self) -> Self }
+impl Ap for i64 { ap = (self, f) => f(self) }
+let a = () -> i64 => 3.ap((x) => x + 1)`,
+		"generic impl": `
+struct Box<t> { v: t }
+trait Ap<e> { ap: (Self, (e) -> e) -> e }
+impl Ap<t> for Box<t> { ap = (self, f) => f(self.v) }
+let a = () -> i64 => Box { v: 3 }.ap((x) => x * 7)`,
+		"default method": `
+trait Ap {
+  base: (Self) -> i64
+  ap: (Self, (i64) -> i64) -> i64 = (self, f) => f(self.base())
+}
+impl Ap for i64 { base = (self) => self }
+let a = () -> i64 => 3.ap((x) => x * 7)`,
+		"bound method, concrete slot": `
+trait Apply { apply: (Self, (i64) -> i64) -> i64 }
+impl Apply for i64 { apply = (self, f) => f(self) }
+let twice<t> where t: Apply = (v: t) -> i64 => v.apply((x) => x * 2)`,
+		// `(Self) -> Self` at a bound receiver is `(t) -> t`: the enclosing declaration's own
+		// variable, so it is planted on the lambda the way `sort_by`'s `(t, t)` is.
+		"bound method, caller's variable in the slot": `
+trait Ap { ap: (Self, (Self) -> Self) -> Self }
+impl Ap for i64 { ap = (self, f) => f(self) }
+let same<t> where t: Ap = (v: t) -> t => v.ap((x) => x)`,
+		"function-typed field": `
+struct S { f: (i64, (i64) -> i64) -> i64 }
+let a = (s: S) -> i64 => s.f(3, (x) => x * 7)`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertNoErrors(t, parseCollectAndCheck(t, src, false))
+		})
+	}
+}
+
+// The slot still checks the lambda: a body of the wrong type is refused, once.
+func TestContextualLambda_AtATraitMethodStillChecksTheBody(t *testing.T) {
+	t.Parallel()
+	res := parseCollectAndCheck(t, `
+trait Apply { apply: (Self, (i64) -> i64) -> i64 }
+impl Apply for i64 { apply = (self, f) => f(self) }
+let a = () -> i64 => 3.apply((x) => "no")`, false)
+	assertErrorsAre(t, res, "lambda: return type mismatch: expected i64, got string")
+}

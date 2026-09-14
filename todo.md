@@ -9,9 +9,10 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] An untyped lambda passed to a trait method gets no parameter types.**
-  `3.apply((x) => x * 7)` against `apply: (Self, (i64) -> i64) -> i64` reports `undefined
-  symbol "x"`; the same lambda to a free or `self` function is typed from the slot.
+- **[OPEN] A trait method's own type variables are unusable.** `trait Mapper { mapv: (Self,
+  (i64) -> b) -> b }` declares (LANGUAGE.md: "A method may be generic in variables of its
+  own"), but a call leaves `b` unsolved (`cannot assign (i64) -> i64 to (i64) -> b`), and
+  `map: (Self<a>, (a) -> b) -> Self<b>` refuses its own impl.
 
 ## In progress
 
