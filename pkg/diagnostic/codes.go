@@ -682,9 +682,9 @@ const (
 	CodeDestructureOfInferredReturn = "lyra-E058"
 
 	// CodeNotAddressable: `&` applied to something that is not storage — a call's
-	// result, an arithmetic expression, a literal. Only a binding, a field or an
-	// element has an address; a temporary stops existing at the end of the statement,
-	// so the pointer would dangle immediately.
+	// result, an arithmetic expression, a literal. Only a binding, a field, an element or
+	// a tuple position (`&mut p.0`, since 09/13) has an address; a temporary stops existing
+	// at the end of the statement, so the pointer would dangle immediately.
 	CodeNotAddressable = "lyra-E059"
 
 	// CodeNotAPointer: `^` applied to a value that is not a raw pointer, reading or

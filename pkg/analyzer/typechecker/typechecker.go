@@ -1738,11 +1738,11 @@ func (tc *TypeChecker) checkLValueWritable(target ast.Expression) {
 // storage is reached through a read-only pointer.
 func (tc *TypeChecker) checkPointerPathWritable(target ast.Expression) {
 	for {
+		if object, ok := ast.PlaceObject(target); ok {
+			target = object
+			continue
+		}
 		switch e := target.(type) {
-		case *ast.MemberExpr:
-			target = e.Object
-		case *ast.IndexExpr:
-			target = e.Object
 		case *ast.DerefExpr:
 			if e.Operand == nil {
 				return
@@ -1857,18 +1857,7 @@ func (tc *TypeChecker) reportDestructureOfInferredReturn(decl *ast.Destructuring
 // identifier (e.g. a function-call result or a parenthesized expression), in
 // which case interior-mutability cannot be attributed to a local binding.
 func rootIdentifier(expr ast.Expression) *ast.IdentifierExpr {
-	for {
-		switch e := expr.(type) {
-		case *ast.IdentifierExpr:
-			return e
-		case *ast.MemberExpr:
-			expr = e.Object
-		case *ast.IndexExpr:
-			expr = e.Object
-		default:
-			return nil
-		}
-	}
+	return ast.RootIdentifier(expr)
 }
 
 // checkFrozenFieldPath walks the member hops of an assignment target from the
@@ -1887,10 +1876,12 @@ func (tc *TypeChecker) checkFrozenFieldPath(target ast.Expression) {
 				return
 			}
 			target = e.Object
-		case *ast.IndexExpr:
-			target = e.Object
 		default:
-			return
+			object, ok := ast.PlaceObject(target)
+			if !ok {
+				return
+			}
+			target = object
 		}
 	}
 }

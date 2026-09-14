@@ -1047,12 +1047,12 @@ func isStoredPlaceRead(e ast.Expression) bool {
 			return true
 		case *ast.DerefExpr:
 			return true
-		case *ast.MemberExpr:
-			e = unsafeBlockValue(v.Object)
-		case *ast.IndexExpr:
-			e = unsafeBlockValue(v.Object)
 		default:
-			return false
+			object, ok := ast.PlaceObject(v)
+			if !ok {
+				return false
+			}
+			e = unsafeBlockValue(object)
 		}
 	}
 }

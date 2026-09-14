@@ -139,10 +139,8 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 				return false
 			}
 			return l.slotIsOwning(slot)
-		case *ast.MemberExpr:
-			e = t.Object
-		case *ast.IndexExpr:
-			e = t.Object
+		case *ast.MemberExpr, *ast.IndexExpr, *ast.TupleIndexExpr:
+			e, _ = ast.PlaceObject(t)
 		case *ast.DerefExpr:
 			// A path through a pointer (`p^.s = v`) ends at storage `&mut` or `data_mut()`
 			// addressed, and both require an owning root — see lowerDerefAssignment.
@@ -244,6 +242,9 @@ func (l *lowerer) lvalueAddressRaw(block *ir.Block, e ast.Expression) (lvalueLoc
 	case *ast.IndexExpr:
 		return l.indexElemAddress(block, t)
 
+	case *ast.TupleIndexExpr:
+		return l.tupleElemAddress(block, t)
+
 	case *ast.DerefExpr:
 		// `p^` names the storage p points at, so its address is p itself — which is what
 		// makes `p.offset(i)^.field = v` a store into that element's field. The front end
@@ -316,6 +317,48 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalue
 	fieldPtr := block.NewGetElementPtr(structTy, obj.ptr,
 		i32c(0), i32c(int64(idx)))
 	return lvalueLoc{ptr: fieldPtr, ty: fieldType}, block, nil
+}
+
+// tupleElemAddress computes the address of `obj.N`, a tuple's element by position — the
+// member case with a numbered field: through the box for a `shared` tuple, and a gep into the
+// object's own storage for a stack one.
+func (l *lowerer) tupleElemAddress(block *ir.Block, e *ast.TupleIndexExpr) (lvalueLoc, *ir.Block, error) {
+	objType, ok := l.recordedType(e.Object)
+	if !ok {
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: no type recorded for tuple-index-assignment object")
+	}
+	tt, ok := l.resolveTupleType(objType)
+	if !ok {
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: tuple element assignment on non-tuple type %s", objType)
+	}
+	idx := int(e.Index)
+	if idx < 0 || idx >= len(tt.Elements) {
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: tuple index %d out of range", idx)
+	}
+	elemType := tt.Elements[idx]
+	if types.AllocationOf(objType) == types.Shared {
+		box, block, err := l.lvalueBoxPtr(block, e.Object, objType)
+		if err != nil {
+			return lvalueLoc{}, nil, err
+		}
+		payloadTy, err := l.lowerType(types.WithAllocation(objType, types.Stack))
+		if err != nil {
+			return lvalueLoc{}, nil, err
+		}
+		elemPtr := block.NewGetElementPtr(SharedBoxType(payloadTy), box,
+			i32c(0), i32c(boxPayloadField), i32c(int64(idx)))
+		return lvalueLoc{ptr: elemPtr, ty: elemType, viaBox: true}, block, nil
+	}
+	obj, block, err := l.lvalueAddress(block, e.Object)
+	if err != nil {
+		return lvalueLoc{}, nil, err
+	}
+	tupleTy, err := l.lowerType(objType)
+	if err != nil {
+		return lvalueLoc{}, nil, err
+	}
+	elemPtr := block.NewGetElementPtr(tupleTy, obj.ptr, i32c(0), i32c(int64(idx)))
+	return lvalueLoc{ptr: elemPtr, ty: elemType}, block, nil
 }
 
 // indexElemAddress computes the address of `obj[i]`. A fixed-size array is addressed

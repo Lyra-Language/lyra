@@ -14,10 +14,11 @@ import (
 // identifier", since that message described the implementation rather than the rule.
 func TestCollect_CompoundAssignment_AcceptsPlaces(t *testing.T) {
 	for name, src := range map[string]string{
-		"a binding":     `let main = () -> void => { var x = 1; x += 1 }`,
-		"a field":       `struct Pt { x: i64 }` + "\n" + `let main = () -> void => { var p = Pt { x: 1 }; p.x += 1 }`,
-		"an element":    `let main = () -> void => { var xs: []i64 = [1]; xs[0] += 1 }`,
-		"a nested path": `struct Pt { x: i64 }` + "\n" + `struct B { p: Pt }` + "\n" + `let main = () -> void => { var bs: []B = [B { p: Pt { x: 1 } }]; bs[0].p.x += 1 }`,
+		"a binding":        `let main = () -> void => { var x = 1; x += 1 }`,
+		"a field":          `struct Pt { x: i64 }` + "\n" + `let main = () -> void => { var p = Pt { x: 1 }; p.x += 1 }`,
+		"an element":       `let main = () -> void => { var xs: []i64 = [1]; xs[0] += 1 }`,
+		"a tuple position": `let main = () -> void => { var p = (1, 2); p.1 += 1 }`,
+		"a nested path":    `struct Pt { x: i64 }` + "\n" + `struct B { p: Pt }` + "\n" + `let main = () -> void => { var bs: []B = [B { p: Pt { x: 1 } }]; bs[0].p.x += 1 }`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if errs := parseAndCollectErrors(t, src); len(errs) > 0 {
@@ -40,5 +41,23 @@ let main = () -> void => { f() += 1 }
 	}
 	if !found {
 		t.Errorf("expected the non-place refusal, got %v", errs)
+	}
+}
+
+// **A tuple position is a place** (09/13): `p.0 = v` had no statement form, so it was a
+// syntax error while `p.x = v` on a struct was not, and a tuple assignment refused one as
+// a target element.
+func TestCollect_TupleIndexAssignment(t *testing.T) {
+	for name, src := range map[string]string{
+		"a plain write":        `let main = () -> void => { var p = (1, 2); p.0 = 3 }`,
+		"through a field":      `struct B { t: (i64, i64) }` + "\n" + `let main = () -> void => { var b = B { t: (1, 2) }; b.t.1 = 3 }`,
+		"through an element":   `let main = () -> void => { var xs: [](i64, i64) = [(1, 2)]; xs[0].0 = 3 }`,
+		"a tuple-assign place": `let main = () -> void => { var p = (1, 2); (p.0, p.1) = (p.1, p.0) }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if errs := parseAndCollectErrors(t, src); len(errs) > 0 {
+				t.Errorf("expected no collector errors, got %v", errs)
+			}
+		})
 	}
 }

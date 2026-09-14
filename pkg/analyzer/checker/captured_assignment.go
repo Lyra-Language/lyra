@@ -147,16 +147,8 @@ func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnos
 // lvalueRootName walks an assignment path (`p.arr[i].x`) down to the binding it
 // is rooted at.
 func lvalueRootName(e ast.Expression) (string, bool) {
-	for {
-		switch v := e.(type) {
-		case *ast.IdentifierExpr:
-			return v.Name, true
-		case *ast.MemberExpr:
-			e = v.Object
-		case *ast.IndexExpr:
-			e = v.Object
-		default:
-			return "", false
-		}
+	if id := ast.RootIdentifier(e); id != nil {
+		return id.Name, true
 	}
+	return "", false
 }

@@ -42,8 +42,8 @@ func (tc *TypeChecker) inferAddressOf(e *ast.AddressOfExpr) types.Type {
 	// compile-time fact, not a thing to leave to the reader.
 	if !isAddressable(e.Operand) {
 		tc.addErrorCode(e.GetLocation(), SeverityError, diag.CodeNotAddressable,
-			"cannot take the address of a temporary — `&` needs a binding, a field or an "+
-				"element, and this expression names none")
+			"cannot take the address of a temporary — `&` needs a binding, a field, an "+
+				"element or a tuple position, and this expression names none")
 		return nil
 	}
 	operand := tc.inferExprType(e.Operand)

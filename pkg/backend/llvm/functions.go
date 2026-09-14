@@ -798,18 +798,7 @@ func (l *lowerer) argumentAddress(block *ir.Block, arg ast.Expression) (value.Va
 // path rooted at one — as opposed to a temporary. The backend counterpart of the
 // typechecker's rootIdentifier walk.
 func isLValuePath(e ast.Expression) bool {
-	for {
-		switch t := e.(type) {
-		case *ast.IdentifierExpr:
-			return true
-		case *ast.MemberExpr:
-			e = t.Object
-		case *ast.IndexExpr:
-			e = t.Object
-		default:
-			return false
-		}
-	}
+	return ast.RootIdentifier(e) != nil
 }
 
 // isGenericLambda reports whether a function's signature mentions a type variable,

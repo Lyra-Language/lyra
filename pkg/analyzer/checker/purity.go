@@ -2466,15 +2466,13 @@ func operatorImplEffect(e ast.Expression, inf *inference) (Effect, string) {
 // `^` — `p^.x`, `xs[i]^.y`, `p.offset(1)^.z`.
 func writesThroughPointer(target ast.Expression) bool {
 	for {
-		switch e := target.(type) {
-		case *ast.MemberExpr:
-			target = e.Object
-		case *ast.IndexExpr:
-			target = e.Object
-		case *ast.DerefExpr:
+		if _, isDeref := target.(*ast.DerefExpr); isDeref {
 			return true
-		default:
+		}
+		object, ok := ast.PlaceObject(target)
+		if !ok {
 			return false
 		}
+		target = object
 	}
 }

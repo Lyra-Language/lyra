@@ -643,7 +643,7 @@ func (c *Collector) collectStatementByKind(node *sitter.Node) ast.Statement {
 		return statements.CollectVarReassignmentStmt(node, c.ctx)
 	case "deref_assignment":
 		return statements.CollectDerefAssignmentStmt(node, c.ctx)
-	case "member_assignment", "index_assignment":
+	case "member_assignment", "index_assignment", "tuple_index_assignment":
 		return statements.CollectLValueAssignmentStmt(node, c.ctx)
 	case "tuple_assignment":
 		return statements.CollectTupleAssignmentStmt(node, c.ctx)

@@ -28,7 +28,7 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	// on the identical place compiled — the compound form is the shorter spelling of
 	// that statement, so it has no business accepting less.
 	switch left.(type) {
-	case *ast.IdentifierExpr, *ast.MemberExpr, *ast.IndexExpr:
+	case *ast.IdentifierExpr, *ast.MemberExpr, *ast.IndexExpr, *ast.TupleIndexExpr:
 	default:
 		ctx.AddError(leftNode, diag.SeverityError,
 			"left side of compound assignment must be a binding, field or element")

@@ -1747,20 +1747,7 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 // that starts at one — storage something already holds, rather than a value this
 // expression produces.
 func rootedAtBinding(e ast.Expression) bool {
-	for {
-		switch v := e.(type) {
-		case *ast.IdentifierExpr:
-			return true
-		case *ast.MemberExpr:
-			e = v.Object
-		case *ast.IndexExpr:
-			e = v.Object
-		case *ast.TupleIndexExpr:
-			e = v.Object
-		default:
-			return false
-		}
-	}
+	return ast.RootIdentifier(e) != nil
 }
 
 // methodSignature returns the trait signature a `.`-call dispatches to, or nil when the
@@ -1918,15 +1905,13 @@ func isOwnedReturn(mod types.TypeModifier) bool {
 // when the path reaches its storage without one.
 func pointerOfPath(target ast.Expression) *ast.DerefExpr {
 	for {
-		switch e := target.(type) {
-		case *ast.MemberExpr:
-			target = e.Object
-		case *ast.IndexExpr:
-			target = e.Object
-		case *ast.DerefExpr:
-			return e
-		default:
+		if deref, isDeref := target.(*ast.DerefExpr); isDeref {
+			return deref
+		}
+		object, ok := ast.PlaceObject(target)
+		if !ok {
 			return nil
 		}
+		target = object
 	}
 }

@@ -39,7 +39,6 @@ Package management, versioning and separate compilation are out of scope by deci
 - **[OPEN] A `const` cannot be a range-pattern bound** (`LOW..<=HIGH`). Admitting
   `const_identifier` makes every all-caps data constructor pattern misparse, since the
   lexer cannot tell it from a type name; needs the same grammar work as all-caps names.
-- **[OPEN] A positional tuple assignment target (`p.0 = v`) does not parse.**
 - **[OPEN] Binding a whole multi-field payload as one value (`Rect pair`)** is refused;
   `Rect _` works.
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as

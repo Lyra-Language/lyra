@@ -103,13 +103,13 @@ func CollectTupleAssignmentStmt(node *sitter.Node, ctx *collector_ctx.Ctx) ast.S
 		switch p := place.(type) {
 		case *ast.IdentifierExpr:
 			stmt = &ast.VarReassignmentStmt{AstBase: ast.AstBase{Location: placeLoc}, Name: p.Name, Value: read}
-		case *ast.MemberExpr, *ast.IndexExpr:
+		case *ast.MemberExpr, *ast.IndexExpr, *ast.TupleIndexExpr:
 			stmt = &ast.LValueAssignmentStmt{AstBase: ast.AstBase{Location: placeLoc}, Target: p, Value: read}
 		case *ast.DerefExpr:
 			stmt = &ast.DerefAssignmentStmt{AstBase: ast.AstBase{Location: placeLoc}, Target: *p, Value: read}
 		default:
 			ctx.AddError(placeNodes[i], diag.SeverityError,
-				"cannot assign to this: each element of a tuple assignment's target must be a place — a name, a member `p.x`, an index `xs[i]` or a deref `p^`")
+				"cannot assign to this: each element of a tuple assignment's target must be a place — a name, a member `p.x`, an index `xs[i]`, a tuple position `p.0` or a deref `p^`")
 			return nil
 		}
 		stmts = append(stmts, stmt)

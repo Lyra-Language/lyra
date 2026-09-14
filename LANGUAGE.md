@@ -98,6 +98,10 @@ Integer `+ - * /` **trap** on overflow. Explicit alternatives, builtin on every 
 
 No `checked_rem` yet (ambiguous between `%` and `%%`).
 
+### Places
+
+A place is what `=` writes and `&` addresses: a binding, a field `p.x`, an element `xs[i]`, a tuple position `p.0`, or a deref `p^`, and any path of those (`b.t.1`, `xs[i].0`). A tuple position obeys a field's rules — the root must allow interior mutation, and the value must fit the element's type.
+
 ### Compound assignment
 
 `+= -= *= /= %= &= |= ~= <<= >>=` target any place `=` accepts (`counts[i].n += 1`) under the same writability rules. **Not a desugaring**: the address is computed once, so `xs[idx()] += 5` calls `idx` once. An overloaded operator is reached through it.
@@ -106,7 +110,7 @@ No `checked_rem` yet (ambiguous between `%` and `%%`).
 
 `(a, b) = (b, a)`, `(q, r) = divmod(n, d)`.
 
-- Targets are places (name, `p.x`, `xs[i]`, `p^`); anything else is refused by the collector, a constructor target by name. `a, b = b, a` is not a form.
+- Targets are places (name, `p.x`, `xs[i]`, `p.0`, `p^`); anything else is refused by the collector, a constructor target by name. `a, b = b, a` is not a form.
 - **RHS evaluated to a tuple first, then places written left to right**; each address computed once, after the RHS.
 - Collector desugaring (not a statement kind): `{ let (t0, t1) = rhs; p0 = t0; p1 = t1 }` with position-stamped names in their own scope. Later passes never see it. The target parses as `tuple_literal` (a place-tuple rule would be a reduce-reduce conflict).
 - Places are the RHS's context: `(a, b) = (4.0, 0.5)` on f32 narrows both. The desugared `let` records its assignments in `DestructuringDeclStmt.Assigns` for this. A mismatch is reported with the stand-alone assignment's message.
