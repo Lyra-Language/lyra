@@ -31,8 +31,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
-- **[OPEN] A crashed or killed language server leaves its diagnostics on screen.** VS Code
-  disposes them with the client; confirm what Zed does before assuming there is work.
 
 ## Language surface
 

@@ -9,6 +9,19 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a crashed language server's diagnostics in Zed: confirmed, and not ours to fix
+
+The entry asked what Zed does before assuming there was work. From Zed's source
+(`crates/lsp/src/lsp.rs`, `crates/project/src/lsp_store.rs` on main): the client never watches
+the server's process — its exit only ends the tasks reading stdout and stderr, which log the
+error — and a server's diagnostics are cleared by `stop_local_language_server` alone, which an
+explicit stop or restart reaches and a crash does not. So Zed keeps a dead `lyra-lsp`'s last
+diagnostics until `editor: restart language server`.
+
+There is nothing for Lyra to do: a crashed or killed process sends nothing, and the extension
+API does not observe the exit. VS Code already disposes them with the client. The behaviour is
+recorded in `lyra-zed-ext/CLAUDE.md`, with the restart that clears it.
+
 ### 09/13/26 — a rename says where it looked for importers, when that was not a workspace
 
 The server finds an exported name's importers by walking a root, and with no workspace folder
