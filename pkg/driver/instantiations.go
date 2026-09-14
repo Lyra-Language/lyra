@@ -185,8 +185,31 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 	// recorded bindings, and queues whatever that makes concrete. One function rather than
 	// two loops, because the trait-method seeding below asks the identical question of a
 	// different kind of body — and two copies of a composition rule drift (hazard 8).
+	// Method specializations a bound call reaches once composed (below), whose bodies are
+	// composed in turn.
+	var methodWorklist []typetable.Resolution
 	compose := func(body *ast.LambdaExpr, subst map[string]types.Type, site ast.Location) []diag.Diagnostic {
 		for _, call := range genericCallsIn(body) {
+			// **A `where`-bound call to a method generic in its own variables** records
+			// its solution in the body's vocabulary (`mapv`'s `b = u`), so each candidate
+			// impl is a specialization only at a composed solution — the same composition
+			// a generic call gets, applied to a method. Every candidate is composed, as
+			// every candidate is published: which one a specialization selects is the
+			// backend's lookup, and an extra one costs a table nobody reads.
+			if solution := res.MethodTable.BoundMethodVars(call); solution != nil {
+				for _, candidate := range res.MethodTable.BoundCandidatesOf(call) {
+					composed := candidate.WithMethodVars(solution, subst, substituteTypeVars)
+					if !bindingsConcrete(composed.Bindings) {
+						continue // a template candidate (`Box<t>` as written), or an unsettled solve
+					}
+					if deepestBinding(composed.Bindings) > maxSpecializationDepth {
+						return methodDivergenceError(composed)
+					}
+					if res.MethodTable.AddSpecialization(composed) {
+						methodWorklist = append(methodWorklist, composed)
+					}
+				}
+			}
 			callee, ok := table.Get(call)
 			if !ok {
 				continue
@@ -254,14 +277,49 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 		}
 	}
 
-	for len(worklist) > 0 {
-		current := worklist[0]
-		worklist = worklist[1:]
-		if d := compose(current.Func, current.Subst, current.Site); d != nil {
+	for len(worklist) > 0 || len(methodWorklist) > 0 {
+		if len(worklist) > 0 {
+			current := worklist[0]
+			worklist = worklist[1:]
+			if d := compose(current.Func, current.Subst, current.Site); d != nil {
+				return d
+			}
+			continue
+		}
+		r := methodWorklist[0]
+		methodWorklist = methodWorklist[1:]
+		lam, err := r.Lambda()
+		if err != nil {
+			continue
+		}
+		if d := compose(lam, r.Bindings, r.Impl.GetLocation()); d != nil {
 			return d
 		}
 	}
 	return nil
+}
+
+// bindingsConcrete reports whether every binding is a real type — no variable left to
+// substitute, so the specialization can be emitted and analyzed.
+func bindingsConcrete(bindings map[string]types.Type) bool {
+	for _, bound := range bindings {
+		if bound == nil || types.MentionsTypeVar(bound) {
+			return false
+		}
+	}
+	return true
+}
+
+// methodDivergenceError is divergenceError for a method specialization reached through a
+// bound call whose solution grows with each composition.
+func methodDivergenceError(r typetable.Resolution) []diag.Diagnostic {
+	return []diag.Diagnostic{{
+		Location: r.Impl.GetLocation(),
+		Severity: diag.SeverityError,
+		Message: fmt.Sprintf(
+			"trait method %q needs an unbounded number of specializations: each call through a `where` bound is at a *larger* type than the last (reached %s, nested %d deep), so the set is infinite and monomorphization cannot compile it",
+			r.Method.GetName(), describeBinding(r.Bindings), deepestBinding(r.Bindings)),
+	}}
 }
 
 // genericCallsIn returns every call expression in a function's body, in a stable order.

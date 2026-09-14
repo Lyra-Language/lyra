@@ -272,6 +272,13 @@ func (l *lowerer) lowerBoundMethodCall(block *ir.Block, call *ast.FunctionCallEx
 				"type variable to a concrete type",
 			ref.Trait, ref.Method, recvT, ref.Trait)
 	}
+	// A method generic in its own variables was solved at the call in this body's
+	// vocabulary (`b = u`); this specialization's bindings make it concrete. The same
+	// composition the driver closed the specialization set with, so the SpecKey here names
+	// a method whose ownership table exists.
+	if solution := l.res.MethodTable.BoundMethodVars(call); solution != nil {
+		res = res.WithMethodVars(solution, l.typeSubst, types.Substitute)
+	}
 	fn, err := l.traitMethod(res)
 	if err != nil {
 		return nil, nil, err

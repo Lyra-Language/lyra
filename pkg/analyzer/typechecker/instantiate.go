@@ -131,14 +131,16 @@ func (tc *TypeChecker) resolveDeclaredParam(lambda *ast.LambdaExpr, i int) types
 // literal in a float slot. The default still applies — one pass later.
 func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type) (map[string]types.Type, bool) {
 	declared := func(i int) types.Type { return tc.resolveDeclaredParam(lambda, i) }
-	return tc.solveArgumentTypeVars(len(lambda.Parameters), declared, call, vars, seed)
+	return tc.solveArgumentTypeVars(len(lambda.Parameters), declared, call, vars, seed, nil)
 }
 
 // solveArgumentTypeVars is solveTypeVars over parameter types given by position rather than
 // read off a declaration: a trait method's call has only its dispatched signature, whose
 // own variables (`mapv: (Self, (i64) -> b) -> b`) are solved by exactly these rules.
-// declaredParam(i) is the resolved type of the parameter call.Arguments[i] fills.
-func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(i int) types.Type, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type) (map[string]types.Type, bool) {
+// declaredParam(i) is the resolved type of the parameter call.Arguments[i] fills. callerVars
+// are variables of the enclosing body a slot may mention and a lambda literal may be given —
+// a bound receiver's `t` — beyond those the solve's own values bring (plantableVars).
+func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(i int) types.Type, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type, callerVars map[string]bool) (map[string]types.Type, bool) {
 	subst := map[string]types.Type{}
 	// Pre-bindings the *context* supplied, for variables the arguments cannot reach
 	// (seedFromExpectedReturn). Installed before the passes below so a parameter written
@@ -223,7 +225,16 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		declared := declaredParam(i)
 		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
 		// and the lambda has something concrete to be elaborated against.
-		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst), plantableVars(subst))
+		plantable := plantableVars(subst)
+		if len(callerVars) > 0 {
+			if plantable == nil {
+				plantable = map[string]bool{}
+			}
+			for v := range callerVars {
+				plantable[v] = true
+			}
+		}
+		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst), plantable)
 		// The parameter type is this argument's context, so a *nested* generic call whose
 		// variables its own arguments cannot reach — `take(empty())` — is solved from the
 		// parameter it is being passed to. Substituted through what is bound so far, so an

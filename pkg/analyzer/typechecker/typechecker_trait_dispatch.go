@@ -23,6 +23,9 @@ type resolvedTraitMethod struct {
 	// it unified with at this call site (empty for a non-generic impl). Consumed
 	// by checkImplConstraints to verify the impl's `where` bounds.
 	Bindings map[string]types.Type
+	// MethodVarNames is typetable.Resolution.MethodVarNames: the method's own variables
+	// the impl-clash rename primed.
+	MethodVarNames map[string]string
 }
 
 // resolveTraitMethod finds every impl in the program whose target type
@@ -97,14 +100,17 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 			}
 			provided = true
 			var sig *types.LambdaType
+			var methodVarNames map[string]string
 			if traitMethod.Signature != nil {
 				// Substitute Self with the concrete receiver (not impl.Type,
 				// which for a generic impl still holds the `<t>` placeholder),
 				// then bind the trait's own type parameters.
-				sig = substituteSelf(tc.methodSignatureForImpl(trait, traitMethod.Signature, impl), receiverType)
+				renamed, names := methodSignatureRenamedAway(trait, traitMethod.Signature, typeVarsOfImpl(impl))
+				sig = substituteSelf(renamed, receiverType)
 				sig = substituteSigGenerics(sig, traitSubst)
+				methodVarNames = names
 			}
-			matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: bindings})
+			matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: bindings, MethodVarNames: methodVarNames})
 		}
 		// An impl that provides no clause for the name falls back to the trait's
 		// **default**, if it declares one. Tried after the impl's own methods and only
@@ -471,21 +477,37 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		// the one that type-checked the call, which is the drift Resolution exists to
 		// prevent.
 		tc.publishBoundCandidates(call, traitName, methodName)
-		// A method generic in a variable of its own is solved per call at a concrete
-		// receiver (solveMethodTypeVars), but not here: a bound call is lowered once per
-		// specialization through candidates that carry no per-call solution. Refused by
-		// name rather than checked against an unsolved `b`, which read as an argument
-		// mismatch the programmer could not fix.
-		if own := methodOwnTypeVars(trait, tm.Signature); len(own) > 0 {
-			tc.addError(call.GetLocation(), SeverityError,
-				"%s::%s: a method generic in its own %s cannot yet be called through a `where` bound; call it on a concrete receiver",
-				traitName, methodName, typeVarList(own))
-			return nil, true
-		}
-		sig := substituteSelf(tm.Signature, recv)
 		// `recv` is the enclosing declaration's own variable, so a slot mentioning it —
 		// `(t) -> t` for `ap: (Self, (Self) -> Self) -> Self` — may be planted on a lambda.
 		plantable := map[string]bool{recv.Name: true}
+		// `Self<a>` at a bare variable has no head to apply (types.ApplySelf), so the
+		// signature would keep a `Self` nothing can check against. Refused by name.
+		if len(selfApplicationsOf(tm.Signature)) > 0 {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s::%s: a method writing Self with type arguments cannot be called through a `where` bound; call it on a concrete receiver",
+				traitName, methodName)
+			return nil, true
+		}
+		// The method's own variables are renamed away from the receiver's — `where b:
+		// Mapper` beside `mapv`'s own `b` are two variables — solved from the arguments,
+		// and recorded under the trait's names for the driver and backend to compose with
+		// each specialization of the enclosing body (Resolution.WithMethodVars).
+		own, renames := methodSignatureRenamedAway(trait, tm.Signature, plantable)
+		sig := substituteSelf(own, recv)
+		if solution, ok := tc.solveBoundMethodTypeVars(traitName+"::"+methodName, trait, own, renames, sig, call, plantable); !ok {
+			return nil, true
+		} else if len(solution) > 0 {
+			tc.methodTable.SetBoundMethodVars(call, solution)
+			local := map[string]types.Type{}
+			for orig, bound := range solution {
+				name := orig
+				if r, renamed := renames[orig]; renamed {
+					name = r
+				}
+				local[name] = bound
+			}
+			sig = substituteSigGenerics(sig, local)
+		}
 		return tc.inferDotCallFromType(traitName+"::"+methodName, sig, call, plantable), true
 	}
 	return nil, false
@@ -552,7 +574,8 @@ func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match res
 		// out for the `where`-bound check below. They travel with the resolution
 		// because the *body* is monomorphized against them: one emitted function per
 		// distinct binding set, analyzed for ownership at the concrete types.
-		Bindings: match.Bindings,
+		Bindings:       match.Bindings,
+		MethodVarNames: match.MethodVarNames,
 	})
 	if match.Signature == nil {
 		// No declared signature to check args against (shouldn't normally
@@ -622,7 +645,7 @@ func (tc *TypeChecker) solveMethodTypeVars(calleeName string, match resolvedTrai
 		}
 		return tc.resolveTypeIfKnown(params[i].Type, call.GetLocation())
 	}
-	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, seed)
+	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, seed, plantableVars(match.Bindings))
 	if !ok {
 		tc.addError(call.GetLocation(), SeverityError,
 			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))
@@ -638,6 +661,46 @@ func (tc *TypeChecker) solveMethodTypeVars(calleeName string, match resolvedTrai
 	match.Signature = substituteSigGenerics(sig, subst)
 	match.Bindings = bindings
 	return match, true
+}
+
+// solveBoundMethodTypeVars solves a `where`-bound call's method variables — solveMethodTypeVars'
+// work for a receiver that is the enclosing body's own variable. sig is the signature with
+// `Self` already the receiver variable and the method's variables renamed away from it (as
+// renames records). The solution is returned keyed by the trait's names, which is how every
+// candidate impl can find it under its own (typetable.Resolution.MethodVarNames).
+func (tc *TypeChecker) solveBoundMethodTypeVars(calleeName string, trait *ast.TraitDeclStmt, renamedSig *types.LambdaType, renames map[string]string, sig *types.LambdaType, call *ast.FunctionCallExpr, callerVars map[string]bool) (map[string]types.Type, bool) {
+	vars := methodOwnTypeVars(trait, renamedSig)
+	if len(vars) == 0 || len(sig.Parameters) == 0 {
+		return nil, true
+	}
+	params := sig.Parameters[1:] // the receiver is implicit
+	if len(call.Arguments) != len(params) {
+		return nil, true // an arity mismatch, which the argument check reports
+	}
+	declared := func(i int) types.Type {
+		if params[i].Type == nil {
+			return nil
+		}
+		return tc.resolveTypeIfKnown(params[i].Type, call.GetLocation())
+	}
+	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, nil, callerVars)
+	if !ok {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))
+		return nil, false
+	}
+	back := make(map[string]string, len(renames))
+	for orig, renamed := range renames {
+		back[renamed] = orig
+	}
+	solution := make(map[string]types.Type, len(subst))
+	for name, bound := range subst {
+		if orig, wasRenamed := back[name]; wasRenamed {
+			name = orig
+		}
+		solution[name] = bound
+	}
+	return solution, true
 }
 
 // inferDotCallFromType is inferLambdaCallFromType's counterpart for a
@@ -1043,6 +1106,7 @@ func describeBindings(b map[string]types.Type) string {
 func resolutionOf(m resolvedTraitMethod) typetable.Resolution {
 	return typetable.Resolution{
 		Impl: m.Impl, Method: m.Method, Signature: m.Signature, Bindings: m.Bindings,
+		MethodVarNames: m.MethodVarNames,
 	}
 }
 
@@ -1107,6 +1171,7 @@ func (tc *TypeChecker) boundCandidatesByType(traitName string, methodName ast.Me
 		m := matches[0]
 		byType[target.String()] = typetable.Resolution{
 			Impl: m.Impl, Method: m.Method, Signature: m.Signature, Bindings: m.Bindings,
+			MethodVarNames: m.MethodVarNames,
 		}
 	}
 	return byType

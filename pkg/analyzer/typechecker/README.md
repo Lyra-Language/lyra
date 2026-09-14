@@ -161,6 +161,12 @@ matches with no `requiredTrait` is the ambiguity `Trait::method(...)` resolves. 
   `tc.genericBounds`, typed against the trait signature with `Self` = the parameter. Recorded as a
   `BoundMethodRef` (`SetBound`); purity joins over all impls. Candidates per implementing type are
   published via `SetBoundCandidates`.
+- **A trait method's own type variables** (`b` of `mapv: (Self, (i64) -> b) -> b`) are solved by
+  `solveArgumentTypeVars`, the generic-call solver: `solveMethodTypeVars` at a concrete dispatch
+  (the receiver seeds it, for `Self<a>`), `solveBoundMethodTypeVars` through a bound, which records
+  the solution under the trait's names (`SetBoundMethodVars`) for the driver and backend to compose
+  per specialization. A method variable clashing with an impl's (or a bound receiver's) is primed
+  (`methodSignatureRenamedAway`); `Resolution.MethodVarNames` carries the rename.
 - **Trait type parameters** (`impl Get<t> for Box<t>`): `TraitImplStmt.TraitArgs` maps trait
   params to impl args, applied by `substituteSigGenerics`. `TraitArgs` is collected with
   `FieldNameForChild` iteration; `impl.GenericParams` stays empty; bounds are in

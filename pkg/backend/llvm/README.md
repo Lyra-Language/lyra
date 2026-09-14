@@ -570,6 +570,11 @@ abstractly by the typechecker, which publishes one candidate per implementing ty
   bound call has no resolution entry, so modes come back nil and a `mut` receiver is passed
   by value into a method expecting a pointer (a wild load).
 
+- **A method generic in its own variables** (`mapv: (Self, (i64) -> b) -> b`): apply
+  `res.WithMethodVars(MethodTable.BoundMethodVars(call), l.typeSubst, types.Substitute)` to the
+  candidate before `traitMethod`. The solution is in the enclosing body's vocabulary (`b = u`);
+  the driver closes the set with the same call, so the SpecKey has an ownership table.
+
 `Trait::method(receiver, …)` (`lowerTraitPathCall`) is not a bound call; the receiver is
 argument 0, so arguments and parameters are index-aligned.
 

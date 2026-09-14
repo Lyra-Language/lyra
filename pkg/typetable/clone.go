@@ -55,6 +55,10 @@ func (t *MethodTable) Clone() *MethodTable {
 		operatorResolutions: cloneMap(t.operatorResolutions),
 		operatorCandidates:  cloneNestedMap(t.operatorCandidates),
 		operatorBounds:      cloneMap(t.operatorBounds),
+		// A solution map is never written after SetBoundMethodVars, so sharing it is safe;
+		// the outer map is what a later pass adds to.
+		boundMethodVars: cloneMap(t.boundMethodVars),
+		reached:         cloneMap(t.reached),
 	}
 }
 

@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a method's own type variables through a `where` bound
+
+`v.mapv(f)` under `where t: Mapper` was refused by name, because a bound call has no single
+resolution to carry a solution. The backend picks a candidate per specialization, and the
+solution to `b` only means something there: inside `viaB<t, u>` it is `b = u`, which is `bool`
+in one specialization and `[]i64` in another.
+
+**The shape is a generic call's, applied to a method.** A generic call records a template
+(`expect<t=t>`), the driver composes it with each concrete specialization, and the backend
+composes the same way while lowering. Here:
+- **Typechecker.** `solveBoundMethodTypeVars` records the solution per call, keyed by the
+  trait's names (`SetBoundMethodVars`). A method variable named like the receiver's (`where b:
+  Mapper` beside `mapv`'s `b`) is renamed away first. The deferred-lambda pass may give a lambda
+  the receiver variable (`callerVars`), so `v.m2((x) => x)` types `x: t`.
+- **Driver.** `closeInstantiations`, walking each concrete body, applies
+  `Resolution.WithMethodVars(solution, subst)` to every candidate of every such call. Each
+  concrete result joins `MethodTable.Specializations()` (`AddSpecialization`) and its body is
+  composed in turn.
+- **Backend.** `lowerBoundMethodCall` applies `WithMethodVars` with `l.typeSubst`.
+
+`WithMethodVars` is one function for the driver and the backend, because their disagreeing is a
+SpecKey with no ownership table behind it. A candidate finds the solution under its own names
+through `Resolution.MethodVarNames`, since the impl-clash rename can differ per impl.
+
+**The ownership half is the part a wrong version passes.** The first run test passed with the
+driver's composition disabled: its managed values were fresh and merely leaked. `twice = (self,
+x) => [x, x]` at `b = string` needs a retain per copy, and with the composition disabled ASan
+aborts, because the backend asked for a table nobody built and emitted no retains. That case is
+in `TestExec_TraitMethods`.
+
+`MethodTable.Clone` had to learn the two new fields; `TestClone_MentionsEveryTableField` said so.
+
+Still refused through a bound: a method writing `Self<…>` (a bare variable has no head to apply).
+Filed: an array literal in a lambda solves a variable as a fixed array even where the return
+wants `[]i64`. Generic functions do the same.
+
 ### 09/14/26 — `Self<a>` means the impl target at new arguments
 
 `trait Functor { map: (Self<a>, (a) -> b) -> Self<b> }` collected and meant nothing. `Self<a>`

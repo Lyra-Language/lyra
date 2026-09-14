@@ -33,9 +33,10 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ### Traits: a method's own type variables
 
-- **[OPEN] Through a `where` bound.** `v.mapv(f)` under `where t: Mapper` is refused by name.
-  Needs the per-call solution carried into each bound candidate's bindings and composed with
-  the specialization in `lowerBoundMethodCall`, with ownership tables for the result.
+- **[OPEN] A lambda's array literal solves a variable as a fixed array.** `app(n, (x) => [x])`
+  against `app<b>(n: i64, f: (i64) -> b) -> b` in a `-> []i64` function solves `b = [1]i64` and
+  fails the return; same through a trait method. The expected return does not seed a variable a
+  parameter mentions (seedFromExpectedReturn).
 - **[OPEN] `Self<…>` beyond an exact match.** Only a target applied to as many distinct
   variables as `Self<…>` has arguments is accepted; `impl Functor for Result<t, e>` (which
   argument?) and a default method writing `Self<…>` are refused until decided.
@@ -43,6 +44,15 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 ### Modules and tooling
 
 Package management, versioning and separate compilation are out of scope by decision.
+
+- **[IDEA] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** Bind libtree-sitter
+  over FFI (`TSNode` crosses by value, which `pkg/abi` already supports) and keep the
+  grammar as is; the program then needs a tree walk, a byte-buffer string builder,
+  `read_file`/`write_file` and `Result` composition — the same shapes a compiler needs, at
+  ~2–4k lines. Expected to surface: the generic-impl-in-generic-function bug above,
+  `Result.map_err`, `?` not carrying an expected type, `[]T` aliasing in a scope stack, a
+  missing `readdir` in `std.io`, and the first compile-time data point for a program larger
+  than any example. A real bootstrap would start with the collector after this.
 
 
 ## Language surface

@@ -35,6 +35,12 @@ type MethodTable struct {
 	// operatorBounds records an operator resolved through a `where` bound (no single
 	// impl); the purity pass joins over the trait method's impls. See SetOperatorBound.
 	operatorBounds map[ast.Expression]BoundMethodRef
+	// boundMethodVars[call] is a `where`-bound call's solution for the method's own type
+	// variables, in the enclosing body's vocabulary. See SetBoundMethodVars.
+	boundMethodVars map[*ast.FunctionCallExpr]map[string]types.Type
+	// reached are the specializations a bound call reaches only once its enclosing body's
+	// bindings are composed in. See AddSpecialization.
+	reached map[string]Resolution
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -137,6 +143,46 @@ type Resolution struct {
 	// the wrong receiver type — invalid IR that Apple clang's opaque pointers cannot
 	// distinguish.
 	Bindings map[string]types.Type
+	// MethodVarNames maps a trait method's own type variable, as the trait writes it, to
+	// its name in this impl's body — different only where it clashed with one of the
+	// impl's variables and was primed (`t` → `t'`). A solution recorded against the trait's
+	// names (SetBoundMethodVars) is keyed through it into Bindings.
+	MethodVarNames map[string]string
+}
+
+// WithMethodVars is r with a bound call's method-variable solution added to its bindings
+// and signature, the solution first taken through outer — the enclosing specialization's
+// bindings, which is what turns `b = u` into `b = bool`. apply is types.Substitute, passed
+// in as Instantiation.Substituted's is.
+//
+// One function for the two consumers that must agree on the result — the driver, closing
+// the specialization set, and the backend, lowering the call — because their disagreeing is
+// a SpecKey with no ownership table behind it.
+func (r Resolution) WithMethodVars(solution, outer map[string]types.Type, apply func(types.Type, map[string]types.Type) types.Type) Resolution {
+	if len(solution) == 0 {
+		return r
+	}
+	bindings := make(map[string]types.Type, len(r.Bindings)+len(solution))
+	for k, v := range r.Bindings {
+		bindings[k] = v
+	}
+	local := make(map[string]types.Type, len(solution))
+	for orig, bound := range solution {
+		name := orig
+		if renamed, ok := r.MethodVarNames[orig]; ok {
+			name = renamed
+		}
+		v := apply(bound, outer)
+		bindings[name] = v
+		local[name] = v
+	}
+	r.Bindings = bindings
+	if r.Signature != nil {
+		if sig, ok := apply(r.Signature, local).(*types.LambdaType); ok {
+			r.Signature = sig
+		}
+	}
+	return r
 }
 
 // SpecKey identifies the *specialization* a resolution names: this method of this impl,
@@ -247,6 +293,55 @@ func (t *MethodTable) SetBoundCandidates(call *ast.FunctionCallExpr, byType map[
 		t.boundCandidates = map[*ast.FunctionCallExpr]map[string]Resolution{}
 	}
 	t.boundCandidates[call] = byType
+}
+
+// SetBoundMethodVars records a `where`-bound call's solution for the method's own type
+// variables (`b` of `mapv: (Self, (i64) -> b) -> b`), keyed by the trait's names and written in
+// the enclosing body's vocabulary — `b = u` inside `<t, u>`. A candidate becomes a real
+// specialization only once that body's bindings are composed in (Resolution.WithMethodVars).
+func (t *MethodTable) SetBoundMethodVars(call *ast.FunctionCallExpr, solution map[string]types.Type) {
+	if t == nil || len(solution) == 0 {
+		return
+	}
+	if t.boundMethodVars == nil {
+		t.boundMethodVars = map[*ast.FunctionCallExpr]map[string]types.Type{}
+	}
+	t.boundMethodVars[call] = solution
+}
+
+// BoundMethodVars returns what SetBoundMethodVars recorded for call, or nil.
+func (t *MethodTable) BoundMethodVars(call *ast.FunctionCallExpr) map[string]types.Type {
+	if t == nil {
+		return nil
+	}
+	return t.boundMethodVars[call]
+}
+
+// BoundCandidatesOf returns every candidate published for a bound call.
+func (t *MethodTable) BoundCandidatesOf(call *ast.FunctionCallExpr) map[string]Resolution {
+	if t == nil {
+		return nil
+	}
+	return t.boundCandidates[call]
+}
+
+// AddSpecialization records a method specialization no single call names: a bound call's
+// candidate at a method-variable solution composed with its enclosing specialization. It
+// joins Specializations, so it gets an ownership table and its body is composed in turn.
+// Reports whether it was new.
+func (t *MethodTable) AddSpecialization(r Resolution) bool {
+	key := r.SpecKey()
+	if t == nil || key == "" {
+		return false
+	}
+	if t.reached == nil {
+		t.reached = map[string]Resolution{}
+	}
+	if _, seen := t.reached[key]; seen {
+		return false
+	}
+	t.reached[key] = r
+	return true
 }
 
 // BoundCandidate returns the resolution for a bound call at a concrete receiver type.
@@ -481,6 +576,11 @@ func (t *MethodTable) Specializations() []Resolution {
 					unique[key] = r
 				}
 			}
+		}
+	}
+	for key, r := range t.reached {
+		if _, seen := unique[key]; !seen {
+			unique[key] = r
 		}
 	}
 	keys := make([]string, 0, len(unique))

@@ -275,16 +275,30 @@ func substituteSigGenerics(sig *types.LambdaType, subst map[string]types.Type) *
 // both build the signature through this, so the renamed variable the body was checked with is
 // the key the backend specializes it under.
 func (tc *TypeChecker) methodSignatureForImpl(trait *ast.TraitDeclStmt, sig *types.LambdaType, impl *ast.TraitImplStmt) *types.LambdaType {
-	if sig == nil {
-		return nil
-	}
-	implVars := map[string]bool{}
-	collectTypeVars(impl.Type, implVars)
+	renamed, _ := methodSignatureRenamedAway(trait, sig, typeVarsOfImpl(impl))
+	return renamed
+}
+
+// typeVarsOfImpl is the type variables an impl declares by writing them: its target's and
+// its trait arguments'.
+func typeVarsOfImpl(impl *ast.TraitImplStmt) map[string]bool {
+	vars := map[string]bool{}
+	collectTypeVars(impl.Type, vars)
 	for _, a := range impl.TraitArgs {
-		collectTypeVars(a, implVars)
+		collectTypeVars(a, vars)
 	}
+	return vars
+}
+
+// methodSignatureRenamedAway primes each of the method's own type variables that is in avoid,
+// returning the signature and the renames made (trait's name → new name; nil for none).
+func methodSignatureRenamedAway(trait *ast.TraitDeclStmt, sig *types.LambdaType, avoid map[string]bool) (*types.LambdaType, map[string]string) {
+	if sig == nil {
+		return nil, nil
+	}
+	implVars := avoid
 	if len(implVars) == 0 {
-		return sig
+		return sig, nil
 	}
 	sigVars := methodOwnTypeVars(trait, sig)
 	rename := map[string]types.Type{}
@@ -298,7 +312,14 @@ func (tc *TypeChecker) methodSignatureForImpl(trait *ast.TraitDeclStmt, sig *typ
 		}
 		rename[v] = types.GenericType{Name: fresh}
 	}
-	return substituteSigGenerics(sig, rename)
+	if len(rename) == 0 {
+		return sig, nil
+	}
+	names := make(map[string]string, len(rename))
+	for v, g := range rename {
+		names[v] = g.(types.GenericType).Name
+	}
+	return substituteSigGenerics(sig, rename), names
 }
 
 // checkSelfApplications refuses an impl whose target cannot stand for a `Self<…>` its method's

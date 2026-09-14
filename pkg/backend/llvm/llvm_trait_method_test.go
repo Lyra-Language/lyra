@@ -222,6 +222,61 @@ func TestExec_TraitMethods(t *testing.T) {
 			// 30 + 2 + 5
 			37,
 		},
+		{
+			// Through a `where` bound the solution is in the enclosing body's terms and is
+			// composed per specialization: `viaB` emits `mapv` at `u = bool`, `u = []i64`
+			// and `u = string` (both managed, so the ownership tables must exist — ASan
+			// sees a missing one), `idm` at `b = t` for two `t`s, `go`'s receiver is named
+			// like the method's `b`, `mk` reaches a generic impl, and `outer` composes
+			// through a second generic. Refused by name until 09/14/26.
+			"a method's own type variables through a where bound",
+			`struct Box<t> { v: t }
+			 trait Mapper { mapv: (Self, (i64) -> b) -> b }
+			 impl Mapper for i64 { mapv = (self, f) => f(self) }
+			 trait M2 { m2: (Self, (Self) -> b) -> b }
+			 impl M2 for i64 { m2 = (self, f) => f(self) }
+			 impl M2 for string { m2 = (self, f) => f(self) }
+			 trait Pair { pair: (Self, t) -> (Self, t) }
+			 impl Pair for Box<t> { pair = (self, x) => (self, x) }
+			 trait Loud: Mapper { loud: (Self) -> []i64 = (self) => self.mapv((x: i64) -> []i64 => [x]) }
+			 impl Loud for i64
+			 let viaB<t, u> where t: Mapper = (v: t, f: (i64) -> u) -> u => v.mapv(f)
+			 let idm<t> where t: M2 = (v: t) -> t => v.m2((x) => x)
+			 let go<b> where b: Mapper = (v: b) -> i64 => v.mapv((x) => x + 1)
+			 let mk<s, u> where s: Pair = (v: s, x: u) -> u => v.pair(x).1
+			 let outer<w> = (f: (i64) -> w) -> w => viaB(9, f)
+			 let main = () -> u8 => {
+			   let a = if viaB(3, (x: i64) -> bool => x > 2) { 1 } else { 0 }
+			   let xs = viaB(4, (x: i64) -> []i64 => [x, x])
+			   let s = viaB(5, (x: i64) -> string => "abc")
+			   let n = idm(6)
+			   let t = idm("hello")
+			   let g = go(9)
+			   let m = mk(Box { v: true }, 20)
+			   let o = outer((x: i64) -> string => "xy")
+			   u8(a + xs.len() + s.len() + n + t.len() + g + m + o.len() + 7.loud().len())
+			 }`,
+			// 1 + 2 + 3 + 6 + 5 + 10 + 20 + 2 + 1
+			50,
+		},
+		{
+			// The ownership half. `twice` copies a runtime string (and an array of them) into
+			// an array, which needs a retain per copy; the specializations `twice<b=string>`
+			// and `twice<b=[]string>` exist only once `viaT`'s bindings are composed into the
+			// bound call's solution. Without that composition in the driver the backend asked
+			// for tables nobody built, lowered with no retains, and ASan saw the double free.
+			"a where-bound method's specialization has its ownership table",
+			`trait Twice { twice: (Self, b) -> []b }
+			 impl Twice for i64 { twice = (self, x) => [x, x] }
+			 let viaT<t, u> where t: Twice = (v: t, x: u) -> []u => v.twice(x)
+			 let main = () -> u8 => {
+			   let s = "ab".slice(0, 1) ++ "cd".slice(1, 2)
+			   let xs = viaT(3, s)
+			   let ys = viaT(4, [s, s])
+			   u8(xs.len() + xs[0].len() + xs[1].len() + ys[1].len())
+			 }`,
+			8,
+		},
 	}
 	clang := lookClang(t)
 	for _, c := range cases {

@@ -76,16 +76,61 @@ let a = () -> i64 => 3.mapv((x: i64) -> string => "n")`, "a: return type mismatc
 	}
 }
 
-// Through a `where` bound there is no per-call solution for the backend's candidates to carry,
-// so the call is refused by name instead of as an argument mismatch.
-func TestTraitMethodTypeVars_ThroughABoundRefused(t *testing.T) {
+// Through a `where` bound the method's own variables are solved the same way, in the enclosing
+// body's vocabulary — `b = string` from a lambda, `b = u` from a parameter, `b = t` from the
+// receiver itself — and composed with each specialization after checking. They were refused
+// by name until 09/14/26.
+func TestTraitMethodTypeVars_ThroughABound(t *testing.T) {
 	t.Parallel()
-	res := parseCollectAndCheck(t, `
+	const mapper = `
 trait Mapper { mapv: (Self, (i64) -> b) -> b }
 impl Mapper for i64 { mapv = (self, f) => f(self) }
-let twice<t> where t: Mapper = (v: t) -> i64 => v.mapv((x) => x)`, false)
-	assertErrorsAre(t, res,
-		"Mapper::mapv: a method generic in its own type variable b cannot yet be called through a `where` bound; call it on a concrete receiver")
+`
+	cases := map[string]string{
+		"solved concretely": mapper + `
+let twice<t> where t: Mapper = (v: t) -> string => v.mapv((x) => "n")`,
+		"solved as the caller's variable": mapper + `
+let viaB<t, u> where t: Mapper = (v: t, f: (i64) -> u) -> u => v.mapv(f)`,
+		"solved as the receiver's variable": `
+trait M2 { m2: (Self, (Self) -> b) -> b }
+impl M2 for i64 { m2 = (self, f) => f(self) }
+let idm<t> where t: M2 = (v: t) -> t => v.m2((x) => x)`,
+		// The receiver's `b` and `mapv`'s own `b` are two variables.
+		"receiver variable named like the method's": mapper + `
+let go<b> where b: Mapper = (v: b) -> i64 => v.mapv((x) => x + 1)`,
+		"in a default method": mapper + `
+trait Loud: Mapper { loud: (Self) -> string = (self) => self.mapv((x) => "L") }
+impl Loud for i64`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertNoErrors(t, parseCollectAndCheck(t, src, false))
+		})
+	}
+}
+
+func TestTraitMethodTypeVars_ThroughABoundRefused(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct{ src, want string }{
+		"unsolvable": {`
+trait Mk { mk: (Self) -> []b }
+impl Mk for i64 { mk = (self) => [] }
+let g<t> where t: Mk = (v: t) -> i64 => { let xs = v.mk(); 0 }`, "Mk::mk: cannot infer type variable b from these arguments"},
+		// A bare variable has no head for `Self<b>` to apply.
+		"Self with type arguments": {`
+struct Box<t> { v: t }
+trait Functor { map: (Self<a>, (a) -> b) -> Self<b> }
+impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }
+let g<f> where f: Functor = (v: f) -> i64 => { let w = v.map((x) => x); 0 }`,
+			"Functor::map: a method writing Self with type arguments cannot be called through a `where` bound; call it on a concrete receiver"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertErrorsAre(t, parseCollectAndCheck(t, tc.src, false), tc.want)
+		})
+	}
 }
 
 // `Self<b>` is the implementing type's head at new arguments, for an impl whose target is a
