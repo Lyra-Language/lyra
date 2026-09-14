@@ -29,8 +29,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 - **[OPEN] Reconcile generic parameter lists on types, traits and impls** with their bodies,
   as `lyra-E031`/`W013` do for bindings. Needs the "is a struct's own field its signature"
   question answered per declaration kind.
-- **[OPEN] The fixed-size `[v; n]` path emits one `insertvalue` per element**, so
-  `[20000]u32` is 1.16 MB of IR. Wants an alloca plus a store loop.
 - **[OPEN] The float→int range trap is never elided.** The value-range pass tracks only
   integers, so a float bounded by construction still pays a compare and branch.
 

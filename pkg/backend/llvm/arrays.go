@@ -312,25 +312,82 @@ func (l *lowerer) lowerArrayRepeatExpr(block *ir.Block, e *ast.ArrayRepeatExpr) 
 	}
 
 	n := int(arrayTy.Len)
-	// One retain per *additional* owner. Emitted before the aggregate is built so the
-	// count is right whatever the element is; `emitRetainValue` is a no-op for a type
-	// that owns nothing, which is every scalar and therefore the common case.
-	for i := 1; i < n; i++ {
-		block, err = l.emitRetainValue(block, elemVal, arrType.ElementType)
+	var agg value.Value
+	if n <= repeatUnrollLimit {
+		// One retain per *additional* owner. Emitted before the aggregate is built so the
+		// count is right whatever the element is; `emitRetainValue` is a no-op for a type
+		// that owns nothing, which is every scalar and therefore the common case.
+		for i := 1; i < n; i++ {
+			block, err = l.emitRetainValue(block, elemVal, arrType.ElementType)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		agg = constant.NewUndef(arrayTy)
+		for i := 0; i < n; i++ {
+			agg = block.NewInsertValue(agg, elemVal, uint64(i))
+		}
+	} else {
+		agg, block, err = l.fillFixedArray(block, arrayTy, elemVal, arrType.ElementType)
 		if err != nil {
 			return nil, nil, err
 		}
-	}
-
-	var agg value.Value = constant.NewUndef(arrayTy)
-	for i := 0; i < n; i++ {
-		agg = block.NewInsertValue(agg, elemVal, uint64(i))
 	}
 	if types.AllocationOf(recorded) == types.Shared {
 		boxed, err := l.lowerBoxShared(block, agg, stackArrType)
 		return boxed, block, err
 	}
 	return agg, block, nil
+}
+
+// fillFixedArray builds an `[n x T]` of one value past repeatUnrollLimit: a stack slot filled
+// by a counted loop and loaded as the aggregate, with a managed element retained once per slot
+// beyond the first. A zero value is one `zeroinitializer` store and no loop at all.
+//
+// **The unrolled form is linear in n**, one `insertvalue` per element, and the fixed path had
+// no limit where the dynamic one did: `[0; 20000]` on a `[20000]u32` was 1.16 MB of IR, and a
+// frame buffer's size makes a build that does not return (the dynamic path measured 43 MB and
+// five minutes at 200000 before it got its limit). The loop is a constant amount of IR at any n.
+func (l *lowerer) fillFixedArray(block *ir.Block, arrayTy *lltypes.ArrayType, elemVal value.Value, elemType types.Type) (value.Value, *ir.Block, error) {
+	slot := block.Parent.Blocks[0].NewAlloca(arrayTy)
+	n := i64c(int64(arrayTy.Len))
+	if isZeroConstant(elemVal) {
+		block.NewStore(constant.NewZeroInitializer(arrayTy), slot)
+		return block.NewLoad(arrayTy, slot), block, nil
+	}
+	var err error
+	if l.needsDrop(elemType) {
+		block, err = l.emitCountedLoop(block, i64c(1), n, func(body *ir.Block, _ value.Value) (*ir.Block, error) {
+			return l.emitRetainValue(body, elemVal, elemType)
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	block, err = l.emitCountedLoop(block, i64c(0), n, func(body *ir.Block, i value.Value) (*ir.Block, error) {
+		body.NewStore(elemVal, body.NewGetElementPtr(arrayTy, slot, i64c(0), i))
+		return body, nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return block.NewLoad(arrayTy, slot), block, nil
+}
+
+// isZeroConstant reports whether v is a constant whose every bit is zero — an integer or
+// float zero, a null pointer, or a zeroinitializer.
+func isZeroConstant(v value.Value) bool {
+	switch c := v.(type) {
+	case *constant.Int:
+		return c.X.Sign() == 0
+	case *constant.Float:
+		return c.X.Sign() == 0 && !c.X.Signbit() && !c.NaN
+	case *constant.Null:
+		return true
+	case *constant.ZeroInitializer:
+		return true
+	}
+	return false
 }
 
 // hasSpread reports whether an array literal splices anything in.

@@ -307,6 +307,10 @@ recorded).
 - A local/param array is indexed through its slot (`arrayLValue` — must address a by-ref
   parameter in place); other values are materialized to a temp.
 - `shared [N]T` — see ALLOCATION.md.
+- `[v; n]` evaluates `v` once and retains a managed element once per slot beyond the first.
+  Up to `repeatUnrollLimit` (64) it is an `insertvalue` chain; above it `fillFixedArray` fills a
+  stack slot in a counted loop and loads it, and an all-zero `v` is one `zeroinitializer` store.
+  The dynamic path (`lowerDynArrayRepeat`) has the same limit.
 
 ### Dynamic `[]T` (`dynarray.go`)
 

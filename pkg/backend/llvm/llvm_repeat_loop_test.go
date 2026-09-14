@@ -88,3 +88,68 @@ let main = () -> void => {
 		t.Errorf("got %q; want \"50000 hi hi\"", got)
 	}
 }
+
+// **The fixed-size path gets the same limit** (09/13). It had none: one `insertvalue` per
+// element, so a `[20000]u32` was 1.16 MB of IR. Above repeatUnrollLimit it now fills a stack
+// slot in a loop and loads the aggregate, and a zero value is a single `zeroinitializer`
+// store — neither grows with the count.
+func TestEmit_LargeFixedRepeatLiteralDoesNotUnroll(t *testing.T) {
+	t.Parallel()
+	ir, err := emitSource(t, `
+let main = () -> void => {
+  let sevens: [20000]u32 = [7; 20000]
+  let zeros: [20000]u32 = [0; 20000]
+  println(sevens[19999] + zeros[0]);
+}
+`)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if n := strings.Count(ir, "insertvalue [20000 x i32]"); n != 0 {
+		t.Errorf("want no per-element insertvalue, got %d", n)
+	}
+	if !strings.Contains(ir, "store [20000 x i32] zeroinitializer") {
+		t.Errorf("a zero repeat should be one zeroinitializer store")
+	}
+	if len(ir) > 400_000 {
+		t.Errorf("IR is %d bytes; it should not scale with the count", len(ir))
+	}
+}
+
+// The looped fixed array is the array the unrolled one was: every slot, and a negative zero
+// is not mistaken for the zeroinitializer (its sign bit is set).
+func TestExec_LargeFixedRepeatLiteralFillsEverySlot(t *testing.T) {
+	t.Parallel()
+	src := `
+let main = () -> void => {
+  let xs: [20000]i64 = [3; 20000]
+  var sum = 0
+  for i in 0..<20000 { sum += xs[i] }
+  let fs: [100]f64 = [-0.0; 100]
+  let zs: [100]i64 = [0; 100]
+  println("${xs[0]} ${xs[19999]} ${sum} ${fs[99]} ${zs[99]}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "3 3 60000 -0 0" {
+		t.Errorf("got %q; want \"3 3 60000 -0 0\"", got)
+	}
+}
+
+// Every slot of a looped fixed array of managed elements is an owner: one retain per slot
+// beyond the first, released by the array's drop glue. A runtime-built string, since a
+// literal is immortal and would hide a miscount.
+func TestLSan_LargeFixedRepeatOfAManagedElement(t *testing.T) {
+	t.Parallel()
+	const src = `module main
+struct Cell { name: string, n: i64 }
+let main = () -> u8 => {
+  let s = "c" ++ "ell"
+  let cells: [100]Cell = [Cell { name: s, n: 1 }; 100]
+  var words: [70]string = [s; 70]
+  words[3] = "x" ++ "y"
+  u8(cells[99].name.len() + words[69].len() + words[3].len())
+}`
+	if got := buildAndRunLSanWithPrelude(t, src); got != 10 {
+		t.Errorf("exited %d; want 10 (1 is LeakSanitizer reporting a leak)", got)
+	}
+}

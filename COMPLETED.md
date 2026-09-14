@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 09/13/26 — a large fixed `[v; n]` is a loop, as a dynamic one already was
+
+The dynamic repeat got `repeatUnrollLimit` on 08/14, after `[0; 200000]` produced 43 MB of IR
+and a build that never returned. The fixed-size path never did: it built the aggregate with
+one `insertvalue` per element and retained a managed element with one call per slot, so
+`[20000]u32` was 1.16 MB of IR and a test program declaring two such arrays emitted 2.3 MB.
+Above the same limit it now fills a stack slot in a counted loop (a retain loop first, when
+the element is managed) and loads the aggregate; that program is 143 KB, nearly all of it
+the prelude.
+
+**A zero value is one `zeroinitializer` store** with no loop, since a zeroed buffer is what
+most large fixed arrays are. "Zero" means every bit: an integer or float zero, a null pointer
+or a zeroinitializer — and not `-0.0`, whose sign bit is set, which the test pins. Below the
+limit nothing changed, as the unrolled form is the better code there.
+
 ### 09/13/26 — `@borrowed`, for a resource a function hands out without handing over
 
 `let font = default_font()` drew lyra-W022 advising `unload_font` — the one call raylib
