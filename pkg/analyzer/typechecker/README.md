@@ -160,7 +160,10 @@ matches with no `requiredTrait` is the ambiguity `Trait::method(...)` resolves. 
 - **Bound dispatch** (`dispatchViaGenericBound`): a call on a bare type parameter resolves through
   `tc.genericBounds`, typed against the trait signature with `Self` = the parameter. Recorded as a
   `BoundMethodRef` (`SetBound`); purity joins over all impls. Candidates per implementing type are
-  published via `SetBoundCandidates`.
+  published via `SetBoundCandidates`; a generic impl's candidate at a concrete type is published
+  where one is seen (`checkGenericBounds`, `publishImplBodyCandidates`,
+  `publishDefaultBodyCandidates`), and for a specialization the driver composes through
+  `PublishCandidatesForInstantiation` / `PublishCandidatesForMethod` (`publish_composed.go`).
 - **A trait method's own type variables** (`b` of `mapv: (Self, (i64) -> b) -> b`) are solved by
   `solveArgumentTypeVars`, the generic-call solver: `solveMethodTypeVars` at a concrete dispatch
   (the receiver seeds it, for `Self<a>`), `solveBoundMethodTypeVars` through a bound, which records

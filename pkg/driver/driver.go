@@ -317,7 +317,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// would fall back to the program-wide one, which is analyzed generically — where a
 	// type variable is not managed, so a `t = string` body would emit neither retains nor
 	// releases. See instantiations.go.
-	res.Diagnostics = append(res.Diagnostics, closeInstantiations(res)...)
+	res.Diagnostics = append(res.Diagnostics, closeInstantiations(res, tc)...)
 	// …and once more per generic instantiation, with that instantiation's type
 	// arguments substituted (see OwnershipBySpec).
 	//

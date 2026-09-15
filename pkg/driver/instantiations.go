@@ -165,7 +165,12 @@ func abbreviateType(t types.Type, depth int) string {
 
 // closeInstantiations expands res.Instantiations to its transitive closure under
 // composition, returning a diagnostic if the set diverges.
-func closeInstantiations(res *Result) []diag.Diagnostic {
+//
+// pub, when non-nil, publishes `where`-bound call candidates for each specialization the
+// closure discovers (the typechecker, which owns impl matching): a callee's bound calls at a
+// composed type have no candidate otherwise, since the typechecker published only at call
+// sites it saw concretely.
+func closeInstantiations(res *Result, pub candidatePublisher) []diag.Diagnostic {
 	table := res.Instantiations
 	if table == nil {
 		return nil
@@ -207,6 +212,9 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 		}
 		if res.MethodTable.AddSpecialization(composed) {
 			methodWorklist = append(methodWorklist, composed)
+			if pub != nil {
+				pub.PublishCandidatesForMethod(composed)
+			}
 		}
 		return nil
 	}
@@ -241,6 +249,9 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 					}
 					if res.MethodTable.AddSpecialization(composed) {
 						methodWorklist = append(methodWorklist, composed)
+						if pub != nil {
+							pub.PublishCandidatesForMethod(composed)
+						}
 					}
 				}
 			}
@@ -275,6 +286,9 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 			seen[composed.Key()] = true
 			table.Add(composed)
 			worklist = append(worklist, composed)
+			if pub != nil {
+				pub.PublishCandidatesForInstantiation(composed)
+			}
 		}
 		return nil
 	}
@@ -294,7 +308,34 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 	//
 	// `Specializations()` is the reached set, deduped by SpecKey — the same source the
 	// per-method ownership pass reads, so the two cannot disagree about which bodies exist.
-	for _, r := range res.MethodTable.Specializations() {
+	composedMethods := map[string]bool{}
+	// queueUncomposedMethods adds every method specialization not yet composed — the
+	// reached set at the start, and later the candidates publishing added, whose bodies
+	// may call generics of their own.
+	queueUncomposedMethods := func() {
+		for _, r := range res.MethodTable.Specializations() {
+			key := r.SpecKey()
+			if composedMethods[key] {
+				continue
+			}
+			composedMethods[key] = true
+			methodWorklist = append(methodWorklist, r)
+		}
+	}
+	queueUncomposedMethods()
+
+	for len(worklist) > 0 || len(methodWorklist) > 0 {
+		if len(worklist) > 0 {
+			current := worklist[0]
+			worklist = worklist[1:]
+			if d := compose(current.Func, current.Subst, current.Site); d != nil {
+				return d
+			}
+			continue
+		}
+		r := methodWorklist[0]
+		methodWorklist = methodWorklist[1:]
+		composedMethods[r.SpecKey()] = true
 		lam, err := r.Lambda()
 		if err != nil {
 			// No declared signature. The backend reports it at the call, with a location.
@@ -309,28 +350,18 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 		if d := compose(lam, r.Bindings, site); d != nil {
 			return d
 		}
-	}
-
-	for len(worklist) > 0 || len(methodWorklist) > 0 {
-		if len(worklist) > 0 {
-			current := worklist[0]
-			worklist = worklist[1:]
-			if d := compose(current.Func, current.Subst, current.Site); d != nil {
-				return d
-			}
-			continue
-		}
-		r := methodWorklist[0]
-		methodWorklist = methodWorklist[1:]
-		lam, err := r.Lambda()
-		if err != nil {
-			continue
-		}
-		if d := compose(lam, r.Bindings, r.Impl.GetLocation()); d != nil {
-			return d
+		if len(worklist) == 0 && len(methodWorklist) == 0 {
+			queueUncomposedMethods()
 		}
 	}
 	return nil
+}
+
+// candidatePublisher is the typechecker's half of closing the specialization set: impl
+// matching for a specialization the closure discovers. See closeInstantiations.
+type candidatePublisher interface {
+	PublishCandidatesForInstantiation(typetable.Instantiation)
+	PublishCandidatesForMethod(typetable.Resolution)
 }
 
 // bindingsConcrete reports whether every binding is a real type — no variable left to

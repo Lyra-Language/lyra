@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a `where`-bound call reached through a second generic
+
+`outer<w>` calling `g(Box { v: y })`, with `g<u> where u: Get` calling `x.get()` on `impl Get for
+Box<t>`, type-checked and failed to lower: `no impl of Get for Box$i64`. A bound call lowers
+through a candidate per implementing type. A generic impl's candidate needs a concrete target,
+and the typechecker publishes one only where it sees a concrete type (`checkGenericBounds` at a
+call site, `publishImplBodyCandidates`, `publishDefaultBodyCandidates`). Here it saw
+`u = Box<w>`; only the driver's closure ever knew `u = Box<i64>`.
+
+**The matching stays in the typechecker; the driver says when.** `closeInstantiations` takes a
+`candidatePublisher`, the `TypeChecker` it already holds, and calls it for every specialization it
+adds:
+- `PublishCandidatesForInstantiation` handles a generic function's `where`-bound parameters at
+  the composed types.
+- `PublishCandidatesForMethod` handles an impl method's `where` clause, or a default body's `Self`.
+
+Those are the existing publishers, given the types the typechecker never saw. Newly published
+candidates are specializations whose bodies may call generics too, so the closure re-scans
+`Specializations()` until nothing uncomposed is left.
+
+Verified by passing a nil publisher: the run test then fails with exactly the filed error. The test
+covers three generics deep, an operator bound through a second generic, an impl's own `where`
+chain (`box box int`), and the case filed with the previous fix, a trait default reached from a generic body.
+A prelude `sort` under `where t: Ord` from a generic caller also builds. This was the last Known
+bug.
+
 ### 09/14/26 — a concrete trait call on a generic impl inside a generic function
 
 `let g<u> = (b: Box<u>) -> i64 => b.get()` against `impl Get for Box<t>` type-checked and failed

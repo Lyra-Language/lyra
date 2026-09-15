@@ -7,13 +7,6 @@ Tags: **[OPEN]** not started · **[PARTIAL]** landed in part · **[DECIDED]** se
 built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberately later.
 Entries rot: re-run an open entry's own reproduction before acting on it.
 
-## Known bugs
-
-- **[OPEN] A `where`-bound call on a generic impl reached through a second generic does not
-  lower.** `outer<w>` calling `g(Box { v: y })`, where `g<u> where u: Get` calls `x.get()` on
-  `impl Get for Box<t>`, fails with `no impl of Get for Box$i64`: bound candidates are published
-  only at call sites the typechecker sees concretely, never for a composed specialization.
-
 ## In progress
 
 ### Backend — LLVM IR

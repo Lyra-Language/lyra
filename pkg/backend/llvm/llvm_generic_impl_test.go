@@ -285,3 +285,50 @@ let main = () -> u8 => {
 		t.Errorf("under ASan: exited %d; want %d", got, want)
 	}
 }
+
+// A `where`-bound call on a generic impl, reached through a second generic: `outer<w>` calls
+// `g(Box { v: y })`, and `g<u> where u: Get` calls `x.get()`. The typechecker publishes bound
+// candidates where it sees a concrete type, and saw only `u = Box<w>`; the specialization the
+// driver composes, `u = Box<i64>`, had no candidate (`no impl of Get for Box$i64`). The driver
+// now asks the typechecker to publish for each specialization it discovers — here through
+// three generics, an operator bound, an impl's own `where` clause and a trait default.
+func TestExec_BoundCallThroughASecondGeneric(t *testing.T) {
+	t.Parallel()
+	src := `struct Box<t> { v: t }
+trait Get { get: (Self) -> string }
+impl Get for Box<t> { get = (self) => "g" ++ "et" }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for i64 { (_+_) = (self, o) => self + o }
+impl Add for Box<t> where t: Add { (_+_) = (self, o) => Box { v: self.v + o.v } }
+trait Named { name: (Self) -> string }
+impl Named for i64 { name = (self) => "int" }
+impl Named for Box<t> where t: Named { name = (self) => "box " ++ self.v.name() }
+trait Twice<e> {
+  one: (Self) -> e
+  both: (Self) -> (e, e) = (self) => (self.one(), self.one())
+}
+impl Twice<t> for Box<t> { one = (self) => self.v }
+let g<u> where u: Get = (x: u) -> string => x.get()
+let mid<m> = (y: m) -> string => g(Box { v: y })
+let top<k> = (z: k) -> string => mid(z) ++ mid(#[z])
+let sum2<u> where u: Add = (a: u, b: u) -> u => a + b
+let viaBox<w> where w: Add = (x: w, y: w) -> w => sum2(Box { v: x }, Box { v: y }).v
+let say<u> where u: Named = (x: u) -> string => x.name()
+let wrapSay<w> where w: Named = (y: w) -> string => say(Box { v: Box { v: y } })
+let pair<u> = (b: Box<u>) -> (u, u) => b.both()
+let main = () -> u8 => {
+  let a = top(1).len() + top("s" ++ "t").len()
+  let b = viaBox(40, 2)
+  let c = wrapSay(5).len()
+  let p = pair(Box { v: "pq" ++ "r" })
+  u8(a + b + c + p.0.len() + p.1.len())
+}`
+	// (6 + 6) + 42 + len("box box int") 11 + 3 + 3
+	const want = 71
+	if got := buildAndRun(t, src); got != want {
+		t.Errorf("exited %d; want %d", got, want)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != want {
+		t.Errorf("under ASan: exited %d; want %d", got, want)
+	}
+}

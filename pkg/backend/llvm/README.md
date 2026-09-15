@@ -555,6 +555,11 @@ callee's bindings. The driver (`driver/instantiations.go`) closes the set — se
 bodies from `MethodTable.Specializations()` too — **before** the per-specialization
 ownership pass, or a late specialization falls back to the generically-analyzed table and
 emits no retains/releases. Polymorphic recursion is refused, bounded on type depth.
+A `where`-bound call's candidates for a specialization only the closure discovers (reached
+through a second generic) are published by the typechecker when the driver asks
+(`candidatePublisher`: `PublishCandidatesForInstantiation` / `PublishCandidatesForMethod`);
+the closure re-scans `Specializations()` to a fixpoint so those candidates' bodies are composed.
+
 A **trait method** resolved inside a generic body is the same template (`impl Get for Box<t>`
 reached from `g<u>` binds `t = u`): `traitMethod` composes it with `l.typeSubst`
 (`Resolution.Composed`), and the driver's closure composes resolutions and operator resolutions
