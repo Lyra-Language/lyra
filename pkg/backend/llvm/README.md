@@ -85,6 +85,9 @@ A match in disguise that seals the failure path and returns the success block.
   is duplicated; an owned temporary's reference moves into the rebuilt error. Inverting
   either is a leak or a use-after-free (`TestExec_TryBorrowedOperand`,
   `TestASan_TryManagedPayload`).
+- **A conversion** (`MethodTable.TryConversion`, `impl From<E1> for E2`) is called on the
+  extracted error in `lowerTryPropagate`: its result is a fresh +1, so nothing is duplicated
+  and the operand's own temporary is released like any other (`transferred` is cleared).
 - **The error block releases the statement's temps itself** (`releaseTempsOnExit`) and
   raises `pendingBase` so `emitReturn`'s flush skips them — flushing from there would
   release in the producing block, *before* the tag test, on the success path too.
@@ -591,7 +594,10 @@ abstractly by the typechecker, which publishes one candidate per implementing ty
   the driver closes the set with the same call, so the SpecKey has an ownership table.
 
 `Trait::method(receiver, …)` (`lowerTraitPathCall`) is not a bound call; the receiver is
-argument 0, so arguments and parameters are index-aligned.
+argument 0, so arguments and parameters are index-aligned. A receiver-less method
+(`zero: () -> Self`) whose `Self` solved to a bound variable *is* one: no resolution is
+recorded, and the candidate is keyed by `MethodTable.BoundSelf(call)` under the active
+substitution, there being no receiver expression to read a type from.
 
 ## Raw pointers (`pointers.go`)
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 // inferTryExpr type-checks a `?` (try) postfix operator and returns the
@@ -22,7 +23,19 @@ import (
 // (top level, or a non-Result/Maybe return) this function stays silent to avoid
 // duplicate diagnostics and simply yields the unwrapped payload.
 func (tc *TypeChecker) inferTryExpr(e *ast.TryExpr) types.Type {
+	// The context reaches through `?`: what is wanted of `make(1)?` is the payload, so
+	// what is wanted of `make(1)` is a Result of that payload and the enclosing error (a
+	// Maybe of it in a Maybe-returning function). Without this an annotation that
+	// solved a generic callee's return-only variable (`let v: i64 = make(1)`) stopped
+	// solving it once `?` was appended, and `required(json, "port")?` needed a turbofish.
+	restoreExpected := func() {}
+	if want := tc.currentExpectedType(); want != nil {
+		if wrapped := tc.wrapInEnclosingReturnKind(want, e.GetLocation()); wrapped != nil {
+			restoreExpected = tc.pushExpectedType(wrapped, e.GetLocation())
+		}
+	}
 	operandT := tc.inferExprType(e.Operand)
+	restoreExpected()
 	if operandT == nil {
 		return nil // operand already failed to infer; it was reported elsewhere
 	}
@@ -60,14 +73,72 @@ func (tc *TypeChecker) inferTryExpr(e *ast.TryExpr) types.Type {
 	}
 	if found && kind == "Result" && operandErr != nil && enclErr != nil &&
 		!errorTypesCompatible(operandErr, enclErr) {
-		tc.addError(e.GetLocation(), SeverityError,
-			"cannot propagate Result with `?`: error type %s is not convertible to the enclosing function's error type %s; convert it explicitly",
-			operandErr, enclErr)
-		return nil
+		// A declared conversion: `impl From<operandErr> for enclErr`. `?` knows both
+		// types, so this is a direct impl lookup, not return-type dispatch.
+		res, ok := tc.fromConversion(operandErr, enclErr, e.GetLocation())
+		if !ok {
+			tc.addError(e.GetLocation(), SeverityError,
+				"cannot propagate Result with `?`: error type %s is not the enclosing function's error type %s and no `impl From<%s> for %s` declares the conversion; declare one, or convert at the call with map_err",
+				operandErr, enclErr, operandErr, enclErr)
+			return nil
+		}
+		tc.methodTable.SetTryConversion(e, res)
 	}
 
 	tc.typeTable.Set(e, payload)
 	return payload
+}
+
+// fromConversion finds `impl From<from> for to` and returns its `from` method as a
+// resolution the backend can emit — the conversion `?` applies to a propagated error.
+//
+// Matched on the impl's *trait argument* as well as its target: `ConfigError` may be
+// built from several types, one impl each, and the operand's error picks among them. The
+// method must take its argument by plain value (a borrow): the backend passes the error
+// it just read out of the operand and then releases the operand, so an `own` parameter
+// would double free and a `ref`/`mut` one needs a pointer nothing has.
+func (tc *TypeChecker) fromConversion(from, to types.Type, loc ast.Location) (typetable.Resolution, bool) {
+	for _, m := range tc.resolveTraitMethod(to, "from", "From") {
+		if len(m.Impl.TraitArgs) != 1 || m.Signature == nil || len(m.Signature.Parameters) != 1 {
+			continue
+		}
+		arg := substituteGenerics(tc.resolveTypeIfKnown(m.Impl.TraitArgs[0], loc), m.Bindings)
+		if !types.TypesEqual(arg, from) {
+			continue
+		}
+		if m.Signature.Parameters[0].Modifier != "" {
+			tc.addError(loc, SeverityError,
+				"`?` cannot apply impl From<%s> for %s: its `from` takes its argument `%s`, and the conversion `?` runs passes the error by value",
+				from, to, m.Signature.Parameters[0].Modifier)
+			continue
+		}
+		return resolutionOf(m), true
+	}
+	return typetable.Resolution{}, false
+}
+
+// wrapInEnclosingReturnKind is `Result<payload, E>` for the enclosing function's error
+// `E`, or `Maybe<payload>` in a Maybe-returning function — the type a `?` operand must
+// have for the expression to be `payload`. Nil outside either.
+func (tc *TypeChecker) wrapInEnclosingReturnKind(payload types.Type, loc ast.Location) types.Type {
+	kind, errType, found := tc.enclosingReturnKind(loc)
+	if !found {
+		return nil
+	}
+	name, ok := tc.canonicalTypeName(kind, loc)
+	if !ok {
+		return nil
+	}
+	switch kind {
+	case "Result":
+		if errType == nil {
+			return nil
+		}
+		return types.ParameterizedType{Name: name, TypeArguments: []types.Type{payload, errType}}
+	case "Maybe":
+		return types.ParameterizedType{Name: name, TypeArguments: []types.Type{payload}}
+	}
+	return nil
 }
 
 // resultOrMaybeKind reports whether t is a Result<T, E> or Maybe<T> and, if so,

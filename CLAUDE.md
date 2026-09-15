@@ -295,6 +295,18 @@ Semantics are in `LANGUAGE.md`; these are the compiler-side traps.
 - Deep-copying defaults into impls was rejected: no cloner exists, and a missed case is a
   silently shared subtree.
 
+**`?`, `From` and receiver-less calls** (`typechecker_try.go`, `typechecker_functions.go`)
+- `inferTryExpr` pushes `Result<want, E>`/`Maybe<want>` as the operand's context
+  (`wrapInEnclosingReturnKind`). A mismatched error looks up `impl From<from> for to`
+  (`fromConversion`, matched on the trait argument too) and records it on the `?` node
+  (`MethodTable.SetTryConversion`); the backend calls it in `lowerTryPropagate`, the purity
+  pass charges it in its `TryExpr` arm, and `Specializations()` includes it so the ownership
+  table exists. `checkImplCoherence` keys on trait args, so `From<A>`/`From<B>` coexist.
+- `inferTraitMethodPathCall` routes a method whose first parameter is not `Self` to
+  `inferReturnDirectedTraitCall`: `Self` is solved from `currentExpectedType()` against the
+  declared return, else from an argument. A variable `Self` is a bound call with the solved
+  variable recorded (`SetBoundSelf`), which `lowerTraitPathCall` keys the candidate by.
+
 **Raw pointers** (`typechecker_pointers.go`, `backend/llvm/pointers.go`)
 - `lyra-E011` runs in `driver.go`; its unsafe-call half and `requireUnsafeBuiltin`
   (`p.offset(n)`, needs the receiver's type) are in the typechecker.

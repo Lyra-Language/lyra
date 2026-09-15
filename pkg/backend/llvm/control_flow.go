@@ -832,9 +832,16 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 // bindingType is the Lyra type a `let`/`var` binding holds: its annotation when
 // there is one (most reliable), else the type recorded for its initializer. It
 // feeds the drop glue selection at the binding's release.
+//
+// The annotation is read **under the active substitution**, as recordedType reads an
+// inferred type: inside a generic body `let decoded: Result<t, string> = …` names the
+// enclosing function's variable, and the drop this type selects is the instantiation's.
+// Returned as written, the frame release asked to drop a `Result<t, string>` and failed
+// with "its instantiation did not resolve" — in every generic body with an annotated
+// local mentioning its variable beside a concrete argument (09/15).
 func (l *lowerer) bindingType(vds *ast.VarDeclStmt) types.Type {
 	if vds.Type != nil {
-		return vds.Type
+		return l.applyTypeSubst(vds.Type)
 	}
 	t, _ := l.recordedType(vds.Value)
 	return t

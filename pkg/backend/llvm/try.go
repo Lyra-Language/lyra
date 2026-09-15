@@ -158,7 +158,19 @@ func (l *lowerer) lowerTryExpr(block *ir.Block, e *ast.TryExpr) (value.Value, *i
 	if transferring {
 		transferred = whole
 	}
-	if err := l.lowerTryPropagate(errBlock, block, transferred, scrut, opShape, retDt, retShape, transferring); err != nil {
+	// A conversion (`impl From<E1> for E2`) builds a fresh error from the operand's,
+	// borrowing it: nothing of the operand moves into the propagated value, so the
+	// operand's own temporary is released like every other, after the call.
+	var convert *ir.Func
+	if res, ok := l.res.MethodTable.TryConversion(e); ok {
+		fn, err := l.traitMethod(res)
+		if err != nil {
+			return nil, nil, err
+		}
+		convert = fn
+		transferred = nil
+	}
+	if err := l.lowerTryPropagate(errBlock, block, transferred, scrut, opShape, retDt, retShape, transferring, convert); err != nil {
 		return nil, nil, err
 	}
 
@@ -185,22 +197,29 @@ func (l *lowerer) lowerTryExpr(block *ir.Block, e *ast.TryExpr) (value.Value, *i
 // pass draws everywhere else, and getting it wrong is a refcount bug in either
 // direction: retaining a transferred reference leaks it, and moving a borrowed one
 // hands the caller a payload the operand's owner will free.
-func (l *lowerer) lowerTryPropagate(block, preBranch *ir.Block, transferred, scrut value.Value, opShape tryShape, retDt types.DataType, retShape tryShape, transferring bool) error {
+//
+// convert, when set, is the `From` impl's `from` (MethodTable.TryConversion): the
+// propagated error is its result — a fresh +1 built from the operand's error, which it
+// borrows — so no reference is duplicated or moved out of the operand.
+func (l *lowerer) lowerTryPropagate(block, preBranch *ir.Block, transferred, scrut value.Value, opShape tryShape, retDt types.DataType, retShape tryShape, transferring bool, convert *ir.Func) error {
 	var fields []value.Value
 	if fieldTypes := opShape.failure.FieldTypes(); len(fieldTypes) > 0 {
 		payload, err := l.extractDataPayload(block, scrut, opShape.failure)
 		if err != nil {
 			return err
 		}
-		errVal := block.NewExtractValue(payload, 0)
-		// A *borrowed* operand (a binding, a field) still owns its copy and will release
-		// it — at scope exit, or via the releaseAllManagedFrames that emitReturn runs
-		// just below — so the propagated error needs a reference of its own. This is the
-		// same duplicate-never-move rule a match arm's binding follows (see the ownership
-		// package doc). An owned temporary is the other case: nothing releases it on this
-		// path, so its reference is what the propagated error carries, and a dup here
-		// would be a leak rather than a fix.
-		if !transferring {
+		var errVal value.Value = block.NewExtractValue(payload, 0)
+		switch {
+		case convert != nil:
+			errVal = block.NewCall(convert, errVal)
+		case !transferring:
+			// A *borrowed* operand (a binding, a field) still owns its copy and will
+			// release it — at scope exit, or via the releaseAllManagedFrames that
+			// emitReturn runs just below — so the propagated error needs a reference of
+			// its own. This is the same duplicate-never-move rule a match arm's binding
+			// follows (see the ownership package doc). An owned temporary is the other
+			// case: nothing releases it on this path, so its reference is what the
+			// propagated error carries, and a dup here would be a leak rather than a fix.
 			if err := l.deepRetain(block, errVal, fieldTypes[0]); err != nil {
 				return err
 			}

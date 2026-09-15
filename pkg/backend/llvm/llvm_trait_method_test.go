@@ -464,3 +464,85 @@ func TestEmit_TraitMethodBodyUsesTheDeclaredWidth(t *testing.T) {
 		t.Errorf("the body should compute at the declared u8, not the i64 default:\n%s", ir)
 	}
 }
+
+// TestExec_ConversionTraits is TestExec_TraitMethods for the programs that need the prelude
+// (`Result`, `From`, `map_err`, `parse_i64`). Each prints and exits with its total.
+func TestExec_ConversionTraits(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// `?` across error types runs `impl From<Low> for High`'s `from` on the failure
+			// path (09/15). The operand is a temporary in `a` and a binding in `b`: the
+			// conversion borrows the error either way and the operand is released as usual,
+			// so a string payload on both paths is the ASan half. The success path is
+			// untouched.
+			"a `?` converting its error through From",
+			`data Low = Oops(string)
+			 data High = Wrapped(Low) | Other(string)
+			 impl From<Low> for High { from = (e) => Wrapped(e) }
+			 let low = (n: i64) -> Result<i64, Low> => if n > 0 { Ok(n) } else { Err(Oops("lo".slice(0, 2) ++ "w")) }
+			 let a = (n: i64) -> Result<i64, High> => Ok(low(n)? + 1)
+			 let b = (n: i64) -> Result<i64, High> => {
+			   let r = low(n)
+			   let v = r?
+			   Ok(v + 2)
+			 }
+			 let main = () -> u8 => {
+			   let x = match a(3) { Ok(v) => v, Err(_) => 0 }
+			   let y = match a(0) { Ok(_) => 0, Err(Wrapped(Oops(m))) => m.len(), Err(Other(_)) => 0 }
+			   let z = match b(5) { Ok(v) => v, Err(_) => 0 }
+			   let w = match b(0) { Ok(_) => 0, Err(Wrapped(Oops(m))) => m.len() * 10, Err(Other(_)) => 0 }
+			   u8(x + y + z + w)
+			 }`,
+			// 4 + 3 + 7 + 30
+			44,
+		},
+		{
+			// A receiver-less method is dispatched from what its result is used as (09/15):
+			// `zero` at two types, `decode` chosen by an annotation, and through a `where`
+			// bound inside `field`, where `Self` is the bound variable and the candidate is
+			// keyed by the specialization's type. The context reaches through `?` to solve
+			// `field`'s `t`. An annotated `Result<t, string>` local inside the generic body
+			// is the drop that used to fail as "its instantiation did not resolve".
+			"return-type-directed dispatch",
+			`trait Zero { zero: () -> Self }
+			 impl Zero for i64 { zero = () => 0 }
+			 impl Zero for string { zero = () => "" }
+			 trait Decode { decode: (string) -> Result<Self, string> }
+			 impl Decode for i64 { decode = (s) => s.parse_i64().ok_or("a whole number") }
+			 impl Decode for bool { decode = (s) => if s == "true" { Ok(true) } else { Err("a bool") } }
+			 let field<t> where t: Decode = (raw: string) -> Result<t, string> => {
+			   let decoded: Result<t, string> = Decode::decode(raw)
+			   decoded.map_err((want) => "not " ++ want)
+			 }
+			 let go = () -> Result<i64, string> => {
+			   let a: i64 = field("7")?
+			   let b: bool = field("true")?
+			   let c: bool = field("nope")?
+			   Ok(if b && c { a } else { 0 })
+			 }
+			 let main = () -> u8 => {
+			   let z: i64 = Zero::zero()
+			   let s: string = Zero::zero()
+			   let n: Result<i64, string> = Decode::decode("42")
+			   let v = match n { Ok(x) => x, Err(_) => 0 }
+			   let e = match go() { Ok(x) => x, Err(m) => m.len() }
+			   u8(z + s.len() + v + e)
+			 }`,
+			// 0 + 0 + 42 + len("not a bool") = 10
+			52,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASanWithPrelude(t, c.src); got != c.want {
+				t.Errorf("under ASan: exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}

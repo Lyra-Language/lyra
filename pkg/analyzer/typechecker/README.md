@@ -12,7 +12,8 @@ implementation.
 |---|---|
 | `typechecker.go` | core, var decls, expressions |
 | `typechecker_control_flow.go` | if/match, exhaustiveness |
-| `typechecker_functions.go` | lambda/call/member-call dispatch, `inferPrintCall` |
+| `typechecker_functions.go` | lambda/call/member-call dispatch, `inferPrintCall`, return-type-directed `Trait::method(…)` |
+| `typechecker_try.go` | `?`: kind and error-type rules, the `From` conversion lookup, the context pushed through it |
 | `typechecker_trait_dispatch.go` | `resolveTraitMethod`, `closeOverSupertraits` |
 | `typechecker_traits.go` | impl conformance, `checkTraitImplMethodBody` |
 | `typechecker_trait_default.go` | trait default methods |

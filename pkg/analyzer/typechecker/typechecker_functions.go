@@ -2,7 +2,9 @@ package typechecker
 
 import (
 	"fmt"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 	"maps"
+	"slices"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -647,9 +649,16 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 // drives dispatch and the whole parameter list — including Self — lines up
 // directly against call.Arguments.
 func (tc *TypeChecker) inferTraitMethodPathCall(path *ast.TraitMethodPathExpr, call *ast.FunctionCallExpr) types.Type {
-	if _, ok := tc.symTable.LookupTraitFrom(path.TraitName, path.GetLocation()); !ok {
+	trait, ok := tc.symTable.LookupTraitFrom(path.TraitName, path.GetLocation())
+	if !ok {
 		tc.addError(call.GetLocation(), SeverityError, "unknown trait %q", path.TraitName)
 		return nil
+	}
+	// A method whose first parameter is not `Self` has no receiver to dispatch on —
+	// `from_json: (JsonValue) -> Maybe<Self>`, `zero: () -> Self` — so the impl is chosen
+	// from what the result is expected to be.
+	if tm := findTraitMethod(trait, path.Method.Name); tm != nil && tm.Signature != nil && !receiverFirst(tm.Signature) {
+		return tc.inferReturnDirectedTraitCall(trait, tm, path, call)
 	}
 	if len(call.Arguments) == 0 {
 		tc.addError(call.GetLocation(), SeverityError,
@@ -660,7 +669,9 @@ func (tc *TypeChecker) inferTraitMethodPathCall(path *ast.TraitMethodPathExpr, c
 	if receiverType == nil {
 		return nil
 	}
-	receiverType = tc.resolveType(receiverType, call.Arguments[0].GetLocation())
+	// A bare literal receiver (`Pair::pair(1, 2)`) dispatches at the literal's default
+	// width, as a binding of it would.
+	receiverType = tc.resolveType(promoteToDefault(receiverType), call.Arguments[0].GetLocation())
 
 	matches := tc.resolveTraitMethod(receiverType, path.Method.Name, path.TraitName)
 	if len(matches) == 0 {
@@ -673,6 +684,122 @@ func (tc *TypeChecker) inferTraitMethodPathCall(path *ast.TraitMethodPathExpr, c
 	// concrete type, so matches[0] is unambiguous here.
 	qualifiedName := path.TraitName + "::" + path.Method.Name
 	return tc.inferResolvedTraitMethodCall(qualifiedName, matches[0], call, nil)
+}
+
+// receiverFirst reports whether a trait method's first parameter is `Self` (bare or
+// applied) — the shape a `.`-call and an ordinary `Trait::method(receiver, …)` dispatch on.
+func receiverFirst(sig *types.LambdaType) bool {
+	if len(sig.Parameters) == 0 {
+		return false
+	}
+	_, isSelf := sig.Parameters[0].Type.(types.SelfType)
+	return isSelf
+}
+
+// inferReturnDirectedTraitCall type-checks `Trait::method(…)` for a method with no
+// receiver: `Self` is solved by unifying the declared return type against the context the
+// call sits in (`let port: i64 = FromJson::from_json(v)` picks the `i64` impl), or, failing
+// that, from an argument whose parameter mentions `Self`. With neither there is nothing to
+// choose by, and the call is refused naming the fix.
+//
+// Inside a generic body `Self` may solve to a bound variable (`required<t> where t:
+// FromJson`); then the call is abstract, like a `.`-call on a `t` receiver
+// (dispatchViaGenericBound): a candidate per implementing type is published, and the
+// solved variable is recorded (SetBoundSelf) so the backend can key the candidate by the
+// specialization's type, having no receiver expression to read one from.
+func (tc *TypeChecker) inferReturnDirectedTraitCall(trait *ast.TraitDeclStmt, tm *ast.TraitMethod, path *ast.TraitMethodPathExpr, call *ast.FunctionCallExpr) types.Type {
+	qualified := path.TraitName + "::" + path.Method.Name
+	loc := call.GetLocation()
+	abstract := substituteSelf(tm.Signature, types.GenericType{Name: selfVar})
+	vars := map[string]bool{selfVar: true}
+	seed := map[string]types.Type{}
+	if want := tc.currentExpectedType(); want != nil && abstract.ReturnType.Type != nil {
+		if !unifyGenericTarget(tc.resolveTypeIfKnown(abstract.ReturnType.Type, loc), want, vars, seed) {
+			delete(seed, selfVar)
+		}
+	}
+	for i, p := range abstract.Parameters {
+		if seed[selfVar] != nil {
+			break
+		}
+		if i >= len(call.Arguments) || p.Type == nil {
+			continue
+		}
+		mentioned := map[string]bool{}
+		collectTypeVars(p.Type, mentioned)
+		if !mentioned[selfVar] {
+			continue
+		}
+		if argT := tc.inferExprType(call.Arguments[i]); argT != nil {
+			if !unifyGenericTarget(tc.resolveTypeIfKnown(p.Type, loc), argT, vars, seed) {
+				delete(seed, selfVar)
+			}
+		}
+	}
+	self := seed[selfVar]
+	if self == nil {
+		tc.addError(loc, SeverityError,
+			"%s takes no receiver, so its impl is chosen by what the result is used as, and nothing here says; give the result a type, as in `let x: T = %s(…)`",
+			qualified, qualified)
+		return nil
+	}
+	if g, isVar := self.(types.GenericType); isVar {
+		if !slices.Contains(tc.genericBounds[g.Name], path.TraitName) {
+			tc.addError(loc, SeverityError,
+				"%s: the result is a %s, which has no `where %s: %s` bound", qualified, g.Name, g.Name, path.TraitName)
+			return nil
+		}
+		tc.methodTable.SetBound(call, typetable.BoundMethodRef{Trait: path.TraitName, Method: path.Method.Name})
+		tc.publishBoundCandidates(call, path.TraitName, path.Method.Name)
+		tc.methodTable.SetBoundSelf(call, g)
+		return tc.inferLambdaCallFromType(qualified, substituteSelf(tm.Signature, g), call)
+	}
+	// Solved from an argument that is a bare literal, `Self` is the literal's default
+	// width, as a binding of it would be.
+	self = tc.resolveType(promoteToDefault(self), loc)
+	matches := tc.resolveTraitMethod(self, path.Method.Name, path.TraitName)
+	if len(matches) == 0 {
+		tc.addError(loc, SeverityError,
+			"no implementation of %s for %s, the type the result is used as", qualified, self)
+		return nil
+	}
+	// A trait implemented several times for the type at different arguments (`From<A>`
+	// and `From<B>` for `High`) is told apart by what the arguments accept.
+	if len(matches) > 1 {
+		matches = tc.matchesAcceptingArguments(matches, call)
+		if len(matches) != 1 {
+			tc.addError(loc, SeverityError,
+				"%s for %s is ambiguous: %d impls could take these arguments", qualified, self, len(matches))
+			return nil
+		}
+	}
+	return tc.inferResolvedTraitMethodCall(qualified, matches[0], call, nil)
+}
+
+// matchesAcceptingArguments keeps the resolved methods whose parameters accept the call's
+// arguments as inferred, for a trait implemented more than once for one type.
+func (tc *TypeChecker) matchesAcceptingArguments(matches []resolvedTraitMethod, call *ast.FunctionCallExpr) []resolvedTraitMethod {
+	var kept []resolvedTraitMethod
+	for _, m := range matches {
+		if m.Signature == nil || len(m.Signature.Parameters) != len(call.Arguments) {
+			continue
+		}
+		ok := true
+		for i, p := range m.Signature.Parameters {
+			argT := tc.inferExprType(call.Arguments[i])
+			if argT == nil || p.Type == nil {
+				continue
+			}
+			if !isAssignable(argT, tc.resolveTypeIfKnown(p.Type, call.GetLocation())) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			kept = append(kept, m)
+		}
+	}
+	return kept
 }
 
 // inferIdentifierCall resolves the identifier in scope and validates the call

@@ -4,6 +4,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
+	"strings"
 )
 
 func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
@@ -439,6 +440,7 @@ func makeTraitMethodKey(name ast.MethodName) traitMethodKey {
 func (tc *TypeChecker) checkImplCoherence() {
 	type key struct {
 		trait  *ast.TraitDeclStmt
+		args   string
 		target string
 	}
 	first := map[key]*ast.TraitImplStmt{}
@@ -452,7 +454,14 @@ func (tc *TypeChecker) checkImplCoherence() {
 			// would name the same line twice.
 			continue
 		}
-		k := key{decl, impl.Type.String()}
+		// The trait's arguments are part of the identity: `impl From<A> for High` beside
+		// `impl From<B> for High` are two conversions, not one impl twice, and `?` picks
+		// between them by the operand's error (fromConversion).
+		args := make([]string, len(impl.TraitArgs))
+		for i, a := range impl.TraitArgs {
+			args[i] = a.String()
+		}
+		k := key{decl, strings.Join(args, ","), impl.Type.String()}
 		prev, seen := first[k]
 		if !seen {
 			first[k] = impl

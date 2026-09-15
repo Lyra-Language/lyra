@@ -68,6 +68,7 @@ an error that names the shadow.
 | `ordering.lyra` | `Ordering`, `Ord`, `Eq`, `min`/`max`/`clamp` |
 | `math.lyra` | `Add`/`Sub`/`Mul`/`Div`, `Arithmetic` |
 | `show.lyra` | `Show` |
+| `convert.lyra` | `From`, the conversion `?` applies to an error |
 | `format.lyra` | `to_fixed` and number formatting |
 | `parse.lyra` | `parse_i64` |
 | `strings.lyra` | ASCII rune classifiers, trimming, prefix/suffix, `index`, `split`, `Needle` |

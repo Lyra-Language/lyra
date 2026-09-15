@@ -56,10 +56,10 @@ Package management, versioning and separate compilation are out of scope by deci
   over FFI (`TSNode` crosses by value, which `pkg/abi` already supports) and keep the
   grammar as is; the program then needs a tree walk, a byte-buffer string builder,
   `read_file`/`write_file` and `Result` composition — the same shapes a compiler needs, at
-  ~2–4k lines. Expected to surface: the generic-impl-in-generic-function bug above,
-  `Result.map_err`, `?` not carrying an expected type, `[]T` aliasing in a scope stack, a
-  missing `readdir` in `std.io`, and the first compile-time data point for a program larger
-  than any example. A real bootstrap would start with the collector after this.
+  ~2–4k lines. Expected to surface: `[]T` aliasing in a scope stack, a missing `readdir` in
+  `std.io`, and the first compile-time data point for a program larger than any example
+  (`map_err` and the context through `?` landed 09/15). A real bootstrap would start with
+  the collector after this.
 
 
 ## Language surface
@@ -83,8 +83,6 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Standard library and bindings
 
-- **[IDEA] `Result.map_err`.** `examples/config/config.lyra` is the first program composing
-  two error types (`JsonError` into `ConfigError`); it writes a `match` per call site today.
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
@@ -118,9 +116,6 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Pit of Success
 
-- **[OPEN] Declared error conversion for `?`** (From-style), once a conversion trait exists.
-  `?` is assignability-only today. Driven by `examples/config/config.lyra` (half 1); `?` knows
-  both types, so this needs an impl lookup, not return-type dispatch.
 - **[OPEN] `checked_rem`.** A naming decision (`%` vs `%%`), not a lowering one.
 - **[IDEA] Overflow policy on a `newtype`** (`where wrapping` / `saturating`), so a hash
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
@@ -244,12 +239,11 @@ existing inferred `pure det`, with no new syntax; results must be emittable cons
   purpose (binary-scaled determinism vs decimal money, which a newtype serves) and what
   arithmetic does to the parameters; blocked on const generics. Add `fixed_point_type` to
   both highlight query files when built.
-- **[OPEN] Return-type-directed dispatch.** `trait Zero { zero: () -> Self }` cannot be
-  resolved, so `Zero`/`Default` are unwritable; settle where the expected type comes from,
-  the no-context case, and E035's interaction. Driven by `examples/config/config.lyra`
-  (half 2, `FromJson`), which first needs the next entry.
-- **[OPEN] An expected type does not reach through `?`.** `let v: i64 = make(1)?` with
-  `make<t>(…) -> Result<t, e>` cannot infer `t`; without `?` the annotation infers it.
+- **[OPEN] A context does not reach a constructor's argument.** `let d: Result<string, e> =
+  Err(Zero::zero())` sees the whole annotation as the argument's context, not `e`, so a
+  receiver-less call there is refused; the same for a literal payload solving a method
+  variable (`Self<integer literal>`). Constructor payloads are typed after the fact
+  (`stampDataConstruction`); pushing the payload's slot type first would settle both.
 - **[OPEN] Overlapping impls** (`impl Show for Box<t>` beside `Box<i64>`) are not ranked;
   only identical targets are refused (`lyra-E037`).
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened

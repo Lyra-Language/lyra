@@ -464,8 +464,25 @@ func (l *lowerer) operatorCandidate(expr ast.Expression, receiver ast.Expression
 func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr, path *ast.TraitMethodPathExpr) (value.Value, *ir.Block, error) {
 	res, ok := l.res.MethodTable.GetResolution(call)
 	if !ok {
-		return nil, nil, fmt.Errorf("llvm: no resolution recorded for %s::%s",
-			path.TraitName, path.Method.Name)
+		// A receiver-less method (`from_json: (JsonValue) -> Maybe<Self>`) whose `Self`
+		// solved to a bound variable: the candidate is keyed by that variable's type in
+		// this specialization, read from the recorded solve since no receiver expression
+		// carries it (lowerBoundMethodCall's candidateKey).
+		ref, isBound := l.res.MethodTable.GetBound(call)
+		selfT, hasSelf := l.res.MethodTable.BoundSelf(call)
+		if !isBound || !hasSelf {
+			return nil, nil, fmt.Errorf("llvm: no resolution recorded for %s::%s",
+				path.TraitName, path.Method.Name)
+		}
+		key := l.stripNewtype(l.applyTypeSubst(selfT)).String()
+		if res, ok = l.res.MethodTable.BoundCandidate(call, key); !ok {
+			return nil, nil, fmt.Errorf(
+				"llvm: cannot lower %s::%s for a result of type %s: no impl of %s for it",
+				ref.Trait, ref.Method, key, ref.Trait)
+		}
+		if solution := l.res.MethodTable.BoundMethodVars(call); solution != nil {
+			res = res.WithMethodVars(solution, l.typeSubst, types.Substitute)
+		}
 	}
 	fn, err := l.traitMethod(res)
 	if err != nil {

@@ -9,6 +9,73 @@ Newest first.
 
 ## Dated log
 
+### 09/15/26 — the config example, as written: `From` for `?`, receiver-less dispatch
+
+`examples/config/config.lyra` carried two `WANTED` halves since 09/14. Both are in, with two
+smaller pieces they turned out to need, and the example is rewritten to the form its
+comments asked for; `TestExample_Config` pins all four inputs.
+
+**`?` across error types applies a declared conversion.** The prelude gains
+`trait From<s> { from: (s) -> Self }` (`convert.lyra`). `inferTryExpr` still refuses a
+mismatched error, but first looks up `impl From<operandErr> for enclErr` — matched on the
+trait *argument* as well as the target, so `ConfigError` may be built from several types,
+one impl each, which meant `checkImplCoherence` had to key on the trait arguments too (it
+refused `From<A>` beside `From<B>` as a duplicate). `?` is the only caller the compiler
+knows: it has both types in hand, so this is a direct lookup and not return-type dispatch.
+The resolution is recorded on the `?` node (`MethodTable.SetTryConversion`, a fourth kind of
+resolution beside calls, bounds and operators, and part of `Specializations()` so the
+driver builds its ownership table); the backend calls it on the extracted error in
+`lowerTryPropagate`, whose refcount rule gets a third case — the conversion's result is a
+fresh +1, so nothing is duplicated and the operand's temporary is released like any other;
+and the purity pass charges it in a `TryExpr` arm, so a `pure` function refuses an impure
+conversion. A `from` taking its argument `own`/`ref`/`mut` is refused: the backend passes
+the error it just read out of the operand by value and then releases the operand.
+
+**The context reaches through `?`.** `let port: i64 = required(json, "port")?` could not
+solve `required`'s `t`: the annotation was pushed for the `?` expression, and the operand
+saw nothing. `inferTryExpr` now pushes `Result<want, E>` (or `Maybe<want>`) for the
+operand, built from the enclosing return's kind and error, which is exactly what
+`seedFromExpectedReturn` unifies a return-only variable against.
+
+**A receiver-less method is dispatched from what its result is used as.** `Trait::method(…)`
+took argument 0 as the receiver, so `FromJson::from_json(value)` looked for an impl on
+`JsonValue` and `Zero::zero()` demanded a receiver. `inferTraitMethodPathCall` now routes
+a method whose first parameter is not `Self` to `inferReturnDirectedTraitCall`: `Self` is
+solved by unifying the declared return with the context, else from an argument whose
+parameter mentions `Self`, and with neither the call is refused naming the annotation to
+write. Inside a generic body `Self` solves to the bound variable (`required<t> where t:
+FromJson`): the call is then abstract, like a `.`-call on a `t` receiver — a candidate per
+implementing type, the driver composing them — and the solved variable is recorded
+(`SetBoundSelf`) because the backend keys the candidate by a type and there is no receiver
+expression to read one from. A context does not reach through a method chain, so the
+example writes `let decoded: Result<t, string> = FromJson::from_json(value)` and maps from
+there. The type parameter's *name* the old comments wanted (`kind_name::<t>()`) is not
+needed: `from_json` answers `Result<Self, string>` and the `Err` is the wanted kind, which
+is the impl's to say.
+
+**`Result.map_err`** is the one-off spelling beside the impl, and is what `required` uses to
+turn the impl's `Err` into a `WrongKind`.
+
+**Two older bugs found on the way.** An annotated local inside a generic body,
+`let decoded: Result<t, string> = …`, was framed with the annotation *as written*
+(`bindingType`), so the frame release asked to drop a `Result<t, string>` and failed with
+"its instantiation did not resolve" — in any generic body with an annotated local naming
+its variable beside a concrete argument; it now reads the annotation under the active
+substitution as an inferred type is. And a literal receiver on the ordinary qualified form
+(`Pair::pair(1, 2)`) dispatched at "integer literal"; it now settles to the default width.
+
+Filed: a constructor's argument sees the whole annotation as its context
+(`Err(Zero::zero())` under `Result<string, e>`), so a receiver-less call or a
+method-variable literal there is not settled; constructor payloads are typed after the
+fact.
+
+Tests: `try_conversion_test.go` (conversion accepted, per-source impls, both refusals; the
+context through `?` for Result and Maybe; return-directed dispatch by annotation, return,
+argument and bound, and its three refusals), `try_conversion_purity_test.go`,
+`TestExec_ConversionTraits` (with the prelude, under ASan on macOS and in the Linux
+container: the conversion on a temporary and a bound operand with string payloads, and the
+dispatch shapes including the annotated generic local), and `TestExample_Config`.
+
 ### 09/15/26 — `Self<…>` beyond an exact match: holes and default methods
 
 The 09/14 rule accepted `Self<a>` only for a target applied to exactly as many distinct

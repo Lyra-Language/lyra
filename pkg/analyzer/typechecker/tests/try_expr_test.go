@@ -101,7 +101,7 @@ let run = (p: string) -> Result<i64, ParseError> => {
 }`
 	res := parseCollectAndCheck(t, source, false)
 	assertErrorsAre(t, res,
-		"cannot propagate Result with `?`: error type IoError is not convertible to the enclosing function's error type ParseError; convert it explicitly")
+		"cannot propagate Result with `?`: error type IoError is not the enclosing function's error type ParseError and no `impl From<IoError> for ParseError` declares the conversion; declare one, or convert at the call with map_err")
 }
 
 // TestTry_BuiltinMarkedResult_NameIndependent: an `@builtin(Result)`-marked type
@@ -166,5 +166,5 @@ let f = (n: i64) -> Result<i64, ParseError> => {
     Ok(x)
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertHasErrorContaining(t, res, "is not convertible to the enclosing function's error type")
+	assertHasErrorContaining(t, res, "is not the enclosing function's error type")
 }

@@ -322,6 +322,15 @@ A lowercase type name is a type variable wherever it appears. What a written `<�
 
 There isn't any. `Rng.seeded(42)` is **`lyra-E035`** (constructors are bare: `rng_seeded`). A trait gets its own message, since `Trait::method(…)` is valid.
 
+### Calling without a receiver
+
+A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_json: (JsonValue) -> Result<Self, string>`) is called as `Trait::method(…)`, and its impl is chosen from **what the result is used as**: the declared return type is unified with the context (`let port: i64 = FromJson::from_json(v)` picks the `i64` impl), or, failing that, with an argument whose parameter mentions `Self`. With neither there is nothing to choose by, and the call is refused naming the fix (an annotation). Inside a generic body the result may be a bound variable (`required<t> where t: FromJson`), and the call is then abstract, specialized with the body. A context does not reach through a method chain, so write `let decoded: Result<t, string> = FromJson::from_json(v)` and continue from `decoded`. A bare literal receiver on the ordinary form (`Pair::pair(1, 2)`) dispatches at the literal's default width.
+
+### `?`, `From` and the context
+
+- `?` propagates a `Result` from a `Result`-returning function and a `Maybe` from a `Maybe`-returning one, never across kinds (`ok_or`/`ok` convert). Across **error types** it applies a declared conversion: `parse_json(text)?` inside `-> Result<_, ConfigError>` runs `impl From<JsonError> for ConfigError`'s `from` on the error before propagating it. `?` knows both types, so the impl is found by a direct lookup — matched on the trait argument as well as the target, so a type may be built from several sources, one impl each. No impl is refused naming the one to write; `map_err` is the one-off spelling. The `from` runs on the failure path, so its effects are the `?`'s (a `pure` function refuses an impure conversion), and it takes the error by plain value (`own`/`ref`/`mut` are refused).
+- **The context reaches through `?`**: what is wanted of `make(1)?` is the payload, so `make(1)` is inferred wanting `Result<payload, E>` (or `Maybe<payload>`), which is what solves a callee's return-only variable — `let port: i64 = required(json, "port")?` needs no turbofish.
+
 ---
 
 ## 5. Effects

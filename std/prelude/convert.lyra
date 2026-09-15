@@ -1,0 +1,37 @@
+module std.prelude
+//! `From` — a value of one type built from a value of another, the conversion `?`
+//! applies to an error on its own.
+
+// **The gap this closes.** A function composing two libraries' failures answers with one
+// error type, and every `?` on the other library's `Result` was a hand-written `match`
+// (or a `map_err`) saying the same thing: wrap it. The conversion is a property of the two
+// types, not of the call site, so it is declared once, as an impl, and `?` looks it up.
+//
+// **`?` is the only caller the compiler knows.** Its operand's error and the enclosing
+// function's error are both known there, so the impl is found by a direct lookup —
+// `impl From<JsonError> for ConfigError` — with no inference. Calling `From::from(e)`
+// yourself is return-type-directed dispatch: the impl is chosen by what the result is
+// expected to be, `let c: ConfigError = From::from(e)`.
+
+/// A `Self` built from an `s`. `?` applies it to a propagated error whose type is not the
+/// enclosing function's, so the conversion is written once per pair of types rather than
+/// at every call site:
+///
+/// ```
+/// impl From<JsonError> for ConfigError {
+///   from = (e) => Malformed(e)
+/// }
+///
+/// let load = (path: string) -> Result<Config, ConfigError> => {
+///   let json = parse_json(text)?     // JsonError → ConfigError, through `from`
+///   …
+/// }
+/// ```
+///
+/// Without an impl, `?` refuses the mismatch and names this trait; `map_err` is the
+/// one-off spelling.
+pub trait From<s> {
+  /// The `Self` that stands for `value`. Called by `?` on a propagated error; callable
+  /// directly only where the result's type is known, `let c: ConfigError = From::from(e)`.
+  from: (s) -> Self
+}

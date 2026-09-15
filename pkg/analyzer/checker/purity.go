@@ -2204,6 +2204,18 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				c.pure(ex.GetLocation(),
 					"pure function mutates captured binding %q; mutation must not escape the function", rootIdentName(ex.Left))
 			}
+		case *ast.TryExpr:
+			// A `?` converting its error through `impl From<…>` runs that impl's `from`
+			// on the failure path: the method's effect is this site's, exactly as a
+			// resolved call's is.
+			if res, ok := inf.methodTable.TryConversion(ex); ok && res.Method != nil {
+				eff := inf.impureMethods[res.Method]
+				found |= eff
+				if eff&PurityEffects != 0 {
+					c.pure(ex.GetLocation(),
+						"pure function propagates an error with `?` through a non-pure From conversion")
+				}
+			}
 		case *ast.FunctionCallExpr:
 			if inf.allocSites.table().IsUnresolvedCallee(ex) {
 				// **The typechecker already refused this callee**, so the call cannot

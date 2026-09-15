@@ -98,6 +98,20 @@ pub let map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> u) -> Result<u,e
   (Err err, _) => Err err,
 }
 
+/// Applies `f` to the error, leaving an `Ok` untouched — the way one error type becomes
+/// another at a boundary between two libraries' failures.
+///
+/// ```
+/// let json = parse_json(text).map_err((e) => Malformed(e))?
+/// ```
+///
+/// Where the conversion is the same at every call site, an `impl From<JsonError> for
+/// ConfigError` lets `?` apply it on its own.
+pub let map_err<t,e,f> = pure noalloc (self: Result<t,e>, f: (e) -> f) -> Result<t,f> {
+  (Ok v, _) => Ok v,
+  (Err err, f) => Err(f(err)),
+}
+
 /// Applies `f` to the success value and returns its result, without nesting.
 ///
 /// Chains a second fallible step onto the first. Both must fail with the same `e`.

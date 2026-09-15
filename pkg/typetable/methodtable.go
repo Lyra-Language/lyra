@@ -41,6 +41,15 @@ type MethodTable struct {
 	// reached are the specializations a bound call reaches only once its enclosing body's
 	// bindings are composed in. See AddSpecialization.
 	reached map[string]Resolution
+	// tryConversions[e] is the `From` impl a `?` applies to its operand's error before
+	// propagating it, when that error is not the enclosing function's. See
+	// SetTryConversion.
+	tryConversions map[*ast.TryExpr]Resolution
+	// boundSelf[call] is the type variable a receiver-less `Trait::method(…)` call solved
+	// `Self` to from its context, inside a generic body: the backend keys the bound
+	// candidate by that variable's substituted type, since there is no receiver
+	// expression to read one from. See SetBoundSelf.
+	boundSelf map[*ast.FunctionCallExpr]types.Type
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -597,6 +606,11 @@ func (t *MethodTable) Specializations() []Resolution {
 			unique[key] = r
 		}
 	}
+	for _, r := range t.tryConversions {
+		if key := r.SpecKey(); key != "" {
+			unique[key] = r
+		}
+	}
 	for _, byType := range t.boundCandidates {
 		for _, r := range byType {
 			if key := r.SpecKey(); key != "" {
@@ -621,6 +635,46 @@ func (t *MethodTable) Specializations() []Resolution {
 		out = append(out, unique[k])
 	}
 	return out
+}
+
+// SetTryConversion records the `From` impl a `?` runs on its operand's error before
+// re-wrapping it — `impl From<JsonError> for ConfigError`'s `from`, for a
+// `Result<_, JsonError>` propagated out of a `Result<_, ConfigError>` function. It is a
+// resolution like a call's (the backend emits the same function, the ownership and purity
+// passes read the same method), keyed by the `?` node since there is no call node.
+func (t *MethodTable) SetTryConversion(e *ast.TryExpr, r Resolution) {
+	if t.tryConversions == nil {
+		t.tryConversions = map[*ast.TryExpr]Resolution{}
+	}
+	t.tryConversions[e] = r
+}
+
+// SetBoundSelf records, for a receiver-less `Trait::method(…)` dispatched through a
+// `where` bound, the type `Self` was solved to — a variable of the enclosing body, which
+// a specialization makes concrete. Read by the backend beside GetBound.
+func (t *MethodTable) SetBoundSelf(call *ast.FunctionCallExpr, self types.Type) {
+	if t.boundSelf == nil {
+		t.boundSelf = map[*ast.FunctionCallExpr]types.Type{}
+	}
+	t.boundSelf[call] = self
+}
+
+// BoundSelf is the `Self` a receiver-less bound call solved, if any. Nil-receiver-safe.
+func (t *MethodTable) BoundSelf(call *ast.FunctionCallExpr) (types.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	s, ok := t.boundSelf[call]
+	return s, ok
+}
+
+// TryConversion is the `From` impl recorded for e, if any. Nil-receiver-safe.
+func (t *MethodTable) TryConversion(e *ast.TryExpr) (Resolution, bool) {
+	if t == nil {
+		return Resolution{}, false
+	}
+	r, ok := t.tryConversions[e]
+	return r, ok
 }
 
 func (t *MethodTable) Get(call *ast.FunctionCallExpr) (*ast.TraitMethodImpl, bool) {

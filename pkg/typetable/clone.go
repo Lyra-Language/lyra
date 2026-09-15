@@ -59,6 +59,8 @@ func (t *MethodTable) Clone() *MethodTable {
 		// the outer map is what a later pass adds to.
 		boundMethodVars: cloneMap(t.boundMethodVars),
 		reached:         cloneMap(t.reached),
+		tryConversions:  cloneMap(t.tryConversions),
+		boundSelf:       cloneMap(t.boundSelf),
 	}
 }
 
