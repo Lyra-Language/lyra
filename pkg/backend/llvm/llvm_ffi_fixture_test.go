@@ -104,6 +104,26 @@ let main = () -> void => unsafe {
 `, wantNarrow)
 }
 
+// **`bool`.** A Lyra `bool` crosses as C's `_Bool` (09/16): `i1 zeroext` on the declaration
+// and the call, which is what clang gives `_Bool` on both targets. Three booleans computed
+// at run time are counted by C, and C's own `_Bool` comes back to drive an `if`.
+func TestExec_FFIFixture_Bool(t *testing.T) {
+	t.Parallel()
+	checkFixture(t, `module main
+unsafe extern pure lyra_fixture_bool_count: (a: bool, b: bool, c: bool) -> i32
+unsafe extern pure lyra_fixture_bool_any: (a: bool, b: bool, n: i32) -> bool
+let main = () -> void => unsafe {
+  let n: i32 = 7
+  let a = n > 3
+  let b = n > 30
+  println(lyra_fixture_bool_count(a, b, a && !b))
+  if lyra_fixture_bool_any(false, false, n) { println("any") } else { println("none") }
+  if !lyra_fixture_bool_any(false, false, n + 10) { println("unreachable") } else { println("some") }
+  if !unsafe { lyra_fixture_bool_any(b, b, n) } { println("negated") } else { println("kept") }
+}
+`, "2\nnone\nsome\nnegated")
+}
+
 // **`float`.** libm is double-only, so nothing else in the suite crosses a f32 — and a
 // Lyra `f32` lowered as a `double` still links, because C has no way to complain.
 func TestExec_FFIFixture_Float32(t *testing.T) {

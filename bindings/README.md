@@ -79,8 +79,8 @@ The tree-sitter runtime (`@link("tree-sitter")`; `brew install tree-sitter`, Deb
 `tree-sitter-lyra/src`). Enough for a tree walk: `new_parser`/`parse`, `root`, `child`,
 `child_count`, `kind`, `start_byte`/`end_byte`, `is_named`, `has_error`. `Parser` and `Tree`
 are `@must_release`. **A `TSNode` crosses by value** — four `u32` and two pointers, spelled
-as six fields — and is opaque: nothing reads them. C's `bool` results are `i8`, compared in
-the wrapper. The runtime the grammar's npm tooling vendors is 0.22 and refuses the parser
+as six fields — and is opaque: nothing reads them. C's `bool` results cross as `bool`. The
+runtime the grammar's npm tooling vendors is 0.22 and refuses the parser
 it generates (language version 15), which is why the system library is required.
 `examples/lyrafmt/lyrafmt.lyra` is the use.
 

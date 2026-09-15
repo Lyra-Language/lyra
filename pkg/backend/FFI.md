@@ -35,7 +35,9 @@ are in [`bindings/README.md`](../../bindings/README.md).
 | `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
 | `NULL` | `nullptr` | `...` | `...` (extern only) |
 
-  `_Bool` is refused (`lyra-E063`; Lyra's `bool` is one bit), as is a borrow modifier.
+  `_Bool` is `bool`: declared and called as `i1 zeroext`, clang's own spelling
+  (`markBoolCrossings`, `callWithDeclaredAttrs`); refused only inside a callback's signature
+  (`lyra-E063`), whose thunk carries no attributes. A borrow modifier is refused.
   `CLong`/`CULong` are `pub type` aliases (not newtypes) so the LLP64 width is a grep target.
 - **C variadics (`...`)** are extern-only (`lyra-E065`); `...` must come last after at least
   one named parameter, and variadic arguments must still be FFI-safe.

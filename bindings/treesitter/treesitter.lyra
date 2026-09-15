@@ -49,8 +49,7 @@ pub struct Node {
 pub let new_parser = (language: Language) -> Maybe<Parser> => {
   let raw = unsafe { ts_parser_new() }
   if raw.is_null() { return None }
-  let accepted = unsafe { ts_parser_set_language(raw, language.raw) }
-  if accepted == 0 {
+  if !unsafe { ts_parser_set_language(raw, language.raw) } {
     unsafe { ts_parser_delete(raw) }
     return None
   }
@@ -101,22 +100,21 @@ pub let child = (node: Node, i: i64) -> Node => {
 }
 
 /// Whether the node is a named rule rather than an anonymous token.
-pub let is_named = (node: Node) -> bool => unsafe { ts_node_is_named(node) } != 0
+pub let is_named = (node: Node) -> bool => unsafe { ts_node_is_named(node) }
 
 /// Whether the node or anything under it is a syntax error or a missing token.
-pub let has_error = (node: Node) -> bool => unsafe { ts_node_has_error(node) } != 0
+pub let has_error = (node: Node) -> bool => unsafe { ts_node_has_error(node) }
 
 // ---------------------------------------------------------------------------------------
 // Foreign declarations
 // ---------------------------------------------------------------------------------------
-// C's `bool` is a byte, so it crosses as `i8` and is compared (lyra-E063).
 
 @symbol("ts_parser_new")
 unsafe extern ts_parser_new: () -> ^u8
 @symbol("ts_parser_delete")
 unsafe extern ts_parser_delete: (parser: ^u8) -> void
 @symbol("ts_parser_set_language")
-unsafe extern ts_parser_set_language: (parser: ^u8, language: ^u8) -> i8
+unsafe extern ts_parser_set_language: (parser: ^u8, language: ^u8) -> bool
 @symbol("ts_parser_parse_string")
 unsafe extern ts_parser_parse_string: (parser: ^u8, old_tree: ^u8, source: ^u8, length: u32) -> ^u8
 @symbol("ts_tree_delete")
@@ -134,6 +132,6 @@ unsafe extern ts_node_child_count: (node: Node) -> u32
 @symbol("ts_node_child")
 unsafe extern ts_node_child: (node: Node, index: u32) -> Node
 @symbol("ts_node_is_named")
-unsafe extern ts_node_is_named: (node: Node) -> i8
+unsafe extern ts_node_is_named: (node: Node) -> bool
 @symbol("ts_node_has_error")
-unsafe extern ts_node_has_error: (node: Node) -> i8
+unsafe extern ts_node_has_error: (node: Node) -> bool

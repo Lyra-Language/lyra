@@ -75,7 +75,8 @@ func TestExtern_SignatureRefusesTypesWithNoCSpelling(t *testing.T) {
 		// return as an anonymous *tuple*, so the direct spelling tests the grammar rather
 		// than this rule.
 		{"function returned", "type Cb = (i64) -> i64\nunsafe extern pure get: () -> Cb", "not a C function pointer"},
-		{"bool", `unsafe extern pure ok: (n: bool) -> i32`, "C's `_Bool` is a byte"},
+		// `bool` itself crosses since 09/16 (`i1 zeroext`); a callback's does not.
+		{"bool in a callback", `unsafe extern on_each: (cb: (i32) -> bool) -> void`, "callback whose return type is boolean"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			res := parseCollectAndCheck(t, c.src, false)

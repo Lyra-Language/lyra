@@ -258,6 +258,11 @@ LyraFixtureBig lyra_fixture_big_make(int32_t n) {
   return s;
 }
 
+/* `_Bool` in both positions: a Lyra `bool` crosses as `i1 zeroext`, clang's own spelling,
+ * so the count reads each argument's low bit and the answer comes back a real bool. */
+int32_t lyra_fixture_bool_count(_Bool a, _Bool b, _Bool c) { return a + b + c; }
+_Bool lyra_fixture_bool_any(_Bool a, _Bool b, int32_t n) { return a || b || n > 10; }
+
 /* Aggregates mixed with scalars, in the order raylib's `DrawCircleV` uses: the
  * interesting part is that the scalar must land in the register the ABI assigns it
  * *after* the aggregate has taken however many it takes. */

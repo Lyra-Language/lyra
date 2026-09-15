@@ -204,7 +204,9 @@ func (l *lowerer) declareExternWithPlan(symbol string, plan *externPlan) *ir.Fun
 			params = append(params, p)
 		}
 	}
-	return l.module.NewFunc(symbol, plan.llRet, params...)
+	fn := l.module.NewFunc(symbol, plan.llRet, params...)
+	markBoolCrossings(fn)
+	return fn
 }
 
 // lowerExternCall emits a call to a foreign function whose signature carries an aggregate.
@@ -250,7 +252,7 @@ func (l *lowerer) lowerExternCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 		args = append(args, pieces...)
 	}
 
-	call := block.NewCall(fn, args...)
+	call := callWithDeclaredAttrs(block, fn, args)
 	if !plan.ret.aggregate {
 		if _, isVoid := plan.llRet.(*lltypes.VoidType); isVoid {
 			return call, block, nil

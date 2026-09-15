@@ -135,7 +135,12 @@ func isFFISafe(t types.Type) bool {
 	case types.RawPointerType:
 		return true
 	case types.PrimitiveType:
-		return isAnyConcreteInt(v.Name) || isAnyConcreteFloat(v.Name) || v.Name == types.Rune
+		// `bool` crosses as C's `_Bool` (09/16): the backend declares it `i1 zeroext`, at
+		// the declaration and the call, which is the spelling clang gives `_Bool` on every
+		// target this compiler reaches — so the two agree about the register. It was refused
+		// while the extern lowering carried no attributes, when a bare `i1` would have
+		// disagreed about the upper bits.
+		return isAnyConcreteInt(v.Name) || isAnyConcreteFloat(v.Name) || v.Name == types.Rune || v.Name == types.Boolean
 	}
 	return false
 }
@@ -152,8 +157,8 @@ func ffiHint(t types.Type) string {
 			return ". A Lyra string is a fat pointer, not a `char*`: take `^u8` and hand " +
 				"the bytes over with `std.ffi`'s `with_cstring`, which needs no copy"
 		case v.Name == types.Boolean:
-			return ". `bool` is deliberately excluded: Lyra's is one bit and C's `_Bool` is a " +
-				"byte, so passing one silently disagrees about the ABI — take `i8` and compare it"
+			return ". A callback compiled from Lyra returns a bare one-bit value, which C's " +
+				"`_Bool` convention does not read back; take `i8` and compare it"
 		}
 	case types.DynamicArrayType, types.StaticArrayType:
 		return ". An array's elements already sit behind a contiguous buffer, so take `^T` " +
@@ -286,6 +291,16 @@ func (tc *TypeChecker) requireCallbackIsFFISafe(fp *types.LambdaType, decl *ast.
 				"Every type in a callback's signature must cross too%s",
 			idx, decl.Name, what, t, ffiHint(tc.resolveTypeIfKnown(t, decl.GetLocation())))
 	}
+	// A callback's own signature is stricter than an extern's: `bool` stays out. The
+	// callback is a Lyra function C calls through a thunk that carries no ABI attributes,
+	// so a `_Bool` there would be the bare `i1` the extern path avoids.
+	callbackSafe := func(t types.Type) bool {
+		resolved := tc.resolveTypeIfKnown(t, decl.GetLocation())
+		if pt, ok := types.StripNewtype(resolved).(types.PrimitiveType); ok && pt.Name == types.Boolean {
+			return false
+		}
+		return isFFISafe(resolved)
+	}
 	for i, p := range fp.Parameters {
 		if p.Type == nil {
 			continue
@@ -294,11 +309,11 @@ func (tc *TypeChecker) requireCallbackIsFFISafe(fp *types.LambdaType, decl *ast.
 			bad(p.Type, fmt.Sprintf("parameter %d", i+1))
 			continue
 		}
-		if !isFFISafe(tc.resolveTypeIfKnown(p.Type, decl.GetLocation())) {
+		if !callbackSafe(p.Type) {
 			bad(p.Type, fmt.Sprintf("parameter %d", i+1))
 		}
 	}
-	if rt := fp.ReturnType.Type; rt != nil && !isFFISafe(tc.resolveTypeIfKnown(rt, decl.GetLocation())) {
+	if rt := fp.ReturnType.Type; rt != nil && !callbackSafe(rt) {
 		bad(rt, "return type")
 	}
 }

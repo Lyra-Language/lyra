@@ -628,7 +628,7 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 			return nil, nil, fmt.Errorf("llvm: %s expects at least %d argument(s), got %d",
 				fn.GlobalIdent.Ident(), len(fn.Params), len(args))
 		}
-		return block.NewCall(fn, args...), block, nil
+		return callWithDeclaredAttrs(block, fn, args), block, nil
 	}
 	// A short argument list means a default the front end should have filled did not reach
 	// here. Emitting the call anyway would produce IR whose argument count disagrees with
@@ -637,7 +637,7 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s), got %d",
 			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
 	}
-	return block.NewCall(fn, args...), block, nil
+	return callWithDeclaredAttrs(block, fn, args), block, nil
 }
 
 // lowerCallArgs lowers a call's arguments left to right onto `args`, and is the one

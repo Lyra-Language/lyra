@@ -717,17 +717,18 @@ const (
 
 	// CodeNotFFISafe: a parameter or return type in an `extern` signature that has no C
 	// spelling — `string`, `[]T`, a closure, a tuple, a `data` type, anything `shared` or
-	// `weak`, and `bool`.
+	// `weak`; and `bool` in a *callback's* signature.
 	//
 	// Refusing at the *signature* is what leaves no room for an implicit conversion, and
 	// therefore no nul-termination policy to get wrong: `std.ffi` builds what Lyra wants
 	// on top, in ordinary Lyra, where the copy is visible and `noalloc` can see it. The
 	// same division of labour `read_line` and `parse_i64` have, one layer up.
 	//
-	// **`bool` is excluded on an ABI ground rather than a representational one**: Lyra's
-	// lowers to `i1` and C's `_Bool` is a byte, so passing one would silently disagree
-	// about the calling convention — the class of wrongness this language traps for
-	// everywhere else. A newtype is looked *through*, since it is nominal only.
+	// **`bool` was excluded on an ABI ground rather than a representational one** — Lyra's
+	// lowers to `i1` and C's `_Bool` is a byte — until 09/16, when the extern lowering
+	// began to declare it `i1 zeroext` at the declaration and the call, which is clang's
+	// own spelling for `_Bool`. It stays refused in a callback, whose thunk carries no
+	// attributes. A newtype is looked *through*, since it is nominal only.
 	//
 	// **A struct is excluded on an ABI ground too, and not on a layout one** — the two are
 	// worth telling apart, because the layouts *do* match (the FFI fixture proves Lyra's

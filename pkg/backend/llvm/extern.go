@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
+	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -62,6 +64,45 @@ func (l *lowerer) declareExterns(program *ast.Program) error {
 	return nil
 }
 
+// markBoolCrossings gives every `i1` parameter and return of a foreign declaration the
+// `zeroext` attribute — the spelling clang gives C's `_Bool`, so a Lyra `bool` crosses in
+// the register the callee reads. Mirrored at each call by callWithDeclaredAttrs: LLVM reads
+// ABI attributes off the call, not the callee.
+func markBoolCrossings(fn *ir.Func) {
+	for _, p := range fn.Params {
+		if lltypes.Equal(p.Typ, lltypes.I1) {
+			p.Attrs = append(p.Attrs, enum.ParamAttrZeroExt)
+		}
+	}
+	if lltypes.Equal(fn.Sig.RetType, lltypes.I1) {
+		fn.ReturnAttrs = append(fn.ReturnAttrs, enum.ReturnAttrZeroExt)
+	}
+}
+
+// callWithDeclaredAttrs emits a call to fn carrying the parameter and return attributes
+// its declaration has — `zeroext` on a `bool` crossing to C — so the caller's side of the
+// convention matches the callee's.
+func callWithDeclaredAttrs(block *ir.Block, fn *ir.Func, args []value.Value) *ir.InstCall {
+	callArgs := make([]value.Value, len(args))
+	for i, a := range args {
+		callArgs[i] = a
+		if i < len(fn.Params) {
+			for _, attr := range fn.Params[i].Attrs {
+				if attr == enum.ParamAttrZeroExt {
+					callArgs[i] = ir.NewArg(a, enum.ParamAttrZeroExt)
+				}
+			}
+		}
+	}
+	call := block.NewCall(fn, callArgs...)
+	for _, attr := range fn.ReturnAttrs {
+		if attr == enum.ReturnAttrZeroExt {
+			call.ReturnAttrs = append(call.ReturnAttrs, enum.ReturnAttrZeroExt)
+		}
+	}
+	return call
+}
+
 // declareExtern declares one foreign function, or returns the one already declared under
 // that symbol.
 //
@@ -105,6 +146,7 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		if err != nil {
 			return nil, err
 		}
+		markBoolCrossings(declared)
 	}
 	// The compiler declares libc functions of its own — `write` for `print`, `memcpy`,
 	// `realloc` — and a C symbol has one declaration per module, so an extern naming one

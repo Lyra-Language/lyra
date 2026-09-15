@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — `bool` crosses to C, and `!unsafe { … }` parses
+
+Two of the three small findings lyrafmt's binding turned up; the third (an `unsafe` helper
+such as `cstring_len` needs its own block at each call) is the rule working as written,
+since reading through a pointer is what `unsafe` marks.
+
+**`bool` in an extern signature.** It was refused (lyra-E063) on an ABI ground: Lyra's
+`bool` lowers to `i1`, C's `_Bool` is a byte, and a bare `i1` parameter says nothing about
+the upper bits of the register. clang's own spelling for `_Bool` is `i1 zeroext`, on the
+declaration and on every call, and that is now what the extern lowering emits:
+`markBoolCrossings` marks each `i1` parameter and return of a foreign declaration (the plain
+path and the planned, aggregate-carrying one alike), and `callWithDeclaredAttrs` mirrors the
+attributes onto the call, since LLVM reads ABI attributes off the call rather than the
+callee — `ir.NewArg` carries them. Verified against a C fixture in both positions: three
+booleans computed at run time counted by C, and C's `_Bool` driving an `if`. A `bool` in a
+**callback's** signature stays refused: the thunk C calls is Lyra-compiled and carries no
+attributes, so it would be the bare `i1` the extern path avoids. `bindings/treesitter`
+drops its `i8` comparisons.
+
+**`if !unsafe { … }`.** The `!` operand admitted a literal, a postfix expression or a nested
+`!`, so an `unsafe` block after it was a syntax error and the block's value had to be bound
+first. `_not_operand` now lists `unsafe_block`; nothing downstream learns the rule exists.
+The grammar archive lyrafmt links must be rebuilt after a grammar change (`libs.sh`), or the
+formatter reports a syntax error on the one file that uses the new spelling — the same
+staleness every other consumer of `parser.c` has.
+
 ### 09/16/26 — lyrafmt's round-trip baseline, and the `let … else` it broke on
 
 The self-hosting probe starts. `bindings/treesitter/` binds enough of the tree-sitter
