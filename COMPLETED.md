@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a parse always terminates: comments are one external token
+
+`let main = () -> void => {` ⏎ `println(x ++ ` hung `lyrac check` in `parser.Parse`. The
+tree-sitter CLI parsed it in under a millisecond. It predated `#[…]`, confirmed by building
+against the old grammar.
+
+**The parse log named the loop.** Recovering from the error at end of input, the runtime went
+back to one state, split into versions that each "reduced" a `comment` from nothing
+(`no_lookahead_after_non_terminal_extra`), failed, and went back again. `comment` was a rule, a
+`choice` over two line-comment tokens and the scanner's block-comment token, so it was a
+**non-terminal extra**. go-tree-sitter bundles an older runtime: 0.25.0, the latest tag, and its
+November master both loop. The CLI's 0.25.10 does not, which is why no corpus test could have
+seen it. Making `comment` a plain token confirmed the diagnosis before anything was built on it.
+
+**The fix keeps the node kind.** An alias in `extras` is refused by `generate`, and a hidden
+external would drop `/* */` from the tree (highlighting, and the `/* glsl */` injection marker).
+So the external scanner now lexes every ordinary comment as the terminal `comment`: `//`, the
+`////` divider and nested `/* */`. It declines `///` and `//!`, so the internal lexer keeps doc
+comments. `parser.c` shrank from 16.1 MB to 14.6 MB.
+
+**How often it bit is the reason it mattered.** A sweep truncating every `.lyra` file in std,
+examples and bindings at 60 points each hung on 5 of its first 2,376 cuts against the old grammar,
+all ordinary mid-edit states such as `Rect { x: x, y: y, w: SIDE, `. Against the new grammar it
+hung on none of 4,892. The language server parses exactly these states on every keystroke. The
+sweep is now `pkg/parser`'s `TestParse_TerminatesOnTruncatedInput`, the only check that sees this
+bug, since the CLI's runtime cannot.
+
 ### 09/14/26 — `#[…]` is a fixed array; `[…]` is always dynamic
 
 The flavor of an array literal was inferred: `[1, 2, 3]` was a fixed `[3]T` until a `[]T`

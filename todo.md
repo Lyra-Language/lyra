@@ -9,9 +9,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] The parser hangs on an unterminated expression at end of file.** `let main = () ->
-  void => {` ⏎ `println(x ++ ` spins in `parser.Parse` (go-tree-sitter 0.25.0) while the 0.25.10
-  CLI parses it in a millisecond; predates `#[…]`. The LSP can meet this mid-edit.
 - **[OPEN] `==` on a `[]T` type-checks and does not lower** (`llvm: structural equality on
   DynamicArray<i64> is not implemented`). Fixed arrays compare element-wise; implement the
   dynamic case (length, then elements) or refuse it in the typechecker.
