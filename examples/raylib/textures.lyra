@@ -290,7 +290,7 @@ let load_assets = () -> Maybe<bool> => {
       set_texture_wrap(sheet, WRAP_CLAMP)
       sheet.gen_mipmaps()
       println("sprite sheet: ${sheet.width}x${sheet.height}, valid=${texture_valid(sheet)}, "
-        ++ "${sheet.mipmaps} mipmap level(s)")
+          ++ "${sheet.mipmaps} mipmap level(s)")
       match asset_texture("panel.png") {
         Some(panel) => {
           match asset_texture("scene.png") {
@@ -397,7 +397,7 @@ let min_i64 = pure (a: i64, b: i64) -> i64 => if a < b { a } else { b }
 
 let loop_frames =
   (sheet: Texture2D, panel: Texture2D, scene: Texture2D, sepia: Texture2D,
-   target: Maybe<RenderTexture>) -> void => {
+  target: Maybe<RenderTexture>) -> void => {
     var shot: Maybe<Texture2D> = None
     for !should_close() {
       let t = f32(elapsed())

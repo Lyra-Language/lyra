@@ -147,7 +147,7 @@ let run_checks = () -> u8 => {
   for k in arrows { everything.push(k) }
   for k in function_keys { everything.push(k) }
   for k in [KEY_NULL, KEY_SPACE, KEY_ESCAPE, KEY_ENTER, KEY_BACKSPACE, KEY_TAB,
-            KEY_LEFT_SHIFT, KEY_LEFT_CONTROL, KEY_LEFT_ALT, KEY_LEFT_SUPER] {
+    KEY_LEFT_SHIFT, KEY_LEFT_CONTROL, KEY_LEFT_ALT, KEY_LEFT_SUPER] {
     everything.push(k)
   }
   failures += check("every key constant is distinct", all_distinct(everything), true)
@@ -319,7 +319,7 @@ let run_tester = () -> void => {
     begin_drawing()
     clear_background(RAYWHITE)
     draw_text("raylib input tester - close the window to quit (ESC is disabled)",
-              24, 16, LABEL, DARKGRAY)
+      24, 16, LABEL, DARKGRAY)
 
     draw_keyboard(24, 56, typed, recent, space_pressed, space_released, repeats)
     draw_mouse(384, 56, wheel_total, cursor, transformed)
@@ -376,7 +376,7 @@ let describe_key = (key: i32) -> string =>
 // ---------------------------------------------------------------------------------------
 
 let draw_keyboard = (x: i32, y: i32, typed: string, recent: []string, pressed: i64,
-                     released: i64, repeats: i64) -> void => {
+  released: i64, repeats: i64) -> void => {
   panel(x, y, 336, 690, "keyboard")
   var row = y + 34
 
@@ -393,7 +393,7 @@ let draw_keyboard = (x: i32, y: i32, typed: string, recent: []string, pressed: i
   row += 24
   var col = x + 12
   for pair in [("shift", KEY_LEFT_SHIFT), ("ctrl", KEY_LEFT_CONTROL),
-               ("alt", KEY_LEFT_ALT), ("cmd", KEY_LEFT_SUPER)] {
+    ("alt", KEY_LEFT_ALT), ("cmd", KEY_LEFT_SUPER)] {
     lamp(col, row, pair.0, key_down(pair.1))
     col += 78
   }
@@ -406,7 +406,7 @@ let draw_keyboard = (x: i32, y: i32, typed: string, recent: []string, pressed: i
   row += 34
   col = x + 12
   for pair in [("enter", KEY_ENTER), ("tab", KEY_TAB), ("esc", KEY_ESCAPE),
-               ("space", KEY_SPACE)] {
+    ("space", KEY_SPACE)] {
     lamp(col, row, pair.0, key_down(pair.1))
     col += 78
   }
@@ -432,7 +432,7 @@ let draw_keyboard = (x: i32, y: i32, typed: string, recent: []string, pressed: i
 }
 
 let draw_mouse = (x: i32, y: i32, wheel_total: f64, cursor: i64,
-                  transformed: bool) -> void => {
+  transformed: bool) -> void => {
   panel(x, y, 312, 396, "mouse")
   let p = mouse_position()
   let d = mouse_delta()
@@ -444,7 +444,7 @@ let draw_mouse = (x: i32, y: i32, wheel_total: f64, cursor: i64,
   draw_text("delta    ${d.x.round()}, ${d.y.round()}", x + 12, row, BODY, BLACK)
   row += 22
   draw_text("wheel    ${w.x.round()}, ${w.y.round()}  total ${wheel_total.round()}",
-            x + 12, row, BODY, BLACK)
+    x + 12, row, BODY, BLACK)
   row += 30
 
   draw_text("buttons (down):", x + 12, row, BODY, DARKGRAY)
@@ -452,9 +452,9 @@ let draw_mouse = (x: i32, y: i32, wheel_total: f64, cursor: i64,
   var col = x + 12
   var i = 0
   for pair in [("L", MOUSE_BUTTON_LEFT), ("R", MOUSE_BUTTON_RIGHT),
-               ("M", MOUSE_BUTTON_MIDDLE), ("side", MOUSE_BUTTON_SIDE),
-               ("extra", MOUSE_BUTTON_EXTRA), ("fwd", MOUSE_BUTTON_FORWARD),
-               ("back", MOUSE_BUTTON_BACK)] {
+    ("M", MOUSE_BUTTON_MIDDLE), ("side", MOUSE_BUTTON_SIDE),
+    ("extra", MOUSE_BUTTON_EXTRA), ("fwd", MOUSE_BUTTON_FORWARD),
+    ("back", MOUSE_BUTTON_BACK)] {
     lamp(col, row, pair.0, mouse_down(pair.1))
     col += 62
     i += 1
@@ -467,7 +467,7 @@ let draw_mouse = (x: i32, y: i32, wheel_total: f64, cursor: i64,
 
   // pressed/released are edge events, so they show as a flash rather than a state.
   draw_text("left pressed ${mouse_pressed(MOUSE_BUTTON_LEFT)}   released ${mouse_released(MOUSE_BUTTON_LEFT)}",
-            x + 12, row, 16, DARKGRAY)
+    x + 12, row, 16, DARKGRAY)
   row += 20
   draw_text("left up ${mouse_up(MOUSE_BUTTON_LEFT)}", x + 12, row, 16, DARKGRAY)
   row += 28
@@ -501,7 +501,7 @@ let draw_touch = (x: i32, y: i32) -> void => {
     for i < n {
       let t = touch_position(i)
       draw_text("id ${touch_id(i)} at ${t.x.round()}, ${t.y.round()}",
-                x + 12, row, BODY, BLACK)
+        x + 12, row, BODY, BLACK)
       draw_circle(t, 14.0, rgb(60, 150, 240))
       row += 22
       i += 1
@@ -575,10 +575,10 @@ let draw_one_gamepad = (x: i32, y: i32, pad: i64) -> i32 => {
   }
   row += 36
   draw_text("A pressed ${gamepad_pressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  released ${gamepad_released(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}",
-            x + 12, row, 16, DARKGRAY)
+    x + 12, row, 16, DARKGRAY)
   row += 18
   draw_text("A up ${gamepad_up(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  (press A to rumble)",
-            x + 12, row, 16, DARKGRAY)
+    x + 12, row, 16, DARKGRAY)
   row += 24
 
   let axes = gamepad_axis_count(pad)

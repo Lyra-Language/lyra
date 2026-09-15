@@ -291,7 +291,7 @@ let run_scene = () -> void => {
     for p in placed {
       let s = world_to_screen(vec3(p.at.x, p.at.y + 2.8, p.at.z), camera)
       draw_text(p.name, i32(s.x.round()) - measure_text(p.name, 16) / 2,
-                i32(s.y.round()) - 18, 16, DARKGRAY)
+        i32(s.y.round()) - 18, 16, DARKGRAY)
     }
     end_drawing()
   }
@@ -304,14 +304,14 @@ let run_scene = () -> void => {
 
 /// Turn a generated mesh into a model standing at ring slot `slot`.
 let place = (self: mut []Placed, name: string, mesh: Maybe<Mesh>, slot: i64,
-             tint: Color) -> void =>
-  match mesh {
-    Some(m) => match model_from_mesh(m) {
-      Some(model) => self.push(Placed { name: name, model: model, at: ring(slot), tint: tint }),
-      None => println("could not build a model for ${name}"),
-    },
-    None => println("could not generate ${name}"),
-  }
+  tint: Color) -> void =>
+    match mesh {
+      Some(m) => match model_from_mesh(m) {
+        Some(model) => self.push(Placed { name: name, model: model, at: ring(slot), tint: tint }),
+        None => println("could not build a model for ${name}"),
+      },
+      None => println("could not generate ${name}"),
+    }
 
 /// A model's box, moved to where it stands. `model_bounding_box` is in model space.
 let world_box = (p: Placed) -> BoundingBox => {

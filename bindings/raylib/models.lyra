@@ -202,7 +202,7 @@ pub let draw_model = (model: Model, position: Vector3, scale: f32, tint: Color) 
 /// Draw a model rotated about an axis and scaled per axis.
 pub let draw_model_ex =
   (model: Model, position: Vector3, axis: Vector3, angle: Degrees, scale: Vector3,
-   tint: Color) -> void =>
+  tint: Color) -> void =>
     unsafe { rl_draw_model_ex(model, position, axis, f32(angle), scale, tint) }
 
 pub let draw_model_wires = (model: Model, position: Vector3, scale: f32, tint: Color) -> void =>
@@ -210,7 +210,7 @@ pub let draw_model_wires = (model: Model, position: Vector3, scale: f32, tint: C
 
 pub let draw_model_wires_ex =
   (model: Model, position: Vector3, axis: Vector3, angle: Degrees, scale: Vector3,
-   tint: Color) -> void =>
+  tint: Color) -> void =>
     unsafe { rl_draw_model_wires_ex(model, position, axis, f32(angle), scale, tint) }
 
 /// A bounding box's edges — for seeing what [model_bounding_box] actually answered.
@@ -592,10 +592,10 @@ pub let update_animation = (model: Model, anims: Animations, index: i64, frame: 
 /// What a walk turning into a run is made of.
 pub let update_animation_blend =
   (model: Model, anims: Animations, first: i64, first_frame: f32, second: i64,
-   second_frame: f32, blend: f32) -> void =>
+  second_frame: f32, blend: f32) -> void =>
     unsafe {
       rl_update_model_animation_ex(model, clip_at(anims, first), first_frame,
-                                   clip_at(anims, second), second_frame, blend)
+        clip_at(anims, second), second_frame, blend)
     }
 
 /// Whether a clip was made for this model's skeleton.
@@ -650,14 +650,14 @@ unsafe extern rl_draw_model: (model: Model, position: Vector3, scale: f32, tint:
 @symbol("DrawModelEx")
 unsafe extern rl_draw_model_ex:
   (model: Model, position: Vector3, axis: Vector3, angle: f32, scale: Vector3,
-   tint: Color) -> void
+  tint: Color) -> void
 @symbol("DrawModelWires")
 unsafe extern rl_draw_model_wires:
   (model: Model, position: Vector3, scale: f32, tint: Color) -> void
 @symbol("DrawModelWiresEx")
 unsafe extern rl_draw_model_wires_ex:
   (model: Model, position: Vector3, axis: Vector3, angle: f32, scale: Vector3,
-   tint: Color) -> void
+  tint: Color) -> void
 @symbol("DrawBoundingBox")
 unsafe extern rl_draw_bounding_box: (box: BoundingBox, color: Color) -> void
 @symbol("SetModelMeshMaterial")
@@ -736,6 +736,6 @@ unsafe extern rl_update_model_animation:
 @symbol("UpdateModelAnimationEx")
 unsafe extern rl_update_model_animation_ex:
   (model: Model, first: ModelAnimation, first_frame: f32, second: ModelAnimation,
-   second_frame: f32, blend: f32) -> void
+  second_frame: f32, blend: f32) -> void
 @symbol("IsModelAnimationValid")
 unsafe extern rl_model_animation_valid: (model: Model, anim: ModelAnimation) -> u8

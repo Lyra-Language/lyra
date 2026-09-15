@@ -153,14 +153,14 @@ pub let export_font_as_code = (font: Font, path: string) -> bool =>
 /// Anything loaded by [load_font] or [font_from_memory] is drawn through here.
 pub let draw_text_ex =
   (font: Font, text: string, position: Vector2, size: f32, spacing: f32,
-   tint: Color) -> void =>
+  tint: Color) -> void =>
     text.with_cstring((t) => unsafe { rl_draw_text_ex(font, t, position, size, spacing, tint) })
 
 /// The same, rotated about `origin` — which is measured from `position`, so a label that
 /// turns about its own centre passes half its measured extent rather than a screen point.
 pub let draw_text_pro =
   (font: Font, text: string, position: Vector2, origin: Vector2, rotation: Degrees,
-   size: f32, spacing: f32, tint: Color) -> void =>
+  size: f32, spacing: f32, tint: Color) -> void =>
     text.with_cstring((t) =>
       unsafe { rl_draw_text_pro(font, t, position, origin, f32(rotation), size, spacing, tint) })
 
@@ -172,11 +172,11 @@ pub let draw_codepoint =
 /// A run of code points, without building a string for them.
 pub let draw_codepoints =
   (font: Font, codepoints: []i32, position: Vector2, size: f32, spacing: f32,
-   tint: Color) -> void => {
+  tint: Color) -> void => {
     if codepoints.len() > 0 {
       unsafe {
         rl_draw_codepoints(font, codepoints.data(), i32(codepoints.len()), position, size,
-                           spacing, tint)
+          spacing, tint)
       }
     }
   }
@@ -244,14 +244,14 @@ unsafe extern rl_draw_text_ex:
 @symbol("DrawTextPro")
 unsafe extern rl_draw_text_pro:
   (font: Font, text: ^u8, position: Vector2, origin: Vector2, rotation: f32, size: f32,
-   spacing: f32, tint: Color) -> void
+  spacing: f32, tint: Color) -> void
 @symbol("DrawTextCodepoint")
 unsafe extern rl_draw_codepoint:
   (font: Font, codepoint: i32, position: Vector2, size: f32, tint: Color) -> void
 @symbol("DrawTextCodepoints")
 unsafe extern rl_draw_codepoints:
   (font: Font, codepoints: ^i32, count: i32, position: Vector2, size: f32, spacing: f32,
-   tint: Color) -> void
+  tint: Color) -> void
 @symbol("MeasureTextEx")
 unsafe extern pure rl_measure_text_ex:
   (font: Font, text: ^u8, size: f32, spacing: f32) -> Vector2

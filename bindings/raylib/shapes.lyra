@@ -136,7 +136,7 @@ pub let draw_circle_gradient =
 /// A filled wedge of a circle, from `start_angle` to `end_angle` in degrees.
 pub let draw_circle_sector =
   (center: Vector2, radius: f32, start_angle: Degrees, end_angle: Degrees, segments: i32,
-   color: Color) -> void =>
+  color: Color) -> void =>
     unsafe {
       rl_draw_circle_sector(center, radius, f32(start_angle), f32(end_angle), segments, color)
     }
@@ -144,10 +144,10 @@ pub let draw_circle_sector =
 /// The outline of a wedge of a circle.
 pub let draw_circle_sector_lines =
   (center: Vector2, radius: f32, start_angle: Degrees, end_angle: Degrees, segments: i32,
-   color: Color) -> void =>
+  color: Color) -> void =>
     unsafe {
       rl_draw_circle_sector_lines(center, radius, f32(start_angle), f32(end_angle),
-                                  segments, color)
+        segments, color)
     }
 
 /// A filled ellipse with separate horizontal and vertical radii.
@@ -163,19 +163,19 @@ pub let draw_ellipse_lines =
 /// A filled annulus — the area between two concentric circles, over an angular span.
 pub let draw_ring =
   (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: Degrees,
-   end_angle: Degrees, segments: i32, color: Color) -> void =>
+  end_angle: Degrees, segments: i32, color: Color) -> void =>
     unsafe {
       rl_draw_ring(center, inner_radius, outer_radius, f32(start_angle), f32(end_angle),
-                   segments, color)
+        segments, color)
     }
 
 /// The outline of an annulus.
 pub let draw_ring_lines =
   (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: Degrees,
-   end_angle: Degrees, segments: i32, color: Color) -> void =>
+  end_angle: Degrees, segments: i32, color: Color) -> void =>
     unsafe {
       rl_draw_ring_lines(center, inner_radius, outer_radius, f32(start_angle),
-                         f32(end_angle), segments, color)
+        f32(end_angle), segments, color)
     }
 
 // ---------------------------------------------------------------------------------------
@@ -220,7 +220,7 @@ pub let draw_rectangle_rounded_lines =
 /// and only in loose coordinates.
 pub let draw_rectangle_gradient =
   (rect: Rectangle, top_left: Color, bottom_left: Color, bottom_right: Color,
-   top_right: Color) -> void =>
+  top_right: Color) -> void =>
     unsafe {
       rl_draw_rectangle_gradient(rect, top_left, bottom_left, bottom_right, top_right)
     }
@@ -279,7 +279,7 @@ pub let draw_poly_lines =
 /// A regular polygon's outline at a given thickness.
 pub let draw_poly_lines_ex =
   (center: Vector2, sides: i32, radius: f32, rotation: Degrees, thick: f32,
-   color: Color) -> void =>
+  color: Color) -> void =>
     unsafe { rl_draw_poly_lines_ex(center, sides, radius, f32(rotation), thick, color) }
 
 // ---------------------------------------------------------------------------------------
@@ -510,12 +510,12 @@ unsafe extern rl_draw_circle_gradient:
 @symbol("DrawCircleSector")
 unsafe extern rl_draw_circle_sector:
   (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
-   color: Color) -> void
+  color: Color) -> void
 
 @symbol("DrawCircleSectorLines")
 unsafe extern rl_draw_circle_sector_lines:
   (center: Vector2, radius: f32, start_angle: f32, end_angle: f32, segments: i32,
-   color: Color) -> void
+  color: Color) -> void
 
 @symbol("DrawEllipseV")
 unsafe extern rl_draw_ellipse:
@@ -528,12 +528,12 @@ unsafe extern rl_draw_ellipse_lines:
 @symbol("DrawRing")
 unsafe extern rl_draw_ring:
   (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
-   segments: i32, color: Color) -> void
+  segments: i32, color: Color) -> void
 
 @symbol("DrawRingLines")
 unsafe extern rl_draw_ring_lines:
   (center: Vector2, inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32,
-   segments: i32, color: Color) -> void
+  segments: i32, color: Color) -> void
 
 @symbol("DrawRectangleRec")
 unsafe extern rl_draw_rectangle: (rect: Rectangle, color: Color) -> void
@@ -559,7 +559,7 @@ unsafe extern rl_draw_rectangle_rounded_lines:
 @symbol("DrawRectangleGradientEx")
 unsafe extern rl_draw_rectangle_gradient:
   (rect: Rectangle, top_left: Color, bottom_left: Color, bottom_right: Color,
-   top_right: Color) -> void
+  top_right: Color) -> void
 
 @symbol("DrawTriangle")
 unsafe extern rl_draw_triangle: (v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void
@@ -679,7 +679,7 @@ unsafe extern pure rl_point_in_poly: (point: Vector2, points: ^Vector2, count: i
 @symbol("CheckCollisionLines")
 unsafe extern pure rl_lines_intersect:
   (start1: Vector2, finish1: Vector2, start2: Vector2, finish2: Vector2,
-   hit: ^mut Vector2) -> u8
+  hit: ^mut Vector2) -> u8
 
 @symbol("GetCollisionRec")
 unsafe extern pure rl_collision_rect: (a: Rectangle, b: Rectangle) -> Rectangle

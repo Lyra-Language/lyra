@@ -55,7 +55,7 @@ pub let decode_jpeg = (bytes: []u8) -> Maybe<Jpeg> => {
   }
   var pixels: []u8 = [0; i64(width) * i64(height) * 4]
   let failed = unsafe { tj3_decompress8(handle, bytes.data(), bytes.len(), pixels.data_mut(),
-                                        width * 4, TJPF_RGBA) } != 0
+    width * 4, TJPF_RGBA) } != 0
   unsafe { tj3_destroy(handle) }
   if failed { None } else { Some(Jpeg { pixels: pixels, width: width, height: height }) }
 }

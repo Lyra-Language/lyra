@@ -88,7 +88,7 @@ let report = (path: string) -> void => {
   }
   println("  file, ${file_length(path)} bytes, modified ${file_mod_time(path)}")
   println("  name ${file_name(path)}  stem ${file_stem(path)}  " ++
-          "ext ${file_extension(path).unwrap_or("(none)")}")
+      "ext ${file_extension(path).unwrap_or("(none)")}")
   println("  in ${directory_of(path)}")
   match read_file_bytes(path) {
     Some(bytes) => {

@@ -37,11 +37,11 @@ module gltf
 //! whose accessor does not check out is skipped, and a file with nothing usable answers `None`.
 
 import std.json.{ parse_json, JsonValue, JsonNull, field, element, elements, as_number, as_int,
-                  as_text, as_bool, kind }
+  as_text, as_bool, kind }
 import bindings.raylib.{ Matrix, Vector3, Vector4, vec3, matrix_multiply, matrix_invert,
-                         matrix_identity, matrix_translation, matrix_scale, quaternion_to_matrix,
-                         quaternion_normalize, quaternion_slerp, read_file_bytes, decode_base64,
-                         directory_of }
+  matrix_identity, matrix_translation, matrix_scale, quaternion_to_matrix,
+  quaternion_normalize, quaternion_slerp, read_file_bytes, decode_base64,
+  directory_of }
 
 /// A file's node animations, ready to be sampled with [pose].
 pub struct NodeAnimation {
@@ -75,7 +75,7 @@ pub let load_node_animation = (path: string) -> Maybe<NodeAnimation> => {
   }
   if clips.len() == 0 { return None }
   Some(NodeAnimation { nodes: nodes, order: parents_first(nodes), clips: clips,
-                       mesh_nodes: mesh_nodes(doc) })
+    mesh_nodes: mesh_nodes(doc) })
 }
 
 pub let node_clip_count = pure (self: NodeAnimation) -> i64 => self.clips.len()
@@ -194,7 +194,7 @@ pub let load_material_params = (path: string) -> Maybe<[]MaterialParams> => {
 /// A material described by the few numbers a non-glTF file gives raylib: every texture on
 /// the first UV set untransformed, at full strength, with no extensions.
 pub let plain_material = pure (metallic: f32, roughness: f32, emissive_r: f32, emissive_g: f32,
-                               emissive_b: f32, blended: bool) -> MaterialParams => {
+  emissive_b: f32, blended: bool) -> MaterialParams => {
   var slots: []TexSlot = []
   for _ in 0..<5 { slots.push(plain_slot()) }
   MaterialParams {
@@ -254,14 +254,14 @@ let slot_of = pure (doc: JsonValue, info: JsonValue) -> TexSlot => {
 /// The image behind texture `index`, or -1 where there is no such texture.
 let image_of = pure (doc: JsonValue, index: i64) -> i64 =>
   member(member(doc, "textures").element(index).unwrap_or(JsonNull), "source")
-    .as_int().unwrap_or(0 - 1)
+  .as_int().unwrap_or(0 - 1)
 
 /// The wrap mode of texture `index`'s sampler, as raylib's constant — repeat, glTF's default,
 /// for a texture with no sampler or one whose two axes disagree.
 let wrap_of = pure (doc: JsonValue, index: i64) -> i64 => {
   let texture = member(doc, "textures").element(index).unwrap_or(JsonNull)
   let sampler = member(doc, "samplers").element(member(texture, "sampler").as_int().unwrap_or(0 - 1))
-                  .unwrap_or(JsonNull)
+    .unwrap_or(JsonNull)
   let s = member(sampler, "wrapS").as_int().unwrap_or(GL_REPEAT)
   let t = member(sampler, "wrapT").as_int().unwrap_or(GL_REPEAT)
   if s != t { WRAP_REPEAT_MODE } else if s == GL_CLAMP_TO_EDGE { WRAP_CLAMP_MODE }
@@ -278,7 +278,7 @@ const WRAP_MIRROR_MODE: i64 = 2
 
 let plain_slot = pure () -> TexSlot =>
   TexSlot { uv: 0, offset_x: 0.0, offset_y: 0.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0,
-            wrap: WRAP_REPEAT_MODE, image: 0 - 1 }
+    wrap: WRAP_REPEAT_MODE, image: 0 - 1 }
 
 let alpha_mode_of = pure (m: string) -> i64 =>
   if m == "MASK" { ALPHA_MASK } else if m == "BLEND" { ALPHA_BLEND } else { ALPHA_OPAQUE }
@@ -422,7 +422,7 @@ let rest_local = pure (n: AnimNode) -> Matrix => match n.matrix {
 /// applies its first argument first.
 let trs = pure (t: Vector3, r: Vector4, s: Vector3) -> Matrix =>
   matrix_multiply(matrix_multiply(matrix_scale(s.x, s.y, s.z), quaternion_to_matrix(r)),
-                  matrix_translation(t))
+    matrix_translation(t))
 
 /// AnimNode indices with every parent before its children. A node caught in a cycle — which a
 /// valid file cannot have — is left out, and keeps an identity transform.
@@ -491,7 +491,7 @@ const LINEAR: i64 = 1
 const CUBICSPLINE: i64 = 2
 
 let read_clip = pure (doc: JsonValue, buffers: [][]u8, anim: JsonValue, index: i64,
-                      node_count: i64) -> AnimClip => {
+  node_count: i64) -> AnimClip => {
   let samplers = member(anim, "samplers")
   var channels: []AnimChannel = []
   var duration: f32 = 0.0
@@ -509,7 +509,7 @@ let read_clip = pure (doc: JsonValue, buffers: [][]u8, anim: JsonValue, index: i
           Some(values) => {
             if times.len() > 0 && values.len() >= times.len() * per_key {
               channels.push(AnimChannel { node: node, path: path, interpolation: interpolation,
-                                      times: times, values: values })
+                times: times, values: values })
               let last = times[times.len() - 1]
               if last > duration { duration = last }
             }
@@ -521,7 +521,7 @@ let read_clip = pure (doc: JsonValue, buffers: [][]u8, anim: JsonValue, index: i
     }
   }
   AnimClip { name: member(anim, "name").as_text().unwrap_or("animation ${index + 1}"),
-         channels: channels, duration: duration }
+    channels: channels, duration: duration }
 }
 
 let nth_clip = pure (self: NodeAnimation, clip: i64) -> AnimClip => {
@@ -578,7 +578,7 @@ let key = pure (ch: AnimChannel, k: i64, width: i64) -> Vector4 =>
 let element_of = pure (ch: AnimChannel, e: i64, width: i64) -> Vector4 => {
   let at = e * width
   Vector4 { x: ch.values[at], y: ch.values[at + 1], z: ch.values[at + 2],
-            w: if width == 4 { ch.values[at + 3] } else { 0.0 } }
+    w: if width == 4 { ch.values[at + 3] } else { 0.0 } }
 }
 
 /// glTF's cubic Hermite spline between key `k` and the next: the two values, key `k`'s
@@ -591,7 +591,7 @@ let hermite = pure (ch: AnimChannel, k: i64, s: f32, span: f32, width: i64) -> V
   let s2 = s * s
   let s3 = s2 * s
   let v = add4(add4(scale4(p0, 2.0 * s3 - 3.0 * s2 + 1.0), scale4(m0, s3 - 2.0 * s2 + s)),
-               add4(scale4(p1, 3.0 * s2 - 2.0 * s3), scale4(m1, s3 - s2)))
+    add4(scale4(p1, 3.0 * s2 - 2.0 * s3), scale4(m1, s3 - s2)))
   if width == 4 { quaternion_normalize(v) } else { v }
 }
 
@@ -776,7 +776,7 @@ let vec3_of = pure (v: JsonValue, fallback: f32) -> Vector3 =>
 
 let rotation_of = pure (v: JsonValue) -> Vector4 =>
   Vector4 { x: number_at(v, 0, 0.0), y: number_at(v, 1, 0.0), z: number_at(v, 2, 0.0),
-            w: number_at(v, 3, 1.0) }
+    w: number_at(v, 3, 1.0) }
 
 /// A node's `matrix`, column-major as glTF writes it — which is also how raylib names its
 /// fields, `m12`..`m14` holding the translation.

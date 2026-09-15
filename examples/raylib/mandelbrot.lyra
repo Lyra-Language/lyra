@@ -299,7 +299,7 @@ let zoom_factor = pure (wheel: f64) -> f64 => {
 /// corner, so a coarse frame sits where the sharp one will rather than two pixels up and
 /// to the left of it.
 let render = (buffer: mut []Color, width: i64, height: i64,
-              min_x: f64, min_y: f64, scale: f64, step: i64) -> void => {
+  min_x: f64, min_y: f64, scale: f64, step: i64) -> void => {
   // The iteration limit is a property of the view, not of a point, so it is computed once
   // per render rather than once per pixel.
   let max_iter = iter_limit(scale)
@@ -346,7 +346,7 @@ let render = (buffer: mut []Color, width: i64, height: i64,
 /// The sample points are placed exactly as a whole-picture supersample would place them, so
 /// a refined pixel's colour is bit-for-bit what it would have been.
 let refine_edges = (buffer: mut []Color, width: i64, height: i64,
-                    min_x: f64, min_y: f64, scale: f64) -> void => {
+  min_x: f64, min_y: f64, scale: f64) -> void => {
   let max_iter = iter_limit(scale)
 
   // Mark both pixels of every neighbouring pair that disagree — right and down from each

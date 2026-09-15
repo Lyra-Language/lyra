@@ -102,17 +102,17 @@ let decode_escape = (self: mut EventReader) -> Maybe<Event> => {
   if !wait_for_key_ms(escape_timeout_ms) {
     Some(Keyboard(Escape))
   } else {
-  match read_key() {
-    // Input ended right after the Escape, so it was the last key pressed.
-    None => Some(Keyboard(Escape)),
-    Some(b) => {
-      // `[` is the usual introducer; `O` is the "application cursor keys" mode some
-      // terminals switch into, where an arrow is `\eOA` rather than `\e[A`. Both are
-      // common enough that handling only one loses arrows on real terminals.
-      if b == '[' || b == 'O' { decode_body() }
-      else { self.pending = Some(b); Some(Keyboard(Escape)) }
+    match read_key() {
+      // Input ended right after the Escape, so it was the last key pressed.
+      None => Some(Keyboard(Escape)),
+      Some(b) => {
+        // `[` is the usual introducer; `O` is the "application cursor keys" mode some
+        // terminals switch into, where an arrow is `\eOA` rather than `\e[A`. Both are
+        // common enough that handling only one loses arrows on real terminals.
+        if b == '[' || b == 'O' { decode_body() }
+        else { self.pending = Some(b); Some(Keyboard(Escape)) }
+      }
     }
-  }
   }
 }
 

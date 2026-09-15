@@ -100,12 +100,12 @@ let run_checks = () -> u8 => {
 
   canvas.fill(BLANK)
   canvas.paint_triangle_fan([vec2(8.0, 8.0), vec2(2.0, 2.0), vec2(8.0, 1.0),
-                             vec2(14.0, 2.0)], PURPLE)
+    vec2(14.0, 2.0)], PURPLE)
   failures += same("paint_triangle_fan", at(canvas, 8, 4), PURPLE)
 
   canvas.fill(BLANK)
   canvas.paint_triangle_strip([vec2(1.0, 14.0), vec2(1.0, 2.0), vec2(8.0, 14.0),
-                               vec2(8.0, 2.0)], YELLOW)
+    vec2(8.0, 2.0)], YELLOW)
   failures += same("paint_triangle_strip", at(canvas, 4, 8), YELLOW)
 
   // The empty-list guard: `data()` traps on an empty array and these absorb it, on the
@@ -134,7 +134,7 @@ let run_checks = () -> u8 => {
   // A gradient triangle takes each corner's colour at that corner.
   canvas.fill(BLANK)
   canvas.paint_triangle_gradient(vec2(0.0, 0.0), vec2(0.0, 15.0), vec2(15.0, 0.0),
-                                 RED, GREEN, BLUE)
+    RED, GREEN, BLUE)
   failures += check("paint_triangle_gradient blends between its corners",
     at_color(canvas, 1, 1).r != at_color(canvas, 1, 13).r, true)
 
@@ -336,7 +336,7 @@ struct Panel {
 
 let run_gallery = () -> void => {
   init_window(i64(4 * CELL_W + 100), i64(3 * (CELL_H + 46) + 60),
-              "Lyra — raylib image painting")
+    "Lyra — raylib image painting")
   set_target_fps(60)
 
   // The window is open, so the built-in font is loaded and the text panel has something
@@ -402,11 +402,11 @@ let primitives = () -> Image => {
   c.paint_triangle(vec2(14.0, 108.0), vec2(40.0, 58.0), vec2(66.0, 108.0), GREEN)
   c.paint_triangle_lines(vec2(14.0, 108.0), vec2(40.0, 58.0), vec2(66.0, 108.0), BLACK)
   c.paint_triangle_gradient(vec2(76.0, 108.0), vec2(102.0, 58.0), vec2(128.0, 108.0),
-                            RED, YELLOW, PURPLE)
+    RED, YELLOW, PURPLE)
   c.paint_triangle_fan([vec2(178.0, 88.0), vec2(142.0, 108.0), vec2(160.0, 58.0),
-                        vec2(206.0, 68.0)], BLUE)
+    vec2(206.0, 68.0)], BLUE)
   c.paint_triangle_strip([vec2(10.0, 140.0), vec2(10.0, 118.0), vec2(60.0, 140.0),
-                          vec2(60.0, 118.0), vec2(110.0, 140.0)], ORANGE)
+    vec2(60.0, 118.0), vec2(110.0, 140.0)], ORANGE)
   c.paint_pixel(vec2(4.0, 4.0), RED)
   c.paint_text("paint_*", 128, 126, 20, BLACK)
   c
@@ -445,7 +445,7 @@ let scene = () -> Image => {
   c.paint_circle(vec2(60.0, 60.0), 34, rgb(240, 90, 60))
   c.paint_circle(vec2(150.0, 50.0), 22, rgb(250, 230, 90))
   c.paint_triangle(vec2(20.0, 140.0), vec2(90.0, 76.0), vec2(160.0, 140.0),
-                   rgb(40, 150, 90))
+    rgb(40, 150, 90))
   c.paint_rectangle(rect(168.0, 96.0, 40.0, 44.0), rgb(120, 60, 160))
   c.paint_line_ex(vec2(0.0, 148.0), vec2(f32(CELL_W), 148.0), 3, BLACK)
   c
@@ -504,7 +504,7 @@ let tone_panel = () -> Image => {
   let half = f32(CELL_H) / 2.0
   c.paint_image(top, rect(0.0, 0.0, f32(CELL_W), half), rect(0.0, 0.0, f32(CELL_W), half), WHITE)
   c.paint_image(bottom, rect(0.0, half, f32(CELL_W), half),
-                rect(0.0, half, f32(CELL_W), half), WHITE)
+    rect(0.0, half, f32(CELL_W), half), WHITE)
   c.paint_line(vec2(0.0, half), vec2(f32(CELL_W), half), BLACK)
   unload_image(top) ; unload_image(bottom)
   c
@@ -568,7 +568,7 @@ let alpha_panel = () -> Image => {
   c.paint_image(blob, whole(blob), rect(4.0, 8.0, 70.0, 70.0), WHITE)
   c.paint_image(cleared, whole(cleared), rect(78.0, 8.0, 70.0, 70.0), WHITE)
   c.paint_image(cropped, whole(cropped),
-                rect(152.0, 8.0, f32(cropped.width), f32(cropped.height)), WHITE)
+    rect(152.0, 8.0, f32(cropped.width), f32(cropped.height)), WHITE)
 
   // The border the crop was taken from, drawn where the blob is.
   let b = image_alpha_border(blob, 0.5)

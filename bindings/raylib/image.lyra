@@ -119,7 +119,7 @@ pub let to_power_of_two = (self: mut Image, fill: Color) -> void =>
 /// (`offset_x`, `offset_y`) and everything else becomes `fill`. Negative offsets crop.
 pub let resize_canvas =
   (self: mut Image, width: i32, height: i32, offset_x: i32, offset_y: i32,
-   fill: Color) -> void =>
+  fill: Color) -> void =>
     unsafe { rl_image_resize_canvas(&mut self, width, height, offset_x, offset_y, fill) }
 
 /// Generate the mipmap chain, in place.
@@ -232,44 +232,44 @@ pub let paint_pixel = (self: mut Image, position: Vector2, color: Color) -> void
   unsafe { rl_image_draw_pixel_v(&mut self, position, color) }
 
 pub let paint_line = (self: mut Image, start: Vector2, finish: Vector2,
-                      color: Color) -> void =>
-  unsafe { rl_image_draw_line_v(&mut self, start, finish, color) }
+  color: Color) -> void =>
+    unsafe { rl_image_draw_line_v(&mut self, start, finish, color) }
 
 /// A line with thickness. **`thick` is an `i32` here** where the screen's `draw_line_ex`
 /// takes an `f32`: a rasteriser counts whole pixels, and raylib's two prototypes say so.
 pub let paint_line_ex = (self: mut Image, start: Vector2, finish: Vector2, thick: i32,
-                         color: Color) -> void =>
-  unsafe { rl_image_draw_line_ex(&mut self, start, finish, thick, color) }
+  color: Color) -> void =>
+    unsafe { rl_image_draw_line_ex(&mut self, start, finish, thick, color) }
 
 /// A filled circle. `radius` is an `i32` for [paint_line_ex]'s reason.
 pub let paint_circle = (self: mut Image, center: Vector2, radius: i32,
-                        color: Color) -> void =>
-  unsafe { rl_image_draw_circle_v(&mut self, center, radius, color) }
+  color: Color) -> void =>
+    unsafe { rl_image_draw_circle_v(&mut self, center, radius, color) }
 
 pub let paint_circle_lines = (self: mut Image, center: Vector2, radius: i32,
-                              color: Color) -> void =>
-  unsafe { rl_image_draw_circle_lines_v(&mut self, center, radius, color) }
+  color: Color) -> void =>
+    unsafe { rl_image_draw_circle_lines_v(&mut self, center, radius, color) }
 
 pub let paint_rectangle = (self: mut Image, rect: Rectangle, color: Color) -> void =>
   unsafe { rl_image_draw_rectangle_rec(&mut self, rect, color) }
 
 pub let paint_rectangle_lines = (self: mut Image, rect: Rectangle, thick: i32,
-                                 color: Color) -> void =>
-  unsafe { rl_image_draw_rectangle_lines(&mut self, rect, thick, color) }
+  color: Color) -> void =>
+    unsafe { rl_image_draw_rectangle_lines(&mut self, rect, thick, color) }
 
 pub let paint_triangle = (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2,
-                          color: Color) -> void =>
-  unsafe { rl_image_draw_triangle(&mut self, v1, v2, v3, color) }
+  color: Color) -> void =>
+    unsafe { rl_image_draw_triangle(&mut self, v1, v2, v3, color) }
 
 /// A triangle with a colour at each corner, interpolated across the face.
 pub let paint_triangle_gradient =
   (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2, c1: Color, c2: Color,
-   c3: Color) -> void =>
+  c3: Color) -> void =>
     unsafe { rl_image_draw_triangle_ex(&mut self, v1, v2, v3, c1, c2, c3) }
 
 pub let paint_triangle_lines = (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2,
-                                color: Color) -> void =>
-  unsafe { rl_image_draw_triangle_lines(&mut self, v1, v2, v3, color) }
+  color: Color) -> void =>
+    unsafe { rl_image_draw_triangle_lines(&mut self, v1, v2, v3, color) }
 
 /// Triangles all sharing `points[0]`. An empty list paints nothing rather than trapping.
 pub let paint_triangle_fan = (self: mut Image, points: []Vector2, color: Color) -> void => {
@@ -280,7 +280,7 @@ pub let paint_triangle_fan = (self: mut Image, points: []Vector2, color: Color) 
 
 /// Triangles each sharing an edge with the last. An empty list paints nothing.
 pub let paint_triangle_strip = (self: mut Image, points: []Vector2,
-                                color: Color) -> void => {
+  color: Color) -> void => {
   if points.len() > 0 {
     unsafe {
       rl_image_draw_triangle_strip(&mut self, points.data(), i32(points.len()), color)
@@ -292,8 +292,8 @@ pub let paint_triangle_strip = (self: mut Image, points: []Vector2,
 ///
 /// The blit every sprite sheet needs, and the one call here that reads a second image.
 pub let paint_image = (self: mut Image, src: Image, source: Rectangle, dest: Rectangle,
-                       tint: Color) -> void =>
-  unsafe { rl_image_draw(&mut self, src, source, dest, tint) }
+  tint: Color) -> void =>
+    unsafe { rl_image_draw(&mut self, src, source, dest, tint) }
 
 /// Text in raylib's built-in font, at a pixel position.
 ///
@@ -302,7 +302,7 @@ pub let paint_image = (self: mut Image, src: Image, source: Rectangle, dest: Rec
 /// output. A void call cannot answer `None`, so the degenerate case is the no-op an empty
 /// point list already is in this module.
 pub let paint_text = (self: mut Image, text: string, x: i32, y: i32, size: i32,
-                      color: Color) -> void => {
+  color: Color) -> void => {
   if font_valid(default_font()) {
     // **`&mut self` must not be taken inside the lambda.** A `with_cstring` closure
     // captures by value, so `&mut self` there addresses a *copy* of the `Image` struct.
@@ -317,7 +317,7 @@ pub let paint_text = (self: mut Image, text: string, x: i32, y: i32, size: i32,
 /// Text in a loaded font, with letter spacing. Paints nothing if `font` is invalid.
 pub let paint_text_ex =
   (self: mut Image, font: Font, text: string, position: Vector2, size: f32, spacing: f32,
-   tint: Color) -> void => {
+  tint: Color) -> void => {
     if font_valid(font) {
       // Outside the lambda, for [paint_text]'s reason.
       var c = text.cstring()
@@ -365,7 +365,7 @@ unsafe extern rl_image_to_pot: (image: ^mut Image, fill: Color) -> void
 @symbol("ImageResizeCanvas")
 unsafe extern rl_image_resize_canvas:
   (image: ^mut Image, width: i32, height: i32, offset_x: i32, offset_y: i32,
-   fill: Color) -> void
+  fill: Color) -> void
 @symbol("ImageMipmaps")
 unsafe extern rl_image_mipmaps: (image: ^mut Image) -> void
 @symbol("ImageDither")
@@ -416,7 +416,7 @@ unsafe extern rl_image_draw_triangle:
 @symbol("ImageDrawTriangleEx")
 unsafe extern rl_image_draw_triangle_ex:
   (dst: ^mut Image, v1: Vector2, v2: Vector2, v3: Vector2, c1: Color, c2: Color,
-   c3: Color) -> void
+  c3: Color) -> void
 @symbol("ImageDrawTriangleLines")
 unsafe extern rl_image_draw_triangle_lines:
   (dst: ^mut Image, v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void
@@ -435,4 +435,4 @@ unsafe extern rl_image_draw_text:
 @symbol("ImageDrawTextEx")
 unsafe extern rl_image_draw_text_ex:
   (dst: ^mut Image, font: Font, text: ^u8, position: Vector2, size: f32, spacing: f32,
-   tint: Color) -> void
+  tint: Color) -> void

@@ -50,10 +50,9 @@ Package management, versioning and separate compilation are out of scope by deci
 
 - **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** The round-trip
   baseline (09/16) and the indentation rule (09/16, COMPLETED.md) are in: `--check`/`-w`
-  over every file in the repo, idempotent, 18 files differing from the rule (the repo's
-  two conventions for a wrapped signature, plus one genuinely mis-indented block in
-  `std/tui/event.lyra`). **Open: whether to run `-w` over the repo** and adopt the rule's
-  answer for wrapped signatures. Next rules: trailing whitespace, blank-line runs, spacing
+  over every file in the repo, idempotent, and the repo is formatted by it (09/17: 18
+  files, one convention for a wrapped signature). `lyrafmt --check` is clean and could be
+  a CI step. Next rules: trailing whitespace, blank-line runs, spacing
   around `=>`/`:`/`,`; then a scope stack (expected to hit `[]T` aliasing) and a directory
   walk (a missing `readdir` in `std.io`). A real bootstrap would start with the collector
   after this.

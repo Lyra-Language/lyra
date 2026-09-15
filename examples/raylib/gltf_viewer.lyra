@@ -52,8 +52,8 @@ module main
 //! framing transform really does centre it and scale it to size. Nothing is shown.
 
 import gltf.{ NodeAnimation, load_node_animation, node_clip_count, node_clip_name,
-              node_clip_duration, node_mesh_count, pose, MaterialParams, load_material_params,
-              plain_material, ALPHA_BLEND, ImageBytes, load_images }
+  node_clip_duration, node_mesh_count, pose, MaterialParams, load_material_params,
+  plain_material, ALPHA_BLEND, ImageBytes, load_images }
 import bindings.jpeg.{ decode_jpeg, is_jpeg_mime }
 import std.ffi.{ data }
 import bindings.raylib.{
@@ -141,7 +141,7 @@ let open = (path: string) -> Maybe<Opened> =>
         nodes: nodes,
         blend: blended(params),
         centre: vec3((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0,
-                     (b.min.z + b.max.z) / 2.0),
+          (b.min.z + b.max.z) / 2.0),
         dims: vec3(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z),
       })
     },
@@ -158,7 +158,7 @@ let matching_nodes = (path: string, model: Model) -> Maybe<NodeAnimation> =>
         Some(n)
       } else {
         println("node animation not shown: the file names ${node_mesh_count(n)} mesh(es), " ++
-                "raylib loaded ${model.mesh_count}")
+            "raylib loaded ${model.mesh_count}")
         None
       }
     },
@@ -182,7 +182,7 @@ let framing = pure (o: Opened, yaw: Degrees, pitch: Degrees, zoom: f32) -> Matri
   let s = if largest > 0.0 { FIT / largest * zoom } else { zoom }
   let centred = matrix_translation(vec3(0.0 - o.centre.x, 0.0 - o.centre.y, 0.0 - o.centre.z))
   let turned = matrix_multiply(matrix_multiply(centred, matrix_rotate_y(yaw)),
-                               matrix_rotate_x(pitch))
+    matrix_rotate_x(pitch))
   matrix_multiply(turned, matrix_scale(s, s, s))
 }
 
@@ -203,7 +203,7 @@ let draw_opened = (o: Opened, transform: Matrix, wires: bool, posed: Maybe<[]Mat
 }
 
 let draw_pass = (o: Opened, transform: Matrix, wires: bool, posed: Maybe<[]Matrix>,
-                 see_through: bool) -> void => {
+  see_through: bool) -> void => {
   for i in 0..<i64(o.model.mesh_count) {
     let material = model_mesh_material(o.model, i)
     let drawn_through = material >= 0 && material < o.blend.len() && o.blend[material]
@@ -472,13 +472,13 @@ let run_viewer = (paths: []string) -> void => {
             if playing && frames > 0.0 {
               frame = wrap_f(frame + dt * CLIP_RATE, frames)
               prev_frame = wrap_f(prev_frame + dt * CLIP_RATE,
-                                  f32(animation_frame_count(a, prev_clip)))
+                f32(animation_frame_count(a, prev_clip)))
             }
             if animation_valid(o.model, a, clip) {
               if fade > 0.0 && animation_valid(o.model, a, prev_clip) {
                 // Crossfade from the clip that was playing to the one chosen.
                 update_animation_blend(o.model, a, prev_clip, prev_frame, clip, frame,
-                                       1.0 - fade / FADE)
+                  1.0 - fade / FADE)
                 fade -= dt
               } else {
                 update_animation(o.model, a, clip, frame)
@@ -523,10 +523,10 @@ let run_viewer = (paths: []string) -> void => {
         end_mode_3d()
         draw_text(file_name(o.path), 20, 18, TEXT + 4, BLACK)
         let shading = if lit.is_none() { "unlit (the lighting shader did not compile)" }
-          else if lighting { "lit" } else { "unlit" }
+        else if lighting { "lit" } else { "unlit" }
         draw_text("meshes ${o.model.mesh_count}  |  materials ${o.model.material_count}  |  " ++
-                  "size ${two(o.dims.x)} x ${two(o.dims.y)} x ${two(o.dims.z)}  |  ${shading}",
-                  20, 50, TEXT, DARKGRAY)
+            "size ${two(o.dims.x)} x ${two(o.dims.y)} x ${two(o.dims.z)}  |  ${shading}",
+          20, 50, TEXT, DARKGRAY)
         draw_text(clip_line, 20, 76, TEXT, DARKGRAY)
       },
       None => {
@@ -535,7 +535,7 @@ let run_viewer = (paths: []string) -> void => {
       },
     }
     draw_text("drag: turn  |  wheel: zoom  |  space: play/pause  |  left/right: clip  |  " ++
-              "l: lighting  |  w: wireframe  |  r: reset  |  drop a file", 20, 690, 16, DARKGRAY)
+        "l: lighting  |  w: wireframe  |  r: reset  |  drop a file", 20, 690, 16, DARKGRAY)
     end_drawing()
   }
 
@@ -587,8 +587,8 @@ let load_lighting = () -> Maybe<Lighting> =>
 
 let feeds_every_slot = (s: Shader) -> bool =>
   bind_shader_map(s, MATERIAL_MAP_OCCLUSION, "occlusionMap") &&
-    bind_shader_map(s, MATERIAL_MAP_EMISSION, "emissionMap") &&
-    bind_shader_map(s, MATERIAL_MAP_HEIGHT, "paramsMap")
+  bind_shader_map(s, MATERIAL_MAP_EMISSION, "emissionMap") &&
+  bind_shader_map(s, MATERIAL_MAP_HEIGHT, "paramsMap")
 
 let unload_lighting = (l: Lighting) -> void => {
   unload_shader(l.smooth)
@@ -647,7 +647,7 @@ let material_params_for = (path: string, model: Model) -> []MaterialParams => {
     Some(from_file) => {
       if from_file.len() + 1 != i64(model.material_count) {
         println("material properties not applied: the file names ${from_file.len()} " ++
-                "material(s), raylib loaded ${model.material_count}")
+            "material(s), raylib loaded ${model.material_count}")
         return plain
       }
       var out: []MaterialParams = [plain[0]]
@@ -670,8 +670,8 @@ let plain_params_for = pure (model: Model) -> []MaterialParams => {
     let e = model_material_color(model, i, MATERIAL_MAP_EMISSION)
     let unset = metal <= 0.0 && rough <= 0.0
     out.push(plain_material(if unset { 0.0 } else { metal }, if unset { 0.8 } else { rough },
-                            f32(e.r) / 255.0, f32(e.g) / 255.0, f32(e.b) / 255.0,
-                            model_material_color(model, i, MATERIAL_MAP_ALBEDO).a < 255))
+      f32(e.r) / 255.0, f32(e.g) / 255.0, f32(e.b) / 255.0,
+      model_material_color(model, i, MATERIAL_MAP_ALBEDO).a < 255))
   }
   out
 }
@@ -703,7 +703,7 @@ let recover_textures = (path: string, model: Model, params: []MaterialParams) ->
   }
   var replaced = 0
   let maps = [MATERIAL_MAP_ALBEDO, MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL,
-              MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION]
+    MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION]
   for i in 0..<i64(model.material_count) {
     for k in 0..<5 {
       let which = params[i].slots[k].image
@@ -773,7 +773,7 @@ let complete_materials = (model: Model, params: []MaterialParams) -> void => {
     // Each slot's wrap mode, which raylib's loader does not apply. The order is the
     // params' slot order; a fallback texture is 1x1, so its mode changes nothing.
     let maps = [MATERIAL_MAP_ALBEDO, MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL,
-                MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION]
+      MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION]
     for k in 0..<5 {
       set_model_material_texture_wrap(model, i, maps[k], i32(params[i].slots[k].wrap))
     }
@@ -795,7 +795,7 @@ let set_params = (model: Model, material: i64, floats: []f32) -> void => {
   for f in floats {
     let bits = float_bits(f)
     texels.push(Color { r: u8(bits & 255), g: u8((bits >> 8) & 255), b: u8((bits >> 16) & 255),
-                        a: u8((bits >> 24) & 255) })
+      a: u8((bits >> 24) & 255) })
   }
   let image = gen_image_color(i32(texels.len()), 1, BLACK)
   match texture_from_image(image) {
@@ -823,8 +823,8 @@ let param_floats = pure (p: MaterialParams) -> []f32 => {
     out.push(s.scale_y)
   }
   for v in [p.normal_scale, p.occlusion_strength, p.metallic, p.roughness, p.emissive_r,
-            p.emissive_g, p.emissive_b, p.emissive_strength, p.transmission, p.clearcoat,
-            p.clearcoat_roughness, f32(p.alpha_mode), p.alpha_cutoff] {
+    p.emissive_g, p.emissive_b, p.emissive_strength, p.transmission, p.clearcoat,
+    p.clearcoat_roughness, f32(p.alpha_mode), p.alpha_cutoff] {
     out.push(v)
   }
   out
@@ -882,7 +882,7 @@ let slots_filled = pure (model: Model) -> bool => {
   var every = true
   for i in 0..<i64(model.material_count) {
     for map in [MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL, MATERIAL_MAP_OCCLUSION,
-                MATERIAL_MAP_EMISSION, MATERIAL_MAP_HEIGHT] {
+      MATERIAL_MAP_EMISSION, MATERIAL_MAP_HEIGHT] {
       if !model_material_has_texture(model, i, map) { every = false }
     }
   }
@@ -1087,8 +1087,8 @@ void main() {
 /// The formats raylib's `LoadModel` reads.
 let is_model_file = (path: string) -> bool =>
   has_extension(path, ".glb") || has_extension(path, ".gltf") ||
-    has_extension(path, ".obj") || has_extension(path, ".iqm") ||
-    has_extension(path, ".vox") || has_extension(path, ".m3d")
+  has_extension(path, ".obj") || has_extension(path, ".iqm") ||
+  has_extension(path, ".vox") || has_extension(path, ".m3d")
 
 /// The program's own arguments, without its name.
 let arguments = () -> []string => {

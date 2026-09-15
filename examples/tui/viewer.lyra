@@ -70,36 +70,36 @@ let main = () => {
         screen.draw(poll_cols, poll_rows, zoom, mx, my, count)
       }
     } else {
-    match events.next_event() {
-      None => { running = false },
-      Some(e) => {
-        count += 1
-        let (cols, rows) = terminal_size()
-        last_cols = cols
-        last_rows = rows
-        match e {
-          Keyboard(Up) => { my -= 1 },
-          Keyboard(Down) => { my += 1 },
-          Keyboard(Left) => { mx -= 1 },
-          Keyboard(Right) => { mx += 1 },
-          Keyboard(PageUp) => { zoom += 1 },
-          Keyboard(PageDown) => { zoom -= 1 },
-          Keyboard(Char c) => { running = i64(c) != 113 },
-          Mouse(m) => match m.button {
-            WheelUp => { zoom -= 1 },
-            WheelDown => { zoom += 1 },
-            // A click sets the marker where the pointer is — the coordinates are
-            // already 0-based, matching the frame's own numbering and the language's.
-            _ => { mx = m.col; my = m.row }
-          },
-          _ => { }
+      match events.next_event() {
+        None => { running = false },
+        Some(e) => {
+          count += 1
+          let (cols, rows) = terminal_size()
+          last_cols = cols
+          last_rows = rows
+          match e {
+            Keyboard(Up) => { my -= 1 },
+            Keyboard(Down) => { my += 1 },
+            Keyboard(Left) => { mx -= 1 },
+            Keyboard(Right) => { mx += 1 },
+            Keyboard(PageUp) => { zoom += 1 },
+            Keyboard(PageDown) => { zoom -= 1 },
+            Keyboard(Char c) => { running = i64(c) != 113 },
+            Mouse(m) => match m.button {
+              WheelUp => { zoom -= 1 },
+              WheelDown => { zoom += 1 },
+              // A click sets the marker where the pointer is — the coordinates are
+              // already 0-based, matching the frame's own numbering and the language's.
+              _ => { mx = m.col; my = m.row }
+            },
+            _ => { }
+          }
+          mx = clamp(mx, 0, cols - 1)
+          my = clamp(my, 0, rows - 2)
+          zoom = clamp(zoom, 0, 99)
+          screen.draw(cols, rows, zoom, mx, my, count)
         }
-        mx = clamp(mx, 0, cols - 1)
-        my = clamp(my, 0, rows - 2)
-        zoom = clamp(zoom, 0, 99)
-        screen.draw(cols, rows, zoom, mx, my, count)
       }
-    }
     }
   }
 
