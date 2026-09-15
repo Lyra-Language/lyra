@@ -209,3 +209,24 @@ let f = (x: Box<Widget>, y: Box<Widget>) -> i64 => {
 	assertErrorsAre(t, res,
 		"Widget does not implement Ord, required by this impl's `t: Ord` bound")
 }
+
+// Inside a generic body a generic impl's bound is met by the body's own `where` clause: `a + b`
+// on `Box<u>` binds the impl's `t` to `u`, and `where u: Add` is what says `u` is `Add`. It was
+// refused — "u does not implement Add, required by this impl's `t: Add` bound" — because the
+// check asked only whether an impl exists for `u`. Without the caller's bound it is still
+// refused.
+func TestGenericImpl_BoundMetByTheCallersWhereClause(t *testing.T) {
+	t.Parallel()
+	const decls = `
+struct Box<t> { v: t }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for i64 { (_+_) = (self, o) => self + o }
+impl Add for Box<t> where t: Add { (_+_) = (self, o) => Box { v: self.v + o.v } }
+`
+	assertNoErrors(t, parseCollectAndCheck(t, decls+`
+let add<u> where u: Add = (a: Box<u>, b: Box<u>) -> u => (a + b).v`, false))
+
+	res := parseCollectAndCheck(t, decls+`
+let add<u> = (a: Box<u>, b: Box<u>) -> Box<u> => a + b`, false)
+	assertHasErrorContaining(t, res, "u does not implement Add, required by this impl's `t: Add` bound")
+}

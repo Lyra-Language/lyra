@@ -150,6 +150,34 @@ type Resolution struct {
 	MethodVarNames map[string]string
 }
 
+// Composed is r inside an enclosing specialization: its bindings and signature with outer
+// — that specialization's bindings — substituted in. A call dispatched concretely inside a
+// generic body records the impl's bindings in the body's vocabulary (`impl Get for Box<t>`
+// reached from `g<u>` binds `t = u`); only the composition names a real specialization
+// (`t = i64`). apply is types.Substitute, passed in as Instantiation.Substituted's is.
+//
+// One function for the driver, which closes the specialization set with it, and the backend,
+// which lowers the call with it — the pair WithMethodVars already is, for the same reason. A
+// resolution with nothing to substitute comes back unchanged.
+func (r Resolution) Composed(outer map[string]types.Type, apply func(types.Type, map[string]types.Type) types.Type) Resolution {
+	if len(outer) == 0 {
+		return r
+	}
+	if len(r.Bindings) > 0 {
+		bindings := make(map[string]types.Type, len(r.Bindings))
+		for k, v := range r.Bindings {
+			bindings[k] = apply(v, outer)
+		}
+		r.Bindings = bindings
+	}
+	if r.Signature != nil {
+		if sig, ok := apply(r.Signature, outer).(*types.LambdaType); ok {
+			r.Signature = sig
+		}
+	}
+	return r
+}
+
 // WithMethodVars is r with a bound call's method-variable solution added to its bindings
 // and signature, the solution first taken through outer — the enclosing specialization's
 // bindings, which is what turns `b = u` into `b = bool`. apply is types.Substitute, passed

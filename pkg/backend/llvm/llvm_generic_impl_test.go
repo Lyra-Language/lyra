@@ -214,26 +214,74 @@ let main = () -> u8 => {
 }
 
 // A generic *body* calling a generic impl method — `getOr<t>` calling `o.unwrap(d)` on an
-// `Opt<t>` — is refused, loudly, rather than mis-specialized. Substitutions are not
-// composed (see monomorphize.go), so the callee's bindings would map t to t, and the same
-// refusal already governs a generic free function calling another one. Pinned because the
-// two must stay in step: the failure mode of getting this wrong is a body emitted at the
-// wrong instantiation, which is silent.
-func TestEmit_GenericImplMethodFromGenericBodyIsRefused(t *testing.T) {
+// `Opt<t>` — lowers at each specialization of the body. The dispatch records the impl's
+// bindings in the body's vocabulary (`t = t`), and the resolution is composed with the
+// body's own bindings both where the specialization set is closed and where the call is
+// lowered (Resolution.Composed). This test pinned the refusal until 09/14, when "a body
+// emitted at the wrong instantiation" was the risk it guarded; the string case under ASan
+// is what shows each specialization got its own body and ownership table.
+func TestExec_GenericImplMethodFromGenericBody(t *testing.T) {
 	t.Parallel()
 	src := optUnwrap + `
 let getOr<t> = (o: Opt<t>, d: t) -> t => o.unwrap(d)
 
 let main = () -> u8 => {
   let m: Opt<i64> = Just 7
-  u8(getOr(m, 0))
+  let s: Opt<string> = Just ("he" ++ "llo")
+  let e: Opt<string> = Nil
+  u8(getOr(m, 0) + getOr(s, "x").len() + getOr(e, "fall" ++ "back").len())
 }
 `
-	_, err := emitSource(t, src)
-	if err == nil {
-		t.Fatal("expected a refusal: the callee's bindings are variable-dependent")
+	// 7 + 5 + 8
+	if got := buildAndRun(t, src); got != 20 {
+		t.Errorf("exited %d; want 20", got)
 	}
-	if !strings.Contains(err.Error(), "no concrete type here") {
-		t.Errorf("expected the uninstantiated-generic error, got %v", err)
+	if got := buildAndRunASan(t, lookClang(t), src); got != 20 {
+		t.Errorf("under ASan: exited %d; want 20", got)
+	}
+}
+
+// The rest of the generic-body shapes: an operator impl met through the caller's `where`
+// bound, a generic impl reached through another generic impl's result, a method generic in
+// its own variable, the body itself reached through a second generic function — and a trait
+// *default* written in the trait's parameter, which failed even from a concrete call because
+// the default's bindings lacked `e`. Managed values throughout, for ASan.
+func TestExec_GenericImplShapesFromGenericBodies(t *testing.T) {
+	t.Parallel()
+	src := `struct Box<t> { v: t }
+trait Val<e> { val: (Self) -> e }
+impl Val<t> for Box<t> { val = (self) => self.v }
+trait Wrap<e> { wrap: (Self) -> Box<Box<e>> }
+impl Wrap<t> for Box<t> { wrap = (self) => Box { v: Box { v: self.v } } }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for i64 { (_+_) = (self, o) => self + o }
+impl Add for Box<t> where t: Add { (_+_) = (self, o) => Box { v: self.v + o.v } }
+trait Mapper { mapv: (Self, (i64) -> b) -> b }
+impl Mapper for Box<t> { mapv = (self, f) => f(3) }
+let len3 = (n: i64) -> string => if n == 3 { "x" ++ "yz" } else { "" }
+trait Twice<e> {
+  one: (Self) -> e
+  both: (Self) -> (e, e) = (self) => (self.one(), self.one())
+}
+impl Twice<t> for Box<t> { one = (self) => self.v }
+let deep<u> = (b: Box<u>) -> u => b.wrap().v.val()
+let add<u> where u: Add = (a: Box<u>, b: Box<u>) -> u => (a + b).v
+let viaMap<u, w> = (b: Box<u>, f: (i64) -> w) -> w => b.mapv(f)
+let outer<u> = (x: u) -> u => deep(Box { v: x })
+let main = () -> u8 => {
+  let a = deep(Box { v: "ab" ++ "c" }).len()
+  let b = add(Box { v: 40 }, Box { v: 2 })
+  let c = viaMap(Box { v: true }, len3).len()
+  let d = outer("q" ++ "rs").len() + outer(4)
+  let p = Box { v: "de" ++ "f" }.both()
+  u8(a + b + c + d + p.0.len() + p.1.len())
+}`
+	// 3 + 42 + 3 + (3 + 4) + 3 + 3
+	const want = 61
+	if got := buildAndRun(t, src); got != want {
+		t.Errorf("exited %d; want %d", got, want)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != want {
+		t.Errorf("under ASan: exited %d; want %d", got, want)
 	}
 }

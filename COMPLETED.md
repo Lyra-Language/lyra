@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — a concrete trait call on a generic impl inside a generic function
+
+`let g<u> = (b: Box<u>) -> i64 => b.get()` against `impl Get for Box<t>` type-checked and failed
+to build: `type variable "u" has no concrete type`. Dispatch in a generic body records the impl's
+bindings in the body's vocabulary, `t = u`. The backend pushed those as the method body's
+substitution, replacing rather than composing, and nothing ever made `u` real.
+`TestEmit_GenericImplMethodFromGenericBodyIsRefused` had pinned the refusal as the safe answer.
+
+**Same design as the `where`-bound method variables earlier today, applied to plain
+resolutions:**
+- **Helper.** `Resolution.Composed(outer, apply)` substitutes an enclosing specialization's
+  bindings into a resolution's bindings and signature.
+- **Backend.** `traitMethod` composes with `l.typeSubst`. That is the one point every caller's
+  resolution becomes a symbol, a SpecKey and a queued body: method calls, trait paths, operators
+  and bound candidates.
+- **Driver.** `closeInstantiations` composes every call resolution and operator resolution in
+  each concrete body (`reach`) and adds the concrete result as a method specialization.
+
+The driver half is what the ASan run test verifies. With it disabled, the build still succeeds,
+and the string case aborts under ASan because the composed SpecKey has no ownership table. The
+old refusal test is now `TestExec_GenericImplMethodFromGenericBody`.
+
+**Two more things surfaced in the probes, both fixed here:**
+- **An impl bound through the caller's `where` clause.** `a + b` on `Box<u>` inside `add<u> where
+  u: Add` was refused as "u does not implement Add, required by this impl's `t: Add` bound".
+  `checkImplConstraints` asked only whether an impl exists for `u`. A binding that is the
+  caller's variable now satisfies the bound through the caller's `where` clause, the rule
+  `implConstraintsHold` already applied one level down.
+- **A trait default written in the trait's own parameter.** `both: (Self) -> (e, e) = …` failed
+  from any call, concrete or not, with `type variable "e" has no concrete type`. The default's
+  bindings carried `Self` and the impl's variables but not `e`. This predates today, confirmed
+  against the pushed build.
+
+**Filed, not fixed:** a `where`-bound call on a generic impl reached through a *second* generic
+(`outer<w>` → `g<u> where u: Get` → `x.get()`) fails with `no impl of Get for Box$i64`. Bound
+candidates are published only at call sites the typechecker sees concretely. It predates this
+change, and a default body calling another trait method from a generic body is one instance of
+it.
+
 ### 09/14/26 — `==` on a dynamic array
 
 `a == b` on two `[]i64` type-checked (`areEqualityCompatible` accepts any array) and failed to

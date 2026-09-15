@@ -82,6 +82,12 @@ func (l *lowerer) traitMethodCallee(call *ast.FunctionCallExpr) (*ir.Func, bool,
 // traitMethod declares and defines one impl method, caching it by symbol so two call
 // sites reaching the same method share one emitted function.
 func (l *lowerer) traitMethod(res typetable.Resolution) (*ir.Func, error) {
+	// A resolution recorded inside a generic body names the body's own variables — `impl Get
+	// for Box<t>` reached from `g<u>` binds `t = u` — and the specialization being lowered is
+	// what makes them real. Composed here, the one place every caller's resolution becomes a
+	// symbol, a spec key and a queued body, and with the helper the driver closed the
+	// specialization set with, so the key names a method whose ownership table exists.
+	res = res.Composed(l.typeSubst, types.Substitute)
 	name := traitMethodSymbol(res)
 	if fn, ok := l.traitMethods[name]; ok {
 		return fn, nil

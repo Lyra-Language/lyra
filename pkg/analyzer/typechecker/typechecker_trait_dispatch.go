@@ -122,8 +122,17 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 				// `Self` joins the impl's own bindings rather than replacing them, so a
 				// generic impl's variables survive: a default running for
 				// `impl Show for Box<t>` at `Box<i64>` needs both t→i64 and Self→Box<i64>.
-				withSelf := make(map[string]types.Type, len(bindings)+1)
+				withSelf := make(map[string]types.Type, len(bindings)+len(traitSubst)+1)
 				for k, v := range bindings {
+					withSelf[k] = v
+				}
+				// …and the trait's own parameters, which are the names a default body is
+				// written in: `both: (Self) -> (e, e) = (self) => (self.one(), self.one())`
+				// on `impl Twice<t> for Box<t>` needs e→i64 as well. Without them the default
+				// type-checked and failed to lower, `type variable "e" has no concrete type`,
+				// from any call. Set after the impl's variables, so a trait parameter sharing
+				// a name with one is the default body's meaning of that name.
+				for k, v := range traitSubst {
 					withSelf[k] = v
 				}
 				withSelf[selfVar] = receiverType
@@ -330,6 +339,14 @@ func (tc *TypeChecker) checkImplConstraints(match resolvedTraitMethod, loc ast.L
 			continue
 		}
 		for _, traitName := range c.TraitBounds {
+			// A binding that is the enclosing declaration's own variable — `a + b` on a
+			// `Box<u>` inside `add<u> where u: Add` — satisfies the bound through that
+			// declaration's `where` clause, not through an impl (implConstraintsHold's rule
+			// for a nested binding, applied at the top). Every specialization of the caller
+			// is checked against its own bound where it is instantiated.
+			if g, isVar := bound.(types.GenericType); isVar && slices.Contains(tc.genericBounds[g.Name], traitName) {
+				continue
+			}
 			if !tc.typeImplementsTrait(bound, traitName) {
 				tc.addError(loc, SeverityError,
 					"%s does not implement %s, required by this impl's `%s: %s` bound",

@@ -215,10 +215,11 @@ func (l *lowerer) ownership() *ownership.Table {
 }
 
 // pushTypeSubst installs a type-variable substitution for the duration of lowering
-// one specialization, returning the restore. Nested substitutions are not composed
-// — a specialization's body is lowered with exactly its own bindings — so a generic
-// function calling *another* generic function at a variable-dependent instantiation
-// is rejected rather than silently mis-specialized (see substituteCallee).
+// one specialization, returning the restore. It replaces rather than composes — a
+// specialization's body is lowered with exactly its own bindings — so every callee named
+// from inside one composes its recorded bindings with the active substitution at the call:
+// a generic function in specializedFuncFor, a trait method in traitMethod
+// (typetable.Resolution.Composed).
 func (l *lowerer) pushTypeSubst(subst map[string]types.Type) func() {
 	prev := l.typeSubst
 	l.typeSubst = subst

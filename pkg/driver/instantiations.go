@@ -188,8 +188,42 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 	// Method specializations a bound call reaches once composed (below), whose bodies are
 	// composed in turn.
 	var methodWorklist []typetable.Resolution
+	// reach adds a concretely dispatched method's specialization at the enclosing body's
+	// bindings. A resolution recorded inside a generic body names the body's own variables
+	// (`impl Get for Box<t>` reached from `g<u>` binds `t = u`), so like a generic call it is
+	// a template until composed — and before this nothing composed it, so the backend asked
+	// for `t = u` and failed with `type variable "u" has no concrete type`. Already-concrete
+	// resolutions are in Specializations() from the start.
+	reach := func(r typetable.Resolution, subst map[string]types.Type) []diag.Diagnostic {
+		if r.Impl == nil || r.Method == nil || bindingsConcrete(r.Bindings) {
+			return nil
+		}
+		composed := r.Composed(subst, substituteTypeVars)
+		if !bindingsConcrete(composed.Bindings) {
+			return nil
+		}
+		if deepestBinding(composed.Bindings) > maxSpecializationDepth {
+			return methodDivergenceError(composed)
+		}
+		if res.MethodTable.AddSpecialization(composed) {
+			methodWorklist = append(methodWorklist, composed)
+		}
+		return nil
+	}
 	compose := func(body *ast.LambdaExpr, subst map[string]types.Type, site ast.Location) []diag.Diagnostic {
+		for _, e := range operatorsIn(body) {
+			if r, ok := res.MethodTable.OperatorResolution(e); ok {
+				if d := reach(r, subst); d != nil {
+					return d
+				}
+			}
+		}
 		for _, call := range genericCallsIn(body) {
+			if r, ok := res.MethodTable.GetResolution(call); ok {
+				if d := reach(r, subst); d != nil {
+					return d
+				}
+			}
 			// **A `where`-bound call to a method generic in its own variables** records
 			// its solution in the body's vocabulary (`mapv`'s `b = u`), so each candidate
 			// impl is a specialization only at a composed solution — the same composition
@@ -350,6 +384,21 @@ func genericCallsIn(fn *ast.LambdaExpr) []*ast.FunctionCallExpr {
 		return a.StartCol < b.StartCol
 	})
 	return calls
+}
+
+// operatorsIn returns every expression in a function's body, for the closure to ask which of
+// them dispatch to an operator impl — an operator is a method call with no call node. Order
+// does not reach the output: a method specialization is keyed and sorted by its SpecKey.
+func operatorsIn(fn *ast.LambdaExpr) []ast.Expression {
+	if fn == nil || fn.Body == nil {
+		return nil
+	}
+	var exprs []ast.Expression
+	ast.WalkExpr(fn.Body, func(ast.Statement) bool { return true }, func(e ast.Expression) bool {
+		exprs = append(exprs, e)
+		return true
+	})
+	return exprs
 }
 
 // substituteTypeVars is the structural substitution the composition needs.
