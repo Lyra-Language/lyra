@@ -1,0 +1,139 @@
+@link("tree-sitter")
+module bindings.treesitter
+//! The tree-sitter runtime: a parser, the tree it builds, and the nodes of that tree.
+//!
+//! Enough of `tree_sitter/api.h` for a tree walk — parse a string, take the root, visit
+//! children by index, read each node's kind and byte span. Queries, cursors and editing are
+//! not bound. A grammar is a separate symbol (`tree_sitter_lyra`, in `lyra_grammar.lyra`).
+//!
+//! **A `TSNode` crosses by value**: four `u32` of context and two pointers, 32 bytes the
+//! runtime hands back and takes again on every call. It is spelled here with the four
+//! words as fields rather than a `[4]u32`, the same layout either way, and nothing reads
+//! them: a node is opaque to Lyra and only ever handed back to the runtime.
+//!
+//! Link with `-ltree-sitter`: `brew install tree-sitter` or `libtree-sitter-dev`, with its
+//! directory on `LIBRARY_PATH` (`pkg-config --variable=libdir tree-sitter`).
+
+import std.ffi.{ CBuffer, cstring, cstring_len, data, decode_utf8, is_null }
+
+/// A grammar, as its generated `tree_sitter_<name>()` answers it.
+pub struct Language {
+  raw: ^u8,
+}
+
+/// A parser; set to one language, reusable across many strings. Release with
+/// `parser_delete`.
+@must_release(parser_delete)
+pub struct Parser {
+  raw: ^u8,
+}
+
+/// A parsed tree. Its nodes are valid while it lives; release with `tree_delete`.
+@must_release(tree_delete)
+pub struct Tree {
+  raw: ^u8,
+}
+
+/// A node of a tree: a position in the parse, valid while its tree is.
+pub struct Node {
+  c0: u32,
+  c1: u32,
+  c2: u32,
+  c3: u32,
+  id: ^u8,
+  tree: ^u8,
+}
+
+/// A parser for `language`, or `None` if the runtime refuses the grammar (a version it
+/// cannot load).
+pub let new_parser = (language: Language) -> Maybe<Parser> => {
+  let raw = unsafe { ts_parser_new() }
+  if raw.is_null() { return None }
+  let accepted = unsafe { ts_parser_set_language(raw, language.raw) }
+  if accepted == 0 {
+    unsafe { ts_parser_delete(raw) }
+    return None
+  }
+  Some(Parser { raw: raw })
+}
+
+/// Releases a parser.
+pub let parser_delete = (parser: own Parser) -> void => unsafe { ts_parser_delete(parser.raw) }
+
+/// Parses `source` into a tree, or `None` if the parser has no language or was
+/// cancelled. A syntax error is not a failure here: the tree carries `ERROR` nodes, which
+/// `has_error` reports.
+pub let parse = (parser: Parser, source: string) -> Maybe<Tree> => {
+  let bytes = source.cstring()
+  let raw = unsafe { ts_parser_parse_string(parser.raw, nullptr, bytes.data(), u32(bytes.len() - 1)) }
+  if raw.is_null() { None } else { Some(Tree { raw: raw }) }
+}
+
+/// Releases a tree; its nodes are invalid afterwards.
+pub let tree_delete = (tree: own Tree) -> void => unsafe { ts_tree_delete(tree.raw) }
+
+/// The tree's root node.
+pub let root = (tree: Tree) -> Node => unsafe { ts_tree_root_node(tree.raw) }
+
+/// The node's kind, as the grammar names it (`"call_expr"`, `"identifier"`, `"("`).
+pub let kind = (node: Node) -> string => {
+  let p = unsafe { ts_node_type(node) }
+  let len = unsafe { cstring_len(p) }
+  CBuffer { ptr: p, len: len }.decode_utf8()
+}
+
+/// The byte offset where the node's text starts.
+pub let start_byte = (node: Node) -> i64 => i64(unsafe { ts_node_start_byte(node) })
+
+/// The byte offset just past the node's text.
+pub let end_byte = (node: Node) -> i64 => i64(unsafe { ts_node_end_byte(node) })
+
+/// How many children the node has, named and anonymous alike.
+pub let child_count = (node: Node) -> i64 => i64(unsafe { ts_node_child_count(node) })
+
+/// The node's `i`th child, counting anonymous tokens.
+///
+/// # Panics
+/// Traps when `i` is out of range, as `xs[i]` does.
+pub let child = (node: Node, i: i64) -> Node => {
+  if i < 0 || i >= child_count(node) { panic("child: index out of range") }
+  unsafe { ts_node_child(node, u32(i)) }
+}
+
+/// Whether the node is a named rule rather than an anonymous token.
+pub let is_named = (node: Node) -> bool => unsafe { ts_node_is_named(node) } != 0
+
+/// Whether the node or anything under it is a syntax error or a missing token.
+pub let has_error = (node: Node) -> bool => unsafe { ts_node_has_error(node) } != 0
+
+// ---------------------------------------------------------------------------------------
+// Foreign declarations
+// ---------------------------------------------------------------------------------------
+// C's `bool` is a byte, so it crosses as `i8` and is compared (lyra-E063).
+
+@symbol("ts_parser_new")
+unsafe extern ts_parser_new: () -> ^u8
+@symbol("ts_parser_delete")
+unsafe extern ts_parser_delete: (parser: ^u8) -> void
+@symbol("ts_parser_set_language")
+unsafe extern ts_parser_set_language: (parser: ^u8, language: ^u8) -> i8
+@symbol("ts_parser_parse_string")
+unsafe extern ts_parser_parse_string: (parser: ^u8, old_tree: ^u8, source: ^u8, length: u32) -> ^u8
+@symbol("ts_tree_delete")
+unsafe extern ts_tree_delete: (tree: ^u8) -> void
+@symbol("ts_tree_root_node")
+unsafe extern ts_tree_root_node: (tree: ^u8) -> Node
+@symbol("ts_node_type")
+unsafe extern ts_node_type: (node: Node) -> ^u8
+@symbol("ts_node_start_byte")
+unsafe extern ts_node_start_byte: (node: Node) -> u32
+@symbol("ts_node_end_byte")
+unsafe extern ts_node_end_byte: (node: Node) -> u32
+@symbol("ts_node_child_count")
+unsafe extern ts_node_child_count: (node: Node) -> u32
+@symbol("ts_node_child")
+unsafe extern ts_node_child: (node: Node, index: u32) -> Node
+@symbol("ts_node_is_named")
+unsafe extern ts_node_is_named: (node: Node) -> i8
+@symbol("ts_node_has_error")
+unsafe extern ts_node_has_error: (node: Node) -> i8

@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — lyrafmt's round-trip baseline, and the `let … else` it broke on
+
+The self-hosting probe starts. `bindings/treesitter/` binds enough of the tree-sitter
+runtime for a tree walk — parser, tree, node kind, byte span, children — with `TSNode`
+crossing by value as six fields (four `u32`, two pointers; `pkg/abi` needs no fixed array),
+and the Lyra grammar as its own symbol from an archive `examples/lyrafmt/libs.sh` builds out
+of the generated `parser.c` and `scanner.c`. The runtime is the system library: the copy the
+grammar's npm tooling vendors is 0.22, language version 14, and refuses the version-15 parser
+the CLI generates. `examples/lyrafmt/lyrafmt.lyra` parses each file, walks to the leaves and
+rebuilds the text from the leaves' bytes with the original bytes between them; every one of
+the 84 `.lyra` files in the repo round-trips byte for byte, itself included. A formatting
+rule is a change to the text *between* leaves, so this is the walk, the byte builder and the
+check every rule is built on. Build time for the program plus its bindings: 0.4 s.
+
+**Its first line read a freed string.** `let Some(source) = read_file(path) else { … }`
+bound `source` to the payload of a temporary the statement then released, and
+`source.cstring()` trapped on a NUL — the freed buffer, zeroed. Under ASan: a use-after-free
+of `read_all`'s allocation. `ownDestructuredNames` made a destructuring `let`'s names owners
+for tuple and struct patterns (09/07) and had no arm for a **constructor** pattern, so a
+`let`'s `Some(s)` got a match arm's borrow. A `match`, an `if let` and `unwrap_or` were all
+fine, which is why nothing had noticed: the tests bound tuples. The arm is in, covering
+`let-else` on a data payload and a `let` on a single-constructor type, under ASan. The
+corruption first showed as `read_file` refusing a readable file and `println` losing its
+literal prefix, a reminder that a heap error's symptom is rarely near its cause.
+
+Found and left as written: C's `bool` in an `extern` is refused by name (lyra-E063, `i8`
+compared instead), `if !unsafe { … }` does not parse (bind the block's value first), and
+`unsafe` helpers such as `cstring_len` need their own block at every call.
+
 ### 09/16/26 — the context settles what the arguments leave open
 
 Two gaps filed this week were one gap. A trait method's variable reached only by a lambda

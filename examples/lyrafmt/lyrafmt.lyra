@@ -1,0 +1,98 @@
+// lyrafmt — a Lyra formatter, in Lyra. The self-hosting probe.
+//
+//   examples/lyrafmt/libs.sh
+//   LIBRARY_PATH=build/lib:$(pkg-config --variable=libdir tree-sitter) \
+//     build/lyrac run examples/lyrafmt/lyrafmt.lyra -- examples/primes.lyra
+//
+// This is the round-trip baseline: parse each file with the tree-sitter grammar, walk the
+// tree to its leaves, and rebuild the text from the leaves' own bytes with the original
+// bytes between them — which must reproduce the input exactly. No formatting rule exists
+// yet; every later rule replaces the text *between* leaves with computed whitespace, so this
+// is the walk, the byte builder and the checks a formatter is built on, proved on a program
+// larger than any example before a single decision about layout is made.
+//
+// Exit 0 when every file round-trips, 1 otherwise, 2 for usage.
+
+import std.collections.{ parse_args }
+import std.io.{ read_file }
+import std.ffi.{ cstring }
+import bindings.treesitter.{
+  Node, Parser, lyra_language, new_parser, parser_delete, parse, tree_delete,
+  root, child, child_count, start_byte, end_byte, has_error,
+}
+
+let main = () -> u8 => {
+  let args = parse_args([])
+  if args.positional.len() == 0 {
+    println("usage: lyrafmt <file.lyra>...")
+    return 2
+  }
+  let Some(parser) = new_parser(lyra_language()) else {
+    println("lyrafmt: the tree-sitter runtime refused the Lyra grammar")
+    return 1
+  }
+  var failures = 0
+  for path in args.positional {
+    if !round_trip(parser, path) { failures += 1 }
+  }
+  parser_delete(parser)
+  if failures == 0 { 0 } else { 1 }
+}
+
+/// Parses the file at `path` and rebuilds it from the tree; reports whether the result is
+/// the input.
+let round_trip = (parser: Parser, path: string) -> bool => {
+  let Some(source) = read_file(path) else {
+    println("lyrafmt: cannot read ${path}")
+    return false
+  }
+  let Some(tree) = parse(parser, source) else {
+    println("lyrafmt: ${path}: the parser answered no tree")
+    return false
+  }
+  let top = root(tree)
+  if has_error(top) {
+    println("lyrafmt: ${path}: syntax error")
+    tree_delete(tree)
+    return false
+  }
+  // Byte offsets index the source's bytes, not its runes; `cstring` is the byte view (its
+  // trailing NUL is past every offset the tree reports).
+  let bytes = source.cstring()
+  var out: []u8 = []
+  let cursor = emit(top, bytes, 0, out)
+  // Whatever follows the last leaf — a final newline, trailing blank lines.
+  copy_bytes(bytes, cursor, bytes.len() - 1, out)
+  tree_delete(tree)
+  let rebuilt = out.decode_utf8()
+  if rebuilt == source {
+    println("ok       ${path}")
+    true
+  } else {
+    println("MISMATCH ${path}: rebuilt ${out.len()} bytes from ${bytes.len() - 1}")
+    false
+  }
+}
+
+/// Appends `node`'s text to `out`, leaf by leaf, with the source bytes between leaves
+/// copied unchanged, starting from `cursor`; answers the byte just past the last leaf.
+let emit = (node: Node, bytes: []u8, cursor: i64, out: mut []u8) -> i64 => {
+  let n = child_count(node)
+  if n == 0 {
+    let start = start_byte(node)
+    let end = end_byte(node)
+    copy_bytes(bytes, cursor, start, out)
+    copy_bytes(bytes, start, end, out)
+    return end
+  }
+  var at = cursor
+  for i in 0..<n {
+    at = emit(child(node, i), bytes, at, out)
+  }
+  at
+}
+
+/// Appends `bytes[from..<to]` to `out`.
+let copy_bytes = (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
+  for i in from..<to { out.push(bytes[i]) }
+}

@@ -48,14 +48,14 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
-- **[IDEA] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** Bind libtree-sitter
-  over FFI (`TSNode` crosses by value, which `pkg/abi` already supports) and keep the
-  grammar as is; the program then needs a tree walk, a byte-buffer string builder,
-  `read_file`/`write_file` and `Result` composition — the same shapes a compiler needs, at
-  ~2–4k lines. Expected to surface: `[]T` aliasing in a scope stack, a missing `readdir` in
-  `std.io`, and the first compile-time data point for a program larger than any example
-  (`map_err` and the context through `?` landed 09/15). A real bootstrap would start with
-  the collector after this.
+- **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** The round-trip
+  baseline landed 09/16 (`examples/lyrafmt/`, `bindings/treesitter/`): every file in the
+  repo parses through the grammar over FFI and is rebuilt from the tree's leaves byte for
+  byte. Its first line found a use-after-free (COMPLETED.md). Next: the first formatting
+  rule, which replaces the text *between* leaves — indentation from nesting depth is the
+  natural start — then a scope stack (expected to hit `[]T` aliasing) and a directory walk
+  (a missing `readdir` in `std.io`). A real bootstrap would start with the collector after
+  this.
 
 
 ## Language surface

@@ -178,6 +178,35 @@ func (l *lowerer) ownDestructuredNames(block *ir.Block, pat ast.Pattern, t types
 				return err
 			}
 		}
+	case *ast.DataPattern:
+		// `let Some(s) = read_file(p) else { … }`: the payload names outlive the
+		// statement exactly as a tuple's do, and the scrutinee is very often a temporary
+		// released at its end. Missing until 09/16, when lyrafmt's first line read a
+		// freed string — the tuple and struct arms were here, the constructor arm was
+		// not, and a match arm's borrow (right there) was silently what a `let` got.
+		dt, ok := l.resolveDataType(t)
+		if !ok {
+			return nil
+		}
+		ctor, _, ok := findConstructor(dt, p.Name)
+		if !ok {
+			return nil
+		}
+		positions, err := payloadPositions(p, ctor)
+		if err != nil {
+			return err
+		}
+		fieldTypes := ctor.FieldTypes()
+		for i, col := range positions.Columns {
+			if err := l.ownDestructuredNames(block, col, fieldTypes[i]); err != nil {
+				return err
+			}
+		}
+		if r := positions.Rest; r != nil {
+			if err := l.ownDestructuredName(block, r.Identifier, restTupleType(positions, fieldTypes)); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

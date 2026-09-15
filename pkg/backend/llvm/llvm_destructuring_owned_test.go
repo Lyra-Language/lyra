@@ -46,6 +46,18 @@ func TestExec_DestructuringLetOwnsItsNames(t *testing.T) {
 		   xs = []
 		   if got[1] == 8 && name == "nm" { 0 } else { 1 }
 		 }`},
+		{"let-else on a data payload", `data Slot = Full(string) | Empty
+		 let make = (n: i64) -> Slot => if n > 0 { Full("a".slice(0, 1) ++ "b") } else { Empty }
+		 let main = () -> u8 => {
+		   let Full(s) = make(1) else { return 9 }
+		   let Full(t) = make(2) else { return 8 }
+		   if s == "ab" && t.len() == 2 { 0 } else { 1 }
+		 }`},
+		{"let on a single-constructor payload", `data Wrap = Wrap(string, []i64)
+		 let main = () -> u8 => {
+		   let Wrap(s, xs) = Wrap("c".slice(0, 1) ++ "d", [4, 5])
+		   if s == "cd" && xs[1] == 5 { 0 } else { 1 }
+		 }`},
 		{"let-else", `let main = () -> u8 => {
 		   var a: []i64 = [1, 2]
 		   var b: []i64 = [3, 4]

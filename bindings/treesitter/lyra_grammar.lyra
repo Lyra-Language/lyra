@@ -1,0 +1,10 @@
+@link("tree-sitter-lyra")
+module bindings.treesitter
+//! The Lyra grammar as a tree-sitter language: `tree_sitter_lyra()` from the generated
+//! parser, built into `libtree-sitter-lyra.a` by `examples/lyrafmt/libs.sh`.
+
+/// The Lyra grammar.
+pub let lyra_language = () -> Language => Language { raw: unsafe { tree_sitter_lyra() } }
+
+@symbol("tree_sitter_lyra")
+unsafe extern tree_sitter_lyra: () -> ^u8

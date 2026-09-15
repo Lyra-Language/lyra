@@ -71,6 +71,19 @@ libjpeg-turbo, because Homebrew's raylib is built without JPEG support. `decode_
 `Image` pointed at that buffer must **never** be `unload_image`d. Link `-lturbojpeg` (`brew
 install jpeg-turbo`, Debian `libturbojpeg0-dev`), on `LIBRARY_PATH` beside raylib.
 
+## `bindings/treesitter/`
+
+The tree-sitter runtime (`@link("tree-sitter")`; `brew install tree-sitter`, Debian
+`libtree-sitter-dev`) and, in `lyra_grammar.lyra`, the Lyra grammar's own symbol
+(`@link("tree-sitter-lyra")`, an archive `examples/lyrafmt/libs.sh` builds from
+`tree-sitter-lyra/src`). Enough for a tree walk: `new_parser`/`parse`, `root`, `child`,
+`child_count`, `kind`, `start_byte`/`end_byte`, `is_named`, `has_error`. `Parser` and `Tree`
+are `@must_release`. **A `TSNode` crosses by value** — four `u32` and two pointers, spelled
+as six fields — and is opaque: nothing reads them. C's `bool` results are `i8`, compared in
+the wrapper. The runtime the grammar's npm tooling vendors is 0.22 and refuses the parser
+it generates (language version 15), which is why the system library is required.
+`examples/lyrafmt/lyrafmt.lyra` is the use.
+
 ## Examples and galleries (`examples/raylib/`)
 
 - **Two programs in one file**: a window, plus a `--check` mode verifying everything a
