@@ -187,6 +187,18 @@ func collectNestedLambdas(program *ast.Program, entry *ast.LambdaExpr) []*ast.La
 				continue
 			}
 		}
+		// **A trait-method body is the other generic body**, and it is not walked here
+		// either: an impl method's lambda may mention the impl's variables (`(y: t) -> t`
+		// inside `impl … for Box<t>`) and a default's the method's own (`(x) => 7` at
+		// `x: a` inside `tag: (Self<a>) -> Self<i64>`), and both are lowered once per
+		// specialization by traitMethod, which declares their closures under the
+		// specialization's bindings (09/15). Walking them here declared each once with
+		// no substitution — *"type variable t has no concrete type here"* for a program
+		// the front end checks clean.
+		switch node.(type) {
+		case *ast.TraitDeclStmt, *ast.TraitImplStmt:
+			continue
+		}
 		switch n := node.(type) {
 		case ast.Statement:
 			ast.WalkStmt(n, nil, onExpr)

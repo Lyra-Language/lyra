@@ -1,6 +1,7 @@
 package collector_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -138,6 +139,19 @@ func TestCollector_TraitDeclarationWithGenericTypeImplementation(t *testing.T) {
 	runGoldenTest(t, source, "trait_declaration_with_generic_type_implementation")
 }
 
+// A hole in an impl target (`_`) is a HoleType, the position a `Self<…>` argument fills.
+func TestCollector_TraitImplWithHole(t *testing.T) {
+	source := `
+	trait Functor {
+		map: (Self<a>, (a) -> b) -> Self<b>
+	}
+	impl Functor for Result<_, e> {
+		map = (self, f) => self
+	}
+	`
+	runGoldenTest(t, source, "trait_impl_with_hole")
+}
+
 func TestCollector_TraitDeclarationForPrefixOperator(t *testing.T) {
 	source := `
 	trait Neg {
@@ -221,4 +235,14 @@ func TestCollector_TraitWithDefaultMethodImplementationWithBlock(t *testing.T) {
 	}
 	`
 	runGoldenTest(t, source, "trait_with_default_method_implementation_with_block")
+}
+
+// A hole means something only in an impl target; anywhere else there is no `Self<…>`
+// for it to stand in for, and it is refused where it is built.
+func TestCollector_HoleOutsideImplTargetIsError(t *testing.T) {
+	errs := parseAndCollectErrors(t, `
+	let f = (m: Maybe<_>) -> i64 => 1`)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "only meaningful in an impl target") {
+		t.Fatalf("expected the hole to be refused outside an impl target, got %v", errs)
+	}
 }

@@ -9,6 +9,64 @@ Newest first.
 
 ## Dated log
 
+### 09/15/26 — `Self<…>` beyond an exact match: holes and default methods
+
+The 09/14 rule accepted `Self<a>` only for a target applied to exactly as many distinct
+variables, and left three cases refused: `impl Functor for Result<t, e>` (which argument?), a
+default method writing `Self<…>`, and a call through a `where` bound. Two of the three are in.
+
+**Which argument: a hole, not a convention.** Haskell's "the last parameter varies" comes from
+currying and would make `Functor` for `Result<t, e>` map the *error*; "the first" would break
+`Table<k, v>`. Neither is derivable, so the impl says it: `impl Functor for Result<_, e>` marks
+the position `Self<b>`'s argument fills (`Result<b, e>`), `Table<k, _>` the last, and
+`Table<string, _>` fixes the other beside it. The grammar gains `hole_type` (`_`, admitted in
+`parameterized_type` arguments); the collector builds `types.HoleType` and refuses it outside an
+impl target, the one place it means anything (`ParseImplTarget`). `ApplySelf` fills holes in
+order and `SelfApplicable` counts them; a holed target refuses a trait method writing a bare
+`Self`, since nothing says what fills `_`.
+
+Dispatch needed one idea: a receiver has forgotten where the holes were. `Result<i64, string>`
+against `Self<b>` cannot say which of its two arguments to replace, so `Self` is bound to the
+*pattern at the receiver's bindings*, `Result<_, string>` (`selfPattern` in
+`resolveTraitMethodNamed`), for the provided signature, the default signature and the default
+body's `Bindings["Self"]` alike — the backend substitutes a default body's `Self<a>` under those
+bindings, and only the pattern knows the position. `implTargetMatches` treats a hole as making
+the target generic (`Maybe<_>` names no variable), and a hole unifies with anything and binds
+nothing.
+
+**A default method writing `Self<…>`** is checked, as every default is, with `Self` the abstract
+head — which is exactly what makes `Self<a>` a type of its own there. `SelfType` now carries
+its arguments as types rather than names (`Self<i64>` is representable, and a solve inside the
+body may produce one), `TypesEqual` and `isAssignable` compare them, and `unifyGenericTarget`
+unifies two applied Selfs pairwise. A `Self<a>` receiver inside a default dispatches through
+Self's bound like the bare variable (`inferMemberCall`), `solveBoundMethodTypeVars` now seeds
+from the receiver as the concrete solver always did (`self: Self<a>` is the only thing that
+says what `map`'s `a'` is), and the bound-call refusal of `Self<…>` methods is lifted for
+`Self` itself. A chained call changes the argument (`self.map((x) => true).map((b) => !b)`
+is a `Self<bool>` receiver at `Self = Box<i64>`), so `publishCandidatesAt` substitutes each
+bound call's *recorded receiver* under the specialization's bindings before matching, instead
+of publishing every inner call at the enclosing receiver.
+
+**The backend gap this uncovered was older than the feature.** `collectNestedLambdas` walked
+trait declarations and impls, so a lambda inside any trait-method body was declared once with
+no substitution; `(x) => true` at `x: a` inside a default failed with *"type variable a has no
+concrete type here"* — and so did `(y: t) -> t` inside `impl Same for Box<t>`, a program the
+front end checked clean before today. Trait bodies are now skipped there and `traitMethod`
+declares each body's closures under the resolution's bindings and `SpecKey`, with
+`definePendingTraitMethods` defining them after the body.
+
+**Still refused, by decision:** `Self<…>` through a `where` bound. A bound receiver `t` has
+no head to apply `Self<a>` to; giving it one is a higher-kinded type variable, which nothing
+asks for. **Found on the way, filed:** a method variable solved from a lambda's untyped literal
+(`b.map((x) => 7)` under `-> Box<i64>`) stays `Box<integer literal>` on a concrete receiver as
+much as in a default.
+
+Tests: the grammar corpus (`Result<_, e>` in traits.txt), a collector golden and refusal,
+`TestTraitSelfApplied_Hole` / `_DefaultMethod` (accepted and refused shapes), and three
+`TestExec_TraitMethods` cases run natively and under ASan on macOS and in the Linux container:
+a default writing `Self<…>` at a managed `b = string`, holed targets with string payloads on
+every path, and a lambda inside a generic impl method. Both highlight queries name `hole_type`.
+
 ### 09/15/26 — a last use inside a loop body is released when the loop ends
 
 The Perceus todo asked whether `computeLastUse`'s textual walk should become a CFG liveness

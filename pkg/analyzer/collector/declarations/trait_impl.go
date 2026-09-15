@@ -46,7 +46,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		return nil
 	}
 
-	astType := ctx.ParseType(typeNode)
+	astType := ctx.ParseImplTarget(typeNode)
 	if astType == nil {
 		ctx.AddError(node, diag.SeverityError, "could not parse trait implementation type")
 		return nil

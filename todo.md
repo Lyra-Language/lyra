@@ -39,9 +39,14 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ### Traits: a method's own type variables
 
-- **[OPEN] `Self<…>` beyond an exact match.** Only a target applied to as many distinct
-  variables as `Self<…>` has arguments is accepted; `impl Functor for Result<t, e>` (which
-  argument?) and a default method writing `Self<…>` are refused until decided.
+- **[DECIDED] `Self<…>` through a `where` bound stays refused.** `Result<_, e>` (a hole
+  marks the position) and default methods writing `Self<…>` landed 09/15; a bound receiver
+  `t` has no head to apply, and giving it one is higher-kinded type variables, which nothing
+  asks for.
+- **[OPEN] A method variable solved from a lambda's untyped literal stays a literal.**
+  `b.map((x) => 7)` under a `-> Box<i64>` context is "expected Box<i64>, got Box<integer
+  literal>", on a concrete receiver and inside a default alike; a filed sibling is the array
+  literal solving a variable as a fixed array. The context should settle the solution.
 
 ### Modules and tooling
 

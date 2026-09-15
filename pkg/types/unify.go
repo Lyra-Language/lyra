@@ -188,11 +188,22 @@ func TypesEqual(a, b Type) bool {
 	case WeakType:
 		bt, ok := b.(WeakType)
 		return ok && TypesEqual(at.Inner, bt.Inner)
-	case SelfType:
-		// SelfType is equal to any other SelfType regardless of generic params;
-		// the params are resolved during trait/impl checking, not here.
-		_, ok := b.(SelfType)
+	case HoleType:
+		_, ok := b.(HoleType)
 		return ok
+	case SelfType:
+		// Inside a default body `Self<a>` and `Self<b>` are different types — the head
+		// is the same abstract `Self`, so the arguments decide.
+		bt, ok := b.(SelfType)
+		if !ok || len(at.Args) != len(bt.Args) {
+			return false
+		}
+		for i := range at.Args {
+			if !TypesEqual(at.Args[i], bt.Args[i]) {
+				return false
+			}
+		}
+		return true
 	case UnresolvedType:
 		// Two unresolved references are equal only if they name the same symbol.
 		bt, ok := b.(UnresolvedType)

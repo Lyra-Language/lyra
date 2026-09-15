@@ -40,7 +40,7 @@ func (tc *TypeChecker) PublishCandidatesForInstantiation(inst typetable.Instanti
 			continue
 		}
 		for _, traitName := range lambda.GenericBounds[p] {
-			tc.publishCandidatesAt(lambda, traitName, concrete)
+			tc.publishCandidatesAt(lambda, traitName, concrete, inst.Subst)
 		}
 	}
 }
@@ -55,7 +55,7 @@ func (tc *TypeChecker) PublishCandidatesForMethod(r typetable.Resolution) {
 	if trait, ok := tc.symTable.LookupTraitFrom(r.Impl.TraitName, r.Impl.GetLocation()); ok {
 		if tm := findTraitMethodNamed(trait, r.Method.Name); tm != nil && tm.DefaultImpl() == r.Method {
 			if self, ok := r.Bindings[selfVar]; ok && self != nil && mentionsNoTypeVar(self) {
-				tc.publishDefaultBodyCandidates(trait, tm, self)
+				tc.publishDefaultBodyCandidates(trait, tm, self, r.Bindings)
 			}
 			return
 		}

@@ -277,6 +277,81 @@ func TestExec_TraitMethods(t *testing.T) {
 			 }`,
 			8,
 		},
+		{
+			// A default method writing `Self<…>` (09/15): its body is checked with `Self` the
+			// abstract head, `self.map(f)` dispatching through Self's bound with the
+			// receiver's arguments seeding `map`'s own `a`, and each implementer gets its own
+			// specialization — including the closures inside the body, which the
+			// program-wide walk used to declare once with no substitution. `twice` at a
+			// managed `b = string` is the ASan half.
+			"a default method writing Self with type arguments",
+			`struct Box<t> { v: t }
+			 data Opt<t> = No | Yes(t)
+			 trait Functor {
+			   map: (Self<a>, (a) -> b) -> Self<b>
+			   twice: (Self<a>, (a) -> a) -> Self<a> = (self, f) => self.map(f).map(f)
+			   flag: (Self<a>) -> Self<bool> = (self) => self.map((x) => true)
+			 }
+			 impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }
+			 impl Functor for Opt<t> { map = (self, f) => match self { Yes(v) => Yes(f(v)), No => No } }
+			 let main = () -> u8 => {
+			   let b = Box { v: 3 }.twice((x) => x * 2)
+			   let s = Box { v: "a".slice(0, 1) }.twice((x) => x ++ "b")
+			   let o = match Yes(4).twice((x) => x + 1) { Yes(v) => v, No => 0 }
+			   let f = if Box { v: 9 }.flag().v { 1 } else { 0 }
+			   u8(b.v + s.v.len() + o + f)
+			 }`,
+			// 12 + 3 + 6 + 1
+			22,
+		},
+		{
+			// A hole in the impl target says which parameter `Self<b>` varies: `Res<_, e>`
+			// maps the value and keeps the error, `Table<k, _>` maps the value beside a
+			// key, and a default (`twice`) reaches both through the pattern the typechecker
+			// binds `Self` to. Managed payloads (strings) on every path are the ASan half.
+			"Self applied through a hole in the impl target",
+			`data Res<t, e> = Good(t) | Bad(e)
+			 struct Table<k, v> { key: k, val: v }
+			 trait Functor {
+			   map: (Self<a>, (a) -> b) -> Self<b>
+			   twice: (Self<a>, (a) -> a) -> Self<a> = (self, f) => self.map(f).map(f)
+			 }
+			 impl Functor for Res<_, e> { map = (self, f) => match self { Good(v) => Good(f(v)), Bad(x) => Bad(x) } }
+			 impl Functor for Table<k, _> { map = (self, f) => Table { key: self.key, val: f(self.val) } }
+			 let main = () -> u8 => {
+			   let g: Res<i64, string> = Good(2)
+			   let b: Res<i64, string> = Bad("no".slice(0, 2))
+			   let x = match g.map((v) => v * 3) { Good(v) => v, Bad(_) => 0 }
+			   let y = match b.map((v) => v * 3) { Good(_) => 0, Bad(m) => m.len() }
+			   let z = match g.twice((v) => v + 10) { Good(v) => v, Bad(_) => 0 }
+			   let s = match g.map((v) => "s".slice(0, 1) ++ "t") { Good(t) => t.len(), Bad(_) => 0 }
+			   let w = Table { key: "k".slice(0, 1), val: 4 }.map((v) => v > 3)
+			   let k = if w.val { w.key.len() } else { 0 }
+			   u8(x + y + z + s + k)
+			 }`,
+			// 6 + 2 + 22 + 2 + 1
+			33,
+		},
+		{
+			// A lambda inside a *generic impl's* method mentions the impl's variable, so it
+			// is lifted per specialization too (the same 09/15 change). Failed to build
+			// before — "type variable t has no concrete type here" — for a program the
+			// front end checked clean.
+			"a lambda inside a generic impl method",
+			`struct Box<t> { v: t }
+			 trait Same { same: (Self) -> Self }
+			 impl Same for Box<t> {
+			   same = (self) => {
+			     let g = (y: t) -> t => y
+			     Box { v: g(self.v) }
+			   }
+			 }
+			 let main = () -> u8 => {
+			   let s = Box { v: "ab".slice(0, 2) }.same()
+			   u8(Box { v: 5 }.same().v + s.v.len())
+			 }`,
+			7,
+		},
 	}
 	clang := lookClang(t)
 	for _, c := range cases {

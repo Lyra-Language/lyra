@@ -178,7 +178,7 @@ func TestTraitSelfApplied_Refused(t *testing.T) {
 trait Functor { map: (Self<a>, (a) -> b) -> Self<b> }
 `
 	want := func(target string, n int) string {
-		return "impl of Functor for " + target + `: method "map" writes Self with 1 type argument(s), so the target must be a generic type applied to 1 distinct type variable(s), like Box<t>`
+		return "impl of Functor for " + target + `: method "map" writes Self with 1 type argument(s), so the target must be a generic type applied to 1 distinct type variable(s), like Box<t>, or mark the positions with holes, like Result<_, e>`
 	}
 	cases := map[string]struct{ src, want string }{
 		"not generic": {functor + `
@@ -193,17 +193,129 @@ impl Functor for Box<i64> { map = (self, f) => self }`, want("Box<i64>", 1)},
 struct Pair<k, v> { a: k, b: v }
 trait F2 { m: (Self<a, b>) -> i64 }
 impl F2 for Pair<t, t> { m = (self) => 1 }`,
-			`impl of F2 for Pair<t, t>: method "m" writes Self with 2 type argument(s), so the target must be a generic type applied to 2 distinct type variable(s), like Box<t>`},
-		"a default method": {`
+			`impl of F2 for Pair<t, t>: method "m" writes Self with 2 type argument(s), so the target must be a generic type applied to 2 distinct type variable(s), like Box<t>, or mark the positions with holes, like Result<_, e>`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertErrorsAre(t, parseCollectAndCheck(t, tc.src, false), tc.want)
+		})
+	}
+}
+
+// A default method may write `Self<…>`: its body is checked once with `Self` the abstract
+// head, so `Self<a>` is a type of its own there — `self.map(f)` dispatches through Self's
+// bound, the receiver's arguments seed `map`'s own `a`, and the result is `Self<b>` at
+// whatever `b` solved to. Refused by name until 09/15.
+func TestTraitSelfApplied_DefaultMethod(t *testing.T) {
+	t.Parallel()
+	const box = `
 struct Box<t> { v: t }
+`
+	accepted := map[string]string{
+		"chained through the trait's own method": box + `
 trait Functor {
   map: (Self<a>, (a) -> b) -> Self<b>
   twice: (Self<a>, (a) -> a) -> Self<a> = (self, f) => self.map(f).map(f)
 }
-impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }`,
-			"Functor::twice: a default method cannot write Self with type arguments yet; implement it in each impl"},
+impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }
+let a = () -> i64 => Box { v: 3 }.twice((x) => x * 2).v`,
+		"a concrete argument to Self": box + `
+trait Functor {
+  map: (Self<a>, (a) -> b) -> Self<b>
+  flag: (Self<a>) -> Self<bool> = (self) => self.map((x) => true)
+}
+impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }
+let a = () -> bool => Box { v: "s" }.flag().v`,
+		"changing the argument": box + `
+trait Functor {
+  map: (Self<a>, (a) -> b) -> Self<b>
+  lens: (Self<string>) -> Self<i64> = (self) => self.map((s) => s.len())
+}
+impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }
+let a = () -> i64 => Box { v: "abc" }.lens().v`,
 	}
-	for name, tc := range cases {
+	for name, src := range accepted {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertNoErrors(t, parseCollectAndCheck(t, src, false))
+		})
+	}
+	// `Self<a>` and `Self<b>` are different types inside the body: the head is the same
+	// abstract `Self`, so the arguments decide.
+	refused := map[string]struct{ src, want string }{
+		"returning the receiver where a new argument is declared": {box + `
+trait Functor {
+  map: (Self<a>, (a) -> b) -> Self<b>
+  bad: (Self<a>, (a) -> b) -> Self<b> = (self, f) => self
+}
+impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }`,
+			"bad: return type mismatch: expected Self<b>, got Self<a>"},
+	}
+	for name, tc := range refused {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertErrorsAre(t, parseCollectAndCheck(t, tc.src, false), tc.want)
+		})
+	}
+}
+
+// A hole in an impl target marks the position a `Self<…>` argument fills: `Result<_, e>` at
+// `Self<b>` is `Result<b, e>`, so a two-parameter type can implement a one-argument trait
+// without a positional convention deciding which parameter varies. What is not a hole stays
+// as the impl fixed it, so a concrete argument is fine beside one (09/15).
+func TestTraitSelfApplied_Hole(t *testing.T) {
+	t.Parallel()
+	const functor = `
+trait Functor { map: (Self<a>, (a) -> b) -> Self<b> }
+`
+	accepted := map[string]string{
+		"the first parameter varies": `
+data Res<t, e> = Good(t) | Bad(e)` + functor + `
+impl Functor for Res<_, e> { map = (self, f) => match self { Good(v) => Good(f(v)), Bad(x) => Bad(x) } }
+let a = () -> bool => {
+  let r: Res<i64, string> = Good(3)
+  match r.map((x) => x > 1) { Good(b) => b, Bad(_) => false }
+}`,
+		"the last parameter varies": `
+struct Table<k, v> { key: k, val: v }` + functor + `
+impl Functor for Table<k, _> { map = (self, f) => Table { key: self.key, val: f(self.val) } }
+let a = () -> string => Table { key: 1, val: "x" }.map((s) => s ++ "y").val`,
+		"a concrete argument beside the hole": `
+struct Table<k, v> { key: k, val: v }` + functor + `
+impl Functor for Table<string, _> { map = (self, f) => Table { key: self.key, val: f(self.val) } }
+let a = () -> bool => Table { key: "k", val: 2 }.map((n) => n > 1).val`,
+		"a default method through a holed target": `
+data Res<t, e> = Good(t) | Bad(e)
+trait Functor {
+  map: (Self<a>, (a) -> b) -> Self<b>
+  twice: (Self<a>, (a) -> a) -> Self<a> = (self, f) => self.map(f).map(f)
+}
+impl Functor for Res<_, e> { map = (self, f) => match self { Good(v) => Good(f(v)), Bad(x) => Bad(x) } }
+let a = () -> i64 => {
+  let r: Res<i64, string> = Good(3)
+  match r.twice((x) => x + 1) { Good(v) => v, Bad(_) => 0 }
+}`,
+	}
+	for name, src := range accepted {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertNoErrors(t, parseCollectAndCheck(t, src, false))
+		})
+	}
+	refused := map[string]struct{ src, want string }{
+		// A bare `Self` says nothing about what fills the hole.
+		"a bare Self through a holed target": {`
+data Res<t, e> = Good(t) | Bad(e)
+trait Same { same: (Self) -> Self }
+impl Same for Res<_, e> { same = (self) => self }`,
+			`impl of Same for Res<_, e>: the target has a hole, but method "same" writes a bare Self, which does not say what fills ` + "`_`" + `; a hole serves only a trait whose methods write Self<…>`},
+		"more holes than Self takes": {`
+struct Pair<k, v> { a: k, b: v }` + functor + `
+impl Functor for Pair<_, _> { map = (self, f) => self }`,
+			`impl of Functor for Pair<_, _>: method "map" writes Self with 1 type argument(s), so the target must have 1 hole(s)`},
+	}
+	for name, tc := range refused {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assertErrorsAre(t, parseCollectAndCheck(t, tc.src, false), tc.want)

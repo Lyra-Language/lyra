@@ -333,13 +333,27 @@ func methodSignatureRenamedAway(trait *ast.TraitDeclStmt, sig *types.LambdaType,
 // body keeps the refusal the one diagnostic.
 func (tc *TypeChecker) checkSelfApplications(impl *ast.TraitImplStmt, traitMethod ast.TraitMethod) bool {
 	ok := true
+	holed := types.HasHole(impl.Type)
+	// A target with a hole has no reading for a bare `Self`: nothing says what fills `_`.
+	if holed && traitMethod.Signature != nil && types.MentionsBareSelf(traitMethod.Signature) {
+		tc.addError(impl.GetLocation(), SeverityError,
+			"impl of %s for %s: the target has a hole, but method %q writes a bare Self, which does not say what fills `_`; a hole serves only a trait whose methods write Self<…>",
+			impl.TraitName, impl.Type, traitMethod.Name.GetName())
+		ok = false
+	}
 	for n := range selfApplicationsOf(traitMethod.Signature) {
 		if types.SelfApplicable(impl.Type, n) {
 			continue
 		}
-		tc.addError(impl.GetLocation(), SeverityError,
-			"impl of %s for %s: method %q writes Self with %d type argument(s), so the target must be a generic type applied to %d distinct type variable(s), like Box<t>",
-			impl.TraitName, impl.Type, traitMethod.Name.GetName(), n, n)
+		if holed {
+			tc.addError(impl.GetLocation(), SeverityError,
+				"impl of %s for %s: method %q writes Self with %d type argument(s), so the target must have %d hole(s)",
+				impl.TraitName, impl.Type, traitMethod.Name.GetName(), n, n)
+		} else {
+			tc.addError(impl.GetLocation(), SeverityError,
+				"impl of %s for %s: method %q writes Self with %d type argument(s), so the target must be a generic type applied to %d distinct type variable(s), like Box<t>, or mark the positions with holes, like Result<_, e>",
+				impl.TraitName, impl.Type, traitMethod.Name.GetName(), n, n)
+		}
 		ok = false
 	}
 	return ok

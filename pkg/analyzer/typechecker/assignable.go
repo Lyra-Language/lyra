@@ -556,6 +556,19 @@ func isAssignable(from, to types.Type) bool {
 	if nominalDataMatch(from, to) {
 		return true
 	}
+	// Inside a default body `Self<…>` is the abstract head at arguments, so it is
+	// assignable argument-wise — a `Self<integer literal>` fills a `Self<i64>` exactly as
+	// `Box<integer literal>` fills a `Box<i64>` once the head is known.
+	if fromSelf, ok := from.(types.SelfType); ok {
+		if toSelf, ok := to.(types.SelfType); ok && len(fromSelf.Args) == len(toSelf.Args) && len(fromSelf.Args) > 0 {
+			for i := range fromSelf.Args {
+				if !isAssignable(fromSelf.Args[i], toSelf.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	// Two *different* newtypes never interconvert, even over the same base. Each
 	// rule below is individually right at the *type* level — a value satisfying the
 	// base is assignable *to* a newtype, and a newtype value is assignable to its

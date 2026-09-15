@@ -166,7 +166,8 @@ matches with no `requiredTrait` is the ambiguity `Trait::method(...)` resolves. 
   `PublishCandidatesForInstantiation` / `PublishCandidatesForMethod` (`publish_composed.go`).
 - **A trait method's own type variables** (`b` of `mapv: (Self, (i64) -> b) -> b`) are solved by
   `solveArgumentTypeVars`, the generic-call solver: `solveMethodTypeVars` at a concrete dispatch
-  (the receiver seeds it, for `Self<a>`), `solveBoundMethodTypeVars` through a bound, which records
+  (the receiver seeds it, for `Self<a>`), `solveBoundMethodTypeVars` through a bound (the receiver
+  seeds it too, so a default body's `self: Self<a>` solves `map`'s `a'`), which records
   the solution under the trait's names (`SetBoundMethodVars`) for the driver and backend to compose
   per specialization. A method variable clashing with an impl's (or a bound receiver's) is primed
   (`methodSignatureRenamedAway`); `Resolution.MethodVarNames` carries the rename.

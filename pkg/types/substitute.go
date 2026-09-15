@@ -39,42 +39,31 @@ func Substitute(t Type, subst map[string]Type) Type {
 		// A trait signature's `Self`, bound under SelfVar. It is a type of its own rather
 		// than a GenericType, so without this case it was replaced only where a caller
 		// checked for it at the top — `(Self) -> Self` worked and `(Self) -> []Self` did not.
-		// `Self<a>`'s arguments are variables written as names, so a rename of `a` (a
-		// GenericType binding, as the impl check's clash rename is) reaches them here;
-		// a binding to anything else is applied once Self becomes a real head, below.
-		if len(tt.GenericParams) > 0 {
-			params := make([]string, len(tt.GenericParams))
-			for i, p := range tt.GenericParams {
-				params[i] = p
-				if g, isVar := subst[p].(GenericType); isVar {
-					params[i] = g.Name
-				}
+		// `Self<a>`'s arguments are ordinary types: a rename of `a` (the impl check's
+		// clash rename) and a concrete binding both reach them here, once.
+		if len(tt.Args) > 0 {
+			args := make([]Type, len(tt.Args))
+			for i, a := range tt.Args {
+				args[i] = Substitute(a, subst)
 			}
-			tt.GenericParams = params
+			tt.Args = args
 		}
 		concrete, ok := subst[SelfVar]
 		if !ok {
 			return tt
 		}
-		if len(tt.GenericParams) == 0 {
+		if len(tt.Args) == 0 {
 			return concrete
 		}
 		// `Self<a>` is the implementing type's head at new arguments. One that cannot be
-		// applied stays `Self<a>`: the impl check refuses such an impl by name
-		// (SelfApplicable), and what a refused impl's signature says is not read further.
-		applied, ok := ApplySelf(concrete, tt.GenericParams)
+		// applied stays `Self<a>`: a default body is checked with `Self` a bare variable,
+		// which has no head, and the impl check refuses a target that has none
+		// (SelfApplicable), so what a refused impl's signature says is not read further.
+		applied, ok := ApplySelf(concrete, tt.Args)
 		if !ok {
 			return tt
 		}
-		// The arguments are already renamed; substitute only what they are bound to
-		// concretely, or a rename `a → a'` would be applied a second time.
-		concreteArgs := map[string]Type{}
-		for k, v := range subst {
-			if _, isVar := v.(GenericType); !isVar && k != SelfVar {
-				concreteArgs[k] = v
-			}
-		}
-		return Substitute(applied, concreteArgs)
+		return applied
 	case StaticArrayType:
 		tt.ElementType = Substitute(tt.ElementType, subst)
 		return tt
@@ -185,26 +174,62 @@ func Substitute(t Type, subst map[string]Type) Type {
 // `Self<a>` for `Result<t, e>` could replace the first argument or the last, and for `i64`
 // there is no head to apply; both answer false, and the impl check refuses such an impl
 // rather than choose (SelfApplicable).
-func ApplySelf(concrete Type, params []string) (Type, bool) {
+func ApplySelf(concrete Type, args []Type) (Type, bool) {
 	pt, ok := concrete.(ParameterizedType)
-	if !ok || len(pt.TypeArguments) != len(params) {
+	if !ok {
 		return nil, false
 	}
-	args := make([]Type, len(params))
-	for i, p := range params {
-		args[i] = GenericType{Name: p}
+	// A target with holes says which positions the arguments fill — `Result<_, e>` at
+	// `Self<b>` is `Result<b, e>`; the rest stays as the impl fixed it.
+	if holes := countHoles(pt.TypeArguments); holes > 0 {
+		if holes != len(args) {
+			return nil, false
+		}
+		filled := make([]Type, len(pt.TypeArguments))
+		next := 0
+		for i, a := range pt.TypeArguments {
+			if _, isHole := a.(HoleType); isHole {
+				filled[i] = args[next]
+				next++
+			} else {
+				filled[i] = a
+			}
+		}
+		pt.TypeArguments = filled
+		return pt, true
 	}
-	pt.TypeArguments = args
+	if len(pt.TypeArguments) != len(args) {
+		return nil, false
+	}
+	pt.TypeArguments = append([]Type(nil), args...)
 	return pt, true
 }
 
+func countHoles(args []Type) int {
+	n := 0
+	for _, a := range args {
+		if _, ok := a.(HoleType); ok {
+			n++
+		}
+	}
+	return n
+}
+
 // SelfApplicable reports whether an impl target can stand for `Self<…>` at arity n: a
-// parameterized type applied to n **distinct type variables**, like `Box<t>` or `Pair<k, v>`.
-// A concrete argument (`Box<i64>`) or a repeated one (`Pair<t, t>`) would make `Self<b>`
-// forget what the impl said about that position.
+// parameterized type applied to n **distinct type variables**, like `Box<t>` or `Pair<k, v>`,
+// or one with exactly n holes, like `Result<_, e>` — a hole marks the position an argument
+// fills, and what is not a hole stays as the impl fixed it. Without holes, a concrete
+// argument (`Box<i64>`) or a repeated one (`Pair<t, t>`) would make `Self<b>` forget what
+// the impl said about that position.
 func SelfApplicable(target Type, n int) bool {
 	pt, ok := target.(ParameterizedType)
-	if !ok || len(pt.TypeArguments) != n {
+	if !ok {
+		return false
+	}
+	if holes := countHoles(pt.TypeArguments); holes > 0 {
+		return holes == n
+	}
+	if len(pt.TypeArguments) != n {
 		return false
 	}
 	seen := map[string]bool{}

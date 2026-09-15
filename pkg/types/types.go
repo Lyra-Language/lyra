@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 )
 
 type Type interface {
@@ -78,12 +79,34 @@ func IsBoolean(t Type) bool {
 const SelfVar = "Self"
 
 type SelfType struct {
-	GenericParams []string
+	// Args are the arguments of an applied `Self<…>`, empty for a bare `Self`. In a trait
+	// signature they are the method's own variables (`Self<a>`); inside a default body,
+	// where `Self` stays abstract, a call may solve one to a concrete type (`Self<i64>`),
+	// which is why they are types rather than names.
+	Args []Type
 }
 
-func (SelfType) typeNode()        {}
-func (SelfType) GetName() string  { return "Self" }
-func (s SelfType) String() string { return s.GetName() }
+func (SelfType) typeNode()       {}
+func (SelfType) GetName() string { return "Self" }
+func (s SelfType) String() string {
+	if len(s.Args) == 0 {
+		return "Self"
+	}
+	parts := make([]string, len(s.Args))
+	for i, a := range s.Args {
+		parts[i] = a.String()
+	}
+	return "Self<" + strings.Join(parts, ", ") + ">"
+}
+
+// HoleType is the `_` in an impl target, `impl Functor for Result<_, e>`: the position a
+// trait's `Self<…>` argument occupies. Meaningful only there (the collector refuses it
+// elsewhere); ApplySelf fills the holes in order, and SelfApplicable counts them.
+type HoleType struct{}
+
+func (HoleType) typeNode()       {}
+func (HoleType) GetName() string { return "_" }
+func (HoleType) String() string  { return "_" }
 
 type VoidType struct{}
 

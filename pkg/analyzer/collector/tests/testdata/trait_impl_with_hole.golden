@@ -1,4 +1,4 @@
-Program(1 statements) {
+Program(2 statements) {
 	Statements: {
 		TraitDeclStmt(Functor) {
 			Methods: {
@@ -66,6 +66,48 @@ Program(1 statements) {
 				}
 			}
 			Name: Functor
+		}
+		TraitImplStmt {
+			Methods: {
+				TraitMethodImpl {
+					Clause: {
+						LambdaClause {
+							Body: {
+								IdentifierExpr(self) {
+									Name: self
+								}
+							}
+							Patterns: {
+								IdentifierPattern(self) {
+									Name: self
+								}
+								IdentifierPattern(f) {
+									Name: f
+								}
+							}
+						}
+					}
+					Name: {
+						MethodName(map) {
+							Kind: 0
+							Value: map
+						}
+					}
+				}
+			}
+			TraitName: Functor
+			Type: {
+				ParameterizedType(Result) {
+					Name: Result
+					TypeArguments: {
+						HoleType(_) {
+						}
+						GenericType(e) {
+							Name: e
+						}
+					}
+				}
+			}
 		}
 	}
 }

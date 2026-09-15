@@ -39,13 +39,8 @@ package types
 // impl fixes it, and no call solves it.
 func CollectTypeVars(t Type, vars map[string]bool) {
 	walkSignature(t, func(t Type) {
-		switch tt := t.(type) {
-		case GenericType:
+		if tt, ok := t.(GenericType); ok {
 			vars[tt.Name] = true
-		case SelfType:
-			for _, p := range tt.GenericParams {
-				vars[p] = true
-			}
 		}
 	})
 }
@@ -55,10 +50,33 @@ func CollectTypeVars(t Type, vars map[string]bool) {
 // different question, so an impl's `Self<…>` check reaches every position a variable does.
 func SelfApplications(t Type, arities map[int]bool) {
 	walkSignature(t, func(t Type) {
-		if st, ok := t.(SelfType); ok && len(st.GenericParams) > 0 {
-			arities[len(st.GenericParams)] = true
+		if st, ok := t.(SelfType); ok && len(st.Args) > 0 {
+			arities[len(st.Args)] = true
 		}
 	})
+}
+
+// HasHole reports whether t contains a `_` (HoleType) anywhere — an impl target with a
+// position reserved for a `Self<…>` argument.
+func HasHole(t Type) bool {
+	found := false
+	walkSignature(t, func(t Type) {
+		if _, ok := t.(HoleType); ok {
+			found = true
+		}
+	})
+	return found
+}
+
+// MentionsBareSelf reports whether t writes a `Self` with no arguments anywhere.
+func MentionsBareSelf(t Type) bool {
+	found := false
+	walkSignature(t, func(t Type) {
+		if st, ok := t.(SelfType); ok && len(st.Args) == 0 {
+			found = true
+		}
+	})
+	return found
 }
 
 // walkSignature calls visit on t and on every type structurally inside it — the one
@@ -83,6 +101,12 @@ func walkSignature(t Type, visit func(Type)) {
 		// field types out in the signature, so `t` is this signature's variable.
 		for _, f := range tt.Fields {
 			walkSignature(f.Type, visit)
+		}
+	case SelfType:
+		// `Self<a>`: the arguments are the method's own variables; `Self` itself is
+		// fixed by the impl.
+		for _, a := range tt.Args {
+			walkSignature(a, visit)
 		}
 	case WeakType:
 		walkSignature(tt.Inner, visit)

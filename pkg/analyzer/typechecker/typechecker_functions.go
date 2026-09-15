@@ -1146,8 +1146,14 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// inside a generic impl body). It has no concrete impl, but a `where t: Trait`
 	// bound in scope lets a method the bound's trait declares be dispatched
 	// against that trait's signature (Self = the parameter).
+	// Inside a default body an applied `Self<a>` receiver is the trait's own abstract
+	// variable at arguments; it dispatches through Self's bound like the bare `Self`,
+	// the arguments seeding the method's own variables (solveBoundMethodTypeVars).
+	if st, ok := objType.(types.SelfType); ok && len(st.Args) > 0 && tc.currentDefaultTrait != "" {
+		objType = types.GenericType{Name: selfVar}
+	}
 	if g, ok := objType.(types.GenericType); ok {
-		if ret, ok := tc.dispatchViaGenericBound(g, methodName, call); ok {
+		if ret, ok := tc.dispatchViaGenericBound(g, methodName, call, member.Object); ok {
 			return ret
 		}
 		// A **free function with a generic receiver** is the other thing `t` can have a

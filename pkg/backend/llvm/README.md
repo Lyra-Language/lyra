@@ -208,6 +208,12 @@ captureless lambda or closure — so no per-call-site specialization.
   `declareSpecialization` emits their closures under the substitution. A capture's type is
   read only through **`capturesOf`**, which substitutes (the third type funnel beside
   `lowerType` and `recordedType`).
+- **A trait-method body is the other generic body**: `collectNestedLambdas` skips trait
+  declarations and impls too, and `traitMethod` declares the body's closures under the
+  resolution's bindings and `SpecKey` (`definePendingTraitMethods` defines them after the
+  body). A lambda there may mention the impl's variable (`(y: t) -> t` in `impl … for
+  Box<t>`) or a default's own (`(x) => true` at `x: a`), which the program-wide walk
+  declared once with no substitution — *"type variable t has no concrete type here"*.
 - **`declareClosure`/`defineClosure` run from top-level loops, so they must
   `enterModuleOf` themselves.** Rule for any new such path: if it lowers a signature or
   body from a top-level loop, it enters its own module.

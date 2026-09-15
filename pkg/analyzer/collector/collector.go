@@ -48,6 +48,9 @@ type Collector struct {
 	// *module's* documentation and may already hold a sibling file's, which is not
 	// what this header says.
 	fileModuleDoc *ast.Doc
+	// inImplTarget is set while a trait impl's target type is parsed — the only place a
+	// hole (`_`) means something (see parseType's hole_type arm).
+	inImplTarget bool
 }
 
 func NewCollector(source []byte) *Collector {
@@ -751,6 +754,12 @@ func (c *Collector) ParseType(node *sitter.Node) types.Type {
 	return c.parseType(node)
 }
 
+func (c *Collector) ParseImplTarget(node *sitter.Node) types.Type {
+	c.inImplTarget = true
+	defer func() { c.inImplTarget = false }()
+	return c.parseType(node)
+}
+
 func (c *Collector) RecordTypeRef(name string, loc ast.Location) {
 	c.table.TypeRefs.Add(name, loc)
 }
@@ -890,6 +899,15 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return types.VoidType{}
 	case "fixed_point_type":
 		return c.parseFixedPointType(node)
+	case "hole_type":
+		// `_` marks the position a trait's `Self<…>` argument fills in an impl target
+		// (`impl Functor for Result<_, e>`). Anywhere else there is no `Self` for it to
+		// stand in for, so it is refused here, at the one place it is built.
+		if !c.inImplTarget {
+			c.addError(node, CollectorErrorSeverityError,
+				"`_` is a hole for a trait's Self<…> argument and is only meaningful in an impl target, like `impl Functor for Result<_, e>`")
+		}
+		return types.HoleType{}
 	}
 	c.addError(node, CollectorErrorSeverityError, "parseType: unknown type node kind: %s", node.Kind())
 	return nil
@@ -920,6 +938,12 @@ func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
 	if len(typeArguments) == 0 {
 		c.addError(node, CollectorErrorSeverityError, "parseParameterizedType: no type arguments")
 		return nil
+	}
+	// `Self<i64>`: the grammar's self_type takes only variables, so an applied Self with
+	// a concrete argument arrives here, and it is the same type as `Self<a>` — the impl
+	// target's head at those arguments — not a nominal type named "Self".
+	if name == "Self" {
+		return types.SelfType{Args: typeArguments}
 	}
 	return types.ParameterizedType{Name: name, TypeArguments: typeArguments}
 }
@@ -1050,13 +1074,13 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 
 func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
 	genericParamsNode := cst.Field(node, "generic_parameters")
-	var names []string
+	var args []types.Type
 	if genericParamsNode != nil {
 		for _, p := range c.CollectGenericParams(genericParamsNode) {
-			names = append(names, p.Name)
+			args = append(args, types.GenericType{Name: p.Name})
 		}
 	}
-	return types.SelfType{GenericParams: names}
+	return types.SelfType{Args: args}
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {

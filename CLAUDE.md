@@ -274,7 +274,15 @@ Semantics are in `LANGUAGE.md`; these are the compiler-side traps.
 **Trait default methods**
 - `Self` is `types.GenericType{"Self"}` bounded by the trait; checked once
   (`checkTraitDefaultMethods`), monomorphized per implementer via `SetBoundCandidates` and
-  `Resolution.Bindings`.
+  `Resolution.Bindings`. An applied `Self<a>` stays a `types.SelfType` (args are types, so
+  `Self<i64>` is representable) and dispatches through Self's bound like the bare variable;
+  `TypesEqual`/`isAssignable` compare its arguments. For a **holed** impl target
+  (`Result<_, e>`) `Bindings["Self"]` is the pattern at the receiver's bindings
+  (`Result<_, string>`), not the receiver: only the holes say which position `Self<a>`'s
+  argument fills (`types.ApplySelf`).
+- `publishCandidatesAt` substitutes each bound call's recorded receiver under the
+  specialization's bindings before matching: inside a default a receiver may be `Self<bool>`
+  after a `map`, whose candidate key is `Box<bool>`, not the enclosing `Box<i64>`.
 - **`ast.TraitMethod.DefaultImpl()` is the one instance** — many caches key on its pointer.
 - Dispatch tries the impl's clauses first, then the default.
 - `publishDefaultBodyCandidates` publishes the body's inner bound calls at the concrete

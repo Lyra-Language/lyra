@@ -104,6 +104,21 @@ func (l *lowerer) traitMethod(res typetable.Resolution) (*ir.Func, error) {
 	// nothing when it is empty.
 	restore := l.pushTypeSubst(res.Bindings)
 	fn, err := l.declareFunctionAs(name, lambda)
+	if err == nil {
+		// A lambda inside the body is lifted per specialization, exactly as
+		// declareSpecialization does for a generic function: its signature may mention
+		// the impl's variables or the method's own, so it is declared here under this
+		// specialization's bindings and keyed by its spec (closureKeyFor), and its body
+		// follows the method's in definePendingTraitMethods. The program-wide walk
+		// skips trait bodies for this reason (collectNestedLambdas).
+		restoreKey := l.pushSpecKey(res.SpecKey())
+		for _, lam := range l.ownNestedLambdas(lambda) {
+			if err = l.declareClosure(lam); err != nil {
+				break
+			}
+		}
+		restoreKey()
+	}
 	restore()
 	if err != nil {
 		return nil, err
@@ -150,7 +165,19 @@ func (l *lowerer) definePendingTraitMethods() error {
 			// what made `t = string` a double free for generic functions.
 			restoreSubst := l.pushTypeSubst(p.subst)
 			restoreOwn := l.pushMethodOwnership(p.specKey)
+			// The spec key names this specialization for the closures created inside
+			// the body (closureKeyFor), which are defined after it — under the same
+			// bindings and ownership table — never re-entrantly during it.
+			restoreKey := l.pushSpecKey(p.specKey)
 			err := l.defineFunctionInto(p.fn, p.lambda, p.fn.GlobalIdent.Ident())
+			if err == nil {
+				for _, lam := range l.ownNestedLambdas(p.lambda) {
+					if err = l.defineClosure(lam); err != nil {
+						break
+					}
+				}
+			}
+			restoreKey()
 			restoreOwn()
 			restoreSubst()
 			if err != nil {

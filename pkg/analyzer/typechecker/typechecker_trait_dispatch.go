@@ -86,6 +86,14 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 				traitSubst[gp.Name] = substituteGenerics(impl.TraitArgs[i], bindings)
 			}
 		}
+		// What `Self` stands for. The concrete receiver, except for a target with holes,
+		// where it is the target at this receiver's bindings with the holes kept
+		// (`Result<_, string>`): only the holes say which position a `Self<b>` argument
+		// fills, and the receiver has forgotten them (types.ApplySelf).
+		selfPattern := receiverType
+		if types.HasHole(implType) {
+			selfPattern = substituteGenerics(implType, bindings)
+		}
 		provided := false
 		for i := range impl.Methods {
 			m := &impl.Methods[i]
@@ -106,7 +114,7 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 				// which for a generic impl still holds the `<t>` placeholder),
 				// then bind the trait's own type parameters.
 				renamed, names := methodSignatureRenamedAway(trait, traitMethod.Signature, typeVarsOfImpl(impl))
-				sig = substituteSelf(renamed, receiverType)
+				sig = substituteSelf(renamed, selfPattern)
 				sig = substituteSigGenerics(sig, traitSubst)
 				methodVarNames = names
 			}
@@ -118,24 +126,28 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 		// rather than an ambiguity — the same last-rung shape a newtype's method
 		// fallback has.
 		if !provided {
-			if m, sig, ok := tc.defaultMatch(trait, methodName, receiverType, traitSubst); ok {
-				// `Self` joins the impl's own bindings rather than replacing them, so a
-				// generic impl's variables survive: a default running for
-				// `impl Show for Box<t>` at `Box<i64>` needs both t→i64 and Self→Box<i64>.
-				withSelf := make(map[string]types.Type, len(bindings)+len(traitSubst)+1)
-				for k, v := range bindings {
-					withSelf[k] = v
-				}
-				// …and the trait's own parameters, which are the names a default body is
-				// written in: `both: (Self) -> (e, e) = (self) => (self.one(), self.one())`
-				// on `impl Twice<t> for Box<t>` needs e→i64 as well. Without them the default
-				// type-checked and failed to lower, `type variable "e" has no concrete type`,
-				// from any call. Set after the impl's variables, so a trait parameter sharing
-				// a name with one is the default body's meaning of that name.
-				for k, v := range traitSubst {
-					withSelf[k] = v
-				}
-				withSelf[selfVar] = receiverType
+			// `Self` joins the impl's own bindings rather than replacing them, so a
+			// generic impl's variables survive: a default running for
+			// `impl Show for Box<t>` at `Box<i64>` needs both t→i64 and Self→Box<i64>.
+			withSelf := make(map[string]types.Type, len(bindings)+len(traitSubst)+1)
+			for k, v := range bindings {
+				withSelf[k] = v
+			}
+			// …and the trait's own parameters, which are the names a default body is
+			// written in: `both: (Self) -> (e, e) = (self) => (self.one(), self.one())`
+			// on `impl Twice<t> for Box<t>` needs e→i64 as well. Without them the default
+			// type-checked and failed to lower, `type variable "e" has no concrete type`,
+			// from any call. Set after the impl's variables, so a trait parameter sharing
+			// a name with one is the default body's meaning of that name.
+			for k, v := range traitSubst {
+				withSelf[k] = v
+			}
+			// The pattern rather than the receiver for a holed target: the backend
+			// substitutes a default body's `Self<a>` under these bindings, and only the
+			// pattern knows which position `a` fills. A holed target admits no bare
+			// `Self`, so nothing reads this binding expecting the receiver itself.
+			withSelf[selfVar] = selfPattern
+			if m, sig, ok := tc.defaultMatch(trait, methodName, withSelf, receiverType); ok {
 				matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: withSelf})
 			}
 		}
@@ -149,19 +161,24 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 // The signature is built for the *concrete* receiver while the body was checked with Self
 // abstract, which is the same split a generic function has: the call site is checked
 // against the instantiated signature, the body once against the variable.
-func (tc *TypeChecker) defaultMatch(trait *ast.TraitDeclStmt, methodName ast.MethodName, receiverType types.Type, traitSubst map[string]types.Type) (*ast.TraitMethodImpl, *types.LambdaType, bool) {
+//
+// bindings is the default's whole vocabulary — the impl's variables, the trait's
+// parameters and `Self` (the receiver, or a holed target's pattern) — and the signature
+// is built by substituting it; receiverType is the concrete receiver the body's own bound
+// calls are published at.
+func (tc *TypeChecker) defaultMatch(trait *ast.TraitDeclStmt, methodName ast.MethodName, bindings map[string]types.Type, receiverType types.Type) (*ast.TraitMethodImpl, *types.LambdaType, bool) {
 	traitMethod := findTraitMethodNamed(trait, methodName)
 	if traitMethod == nil || traitMethod.DefaultMethod == nil {
 		return nil, nil, false
 	}
 	var sig *types.LambdaType
 	if traitMethod.Signature != nil {
-		sig = substituteSelf(traitMethod.Signature, receiverType)
-		sig = substituteSigGenerics(sig, traitSubst)
+		sig = substituteSelf(traitMethod.Signature, bindings[selfVar])
+		sig = substituteSigGenerics(sig, bindings)
 	}
 	// The body's own bound calls need a candidate at *this* receiver, or the default
 	// type-checks abstractly and fails to lower. See publishDefaultBodyCandidates.
-	tc.publishDefaultBodyCandidates(trait, traitMethod, receiverType)
+	tc.publishDefaultBodyCandidates(trait, traitMethod, receiverType, bindings)
 	return traitMethod.DefaultImpl(), sig, true
 }
 
@@ -188,7 +205,9 @@ func implTargetMatches(implType, receiverType types.Type) (map[string]types.Type
 	}
 	generics := map[string]bool{}
 	collectTypeVars(implType, generics)
-	if len(generics) == 0 {
+	// A target with a hole (`Maybe<_>`) is generic in the hole's position even when it
+	// names no variable: the hole unifies with anything and binds nothing.
+	if len(generics) == 0 && !types.HasHole(implType) {
 		return nil, false
 	}
 	bindings := map[string]types.Type{}
@@ -212,6 +231,23 @@ func unifyGenericTarget(implType, receiverType types.Type, generics map[string]b
 		return true
 	}
 	switch it := implType.(type) {
+	case types.HoleType:
+		// A hole in an impl target stands for whatever the receiver has there; the
+		// position is a trait's `Self<…>` argument, solved per call and not here.
+		return true
+	case types.SelfType:
+		// Inside a default body the receiver of `map: (Self<a>, …)` is a `Self<x>`: the
+		// same abstract head, so the arguments unify pairwise and solve `a`.
+		rt, ok := receiverType.(types.SelfType)
+		if !ok || len(it.Args) != len(rt.Args) {
+			return false
+		}
+		for i := range it.Args {
+			if !unifyGenericTarget(it.Args[i], rt.Args[i], generics, bindings) {
+				return false
+			}
+		}
+		return true
 	case types.DynamicArrayType:
 		rt, ok := receiverType.(types.DynamicArrayType)
 		return ok && unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
@@ -473,7 +509,7 @@ func (tc *TypeChecker) implConstraintsHold(impl *ast.TraitImplStmt, bindings map
 // is no concrete impl to record (the actual impl is chosen when the enclosing
 // generic is instantiated at its own call site, where checkImplConstraints has
 // already verified the bound holds), so nothing is written to the MethodTable.
-func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodName string, call *ast.FunctionCallExpr) (types.Type, bool) {
+func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodName string, call *ast.FunctionCallExpr, receiver ast.Expression) (types.Type, bool) {
 	for _, traitName := range tc.genericBounds[recv.Name] {
 		trait, ok := tc.symTable.LookupTraitFrom(traitName, call.GetLocation())
 		if !ok {
@@ -497,9 +533,11 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		// `recv` is the enclosing declaration's own variable, so a slot mentioning it —
 		// `(t) -> t` for `ap: (Self, (Self) -> Self) -> Self` — may be planted on a lambda.
 		plantable := map[string]bool{recv.Name: true}
-		// `Self<a>` at a bare variable has no head to apply (types.ApplySelf), so the
-		// signature would keep a `Self` nothing can check against. Refused by name.
-		if len(selfApplicationsOf(tm.Signature)) > 0 {
+		// `Self<a>` at a `where`-bound variable has no head to apply (types.ApplySelf): a
+		// bare `t` cannot be `t<a>`, so the signature would keep a `Self` nothing can
+		// check against. Refused by name. Inside a default body the receiver *is* `Self`,
+		// which stays the abstract head, so `Self<a>` is a type of its own there.
+		if len(selfApplicationsOf(tm.Signature)) > 0 && recv.Name != selfVar {
 			tc.addError(call.GetLocation(), SeverityError,
 				"%s::%s: a method writing Self with type arguments cannot be called through a `where` bound; call it on a concrete receiver",
 				traitName, methodName)
@@ -511,7 +549,7 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		// each specialization of the enclosing body (Resolution.WithMethodVars).
 		own, renames := methodSignatureRenamedAway(trait, tm.Signature, plantable)
 		sig := substituteSelf(own, recv)
-		if solution, ok := tc.solveBoundMethodTypeVars(traitName+"::"+methodName, trait, own, renames, sig, call, plantable); !ok {
+		if solution, ok := tc.solveBoundMethodTypeVars(traitName+"::"+methodName, trait, own, renames, sig, call, receiver, plantable); !ok {
 			return nil, true
 		} else if len(solution) > 0 {
 			tc.methodTable.SetBoundMethodVars(call, solution)
@@ -688,10 +726,23 @@ func (tc *TypeChecker) solveMethodTypeVars(calleeName string, match resolvedTrai
 // `Self` already the receiver variable and the method's variables renamed away from it (as
 // renames records). The solution is returned keyed by the trait's names, which is how every
 // candidate impl can find it under its own (typetable.Resolution.MethodVarNames).
-func (tc *TypeChecker) solveBoundMethodTypeVars(calleeName string, trait *ast.TraitDeclStmt, renamedSig *types.LambdaType, renames map[string]string, sig *types.LambdaType, call *ast.FunctionCallExpr, callerVars map[string]bool) (map[string]types.Type, bool) {
+func (tc *TypeChecker) solveBoundMethodTypeVars(calleeName string, trait *ast.TraitDeclStmt, renamedSig *types.LambdaType, renames map[string]string, sig *types.LambdaType, call *ast.FunctionCallExpr, receiver ast.Expression, callerVars map[string]bool) (map[string]types.Type, bool) {
 	vars := methodOwnTypeVars(trait, renamedSig)
 	if len(vars) == 0 || len(sig.Parameters) == 0 {
 		return nil, true
+	}
+	// The receiver seeds the solve, as it does for a concrete receiver
+	// (solveMethodTypeVars): inside a default body `self: Self<a>` against the method's
+	// `Self<a'>` is the only thing that says what `a'` is. A bare `t` receiver against a
+	// bare `Self` binds nothing and costs nothing.
+	var seed map[string]types.Type
+	if receiver != nil && sig.Parameters[0].Type != nil {
+		if recvType := tc.inferExprType(receiver); recvType != nil {
+			seed = map[string]types.Type{}
+			if !unifyGenericTarget(sig.Parameters[0].Type, recvType, vars, seed) {
+				seed = nil
+			}
+		}
 	}
 	params := sig.Parameters[1:] // the receiver is implicit
 	if len(call.Arguments) != len(params) {
@@ -703,7 +754,7 @@ func (tc *TypeChecker) solveBoundMethodTypeVars(calleeName string, trait *ast.Tr
 		}
 		return tc.resolveTypeIfKnown(params[i].Type, call.GetLocation())
 	}
-	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, argumentSolve{callerVars: callerVars})
+	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, argumentSolve{seed: seed, callerVars: callerVars})
 	if !ok {
 		tc.addError(call.GetLocation(), SeverityError,
 			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))
@@ -947,7 +998,7 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 			// concrete type — the one thing the candidate tables were missing for a
 			// *generic* impl. Publish before reporting, since a failing bound has no
 			// specialization to publish for.
-			tc.publishCandidatesAt(lambda, traitName, concrete)
+			tc.publishCandidatesAt(lambda, traitName, concrete, nil)
 			if ok, why := tc.typeImplementsTraitWhy(concrete, traitName, nil); !ok {
 				// The `because` clause is what makes a nested failure actionable: an
 				// impl may apply to `Complex<t>` in general and be excluded here by its
@@ -986,14 +1037,36 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 // Sites are filtered by trait rather than by which parameter they belong to. A generic
 // with two bounded parameters may publish a candidate under the wrong one, which costs a
 // table entry nobody selects — the same trade `publishBoundCandidates` already documents.
-func (tc *TypeChecker) publishCandidatesAt(lambda *ast.LambdaExpr, traitName string, concrete types.Type) {
+//
+// bindings is the specialization's substitution, when the caller has one. A bound call's
+// receiver is normally the bound variable itself (`self`, `x: t`), and its concrete type
+// is `concrete`. Inside a default body writing `Self<…>` it may be `Self<bool>` after a
+// `map`, whose concrete type at `Self = Box<i64>` is `Box<bool>` — so the receiver's
+// recorded type is substituted first, and `concrete` is the fallback for a receiver that
+// does not settle (its method variables unsolved at this point).
+func (tc *TypeChecker) publishCandidatesAt(lambda *ast.LambdaExpr, traitName string, concrete types.Type, bindings map[string]types.Type) {
 	if lambda == nil || lambda.Body == nil || concrete == nil {
 		return
 	}
 	if _, isVar := concrete.(types.GenericType); isVar {
 		return
 	}
-	keys := candidateKeys(concrete)
+	receiverAt := func(call *ast.FunctionCallExpr) types.Type {
+		member, ok := call.Function.(*ast.MemberExpr)
+		if !ok || len(bindings) == 0 {
+			return concrete
+		}
+		recorded, ok := tc.typeTable.Get(member.Object)
+		if !ok || recorded == nil {
+			return concrete
+		}
+		if at := types.Substitute(recorded, bindings); mentionsNoTypeVar(at) && !types.HasHole(at) {
+			if _, isSelf := at.(types.SelfType); !isSelf {
+				return at
+			}
+		}
+		return concrete
+	}
 	// **The bound's trait is not the method's trait once supertraits exist.** A site
 	// under `where u: Arithmetic` dispatches `(_+_)` through `Add`, because `Arithmetic`
 	// declares nothing — so matching the ref against the bound's name alone publishes
@@ -1003,8 +1076,9 @@ func (tc *TypeChecker) publishCandidatesAt(lambda *ast.LambdaExpr, traitName str
 	onExpr := func(e ast.Expression) bool {
 		if call, isCall := e.(*ast.FunctionCallExpr); isCall {
 			if ref, ok := tc.methodTable.GetBound(call); ok && slices.Contains(reachable, ref.Trait) {
-				if m, found := tc.matchOneAt(concrete, ast.NewMethodNameIdentifier(ref.Method), ref.Trait); found {
-					for _, k := range keys {
+				at := receiverAt(call)
+				if m, found := tc.matchOneAt(at, ast.NewMethodNameIdentifier(ref.Method), ref.Trait); found {
+					for _, k := range candidateKeys(at) {
 						tc.methodTable.AddBoundCandidate(call, k, resolutionOf(m))
 					}
 					tc.publishImplBodyCandidates(m)
@@ -1013,7 +1087,7 @@ func (tc *TypeChecker) publishCandidatesAt(lambda *ast.LambdaExpr, traitName str
 		}
 		if ref, ok := tc.methodTable.OperatorBound(e); ok && slices.Contains(reachable, ref.Trait) {
 			if m, found := tc.matchOneAt(concrete, methodNameFromKey(ref.Method), ref.Trait); found {
-				for _, k := range keys {
+				for _, k := range candidateKeys(concrete) {
 					tc.methodTable.AddOperatorCandidate(e, k, resolutionOf(m))
 				}
 				tc.publishImplBodyCandidates(m)
@@ -1066,7 +1140,7 @@ func (tc *TypeChecker) publishImplBodyCandidates(m resolvedTraitMethod) {
 			continue
 		}
 		for _, traitName := range c.TraitBounds {
-			tc.publishCandidatesAt(body, traitName, concrete)
+			tc.publishCandidatesAt(body, traitName, concrete, m.Bindings)
 		}
 	}
 }

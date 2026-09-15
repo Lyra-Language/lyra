@@ -26,6 +26,9 @@ type Collector interface {
 	ParseDestructuringPattern(*sitter.Node) ast.Pattern
 	CollectPattern(*sitter.Node) ast.Pattern
 	ParseType(*sitter.Node) types.Type
+	// ParseImplTarget is ParseType for a trait impl's target, the one position where a
+	// hole (`Result<_, e>`) is admitted.
+	ParseImplTarget(*sitter.Node) types.Type
 	ParseLambdaType(*sitter.Node) *types.LambdaType
 	RegisterType(*ast.TypeDeclStmt) error
 	RegisterTrait(*ast.TraitDeclStmt) error
