@@ -243,8 +243,60 @@ func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Typ
 			}
 		}
 		return true
+
+	case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
+		// A branching value takes a shape when every branch does: `(c) -> []string =>
+		// if c { ["a"] } else { ["b"] }` is two array literals a `[]string` return may
+		// build dynamic, exactly as it may one. Each branch is judged by its own record,
+		// so a branch that is a fixed-array *binding* is still the refusal this function
+		// exists to keep. propagateExpected then re-flavors the literals and re-records
+		// the node (recordBranchingValueNode).
+		branches := valueBranches(expr)
+		if len(branches) == 0 {
+			return false
+		}
+		for _, b := range branches {
+			got := tc.inferExprType(b)
+			if got == nil {
+				return false
+			}
+			if !isAssignable(got, to) && !tc.literalTakesShape(b, got, to) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
+}
+
+// valueBranches is the expressions a branching value takes its value from: an `if`'s two
+// branches, a match's arm bodies, a block's final expression. Nil for anything else, and for
+// an `if` with no `else` or a block whose last statement is not an expression, which have
+// no value to shape.
+func valueBranches(expr ast.Expression) []ast.Expression {
+	switch e := expr.(type) {
+	case *ast.IfExpr:
+		if e.Then == nil || e.Else == nil {
+			return nil
+		}
+		return []ast.Expression{e.Then, e.Else}
+	case *ast.MatchExpr:
+		out := make([]ast.Expression, 0, len(e.MatchArms))
+		for _, arm := range e.MatchArms {
+			if arm.Body == nil {
+				return nil
+			}
+			out = append(out, arm.Body)
+		}
+		return out
+	case *ast.BlockExpr:
+		if n := len(e.Statements); n > 0 {
+			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
+				return []ast.Expression{es.Expression}
+			}
+		}
+	}
+	return nil
 }
 
 // elementTakesShape checks one element of an array literal against the target's
@@ -368,6 +420,20 @@ func isSyntacticLiteral(expr ast.Expression) bool {
 	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr, *ast.LambdaExpr:
 		// Both array forms — ArrayRepeatExpr is ArrayLiteralExpr's variant (hazard 8),
 		// and the repeat's count was never consulted (a length is not an element).
+		return true
+	case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
+		// A value every branch of which is built in place is built in place: `-> Bag =>
+		// if c { ["a"] } else { ["b"] }` constructs one of two literals, as `-> Bag =>
+		// ["a"]` constructs one. A branch holding a binding makes the whole value one.
+		branches := valueBranches(expr)
+		if len(branches) == 0 {
+			return false
+		}
+		for _, b := range branches {
+			if !isSyntacticLiteral(b) {
+				return false
+			}
+		}
 		return true
 	}
 	return false

@@ -3892,7 +3892,37 @@ func (tc *TypeChecker) stampSharedConstruction(expr ast.Expression, expected typ
 func (tc *TypeChecker) recordUntypedValueNode(expr ast.Expression, expected types.Type) {
 	if cp, ok := expected.(types.PrimitiveType); ok && tc.currentTypeIsUntyped(expr) {
 		tc.typeTable.Set(expr, cp)
+		return
 	}
+	tc.recordBranchingValueNode(expr, expected)
+}
+
+// recordBranchingValueNode re-records a match/if/block at a **dynamic array** context once
+// the push has re-flavored every branch into it. The branches' literals re-record
+// themselves, but the node keeps the fixed array its branches joined to, and that record is
+// what the backend merges the branches at: `if c { ["a"] } else { ["b"] }` for a `[]string`
+// return would join two dynamic values as a `[1]string`. Only when every branch now records
+// something assignable — a fixed-array binding in one branch was refused by the check and
+// keeps its mismatch (the same guard refreshBranchingRecord applies to data types).
+func (tc *TypeChecker) recordBranchingValueNode(expr ast.Expression, expected types.Type) {
+	dyn, ok := expected.(types.DynamicArrayType)
+	if !ok {
+		return
+	}
+	if recorded, ok := tc.typeTable.Get(expr); !ok || isAssignable(recorded, dyn) {
+		return
+	}
+	branches := valueBranches(expr)
+	if len(branches) == 0 {
+		return
+	}
+	for _, b := range branches {
+		got, ok := tc.typeTable.Get(b)
+		if !ok || got == nil || !isAssignable(got, dyn) {
+			return
+		}
+	}
+	tc.typeTable.Set(expr, dyn)
 }
 
 // currentTypeIsUntyped reports whether expr's currently recorded type is an

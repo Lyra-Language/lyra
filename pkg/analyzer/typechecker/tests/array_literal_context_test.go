@@ -109,3 +109,62 @@ let main = () -> void => {
 		t.Fatal("an element whose payload disagrees with the context should be reported")
 	}
 }
+
+// A branching value whose branches are array literals takes a dynamic-array context the way a
+// single literal does — through an `if`, an `else if` chain, a match, a nested block, and when
+// the branches differ in length or one is empty, which do not join on their own. It used to be
+// refused in every one of those shapes: `(c) -> []string => if c { ["a"] } else { ["b"] }`
+// reported `expected DynamicArray<string>, got StaticArray<string, 1>`.
+func TestArrayLiteralContext_BranchesTakeTheContext(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"if, same length":      `let g = (c: bool) -> []string => if c { ["a"] } else { ["b"] }`,
+		"if, different length": `let g = (c: bool) -> []string => if c { ["a"] } else { ["b", "c"] }`,
+		"if, empty else":       `let g = (c: bool) -> []i64 => if c { [1, 2] } else { [] }`,
+		"else if chain":        `let g = (n: i64) -> []i64 => if n == 0 { [] } else if n == 1 { [1] } else { [1, 2, 3] }`,
+		"match":                `let g = (n: i64) -> []i64 => match n { 0 => [], 1 => [1], _ => { let k = n; [k, k] } }`,
+		"match inside if":      `let g = (c: bool, n: i64) -> []i64 => if c { match n { 0 => [], _ => [n] } } else { [7, 8] }`,
+		"annotated binding":    `let g = (c: bool) -> i64 => { let xs: []i64 = if c { [1] } else { [2, 3] }; xs.len() }`,
+		"argument slot": `
+let take = (xs: []i64) -> i64 => xs.len()
+let g = (c: bool) -> i64 => take(if c { [1] } else { [2, 3] })`,
+		"a dynamic binding in one branch": `let g = (c: bool, ys: []i64) -> []i64 => if c { ys } else { [1, 2, 3] }`,
+		"newtype over an array": `
+newtype Bag = []string
+let g = (c: bool) -> Bag => if c { ["a"] } else { ["b", "c"] }`,
+		"the result is dynamic": `let g = (c: bool) -> i64 => { var xs: []i64 = if c { [1] } else { [2, 3] }; xs.push(4); xs.len() }`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertNoErrors(t, parseCollectAndCheck(t, src, false))
+		})
+	}
+}
+
+// Only literals take the shape: a fixed-array binding in a branch is the refusal
+// literalTakesShape exists for, and with no context the branches are still two fixed arrays.
+func TestArrayLiteralContext_BranchesKeepTheirRefusals(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct{ src, want string }{
+		"fixed binding, same length": {
+			`let g = (c: bool) -> []i64 => { let fixed = [1, 2]; if c { fixed } else { [3, 4] } }`,
+			"g: return type mismatch: expected DynamicArray<i64>, got StaticArray<i64, 2>"},
+		"fixed binding, different length": {
+			`let g = (c: bool) -> []i64 => { let fixed = [1, 2]; if c { fixed } else { [3] } }`,
+			"if/else branches have incompatible types: then is StaticArray<i64, 2>, else is StaticArray<integer literal, 1>"},
+		"no context": {
+			`let g = (c: bool) -> i64 => { let k = if c { [1] } else { [2, 3] }; 0 }`,
+			"if/else branches have incompatible types: then is StaticArray<integer literal, 1>, else is StaticArray<integer literal, 2>"},
+		"a binding into a newtype": {`
+newtype Bag = []string
+let g = (c: bool, ys: []string) -> Bag => if c { ys } else { ["b"] }`,
+			"cannot use DynamicArray<string> as Bag implicitly: Bag is a distinct type over DynamicArray<string>, so the conversion must be written — `Bag(...)`"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assertHasErrorContaining(t, parseCollectAndCheck(t, tc.src, false), tc.want)
+		})
+	}
+}

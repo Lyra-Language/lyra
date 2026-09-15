@@ -9,11 +9,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] An `if` whose branches end in array literals ignores a `[]E` return.**
-  `(c: bool) -> []string => if c { ["a"] } else { ["b"] }` is refused (`expected
-  DynamicArray<string>, got StaticArray<string, 1>`); the branches' literals are not
-  re-flavored the way a bare literal tail is.
-
 - **[OPEN] A concrete trait call on a generic impl inside a generic function does not lower.**
   `let g<u> = (b: Box<u>) -> i64 => b.get()` against `impl Get for Box<t>` type-checks, then
   the backend reports `type variable "u" has no concrete type`: a resolution's bindings

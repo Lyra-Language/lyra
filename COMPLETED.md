@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — branches of array literals take a dynamic-array context
+
+`(c: bool) -> []string => if c { ["a"] } else { ["b"] }` was refused with `expected
+DynamicArray<string>, got StaticArray<string, 1>`, while `-> []string => ["a"]` compiled. The
+rule "a literal's flavor is its context's" had reached payloads, nested literals, solved
+arguments and receivers, but not branches.
+
+**Three places had to learn it, and each was checked by removing it.**
+- **`literalTakesShape`** (assignability) accepts an `if`/`match`/block when every branch is
+  assignable or is itself a literal of that shape (`valueBranches`). A branch holding a
+  fixed-array *binding* still fails, which is the memory-safety refusal this function exists for.
+- **The branch join.** `[1, 2]` and `[]` have no common type, so `checkIfExpr` and
+  `checkMatchExpr` refused them before any context was asked. On a failed join,
+  `joinAtArrayContext` asks the context in force: an annotation, a declared return or a parameter
+  slot, never a statement's (withoutExpectedType, earlier today). If every branch takes that
+  shape, the value is the context, newtype included. The match fold now infers every arm before
+  judging, so the fallback has all their types.
+- **The node's record.** Same-length branches join on their own, to `[2]string`, and the push
+  re-flavored the literals but left the `if` recorded fixed. That record is what the backend
+  merges at: an annotated `let` or an argument slot stored a `[2]string` merge into a `[]string`
+  slot, and llir panicked in `NewStore`. `recordBranchingValueNode` re-records the node once
+  every branch is assignable. `TestExec_SameLengthArrayBranchesRecordTheContext` is the case
+  that panics without it; the first run test passed without it, because a return position never
+  reads the node.
+
+`isSyntacticLiteral` now sees through branches too, so `-> Bag => if c { ["a"] } else { ["b"] }`
+converts implicitly into `newtype Bag = []string`, as the bare literal does. A `[]string` binding
+in a branch still needs `Bag(...)`.
+
 ### 09/14/26 — a statement inside a branch no longer inherits the value's context
 
 `-> Maybe<i64> => if c { let q = make(); None } else { None }` compiled, with `make<t>() ->

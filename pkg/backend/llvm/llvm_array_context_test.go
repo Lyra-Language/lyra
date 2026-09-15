@@ -92,3 +92,60 @@ let main = () -> u8 => {
 		t.Errorf("under ASan: exited %d; want 20", got)
 	}
 }
+
+// Branches of array literals lower as the dynamic array their context asks for: the branch
+// values and the merge the backend builds from the branching node's record must agree, or
+// two dynamic arrays meet a fixed-array phi (rule 5's joinPhi check, or silent garbage).
+// Different lengths, an empty branch, a match and a newtype, with managed elements and a
+// push onto each result, so ASan sees any record that disagrees with what was built.
+func TestExec_ArrayLiteralBranchesTakeTheContext(t *testing.T) {
+	t.Parallel()
+	src := `newtype Bag = []string
+let pick = (c: bool) -> []string => if c { ["a".slice(0, 1) ++ "x"] } else { ["b", "c" ++ "d"] }
+let nums = (n: i64) -> []i64 => match n { 0 => [], 1 => [5], _ => { let k = n * 2; [k, k, k] } }
+let bag = (c: bool) -> Bag => if c { [] } else { ["p", "q" ++ "r"] }
+let main = () -> u8 => {
+  var a = pick(true)
+  a.push("y")
+  var b = pick(false)
+  b.push("z")
+  var n = nums(4)
+  n.push(1)
+  let e = nums(0)
+  let g = base(bag(false))
+  u8(a.len() + a[0].len() + b.len() + b[1].len() + n.len() + n[0] + e.len() + nums(1)[0] + g.len() + g[1].len() + base(bag(true)).len())
+}`
+	// 2 + 2 + 3 + 2 + 4 + 8 + 0 + 5 + 2 + 2 + 0
+	const want = 30
+	if got := buildAndRun(t, src); got != want {
+		t.Errorf("exited %d; want %d", got, want)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != want {
+		t.Errorf("under ASan: exited %d; want %d", got, want)
+	}
+}
+
+// Same-length branches join to a fixed array on their own, so the branching node keeps that
+// record unless the context's push re-records it (recordBranchingValueNode). An annotated
+// binding and an argument slot are where the backend reads it: without the re-record it
+// stored a `[2]string` merge into a `[]string` slot, and llir panicked in NewStore.
+func TestExec_SameLengthArrayBranchesRecordTheContext(t *testing.T) {
+	t.Parallel()
+	src := `let take = (xs: []string) -> i64 => xs.len() + xs[1].len()
+let main = () -> u8 => {
+  let c = true
+  var xs: []string = if c { ["a" ++ "b", "c"] } else { ["d", "e"] }
+  xs.push("f")
+  let n = take(if c { ["g", "h" ++ "i"] } else { ["j", "k"] })
+  let m = match n { 4 => { let ys: []string = if c { ["l", "m"] } else { ["n", "o"] }; ys.len() }, _ => 0 }
+  u8(xs.len() + xs[0].len() + n + m)
+}`
+	// 3 + 2 + 4 + 2
+	const want = 11
+	if got := buildAndRun(t, src); got != want {
+		t.Errorf("exited %d; want %d", got, want)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != want {
+		t.Errorf("under ASan: exited %d; want %d", got, want)
+	}
+}
