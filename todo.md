@@ -43,10 +43,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
   marks the position) and default methods writing `Self<…>` landed 09/15; a bound receiver
   `t` has no head to apply, and giving it one is higher-kinded type variables, which nothing
   asks for.
-- **[OPEN] A method variable solved from a lambda's untyped literal stays a literal.**
-  `b.map((x) => 7)` under a `-> Box<i64>` context is "expected Box<i64>, got Box<integer
-  literal>", on a concrete receiver and inside a default alike; a filed sibling is the array
-  literal solving a variable as a fixed array. The context should settle the solution.
 
 ### Modules and tooling
 
@@ -239,11 +235,6 @@ existing inferred `pure det`, with no new syntax; results must be emittable cons
   purpose (binary-scaled determinism vs decimal money, which a newtype serves) and what
   arithmetic does to the parameters; blocked on const generics. Add `fixed_point_type` to
   both highlight query files when built.
-- **[OPEN] A context does not reach a constructor's argument.** `let d: Result<string, e> =
-  Err(Zero::zero())` sees the whole annotation as the argument's context, not `e`, so a
-  receiver-less call there is refused; the same for a literal payload solving a method
-  variable (`Self<integer literal>`). Constructor payloads are typed after the fact
-  (`stampDataConstruction`); pushing the payload's slot type first would settle both.
 - **[OPEN] Overlapping impls** (`impl Show for Box<t>` beside `Box<i64>`) are not ranked;
   only identical targets are refused (`lyra-E037`).
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened

@@ -129,9 +129,9 @@ func (tc *TypeChecker) resolveDeclaredParam(lambda *ast.LambdaExpr, i int) types
 // the specialized function, deciding an alloca's width and an instruction's signedness,
 // so an unresolved literal type reaching codegen is the same class of bug as an int
 // literal in a float slot. The default still applies — one pass later.
-func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool, seed map[string]types.Type) (map[string]types.Type, bool) {
+func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool, ctx argumentSolve) (map[string]types.Type, bool) {
 	declared := func(i int) types.Type { return tc.resolveDeclaredParam(lambda, i) }
-	return tc.solveArgumentTypeVars(len(lambda.Parameters), declared, call, vars, argumentSolve{seed: seed})
+	return tc.solveArgumentTypeVars(len(lambda.Parameters), declared, call, vars, ctx)
 }
 
 // argumentSolve is what a call's context contributes to solving its type variables, beyond
@@ -142,6 +142,45 @@ type argumentSolve struct {
 	// callerVars are the enclosing body's variables a lambda literal may be given — a bound
 	// receiver's `t` — beyond those the solve's own values bring (plantableVars).
 	callerVars map[string]bool
+	// settle binds, from the context, the variables the arguments *can* reach but leave
+	// open after the first pass — those only a deferred lambda or an untyped literal
+	// mentions. See contextBindings.
+	settle map[string]types.Type
+}
+
+// contextBindings is what the context a call sits in says about the callee's variables:
+// the declared return type unified against currentExpectedType over vars. Nil when there
+// is no context or it is a different shape.
+//
+// Installed by solveArgumentTypeVars *between* its passes, for variables still unbound
+// after the arguments that carry a type of their own have spoken. Before this, a variable
+// only a lambda literal's return reached was bound to whatever the lambda's body defaulted
+// to: `b.map((x) => 7)` under a `-> Box<i64>` context solved `b` to the literal and reported
+// "expected Box<i64>, got Box<integer literal>"; under `Box<u8>` the lambda would have
+// returned an i64 into a u8 slot. With the context binding `b` first, the lambda is
+// elaborated against `(i64) -> u8` and its literal is checked and narrowed as any literal in
+// a typed slot is. Arguments with a type of their own still win — this reaches only what
+// they left open — so no call that solved before solves differently.
+func (tc *TypeChecker) contextBindings(declaredReturn types.Type, vars map[string]bool, loc ast.Location) map[string]types.Type {
+	want := tc.currentExpectedType()
+	if want == nil || declaredReturn == nil || len(vars) == 0 {
+		return nil
+	}
+	declared := tc.resolveTypeIfKnown(declaredReturn, loc)
+	if declared == nil {
+		return nil
+	}
+	out := map[string]types.Type{}
+	if !unifyGenericTarget(declared, want, vars, out) {
+		return nil
+	}
+	for k, v := range out {
+		// A context that is itself open (a bare `Box`, or a literal) settles nothing.
+		if v == nil || !mentionsNoTypeVar(v) || isUntypedLiteralType(v) {
+			delete(out, k)
+		}
+	}
+	return out
 }
 
 // solveArgumentTypeVars is solveTypeVars over parameter types given by position rather than
@@ -230,6 +269,32 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 			return nil, false
 		}
 	}
+	// The context settles what the typed arguments left open, before the lambdas and
+	// literals that would otherwise guess it (contextBindings). A settled binding is
+	// provisional: a deferred argument that carries a type of its own (`(x) -> string =>
+	// "s"`) and disagrees with it wins, as a typed argument in the first pass would have —
+	// the binding is dropped and the argument re-unified, so the mismatch surfaces where
+	// the result is checked against the context rather than as an inference failure.
+	settled := map[string]bool{}
+	for k, v := range ctx.settle {
+		if _, bound := subst[k]; !bound && vars[k] {
+			subst[k] = v
+			settled[k] = true
+		}
+	}
+	unify := func(declared, actual types.Type) bool {
+		if unifyGenericTarget(declared, actual, vars, subst) {
+			return true
+		}
+		if len(settled) == 0 {
+			return false
+		}
+		for k := range settled {
+			delete(subst, k)
+		}
+		settled = map[string]bool{}
+		return unifyGenericTarget(declared, actual, vars, subst)
+	}
 	for _, i := range deferred {
 		declared := declaredParam(i)
 		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
@@ -254,7 +319,7 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		if argType == nil {
 			return nil, false
 		}
-		if !unifyGenericTarget(declared, promoteToDefault(argType), vars, subst) {
+		if !unify(declared, promoteToDefault(argType)) {
 			return nil, false
 		}
 	}
@@ -278,13 +343,20 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 				// assignableValue rather than isAssignable, so an array literal's untyped
 				// elements adopt the binding's; for a scalar literal or a bare construction
 				// the two agree.
-				if !tc.assignableValue(call.Arguments[u.index], u.typ, bound) {
+				if tc.assignableValue(call.Arguments[u.index], u.typ, bound) {
+					continue
+				}
+				// A context-settled binding the literal cannot fill yields to the literal,
+				// as it does to a typed deferred argument: `"${idf(5)}"` sits in a context
+				// that wants a string, and `5` is what `idf` was given.
+				if !settled[g.Name] {
 					return nil, false
 				}
-				continue
+				delete(subst, g.Name)
+				delete(settled, g.Name)
 			}
 		}
-		if !unifyGenericTarget(declared, promoteToDefault(u.typ), vars, subst) {
+		if !unify(declared, promoteToDefault(u.typ)) {
 			return nil, false
 		}
 	}
@@ -363,6 +435,13 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 	for _, gp := range decl.GenericParams {
 		vars[gp.Name] = true
 	}
+	// The construction's own context, when it is an instantiation of this declaration:
+	// `Err(Zero::zero())` under `let d: Result<string, string>` reads `e = string` off the
+	// annotation, so the payload is inferred wanting a `string` rather than the whole
+	// `Result` — which is what a receiver-less call or a generic callee in the payload
+	// needs to solve. Only a payload written in the declaration's parameters uses it; the
+	// solve below still runs on what the argument then infers, so the two agree.
+	fromContext := tc.constructionContext(decl, vars)
 	for i, arg := range args {
 		if i >= len(declaredFields) {
 			break
@@ -372,11 +451,13 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 		// `Wrap(bag_new())` against `Wrap(Bag<string>)` has to seed the callee's
 		// variables before the argument is inferred, because a generic call reports its
 		// own failure inside inferExprType. A field that does mention one (`Some(t)`) is
-		// what this loop exists to solve, so it has nothing to offer and pushing it
-		// would present an unsolved variable as an expectation.
+		// what this loop exists to solve, so it offers only what the construction's own
+		// context says about that parameter.
 		var restoreExpected func()
 		if !mentionsGenericParam(declaredFields[i], vars) {
 			restoreExpected = tc.pushExpectedType(declaredFields[i], arg.GetLocation())
+		} else if want := substituteGenerics(declaredFields[i], fromContext); len(fromContext) > 0 && mentionsNoTypeVar(want) {
+			restoreExpected = tc.pushExpectedType(want, arg.GetLocation())
 		}
 		argType := tc.inferExprType(arg)
 		if restoreExpected != nil {
@@ -388,6 +469,26 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 		unifyGenericTarget(declaredFields[i], promoteToDefault(argType), vars, subst)
 	}
 	return subst
+}
+
+// constructionContext is the binding of a generic declaration's parameters the current
+// expected type supplies, when that type is an instantiation of the declaration itself
+// (`Result<string, string>` for `Result<t, e>`), with anything open left out.
+func (tc *TypeChecker) constructionContext(decl *ast.TypeDeclStmt, vars map[string]bool) map[string]types.Type {
+	want, ok := tc.currentExpectedType().(types.ParameterizedType)
+	if !ok || decl == nil || len(want.TypeArguments) != len(decl.GenericParams) {
+		return nil
+	}
+	if wantDecl, found := tc.symTable.LookupTypeFrom(want.Name, decl.GetLocation()); !found || wantDecl != decl {
+		return nil
+	}
+	out := ast.BindGenericParams(decl.GenericParams, want.TypeArguments)
+	for k, v := range out {
+		if v == nil || !vars[k] || !mentionsNoTypeVar(v) || isUntypedLiteralType(v) {
+			delete(out, k)
+		}
+	}
+	return out
 }
 
 // instantiateSignature substitutes a solved binding set through a function's
@@ -439,7 +540,11 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		return nil
 	}
 	if subst == nil {
-		subst, ok = tc.solveTypeVars(lambda, call, vars, tc.seedFromExpectedReturn(lambda, vars))
+		var settle map[string]types.Type
+		if len(lambda.GenericParams) > 0 { // the line seedFromExpectedReturn draws, for its reason
+			settle = tc.contextBindings(lambda.ReturnType.Type, vars, call.GetLocation())
+		}
+		subst, ok = tc.solveTypeVars(lambda, call, vars, argumentSolve{seed: tc.seedFromExpectedReturn(lambda, vars), settle: settle})
 		if !ok {
 			tc.addError(call.GetLocation(), SeverityError,
 				"%s: cannot infer %s from these arguments%s", calleeName, typeVarList(vars),

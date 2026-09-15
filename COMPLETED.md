@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — the context settles what the arguments leave open
+
+Two gaps filed this week were one gap. A trait method's variable reached only by a lambda
+literal's return (`b.map((x) => 7)` under `-> Box<i64>`) solved to the literal's own default
+and reported "expected Box<i64>, got Box<integer literal>"; under `Box<u8>` it would have
+returned an i64 into a u8 slot. And a constructor's payload saw the whole annotation as its
+context (`Err(Zero::zero())` under `Result<i64, string>` offered the receiver-less call a
+`Result` to solve `Self` from), because a payload written in the declaration's own
+parameters was deliberately given no expectation — the loop that reads it exists to *solve*
+those parameters.
+
+**Between the passes, not before them.** `solveArgumentTypeVars` already ran typed arguments
+first and deferred lambdas and literals to guess last; `contextBindings` — the declared
+return unified against `currentExpectedType()` over the callee's variables — is installed
+between the two, binding only what the typed arguments left open. So a typed argument still
+wins (a `(x) -> string => "s"` under `Box<i64>` is a return mismatch, as before), no call that
+solved before solves differently, and a lambda is then elaborated against `(i64) -> u8` and
+its literal checked and narrowed as any literal in a typed slot is. The generic-function path
+draws the line `seedFromExpectedReturn` drew — only a declaration with a written `<t>` —
+for its reason. `constructionContext` is the constructor's half: when the expected type is
+an instantiation of the declaration itself, its arguments bind the parameters, and a payload
+mentioning one is inferred wanting the substituted slot. The solve still runs on what the
+payload then infers, so the two cannot disagree.
+
+The array-literal sibling filed 09/14 (`app(n, (x) => [x])` under `-> []i64`) is the same
+gap and passes now; the one test that pinned its diagnostic moved from the call to the
+lambda's own return, which is where the mismatch is.
+
+Tests: `context_settle_test.go` (the trait-method, default-body and generic-function shapes,
+narrowing to `u8`, out-of-range as the literal's error, the constructor slots), and a
+`TestExec_ConversionTraits` case under ASan whose `200 + 100` wraps in `u8`.
+
 ### 09/15/26 — the config example, as written: `From` for `?`, receiver-less dispatch
 
 `examples/config/config.lyra` carried two `WANTED` halves since 09/14. Both are in, with two

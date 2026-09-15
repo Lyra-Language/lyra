@@ -536,6 +536,27 @@ func TestExec_ConversionTraits(t *testing.T) {
 			// 0 + 0 + 42 + len("not a bool") = 10
 			52,
 		},
+		{
+			// The context settles a variable only a lambda's literal reaches (09/16): `map`'s
+			// `b` is `u8` from the return type, so the lambda returns a u8 and `200 + 100`
+			// wraps in u8 rather than being an i64 stored into a u8 slot. A receiver-less
+			// call in a constructor payload takes the slot's type from the annotation.
+			"the context settles a lambda's literal and a constructor's payload",
+			`struct Box<t> { v: t }
+			 trait Functor { map: (Self<a>, (a) -> b) -> Self<b> }
+			 impl Functor for Box<t> { map = (self, f) => Box { v: f(self.v) } }
+			 trait Zero { zero: () -> Self }
+			 impl Zero for string { zero = () => "ab".slice(0, 2) }
+			 let narrow = (b: Box<bool>) -> Box<u8> => b.map((x) => 200)
+			 let main = () -> u8 => {
+			   let n = narrow(Box { v: true })
+			   let d: Result<i64, string> = Err(Zero::zero())
+			   let e = match d { Ok(_) => 0, Err(m) => m.len() }
+			   n.v.wrapping_add(100) + u8(e)
+			 }`,
+			// (200 + 100) mod 256 + 2
+			46,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
