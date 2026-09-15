@@ -56,6 +56,10 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Language surface
 
+- **[DECIDED] Array literal flavor by syntax.** `[…]` is always `[]T` and `#[…]` always `[N]T`
+  (likewise `[v; n]`/`#[v; n]`), with no conversion either way — deleting the flavor guesses
+  (`settleArrayLiteralGuess`, `joinAtArrayContext`, `recordBranchingValueNode`, …). Counted
+  09/14: 18 of 165 literals in std/examples/bindings are fixed (3 need to be); ~760 in Go tests.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
