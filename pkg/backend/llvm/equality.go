@@ -111,6 +111,8 @@ func (l *lowerer) emitEqValue(block *ir.Block, a, b value.Value, t types.Type) (
 			elems[i] = rt.ElementType
 		}
 		return l.emitEqFields(block, a, b, elems)
+	case types.DynamicArrayType:
+		return l.emitEqDynArray(block, a, b, rt)
 	case types.DataType:
 		return l.emitEqData(block, a, b, rt)
 	case types.ParameterizedType:
@@ -171,6 +173,53 @@ func (l *lowerer) emitEqFields(block *ir.Block, a, b value.Value, fields []types
 		result = block.NewAnd(result, eq)
 	}
 	return result, block, nil
+}
+
+// emitEqDynArray compares two dynamic arrays: equal lengths, then equal elements in order.
+//
+// The typechecker always accepted `==` on a `[]T` (areEqualityCompatible) and this file
+// refused it — *"structural equality on DynamicArray<i64> is not implemented"*, hazard 5's
+// shape again. It stayed out of sight while `[1, 2, 3] == [1, 2, 3]` compared two fixed
+// arrays; once `[…]` meant `[]T` by spelling (09/14) the same line reached here.
+//
+// Unlike a fixed array, the element count is a run-time value, so this is a loop rather
+// than a field walk — which is fine for the reason the file gives: it is emitted inside the
+// glue function, where branching is nobody else's problem. The elements are compared
+// through emitEqValue, so a nested array, a string or a struct element compares
+// structurally, and only read, so nothing is retained. A mismatched length never reaches
+// the loop, and a length of 0 never loads the element buffer (null at capacity 0).
+func (l *lowerer) emitEqDynArray(block *ir.Block, a, b value.Value, dt types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	elemLL, err := l.lowerType(dt.ElementType)
+	if err != nil {
+		return nil, nil, err
+	}
+	boxTy := DynArrayBoxType(elemLL)
+	fn := block.Parent
+
+	lenA := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, a))
+	lenB := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, b))
+	sameLen := block.NewICmp(enum.IPredEQ, lenA, lenB)
+	result := fn.Blocks[0].NewAlloca(lltypes.I1)
+	block.NewStore(sameLen, result)
+
+	walk := fn.NewBlock("")
+	done := fn.NewBlock("")
+	block.NewCondBr(sameLen, walk, done)
+	end, err := l.emitCountedLoop(walk, i64c(0), lenA, func(body *ir.Block, i value.Value) (*ir.Block, error) {
+		ea := body.NewLoad(elemLL, dynArrayElemPtr(body, boxTy, a, i))
+		eb := body.NewLoad(elemLL, dynArrayElemPtr(body, boxTy, b, i))
+		eq, next, err := l.emitEqValue(body, ea, eb, dt.ElementType)
+		if err != nil {
+			return nil, err
+		}
+		next.NewStore(next.NewAnd(next.NewLoad(lltypes.I1, result), eq), result)
+		return next, nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	end.NewBr(done)
+	return done.NewLoad(lltypes.I1, result), done, nil
 }
 
 // emitEqData compares two `data` values: same variant, and equal payloads within it.

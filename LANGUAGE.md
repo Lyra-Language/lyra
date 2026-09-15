@@ -159,6 +159,7 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 - **Neither converts** (`lyra-E079`, naming the other spelling): `[1, 2]` where a `[2]i64` is wanted, `#[1, 2]` where a `[]i64` is. A fixed-array binding does not widen either (`let xs = #[1, 2]; xs.map(f)` is refused); `.slice(0, n)` is the explicit copy.
 - **Element types still come from context**: `let xs: []u8 = [1, 2]`, `let m: [][]u8 = [[1], [2, 3]]`, `-> []u8 => if c { [1] } else { [2, 3] }`. An empty `[]` takes any element type; `#[]` is `[0]T`.
 - `#[` is one token: `# [1]` is not a fixed array. Array *patterns* (`[a, b, ...rest]`) match either flavor.
+- **`==`/`!=` are structural**: a fixed array compares element-wise, a dynamic array by length and then elements in order, recursing into nested arrays, strings, structs and `data` payloads.
 - Elements: any type but `void` (tuples, raw pointers, anonymous structs), optionally with one allocation or `weak` modifier (`[]shared Node`).
 - Layout `{rc, weak, len, cap, T*}`: elements behind a pointer so growth cannot move the box (one extra load per access).
 - `xs.push(v)`: amortized doubling, `mut` receiver (same diagnostic as `xs[i] = v`), `noalloc` refuses.

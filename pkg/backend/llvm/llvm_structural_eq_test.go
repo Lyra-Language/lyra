@@ -105,3 +105,40 @@ let main = () -> void => {
 		t.Errorf("want exactly one float-equality warning (the f64 call), got %d: %v", floatWarnings, diags)
 	}
 }
+
+// `==` on a dynamic array compares lengths, then elements in order, through the same
+// structural walk everything else uses: a nested array, a string built at run time, an array
+// inside a struct or a `data` payload. The typechecker always accepted it and the backend
+// refused it ("structural equality on DynamicArray<i64> is not implemented") — invisible
+// while `[1, 2, 3]` was a fixed array, and reached by every array literal once `[…]` meant
+// `[]T` (09/14). Managed elements, so ASan sees an element read out of a freed box.
+func TestExec_DynamicArrayStructuralEquality(t *testing.T) {
+	t.Parallel()
+	src := `struct P { name: string, xs: []i64 }
+data T = Leaf | Node([]i64)
+let bit = (b: bool, place: i64) -> i64 => if b { place } else { 0 }
+let main = () -> u8 => {
+  let a: []i64 = [1, 2, 3]
+  let e: []i64 = []
+  let f: []i64 = []
+  let s1 = ["a".slice(0, 1) ++ "b", "c"]
+  let s2 = ["ab", "c"]
+  let n1 = [[1], [2, 3]]
+  let n3 = [[1], [2, 4]]
+  let p1 = P { name: "x", xs: [1] }
+  let p3 = P { name: "x", xs: [2] }
+  let r = bit(a == [1, 2, 3], 1) + bit(a == [1, 2], 2) + bit(a != [1, 9, 3], 4) + bit(e == f, 8) +
+    bit(a == e, 16) + bit(s1 == s2, 32) + bit(n1 == [[1], [2, 3]], 64) + bit(n1 == n3, 128) +
+    bit(p1 == P { name: "x", xs: [1] }, 256) + bit(p1 == p3, 512) +
+    bit(Node([1]) == Node([1]), 1024) + bit(Node([1]) == Node([2]), 2048)
+  u8(r % 251)
+}`
+	// set: 1 + 4 + 8 + 32 + 64 + 256 + 1024 = 1389; 1389 % 251 = 134
+	const want = 134
+	if got := buildAndRun(t, src); got != want {
+		t.Errorf("exited %d; want %d", got, want)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != want {
+		t.Errorf("under ASan: exited %d; want %d", got, want)
+	}
+}

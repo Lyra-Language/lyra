@@ -9,9 +9,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 ## Known bugs
 
-- **[OPEN] `==` on a `[]T` type-checks and does not lower** (`llvm: structural equality on
-  DynamicArray<i64> is not implemented`). Fixed arrays compare element-wise; implement the
-  dynamic case (length, then elements) or refuse it in the typechecker.
 - **[OPEN] A concrete trait call on a generic impl inside a generic function does not lower.**
   `let g<u> = (b: Box<u>) -> i64 => b.get()` against `impl Get for Box<t>` type-checks, then
   the backend reports `type variable "u" has no concrete type`: a resolution's bindings

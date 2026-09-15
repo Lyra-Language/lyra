@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — `==` on a dynamic array
+
+`a == b` on two `[]i64` type-checked (`areEqualityCompatible` accepts any array) and failed to
+build: *"llvm: structural equality on DynamicArray<i64> is not implemented"*. That is rule 5's
+shape, a form the front end accepts and the backend never built. It was invisible while array
+literals compared as fixed arrays. It surfaced the moment `[1, 2, 3]` became a `[]T` by spelling,
+earlier the same day.
+
+The equality glue already walked a fixed array as a row of fields. A dynamic array's length is a
+run-time value, so `emitEqDynArray` compares the two lengths and, when they match, loops over the
+elements with `emitCountedLoop`, ANDing `emitEqValue` into a slot. Branching is safe because
+equality is emitted as a per-type glue function, the reason the file gives for existing, so the
+call site stays one instruction. Elements go through the same structural walk, so nested arrays,
+run-time strings, and arrays inside structs and `data` payloads all compare by value. They are
+only read, so nothing is retained, and a zero length never touches the buffer, which is null at
+capacity 0.
+
+`TestExec_DynamicArrayStructuralEquality` covers twelve comparisons with managed elements under
+ASan, on macOS and in the clang-15 container, whose typed pointers check the new loop's IR.
+
 ### 09/14/26 — a parse always terminates: comments are one external token
 
 `let main = () -> void => {` ⏎ `println(x ++ ` hung `lyrac check` in `parser.Parse`. The
