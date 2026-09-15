@@ -17,9 +17,10 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
     deferred: it saves refcount traffic, not allocations, and carries double-free risk.
   - Hoisting a *conditional* last use; reuse through guards/value-testing payloads; struct
     and tuple reuse.
-  - A CFG liveness pass to replace `computeLastUse`'s textual walk (shadowed, reassigned or
-    loop-referenced bindings fall back to scope exit). Sound today; settle by measuring a
-    loop holding a large `shared` array alive.
+  - A CFG liveness pass was the candidate for shadowed, reassigned and loop-referenced
+    bindings. Measured and settled 09/15 (COMPLETED.md): the loop case is closed by a
+    loop-exit release; a reassignment already frees at the store; shadowing stays at scope
+    exit, with nothing measured needing more.
 - **[PARTIAL] Closure lowering is tiered.** Dev (boxed closures) is in; release = Lambda Set
   Specialization, gated on the monomorphizer. LSS can only loosen `noalloc`'s closure rule,
   never tighten it.

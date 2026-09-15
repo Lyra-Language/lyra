@@ -39,10 +39,16 @@ A binding / `own` parameter holds one owning reference. The pass records:
   receiver) — released after the statement. **Every owned producer needs this arm**; a missing one
   is a leak only LeakSanitizer reports.
 - **`LastUseTransfer` / `LastUseDrop`** — Perceus last use. `computeLastUse` finds an eligible
-  binding's final textual reference (shadowed, parameter, reassigned, loop-referenced and
-  address-taken names are ineligible). An owning last use *transfers* only if unconditional; a
-  borrowing one *drops* there. The backend fuses both (`retireManagedSlot`,
-  `dropLastUsesInStmt`); the managed frame is the leak-safe backstop.
+  binding's final textual reference (shadowed, parameter, reassigned and address-taken names are
+  ineligible). An owning last use *transfers* only if unconditional; a borrowing one *drops*
+  there. The backend fuses both (`retireManagedSlot`, `dropLastUsesInStmt`); the managed frame
+  is the leak-safe backstop.
+  - **A last use inside a loop body is eligible.** The drop is emitted after the enclosing
+    statement of the *declaring* scope, which for a loop is its exit block (post-dominating every
+    iteration and `break`), so the binding is freed when the loop ends, not at scope exit. Loop
+    bodies are analyzed `conditional`, so an owning read there dups rather than transfers.
+    `computeOwnedLastRef` (reuse) still excludes loop-referenced names: reuse reclaims at the
+    `match` itself, which a back-edge would re-run.
 - **`ReuseMatch[m]` / `ReuseTarget[c]`** — FBIP reuse: a `match` on an owned binding
   (`computeOwnedLastRef`) at its last use, of a `shared data` type, with a plain tag switch
   (`plainTagSwitch`) and ≥1 arm constructing the same type. A borrowed scrutinee is never a reuse

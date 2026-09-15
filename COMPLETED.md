@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 09/15/26 — a last use inside a loop body is released when the loop ends
+
+The Perceus todo asked whether `computeLastUse`'s textual walk should become a CFG liveness
+pass, and said to settle it by measuring a loop holding a large array alive. Measured: a
+400 MB `[]i64` whose final mention is `big[i]` in a `for i in 0..<n` body, followed by a second
+400 MB allocation in the same scope, peaked at 801 MB; the same reads outside a loop peaked at
+401 MB. The cause was `loopUsed`: a name referenced in a loop body was ineligible for last use
+and fell back to the scope-exit frame, so the first array outlived the second's allocation.
+
+The measurement also showed how little a CFG pass would add. A `for x in xs` source is not in
+the body, so it was already dropped right after the loop (401 MB). A binding declared inside the
+body is released each iteration. A reassignment frees the old value at the store, and its
+two-arrays-alive peak is inherent (the new value is built before the old is stored over). Only a
+binding declared outside a loop and last mentioned inside it was left.
+
+**The backend never needed the exclusion.** `dropLastUsesInStmt` emits a borrowing last use's
+release after the enclosing *statement* of the declaring scope, in the block that post-dominates
+it; for a loop that is the exit block, reached by the condition failing and by every `break`.
+The inner statements never touch it (the top-frame restriction), a `return` inside the body
+releases every live frame on its own path before the slot is retired, and a `continue` never
+leaves the loop. So the change is one rule removed from `computeLastUse`: a reference inside a
+loop body is eligible. Owning reads in a body were already safe, since loop bodies are analyzed
+`conditional` and a conditional owning last use is a dup, never a transfer. `computeOwnedLastRef`
+keeps the exclusion: reuse reclaims the box at the `match` itself, which a back-edge would
+re-run.
+
+After the change the loop program peaks at 401 MB. Tests: `ownership_test.go` (a loop-body borrow
+records exactly one drop; an owning read there is one retain and no transfer), `TestEmit_OwnershipIR`
+(one release, no retain), and seven `ownershipCases` run natively and under ASan on macOS and in
+the Linux container: loop runs out, `break`, `continue`, early `return`, a C-style loop, a binding
+declared in an outer loop body and last used in an inner loop, and an owning read beside the
+borrow. What the CFG pass would still buy is now only the shadowed case, which nothing measured
+needs; the entry is closed.
+
 ### 09/14/26 — a `where`-bound call reached through a second generic
 
 `outer<w>` calling `g(Box { v: y })`, with `g<u> where u: Get` calling `x.get()` on `impl Get for

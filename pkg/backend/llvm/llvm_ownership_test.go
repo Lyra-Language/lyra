@@ -259,6 +259,101 @@ var ownershipCases = []struct {
 		 }`,
 		5,
 	},
+	// Loop-exit release (09/15): a binding whose last use is a borrow inside a loop
+	// body is dropped once, in the loop's exit block — not per iteration (the
+	// back-edge would then read a freed value), and not deferred to scope exit.
+	{
+		"last use inside a for-in body, loop runs out",
+		`let main = () -> u8 => {
+		   let s: string = "a" ++ "b"
+		   var n: u8 = 0
+		   for i in 0..<3 {
+		     if s == "ab" { n += 1 }
+		   }
+		   let t: string = "c" ++ "d"
+		   if t == "cd" { n } else { 0 }
+		 }`,
+		3,
+	},
+	{
+		"last use inside a loop body left by break",
+		`let main = () -> u8 => {
+		   let s: string = "a" ++ "b"
+		   var n: u8 = 0
+		   for i in 0..<10 {
+		     if s == "ab" { n += 1 }
+		     if n == 2 { break }
+		   }
+		   n
+		 }`,
+		2,
+	},
+	{
+		"last use inside a loop body with continue",
+		`let main = () -> u8 => {
+		   let s: string = "a" ++ "b"
+		   var n: u8 = 0
+		   for i in 0..<4 {
+		     if i == 1 { continue }
+		     if s == "ab" { n += 1 }
+		   }
+		   n
+		 }`,
+		3,
+	},
+	{
+		"last use inside a loop body, early return from the loop",
+		`let main = () -> u8 => {
+		   let s: string = "a" ++ "b"
+		   var n: u8 = 0
+		   for i in 0..<10 {
+		     if s == "ab" { n += 1 }
+		     if n == 3 { return n }
+		   }
+		   0
+		 }`,
+		3,
+	},
+	{
+		"last use inside a C-style loop body",
+		`let main = () -> u8 => {
+		   let s: string = "a" ++ "b"
+		   var n: u8 = 0
+		   for var i: u8 = 0; i < 3; i += 1 {
+		     if s == "ab" { n += 1 }
+		   }
+		   n
+		 }`,
+		3,
+	},
+	{
+		"binding declared in an outer loop body, last used in an inner loop",
+		`let main = () -> u8 => {
+		   var n: u8 = 0
+		   for i in 0..<2 {
+		     let s: string = "a" ++ "b"
+		     for j in 0..<2 {
+		       if s == "ab" { n += 1 }
+		     }
+		     if i == 1 { break }
+		   }
+		   n
+		 }`,
+		4,
+	},
+	{
+		"last use inside a loop body, owning read alongside the borrow",
+		`let main = () -> u8 => {
+		   let s: string = "a" ++ "b"
+		   var n: u8 = 0
+		   for i in 0..<3 {
+		     let y: string = s
+		     if y == s { n += 1 }
+		   }
+		   n
+		 }`,
+		3,
+	},
 }
 
 // TestExec_Ownership runs each ownership program and checks its result. A wrong
@@ -326,6 +421,21 @@ func TestEmit_OwnershipIR(t *testing.T) {
 	}
 	if n := count(single, "call void @lyra_rc_release"); n != 1 {
 		t.Errorf("single binding: want exactly 1 release (drop fusion), got %d", n)
+	}
+
+	// A last use inside a loop body: one release, in the loop's exit block — no
+	// per-iteration release and no scope-exit backstop (the slot is retired).
+	inLoop := `let main = () -> u8 => {
+	   let a: string = "x" ++ "y"
+	   var n: u8 = 0
+	   for i in 0..<3 { if a == "xy" { n += 1 } }
+	   n
+	 }`
+	if n := count(inLoop, "call void @lyra_rc_retain"); n != 0 {
+		t.Errorf("last use in loop body: want 0 retains, got %d", n)
+	}
+	if n := count(inLoop, "call void @lyra_rc_release"); n != 1 {
+		t.Errorf("last use in loop body: want exactly 1 release (after the loop), got %d", n)
 	}
 
 	// A copy is a *transfer* under Perceus last-use — no dup. Before last-use this

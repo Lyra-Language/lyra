@@ -676,7 +676,18 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 //   - a managed `let`/`var` binding declared exactly once (no shadowing),
 //   - whose name isn't a parameter,
 //   - that is never reassigned (a `var s = …; s = …` has several live values),
-//   - and isn't referenced inside a loop body (a back-edge re-runs earlier uses).
+//   - and whose address is never taken (see addressTakenNames).
+//
+// A reference inside a loop body *is* eligible. The back-edge re-runs it, but the
+// backend never releases at the reference itself: a borrowing last use is dropped
+// after the enclosing *statement* of the scope that declared the binding
+// (dropLastUsesInStmt), which for a loop is its exit block — post-dominating every
+// iteration and every `break`. So a large array whose final mention is `big[i]` in a
+// loop body is freed when the loop ends rather than at scope exit (measured 09/15:
+// half the peak RSS when a second allocation follows). An owning read in a body is
+// still a dup, never a transfer, because loop bodies are analyzed `conditional`.
+// A binding declared *inside* the body is dropped per iteration, at its last use
+// within that iteration's block.
 //
 // Anything ineligible simply isn't given a last-use annotation and falls back to
 // the scope-exit frame release (still correct — a missed last-use only defers the
@@ -703,25 +714,17 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 		return true
 	}
 
-	// Names referenced anywhere inside a loop body are ineligible, and so are names whose
-	// address has been taken — see addressTakenNames.
-	loopUsed := map[string]bool{}
+	// Names whose address has been taken are ineligible — see addressTakenNames.
 	addrTaken := map[string]bool{}
 	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
-		switch le := e.(type) {
-		case *ast.ForLoopExpr:
-			collectNames(le.Body, loopUsed)
-		case *ast.ForInLoopExpr:
-			collectNames(le.Body, loopUsed)
-		case *ast.AddressOfExpr:
+		if le, ok := e.(*ast.AddressOfExpr); ok {
 			noteAddressTaken(le, addrTaken)
 		}
 		return true
 	})
 
 	eligible := func(name string) bool {
-		return declCount[name] == 1 && !params[name] && !reassigned[name] &&
-			!loopUsed[name] && !addrTaken[name]
+		return declCount[name] == 1 && !params[name] && !reassigned[name] && !addrTaken[name]
 	}
 
 	// Pre-order walk records references in program order; the final one per eligible
@@ -745,9 +748,10 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 // textual reference. An owned binding is an `own` managed parameter, or an eligible
 // managed `let`/`var` (declared once, not a plain parameter, not reassigned) — the
 // same eligibility as computeLastUse but *including* `own` params, since Perceus
-// reuse reclaims the cells of a consumed argument. A name referenced inside a loop
-// is excluded (a back-edge re-runs the reference, so "the last textual reference"
-// isn't soundly its dynamic last use). The result decides whether a `match`
+// reuse reclaims the cells of a consumed argument, and *excluding* a name referenced
+// inside a loop body. Unlike a last-use drop, which the backend defers to the loop's
+// exit, reuse reclaims the box at the `match` itself, and a back-edge would then
+// re-run the match on a reclaimed box. The result decides whether a `match`
 // scrutinee is a binding's last use — a precondition for reclaiming its box.
 func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expression {
 	declCount := map[string]int{}
@@ -1544,10 +1548,11 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// body was never analyzed, so a borrowed managed value bound into an owning
 		// `let` inside the body (`for … { let y = s }`, s an `own` string) was released
 		// by the backend's per-iteration frame with *no balancing retain* → a double-
-		// free / use-after-free. A binding referenced in the body is excluded from
-		// last-use precision (computeLastUse's `loopUsed`), so an owning read there is a
-		// retain (a dup), never a transfer/drop that the back-edge would re-run on an
-		// already-freed value; `conditional` guards against a stray transfer besides.
+		// free / use-after-free. The body is analyzed under `conditional`, so an owning
+		// read of an outer binding there is a retain (a dup), never a transfer the
+		// back-edge would re-run on a moved value. A *borrowing* last use in the body is
+		// fine: the backend drops it after the loop statement, in the exit block (see
+		// computeLastUse).
 		savedCond := a.conditional
 		a.conditional = true
 		if e.Init != nil {
@@ -1565,8 +1570,8 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 	case *ast.ForInLoopExpr:
 		// Same as the C-style loop: the iterable is borrowed (the loop reads elements
 		// out of it and the loop variable borrows each), and the body is analyzed under
-		// `conditional` so an owning read of a (loop-referenced, hence last-use-excluded)
-		// binding or of the borrowed loop variable records a retain, not a transfer.
+		// `conditional` so an owning read of an outer binding or of the borrowed loop
+		// variable records a retain, not a transfer.
 		a.expr(e.Iterable, false)
 		savedCond := a.conditional
 		a.conditional = true

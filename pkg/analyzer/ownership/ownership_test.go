@@ -274,3 +274,41 @@ func TestOwnership_NewtypeStringFieldOwnsManaged(t *testing.T) {
 		t.Error("newtype field: the struct copy recorded no ownership action at all")
 	}
 }
+
+// A binding whose final mention is a *borrow* inside a loop body gets a last-use
+// drop: the backend emits it after the loop statement (its exit block), so the
+// binding is freed when the loop ends instead of at scope exit. It was excluded
+// from last use until 09/15 (`loopUsed`), which held a 400 MB array alive across
+// whatever followed the loop.
+func TestOwnership_LastUseDropInsideLoopBody(t *testing.T) {
+	c := analyze(t, `let main = () -> u8 => {
+	   let s: string = "a" ++ "b"
+	   var n: u8 = 0
+	   for i in 0..<3 {
+	     if s == "ab" { n += 1 }
+	   }
+	   n
+	 }`)
+	if c.drops != 1 || c.retains != 0 || c.transfers != 0 {
+		t.Errorf("loop-body borrow last use: want drops=1 retains=0 transfers=0, got drops=%d retains=%d transfers=%d",
+			c.drops, c.retains, c.transfers)
+	}
+}
+
+// An *owning* read inside the body is still a dup, never a transfer or drop: the
+// body is conditional (it may run zero or many times).
+func TestOwnership_OwningReadInsideLoopBodyDups(t *testing.T) {
+	c := analyze(t, `let main = () -> u8 => {
+	   let s: string = "a" ++ "b"
+	   var n: u8 = 0
+	   for i in 0..<3 {
+	     let y: string = s
+	     if y == "ab" { n += 1 }
+	   }
+	   n
+	 }`)
+	if c.retains != 1 || c.transfers != 0 {
+		t.Errorf("loop-body owning read: want retains=1 transfers=0, got retains=%d transfers=%d",
+			c.retains, c.transfers)
+	}
+}
