@@ -11,8 +11,9 @@ import (
 // `examples/lyrafmt/lyrafmt.lyra` is the self-hosting probe: a Lyra program that parses
 // Lyra through the tree-sitter grammar over FFI and rebuilds each file from the tree's
 // leaves. The round trip must reproduce the input byte for byte, on the formatter itself
-// among others. Needs the tree-sitter runtime (`brew install tree-sitter`) and a C compiler
-// for the grammar; skips without them, since the question is about the linker.
+// among others, and the indentation rule must fix a badly indented file once and then
+// leave it alone. Needs the tree-sitter runtime (`brew install tree-sitter`) and a C
+// compiler for the grammar; skips without them, since the question is about the linker.
 func TestExample_LyrafmtRoundTrips(t *testing.T) {
 	root := repoRoot(t)
 	clang, err := exec.LookPath("clang")
@@ -51,13 +52,82 @@ func TestExample_LyrafmtRoundTrips(t *testing.T) {
 		filepath.Join(root, "std", "prelude", "array.lyra"),
 		filepath.Join(root, "bindings", "treesitter", "treesitter.lyra"),
 	}
-	out, err := exec.Command(bin, files...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("the round trip failed: %v\n%s", err, out)
+	// With no rule in force the output is the input: `--check` finds nothing to change.
+	if out, err := exec.Command(bin, append([]string{"--roundtrip", "--check"}, files...)...).CombinedOutput(); err != nil {
+		t.Fatalf("the round trip changed a file: %v\n%s", err, out)
 	}
-	for _, f := range files {
-		if !strings.Contains(string(out), "ok       "+f+"\n") {
-			t.Errorf("no ok line for %s in:\n%s", f, out)
-		}
+	// The indentation rule, on a file that breaks it every way it can: a wrapped array,
+	// match arms at odd depths, a block body, a `data` type's constructors after `=`, an
+	// `else` on its own line, a wrapped signature with its body, and a doc comment
+	// between `=` and a constructor. What comes out is fixed once — the second run
+	// changes nothing.
+	ugly := filepath.Join(t.TempDir(), "ugly.lyra")
+	if err := os.WriteFile(ugly, []byte(`let f = (n: i64) -> i64 => {
+      let xs = [
+1,
+        2,
+]
+  match n {
+   0 => 1,
+_ => {
+  xs.len()
+  },
+ }
+}
+data E =
+      /// doc
+  A(i64)
+      | B
+let g = (n: i64) -> i64 =>
+if n > 0 { 1 }
+      else { 0 }
+let h = (a: i64,
+                b: i64) -> i64 => {
+      a + b
+   }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const want = `let f = (n: i64) -> i64 => {
+  let xs = [
+    1,
+    2,
+  ]
+  match n {
+    0 => 1,
+    _ => {
+      xs.len()
+    },
+  }
+}
+data E =
+  /// doc
+  A(i64)
+  | B
+let g = (n: i64) -> i64 =>
+  if n > 0 { 1 }
+  else { 0 }
+let h = (a: i64,
+  b: i64) -> i64 => {
+  a + b
+}
+`
+	got, err := exec.Command(bin, ugly).Output()
+	if err != nil {
+		t.Fatalf("formatting failed: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("formatted:\n%s\nwant:\n%s", got, want)
+	}
+	formatted := filepath.Join(t.TempDir(), "formatted.lyra")
+	if err := os.WriteFile(formatted, got, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(bin, "--check", formatted).CombinedOutput(); err != nil {
+		t.Errorf("formatting is not a fixed point: %v\n%s", err, out)
+	}
+	// Every file above is formatted already, so `--check` passes on all of them.
+	if out, err := exec.Command(bin, append([]string{"--check"}, files...)...).CombinedOutput(); err != nil {
+		t.Errorf("--check on formatted files: %v\n%s", err, out)
 	}
 }

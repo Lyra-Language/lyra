@@ -9,6 +9,55 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — lyrafmt's indentation rule
+
+The first rule that changes what is between the leaves. `build/lyrafmt file.lyra` prints
+the formatted text, `--check` names the files that would change (exit 1 if any), `-w`
+rewrites them; `--roundtrip` keeps the baseline reachable. The rule was written against the
+repo — 84 files, `--check` after every change — and each iteration moved from tokens
+toward the tree.
+
+**Delimiter depth alone was wrong twice over.** Two spaces per open `{`/`(`/`[` gave a
+`data` type's constructors after `=`, a lambda body after `=>` and a chained `.method()` no
+indentation at all, and gave a block opened at the end of a wrapped `if` its body level
+with the `if`. The rule that survived has three parts, all read off the tree:
+
+- Every token has an **owner** — the statement, declaration, member, argument, arm or
+  import name it is part of: a child of the program, a block, a loop body or a member list
+  (`impl_methods`, `trait_methods`), or whatever follows an opening delimiter, a comma, or
+  an attribute line; comments are looked past, so a doc comment above a field leaves the
+  field an owner. A line whose first token is on a later line than its owner's start is a
+  **continuation** and takes one more level — one, however deep the expression — except
+  that a body after a line ending in `=>` or `=` sits one deeper than *that line*, so the
+  body of a wrapped signature is not level with the signature's own continuation.
+- Every opening delimiter has an **anchor** — the nearest enclosing node that begins
+  before it: the `if` of its block, the callee of its argument list, the `match` of its
+  arms, and for a lambda its parameter list rather than a `pure` before it. Its contents
+  sit one level below the anchor's line, and a closing delimiter starting a line sits at
+  the anchor's line — so the `}` of an `if` that was a continuation lines up with the
+  `if`, not with the statement.
+- An `else` on its own line takes the previous line's level, whether that line held the
+  whole `if … { … }` or only the `}` closing it.
+
+An import's `.{` is one token and opens a level; an interpolation's `${` opens one and its
+`}` closes it, so a string with an interpolation balances. A leaf spanning lines is copied
+verbatim. The rule is a fixed point on every file in the repo and on its own output for a
+deliberately mangled input (`TestExample_LyrafmtRoundTrips`).
+
+**What it disagrees with the repo about** is one decision: 18 files, 214 lines. The repo
+aligns a wrapped signature's continuation under the first parameter and sometimes indents
+the body from the wrapped line, sometimes from the `let`; the rule indents the
+continuation one level and the body one below that, consistently. One diff is a real
+mis-indentation the rule found (`std/tui/event.lyra`, a `match` two columns short inside
+an `else`). Whether to run `-w` over the repo is filed.
+
+**Found on the way: `"${"` is an unterminated interpolation.** There is no escape for `${`
+in a string (the raw-string spelling is the way), and one left open swallows the file to
+the next `}` — including two later declarations — and *parses*, so the report was
+`undefined function "closes"` far from the cause. Filed as a lint. Also found: a raw
+string is backtick-delimited, and `r"…"` is an identifier followed by a string that
+parses with a zero-width `++` between them.
+
 ### 09/16/26 — `bool` crosses to C, and `!unsafe { … }` parses
 
 Two of the three small findings lyrafmt's binding turned up; the third (an `unsafe` helper

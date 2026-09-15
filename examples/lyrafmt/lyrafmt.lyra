@@ -2,94 +2,302 @@
 //
 //   examples/lyrafmt/libs.sh
 //   LIBRARY_PATH=build/lib:$(pkg-config --variable=libdir tree-sitter) \
-//     build/lyrac run examples/lyrafmt/lyrafmt.lyra -- examples/primes.lyra
+//     build/lyrac build -o build/lyrafmt examples/lyrafmt/lyrafmt.lyra
+//   build/lyrafmt file.lyra           # the formatted text, to stdout
+//   build/lyrafmt --check *.lyra      # names each file that would change; exit 1 if any
+//   build/lyrafmt -w *.lyra           # rewrites each file that would change
 //
-// This is the round-trip baseline: parse each file with the tree-sitter grammar, walk the
-// tree to its leaves, and rebuild the text from the leaves' own bytes with the original
-// bytes between them — which must reproduce the input exactly. No formatting rule exists
-// yet; every later rule replaces the text *between* leaves with computed whitespace, so this
-// is the walk, the byte builder and the checks a formatter is built on, proved on a program
-// larger than any example before a single decision about layout is made.
+// The tree-sitter grammar parses each file; the formatter walks the tree to its leaves
+// and rebuilds the text from the leaves' own bytes, deciding only what goes *between*
+// them. A leaf is never changed, so a string, a comment or a raw string is what it was;
+// with no rule in force (`--roundtrip`) the output is the input byte for byte, which is
+// the baseline every rule is built on.
 //
-// Exit 0 when every file round-trips, 1 otherwise, 2 for usage.
+// One rule so far, **indentation**. Every token has an **owner**: the statement,
+// declaration, member, argument, arm or import name it is part of — a child of the program,
+// a block or a member list, or whatever follows an opening delimiter, a comma or a comment.
+// A line's level is then:
+//
+//   - one more than the level of the line its innermost open delimiter's **anchor** is on —
+//     the construct the delimiter belongs to: the `if` of its block, the callee of its
+//     argument list, the `match` of its arms, the declaration of a lambda's parameters
+//     (`{`, `(`, `[`, `#[`, an import's `.{`, an interpolation's `${`) — or zero with none
+//     open; so a block's body indents from the `if` that opened it even when that `if`
+//     was itself a continuation, and from the declaration when only its signature wrapped;
+//   - plus one if the line *continues* its owner from an earlier line with no delimiter
+//     to say so (a lambda body after `=>`, a `data` type's constructors after `=`, a
+//     chained `.method()`, the second half of a wrapped expression) — one level however
+//     deep the expression, except that a body following a line-ending `=>` or `=` sits one
+//     deeper than that line, so the body of a wrapped signature is not level with the
+//     signature's own continuation;
+//   - a line beginning with a closing delimiter closes it first and sits at the level of
+//     its anchor's line, and an `else` on its own line takes the previous line's level.
+//
+// Blank lines and the spacing within a line are left alone. A leaf spanning lines (a
+// block comment, a raw string) is copied verbatim, since its inner lines are content.
+//
+// Exit 0 when nothing is wrong (or, under `--check`, nothing would change), 1 otherwise,
+// 2 for usage.
 
-import std.collections.{ parse_args }
-import std.io.{ read_file }
+import std.collections.{ parse_args, HashMap, hashmap_new, insert, get_or }
+import std.io.{ read_file, write_file }
 import std.ffi.{ cstring }
 import bindings.treesitter.{
   Node, Parser, lyra_language, new_parser, parser_delete, parse, tree_delete,
-  root, child, child_count, start_byte, end_byte, has_error,
+  root, child, child_count, start_byte, end_byte, kind, has_error,
 }
 
 let main = () -> u8 => {
   let args = parse_args([])
   if args.positional.len() == 0 {
-    println("usage: lyrafmt <file.lyra>...")
+    println("usage: lyrafmt [--check | -w | --roundtrip] <file.lyra>...")
     return 2
   }
   let Some(parser) = new_parser(lyra_language()) else {
     println("lyrafmt: the tree-sitter runtime refused the Lyra grammar")
     return 1
   }
+  let mode = if args.has("--check") { Check } else if args.has("-w") { Write } else { Print }
+  let rule = !args.has("--roundtrip")
   var failures = 0
   for path in args.positional {
-    if !round_trip(parser, path) { failures += 1 }
+    match format_file(parser, path, rule) {
+      Ok(f) => if !deliver(path, f, mode) { failures += 1 },
+      Err(problem) => {
+        println("lyrafmt: ${problem}")
+        failures += 1
+      },
+    }
   }
   parser_delete(parser)
   if failures == 0 { 0 } else { 1 }
 }
 
-/// Parses the file at `path` and rebuilds it from the tree; reports whether the result is
-/// the input.
-let round_trip = (parser: Parser, path: string) -> bool => {
-  let Some(source) = read_file(path) else {
-    println("lyrafmt: cannot read ${path}")
-    return false
-  }
-  let Some(tree) = parse(parser, source) else {
-    println("lyrafmt: ${path}: the parser answered no tree")
-    return false
-  }
+/// What to do with a formatted file.
+data Mode = Print | Check | Write
+
+/// A file and what the rules make of it.
+struct Formatted {
+  source: string,
+  text: string,
+}
+
+/// Hands one result to its destination; answers whether it counts as success under `mode`
+/// — under `--check`, a file that would change does not.
+let deliver = (path: string, f: Formatted, mode: Mode) -> bool => match mode {
+  Print => {
+    print(f.text)
+    true
+  },
+  Check => {
+    if f.text == f.source { return true }
+    println("would reformat ${path}")
+    false
+  },
+  Write => {
+    if f.text == f.source { return true }
+    if write_file(path, f.text) {
+      println("reformatted ${path}")
+      true
+    } else {
+      println("lyrafmt: cannot write ${path}")
+      false
+    }
+  },
+}
+
+/// The file at `path`, formatted (or rebuilt unchanged when `rule` is off).
+let format_file = (parser: Parser, path: string, rule: bool) -> Result<Formatted, string> => {
+  let Some(source) = read_file(path) else { return Err("cannot read ${path}") }
+  let Some(tree) = parse(parser, source) else { return Err("${path}: the parser answered no tree") }
   let top = root(tree)
   if has_error(top) {
-    println("lyrafmt: ${path}: syntax error")
     tree_delete(tree)
-    return false
+    return Err("${path}: syntax error")
   }
+  var leaves: []Leaf = []
+  collect_leaves(top, 0, 0, leaves)
+  tree_delete(tree)
   // Byte offsets index the source's bytes, not its runes; `cstring` is the byte view (its
   // trailing NUL is past every offset the tree reports).
   let bytes = source.cstring()
-  var out: []u8 = []
-  let cursor = emit(top, bytes, 0, out)
-  // Whatever follows the last leaf — a final newline, trailing blank lines.
-  copy_bytes(bytes, cursor, bytes.len() - 1, out)
-  tree_delete(tree)
-  let rebuilt = out.decode_utf8()
-  if rebuilt == source {
-    println("ok       ${path}")
-    true
-  } else {
-    println("MISMATCH ${path}: rebuilt ${out.len()} bytes from ${bytes.len() - 1}")
-    false
+  let text = format(bytes, bytes.len() - 1, leaves, rule).decode_utf8()
+  Ok(Formatted { source: source, text: text })
+}
+
+/// A token of the source: where it is, what the grammar calls it, and where the thing it
+/// belongs to began.
+struct Leaf {
+  start: i64,
+  end: i64,
+  kind: string,
+  /// The start of the token's owner — the statement, declaration, member or list element
+  /// it is part of. A token on a later line than its owner's start continues the owner.
+  owner: i64,
+  /// The start of the construct an opening delimiter belongs to — the nearest ancestor
+  /// that begins before the token — whose line the delimiter's contents indent from.
+  anchor: i64,
+}
+
+/// Appends `node`'s leaves to `out`, in source order. `owner` is the enclosing owner's
+/// start; a child of a block-like node, or one that follows an opening delimiter or a
+/// comma, begins an owner of its own.
+let collect_leaves = (node: Node, owner: i64, anchor: i64, out: mut []Leaf) -> void => {
+  let n = child_count(node)
+  let start = start_byte(node)
+  if n == 0 {
+    out.push(Leaf { start: start, end: end_byte(node), kind: kind(node), owner: owner, anchor: anchor })
+    return
+  }
+  let block_like = is_block_like(kind(node))
+  // A lambda anchors at its parameter list, not at a modifier before it: `pure` may end
+  // the `let` line with the signature on the next, and the body indents from the
+  // signature's line.
+  let anchor_start = if kind(node) == "lambda_expr" { parameter_list_start(node, start) } else { start }
+  var after_attributes = false
+  for i in 0..<n {
+    let c = child(node, i)
+    let after_separator = separates(last_code_kind(out))
+    // An attribute sits on its own line above what it marks (`@link("z")` above
+    // `module`, `@must_release(f)` above `pub struct`), inside the declaration's node:
+    // the declaration proper begins fresh after it.
+    let own = if block_like || after_separator || after_attributes { start_byte(c) } else { owner }
+    // A node beginning where its parent does (a block at its `{`, an argument list at
+    // its `(`) is not a construct of its own for anchoring; the parent that begins
+    // earlier is.
+    let anchored = if start_byte(c) == anchor_start { anchor } else { anchor_start }
+    collect_leaves(c, own, anchored, out)
+    after_attributes = kind(c) == "attribute_list"
   }
 }
 
-/// Appends `node`'s text to `out`, leaf by leaf, with the source bytes between leaves
-/// copied unchanged, starting from `cursor`; answers the byte just past the last leaf.
-let emit = (node: Node, bytes: []u8, cursor: i64, out: mut []u8) -> i64 => {
-  let n = child_count(node)
-  if n == 0 {
-    let start = start_byte(node)
-    let end = end_byte(node)
-    copy_bytes(bytes, cursor, start, out)
-    copy_bytes(bytes, start, end, out)
-    return end
+/// Where a lambda's parameter list begins, or `fallback` if it has none.
+let parameter_list_start = (lambda: Node, fallback: i64) -> i64 => {
+  for i in 0..<child_count(lambda) {
+    let c = child(lambda, i)
+    let k = kind(c)
+    if k == "parameter_list" || k == "pattern_parameter_list" { return start_byte(c) }
   }
-  var at = cursor
-  for i in 0..<n {
-    at = emit(child(node, i), bytes, at, out)
+  fallback
+}
+
+/// Whether a node's children are each their own line's business: the program, a block, a
+/// loop's body, and the member lists a newline separates.
+let is_block_like = pure (k: string) -> bool =>
+  k == "program" || k == "block" || k == "for_body" || k == "for_in_body" ||
+  k == "impl_methods" || k == "trait_methods"
+
+/// Whether the token before a node makes the node an owner: an opening delimiter or a
+/// comma, so an argument, a parameter, a field, a match arm or an import name starts
+/// fresh. Comments are looked past (last_code_kind): a doc comment above a field is
+/// preceded by the comma, and the field after it still is.
+let separates = pure (k: string) -> bool => opens(k) || k == ","
+
+/// The kind of the last token in `out` that is not a comment, or "" with none.
+let last_code_kind = pure (out: []Leaf) -> string => {
+  var i = out.len() - 1
+  for i >= 0 {
+    let k = out[i].kind
+    if k != "comment" && k != "doc_comment" { return k }
+    i -= 1
   }
-  at
+  ""
+}
+
+
+/// The formatted bytes: every leaf as it was, and between leaves the source's own bytes —
+/// except, with the rule on, the whitespace that begins a line, which becomes the
+/// indentation the enclosing delimiters call for.
+let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
+  var out: []u8 = []
+  // One entry per delimiter still open: the level its contents sit at (one more than its
+  // anchor's line) and the level a closing delimiter starting a line sits at (the
+  // anchor's line itself — so the `}` of an `if` that was a continuation lines up with
+  // the `if`, not with the statement).
+  var levels: []i64 = []
+  var closer_levels: []i64 = []
+  // The level of the line each token sits on, by the token's start — read back for an
+  // opener's anchor, so a block indents from the line of the construct that opened it.
+  var level_at: HashMap<i64, i64> = hashmap_new()
+  var line_level = 0
+  var previous_line_level = 0
+  var previous_line_last_kind = ""
+  var last_kind = ""
+  var cursor = 0
+  for leaf in leaves {
+    var closer_level = 0
+    if rule && closes(leaf.kind) && levels.len() > 0 {
+      closer_level = closer_levels[levels.len() - 1]
+      levels = levels.slice(0, levels.len() - 1)
+      closer_levels = closer_levels.slice(0, closer_levels.len() - 1)
+    }
+    let nl = last_newline(bytes, cursor, leaf.start)
+    if rule && nl >= 0 {
+      copy_bytes(bytes, cursor, nl + 1, out)
+      let base = if closes(leaf.kind) { closer_level } else if levels.len() == 0 { 0 } else { levels[levels.len() - 1] }
+      let continuation = !closes(leaf.kind) && last_newline(bytes, leaf.owner, leaf.start) >= 0
+      previous_line_level = line_level
+      previous_line_last_kind = last_kind
+      // An `else` on its own line sits under the line its `if` began — the previous line,
+      // whether that held the whole `if … { … }` or only the `}` closing it. A body after
+      // a line ending in `=>` or `=` sits one deeper than that line — the line right
+      // before, so a doc comment between `=` and a constructor does not deepen it again.
+      line_level = if leaf.kind == "else" {
+        previous_line_level
+      } else if continuation && introduces_body(previous_line_last_kind) {
+        previous_line_level + 1
+      } else if continuation {
+        base + 1
+      } else {
+        base
+      }
+      push_indent(line_level, out)
+    } else {
+      copy_bytes(bytes, cursor, leaf.start, out)
+    }
+    level_at.insert(leaf.start, line_level)
+    copy_bytes(bytes, leaf.start, leaf.end, out)
+    cursor = leaf.end
+    last_kind = leaf.kind
+    if rule && opens(leaf.kind) {
+      let anchor_level = level_at.get_or(leaf.anchor, line_level)
+      levels.push(anchor_level + 1)
+      closer_levels.push(anchor_level)
+    }
+  }
+  // Whatever follows the last leaf: a final newline, blank lines. Nothing is indented at
+  // the end of the file, so what trails the last newline is dropped.
+  let nl = last_newline(bytes, cursor, len)
+  if rule && nl >= 0 { copy_bytes(bytes, cursor, nl + 1, out) } else { copy_bytes(bytes, cursor, len, out) }
+  out
+}
+
+/// Whether a token opens a level of indentation. An interpolation's `${` is one, since
+/// its `}` is a closer; the raw-string spelling is the only way to write those two
+/// characters, as `"${"` begins an interpolation.
+let opens = pure (k: string) -> bool =>
+  k == "{" || k == "(" || k == "[" || k == "#[" || k == ".{" || k == `${`
+
+/// Whether a token at the end of a line introduces a body on the next: `=>` before a
+/// lambda's or an arm's, `=` before a declaration's value or a `data` type's constructors.
+let introduces_body = pure (k: string) -> bool => k == "=>" || k == "="
+
+/// Whether a token closes one.
+let closes = pure (k: string) -> bool => k == "}" || k == ")" || k == "]"
+
+/// The offset of the last newline in `bytes[from..<to]`, or -1.
+let last_newline = pure (bytes: []u8, from: i64, to: i64) -> i64 => {
+  var i = to - 1
+  for i >= from {
+    if bytes[i] == 10 { return i }
+    i -= 1
+  }
+  -1
+}
+
+/// Appends two spaces per level.
+let push_indent = (depth: i64, out: mut []u8) -> void => {
+  for _ in 0..<(depth * 2) { out.push(32) }
 }
 
 /// Appends `bytes[from..<to]` to `out`.

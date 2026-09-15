@@ -49,13 +49,14 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 Package management, versioning and separate compilation are out of scope by decision.
 
 - **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** The round-trip
-  baseline landed 09/16 (`examples/lyrafmt/`, `bindings/treesitter/`): every file in the
-  repo parses through the grammar over FFI and is rebuilt from the tree's leaves byte for
-  byte. Its first line found a use-after-free (COMPLETED.md). Next: the first formatting
-  rule, which replaces the text *between* leaves — indentation from nesting depth is the
-  natural start — then a scope stack (expected to hit `[]T` aliasing) and a directory walk
-  (a missing `readdir` in `std.io`). A real bootstrap would start with the collector after
-  this.
+  baseline (09/16) and the indentation rule (09/16, COMPLETED.md) are in: `--check`/`-w`
+  over every file in the repo, idempotent, 18 files differing from the rule (the repo's
+  two conventions for a wrapped signature, plus one genuinely mis-indented block in
+  `std/tui/event.lyra`). **Open: whether to run `-w` over the repo** and adopt the rule's
+  answer for wrapped signatures. Next rules: trailing whitespace, blank-line runs, spacing
+  around `=>`/`:`/`,`; then a scope stack (expected to hit `[]T` aliasing) and a directory
+  walk (a missing `readdir` in `std.io`). A real bootstrap would start with the collector
+  after this.
 
 
 ## Language surface
@@ -113,6 +114,11 @@ Package management, versioning and separate compilation are out of scope by deci
 ## Pit of Success
 
 - **[OPEN] `checked_rem`.** A naming decision (`%` vs `%%`), not a lowering one.
+- **[IDEA] Refuse an interpolation that spans lines.** `"${"` begins an interpolation with
+  no way to escape it (the spelling for the literal is a raw string), and one left open
+  swallows everything to the next `}` — declarations included — and *parses*: lyrafmt's
+  `k == "${"` cost an hour reported as `undefined function "closes"` two declarations
+  later. No program writes a newline inside `${…}`; refusing it names the real mistake.
 - **[IDEA] Overflow policy on a `newtype`** (`where wrapping` / `saturating`), so a hash
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
   Open: explicit-method precedence, and whether saturation clamps every intermediate or
