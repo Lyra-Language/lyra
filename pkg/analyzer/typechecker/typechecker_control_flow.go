@@ -215,11 +215,6 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 	if requireType && expr.Else != nil && thenType != nil && elseType != nil {
 		common, ok := branchCommonType(thenType, elseType)
 		if !ok {
-			if dyn, shaped := tc.joinAtArrayContext([]ast.Expression{expr.Then, expr.Else}, []types.Type{thenType, elseType}); shaped {
-				tc.propagateExpectedType(expr.Then, dyn)
-				tc.propagateExpectedType(expr.Else, dyn)
-				return dyn
-			}
 			tc.addError(expr.GetLocation(), SeverityError,
 				"if/else branches have incompatible types: then is %s, else is %s",
 				thenType, elseType)
@@ -265,34 +260,6 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 	// Two-armed, but at least one branch type was unresolvable (a nested error
 	// is already reported); return the then type as a best effort.
 	return thenType
-}
-
-// joinAtArrayContext is the join of branches that do not join on their own — fixed arrays
-// of different lengths, or one empty — when the value's context is a dynamic array every
-// branch can be built as: `-> []i64 => if c { [1, 2] } else { [] }`. branchCommonType
-// cannot answer it, since `[2]i64` and `[0]?` have no common type; the context can, because
-// each is a literal whose flavor is the context's to choose (literalTakesShape). A branch
-// that is a fixed-array binding cannot be, and the join stays the error it was.
-//
-// Only a context in force — an annotation, a declared return, a parameter slot — and one a
-// statement cannot inherit (withoutExpectedType), so `let k = if c { [1] } else { [2, 3] }`
-// with no annotation is still refused rather than silently made dynamic.
-func (tc *TypeChecker) joinAtArrayContext(branches []ast.Expression, branchTypes []types.Type) (types.Type, bool) {
-	want := tc.currentExpectedType()
-	if want == nil || len(branches) == 0 {
-		return nil, false
-	}
-	if _, ok := tc.stripNewtypeResolving(want, branches[0].GetLocation()).(types.DynamicArrayType); !ok || len(branches) != len(branchTypes) {
-		return nil, false
-	}
-	for i, b := range branches {
-		if !isAssignable(branchTypes[i], want) && !tc.literalTakesShape(b, branchTypes[i], want) {
-			return nil, false
-		}
-	}
-	// The context itself, newtype and all: `-> Bag` joins to `Bag`, which the push then
-	// takes through its base to the literals (propagateExpected's newtype arm).
-	return want, true
 }
 
 // withPatternBindings runs fn with the variables a match arm's pattern binds
@@ -595,11 +562,6 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	}
 
 	var commonType types.Type
-	// Every arm is inferred before the join is judged, so a failed join can still ask the
-	// context (joinAtArrayContext) with every arm's type in hand.
-	var bodies []ast.Expression
-	var armTypes []types.Type
-	var clashA, clashB types.Type
 	for _, arm := range expr.MatchArms {
 		var armType types.Type
 		tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
@@ -609,31 +571,18 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 		if armType == nil {
 			continue // body type unresolvable — skip rather than false-positive
 		}
-		bodies = append(bodies, arm.Body)
-		armTypes = append(armTypes, armType)
-		if clashA != nil {
-			continue
-		}
 		if commonType == nil {
 			commonType = armType
 			continue
 		}
 		next, ok := branchCommonType(commonType, armType)
 		if !ok {
-			clashA, clashB = commonType, armType
-			continue
-		}
-		commonType = next
-	}
-	if clashA != nil {
-		dyn, shaped := tc.joinAtArrayContext(bodies, armTypes)
-		if !shaped {
 			tc.addError(expr.GetLocation(), SeverityError,
 				"match arms have incompatible types: %s vs %s",
-				promoteToDefault(clashA), promoteToDefault(clashB))
+				promoteToDefault(commonType), promoteToDefault(armType))
 			return nil
 		}
-		commonType = dyn
+		commonType = next
 	}
 	if commonType == nil {
 		return nil

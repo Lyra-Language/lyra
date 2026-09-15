@@ -20,7 +20,7 @@ func TestExec_DecodeUTF8BothArrayFlavours(t *testing.T) {
 	out, _ := buildAndRunCapture(t, `module main
 let main = () -> void => {
   var dyn: []u8 = [104, 105, 33]
-  let fixed: [3]u8 = [104, 105, 33]
+  let fixed: [3]u8 = #[104, 105, 33]
   print("${dyn.decode_utf8()} ${fixed.decode_utf8()}")
 }
 `)

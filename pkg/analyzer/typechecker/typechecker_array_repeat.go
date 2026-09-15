@@ -34,13 +34,29 @@ import (
 // inferArrayLiteralType leaves its elements untyped, so `let g: [4]u8 = [0; 4]` narrows
 // the 0 to u8 instead of lowering it at the i64 default and mismatching the annotation.
 // propagateExpectedType has the matching arm.
+//
+// **Since 09/14 the spelling decides, not the count**: `#[v; n]` is `[n]T` and its count must
+// fold (lyra-E056); `[v; n]` is `[]T` for any integer count, constant or not.
 func (tc *TypeChecker) inferArrayRepeatType(expr *ast.ArrayRepeatExpr) types.Type {
+	// A repeated literal spelled for the other flavor than the element context — `[[0, 0];
+	// 3]` under `[][2]i64` — names its fix, as an array literal's element does.
+	if elemContext := tc.arrayElementContext(expr.GetLocation()); elemContext != nil &&
+		tc.reportArrayLiteralFlavor(expr.Value, elemContext) {
+		return nil
+	}
 	elem := tc.inferExprType(expr.Value)
 	if elem == nil {
 		return nil
 	}
-	if !tc.arrayRepeatCountIsConstant(expr) {
+	if !expr.Fixed {
 		if !tc.checkRuntimeRepeatCount(expr) {
+			return nil
+		}
+		// A constant count is still checked for sign here, where it can be; a runtime
+		// one traps when it is negative.
+		if n, ok := ast.ArrayRepeatCount(expr.Count, tc.constInitializer); ok && n < 0 {
+			tc.addError(expr.Count.GetLocation(), SeverityError,
+				"array repeat count must not be negative, got %d", n)
 			return nil
 		}
 		return types.DynamicArrayType{ElementType: elem}
@@ -50,17 +66,6 @@ func (tc *TypeChecker) inferArrayRepeatType(expr *ast.ArrayRepeatExpr) types.Typ
 		return nil
 	}
 	return types.StaticArrayType{ElementType: elem, Size: count}
-}
-
-// arrayRepeatCountIsConstant reports whether the count folds, without reporting anything.
-// The quiet twin of arrayRepeatCount, so inference can *choose* between the fixed and
-// dynamic readings instead of erroring on the way to one of them.
-func (tc *TypeChecker) arrayRepeatCountIsConstant(expr *ast.ArrayRepeatExpr) bool {
-	if expr.Count == nil {
-		return false
-	}
-	_, ok := ast.ArrayRepeatCount(expr.Count, tc.constInitializer)
-	return ok
 }
 
 // checkRuntimeRepeatCount verifies that a non-constant count is at least an integer.
@@ -104,18 +109,16 @@ func (tc *TypeChecker) arrayRepeatCount(expr *ast.ArrayRepeatExpr) (int, bool) {
 	}
 	n, ok := ast.ArrayRepeatCount(count, tc.constInitializer)
 	if !ok {
-		// Only a **fixed** array reaches here now: inference reads a non-constant count
-		// as `[]T`, so this fires when such a literal is used where a size is part of
-		// the type. Naming the dynamic spelling is the whole message — the author has
-		// written something with a perfectly good meaning, in the one position that
-		// cannot hold it.
+		// Only `#[v; n]` reaches here: its length is part of its type. Naming the dynamic
+		// spelling is the whole message — the author has written something with a perfectly
+		// good meaning, in the one spelling that cannot hold it.
 		if id, isIdent := count.(*ast.IdentifierExpr); isIdent {
 			tc.addErrorCode(count.GetLocation(), SeverityError, diag.CodeNonConstantArraySize,
-				"a fixed-size array's length is part of its type, so the count must be a compile-time constant; %s is not a `const` — annotate the binding as `[]T` for an array sized at run time",
+				"a fixed-size array's length is part of its type, so the count must be a compile-time constant; %s is not a `const` — write `[v; n]` for an array sized at run time",
 				id.Name)
 		} else {
 			tc.addErrorCode(count.GetLocation(), SeverityError, diag.CodeNonConstantArraySize,
-				"a fixed-size array's length is part of its type, so the count must be a compile-time constant — annotate the binding as `[]T` for an array sized at run time")
+				"a fixed-size array's length is part of its type, so the count must be a compile-time constant — write `[v; n]` for an array sized at run time")
 		}
 		return 0, false
 	}
@@ -158,23 +161,58 @@ func (tc *TypeChecker) constInitializer(name string) (ast.Expression, bool) {
 	return decl.Value, true
 }
 
-// reportRuntimeRepeatInFixedContext reports lyra-E056 for `[v; n]` with a runtime count
-// used where a **fixed** array is wanted, and says whether it did.
+// reportArrayLiteralFlavor reports lyra-E079 for an array literal or repeat spelled for the
+// other flavor than want — `[1, 2]` where a `[2]i64` is wanted, `#[1, 2]` where a `[]i64` is
+// — and says whether it did.
 //
-// Inference reads such a literal as `[]T` — the only type it can have — so without this
-// the mismatch is an ordinary assignability failure naming two types, neither of which is
-// the problem. The count is.
-func (tc *TypeChecker) reportRuntimeRepeatInFixedContext(expr ast.Expression, want types.Type) bool {
-	ar, isRepeat := expr.(*ast.ArrayRepeatExpr)
-	if !isRepeat {
+// Without it the mismatch is an ordinary assignability failure naming two types, which is
+// true and says nothing about the fix: the author wrote one character too few or too many.
+// It also replaces the E056 special case this site had for `[v; n]` with a runtime count
+// in fixed position, which the spelling now settles before any count is looked at.
+func (tc *TypeChecker) reportArrayLiteralFlavor(expr ast.Expression, want types.Type) bool {
+	var fixed bool
+	switch e := expr.(type) {
+	case *ast.ArrayLiteralExpr:
+		fixed = e.Fixed
+	case *ast.ArrayRepeatExpr:
+		fixed = e.Fixed
+	case *ast.TupleLiteralExpr:
+		// An anonymous tuple literal is its elements, so `([1, 2], 3)` for a `([2]i64, i64)`
+		// names the element's fix rather than restating both whole tuples.
+		if !types.IsAnonymousTupleName(e.Name) {
+			return false
+		}
+		tt, ok := tc.stripNewtypeResolving(tc.resolveTypeIfKnown(want, expr.GetLocation()), expr.GetLocation()).(types.TupleType)
+		if !ok || len(tt.Elements) != len(e.Elements) {
+			return false
+		}
+		reported := false
+		for i, el := range e.Elements {
+			reported = tc.reportArrayLiteralFlavor(el, tt.Elements[i]) || reported
+		}
+		return reported
+	default:
 		return false
 	}
-	if _, wantsFixed := tc.resolveTypeIfKnown(want, expr.GetLocation()).(types.StaticArrayType); !wantsFixed {
+	resolved := tc.resolveTypeIfKnown(want, expr.GetLocation())
+	if resolved == nil {
 		return false
 	}
-	if tc.arrayRepeatCountIsConstant(ar) {
-		return false
+	switch tc.stripNewtypeResolving(resolved, expr.GetLocation()).(type) {
+	case types.StaticArrayType:
+		if fixed {
+			return false
+		}
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeArrayLiteralFlavor,
+			"`[…]` builds a dynamic array, and %s is a fixed-size one — write `#[…]` for a fixed array", resolved)
+		return true
+	case types.DynamicArrayType:
+		if !fixed {
+			return false
+		}
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeArrayLiteralFlavor,
+			"`#[…]` builds a fixed-size array, and %s is a dynamic one — write `[…]` for a dynamic array", resolved)
+		return true
 	}
-	_, ok := tc.arrayRepeatCount(ar) // emits lyra-E056
-	return !ok
+	return false
 }

@@ -23,7 +23,7 @@ let f = noalloc () -> i64 => {
 func TestArrayRepeatAlloc_FixedFormAllowed(t *testing.T) {
 	src := `
 let f = noalloc () -> i64 => {
-    let a = [0; 3]
+    let a = #[0; 3]
     a[0]
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)

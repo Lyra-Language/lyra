@@ -354,11 +354,10 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 	// is the only one that names an actual edit.** A fixed-array *binding* reaching a
 	// `[]t` combinator is refused, and deliberately: the value already exists as a
 	// stack `[N]T` while a `[]T` is a heap box, so widening it at a call would allocate
-	// where nothing asked it to. (A *literal* receiver is admitted since 08/28 — it has
-	// no prior shape to widen, so it is simply built as the `[]T` the receiver asks
-	// for, and never reaches this hint.) Left to the branches below, an overloaded name
-	// answers "map takes DynamicArray<t>, Maybe<t>, Result<t, e>", which is true and
-	// still leaves the reader to work out that an annotation is the fix.
+	// where nothing asked it to. (A `[…]` literal receiver is a `[]T` by spelling and never
+	// reaches this hint; a `#[…]` one does, and gets the same edit.) Left to the branches
+	// below, an overloaded name answers "map takes DynamicArray<t>, Maybe<t>, Result<t, e>",
+	// which is true and still leaves the reader to work out what to change.
 	if hint, ok := tc.fixedArrayHint(methodName, recv, loc); ok {
 		return hint
 	}
@@ -421,13 +420,12 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 // fixedArrayHint names the edit for the one mismatch a reader cannot guess from the
 // types alone: a fixed-array receiver against a combinator that takes a dynamic one.
 //
-// It fires for a *binding* (`let xs = [1, 2, 3]`); a literal receiver is admitted
-// upstream and never arrives here.
+// It fires for a fixed value — a `#[…]` literal or a binding holding one. The edits it
+// names are the two that exist: build the array dynamic (`[…]`), or copy it (`.slice`).
 //
 // Keyed on *any* declaration of the name taking a dynamic array, so it covers the
 // overloaded shape (`map`, declared for `[]t`, `Maybe<t>` and `Result<t, e>`) and the
-// single one (`join`) with the same sentence. The annotation is spelled in source syntax —
-// `[]string`, not `DynamicArray<string>` — because it is code the reader is about to type.
+// single one (`join`) with the same sentence.
 func (tc *TypeChecker) fixedArrayHint(methodName string, recv types.Type, loc ast.Location) (string, bool) {
 	sa, isStatic := recv.(types.StaticArrayType)
 	if !isStatic {
@@ -441,13 +439,9 @@ func (tc *TypeChecker) fixedArrayHint(methodName string, recv types.Type, loc as
 		if _, wantsDyn := tc.resolveTypeIfKnown(param.Type, fn.GetLocation()).(types.DynamicArrayType); !wantsDyn {
 			continue
 		}
-		// The element is **defaulted** before it is named: an unannotated `[1, 2, 3]`
-		// has untyped elements, which render as "integer literal" — a phrase, not a
-		// type, so the suggested annotation would not compile. Same rule the generated
-		// documentation follows: a spelling offered to a reader has to parse.
 		return fmt.Sprintf(
-			"; %s takes a dynamic array — annotate the value as `[]%s` (a `[%d]T` value is a fixed array, and widening it would allocate)",
-			methodName, promoteToDefault(sa.ElementType), sa.Size), true
+			"; %s takes a dynamic array, and this is a fixed `[%d]T` — build it with `[…]` rather than `#[…]`, or copy it with `.slice(0, %d)` (widening it implicitly would allocate)",
+			methodName, sa.Size, sa.Size), true
 	}
 	return "", false
 }

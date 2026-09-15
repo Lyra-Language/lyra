@@ -37,7 +37,7 @@ func TestExec_BoundsCheckSurvivesAWriteThroughAMutablePointer(t *testing.T) {
 module main
 let set = (p: ^mut i64, v: i64) -> void => unsafe { p^ = v }
 let main = () -> void => {
-  let xs: [3]i64 = [10, 20, 30]
+  let xs: [3]i64 = #[10, 20, 30]
   var i: i64 = 0
   unsafe { set(&mut i, 7) }
   println("${xs[i]}")
@@ -80,7 +80,7 @@ func TestExec_ATakenAddressUntracksTheNameForTheWholeFunction(t *testing.T) {
 	assertTraps(t, `
 module main
 let main = () -> void => {
-  let xs: [3]i64 = [10, 20, 30]
+  let xs: [3]i64 = #[10, 20, 30]
   var i: i64 = 5
   let p = unsafe { &mut i }
   i = 0

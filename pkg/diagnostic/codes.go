@@ -945,6 +945,22 @@ const (
 	// case, since it tested the tag anyway.
 	CodeRefutablePattern = "lyra-E077"
 
+	// CodeFixedArraySpread: a spread inside a fixed array literal, `#[...xs, 1]`.
+	//
+	// A `[N]T` carries its length in its type, and a spread's contribution is known only at run
+	// time — or, where the operand happens to be fixed, would make the literal's type change
+	// when the operand's declaration does. Splicing builds the dynamic flavor, `[...xs, 1]`.
+	CodeFixedArraySpread = "lyra-E078"
+
+	// CodeArrayLiteralFlavor: an array literal or repeat spelled for one flavor where the other
+	// is expected — `[1, 2]` for a `[2]i64`, or `#[1, 2]` for a `[]i64`.
+	//
+	// The spelling is the flavor (`[…]` is `[]T`, `#[…]` is `[N]T`), and neither converts: a
+	// fixed array is inline storage and a dynamic one a ref-counted box, so reading one as the
+	// other is a memory fault, and choosing between them from context was a family of
+	// inference bugs (09/14). Refused naming the other spelling.
+	CodeArrayLiteralFlavor = "lyra-E079"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

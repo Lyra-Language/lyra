@@ -22,7 +22,7 @@ func TestExec_ForIn(t *testing.T) {
 			"fixed array accumulate",
 			`let main = () -> u8 => {
   var sum: u8 = 0
-  let xs: [3]u8 = [10, 20, 12]
+  let xs: [3]u8 = #[10, 20, 12]
   for x in xs {
     sum += x
   }
@@ -46,7 +46,7 @@ func TestExec_ForIn(t *testing.T) {
 			"shared fixed array accumulate",
 			`let main = () -> u8 => {
   var sum: u8 = 0
-  let xs: shared [3]u8 = [10, 20, 12]
+  let xs: shared [3]u8 = #[10, 20, 12]
   for x in xs {
     sum += x
   }
@@ -58,7 +58,7 @@ func TestExec_ForIn(t *testing.T) {
 			"break out of the loop",
 			`let main = () -> u8 => {
   var sum: u8 = 0
-  let xs: [4]u8 = [1, 2, 3, 4]
+  let xs: [4]u8 = #[1, 2, 3, 4]
   for x in xs {
     if x == 3 { break }
     sum += x
@@ -71,7 +71,7 @@ func TestExec_ForIn(t *testing.T) {
 			"continue skips an element",
 			`let main = () -> u8 => {
   var sum: u8 = 0
-  let xs: [4]u8 = [1, 2, 3, 4]
+  let xs: [4]u8 = #[1, 2, 3, 4]
   for x in xs {
     if x == 2 { continue }
     sum += x
@@ -130,7 +130,7 @@ func TestExec_ForIn_TwoVar(t *testing.T) {
 			"index plus element (fixed)",
 			`let main = () -> u8 => {
   var acc: u8 = 0
-  let xs: [3]u8 = [1, 2, 3]
+  let xs: [3]u8 = #[1, 2, 3]
   for i, x in xs {
     acc += u8(i) + x
   }

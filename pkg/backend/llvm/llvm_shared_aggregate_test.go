@@ -135,7 +135,7 @@ let main = () -> u8 => {
 			"[N]shared struct",
 			`struct Pt { x: u8, y: u8 }
 let main = () -> u8 => {
-  let xs: [2]shared Pt = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]
+  let xs: [2]shared Pt = #[Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]
   xs[0].y + xs[1].x
 }`,
 			5,
@@ -155,7 +155,7 @@ let main = () -> u8 => {
 			// The array's *own* flavor from a repeat: the eighth omission itself.
 			"shared array from a repeat",
 			`let main = () -> u8 => {
-  let xs: shared [3]u8 = [7; 3]
+  let xs: shared [3]u8 = #[7; 3]
   xs[1]
 }`,
 			7,

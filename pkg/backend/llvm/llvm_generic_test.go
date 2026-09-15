@@ -41,7 +41,7 @@ func TestExec_GenericFunctions(t *testing.T) {
 			// element type.
 			"a type variable inside an array type",
 			`let first = (xs: [3]t) -> t => xs[0]
-			 let main = () -> u8 => u8(first([7, 8, 9]))`,
+			 let main = () -> u8 => u8(first(#[7, 8, 9]))`,
 			7,
 		},
 		{

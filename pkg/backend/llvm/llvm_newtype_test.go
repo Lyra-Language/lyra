@@ -76,7 +76,7 @@ func TestExec_Newtype(t *testing.T) {
 			"as a fixed-array element",
 			`newtype Meters = i64
 			 let main = () -> u8 => {
-			   let xs: [3]Meters = [1, 2, 3]
+			   let xs: [3]Meters = #[1, 2, 3]
 			   let d = i64(xs[1])
 			   u8(d)
 			 }`,
@@ -479,7 +479,7 @@ func TestExec_NewtypeOverArray(t *testing.T) {
 module main
 newtype Grid = [3]i64
 let main = () -> void => {
-  let g: Grid = [4, 5, 6];
+  let g: Grid = #[4, 5, 6];
   println("${g.len()} ${g[1]}");
 }
 `

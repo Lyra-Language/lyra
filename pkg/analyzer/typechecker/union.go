@@ -50,7 +50,9 @@ func (tc *TypeChecker) inferUnionInstanceExpr(expr *ast.StructInstanceExpr, ut t
 		return nil
 	}
 	declared := tc.resolveType(member.Type, expr.GetLocation())
-	if valueType := tc.inferExprType(field.Value); valueType != nil {
+	// A value spelled for the other array flavor names its fix (lyra-E079), as every other
+	// value position does through contextualType, and is not reported twice.
+	if valueType := tc.inferExprType(field.Value); valueType != nil && !tc.reportArrayLiteralFlavor(field.Value, declared) {
 		tc.propagateExpectedType(field.Value, declared)
 		if !isAssignable(tc.inferExprType(field.Value), declared) {
 			tc.addError(field.Value.GetLocation(), SeverityError,

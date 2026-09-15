@@ -25,13 +25,12 @@ import (
 //
 // # It runs after typechecking, and it has to
 //
-// The element's type at *inference* time is not the type it is lowered at. Under a
-// `[][]rune` annotation the inner `[' '; WIDTH]` infers as the fixed `[WIDTH]rune` —
-// which shares nothing, being copied per slot — and only propagation widens it to
-// the heap-boxed `[]rune` that does. So a check inside inferArrayRepeatType would
-// have cleared the exact program that motivated it. This reads the TypeTable, which
-// holds the settled type the backend will lower, and is a standalone pass for that
-// reason rather than an arm of the typechecker.
+// The element's type at *inference* time is not always the type it is lowered at: an
+// untyped or empty element settles through its context afterwards. (Until 09/14 the
+// inner repeat's *flavor* did too — `[' '; WIDTH]` inferred fixed and was widened to the
+// heap-boxed `[]rune` that shares; the spelling decides that now.) This reads the
+// TypeTable, which holds the settled type the backend will lower, and is a standalone
+// pass for that reason rather than an arm of the typechecker.
 //
 // # What it does not fire on
 //

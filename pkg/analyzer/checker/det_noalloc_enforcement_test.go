@@ -255,7 +255,7 @@ func TestNoAlloc_ArrayComprehension_Violates(t *testing.T) {
 // is the assertion that fails if the rule ever keys off the syntax instead of the recorded
 // type — the two are told apart by what the literal was used as, not by how it was written.
 func TestNoAlloc_FixedSizeArrayLiteral_IsFine(t *testing.T) {
-	src := `let build = pure noalloc (n: i64) -> [3]i64 => [1, 2, 3]`
+	src := `let build = pure noalloc (n: i64) -> [3]i64 => #[1, 2, 3]`
 	if errs := checkPurity(t, src); len(errs) != 0 {
 		t.Errorf("a fixed-size array is stack storage and must not count as an allocation: %v", errs)
 	}

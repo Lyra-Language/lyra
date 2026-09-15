@@ -99,7 +99,7 @@ func TestExec_AnonymousStructInsideAggregates(t *testing.T) {
 module main
 let main = () -> void => {
   let xs: []{ x: i64 } = [{ x: 1 }, { x: 2 }];
-  let fixed: [2]{ x: i64 } = [{ x: 3 }, { x: 4 }];
+  let fixed: [2]{ x: i64 } = #[{ x: 3 }, { x: 4 }];
   let t: ({ x: i64 }, i64) = ({ x: 5 }, 6);
   println("${xs[1].x} ${fixed[0].x} ${t.0.x} ${t.1}");
 }

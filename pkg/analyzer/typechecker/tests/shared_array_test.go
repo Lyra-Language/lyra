@@ -14,12 +14,12 @@ import (
 
 func TestTypeCheck_SharedArray_Accepted(t *testing.T) {
 	cases := []string{
-		`let xs: shared [3]i64 = [1, 2, 3]`,
-		`let xs: shared [3]u8 = [10, 20, 30]
+		`let xs: shared [3]i64 = #[1, 2, 3]`,
+		`let xs: shared [3]u8 = #[10, 20, 30]
 let y: u8 = xs[1]`,
 		`let third = (xs: shared [3]i64) -> i64 => xs[2]`,
-		`let make = () -> shared [3]i64 => [7, 8, 9]`,
-		`let xs: shared [2]string = ["a", "b"]`,
+		`let make = () -> shared [3]i64 => #[7, 8, 9]`,
+		`let xs: shared [2]string = #["a", "b"]`,
 	}
 	for _, src := range cases {
 		res := parseCollectAndCheck(t, src, false)
@@ -31,7 +31,7 @@ let y: u8 = xs[1]`,
 // construction node (propagateExpectedType), which is what tells the backend to
 // heap-box it rather than build an inline value.
 func TestTypeCheck_SharedArray_StampsConstructionFlavor(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: shared [3]i64 = [1, 2, 3]`, false)
+	res := parseCollectAndCheck(t, `let xs: shared [3]i64 = #[1, 2, 3]`, false)
 	assertNoErrors(t, res)
 
 	var arrType types.Type

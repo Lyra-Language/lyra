@@ -6,7 +6,7 @@ import (
 
 func TestIndexExpr_StaticArray_ReturnsElementType(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let y = xs[0]
 	`, false)
 	assertNoErrors(t, res)
@@ -30,7 +30,7 @@ func TestIndexExpr_String_ReturnsChar(t *testing.T) {
 
 func TestIndexExpr_NonIntegerIndex_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let y = xs[1.5]
 	`, false)
 	assertErrorsAre(t, res, "index must be an integer, got float literal")
@@ -46,7 +46,7 @@ func TestIndexExpr_NonIndexable_Error(t *testing.T) {
 
 func TestIndexExpr_StaticArray_LiteralInBounds_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let y = xs[2]
 	`, false)
 	assertNoErrors(t, res)
@@ -59,7 +59,7 @@ func TestIndexExpr_StaticArray_LiteralInBounds_Ok(t *testing.T) {
 // here; a runtime negative → the bounds trap.
 func TestIndexExpr_StaticArray_NegativeIndexRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let a = xs[-1]
 	`, false)
 	assertErrorsAre(t, res,
@@ -70,7 +70,7 @@ func TestIndexExpr_StaticArray_NegativeIndexRefused(t *testing.T) {
 // is refused the same way a literal is.
 func TestIndexExpr_StaticArray_NegativeConstBindingRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let i: i64 = -2
 		let a = xs[i]
 	`, false)
@@ -92,7 +92,7 @@ func TestIndexExpr_String_NegativeIndexRefused(t *testing.T) {
 // from_end type-checks on all three receivers, with the element (rune) result type.
 func TestIndexExpr_FromEndTypes(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i32 = [1, 2, 3]
+		let xs: [3]i32 = #[1, 2, 3]
 		let a: i32 = xs.from_end(1)
 		let ds: []string = ["x", "y"]
 		let b: string = ds.from_end(2)
@@ -104,7 +104,7 @@ func TestIndexExpr_FromEndTypes(t *testing.T) {
 
 func TestIndexExpr_StaticArray_LiteralOutOfBounds_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let y = xs[3]
 	`, false)
 	assertErrorsAre(t, res, "index 3 out of range for array of size 3 (valid indices are 0 to 2)")
@@ -112,7 +112,7 @@ func TestIndexExpr_StaticArray_LiteralOutOfBounds_Error(t *testing.T) {
 
 func TestIndexExpr_StaticArray_ElementType_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i32 = [1, 2, 3]
+		let xs: [3]i32 = #[1, 2, 3]
 		let y: i32 = xs[0]
 	`, false)
 	assertNoErrors(t, res)
@@ -120,7 +120,7 @@ func TestIndexExpr_StaticArray_ElementType_Ok(t *testing.T) {
 
 func TestIndexExpr_StaticArray_ElementType_Widening_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i32 = [1, 2, 3]
+		let xs: [3]i32 = #[1, 2, 3]
 		let y: i64 = xs[0]
 	`, false)
 	assertErrorsAre(t, res, "y: cannot assign i32 to i64")
@@ -128,7 +128,7 @@ func TestIndexExpr_StaticArray_ElementType_Widening_Ok(t *testing.T) {
 
 func TestIndexExpr_StaticArray_ElementType_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i32 = [1, 2, 3]
+		let xs: [3]i32 = #[1, 2, 3]
 		let str: string = xs[0]
 	`, false)
 	assertErrorsAre(t, res, "str: cannot assign i32 to string")
@@ -138,7 +138,7 @@ func TestIndexExpr_StaticArray_ConstLetIndex_OutOfBounds_Error(t *testing.T) {
 	// A let binding with a literal initializer is a compile-time constant —
 	// its value is knowable and out-of-bounds access must be caught.
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let i: i64 = 10
 		let y = xs[i]
 	`, false)
@@ -147,7 +147,7 @@ func TestIndexExpr_StaticArray_ConstLetIndex_OutOfBounds_Error(t *testing.T) {
 
 func TestIndexExpr_StaticArray_ConstLetIndex_InBounds_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let i: i64 = 2
 		let y = xs[i]
 	`, false)
@@ -210,7 +210,7 @@ func TestIndexExpr_Tuple_RuntimeVariableIndex_Error(t *testing.T) {
 
 func TestIndexExpr_ReassignedVarIndexIsNotAConstant(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		var i: i64 = 5
 		i = 0
 		let y = xs[i]
@@ -221,7 +221,7 @@ func TestIndexExpr_ReassignedVarIndexIsNotAConstant(t *testing.T) {
 func TestIndexExpr_LetMutIndexIsNotAConstant(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let set = (p: ^mut i64, v: i64) -> void => unsafe { p^ = v }
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		let mut i: i64 = 5
 		unsafe { set(&mut i, 0) }
 		let y = xs[i]
@@ -232,7 +232,7 @@ func TestIndexExpr_LetMutIndexIsNotAConstant(t *testing.T) {
 // The negative-index check shares the folding, and so shared the bug.
 func TestIndexExpr_ReassignedNegativeVarIsNotRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]i64 = [1, 2, 3]
+		let xs: [3]i64 = #[1, 2, 3]
 		var i: i64 = -1
 		i = 2
 		let y = xs[i]

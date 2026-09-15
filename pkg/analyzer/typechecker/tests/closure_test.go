@@ -34,7 +34,7 @@ let main = () -> u8 => {
 func TestClosure_CallThroughArrayElement(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 let main = () -> u8 => {
-  let fs: [2](i64) -> i64 = [(x: i64) -> i64 => x + 1, (x: i64) -> i64 => x * 2]
+  let fs: [2](i64) -> i64 = #[(x: i64) -> i64 => x + 1, (x: i64) -> i64 => x * 2]
   u8(fs[1](5))
 }
 `, false))
@@ -44,7 +44,7 @@ let main = () -> u8 => {
 func TestClosure_NonFunctionValueNotCallable(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let main = () -> u8 => {
-  let xs: [2]i64 = [1, 2]
+  let xs: [2]i64 = #[1, 2]
   u8(xs[0](3))
 }
 `, false)

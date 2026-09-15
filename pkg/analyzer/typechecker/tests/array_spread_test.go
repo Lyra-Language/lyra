@@ -7,7 +7,7 @@ func TestTypeCheck_ArraySpread_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let main = () -> void => {
   let xs: []i64 = [1, 2]
-  let fixed: [2]i64 = [3, 4]
+  let fixed: [2]i64 = #[3, 4]
   let a: []i64 = [...xs, 5]
   let b: []i64 = [...xs, ...fixed]
   let c: []i64 = [0, ...xs]
@@ -16,18 +16,18 @@ let main = () -> void => {
 	assertNoErrors(t, res)
 }
 
-// **A spread makes the result dynamic even when every operand is fixed.** The lengths
-// would add up here, and the rule still refuses: a `[N]T` carries its size in its type, so
+// **A spread makes the result dynamic even when every operand is fixed**, so `#[...]` is
+// lyra-E078. The lengths would add up here, and the rule still refuses: a `[N]T` carries its size in its type, so
 // deriving the arity from the operands' *declarations* would make this literal change type
 // when `fixed`'s annotation changes from `[2]i64` to `[]i64` while reading identically.
 func TestTypeCheck_ArraySpread_IsAlwaysDynamic(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let main = () -> void => {
-  let fixed: [2]i64 = [1, 2]
-  let c: [3]i64 = [...fixed, 3]
+  let fixed: [2]i64 = #[1, 2]
+  let c: [3]i64 = #[...fixed, 3]
   println(c[0])
 }`, false)
-	assertErrorsAre(t, res, "c: cannot assign DynamicArray<i64> to StaticArray<i64, 3>")
+	assertErrorsAre(t, res, "a fixed array literal cannot spread: its length is part of its type — write `[...]` to splice into a dynamic array")
 }
 
 // A spread has no type of its own — it stands for zero or more elements of a surrounding

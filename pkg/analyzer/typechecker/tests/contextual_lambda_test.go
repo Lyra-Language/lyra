@@ -227,18 +227,18 @@ impl Mapper for i64 { mapv = (self, f) => f(self) }
 	}
 }
 
-// Without a context asking for exactly that dynamic array the default stands: no context
-// leaves it fixed, and a context with another element type is a mismatch, as before.
-func TestContextualLambda_ArrayLiteralReturnKeepsItsDefault(t *testing.T) {
+// The lambda's spelling is the flavor, whatever the context: `#[x]` stays fixed even where a
+// dynamic array would fit, and a context with another element type is a mismatch.
+func TestContextualLambda_ArrayLiteralReturnKeepsItsSpelling(t *testing.T) {
 	t.Parallel()
 	const app = `
 let app<b> = (n: i64, f: (i64) -> b) -> b => f(n)
 `
 	cases := map[string]struct{ src, want string }{
-		"no context": {app + `let w = () -> i64 => { var xs = app(1, (x) => [x]); xs.push(2); 0 }`,
+		"a fixed spelling stays fixed": {app + `let w = () -> i64 => { var xs = app(1, (x) => #[x]); xs.push(2); 0 }`,
 			"member access on non-struct type StaticArray<i64, 1>"},
 		"another element type": {app + `let w = (n: i64) -> []string => app(n, (x) => [x])`,
-			"w: return type mismatch: expected DynamicArray<string>, got StaticArray<i64, 1>"},
+			"w: return type mismatch: expected DynamicArray<string>, got DynamicArray<i64>"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

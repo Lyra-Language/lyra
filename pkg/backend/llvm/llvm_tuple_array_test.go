@@ -18,7 +18,7 @@ func TestExec_ArrayOfAnonymousTuples(t *testing.T) {
 module main
 let main = () -> void => {
   let xs: [](i64, string) = [(1, "a"), (2, "b")];
-  let ys: [2](i64, i64) = [(1, 2), (3, 4)];
+  let ys: [2](i64, i64) = #[(1, 2), (3, 4)];
   println("${xs.len()} ${xs[0].0} ${xs[1].1} ${ys[1].0}");
 }
 `

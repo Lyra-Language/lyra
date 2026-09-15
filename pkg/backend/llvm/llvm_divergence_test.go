@@ -50,7 +50,7 @@ let main = () -> void => {
 		// landed on. Kept so the fixed-size path is covered too: it is the same loop as the
 		// dynamic one a few lines up, and nothing but a test keeps the two in step.
 		{"fixed array element", `let main = () -> void => {
-  var xs: [2]i64 = [panic("x"), 2]
+  var xs: [2]i64 = #[panic("x"), 2]
   println(xs[0])
 }`},
 		{"push argument", `let main = () -> void => {

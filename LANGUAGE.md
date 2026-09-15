@@ -155,8 +155,10 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 
 ### Arrays
 
-- **Literal flavour is decided by context, wherever it sits**: `[1, 2, 3]` is a fixed `[3]T`; under a `[]T` context it is a heap dynamic array (`noalloc` refuses that one). Applies to constructor payloads (`Some([1])` as `Maybe<[]i64>`), nested literals (`[[1], [2, 3]]` as `[][]i64`), generic arguments already solved (`m.unwrap_or([])`), **receivers** (`[1, 2, 3].map(f)`), and **branches**: an `if`, `match` or block whose every branch is a literal takes the context too, even when the branches differ in length or one is empty (`-> []i64 => if c { [1, 2] } else { [] }`). A fixed-array binding in any branch keeps the value fixed; with no context, branches of different lengths are refused.
-- **A fixed-array binding never widens**: `let xs = [1, 2, 3]; xs.map(f)` is refused, naming the annotation as the fix.
+- **The spelling is the flavor**: `[1, 2, 3]` is a dynamic `[]T` (a heap box; allocates, so `noalloc` refuses it) and `#[1, 2, 3]` a fixed `[3]T` (inline storage; never allocates). No context changes it, anywhere — an annotation, argument, return, payload, receiver or branch.
+- **Neither converts** (`lyra-E079`, naming the other spelling): `[1, 2]` where a `[2]i64` is wanted, `#[1, 2]` where a `[]i64` is. A fixed-array binding does not widen either (`let xs = #[1, 2]; xs.map(f)` is refused); `.slice(0, n)` is the explicit copy.
+- **Element types still come from context**: `let xs: []u8 = [1, 2]`, `let m: [][]u8 = [[1], [2, 3]]`, `-> []u8 => if c { [1] } else { [2, 3] }`. An empty `[]` takes any element type; `#[]` is `[0]T`.
+- `#[` is one token: `# [1]` is not a fixed array. Array *patterns* (`[a, b, ...rest]`) match either flavor.
 - Elements: any type but `void` (tuples, raw pointers, anonymous structs), optionally with one allocation or `weak` modifier (`[]shared Node`).
 - Layout `{rc, weak, len, cap, T*}`: elements behind a pointer so growth cannot move the box (one extra load per access).
 - `xs.push(v)`: amortized doubling, `mut` receiver (same diagnostic as `xs[i] = v`), `noalloc` refuses.
@@ -164,13 +166,13 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 
 **Spread `[...xs, v]`**
 - Operand is any postfix expression (`...f(x)`, `...h.xs`).
-- Result is **always `[]T`**, even if all operands are fixed.
+- Result is **always `[]T`**, even if all operands are fixed. `#[...xs]` is `lyra-E078`: a fixed array's length is part of its type.
 - Allocates once, sized from operand lengths; each operand evaluated once in order.
 - Only inside an array literal (`lyra-E068`); `f(...xs)` refused. Non-array operand refused by name (`[..."ab"]` names `to_runes()`).
 
-**Repeat `[v; n]`**
+**Repeat `[v; n]` / `#[v; n]`**
 - Value evaluated **once**; each slot retains it.
-- Count must fold for `[N]T` (const chains work); any expression for `[]T`.
+- `[v; n]` is `[]T` for any integer count; `#[v; n]` is `[n]T` and its count must fold (const chains work; `lyra-E056` otherwise, naming `[v; n]`).
 - **`lyra-W019`**: repeating a value with shared mutable structure aliases it — `[[' '; W]; H]` is one row H times. Fires for a `[]T`, a `shared` aggregate with a writable field, or a struct/tuple/`data`/`[N]T` containing one. Silent for strings and `shared` scalars. `readonly` does not prevent the sharing. See `examples/life.lyra`.
 
 **Sorting** (all ordinary Lyra in `std/prelude/array.lyra`):
@@ -301,7 +303,6 @@ Solved from argument types first, then:
 - Only blanks are filled; a written annotation wins and is checked.
 - A slot type mentioning a variable the call has not solved (the `u` of `(t) -> u`) is left blank for the body to solve; the enclosing declaration's own variable (`(t) -> t` inside `<t>`) is filled in.
 - An arity mismatch fills nothing.
-- A lambda whose value is an array literal (`(x) => [x]`, a block ending in one) solves the slot's variable as a fixed array unless the call's context — a declared return, an annotation — wants exactly `[]E` for it, with the same element type; then it builds `[]E`. `app(n, (x) => [x])` in a `-> []i64` function is `[]i64`; bare, it is `[1]i64`.
 
 ### Generic parameter lists
 

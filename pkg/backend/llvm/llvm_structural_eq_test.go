@@ -63,11 +63,11 @@ module main
 struct Inner { v: i64 }
 struct Outer { a: Inner, b: [2]i64 }
 let main = () -> void => {
-  let p = Outer { a: Inner { v: 1 }, b: [1, 2] };
-  let q = Outer { a: Inner { v: 1 }, b: [1, 2] };
-  let r = Outer { a: Inner { v: 1 }, b: [1, 3] };
-  let s = Outer { a: Inner { v: 9 }, b: [1, 2] };
-  println("${p == q} ${p == r} ${p == s} ${[1,2,3] == [1,2,3]} ${[1,2,3] == [1,9,3]}");
+  let p = Outer { a: Inner { v: 1 }, b: #[1, 2] };
+  let q = Outer { a: Inner { v: 1 }, b: #[1, 2] };
+  let r = Outer { a: Inner { v: 1 }, b: #[1, 3] };
+  let s = Outer { a: Inner { v: 9 }, b: #[1, 2] };
+  println("${p == q} ${p == r} ${p == s} ${#[1,2,3] == #[1,2,3]} ${#[1,2,3] == #[1,9,3]}");
 }
 `
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "true false false true false" {

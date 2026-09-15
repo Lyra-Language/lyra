@@ -29,7 +29,7 @@ newtype Nums = []i64
 let n: Nums = [7; 3]`},
 		{"newtype over a fixed array", `
 newtype Trio = [3]i64
-let t: Trio = [7; 3]`},
+let t: Trio = #[7; 3]`},
 		{"newtype over an array of strings", `
 newtype Names = []string
 let n: Names = ["ab"; 2]`},

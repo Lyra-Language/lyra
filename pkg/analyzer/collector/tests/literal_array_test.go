@@ -2,8 +2,10 @@ package collector_test
 
 import "testing"
 
+// `#[…]` is the fixed flavor, recorded as `Fixed: true`; the golden printer omits a false
+// field, so the dynamic goldens below are the plain spelling's pin.
 func TestCollectSimpleStaticArrayLiteral(t *testing.T) {
-	runGoldenTest(t, `let arr = [1, 2, 3]`, "simple_static_array_literal")
+	runGoldenTest(t, `let arr = #[1, 2, 3]`, "simple_static_array_literal")
 }
 
 func TestCollectArrayLiteralWithExpression(t *testing.T) {
@@ -19,9 +21,13 @@ func TestCollectSimpleDynamicArrayLiteral(t *testing.T) {
 }
 
 func TestCollectArrayRepeatInitialization(t *testing.T) {
-	runGoldenTest(t, `let arr = [0; 8]`, "array_repeat_initialization")
+	runGoldenTest(t, `let arr = #[0; 8]`, "array_repeat_initialization")
 }
 
 func TestCollectArrayRepeatInitializationWithCompileTimeConstantCount(t *testing.T) {
-	runGoldenTest(t, `let arr = [0; SIZE]`, "array_repeat_initialization_with_compile_time_constant_count")
+	runGoldenTest(t, `let arr = #[0; SIZE]`, "array_repeat_initialization_with_compile_time_constant_count")
+}
+
+func TestCollectDynamicArrayRepeatInitialization(t *testing.T) {
+	runGoldenTest(t, `let arr = [0; n]`, "dynamic_array_repeat_initialization")
 }

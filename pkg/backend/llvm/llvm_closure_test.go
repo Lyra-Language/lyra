@@ -96,7 +96,7 @@ func TestExec_Closures(t *testing.T) {
 		{
 			"array of closures",
 			`let main = () -> u8 => {
-			   let fs: [2](i64) -> i64 = [(x: i64) -> i64 => x + 1, (x: i64) -> i64 => x * 2]
+			   let fs: [2](i64) -> i64 = #[(x: i64) -> i64 => x + 1, (x: i64) -> i64 => x * 2]
 			   u8(fs[1](5))
 			 }`,
 			10,

@@ -324,7 +324,7 @@ func TestTypeCheck_MutArgument_ElementPath_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, pointStruct+`
 		let poke = (p: mut Point) -> void => { p.x = 5 }
 		let run = () -> void => {
-			var ps: [2]Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+			var ps: [2]Point = #[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
 			poke(ps[0])
 		}
 	`, false)

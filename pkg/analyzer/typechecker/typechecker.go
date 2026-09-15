@@ -3146,8 +3146,12 @@ func promoteToDefault(t types.Type) types.Type {
 			return types.PrimitiveType{Name: types.Float64}
 		}
 	case types.StaticArrayType:
-		// Promote the element type so that e.g. [1, 2, 3] (UntypedInt elements)
+		// Promote the element type so that e.g. #[1, 2, 3] (UntypedInt elements)
 		// becomes StaticArrayType{int, 3} when there is no annotation.
+		v.ElementType = promoteToDefault(v.ElementType)
+		return v
+	case types.DynamicArrayType:
+		// …and `[1, 2, 3]`, which is a `[]T` whenever it is not spelled `#[…]`.
 		v.ElementType = promoteToDefault(v.ElementType)
 		return v
 	case types.TupleType:
@@ -3620,13 +3624,9 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 	// own arm rather than folded into the one below because there is one leaf, not a
 	// list, and the re-record is the same either way.
 	if ar, ok := expr.(*ast.ArrayRepeatExpr); ok {
-		var ctxElem types.Type
-		switch at := expected.(type) {
-		case types.StaticArrayType:
-			ctxElem = at.ElementType
-		case types.DynamicArrayType:
-			ctxElem = at.ElementType
-		}
+		// The context narrows the element and never the flavor, which the spelling fixed:
+		// a context of the other flavor is lyra-E079's to report, so it pushes nothing.
+		ctxElem := arrayContextElement(ar.Fixed, expected)
 		if ctxElem != nil {
 			resolved := tc.resolveType(ctxElem, expr.GetLocation())
 			// The element recursion carries the element's own flavor with it:
@@ -3646,12 +3646,9 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			// two calls; the array arms were the pair that had only one.
 			tc.propagateInstantiation(ar.Value, resolved)
 			tc.checkLiteralRange("repeated element", ar.Value, resolved)
-			// A *dynamic* context stays dynamic, for the reason the array-literal arm
-			// below gives: the value is used as a dynamic array, and rewriting it to
-			// static would mask a later dynamic→static assignment error. The backend
-			// recovers the count by folding `ar.Count` with the same helper the check
-			// used.
-			if _, isDyn := expected.(types.DynamicArrayType); isDyn {
+			// Re-recorded at the narrowed element, in the repeat's own flavor. The backend
+			// recovers a fixed repeat's count by folding `ar.Count` with the same helper.
+			if !ar.Fixed {
 				tc.typeTable.Set(expr, types.DynamicArrayType{ElementType: resolved})
 			} else if n, ok := tc.arrayRepeatCount(ar); ok {
 				tc.typeTable.Set(expr, types.StaticArrayType{ElementType: resolved, Size: n})
@@ -3663,13 +3660,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 	}
 
 	if al, ok := expr.(*ast.ArrayLiteralExpr); ok {
-		var ctxElem types.Type
-		switch at := expected.(type) {
-		case types.StaticArrayType:
-			ctxElem = at.ElementType
-		case types.DynamicArrayType:
-			ctxElem = at.ElementType
-		}
+		ctxElem := arrayContextElement(al.Fixed, expected)
 		if ctxElem == nil {
 			tc.stampSharedConstruction(al, expected)
 			return
@@ -3684,18 +3675,13 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			tc.propagateInstantiation(elem, resolved)
 			tc.checkLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved)
 		}
-		// Re-record with the concrete element type so the backend builds the right
-		// shape. A *static* context records `[N x <resolved>]`; a *dynamic* context
-		// records a `DynamicArrayType` (kept dynamic, never rewritten to static — the
-		// value is *used* as a dynamic array, and a static rewrite would make it look
-		// statically sized and mask a later dynamic→static assignment error). The
-		// dynamic re-record matters where nothing else records the type onto the
-		// literal node — a return body (`() -> []i64 => [1,2,3]`) or an argument
-		// position — since only an annotated `let` sets it via checkVarDecl.
-		switch expected.(type) {
-		case types.StaticArrayType:
+		// Re-record at the concrete element type, in the literal's own flavor, so the backend
+		// builds the right shape. It matters where nothing else records the type onto the
+		// literal node — a return body (`() -> []i64 => [1, 2, 3]`) or an argument position —
+		// since only an annotated `let` sets it via checkVarDecl.
+		if al.Fixed {
 			tc.typeTable.Set(al, types.StaticArrayType{ElementType: resolved, Size: len(al.Elements)})
-		case types.DynamicArrayType:
+		} else {
 			tc.typeTable.Set(al, types.DynamicArrayType{ElementType: resolved})
 		}
 		// The array's own flavor (`shared [3]T`), after the flavorless re-record above.
@@ -3892,37 +3878,7 @@ func (tc *TypeChecker) stampSharedConstruction(expr ast.Expression, expected typ
 func (tc *TypeChecker) recordUntypedValueNode(expr ast.Expression, expected types.Type) {
 	if cp, ok := expected.(types.PrimitiveType); ok && tc.currentTypeIsUntyped(expr) {
 		tc.typeTable.Set(expr, cp)
-		return
 	}
-	tc.recordBranchingValueNode(expr, expected)
-}
-
-// recordBranchingValueNode re-records a match/if/block at a **dynamic array** context once
-// the push has re-flavored every branch into it. The branches' literals re-record
-// themselves, but the node keeps the fixed array its branches joined to, and that record is
-// what the backend merges the branches at: `if c { ["a"] } else { ["b"] }` for a `[]string`
-// return would join two dynamic values as a `[1]string`. Only when every branch now records
-// something assignable — a fixed-array binding in one branch was refused by the check and
-// keeps its mismatch (the same guard refreshBranchingRecord applies to data types).
-func (tc *TypeChecker) recordBranchingValueNode(expr ast.Expression, expected types.Type) {
-	dyn, ok := expected.(types.DynamicArrayType)
-	if !ok {
-		return
-	}
-	if recorded, ok := tc.typeTable.Get(expr); !ok || isAssignable(recorded, dyn) {
-		return
-	}
-	branches := valueBranches(expr)
-	if len(branches) == 0 {
-		return
-	}
-	for _, b := range branches {
-		got, ok := tc.typeTable.Get(b)
-		if !ok || got == nil || !isAssignable(got, dyn) {
-			return
-		}
-	}
-	tc.typeTable.Set(expr, dyn)
 }
 
 // currentTypeIsUntyped reports whether expr's currently recorded type is an
@@ -3936,11 +3892,9 @@ func (tc *TypeChecker) recordBranchingValueNode(expr ast.Expression, expected ty
 //
 //   - an **untyped literal** leaf, or a payload that is itself a defaulted construction:
 //     `Some 7` is a `Maybe<i64>` only because 7 defaults to i64;
-//   - an **array literal or constant-count repeat recorded as a fixed array**: a literal's
-//     flavor is chosen by what it is used as, and `[1]` reads as `[1]i64` only because
-//     nothing has said otherwise. Without this, `let m: Maybe<[]i64> = Some([1])` was
-//     refused — in every position, not just an annotation — while `Ok([1])` against a
-//     `Result<[]i64, e>` worked, since `Ok` solves too little to be settled at all;
+//   - an **array literal or repeat whose elements are unsettled** (`[]`, `[1]`): `Some([1])`
+//     is `Maybe<[]i64>` only because 1 defaults to i64. (Until 09/14 the literal's *flavor*
+//     was the guess, fixed by default and widened by context; the spelling decides it now);
 //   - an **anonymous tuple literal holding a guess**, which is how `Some((1, 2))` against
 //     `Maybe<(u8, u8)>` and `Some(([1], 2))` against `Maybe<([]i64, i64)>` reach one.
 //
@@ -3951,9 +3905,10 @@ func (tc *TypeChecker) payloadIsAGuess(elem ast.Expression) bool {
 	}
 	switch e := elem.(type) {
 	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
+		// Its element type, not its flavor: `Some([1])` is a `Maybe<[]i64>` only because 1
+		// defaults to i64, so `Maybe<[]u8>` may still override it. The flavor was spelled.
 		t, _ := tc.typeTable.Get(elem)
-		_, fixed := t.(types.StaticArrayType)
-		return fixed
+		return isUnsettledArrayLiteral(elem, t)
 	case *ast.TupleLiteralExpr:
 		if !types.IsAnonymousTupleName(e.Name) {
 			return false
@@ -3992,22 +3947,12 @@ func isLiteralZero(expr ast.Expression) bool {
 	return false
 }
 
-// inferArrayLiteralType infers the type of an array literal expression.
-// An array literal always produces a StaticArrayType — its length is known at
-// compile time from the number of elements. The element type is the common type
-// of all elements (via branchCommonType). When the elements are empty the
-// element type is nil, which signals an unresolved/empty array.
-//
-// Whether the containing variable is static or dynamic is determined by the
-// annotation type on the VarDeclStmt, not by the literal itself. `assignableValue`
-// lets a *literal's* StaticArrayType take a DynamicArrayType slot so that:
-//
-//	let xs: []int = [1, 2, 3]   // OK — the literal is built as a box
-//	let xs: [3]int = [1, 2, 3]  // OK — exact match
-//
-// That allowance belongs to the **expression**, not to the type: a `[3]int` binding
-// reaching a `[]int` slot is stack storage read as a ref-counted box, and it
-// segfaulted while `isAssignable` carried the rule (08/13).
+// inferArrayLiteralType infers the type of an array literal expression: `#[…]` is a
+// `[N]T`, its length the element count, and `[…]` a `[]T`. **The spelling is the flavor**
+// (09/14) — no context changes it, and neither converts to the other (lyra-E079). The
+// element type is the common type of all elements (via branchCommonType), each inferred
+// against the context's element type first; an empty literal's is nil, for the context to
+// supply.
 func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.Type {
 	var elemType types.Type
 	spread := false
@@ -4082,19 +4027,57 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 	for _, el := range expr.Elements {
 		if _, isSpread := el.(*ast.SpreadExpr); !isSpread {
 			tc.pushSettledInstantiation(el, elemType)
+			// …and an empty array element takes its siblings' element type: in `[["a"], []]`
+			// the join is `[]string`, and the `[]` recorded with no element type has nothing
+			// to lower as until it is told. Before 09/14 the two were fixed arrays of
+			// different lengths and never joined, so no element was ever left empty here.
+			if t, ok := tc.typeTable.Get(el); ok && arrayHasNoElementType(t) {
+				tc.propagateExpectedType(el, elemType)
+			}
 		}
 	}
-	if spread {
-		// **A spread makes the result a `[]T`, always** — even when every operand happens
-		// to be a fixed `[N]T` whose lengths would add up. A `[N]T` carries its size in
-		// its type, so deciding the arity from whether the operands' types happen to be
-		// fixed would make `[...xs, 1]` change type when `xs`'s *declaration* changes from
-		// `[3]i64` to `[]i64` — the literal reads identically and means something else.
-		// One rule instead: splicing produces the growable flavor, which is also the one
-		// an author reaching for append-shaped syntax wants.
+	if !expr.Fixed {
 		return types.DynamicArrayType{ElementType: elemType}
 	}
+	if spread {
+		// **A spread builds a `[]T`, never a `[N]T`** — even when every operand happens to
+		// be fixed and the lengths would add up. A `[N]T` carries its size in its type, so
+		// deciding it from the operands' types would make `#[...xs, 1]` change type when
+		// `xs`'s *declaration* changes from `[3]i64` to `[]i64`.
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeFixedArraySpread,
+			"a fixed array literal cannot spread: its length is part of its type — write `[...]` to splice into a dynamic array")
+		return nil
+	}
 	return types.StaticArrayType{ElementType: elemType, Size: len(expr.Elements)}
+}
+
+// arrayHasNoElementType reports whether t is an array whose element type is unknown — the
+// empty literal before anything has said what it holds.
+func arrayHasNoElementType(t types.Type) bool {
+	switch a := t.(type) {
+	case types.DynamicArrayType:
+		return a.ElementType == nil
+	case types.StaticArrayType:
+		return a.ElementType == nil
+	}
+	return false
+}
+
+// arrayContextElement is the element type an array context offers a literal or repeat of
+// the given spelling: a `[N]T` context's to a `#[…]`, a `[]T` context's to a `[…]`, and
+// nothing across flavors — the spelling is the flavor, and the mismatch is lyra-E079's.
+func arrayContextElement(fixed bool, expected types.Type) types.Type {
+	switch at := expected.(type) {
+	case types.StaticArrayType:
+		if fixed {
+			return at.ElementType
+		}
+	case types.DynamicArrayType:
+		if !fixed {
+			return at.ElementType
+		}
+	}
+	return nil
 }
 
 // arrayElementContext is the element type the innermost context wants an array literal's
@@ -4149,6 +4132,16 @@ func (tc *TypeChecker) elementTakesContext(el ast.Expression, t, want types.Type
 	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr, *ast.TupleLiteralExpr, *ast.DataConstructorExpr:
 	default:
 		return t, false
+	}
+	// A nested literal spelled for the other flavor — `#[[1, 2], [3, 4]]` for a `[2][2]u8` —
+	// names its fix here, as a top-level one does in contextualType; the outer literal's
+	// mismatch would otherwise report only the two whole types.
+	if tc.reportArrayLiteralFlavor(el, want) {
+		if tc.contextRefused == nil {
+			tc.contextRefused = map[ast.Expression]bool{}
+		}
+		tc.contextRefused[el] = true
+		return t, true
 	}
 	if tc.assignableValue(el, t, want) {
 		tc.propagateExpectedType(el, want)
@@ -4454,6 +4447,27 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 						continue
 					}
 					expected := tc.resolveType(substituteGenerics(declaredFields[i], subst), elem.GetLocation())
+					// **The payload is checked before it is recorded as the declared type.**
+					// It was not: the record below was unconditional, so `N("y")` against
+					// `data Num = N(i64)` type-checked and reached the backend as a string
+					// stored into an i64 slot (refused there, rule 5), and `Full([1, 2])`
+					// against a `[2]i64` payload was silently built fixed — the one position
+					// the `#[…]` spelling did not decide (09/14). The generic path through a
+					// context (stampDataConstruction) always checked; this is its twin.
+					if mentionsNoTypeVar(expected) {
+						if tc.reportArrayLiteralFlavor(elem, expected) {
+							continue
+						}
+						tc.propagateExpectedType(elem, expected)
+						tc.propagateInstantiation(elem, expected)
+						if actual := tc.inferExprType(elem); actual != nil && !tc.assignableValue(elem, actual, expected) {
+							tc.addError(elem.GetLocation(), SeverityError,
+								"%s: cannot assign %s to %s", name, actual, expected)
+							continue
+						}
+						tc.typeTable.Set(elem, expected)
+						continue
+					}
 					tc.propagateExpectedType(elem, expected)
 					// A payload that is itself a construction narrows too, so a
 					// concrete declared field reaches all the way down.

@@ -42,7 +42,7 @@ func TestArrayLiteralContext_StaticArrayAnnotation(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 data Maybe<t> = None | Some(t)
 let main = () -> void => {
-  let xs: [2]Maybe<u8> = [Some(200), None]
+  let xs: [2]Maybe<u8> = #[Some(200), None]
 }
 `, false)
 	assertNoErrors(t, res)
@@ -142,19 +142,19 @@ let g = (c: bool) -> Bag => if c { ["a"] } else { ["b", "c"] }`,
 	}
 }
 
-// Only literals take the shape: a fixed-array binding in a branch is the refusal
-// literalTakesShape exists for, and with no context the branches are still two fixed arrays.
+// Only literals narrow, and never across flavors: a fixed-array binding in a branch does not
+// join a dynamic literal, and fixed literals of different lengths do not join at all.
 func TestArrayLiteralContext_BranchesKeepTheirRefusals(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct{ src, want string }{
 		"fixed binding, same length": {
-			`let g = (c: bool) -> []i64 => { let fixed = [1, 2]; if c { fixed } else { [3, 4] } }`,
-			"g: return type mismatch: expected DynamicArray<i64>, got StaticArray<i64, 2>"},
+			`let g = (c: bool) -> []i64 => { let fixed = #[1, 2]; if c { fixed } else { [3, 4] } }`,
+			"if/else branches have incompatible types: then is StaticArray<i64, 2>, else is DynamicArray<integer literal>"},
 		"fixed binding, different length": {
-			`let g = (c: bool) -> []i64 => { let fixed = [1, 2]; if c { fixed } else { [3] } }`,
+			`let g = (c: bool) -> []i64 => { let fixed = #[1, 2]; if c { fixed } else { #[3] } }`,
 			"if/else branches have incompatible types: then is StaticArray<i64, 2>, else is StaticArray<integer literal, 1>"},
-		"no context": {
-			`let g = (c: bool) -> i64 => { let k = if c { [1] } else { [2, 3] }; 0 }`,
+		"fixed literals of different lengths": {
+			`let g = (c: bool) -> i64 => { let k = if c { #[1] } else { #[2, 3] }; 0 }`,
 			"if/else branches have incompatible types: then is StaticArray<integer literal, 1>, else is StaticArray<integer literal, 2>"},
 		"a binding into a newtype": {`
 newtype Bag = []string

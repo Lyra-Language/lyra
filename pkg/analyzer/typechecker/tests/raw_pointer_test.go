@@ -58,7 +58,7 @@ func TestPointers_FieldWriteThroughAReadOnlyPointerRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 struct P { a: i32, b: i32 }
 let main = () -> void => {
-  var xs: [2]P = [P { a: 1, b: 2 }; 2]
+  var xs: [2]P = #[P { a: 1, b: 2 }; 2]
   unsafe {
     let p = &xs[0]
     p.offset(1)^.b = 9
@@ -71,7 +71,7 @@ func TestPointers_FieldWriteThroughAMutablePointerAccepted(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 struct P { a: i32, b: i32 }
 let main = () -> void => {
-  var xs: [2]P = [P { a: 1, b: 2 }; 2]
+  var xs: [2]P = #[P { a: 1, b: 2 }; 2]
   unsafe {
     let p = &mut xs[0]
     p.offset(1)^.b = 9

@@ -108,7 +108,7 @@ let tup = pure (p: (Id, Id)) -> i64 => p.0
 let fn = pure (f: (Id) -> Id) -> i64 => f(1)
 let use = () -> i64 => {
   var d: []i64 = [1]
-  let s: [2]i64 = [1, 2]
+  let s: [2]i64 = #[1, 2]
   arr(d) + fixed(s) + tup((1, 2)) + fn((n: i64) -> i64 => n)
 }`, false)
 	assertNoErrors(t, res)

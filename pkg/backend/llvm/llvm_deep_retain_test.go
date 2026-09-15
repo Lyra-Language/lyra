@@ -68,7 +68,7 @@ let main = () -> u8 => {
 			"fixed-size array of aggregates",
 			`struct Person { name: string }
 let main = () -> u8 => {
-  let xs: [2]Person = [Person { name: "a" ++ "b" }, Person { name: "c" ++ "d" }]
+  let xs: [2]Person = #[Person { name: "a" ++ "b" }, Person { name: "c" ++ "d" }]
   let ys = xs
   if ys[0].name == "ab" { 0 } else { 1 }
 }`,
@@ -454,7 +454,7 @@ let main = () -> u8 => {
 }`,
 		`struct Person { name: string }
 let main = () -> u8 => {
-  let xs: [2]Person = [Person { name: "a" ++ "b" }, Person { name: "c" ++ "d" }]
+  let xs: [2]Person = #[Person { name: "a" ++ "b" }, Person { name: "c" ++ "d" }]
   let ys = xs
   if xs[1].name == "cd" { if ys[0].name == "ab" { 0 } else { 1 } } else { 2 }
 }`,

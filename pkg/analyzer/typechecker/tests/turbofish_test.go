@@ -55,7 +55,7 @@ let xs = empty()
 func TestTypeCheck_InferenceFailure_WithholdsTheHintWhenReachable(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let first_of<t> = (xs: []t) -> t => xs[0]
-let a = [1, 2, 3]
+let a = #[1, 2, 3]
 let b = first_of(a)
 `, false)
 	assertErrorsAre(t, res, "first_of: cannot infer type variable t from these arguments")

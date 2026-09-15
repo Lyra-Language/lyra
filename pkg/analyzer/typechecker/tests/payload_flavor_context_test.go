@@ -47,27 +47,29 @@ func TestPayloadFlavor_ElementsJoinUnderTheirContext(t *testing.T) {
 let main = () -> void => {
   let a: [][]u8 = [[1], [2, 3], []]
   let b: [][][]i64 = [[[1]], [[2], [3, 4]]]
-  let c: [2][]i64 = [[1], [2, 3]]
+  let c: [2][]i64 = #[[1], [2, 3]]
   let d: []Maybe<[]i64> = [Some([1]), Some([2, 3]), None]
 }
 `, false)
 	assertNoErrors(t, res)
 }
 
-// What must still be refused: a literal with no context to choose its flavor, and a
-// fixed-array *binding*, which is stack storage rather than a literal.
+// What must still be refused: fixed literals of different lengths as elements of one array
+// (a `[1]i64` and a `[2]i64` have no common type), and a fixed-array *binding*, which is stack
+// storage rather than a literal. With the dynamic spelling, `[[1], [2, 3]]` is an ordinary
+// `[][]i64`.
 func TestPayloadFlavor_NoContextOrABindingIsStillRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let main = () -> void => {
-  let g = [[1], [2, 3]]
+  let g = #[#[1], #[2, 3]]
 }
 `, false)
 	assertHasErrorContaining(t, res, "is not compatible with preceding element type")
 
 	res = parseCollectAndCheck(t, `
 let main = () -> void => {
-  let a: [1]i64 = [1]
-  let b: [2]i64 = [2, 3]
+  let a: [1]i64 = #[1]
+  let b: [2]i64 = #[2, 3]
   let g: [][]i64 = [a, b]
 }
 `, false)

@@ -175,7 +175,7 @@ let main = () -> u8 => {
 		{
 			name: "parameter only under an array field",
 			src: `struct Holder<t> { items: [2]t }
-let f = () -> Holder<i64> => Holder { items: [40, 2] }
+let f = () -> Holder<i64> => Holder { items: #[40, 2] }
 let main = () -> u8 => u8(f().items[0] + f().items[1])`,
 			want: 42,
 		},

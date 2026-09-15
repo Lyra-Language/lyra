@@ -69,7 +69,7 @@ let main = () -> u8 => u8(mk().xs.len())`, 3},
 let n = (xs: []i64) -> i64 => xs.len()
 let w = (v: W) -> i64 => v.xs.len()
 let f = (xs: [2]string) -> i64 => xs[0].len()
-let main = () -> u8 => u8(n([9, 9]) + w(W { xs: [9] }) + n([i in 0..<3 | i]) + f(["${12}", "b"]))`, 8},
+let main = () -> u8 => u8(n([9, 9]) + w(W { xs: [9] }) + n([i in 0..<3 | i]) + f(#["${12}", "b"]))`, 8},
 		{"a std.json read chain", `module main
 import std.json.{ parse_json, JsonNull, field, as_text }
 let main = () -> u8 => match parse_json("{\"a\": \"xyz\"}") {

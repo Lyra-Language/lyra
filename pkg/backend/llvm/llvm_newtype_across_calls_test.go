@@ -41,7 +41,7 @@ let main = () -> void => {
 }`, "42"},
 		{"fixed-array base", `newtype Trio = [3]i64
 let make = () -> Trio => {
-  let t: Trio = [1, 2, 3]
+  let t: Trio = #[1, 2, 3]
   t
 }
 let main = () -> void => println(make()[2])`, "3"},

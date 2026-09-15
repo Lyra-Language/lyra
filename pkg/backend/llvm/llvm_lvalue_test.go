@@ -16,7 +16,7 @@ func TestExec_ArrayElementAssignment(t *testing.T) {
 		{
 			"fixed-size: constant index",
 			`let main = () -> u8 => {
-  var xs: [3]u8 = [1, 2, 3]
+  var xs: [3]u8 = #[1, 2, 3]
   xs[1] = 9
   xs[1]
 }`,
@@ -25,7 +25,7 @@ func TestExec_ArrayElementAssignment(t *testing.T) {
 		{
 			"fixed-size: mutate one, read another",
 			`let main = () -> u8 => {
-  var xs: [3]u8 = [10, 20, 30]
+  var xs: [3]u8 = #[10, 20, 30]
   xs[0] = 5
   xs[0] + xs[2]
 }`,
@@ -34,7 +34,7 @@ func TestExec_ArrayElementAssignment(t *testing.T) {
 		{
 			"fixed-size: runtime index",
 			`let main = () -> u8 => {
-  var xs: [3]u8 = [1, 2, 3]
+  var xs: [3]u8 = #[1, 2, 3]
   var i: i64 = 2
   xs[i] = 8
   xs[2]
@@ -46,7 +46,7 @@ func TestExec_ArrayElementAssignment(t *testing.T) {
 			// is spelled through len() — a negative target index traps (08/12).
 			"fixed-size: last element via len()-1",
 			`let main = () -> u8 => {
-  var xs: [3]u8 = [1, 2, 3]
+  var xs: [3]u8 = #[1, 2, 3]
   xs[xs.len() - 1] = 9
   xs[2]
 }`,
@@ -55,7 +55,7 @@ func TestExec_ArrayElementAssignment(t *testing.T) {
 		{
 			"shared fixed-size array",
 			`let main = () -> u8 => {
-  var xs: shared [3]u8 = [1, 2, 3]
+  var xs: shared [3]u8 = #[1, 2, 3]
   xs[1] = 9
   xs[1]
 }`,

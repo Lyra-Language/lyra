@@ -40,7 +40,7 @@ let main = () -> u8 => {
 			// array into a fresh alloca and mutate that.
 			"fixed-size array element", `let bump = (xs: mut [3]i64) -> void => { xs[0] = 42 }
 let main = () -> u8 => {
-  var arr: [3]i64 = [1, 2, 3]
+  var arr: [3]i64 = #[1, 2, 3]
   bump(arr)
   u8(arr[0])
 }`, 42,
@@ -73,7 +73,7 @@ let main = () -> u8 => {
 			"struct inside a mut array", `struct Pt { x: i64 }
 let bump = (ps: mut [2]Pt) -> void => { ps[1].x = 33 }
 let main = () -> u8 => {
-  var ps: [2]Pt = [Pt { x: 1 }, Pt { x: 2 }]
+  var ps: [2]Pt = #[Pt { x: 1 }, Pt { x: 2 }]
   bump(ps)
   u8(ps[1].x)
 }`, 33,
@@ -105,7 +105,7 @@ let main = () -> u8 => {
 			"array element passed as the argument", `struct Pt { x: i64 }
 let poke = (p: mut Pt) -> void => { p.x = 88 }
 let main = () -> u8 => {
-  var ps: [2]Pt = [Pt { x: 1 }, Pt { x: 2 }]
+  var ps: [2]Pt = #[Pt { x: 1 }, Pt { x: 2 }]
   poke(ps[0])
   u8(ps[0].x)
 }`, 88,
@@ -258,7 +258,7 @@ let main = () -> u8 => u8(read(Pt { x: 1, y: 1 }))`, 2,
 		{
 			"fixed-size array", `let read = (xs: ref [4]i64) -> i64 => xs[0] + xs[3]
 let main = () -> u8 => {
-  let a: [4]i64 = [10, 20, 30, 40]
+  let a: [4]i64 = #[10, 20, 30, 40]
   u8(read(a))
 }`, 50,
 		},

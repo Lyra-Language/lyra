@@ -16,7 +16,7 @@ func TestExec_ArrayRepeatFixedSize(t *testing.T) {
 module main
 let main = () -> void => {
   let g = [0; 5];
-  let a: [4]u8 = [7; 4];
+  let a: [4]u8 = #[7; 4];
   println("${g.len()} ${g[0]} ${g[4]} ${a.len()} ${a[3]}");
 }
 `

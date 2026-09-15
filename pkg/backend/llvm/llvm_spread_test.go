@@ -41,7 +41,7 @@ func TestExec_ArraySpread(t *testing.T) {
 			// A fixed operand unrolls rather than looping, and still yields a `[]T`.
 			"spread a fixed array, with elements on both sides",
 			`let main = () -> u8 => {
-  let a: [3]u8 = [1, 2, 3]
+  let a: [3]u8 = #[1, 2, 3]
   let c: []u8 = [0, ...a, 4]
   u8(c.len()) + c[1] + c[4]
 }`,

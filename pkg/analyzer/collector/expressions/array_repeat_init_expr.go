@@ -12,5 +12,6 @@ func collectArrayRepeatInitExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc a
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Value:    CollectExpression(cst.Field(node, "value"), ctx),
 		Count:    CollectExpression(cst.Field(node, "count"), ctx),
+		Fixed:    cst.Field(node, "fixed") != nil,
 	}
 }

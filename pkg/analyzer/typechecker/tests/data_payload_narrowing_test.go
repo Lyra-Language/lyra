@@ -121,7 +121,7 @@ func TestCompositeNarrowing_TupleElementOutOfRange(t *testing.T) {
 }
 
 func TestCompositeNarrowing_ArrayElementOutOfRange(t *testing.T) {
-	res := parseCollectAndCheck(t, `let a: [2]u8 = [300, 1]`, false)
+	res := parseCollectAndCheck(t, `let a: [2]u8 = #[300, 1]`, false)
 	assertErrorsAre(t, res, "element 1: literal value 300 overflows u8")
 }
 
@@ -129,10 +129,10 @@ func TestCompositeNarrowing_ArrayElementOutOfRange(t *testing.T) {
 // would satisfy the two above.
 func TestCompositeNarrowing_BoundaryValuesFit(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `let t: (u8, u8) = (255, 0)`, false))
-	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]u8 = [0, 255]`, false))
+	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]u8 = #[0, 255]`, false))
 	// The signed boundaries, which also mix a negated literal with a plain one — see
 	// TestUntypedIntegerJoin_* for why that pairing is its own question.
-	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]i8 = [-128, 127]`, false))
+	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]i8 = #[-128, 127]`, false))
 }
 
 // Every narrowing context, not just the annotated `let` the bug was found through.
@@ -150,7 +150,7 @@ let x = f((300, 1))`, false)
 func TestCompositeNarrowing_Nested(t *testing.T) {
 	assertErrorsAre(t, parseCollectAndCheck(t, `let t: ((u8, u8), u8) = ((300, 1), 2)`, false),
 		"element 1: literal value 300 overflows u8")
-	assertErrorsAre(t, parseCollectAndCheck(t, `let a: [2][2]u8 = [[300, 1], [2, 3]]`, false),
+	assertErrorsAre(t, parseCollectAndCheck(t, `let a: [2][2]u8 = #[#[300, 1], #[2, 3]]`, false),
 		"element 1: literal value 300 overflows u8")
 }
 
@@ -177,7 +177,7 @@ let p: Pair = Pair { xs: (300, 1) }`, false)
 // containing a negative value can settle to.
 
 func TestUntypedIntegerJoin_ArrayLiteral(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]i8 = [-1, 2]`, false))
+	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]i8 = #[-1, 2]`, false))
 	assertNoErrors(t, parseCollectAndCheck(t, `let a = [-1, 2]`, false)) // no annotation either
 }
 
@@ -194,8 +194,8 @@ let f = (n: i64) -> i8 => match n { 0 => -1, _ => 2 }`, false))
 // The join produces an *untyped* result, so an annotation still narrows it — and the
 // range check still applies to what it narrowed to.
 func TestUntypedIntegerJoin_StillNarrowsAndRangeChecks(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]i8 = [-128, 127]`, false))
-	assertErrorsAre(t, parseCollectAndCheck(t, `let a: [2]i8 = [-1, 200]`, false),
+	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]i8 = #[-128, 127]`, false))
+	assertErrorsAre(t, parseCollectAndCheck(t, `let a: [2]i8 = #[-1, 200]`, false),
 		"element 2: literal value 200 overflows i8")
 }
 

@@ -217,7 +217,7 @@ func TestResolve_NamedArrayElementType_Ok(t *testing.T) {
 		struct Node {
 			value: i64,
 		}
-		let xs: [2]Node = [Node { value: 1 }, Node { value: 2 }]
+		let xs: [2]Node = #[Node { value: 1 }, Node { value: 2 }]
 	`, false)
 	assertNoErrors(t, res)
 }
@@ -250,7 +250,7 @@ func TestAlloc_ArrayElementFlavorMismatch_Error(t *testing.T) {
 		struct Node {
 			value: i64,
 		}
-		let src: [2]stack Node = [Node { value: 1 }, Node { value: 2 }]
+		let src: [2]stack Node = #[Node { value: 1 }, Node { value: 2 }]
 		let xs: [2]shared Node = src
 	`, false)
 	assertErrorsAre(t, res,
@@ -280,7 +280,7 @@ func TestAlloc_ArrayElementModifier_Ok(t *testing.T) {
 		// Matching flavors, fixed size.
 		`struct Node { value: i64 }
 let a: shared Node = Node { value: 1 }
-let xs: [1]shared Node = [a]`,
+let xs: [1]shared Node = #[a]`,
 		// Dynamic array of shared elements — the motivating shape.
 		`struct Node { value: i64, kids: []shared Node }
 let leaf: shared Node = Node { value: 1, kids: [] }
@@ -288,13 +288,13 @@ let root: shared Node = Node { value: 2, kids: [leaf] }`,
 		// An array of weak references.
 		`struct Node { value: i64 }
 let a: shared Node = Node { value: 1 }
-let xs: [1]weak Node = [a.weak()]`,
+let xs: [1]weak Node = #[a.weak()]`,
 		// Nesting composes in both directions: a modifier inside an array of arrays,
 		// and an array-of-weak inside an outer allocation modifier.
 		`struct Node { value: i64 }
 let xs: [][]shared Node = [[]]
 let a: shared Node = Node { value: 1 }
-let ys: stack [1]weak Node = [a.weak()]`,
+let ys: stack [1]weak Node = #[a.weak()]`,
 	} {
 		res := parseCollectAndCheck(t, source, false)
 		assertNoErrors(t, res)

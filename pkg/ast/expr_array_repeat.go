@@ -8,7 +8,9 @@ import (
 type ArrayRepeatExpr struct {
 	ExprBase
 	Value Expression // The value to repeat
-	Count Expression // The count (compile-time constant)
+	Count Expression // The count: any expression for `[v; n]`, a compile-time constant for `#[v; n]`
+	// Fixed is the `#[v; n]` spelling, a `[N]T`; ArrayLiteralExpr.Fixed's twin.
+	Fixed bool
 }
 
 func (a *ArrayRepeatExpr) exprNode() {}

@@ -8,9 +8,9 @@ func TestTypeCheck_ArrayLen(t *testing.T) {
 	cases := []string{
 		`let xs: []i64 = [1, 2, 3]
 let n: i64 = xs.len()`,
-		`let xs: [4]u8 = [1, 2, 3, 4]
+		`let xs: [4]u8 = #[1, 2, 3, 4]
 let n: i64 = xs.len()`,
-		`let xs: shared [3]i64 = [1, 2, 3]
+		`let xs: shared [3]i64 = #[1, 2, 3]
 let n: i64 = xs.len()`,
 		// len() composes in arithmetic and comparisons.
 		`let xs: []i64 = [1, 2, 3]

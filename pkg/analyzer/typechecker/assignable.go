@@ -163,17 +163,17 @@ func (tc *TypeChecker) assignableValue(expr ast.Expression, from, to types.Type)
 }
 
 // literalTakesShape asks whether expr can be *built* as `to`, given that its own
-// inferred type is `from`. It walks the expression and the target type together,
-// which is what keeps the allowance exact: only a literal, and only where a literal
-// actually sits.
+// inferred type is `from`: whether its untyped leaves can take the target's element types.
+// It walks the expression and the target type together, which is what keeps the allowance
+// exact: only a literal, and only where a literal actually sits.
 //
-// The walk matters because arrays nest inside other literals. `let xs: [][]i64 =
-// [[1, 2], [3, 4]]` reaches here as a static array of static arrays against a
-// dynamic array of dynamic arrays, and each level is a literal whose shape its
-// context chooses — but `[ys1, ys2]` for the same annotation, with `[2]i64`
-// bindings inside, is the original memory fault one level down and must still be
-// refused. A type-level recursion could not tell those apart, since both are
-// `[2][2]i64`.
+// **It never changes an array's flavor.** Until 09/14 its array arms let a fixed literal
+// become a dynamic array — `[1, 2, 3]` was `[3]T` until a `[]T` context widened it — and
+// the choice of flavor by context grew a family of guesses and their bugs. The spelling is
+// the flavor now (`[…]` is `[]T`, `#[…]` is `[N]T`), so an arm here matches only its own
+// flavor, and only narrows elements: `let xs: []u8 = [1, 2]` and `let m: [][]u8 = [[1],
+// [2, 3]]`. The walk still matters for nesting, since `[ys1, ys2]` with `[2]i64` bindings
+// inside is a real mismatch while `[#[1, 2], #[3, 4]]` under `[][2]u8` is narrowing.
 func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Type) bool {
 	// A newtype over an array is its base at run time, so `newtype Row = []i64`
 	// accepts the literal its base accepts. The constraint itself is checked
@@ -183,39 +183,33 @@ func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Typ
 	}
 	switch e := expr.(type) {
 	case *ast.ArrayLiteralExpr:
-		toDyn, fromSA, ok := arrayWideningPair(from, to)
+		want, ok := sameFlavorElement(e.Fixed, len(e.Elements), from, to)
 		if !ok {
 			return false
 		}
-		if fromSA.ElementType == nil {
-			return true // the empty literal names no elements to disagree about
-		}
 		for _, el := range e.Elements {
-			if !tc.elementTakesShape(el, toDyn.ElementType) {
+			if _, isSpread := el.(*ast.SpreadExpr); isSpread {
+				continue // a spread's operand is typed as a whole; its elements are already concrete
+			}
+			if !tc.elementTakesShape(el, want) {
 				return false
 			}
 		}
 		return true
 
 	case *ast.ArrayRepeatExpr:
-		// Two shapes reach here, and the second only since 08/14. A *constant* count
-		// infers a fixed array that the annotation widens (`[3]u8` into `[]u8`), which
-		// is arrayWideningPair. A **runtime** count infers `[]T` outright — no fixed
-		// type can describe it — so the pair is dynamic-to-dynamic and the widening
-		// helper, which requires a static source, answers false. Without this arm the
-		// element never narrows: `() -> []u32 => [0; w * h]` reported
-		// *"expected DynamicArray<u32>, got DynamicArray<integer literal>"*, an element
-		// type that had nothing to pin it.
-		toDyn, ok := to.(types.DynamicArrayType)
+		// `() -> []u32 => [0; w * h]` narrows its untyped 0 to u32, the one thing this arm is
+		// for; without it the element had nothing to pin it and reported *"expected
+		// DynamicArray<u32>, got DynamicArray<integer literal>"*.
+		size := -1
+		if st, isStatic := from.(types.StaticArrayType); isStatic {
+			size = st.Size
+		}
+		want, ok := sameFlavorElement(e.Fixed, size, from, to)
 		if !ok {
 			return false
 		}
-		if _, fromDyn := from.(types.DynamicArrayType); !fromDyn {
-			if _, _, widens := arrayWideningPair(from, to); !widens {
-				return false
-			}
-		}
-		return tc.elementTakesShape(e.Value, toDyn.ElementType)
+		return tc.elementTakesShape(e.Value, want)
 
 	case *ast.TupleLiteralExpr:
 		// A tuple literal is not itself malleable, but it *contains* elements that
@@ -245,12 +239,9 @@ func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Typ
 		return true
 
 	case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
-		// A branching value takes a shape when every branch does: `(c) -> []string =>
-		// if c { ["a"] } else { ["b"] }` is two array literals a `[]string` return may
-		// build dynamic, exactly as it may one. Each branch is judged by its own record,
-		// so a branch that is a fixed-array *binding* is still the refusal this function
-		// exists to keep. propagateExpected then re-flavors the literals and re-records
-		// the node (recordBranchingValueNode).
+		// A branching value takes a shape when every branch does: `-> []u8 => if c { [1] }
+		// else { [2, 3] }` narrows both branches' untyped elements, as it would narrow one
+		// literal's. Each branch is judged by its own record.
 		branches := valueBranches(expr)
 		if len(branches) == 0 {
 			return false
@@ -314,18 +305,26 @@ func (tc *TypeChecker) elementTakesShape(el ast.Expression, want types.Type) boo
 	return tc.assignableValue(el, got, want)
 }
 
-// arrayWideningPair recognizes the one shape this allowance is about — a static
-// array being asked to become a dynamic one — returning both halves.
-func arrayWideningPair(from, to types.Type) (types.DynamicArrayType, types.StaticArrayType, bool) {
+// sameFlavorElement is the element type a literal of the given spelling may narrow to under
+// `to`: a `[…]` under a `[]T`, a `#[…]` under a `[N]T` of its own length (size, or -1 when
+// the length is not the literal's to check). ok is false across flavors, which no literal
+// crosses (lyra-E079), and for a recorded type of the other flavor.
+func sameFlavorElement(fixed bool, size int, from, to types.Type) (types.Type, bool) {
+	if fixed {
+		toSA, ok := to.(types.StaticArrayType)
+		if _, fromSA := from.(types.StaticArrayType); !ok || !fromSA {
+			return nil, false
+		}
+		if size >= 0 && toSA.Size != size {
+			return nil, false
+		}
+		return toSA.ElementType, true
+	}
 	toDyn, ok := to.(types.DynamicArrayType)
-	if !ok {
-		return types.DynamicArrayType{}, types.StaticArrayType{}, false
+	if _, fromDyn := from.(types.DynamicArrayType); !ok || !fromDyn {
+		return nil, false
 	}
-	fromSA, ok := from.(types.StaticArrayType)
-	if !ok {
-		return types.DynamicArrayType{}, types.StaticArrayType{}, false
-	}
-	return toDyn, fromSA, true
+	return toDyn.ElementType, true
 }
 
 // ordinal renders 1 → "1st", 2 → "2nd", 3 → "3rd", n → "nth", for the
@@ -435,6 +434,39 @@ func isSyntacticLiteral(expr ast.Expression) bool {
 			}
 		}
 		return true
+	}
+	return false
+}
+
+// unsettledElementAssignable reports whether an array element type that a literal's leaves
+// have not settled — none, an untyped literal, or an array or anonymous tuple of those — can
+// settle as `to`. A settled element must already equal it.
+func unsettledElementAssignable(from, to types.Type) bool {
+	if from == nil || types.TypesEqual(from, to) {
+		return true
+	}
+	if isUntypedLiteralType(from) {
+		return isAssignable(from, to)
+	}
+	switch f := from.(type) {
+	case types.DynamicArrayType:
+		if t, ok := to.(types.DynamicArrayType); ok {
+			return unsettledElementAssignable(f.ElementType, t.ElementType)
+		}
+	case types.StaticArrayType:
+		if t, ok := to.(types.StaticArrayType); ok && f.Size == t.Size {
+			return unsettledElementAssignable(f.ElementType, t.ElementType)
+		}
+	case types.TupleType:
+		if t, ok := to.(types.TupleType); ok && types.IsAnonymousTupleName(f.Name) &&
+			types.IsAnonymousTupleName(t.Name) && len(f.Elements) == len(t.Elements) {
+			for i := range f.Elements {
+				if !unsettledElementAssignable(f.Elements[i], t.Elements[i]) {
+					return false
+				}
+			}
+			return true
+		}
 	}
 	return false
 }
@@ -585,6 +617,17 @@ func isAssignable(from, to types.Type) bool {
 		// StaticArrayType → StaticArrayType: sizes must match, elements must be assignable.
 		if toSA, ok := to.(types.StaticArrayType); ok {
 			return fromSA.Size == toSA.Size && isAssignable(fromSA.ElementType, toSA.ElementType)
+		}
+	}
+	// DynamicArrayType → DynamicArrayType: only a literal's **unsettled** elements may differ —
+	// the empty `[]` (no element type) or untyped leaves (`[1, 2]` into `[]u8`), recursively.
+	// Narrower than the fixed-array rule above on purpose: a `[]T` is a heap box shared by
+	// reference, so a settled `[]u8` is never a `[]i64`, and only a literal still has leaves
+	// to settle. Needed since 09/14, when `[…]` became dynamic by spelling, so that branch
+	// joins and element checks meet `[]{integer literal}` where they used to meet `[N]{…}`.
+	if fromDA, ok := from.(types.DynamicArrayType); ok {
+		if toDA, ok := to.(types.DynamicArrayType); ok {
+			return unsettledElementAssignable(fromDA.ElementType, toDA.ElementType)
 		}
 	}
 

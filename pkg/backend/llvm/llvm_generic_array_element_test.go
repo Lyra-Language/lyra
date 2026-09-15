@@ -46,7 +46,7 @@ func TestExec_GenericTypeAsArrayElement(t *testing.T) {
 			// Fixed arrays take the same path and had the same failure.
 			name: "fixed array of Maybe",
 			src: `
-  let xs: [2]Maybe<i64> = [Some(3), None]
+  let xs: [2]Maybe<i64> = #[Some(3), None]
   match xs[0] { Some(v) => println(v), None => println("-") }`,
 			want: "3",
 		},

@@ -24,7 +24,7 @@ func TestExec_SharedArray(t *testing.T) {
 			// Construct + constant index through the box.
 			"construct and constant-index",
 			`let main = () -> u8 => {
-  let xs: shared [3]u8 = [10, 20, 30]
+  let xs: shared [3]u8 = #[10, 20, 30]
   xs[1]
 }`,
 			20,
@@ -34,7 +34,7 @@ func TestExec_SharedArray(t *testing.T) {
 			"borrowed param + index in callee",
 			`let third = (xs: shared [3]i64) -> i64 => xs[2]
 let main = () -> u8 => {
-  let a: shared [3]i64 = [4, 5, 6]
+  let a: shared [3]i64 = #[4, 5, 6]
   u8(third(a))
 }`,
 			6,
@@ -42,7 +42,7 @@ let main = () -> u8 => {
 		{
 			// A function returns a freshly-boxed `shared` array (construction in return position).
 			"return a shared array",
-			`let make = () -> shared [3]i64 => [7, 8, 9]
+			`let make = () -> shared [3]i64 => #[7, 8, 9]
 let main = () -> u8 => {
   let a: shared [3]i64 = make()
   u8(a[0] + a[1])
@@ -54,7 +54,7 @@ let main = () -> u8 => {
 			"runtime index",
 			`let at = (xs: shared [3]u8, i: i64) -> u8 => xs[i]
 let main = () -> u8 => {
-  let a: shared [3]u8 = [5, 15, 25]
+  let a: shared [3]u8 = #[5, 15, 25]
   at(a, 2)
 }`,
 			25,
@@ -64,7 +64,7 @@ let main = () -> u8 => {
 			// `shared` fixed array reaches its payload rather than an inline alloca.
 			"from_end through the box",
 			`let main = () -> u8 => {
-  let xs: shared [3]u8 = [1, 2, 3]
+  let xs: shared [3]u8 = #[1, 2, 3]
   xs.from_end(1)
 }`,
 			3,
@@ -86,7 +86,7 @@ func TestExec_SharedArray_BoundsTrap(t *testing.T) {
 	t.Parallel()
 	src := `let at = (xs: shared [3]u8, i: i64) -> u8 => xs[i]
 let main = () -> u8 => {
-  let a: shared [3]u8 = [1, 2, 3]
+  let a: shared [3]u8 = #[1, 2, 3]
   at(a, 5)
 }`
 	if got := buildAndRun(t, src); got != 101 {
@@ -100,7 +100,7 @@ let main = () -> u8 => {
 func TestEmit_SharedArray_IR(t *testing.T) {
 	t.Parallel()
 	src := `let main = () -> u8 => {
-  let xs: shared [3]u8 = [10, 20, 30]
+  let xs: shared [3]u8 = #[10, 20, 30]
   xs[1]
 }
 `
@@ -140,7 +140,7 @@ func TestExec_SharedArray_ManagedElementsASan(t *testing.T) {
 	src := `let main = () -> u8 => {
   let s: string = "a" ++ "b"
   let t: string = "c" ++ "d"
-  let xs: shared [2]string = [s, t]
+  let xs: shared [2]string = #[s, t]
   0
 }
 `
@@ -186,7 +186,7 @@ func TestExec_ArrayOfManagedElements(t *testing.T) {
 			 let main = () -> u8 => {
 			   let a: shared Node = Node { n: 3 }
 			   let b: shared Node = Node { n: 4 }
-			   let xs: [2]shared Node = [a, b]
+			   let xs: [2]shared Node = #[a, b]
 			   u8(xs[0].n + xs[1].n)
 			 }`,
 			7,
@@ -225,7 +225,7 @@ func TestExec_ArrayOfManagedElements(t *testing.T) {
 			`struct Node { n: i64 }
 			 let main = () -> u8 => {
 			   let a: shared Node = Node { n: 6 }
-			   let xs: [1]weak Node = [a.weak()]
+			   let xs: [1]weak Node = #[a.weak()]
 			   var out = 0
 			   if let p = xs[0] { out = p.n }
 			   u8(out)

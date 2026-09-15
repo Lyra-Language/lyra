@@ -65,7 +65,7 @@ func TestExec_GenericArrayParamOtherForms(t *testing.T) {
 			   println(first_of(xs))
 			 }`, "1\n"},
 		{"fixed-size parameter takes a literal", `let first_fixed<t> = (xs: [3]t) -> t => xs[0]
-			 let main = () -> void => println(first_fixed([4, 5, 6]))`, "4\n"},
+			 let main = () -> void => println(first_fixed(#[4, 5, 6]))`, "4\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

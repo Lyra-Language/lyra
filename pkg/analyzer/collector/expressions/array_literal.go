@@ -19,5 +19,7 @@ func collectArrayLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 	return &ast.ArrayLiteralExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Elements: elements,
+		// The `#[` opener is an anonymous token, so the element loop above never sees it.
+		Fixed: cst.Field(node, "fixed") != nil,
 	}
 }

@@ -19,11 +19,11 @@ func TestExec_StaticArray(t *testing.T) {
 		want int
 	}{
 		{"constant index sum", `let main = () -> u8 => {
-		   let xs: [3]u8 = [10, 20, 30]
+		   let xs: [3]u8 = #[10, 20, 30]
 		   xs[0] + xs[2]
 		 }`, 40},
 		{"runtime index loop sum", `let main = () -> u8 => {
-		   let xs: [3]u8 = [10, 20, 30]
+		   let xs: [3]u8 = #[10, 20, 30]
 		   var sum: u8 = 0
 		   for var i = 0; i < 3; i += 1 {
 		     sum += xs[i]
@@ -32,16 +32,16 @@ func TestExec_StaticArray(t *testing.T) {
 		 }`, 60},
 		{"array param and arg, indexed by a param", `let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
 		 let main = () -> u8 => {
-		   let arr: [3]u8 = [10, 20, 30]
+		   let arr: [3]u8 = #[10, 20, 30]
 		   at(arr, 1)
 		 }`, 20},
-		{"array returned from a function", `let make = () -> [3]u8 => [4, 5, 6]
+		{"array returned from a function", `let make = () -> [3]u8 => #[4, 5, 6]
 		 let main = () -> u8 => {
 		   let xs = make()
 		   xs[0] + xs[1] + xs[2]
 		 }`, 15},
 		{"wider element type (i32)", `let main = () -> u8 => {
-		   let xs: [4]i32 = [1000, 2000, 3000, 60]
+		   let xs: [4]i32 = #[1000, 2000, 3000, 60]
 		   u8(xs[3])
 		 }`, 60},
 		{"no-annotation array (i64 default element)", `let main = () -> u8 => {
@@ -49,7 +49,7 @@ func TestExec_StaticArray(t *testing.T) {
 		   u8(xs[0])
 		 }`, 100},
 		{"bool array, runtime index", `let main = () -> u8 => {
-		   let flags: [2]bool = [true, false]
+		   let flags: [2]bool = #[true, false]
 		   var i: i64 = 0
 		   if flags[i] { 1 } else { 0 }
 		 }`, 1},
@@ -78,12 +78,12 @@ func TestExec_ArrayBoundsCheck(t *testing.T) {
 		src  string
 	}{
 		{"index past the end", `let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
-		 let main = () -> u8 => at([10, 20, 30], 5)`},
+		 let main = () -> u8 => at(#[10, 20, 30], 5)`},
 		// A negative runtime index traps as of 08/12 — it counted from the end
 		// before, which handed the most common off-by-one a valid read of the
 		// wrong element. This pins the semantics *change*, not just a bound.
 		{"negative index traps", `let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
-		 let main = () -> u8 => at([10, 20, 30], -1)`},
+		 let main = () -> u8 => at(#[10, 20, 30], -1)`},
 	}
 	for _, c := range trap {
 		t.Run("", func(t *testing.T) {
@@ -100,9 +100,9 @@ func TestExec_ArrayBoundsCheck(t *testing.T) {
 		want int
 	}{
 		{`let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
-		  let main = () -> u8 => at([7, 8, 9], 2)`, 9},
+		  let main = () -> u8 => at(#[7, 8, 9], 2)`, 9},
 		{`let at = (xs: [3]u8, k: i64) -> u8 => xs.from_end(k)
-		  let main = () -> u8 => at([7, 8, 9], 3)`, 7},
+		  let main = () -> u8 => at(#[7, 8, 9], 3)`, 7},
 	} {
 		if got := buildAndRun(t, c.src); got != c.want {
 			t.Errorf("boundary index: exited %d, want %d", got, c.want)
@@ -123,19 +123,19 @@ func TestExec_ArrayFromEnd(t *testing.T) {
 		want int
 	}{
 		{"from_end(1) is the last element", `let at = (xs: [4]u8, k: i64) -> u8 => xs.from_end(k)
-		 let main = () -> u8 => at([10, 20, 30, 40], 1)`, 40},
+		 let main = () -> u8 => at(#[10, 20, 30, 40], 1)`, 40},
 		{"from_end(2) is second-to-last", `let at = (xs: [4]u8, k: i64) -> u8 => xs.from_end(k)
-		 let main = () -> u8 => at([10, 20, 30, 40], 2)`, 30},
+		 let main = () -> u8 => at(#[10, 20, 30, 40], 2)`, 30},
 		{"from_end(size) is the first element", `let at = (xs: [4]u8, k: i64) -> u8 => xs.from_end(k)
-		 let main = () -> u8 => at([10, 20, 30, 40], 4)`, 10},
+		 let main = () -> u8 => at(#[10, 20, 30, 40], 4)`, 10},
 		{"constant from_end on a binding", `let main = () -> u8 => {
-		   let xs: [3]u8 = [10, 20, 30]
+		   let xs: [3]u8 = #[10, 20, 30]
 		   xs.from_end(1)
 		 }`, 30},
 		{"from_end(0) traps", `let at = (xs: [3]u8, k: i64) -> u8 => xs.from_end(k)
-		 let main = () -> u8 => at([10, 20, 30], 0)`, trapExitCode},
+		 let main = () -> u8 => at(#[10, 20, 30], 0)`, trapExitCode},
 		{"from_end past the start traps", `let at = (xs: [3]u8, k: i64) -> u8 => xs.from_end(k)
-		 let main = () -> u8 => at([10, 20, 30], 4)`, trapExitCode},
+		 let main = () -> u8 => at(#[10, 20, 30], 4)`, trapExitCode},
 	}
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestEmit_ArrayIR(t *testing.T) {
 
 	// Construction + a constant index: [3 x i8], insertvalue, extractvalue, no trap.
 	constIdx := emit(`let main = () -> u8 => {
-	   let xs: [3]u8 = [10, 20, 30]
+	   let xs: [3]u8 = #[10, 20, 30]
 	   xs[0]
 	 }`)
 	if !strings.Contains(constIdx, "[3 x i8]") {
@@ -180,7 +180,7 @@ func TestEmit_ArrayIR(t *testing.T) {
 
 	// A runtime index: bounds compare + trap call + getelementptr + load.
 	runtimeIdx := emit(`let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
-	 let main = () -> u8 => at([1, 2, 3], 0)`)
+	 let main = () -> u8 => at(#[1, 2, 3], 0)`)
 	if !strings.Contains(runtimeIdx, "@lyra_panic_index_out_of_bounds") {
 		t.Error("a runtime index must guard against out-of-bounds")
 	}
@@ -192,7 +192,7 @@ func TestEmit_ArrayIR(t *testing.T) {
 	}
 
 	// An array-returning function's signature and return match the array type.
-	arrayRet := emit(`let make = () -> [3]u8 => [4, 5, 6]
+	arrayRet := emit(`let make = () -> [3]u8 => #[4, 5, 6]
 	 let main = () -> u8 => make()[0]`)
 	if !strings.Contains(arrayRet, "define [3 x i8] @lyra.make()") {
 		t.Error("expected @make to return [3 x i8]")
@@ -219,7 +219,7 @@ func TestExec_DestructuredIndexStillBoundsChecked(t *testing.T) {
   let i = 0
   {
     let (i, j) = (10, 1)
-    var xs: [3]u8 = [7, 8, 9]
+    var xs: [3]u8 = #[7, 8, 9]
     xs[i]
   }
 }

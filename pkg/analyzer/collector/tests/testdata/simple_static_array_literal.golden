@@ -19,6 +19,7 @@ Program(1 statements) {
 							Value: 3
 						}
 					}
+					Fixed: true
 				}
 			}
 		}

@@ -23,7 +23,7 @@ const dynArrayRefusal = "cannot assign StaticArray<i64, 3> to DynamicArray<i64>"
 func TestStaticToDynamic_BindingAsArgument_Refused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let take = (xs: []i64) -> i64 => xs[0]
-let ys: [3]i64 = [1, 2, 3]
+let ys: [3]i64 = #[1, 2, 3]
 let n = take(ys)
 `, false)
 	assertHasErrorContaining(t, res, dynArrayRefusal)
@@ -31,7 +31,7 @@ let n = take(ys)
 
 func TestStaticToDynamic_BindingInAnnotation_Refused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-let ys: [3]i64 = [1, 2, 3]
+let ys: [3]i64 = #[1, 2, 3]
 let xs: []i64 = ys
 `, false)
 	assertHasErrorContaining(t, res, dynArrayRefusal)
@@ -40,7 +40,7 @@ let xs: []i64 = ys
 func TestStaticToDynamic_BindingInReturn_Refused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let ret = () -> []i64 => {
-  let ys: [3]i64 = [1, 2, 3]
+  let ys: [3]i64 = #[1, 2, 3]
   ys
 }
 `, false)
@@ -52,12 +52,12 @@ let ret = () -> []i64 => {
 // only the expressions tell the legal case from the crashing one.
 func TestStaticToDynamic_BindingsNestedInsideALiteral_Refused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-let y1: [2]i64 = [1, 2]
-let y2: [2]i64 = [3, 4]
+let y1: [2]i64 = #[1, 2]
+let y2: [2]i64 = #[3, 4]
 let bad: [][]i64 = [y1, y2]
 `, false)
 	assertHasErrorContaining(t, res,
-		"cannot assign StaticArray<StaticArray<i64, 2>, 2> to DynamicArray<DynamicArray<i64>>")
+		"cannot assign DynamicArray<StaticArray<i64, 2>> to DynamicArray<DynamicArray<i64>>")
 }
 
 // ── allowed: a literal, wherever one legitimately sits ──────────────────────

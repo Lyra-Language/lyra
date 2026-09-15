@@ -2322,9 +2322,9 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			//   - a struct instance, named tuple (`Foo(1, 2)`), data construction
 			//     (`Branch(5)`) or nullary constructor (`Leaf`) allocates when the
 			//     typechecker recorded its flavor as `shared`;
-			//   - `[1, 2, 3]` as a `[]T` allocates its box, while the same literal as a
-			//     fixed `[3]T` is stack storage and does not — told apart by what the
-			//     literal was *used as* rather than how it was written;
+			//   - `[1, 2, 3]` is a `[]T` and allocates its box, while `#[1, 2, 3]` is a
+			//     fixed `[3]T`, stack storage, and does not — the spelling decides, and the
+			//     recorded type is the one place that says so;
 			//   - `[v; n]` is that literal with a count instead of a list, and belongs
 			//     here for the same reason. It was left out when the repeat form landed
 			//     (08/08) and the gap was live for exactly one build: `noalloc … => { let

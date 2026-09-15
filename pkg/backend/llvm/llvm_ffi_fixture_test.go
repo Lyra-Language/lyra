@@ -386,7 +386,7 @@ unsafe extern pure lyra_fixture_event_code_offset: () -> i64
 unsafe extern pure lyra_fixture_make_event: (out: ^mut FixtureEvent, code: i64) -> void
 unsafe extern pure lyra_fixture_event_code: (ev: ^FixtureEvent) -> i64
 let main = () -> void => unsafe {
-  var ev = FixtureEvent { padding: [0; 64] }
+  var ev = FixtureEvent { padding: #[0; 64] }
   lyra_fixture_make_event(&mut ev, 99)
   println("${lyra_fixture_event_size()} ${lyra_fixture_event_align()} ${lyra_fixture_event_code_offset()} ${ev.user.kind} ${ev.user.code} ${ev.user.weight} ${lyra_fixture_event_code(&ev)}")
 }

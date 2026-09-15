@@ -140,7 +140,7 @@ let main = () -> void => {
   } }
   let pushed = unsafe { sdl_push(&mut push) }
   if pushed == 0 { println("push failed"); return }
-  var got = SdlEvent { padding: [0; 128] }
+  var got = SdlEvent { padding: #[0; 128] }
   var polling = unsafe { sdl_poll(&mut got) }
   for polling != 0 {
     let kind = unsafe { got.kind }

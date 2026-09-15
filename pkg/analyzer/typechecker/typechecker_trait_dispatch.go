@@ -646,9 +646,8 @@ func (tc *TypeChecker) solveMethodTypeVars(calleeName string, match resolvedTrai
 		return tc.resolveTypeIfKnown(params[i].Type, call.GetLocation())
 	}
 	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, argumentSolve{
-		seed:           seed,
-		callerVars:     plantableVars(match.Bindings),
-		expectedReturn: tc.expectedReturnBindings(tc.resolveTypeIfKnown(sig.ReturnType.Type, call.GetLocation()), vars),
+		seed:       seed,
+		callerVars: plantableVars(match.Bindings),
 	})
 	if !ok {
 		tc.addError(call.GetLocation(), SeverityError,
@@ -687,10 +686,7 @@ func (tc *TypeChecker) solveBoundMethodTypeVars(calleeName string, trait *ast.Tr
 		}
 		return tc.resolveTypeIfKnown(params[i].Type, call.GetLocation())
 	}
-	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, argumentSolve{
-		callerVars:     callerVars,
-		expectedReturn: tc.expectedReturnBindings(tc.resolveTypeIfKnown(sig.ReturnType.Type, call.GetLocation()), vars),
-	})
+	subst, ok := tc.solveArgumentTypeVars(len(params), declared, call, vars, argumentSolve{callerVars: callerVars})
 	if !ok {
 		tc.addError(call.GetLocation(), SeverityError,
 			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))

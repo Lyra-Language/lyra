@@ -25,20 +25,20 @@ let n: i64 = g[0]
 // reaching the backend and mismatching.
 func TestArrayRepeat_AnnotationNarrowsTheElement(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-let a: [4]u8 = [7; 4]
+let a: [4]u8 = #[7; 4]
 `, false))
 }
 
 func TestArrayRepeat_ElementOutOfRangeForAnnotation(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-let a: [4]u8 = [300; 4]
+let a: [4]u8 = #[300; 4]
 `, false)
 	assertHasErrorContaining(t, res, "300")
 }
 
 func TestArrayRepeat_SizeMustMatchTheAnnotation(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-let a: [4]i64 = [0; 5]
+let a: [4]i64 = #[0; 5]
 `, false)
 	assertHasErrorContaining(t, res, "cannot assign")
 }
@@ -48,8 +48,8 @@ func TestArrayRepeat_ConstCount(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 const N = 3
 const M = N * 2
-let a: [3]i64 = [1; N]
-let b: [6]i64 = [2; M]
+let a: [3]i64 = #[1; N]
+let b: [6]i64 = #[2; M]
 `, false))
 }
 
@@ -69,7 +69,7 @@ let a = [0; K]
 // the backend emits one element per count.
 func TestArrayRepeat_CountTooLarge(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-let a = [0; 99999999]
+let a = #[0; 99999999]
 `, false)
 	assertHasErrorContaining(t, res, "is too large (the limit is 1048576 elements)")
 }
@@ -124,7 +124,7 @@ func TestArrayRepeat_RuntimeCountInFixedPositionIsRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let main = () => {
   let n = 3
-  let a: [3]u32 = [0; n]
+  let a: [3]u32 = #[0; n]
   println(a[0])
 }
 `, false)
@@ -132,7 +132,7 @@ let main = () => {
 		t.Fatal("a runtime count must be refused in fixed-array position")
 	}
 	msg := res.errors[0].Error()
-	for _, want := range []string{"part of its type", "compile-time constant", "`[]T`"} {
+	for _, want := range []string{"part of its type", "compile-time constant", "`[v; n]`"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the diagnostic should mention %q; got: %s", want, msg)
 		}

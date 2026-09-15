@@ -38,7 +38,7 @@ let main = () -> u8 => u8(Node { n: 7 }.peek())
 		{
 			"index through a field",
 			`struct Grid { cells: [2]i64 }
-let main = () -> u8 => u8(Grid { cells: [21, 9] }.cells[0])
+let main = () -> u8 => u8(Grid { cells: #[21, 9] }.cells[0])
 `,
 			21,
 		},

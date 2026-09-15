@@ -182,11 +182,17 @@ func (tc *TypeChecker) propagateArrayInstantiation(expr ast.Expression, want, el
 			return false
 		}
 	}
+	// Re-recorded in the literal's own flavor, and only under a context of that flavor: the
+	// spelling decides it, and a context of the other flavor is lyra-E079's to report.
 	switch want.(type) {
 	case types.StaticArrayType:
-		tc.typeTable.Set(al, types.StaticArrayType{ElementType: resolved, Size: len(al.Elements)})
+		if al.Fixed {
+			tc.typeTable.Set(al, types.StaticArrayType{ElementType: resolved, Size: len(al.Elements)})
+		}
 	case types.DynamicArrayType:
-		tc.typeTable.Set(al, types.DynamicArrayType{ElementType: resolved})
+		if !al.Fixed {
+			tc.typeTable.Set(al, types.DynamicArrayType{ElementType: resolved})
+		}
 	}
 	return false
 }
@@ -294,11 +300,10 @@ func (tc *TypeChecker) contextualType(expr ast.Expression, want, current types.T
 		return current, false
 	}
 	// Reported here rather than left to the assignability failure below, because the
-	// generic message names the symptom and not the cause: `[0; n]` in fixed-array
-	// position surfaces as "cannot assign DynamicArray<integer literal> to
-	// StaticArray<u32, 3>", which says the literal inferred dynamic and not *why* it
-	// had to.
-	if tc.reportRuntimeRepeatInFixedContext(expr, want) {
+	// generic message names the symptom and not the cause: `[0; 3]` in fixed-array
+	// position would surface as "cannot assign DynamicArray<integer literal> to
+	// StaticArray<u32, 3>", when the fix is a `#`.
+	if tc.reportArrayLiteralFlavor(expr, want) {
 		return current, true
 	}
 	reported := tc.propagateInstantiation(expr, want)
@@ -362,6 +367,9 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 		expected := tc.resolveType(substituteGenerics(declaredFields[i], subst), elem.GetLocation())
 		if expected == nil {
 			continue
+		}
+		if tc.reportArrayLiteralFlavor(elem, expected) {
+			return true
 		}
 		// Narrow an untyped literal to the context's width first, so `Ok(1)` against
 		// `Result<u8, string>` records a u8 payload rather than the i64 default —
@@ -535,6 +543,9 @@ func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expressi
 		expected := tc.resolveType(substituteGenerics(declared[i], subst), v.GetLocation())
 		if expected == nil {
 			continue
+		}
+		if tc.reportArrayLiteralFlavor(v, expected) {
+			return true
 		}
 		tc.propagateExpectedType(v, expected)
 		tc.propagateInstantiation(v, expected) // a nested partly solved construction

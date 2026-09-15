@@ -192,7 +192,7 @@ func TestAnalyze_RangeAnalysis_DefiniteOutOfBounds(t *testing.T) {
 // OOB diagnostic requires a non-singleton range) does not also emit E022, so the
 // bug is reported exactly once.
 func TestAnalyze_ConstantOutOfBounds_NoDuplicate(t *testing.T) {
-	src := "let main = () -> u8 => {\n  let xs: [3]u8 = [1, 2, 3]\n  xs[5]\n}\n"
+	src := "let main = () -> u8 => {\n  let xs: [3]u8 = #[1, 2, 3]\n  xs[5]\n}\n"
 	res := Analyze([]byte(src))
 	if hasCode(res, diag.CodeIndexOutOfBounds) {
 		t.Fatalf("a constant xs[5] should be the typechecker's error only, not a duplicate E022: %v", res.Diagnostics)

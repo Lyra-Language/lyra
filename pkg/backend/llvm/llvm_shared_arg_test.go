@@ -31,7 +31,7 @@ let main = () -> void => {
   // A construction inside a match arm reaches the argument through the same recursion
   // propagateExpectedType already used for a binding.
   let viaArm = s_data(match 1 { 0 => Nil, _ => Cons(9) })
-  println("${s_struct(Node { v: 1 })} ${s_data(Cons(2))} ${s_arr([0, 4, 0])} ${plain(Node { v: 5 })} ${viaArm}")
+  println("${s_struct(Node { v: 1 })} ${s_data(Cons(2))} ${s_arr(#[0, 4, 0])} ${plain(Node { v: 5 })} ${viaArm}")
 }
 `)
 	if got := strings.TrimSpace(out); got != "1 2 4 5 9" {

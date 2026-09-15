@@ -5,17 +5,13 @@ import (
 	"testing"
 )
 
-// ── A fixed-array *binding* against a `[]t` combinator names the edit (08/14) ──
+// ── A fixed array against a `[]t` combinator names the edit (08/14) ──
 //
-// The **literal** receiver works as of 08/28: `["a", "b"].join("")` and `[1, 2, 3].map(f)`
-// are ordinary calls, because a literal is *built* in the shape its context asks for, the
-// same rule that already admitted `map([1, 2, 3], f)` and `let xs: []i64 = [1, 2, 3]`.
-//
-// What stays refused, and what these now pin, is a fixed-array **binding**: there the
-// value already exists as a stack `[N]T`, so reaching a `[]t` combinator would widen it —
-// allocating where nothing asked, invisibly to `noalloc`. The message carries the cost,
-// which is the pattern lyra-E046 and the `++` diagnostic both follow: name the edit, not
-// just the mismatch.
+// `["a", "b"].join("")` and `[1, 2, 3].map(f)` are ordinary calls: `[…]` is a `[]T` by
+// spelling (09/14). What stays refused, and what these pin, is a **fixed** array — a
+// `#[…]` value — reaching a `[]t` combinator, which would widen it, allocating where
+// nothing asked, invisibly to `noalloc`. The message names the edits, which is the pattern
+// lyra-E046 and the `++` diagnostic both follow.
 //
 // Declared locally rather than leaning on the prelude's `join`/`map`, so these test the
 // mechanism rather than what the standard library happens to ship — and because
@@ -31,7 +27,7 @@ let twice<t> = (self: Maybe<t>) -> i64 => 1
 func TestArrayBindingReceiver_SingleDeclarationNamesTheEdit(t *testing.T) {
 	res := parseCollectAndCheck(t, dynReceivers+`
 let main = () => {
-  let parts = ["a", "b", "c"]
+  let parts = #["a", "b", "c"]
   println(parts.squash(""))
 }
 `, false)
@@ -39,7 +35,7 @@ let main = () => {
 		t.Fatal("a fixed-array receiver must be refused")
 	}
 	msg := res.errors[0].Error()
-	for _, want := range []string{"squash takes a dynamic array", "`[]string`", "would allocate"} {
+	for _, want := range []string{"squash takes a dynamic array", "build it with `[…]` rather than `#[…]`", ".slice(0, 3)", "would allocate"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("want %q in: %s", want, msg)
 		}
@@ -49,11 +45,11 @@ let main = () => {
 // The overloaded shape gets the same sentence, and it is the one that matters more:
 // `map` and `filter` are what a reader reaches for. Left to the overload branch it answers
 // "twice is overloaded on its receiver and takes …" — true, and it still leaves the
-// annotation to be worked out.
+// edit to be worked out.
 func TestArrayBindingReceiver_OverloadedNameNamesTheEdit(t *testing.T) {
 	res := parseCollectAndCheck(t, dynReceivers+`
 let main = () => {
-  let nums = [1, 2, 3]
+  let nums = #[1, 2, 3]
   println(nums.twice())
 }
 `, false)
@@ -63,13 +59,6 @@ let main = () => {
 	msg := res.errors[0].Error()
 	if !strings.Contains(msg, "twice takes a dynamic array") {
 		t.Errorf("want the array-literal hint, got: %s", msg)
-	}
-	// **The suggested annotation has to parse.** An unannotated `[1, 2, 3]` has untyped
-	// elements, which render as "integer literal" — a phrase, not a type — so the element
-	// is defaulted before it is named. The rule the generated documentation follows: a
-	// spelling offered to a reader must compile.
-	if !strings.Contains(msg, "`[]i64`") || strings.Contains(msg, "integer literal`") {
-		t.Errorf("the suggestion must name a spellable type; got: %s", msg)
 	}
 }
 
@@ -101,10 +90,8 @@ let main = () => println("abc".squash(""))
 	}
 }
 
-// The literal receiver, which is what this file used to assert was refused. A literal has
-// no prior shape to widen — it is constructed in the shape the receiver asks for, exactly
-// as it already was in argument position (`squash(["a"], "")`) and under an annotation.
-// The two spellings of one call agreeing is the invariant receiverAccepts' own note names.
+// The literal receiver, which is what this file used to assert was refused: `[…]` is a
+// `[]T`, in receiver position as in argument position (`squash(["a"], "")`).
 func TestArrayLiteralReceiver_LiteralIsBuiltAsTheReceiverAsks(t *testing.T) {
 	res := parseCollectAndCheck(t, dynReceivers+`
 let main = () => {
@@ -115,8 +102,7 @@ let main = () => {
 	assertNoErrors(t, res)
 }
 
-// The **repeat** form is the comma form's variant and takes the same allowance —
-// `receiverAcceptsValue` asks `arrayLiteralAsDeclared`, which covers both. Reaching it
+// The **repeat** form is the comma form's variant and is a `[]T` the same way. Reaching it
 // needed a grammar change too (08/28): `array_repeat_init` was not a postfix head, so
 // `["x"; 3].squash("")` was a *parse* error while the comma form checked fine, which is
 // hazard 8's "when adding an expression kind, grep for the kind it is a variant of" seen

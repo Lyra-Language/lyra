@@ -95,15 +95,15 @@ func TestExec_ArrayLiteralReceiverReachesAPreludeCombinator(t *testing.T) {
 func TestCheck_ArrayBindingReceiverNamesTheEditAgainstThePrelude(t *testing.T) {
 	t.Parallel()
 	src := `let main = () -> void => {
-  let parts = ["a", "b"]
+  let parts = #["a", "b"]
   println(parts.join(""))
 }`
 	errs := strings.Join(checkWithPrelude(t, src+"\n"), "\n")
 	if !strings.Contains(errs, "join takes a dynamic array") {
 		t.Errorf("want the array hint; got: %s", errs)
 	}
-	if !strings.Contains(errs, "annotate the value as") {
-		t.Errorf("the hint should name the annotation; got: %s", errs)
+	if !strings.Contains(errs, "build it with `[…]` rather than `#[…]`") {
+		t.Errorf("the hint should name the edit; got: %s", errs)
 	}
 }
 

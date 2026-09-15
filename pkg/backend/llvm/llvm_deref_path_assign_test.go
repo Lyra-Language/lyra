@@ -22,7 +22,7 @@ func TestExec_AssignThroughADerefPathASan(t *testing.T) {
 	}
 	src := `struct P { a: i64, name: string }
 let main = () -> u8 => {
-  var xs: [3]P = [P { a: 1, name: "x" }, P { a: 2, name: "y" }, P { a: 3, name: "z" }]
+  var xs: [3]P = #[P { a: 1, name: "x" }, P { a: 2, name: "y" }, P { a: 3, name: "z" }]
   unsafe {
     let p = &mut xs[0]
     p.offset(1)^.a = 20

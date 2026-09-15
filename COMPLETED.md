@@ -9,6 +9,61 @@ Newest first.
 
 ## Dated log
 
+### 09/14/26 — `#[…]` is a fixed array; `[…]` is always dynamic
+
+The flavor of an array literal was inferred: `[1, 2, 3]` was a fixed `[3]T` until a `[]T`
+context widened it. Four bugs in one day came from that single rule. A lambda's literal solved a
+generic variable as fixed. `if` branches of literals ignored a `[]E` return. The branch join
+refused different lengths. The re-recorded branch node crashed the backend. Each fix added
+another guess. The user's call was to make it syntax: `[…]` and `[v; n]` are `[]T`, `#[…]` and
+`#[v; n]` are `[N]T`, and neither converts.
+
+**Counting first said what the change would cost.** Across `std`, `examples` and `bindings`, 18
+of 165 literals were fixed, and only 3 needed to be: two annotated `[N](f32, f32)` constants
+and an SDL union's `[0; 128]` padding. None was in a `noalloc` function. The 15 by-default ones
+(for-in over a literal, unannotated consts) stay `[…]` and now allocate.
+
+**Grammar.** Same node kinds, and the `#[` opener is one token exposed as a `fixed` field. A
+second node kind would have doubled every derivation path and every consumer's switch (rule 8).
+`parser.c` grew 2%. The raw-string scanner also starts at `#`, but returns false without a
+backtick. The corpus cannot pin the flavor, because tree-sitter 0.25 compares named nodes only,
+so the collector tests pin `Fixed`.
+
+**Typechecker: deletion more than addition.** The inference functions read `Fixed`. The flavor
+re-records in `propagateExpected` and `propagateArrayInstantiation` keep the literal's own
+flavor. `literalTakesShape` narrows elements within one flavor. Gone:
+- `arrayWideningPair`, `isFixedArrayLiteral`, `arrayLiteralAsDeclared`;
+- today's `arrayLiteralLambdaGuess`, `settleArrayLiteralGuess` (with `expectedReturn`),
+  `reflavorArrayLiteralReturn`, `joinAtArrayContext` and `recordBranchingValueNode`;
+- `reportRuntimeRepeatInFixedContext` and the receiver widening.
+
+Two things had to be added:
+- `promoteToDefault` and `isAssignable` learned `[]T` with unsettled elements
+  (`unsettledElementAssignable`), because a dynamic literal's untyped leaves now meet branch
+  joins and element checks where a fixed one used to.
+- An empty array element takes its siblings' element type (`[["a"], []]`), which never arose
+  when those were fixed arrays of different lengths.
+
+**lyra-E079 names the other spelling in every position**: annotation, argument, return, repeat,
+nested element, repeated value, struct field, anonymous tuple, data payload, generic parameter,
+generic struct field, union member. lyra-E078 refuses `#[...xs]`. lyra-E056 now names `[v; n]`.
+
+**Migration used the compiler.** Every E079 of the "builds a dynamic array" kind is a place the
+old rule built fixed, so a throwaway rewriter inserted `#` at each one: 3 literals in `.lyra`
+files and about 200 across 67 Go test files, repeated to a fixpoint for nesting. About 30 tests pinned the
+old inference itself (an unannotated literal is fixed, flavor-by-context branch and lambda
+cases, receiver widening) and were rewritten by hand.
+
+**Found on the way:**
+- **Missing payload check.** A non-generic data constructor's payload was recorded as its
+  declared type without being checked, so `N("y")` against `N(i64)` type-checked and failed only
+  in the backend, and `Full([1, 2])` was silently built fixed. It is checked now.
+- **Filed:**
+  - `==` on `[]T` type-checks and is not lowered; it surfaced because `[1, 2, 3] == [1, 2, 3]`
+    became dynamic.
+  - The parser hangs on an unterminated expression at end of file. This predates the change and
+    was confirmed by building against the old grammar.
+
 ### 09/14/26 — branches of array literals take a dynamic-array context
 
 `(c: bool) -> []string => if c { ["a"] } else { ["b"] }` was refused with `expected

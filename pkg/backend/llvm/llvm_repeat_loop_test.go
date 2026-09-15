@@ -97,8 +97,8 @@ func TestEmit_LargeFixedRepeatLiteralDoesNotUnroll(t *testing.T) {
 	t.Parallel()
 	ir, err := emitSource(t, `
 let main = () -> void => {
-  let sevens: [20000]u32 = [7; 20000]
-  let zeros: [20000]u32 = [0; 20000]
+  let sevens: [20000]u32 = #[7; 20000]
+  let zeros: [20000]u32 = #[0; 20000]
   println(sevens[19999] + zeros[0]);
 }
 `)
@@ -122,11 +122,11 @@ func TestExec_LargeFixedRepeatLiteralFillsEverySlot(t *testing.T) {
 	t.Parallel()
 	src := `
 let main = () -> void => {
-  let xs: [20000]i64 = [3; 20000]
+  let xs: [20000]i64 = #[3; 20000]
   var sum = 0
   for i in 0..<20000 { sum += xs[i] }
-  let fs: [100]f64 = [-0.0; 100]
-  let zs: [100]i64 = [0; 100]
+  let fs: [100]f64 = #[-0.0; 100]
+  let zs: [100]i64 = #[0; 100]
   println("${xs[0]} ${xs[19999]} ${sum} ${fs[99]} ${zs[99]}");
 }
 `
@@ -144,8 +144,8 @@ func TestLSan_LargeFixedRepeatOfAManagedElement(t *testing.T) {
 struct Cell { name: string, n: i64 }
 let main = () -> u8 => {
   let s = "c" ++ "ell"
-  let cells: [100]Cell = [Cell { name: s, n: 1 }; 100]
-  var words: [70]string = [s; 70]
+  let cells: [100]Cell = #[Cell { name: s, n: 1 }; 100]
+  var words: [70]string = #[s; 70]
   words[3] = "x" ++ "y"
   u8(cells[99].name.len() + words[69].len() + words[3].len())
 }`

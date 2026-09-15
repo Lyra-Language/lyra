@@ -467,7 +467,7 @@ let first_over = (xs: [4]i64, limit: i64) -> Maybe<i64> => {
   None
 }
 let main = () -> void => {
-  let xs = [3, 9, 4, 12];
+  let xs = #[3, 9, 4, 12];
   println("${first_over(xs, 5).unwrap_or(-1)} ${first_over(xs, 20).unwrap_or(-1)} ${first_over(xs, -1).unwrap_or(-1)}");
 }
 `

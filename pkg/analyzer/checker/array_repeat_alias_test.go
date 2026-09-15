@@ -87,7 +87,7 @@ func TestRepeatAlias_ScalarAndFixedArrayAreSilent(t *testing.T) {
 let main = () => {
   var ns: []i64 = [0; 3]
   ns[0] = 7
-  var rows: [][2]i64 = [[0, 0]; 3]
+  var rows: [][2]i64 = [#[0, 0]; 3]
   rows[0][0] = 7
 }
 `)

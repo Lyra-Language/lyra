@@ -41,7 +41,7 @@ let first_of<t> = (xs: []t) -> t => xs[0]
 let first_fixed<t> = (xs: [3]t) -> t => xs[0]
 let xs: []i64 = [1, 2, 3]
 let a = first_of(xs)
-let b = first_fixed([4, 5, 6])
+let b = first_fixed(#[4, 5, 6])
 `, false))
 }
 
@@ -56,7 +56,7 @@ let b = first_fixed([4, 5, 6])
 func TestTypeCheck_GenericDynamicArrayParam_FixedBindingStillRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let first_of<t> = (xs: []t) -> t => xs[0]
-let ys: [3]i64 = [1, 2, 3]
+let ys: [3]i64 = #[1, 2, 3]
 let a = first_of(ys)
 `, false)
 	assertErrorsAre(t, res, "first_of: cannot infer type variable t from these arguments")

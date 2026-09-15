@@ -111,7 +111,7 @@ func TestResolveType_EveryCompositeInReturnPosition(t *testing.T) {
 	for _, source := range []string{
 		// Static array.
 		`struct Pt { x: i64 }
-let mk = () -> [2]Pt => [Pt { x: 1 }, Pt { x: 2 }]`,
+let mk = () -> [2]Pt => #[Pt { x: 1 }, Pt { x: 2 }]`,
 		// Dynamic array.
 		`struct Pt { x: i64 }
 let mk = () -> []Pt => [Pt { x: 1 }]`,
@@ -128,7 +128,7 @@ let mk = () -> (Pt) -> i64 => (p: Pt) -> i64 => p.x`,
 		// Nested composites: the walk has to keep descending, not stop at the first.
 		`struct Pt { x: i64 }
 data Box<t> = B(t)
-let mk = () -> [2]Box<Pt> => [B(Pt { x: 1 }), B(Pt { x: 2 })]`,
+let mk = () -> [2]Box<Pt> => #[B(Pt { x: 1 }), B(Pt { x: 2 })]`,
 		`struct Pt { x: i64 }
 data Box<t> = B(t)
 let mk = () -> (Box<Pt>, []Pt) => (B(Pt { x: 1 }), [Pt { x: 2 }])`,

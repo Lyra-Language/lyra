@@ -128,7 +128,7 @@ func TestExec_ArrayCompOverFixedSizeSource(t *testing.T) {
 	t.Parallel()
 	got := buildAndRun(t, `
 let main = () -> u8 => {
-  let xs: [3]i64 = [5, 6, 7]
+  let xs: [3]i64 = #[5, 6, 7]
   let ys = [x in xs | x + 1]
   u8(ys.len() + ys[2])
 }`)

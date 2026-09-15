@@ -29,12 +29,28 @@ func arrayLiteralType(t *testing.T, source string) types.Type {
 	return typ
 }
 
-// ── unannotated literals: inferred as StaticArrayType ────────────────────────
+// ── unannotated literals: the spelling decides ───────────────────────────────
 
-func TestArrayLiteral_NoAnnotation_InferredAsStaticArray(t *testing.T) {
+// `[…]` is a dynamic array with no annotation, its untyped elements at their defaults.
+func TestArrayLiteral_NoAnnotation_PlainSpellingIsDynamic(t *testing.T) {
 	res := parseCollectAndCheck(t, `let xs = [1, 2, 3]`, false)
 	assertNoErrors(t, res)
 	typ := arrayLiteralType(t, `let xs = [1, 2, 3]`)
+	da, ok := typ.(types.DynamicArrayType)
+	if !ok {
+		t.Fatalf("expected DynamicArrayType, got %T (%s)", typ, typ)
+	}
+	if p, ok := da.ElementType.(types.PrimitiveType); !ok || p.Name != types.Int64 {
+		t.Errorf("expected element type i64, got %s", da.ElementType)
+	}
+}
+
+// `#[…]` is a fixed array.
+
+func TestArrayLiteral_NoAnnotation_InferredAsStaticArray(t *testing.T) {
+	res := parseCollectAndCheck(t, `let xs = #[1, 2, 3]`, false)
+	assertNoErrors(t, res)
+	typ := arrayLiteralType(t, `let xs = #[1, 2, 3]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T (%s)", typ, typ)
@@ -49,9 +65,9 @@ func TestArrayLiteral_NoAnnotation_InferredAsStaticArray(t *testing.T) {
 }
 
 func TestArrayLiteral_NoAnnotation_StringElements(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs = ["a", "b"]`, false)
+	res := parseCollectAndCheck(t, `let xs = #["a", "b"]`, false)
 	assertNoErrors(t, res)
-	typ := arrayLiteralType(t, `let xs = ["a", "b"]`)
+	typ := arrayLiteralType(t, `let xs = #["a", "b"]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T", typ)
@@ -66,9 +82,9 @@ func TestArrayLiteral_NoAnnotation_StringElements(t *testing.T) {
 }
 
 func TestArrayLiteral_NoAnnotation_BoolElements(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs = [true, false, true]`, false)
+	res := parseCollectAndCheck(t, `let xs = #[true, false, true]`, false)
 	assertNoErrors(t, res)
-	typ := arrayLiteralType(t, `let xs = [true, false, true]`)
+	typ := arrayLiteralType(t, `let xs = #[true, false, true]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T", typ)
@@ -83,9 +99,9 @@ func TestArrayLiteral_NoAnnotation_BoolElements(t *testing.T) {
 }
 
 func TestArrayLiteral_NoAnnotation_SingleElement(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs = [42]`, false)
+	res := parseCollectAndCheck(t, `let xs = #[42]`, false)
 	assertNoErrors(t, res)
-	typ := arrayLiteralType(t, `let xs = [42]`)
+	typ := arrayLiteralType(t, `let xs = #[42]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T", typ)
@@ -103,7 +119,7 @@ func TestArrayLiteral_NoAnnotation_SingleElement(t *testing.T) {
 // i64 element width (a residual coerce saved a `let`, but a function return —
 // which fixes the type from the signature — miscompiled).
 func TestArrayLiteral_AnnotatedElementWidth_Narrows(t *testing.T) {
-	typ := arrayLiteralType(t, `let xs: [3]u8 = [10, 20, 30]`)
+	typ := arrayLiteralType(t, `let xs: [3]u8 = #[10, 20, 30]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T (%s)", typ, typ)
@@ -127,22 +143,22 @@ func TestArrayLiteral_DynamicAnnotation_StaysDynamic(t *testing.T) {
 // ── static array annotation: exact-match and size errors ─────────────────────
 
 func TestArrayLiteral_StaticAnnotation_MatchingSize_Ok(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [3]i64 = [1, 2, 3]`, false)
+	res := parseCollectAndCheck(t, `let xs: [3]i64 = #[1, 2, 3]`, false)
 	assertNoErrors(t, res)
 }
 
 func TestArrayLiteral_StaticAnnotation_FewerElements_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [3]i64 = [1, 2]`, false)
+	res := parseCollectAndCheck(t, `let xs: [3]i64 = #[1, 2]`, false)
 	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 2> to StaticArray<i64, 3>")
 }
 
 func TestArrayLiteral_StaticAnnotation_MoreElements_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [3]i64 = [1, 2, 3, 4]`, false)
+	res := parseCollectAndCheck(t, `let xs: [3]i64 = #[1, 2, 3, 4]`, false)
 	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 4> to StaticArray<i64, 3>")
 }
 
 func TestArrayLiteral_StaticAnnotation_OneElement_Ok(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [1]i64 = [99]`, false)
+	res := parseCollectAndCheck(t, `let xs: [1]i64 = #[99]`, false)
 	assertNoErrors(t, res)
 }
 
@@ -218,14 +234,14 @@ func TestArrayLiteral_StaticAnnotation_WrongElementType_Error(t *testing.T) {
 
 func TestArrayLiteral_DynamicAnnotation_WrongElementType_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let xs: []i64 = ["a", "b"]`, false)
-	assertErrorsAre(t, res, "xs: cannot assign StaticArray<string, 2> to DynamicArray<i64>")
+	assertErrorsAre(t, res, "xs: cannot assign DynamicArray<string> to DynamicArray<i64>")
 }
 
 // ── static ↔ static size mismatch via variable ───────────────────────────────
 
 func TestArrayLiteral_StaticToStaticSameSizeVar_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let a: [3]i64 = [1, 2, 3]
+		let a: [3]i64 = #[1, 2, 3]
 		let b: [3]i64 = a
 	`, false)
 	assertNoErrors(t, res)
@@ -233,7 +249,7 @@ func TestArrayLiteral_StaticToStaticSameSizeVar_Ok(t *testing.T) {
 
 func TestArrayLiteral_StaticToStaticDifferentSizeVar_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let a: [3]i64 = [1, 2, 3]
+		let a: [3]i64 = #[1, 2, 3]
 		let b: [4]i64 = a
 	`, false)
 	assertErrorsAre(t, res, "b: cannot assign StaticArray<i64, 3> to StaticArray<i64, 4>")
@@ -244,7 +260,7 @@ func TestArrayLiteral_StaticToStaticDifferentSizeVar_Error(t *testing.T) {
 func TestArrayLiteral_NoAnnotation_ElementsPromoteToDefaultInt(t *testing.T) {
 	// Without an annotation the literal's element type goes through
 	// promoteToDefault: UntypedInt → i64.
-	typ := arrayLiteralType(t, `let xs = [10, 20, 30]`)
+	typ := arrayLiteralType(t, `let xs = #[10, 20, 30]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T", typ)
@@ -256,7 +272,7 @@ func TestArrayLiteral_NoAnnotation_ElementsPromoteToDefaultInt(t *testing.T) {
 }
 
 func TestArrayLiteral_NoAnnotation_FloatElementsPromoteToF64(t *testing.T) {
-	typ := arrayLiteralType(t, `let xs = [1.0, 2.5, 3.14]`)
+	typ := arrayLiteralType(t, `let xs = #[1.0, 2.5, 3.14]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T", typ)

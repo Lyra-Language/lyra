@@ -17,7 +17,7 @@ func TestExec_ArrayLiteralTakesItsContextsElementType(t *testing.T) {
 	out := buildAndRunWithPrelude(t, `module main
 let main = () -> void => {
   let xs: []Maybe<u8> = [Some(200), None]
-  let ys: [2]Maybe<u8> = [Some(201), None]
+  let ys: [2]Maybe<u8> = #[Some(201), None]
   print("${xs[0].unwrap_or(0)} ${xs[1].unwrap_or(7)} ${ys[0].unwrap_or(0)}")
 }`, "")
 	if out != "200 7 201" {
@@ -142,6 +142,43 @@ let main = () -> u8 => {
 }`
 	// 3 + 2 + 4 + 2
 	const want = 11
+	if got := buildAndRun(t, src); got != want {
+		t.Errorf("exited %d; want %d", got, want)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != want {
+		t.Errorf("under ASan: exited %d; want %d", got, want)
+	}
+}
+
+// Both spellings lower as what they say, end to end: `[…]` and `[v; n]` as heap boxes that
+// grow, `#[…]` and `#[v; n]` as inline storage, nested either way, as arguments, payloads,
+// receivers and loop sources, with managed elements so ASan sees any box built as the
+// wrong flavor.
+func TestExec_ArrayLiteralSpellingIsTheFlavor(t *testing.T) {
+	t.Parallel()
+	src := `struct Grid { cells: [2][3]u8 }
+data Slot = Full([2]string) | Empty
+let sumFixed = (xs: [3]i64) -> i64 => xs[0] + xs[1] + xs[2]
+let sumDyn = (self: []i64) -> i64 => { var t = 0; for x in self { t = t + x }; t }
+let main = () -> u8 => {
+  var d = [1, 2, 3]
+  d.push(4)
+  let f = #[10, 20, 30]
+  var r = [0; 2]
+  r.push(7)
+  let rf = #[5; 3]
+  let g = Grid { cells: #[#[1, 2, 3], #[4, 5, 6]] }
+  var nested = [["a" ++ "b"], []]
+  nested[1].push("c")
+  let slot = Full(#["x" ++ "y", "z"])
+  let named = match slot { Full(ss) => ss[0].len() + ss[1].len(), Empty => 0 }
+  var loops = 0
+  for k in #[1, 2, 3] { loops = loops + k }
+  let summed = [4, 5].sumDyn()
+  u8(sumDyn(d) + sumFixed(f) + r.len() + r[2] + rf[2] + i64(g.cells[1][2]) + nested[0][0].len() + nested[1].len() + named + loops + summed)
+}`
+	// 10 + 60 + 3 + 7 + 5 + 6 + 2 + 1 + 3 + 6 + 9
+	const want = 112
 	if got := buildAndRun(t, src); got != want {
 		t.Errorf("exited %d; want %d", got, want)
 	}

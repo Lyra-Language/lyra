@@ -31,7 +31,7 @@ func TestExec_ArrayLen(t *testing.T) {
 		{
 			"fixed-size array length is its size",
 			`let main = () -> u8 => {
-  let xs: [4]u8 = [1, 2, 3, 4]
+  let xs: [4]u8 = #[1, 2, 3, 4]
   u8(xs.len())
 }`,
 			4,
@@ -39,7 +39,7 @@ func TestExec_ArrayLen(t *testing.T) {
 		{
 			"shared fixed-size array length",
 			`let main = () -> u8 => {
-  let xs: shared [3]u8 = [10, 20, 30]
+  let xs: shared [3]u8 = #[10, 20, 30]
   u8(xs.len())
 }`,
 			3,

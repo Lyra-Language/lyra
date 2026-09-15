@@ -17,7 +17,7 @@ func TestExec_MixedLValueAssignment(t *testing.T) {
 			"field of an array element",
 			`struct Point { x: u8, y: u8 }
 let main = () -> u8 => {
-  var grid: [2]Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+  var grid: [2]Point = #[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
   grid[0].y = 9
   grid[0].y + grid[1].x
 }`,
@@ -28,7 +28,7 @@ let main = () -> u8 => {
 			"element of a struct's array field",
 			`struct Buf { data: [3]u8, n: u8 }
 let main = () -> u8 => {
-  var b: Buf = Buf { data: [1, 2, 3], n: 3 }
+  var b: Buf = Buf { data: #[1, 2, 3], n: 3 }
   b.data[1] = 8
   b.data[1] + b.n
 }`,
@@ -49,7 +49,7 @@ let main = () -> u8 => {
 			// Two-dimensional fixed-size array: m[0][1]
 			"element of a 2-D array",
 			`let main = () -> u8 => {
-  var m: [2][2]u8 = [[1, 2], [3, 4]]
+  var m: [2][2]u8 = #[#[1, 2], #[3, 4]]
   m[0][1] = 9
   m[0][1] + m[1][0]
 }`,

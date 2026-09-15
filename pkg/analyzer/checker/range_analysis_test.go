@@ -681,7 +681,7 @@ func TestRange_Safety_ProvableIndexIsMarked(t *testing.T) {
 func TestRange_Safety_ProvableLoopIndexIsMarked(t *testing.T) {
 	// The loop-widening fixpoint tracks the counter i ∈ [0,2], within a size-3 array.
 	program, safety := analyzeForSafety(t, `let main = () -> u8 => {
-		let xs: [3]u8 = [10, 20, 30]
+		let xs: [3]u8 = #[10, 20, 30]
 		var sum: u8 = 0
 		for var i = 0; i < 3; i += 1 {
 			sum += xs[i]

@@ -176,7 +176,7 @@ func TestEmit_BoundsElision(t *testing.T) {
 	// The loop counter i ∈ [0,2] (widening fixpoint) indexes a size-3 array → the
 	// bounds check is elided (and no negative-index adjustment is emitted).
 	elided := emit(`let main = () -> u8 => {
-	  let xs: [3]u8 = [10, 20, 12]
+	  let xs: [3]u8 = #[10, 20, 12]
 	  var sum: u8 = 0
 	  for var i: u8 = 0; i < 3; i += 1 {
 	    sum += xs[i]
@@ -190,7 +190,7 @@ func TestEmit_BoundsElision(t *testing.T) {
 	// A parameter index spans the whole type → the bounds check stays.
 	kept := emit(`let get = (xs: [3]u8, i: u8) -> u8 => xs[i]
 	let main = () -> u8 => {
-	  let arr: [3]u8 = [1, 2, 3]
+	  let arr: [3]u8 = #[1, 2, 3]
 	  get(arr, 0)
 	}`)
 	if !strings.Contains(kept, "lyra_panic_index_out_of_bounds") {
@@ -211,7 +211,7 @@ func TestExec_DivBoundsElisionPreservesResults(t *testing.T) {
 		  a / 2
 		}`, 42},
 		{`let main = () -> u8 => {
-		  let xs: [3]u8 = [10, 20, 12]
+		  let xs: [3]u8 = #[10, 20, 12]
 		  var sum: u8 = 0
 		  for var i: u8 = 0; i < 3; i += 1 {
 		    sum += xs[i]
@@ -241,7 +241,7 @@ func TestExec_ElisionKeepsRealDivBoundsTrap(t *testing.T) {
 
 	oob := `let get = (xs: [3]u8, i: u8) -> u8 => xs[i]
 	let main = () -> u8 => {
-	  let arr: [3]u8 = [1, 2, 3]
+	  let arr: [3]u8 = #[1, 2, 3]
 	  get(arr, 5)
 	}`
 	if got := buildAndRun(t, oob); got != trapExitCode {
@@ -284,7 +284,7 @@ func TestExec_MatchRefinementElisionPreservesResults(t *testing.T) {
 	  _ => 0,
 	}
 	let main = () -> u8 => {
-	  let xs: [3]u8 = [10, 20, 30]
+	  let xs: [3]u8 = #[10, 20, 30]
 	  at(xs, 2)
 	}`
 	if got := buildAndRun(t, src); got != 30 {

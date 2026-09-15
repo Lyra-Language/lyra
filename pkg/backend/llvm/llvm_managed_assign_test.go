@@ -132,7 +132,7 @@ let main = () -> u8 => {
 			// A fixed-size array copy: `ys` holds unretained duplicates of xs's elements.
 			"fixed-size array element",
 			`let main = () -> u8 => {
-  var xs: [2]string = ["a" ++ "b", "c" ++ "d"]
+  var xs: [2]string = #["a" ++ "b", "c" ++ "d"]
   let ys = xs
   xs[0] = "x" ++ "y"
   if ys[0] == "ab" { 0 } else { 1 }
@@ -228,7 +228,7 @@ let main = () -> u8 => {
 			name: "stack array element, owning root", fn: "main", want: 1,
 			why: "release-old; the array's deep release is a drop-glue call",
 			src: `let main = () -> u8 => {
-  var xs: [2]string = ["a" ++ "b", "c" ++ "d"]
+  var xs: [2]string = #["a" ++ "b", "c" ++ "d"]
   xs[0] = "x" ++ "y"
   0
 }`,

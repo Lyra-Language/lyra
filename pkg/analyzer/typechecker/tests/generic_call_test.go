@@ -33,7 +33,7 @@ let main = () -> u8 => {
 func TestGeneric_SolvedThroughArrayType(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 let first = (xs: [3]t) -> t => xs[0]
-let main = () -> u8 => u8(first([7, 8, 9]))
+let main = () -> u8 => u8(first(#[7, 8, 9]))
 `, false))
 }
 

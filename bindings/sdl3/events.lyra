@@ -116,7 +116,7 @@ unsafe extern sdl_poll_event: (event: ^mut RawEvent) -> u8
 pub let poll_event = () -> Maybe<Event> => {
   // A union Lyra allocated and SDL writes through — the direction that proves the size,
   // since a short buffer would be a stack smash rather than a wrong answer.
-  var raw = RawEvent { padding: [0; 128] }
+  var raw = RawEvent { padding: #[0; 128] }
   let got = unsafe { sdl_poll_event(&mut raw) }
   if got == 0 {
     None

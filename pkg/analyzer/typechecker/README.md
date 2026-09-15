@@ -272,14 +272,19 @@ signature, return the substituted return type.
 - **Elements take element context before joining** (`elementTakesContext`): array/repeat/tuple
   literals and constructions, never scalar leaves. Refused payloads go in `contextRefused` so
   they aren't reported twice.
-- **Only a literal is adapted**: a `[N]T` binding is stack storage, `[]T` a box.
+- **An array literal's flavor is its spelling** (`[…]`/`[v; n]` → `[]T`, `#[…]`/`#[v; n]` →
+  `[N]T`, the collector's `Fixed`). The walk narrows elements and re-records a literal **in its
+  own flavor only**; a context of the other flavor is `lyra-E079`'s (`reportArrayLiteralFlavor`,
+  from `contextualType`, `elementTakesContext`, both constructor stamps, generic calls and union
+  members). Nothing chooses a flavor from context.
 
-**`isAssignable` vs `assignableValue`**: `isAssignable` is types only and refuses static→dynamic
-arrays. `assignableValue` adds the one expression-dependent widening — an array literal (walking
-expression and type together through array literals, repeats, newtype targets, tuple elements,
-re-checking tuple names) may fill a `[]T`. Never convert a *built* array (hidden allocation;
-a binding reaching a `[]T` slot segfaulted). Value-vs-type sites use the second, type-vs-type
-the first.
+**`isAssignable` vs `assignableValue`**: `isAssignable` is types only and never crosses array
+flavors; within `[]T` only unsettled elements (none, untyped leaves) may differ
+(`unsettledElementAssignable`). `assignableValue` adds the expression-dependent narrowing — a
+literal's untyped elements take the target's (`literalTakesShape`, walking expression and type
+together through array literals, repeats, branches, newtype targets, tuple elements), within one
+flavor. Never convert a *built* array (hidden allocation; a binding reaching a `[]T` slot
+segfaulted). Value-vs-type sites use the second, type-vs-type the first.
 
 **Function types**: `unifyGenericTarget` and `substituteGenerics` handle `*types.LambdaType`;
 parameters unify in the same direction as the return (pattern unification, not subtyping).
