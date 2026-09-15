@@ -22,8 +22,20 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
     loop-exit release; a reassignment already frees at the store; shadowing stays at scope
     exit, with nothing measured needing more.
 - **[PARTIAL] Closure lowering is tiered.** Dev (boxed closures) is in; release = Lambda Set
-  Specialization, gated on the monomorphizer. LSS can only loosen `noalloc`'s closure rule,
-  never tighten it.
+  Specialization. The monomorphizer it was gated on exists. LSS can only loosen `noalloc`'s
+  closure rule, never tighten it.
+  - **Measured 09/15, before building anything.** For a small higher-order function
+    (`xs.map((x) => x * k)` in a hot loop) clang at `-O2` inlines `map`, makes the closure
+    call direct, and deletes the environment box: the optimized IR and timing are identical
+    to a hand-written comprehension. The win is confined to a higher-order function too big
+    to inline: the prelude's `sorted()` on 2M `i64` keeps its comparator indirect (7 indirect
+    calls survive in the optimized merge sort) and runs 0.21 s against 0.165 s for a copy
+    with `compare` inlined by hand, the code LSS would emit — about 20%. The other thing LSS
+    buys is a language guarantee that a non-escaping capturing closure allocates nothing, so
+    `sort_by` with a capturing comparator could be written inside `noalloc` (lyra-E016
+    today). Costs: a lambda-set type analysis through the typechecker and one copy of each
+    higher-order function per lambda set. Verdict: not worth it for speed alone; revisit if
+    the `noalloc` refusal starts biting or a self-hosting profile shows indirect-call cost.
 
 ### Traits: a method's own type variables
 
