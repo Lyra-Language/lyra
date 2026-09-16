@@ -85,13 +85,13 @@ func referencedNames(stmts []ast.Statement) map[string]bool {
 				if r, ok := s.(*ast.VarReassignmentStmt); ok {
 					refs[r.Name] = true
 				}
-				for _, name := range ast.RangeBoundNames(s) {
+				for _, name := range ast.ConstRefNames(s) {
 					refs[name] = true
 				}
 				return true
 			},
 			func(e ast.Expression) bool {
-				for _, name := range ast.RangeBoundNames(e) {
+				for _, name := range ast.ConstRefNames(e) {
 					refs[name] = true
 				}
 				switch ex := e.(type) {

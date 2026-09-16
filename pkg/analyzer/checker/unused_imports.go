@@ -183,7 +183,7 @@ func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
 			noteType(sig.ReturnType.Type)
 		}
 		ast.WalkStmt(stmt, func(s ast.Statement) bool {
-			for _, name := range ast.RangeBoundNames(s) {
+			for _, name := range ast.ConstRefNames(s) {
 				refs[name] = true
 			}
 			switch st := s.(type) {
@@ -228,7 +228,7 @@ func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
 			}
 			return true
 		}, func(e ast.Expression) bool {
-			for _, name := range ast.RangeBoundNames(e) {
+			for _, name := range ast.ConstRefNames(e) {
 				refs[name] = true
 			}
 			switch ex := e.(type) {

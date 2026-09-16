@@ -11,6 +11,19 @@ type ArrayRepeatExpr struct {
 	Count Expression // The count: any expression for `[v; n]`, a compile-time constant for `#[v; n]`
 	// Fixed is the `#[v; n]` spelling, a `[N]T`; ArrayLiteralExpr.Fixed's twin.
 	Fixed bool
+	// CountAsWritten is Count as the author spelled it, kept when the typechecker folded a
+	// `#[v; N]` count to a literal (arrayRepeatCount). Nil when nothing was folded away.
+	//
+	// **It exists so a pass asking "is this name used" can still see the name**, which is
+	// the same debt `RangePattern.ConstBounds` pays for a folded range bound, contracted the
+	// same way and found the same way: a `const` used *only* as a fixed array's count warned
+	// as unused (lyra-W003), and an import used only there warned as `lyra-W004` — advice
+	// that breaks the program if followed. ConstRefNames is the one answer both read.
+	//
+	// **Deliberately not walked** (WalkExprChildren, RewriteExpr). It is a record of what
+	// the count *was*, and the count is now Count; a walk reaching both would report one
+	// occurrence twice and hand a rewriter a node that no longer occupies a position.
+	CountAsWritten Expression
 }
 
 func (a *ArrayRepeatExpr) exprNode() {}

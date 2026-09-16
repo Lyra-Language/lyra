@@ -137,6 +137,10 @@ func (tc *TypeChecker) arrayRepeatCount(expr *ast.ArrayRepeatExpr) (int, bool) {
 		return 0, false
 	}
 	if _, isLit := count.(*ast.IntegerLiteralExpr); !isLit {
+		// Kept before it is overwritten: the names in it are erased from the AST by this
+		// rewrite, and a pass that asks which names a program uses has no other way to see
+		// them (ast.ConstRefNames, and ArrayRepeatExpr.CountAsWritten for why).
+		expr.CountAsWritten = count
 		expr.Count = &ast.IntegerLiteralExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: count.GetLocation()}},
 			Value:    n,

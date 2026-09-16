@@ -119,6 +119,44 @@ func RangeBoundNames(node AstNode) []string {
 	return names
 }
 
+// ConstRefNames is every `const` name node holds that the typechecker may have **folded to
+// a literal**, so a pass counting references sees it as used.
+//
+// Two constructs erase a name this way, and both cost a diagnostic before they were
+// answered here: a range-pattern bound (`LOW..<=HIGH`) and a fixed array's repeat count
+// (`#[v; N]`). Each is folded on purpose — one rewrite beats teaching every later pass to
+// resolve a `const` — and the cost lands on whoever asks a question about names afterwards.
+// A `const` used only in one of these positions warned as unused (lyra-W003), and an import
+// used only there warned as lyra-W004, which breaks the program if believed.
+//
+// **One helper rather than two**, because both callers want the same thing and a second
+// list is the drift a pass discovers years later (rule 8). Anything else that folds a name
+// away belongs here too.
+func ConstRefNames(node AstNode) []string {
+	return append(RangeBoundNames(node), RepeatCountNames(node)...)
+}
+
+// RepeatCountNames returns the names a fixed array's repeat count was written with, once
+// the typechecker has folded it (ArrayRepeatExpr.CountAsWritten). Empty for every other
+// node, and for a count that was already a literal.
+//
+// Every identifier in the expression, not just a bare one: `#[0; N * 2]` folds through the
+// arithmetic and erases `N` just the same.
+func RepeatCountNames(node AstNode) []string {
+	repeat, ok := node.(*ArrayRepeatExpr)
+	if !ok || repeat.CountAsWritten == nil {
+		return nil
+	}
+	var names []string
+	WalkExpr(repeat.CountAsWritten, nil, func(e Expression) bool {
+		if id, isIdent := e.(*IdentifierExpr); isIdent {
+			names = append(names, id.Name)
+		}
+		return true
+	})
+	return names
+}
+
 // RangeBounds is RangeBoundNames with the nodes as written, locations included.
 func RangeBounds(node AstNode) []*IdentifierExpr {
 	var ids []*IdentifierExpr
