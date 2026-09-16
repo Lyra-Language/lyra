@@ -536,7 +536,22 @@ constraint — `match_unreachable_arm_test.go` never runs on arm64 and `go test`
 
 ## Current Development Focus
 
-The typechecker — match exhaustiveness (`pkg/analyzer/typechecker/README.md`) and the
-FP/imperative purity work (`pkg/analyzer/checker/README.md`). Codegen is pre-release but
-broad (closures, generics, strings, arrays, `match`, traits, `?`, Perceus); the backend
-README is the inventory and `todo.md` the gaps.
+**`lyrafmt` — the formatter written in Lyra — as the self-hosting probe** (`todo.md`,
+Modules and tooling). The round-trip baseline, indentation and spacing rules are in, the
+repo is formatted by it, and both editors reach it through `lyra-lsp`. Its value is that it
+keeps finding **compiler** bugs rather than formatter ones: a `let … else` use-after-free, a
+destructuring release that never happened, and an interpolation that swallows source to the
+next `}` — each found by the first Lyra program large enough to hit them.
+
+The typechecker is **maintenance rather than build-out**. Match exhaustiveness is built
+(Maranget pattern matrices for tuple and `data`, plus arrays, runes and structs —
+`pkg/analyzer/typechecker/README.md`), and so is the FP/imperative purity work
+(`pkg/analyzer/checker/README.md`), which has one open question left, impurity of imported
+functions. What turns up now is a *position that accepts a value it should refuse* — a
+`data` payload that truncated a literal in silence, a bound on a generic type's parameter
+that parses and is never read. Reproduce a README "Open" marker before believing it: of the
+three standing on 09/16, one was stale, one pointed at a `todo.md` item that never existed,
+and the real bug was in a position none of them named.
+
+Codegen is pre-release but broad (closures, generics, strings, arrays, `match`, traits, `?`,
+Perceus); the backend README is the inventory and `todo.md` the gaps.
