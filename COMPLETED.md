@@ -159,6 +159,148 @@ legitimate forms that must stay legal — a block with its own braces inside the
 one interpolation nested in another, several on a line, and the raw spelling the
 diagnostic recommends.
 
+### 09/16/26 — a shadow warning for what the import admitted
+
+`import std.io.{ write_file }` beside a local `read_file` warned that `read_file`
+"shadows the read_file imported from std.io". Nothing of the sort had been imported.
+`noteAmbientShadow` asked `ModuleExports` — *does that module export this name* — where the
+question is whether this module's import **admitted** it, and a selective import admits only
+what it lists (LANGUAGE.md §6). The message was wrong three ways over: it fired at all, it
+named an import that had not happened, and its advice — "reach the imported one as
+`io.read_file`" — could not be followed, since only a bare `import lib` binds a namespace.
+
+**Reading the member lists where the check stood does not work, and that is why the old code
+reached for exports.** `noteAmbientShadow` runs while the files are still being walked, and a
+module's members arrive per file as each `import` is collected — so a module whose `import`
+sits in its second file has recorded nothing when the first file's declarations are noted.
+`Collector.SetImports` is written about exactly that trap, and hands over the whole import
+graph before the walk to dodge it. The graph knows which modules; only the statements know
+which names.
+
+So the import half moved out to `noteImportShadows`, a sweep run from
+`PopulateImportScopes` — the first moment the answer exists. It reads the **import scope**,
+which *is* the admitted set, and that is the whole fix: a namespace import contributes
+nothing to it, an alias contributes its local name and not the original, and a member that
+is missing or not `pub` contributes nothing. Every one of those was wrong under the export
+question and comes out right here without being restated, because `PopulateImportScopes`
+already made each distinction to build the scope. The prelude half stayed where it was —
+`PreludeNames` is complete before collection starts.
+
+The message followed. Now that the warning fires only for a selective import, the namespace
+it used to offer never exists, so it names the two renames instead, as the import-clash error
+does. `lastSegment` existed for that hint alone and went with it.
+
+**Two tests asserted the old behaviour**, and both imported a *namespace*
+(`import util.seq`) while expecting the warning. They predate `ImportScopeFor`, when every
+`pub` declaration sat in one global scope on every module's parent chain and a namespace
+import did admit its module's bare names — the first one's comment records that era. Both
+now use the selective form, which is what they were testing, and three cases pin the
+corrected rule. `lyra-W004` never shared the bug: `CheckUnusedImports` walks the `ImportStmt`
+members and never consults an export list.
+
+### 09/16/26 — the examples stop working around the missing trigonometry
+
+`shapes.lyra` carried a range-reduced Taylor series — `wrap_pi`, `cos32`, `sin32` and two
+hand-typed constants, thirty lines — for **one** call site, under a doc comment opening
+"`std.math` has neither". The comment also recorded what the workaround had already cost: a
+bare series answered **-39.3** at one full turn instead of 1.0, so the closing vertex of a
+triangle fan landed off-screen and dragged a yellow triangle across the gallery. Invisible to
+the layout arithmetic, which measures the extents written in the source, and obvious in a
+screenshot. It is `angle.cos()` and `angle.sin()` now, and the fan closes exactly — vertex 6
+lands on vertex 0.
+
+The raylib angle factors were `57.295780` and `0.017453292`. The first is not 180/π
+(57.29577951…); it is that number mistyped in the seventh digit, and it survived because both
+spellings round to the same `f32`. `raymath.lyra` held a **third** copy of the factor in a
+private `radians` that duplicated the module's own public `to_radians`. Both are derived from
+`PI` now and the duplicate is gone.
+
+`SDL3/basic.lyra`'s `wave` folded the tick into a triangle and smoothed it with a cubic;
+`sin(πt) * 0.5 + 0.5` is the same shape said once, with the period still 2 in `t`, which is
+the unit the call sites' phase offsets are in. `models.lyra`'s ring of eleven was a table of
+(x, z) pairs 360/11 degrees apart — opaque digits, checkable only against the trigonometry it
+stood in for — and **two of its entries were wrong**: slots 1 and 10 read 4.32 where the
+value is 4.33. `shapes3d.lyra` keeps its twelve, where the steps are 30 degrees and the
+numbers are recognisable, and `breakout.lyra` keeps its square wave, which is intentional for
+an 8-bit blip rather than a workaround.
+
+### 09/16/26 — a float builtin is callable either way
+
+The builtin registry is keyed by receiver and reached only from member dispatch, so
+`sqrt(5.0)` reported the name undefined — while `sinh(1.0)` from `std.math` worked, that one
+being an ordinary declaration, and UFCS letting any `self`-first function be called either
+way. Nothing about the two names said which was which.
+
+`desugarBuiltinFreeCall` rewrites the free form onto the method form and re-enters inference,
+so the builtin signature, `SetBuiltinMethod`, the purity ladders, `noalloc`, the const walk
+and the backend all see the shape they already handled — the backend is untouched. It is
+`desugarUFCSCall` run backwards, and the pair now states a rule rather than a pair of
+conveniences: a declared function is canonical as a direct call and a builtin as a method,
+each desugar folding the other spelling onto the canonical one. It fires after every lookup
+has missed, so a declaration of the name still wins, and there is no type test on the first
+argument — `sqrt(5)` is the member path's diagnostic to give.
+
+**The const sweep had quietly stopped working for the free spelling**, and the test written
+for it did not cover that. `callResolved` looked for the declaration in the dispatch tables,
+and an ordinary free call to a declared function is in none of them — `TypeTable.Callee`
+holds only receiver-overloaded calls — so a user's own `sqrt` called as `sqrt(5.0)` read as
+*unresolved* and the `const` was accepted as compile-time when it is a real call at every use
+site. The two spellings fail in opposite directions: a member callee that resolved is
+recorded, a free one that resolved is not. The member spelling keeps the table lookups; the
+free one asks `IsUnresolvedCallee`.
+
+### 09/16/26 — trigonometry, exponentials, and the `std.math` over them
+
+A sine is not expressible in this language — no series, no lookup table, and no FFI to reach
+libm — so the eight new unary functions and the two binary ones join the registries beside
+`log` and `sqrt`. That is the `random_seed` rule rather than the `parse_i64` one. The gap was
+visible from the outside: four examples carried comments apologising that Lyra "has `sqrt`
+and the logarithms and no `sin`", each working around it.
+
+**The lowering splits on a version floor, not on semantics.** `sin`, `cos`, `exp`, `exp2` and
+`pow` become LLVM intrinsics; `tan`, `asin`, `acos`, `atan` and `atan2` become **direct libm
+calls**, because their intrinsics only arrived in LLVM 19/20 and the emitted IR has to parse
+under the clang-15 the ASan container pins — an intrinsic it does not know is a parse error,
+not a slow path. libm has no half-precision entry points at all, so an `f16` receiver on that
+path is widened to `f32` and rounded back. Which list a name is in is private to
+`rounding.go`; raising the floor moves names between them and changes nothing else.
+
+`std.math` gains the constants and the `f64` functions the builtins make writable — `sinh`,
+`cosh`, `tanh`, `hypot`, `cbrt` and the degree conversions, all ordinary Lyra, since what the
+builtins cannot do is the part that had to be primitive. `tanh` saturates past ±20, where the
+quotient's two halves both overflow and `inf/inf` is a NaN — the naive formula returns *no
+answer* exactly where the answer is least in doubt — and `hypot` scales by the larger leg,
+since `x * x` overflows for an `x` past 1.3e154 whose hypotenuse an `f64` holds perfectly
+well.
+
+**A `const` initializer may call them**, which is the third widening of the constancy walk
+after conversions (08/17) and struct literals (09/09) and rests on the same fact: a `const`
+is inlined as its value *expression*, and these fold to the number. Checked, rather than
+assumed: `llvm.sqrt.f64(5.0)` and `llvm.exp.f64(1.0)` both vanish at `-O2`, leaving the exact
+bit patterns of φ and e. At `-O0` nothing folds and the call survives at each use site, which
+is the argument for a real evaluator if one is ever wanted (todo.md's compile-time function
+evaluation, whose "float width and rounding" risk this is).
+
+The walk runs before inference, so it matches the method *name* and nothing more — and member
+dispatch consults the builtins last, so a declared `sqrt` for `f64` shadows one and makes the
+const a real call at every use site, effects included. `verifyConstBuiltinCalls` sweeps at the
+end of the pass and asks the method table what each accepted call resolved to, on the
+`checkUnpinnedNullPtrs` model: the answer only exists once inference has run. It passes over a
+call that resolved to nothing, so `5.sqrt()` keeps its one diagnostic about an i64 receiver
+rather than gaining a second that blames a declaration which does not exist.
+
+**Only `SQRT_2` and `PHI` are derived, and the line is `sqrt`.** LLVM folds a libm call by
+calling the *host's* libm, and no mainstream libm is correctly rounded for `exp` or `log`, so
+a derived `E` could differ in the last place between a native build and a cross-compile.
+IEEE 754 *requires* `sqrt` correctly rounded, so every implementation returns the same bits —
+which is why the two derived constants are exactly the two reachable through it. Confirmed
+rather than argued: the derived values are bit-identical to the literals they replaced on
+macOS/arm64 under Apple clang 21 and on linux/arm64 under clang-15.
+
+Found on the way: an untyped literal argument is only checked for assignability, so
+`f32_value.pow(3.0)` reached the backend as a double against a float receiver. Coerced
+defensively there, as the integer overflow builtins already coerce theirs.
+
 ### 09/16/26 — lyrafmt's indentation rule
 
 The first rule that changes what is between the leaves. `build/lyrafmt file.lyra` prints
