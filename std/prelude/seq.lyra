@@ -24,7 +24,7 @@ pub let seq<t> = pure gen (self: []t) -> Seq<t> => {
 }
 
 /// Each element with `f` applied, lazily: `f` runs when the consumer asks, not here.
-pub let map<t,u> = pure gen (self: Seq<t>, f: (t) -> u) -> Seq<u> => {
+pub let map<t, u> = pure gen (self: Seq<t>, f: (t) -> u) -> Seq<u> => {
   for x in self { yield f(x) }
 }
 

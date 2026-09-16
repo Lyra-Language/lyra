@@ -254,7 +254,6 @@ let spaces = pure (n: i64) -> string => {
   out
 }
 
-
 /// One row of the frame, as a string. Built by concatenation into a single row rather
 /// than printed per cell.
 ///

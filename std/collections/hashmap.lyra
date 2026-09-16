@@ -412,7 +412,6 @@ impl Hash for string {
   }
 }
 
-
 // The two 64-bit halves xored: a u128 that fits in 64 bits hashes exactly as its u64
 // would, so a key promoted to the wider type keeps its hash.
 let hash_u128 = pure noalloc (x: u128) -> u64 =>

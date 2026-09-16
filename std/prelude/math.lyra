@@ -258,7 +258,6 @@ impl Div for f64 { (_/_) = pure (self, o) => self / o }
 /// `f64` supports all four arithmetic operators.
 impl Arithmetic for f64
 
-
 /// Types whose values can be asked whether they are negative.
 ///
 /// Two receiver methods rather than a `zero` constant, because Lyra dispatches on a

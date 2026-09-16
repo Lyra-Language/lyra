@@ -219,7 +219,6 @@ pub let glyph_info = pure (font: Font, codepoint: rune) -> GlyphInfo =>
 pub let glyph_atlas_rect = pure (font: Font, codepoint: rune) -> Rectangle =>
   unsafe { rl_glyph_atlas_rec(font, i32(codepoint)) }
 
-
 @symbol("GetFontDefault")
 unsafe extern rl_default_font: () -> Font
 @symbol("LoadFont")

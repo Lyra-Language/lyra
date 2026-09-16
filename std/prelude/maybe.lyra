@@ -84,7 +84,7 @@ pub let is_none<t> = pure noalloc (self: Maybe<t>) -> bool {
 ///
 /// The bridge from "there was no value" to "here is why", at the point where the caller
 /// knows what the absence meant. `err` is evaluated whether or not it is used.
-pub let ok_or<t,e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t,e> {
+pub let ok_or<t, e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t, e> {
   (Some v, _) => Ok v,
   (None, err) => Err err,
 }
@@ -92,7 +92,7 @@ pub let ok_or<t,e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t,e> {
 /// This `Maybe` as a `Result`, calling `f` for the error of a `None`.
 ///
 /// The lazy `ok_or`: `f` runs only when there is no value.
-pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,e> {
+pub let ok_or_else<t, e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t, e> {
   (Some v, _) => Ok v,
   (None, f) => Err(f()),
 }
@@ -107,7 +107,7 @@ pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,
 /// ```
 /// let doubled = Some(21).map((n) => n * 2)   // Some 42
 /// ```
-pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> {
+pub let map<t, u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> {
   (Some v, f) => Some(f(v)),
   (None, _) => None,
 }
@@ -116,7 +116,7 @@ pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> {
 ///
 /// `map` with a `Maybe`-returning `f` would give `Maybe<Maybe<u>>`; this flattens it,
 /// which is what chaining fallible steps needs.
-pub let flat_map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> {
+pub let flat_map<t, u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> {
   (Some v, f) => f(v),
   (None, _) => None,
 }

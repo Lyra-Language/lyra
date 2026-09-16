@@ -27,7 +27,7 @@ module std.prelude
 /// ```
 /// let doubled = [1, 2, 3].map((n) => n * 2)   // [2, 4, 6]
 /// ```
-pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
+pub let map<t, u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 
 /// A new array of the elements satisfying `predicate`, in order.
 ///

@@ -30,13 +30,13 @@ pub data Result<t, e> =
   | Err(e)
 
 /// Whether this is an `Ok`.
-pub let is_ok<t,e> = pure noalloc (self: Result<t, e>) -> bool {
+pub let is_ok<t, e> = pure noalloc (self: Result<t, e>) -> bool {
   (Ok _) => true,
   (Err _) => false,
 }
 
 /// Whether this is an `Err`.
-pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool {
+pub let is_err<t, e> = pure noalloc (self: Result<t, e>) -> bool {
   (Ok _) => false,
   (Err _) => true,
 }
@@ -44,7 +44,7 @@ pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool {
 /// The success value, or `fallback` if this is an `Err`.
 ///
 /// The error is discarded. `fallback` is evaluated whether or not it is used.
-pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t {
+pub let unwrap_or<t, e> = pure noalloc (self: Result<t, e>, fallback: t) -> t {
   (Ok v, _) => v,
   (Err _, fb) => fb,
 }
@@ -53,7 +53,7 @@ pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t {
 ///
 /// The lazy `unwrap_or`. `f` takes no argument, so it cannot see the error — use a
 /// `match` when the recovery depends on what went wrong.
-pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t {
+pub let unwrap_or_else<t, e> = pure noalloc (self: Result<t, e>, f: () -> t) -> t {
   (Ok v, _) => v,
   (Err _, f) => f(),
 }
@@ -64,7 +64,7 @@ pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t 
 ///
 /// Traps with `msg` when `self` is an `Err`. The error value itself is not shown, so say
 /// in `msg` what you expected to succeed.
-pub let expect<t,e> = pure noalloc (self: Result<t,e>, msg: string) -> t {
+pub let expect<t, e> = pure noalloc (self: Result<t, e>, msg: string) -> t {
   (Ok v, _) => v,
   (Err _, msg) => panic(msg),
 }
@@ -75,16 +75,16 @@ pub let expect<t,e> = pure noalloc (self: Result<t,e>, msg: string) -> t {
 ///
 /// Traps with `unwrap on an Err` when `self` is an `Err`. `expect` takes a message
 /// naming what was expected, which is all a crash report will have.
-pub let unwrap<t,e> = pure noalloc (self: Result<t,e>) -> t => expect(self, "unwrap on an Err")
+pub let unwrap<t, e> = pure noalloc (self: Result<t, e>) -> t => expect(self, "unwrap on an Err")
 
 /// The success value as a `Maybe`, discarding the error.
-pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> {
+pub let ok<t, e> = pure noalloc (self: Result<t, e>) -> Maybe<t> {
   (Ok v) => Some v,
   (Err _) => None,
 }
 
 /// The error as a `Maybe`, discarding the success value.
-pub let err<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<e> {
+pub let err<t, e> = pure noalloc (self: Result<t, e>) -> Maybe<e> {
   (Ok _) => None,
   (Err err) => Some err,
 }
@@ -93,7 +93,7 @@ pub let err<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<e> {
 ///
 /// The error type is unchanged, so this maps the happy path of a chain without deciding
 /// anything about failure.
-pub let map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> u) -> Result<u,e> {
+pub let map<t, u, e> = pure noalloc (self: Result<t, e>, f: (t) -> u) -> Result<u, e> {
   (Ok v, f) => Ok(f(v)),
   (Err err, _) => Err err,
 }
@@ -107,7 +107,7 @@ pub let map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> u) -> Result<u,e
 ///
 /// Where the conversion is the same at every call site, an `impl From<JsonError> for
 /// ConfigError` lets `?` apply it on its own.
-pub let map_err<t,e,f> = pure noalloc (self: Result<t,e>, f: (e) -> f) -> Result<t,f> {
+pub let map_err<t, e, f> = pure noalloc (self: Result<t, e>, f: (e) -> f) -> Result<t, f> {
   (Ok v, _) => Ok v,
   (Err err, f) => Err(f(err)),
 }
@@ -115,7 +115,7 @@ pub let map_err<t,e,f> = pure noalloc (self: Result<t,e>, f: (e) -> f) -> Result
 /// Applies `f` to the success value and returns its result, without nesting.
 ///
 /// Chains a second fallible step onto the first. Both must fail with the same `e`.
-pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>) -> Result<u,e> {
+pub let flat_map<t, u, e> = pure noalloc (self: Result<t, e>, f: (t) -> Result<u, e>) -> Result<u, e> {
   (Ok v, f) => f(v),
   (Err err, _) => Err err,
 }
@@ -131,7 +131,7 @@ pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>
 /// ```
 /// let big = Ok(10).filter((n) => n > 5).ok_or("too small")   // Ok 10
 /// ```
-pub let filter<t,e> = pure noalloc (self: Result<t,e>, predicate: (t) -> bool) -> Maybe<t> {
+pub let filter<t, e> = pure noalloc (self: Result<t, e>, predicate: (t) -> bool) -> Maybe<t> {
   (Ok v, pred) => if pred(v) { Some v } else { None },
   (Err _, _) => None,
 }

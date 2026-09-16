@@ -52,10 +52,11 @@ Package management, versioning and separate compilation are out of scope by deci
   baseline (09/16) and the indentation rule (09/16, COMPLETED.md) are in: `--check`/`-w`
   over every file in the repo, idempotent, and the repo is formatted by it (09/17: 18
   files, one convention for a wrapped signature). `lyrafmt --check` is clean and could be
-  a CI step. Next rules: trailing whitespace, blank-line runs, spacing
-  around `=>`/`:`/`,`; then a scope stack (expected to hit `[]T` aliasing) and a directory
-  walk (a missing `readdir` in `std.io`). A real bootstrap would start with the collector
-  after this.
+  a CI step. Trailing whitespace, blank-line runs and token spacing landed 09/17. Next
+  rules: a `{` that is not followed by a newline is an inline block and stays one (no rule
+  yet says when a line should *break*, which is where a formatter becomes opinionated);
+  then a scope stack (expected to hit `[]T` aliasing) and a directory walk (a missing
+  `readdir` in `std.io`). A real bootstrap would start with the collector after this.
 
 
 ## Language surface

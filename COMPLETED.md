@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — lyrafmt: whitespace and spacing
+
+Three rules on top of indentation, all of them about the space *between* tokens and none
+touching a leaf — so a comment, a string and a raw string keep every byte they had.
+
+- **Trailing whitespace** goes, and a file ends with exactly one newline. Every byte in a
+  gap that spans lines is either a newline or the whitespace before one, so the whole
+  question is "which newlines survive": the rest is dropped.
+- **Blank lines** run at most one deep.
+- **Spacing** that is *missing or forbidden* is fixed — one space each side of `=>`, one
+  after `,` and `:`, none before them.
+
+**The third rule stops where alignment begins.** Extra spaces are left alone, because more
+than one space is a choice somebody made: `examples/guess_game.lyra` lines its match arms
+up on their `=>`, and a formatter that cannot align columns itself has no business
+destroying the columns that are there. So the rule reads "insert what is required, remove
+what is forbidden, and otherwise leave the gap as written" — which also means the single
+space almost every gap already is stays untouched, and the rule is a fixed point on the
+first pass rather than the second.
+
+**A range's step is not an annotation.** `0..<10:2` is a plain `:` token, and the first
+draft spaced it to `0..<10: 2` — which compiles and means the same thing, but the step
+binds as tightly as the `..` beside it and the language writes it closed up. Telling the
+two apart needs the token's **parent**, so a `Leaf` now carries it: a `:` directly inside a
+`range_expr` is left alone on both sides. `::` and `::<` were never at risk, being tokens
+of their own, so a trait path and a turbofish are untouched by construction.
+
+Over the repo the three rules come to 18 insertions and 22 deletions in 9 files: `<t,u>` →
+`<t, u>` through the prelude, and six runs of two blank lines cut to one. Applied, so
+`lyrafmt --check` is clean again.
+
 ### 09/17/26 — an interpolation that spans lines is refused
 
 `${` has no escape in an ordinary string — the two characters as text are a raw string,

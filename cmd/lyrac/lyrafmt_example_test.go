@@ -56,11 +56,14 @@ func TestExample_LyrafmtRoundTrips(t *testing.T) {
 	if out, err := exec.Command(bin, append([]string{"--roundtrip", "--check"}, files...)...).CombinedOutput(); err != nil {
 		t.Fatalf("the round trip changed a file: %v\n%s", err, out)
 	}
-	// The indentation rule, on a file that breaks it every way it can: a wrapped array,
-	// match arms at odd depths, a block body, a `data` type's constructors after `=`, an
-	// `else` on its own line, a wrapped signature with its body, and a doc comment
-	// between `=` and a constructor. What comes out is fixed once — the second run
-	// changes nothing.
+	// Every rule at once, on a file that breaks each of them: indentation (a wrapped
+	// array, match arms at odd depths, a block body, a `data` type's constructors after
+	// `=`, an `else` on its own line, a wrapped signature with its body, a doc comment
+	// between `=` and a constructor), a run of blank lines, spacing that is missing or
+	// forbidden around `,` `:` `=>`, and a trailing newline. Two things must survive
+	// untouched: a range's tight step (`0..<10:2`), and the aligned `=>` of a match, which
+	// is a choice the author made and not a gap to collapse. What comes out is fixed once
+	// — the second run changes nothing.
 	ugly := filepath.Join(t.TempDir(), "ugly.lyra")
 	if err := os.WriteFile(ugly, []byte(`let f = (n: i64) -> i64 => {
       let xs = [
@@ -85,6 +88,19 @@ let h = (a: i64,
                 b: i64) -> i64 => {
       a + b
    }
+
+
+
+let spaced = (a: i64,b :i64) -> i64=>{
+  let xs = [1 ,2]
+  let r = 0..<10:2
+  match a { 1=>2, _ =>3 }
+}
+let aligned = (n: i64) -> i64 => match n {
+  1   => 1,
+  100 => 2,
+  _   => 3,
+}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +126,17 @@ let g = (n: i64) -> i64 =>
 let h = (a: i64,
   b: i64) -> i64 => {
   a + b
+}
+
+let spaced = (a: i64, b: i64) -> i64 => {
+  let xs = [1, 2]
+  let r = 0..<10:2
+  match a { 1 => 2, _ => 3 }
+}
+let aligned = (n: i64) -> i64 => match n {
+  1   => 1,
+  100 => 2,
+  _   => 3,
 }
 `
 	got, err := exec.Command(bin, ugly).Output()
