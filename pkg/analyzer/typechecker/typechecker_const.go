@@ -13,21 +13,89 @@ import (
 //   - a reference to another `const`,
 //   - a purely-constant expression built from the above: unary (`-x`, `!x`),
 //     arithmetic / boolean binary ops, string concatenation, a **conversion**
-//     (`f64(N)`, `u8(200)`) of a constant operand, or an array/tuple literal whose
-//     elements are themselves all constant.
+//     (`f64(N)`, `u8(200)`) of a constant operand, a **float builtin** over constant
+//     operands (`5.0.sqrt()`, `2.0.pow(10.0)`, `2.7.floor()`), or an array/tuple literal
+//     whose elements are themselves all constant.
 //
 // Anything that depends on runtime state — a function call, a non-const variable,
 // an interpolated string, a member/index access, etc. — is rejected with
 // lyra-E012. The check reports the first (outermost) offending sub-expression so
 // the author is pointed at the part that isn't constant.
 func (tc *TypeChecker) checkConstInitializer(_ string, expr ast.Expression) {
+	pending := len(tc.constBuiltinCalls)
 	offender, ok := tc.firstNonConstant(expr)
 	if ok {
 		return
 	}
+	// Refused for some other reason, so drop the builtin calls this walk accepted on the
+	// way down: they are owed no verification sweep, and leaving them queued would report
+	// a second diagnostic about an initializer already reported.
+	tc.constBuiltinCalls = tc.constBuiltinCalls[:pending]
 	tc.addErrorCode(offender.GetLocation(), SeverityError, diag.CodeNonConstantConstInitializer,
 		"`const` initializer must be a compile-time constant: %s is not constant",
 		describeNonConstant(offender))
+}
+
+// isFloatBuiltinName reports whether name is one of the compiler's float builtins — the
+// three registries in builtins.go, which is what makes this one question rather than a
+// fourth list to keep in step (rule 8).
+//
+// **A name, not a resolution.** This walk runs before the initializer is inferred, so a
+// declaration shadowing a builtin of the same name is indistinguishable here; that is what
+// verifyConstBuiltinCalls exists to catch.
+func isFloatBuiltinName(name string) bool {
+	return floatUnaryMathOps[name] || floatBinaryMathOps[name] || floatRoundingOps[name]
+}
+
+// verifyConstBuiltinCalls is the second half of the float-builtin arm, run once the whole
+// program has been inferred: every call the constancy walk accepted by *name* is asked
+// whether it actually resolved to a compiler builtin, and refused if it did not.
+//
+// **Because a name does not identify a declaration (rule 9).** The builtins are consulted
+// last in member dispatch, so a trait method named `sqrt` implemented for `f64` wins over
+// the compiler's — and a `const` holding a call to *that* is not compile-time at all: it
+// inlines a real call at every use site, once per site, effects included. Matching on the
+// name alone would accept it silently, which is the failure this pass is for.
+//
+// A sweep rather than a check in place, on the `checkUnpinnedNullPtrs` model: the answer
+// only exists once inference has run, and "no builtin was recorded here" is a not-yet
+// until the pass is over.
+//
+// **A call that resolved to nothing is passed over in silence**, because it has already
+// been reported — `5.sqrt()` is an i64 receiver with no such method, which is the most
+// likely way to get here and gets `lyra-E001` naming the real problem. Reporting it again
+// as "not constant" would be a second diagnostic for one mistake, and a misleading one:
+// it would blame a declared method where none exists. Only a call that genuinely resolved
+// to a declaration is refused here.
+func (tc *TypeChecker) verifyConstBuiltinCalls() {
+	for _, call := range tc.constBuiltinCalls {
+		if tc.methodTable.IsBuiltinMethod(call) || !tc.callResolved(call) {
+			continue
+		}
+		name := "this method"
+		if member, ok := call.Function.(*ast.MemberExpr); ok {
+			name = "`" + member.Property.Name + "`"
+		}
+		tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeNonConstantConstInitializer,
+			"`const` initializer must be a compile-time constant: %s is a declared method, not the compiler's float builtin, so it is a function call",
+			name)
+	}
+	tc.constBuiltinCalls = nil
+}
+
+// callResolved reports whether dispatch found this call a declaration of any kind — a
+// trait-impl method, a bound-dispatched one, or an ordinary callee. All three are asked
+// because a method call reaches its declaration by three different routes (rule 9), and a
+// UFCS desugar rewrites the callee out of MemberExpr shape on the way.
+func (tc *TypeChecker) callResolved(call *ast.FunctionCallExpr) bool {
+	if _, ok := tc.methodTable.Get(call); ok {
+		return true
+	}
+	if _, ok := tc.methodTable.GetBound(call); ok {
+		return true
+	}
+	_, ok := tc.typeTable.Callee(call)
+	return ok
 }
 
 // conversionTargetOf reports the primitive a call converts to, when the call is a
@@ -111,6 +179,35 @@ func (tc *TypeChecker) firstNonConstant(expr ast.Expression) (ast.Expression, bo
 		// now the variable, which is the thing that is not constant.
 		if _, isConv := conversionTargetOf(e); isConv && len(e.Arguments) == 1 {
 			return tc.firstNonConstant(e.Arguments[0])
+		}
+		// A **float builtin over constant operands is constant**: `5.0.sqrt()`,
+		// `2.0.pow(10.0)`, `2.7.floor()`. Same grounds as the conversion arm above — a
+		// `const` is inlined as its value *expression* and lowered like any other code, and
+		// these lower to an LLVM intrinsic or a libm call over literal operands, which the
+		// optimizer folds to the number. So accepting them changes nothing about what the
+		// program computes; it stops refusing a derivation that otherwise has to be
+		// hand-computed and pasted in as digits, which is a typo nothing catches.
+		//
+		// **Two caveats, both real and both deliberate.** At `-O0` nothing folds, so the
+		// call survives at each use site — and a const is inlined at *every* one, so a
+		// const in a loop is a call per iteration there. And LLVM folds a libm call by
+		// calling the **host's** libm, which is exact for `sqrt` (IEEE 754 requires it
+		// correctly rounded) but not for the transcendentals, where a cross-compile can
+		// bake the build host's last ulp into the target's binary.
+		//
+		// The receiver and every argument are walked rather than accepted outright, which
+		// is what keeps `x.sqrt()` for a runtime `x` refused with the variable named.
+		if member, isMethod := e.Function.(*ast.MemberExpr); isMethod && isFloatBuiltinName(member.Property.Name) {
+			if off, ok := tc.firstNonConstant(member.Object); !ok {
+				return off, false
+			}
+			for _, arg := range e.Arguments {
+				if off, ok := tc.firstNonConstant(arg); !ok {
+					return off, false
+				}
+			}
+			tc.constBuiltinCalls = append(tc.constBuiltinCalls, e)
+			return nil, true
 		}
 		return expr, false
 

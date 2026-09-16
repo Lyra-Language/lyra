@@ -138,3 +138,84 @@ const X = f(3)`, false)
 	assertErrorsAre(t, res,
 		"`const` initializer must be a compile-time constant: a function call is not constant")
 }
+
+// A **float builtin over constant operands is constant** (09/15) — the third widening of
+// the constancy walk, after conversions (08/17) and struct literals (09/09), and on the
+// same grounds: a `const` is inlined as its value *expression*, and these lower to an
+// intrinsic or a libm call over literal operands that the optimizer folds to the number.
+//
+// What it buys is a derivation written as its definition instead of as digits, which is
+// the one failure a hand-copied constant has.
+func TestConst_FloatBuiltinOfAConstantIsConstant(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `const ROOT = 2.0.sqrt()
+const E = 1.0.exp()
+const KILO = 2.0.pow(10.0)
+const ANGLE = 1.0.atan2(0.0)
+const FLOOR = 2.7.floor()`, false))
+}
+
+// The motivating case, and the one that reads as a definition rather than a number.
+func TestConst_GoldenRatioAsItsClosedForm(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `const PHI = (1 + 5.0.sqrt()) / 2`, false))
+}
+
+// Constant in, constant out: a builtin over another `const`, and a `const` over that.
+func TestConst_FloatBuiltinChainsThroughConsts(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `const TWO = 2.0
+const ROOT = TWO.sqrt()
+const DOUBLED = ROOT * 2.0
+const BACK = DOUBLED.log()`, false))
+}
+
+// The receiver is walked rather than accepted outright, so a runtime receiver is still
+// refused — and the offender named is the variable, not the call.
+func TestConst_FloatBuiltinOnAVariableNamesTheVariable(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 3.0
+const A = x.sqrt()`, false)
+	assertErrorsAre(t, res,
+		"`const` initializer must be a compile-time constant: variable `x` is not constant")
+}
+
+// So is each argument of the two that take one.
+func TestConst_FloatBuiltinArgumentMustBeConstant(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y = 3.0
+const A = 2.0.pow(y)`, false)
+	assertErrorsAre(t, res,
+		"`const` initializer must be a compile-time constant: variable `y` is not constant")
+}
+
+// A method that is not a float builtin keeps the ordinary message — the arm is the three
+// builtin registries, not "any method call on a constant".
+func TestConst_NonBuiltinMethodKeepsItsMessage(t *testing.T) {
+	res := parseCollectAndCheck(t, `const A = "hi".len()`, false)
+	assertErrorsAre(t, res,
+		"`const` initializer must be a compile-time constant: a function call is not constant")
+}
+
+// **A declaration of the name shadows the builtin, and the const is then not constant.**
+// Member dispatch consults the compiler's builtins *last*, so a trait method named `sqrt`
+// implemented for `f64` wins — and a `const` holding a call to that inlines a real call at
+// every use site, once per site, effects included.
+//
+// The constancy walk cannot see this: it runs before the initializer is inferred, so it
+// matches the method *name* and nothing more. Catching it is `verifyConstBuiltinCalls`, a
+// sweep at the end of the pass that asks the method table what each accepted call actually
+// resolved to. A name-only check accepts this silently, which is the whole reason the sweep
+// exists (rule 9: a name does not identify a declaration).
+func TestConst_ADeclaredMethodShadowingABuiltinIsNotConstant(t *testing.T) {
+	res := parseCollectAndCheck(t, `trait Rooty { sqrt: (Self) -> Self }
+impl Rooty for f64 { sqrt = pure (self) => self * 2.0 }
+const A = 9.0.sqrt()`, false)
+	assertErrorsAre(t, res,
+		"`const` initializer must be a compile-time constant: `sqrt` is a declared method, not the compiler's float builtin, so it is a function call")
+}
+
+// **One mistake, one diagnostic.** `5.sqrt()` is the likeliest way to get this wrong — the
+// float builtins are float-only and a bare `5` promotes to i64 — and it already has an
+// error naming the real problem. The sweep passes over a call that resolved to nothing at
+// all rather than adding a second message that would blame a declared method where none
+// exists.
+func TestConst_AnUnresolvedBuiltinCallReportsOnlyTheTypeError(t *testing.T) {
+	res := parseCollectAndCheck(t, `const A = 5.sqrt()`, false)
+	assertErrorsAre(t, res, `i64 has no method "sqrt"`)
+}

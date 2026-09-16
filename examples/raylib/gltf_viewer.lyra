@@ -43,9 +43,11 @@ module main
 //! largest extent, and its transform moves the centre to the origin, turns it, and scales
 //! it to a fixed size — so the camera never moves.
 //!
-//! **The turning is matrices, not trigonometry.** Lyra has no `sin` or `cos`; raylib's
-//! raymath does, and `matrix_rotate_y`/`matrix_rotate_x` are the binding's. The transform
-//! is composed with `matrix_multiply`, which applies its first argument and then its second.
+//! **The turning is matrices, not trigonometry.** Lyra has `sin` and `cos` (09/15), but a
+//! rotation composed by hand from them is a matrix a reader has to check; raymath's
+//! `matrix_rotate_y`/`matrix_rotate_x` are the binding's and are already right. The
+//! transform is composed with `matrix_multiply`, which applies its first argument and then
+//! its second.
 //!
 //! `--check` opens the model under a hidden window and reports what is in it — meshes,
 //! materials, size, and every animation clip — then steps each clip and checks that the

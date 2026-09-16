@@ -329,8 +329,9 @@ let ring = pure (n: i64) -> Vector3 => {
   vec3(p.0, 1.0, p.1)
 }
 
-/// Eleven (x, z) pairs, 360/11 degrees apart at radius 8. Written out because Lyra has
-/// no `cos`/`sin`.
+/// Eleven (x, z) pairs, 360/11 degrees apart at radius 8. Written out rather than computed
+/// with `cos`/`sin` (which exist as of 09/15): a table of eleven constants is checkable at a
+/// glance, and this example is about models, not about angles.
 const RING: [11](f32, f32) = #[
   (8.00, 0.00), (6.73, 4.32), (3.32, 7.28), (0.0 - 1.14, 7.92), (0.0 - 5.24, 6.05),
   (0.0 - 7.68, 2.25), (0.0 - 7.68, 0.0 - 2.25), (0.0 - 5.24, 0.0 - 6.05),

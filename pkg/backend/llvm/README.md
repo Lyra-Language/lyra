@@ -439,9 +439,17 @@ destructuring form uses it, so a pattern means the same thing everywhere.
 (rounds to nearest). Binary op lowering dispatches on the lowered operand's LLVM type.
 
 `floor`/`ceil`/`round` (`rounding.go`, via `lowerBuiltinMethodCall`) call
-`llvm.<op>.<width>` (cached in `l.roundingIntrinsics`) then `fptosi` to i64, with a range
-and NaN check first (`lyra_panic_float_to_int`) — `fptosi` out of range is poison. `log`,
-`log2`, `log10`, `sqrt` answer the receiver's width.
+`llvm.<op>.<width>` (cached in `l.floatMathFuncs`) then `fptosi` to i64, with a range
+and NaN check first (`lyra_panic_float_to_int`) — `fptosi` out of range is poison.
+
+The float-math builtins share that lowering and answer the **receiver's width** instead:
+`log`, `log2`, `log10`, `sqrt`, `exp`, `exp2`, `sin`, `cos` as `llvm.<op>.<width>`, and
+`pow` as `llvm.pow.<width>`. `tan`, `asin`, `acos`, `atan` and `atan2` are emitted as
+**direct libm calls** — their LLVM intrinsics only arrived in 19/20 and the emitted IR must
+parse under the clang-15 the ASan container pins — which is also why `lyrac build` links
+`-lm`. libm has no half-precision entry points, so an `f16` receiver on that path is widened
+to `f32` and rounded back (`emitLibmMathCall`). Which list a name is in is private to
+`rounding.go`; raising the clang floor moves names between them and changes nothing else.
 
 ## Strings
 

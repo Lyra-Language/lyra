@@ -151,4 +151,8 @@ func (tc *TypeChecker) checkRange(program *ast.Program, start, end int) {
 		tc.checkUnpinnedNullPtrs(program.Statements[i])
 		tc.checkUninferableConstructions(program.Statements[i])
 	}
+	// Last, and for the same reason as the loop above: a `const`'s float-builtin call was
+	// accepted by name on the way down, and whether that name reached the compiler's
+	// builtin or a declaration shadowing it is only settled once everything is inferred.
+	tc.verifyConstBuiltinCalls()
 }

@@ -1,0 +1,91 @@
+module std.math
+//! Functions on real numbers, built on the float builtins.
+
+// **What is here is what the builtins made writable, and nothing that they are.** A
+// logarithm, a root, a sine and a power are compiler builtins because none of them is
+// expressible in this language — no series, no lookup table, and no FFI to reach libm
+// (`LANGUAGE.md` §7, "Float math"). Everything below *is* expressible once those exist, so
+// it is ordinary Lyra: that is the `parse_i64` rule rather than the `random_seed` one, and
+// a wrapper here that only forwarded to a builtin would be a name to keep in step for no
+// gain. Call `x.sin()` directly.
+//
+// **`f64` only, and that is a missing trait rather than a decision.** Each of these wants
+// to be generic over the float widths, and the bound that would say so does not exist —
+// the same gap `complex.lyra` records at its head. `f64` is the width these are reached at
+// in practice; a caller at another width converts, and gets to see the conversion.
+//
+// **Each takes `self` first**, so it reads as a method — `angle.to_radians()`, not
+// `to_radians(angle)` — matching the builtins it sits beside.
+
+/// Degrees to radians, the unit every function here and every trig builtin takes.
+///
+/// # Examples
+///
+/// ```
+/// let right_angle = 90.0.to_radians()   // HALF_PI
+/// ```
+pub let to_radians = pure noalloc (self: f64) -> f64 => self * (PI / 180.0)
+
+/// Radians to degrees, the inverse of `to_radians`.
+pub let to_degrees = pure noalloc (self: f64) -> f64 => self * (180.0 / PI)
+
+/// The hyperbolic sine, `(eˣ - e⁻ˣ)/2`.
+pub let sinh = pure noalloc (self: f64) -> f64 => (self.exp() - (-self).exp()) / 2.0
+
+/// The hyperbolic cosine, `(eˣ + e⁻ˣ)/2`.
+pub let cosh = pure noalloc (self: f64) -> f64 => (self.exp() + (-self).exp()) / 2.0
+
+/// The hyperbolic tangent, `sinh/cosh` — an S-curve from -1 to 1.
+///
+/// **Saturated rather than computed past ±20.** The quotient's two halves both overflow to
+/// infinity well before the answer stops being 1, and `inf/inf` is a NaN — so the naive
+/// formula returns *no answer at all* exactly where the answer is least in doubt. At 20 the
+/// true value differs from 1 by about 4e-18, which is below what an `f64` can hold apart
+/// from 1, so the cutoff costs no precision and buys a total function.
+pub let tanh = pure noalloc (self: f64) -> f64 =>
+  if self > 20.0 {
+    1.0
+  } else if self < -20.0 {
+    -1.0
+  } else {
+    let e2 = (2.0 * self).exp()
+    (e2 - 1.0) / (e2 + 1.0)
+  }
+
+/// The length of the hypotenuse with legs `self` and `other` — `√(x² + y²)` without the
+/// overflow.
+///
+/// **Scaled by the larger leg rather than summed directly.** `x * x` overflows to infinity
+/// for any `x` past about 1.3e154, so the naive formula answers infinity for a triangle
+/// whose hypotenuse an `f64` represents perfectly well; dividing both legs by the larger
+/// first keeps the squares inside `[0, 1]` whatever the magnitude. The scaling divides by
+/// that larger leg, so the branch is `> 0.0` — which also lets a NaN leg fall to the `0.0`
+/// arm rather than dividing by it.
+///
+/// # Examples
+///
+/// ```
+/// let d = 3.0.hypot(4.0)   // 5.0
+/// ```
+pub let hypot = pure noalloc (self: f64, other: f64) -> f64 => {
+  let larger = if self.abs() > other.abs() { self.abs() } else { other.abs() }
+  if larger > 0.0 {
+    let a = self / larger
+    let b = other / larger
+    larger * (a * a + b * b).sqrt()
+  } else {
+    0.0
+  }
+}
+
+/// The real cube root, defined for negative values as well.
+///
+/// **The sign is taken out and put back**, because `pow` is not defined for a negative base
+/// and a fractional exponent — `(-8.0).pow(1.0 / 3.0)` is a NaN, where the real cube root of
+/// -8 is -2. A cube root is the odd root that most often arrives with a negative argument
+/// (a depressed cubic's discriminant), so answering NaN there would make the obvious
+/// spelling the wrong one.
+pub let cbrt = pure noalloc (self: f64) -> f64 => {
+  let root = self.abs().pow(1.0 / 3.0)
+  if self.is_negative() { -root } else { root }
+}

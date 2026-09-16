@@ -96,21 +96,65 @@ var floatRoundingOps = map[string]bool{
 // lookup table, and no FFI to reach libm — so they have to be primitive. Parsing and
 // formatting are arithmetic and live in the prelude; these cannot.
 //
-// **One map, because they are one question.** Each is `llvm.<name>.<width>` and each
-// returns the receiver's width, so a second table keyed the same way is the drift hazard
-// 8 keeps cataloguing. Adding `exp` or `sin` later is a line here and a line in the
-// backend's twin, and nothing else.
+// **One map, because they are one question.** Each returns the receiver's width, so a
+// second table keyed the same way is the drift hazard 8 keeps cataloguing. Adding one is
+// a line here and a line in the backend's twin, and nothing else — which is what the
+// 09/15 batch (the trig family, `exp` and `exp2`) cost.
 //
 // The three logarithms ship together because smooth mandelbrot coloring is
 // `n + 1 - log2(log(|z|))` — `log2` written as `x.log() / 2.0.log()` costs an extra call
 // and loses accuracy at exactly the magnitudes shading depends on. Having the trio is
 // also what makes the bare name's base unambiguous by contrast: `log` is the one with no
-// subscript, which is `e`.
+// subscript, which is `e`. `exp` and `exp2` are their inverses and are named to match.
+//
+// **The trig functions are the gap the examples kept apologizing for**: four of them say
+// in a comment that the language "has `sqrt` and the logarithms and no `sin`", and each
+// works around it with a square wave or a polynomial where a sine was meant. A rotation,
+// a circle, an easing curve and an oscillator are all one call, and none of them is
+// expressible here.
+//
+// **The inverses are `asin`/`acos`/`atan` rather than `arcsin`** — the libm spelling,
+// which is also C's, Rust's, Go's and Python's. `atan2` is not here because it takes an
+// argument (floatBinaryMathOps).
 var floatUnaryMathOps = map[string]bool{
 	"log":   true,
 	"log2":  true,
 	"log10": true,
 	"sqrt":  true,
+	"exp":   true,
+	"exp2":  true,
+	"sin":   true,
+	"cos":   true,
+	"tan":   true,
+	"asin":  true,
+	"acos":  true,
+	"atan":  true,
+}
+
+// floatBinaryMathOps are the float-math builtins that take **one argument**: `x.pow(y)`
+// and `x.atan2(y)`. Both operands and the result are the receiver's width, so they are
+// the unary family's shape with a second float — `(self: T, other: T) -> T`, the same
+// signature the integer overflow builtins have.
+//
+// **A separate map because the *arity* differs, not the semantics.** The backend's
+// dispatcher reads the argument count off the name, and merging these into
+// floatUnaryMathOps would make a zero-argument `x.pow()` type-check and then fail in the
+// backend, which is rule 5 backwards.
+//
+// **`pow` is not `x ** y`, and there is no such operator.** Exponentiation binds in a
+// direction (right) that nothing else in this language does, and its integer case has an
+// overflow story the float case does not, so a method keeps one name for one operation
+// instead of an operator that would have to mean two things. `2.0.pow(10.0)` also refuses
+// to be confused with `2 ^ 10`, which in this language is nothing at all.
+//
+// **`atan2` takes the *x* coordinate**, so `y.atan2(x)` is the angle of `(x, y)` — the
+// receiver is the first argument of C's `atan2(y, x)`, which keeps the order the name is
+// documented in everywhere. It is the one of the pair that cannot be written as
+// `(y / x).atan()`: the quotient throws away which quadrant the point was in, and divides
+// by zero on the vertical axis.
+var floatBinaryMathOps = map[string]bool{
+	"pow":   true,
+	"atan2": true,
 }
 
 // builtinMethodSignature returns the LambdaType of the builtin method name for a
@@ -651,6 +695,17 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 		// The receiver's own width, not a fixed one: `f32.log()` is an f32.
 		return &types.LambdaType{
 			Parameters: nil,
+			ReturnType: types.ReturnType{Type: recv},
+		}, true
+	}
+	if floatBinaryMathOps[name] {
+		if !isAnyConcreteFloat(p.Name) {
+			return nil, false
+		}
+		// One float in, one float out, both the receiver's own width — so an f32
+		// receiver takes an f32 argument, and an untyped float literal narrows to it.
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{{Type: recv}},
 			ReturnType: types.ReturnType{Type: recv},
 		}, true
 	}

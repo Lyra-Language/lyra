@@ -321,9 +321,9 @@ let label_at = (text: string, at: Vector3, camera: Camera3D) -> void => {
 
 /// Slot `n` of twelve around a circle of radius 9, at height `y`.
 ///
-/// The coordinates are written out rather than computed: Lyra has no `cos`/`sin`, and a
-/// hand-rolled series in an example about *shapes* would be the thing a reader had to
-/// check before believing the picture.
+/// The coordinates are written out rather than computed with `cos`/`sin` (which exist as
+/// of 09/15): in an example about *shapes* a table of twelve constants is one less thing a
+/// reader has to check before believing the picture.
 let ring = pure (n: i64, y: f32) -> Vector3 => {
   let p = RING[n %% RING.len()]
   vec3(p.0, y, p.1)

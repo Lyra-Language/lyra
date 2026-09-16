@@ -25,6 +25,13 @@ type TypeChecker struct {
 	paramTypes   map[string]types.Type         // non-nil only while checking a function body
 	paramMods    map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
 	patternBound map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
+	// constBuiltinCalls holds the float-builtin method calls that a `const` initializer's
+	// constancy walk accepted, pending the verification sweep at the end of the pass
+	// (verifyConstBuiltinCalls, typechecker_const.go). The walk runs before the
+	// initializer is inferred, so it can only match the method *name*; whether the name
+	// reached the compiler's builtin or a declaration that shadows it is the method
+	// table's answer, and the table has no entry until inference has run.
+	constBuiltinCalls []*ast.FunctionCallExpr
 	// walkingArm is set while checkNestedArmPattern walks a match arm, where a capitalized
 	// name is a pattern the author meant to match rather than a binding they misspelled.
 	walkingArm    bool

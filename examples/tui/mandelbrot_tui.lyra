@@ -353,8 +353,8 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> i64 => {
 /// A hue at full saturation and the given value, packed.
 ///
 /// Plain HSV with S = 1: each sector holds one channel at full, ramps a second up or down,
-/// and leaves the third at zero. Six linear sectors, no trigonometry — which is just as
-/// well, since the language has `log` and `sqrt` and no `cos`.
+/// and leaves the third at zero. Six linear sectors, no trigonometry — which is what HSV
+/// actually is; `cos` exists (09/15) and a hue ramp has no use for it.
 let hue_rgb = pure (hue: f64, value: f64) -> i64 => {
   let sector = hue.floor()
   let f = hue - f64(sector)

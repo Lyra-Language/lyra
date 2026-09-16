@@ -218,9 +218,10 @@ let play = (sound: Maybe<Sound>) -> void =>
 
 /// A decaying square-wave blip, as 8-bit mono WAV bytes at 22050 Hz.
 ///
-/// Square rather than sine because Lyra has `sqrt` and the logarithms and no `sin`, and a
-/// square wave is a comparison per sample. The linear decay is what keeps it a *blip*
-/// rather than a beep.
+/// Square rather than sine because a square wave is a comparison per sample where a sine
+/// is a libm call, and at 22050 Hz through an 8-bit channel the two blips sound the same.
+/// (`sin` has existed since 09/15; this predates it and does not want it.) The linear decay
+/// is what keeps it a *blip* rather than a beep.
 let tone_wav = pure (freq: i64, ms: i64) -> []u8 => {
   let rate = 22050
   let frames = rate * ms / 1000

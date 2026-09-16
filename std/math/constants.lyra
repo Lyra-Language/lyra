@@ -1,0 +1,84 @@
+module std.math
+//! The mathematical constants.
+
+// **These are `f64`, and a single-precision program converts: `f32(PI)`.** An unannotated
+// binding takes the default width, so leaving the annotation off does not make a `const`
+// polymorphic the way a *written* literal is — `let r: f32 = PI` is `lyra-E001`, where
+// `let r: f32 = 3.14159` is fine. The annotation is left off anyway because adding it
+// would say the same thing twice; what settles the width is the rule, not the spelling.
+//
+// The conversion is exact in the only sense that matters: `f32(PI)` rounds the `f64` to
+// single precision, and that is the same value `f32`'s own nearest-to-π is, because π is
+// nowhere near the halfway point between two singles. It costs nothing at run time either
+// — both operands fold.
+//
+// **Most are written out; two are derived, and the line between them is `sqrt`.** A `const`
+// initializer may call the float builtins, so `SQRT_2` and `PHI` are computed rather than
+// typed out — which removes the one failure a table of digits has, a transcription typo
+// that nothing checks.
+//
+// The rest stay literals **because deriving them would make the value depend on the machine
+// that built the compiler.** LLVM folds a libm call at compile time by calling the *host's*
+// libm, and no mainstream libm is correctly rounded for `exp` or `log` — so `1.0.exp()` can
+// differ in the last place between a native build and a cross-compile. `sqrt` is the
+// exception, and not by luck: IEEE 754 *requires* it correctly rounded, so every
+// implementation returns the same bits. That is why the two derived constants are exactly
+// the two reachable through `sqrt` alone, and why `E` and the logarithms are not.
+//
+// (Checked: the derived values are bit-identical to the literals they replaced.)
+//
+// `TAU` and `HALF_PI` stay literals for a different and duller reason — doubling and halving
+// are exact in binary, so `2.0 * PI` would agree, and the literal is the one a reader can
+// check against a table. The digits are the correctly-rounded binary64 values.
+
+/// The ratio of a circle's circumference to its diameter, **π**.
+pub const PI = 3.141592653589793
+
+/// A full turn in radians, **τ = 2π**.
+///
+/// The constant to reach for when an angle is a *fraction of a turn*, which is most of the
+/// time: a quarter turn is `TAU / 4.0` where the same angle spelled in `PI` is `PI / 2.0`,
+/// and the first says what it means. `PI` is still the right one for a formula copied from
+/// a source that is written in it.
+pub const TAU = 6.283185307179586
+
+/// A half turn in radians, **π/2**.
+///
+/// Spelled out because it is the single most common angle there is — the argument that
+/// takes `sin` to 1 and `cos` to 0, and the value `atan` approaches — and because
+/// `PI / 2.0` in a hot loop is a division a reader has to check rather than a number.
+pub const HALF_PI = 1.5707963267948966
+
+/// The base of the natural logarithm, **e**.
+///
+/// `x.exp()` is the builtin, and is what to use for a power of `e`: `E.pow(x)` rounds
+/// twice where `exp` rounds once.
+pub const E = 2.718281828459045
+
+/// **√2**, the diagonal of the unit square.
+pub const SQRT_2 = 2.0.sqrt()
+
+/// **ln 2** — the natural logarithm of 2, which converts a binary exponent to a natural one.
+pub const LN_2 = 0.6931471805599453
+
+/// **ln 10** — the natural logarithm of 10, which converts a decimal exponent to a natural one.
+pub const LN_10 = 2.302585092994046
+
+/// **log₂ e**, the reciprocal of `LN_2`: `x.log() * LOG2_E` is `x.log2()`.
+///
+/// The builtin is the better answer where one exists — it rounds once — but this is what a
+/// change of base costs when the base is not one of the three that ship.
+pub const LOG2_E = 1.4426950408889634
+
+/// **log₁₀ e**, the reciprocal of `LN_10`.
+pub const LOG10_E = 0.4342944819032518
+
+/// The golden ratio, **φ = (1 + √5)/2**.
+///
+/// The positive root of `x² = x + 1`, and the limit of the ratio of consecutive Fibonacci
+/// numbers — which is what it is usually reached for.
+///
+/// Written as the closed form it is defined by rather than as digits, which is what the
+/// `const` float builtins buy: the expression is checkable against the definition, where a
+/// digit string is only checkable against another digit string.
+pub const PHI = (1 + 5.0.sqrt()) / 2

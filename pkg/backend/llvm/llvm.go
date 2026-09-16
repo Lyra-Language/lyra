@@ -177,7 +177,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		globals:            map[string]*ir.Global{},
 		structTypes:        map[string]*lltypes.StructType{},
 		traitMethods:       map[string]*ir.Func{},
-		roundingIntrinsics: map[string]*ir.Func{},
+		floatMathFuncs:     map[string]*ir.Func{},
 		overflowIntrinsics: map[string]*ir.Func{},
 		panics:             map[string]*ir.Func{},
 		dropFns:            map[string]*ir.Func{},
@@ -370,9 +370,11 @@ type lowerer struct {
 	newlineByte     *ir.Global              // interned "\n" byte, for println's trailing newline
 	cStrings        map[string]*ir.Global   // interned NUL-terminated C strings (snprintf formats, bool text)
 
-	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
-	// intrinsics (rounding.go), keyed by full intrinsic name.
-	roundingIntrinsics map[string]*ir.Func
+	// floatMathFuncs caches the lazily-declared callees of the float builtins
+	// (rounding.go), keyed by symbol: the llvm.{floor,ceil,round,log,sqrt,sin,…}.<width>
+	// intrinsics, and the libm entry points (`tan`, `atan2f`) for the ones with no
+	// intrinsic old enough to emit.
+	floatMathFuncs map[string]*ir.Func
 
 	// Checked-arithmetic traps (trap.go): overflowIntrinsics caches the lazily-
 	// declared llvm.{s,u}{add,sub,mul}.with.overflow.iN and .sat.iN intrinsics by
