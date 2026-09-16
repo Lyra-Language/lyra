@@ -2,7 +2,7 @@ package typechecker_test
 
 import "testing"
 
-// The context settles what the arguments leave open (09/16). A variable only a lambda
+// The context settles what the arguments leave open (09/15). A variable only a lambda
 // literal's return reaches used to be bound to the literal's own default; now the call's
 // context binds it first, and the lambda is elaborated against the settled type.
 func TestContextSettlesLambdaSolvedVariable(t *testing.T) {
@@ -45,7 +45,7 @@ let big = (b: Box<bool>) -> Box<u8> => b.map((x) => 300)`, false), "300")
 }
 
 // A constructor's payload sees its slot's type from the construction's own context
-// (09/16): `Err(Zero::zero())` under `Result<string, string>` infers the payload wanting a
+// (09/15): `Err(Zero::zero())` under `Result<string, string>` infers the payload wanting a
 // `string`, which is what a receiver-less call or a generic callee there needs.
 func TestConstructorPayloadTakesContext(t *testing.T) {
 	t.Parallel()

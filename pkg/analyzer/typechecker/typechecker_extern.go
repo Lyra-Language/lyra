@@ -135,7 +135,7 @@ func isFFISafe(t types.Type) bool {
 	case types.RawPointerType:
 		return true
 	case types.PrimitiveType:
-		// `bool` crosses as C's `_Bool` (09/16): the backend declares it `i1 zeroext`, at
+		// `bool` crosses as C's `_Bool` (09/15): the backend declares it `i1 zeroext`, at
 		// the declaration and the call, which is the spelling clang gives `_Bool` on every
 		// target this compiler reaches — so the two agree about the register. It was refused
 		// while the extern lowering carried no attributes, when a bare `i1` would have

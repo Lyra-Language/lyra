@@ -15,7 +15,7 @@ import (
 // one". The prelude, whose names you never asked for, had always taken the soft path, so
 // the explicit act was punished and the implicit one forgiven.
 //
-// **The import is selective, and on 09/16 that became the point.** It was `import util.seq`
+// **The import is selective, and on 09/15 that became the point.** It was `import util.seq`
 // when this was written, back when every `pub` declaration sat in one global scope on every
 // module's parent chain — a namespace import admitted its module's bare names along with
 // the namespace. `ImportScopeFor` ended that, and the warning is now what the import
@@ -39,7 +39,7 @@ let main = () -> u8 => u8(map(1))`,
 // **A namespace import admits no bare name, so it shadows none** — `import lib` binds
 // `lib.x` and nothing else (LANGUAGE.md §6).
 //
-// Until 09/16 this warned, because the check asked whether the imported module *exports*
+// Until 09/15 this warned, because the check asked whether the imported module *exports*
 // the name rather than whether this module imported it. That made `lyra-W016` fire on
 // names nobody had asked for: `import std.io.{ write_file }` beside a local `read_file`
 // reported that `read_file` "shadows the read_file imported from std.io". It also made the

@@ -49,12 +49,12 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 Package management, versioning and separate compilation are out of scope by decision.
 
 - **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** The round-trip
-  baseline (09/16) and the indentation rule (09/16, COMPLETED.md) are in: `--check`/`-w`
-  over every file in the repo, idempotent, and the repo is formatted by it (09/17: 18
+  baseline (09/15) and the indentation rule (09/15, COMPLETED.md) are in: `--check`/`-w`
+  over every file in the repo, idempotent, and the repo is formatted by it (09/15: 18
   files, one convention for a wrapped signature). `lyrafmt --check` is clean and could be
-  a CI step, and **both editors format through it** (09/17: `lyra-lsp` runs `lyrafmt -`;
+  a CI step, and **both editors format through it** (09/15: `lyra-lsp` runs `lyrafmt -`;
   `build.sh` builds it beside the server). Trailing whitespace, blank-line runs and token
-  spacing landed 09/17, spacing made canonical the same day. Next
+  spacing landed 09/15, spacing made canonical the same day. Next
   rules: a `{` that is not followed by a newline is an inline block and stays one (no rule
   yet says when a line should *break*, which is where a formatter becomes opinionated);
   then a scope stack (expected to hit `[]T` aliasing) and a directory walk (a missing
@@ -239,7 +239,7 @@ scratch buffer sized at run time has nowhere to go today.
 
 ## Compile-time function evaluation
 
-**[IDEA]** Nothing here evaluates anything, and that is still true after 09/16. What a
+**[IDEA]** Nothing here evaluates anything, and that is still true after 09/15. What a
 `const` accepts has widened three times — conversions, struct literals, and the **float
 builtins** (`const PHI = (1 + 5.0.sqrt()) / 2`) — but the walk behind it is structural, and
 a `const` is inlined as its value *expression* at every use site and lowered like any other

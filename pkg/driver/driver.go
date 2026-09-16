@@ -498,7 +498,7 @@ func preludeOf(units []modules.Unit) string {
 // **Neither message offers a qualifier, and the import one used to.** It said "reach the
 // imported one as `io.read_file`", which never worked: only a bare `import lib` binds a
 // namespace, and this warning now fires only for a *selective* import, which binds none
-// (before the 09/16 fix it also fired for names nobody had imported, where the advice was
+// (before the 09/15 fix it also fired for names nobody had imported, where the advice was
 // doubly wrong). What does work is renaming the declaration, or bringing the import in
 // under another name — the same escape the import-clash error offers.
 func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {

@@ -152,7 +152,7 @@ func TestFormatting_WithoutLyrafmt(t *testing.T) {
 // The layout the extensions tell people to use: `lyra-lsp` on PATH is a **symlink** into
 // the build directory, and `lyrafmt` sits beside the real binary. Looking beside the link
 // finds nothing, which is how formatting came to do nothing in Zed while working when the
-// server was run from `build/` directly (09/17).
+// server was run from `build/` directly (09/15).
 func TestLyrafmtBeside_ResolvesASymlinkedServer(t *testing.T) {
 	build := t.TempDir()
 	bin := t.TempDir()

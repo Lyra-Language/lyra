@@ -104,7 +104,7 @@ let main = () -> void => unsafe {
 `, wantNarrow)
 }
 
-// **`bool`.** A Lyra `bool` crosses as C's `_Bool` (09/16): `i1 zeroext` on the declaration
+// **`bool`.** A Lyra `bool` crosses as C's `_Bool` (09/15): `i1 zeroext` on the declaration
 // and the call, which is what clang gives `_Bool` on both targets. Three booleans computed
 // at run time are counted by C, and C's own `_Bool` comes back to drive an `if`.
 func TestExec_FFIFixture_Bool(t *testing.T) {

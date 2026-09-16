@@ -161,7 +161,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	}
 	// **The output must still be a program.** A formatter that rewrites a gap holding a
 	// hidden token produces something that reads almost right and no longer parses, which
-	// is how `1.0e30` became `e30` and a raw string lost its opening backtick (09/17).
+	// is how `1.0e30` became `e30` and a raw string lost its opening backtick (09/15).
 	if _, stderr, code := captureRun(t, "check", formatted); code != 0 {
 		t.Errorf("the formatted file no longer checks (exit %d):\n%s", code, stderr)
 	}

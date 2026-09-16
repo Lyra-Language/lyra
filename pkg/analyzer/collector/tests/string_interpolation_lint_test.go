@@ -5,7 +5,7 @@ import "testing"
 // `${` has no escape in an ordinary string, so a program meaning the two characters
 // literally opens an interpolation that swallows source to the next `}` — declarations
 // included — and still parses. The report was then an undefined name far below; it is
-// lyra-E080 at the `${` itself (09/17).
+// lyra-E080 at the `${` itself (09/15).
 func TestCollector_InterpolationSpanningLinesIsRefused(t *testing.T) {
 	// The shape that cost an hour in lyrafmt: the `${` swallows to the `}` in the *next*
 	// declaration's string, so `closes` is never declared and the file type-checks with

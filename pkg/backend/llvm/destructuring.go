@@ -181,7 +181,7 @@ func (l *lowerer) ownDestructuredNames(block *ir.Block, pat ast.Pattern, t types
 	case *ast.DataPattern:
 		// `let Some(s) = read_file(p) else { … }`: the payload names outlive the
 		// statement exactly as a tuple's do, and the scrutinee is very often a temporary
-		// released at its end. Missing until 09/16, when lyrafmt's first line read a
+		// released at its end. Missing until 09/15, when lyrafmt's first line read a
 		// freed string — the tuple and struct arms were here, the constructor arm was
 		// not, and a match arm's borrow (right there) was silently what a `let` got.
 		dt, ok := l.resolveDataType(t)

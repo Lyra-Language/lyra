@@ -725,7 +725,7 @@ const (
 	// same division of labour `read_line` and `parse_i64` have, one layer up.
 	//
 	// **`bool` was excluded on an ABI ground rather than a representational one** — Lyra's
-	// lowers to `i1` and C's `_Bool` is a byte — until 09/16, when the extern lowering
+	// lowers to `i1` and C's `_Bool` is a byte — until 09/15, when the extern lowering
 	// began to declare it `i1 zeroext` at the declaration and the call, which is clang's
 	// own spelling for `_Bool`. It stays refused in a callback, whose thunk carries no
 	// attributes. A newtype is looked *through*, since it is nominal only.

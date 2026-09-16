@@ -276,7 +276,7 @@ let main = () -> void => {
 	}
 }
 
-// The free-call spelling, end to end (09/16). `sqrt(5.0)` is desugared onto `5.0.sqrt()` in
+// The free-call spelling, end to end (09/15). `sqrt(5.0)` is desugared onto `5.0.sqrt()` in
 // the typechecker, so the backend has no new path — which is the point of desugaring rather
 // than resolving the free form in place, and what this pins: the values come out identical
 // to the method spelling, including through `std.math`, a `const`, and a `pure noalloc`

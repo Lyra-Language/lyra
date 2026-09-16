@@ -2,7 +2,7 @@ package typechecker_test
 
 import "testing"
 
-// `bool` crosses an extern boundary as C's `_Bool` (09/16); in a callback's signature it
+// `bool` crosses an extern boundary as C's `_Bool` (09/15); in a callback's signature it
 // stays refused, since the thunk C calls carries no ABI attributes.
 func TestExternBool(t *testing.T) {
 	t.Parallel()

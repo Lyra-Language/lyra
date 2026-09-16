@@ -59,7 +59,7 @@
 // gap between two leaves with nothing naming them. Every rule above therefore runs only on
 // a gap that is entirely spaces, tabs and newlines; anything else is reproduced exactly,
 // indentation and all. Treating a gap as whitespace unconditionally deleted the opening
-// backtick of a raw string and turned `1.0e30` into `e30` (09/17).
+// backtick of a raw string and turned `1.0e30` into `e30` (09/15).
 //
 // Exit 0 when nothing is wrong (or, under `--check`, nothing would change), 1 otherwise,
 // 2 for usage.

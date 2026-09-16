@@ -65,7 +65,7 @@ func TestBuiltin_FloatMath_DoesNotWidenTheReceiver(t *testing.T) {
 	assertErrorsAre(t, res, "b: cannot assign f32 to f64")
 }
 
-// **The float builtins are callable as free functions too** (09/16): `sqrt(5.0)` as well as
+// **The float builtins are callable as free functions too** (09/15): `sqrt(5.0)` as well as
 // `5.0.sqrt()`.
 //
 // The registry is keyed by receiver and is reached only from member dispatch, so a bare

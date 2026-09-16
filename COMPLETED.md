@@ -9,157 +9,62 @@ Newest first.
 
 ## Dated log
 
-### 09/17/26 — spacing is canonical, and a gap is not always whitespace
+### 09/16/26 — `pub` on a local binding is refused
 
-Reported: the formatter left `a   +   b` alone. It did, by a rule written the day before —
-"insert what is required, remove what is forbidden, leave the rest" — chosen to protect the
-hand-aligned match arms in `examples/guess_game.lyra`. That was the wrong trade. A formatter
-exists so that two files with the same tokens read the same way, and one that preserves
-whatever spacing it finds cannot promise that; an alignment it cannot *produce* is not one
-it can undertake to keep. Spacing between two tokens on a line is now **one space or none**:
-none where forbidden, one where required, and otherwise one if anything was there and none
-if nothing was — so `a   +   b` closes up while `xs.len()` stays closed. The three aligned
-arms in guess_game lose their columns, which is the whole cost.
+`pub let n = 3` inside a function body parsed, collected, and was then ignored. `pub`
+exports a name from its module and a local binding has none to export, so the modifier asks
+for something the language cannot do — and nothing said so. The author states an intent, the
+compiler does nothing about it, and no diagnostic connects the two.
 
-**Collapsing the gap is what exposed the real bug**, and it was in the shipped version too.
-The formatter rebuilds a file from its leaves and the gaps between them, on the premise that
-a gap is whitespace. It is not: tree-sitter **hides** some tokens, and hidden bytes sit in
-the gaps with nothing naming them. A raw string's own backticks (`_raw_string_start` /
-`_raw_string_end`) are hidden, and so is a float's mantissa before its exponent — the only
-leaf in `1.0e30` is `float_exponent`, covering `e30`. Copying gaps verbatim had preserved
-them by accident. Collapsing turned `1.0e30` into `e30` and dropped the opening backtick of
-every raw string.
+**An error (`lyra-E081`) rather than a warning**, which is the easy call here: no program
+wants the modifier in that position and none changes meaning by deleting it, so refusing
+takes nothing away from anybody. All three spellings are covered, since `pub` means the same
+thing on `let`, `var` and `const`.
 
-The line-spanning path was worse and had already shipped: it emitted the gap only up to its
-last newline and then pushed fresh indentation, so anything *after* that newline — the
-backtick of a raw string beginning a line — was dropped outright. No file in the repo had
-one, so nothing caught it.
+**Top level is decided by identity, not by depth.** A module's own statements *are* its top
+level, so they go into a set and everything the walk finds outside it is local. A depth
+counter would have to agree with every construct that holds statements — a loop body, a
+match arm, an `unsafe` block, a lambda — which is per-construct bookkeeping for a question
+that has an exact answer available.
 
-The rule now is one line: **every rewrite runs only on a gap that is entirely whitespace**,
-and a gap holding anything else is reproduced exactly, indentation and all. The formatter
-gives up on such a line rather than guessing at it.
+Noticed while asking whether `const` should be global-only (it should not: it is the only
+way to get a *local* fold target, since `let` is refused as both a `#[v; n]` count and a
+range-pattern bound). But the gap was never about `const` — `pub let` and `pub var` in a
+body were ignored the same way.
 
-**The check that was missing is the one that matters**: that the formatted file still
-compiles. The suite compared bytes and fixed points, both of which a corrupted raw string
-passes. `TestExample_LyrafmtRoundTrips` now runs `lyrac check` over its own output, and
-carries the three hidden-token shapes — a float with an exponent, a raw string starting a
-line, and a `#`-delimited raw string holding a backtick. A parity sweep over the repo (every
-file's error count before and against the formatted text, in place) is zero to zero.
+### 09/16/26 — a name folded out of a fixed array's count is still used
 
-Applied: 16 lines in `std` and `bindings`, 12 in the examples.
+A `const` used only as `#[0; N]` warned as unused (`lyra-W003`), and an import used only
+there warned as `lyra-W004` — which breaks the program if believed, since the advice is to
+delete an import the array's size depends on.
 
-### 09/17/26 — formatting did nothing in Zed: the symlink
+**The walk was not at fault, which is where an hour could have gone.** `WalkExprChildren`
+reaches `ArrayRepeatExpr.Count` perfectly well. The typechecker rewrites it: `arrayRepeatCount`
+folds a `#[v; N]` count to a literal so the backend can read the size without threading a
+`const` resolver through it, and every pass that runs afterwards — the unused checks among
+them — sees a program that never mentions `N`. The dynamic spelling `[v; n]` keeps its
+identifier and was always fine, which is exactly the clue: the same name in the same
+position, warned about in one spelling and not the other.
 
-Reported the day it landed, and the server was innocent: launched from `build/lyra-lsp` it
-formatted correctly, and through Zed it returned no edits. Zed runs whatever `lyra-lsp`
-`PATH` finds, and the extensions' own advice is to put a **symlink** there
-(`ln -s …/build/lyra-lsp ~/.local/bin/lyra-lsp`, a symlink rather than a copy so `std/`
-stays beside the real binary). `os.Executable` hands back the link's own path on macOS, so
-"beside this executable" looked in `~/.local/bin`, found no `lyrafmt`, and the handler did
-what it does whenever the formatter is missing: nothing, quietly.
+**The debt already had a name.** `RangePattern.ConstBounds` preserves a range-pattern bound
+for this reason, and its own comment records this same diagnostic being hit once before, on
+an import used only as a bound. So `ArrayRepeatExpr` keeps `CountAsWritten`, and
+`ast.ConstRefNames` answers "which names did a fold erase from this node" for both
+constructs at once — replacing the four `RangeBoundNames` call sites across the two checkers
+rather than adding a second list beside it for them to drift apart on. It walks the whole
+expression, so `#[0; N * 2]` is covered too.
 
-`modules.StdRoot` carries a guard for exactly this, with a comment ending "the language
-server is normally reached through exactly such a symlink" — written for `std/` and not
-applied here. `lyrafmtBeside` now resolves the link before taking the directory, and tries
-the unresolved one too for the layout where both binaries are copied somewhere together.
+`CountAsWritten` is deliberately outside `WalkExprChildren` and `RewriteExpr`. It records
+what the count *was*, and the count is now `Count`; a walk reaching both would report one
+occurrence twice and hand a rewriter a node that no longer occupies a position.
 
-**The quiet failure is what made it a report rather than a message**, and that trade is
-still the right one — a formatter that mangles a buffer is worse than one that declines —
-but it means the *lookup* has to be right, because nothing will say when it is not. The
-regression test builds the reported layout (a symlink on `PATH`, the formatter beside the
-real binary) and asserts the formatter is found through it; the end-to-end check was an LSP
-handshake against the installed symlink, which is the only thing that would have caught
-this before shipping.
+**The regression tests are in `pkg/driver` and `pkg/modules`, and have to be.** The
+`unused_*` harnesses in `pkg/analyzer/checker` stop at the collector, where the count is
+still an identifier — a test written there passes whether the bug is present or not. That is
+recorded in the test comments, because "this belongs beside the pass it tests" is exactly
+the tidying that would silently un-test it.
 
-### 09/17/26 — both editors format, through one formatter
-
-`Format Document` works in VS Code and in Zed, and **neither extension has a line of code
-about it**. `lyra-lsp` implements `textDocument/formatting` by piping the buffer through
-`lyrafmt -`; both editors already route formatting to the language server, so adding the
-handler was the whole integration.
-
-**The alternative was a Go formatter beside the Lyra one**, and it is the one thing this
-could not afford. lyrafmt's rules are ~250 lines whose answers are pinned by a test over
-every file in the repo; a second implementation would be two passes deciding one question,
-free to disagree the first day either changed — the drift this project refuses everywhere
-it has two passes deciding anything. So the server shells out, and lyrafmt stops being a
-probe that is merely *run* and becomes one that is *used*.
-
-The cost is stated rather than hidden: lyrafmt links the tree-sitter runtime and the
-grammar, so a machine that cannot build it has no formatting. Every failure — no binary, a
-syntax error (the normal state of a buffer being typed into), a timeout — answers with **no
-edits**, never an error dialog and never a partial rewrite. `build.sh` now builds lyrafmt
-beside `lyra-lsp` when it can and says it skipped when it cannot, which is what makes the
-feature work by default for anyone who runs it. The lookup ladder is `$LYRA_FMT` → `PATH` →
-beside the server, the same shape the extensions use to find `lyra-lsp`.
-
-**A stdlib gap on the way, fixed where it belonged.** `lyrafmt -` needs `-` to be an
-operand, and `parse_args` classified everything starting with `-` as a switch — so the one
-spelling every Unix tool uses for "the input is a pipe" was unsayable. A bare `-` is now
-positional in `std.collections.args`, which is the convention `cat -` has kept since v7.
-
-Tests: the handler against a real lyrafmt built from the grammar (the formatted text, and a
-range that reaches the end of the buffer), resolution through `$PATH`, and three declines —
-already formatted, a syntax error, and no lyrafmt at all.
-
-### 09/17/26 — lyrafmt: whitespace and spacing
-
-Three rules on top of indentation, all of them about the space *between* tokens and none
-touching a leaf — so a comment, a string and a raw string keep every byte they had.
-
-- **Trailing whitespace** goes, and a file ends with exactly one newline. Every byte in a
-  gap that spans lines is either a newline or the whitespace before one, so the whole
-  question is "which newlines survive": the rest is dropped.
-- **Blank lines** run at most one deep.
-- **Spacing** that is *missing or forbidden* is fixed — one space each side of `=>`, one
-  after `,` and `:`, none before them.
-
-**The third rule stops where alignment begins.** Extra spaces are left alone, because more
-than one space is a choice somebody made: `examples/guess_game.lyra` lines its match arms
-up on their `=>`, and a formatter that cannot align columns itself has no business
-destroying the columns that are there. So the rule reads "insert what is required, remove
-what is forbidden, and otherwise leave the gap as written" — which also means the single
-space almost every gap already is stays untouched, and the rule is a fixed point on the
-first pass rather than the second.
-
-**A range's step is not an annotation.** `0..<10:2` is a plain `:` token, and the first
-draft spaced it to `0..<10: 2` — which compiles and means the same thing, but the step
-binds as tightly as the `..` beside it and the language writes it closed up. Telling the
-two apart needs the token's **parent**, so a `Leaf` now carries it: a `:` directly inside a
-`range_expr` is left alone on both sides. `::` and `::<` were never at risk, being tokens
-of their own, so a trait path and a turbofish are untouched by construction.
-
-Over the repo the three rules come to 18 insertions and 22 deletions in 9 files: `<t,u>` →
-`<t, u>` through the prelude, and six runs of two blank lines cut to one. Applied, so
-`lyrafmt --check` is clean again.
-
-### 09/17/26 — an interpolation that spans lines is refused
-
-`${` has no escape in an ordinary string — the two characters as text are a raw string,
-`` `${` `` — so a program that means them literally opens an interpolation instead. The
-interpolation then swallows source to the next `}`, which may be several declarations
-away, and the result **parses**: what the author sees is an undefined name far below and
-nothing near the string. lyrafmt's own `k == "${"` was reported as `undefined function
-"closes"` two declarations later, and cost an hour.
-
-The rule is **spans lines**, not "is long": an interpolated expression is written where it
-is read, so no program puts a newline inside `${…}`, and a multi-line one is therefore
-always the swallow rather than an intent. That is what makes refusing it safe to add to a
-language that already has programs in it — verified over the repo's 84 files, which
-produce not one.
-
-`lyra-E080`, in the collector, at the `${` itself, because that is where the span is known
-and the cascade has not started. On the shape that cost the hour it is now the *first*
-diagnostic and names the fix; the undefined name follows it as the consequence it is.
-A string literal holding one becomes the empty-string placeholder every other
-string-literal error yields, so nothing downstream sees a nil.
-
-Tests: the lyrafmt shape and a deliberate newline inside the braces, against four
-legitimate forms that must stay legal — a block with its own braces inside the expression,
-one interpolation nested in another, several on a line, and the raw spelling the
-diagnostic recommends.
-
-### 09/16/26 — a shadow warning for what the import admitted
+### 09/15/26 — a shadow warning for what the import admitted
 
 `import std.io.{ write_file }` beside a local `read_file` warned that `read_file`
 "shadows the read_file imported from std.io". Nothing of the sort had been imported.
@@ -198,7 +103,7 @@ now use the selective form, which is what they were testing, and three cases pin
 corrected rule. `lyra-W004` never shared the bug: `CheckUnusedImports` walks the `ImportStmt`
 members and never consults an export list.
 
-### 09/16/26 — the examples stop working around the missing trigonometry
+### 09/15/26 — the examples stop working around the missing trigonometry
 
 `shapes.lyra` carried a range-reduced Taylor series — `wrap_pi`, `cos32`, `sin32` and two
 hand-typed constants, thirty lines — for **one** call site, under a doc comment opening
@@ -224,7 +129,7 @@ value is 4.33. `shapes3d.lyra` keeps its twelve, where the steps are 30 degrees 
 numbers are recognisable, and `breakout.lyra` keeps its square wave, which is intentional for
 an 8-bit blip rather than a workaround.
 
-### 09/16/26 — a float builtin is callable either way
+### 09/15/26 — a float builtin is callable either way
 
 The builtin registry is keyed by receiver and reached only from member dispatch, so
 `sqrt(5.0)` reported the name undefined — while `sinh(1.0)` from `std.math` worked, that one
@@ -249,7 +154,7 @@ site. The two spellings fail in opposite directions: a member callee that resolv
 recorded, a free one that resolved is not. The member spelling keeps the table lookups; the
 free one asks `IsUnresolvedCallee`.
 
-### 09/16/26 — trigonometry, exponentials, and the `std.math` over them
+### 09/15/26 — trigonometry, exponentials, and the `std.math` over them
 
 A sine is not expressible in this language — no series, no lookup table, and no FFI to reach
 libm — so the eight new unary functions and the two binary ones join the registries beside
@@ -301,7 +206,157 @@ Found on the way: an untyped literal argument is only checked for assignability,
 `f32_value.pow(3.0)` reached the backend as a double against a float receiver. Coerced
 defensively there, as the integer overflow builtins already coerce theirs.
 
-### 09/16/26 — lyrafmt's indentation rule
+### 09/15/26 — spacing is canonical, and a gap is not always whitespace
+
+Reported: the formatter left `a   +   b` alone. It did, by a rule written the day before —
+"insert what is required, remove what is forbidden, leave the rest" — chosen to protect the
+hand-aligned match arms in `examples/guess_game.lyra`. That was the wrong trade. A formatter
+exists so that two files with the same tokens read the same way, and one that preserves
+whatever spacing it finds cannot promise that; an alignment it cannot *produce* is not one
+it can undertake to keep. Spacing between two tokens on a line is now **one space or none**:
+none where forbidden, one where required, and otherwise one if anything was there and none
+if nothing was — so `a   +   b` closes up while `xs.len()` stays closed. The three aligned
+arms in guess_game lose their columns, which is the whole cost.
+
+**Collapsing the gap is what exposed the real bug**, and it was in the shipped version too.
+The formatter rebuilds a file from its leaves and the gaps between them, on the premise that
+a gap is whitespace. It is not: tree-sitter **hides** some tokens, and hidden bytes sit in
+the gaps with nothing naming them. A raw string's own backticks (`_raw_string_start` /
+`_raw_string_end`) are hidden, and so is a float's mantissa before its exponent — the only
+leaf in `1.0e30` is `float_exponent`, covering `e30`. Copying gaps verbatim had preserved
+them by accident. Collapsing turned `1.0e30` into `e30` and dropped the opening backtick of
+every raw string.
+
+The line-spanning path was worse and had already shipped: it emitted the gap only up to its
+last newline and then pushed fresh indentation, so anything *after* that newline — the
+backtick of a raw string beginning a line — was dropped outright. No file in the repo had
+one, so nothing caught it.
+
+The rule now is one line: **every rewrite runs only on a gap that is entirely whitespace**,
+and a gap holding anything else is reproduced exactly, indentation and all. The formatter
+gives up on such a line rather than guessing at it.
+
+**The check that was missing is the one that matters**: that the formatted file still
+compiles. The suite compared bytes and fixed points, both of which a corrupted raw string
+passes. `TestExample_LyrafmtRoundTrips` now runs `lyrac check` over its own output, and
+carries the three hidden-token shapes — a float with an exponent, a raw string starting a
+line, and a `#`-delimited raw string holding a backtick. A parity sweep over the repo (every
+file's error count before and against the formatted text, in place) is zero to zero.
+
+Applied: 16 lines in `std` and `bindings`, 12 in the examples.
+
+### 09/15/26 — formatting did nothing in Zed: the symlink
+
+Reported the day it landed, and the server was innocent: launched from `build/lyra-lsp` it
+formatted correctly, and through Zed it returned no edits. Zed runs whatever `lyra-lsp`
+`PATH` finds, and the extensions' own advice is to put a **symlink** there
+(`ln -s …/build/lyra-lsp ~/.local/bin/lyra-lsp`, a symlink rather than a copy so `std/`
+stays beside the real binary). `os.Executable` hands back the link's own path on macOS, so
+"beside this executable" looked in `~/.local/bin`, found no `lyrafmt`, and the handler did
+what it does whenever the formatter is missing: nothing, quietly.
+
+`modules.StdRoot` carries a guard for exactly this, with a comment ending "the language
+server is normally reached through exactly such a symlink" — written for `std/` and not
+applied here. `lyrafmtBeside` now resolves the link before taking the directory, and tries
+the unresolved one too for the layout where both binaries are copied somewhere together.
+
+**The quiet failure is what made it a report rather than a message**, and that trade is
+still the right one — a formatter that mangles a buffer is worse than one that declines —
+but it means the *lookup* has to be right, because nothing will say when it is not. The
+regression test builds the reported layout (a symlink on `PATH`, the formatter beside the
+real binary) and asserts the formatter is found through it; the end-to-end check was an LSP
+handshake against the installed symlink, which is the only thing that would have caught
+this before shipping.
+
+### 09/15/26 — both editors format, through one formatter
+
+`Format Document` works in VS Code and in Zed, and **neither extension has a line of code
+about it**. `lyra-lsp` implements `textDocument/formatting` by piping the buffer through
+`lyrafmt -`; both editors already route formatting to the language server, so adding the
+handler was the whole integration.
+
+**The alternative was a Go formatter beside the Lyra one**, and it is the one thing this
+could not afford. lyrafmt's rules are ~250 lines whose answers are pinned by a test over
+every file in the repo; a second implementation would be two passes deciding one question,
+free to disagree the first day either changed — the drift this project refuses everywhere
+it has two passes deciding anything. So the server shells out, and lyrafmt stops being a
+probe that is merely *run* and becomes one that is *used*.
+
+The cost is stated rather than hidden: lyrafmt links the tree-sitter runtime and the
+grammar, so a machine that cannot build it has no formatting. Every failure — no binary, a
+syntax error (the normal state of a buffer being typed into), a timeout — answers with **no
+edits**, never an error dialog and never a partial rewrite. `build.sh` now builds lyrafmt
+beside `lyra-lsp` when it can and says it skipped when it cannot, which is what makes the
+feature work by default for anyone who runs it. The lookup ladder is `$LYRA_FMT` → `PATH` →
+beside the server, the same shape the extensions use to find `lyra-lsp`.
+
+**A stdlib gap on the way, fixed where it belonged.** `lyrafmt -` needs `-` to be an
+operand, and `parse_args` classified everything starting with `-` as a switch — so the one
+spelling every Unix tool uses for "the input is a pipe" was unsayable. A bare `-` is now
+positional in `std.collections.args`, which is the convention `cat -` has kept since v7.
+
+Tests: the handler against a real lyrafmt built from the grammar (the formatted text, and a
+range that reaches the end of the buffer), resolution through `$PATH`, and three declines —
+already formatted, a syntax error, and no lyrafmt at all.
+
+### 09/15/26 — lyrafmt: whitespace and spacing
+
+Three rules on top of indentation, all of them about the space *between* tokens and none
+touching a leaf — so a comment, a string and a raw string keep every byte they had.
+
+- **Trailing whitespace** goes, and a file ends with exactly one newline. Every byte in a
+  gap that spans lines is either a newline or the whitespace before one, so the whole
+  question is "which newlines survive": the rest is dropped.
+- **Blank lines** run at most one deep.
+- **Spacing** that is *missing or forbidden* is fixed — one space each side of `=>`, one
+  after `,` and `:`, none before them.
+
+**The third rule stops where alignment begins.** Extra spaces are left alone, because more
+than one space is a choice somebody made: `examples/guess_game.lyra` lines its match arms
+up on their `=>`, and a formatter that cannot align columns itself has no business
+destroying the columns that are there. So the rule reads "insert what is required, remove
+what is forbidden, and otherwise leave the gap as written" — which also means the single
+space almost every gap already is stays untouched, and the rule is a fixed point on the
+first pass rather than the second.
+
+**A range's step is not an annotation.** `0..<10:2` is a plain `:` token, and the first
+draft spaced it to `0..<10: 2` — which compiles and means the same thing, but the step
+binds as tightly as the `..` beside it and the language writes it closed up. Telling the
+two apart needs the token's **parent**, so a `Leaf` now carries it: a `:` directly inside a
+`range_expr` is left alone on both sides. `::` and `::<` were never at risk, being tokens
+of their own, so a trait path and a turbofish are untouched by construction.
+
+Over the repo the three rules come to 18 insertions and 22 deletions in 9 files: `<t,u>` →
+`<t, u>` through the prelude, and six runs of two blank lines cut to one. Applied, so
+`lyrafmt --check` is clean again.
+
+### 09/15/26 — an interpolation that spans lines is refused
+
+`${` has no escape in an ordinary string — the two characters as text are a raw string,
+`` `${` `` — so a program that means them literally opens an interpolation instead. The
+interpolation then swallows source to the next `}`, which may be several declarations
+away, and the result **parses**: what the author sees is an undefined name far below and
+nothing near the string. lyrafmt's own `k == "${"` was reported as `undefined function
+"closes"` two declarations later, and cost an hour.
+
+The rule is **spans lines**, not "is long": an interpolated expression is written where it
+is read, so no program puts a newline inside `${…}`, and a multi-line one is therefore
+always the swallow rather than an intent. That is what makes refusing it safe to add to a
+language that already has programs in it — verified over the repo's 84 files, which
+produce not one.
+
+`lyra-E080`, in the collector, at the `${` itself, because that is where the span is known
+and the cascade has not started. On the shape that cost the hour it is now the *first*
+diagnostic and names the fix; the undefined name follows it as the consequence it is.
+A string literal holding one becomes the empty-string placeholder every other
+string-literal error yields, so nothing downstream sees a nil.
+
+Tests: the lyrafmt shape and a deliberate newline inside the braces, against four
+legitimate forms that must stay legal — a block with its own braces inside the expression,
+one interpolation nested in another, several on a line, and the raw spelling the
+diagnostic recommends.
+
+### 09/15/26 — lyrafmt's indentation rule
 
 The first rule that changes what is between the leaves. `build/lyrafmt file.lyra` prints
 the formatted text, `--check` names the files that would change (exit 1 if any), `-w`
@@ -350,7 +405,7 @@ the next `}` — including two later declarations — and *parses*, so the repor
 string is backtick-delimited, and `r"…"` is an identifier followed by a string that
 parses with a zero-width `++` between them.
 
-### 09/16/26 — `bool` crosses to C, and `!unsafe { … }` parses
+### 09/15/26 — `bool` crosses to C, and `!unsafe { … }` parses
 
 Two of the three small findings lyrafmt's binding turned up; the third (an `unsafe` helper
 such as `cstring_len` needs its own block at each call) is the rule working as written,
@@ -376,7 +431,7 @@ The grammar archive lyrafmt links must be rebuilt after a grammar change (`libs.
 formatter reports a syntax error on the one file that uses the new spelling — the same
 staleness every other consumer of `parser.c` has.
 
-### 09/16/26 — lyrafmt's round-trip baseline, and the `let … else` it broke on
+### 09/15/26 — lyrafmt's round-trip baseline, and the `let … else` it broke on
 
 The self-hosting probe starts. `bindings/treesitter/` binds enough of the tree-sitter
 runtime for a tree walk — parser, tree, node kind, byte span, children — with `TSNode`
@@ -405,7 +460,7 @@ Found and left as written: C's `bool` in an `extern` is refused by name (lyra-E0
 compared instead), `if !unsafe { … }` does not parse (bind the block's value first), and
 `unsafe` helpers such as `cstring_len` need their own block at every call.
 
-### 09/16/26 — the context settles what the arguments leave open
+### 09/15/26 — the context settles what the arguments leave open
 
 Two gaps filed this week were one gap. A trait method's variable reached only by a lambda
 literal's return (`b.map((x) => 7)` under `-> Box<i64>`) solved to the literal's own default

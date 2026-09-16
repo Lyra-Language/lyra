@@ -537,7 +537,7 @@ func TestExec_ConversionTraits(t *testing.T) {
 			52,
 		},
 		{
-			// The context settles a variable only a lambda's literal reaches (09/16): `map`'s
+			// The context settles a variable only a lambda's literal reaches (09/15): `map`'s
 			// `b` is `u8` from the return type, so the lambda returns a u8 and `200 + 100`
 			// wraps in u8 rather than being an i64 stored into a u8 slot. A receiver-less
 			// call in a constructor payload takes the slot's type from the annotation.
