@@ -201,6 +201,42 @@ a compile-time value parameter: `let sum<t, const N: i64> = (xs: [N]t) -> t`. Th
 - Before building, sweep whether the array helpers that need `noalloc` actually exist.
 - **[IDEA]** a named turbofish form `sum::<i64, N = 3>`, purely additive.
 
+## Bounded stack buffers
+
+**[IDEA]** A buffer with a **compile-time capacity and a run-time length** — `ArrayVec`'s
+shape — so a `noalloc` function can build up a sequence whose size it does not know until it
+runs.
+
+The gap: `#[0; 4]` is a stack value and passes `noalloc`, while `[0; n]` is a heap box and
+does not (`lyra-E016`, "a repeat literal builds a `[]T`"). A `noalloc` function that needs a
+scratch buffer sized at run time has nowhere to go today.
+
+- **The concrete case already works**, which is why this is an entry about generality rather
+  than about a missing capability. A struct over a fixed array with a length beside it —
+  `struct Buf { data: [8]i64, len: i64 }` — pushed through `mut self`, compiles and runs
+  under `noalloc`. (`pure` is correctly refused: the write escapes to the caller, `lyra-E007`.)
+- What is missing is **genericity over the capacity and the element type**: one `Buf<t, N>`
+  instead of a hand-written struct per size. That waits on const generics above, and is the
+  only reason this is not simply a library.
+- Open: standard library or language form. Once `N` is a parameter a struct in
+  `std.collections` needs nothing further from the compiler, and a language form would buy
+  syntax and a name rather than a capability — so the library is the default answer unless
+  something turns up that only the compiler can do.
+- Open: whether the bound check folds. `push` tests `len >= N` every call, where a caller
+  filling it in a counted loop often cannot overflow; the value-range pass already elides
+  array bounds checks it can prove, and this is the same question asked of a field.
+- **Not a VLA**, and not a runtime-sized `[N]T`. A size known only at run time is not a
+  property of the array but of its type — `types.StaticArrayType.Size` is an `int`, and
+  layout, ABI classification and instantiation keys all read it — so that is a dependent
+  type rather than a relaxed check. The `alloca` spelling that would fit `noalloc` needs a
+  sound escape analysis this language does not have (see Allocation, #5), grows the frame
+  per iteration in a loop unless the backend brackets every scope with
+  stacksave/stackrestore, and fails by moving the stack pointer past the guard page — a
+  wrong answer that does not trap, on data rather than on a coding mistake, which is the one
+  outcome the language is built to refuse. A capacity in the type avoids all three: it
+  cannot escape any way a `[N]T` cannot, a loop reuses one slot, and overflow is a length
+  test that traps.
+
 ## Compile-time function evaluation
 
 **[IDEA]** Nothing here evaluates anything, and that is still true after 09/16. What a
