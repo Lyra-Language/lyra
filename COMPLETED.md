@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — a generic type's parameter bound is enforced
+
+`struct Bx<t: Tag>` parsed, stored the bound on `GenericParam.Constraints`, and nothing ever
+read it. `Bx<NoTag>` compiled and ran with no `Tag` impl in sight. The typechecker README had
+carried the marker for a while ("a `where` bound on a generic type's parameter is not
+enforced at instantiation"), which is how it was found.
+
+**The question was whether to enforce the bound or refuse the syntax**, and the reproduction
+answered it. `<t: Tag>` is not a grammar accident: it is enforced on a *function* already —
+`let f<t: Tag> = …` at a type with no impl is `lyra-E036`, and the message even renders the
+colon form as `where t: Tag`. Refusing would have made one spelling mean something on a `let`
+and be illegal on a `struct`, for a bound the language already knows how to check. (The
+`where` clause after a type's name does *not* parse, so the colon form is the only spelling
+there — the one nothing was reading.)
+
+It asks `typeImplementsTraitWhy`, the same predicate the function side asks, so the two
+cannot drift about what satisfying a bound means, and a nested failure — an impl excluded by
+its own `where` — keeps the `because` clause that explains it.
+
+**A type-variable argument is skipped rather than reported.** Inside `struct Wrap<t> { b: Bx<t> }`
+the question is whether `Wrap`'s own `t` carries the bound, which belongs to the enclosing
+declaration; the function side reaches `tc.genericBounds` for exactly this, because a call
+knows its enclosing callable and a resolved type does not. Silence is the right direction for
+a check being added to a language that already has programs in it.
+
+**Keyed by the instantiation, not by the location**, which the first attempt got wrong and the
+tests now pin. One written `Bx<NoTag>` is resolved at every position that asks about the
+value — the annotation, then each field read through it — and `resolveType` cannot tell a
+written instantiation from a re-resolved one. Keyed by location it reported once per use;
+the instantiation is the mistake, so it is the key.
+
 ### 09/16/26 — a `data` payload range-checks its literal
 
 `data W = Wrapped(u8)` accepted `Wrapped(300)` and produced **44**. No diagnostic, no trap —

@@ -95,6 +95,10 @@ type TypeChecker struct {
 	// overflowReported guards checkLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
+	// boundReported guards checkGenericTypeBounds. One written type is resolved many
+	// times over — every assignability question re-resolves it — so the report is keyed
+	// by where it was written and what was written there, not by how often it is asked.
+	boundReported map[genericBoundReport]bool
 	// contextRefused is the same guard for an array element whose payload its element
 	// context refused (elementTakesContext): a return body is inferred more than once with
 	// its context pushed, and the refusal is one mistake.
@@ -2588,7 +2592,91 @@ func (tc *TypeChecker) resolveTypeWith(t types.Type, loc ast.Location, leaf func
 // Results are cached so that repeated resolutions of the same name only emit
 // "unknown type" once per Check run.
 func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
-	return tc.resolveTypeWith(t, loc, tc.resolveNameReporting)
+	resolved := tc.resolveTypeWith(t, loc, tc.resolveNameReporting)
+	// Reporting entry only. A bound is a claim about a *written* instantiation, and
+	// resolveTypeIfKnown exists precisely for the callers that must not report.
+	if pt, isParam := resolved.(types.ParameterizedType); isParam {
+		tc.checkGenericTypeBounds(pt, loc)
+	}
+	return resolved
+}
+
+// genericBoundReport keys one reported bound failure: the instantiation and the trait it
+// failed, and **deliberately not the location**.
+//
+// One written `Bx<NoTag>` is resolved at every position that asks about the value, not only
+// where it was written — the annotation, then each field read through it — and resolveType
+// cannot tell a written instantiation from a re-resolved one. Keyed by location, a single
+// mistake reported once per use. The instantiation is the mistake, so it is the key.
+type genericBoundReport struct {
+	name  string
+	inst  string
+	trait string
+}
+
+// checkGenericTypeBounds reports a type argument that does not satisfy the bound its
+// parameter declares — `struct Bx<t: Tag>` instantiated at a type with no `Tag` impl.
+//
+// **The bound was parsed, stored and never read.** `<t: Tag>` is a real spelling, enforced
+// on a *function* since before this (`checkGenericBounds` reports `lyra-E036` and renders it
+// as `where t: Tag`), so the same syntax meant something on a `let` and nothing on a
+// `struct`. That asymmetry is why this enforces rather than refusing the syntax: refusing
+// would make one spelling legal in one declaration and illegal in the other, for a bound the
+// language already knows how to check.
+//
+// `typeImplementsTraitWhy` is the same predicate the function side asks, so the two cannot
+// drift about what satisfying a bound means, and the `because` clause carries a nested
+// failure (an impl excluded by its own `where`) the outer name would not explain.
+//
+// **A type-variable argument is skipped.** Inside `struct Wrap<t> { b: Bx<t> }` the question
+// is whether `Wrap`'s own `t` carries the bound, which is the enclosing declaration's
+// business and not something this site has in hand — the function side reaches
+// `tc.genericBounds` for it because a call knows its enclosing callable. Skipping errs
+// toward silence, which is the right direction for a check being added to a language that
+// already has programs in it.
+func (tc *TypeChecker) checkGenericTypeBounds(pt types.ParameterizedType, loc ast.Location) {
+	decl, ok := tc.symTable.LookupTypeFrom(pt.Name, loc)
+	if !ok || decl == nil || len(decl.GenericParams) == 0 {
+		return
+	}
+	for i, gp := range decl.GenericParams {
+		if len(gp.Constraints) == 0 || i >= len(pt.TypeArguments) {
+			continue
+		}
+		arg := pt.TypeArguments[i]
+		if arg == nil {
+			continue
+		}
+		if _, isVar := arg.(types.GenericType); isVar {
+			continue
+		}
+		for _, traitName := range gp.Constraints {
+			if _, known := tc.symTable.LookupTraitFrom(traitName, loc); !known {
+				// An unknown trait in the bound is the declaration's problem and is
+				// reported there; satisfying it here would turn one error into none.
+				continue
+			}
+			ok, why := tc.typeImplementsTraitWhy(arg, traitName, nil)
+			if ok {
+				continue
+			}
+			key := genericBoundReport{name: pt.Name, inst: arg.String(), trait: traitName}
+			if tc.boundReported[key] {
+				continue
+			}
+			if tc.boundReported == nil {
+				tc.boundReported = map[genericBoundReport]bool{}
+			}
+			tc.boundReported[key] = true
+			because := ""
+			if why != "" {
+				because = " — " + why
+			}
+			tc.addErrorCode(loc, SeverityError, diag.CodeUnsatisfiedTraitBound,
+				"%s: %s is instantiated at %s, which does not implement %s%s (required by `%s<%s: %s>`)",
+				pt.Name, gp.Name, arg, traitName, because, decl.Name, gp.Name, traitName)
+		}
+	}
 }
 
 // resolveNameReporting is resolveType's leaf: resolve the name, and say so when it

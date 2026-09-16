@@ -37,31 +37,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
     higher-order function per lambda set. Verdict: not worth it for speed alone; revisit if
     the `noalloc` refusal starts biting or a self-hosting profile shows indirect-call cost.
 
-### Typechecker — a position that accepts a value it should refuse
-
-Found 09/16 by walking the typechecker README's own "Open" markers and reproducing each.
-The payload range-check half is **fixed** (09/16, COMPLETED.md); what is left is a bound
-that parses and is never read, which needs a decision before it needs code.
-
-- **[OPEN] A bound on a generic type's parameter is parsed and never enforced.**
-
-  ```lyra
-  trait Tag { tag: (Self) -> string }
-  struct Bx<t: Tag> { item: t }
-  struct NoTag { n: i64 }
-  let b: Bx<NoTag> = Bx { item: NoTag { n: 7 } }   // compiles, runs, prints 7
-  ```
-
-  The typechecker README records this ("a `where` bound on a generic type's parameter is not
-  enforced at instantiation"); what the reproduction adds is that the `<t: Tag>` spelling
-  parses while the `where` clause after the name does not (`struct Bx<t> where t: Tag` is a
-  syntax error), so the only spelling available is the one nothing reads. `checkTraitImpl`
-  already verifies a matched impl's own bounds (08/14), which is the check to reuse.
-
-  Decide, before fixing: whether a generic *type* should take bounds at all. Nothing in
-  `std/` or `examples/` writes one, and the alternative — refuse the syntax, keep bounds on
-  functions and impls where they are enforced — is smaller and loses nothing anybody uses.
-
 ### Traits: a method's own type variables
 
 - **[DECIDED] `Self<…>` through a `where` bound stays refused.** `Result<_, e>` (a hole

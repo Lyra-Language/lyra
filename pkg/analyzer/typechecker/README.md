@@ -332,7 +332,12 @@ incomplete; `propagateInstantiation` re-checks what it defers.
 - **Managed type arguments**: `ownership.OwnsManaged` → `parameterizedOwnsManaged` substitutes and
   re-asks, so pass and backend use one predicate (mismatch was a double free). macOS ASan missed
   it; `TestEmit_GenericManagedMatchesConcrete` compares retain/drop counts to a concrete twin.
-- Open: a `where` bound on a generic type's parameter is not enforced at instantiation.
+- **A bound on a generic type's parameter is enforced at instantiation** (`checkGenericTypeBounds`,
+  `lyra-E036`), asking `typeImplementsTraitWhy` as the function side does. The spelling is
+  `struct Bx<t: Tag>` — a `where` clause after a type's name does not parse. A type-variable
+  argument is skipped: whether it carries the bound is the enclosing declaration's business,
+  which a resolved type does not have in hand. Reports are keyed by the *instantiation*, since
+  one written type is re-resolved at every position that asks about the value.
 
 ## Contextual typing for lambdas (`contextual_lambda.go`)
 
