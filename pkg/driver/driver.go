@@ -13,7 +13,6 @@ package driver
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
@@ -493,9 +492,12 @@ func preludeOf(units []modules.Unit) string {
 // *imported* name is the same bargain made deliberately, so punishing it harder than the
 // implicit case is backwards.
 //
-// The two differ only in what the message can offer. The prelude has no qualifier to
-// point at, being reachable precisely because nothing names it; an imported module does,
-// so the warning names the spelling that still reaches the shadowed declaration.
+// **Neither message offers a qualifier, and the import one used to.** It said "reach the
+// imported one as `io.read_file`", which never worked: only a bare `import lib` binds a
+// namespace, and this warning now fires only for a *selective* import, which binds none
+// (before the 09/16 fix it also fired for names nobody had imported, where the advice was
+// doubly wrong). What does work is renaming the declaration, or bringing the import in
+// under another name — the same escape the import-clash error offers.
 func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
 	if symTable == nil {
 		return nil
@@ -514,24 +516,12 @@ func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
 			d.Code = diag.CodeImportShadowed
 			d.Message = fmt.Sprintf(
 				"%s shadows the %s imported from module %q — this declaration wins;"+
-					" reach the imported one as `%s.%s`",
-				s.Name, s.Name, s.Source, lastSegment(s.Source), s.Name)
+					" rename it, or import the other under another name (`import %s.{ %s as … }`)",
+				s.Name, s.Name, s.Source, s.Source, s.Name)
 		}
 		out = append(out, d)
 	}
 	return out
-}
-
-// lastSegment is the namespace a plain `import a.b` binds — the name the shadowing
-// module writes to reach past its own declaration. An `as` alias would rename it, and
-// this does not chase that: the hint is a spelling to try, and getting it from the
-// import list would mean threading the referencing file through a warning built from a
-// declaration.
-func lastSegment(module string) string {
-	if idx := strings.LastIndex(module, "."); idx >= 0 {
-		return module[idx+1:]
-	}
-	return module
 }
 
 // collectLinks is the union of every `@link` in the program — on a module header or on

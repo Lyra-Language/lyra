@@ -12,6 +12,8 @@ module bindings.raylib
 //! literal converts implicitly: `draw_poly(centre, 6, 30.0, 45.0, GREEN)` is unchanged. A
 //! **computed** `f32` is the case it catches, and there the conversion has to be written.
 
+import std.math.{ PI }
+
 /// An angle in degrees, measured clockwise from the positive x axis.
 ///
 /// **Deliberately unconstrained.** A `where range(0..<360)` would state something true of
@@ -33,20 +35,13 @@ pub newtype Degrees = f32
 // constant should not depend on. A `const` initializer may call the float builtins, so the
 // definition can be written down instead of its decimal expansion.
 //
-// **π comes from `atan` rather than from `std.math.PI`, and that is a workaround.**
-// Importing anything at all from `std.math` here makes this module's own `to_radians` warn
-// as a shadow of *that* module's — `lyra-W016` fires on the imported module's whole export
-// list rather than on the names a selective import actually admits, which is a bug (a
-// selective import admits only what it lists; LANGUAGE.md §6). Every raylib program would
-// print the warning. `4·atan(1)` is the classic spelling of π and needs no import; switch
-// these to `f32(180.0 / PI)` once W016 is fixed.
-//
-// The last-place question that governs which constants `std.math` derives does not arise at
-// this width: `atan` is folded by the host's libm and is not correctly rounded, but its
-// error is around 1e-16 against an `f32` epsilon of 1e-7.
-const PI32: f32 = f32(4.0 * atan(1.0))
-const DEGREES_PER_RADIAN: f32 = 180.0 / PI32
-const RADIANS_PER_DEGREE: f32 = PI32 / 180.0
+// **This module declares `to_radians` and so does `std.math`, and that is fine.** Importing
+// `PI` admits `PI` and nothing else, so the two names never meet. It briefly was not fine:
+// `lyra-W016` used to fire on an imported module's whole export list rather than on what
+// the import admitted, so this import made the declaration below warn against a name it had
+// never asked for, and every raylib program printed it.
+const DEGREES_PER_RADIAN = f32(180.0 / PI)
+const RADIANS_PER_DEGREE = f32(PI / 180.0)
 
 /// Degrees from a fraction of a full turn — 0.0 to 1.0 around the circle.
 ///

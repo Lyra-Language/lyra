@@ -14,9 +14,15 @@ import (
 // which read as "the module you imported owns that name and your program may not have
 // one". The prelude, whose names you never asked for, had always taken the soft path, so
 // the explicit act was punished and the implicit one forgiven.
+//
+// **The import is selective, and on 09/16 that became the point.** It was `import util.seq`
+// when this was written, back when every `pub` declaration sat in one global scope on every
+// module's parent chain — a namespace import admitted its module's bare names along with
+// the namespace. `ImportScopeFor` ended that, and the warning is now what the import
+// actually admitted, so the namespace form shadows nothing (pinned just below).
 func TestModules_LocalDeclarationShadowsAnImportedName(t *testing.T) {
 	root := buildTree(t, map[string]string{
-		"app.lyra": `import util.seq
+		"app.lyra": `import util.seq.{ map }
 let map = (n: i64) -> i64 => n + 1
 let main = () -> u8 => u8(map(1))`,
 		"util/seq.lyra": "module util.seq\npub let map = (n: i64) -> i64 => n * 2",
@@ -25,8 +31,81 @@ let main = () -> u8 => u8(map(1))`,
 	if errs := res.Errors(); len(errs) != 0 {
 		t.Fatalf("a local declaration over an imported name must be allowed; got %v", errs)
 	}
-	if !warnsWith(res, diag.CodeImportShadowed, `reach the imported one as `+"`seq.map`") {
-		t.Errorf("expected a shadow warning naming the namespace; got %v", res.Diagnostics)
+	if !warnsWith(res, diag.CodeImportShadowed, "map shadows the map imported from module") {
+		t.Errorf("expected a shadow warning for the imported name; got %v", res.Diagnostics)
+	}
+}
+
+// **A namespace import admits no bare name, so it shadows none** — `import lib` binds
+// `lib.x` and nothing else (LANGUAGE.md §6).
+//
+// Until 09/16 this warned, because the check asked whether the imported module *exports*
+// the name rather than whether this module imported it. That made `lyra-W016` fire on
+// names nobody had asked for: `import std.io.{ write_file }` beside a local `read_file`
+// reported that `read_file` "shadows the read_file imported from std.io". It also made the
+// advice impossible to follow — the message offered `io.read_file`, and a selective import
+// binds no namespace to reach it through.
+func TestModules_ANamespaceImportShadowsNothing(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra": `import util.seq
+let map = (n: i64) -> i64 => n + 1
+let main = () -> u8 => u8(map(1) + seq.map(1))`,
+		"util/seq.lyra": "module util.seq\npub let map = (n: i64) -> i64 => n * 2",
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Fatalf("expected a clean program; got %v", errs)
+	}
+	for _, d := range res.Diagnostics {
+		if d.Code == diag.CodeImportShadowed {
+			t.Errorf("a namespace import binds no bare name, so it shadows none; got %v", d)
+		}
+	}
+}
+
+// The same question asked of a name the module imported *some other* member alongside —
+// the shape the bug was found in, reduced. Only `keep` was admitted, so declaring `drop`
+// shadows nothing.
+func TestModules_AnUnimportedExportIsNotShadowed(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra": `import util.seq.{ keep }
+let drop = (n: i64) -> i64 => n - 1
+let main = () -> u8 => u8(keep(1) + drop(2))`,
+		"util/seq.lyra": "module util.seq\npub let keep = (n: i64) -> i64 => n\npub let drop = (n: i64) -> i64 => n * 2",
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Fatalf("expected a clean program; got %v", errs)
+	}
+	for _, d := range res.Diagnostics {
+		if d.Code == diag.CodeImportShadowed {
+			t.Errorf("`drop` was never imported, so it shadows nothing; got %v", d)
+		}
+	}
+}
+
+// An alias admits its *local* name and not the original, and the warning follows: declaring
+// the alias shadows, declaring the original does not.
+func TestModules_AnAliasShadowsUnderItsLocalName(t *testing.T) {
+	files := map[string]string{
+		"util/seq.lyra": "module util.seq\npub let map = (n: i64) -> i64 => n * 2",
+	}
+	files["app.lyra"] = `import util.seq.{ map as remap }
+let remap = (n: i64) -> i64 => n + 1
+let main = () -> u8 => u8(remap(1))`
+	res := analyze(t, buildTree(t, files))
+	if !warnsWith(res, diag.CodeImportShadowed, "remap shadows the remap imported from module") {
+		t.Errorf("the alias's local name should shadow; got %v", res.Diagnostics)
+	}
+
+	files["app.lyra"] = `import util.seq.{ map as remap }
+let map = (n: i64) -> i64 => n + 1
+let main = () -> u8 => u8(map(1) + remap(2))`
+	res = analyze(t, buildTree(t, files))
+	for _, d := range res.Diagnostics {
+		if d.Code == diag.CodeImportShadowed {
+			t.Errorf("`map` was not admitted under that name, so it shadows nothing; got %v", d)
+		}
 	}
 }
 
@@ -90,7 +169,7 @@ let main = () -> u8 => u8(other.use())`,
 // Types take the same key, so they take the same rule.
 func TestModules_LocalTypeShadowsAnImportedType(t *testing.T) {
 	root := buildTree(t, map[string]string{
-		"app.lyra": `import util.shapes
+		"app.lyra": `import util.shapes.{ Point }
 struct Point { label: string }
 let main = () -> u8 => {
   let p: Point = Point { label: "mine" }

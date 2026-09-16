@@ -983,26 +983,70 @@ func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
 }
 
 // noteAmbientShadow records the warning for a declaration that took a name reaching it
-// from elsewhere, whichever source it came from.
+// from the **prelude**, which is the only source known while the files are still being
+// walked: the prelude is ambient by definition, so PreludeNames is complete before
+// collection starts.
 //
-// The prelude half asks takesPreludeName, which does not consult the declaring module's
-// scope, because a *type* is registered before its own scope entry exists. The import
-// half has no such wrinkle — every caller has already defined the declaration in its
-// module scope by the time it gets here.
+// **The import half is not here, and cannot be.** It used to be, and asked whether the
+// imported module *exports* the name — which is a different question from whether this
+// module's import admitted it, and reported `lyra-W016` for names nobody had imported:
+// `import std.io.{ write_file }` beside a local `read_file` warned that `read_file`
+// "shadows the read_file imported from std.io". Nothing was imported, the suggested
+// qualifier did not exist (a selective import binds no namespace), and the rule it
+// contradicted is written down (`import lib.{ listed }` admits `listed` only —
+// LANGUAGE.md §6).
+//
+// Asking the real question needs the member lists, and those arrive per file as each
+// import statement is walked — where this runs, a module whose `import` sits in its second
+// file has not recorded it yet. That is exactly why the old check reached for
+// ImportedModules, the whole graph handed over before the walk (Collector.SetImports).
+// So the import half moved to noteImportShadows, a sweep after every file is in.
+//
+// takesPreludeName does not consult the declaring module's scope, because a *type* is
+// registered before its own scope entry exists.
 func (st *SymbolTable) noteAmbientShadow(name string, loc ast.Location) {
 	if st == nil {
 		return
 	}
 	if st.takesPreludeName(name, loc) {
 		st.noteShadowed(name, loc)
+	}
+}
+
+// noteImportShadows records `lyra-W016` for every module declaration that takes a name the
+// module actually imported. Run from PopulateImportScopes, which is the first moment the
+// answer exists.
+//
+// **The import scope is the admitted set, and asking it is the whole fix.** It holds one
+// entry per name a selective import brought in — a namespace import contributes none, an
+// alias contributes its local name and not the original, and a member that does not exist
+// or is not `pub` contributes nothing. Every one of those distinctions was wrong when the
+// question was "does that module export this name", and all of them come out right here for
+// free, because PopulateImportScopes already made them to build the scope.
+//
+// The source module is recovered from the symbol's own file rather than from the import
+// that bound it, so an alias still names the module the declaration lives in.
+func (st *SymbolTable) noteImportShadows() {
+	if st == nil {
 		return
 	}
-	module := st.ModuleOfFile[loc.File]
-	for _, imported := range st.ImportedModules[module] {
-		if imported != module && st.ModuleExports(imported, name) && st.ModuleDeclares(module, name) {
+	for _, module := range sortedKeys(st.ImportScopes) {
+		imported := st.ImportScopes[module]
+		own := st.moduleScope(module)
+		if imported == nil || own == nil {
+			continue
+		}
+		for _, name := range sortedKeys(imported.Symbols) {
+			decl, declared := own.LookupLocal(name)
+			if !declared || decl == nil {
+				continue
+			}
+			source := st.ModuleOfFile[imported.Symbols[name].GetLocation().File]
+			if source == "" || source == module {
+				continue
+			}
 			st.Shadowed = append(st.Shadowed,
-				ShadowedName{Name: name, Loc: loc, Source: imported})
-			return
+				ShadowedName{Name: name, Loc: decl.GetLocation(), Source: source})
 		}
 	}
 }
@@ -1110,6 +1154,9 @@ func (st *SymbolTable) PopulateImportScopes() []ImportClash {
 			}
 		}
 	}
+	// Every module's admitted set is now known, which is the one thing the import half of
+	// lyra-W016 needs and could not have while the files were still being walked.
+	st.noteImportShadows()
 	return clashes
 }
 
@@ -1120,7 +1167,10 @@ type ImportClash struct {
 	First, Second Import
 }
 
-func sortedKeys(m map[string]string) []string {
+// sortedKeys gives a map's keys in a fixed order, so a pass that walks one produces the
+// same diagnostics in the same order on every run. Generic in the value, because the maps
+// that need it hold member names, scopes and symbols.
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

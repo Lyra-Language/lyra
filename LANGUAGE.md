@@ -362,7 +362,9 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 
 ### Shadowing
 
-A local declaration of an imported (or prelude) name wins every bare reference in that module and warns **`lyra-W016`**; the import stays reachable as `seq.map`.
+A local declaration of an imported (or prelude) name wins every bare reference in that module and warns **`lyra-W016`** (the prelude's own is `lyra-W012`).
+
+**Only a name the import admitted shadows.** `import lib` binds no bare name, so it shadows nothing; `import lib.{ a }` shadows `a` and no other export of `lib`; `import lib.{ a as b }` shadows `b`, never `a`. The shadowed declaration is reached by renaming one side — the local one, or the import (`import lib.{ a as other }`) — since a selective import binds no namespace to qualify through.
 
 **Several modules may export one name**, and a module may re-export a name it imports (`pub let map = (n) => seq.map(n) + 1`). A bare name reaches a module only through its own member list, so the importer chooses; importing one name from two modules is an error, fixed with an alias (`import two.{ helper as other }`) or the namespace.
 
