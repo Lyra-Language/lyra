@@ -207,7 +207,7 @@ func TestConst_ADeclaredMethodShadowingABuiltinIsNotConstant(t *testing.T) {
 impl Rooty for f64 { sqrt = pure (self) => self * 2.0 }
 const A = 9.0.sqrt()`, false)
 	assertErrorsAre(t, res,
-		"`const` initializer must be a compile-time constant: `sqrt` is a declared method, not the compiler's float builtin, so it is a function call")
+		"`const` initializer must be a compile-time constant: `sqrt` resolves to a declaration that shadows the compiler's float builtin, so it is a function call")
 }
 
 // **One mistake, one diagnostic.** `5.sqrt()` is the likeliest way to get this wrong — the
@@ -218,4 +218,36 @@ const A = 9.0.sqrt()`, false)
 func TestConst_AnUnresolvedBuiltinCallReportsOnlyTheTypeError(t *testing.T) {
 	res := parseCollectAndCheck(t, `const A = 5.sqrt()`, false)
 	assertErrorsAre(t, res, `i64 has no method "sqrt"`)
+}
+
+// A `const` takes the free spelling too. The constancy walk runs *before* inference, so it
+// cannot rely on the desugar having happened — it recognises both callee shapes itself
+// (floatBuiltinCallShape), and by the time the verification sweep looks, the desugar has
+// been and gone.
+func TestConst_FloatBuiltinInItsFreeForm(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `const ROOT = sqrt(2.0)
+const KILO = pow(2.0, 10.0)
+const PHI = (1 + sqrt(5.0)) / 2`, false))
+}
+
+// The operands are walked in that spelling too, receiver included — it is the first
+// argument here rather than the object.
+func TestConst_FreeFormFloatBuiltinOnAVariableNamesTheVariable(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y = 5.0
+const A = sqrt(y)`, false)
+	assertErrorsAre(t, res,
+		"`const` initializer must be a compile-time constant: variable `y` is not constant")
+}
+
+// **The shadowing sweep covers the free spelling**, and this is the case that caught a bug
+// in how it asked the question. A declared function resolves perfectly well and is recorded
+// in none of the dispatch tables — `TypeTable.Callee` holds only receiver-overloaded calls —
+// so a sweep that looked for the declaration read this as unresolved and stayed silent,
+// accepting a `const` that is a real call at every use site. It asks `IsUnresolvedCallee`
+// for this spelling instead.
+func TestConst_ADeclaredFunctionShadowingAFreeFormBuiltinIsNotConstant(t *testing.T) {
+	res := parseCollectAndCheck(t, `let sqrt = pure (x: f64) -> f64 => x
+const A = sqrt(5.0)`, false)
+	assertErrorsAre(t, res,
+		"`const` initializer must be a compile-time constant: `sqrt` resolves to a declaration that shadows the compiler's float builtin, so it is a function call")
 }

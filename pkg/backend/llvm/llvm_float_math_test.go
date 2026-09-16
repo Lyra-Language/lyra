@@ -275,3 +275,44 @@ let main = () -> void => {
 		t.Errorf("const float builtins = %q; want %q", got, want)
 	}
 }
+
+// The free-call spelling, end to end (09/16). `sqrt(5.0)` is desugared onto `5.0.sqrt()` in
+// the typechecker, so the backend has no new path — which is the point of desugaring rather
+// than resolving the free form in place, and what this pins: the values come out identical
+// to the method spelling, including through `std.math`, a `const`, and a `pure noalloc`
+// function where the purity ladders must still charge the call nothing.
+func TestExec_FloatBuiltinsAsFreeFunctions(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+import std.math.{ PI, sinh }
+const PHI = (1 + sqrt(5.0)) / 2
+let shade = pure noalloc (t: f64) -> f64 => sin(t) + pow(2.0, t)
+let main = () -> void => {
+  println(sqrt(5.0).to_fixed(6))
+  println(pow(2.0, 10.0).to_fixed(1))
+  println(atan2(1.0, 0.0).to_fixed(6))
+  println("${floor(2.7)}")
+  println(sqrt(pow(3.0, 2.0)).to_fixed(1))
+  println("${sqrt(5.0) == 5.0.sqrt()}")
+  println(PHI.to_fixed(9))
+  println(shade(0.0).to_fixed(1))
+  println(cos(PI).to_fixed(1))
+  println(sinh(1.0).to_fixed(6))
+}
+`, "")
+	want := strings.Join([]string{
+		"2.236068",    // the free form of a unary builtin
+		"1024.0",      // and of a binary one
+		"1.570796",    // atan2 takes (y, x) in this spelling too
+		"2",           // a rounding builtin still answers i64
+		"3.0",         // nested free calls
+		"true",        // the two spellings are the same call
+		"1.618033989", // a const written in the free form
+		"1.0",         // sin(0) + 2^0, from a `pure noalloc` function
+		"-1.0",        // a std.math constant as the argument
+		"1.175201",    // and a std.math function, which was always callable both ways
+	}, "\n")
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("free-form float builtins = %q; want %q", got, want)
+	}
+}

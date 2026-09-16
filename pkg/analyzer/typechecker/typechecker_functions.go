@@ -886,6 +886,32 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 			i64 := types.PrimitiveType{Name: types.Int64}
 			return types.TupleType{Elements: []types.Type{i64, i64}}
 		}
+		// **A float builtin written as a free call**: `sqrt(5.0)`, `pow(2.0, 10.0)`,
+		// `floor(2.7)`. The registry is keyed by *receiver* and is reached only from
+		// member dispatch, so a bare call found nothing and reported the name undefined —
+		// while `sinh(1.0)` from `std.math` worked, because that one is an ordinary
+		// declaration and UFCS lets any `self`-first function be called either way. The
+		// asymmetry was invisible from the names, which is what makes it worth removing
+		// rather than documenting.
+		//
+		// **Desugared into the method form rather than resolved here**, which is
+		// `desugarUFCSCall` run backwards. Everything downstream — the builtin signature,
+		// `SetBuiltinMethod`, the purity ladders, `noalloc`, the const-initializer walk and
+		// the backend's lowering — already handles a MemberExpr callee and needs to learn
+		// nothing. Resolving the free form in place would mean a second copy of all of it,
+		// which is the drift hazard rule 8 keeps cataloguing.
+		//
+		// **Last, after every lookup has missed**, so a declaration of the name still wins:
+		// that is the same ordering member dispatch uses, where the builtins are consulted
+		// only once a field and a trait method have both missed.
+		//
+		// No type test on the first argument — the member path owns that question, and
+		// answers `sqrt(5)` with `i64 has no method "sqrt"` rather than a second opinion
+		// from here.
+		if len(call.Arguments) >= 1 && isFloatBuiltinName(ident.Name) {
+			desugarBuiltinFreeCall(call, ident)
+			return tc.inferFunctionCallExpr(call)
+		}
 		// A name that exists but belongs privately to another module gets the
 		// privacy diagnostic rather than "undefined": the distinction between "no
 		// such function" and "not yours to call" is the whole point of the rule.

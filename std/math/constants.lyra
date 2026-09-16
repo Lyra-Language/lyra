@@ -56,7 +56,7 @@ pub const HALF_PI = 1.5707963267948966
 pub const E = 2.718281828459045
 
 /// **√2**, the diagonal of the unit square.
-pub const SQRT_2 = 2.0.sqrt()
+pub const SQRT_2 = sqrt(2.0)
 
 /// **ln 2** — the natural logarithm of 2, which converts a binary exponent to a natural one.
 pub const LN_2 = 0.6931471805599453
@@ -81,4 +81,4 @@ pub const LOG10_E = 0.4342944819032518
 /// Written as the closed form it is defined by rather than as digits, which is what the
 /// `const` float builtins buy: the expression is checkable against the definition, where a
 /// digit string is only checkable against another digit string.
-pub const PHI = (1 + 5.0.sqrt()) / 2
+pub const PHI = (1 + sqrt(5.0)) / 2

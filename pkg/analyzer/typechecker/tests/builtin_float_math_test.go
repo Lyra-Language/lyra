@@ -64,3 +64,57 @@ func TestBuiltin_FloatMath_DoesNotWidenTheReceiver(t *testing.T) {
 	res := parseCollectAndCheck(t, "let a: f32 = 1.5\nlet b: f64 = a.exp()\n", false)
 	assertErrorsAre(t, res, "b: cannot assign f32 to f64")
 }
+
+// **The float builtins are callable as free functions too** (09/16): `sqrt(5.0)` as well as
+// `5.0.sqrt()`.
+//
+// The registry is keyed by receiver and is reached only from member dispatch, so a bare
+// call used to report the name undefined — while `sinh(1.0)` from `std.math` worked, since
+// that one is an ordinary declaration and UFCS lets any `self`-first function be called
+// either way. Nothing about the two names told you which was which.
+//
+// The free form is desugared onto the method form (`desugarBuiltinFreeCall`), so this is
+// the front end's whole share of the feature: everything downstream sees the shape it
+// already handled.
+func TestBuiltin_FloatMath_CallableAsAFreeFunction(t *testing.T) {
+	for _, op := range []string{"log", "log2", "log10", "sqrt", "exp", "exp2", "sin", "cos", "tan", "asin", "acos", "atan"} {
+		src := "let a: f64 = 0.5\nlet b: f64 = " + op + "(a)\n"
+		assertNoErrors(t, parseCollectAndCheck(t, src, false))
+	}
+	for _, op := range []string{"pow", "atan2"} {
+		src := "let a: f64 = 0.5\nlet b: f64 = " + op + "(a, 2.0)\n"
+		assertNoErrors(t, parseCollectAndCheck(t, src, false))
+	}
+	// A rounding builtin answers i64 in either spelling.
+	assertNoErrors(t, parseCollectAndCheck(t, "let a: f64 = 2.7\nlet b: i64 = floor(a)\n", false))
+}
+
+// The first argument is the receiver, so the result is *its* width — the free spelling is
+// the same call, not a separately-typed one.
+func TestBuiltin_FloatMath_FreeFormAnswersTheFirstArgumentsWidth(t *testing.T) {
+	res := parseCollectAndCheck(t, "let a: f32 = 1.5\nlet b: f64 = exp(a)\n", false)
+	assertErrorsAre(t, res, "b: cannot assign f32 to f64")
+}
+
+// **A declaration of the name still wins**, which is the ordering member dispatch already
+// uses: the builtins are consulted only once everything else has missed. Without it, adding
+// a builtin would silently steal a call from a program that declared its own.
+func TestBuiltin_FloatMath_ADeclaredFunctionWinsOverTheFreeForm(t *testing.T) {
+	res := parseCollectAndCheck(t, `let sqrt = pure (x: f64) -> string => "mine"
+let s: string = sqrt(1.0)`, false)
+	assertNoErrors(t, res)
+}
+
+// A wrong first argument is the member path's diagnostic, not a second opinion from the
+// desugar — which is why there is no type test at the rewrite.
+func TestBuiltin_FloatMath_FreeFormOnAnIntegerReportsTheReceiver(t *testing.T) {
+	res := parseCollectAndCheck(t, `let b = sqrt(5)`, false)
+	assertErrorsAre(t, res, `i64 has no method "sqrt"`)
+}
+
+// With no argument there is no receiver to take, so it is not a builtin call at all and
+// keeps the undefined-function message.
+func TestBuiltin_FloatMath_FreeFormNeedsAnArgument(t *testing.T) {
+	res := parseCollectAndCheck(t, `let b = sqrt()`, false)
+	assertErrorsAre(t, res, `undefined function "sqrt"`)
+}

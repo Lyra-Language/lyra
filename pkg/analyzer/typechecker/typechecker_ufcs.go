@@ -460,3 +460,23 @@ func exprText(e ast.Expression) string {
 		return "receiver"
 	}
 }
+
+// desugarBuiltinFreeCall rewrites `sqrt(5.0)` into `5.0.sqrt()` in place — the first
+// argument becomes the receiver and the rest stay arguments.
+//
+// desugarUFCSCall above is this function's mirror, and the pair is deliberate: one
+// spelling is canonical for each kind of callee, and each desugar moves the other
+// spelling onto it. A declared function is canonical as a *direct call*, so a method-form
+// call on one is flattened into its arguments; a builtin is canonical as a *method*, since
+// that is the only form its registry is keyed for, so a free-form call on one is folded
+// back into a receiver.
+//
+// The caller has already established that there is at least one argument.
+func desugarBuiltinFreeCall(call *ast.FunctionCallExpr, ident *ast.IdentifierExpr) {
+	member := &ast.MemberExpr{Object: call.Arguments[0]}
+	member.Property.Name = ident.Name
+	member.Property.Location = ident.GetLocation()
+	member.Location = ident.GetLocation()
+	call.Function = member
+	call.Arguments = call.Arguments[1:]
+}
