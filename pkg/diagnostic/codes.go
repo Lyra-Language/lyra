@@ -979,6 +979,16 @@ const (
 	// refusing it safe to add to a language that already has programs in it.
 	CodeInterpolationSpansLines = "lyra-E080"
 
+	// CodePubOnLocalBinding: `pub` on a binding inside a function body.
+	//
+	// `pub` exports a name from its module, and a local binding has no existence outside the
+	// block that declares it — so `pub let n = 3` in a body asks for something the language
+	// cannot do. It was accepted and silently ignored, which is the shape of mistake worth
+	// refusing rather than tolerating: the author has stated an intent, the compiler has
+	// done nothing about it, and nothing says so. Every spelling is covered (`pub let`,
+	// `pub var`, `pub const`), since the modifier means the same thing on each.
+	CodePubOnLocalBinding = "lyra-E081"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

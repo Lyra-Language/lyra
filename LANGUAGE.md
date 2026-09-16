@@ -353,6 +353,7 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 - Every file in a module directory must declare the module; a single-file module needs no header.
 - A subdirectory is a child module. Both forms in one root is an error.
 - Compiling one file of a multi-file module brings its siblings.
+- **`pub` is a top-level modifier.** On a binding inside a function body it is `lyra-E081`: `pub` exports a name from its module and a local binding has none to export. It was accepted and ignored before 09/16.
 
 ### Imports
 

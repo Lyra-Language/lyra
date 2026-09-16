@@ -358,6 +358,9 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// (lyra-W023, lyra-W024). Purely a shape question, so it needs no types and runs
 	// beside the other AST passes.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckContinuationLines(program)...)
+	// `pub` on a binding inside a function (lyra-E081) — a shape question too, and the
+	// modifier was collected and then ignored until this asked about it.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckPubOnLocalBindings(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedVariables(program)...)
 	// The UFCS map comes from the typechecker: a method-style call into another module
 	// never writes that module's name, so the syntactic check cannot see the use.
