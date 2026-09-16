@@ -6,6 +6,11 @@
 //   build/lyrafmt file.lyra           # the formatted text, to stdout
 //   build/lyrafmt --check *.lyra      # names each file that would change; exit 1 if any
 //   build/lyrafmt -w *.lyra           # rewrites each file that would change
+//   build/lyrafmt -                   # formats standard input onto standard output
+//
+// The `-` form is what an editor uses: `lyra-lsp` runs it for `textDocument/formatting`,
+// so the buffer being formatted need not be saved, and both editor extensions get the
+// formatter without a second copy of these rules living in Go.
 //
 // The tree-sitter grammar parses each file; the formatter walks the tree to its leaves
 // and rebuilds the text from the leaves' own bytes, deciding only what goes *between*
@@ -51,7 +56,7 @@
 // 2 for usage.
 
 import std.collections.{ parse_args, HashMap, hashmap_new, insert, get_or }
-import std.io.{ read_file, write_file }
+import std.io.{ read_file, read_stdin, write_file }
 import std.ffi.{ cstring }
 import bindings.treesitter.{
   Node, Parser, lyra_language, new_parser, parser_delete, parse, tree_delete,
@@ -72,6 +77,22 @@ let main = () -> u8 => {
   let rule = !args.has("--roundtrip")
   var failures = 0
   for path in args.positional {
+    // `-` is standard input, which has no name to report and nothing to write back to.
+    if path == "-" {
+      if mode == Write {
+        println("lyrafmt: -w needs a file to write to, and `-` is standard input")
+        parser_delete(parser)
+        return 2
+      }
+      match format_source(parser, "<stdin>", read_stdin(), rule) {
+        Ok(f) => if !deliver("<stdin>", f, mode) { failures += 1 },
+        Err(problem) => {
+          println("lyrafmt: ${problem}")
+          failures += 1
+        },
+      }
+      continue
+    }
     match format_file(parser, path, rule) {
       Ok(f) => if !deliver(path, f, mode) { failures += 1 },
       Err(problem) => {
@@ -120,6 +141,12 @@ let deliver = (path: string, f: Formatted, mode: Mode) -> bool => match mode {
 /// The file at `path`, formatted (or rebuilt unchanged when `rule` is off).
 let format_file = (parser: Parser, path: string, rule: bool) -> Result<Formatted, string> => {
   let Some(source) = read_file(path) else { return Err("cannot read ${path}") }
+  format_source(parser, path, source, rule)
+}
+
+/// `source`, formatted; `name` is what a problem is reported against.
+let format_source = (parser: Parser, name: string, source: string, rule: bool) -> Result<Formatted, string> => {
+  let path = name
   let Some(tree) = parse(parser, source) else { return Err("${path}: the parser answered no tree") }
   let top = root(tree)
   if has_error(top) {

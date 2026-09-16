@@ -486,6 +486,10 @@ of Markdown.
   differs between Linux and macOS).
 - `build/` is gitignored as a directory. Point VS Code's `lyra.languageServerPath` at
   `build/lyra-lsp`.
+- **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling
+  `tree-sitter-lyra` checkout are present, and skips it with a note otherwise. It lands
+  beside `lyra-lsp`, which is where the server looks for it (`cmd/lyra-lsp/formatting.go`)
+  — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
   `std/tui/`, `std/ffi.lyra`, `std/io.lyra`.

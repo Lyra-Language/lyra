@@ -31,6 +31,29 @@ prelude come from `modules.DefaultRoots`/`DefaultOptions`, shared with `lyrac`.
   to the document's directory), rename shows a `window/showMessage` warning naming the directory
   searched, rather than walking further up.
 
+## Formatting runs lyrafmt (`formatting.go`)
+
+`textDocument/formatting` shells out to **lyrafmt**, the formatter written in Lyra
+(`examples/lyrafmt/`), piping the buffer through `lyrafmt -`. It is not reimplemented here,
+and that is the point: the rules are ~250 lines of Lyra pinned by a test over every file in
+the repo, and a Go copy beside them would be a second implementation of one question, free
+to disagree the first day either changed. One formatter, two callers — the CLI and this.
+
+- **The ladder is `$LYRA_FMT` → `lyrafmt` on `$PATH` → beside this executable**, the same
+  shape the extensions walk to find `lyra-lsp` and `lyrac` walks to find `std/`. Looked up
+  once and cached: nothing in a running server changes the answer, and formatting is on a
+  keystroke path.
+- **`./build.sh` puts `lyrafmt` in `build/` beside `lyra-lsp`** when the machine can build
+  it, which is what makes `Format Document` work in both editors with neither extension
+  knowing the formatter exists.
+- **Every failure is no edits, never an error.** No binary, a syntax error (the normal state
+  of a buffer being typed into), a timeout: the request answers with nothing and the editor
+  leaves the buffer alone. A formatter that mangles a buffer is far worse than one that
+  declines.
+- The edit returned covers the whole document. A minimal diff would be kinder to the cursor,
+  but the client computes that from a whole-file replace better than a line differ here
+  would, and a wrong range on a formatting edit corrupts the buffer.
+
 ## Handler conventions
 
 - Prologue is `handler.go`'s: `defer recoverHandler(name, &result, &retErr)`, `h.docFor(uri)`

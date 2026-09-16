@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — both editors format, through one formatter
+
+`Format Document` works in VS Code and in Zed, and **neither extension has a line of code
+about it**. `lyra-lsp` implements `textDocument/formatting` by piping the buffer through
+`lyrafmt -`; both editors already route formatting to the language server, so adding the
+handler was the whole integration.
+
+**The alternative was a Go formatter beside the Lyra one**, and it is the one thing this
+could not afford. lyrafmt's rules are ~250 lines whose answers are pinned by a test over
+every file in the repo; a second implementation would be two passes deciding one question,
+free to disagree the first day either changed — the drift this project refuses everywhere
+it has two passes deciding anything. So the server shells out, and lyrafmt stops being a
+probe that is merely *run* and becomes one that is *used*.
+
+The cost is stated rather than hidden: lyrafmt links the tree-sitter runtime and the
+grammar, so a machine that cannot build it has no formatting. Every failure — no binary, a
+syntax error (the normal state of a buffer being typed into), a timeout — answers with **no
+edits**, never an error dialog and never a partial rewrite. `build.sh` now builds lyrafmt
+beside `lyra-lsp` when it can and says it skipped when it cannot, which is what makes the
+feature work by default for anyone who runs it. The lookup ladder is `$LYRA_FMT` → `PATH` →
+beside the server, the same shape the extensions use to find `lyra-lsp`.
+
+**A stdlib gap on the way, fixed where it belonged.** `lyrafmt -` needs `-` to be an
+operand, and `parse_args` classified everything starting with `-` as a switch — so the one
+spelling every Unix tool uses for "the input is a pipe" was unsayable. A bare `-` is now
+positional in `std.collections.args`, which is the convention `cat -` has kept since v7.
+
+Tests: the handler against a real lyrafmt built from the grammar (the formatted text, and a
+range that reaches the end of the buffer), resolution through `$PATH`, and three declines —
+already formatted, a syntax error, and no lyrafmt at all.
+
 ### 09/17/26 — lyrafmt: whitespace and spacing
 
 Three rules on top of indentation, all of them about the space *between* tokens and none

@@ -38,4 +38,24 @@ for dir in std bindings; do
   ln -s "../$dir" "$OUT/$dir"
 done
 
-printf 'built %s/{lyrac,lyra-lsp} with std -> ../std, bindings -> ../bindings\n' "$OUT"
+# **lyrafmt is built when it can be**, and skipped with a note when it cannot. The
+# formatter is a Lyra program that links the tree-sitter runtime and the grammar
+# (examples/lyrafmt/libs.sh), so it needs a C compiler, `libtree-sitter` and the sibling
+# tree-sitter-lyra checkout — none of which the compiler itself needs. Skipping keeps
+# `./build.sh` working on a machine that has none of them.
+#
+# It lands **beside `lyra-lsp`**, which is where the language server looks for it after
+# `$LYRA_FMT` and `$PATH`: that is what gives both editor extensions `Format Document`
+# without either of them knowing the formatter exists.
+fmt_note='(skipped lyrafmt)'
+if [ -f "$ROOT/../tree-sitter-lyra/src/parser.c" ] && pkg-config --exists tree-sitter 2>/dev/null; then
+  if "$ROOT/examples/lyrafmt/libs.sh" >/dev/null 2>&1 &&
+    LIBRARY_PATH="$OUT/lib:$(pkg-config --variable=libdir tree-sitter)" \
+      "$OUT/lyrac" build -o "$OUT/lyrafmt" "$ROOT/examples/lyrafmt/lyrafmt.lyra" >/dev/null 2>&1; then
+    fmt_note='and lyrafmt'
+  else
+    fmt_note='(lyrafmt failed to build)'
+  fi
+fi
+
+printf 'built %s/{lyrac,lyra-lsp} %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note"

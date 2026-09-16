@@ -48,7 +48,11 @@ pub let parse_args = (valued: []string) -> ProgramArgs => {
   var i = 1
   for i < args.len() {
     let arg = args[i]
-    if !arg.starts_with("-") {
+    // A bare `-` is **standard input**, by the convention every Unix tool keeps, so it is
+    // an operand and not a flag — `cat -`, `lyrafmt -`. Reading it as a switch is what a
+    // leading-dash test does on its own, and it makes the one spelling for "the input is
+    // a pipe" unsayable.
+    if !arg.starts_with("-") || arg == "-" {
       parsed.positional.push(arg)
       i += 1
     } else if valued.holds(arg) && i + 1 < args.len() {
