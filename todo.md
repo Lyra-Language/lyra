@@ -203,11 +203,29 @@ a compile-time value parameter: `let sum<t, const N: i64> = (xs: [N]t) -> t`. Th
 
 ## Compile-time function evaluation
 
-**[IDEA]** Today only literal arithmetic and const chains fold. The gate would be the
-existing inferred `pure det`, with no new syntax; results must be emittable constants.
+**[IDEA]** Nothing here evaluates anything, and that is still true after 09/16. What a
+`const` accepts has widened three times — conversions, struct literals, and the **float
+builtins** (`const PHI = (1 + 5.0.sqrt()) / 2`) — but the walk behind it is structural, and
+a `const` is inlined as its value *expression* at every use site and lowered like any other
+code. The number comes from the optimizer, not from the compiler. The gate for real
+evaluation would be the existing inferred `pure det`, with no new syntax; results must be
+emittable constants.
 
 - The risk is a second evaluator disagreeing with the backend: overflow (a diagnostic at
   compile time), float width and rounding, and termination (a step budget).
+- **Float rounding now has a measured answer, and it is a split rather than a risk.**
+  IEEE 754 *requires* `sqrt` correctly rounded, so every implementation agrees bit for bit;
+  no mainstream libm is correctly rounded for `exp`, `log`, `sin` or `pow`. LLVM folds a
+  libm call by calling the **host's** libm, so a folded `exp` is the build machine's answer
+  and a cross-compile can differ in the last place. An evaluator therefore has to decide
+  what it is matching — the host, the target, or a correctly-rounded ideal that agrees with
+  neither — and that choice is the design, not a detail of it. `std/math/constants.lyra`
+  takes the conservative half today: `SQRT_2` and `PHI` are derived, `E` and the logarithms
+  are literals, and the line between them is exactly `sqrt`.
+- **The `-O0` gap is the case for building this.** At `-O2` the calls fold and the constant
+  costs nothing; at `-O0` nothing folds, and since a `const` is inlined at every *use*, one
+  in a loop body is a libm call per iteration. Relying on the optimizer is not the same
+  promise as evaluating, and only the second survives `-O0`.
 - Ladder: a `const` from a `pure det` call returning a scalar/string → aggregate results →
   computed generic parameters.
 - Driver: user constraint predicates, or a library needing to ship a precomputed table.
