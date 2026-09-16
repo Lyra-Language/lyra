@@ -100,8 +100,12 @@ what makes `unwrap_or(None, 42)` work).
   literal, an array literal recorded fixed, an anonymous tuple holding a guess. Everything else
   is closed — overriding a program-determined instantiation would let a real mismatch through.
 - **`fieldTakesWidthFromSolve`**: a type-variable field takes width from the substitution and may
-  defer; a concrete field (`Wrapped(u8)`) must be narrowed on the spot. A narrowed literal is
-  range-checked against its new type (tuple/array narrowing still skip this — `todo.md`).
+  defer; a concrete field (`Wrapped(u8)`) must be narrowed on the spot. **A narrowed literal is
+  range-checked against its new type, on both paths** — `stampDataConstruction` for a solved
+  payload and `inferTupleLiteralExpr` for a concrete declared one. The concrete side was missing
+  it until 09/16, so `Wrapped(300)` truncated to 44 in silence while the generic spelling of the
+  same constructor reported; assignability cannot answer it, since after narrowing the payload
+  really is a `u8` holding 300.
 - Covers data constructors, generic structs and named tuples. A bare `DataType` is assignable to
   any instantiation while bare struct/tuple types are not, so every context site goes through
   **`contextualType`**: propagate *before* the assignability check, re-read the record, and

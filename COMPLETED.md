@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — a `data` payload range-checks its literal
+
+`data W = Wrapped(u8)` accepted `Wrapped(300)` and produced **44**. No diagnostic, no trap —
+silent truncation, in the language that gave up platform-dependent integer widths to avoid
+programs whose answer you cannot predict. `LANGUAGE.md` states the rule as "a compile error
+in **every** position", so the documentation was right and the implementation was not.
+
+**Every other position reported it**, which is what made this hard to see rather than easy:
+a binding, a struct field, a tuple element, an array element, a function argument — and the
+*generic* spelling of the same constructor. `data Box<t> = Boxed(t)` with
+`let b: Box<u8> = Boxed(300)` is `lyra-E001`. So the failing case was the simpler one, and
+anybody reasoning from "generics are where the corners are" would look in the wrong place.
+
+The reason is visible once both paths are side by side. A payload is narrowed to its
+declared type before it is checked, and **narrowing is what creates the question**: after it,
+`Wrapped(300)` genuinely holds a `u8` with 300 in it, and a `u8` is assignable to a `u8`, so
+the assignability check cannot see anything wrong. A separate range check is required, and
+`stampDataConstruction` — the path a *solved* payload takes — has had one all along, with a
+comment explaining exactly this. `inferTupleLiteralExpr`, the path a *concrete declared*
+payload takes, narrowed and then asked only about assignability. One line, in the same
+position as its twin, with the same subject.
+
+Found by walking the typechecker README's own "Open" markers and reproducing each rather
+than reading them — the file pointed at `todo.md` for a tuple/array narrowing gap that no
+longer reproduces and that `todo.md` never carried, and the real gap was somewhere the
+markers did not mention at all.
+
 ### 09/16/26 — `pub` on a local binding is refused
 
 `pub let n = 3` inside a function body parsed, collected, and was then ignored. `pub`

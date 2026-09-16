@@ -4467,6 +4467,20 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 						}
 						tc.propagateExpectedType(elem, expected)
 						tc.propagateInstantiation(elem, expected)
+						// **A narrowed literal must still fit what it was narrowed to**, which
+						// the assignability check below cannot answer: after the propagation
+						// above, `Wrapped(300)` against a `u8` payload *has* a u8 holding 300,
+						// and a u8 is assignable to a u8. It truncated to 44 and said nothing —
+						// silent wrongness in the one position that had no check, while a
+						// binding, a struct field, a tuple element, an array element and a
+						// function argument all reported it.
+						//
+						// stampDataConstruction (propagate_instantiation.go) is this line's twin
+						// and has always had it, which is why the *generic* spelling of the same
+						// constructor caught what the concrete one missed: a solved payload is
+						// narrowed there, and a concrete declared payload is narrowed here.
+						// Same subject, same position — after the narrowing, before assignability.
+						tc.checkLiteralRange(name, elem, expected)
 						if actual := tc.inferExprType(elem); actual != nil && !tc.assignableValue(elem, actual, expected) {
 							tc.addError(elem.GetLocation(), SeverityError,
 								"%s: cannot assign %s to %s", name, actual, expected)
