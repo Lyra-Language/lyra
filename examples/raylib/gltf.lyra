@@ -765,9 +765,9 @@ let glb_bin = pure (b: []u8) -> []u8 => {
   b.slice(at + 8, at + 8 + length)
 }
 
-const GLB_MAGIC: u32 = 1179937895    // "glTF"
-const CHUNK_JSON: u32 = 1313821514   // "JSON"
-const CHUNK_BIN: u32 = 5130562       // "BIN\0"
+const GLB_MAGIC: u32 = 1179937895 // "glTF"
+const CHUNK_JSON: u32 = 1313821514 // "JSON"
+const CHUNK_BIN: u32 = 5130562 // "BIN\0"
 
 let member = pure (v: JsonValue, key: string) -> JsonValue => v.field(key).unwrap_or(JsonNull)
 

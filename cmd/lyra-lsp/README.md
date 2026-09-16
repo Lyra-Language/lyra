@@ -43,6 +43,11 @@ to disagree the first day either changed. One formatter, two callers — the CLI
   shape the extensions walk to find `lyra-lsp` and `lyrac` walks to find `std/`. Looked up
   once and cached: nothing in a running server changes the answer, and formatting is on a
   keystroke path.
+- **"Beside" resolves symlinks first** (`lyrafmtBeside`), for the reason `modules.StdRoot`
+  does: `os.Executable` returns the link's own path on macOS, and the server is *normally*
+  reached through a link — the extensions' own advice is to symlink `build/lyra-lsp` onto
+  `PATH`. Looking beside the link found nothing, so Zed formatted nothing while the same
+  build formatted fine when run from `build/` directly.
 - **`./build.sh` puts `lyrafmt` in `build/` beside `lyra-lsp`** when the machine can build
   it, which is what makes `Format Document` work in both editors with neither extension
   knowing the formatter exists.

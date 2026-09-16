@@ -59,11 +59,17 @@ func TestExample_LyrafmtRoundTrips(t *testing.T) {
 	// Every rule at once, on a file that breaks each of them: indentation (a wrapped
 	// array, match arms at odd depths, a block body, a `data` type's constructors after
 	// `=`, an `else` on its own line, a wrapped signature with its body, a doc comment
-	// between `=` and a constructor), a run of blank lines, spacing that is missing or
-	// forbidden around `,` `:` `=>`, and a trailing newline. Two things must survive
-	// untouched: a range's tight step (`0..<10:2`), and the aligned `=>` of a match, which
-	// is a choice the author made and not a gap to collapse. What comes out is fixed once
-	// — the second run changes nothing.
+	// between `=` and a constructor), a run of blank lines, spacing missing, forbidden and
+	// doubled around `,` `:` `=>`, and a trailing newline.
+	//
+	// Three things must survive untouched, and each is a **hidden token** the grammar gives
+	// no node — bytes that sit in the gap between two leaves with nothing naming them, so a
+	// formatter that assumes a gap is whitespace destroys them: a raw string's own
+	// backticks, a float's mantissa before its exponent, and (a node, but tight by rule) a
+	// range's step. What comes out is fixed once — the second run changes nothing.
+	// A Lyra raw string is backtick-delimited, and a backtick cannot appear inside a Go
+	// raw string — so the lines exercising them are concatenated in.
+	const bt = "\x60"
 	ugly := filepath.Join(t.TempDir(), "ugly.lyra")
 	if err := os.WriteFile(ugly, []byte(`let f = (n: i64) -> i64 => {
       let xs = [
@@ -94,13 +100,13 @@ let h = (a: i64,
 let spaced = (a: i64,b :i64) -> i64=>{
   let xs = [1 ,2]
   let r = 0..<10:2
+  let wide   =   a   +   1
   match a { 1=>2, _ =>3 }
 }
-let aligned = (n: i64) -> i64 => match n {
-  1   => 1,
-  100 => 2,
-  _   => 3,
-}
+let hidden = () -> f64 => 1.0e30 + 2.5e-3
+let raw_line = () -> string =>
+  `+bt+`starts a line`+bt+`
+let raw_tail = () -> string => #`+bt+`holds a `+bt+` backtick`+bt+`#
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -131,13 +137,13 @@ let h = (a: i64,
 let spaced = (a: i64, b: i64) -> i64 => {
   let xs = [1, 2]
   let r = 0..<10:2
+  let wide = a + 1
   match a { 1 => 2, _ => 3 }
 }
-let aligned = (n: i64) -> i64 => match n {
-  1   => 1,
-  100 => 2,
-  _   => 3,
-}
+let hidden = () -> f64 => 1.0e30 + 2.5e-3
+let raw_line = () -> string =>
+  ` + bt + `starts a line` + bt + `
+let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 `
 	got, err := exec.Command(bin, ugly).Output()
 	if err != nil {
@@ -152,6 +158,12 @@ let aligned = (n: i64) -> i64 => match n {
 	}
 	if out, err := exec.Command(bin, "--check", formatted).CombinedOutput(); err != nil {
 		t.Errorf("formatting is not a fixed point: %v\n%s", err, out)
+	}
+	// **The output must still be a program.** A formatter that rewrites a gap holding a
+	// hidden token produces something that reads almost right and no longer parses, which
+	// is how `1.0e30` became `e30` and a raw string lost its opening backtick (09/17).
+	if _, stderr, code := captureRun(t, "check", formatted); code != 0 {
+		t.Errorf("the formatted file no longer checks (exit %d):\n%s", code, stderr)
 	}
 	// Every file above is formatted already, so `--check` passes on all of them.
 	if out, err := exec.Command(bin, append([]string{"--check"}, files...)...).CombinedOutput(); err != nil {

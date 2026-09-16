@@ -12,9 +12,9 @@ let main = () => {
               1..<=100 => {
                 guess_count += 1
                 match guess <=> secret {
-                  Less    => println("Too low!"),
+                  Less => println("Too low!"),
                   Greater => println("Too high!"),
-                  Equal   => { println("You guessed it!"); break },
+                  Equal => { println("You guessed it!"); break },
                 }
               },
               _ => {

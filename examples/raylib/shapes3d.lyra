@@ -214,7 +214,7 @@ let run_scene = () -> void => {
     }
 
     begin_drawing()
-    clear_background(rgb(102, 191, 255))   // raylib's SKYBLUE, which color.lyra does not ship
+    clear_background(rgb(102, 191, 255)) // raylib's SKYBLUE, which color.lyra does not ship
 
     begin_mode_3d(camera)
     draw_grid(30, 1.0)

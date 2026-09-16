@@ -121,10 +121,37 @@ func lyrafmtPath() (string, bool) {
 		return lyrafmtFound, true
 	}
 	if self, err := os.Executable(); err == nil {
-		beside := filepath.Join(filepath.Dir(self), "lyrafmt")
-		if _, err := os.Stat(beside); err == nil {
+		if beside, ok := lyrafmtBeside(self); ok {
 			lyrafmtFound = beside
 		}
 	}
 	return lyrafmtFound, lyrafmtFound != ""
+}
+
+// lyrafmtBeside looks for the formatter in the directory holding exe, **with symlinks
+// resolved first**.
+//
+// `os.Executable` does not resolve them consistently — on Linux it reads /proc/self/exe,
+// already resolved, and on macOS it can hand back the symlink's own path — and the language
+// server is normally reached through exactly such a symlink: the extensions' own advice is
+// to put `ln -s …/build/lyra-lsp ~/.local/bin/lyra-lsp` on PATH. Looking beside the *link*
+// finds nothing, so formatting silently did nothing in Zed while working from the build
+// directory, which is the platform split `modules.StdRoot` carries the same guard for.
+//
+// The unresolved directory is tried too, for the layout where someone copies both binaries
+// somewhere together: `EvalSymlinks` on a real file answers itself, so the two collapse.
+func lyrafmtBeside(exe string) (string, bool) {
+	dirs := []string{filepath.Dir(exe)}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		if dir := filepath.Dir(resolved); dir != dirs[0] {
+			dirs = append(dirs, dir)
+		}
+	}
+	for _, dir := range dirs {
+		candidate := filepath.Join(dir, "lyrafmt")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, true
+		}
+	}
+	return "", false
 }

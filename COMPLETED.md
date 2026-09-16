@@ -9,6 +9,68 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — spacing is canonical, and a gap is not always whitespace
+
+Reported: the formatter left `a   +   b` alone. It did, by a rule written the day before —
+"insert what is required, remove what is forbidden, leave the rest" — chosen to protect the
+hand-aligned match arms in `examples/guess_game.lyra`. That was the wrong trade. A formatter
+exists so that two files with the same tokens read the same way, and one that preserves
+whatever spacing it finds cannot promise that; an alignment it cannot *produce* is not one
+it can undertake to keep. Spacing between two tokens on a line is now **one space or none**:
+none where forbidden, one where required, and otherwise one if anything was there and none
+if nothing was — so `a   +   b` closes up while `xs.len()` stays closed. The three aligned
+arms in guess_game lose their columns, which is the whole cost.
+
+**Collapsing the gap is what exposed the real bug**, and it was in the shipped version too.
+The formatter rebuilds a file from its leaves and the gaps between them, on the premise that
+a gap is whitespace. It is not: tree-sitter **hides** some tokens, and hidden bytes sit in
+the gaps with nothing naming them. A raw string's own backticks (`_raw_string_start` /
+`_raw_string_end`) are hidden, and so is a float's mantissa before its exponent — the only
+leaf in `1.0e30` is `float_exponent`, covering `e30`. Copying gaps verbatim had preserved
+them by accident. Collapsing turned `1.0e30` into `e30` and dropped the opening backtick of
+every raw string.
+
+The line-spanning path was worse and had already shipped: it emitted the gap only up to its
+last newline and then pushed fresh indentation, so anything *after* that newline — the
+backtick of a raw string beginning a line — was dropped outright. No file in the repo had
+one, so nothing caught it.
+
+The rule now is one line: **every rewrite runs only on a gap that is entirely whitespace**,
+and a gap holding anything else is reproduced exactly, indentation and all. The formatter
+gives up on such a line rather than guessing at it.
+
+**The check that was missing is the one that matters**: that the formatted file still
+compiles. The suite compared bytes and fixed points, both of which a corrupted raw string
+passes. `TestExample_LyrafmtRoundTrips` now runs `lyrac check` over its own output, and
+carries the three hidden-token shapes — a float with an exponent, a raw string starting a
+line, and a `#`-delimited raw string holding a backtick. A parity sweep over the repo (every
+file's error count before and against the formatted text, in place) is zero to zero.
+
+Applied: 16 lines in `std` and `bindings`, 12 in the examples.
+
+### 09/17/26 — formatting did nothing in Zed: the symlink
+
+Reported the day it landed, and the server was innocent: launched from `build/lyra-lsp` it
+formatted correctly, and through Zed it returned no edits. Zed runs whatever `lyra-lsp`
+`PATH` finds, and the extensions' own advice is to put a **symlink** there
+(`ln -s …/build/lyra-lsp ~/.local/bin/lyra-lsp`, a symlink rather than a copy so `std/`
+stays beside the real binary). `os.Executable` hands back the link's own path on macOS, so
+"beside this executable" looked in `~/.local/bin`, found no `lyrafmt`, and the handler did
+what it does whenever the formatter is missing: nothing, quietly.
+
+`modules.StdRoot` carries a guard for exactly this, with a comment ending "the language
+server is normally reached through exactly such a symlink" — written for `std/` and not
+applied here. `lyrafmtBeside` now resolves the link before taking the directory, and tries
+the unresolved one too for the layout where both binaries are copied somewhere together.
+
+**The quiet failure is what made it a report rather than a message**, and that trade is
+still the right one — a formatter that mangles a buffer is worse than one that declines —
+but it means the *lookup* has to be right, because nothing will say when it is not. The
+regression test builds the reported layout (a symlink on `PATH`, the formatter beside the
+real binary) and asserts the formatter is found through it; the end-to-end check was an LSP
+handshake against the installed symlink, which is the only thing that would have caught
+this before shipping.
+
 ### 09/17/26 — both editors format, through one formatter
 
 `Format Document` works in VS Code and in Zed, and **neither extension has a line of code

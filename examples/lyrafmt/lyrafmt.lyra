@@ -43,14 +43,23 @@
 //
 //   - **trailing whitespace** is dropped, and a file ends with exactly one newline;
 //   - **blank lines** run at most one deep;
-//   - **spacing** that is missing or forbidden is fixed: a space each side of `=>`, one
-//     after `,` and `:`, none before them. Extra spaces are **left alone**, because more
-//     than one is an alignment somebody chose — `examples/guess_game.lyra` lines its match
-//     arms up on their `=>`, and a formatter that cannot align columns itself has no
-//     business destroying the ones that are there.
+//   - **spacing** between two tokens on a line is one space or none: none where it is
+//     forbidden (before `,` and `:`), one where it is required (each side of `=>`, after
+//     `,` and `:`), and otherwise one if anything was there and none if nothing was — so
+//     `a   +   b` closes up and `xs.len()` stays closed. A run of spaces is not preserved,
+//     which does lose hand alignment; that is the trade for two files with the same tokens
+//     formatting the same way.
 //
 // A leaf spanning lines (a block comment, a raw string) is copied verbatim, since its
 // inner lines are content.
+//
+// **A gap is not always whitespace, and one that is not is copied untouched.** Some of the
+// grammar's tokens are hidden — a raw string's own backticks (`_raw_string_start`/`_end`)
+// and a float's mantissa before its `e30` exponent are not nodes, so those bytes sit in the
+// gap between two leaves with nothing naming them. Every rule above therefore runs only on
+// a gap that is entirely spaces, tabs and newlines; anything else is reproduced exactly,
+// indentation and all. Treating a gap as whitespace unconditionally deleted the opening
+// backtick of a raw string and turned `1.0e30` into `e30` (09/17).
 //
 // Exit 0 when nothing is wrong (or, under `--check`, nothing would change), 1 otherwise,
 // 2 for usage.
@@ -275,7 +284,8 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
       closer_levels = closer_levels.slice(0, closer_levels.len() - 1)
     }
     let nl = last_newline(bytes, cursor, leaf.start)
-    if rule && nl >= 0 {
+    let plain = all_whitespace(bytes, cursor, leaf.start)
+    if rule && plain && nl >= 0 {
       push_line_breaks(bytes, cursor, nl + 1, out)
       let base = if closes(leaf.kind) { closer_level } else if levels.len() == 0 { 0 } else { levels[levels.len() - 1] }
       let continuation = !closes(leaf.kind) && last_newline(bytes, leaf.owner, leaf.start) >= 0
@@ -295,8 +305,8 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
         base
       }
       push_indent(line_level, out)
-    } else if rule {
-      push_spacing(bytes, cursor, leaf.start, last_kind, last_parent, leaf, out)
+    } else if rule && plain {
+      push_spacing(leaf.start - cursor, last_kind, last_parent, leaf, out)
     } else {
       copy_bytes(bytes, cursor, leaf.start, out)
     }
@@ -311,15 +321,28 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
       closer_levels.push(anchor_level)
     }
   }
-  // What follows the last leaf is a newline and possibly blank lines, and a file ends with
-  // exactly one newline — so with the rule on there is nothing here to weigh: emit it.
-  // (A file with no leaves at all has nothing to end.)
-  if rule {
+  // What follows the last leaf is normally a newline and possibly blank lines, and a file
+  // ends with exactly one newline. Normally: a file ending in a raw string ends with the
+  // hidden backtick that closes it, which is real source sitting in this gap, so the
+  // whitespace test decides here too. (A file with no leaves has nothing to end.)
+  if rule && all_whitespace(bytes, cursor, len) {
     if leaves.len() > 0 { out.push(10) }
   } else {
     copy_bytes(bytes, cursor, len, out)
+    if rule && (len == 0 || bytes[len - 1] != 10) { out.push(10) }
   }
   out
+}
+
+/// Whether every byte of `bytes[from..<to]` is a space, tab, carriage return or newline —
+/// which is what lets a gap be rewritten. A gap holding anything else holds source the
+/// grammar hid (a raw string's backticks, a float's mantissa) and must be left alone.
+let all_whitespace = pure (bytes: []u8, from: i64, to: i64) -> bool => {
+  for i in from..<to {
+    let b = bytes[i]
+    if b != 32 && b != 9 && b != 13 && b != 10 { return false }
+  }
+  true
 }
 
 /// Emits the line breaks of a gap that spans lines: every byte in it is either a newline
@@ -327,7 +350,7 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
 /// the caller), so the whitespace is trailing and is dropped, and a run of newlines is cut
 /// to at most two — one line ending, one blank line. Anything else is copied, which cannot
 /// happen between two leaves and is the leak-safe direction if it ever does.
-let push_line_breaks = (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
+let push_line_breaks = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
   var newlines = 0
   for i in from..<to {
     let b = bytes[i]
@@ -340,18 +363,21 @@ let push_line_breaks = (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void 
   }
 }
 
-/// Emits the space between two tokens on one line: none where a space is forbidden, one
-/// where it is required and absent, and otherwise what was there — so an alignment of more
-/// than one space survives, and so does the single space almost every gap already is.
-let push_spacing = (bytes: []u8, from: i64, to: i64, before: string, before_parent: string,
+/// Emits the space between two tokens on one line: **one space, or none**. None where a
+/// space is forbidden, one where it is required, and otherwise one if there was any
+/// whitespace at all and none if there was not — so `a   +   b` closes up to `a + b` while
+/// `xs.len()` and `f(a)` keep their tokens together.
+///
+/// A run of spaces is therefore not preserved, and that loses hand alignment: the match
+/// arms in `examples/guess_game.lyra` used to line up on their `=>`. It is the trade a
+/// formatter makes to be one — two files with the same tokens format the same way, which
+/// is the point of running it, and an alignment the formatter cannot produce itself is one
+/// it cannot promise to keep.
+let push_spacing = pure (gap: i64, before: string, before_parent: string,
   after: Leaf, out: mut []u8) -> void => {
   let want = wanted_space(before, before_parent, after.kind, after.parent)
   if want < 0 { return }
-  if want > 0 && to == from {
-    out.push(32)
-    return
-  }
-  copy_bytes(bytes, from, to, out)
+  if want > 0 || gap > 0 { out.push(32) }
 }
 
 /// Whether a space between two adjacent tokens is forbidden (-1), required (1) or the
@@ -397,11 +423,11 @@ let last_newline = pure (bytes: []u8, from: i64, to: i64) -> i64 => {
 }
 
 /// Appends two spaces per level.
-let push_indent = (depth: i64, out: mut []u8) -> void => {
+let push_indent = pure (depth: i64, out: mut []u8) -> void => {
   for _ in 0..<(depth * 2) { out.push(32) }
 }
 
 /// Appends `bytes[from..<to]` to `out`.
-let copy_bytes = (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
+let copy_bytes = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
   for i in from..<to { out.push(bytes[i]) }
 }

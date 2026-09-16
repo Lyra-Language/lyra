@@ -148,3 +148,40 @@ func TestFormatting_WithoutLyrafmt(t *testing.T) {
 		t.Errorf("expected no edits without lyrafmt, got %v", edits)
 	}
 }
+
+// The layout the extensions tell people to use: `lyra-lsp` on PATH is a **symlink** into
+// the build directory, and `lyrafmt` sits beside the real binary. Looking beside the link
+// finds nothing, which is how formatting came to do nothing in Zed while working when the
+// server was run from `build/` directly (09/17).
+func TestLyrafmtBeside_ResolvesASymlinkedServer(t *testing.T) {
+	build := t.TempDir()
+	bin := t.TempDir()
+	real := filepath.Join(build, "lyra-lsp")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	formatter := filepath.Join(build, "lyrafmt")
+	if err := os.WriteFile(formatter, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(bin, "lyra-lsp")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := lyrafmtBeside(link)
+	if !ok {
+		t.Fatalf("no lyrafmt found beside the symlinked server at %s", link)
+	}
+	// EvalSymlinks canonicalises /var → /private/var on macOS, so compare resolved paths.
+	want, _ := filepath.EvalSymlinks(formatter)
+	gotResolved, _ := filepath.EvalSymlinks(got)
+	if gotResolved != want {
+		t.Errorf("found %s, want %s", gotResolved, want)
+	}
+
+	// And nothing is invented when the formatter is genuinely absent.
+	if _, ok := lyrafmtBeside(filepath.Join(t.TempDir(), "lyra-lsp")); ok {
+		t.Error("found a lyrafmt that does not exist")
+	}
+}
