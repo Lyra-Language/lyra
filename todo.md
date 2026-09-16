@@ -113,11 +113,6 @@ Package management, versioning and separate compilation are out of scope by deci
 ## Pit of Success
 
 - **[OPEN] `checked_rem`.** A naming decision (`%` vs `%%`), not a lowering one.
-- **[IDEA] Refuse an interpolation that spans lines.** `"${"` begins an interpolation with
-  no way to escape it (the spelling for the literal is a raw string), and one left open
-  swallows everything to the next `}` — declarations included — and *parses*: lyrafmt's
-  `k == "${"` cost an hour reported as `undefined function "closes"` two declarations
-  later. No program writes a newline inside `${…}`; refusing it names the real mistake.
 - **[IDEA] Overflow policy on a `newtype`** (`where wrapping` / `saturating`), so a hash
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
   Open: explicit-method precedence, and whether saturation clamps every intermediate or

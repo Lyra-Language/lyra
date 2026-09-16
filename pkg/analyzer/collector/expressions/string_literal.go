@@ -52,6 +52,20 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 	var interps []*sitter.Node
 	for i := range node.NamedChildCount() {
 		if child := node.NamedChild(i); child.Kind() == "string_interpolation" {
+			// **An interpolation that runs past its line is the unescaped `${`**, not an
+			// expression somebody wrapped: `${` has no escape in an ordinary string, so a
+			// program meaning the two characters literally opens one, and it swallows
+			// source to the next `}` — declarations included — while still parsing. The
+			// author then sees an undefined name far below and nothing near the string.
+			// Refused here, where the span is known, rather than left to the cascade.
+			if child.StartPosition().Row != child.EndPosition().Row {
+				ctx.AddErrorCoded(child, diag.SeverityError, diag.CodeInterpolationSpansLines,
+					"this `${` opens an interpolation that runs past the end of its line, "+
+						"swallowing the source up to the next `}`. An interpolated expression is "+
+						"written where it is read, so this is almost always a literal `${` — there "+
+						"is no escape for it, so write the string raw: `${`")
+				return placeholder()
+			}
 			interps = append(interps, child)
 		}
 	}

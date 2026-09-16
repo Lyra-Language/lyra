@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — an interpolation that spans lines is refused
+
+`${` has no escape in an ordinary string — the two characters as text are a raw string,
+`` `${` `` — so a program that means them literally opens an interpolation instead. The
+interpolation then swallows source to the next `}`, which may be several declarations
+away, and the result **parses**: what the author sees is an undefined name far below and
+nothing near the string. lyrafmt's own `k == "${"` was reported as `undefined function
+"closes"` two declarations later, and cost an hour.
+
+The rule is **spans lines**, not "is long": an interpolated expression is written where it
+is read, so no program puts a newline inside `${…}`, and a multi-line one is therefore
+always the swallow rather than an intent. That is what makes refusing it safe to add to a
+language that already has programs in it — verified over the repo's 84 files, which
+produce not one.
+
+`lyra-E080`, in the collector, at the `${` itself, because that is where the span is known
+and the cascade has not started. On the shape that cost the hour it is now the *first*
+diagnostic and names the fix; the undefined name follows it as the consequence it is.
+A string literal holding one becomes the empty-string placeholder every other
+string-literal error yields, so nothing downstream sees a nil.
+
+Tests: the lyrafmt shape and a deliberate newline inside the braces, against four
+legitimate forms that must stay legal — a block with its own braces inside the expression,
+one interpolation nested in another, several on a line, and the raw spelling the
+diagnostic recommends.
+
 ### 09/16/26 — lyrafmt's indentation rule
 
 The first rule that changes what is between the leaves. `build/lyrafmt file.lyra` prints

@@ -962,6 +962,23 @@ const (
 	// inference bugs (09/14). Refused naming the other spelling.
 	CodeArrayLiteralFlavor = "lyra-E079"
 
+	// CodeInterpolationSpansLines: a `${…}` in a string literal that runs past the end of
+	// its line.
+	//
+	// **It is a lint against one mistake**, and the mistake is invisible without it. There
+	// is no escape for `${` in an ordinary string — the raw form (`` `${` ``) is how the two
+	// characters are written — so a program that means them literally opens an
+	// interpolation, and the interpolation swallows source until the next `}`, which may be
+	// several declarations away. That *parses*: what the author gets is an undefined name
+	// far below, and nothing anywhere near the string. Measured on lyrafmt, whose
+	// `k == "${"` was reported as `undefined function "closes"` two declarations later.
+	//
+	// The rule is "spans lines" rather than "is long" because no program writes a newline
+	// inside `${…}`: the expression is an interpolated value, written where it is read. A
+	// multi-line one is therefore always the swallow, never an intent — which is what makes
+	// refusing it safe to add to a language that already has programs in it.
+	CodeInterpolationSpansLines = "lyra-E080"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"
