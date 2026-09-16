@@ -20,17 +20,17 @@ pub let matrix_multiply = pure (first: Matrix, second: Matrix) -> Matrix =>
 
 /// A rotation of `angle` about `axis`. The axis need not be normalised; raymath does it.
 pub let matrix_rotate = pure (axis: Vector3, angle: Degrees) -> Matrix =>
-  unsafe { rl_matrix_rotate(axis, radians(angle)) }
+  unsafe { rl_matrix_rotate(axis, to_radians(angle)) }
 
 pub let matrix_rotate_x = pure (angle: Degrees) -> Matrix =>
-  unsafe { rl_matrix_rotate_x(radians(angle)) }
+  unsafe { rl_matrix_rotate_x(to_radians(angle)) }
 
 pub let matrix_rotate_y = pure (angle: Degrees) -> Matrix =>
-  unsafe { rl_matrix_rotate_y(radians(angle)) }
+  unsafe { rl_matrix_rotate_y(to_radians(angle)) }
 
 /// Rotations about x, then y, then z — the Euler angles a viewer's drag produces.
 pub let matrix_rotate_xyz = pure (x: Degrees, y: Degrees, z: Degrees) -> Matrix =>
-  unsafe { rl_matrix_rotate_xyz(vec3(radians(x), radians(y), radians(z))) }
+  unsafe { rl_matrix_rotate_xyz(vec3(to_radians(x), to_radians(y), to_radians(z))) }
 
 /// A scale along each axis. `matrix_scale(s, s, s)` is a uniform zoom.
 pub let matrix_scale = pure (x: f32, y: f32, z: f32) -> Matrix =>
@@ -49,9 +49,6 @@ pub let quaternion_normalize = pure (q: Vector4) -> Vector4 => unsafe { rl_quate
 /// The rotation `t` of the way from `a` to `b` along the shorter arc, `t` from 0 to 1.
 pub let quaternion_slerp = pure (a: Vector4, b: Vector4, t: f32) -> Vector4 =>
   unsafe { rl_quaternion_slerp(a, b, t) }
-
-/// Degrees to raymath's radians. A multiplication, not trigonometry.
-let radians = pure (d: Degrees) -> f32 => f32(d) * 0.017453292519943295
 
 @symbol("MatrixInvert")
 unsafe extern pure rl_matrix_invert: (m: Matrix) -> Matrix

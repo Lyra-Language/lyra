@@ -27,6 +27,7 @@ import bindings.sdl3.{
   poll_event, KEY_ESCAPE,
   delay,
 }
+import std.math.{ PI }
 
 const WIDTH: f32 = 640.0
 const HEIGHT: f32 = 480.0
@@ -117,11 +118,9 @@ let run = (renderer: Renderer) -> void => {
   }
 }
 
-/// A smooth 0..1 wave with no trig: the tick folds into a triangle, which is then smoothed.
-/// `sin` would do it in one call as of 09/15 — this stays because it is three multiplies
-/// against a libm call, and drifting a colour cannot tell the difference.
-let wave = pure (t: f32) -> f32 => {
-  let phase = t - f32((t / 2.0).floor()) * 2.0
-  let tri = if phase < 1.0 { phase } else { 2.0 - phase }
-  tri * tri * (3.0 - 2.0 * tri)
-}
+/// A smooth 0..1 wave.
+///
+/// It used to fold the tick into a triangle and smooth that with a cubic, because the
+/// language had no `sin`. `sin(πt)` is the same shape said once, and keeps the period at 2
+/// in `t` — which is what the phase offsets at the call sites are measured in.
+let wave = pure (t: f32) -> f32 => (t * f32(PI)).sin() * 0.5 + 0.5

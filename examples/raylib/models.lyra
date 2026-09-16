@@ -32,6 +32,7 @@ import bindings.raylib.{
   draw_text, measure_text, mouse_position, Matrix, Color,
   RAYWHITE, WHITE, BLACK, RED, GREEN, BLUE, ORANGE, PURPLE, DARKGRAY, rgb,
 }
+import std.math.{ TAU }
 
 const LABEL: i32 = 20
 
@@ -324,18 +325,19 @@ let world_box = (p: Placed) -> BoundingBox => {
 
 /// Slot `n` of eleven around a circle of radius 8 — a ring, so an orbiting camera never
 /// sees the models edge-on in a row (the lesson `shapes3d.lyra` learned).
+///
+/// **Computed, where it used to be a table of eleven (x, z) pairs.** The table was there
+/// because the language had no `cos`/`sin`, and eleven slots put the steps at 360/11 =
+/// 32.7 degrees — angles whose coordinates are opaque digits, so the table could only ever
+/// be checked against the trigonometry it stood in for. `shapes3d.lyra` keeps its twelve,
+/// where the steps are 30 degrees and the numbers are recognisable.
 let ring = pure (n: i64) -> Vector3 => {
-  let p = RING[n %% RING.len()]
-  vec3(p.0, 1.0, p.1)
+  let angle = f32(TAU) * f32(n %% RING_SLOTS) / f32(RING_SLOTS)
+  vec3(RING_RADIUS * angle.cos(), 1.0, RING_RADIUS * angle.sin())
 }
 
-/// Eleven (x, z) pairs, 360/11 degrees apart at radius 8. Written out rather than computed
-/// with `cos`/`sin` (which exist as of 09/15): a table of eleven constants is checkable at a
-/// glance, and this example is about models, not about angles.
-const RING: [11](f32, f32) = #[
-  (8.00, 0.00), (6.73, 4.32), (3.32, 7.28), (0.0 - 1.14, 7.92), (0.0 - 5.24, 6.05),
-  (0.0 - 7.68, 2.25), (0.0 - 7.68, 0.0 - 2.25), (0.0 - 5.24, 0.0 - 6.05),
-  (0.0 - 1.14, 0.0 - 7.92), (3.32, 0.0 - 7.28), (6.73, 0.0 - 4.32),
-]
+/// How many slots the ring has, and how far out they sit.
+const RING_SLOTS = 11
+const RING_RADIUS: f32 = 8.0
 
 let wrap01 = pure (v: f32) -> f32 => v - f32(f64(v).floor())

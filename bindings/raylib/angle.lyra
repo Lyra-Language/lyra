@@ -26,6 +26,28 @@ module bindings.raylib
 /// nothing here needs to add two angles. Read one out with `f32(d)` and compute on that.
 pub newtype Degrees = f32
 
+// **The two conversion factors are derived, not typed.** They were `57.295780` and
+// `0.017453292`, which are 180/π and π/180 transcribed by hand — and the first is not
+// actually 180/π (57.29577951…), it is that number mistyped in the seventh digit. It
+// survived only because both spellings round to the same `f32`, which is the kind of luck a
+// constant should not depend on. A `const` initializer may call the float builtins, so the
+// definition can be written down instead of its decimal expansion.
+//
+// **π comes from `atan` rather than from `std.math.PI`, and that is a workaround.**
+// Importing anything at all from `std.math` here makes this module's own `to_radians` warn
+// as a shadow of *that* module's — `lyra-W016` fires on the imported module's whole export
+// list rather than on the names a selective import actually admits, which is a bug (a
+// selective import admits only what it lists; LANGUAGE.md §6). Every raylib program would
+// print the warning. `4·atan(1)` is the classic spelling of π and needs no import; switch
+// these to `f32(180.0 / PI)` once W016 is fixed.
+//
+// The last-place question that governs which constants `std.math` derives does not arise at
+// this width: `atan` is folded by the host's libm and is not correctly rounded, but its
+// error is around 1e-16 against an `f32` epsilon of 1e-7.
+const PI32: f32 = f32(4.0 * atan(1.0))
+const DEGREES_PER_RADIAN: f32 = 180.0 / PI32
+const RADIANS_PER_DEGREE: f32 = PI32 / 180.0
+
 /// Degrees from a fraction of a full turn — 0.0 to 1.0 around the circle.
 ///
 /// The form an animation actually wants, since a phase is what a clock produces:
@@ -37,7 +59,7 @@ pub let turns = pure (fraction: f32) -> Degrees => Degrees(360.0 * fraction)
 ///
 /// **This is the conversion the type exists for.** Without it the mistake is invisible:
 /// an `f32` from `atan2` looks exactly like an `f32` of degrees, and raylib takes either.
-pub let from_radians = pure (radians: f32) -> Degrees => Degrees(radians * 57.295780)
+pub let from_radians = pure (radians: f32) -> Degrees => Degrees(radians * DEGREES_PER_RADIAN)
 
 /// Radians from degrees, for handing an angle back to trigonometry.
-pub let to_radians = pure (angle: Degrees) -> f32 => f32(angle) * 0.017453292
+pub let to_radians = pure (angle: Degrees) -> f32 => f32(angle) * RADIANS_PER_DEGREE
