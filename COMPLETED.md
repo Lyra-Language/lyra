@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — a trait's parameter bound is enforced at the impl
+
+`trait Holder<t: Tag>` parsed, stored the bound, and nothing read it — `impl Holder<NoTag>
+for Cell` compiled and ran with no `Tag` impl on `NoTag`. The sibling of the generic-*type*
+bound fixed hours earlier, and it survived that fix for a reason worth writing down:
+`checkGenericTypeBounds` hangs off **resolving a type**, and a trait is never one. The two
+look like one gap and are two sites.
+
+**The impl is where it belongs, because the impl is what binds the parameter.** A trait's
+parameter has no value until an impl gives it one, so there is nothing to check before that
+and nothing left to check after. That puts it beside the supertrait check, which is its
+sibling in every respect: a claim the declaration makes, verified where the impl and the
+trait are both in hand — and unenforced until somebody looked, which is exactly how
+`TraitDeclStmt.Bounds` was found with no consumer at all on 08/07. Three times now, the same
+shape: a field the grammar fills and no pass reads.
+
+`impl.TraitArgs` are positional against `trait.GenericParams`, which is what the field's own
+comment says they are for, so the check is a walk over the pair asking
+`typeImplementsTraitWhy` — the same predicate the type and function sides ask, so none of
+the three can drift about what satisfying a bound means.
+
+A type-variable argument is skipped, as on the type side: in `impl Holder<t> for Box<t>` the
+question is whether the *impl's* `t` carries the bound, which is its own `where` clause's
+business and is checked when that clause is used.
+
 ### 09/16/26 — a generic type's parameter bound is enforced
 
 `struct Bx<t: Tag>` parsed, stored the bound on `GenericParam.Constraints`, and nothing ever

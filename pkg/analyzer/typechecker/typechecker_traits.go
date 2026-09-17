@@ -34,6 +34,52 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 		}
 	}
 
+	// **A bound on the trait's own generic parameter** (`trait Holder<t: Tag>`), checked at
+	// the impl that binds it. This is the supertrait check's sibling in every way: a claim
+	// the declaration makes, verified where the impl and the trait are both in hand, and
+	// unenforced until somebody looked — `impl Holder<NoTag> for Cell` compiled and ran with
+	// no `Tag` impl on `NoTag` (09/16).
+	//
+	// **The impl is where it belongs, because the impl is what binds the parameter.** A
+	// trait's parameter has no value until one does — `checkGenericTypeBounds` hangs off
+	// resolving a *type*, which a trait never is, so the generic-type fix earlier the same
+	// day could not reach this. `TraitArgs` are positional against `GenericParams`, which is
+	// what the declaration's own comment says they are for.
+	//
+	// A type-variable argument is skipped, as the type side skips one: inside
+	// `impl Holder<t> for Box<t>` the question is whether the *impl's* `t` carries the bound,
+	// which is its `where` clause's business and is checked when that clause is used.
+	for i, param := range trait.GenericParams {
+		if len(param.Constraints) == 0 || i >= len(impl.TraitArgs) {
+			continue
+		}
+		arg := tc.resolveTypeIfKnown(impl.TraitArgs[i], impl.GetLocation())
+		if arg == nil {
+			continue
+		}
+		if _, isVar := arg.(types.GenericType); isVar {
+			continue
+		}
+		for _, traitName := range param.Constraints {
+			if _, known := tc.symTable.LookupTraitFrom(traitName, impl.GetLocation()); !known {
+				// An unknown trait in the bound is the declaration's mistake, reported there.
+				continue
+			}
+			ok, why := tc.typeImplementsTraitWhy(arg, traitName, nil)
+			if ok {
+				continue
+			}
+			because := ""
+			if why != "" {
+				because = " — " + why
+			}
+			tc.addErrorCode(impl.GetLocation(), SeverityError, diag.CodeUnsatisfiedTraitBound,
+				"impl of %s for %s: %s is bound at %s, which does not implement %s%s (required by `%s<%s: %s>`)",
+				impl.TraitName, implType, param.Name, arg, traitName, because,
+				trait.Name, param.Name, traitName)
+		}
+	}
+
 	// Put the impl's `where` bounds (`t: Show`) in scope for the duration of its
 	// method-body checks, so a call on a value of type `t` can dispatch through
 	// the bound (see dispatchViaGenericBound). Save/restore handles nesting.

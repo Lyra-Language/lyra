@@ -37,26 +37,6 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
     higher-order function per lambda set. Verdict: not worth it for speed alone; revisit if
     the `noalloc` refusal starts biting or a self-hosting profile shows indirect-call cost.
 
-### Typechecker
-
-- **[OPEN] A bound on a *trait*'s generic parameter is parsed and never enforced.** The
-  sibling of the generic-type bound fixed 09/16, in the one place that fix does not reach:
-  `checkGenericTypeBounds` hangs off resolving a *type*, and a trait's parameter is bound by
-  an **impl**, which is a different site.
-
-  ```lyra
-  trait Tag { tag: (Self) -> string }
-  struct NoTag { n: i64 }
-  trait Holder<t: Tag> { get: (Self) -> t }
-  impl Holder<NoTag> for Cell { … }   // compiles and runs; NoTag has no Tag impl
-  ```
-
-  The check to reuse is the same one: `typeImplementsTraitWhy`, asked of each trait argument
-  against the declaring trait's `GenericParams[i].Constraints`. The site is wherever an impl's
-  trait arguments are resolved — `checkTraitImpl` already verifies a matched impl's *own*
-  bounds (08/14), so this is the same question asked one level out. Skip a type-variable
-  argument as the type side does, for the same reason.
-
 ### Traits: a method's own type variables
 
 - **[DECIDED] `Self<…>` through a `where` bound stays refused.** `Result<_, e>` (a hole
