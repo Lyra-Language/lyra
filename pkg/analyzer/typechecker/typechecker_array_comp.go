@@ -23,7 +23,7 @@ import (
 func (tc *TypeChecker) inferArrayCompType(comp *ast.ArrayCompExpr) types.Type {
 	if len(comp.Generators) == 0 {
 		tc.addError(comp.GetLocation(), SeverityError,
-			"an array comprehension needs at least one generator, as in `[ x in xs | x ]`")
+			"an array comprehension needs at least one clause, as in `[ x in xs | x ]`")
 		return nil
 	}
 	var result types.Type
@@ -71,7 +71,7 @@ func (tc *TypeChecker) bindGenerator(gen *ast.Generator) {
 	elem := iterableElementType(sourceType)
 	if elem == nil {
 		tc.addError(gen.GetLocation(), SeverityError,
-			"cannot iterate over %s in a comprehension — a generator's source must be an array, a string, a range, or a Seq",
+			"cannot iterate over %s in a comprehension — a clause's source must be an array, a string, a range, or a Seq",
 			sourceType)
 		return
 	}

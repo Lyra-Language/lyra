@@ -267,7 +267,7 @@ never mentioned is `lyra-W013`. The list stays optional. Catches typo'd lowercas
   then, `||` into else, `!` swaps. Contradiction → unreachable.
 - **`evalMatch`/`refineScrutinee`**: arms narrow a tracked scrutinee via `patternInterval`; a
   non-overlapping arm is unreachable. **A name the arm's pattern binds is forgotten** for the arm
-  and restored after it, as a comprehension's generator variables are (`evalArrayComp`) and a
+  and restored after it, as a comprehension's clause variables are (`evalArrayComp`) and a
   `with` binding is — inheriting the shadowed outer interval dropped bounds checks
   (`TestRange_Safety_ShadowingBindersDoNotInherit`).
 - **Floats** (`range_float.go`): `rangeEnv.floats` holds float bindings' bounds beside `vars`;

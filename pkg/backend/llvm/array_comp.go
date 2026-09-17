@@ -92,7 +92,7 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	for i := range e.Generators {
 		if srcType, ok := l.recordedType(e.Generators[i].Value); ok && isSeqType(srcType) {
 			if len(e.Generators) != 1 {
-				return nil, nil, errSeqStage1("a comprehension over a sequence takes one generator; nest the others inside it")
+				return nil, nil, errSeqStage1("a comprehension over a sequence takes one clause; nest the others inside it")
 			}
 			return l.lowerSeqComp(block, e, &e.Generators[i], dynType)
 		}
@@ -328,7 +328,7 @@ func dependentGenerator(generators []ast.Generator) error {
 			})
 			if offender != "" {
 				return fmt.Errorf(
-					"llvm: a comprehension generator whose source depends on an earlier generator (%q in %q's source) is not implemented yet — write it as a comprehension over a comprehension instead",
+					"llvm: a comprehension clause whose source depends on an earlier clause (%q in %q's source) is not implemented yet — write it as a comprehension over a comprehension instead",
 					offender, gen.Identifier)
 			}
 		}
@@ -341,7 +341,7 @@ func dependentGenerator(generators []ast.Generator) error {
 func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSource, *ir.Block, error) {
 	srcType, ok := l.recordedType(gen.Value)
 	if !ok {
-		return compSource{}, nil, fmt.Errorf("llvm: no type recorded for a comprehension generator's source")
+		return compSource{}, nil, fmt.Errorf("llvm: no type recorded for a comprehension clause's source")
 	}
 	if _, isRange := srcType.(types.RangeType); isRange {
 		return l.rangeSource(block, gen)
@@ -388,7 +388,7 @@ func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSour
 	// a tuple, a struct. Those are not iterable at all (the typechecker says so first),
 	// which makes this the backstop rather than a deferral.
 	return compSource{}, nil, fmt.Errorf(
-		"llvm: a comprehension over %s is not implemented — a generator's source must be an array, a range, or a string", srcType)
+		"llvm: a comprehension over %s is not implemented — a clause's source must be an array, a range, or a string", srcType)
 }
 
 // rangeSource walks `start..<end` / `start..<=end` with an optional step.

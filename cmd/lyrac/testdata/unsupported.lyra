@@ -1,7 +1,7 @@
 let nums = pure gen () -> Seq<i64> => { yield from 0..<3 }
 
 let main = () -> u8 => {
-    var total = 0
-    for x in nums() { total += x }
-    u8(total)
+  var total = 0
+  for x in nums() { total += x }
+  u8(total)
 }

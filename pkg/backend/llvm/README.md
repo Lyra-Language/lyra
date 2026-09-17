@@ -340,7 +340,7 @@ lengths; spreading a `shared` array is a loud error.
 
 `[ x in xs | guard | result ]` allocates once and fills at a running count.
 
-- **Capacity = product of source lengths**, allocated up front. Running generators twice
+- **Capacity = product of source lengths**, allocated up front. Running the clauses twice
   would evaluate guards (which may call functions) twice; growing would realloc on the
   common mapping case.
 - **The capacity must bound the loop by construction**: an array's bound is its length; a
@@ -354,7 +354,7 @@ lengths; spreading a `shared` array is a loud error.
   (`realloc(p, 0)` may free and return null; the buffer pointer is non-null by
   construction), a failed shrink keeps the old buffer via `select`, and `cap` is rewritten
   with the buffer.
-- Loud error: a generator whose source depends on an earlier generator.
+- Loud error: a comprehension clause whose source depends on an earlier clause.
 
 ### `match` on `[]T` (`match_array.go`)
 

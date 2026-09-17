@@ -108,7 +108,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    - **Adding an expression kind: grep for the kind it is a variant of.** List every file
      mentioning `ArrayLiteralExpr` and check each for `ArrayRepeatExpr` (eight past misses).
    - **A binder is its own family** — parameters, `match` arms, loop variables,
-     destructurings, comprehension generators. A binder a walk doesn't know reads as a capture.
+     destructurings, comprehension clauses. A binder a walk doesn't know reads as a capture.
    - **A bare `string` field is invisible to every walk** (`VarReassignmentStmt.Name` hid a
      write-only capture → backend nil deref).
    - **Declaration kinds**: `pkg/ast/exhaustive_test.go` parses switches and checks registered
@@ -379,6 +379,13 @@ starts one before its expression).
   against real programs using `bindings/raylib`.
 
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
+
+**Naming: "generator", "clause"** — a `gen` function is a **generator function**; `x in xs`
+inside a comprehension is a **comprehension clause**, always qualified, because a bare
+*clause* is a multi-clause function's arm (`desugarClauses`, rule 11). "Generator" alone
+named both until 09/17 and now names neither. The grammar node and `ast.Generator` keep
+their name — a contract with the golden files and the editors' queries — so the convention
+is about prose and diagnostics, which is where the confusion was.
 
 **Sweeping for surfaces nothing reads** — to find AST fields no pass consumes, enumerate
 exported `pkg/ast` fields and grep for readers **outside `pkg/ast`, `pkg/printer` (reads all

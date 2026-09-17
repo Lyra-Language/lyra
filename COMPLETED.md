@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — "generator" named two things; now it names one
+
+A `gen` function and a comprehension's `x in xs` were both generators, in prose and in
+diagnostics. Three of the collector's messages said it bare — "generator must have a
+value" — so a reader who had just met `lyra-E006`'s "outside of a **generator function**"
+had no way to tell the two apart. The `gen` function keeps the word; `x in xs` is a
+**comprehension clause**, and its right-hand side is the clause's **source**.
+
+**The obvious term was already taken, which is the part worth recording.** "Clause" alone
+is a multi-clause function's arm (`desugarClauses`, rule 11) and appears all over the
+compiler's prose, so the fix was one word away from swapping one ambiguity for another.
+Hence *comprehension clause*, always qualified: the two never appear unqualified in the
+same paragraph, and a bare "clause" still means what it always meant.
+
+**Identifiers were deliberately left alone.** The grammar node is named `generator` and so
+is `ast.Generator`, and both are contracts — with the collector's golden files and with the
+editors' tree-sitter queries — so renaming them is churn with a real breakage surface and
+no user visible in it. The convention is about prose and diagnostics, which is where the
+confusion actually was, and CLAUDE.md now says so rather than leaving the next reader to
+wonder whether the code disagrees on purpose.
+
+Eight messages changed across the collector, the typechecker and the backend. The one test
+asserting the old wording is updated, and its name with it.
+
+**LANGUAGE.md had no comprehension section at all**, which is how a term gets to mean two
+things: there was nowhere that said what one is. It has one now — clause and source, the
+guards being comma-separated and conjunctive, several clauses nesting left to right (the
+leftmost is the outer loop), the sources a clause may take, and why a clause depending on
+an earlier clause's binding is refused. Every claim in it was run before it was written,
+not recalled.
+
+**Every `.lyra` file in the repo is now formatted**, the two stragglers included:
+`examples/raylib/shapes.lyra` ended with a blank line and `cmd/lyrac/testdata/unsupported.lyra`
+was indented four spaces. Both predate the inline-block rule and had been left alone as
+unrelated churn while the formatter was being changed under them; with the directory walk
+in, `lyrafmt --check .` is the thing that reports them, so they are worth closing. The
+fixture's test asserts an exit code and a message prefix, not a column, so the reindent
+touches nothing.
+
 ### 09/17/26 — lyrafmt walks a directory
 
 `lyrafmt --check .` now means every `.lyra` file beneath it, which is what a formatter has

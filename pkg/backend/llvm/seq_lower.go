@@ -641,7 +641,7 @@ func (l *lowerer) lowerSeqComp(block *ir.Block, e *ast.ArrayCompExpr, gen *ast.G
 	stride := int64(alignUp(elemSize, elemAlign))
 	srcElem, ok := l.recordedType(gen.Value)
 	if !ok {
-		return nil, nil, fmt.Errorf("llvm: no type recorded for a comprehension generator's source")
+		return nil, nil, fmt.Errorf("llvm: no type recorded for a comprehension clause's source")
 	}
 	srcElemLL, err := l.lowerType(srcElem.(types.ParameterizedType).TypeArguments[0])
 	if err != nil {

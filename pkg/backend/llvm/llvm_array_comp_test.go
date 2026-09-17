@@ -153,10 +153,10 @@ let main = () -> u8 => {
 	}
 }
 
-// Deferred loudly rather than mis-lowered: a source that depends on an earlier generator
-// would be materialized before that binding has a value, since sources are hoisted to make
-// the capacity computable.
-func TestEmit_ArrayCompDependentGeneratorIsRefused(t *testing.T) {
+// Deferred loudly rather than mis-lowered: a source that depends on an earlier
+// comprehension clause would be materialized before that binding has a value, since
+// sources are hoisted to make the capacity computable.
+func TestEmit_ArrayCompDependentClauseIsRefused(t *testing.T) {
 	t.Parallel()
 	_, err := emitSource(t, `
 let main = () -> u8 => {
@@ -165,9 +165,9 @@ let main = () -> u8 => {
   u8(flat.len())
 }`)
 	if err == nil {
-		t.Fatal("expected a dependent generator to be refused")
+		t.Fatal("expected a dependent comprehension clause to be refused")
 	}
-	if !strings.Contains(err.Error(), "depends on an earlier generator") {
+	if !strings.Contains(err.Error(), "depends on an earlier clause") {
 		t.Errorf("expected the message to name the dependency, got %v", err)
 	}
 }

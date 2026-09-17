@@ -55,16 +55,13 @@ Package management, versioning and separate compilation are out of scope by deci
   formatter becomes opinionated: it needs a width budget, a list of breakable constructs and
   re-indentation of what it broke. What is left is the bootstrap proper, which starts with
   the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/17.)
-  - **[OPEN] `lyrafmt --check .` cannot be the CI step yet**, and the walk is what made
-    that concrete: `cmd/lyrac/testdata/syntax.lyra` does not parse *on purpose*, so the
-    run reports it and exits 1 from the repo root for ever. Skipping an unparseable file
-    found by walking (while still reporting one named explicitly) is the shape that
-    matches the dotfile rule — but a formatter check that silently ignores broken files is
-    worse for CI than one that flags them, so the answer is probably an exclusion the
-    repo states rather than a rule the formatter infers. Scope it before building.
-  - Two files still fail `lyrafmt --check`, both predating the inline-block rule and
-    neither touched since: `cmd/lyrac/testdata/unsupported.lyra` is indented four spaces
-    (testdata, never formatted) and `examples/raylib/shapes.lyra` ends with a blank line.
+  - **[OPEN] One thing stands between `lyrafmt --check .` and a CI step**: every file in
+    the repo is formatted as of 09/17, and `cmd/lyrac/testdata/syntax.lyra` does not parse
+    *on purpose*, so the run reports it and exits 1 from the root for ever. Skipping an
+    unparseable file found by walking (while still reporting one named explicitly) would
+    match the dotfile rule — but a formatter check that silently ignores broken files is
+    worse for CI than one that flags them, so the answer is probably an exclusion the repo
+    states rather than a rule the formatter infers. Scope it before building.
 
 
 ## Language surface
@@ -111,8 +108,6 @@ Package management, versioning and separate compilation are out of scope by deci
 - **[OPEN] Shapes still refused:** a plain function returning a sequence from a block body;
   a lambda literal inside a `gen` used as a value; a `mut` parameter on one; `yield from`
   over an array, string or range.
-- **[OPEN] "Generator" means two things** — a comprehension clause and a `gen` function.
-  The docs should pick distinct terms.
 
 ## Ranges
 

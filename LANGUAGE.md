@@ -176,6 +176,21 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 - `[v; n]` is `[]T` for any integer count; `#[v; n]` is `[n]T` and its count must fold (const chains work; `lyra-E056` otherwise, naming `[v; n]`).
 - **`lyra-W019`**: repeating a value with shared mutable structure aliases it — `[[' '; W]; H]` is one row H times. Fires for a `[]T`, a `shared` aggregate with a writable field, or a struct/tuple/`data`/`[N]T` containing one. Silent for strings and `shared` scalars. `readonly` does not prevent the sharing. See `examples/life.lyra`.
 
+**Comprehensions `[x in xs | guard | result]`**
+- **`x in xs` is a comprehension clause** and `xs` is its **source**. A `gen` function is a
+  *generator function*; nothing here is called a generator, because the word used to name
+  both. Always qualified, because bare "clause" is a multi-clause function's arm — the two
+  never appear unqualified in the same prose. (The grammar node and the AST field keep the
+  name `generator`: a contract older than the convention.)
+- The guards are optional (`[x in xs | x * 2]`), comma-separated, and **all must hold**.
+- **Several clauses nest left to right**: in `[y in ys, x in xs | …]` the `y` clause is the
+  outer loop, so `ys = [10, 20]`, `xs = [1, 2, 3]` yields the pairs in the order `10:1
+  10:2 10:3 20:1 …`.
+- A source is an array, a range, a string (by rune), or one `Seq`. Capacity is the product
+  of the sources' lengths, computed up front, which is why a clause whose source depends on
+  an **earlier clause's binding** (`[row in grid, cell in row | cell]`) is refused today.
+- The result is any expression, and the brackets make a `[]T` — there is no `collect`.
+
 **Sorting** (all ordinary Lyra in `std/prelude/array.lyra`):
 
 | Method | Bound | In place | Stable | Allocates |
@@ -237,7 +252,7 @@ A `gen` function yields into a `Seq<t>`; combinators are Lyra in `std/prelude/se
 - **Consumed where written** (`for x in xs.seq().filter(p).map(f)`, or a terminal like `sum`): one fused loop, no allocation.
 - **Held as a value** (binding, argument, field): a cursor over an LLVM coroutine; `s.next()` steps it (`mut` receiver); copies share the cursor; the last reference destroys the coroutine.
 - `Seq<t>` is compiler-known by name, declared nowhere; a program's own `Seq` wins.
-- A `gen` function must declare `-> Seq<t>`; body is void; `yield e` checks `e: t`; `yield from s` lowers only for sequences (write the loop for arrays/ranges).
+- A `gen` function (a **generator function** — never just "generator", which used to name a comprehension clause too) must declare `-> Seq<t>`; body is void; `yield e` checks `e: t`; `yield from s` lowers only for sequences (write the loop for arrays/ranges).
 - Consumers: `for-in` and comprehensions. Brackets make an array; there is no `collect`. Eager `map`/`filter` on `[]t` coexist via receiver-keyed overloading.
 - **Sequence values need clang ≥ 15** (coroutine splitting). `lyrac` probes once and refuses by name, keeping the `.ll`; backend tests skip.
 - Still refused by name: a plain function returning a sequence from a block body, a lambda literal inside a `gen` used as a value, a `mut` parameter on one, `yield from` over a non-sequence.

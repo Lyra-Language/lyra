@@ -40,7 +40,7 @@ func collectArrayCompExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Loc
 	comp.Guards = collectGuards(node, ctx)
 	comp.Result = CollectExpression(resultNode, ctx)
 	// Recorded so the typechecker can re-enter this scope to type the guards and result
-	// against the generator bindings, the way it re-enters a block's.
+	// against the clauses' bindings, the way it re-enters a block's.
 	ctx.RecordScope(comp, scope)
 	return comp
 }
@@ -59,12 +59,12 @@ func collectGenerators(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Generato
 func collectGenerator(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Generator {
 	valueNode := cst.Field(node, "value")
 	if valueNode == nil {
-		ctx.AddError(node, diag.SeverityError, "generator must have a value")
+		ctx.AddError(node, diag.SeverityError, "a comprehension clause must have a source (`x in xs`)")
 		return ast.Generator{}
 	}
 	identifierNode := cst.Field(node, "identifier")
 	if identifierNode == nil {
-		ctx.AddError(node, diag.SeverityError, "generator must have an identifier")
+		ctx.AddError(node, diag.SeverityError, "a comprehension clause must bind a name (`x in xs`)")
 		return ast.Generator{}
 	}
 	// The source before the binding: see the note on ordering above.
@@ -76,7 +76,7 @@ func collectGenerator(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Generator {
 		Name:        name,
 	}
 	if err := ctx.RegisterVariable(binding); err != nil {
-		ctx.AddError(node, diag.SeverityError, "failed to register generator variable %q: %v", name, err)
+		ctx.AddError(node, diag.SeverityError, "failed to register the comprehension clause's variable %q: %v", name, err)
 	}
 	return ast.Generator{
 		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
