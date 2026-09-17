@@ -109,3 +109,49 @@ let main = () -> void => {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
 }
+
+// `std.io.is_symlink` over `readlink` into a one-byte buffer: the link itself, not what it
+// points at, which is the question `read_dir` cannot answer because `opendir` follows a
+// link. A walker needs it to not read a tree twice through its own symlinks.
+func TestExec_IsSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "real.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toFile := filepath.Join(dir, "to_file")
+	toDir := filepath.Join(dir, "to_dir")
+	broken := filepath.Join(dir, "broken")
+	if err := os.Symlink(file, toFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sub, toDir); err != nil {
+		t.Fatal(err)
+	}
+	// A link to nothing is still a link — the test that follows it would say otherwise.
+	if err := os.Symlink(filepath.Join(dir, "gone"), broken); err != nil {
+		t.Fatal(err)
+	}
+
+	src := `module main
+import std.io.{ is_symlink }
+let main = () -> void => {
+  let args = program_args()
+  for i in 1..<args.len() { println(is_symlink(args[i])) }
+}`
+	bin := preludeBinary(t, src)
+	out, err := exec.Command(bin, file, sub, toFile, toDir, broken,
+		filepath.Join(dir, "no-such-path")).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// real file, real directory, link to each, a broken link, and a path that is nothing.
+	if want := "false\nfalse\ntrue\ntrue\ntrue\nfalse\n"; string(out) != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
+	}
+}

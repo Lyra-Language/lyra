@@ -6,6 +6,7 @@
 //   build/lyrafmt file.lyra           # the formatted text, to stdout
 //   build/lyrafmt --check *.lyra      # names each file that would change; exit 1 if any
 //   build/lyrafmt -w *.lyra           # rewrites each file that would change
+//   build/lyrafmt --check .           # a directory is every `.lyra` file beneath it
 //   build/lyrafmt -                   # formats standard input onto standard output
 //
 // The `-` form is what an editor uses: `lyra-lsp` runs it for `textDocument/formatting`,
@@ -72,7 +73,7 @@
 // 2 for usage.
 
 import std.collections.{ parse_args, HashMap, hashmap_new, insert, get_or }
-import std.io.{ read_file, read_stdin, write_file }
+import std.io.{ read_file, read_stdin, write_file, read_dir, is_symlink }
 import std.ffi.{ cstring }
 import bindings.treesitter.{
   Node, Parser, lyra_language, new_parser, parser_delete, parse, tree_delete,
@@ -82,7 +83,7 @@ import bindings.treesitter.{
 let main = () -> u8 => {
   let args = parse_args([])
   if args.positional.len() == 0 {
-    println("usage: lyrafmt [--check | -w | --roundtrip] <file.lyra>...")
+    println("usage: lyrafmt [--check | -w | --roundtrip] <file.lyra | directory>...")
     return 2
   }
   let Some(parser) = new_parser(lyra_language()) else {
@@ -92,7 +93,7 @@ let main = () -> u8 => {
   let mode = if args.has("--check") { Check } else if args.has("-w") { Write } else { Print }
   let rule = !args.has("--roundtrip")
   var failures = 0
-  for path in args.positional {
+  for path in expand(args.positional) {
     // `-` is standard input, which has no name to report and nothing to write back to.
     if path == "-" {
       if mode == Write {
@@ -128,6 +129,57 @@ data Mode = Print | Check | Write
 struct Formatted {
   source: string,
   text: string,
+}
+
+/// The files the command line names: a `-` or a file as written, and a **directory
+/// expanded to the `.lyra` files beneath it**, so `lyrafmt --check .` is the whole repo.
+///
+/// **A path is a directory if it can be read as one**, which is the only question this
+/// needs and the only one `std.io` answers. A file, a missing path and an unreadable
+/// directory all come back `None` and are passed through as written — so a path that names
+/// nothing is reported by the read that follows, against the name the user typed, rather
+/// than swallowed here as "not a directory".
+///
+/// The order is `read_dir`'s, which is sorted, so a run over a tree visits the same files
+/// in the same order on every machine — which is what makes `--check`'s output, and its
+/// exit code, reproducible.
+let expand = (paths: []string) -> []string => {
+  var out: []string = []
+  for path in paths {
+    match read_dir(path) {
+      Some(names) => walk(path, names, out),
+      None => out.push(path),
+    }
+  }
+  out
+}
+
+/// Appends every `.lyra` file at or below `dir` — whose entries are `names` — to `out`.
+///
+/// **A name beginning with `.` is skipped**, and only while walking: `.git` holds no Lyra
+/// to format and is most of the work of walking a repo, and a file the author hid is not
+/// one a formatter should find on its own. A path named on the command line is never
+/// filtered — it was asked for by name, which is the convention every tool that skips
+/// dotfiles keeps.
+///
+/// Recursion rather than a work list because a directory tree is one, and the depth is the
+/// tree's: a repo is tens deep at worst.
+let walk = (dir: string, names: []string, out: mut []string) -> void => {
+  for name in names {
+    if name.starts_with(".") { continue }
+    // `entry`, not `child`: the grammar binding exports a `child`, and a local of that
+    // name shadows it (lyra-W001) two functions above where the tree is walked.
+    let entry = dir ++ "/" ++ name
+    match read_dir(entry) {
+      // **A symlink is never descended.** `build/std` here points back at `std/`, so
+      // following links formats every prelude file twice under two names, and a link into
+      // an ancestor would not terminate at all. A symlinked *file* is still formatted —
+      // it is a file, and the caller could have named it — which is where every walker
+      // that refuses symlinked directories lands.
+      Some(names_below) => if !is_symlink(entry) { walk(entry, names_below, out) },
+      None => if entry.ends_with(".lyra") { out.push(entry) },
+    }
+  }
 }
 
 /// Hands one result to its destination; answers whether it counts as success under `mode`

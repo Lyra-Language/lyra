@@ -9,6 +9,57 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — lyrafmt walks a directory
+
+`lyrafmt --check .` now means every `.lyra` file beneath it, which is what a formatter has
+to be before anybody runs it over a repo. Twenty lines of Lyra on top of the morning's
+`read_dir`, and the interesting parts are all about what the walk does *not* visit.
+
+**A path is a directory if it can be read as one.** That is the only question the walk has,
+and the only one `std.io` answers — a file, a missing path and an unreadable directory all
+come back `None` and are passed through as written, so a path that names nothing is
+reported by the read that follows, against the name the user typed, rather than swallowed
+here as "not a directory".
+
+**A name beginning with `.` is skipped while walking, and never when named.** `.git` is
+most of the cost of walking a repo and holds no Lyra; a file the author hid is not one a
+formatter should find on its own. But `lyrafmt .dotfile.lyra` formats it, because it was
+asked for by name — the convention every tool that skips dotfiles keeps, and the same
+explicit-beats-inferred line the walk draws everywhere else.
+
+**A symlink is not descended, and this repo is why.** `build/std` is a symlink back to
+`std/` (it has to be: a copy drifts from edited prelude sources, rule 7). A walk that
+follows links therefore formats every prelude file twice under two names, which `-w` would
+turn into two writes to one file — and a link into an ancestor would not terminate at all.
+The first version of the walk did exactly that, and it was not a hypothesis: comparing the
+bytes it emitted under `--roundtrip` against `find`'s own list showed 503 KB too many.
+
+That test needed something `read_dir` cannot answer, because `opendir` follows a link, so a
+symlink to a directory reads exactly like the directory. **`std.io.is_symlink`** is the
+answer, over `readlink` into a one-byte buffer: it returns the bytes it copied for a link
+(every link has a non-empty target) and -1 for anything else, so the truncation is the
+point rather than a limitation. It belongs in Lyra, and the contrast with `dir_names` is
+the reason worth recording: `readlink` carries **no struct and no platform-dependent
+number**, so nothing about it needs the compiler. The rule is not "file system calls are
+the compiler's" — it is "a call whose answer arrives inside a C struct is".
+
+A symlinked *file* is still formatted; only the descent is refused. That is where every
+walker that declines symlinked directories lands.
+
+**The walk is what made the CI question concrete**, and it is now an open item rather than
+an answer: `cmd/lyrac/testdata/syntax.lyra` does not parse on purpose, so `--check .` from
+the repo root reports it and exits 1 for ever. Skipping an unparseable file *found by
+walking* would match the dotfile rule exactly — but a formatter check that silently ignores
+broken files is worse for CI than one that flags them, so this is probably an exclusion the
+repo states rather than a rule the formatter infers.
+
+Verification: the walk's output under `--roundtrip` over the repo is **byte-identical** to
+`cat` of `find`'s list (886,457 bytes either way), which is a set comparison that needs no
+new machinery and no agreement about order. Tests: a tree with a subdirectory, a nested
+one, a dotfile, a hidden directory, a non-`.lyra` file and a symlink to a sibling — three
+files reported, in sorted order, exit 1 — plus the named dotfile formatting anyway, and
+`is_symlink` over a file, a directory, a link to each, a broken link and a missing path.
+
 ### 09/17/26 — `read_dir`, and the argument half of the builtin ownership rule
 
 `std.io.read_dir(path)` answers a directory's names — sorted, without `.` and `..`,

@@ -48,27 +48,23 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
-- **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** The round-trip
-  baseline (09/15) and the indentation rule (09/15, COMPLETED.md) are in: `--check`/`-w`
-  over every file in the repo, idempotent, and the repo is formatted by it (09/15: 18
-  files, one convention for a wrapped signature). `lyrafmt --check` is clean over every file
-  it has formatted and could be a CI step, and **both editors format through it** (09/15:
-  `lyra-lsp` runs `lyrafmt -`; `build.sh` builds it beside the server). Trailing
-  whitespace, blank-line runs and token spacing landed 09/15, spacing made canonical the same day, and **inline blocks** 09/16
-  (`{ n }`, `{}` when empty, an interpolation's `${…}` left tight; COMPLETED.md). That was
-  the last rule that needs no line-breaking decision — **nothing in lyrafmt yet says when a
-  line should break**, which is where a formatter becomes opinionated and would need a width
-  budget, a list of breakable constructs and re-indentation of what it broke. The **scope
-  stack** landed 09/17 (one `[]Scope` for the open delimiters, replacing two parallel
-  arrays; output byte-identical on all 94 files). It was expected to hit `[]T` aliasing and
-  did not — a stack never copies itself, so there is no second binding for the aliasing to
-  be seen through; that expectation is retired (COMPLETED.md). `std.io.read_dir` landed
-  09/17 over a `dir_names` builtin (COMPLETED.md), so **the directory walk is unblocked and
-  is the next piece of lyrafmt**: `lyrafmt --check src/` should mean every `.lyra` file
-  under it. A real bootstrap would start with the collector after this.
-  - Two files fail `lyrafmt --check` and predate the inline-block rule:
-    `cmd/lyrac/testdata/unsupported.lyra` is indented four spaces (testdata, never
-    formatted) and `examples/raylib/shapes.lyra` ends with a blank line.
+- **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** Round trip,
+  indentation, whitespace, spacing and inline blocks are in; the repo is formatted by it, a
+  directory argument is every `.lyra` file beneath it, and both editors format through
+  `lyra-lsp`. **Nothing in it decides when a line should break** — that is where a
+  formatter becomes opinionated: it needs a width budget, a list of breakable constructs and
+  re-indentation of what it broke. What is left is the bootstrap proper, which starts with
+  the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/17.)
+  - **[OPEN] `lyrafmt --check .` cannot be the CI step yet**, and the walk is what made
+    that concrete: `cmd/lyrac/testdata/syntax.lyra` does not parse *on purpose*, so the
+    run reports it and exits 1 from the repo root for ever. Skipping an unparseable file
+    found by walking (while still reporting one named explicitly) is the shape that
+    matches the dotfile rule — but a formatter check that silently ignores broken files is
+    worse for CI than one that flags them, so the answer is probably an exclusion the
+    repo states rather than a rule the formatter infers. Scope it before building.
+  - Two files still fail `lyrafmt --check`, both predating the inline-block rule and
+    neither touched since: `cmd/lyrac/testdata/unsupported.lyra` is indented four spaces
+    (testdata, never formatted) and `examples/raylib/shapes.lyra` ends with a blank line.
 
 
 ## Language surface

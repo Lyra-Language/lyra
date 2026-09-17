@@ -182,4 +182,53 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	if out, err := exec.Command(bin, append([]string{"--check"}, files...)...).CombinedOutput(); err != nil {
 		t.Errorf("--check on formatted files: %v\n%s", err, out)
 	}
+
+	// **A directory is every `.lyra` file beneath it**, which is what makes `lyrafmt
+	// --check .` a CI step. Four rules at once, and three of them are about what the walk
+	// does *not* visit:
+	//
+	//   - it recurses, and the order is `read_dir`'s (sorted), so the report is the same
+	//     on every machine — the reason the output below can be compared literally;
+	//   - a name beginning with `.` is skipped while walking, so `.git` costs nothing;
+	//   - a file that is not `.lyra` is not a candidate;
+	//   - **a symlink is not descended.** This repo's own `build/std` points back at
+	//     `std/`, so a walk that follows links formats the prelude twice under two names,
+	//     and a link into an ancestor never terminates. The link here points at a sibling
+	//     directory, so following it would report `sub/b.lyra` a second time as
+	//     `link/b.lyra`.
+	tree := t.TempDir()
+	for _, dir := range []string{"sub", filepath.Join("sub", "deep"), ".hidden"} {
+		if err := os.MkdirAll(filepath.Join(tree, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"a.lyra", ".dotfile.lyra", "readme.txt",
+		filepath.Join("sub", "b.lyra"), filepath.Join("sub", "deep", "c.lyra"),
+		filepath.Join(".hidden", "h.lyra")} {
+		if err := os.WriteFile(filepath.Join(tree, f), []byte("let f = () -> i64 => {1}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(tree, "sub"), filepath.Join(tree, "link")); err != nil {
+		t.Fatal(err)
+	}
+	walked, err := exec.Command(bin, "--check", tree).Output()
+	if err == nil {
+		t.Errorf("--check over a tree needing changes exited 0")
+	}
+	wantWalk := "would reformat " + filepath.Join(tree, "a.lyra") + "\n" +
+		"would reformat " + filepath.Join(tree, "sub", "b.lyra") + "\n" +
+		"would reformat " + filepath.Join(tree, "sub", "deep", "c.lyra") + "\n"
+	if string(walked) != wantWalk {
+		t.Errorf("walking a directory reported:\n%s\nwant:\n%s", walked, wantWalk)
+	}
+	// **A path named on the command line is never filtered** — the convention every tool
+	// that skips dotfiles keeps. The skip is a rule about walking, not about the file.
+	named, err := exec.Command(bin, filepath.Join(tree, ".dotfile.lyra")).Output()
+	if err != nil {
+		t.Fatalf("formatting a named dotfile: %v", err)
+	}
+	if got, want := string(named), "let f = () -> i64 => { 1 }\n"; got != want {
+		t.Errorf("a named dotfile formatted to %q, want %q", got, want)
+	}
 }
