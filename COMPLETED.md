@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — lyrafmt: the scope stack, and a prediction that did not come true
+
+The formatter carried its open delimiters as **two parallel arrays**, `levels` and
+`closer_levels`, kept the same length by hand — and read one of them with the other's
+length (`closer_levels[levels.len() - 1]`), which was correct only because of that
+discipline. They are now one `[]Scope`, a struct of the two numbers, pushed and sliced as
+a stack. A third fact about an open delimiter is now a field rather than a third array.
+
+**Output is byte-identical on all 94 `.lyra` files in the repo**, which is the only
+acceptable result for a change that is meant to decide nothing new, and a better check than
+any test could be: the rules are unchanged, so every file must be.
+
+**`todo.md` expected this to hit `[]T` aliasing** (Borrow model (e): `var b = a` on a `[]T`
+aliases silently). It did not, and the reason is worth keeping, because it says which
+programs that hole is actually reachable from: **a stack never copies itself.** `push`
+mutates in place and `slice` is a fresh array; nothing in the formatter wants a second
+binding to the same stack, so there is nothing for the aliasing to be observed through. The
+prediction was about the element type — an array of structs *looked* like the shape that
+would trip it — but the hazard is about the *binding*, and the two are unrelated. The
+entry's `[]T` expectation is retired rather than carried forward.
+
+Two smaller things the probe did answer, both clean: a `[]Scope` pushed, indexed for a
+field and sliced compiles with no diagnostic, and `leaks --atExit` reports zero leaked bytes
+for a run over `examples/primes.lyra`, so the struct array's retains and releases balance.
+
 ### 09/16/26 — lyrafmt: the inline-block rule
 
 Braces that share a line now hold their contents one space away — `{ n }`, never `{n}` or

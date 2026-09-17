@@ -263,17 +263,25 @@ let last_code_kind = pure (out: []Leaf) -> string => {
   ""
 }
 
+/// A delimiter that is open — one entry of the scope stack the formatter carries through a
+/// file, and what the two questions a line asks its enclosing delimiter are answered from.
+struct Scope {
+  /// The level the delimiter's contents sit at: one more than the level of the line its
+  /// anchor is on.
+  level: i64,
+  /// The level a closing delimiter that *starts* a line sits at: the anchor's line itself,
+  /// so the `}` of an `if` that was a continuation lines up with the `if` and not with the
+  /// statement the `if` continued.
+  closer: i64,
+}
+
 /// The formatted bytes: every leaf as it was, and between leaves the source's own bytes —
 /// except, with the rule on, the whitespace that begins a line, which becomes the
 /// indentation the enclosing delimiters call for.
 let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
   var out: []u8 = []
-  // One entry per delimiter still open: the level its contents sit at (one more than its
-  // anchor's line) and the level a closing delimiter starting a line sits at (the
-  // anchor's line itself — so the `}` of an `if` that was a continuation lines up with
-  // the `if`, not with the statement).
-  var levels: []i64 = []
-  var closer_levels: []i64 = []
+  // One entry per delimiter still open, innermost last.
+  var scopes: []Scope = []
   // The level of the line each token sits on, by the token's start — read back for an
   // opener's anchor, so a block indents from the line of the construct that opened it.
   var level_at: HashMap<i64, i64> = hashmap_new()
@@ -285,16 +293,21 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
   var cursor = 0
   for leaf in leaves {
     var closer_level = 0
-    if rule && closes(leaf.kind) && levels.len() > 0 {
-      closer_level = closer_levels[levels.len() - 1]
-      levels = levels.slice(0, levels.len() - 1)
-      closer_levels = closer_levels.slice(0, closer_levels.len() - 1)
+    if rule && closes(leaf.kind) && scopes.len() > 0 {
+      closer_level = scopes[scopes.len() - 1].closer
+      scopes = scopes.slice(0, scopes.len() - 1)
     }
     let nl = last_newline(bytes, cursor, leaf.start)
     let plain = all_whitespace(bytes, cursor, leaf.start)
     if rule && plain && nl >= 0 {
       push_line_breaks(bytes, cursor, nl + 1, out)
-      let base = if closes(leaf.kind) { closer_level } else if levels.len() == 0 { 0 } else { levels[levels.len() - 1] }
+      let base = if closes(leaf.kind) {
+        closer_level
+      } else if scopes.len() == 0 {
+        0
+      } else {
+        scopes[scopes.len() - 1].level
+      }
       let continuation = !closes(leaf.kind) && last_newline(bytes, leaf.owner, leaf.start) >= 0
       previous_line_level = line_level
       previous_line_last_kind = last_kind
@@ -324,8 +337,7 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
     last_parent = leaf.parent
     if rule && opens(leaf.kind) {
       let anchor_level = level_at.get_or(leaf.anchor, line_level)
-      levels.push(anchor_level + 1)
-      closer_levels.push(anchor_level)
+      scopes.push(Scope { level: anchor_level + 1, closer: anchor_level })
     }
   }
   // What follows the last leaf is normally a newline and possibly blank lines, and a file
