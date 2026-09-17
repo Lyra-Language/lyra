@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — `lyra-md`: a second probe, aimed at the standard library
+
+lyrafmt probes the compiler by being a *large* Lyra program. `examples/lyra-md` probes the
+**standard library** by being an *ordinary* one: it is text handling, file handling and
+collections end to end, so every helper it writes by hand is something `std` is missing.
+The first slice renders the block level — ATX headings, fenced code, paragraphs, and HTML
+escaping of every character of text — and it found three gaps before it compiled once.
+
+**What it took to the prelude**, and nothing more than that:
+
+- **`lines()`**, which is not `split("\n")`. The two details every program gets wrong by
+  hand are that a trailing newline does not make a last empty line (every file an editor
+  writes ends in one, so the alternative gives almost every real file a phantom final
+  line) and that `\r\n` is *one* terminator (otherwise a file written on Windows leaves
+  an invisible byte at the end of every line, where it breaks a comparison against text
+  written anywhere else and looks like a bug in whatever compares).
+- **`strip_prefix`/`strip_suffix`**, answering `Maybe<string>`. `starts_with` then `slice`
+  asks the same question twice and writes the affix's length in two places, which is the
+  bug: the slice's start and the prefix's length are one number spelled apart.
+
+Three more candidates were *rejected for now*, which is the discipline this example is
+for. `replace` was not added because escaping wants one pass over the runes rather than
+three passes of a replace — and a single pass cannot have the bug a multi-pass escaper has,
+where `&` must run first or `<` becomes `&amp;lt;`. `repeat` and `pad` were not added
+because nothing has asked yet; `format.lyra` holding exactly one function is a fact about
+what has been needed, not an oversight to correct in advance.
+
+**The block level is a complete program, which is the point of stopping there.** It is the
+same shape lyrafmt's round-trip baseline had: correct output, obviously incomplete, and a
+fixed point to add rules to. Inline spans are the next slice, and the test pins today's
+behaviour so the day `**bold**` stops being literal text, the test says so.
+
+Rules worth keeping straight, all of them CommonMark's where they overlap: a blank line
+ends every block *except* inside a fence, where it is content — so the fence is tested
+first; `#tag` and seven hashes are paragraphs, because a hash that is part of a word is a
+word; a paragraph the author wrapped is one paragraph, since where it was wrapped is not
+content; and a document that stops mid-block still ends it, so an unclosed fence renders as
+the code it looks like rather than vanishing.
+
+Tests: fifteen cases through the built binary covering each of those, CRLF input, escaping
+in text and in code, and a missing file reported against the name the user typed. The three
+prelude additions have their own tests, including the multi-byte case a rune-indexed slice
+must get right (`"héllo".strip_prefix("hé")` removes two runes, not two bytes).
+
 ### 09/17/26 — `checked_rem`, and the grammar's two remainders were named backwards
 
 `checked_rem` is `%` and `checked_rem_floor` is `%%`. The todo called this "a naming

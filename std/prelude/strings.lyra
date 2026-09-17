@@ -348,6 +348,87 @@ pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
 pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
   self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
 
+/// `self` without `prefix`, or `None` if it does not start with it.
+///
+/// **The `Maybe` is the point.** `starts_with` then `slice` asks the same question twice
+/// and writes the length in two places — the bug being that the slice's start and the
+/// prefix's length are the same number, spelled apart. Here they cannot disagree, and the
+/// `None` arm is where a caller says what "it was not there" means.
+///
+/// # Complexity
+///
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(1) | O(n)    | O(n)  |
+/// | **Memory** | O(1) | O(n)    | O(n)  |
+///
+/// The test is `starts_with`'s `memcmp`; the copy is `slice`'s, and only happens on the
+/// `Some` path.
+///
+/// # Examples
+///
+/// ```
+/// let flag = arg.strip_prefix("--").unwrap_or(arg)
+/// ```
+pub let strip_prefix = pure (self: string, prefix: string) -> Maybe<string> => {
+  if !self.starts_with(prefix) { return None }
+  Some(self.slice(prefix.len(), self.len()))
+}
+
+/// `self` without `suffix`, or `None` if it does not end with it.
+///
+/// The mirror of `strip_prefix`, and the same reason for answering a `Maybe`: the end
+/// position and the suffix's length are one number.
+///
+/// # Complexity
+///
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(1) | O(n)    | O(n)  |
+/// | **Memory** | O(1) | O(n)    | O(n)  |
+///
+/// # Examples
+///
+/// ```
+/// let stem = name.strip_suffix(".lyra").unwrap_or(name)
+/// ```
+pub let strip_suffix = pure (self: string, suffix: string) -> Maybe<string> => {
+  if !self.ends_with(suffix) { return None }
+  Some(self.slice(0, self.len() - suffix.len()))
+}
+
+/// `self` split into lines, without their terminators.
+///
+/// **The two details every program gets wrong by hand**, which is the whole reason this is
+/// here rather than at each call site:
+///
+///   - a trailing newline does not make a last empty line — a file ending in one has as
+///     many lines as it has, which is what every line-oriented tool means by a line;
+///   - `\r\n` is one terminator, so a file written on Windows does not leave an invisible
+///     byte at the end of every line, where it silently breaks a comparison against text
+///     that was written anywhere else.
+///
+/// An empty string has no lines. A line that is only `"\r"` keeps nothing, and a `\r` in
+/// the middle of a line is ordinary content — only a terminating one is a terminator.
+///
+/// # Complexity
+///
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(n)    | O(n)  |
+/// | **Memory** | O(n) | O(n)    | O(n)  |
+///
+/// # Examples
+///
+/// ```
+/// for line in read_stdin().lines() { println(line) }
+/// ```
+pub let lines = pure (self: string) -> []string => {
+  if self.len() == 0 { return [] }
+  let body = self.strip_suffix("\n").unwrap_or(self)
+  [line in body.split("\n") | line.strip_suffix("\r").unwrap_or(line)]
+}
+
 /// How many bytes this rune encodes to in UTF-8: 1 below U+0080, 2 below U+0800, 3 below
 /// U+10000, 4 above.
 ///

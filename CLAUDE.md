@@ -567,6 +567,12 @@ keeps finding **compiler** bugs rather than formatter ones: a `let … else` use
 destructuring release that never happened, and an interpolation that swallows source to the
 next `}` — each found by the first Lyra program large enough to hit them.
 
+**`lyra-md` is the standard library's forcing function**, and the deliberate contrast with
+lyrafmt: an *ordinary* program — text, files, collections — whose every hand-written helper
+is a gap in `std`. The block level landed 09/17 and took `lines`, `strip_prefix` and
+`strip_suffix` to the prelude with it. Additions follow the program; a standard library
+written against imagined callers grows functions nobody calls.
+
 The typechecker is **maintenance rather than build-out**. Match exhaustiveness is built
 (Maranget pattern matrices for tuple and `data`, plus arrays, runes and structs —
 `pkg/analyzer/typechecker/README.md`), and so is the FP/imperative purity work

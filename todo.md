@@ -85,6 +85,13 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Standard library and bindings
 
+- **[PARTIAL] `lyra-md`, a Markdown renderer, as the standard library's forcing function.**
+  The block level (headings, fenced code, paragraphs, escaping) renders and is pinned by
+  `cmd/lyrac/lyra_md_example_test.go`; writing it added `lines`, `strip_prefix` and
+  `strip_suffix` to the prelude. Next: inline spans (`code`, emphasis, links), which is
+  where a string builder and `replace` are expected to be wanted; then a site pass over a
+  directory, which is what should force `std.path` and a Set.
+
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute

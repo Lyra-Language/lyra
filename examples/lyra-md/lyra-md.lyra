@@ -1,0 +1,179 @@
+// lyra-md — Markdown to HTML, in Lyra. The standard library's forcing function.
+//
+//   build/lyrac build -o build/lyra-md examples/lyra-md/lyra-md.lyra
+//   build/lyra-md post.md           # the HTML, to stdout
+//   build/lyra-md -                 # renders standard input
+//
+// lyrafmt probes the *compiler* by being a large Lyra program. This probes the *standard
+// library* by being an ordinary one: every line of it is text handling, file handling and
+// collections, so whatever it has to write by hand is something `std` is missing. The
+// missing pieces are added as it needs them and not before — a standard library written
+// against imagined callers grows functions nobody calls.
+//
+// **Blocks first, spans later.** This slice renders the block level: ATX headings, fenced
+// code, and paragraphs, with every character of text escaped for HTML. Inline spans —
+// `code`, emphasis, links — are the next slice, and the split is deliberate: a block-level
+// renderer is a complete program that produces correct (if plain) HTML, which is the same
+// shape lyrafmt's round-trip baseline had.
+//
+// What it is not: a CommonMark implementation. The subset is the one a dev blog writes,
+// and every rule it does implement follows CommonMark where they overlap.
+//
+// Exit 0 when the file rendered, 1 when it could not be read, 2 for usage.
+
+import std.collections.{ parse_args }
+import std.io.{ read_file, read_stdin }
+
+let main = () -> u8 => {
+  let args = parse_args([])
+  if args.positional.len() == 0 {
+    println("usage: lyra-md <file.md | ->")
+    return 2
+  }
+  var failures = 0
+  for path in args.positional {
+    if path == "-" {
+      print(render(read_stdin()))
+      continue
+    }
+    match read_file(path) {
+      Some(source) => print(render(source)),
+      None => {
+        println("lyra-md: cannot read ${path}")
+        failures += 1
+      },
+    }
+  }
+  if failures == 0 { 0 } else { 1 }
+}
+
+/// The HTML for a whole document: every block rendered, one per line.
+let render = pure (source: string) -> string =>
+  [block in blocks(source) | render_block(block)].join("\n") ++ "\n"
+
+/// A run of lines that becomes one HTML element.
+///
+/// The payloads are what the renderer needs and nothing more: a heading carries its level
+/// and its text, a code fence its content and the language it named (`""` when bare), a
+/// paragraph its lines already joined.
+data Block =
+  Heading(i64, string)
+  | Code(string, string)
+  | Paragraph(string)
+
+/// The document's blocks, in order.
+///
+/// **A blank line ends a block and belongs to none**, which is the one rule the whole
+/// block level rests on. Inside a fence it is ordinary content, so the fence is tested
+/// before anything else — a blank line in a code block is part of the code.
+let blocks = pure (source: string) -> []Block => {
+  var out: []Block = []
+  var paragraph: []string = []
+  var fence: []string = []
+  var language = ""
+  var fenced = false
+  for line in source.lines() {
+    if fenced {
+      if is_fence(line) {
+        out.push(Code(fence.join("\n"), language))
+        fence = []
+        fenced = false
+      } else {
+        fence.push(line)
+      }
+      continue
+    }
+    if is_fence(line) {
+      flush_paragraph(paragraph, out)
+      paragraph = []
+      language = fence_language(line)
+      fenced = true
+      continue
+    }
+    if line.trim() == "" {
+      flush_paragraph(paragraph, out)
+      paragraph = []
+      continue
+    }
+    let level = heading_level(line)
+    if level > 0 {
+      flush_paragraph(paragraph, out)
+      paragraph = []
+      let text = line.trim()
+      out.push(Heading(level, text.slice(level, text.len()).trim()))
+      continue
+    }
+    paragraph.push(line.trim())
+  }
+  // A document that ends without a blank line still ends its last block, and an unclosed
+  // fence renders as the code it looks like rather than being dropped.
+  if fenced {
+    out.push(Code(fence.join("\n"), language))
+  } else {
+    flush_paragraph(paragraph, out)
+  }
+  out
+}
+
+/// Appends the paragraph built so far, if any, to `out`.
+///
+/// Its lines are joined with a space rather than a newline: a paragraph wrapped by the
+/// author is one paragraph, and where it was wrapped is not content.
+let flush_paragraph = pure (lines_so_far: []string, out: mut []Block) -> void => {
+  if lines_so_far.len() > 0 { out.push(Paragraph(lines_so_far.join(" "))) }
+}
+
+/// One block as HTML.
+///
+/// **Code content is escaped but never otherwise touched**, which is what makes a fenced
+/// block safe to put anything in. A language becomes the `class` CommonMark recommends,
+/// so a highlighter downstream has something to read.
+let render_block = pure (block: Block) -> string => match block {
+  Heading(level, text) => "<h${level}>${escape(text)}</h${level}>",
+  Code(content, language) => {
+    let open = if language == "" { "<pre><code>" } else { "<pre><code class=\"language-${escape(language)}\">" }
+    "${open}${escape(content)}</code></pre>"
+  },
+  Paragraph(text) => "<p>${escape(text)}</p>",
+}
+
+/// `text` with the three characters HTML cannot take literally replaced by their entities.
+///
+/// **One pass over the runes, not three passes of a replace**, and it is the escaping every
+/// other renderer here goes through: a program that escapes in two places escapes
+/// differently in two places. `&` must be first in any multi-pass version, which is exactly
+/// the bug a single pass cannot have.
+let escape = pure (text: string) -> string =>
+  [c in text | match c {
+    '&' => "&amp;",
+    '<' => "&lt;",
+    '>' => "&gt;",
+    _ => "${c}",
+  }].join("")
+
+/// The heading level of `line` — the number of leading `#`, or 0 when it is not a heading.
+///
+/// A run of more than six is not a heading, and `#`s must be followed by a space: `#tag` is
+/// a paragraph, which is CommonMark's rule and the one a post written by a human wants.
+let heading_level = pure (line: string) -> i64 => {
+  let text = line.trim()
+  var level = 0
+  for c in text {
+    if c != '#' { break }
+    level += 1
+  }
+  if level == 0 || level > 6 { return 0 }
+  if text.len() == level { return level }
+  if text.to_runes()[level] != ' ' { return 0 }
+  level
+}
+
+/// Whether `line` opens or closes a fenced code block.
+let is_fence = pure (line: string) -> bool => line.trim().starts_with("```")
+
+/// The language a fence names, or `""` for a bare one: whatever follows the backticks
+/// `is_fence` matched.
+let fence_language = pure (line: string) -> string => {
+  let text = line.trim()
+  text.strip_prefix("```").unwrap_or("").trim()
+}

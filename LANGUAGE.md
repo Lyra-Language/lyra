@@ -240,6 +240,8 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 - `index(needle, offset = 0) -> Maybe<i64>`: naive scan, offset and result in **rune** indices.
 - `index`/`contains`/`split` are generic over `pub trait Needle` (`found_at` returns an `(Index, Length)` span), implemented for `rune` and `string`. `split` on an empty separator traps, naming `to_runes() -> []rune`.
 - `split` keeps empty parts (`"a,,b"` → 3); `split_when(pred)` **collapses** runs of boundaries and drops leading/trailing empties.
+- `lines()` splits on terminators, not on `\n`: `\r\n` is one, a trailing newline does not make a last empty line (`"a\nb\n"` → 2), and an interior blank line is a line. An empty string has none.
+- `strip_prefix`/`strip_suffix` answer `Maybe<string>` — the affix removed, or `None` when it was not there, so the affix's length is never written twice.
 - `s.byte_offset(i) -> Maybe<i64>`: rune position → byte offset; end position answers `Some(byte_len)`; negative is `None`.
 - ASCII classifiers (name is the boundary): `is_ascii_upper`, `_lower`, `_alpha`, `_digit`, `_punctuation`, `_printable` (space..`~`, not "not a control code"), `_control_code`, `is_ascii_space`. `is_ascii_alpha` splits `héllo`; use `is_ascii_space` for non-ASCII text.
 - `to_ascii_lower`/`to_ascii_upper`: total (identity on non-letters), on both `rune` and `string`. ASCII only.
