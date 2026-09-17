@@ -37,6 +37,26 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
     higher-order function per lambda set. Verdict: not worth it for speed alone; revisit if
     the `noalloc` refusal starts biting or a self-hosting profile shows indirect-call cost.
 
+### Typechecker
+
+- **[OPEN] A bound on a *trait*'s generic parameter is parsed and never enforced.** The
+  sibling of the generic-type bound fixed 09/16, in the one place that fix does not reach:
+  `checkGenericTypeBounds` hangs off resolving a *type*, and a trait's parameter is bound by
+  an **impl**, which is a different site.
+
+  ```lyra
+  trait Tag { tag: (Self) -> string }
+  struct NoTag { n: i64 }
+  trait Holder<t: Tag> { get: (Self) -> t }
+  impl Holder<NoTag> for Cell { … }   // compiles and runs; NoTag has no Tag impl
+  ```
+
+  The check to reuse is the same one: `typeImplementsTraitWhy`, asked of each trait argument
+  against the declaring trait's `GenericParams[i].Constraints`. The site is wherever an impl's
+  trait arguments are resolved — `checkTraitImpl` already verifies a matched impl's *own*
+  bounds (08/14), so this is the same question asked one level out. Skip a type-variable
+  argument as the type side does, for the same reason.
+
 ### Traits: a method's own type variables
 
 - **[DECIDED] `Self<…>` through a `where` bound stays refused.** `Result<_, e>` (a hole
@@ -137,6 +157,12 @@ Item numbers (#3–#8) are cited from code comments.
   noisy to default on.
 - **[OPEN] (#3) Purity inference phase 2 for trait-method clauses.** Method clauses re-walk
   the AST because `CollectLambdaClause` records no scope.
+- **[OPEN] Impurity of an imported function.** `pkg/analyzer/checker/README.md` calls this
+  open and points here for it; it had never been written down — the third README→`todo.md`
+  reference found dangling on 09/16, after the typechecker's tuple/array narrowing marker
+  and its generic-type bound. Scope it before building: what a caller in another module can
+  know about an imported function's effects, and whether the answer is inference across the
+  merged program or a declared bound at the boundary.
 - **[OPEN] (#4) `ref`/`mut`/`own` outside parameter position**, driving move/copy/borrow
   semantics.
 - **[OPEN] (#5) Allocation, remaining:** a nested `shared data` sub-pattern errors loudly;
