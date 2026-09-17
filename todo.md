@@ -51,14 +51,19 @@ Package management, versioning and separate compilation are out of scope by deci
 - **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** The round-trip
   baseline (09/15) and the indentation rule (09/15, COMPLETED.md) are in: `--check`/`-w`
   over every file in the repo, idempotent, and the repo is formatted by it (09/15: 18
-  files, one convention for a wrapped signature). `lyrafmt --check` is clean and could be
-  a CI step, and **both editors format through it** (09/15: `lyra-lsp` runs `lyrafmt -`;
+  files, one convention for a wrapped signature). `lyrafmt --check` is clean over every file
+  it has formatted and could be a CI step, and **both editors format through it** (09/15: `lyra-lsp` runs `lyrafmt -`;
   `build.sh` builds it beside the server). Trailing whitespace, blank-line runs and token
-  spacing landed 09/15, spacing made canonical the same day. Next
-  rules: a `{` that is not followed by a newline is an inline block and stays one (no rule
-  yet says when a line should *break*, which is where a formatter becomes opinionated);
-  then a scope stack (expected to hit `[]T` aliasing) and a directory walk (a missing
-  `readdir` in `std.io`). A real bootstrap would start with the collector after this.
+  spacing landed 09/15, spacing made canonical the same day, and **inline blocks** 09/16
+  (`{ n }`, `{}` when empty, an interpolation's `${…}` left tight; COMPLETED.md). That was
+  the last rule that needs no line-breaking decision — **nothing in lyrafmt yet says when a
+  line should break**, which is where a formatter becomes opinionated and would need a width
+  budget, a list of breakable constructs and re-indentation of what it broke. Next: a scope
+  stack (expected to hit `[]T` aliasing) and a directory walk (a missing `readdir` in
+  `std.io`). A real bootstrap would start with the collector after this.
+  - Two files fail `lyrafmt --check` and predate the inline-block rule:
+    `cmd/lyrac/testdata/unsupported.lyra` is indented four spaces (testdata, never
+    formatted) and `examples/raylib/shapes.lyra` ends with a blank line.
 
 
 ## Language surface

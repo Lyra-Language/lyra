@@ -248,7 +248,7 @@ let run_scene = () -> void => {
           best = f64(h.distance)
           picked = i
         },
-        None => { },
+        None => {},
       }
       i += 1
     }
@@ -277,9 +277,9 @@ let run_scene = () -> void => {
     match row {
       Some(mesh) => match material {
         Some(mat) => draw_mesh_instanced(mesh, mat, transforms),
-        None => { },
+        None => {},
       },
-      None => { },
+      None => {},
     }
     end_mode_3d()
 
@@ -298,8 +298,8 @@ let run_scene = () -> void => {
   }
 
   for p in placed { unload_model(p.model) }
-  match row { Some(mesh) => unload_mesh(mesh), None => { } }
-  match material { Some(mat) => unload_material(mat), None => { } }
+  match row { Some(mesh) => unload_mesh(mesh), None => {} }
+  match material { Some(mat) => unload_material(mat), None => {} }
   close_window()
 }
 

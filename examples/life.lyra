@@ -86,22 +86,22 @@ let main = () => {
                   grid[y][x] = paint_alive
                   painting = true
                 },
-                None => { }
+                None => {}
               },
               // A wheel notch is a press too, and must not draw.
-              _ => { }
+              _ => {}
             },
             Move => {
               if painting {
                 match cell_at(grid, m) {
                   Some((x, y)) => { grid[y][x] = paint_alive },
-                  None => { }
+                  None => {}
                 }
               }
             },
             Release => { painting = false }
           },
-          _ => { }
+          _ => {}
         }
       }
     } else {

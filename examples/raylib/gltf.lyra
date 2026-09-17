@@ -456,7 +456,7 @@ let mesh_nodes = pure (doc: JsonValue) -> []i64 => {
           if member(p, "mode").as_int().unwrap_or(4) == 4 { out.push(i) }
         }
       },
-      None => { },
+      None => {},
     }
   }
   out
@@ -514,9 +514,9 @@ let read_clip = pure (doc: JsonValue, buffers: [][]u8, anim: JsonValue, index: i
               if last > duration { duration = last }
             }
           },
-          None => { },
+          None => {},
         },
-        None => { },
+        None => {},
       }
     }
   }

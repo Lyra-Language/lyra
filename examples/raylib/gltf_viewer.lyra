@@ -172,7 +172,7 @@ let close = (o: Opened) -> void => {
   unload_model(o.model)
   match o.anims {
     Some(a) => unload_animations(a),
-    None => { },
+    None => {},
   }
 }
 
@@ -319,7 +319,7 @@ let run_check = (path: string) -> u8 => {
             node_mesh_count(na), i64(o.model.mesh_count))
           failures += check("every node clip poses finite transforms", poses_finite(na), true)
         },
-        None => { },
+        None => {},
       }
       close(o)
     },
@@ -330,7 +330,7 @@ let run_check = (path: string) -> u8 => {
   }
   match lit {
     Some(l) => unload_lighting(l),
-    None => { },
+    None => {},
   }
   close_window()
   if failures == 0 {
@@ -421,7 +421,7 @@ let run_viewer = (paths: []string) -> void => {
         if is_model_file(path) {
           match viewing {
             Some(o) => close(o),
-            None => { },
+            None => {},
           }
           viewing = open(path)
           if viewing.is_none() { status = "could not load ${file_name(path)}" }
@@ -509,10 +509,10 @@ let run_viewer = (paths: []string) -> void => {
             clip_line = "clip ${clip + 1}/${n}: ${node_clip_name(na, clip)}   " ++
               "${two(node_time)}s / ${two(length)}s   ${state}"
           },
-          None => { },
+          None => {},
         },
       },
-      None => { },
+      None => {},
     }
 
     // --- drawing ----------------------------------------------------------------------
@@ -543,11 +543,11 @@ let run_viewer = (paths: []string) -> void => {
 
   match viewing {
     Some(o) => close(o),
-    None => { },
+    None => {},
   }
   match lit {
     Some(l) => unload_lighting(l),
-    None => { },
+    None => {},
   }
   close_window()
 }
@@ -637,7 +637,7 @@ let meshes_without_normals = pure (model: Model) -> i64 => {
 let relight = (viewing: Maybe<Opened>, lit: Maybe<Lighting>, on: bool) -> void =>
   match viewing {
     Some(o) => apply_lighting(o.model, lit, on),
-    None => { },
+    None => {},
   }
 
 /// Each material's parameters, as the file states them where it is glTF and raylib loaded
@@ -716,7 +716,7 @@ let recover_textures = (path: string, model: Model, params: []MaterialParams) ->
               uploaded[which] = t
               ready[which] = true
             },
-            None => { },
+            None => {},
           }
         }
         if ready[which] {
@@ -787,7 +787,7 @@ let fill_slot = (model: Model, material: i64, map: i32, colour: Color) -> void =
   let image = gen_image_color(1, 1, colour)
   match texture_from_image(image) {
     Some(t) => set_model_material_texture(model, material, map, t),
-    None => { },
+    None => {},
   }
   unload_image(image)
 }
@@ -805,7 +805,7 @@ let set_params = (model: Model, material: i64, floats: []f32) -> void => {
       if !update_texture(t, texels) { println("material ${material}: parameters not uploaded") }
       set_model_material_texture(model, material, MATERIAL_MAP_HEIGHT, t)
     },
-    None => { },
+    None => {},
   }
   unload_image(image)
 }
@@ -865,14 +865,14 @@ let sphere_lit = (lit: Maybe<Lighting>) -> bool => {
             brighter = channel_sum(toward) > channel_sum(away) + 60
             unload_image(shot)
           },
-          None => { },
+          None => {},
         }
         end_drawing()
         unload_model(m)
       },
-      None => { },
+      None => {},
     },
-    None => { },
+    None => {},
   }
   brighter
 }

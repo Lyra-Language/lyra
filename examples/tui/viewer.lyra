@@ -92,7 +92,7 @@ let main = () => {
               // already 0-based, matching the frame's own numbering and the language's.
               _ => { mx = m.col; my = m.row }
             },
-            _ => { }
+            _ => {}
           }
           mx = clamp(mx, 0, cols - 1)
           my = clamp(my, 0, rows - 2)

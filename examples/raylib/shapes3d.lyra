@@ -209,7 +209,7 @@ let run_scene = () -> void => {
           best = f64(h.distance)
           nearest = target.name
         },
-        None => { },
+        None => {},
       }
     }
 
@@ -278,7 +278,7 @@ let run_scene = () -> void => {
           vec3(0.0, 1.0, 0.0), vec2(1.8, 1.8), vec2(0.9, 0.9),
           turns(wrap01(t * 0.1)), WHITE)
       },
-      None => { },
+      None => {},
     }
 
     // The cursor's ray, drawn so the pick is visible rather than only reported.
@@ -305,7 +305,7 @@ let run_scene = () -> void => {
 
   match billboard {
     Some(tex) => unload_texture(tex),
-    None => { },
+    None => {},
   }
   close_window()
 }

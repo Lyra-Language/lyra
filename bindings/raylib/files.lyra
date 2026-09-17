@@ -268,7 +268,7 @@ let copy_paths = pure (list: FilePathList) -> []string => {
   for i < total {
     match copy_c_string(unsafe { list.paths.offset(i)^ }) {
       Some(path) => out.push(path),
-      None => { },
+      None => {},
     }
     i += 1
   }

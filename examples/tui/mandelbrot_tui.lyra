@@ -118,7 +118,7 @@ let main = () -> void => {
                 WheelDown => { view = view.zoom_at(fcols, frows, left, top, m.col, m.row, ZOOM_STEP) },
                 _ => { mx = m.col; my = m.row }
               },
-              _ => { }
+              _ => {}
             }
             mx = clamp(mx, 0, cols - 1)
             my = clamp(my, 0, rows - 2)

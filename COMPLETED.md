@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 09/16/26 — lyrafmt: the inline-block rule
+
+Braces that share a line now hold their contents one space away — `{ n }`, never `{n}` or
+`{ n}` — and empty braces close up to `{}`. The fifth rule, and the last one that can be
+written without answering a question the formatter has so far refused to answer.
+
+**The rule is a spacing rule on purpose.** The obvious reading of "inline block" is a
+breaking rule: decide when `{ … }` is too long for its line and split it. That is where a
+formatter becomes opinionated, and it needs a line-width budget, a notion of which
+constructs may break and a way to re-indent what it broke — three decisions, none of them
+forced by anything here. What the name is worth on its own is the *other* half: a block
+written on one line stays on one line however long it is, a block written across lines keeps
+its lines, and the only thing that changes is the space against each brace. So the whole
+implementation is two predicates and two lines in `wanted_space`, and **nothing in lyrafmt
+still decides that a line should break**.
+
+**An interpolation's `${…}` is not a block**, and this is the reason `opens_braces` is not
+just `closes`. The opener is a distinct token (`${`), so the opening side excludes itself;
+the closing `}` does not, and is told apart by its parent node (`string_interpolation`).
+Getting this wrong would have put spaces inside a string literal's braces — harmless to the
+program's meaning, since the spaces land in the expression and not in the text, but a
+formatter reaching inside a string literal is the thing this design exists to make
+impossible. The gap between `${` and the expression is a real formattable gap, which is what
+makes the parent test necessary rather than decorative.
+
+The multi-line case needs no rule at all and got none: a gap spanning lines is indented
+rather than spaced and never reaches `wanted_space`. That is a property of the existing
+structure, not a coincidence, and it is why the rule cannot accidentally join two lines.
+
+**Empty braces were the only decision with any churn behind it.** The repo wrote `None =>
+{ }` in 13 places; `{}` is the spelling Go and Rust settled on, and "hold the contents apart"
+has nothing to hold apart. Taking `{}` reformatted 10 files (`std/json.lyra`, `life.lyra`,
+the tui and raylib examples, `bindings/raylib/files.lyra`) and every hunk in every one of
+them is that collapse — no other inline block in the repo was written tight, so the rest of
+the rule is a canonicalization of what was already there.
+
+Two files still fail `--check`, both from before this change and neither touched by it:
+`cmd/lyrac/testdata/unsupported.lyra` is indented four spaces, and `examples/raylib/
+shapes.lyra` ends with a blank line.
+
+Tests: the example test's fixture gains a tight block, an arm list closing tight, empty
+braces and an interpolation, and still must be a fixed point and still must check.
+
 ### 09/16/26 — a trait's parameter bound is enforced at the impl
 
 `trait Holder<t: Tag>` parsed, stored the bound, and nothing read it — `impl Holder<NoTag>

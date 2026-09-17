@@ -48,7 +48,7 @@ let main = () => {
               print("  motion reporting ${if motion { "on" } else { "off" }}\r\n")
             }
           },
-          _ => { }
+          _ => {}
         }
       }
     }

@@ -273,7 +273,7 @@ let parse_unicode_escape = pure (b: []u8, at: i64) -> Result<(i64, i64), JsonErr
             return Ok((65536 + (hi - 55296) * 1024 + (lo - 56320), at + 12))
           }
         },
-        None => { },
+        None => {},
       }
     }
     return Ok((65533, at + 6))

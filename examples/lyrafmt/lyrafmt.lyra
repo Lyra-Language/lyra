@@ -18,7 +18,7 @@
 // with no rule in force (`--roundtrip`) the output is the input byte for byte, which is
 // the baseline every rule is built on.
 //
-// One rule so far, **indentation**. Every token has an **owner**: the statement,
+// The first rule is **indentation**. Every token has an **owner**: the statement,
 // declaration, member, argument, arm or import name it is part of — a child of the program,
 // a block or a member list, or whatever follows an opening delimiter, a comma or a comment.
 // A line's level is then:
@@ -38,7 +38,7 @@
 //   - a line beginning with a closing delimiter closes it first and sits at the level of
 //     its anchor's line, and an `else` on its own line takes the previous line's level.
 //
-// Three more, all about the space *between* tokens, and none of them touching a leaf — so
+// Four more, all about the space *between* tokens, and none of them touching a leaf — so
 // a comment, a string or a raw string keeps every byte it had:
 //
 //   - **trailing whitespace** is dropped, and a file ends with exactly one newline;
@@ -48,7 +48,14 @@
 //     `,` and `:`), and otherwise one if anything was there and none if nothing was — so
 //     `a   +   b` closes up and `xs.len()` stays closed. A run of spaces is not preserved,
 //     which does lose hand alignment; that is the trade for two files with the same tokens
-//     formatting the same way.
+//     formatting the same way;
+//   - **an inline block** — a `{` with its `}` on the same line, and so also a struct's
+//     fields, a struct literal and an inline import list — holds its contents one space
+//     from each brace: `{ n }`, never `{n}` or `{ n}`. Empty braces close up to `{}`,
+//     having nothing to hold apart, and an interpolation's `${…}` is not a block and stays
+//     tight. This is a spacing rule and not a breaking one: **nothing here ever decides
+//     that a line should break**, so a block written on one line stays on one line however
+//     long it is, and a block written across lines keeps its lines.
 //
 // A leaf spanning lines (a block comment, a raw string) is copied verbatim, since its
 // inner lines are content.
@@ -387,8 +394,14 @@ let push_spacing = pure (gap: i64, before: string, before_parent: string,
 /// (`sum::<i64>`) are untouched by the rule for `:`. A range's **step** separator is a
 /// plain `:` and is left alone on both sides: it binds as tightly as the `..` beside it,
 /// and the language writes it `0..<10:2`.
+///
+/// **Braces hold their contents apart** — `{ n }`, never `{n}` or `{ n}` — which is the
+/// inline-block rule, since a gap spanning lines is indented rather than spaced and never
+/// reaches here. Empty braces close up to `{}`: there is nothing to hold apart.
 let wanted_space = pure (before: string, before_parent: string, after: string, after_parent: string) -> i64 => {
   if is_range_step(before, before_parent) || is_range_step(after, after_parent) { return 0 }
+  if opens_braces(before) && closes_braces(after, after_parent) { return 0 - 1 }
+  if opens_braces(before) || closes_braces(after, after_parent) { return 1 }
   if after == "," || after == ":" { return 0 - 1 }
   if before == "," { return if closes(after) { 0 } else { 1 } }
   if before == ":" { return 1 }
@@ -398,6 +411,17 @@ let wanted_space = pure (before: string, before_parent: string, after: string, a
 
 /// Whether a token is a range's step separator, `:` directly inside a `range_expr`.
 let is_range_step = pure (k: string, parent: string) -> bool => k == ":" && parent == "range_expr"
+
+/// Whether a token opens a brace-delimited body whose contents are held one space away
+/// when they share its line: a block, a struct's fields or type, an import's names. An
+/// interpolation's `${` is not one — those braces are part of a string literal and stay
+/// tight against the expression between them.
+let opens_braces = pure (k: string) -> bool => k == "{" || k == ".{"
+
+/// Whether a token closes one. A `}` is a closer for every brace; only its parent says
+/// whether the pair was an interpolation's.
+let closes_braces = pure (k: string, parent: string) -> bool =>
+  k == "}" && parent != "string_interpolation"
 
 /// Whether a token opens a level of indentation. An interpolation's `${` is one, since
 /// its `}` is a closer; the raw-string spelling is the only way to write those two

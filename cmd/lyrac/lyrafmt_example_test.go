@@ -62,6 +62,11 @@ func TestExample_LyrafmtRoundTrips(t *testing.T) {
 	// between `=` and a constructor), a run of blank lines, spacing missing, forbidden and
 	// doubled around `,` `:` `=>`, and a trailing newline.
 	//
+	// The inline-block rule is here too: braces that share a line hold their contents one
+	// space away (`{n + 1}`, an arm list closing tight), empty braces close up to `{}`, and
+	// an interpolation's `${…}` is not a block — those braces stay against the expression,
+	// which is a leaf's business and not a block's.
+	//
 	// Three things must survive untouched, and each is a **hidden token** the grammar gives
 	// no node — bytes that sit in the gap between two leaves with nothing naming them, so a
 	// formatter that assumes a gap is whitespace destroys them: a raw string's own
@@ -103,6 +108,10 @@ let spaced = (a: i64,b :i64) -> i64=>{
   let wide   =   a   +   1
   match a { 1=>2, _ =>3 }
 }
+let tight = (n: i64) -> i64 => {n + 1}
+let arm = (n: i64) -> i64 => match n { 1 => 2, _ => 3}
+let empty = () -> void => { }
+let interp = (n: i64) -> string => {"x${n}y"}
 let hidden = () -> f64 => 1.0e30 + 2.5e-3
 let raw_line = () -> string =>
   `+bt+`starts a line`+bt+`
@@ -140,6 +149,10 @@ let spaced = (a: i64, b: i64) -> i64 => {
   let wide = a + 1
   match a { 1 => 2, _ => 3 }
 }
+let tight = (n: i64) -> i64 => { n + 1 }
+let arm = (n: i64) -> i64 => match n { 1 => 2, _ => 3 }
+let empty = () -> void => {}
+let interp = (n: i64) -> string => { "x${n}y" }
 let hidden = () -> f64 => 1.0e30 + 2.5e-3
 let raw_line = () -> string =>
   ` + bt + `starts a line` + bt + `
