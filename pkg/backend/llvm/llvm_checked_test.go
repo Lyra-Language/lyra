@@ -58,6 +58,70 @@ let main = () -> void => {
 	}
 }
 
+// `checked_rem` is `%` and `checked_rem_floor` is `%%`, and the pair exists because a
+// remainder fails on exactly the inputs a division does — so the operator that traps has
+// a value-answering form like `/` does.
+//
+// **Which operator each name means is the decision the methods settled** (09/17).
+// `checked_rem` is the truncated remainder, the sign of the dividend, because it is
+// `checked_div`'s partner: `/` truncates, so `a == (a / b) * b + (a % b)` and the two
+// halves of one division use the same word. `checked_rem_floor` is `%%`, the sign of the
+// divisor. The grammar's rule names were renamed to match rather than left disagreeing.
+//
+// `INT_MIN % -1` is the case worth pinning: the mathematical answer is 0, but LLVM's
+// `srem` is poison there and `%` traps, so the checked form answers `None` — the name
+// means "the operation the operator would have refused", not "the mathematically true
+// value". Rust answers `None` there too.
+func TestExec_CheckedRemainders(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let show<t> where t: Show = (m: Maybe<t>) -> string =>
+  match m { Some v => "${v}", None => "none" }
+let main = () -> void => {
+  println(show(i64(11).checked_rem(-3)));
+  println(show(i64(11).checked_rem_floor(-3)));
+  println(show(i64(-11).checked_rem(3)));
+  println(show(i64(-11).checked_rem_floor(3)));
+  println(show(i64(11).checked_rem(0)));
+  println(show(i64(11).checked_rem_floor(0)));
+  let m: i32 = -2147483648;
+  println(show(m.checked_rem(-1)));
+  println(show(m.checked_rem_floor(-1)));
+  println(show(u8(11).checked_rem(3)));
+  println(show(u8(11).checked_rem_floor(3)));
+  println(show(u8(11).checked_rem(0)));
+}
+`
+	// The first four are the operators' own answers (`11 % -3 == 2`, `11 %% -3 == -1`),
+	// so the methods and the operators cannot drift. Unsigned floored and truncated agree
+	// by definition, and the last is the zero divisor an unsigned type still has.
+	want := "2\n-1\n-2\n1\nnone\nnone\nnone\nnone\n2\n2\nnone"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("checked remainders =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// The methods and the operators must answer the same thing wherever the operator does not
+// trap — one lowering rule written twice is how they would drift, so this asks both.
+func TestExec_CheckedRemaindersAgreeWithTheOperators(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let agree = pure noalloc (a: i64, b: i64) -> bool => {
+  let r = match a.checked_rem(b) { Some v => v, None => 0 }
+  let f = match a.checked_rem_floor(b) { Some v => v, None => 0 }
+  r == a % b && f == a %% b
+}
+let main = () -> void => {
+  println("${agree(11, 3)} ${agree(11, -3)} ${agree(-11, 3)} ${agree(-11, -3)}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "true true true true" {
+		t.Errorf("methods disagree with the operators: %q", got)
+	}
+}
+
 // 128-bit widths, which is where the intrinsic story is not uniform: a *signed* 128-bit
 // multiply-with-overflow expands to compiler-rt's `__muloti4`, which Linux clang does
 // not link, so the backend substitutes its own helper of the same `{ iN, i1 }` shape

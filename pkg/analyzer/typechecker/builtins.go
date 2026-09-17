@@ -48,11 +48,24 @@ var intBinaryOps = map[string]bool{
 // would have refused, as a value). It is arguably the most useful of the four, since a
 // zero divisor is the overflow case that most often comes from data rather than from a
 // bug.
+//
+// **`checked_rem` is `%` and `checked_rem_floor` is `%%`**, which is a naming decision
+// worth stating where the names are declared. The two operators are the truncated
+// remainder (sign of the dividend, `11 % -3 == 2`) and the floored one (sign of the
+// divisor, `11 %% -3 == -1`), and `checked_rem` takes the first because it is the partner
+// of the `checked_div` above it: `/` truncates, so `a == (a / b) * b + (a % b)`, and the
+// two halves of one division should not need different words in different languages.
+// Rust's `checked_rem` is the same operation. The grammar's rules were named the other way
+// round until 09/17 — `%` was `mod_operator` while behaving like everyone's `rem` — and
+// were renamed rather than documented, so that the standard library and the grammar say
+// the same thing.
 var checkedIntBinaryOps = map[string]string{
-	"checked_add": "add",
-	"checked_sub": "sub",
-	"checked_mul": "mul",
-	"checked_div": "div",
+	"checked_add":       "add",
+	"checked_sub":       "sub",
+	"checked_mul":       "mul",
+	"checked_div":       "div",
+	"checked_rem":       "rem",
+	"checked_rem_floor": "rem_floor",
 }
 
 // isOverflowArithBuiltin reports whether name is one of the integer

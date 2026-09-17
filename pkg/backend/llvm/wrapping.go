@@ -147,14 +147,16 @@ func (l *lowerer) emitSaturatingMul(block *ir.Block, left, right value.Value, si
 }
 
 // checkedIntOps are the `checked_*` family: the operation's result as `Some(v)`, or
-// `None` where it would have overflowed. `div` is not an intrinsic op — its two
-// failures are a zero divisor and `INT_MIN / -1`, the two cases `/` traps on — so it is
-// handled separately below.
+// `None` where it would have overflowed. `div`, `rem` and `rem_floor` are not intrinsic
+// ops — they share one pair of failures, a zero divisor and `INT_MIN ÷ -1`, which are the
+// two cases `/`, `%` and `%%` all trap on — so the three are handled separately below.
 var checkedIntOps = map[string]string{
-	"checked_add": "add",
-	"checked_sub": "sub",
-	"checked_mul": "mul",
-	"checked_div": "div",
+	"checked_add":       "add",
+	"checked_sub":       "sub",
+	"checked_mul":       "mul",
+	"checked_div":       "div",
+	"checked_rem":       "rem",
+	"checked_rem_floor": "rem_floor",
 }
 
 // lowerCheckedIntMethod lowers `x.checked_add(y)` and friends to a `Maybe<T>`.
@@ -208,9 +210,12 @@ func (l *lowerer) lowerCheckedIntMethod(block *ir.Block, call *ast.FunctionCallE
 
 	var result value.Value
 	var failed value.Value
-	if op == "div" {
+	switch op {
+	case "div":
 		result, failed = l.emitCheckedDiv(block, left, right, signed, intTy)
-	} else {
+	case "rem", "rem_floor":
+		result, failed = l.emitCheckedRem(block, left, right, signed, intTy, op == "rem_floor")
+	default:
 		fn, err := l.overflowIntrinsic(op, signed, intTy)
 		if err != nil {
 			return nil, nil, err
@@ -257,4 +262,41 @@ func (l *lowerer) emitCheckedDiv(block *ir.Block, left, right value.Value, signe
 		return block.NewSDiv(left, safe), failed
 	}
 	return block.NewUDiv(left, safe), failed
+}
+
+// emitCheckedRem computes `left % right` (or `%%` when floored) without ever executing an
+// undefined remainder, and reports whether it was refused.
+//
+// **The failures are division's, exactly**, which is why the divisor substitution is the
+// same trick: `srem`/`urem` are undefined on a zero divisor, and signed `srem` is
+// undefined on `INT_MIN % -1` as well. That second one is the case worth stating, because
+// the *mathematical* answer is 0 and a reader may expect `Some(0)`: LLVM's `srem` is
+// poison there and the hardware traps, `%` traps today for that reason, and `checked_rem`
+// means "the operation the operator would have refused, as a value". Rust's
+// `checked_rem` answers `None` there too.
+//
+// The floored form (`%%`) adjusts afterwards — add the divisor back when the truncated
+// remainder is non-zero and its sign disagrees with the divisor's — which is
+// `lowerFlooredSRem`'s rule. It cannot fail where the truncated form does not: the
+// adjustment is an add on a value that already exists. Unsigned floored and truncated
+// remainders are identical (every operand is non-negative), so only the signed path
+// adjusts.
+func (l *lowerer) emitCheckedRem(block *ir.Block, left, right value.Value, signed bool,
+	intTy *lltypes.IntType, floored bool) (result, failed value.Value) {
+	zero := constant.NewInt(intTy, 0)
+	failed = block.NewICmp(enum.IPredEQ, right, zero)
+	if signed {
+		negOne := constant.NewInt(intTy, -1)
+		isMin := block.NewICmp(enum.IPredEQ, left, intMinConst(intTy))
+		isNegOne := block.NewICmp(enum.IPredEQ, right, negOne)
+		failed = block.NewOr(failed, block.NewAnd(isMin, isNegOne))
+	}
+	safe := block.NewSelect(failed, constant.NewInt(intTy, 1), right)
+	if !signed {
+		return block.NewURem(left, safe), failed
+	}
+	if floored {
+		return l.lowerFlooredSRem(block, left, safe), failed
+	}
+	return block.NewSRem(left, safe), failed
 }

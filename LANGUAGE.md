@@ -94,9 +94,30 @@ Integer `+ - * /` **trap** on overflow. Explicit alternatives, builtin on every 
 |---|---|---|
 | `wrapping_*` | `add` `sub` `mul` | modular two's complement |
 | `saturating_*` | `add` `sub` `mul` | clamped |
-| `checked_*` | `add` `sub` `mul` `div` | `Maybe<T>`; `checked_div` is `None` on zero divisor and `INT_MIN / -1` |
+| `checked_*` | `add` `sub` `mul` `div` `rem` `rem_floor` | `Maybe<T>`; `div`, `rem` and `rem_floor` are `None` on a zero divisor and on `INT_MIN ÷ -1` |
 
-No `checked_rem` yet (ambiguous between `%` and `%%`).
+`checked_rem` is `%` and `checked_rem_floor` is `%%` — see the two remainders below.
+`INT_MIN % -1` answers `None` although its mathematical value is 0: the name means "the
+operation the operator would have refused, as a value", and `%` traps there.
+
+### The two remainders
+
+`%` is the **truncated** remainder and `%%` the **floored** one:
+
+| | `11 % -3` | `11 %% -3` | `-11 % 3` | `-11 %% 3` |
+|---|---|---|---|---|
+| | `2` | `-1` | `-2` | `1` |
+
+- `%` takes the sign of the **dividend** and is the partner of this language's truncating
+  `/`, so `a == (a / b) * b + (a % b)` holds. It is what C, Go and Rust spell `%`.
+- `%%` takes the sign of the **divisor**. It is what Python spells `%`. For unsigned
+  operands the two are identical.
+- The names follow: `checked_rem`/`rem_operator` for `%`, `checked_rem_floor`/
+  `rem_floor_operator` for `%%`. Until 09/17 the grammar called `%` `mod_operator` and
+  `%%` `remainder_operator`, which was backwards from every language that uses those two
+  words; the rules were renamed rather than documented.
+- Only `%` is overloadable, because `(_%%_)` is not a spellable method name
+  (`std/prelude/math.lyra`).
 
 ### Places
 

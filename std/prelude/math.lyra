@@ -14,9 +14,10 @@ module std.prelude
 // wants all four.
 //
 // **`%` is missing on purpose, not by oversight.** It is overloadable like the rest, but a
-// remainder has two useful meanings in this language (`%` and `%%`) and only one of them is
-// spellable as a method name, so a shipped trait would have to pick one and be silently
-// wrong for the other half of its users. Declaring a trait with a `(_%_)` method works and
+// remainder has two useful meanings in this language — `%` truncates toward zero and `%%`
+// floors (LANGUAGE.md, "The two remainders") — and only `%` is spellable as a method name,
+// so a shipped trait would have to pick one and be silently wrong for the other half of
+// its users. Declaring a trait with a `(_%_)` method works and
 // needs nothing from here. The bitwise operators (`& | ~ << >>`) are the same story.
 
 /// Types whose values can be added with `+`.

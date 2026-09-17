@@ -380,6 +380,14 @@ starts one before its expression).
 
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 
+**Naming: the two remainders** — `%` is the **truncated** remainder (sign of the dividend,
+`rem`) and `%%` the **floored** one (sign of the divisor, `rem_floor`). The grammar rules,
+the AST constants (`MathBinaryOpRem`/`MathBinaryOpRemFloor`) and the standard library
+(`checked_rem`/`checked_rem_floor`) all use those two words the same way. They were
+`mod`/`remainder` with the meanings swapped relative to C, Go and Rust until 09/17, when
+`checked_rem` had to pick one: `%` won it because `/` truncates, so `checked_rem` is
+`checked_div`'s partner and `a == (a / b) * b + (a % b)`.
+
 **Naming: "generator", "clause"** — a `gen` function is a **generator function**; `x in xs`
 inside a comprehension is a **comprehension clause**, always qualified, because a bare
 *clause* is a multi-clause function's arm (`desugarClauses`, rule 11). "Generator" alone

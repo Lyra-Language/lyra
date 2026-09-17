@@ -554,7 +554,7 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		rv, rt, st2 := c.eval(st1, v.Right)
 		st = st2
 		switch v.Operator {
-		case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
+		case ast.MathBinaryOpDiv, ast.MathBinaryOpRem, ast.MathBinaryOpRemFloor:
 			// Division / remainder can't grow magnitude, so there's no E020 to report
 			// (its precise result range isn't tracked — it widens to the type range).
 			// Instead report a definite divide-by-zero (E021) and prove the two runtime
@@ -605,7 +605,7 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		rv, rt, after := c.eval(st, v.Right)
 		st = after
 		switch v.Operator {
-		case ast.MathAssignOpDiv, ast.MathAssignOpMod, ast.MathAssignOpRemainder:
+		case ast.MathAssignOpDiv, ast.MathAssignOpRem, ast.MathAssignOpRemFloor:
 			// The compound-assign result is typed void and the target identifier isn't
 			// recorded, so v.Right (which carries the target's propagated width) supplies
 			// the operation's integer type and is the divisor. The new value of x isn't

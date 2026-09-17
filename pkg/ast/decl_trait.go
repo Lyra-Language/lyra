@@ -186,7 +186,7 @@ const (
 	Subtract           BinaryOperator = "-"
 	Multiply           BinaryOperator = "*"
 	Divide             BinaryOperator = "/"
-	Modulus            BinaryOperator = "%"
+	Rem                BinaryOperator = "%"
 	Power              BinaryOperator = "**"
 	LeftShift          BinaryOperator = "<<"
 	RightShift         BinaryOperator = ">>"

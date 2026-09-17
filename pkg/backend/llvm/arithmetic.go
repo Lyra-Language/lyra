@@ -391,9 +391,9 @@ func (l *lowerer) applyFloatMathOp(block *ir.Block, op ast.MathBinaryOp, left, r
 		return block.NewFMul(left, right), nil
 	case ast.MathBinaryOpDiv:
 		return block.NewFDiv(left, right), nil
-	case ast.MathBinaryOpMod:
+	case ast.MathBinaryOpRem:
 		return block.NewFRem(left, right), nil
-	case ast.MathBinaryOpRemainder:
+	case ast.MathBinaryOpRemFloor:
 		return l.lowerFlooredFRem(block, left, right), nil
 	default:
 		return nil, fmt.Errorf("llvm: float math binary op lowering not implemented for %v", op)
@@ -453,7 +453,7 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 			return l.emitWrappingOp(block, "mul", left, right)
 		}
 		return l.emitCheckedIntOp(block, "mul", left, right, signed)
-	case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
+	case ast.MathBinaryOpDiv, ast.MathBinaryOpRem, ast.MathBinaryOpRemFloor:
 		return l.emitCheckedDivOp(block, op, left, right, signed, e)
 	case ast.MathBinaryOpBitAnd:
 		return block.NewAnd(left, right), block, nil
@@ -597,7 +597,7 @@ func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, r
 			return block.NewSDiv(left, right), block, nil
 		}
 		return block.NewUDiv(left, right), block, nil
-	case ast.MathBinaryOpMod:
+	case ast.MathBinaryOpRem:
 		// Mod (%): Odin's "modulo (truncated)" — sign follows the
 		// dividend, exactly what LLVM's srem/urem give natively.
 		// 11 % -3 = 2.
@@ -605,7 +605,7 @@ func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, r
 			return block.NewSRem(left, right), block, nil
 		}
 		return block.NewURem(left, right), block, nil
-	default: // ast.MathBinaryOpRemainder
+	default: // ast.MathBinaryOpRemFloor
 		// Remainder (%%): Odin's "remainder (floored)" — sign follows the
 		// divisor, distinct from Mod above. 11 %% -3 = -1 (vs Mod's 2).
 		// Unsigned floored remainder is identical to truncated (every

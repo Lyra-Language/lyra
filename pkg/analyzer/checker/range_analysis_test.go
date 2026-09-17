@@ -630,7 +630,7 @@ func firstExpr(t *testing.T, program *ast.Program, pred func(ast.Expression) boo
 
 func isDivExpr(e ast.Expression) bool {
 	b, ok := e.(*ast.MathBinaryOpExpr)
-	return ok && (b.Operator == ast.MathBinaryOpDiv || b.Operator == ast.MathBinaryOpMod || b.Operator == ast.MathBinaryOpRemainder)
+	return ok && (b.Operator == ast.MathBinaryOpDiv || b.Operator == ast.MathBinaryOpRem || b.Operator == ast.MathBinaryOpRemFloor)
 }
 
 func isIndexExpr(e ast.Expression) bool { _, ok := e.(*ast.IndexExpr); return ok }

@@ -116,7 +116,6 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Pit of Success
 
-- **[OPEN] `checked_rem`.** A naming decision (`%` vs `%%`), not a lowering one.
 - **[IDEA] Overflow policy on a `newtype`** (`where wrapping` / `saturating`), so a hash
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
   Open: explicit-method precedence, and whether saturation clamps every intermediate or

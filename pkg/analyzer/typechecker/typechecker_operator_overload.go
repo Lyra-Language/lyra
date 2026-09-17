@@ -50,7 +50,7 @@ var overloadableBinaryOperators = map[ast.MathBinaryOp]bool{
 	ast.MathBinaryOpSub:    true,
 	ast.MathBinaryOpMul:    true,
 	ast.MathBinaryOpDiv:    true,
-	ast.MathBinaryOpMod:    true,
+	ast.MathBinaryOpRem:    true,
 	ast.MathBinaryOpBitAnd: true,
 	ast.MathBinaryOpBitOr:  true,
 	ast.MathBinaryOpBitXor: true,

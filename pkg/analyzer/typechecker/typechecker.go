@@ -3477,7 +3477,7 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 		return left
 	}
 
-	if expr.Operator == ast.MathBinaryOpDiv || expr.Operator == ast.MathBinaryOpMod || expr.Operator == ast.MathBinaryOpRemainder {
+	if expr.Operator == ast.MathBinaryOpDiv || expr.Operator == ast.MathBinaryOpRem || expr.Operator == ast.MathBinaryOpRemFloor {
 		if isLiteralZero(expr.Right) {
 			tc.addError(expr.Right.GetLocation(), SeverityError,
 				"operator %s: division by zero", expr.Operator)

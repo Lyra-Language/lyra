@@ -14,12 +14,12 @@ func (m *MathBinaryOpExpr) GetName() string {
 type MathBinaryOp string
 
 const (
-	MathBinaryOpAdd       MathBinaryOp = "+"
-	MathBinaryOpSub       MathBinaryOp = "-"
-	MathBinaryOpMul       MathBinaryOp = "*"
-	MathBinaryOpDiv       MathBinaryOp = "/"
-	MathBinaryOpMod       MathBinaryOp = "%"
-	MathBinaryOpRemainder MathBinaryOp = "%%"
+	MathBinaryOpAdd      MathBinaryOp = "+"
+	MathBinaryOpSub      MathBinaryOp = "-"
+	MathBinaryOpMul      MathBinaryOp = "*"
+	MathBinaryOpDiv      MathBinaryOp = "/"
+	MathBinaryOpRem      MathBinaryOp = "%"
+	MathBinaryOpRemFloor MathBinaryOp = "%%"
 
 	// Bitwise and shift. Xor is `~` rather than `^`, which is taken by raw-pointer
 	// types (`^T`) and postfix deref (`ptr^`) — see tree-sitter-lyra's CLAUDE.md.
@@ -70,12 +70,12 @@ func (m *MathAssignOpExpr) GetName() string {
 type MathAssignOp string
 
 const (
-	MathAssignOpAdd       MathAssignOp = "+="
-	MathAssignOpSub       MathAssignOp = "-="
-	MathAssignOpMul       MathAssignOp = "*="
-	MathAssignOpDiv       MathAssignOp = "/="
-	MathAssignOpMod       MathAssignOp = "%="
-	MathAssignOpRemainder MathAssignOp = "%%="
+	MathAssignOpAdd      MathAssignOp = "+="
+	MathAssignOpSub      MathAssignOp = "-="
+	MathAssignOpMul      MathAssignOp = "*="
+	MathAssignOpDiv      MathAssignOp = "/="
+	MathAssignOpRem      MathAssignOp = "%="
+	MathAssignOpRemFloor MathAssignOp = "%%="
 
 	MathAssignOpBitAnd MathAssignOp = "&="
 	MathAssignOpBitOr  MathAssignOp = "|="
@@ -97,10 +97,10 @@ func (op MathAssignOp) BinaryOp() (MathBinaryOp, bool) {
 		return MathBinaryOpMul, true
 	case MathAssignOpDiv:
 		return MathBinaryOpDiv, true
-	case MathAssignOpMod:
-		return MathBinaryOpMod, true
-	case MathAssignOpRemainder:
-		return MathBinaryOpRemainder, true
+	case MathAssignOpRem:
+		return MathBinaryOpRem, true
+	case MathAssignOpRemFloor:
+		return MathBinaryOpRemFloor, true
 	case MathAssignOpBitAnd:
 		return MathBinaryOpBitAnd, true
 	case MathAssignOpBitOr:

@@ -49,10 +49,10 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 		operator = ast.MathAssignOpMul
 	case "div_assign_operator":
 		operator = ast.MathAssignOpDiv
-	case "mod_assign_operator":
-		operator = ast.MathAssignOpMod
-	case "remainder_assign_operator":
-		operator = ast.MathAssignOpRemainder
+	case "rem_assign_operator":
+		operator = ast.MathAssignOpRem
+	case "rem_floor_assign_operator":
+		operator = ast.MathAssignOpRemFloor
 	case "bitand_assign_operator":
 		operator = ast.MathAssignOpBitAnd
 	case "bitor_assign_operator":

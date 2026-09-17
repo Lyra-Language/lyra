@@ -9,6 +9,55 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — `checked_rem`, and the grammar's two remainders were named backwards
+
+`checked_rem` is `%` and `checked_rem_floor` is `%%`. The todo called this "a naming
+decision, not a lowering one" and that was right — the lowering is `emitCheckedDiv`'s
+twin — but the decision had a factual anchor, and finding it turned up something worse
+than an open question.
+
+**The anchor: `checked_rem` is `checked_div`'s partner.** `/` truncates toward zero
+(`11 / -3 == -3`), and the remainder satisfying `a == (a / b) * b + (a % b)` is `%`, the
+one whose sign follows the dividend — verified by running it, not by reasoning about it.
+The two halves of one division should not need different words, and Rust's `checked_rem`
+is already this operation, so a reader arriving from C, Go or Rust is right by default.
+
+**What that exposed: the grammar had the two words backwards.** `%` was `mod_operator`
+and `%%` was `remainder_operator`, while `%` *behaves* like everyone's `rem` and `%%` like
+Python's `%`. Naming the method `checked_rem` for `%` would have left the standard library
+and the grammar disagreeing about which word means which operator — so the rules were
+renamed instead: `rem_operator`, `rem_floor_operator`, `rem_assign_operator`,
+`rem_floor_assign_operator`, with `MathBinaryOpRem`/`MathBinaryOpRemFloor` and
+`ast.Rem` following in the compiler.
+
+**A rule name is a node kind, so the rename is a cross-repo change**, and this is the
+shape to remember for the next one:
+
+- `tree-sitter-lyra`: the four rules, `queries/highlights.scm`, one corpus expectation,
+  and the regenerated `parser.c`. All 537 corpus tests pass.
+- `lyra`: `go clean -cache` first (or the tests run against the old parser and prove
+  nothing), then the AST constants and the **compound-assignment collector, which switches
+  on the kind** — `%=` would have stopped collecting otherwise. It reports an unknown
+  operator loudly rather than silently, which is the only reason that one was not a trap.
+- `lyra-zed-ext`: its own `highlights.scm` names the nodes too, and a query naming a node
+  that no longer exists makes Zed **drop the file and lose all Lyra highlighting**. The
+  pin has to move to the grammar commit after it is pushed.
+- The VS Code grammar is hand-written TextMate matching characters, so it needed nothing.
+
+**The methods themselves.** `checked_rem` and `checked_rem_floor` join the family on every
+concrete width, `pure noalloc`, answering `Maybe<T>`. Their failures are division's,
+exactly: a zero divisor and `INT_MIN ÷ -1`. The second is worth stating because the
+*mathematical* answer is 0 and a reader may expect `Some(0)` — LLVM's `srem` is poison
+there, `%` traps, and `checked_*` means "the operation the operator would have refused, as
+a value". The lowering stays branchless by substituting 1 for the divisor on the failing
+paths, the trick `emitCheckedDiv` already used; the floored form adjusts afterwards with
+`lowerFlooredSRem`'s rule, which cannot fail where the truncated form does not.
+
+Tests: the four sign combinations, both zero divisors, `INT_MIN` against -1 in both forms,
+unsigned (where floored and truncated agree by definition), and a program asserting the
+methods and the operators give the same answer wherever the operator does not trap — one
+rule written twice is how they would drift.
+
 ### 09/17/26 — "generator" named two things; now it names one
 
 A `gen` function and a comprehension's `x in xs` were both generators, in prose and in
