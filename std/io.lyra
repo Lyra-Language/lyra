@@ -3,7 +3,18 @@ module std.io
 //!
 //! `read_line` and the terminal builtins are the compiler's because a syscall is
 //! primitive. A file is not: `open`, `read` and `close` are three `extern`s, and
-//! everything else here is the arithmetic over them. Written the way `std.ffi` is
+//! everything else here is the arithmetic over them.
+//!
+//! **A directory is the exception, and it is worth saying why it is not a fourth
+//! `extern`.** `readdir` answers a pointer to a `struct dirent`, and the name inside it
+//! sits at an offset that differs by platform — 21 on macOS, 19 on Linux — while the
+//! symbol itself differs too (x86_64 macOS resolves a bare `readdir` to the legacy
+//! 32-bit-inode entry point, which links and reads the wrong field). Lyra source cannot
+//! ask which platform it is being compiled for, so neither number can be written here at
+//! all, and there is no struct-free directory call in libc to write instead. The crossing
+//! is therefore the compiler's — the `dir_names` builtin, which answers exactly what libc
+//! reported — and `read_dir` below is the arithmetic over it, the same split
+//! `program_arg`/`program_args` has. Written the way `std.ffi` is
 //! written — `unsafe` appears in this file so it need not appear at a call site — but
 //! not *over* `std.ffi`: importing it would bring its exported `get` into every program
 //! that also uses `std.collections`, whose `HashMap` exports one too, and a name may not
@@ -60,6 +71,31 @@ let read_all = (fd: i32) -> string => {
     chunks.push(buf.slice(0, n).decode_utf8())
   }
   chunks.join("")
+}
+
+/// The names in the directory at `path`, sorted, without `.` and `..` — or `None` if the
+/// directory cannot be opened (missing, unreadable, or a file rather than a directory).
+///
+/// Names only, not paths: joining them to `path` is the caller's, since a caller walking a
+/// tree usually wants its own separator handling. Dotfiles are kept, because the file
+/// system reports them and dropping them silently is a policy rather than a fact.
+///
+/// **Sorted, which the file system does not promise.** `readdir` answers in whatever order
+/// the directory's on-disk structure gives, so two machines listing the same directory can
+/// disagree — and a program that walks a tree to format, check or report is then not
+/// reproducible. Sorting once here costs a comparison per entry against a `readdir` syscall
+/// per entry, and buys an answer that is the same everywhere.
+///
+/// `None` rather than an empty array for a directory that cannot be read, on `read_file`'s
+/// rule: an empty directory is a real answer (`Some([])`) and a missing one is not.
+///
+/// ```
+/// let Some(names) = read_dir("src") else { return println("cannot list src") }
+/// for name in names { println(name) }
+/// ```
+pub let read_dir = (path: string) -> Maybe<[]string> => {
+  let Some(names) = dir_names(path) else { return None }
+  Some([n in names | n != "." && n != ".." | n].sorted())
 }
 
 /// The file at `path` overwritten with `contents`, answering whether all of it landed.

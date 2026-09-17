@@ -78,6 +78,16 @@ let main = () -> u8 => match parse_json("{\"a\": \"xyz\"}") {
 }`, 3},
 		{"a literal default inside a callee", `let total = (m: Maybe<[]i64>) -> i64 => m.unwrap_or([]).len()
 let main = () -> u8 => u8(total(Some([9, 9]))) + 1`, 3},
+		// A builtin taking a *managed argument* it does not keep. The default for an
+		// unresolved callee is transfer — leak-safe when the callee might store what it
+		// was handed — so a builtin whose shim only reads its argument has to say it
+		// borrows (calleeIsBorrowingBuiltin), exactly as print/println do. `dir_names`
+		// leaked one string per call until it did (09/17), which only a path the caller
+		// owns shows: a literal is pinned and never released either way.
+		{"a builtin borrowing an owned path", `let main = () -> u8 => {
+  let here = "." ++ ""
+  match dir_names(here) { Some(names) => if names.len() > 0 { 3 } else { 1 }, None => 1 }
+}`, 3},
 		// The five that were still failing with leak detection forced on, and what fixing
 		// them turned up (09/13).
 		{"a trait method's owned result", `struct Tag { n: i64 }

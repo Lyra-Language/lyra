@@ -566,6 +566,8 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerPanicCall(block, e)
 		case "read_line":
 			return l.lowerReadLineCall(block, e)
+		case "dir_names":
+			return l.lowerDirNamesCall(block, e)
 		case "random_seed":
 			return l.lowerRandomSeedCall(block, e)
 		case "wall_clock_nanos":

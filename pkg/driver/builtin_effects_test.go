@@ -37,6 +37,7 @@ func TestBuiltinEffects_EveryKeyNamesACallableBuiltin(t *testing.T) {
 		{"println", `println("x")`},
 		{"panic", `panic("x")`},
 		{"read_line", `read_line()`},
+		{"dir_names", `dir_names(".")`},
 		{"set_raw_mode", `set_raw_mode(true)`},
 		{"read_key", `read_key()`},
 		{"terminal_size", `terminal_size()`},

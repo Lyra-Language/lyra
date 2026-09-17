@@ -398,6 +398,7 @@ type lowerer struct {
 	terminalSize *ir.Func   // lyra_terminal_size: TIOCGWINSZ, (columns, rows)
 	waitForKey   *ir.Func   // lyra_wait_for_key_ms: poll(stdin) with a timeout
 	cstrLen      *ir.Func   // lyra_cstr_len: bytes before the NUL (args.go)
+	readDir      *ir.Func   // lyra_read_dir: a directory's entry names (dirent.go)
 	argcGlobal   *ir.Global // lyra_argc / lyra_argv: what main was called with (args.go)
 	argvGlobal   *ir.Global
 	rcAlloc      *ir.Func // lyra_rc_alloc: malloc a box, rc = 1

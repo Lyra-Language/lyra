@@ -62,9 +62,10 @@ Package management, versioning and separate compilation are out of scope by deci
   stack** landed 09/17 (one `[]Scope` for the open delimiters, replacing two parallel
   arrays; output byte-identical on all 94 files). It was expected to hit `[]T` aliasing and
   did not — a stack never copies itself, so there is no second binding for the aliasing to
-  be seen through; that expectation is retired (COMPLETED.md). Next: a directory walk,
-  which needs a `readdir` in `std.io`. A real bootstrap would start with the collector
-  after this.
+  be seen through; that expectation is retired (COMPLETED.md). `std.io.read_dir` landed
+  09/17 over a `dir_names` builtin (COMPLETED.md), so **the directory walk is unblocked and
+  is the next piece of lyrafmt**: `lyrafmt --check src/` should mean every `.lyra` file
+  under it. A real bootstrap would start with the collector after this.
   - Two files fail `lyrafmt --check` and predate the inline-block rule:
     `cmd/lyrac/testdata/unsupported.lyra` is indented four spaces (testdata, never
     formatted) and `examples/raylib/shapes.lyra` ends with a blank line.

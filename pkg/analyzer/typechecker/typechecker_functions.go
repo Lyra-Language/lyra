@@ -841,6 +841,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinReadLineFn(ident.Name) {
 			return tc.inferReadLineCall(call)
 		}
+		if isBuiltinDirNamesFn(ident.Name) {
+			return tc.inferDirNamesCall(call)
+		}
 		if isBuiltinBaseReadoutFn(ident.Name) {
 			return tc.inferBaseReadoutCall(call)
 		}
@@ -1105,6 +1108,44 @@ func (tc *TypeChecker) inferReadLineCall(call *ast.FunctionCallExpr) types.Type 
 		Name:          name,
 		TypeArguments: []types.Type{types.PrimitiveType{Name: types.String}},
 	}
+}
+
+// inferDirNamesCall type-checks `dir_names(path)` and gives it the type
+// `Maybe<[]string>` — see isBuiltinDirNamesFn for what it answers and why it is a
+// builtin at all.
+//
+// The `Maybe` is the program's *canonical* one, reached through the kind stamped at
+// collection rather than by writing the name "Maybe" here, for the reason
+// inferReadLineCall states: the canonical type's spelling is free, so a hard-coded name
+// would build whatever type the program happens to have declared.
+//
+// **`None` rather than an empty list when the directory cannot be opened**, on
+// `read_file`'s rule and for the same reason: a missing directory and an empty one are
+// different answers, and a caller that cannot tell them apart reports neither. An empty
+// directory is `Some([])`.
+func (tc *TypeChecker) inferDirNamesCall(call *ast.FunctionCallExpr) types.Type {
+	maybeOf := func(elem types.Type) types.Type {
+		name, ok := tc.canonicalTypeName("Maybe", call.GetLocation())
+		if !ok {
+			tc.addError(call.GetLocation(), SeverityError,
+				"dir_names returns a Maybe, and this program has no canonical Maybe type "+
+					"(it is normally the prelude's)")
+			return nil
+		}
+		return types.ParameterizedType{Name: name, TypeArguments: []types.Type{elem}}
+	}
+	names := types.DynamicArrayType{ElementType: types.PrimitiveType{Name: types.String}}
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"dir_names: expected 1 argument(s), got %d", len(call.Arguments))
+		return maybeOf(names)
+	}
+	argT := tc.inferExprType(call.Arguments[0])
+	if argT != nil && !types.IsString(argT) {
+		tc.addError(call.Arguments[0].GetLocation(), SeverityError,
+			"dir_names: expected a path (a string), got %s", promoteToDefault(argT))
+	}
+	return maybeOf(names)
 }
 
 // inferSetRawModeCall type-checks `set_raw_mode(on)`, whose result is void.

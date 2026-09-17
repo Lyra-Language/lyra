@@ -814,6 +814,32 @@ func isBuiltinReadLineFn(name string) bool {
 	return name == "read_line"
 }
 
+// isBuiltinDirNamesFn reports whether name is the compiler-provided `dir_names`.
+// Resolved exactly like read_line — by name in inferIdentifierCall, only after scope
+// resolution misses, so a user binding of the same name shadows it.
+//
+// `dir_names(path: string) -> Maybe<[]string>` answers the entries of a directory
+// exactly as libc reported them: every name including `.`, `..` and dotfiles, in the
+// order the file system gave them, or `None` when the directory cannot be opened.
+//
+// **It is a builtin for a narrower reason than read_line's, and the line is worth
+// keeping straight.** read_line is the compiler's because a syscall is primitive and
+// this language had no FFI. Files are *not* the compiler's — `std.io` opens, reads and
+// closes them over three `extern`s, and says so in its module doc. A directory is the
+// exception because the answer comes back inside `struct dirent`, whose `d_name` sits at
+// an offset that differs by platform (21 on macOS, 19 on Linux), and no struct-free
+// directory interface exists in libc to write instead. Lyra source cannot ask what
+// platform it is compiled for, so the offset has nowhere to live but the backend — see
+// `pkg/backend/llvm/dirent.go`, which also explains why the *symbol* varies.
+//
+// **The raw list is the primitive, and the usable one is Lyra.** Dropping `.` and `..`
+// and sorting the rest is `std.io`'s `read_dir`, ordinary Lyra over this — the same
+// split as `program_arg`/`program_args`, and the thing that keeps this registry from
+// growing a standard library inside the compiler.
+func isBuiltinDirNamesFn(name string) bool {
+	return name == "dir_names"
+}
+
 // isBuiltinBaseReadoutFn reports whether name is the compiler-provided `base`.
 // Resolved exactly like print/panic/read_line — by name in inferIdentifierCall, after
 // scope resolution misses, so a user binding named `base` shadows it — which is why

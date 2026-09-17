@@ -159,6 +159,15 @@ var builtinEffects = map[string]Effect{
 	// and would not reach the pass that decides `noalloc`. Left for whenever a
 	// builtin's allocation is charged at all; today no builtin's is.
 	"read_line": EffectInput,
+	// `dir_names(path)` reads a directory. Input for the plain reason — the answer comes
+	// from the file system, and two calls a moment apart need not agree — but *not*
+	// destructive the way `read_line` and `read_key` are: reading a directory consumes
+	// nothing, so calling it twice is merely two answers rather than two halves of one.
+	// Input is what `det` cares about either way.
+	//
+	// It allocates (a `[]string` and a string per entry), which is not expressible here
+	// for the reason the entry above gives.
+	"dir_names": EffectInput,
 	// The terminal builtins, and their split is the interesting part: two of the three
 	// are Input and the other is Output, although all three are "terminal stuff".
 	//

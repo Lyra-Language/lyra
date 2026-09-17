@@ -24,6 +24,7 @@ import (
 // arena purity test green over a program with three compile errors.
 func TestBuiltinEffects_KeySetIsPinned(t *testing.T) {
 	want := []string{
+		"dir_names",
 		"panic",
 		"print",
 		"println",

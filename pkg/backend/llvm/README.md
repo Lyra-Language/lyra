@@ -539,8 +539,20 @@ primitive. The generator itself is prelude Lyra.
 
 ### Terminal (`tui.go`)
 
-The only file that consults `runtime.GOOS` (for `TIOCGWINSZ`); sound only because `lyrac`
-compiles for its host.
+One of the two files that consult `runtime.GOOS` (here for `TIOCGWINSZ`); sound only
+because `lyrac` compiles for its host. It never indexes a platform struct — `struct
+termios` is carried as an oversized opaque buffer — which is the difference from the other
+one.
+
+### Directories (`dirent.go`)
+
+The second `runtime.GOOS` consumer, and the one that *must* know a field offset: `d_name`
+sits at 21 on macOS and 19 on Linux, and `readdir` is `readdir$INODE64` on x86_64 macOS
+(where the bare name links against the legacy 32-bit-inode entry point and reads the wrong
+field). Both measured 09/17; an unknown host is refused rather than guessed. The shim
+`lyra_read_dir` answers the canonical `Maybe<[]string>` in one call, copying each name into
+a fresh box as `program_arg` copies argv — `readdir` reuses its buffer. `std.io`'s
+`read_dir` is the Lyra half.
 
 ## Traits and generics
 

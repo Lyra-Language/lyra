@@ -1829,15 +1829,24 @@ func (a *analyzer) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
 // calleeIsBorrowingBuiltin reports whether e is a direct call to a
 // compiler-provided builtin whose parameters are borrows (bare), so an owned
 // temporary argument must be released after the call rather than conservatively
-// transferred (leaked). print/println borrow their `string` argument. Callers
-// gate this on the name not being shadowed by a user function.
+// transferred (leaked). print/println borrow their `string` argument, and so does
+// `dir_names(path)` — its shim reads the path's bytes through to `opendir` and hands
+// nothing on, so the caller still owns the string afterwards. Callers gate this on the
+// name not being shadowed by a user function.
+//
+// **A builtin taking a managed argument belongs here or it leaks**, which is the mirror
+// of the rule calleeIsOwningBuiltin states for results: the default for an unresolved
+// callee is *transfer*, chosen because it is leak-safe for an unknown callee, and a
+// builtin whose shim does not release what it was handed makes that default a leak.
+// Found 09/17 by `dir_names(args[1])`, which leaked one string per call while
+// `println(args[1])` beside it did not.
 func calleeIsBorrowingBuiltin(e *ast.FunctionCallExpr) bool {
 	id, ok := e.Function.(*ast.IdentifierExpr)
 	if !ok {
 		return false
 	}
 	switch id.Name {
-	case "print", "println":
+	case "print", "println", "dir_names":
 		return true
 	}
 	return false
@@ -1886,13 +1895,14 @@ func calleeIsTransferringBuiltin(e *ast.FunctionCallExpr) bool {
 // `read_line` did: `program_arg(i)` copies argv[i] into a fresh string, fell to the
 // borrowed-result default, and leaked one string per argument — which every program
 // calling `program_args()` did, invisibly, since only LeakSanitizer on Linux reports it.
-// The rest of the builtin free functions answer scalars.
+// `dir_names(path)` answers a `[]string` and joined them on 09/17; the rest of the
+// builtin free functions answer scalars.
 func calleeIsOwningBuiltin(e *ast.FunctionCallExpr) bool {
 	id, ok := e.Function.(*ast.IdentifierExpr)
 	if !ok {
 		return false
 	}
-	return id.Name == "read_line" || id.Name == "program_arg"
+	return id.Name == "read_line" || id.Name == "program_arg" || id.Name == "dir_names"
 }
 
 // paramOwnsArgument / isOwnedReturn mirror the typechecker's ownership predicates

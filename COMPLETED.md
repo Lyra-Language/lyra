@@ -9,6 +9,64 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — `read_dir`, and the argument half of the builtin ownership rule
+
+`std.io.read_dir(path)` answers a directory's names — sorted, without `.` and `..`,
+dotfiles kept — over a new `dir_names` builtin that answers exactly what libc reported.
+It was asked for as "a `readdir` in `std.io`", and the interesting part is that it could
+not go there.
+
+**Why a directory is the compiler's when a file is not.** `std/io.lyra` opens, reads and
+writes files over three `extern`s and says in its own module doc that a file needs no
+builtin. A directory does, and not because a syscall is primitive — because the answer
+comes back *inside a struct*. `readdir` returns a `struct dirent` whose `d_name` sits at a
+platform-dependent offset, and there is no struct-free directory call in libc to write
+instead: `scandir` and `glob` hand back the same struct, `fts`/`ftw` take function
+pointers Lyra cannot pass. Lyra source, meanwhile, cannot ask which platform it is being
+compiled for — target predicates are unbuilt — so the offset has nowhere to live in the
+standard library at all. It lives in `backend/llvm/dirent.go`, on tui.go's precedent
+(`lyrac` compiles for its host), and that file is now the second place the backend is not
+platform-neutral. It goes one step past the first: tui.go carries `struct termios` as an
+oversized opaque buffer *precisely so* it never needs a field offset, and this cannot,
+because the field is the answer.
+
+**Both numbers were measured, and the symbol was the sharper hazard.** `d_name` is at 21
+on macOS arm64 and 19 on Linux glibc (`offsetof` through each platform's own header, not
+memory). More dangerous: macOS declares `readdir` as `__DARWIN_INODE64(readdir)`, which on
+x86_64 renames it to `readdir$INODE64`. A bare `readdir` there **links** — against the
+legacy 32-bit-inode entry point, whose `d_name` is at 8. That is a wrong answer that does
+not trap, on data rather than on a coding mistake, which is the failure `std/io.lyra`'s
+`creat` comment was written about. An unmeasured host is refused rather than guessed.
+
+**The split is `program_arg`/`program_args`, not a new standard library in the compiler.**
+The builtin answers the raw list in the file system's order; dropping `.` and `..` and
+sorting is four lines of Lyra in `std.io`. Sorting is the one policy added, and it is not
+cosmetic: `readdir` promises no order, so without it two machines listing one directory
+disagree and anything built on the walk stops being reproducible.
+
+**The bug this found is the argument half of a rule the repo only had the result half
+of.** `dir_names(args[1])` leaked one string per call while `println(args[1])` beside it
+did not. The ownership pass defaults an unresolved callee's arguments to *transfer* —
+correct as a default, because a callee that might store what it was handed must not have
+it freed underneath — but a builtin's shim has no declaration to read a mode from, so
+every builtin taking a managed value it merely reads leaks it. `print`/`println` were
+listed in `calleeIsBorrowingBuiltin` and were the only two, exactly as `read_line` was
+once the only entry on the *result* side and `program_arg` leaked a string per argument
+until 09/13. Both defaults are wrong in the same direction for a builtin, and neither is
+visible without LeakSanitizer on Linux. CLAUDE.md's rule 17 now states both halves.
+
+One more thing the shim had to get right, and it is the same class: the `[]string` box is
+allocated **past** the `opendir` null test. Building it in the entry block allocates one on
+the `None` path too, which returns without a box to hand back and so without anything to
+free it — a leak on exactly the path a caller takes when a directory is missing.
+
+Tests: the entries of a directory the test just created (the real check on the offset — a
+wrong one answers plausible garbage rather than crashing), `.`/`..` present in the builtin
+and absent from `read_dir`, a dotfile kept, an empty directory as `Some([])`, a missing
+directory and a plain file as `None`, and a must-fire leak case that exits 1 without the
+borrowing-builtin fix. `./asan.sh` runs all of it on Linux, which is what covers the other
+offset.
+
 ### 09/17/26 — lyrafmt: the scope stack, and a prediction that did not come true
 
 The formatter carried its open delimiters as **two parallel arrays**, `levels` and

@@ -223,6 +223,12 @@ Each of these produces something that looks like it works. Other docs cite them 
     `calleeIsOwningBuiltin` (the unresolved default treats a result as borrowed → leak) and
     lower **branchlessly** (a merge block defeats `flushStmtTemps`). `read_line` is the model;
     `<=>` is branchless for the same reason.
+    - **The mirror on the argument side**: a builtin **taking** a managed value it does not
+      keep must be named in `calleeIsBorrowingBuiltin`, beside `print`/`println`. There the
+      unresolved default is *transfer* — leak-safe for an unknown callee, a leak for a shim
+      that only reads what it was handed. Both defaults are wrong in the same direction for
+      a builtin, and neither is reported by anything but LeakSanitizer on Linux
+      (`dir_names(path)`, 09/17).
 
 18. **A value-range fact is only as good as the pass's knowledge of every write — and the
     backend drops traps on it** (`res.RangeSafety` in `arrays.go`, `arithmetic.go`). A stale
@@ -448,8 +454,9 @@ MethodTable, Ownership, Captures, RangeSafety, Diagnostics}` with all errors as
   returning `u8` or void. Build-time only, not part of `Analyze`.
 
 **`pkg/backend`** — `backend.Backend{Name(); Emit(res, entry)}`, called only on error-free
-analysis. `backend/llvm/tui.go` is the **only** `runtime.GOOS` consumer (`TIOCGWINSZ`), sound
-because `lyrac` compiles for its host.
+analysis. `backend/llvm/tui.go` and `backend/llvm/dirent.go` are the **only** `runtime.GOOS`
+consumers (`TIOCGWINSZ`; `struct dirent`'s name offset and `readdir`'s symbol), sound
+because `lyrac` compiles for its host. An unmeasured host is refused, not guessed.
 
 **`pkg/abi`** — `Classify(target, aggregate, isReturn)` for AAPCS64 and SysV AMD64.
 `abi_diff_test.go` checks against clang (19 shapes × 3 targets). AAPCS64 register-passes an
