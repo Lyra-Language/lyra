@@ -1,8 +1,10 @@
 package llvm
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // `split_when` — `split`'s predicate form (`std/prelude/strings.lyra`).
@@ -141,5 +143,52 @@ let main = () -> void => {
 	want := "[héllo|wörld|ünïcode]\n5"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
 		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
+// **`split` must not be quadratic**, which is a property no correctness test sees.
+//
+// It was, until 09/17, in two ways at once: `Needle::found_at` searches forward from a
+// rune offset and so walked from rune 0 on every part, and `slice(start, at)` walked there
+// again to cut the part out. 600 K runes took 4.7 s; the same input takes ~10 ms now, and
+// `lines` — and so every line-oriented program — was quadratic with it.
+//
+// The assertion is a **ratio, not a wall-clock bound**, because absolute times on a shared
+// CI runner are noise: doubling the input must not much more than double the work. Linear
+// gives ~2 and the old code gave ~4, so 3 separates them with room. The sizes are large
+// enough that the fixed overhead does not dominate the ratio.
+func TestExec_SplitIsNotQuadratic(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let args = program_args()
+  let n = match args[1].parse_i64() { Some(v) => v, None => 0 }
+  var line = "lyra lyra lyra lyra lyra lyra lyra lyra"
+  var text = ""
+  var parts: []string = []
+  for i in 0..<n { parts.push(line) }
+  text = parts.join("\n")
+  println("${text.split("\n").len()}")
+}
+`
+	bin := preludeBinary(t, src)
+	elapsed := func(lines string) time.Duration {
+		out, err := exec.Command(bin, lines).Output()
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		_ = out
+		start := time.Now()
+		if _, err := exec.Command(bin, lines).Output(); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		return time.Since(start)
+	}
+	small := elapsed("4000")
+	large := elapsed("8000")
+	if ratio := float64(large) / float64(small); ratio > 3 {
+		t.Errorf("doubling the input multiplied the time by %.1f (want < 3); split looks quadratic again:"+
+			" 4000 lines %v, 8000 lines %v", ratio, small, large)
 	}
 }

@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — `split` was quadratic, and so was every line-oriented program
+
+`lyra-md` rendered 200 KB in about a second and nothing in it explained where the time
+went. The scanner looked guilty — it is the part with the loop in it — and it was innocent.
+**One `sample` run answered it**: 100% of the samples in `string$Needle$found_at` and
+`lyra.split$string`, none in the renderer at all.
+
+`split` was quadratic **twice over**, and both came from rune indexing:
+
+- `sep.found_at(self, start)` searches forward *from an offset*, and a rune offset is only
+  reachable by counting runes from the start — so both shipped needles walked from rune 0
+  on every part.
+- `self.slice(start, at)` walked from rune 0 again to cut each part out.
+
+Measured before: 150 K runes 297 ms, 300 K 1180 ms, 600 K 4709 ms — a doubling that
+quadruples. After: **6 ms, 7 ms, 9 ms**, which is flat enough that fixed overhead
+dominates. `lyra-md` over the same 200 KB went from 1081 ms to **18 ms**, and 1.2 MB —
+the file that took minutes under the profiler — now renders in 64 ms.
+
+**The fix is a second trait method, because the first one cannot be made fast.** No
+implementation of `found_at(haystack, offset)` can avoid re-walking: the offset names a
+rune, and finding it means counting. What a stepping caller needs is a *position test*, so
+`Needle` gained `matches_at(haystack, rune_at, byte_at, here)` — a walk that has arrived
+somewhere already knows all three, a `rune` needle compares `here`, and a `string` needle
+asks `compare_bytes_at(byte_at, …)`. Neither looks at anything before the position.
+
+**It is defaulted in terms of `found_at`**, which is what makes this additive: a `Needle`
+written before today keeps compiling and keeps its old cost, and only the two shipped impls
+take the fast path. `split` then walks the string once, tracking the byte offset alongside
+the rune index, and cuts each part out of one `encode_utf8()` by byte range — so a part
+costs what it copies rather than where it starts.
+
+Semantics are unchanged, deliberately and checked: empty parts kept (`"a,,b"` is three),
+the trailing part kept (`"a,"` is two), an empty separator still traps, `"ab".split("ab")`
+is two empty parts, and multi-byte runes are handled by byte offsets that were derived from
+the walk rather than recomputed.
+
+**The regression guard is a ratio, not a wall clock.** Absolute times on a shared runner
+are noise; "doubling the input must not much more than double the work" is the property
+that was violated. Linear measures ~2 and the old code measures exactly 4.0, so a bound of
+3 separates them with room. Confirmed must-fire: against the pre-fix prelude the test fails
+with `multiplied the time by 4.0`, and takes 31 s doing it.
+
+Two lessons worth more than the fix. **A trait method that searches forward from an index
+makes every stepping caller quadratic** — the shape is the bug, not the implementation, and
+it is invisible to every correctness test. And **profile before localizing**: two rounds of
+plausible reasoning put the cost in the renderer, where it never was.
+
 ### 09/17/26 — lyra-md: inline spans, and a quadratic hiding in a rune-indexed slice
 
 Code spans, emphasis, strong, links, images and backslash escapes, rendered inside

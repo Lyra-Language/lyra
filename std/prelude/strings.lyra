@@ -464,10 +464,39 @@ pub trait Needle {
   /// `Some((0, 0))` is what makes a search for an empty needle terminate. It is `split`,
   /// not this method, that refuses to act on one.
   found_at: (Self, string, Index) -> Maybe<(Index, Length)>
+
+  /// Whether this needle matches **at** the given position, and how many runes it spans.
+  ///
+  /// **The position test `found_at` cannot be.** `found_at` searches *forward from* an
+  /// offset, and no implementation of that shape can avoid re-walking: a rune offset is
+  /// only reachable by counting runes from the start. So a caller stepping through a
+  /// string pays O(n) per step — which made `split` quadratic, and with it `lines` and
+  /// every line-oriented program (measured 09/17: 150 K runes 0.3 s, 300 K 1.2 s, 600 K
+  /// 4.7 s, the signature of a doubling that quadruples).
+  ///
+  /// A walk that has arrived at a position already knows everything the shipped needles
+  /// need, so the method is handed all of it: `rune_at` is the rune index, `byte_at` the
+  /// byte offset, and `here` the rune sitting there. A `rune` needle compares `here`; a
+  /// `string` needle asks `compare_bytes_at(byte_at, …)`; neither looks at anything before
+  /// the position.
+  ///
+  /// **The default answers correctly and slowly**, by asking `found_at` whether its next
+  /// match happens to start here — so a needle written before this method existed still
+  /// works everywhere, and only pays the old cost.
+  matches_at: (Self, string, Index, i64, rune) -> Maybe<Length> =
+    (self, haystack, rune_at, byte_at, here) => match self.found_at(haystack, rune_at) {
+      Some((at, span)) => if at == rune_at { Some(span) } else { None },
+      None => None,
+    }
 }
 
 /// A rune matches a single code point, spanning one rune.
 impl Needle for rune {
+  // The rune at the position is handed in, so the test is one comparison and reads
+  // nothing.
+  matches_at = pure (needle, haystack, rune_at, byte_at, here) =>
+    if here == needle { Some(1) } else { None }
+
   found_at = pure (needle, haystack, offset) => {
     if offset < 0 {
       return None
@@ -485,6 +514,12 @@ impl Needle for rune {
 
 /// A string matches its own contents, spanning its own rune length.
 impl Needle for string {
+  // A prefix test at a byte offset: `compare_bytes_at` is a `memcmp` and is total, so an
+  // offset past the end simply does not match. The span is the needle's **rune** length,
+  // which is what the caller steps by.
+  matches_at = pure (needle, haystack, rune_at, byte_at, here) =>
+    if haystack.compare_bytes_at(byte_at, needle) == 0 { Some(needle.len()) } else { None }
+
   found_at = pure (needle, haystack, offset) => {
     if offset < 0 {
       return None
@@ -602,31 +637,53 @@ pub let to_runes = pure (self: string) -> []rune => [c in self | c]
 /// let fields = "a::b::c".split("::")   // ["a", "b", "c"]
 /// let chars  = "abc".to_runes()        // not split("")
 /// ```
-pub let split<t> where t: Needle = pure(self: string, sep: t = " ") -> []string => {
-  var parts: []string = [];
-  var start = 0;
-  for {
-    match sep.found_at(self, start) {
-      Some((at, span)) => {
-        // A zero-span match can never advance the cursor, so it is not a question this
-        // loop can answer — an empty separator would sit here forever. A trap rather
-        // than a Maybe, on `slice`'s reasoning about its inverted range: this is a
-        // caller bug, not an answer, and the empty result a soft path would hand back
-        // is indistinguishable from a real one. A rune separator cannot be empty, so
-        // the common call never pays for the check it cannot fail.
-        //
-        // The guard lives here and not in Needle because a zero-length match is
-        // *legitimate* to `found_at`: `"".index("")` answering `Some((0, 0))` is what
-        // makes a search for an empty needle terminate.
-        if span == 0 {
-          panic("split: empty separator; to split a string into its runes, use to_runes()")
-        }
-        parts.push(self.slice(start, at));
-        start = at + span;
-      },
-      None => { parts.push(self.slice(start, self.len())); break; },
+pub let split<t> where t: Needle = pure (self: string, sep: t = " ") -> []string => {
+  var parts: []string = []
+  // The bytes once, so a part costs what it copies rather than where it starts: slicing
+  // the *string* is rune-indexed and walks from rune 0, which was the second of this
+  // function's two quadratics (the first was searching from the start on every part).
+  let bytes = self.encode_utf8()
+  var part_start = 0
+  var pending = 0 - 1
+  var skip_until = 0
+  var byte_i = 0
+  for i, c in self {
+    // A part begins where the previous separator ended, and the walk learns that byte
+    // offset only when it arrives — which is also what makes two adjacent separators
+    // yield the empty part between them.
+    if i == pending {
+      part_start = byte_i
+      pending = 0 - 1
     }
+    if i >= skip_until {
+      match sep.matches_at(self, i, byte_i, c) {
+        Some(span) => {
+          // A zero-span match can never advance the cursor, so it is not a question this
+          // loop can answer — an empty separator would sit here forever. A trap rather
+          // than a Maybe, on `slice`'s reasoning about its inverted range: this is a
+          // caller bug, not an answer, and the empty result a soft path would hand back
+          // is indistinguishable from a real one. A rune separator cannot be empty, so
+          // the common call never pays for the check it cannot fail.
+          //
+          // The guard lives here and not in Needle because a zero-length match is
+          // *legitimate* to `found_at`: `"".index("")` answering `Some((0, 0))` is what
+          // makes a search for an empty needle terminate.
+          if span == 0 {
+            panic("split: empty separator; to split a string into its runes, use to_runes()")
+          }
+          parts.push(bytes.slice(part_start, byte_i).decode_utf8())
+          skip_until = i + span
+          pending = i + span
+        },
+        None => {},
+      }
+    }
+    byte_i += c.utf8_len()
   }
+  // The tail, which is a part even when it is empty: `"a,"` is two fields, and a
+  // separator that ran to the very end leaves the last one with nothing in it.
+  if pending >= 0 { part_start = bytes.len() }
+  parts.push(bytes.slice(part_start, bytes.len()).decode_utf8())
   parts
 }
 
