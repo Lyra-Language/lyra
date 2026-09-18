@@ -58,6 +58,32 @@ let sum = pure (n: i64) -> i64 => {
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
 
+// **A `var` reassigned in a while-style loop inside a trait method crashed the compiler**
+// (09/18). A trait-method clause records no scope, so its bindings are collected by a hand
+// walk, and that walk handed a `for` loop's `Init` — a `*VarDeclStmt`, nil when the loop
+// has no init — straight to a function taking `ast.Statement`. The nil pointer became a
+// *typed* nil inside a non-nil interface, matched `case *ast.VarDeclStmt`, and `s.Value`
+// dereferenced it. Every other pass visiting `Init` guards it first; this one did not.
+//
+// `std.temporal`'s `Show for PlainTime`, trimming trailing zeros off a fraction in a loop,
+// was the first program to write one. Both loop shapes are pinned: the while form that
+// crashed, and the three-part form whose init must still be collected as a local. No
+// method calls, because this harness has no prelude and an unresolved one reads as impure.
+func TestPurity_TraitClauseLoopLocalMutation_Ok(t *testing.T) {
+	src := `
+struct Tag { n: i64 }
+trait Weigh { weight: (Self) -> i64 }
+impl Weigh for Tag {
+    weight = pure (self) => {
+        var w = self.n
+        for w < 100 { w = w * 2 }
+        for var i = 0; i < 2; i += 1 { w = w + i }
+        w
+    }
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
 // Names bound by an `if let` destructuring are locals the pure function owns, so
 // reassigning one inside the branch is not an escaping effect.
 func TestPurity_IfLetBoundReassign_Ok(t *testing.T) {

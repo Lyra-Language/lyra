@@ -1121,12 +1121,23 @@ func (f *scopeFrames) addScopeSymbols(scope *symbols.Scope, frame *scopeBindings
 	}
 }
 
-// directScopeBindingsForClause is directScopeBindings's counterpart for a
-// bare trait-method clause — a method is always exactly one ordinary clause
-// (the grammar never gives it a multi-clause or bare-body form the way a
-// regular lambda can take), so there is no LambdaExpr wrapper to dispatch on.
-// The inner walk logic (collecting let/var/destructuring bindings and
-// stopping at nested lambdas) mirrors directScopeBindings's collectBody.
+// directScopeBindingsForClause collects the bindings a bare trait-method clause
+// declares directly — a method is always exactly one ordinary clause (the grammar
+// never gives it a multi-clause or bare-body form the way a regular lambda can
+// take), so there is no LambdaExpr wrapper to dispatch on. It walks the AST
+// because CollectLambdaClause records no scope (todo.md, #3): let/var/
+// destructuring bindings, stopping at nested lambdas.
+//
+// **It is a hand walk beside six others over the same nodes, and it had drifted**
+// (09/18). It once mirrored a `collectBody` that has since gone, and every other
+// pass that visits a `for` loop's init — typechecker, ownership, range analysis,
+// use-after-move, must-release, the backend — guards `Init != nil` while the field
+// is still a concrete `*VarDeclStmt`. This one handed it straight to
+// `mergeStmt(ast.Statement)`, so a while-style loop (`for cond { … }`, no init)
+// became a *typed* nil: a nil pointer inside a non-nil interface, which slips past
+// `== nil` and matches `case *ast.VarDeclStmt` (hazard 3). A `var` reassigned in
+// such a loop inside any trait method crashed the compiler; `std.temporal`'s
+// `Show for PlainTime` was the first to write one.
 func directScopeBindingsForClause(clause *ast.LambdaClause) scopeBindings {
 	scope := scopeBindings{mutable: map[string]bool{}, functions: map[string]*ast.LambdaExpr{}}
 	for _, pat := range clause.Patterns {
@@ -1154,7 +1165,10 @@ func directScopeBindingsForClause(clause *ast.LambdaClause) scopeBindings {
 			case *ast.LambdaExpr:
 				return false
 			case *ast.ForLoopExpr:
-				mergeStmt(n.Init)
+				// Guard the concrete pointer, before it becomes an interface.
+				if n.Init != nil {
+					mergeStmt(n.Init)
+				}
 			}
 			return true
 		},
