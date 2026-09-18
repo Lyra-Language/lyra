@@ -97,11 +97,9 @@ func (l *lowerer) ensureSetRawModeRuntime() *ir.Func {
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	bufTy := lltypes.NewArray(termiosBufBytes, lltypes.I8)
 
-	tcgetattr := l.module.NewFunc("tcgetattr", lltypes.I32,
-		ir.NewParam("", lltypes.I32), ir.NewParam("", i8ptr))
-	tcsetattr := l.module.NewFunc("tcsetattr", lltypes.I32,
-		ir.NewParam("", lltypes.I32), ir.NewParam("", lltypes.I32), ir.NewParam("", i8ptr))
-	cfmakeraw := l.module.NewFunc("cfmakeraw", lltypes.Void, ir.NewParam("", i8ptr))
+	tcgetattr, _ := l.declareLibc("tcgetattr", lltypes.I32, lltypes.I32, i8ptr)
+	tcsetattr, _ := l.declareLibc("tcsetattr", lltypes.I32, lltypes.I32, lltypes.I32, i8ptr)
+	cfmakeraw, _ := l.declareLibc("cfmakeraw", lltypes.Void, i8ptr)
 
 	saved := l.module.NewGlobalDef("lyra_termios_saved", constant.NewZeroInitializer(bufTy))
 	savedOK := l.module.NewGlobalDef("lyra_termios_saved_ok", i32c(0))
@@ -198,8 +196,10 @@ func (l *lowerer) ensureReadKeyRuntime(dt types.DataType, someC types.DataTypeCo
 		return l.readKey, nil
 	}
 	i8ptr := lltypes.NewPointer(lltypes.I8)
-	read := l.module.NewFunc("read", lltypes.I64,
-		ir.NewParam("", lltypes.I32), ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
+	// Through declareLibc, which shares one declaration with a program's own `extern
+	// read` — `std.io` has one — where a second `declare @read` is an invalid module
+	// (09/18: the first program to use both was `examples/calendar`).
+	read, _ := l.declareLibc("read", lltypes.I64, lltypes.I32, i8ptr, lltypes.I64)
 
 	fn := l.module.NewFunc(ShimReadKey, constant.NewUndef(lltypes.I8).Type())
 	// The real return type is the Maybe union's; it is only known once the data type is
@@ -338,9 +338,7 @@ func (l *lowerer) ensureTerminalSizeRuntime(tt types.TupleType) (*ir.Func, error
 		return l.terminalSize, nil
 	}
 	i8ptr := lltypes.NewPointer(lltypes.I8)
-	ioctl := l.module.NewFunc("ioctl", lltypes.I32,
-		ir.NewParam("", lltypes.I32), ir.NewParam("", lltypes.I64))
-	ioctl.Sig.Variadic = true
+	ioctl := l.declareLibcVariadic("ioctl", lltypes.I32, lltypes.I32, lltypes.I64)
 
 	retTy, err := l.lowerType(tt)
 	if err != nil {
@@ -453,8 +451,7 @@ func (l *lowerer) ensureWaitForKeyRuntime() *ir.Func {
 	}
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	pollfdTy := lltypes.NewStruct(lltypes.I32, lltypes.I16, lltypes.I16)
-	poll := l.module.NewFunc("poll", lltypes.I32,
-		ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64), ir.NewParam("", lltypes.I32))
+	poll, _ := l.declareLibc("poll", lltypes.I32, i8ptr, lltypes.I64, lltypes.I32)
 
 	timeout := ir.NewParam("timeout_ms", lltypes.I64)
 	fn := l.module.NewFunc(ShimWaitForKey, lltypes.I1, timeout)

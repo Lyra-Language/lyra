@@ -89,8 +89,8 @@ func (l *lowerer) ensureRCRuntime() {
 	one := i64c(1)
 	zero := i64c(0)
 
-	l.malloc = l.module.NewFunc("malloc", i8ptr, ir.NewParam("", lltypes.I64))
-	l.free = l.module.NewFunc("free", lltypes.Void, ir.NewParam("", i8ptr))
+	l.malloc, _ = l.declareLibc("malloc", i8ptr, lltypes.I64)
+	l.free, _ = l.declareLibc("free", lltypes.Void, i8ptr)
 
 	// i8* @lyra_rc_alloc(i64 %size): p = malloc(size); *(i64*)p = 1; ret p.
 	{

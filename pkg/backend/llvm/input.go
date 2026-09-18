@@ -54,7 +54,7 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 	zero := i64c(0)
 	one := i64c(1)
 
-	getchar := l.module.NewFunc("getchar", lltypes.I32)
+	getchar, _ := l.declareLibc("getchar", lltypes.I32)
 	// The shared lazy declaration, not a fresh NewFunc: push (dynarray.go) declares
 	// realloc too, and two declarations of one libc function are an invalid module.
 	// Latent until `to_runes` — the first *non-generic* prelude function built on push,

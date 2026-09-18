@@ -1087,11 +1087,30 @@ func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 // site shares one declaration. clang links libc, so no runtime object is needed — the same
 // self-contained story the rc runtime has.
 //
-// It reports whether *this* call created the declaration, which the two that need more
-// than a signature use: `exit` is noreturn and `snprintf` is variadic, and both must be
-// stamped once rather than re-stamped on every lookup (appending the attribute again on
-// each call is the bug the shared helper exists to make unwritable).
+// It reports whether *this* call created the declaration, which `exit` uses to stamp
+// `noreturn` once rather than on every lookup (appending the attribute again on each call
+// is the bug the shared helper exists to make unwritable). A variadic function goes
+// through declareLibcVariadic instead, because `...` is part of the signature the
+// extern comparison reads and cannot be stamped afterwards.
 func (l *lowerer) declareLibc(name string, ret lltypes.Type, params ...lltypes.Type) (*ir.Func, bool) {
+	return l.declareLibcFunc(name, false, ret, params...)
+}
+
+// declareLibcVariadic is declareLibc for a C function taking `...` — `snprintf`, `ioctl`.
+//
+// **Variadic-ness is part of the signature the two tables compare**, so it cannot be
+// stamped on afterwards. It used to be — `fn, fresh := declareLibc(…); if fresh {
+// fn.Sig.Variadic = true }` — which is right when this call creates the declaration and
+// wrong when a program's `extern` got there first: the comparison ran against a
+// non-variadic `want`, and a correctly declared `extern ioctl(fd, req, ...)` read as a
+// conflict with the compiler's own use of `ioctl` (09/18, when `ioctl` stopped bypassing
+// this function and started being checked at all).
+func (l *lowerer) declareLibcVariadic(name string, ret lltypes.Type, params ...lltypes.Type) *ir.Func {
+	fn, _ := l.declareLibcFunc(name, true, ret, params...)
+	return fn
+}
+
+func (l *lowerer) declareLibcFunc(name string, variadic bool, ret lltypes.Type, params ...lltypes.Type) (*ir.Func, bool) {
 	if fn, ok := l.libc[name]; ok {
 		return fn, false
 	}
@@ -1102,7 +1121,9 @@ func (l *lowerer) declareLibc(name string, ret lltypes.Type, params ...lltypes.T
 	// share the declaration when the signatures agree, and record the conflict when they
 	// do not, since this returns no error and ten call sites ignore one.
 	if prior, ok := l.externs[name]; ok {
-		if want := lltypes.NewFunc(ret, params...); !lltypes.Equal(prior.fn.Sig, want) {
+		want := lltypes.NewFunc(ret, params...)
+		want.Variadic = variadic
+		if !lltypes.Equal(prior.fn.Sig, want) {
 			l.noteSymbolConflict(name, prior.fn.Sig, want)
 		}
 		if l.libc == nil {
@@ -1116,6 +1137,7 @@ func (l *lowerer) declareLibc(name string, ret lltypes.Type, params ...lltypes.T
 		ps[i] = ir.NewParam("", t)
 	}
 	fn := l.module.NewFunc(name, ret, ps...)
+	fn.Sig.Variadic = variadic
 	if l.libc == nil {
 		l.libc = map[string]*ir.Func{}
 	}

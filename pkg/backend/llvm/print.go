@@ -31,10 +31,7 @@ func (l *lowerer) writeFunc() *ir.Func {
 // print use.
 func (l *lowerer) snprintfFunc() *ir.Func {
 	i8ptr := lltypes.NewPointer(lltypes.I8)
-	fn, fresh := l.declareLibc("snprintf", lltypes.I32, i8ptr, lltypes.I64, i8ptr)
-	if fresh {
-		fn.Sig.Variadic = true
-	}
+	fn := l.declareLibcVariadic("snprintf", lltypes.I32, i8ptr, lltypes.I64, i8ptr)
 	return fn
 }
 

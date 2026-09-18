@@ -58,9 +58,8 @@ func (l *lowerer) ensureRandomSeedRuntime() *ir.Func {
 
 	// time(time_t*) -> time_t and getentropy(void*, size_t) -> int. `time_t` is
 	// 64-bit on both supported targets.
-	timeFn := l.module.NewFunc("time", lltypes.I64, ir.NewParam("", i8ptr))
-	getentropy := l.module.NewFunc("getentropy", lltypes.I32,
-		ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
+	timeFn, _ := l.declareLibc("time", lltypes.I64, i8ptr)
+	getentropy, _ := l.declareLibc("getentropy", lltypes.I32, i8ptr, lltypes.I64)
 
 	fn := l.module.NewFunc(ShimRandomSeed, lltypes.I64)
 	b := fn.NewBlock("entry")

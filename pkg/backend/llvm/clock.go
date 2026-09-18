@@ -65,8 +65,7 @@ func (l *lowerer) ensureWallClockRuntime() *ir.Func {
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	tsType := lltypes.NewArray(2, lltypes.I64)
 
-	clockGettime := l.module.NewFunc("clock_gettime", lltypes.I32,
-		ir.NewParam("", lltypes.I32), ir.NewParam("", i8ptr))
+	clockGettime, _ := l.declareLibc("clock_gettime", lltypes.I32, lltypes.I32, i8ptr)
 
 	fn := l.module.NewFunc(ShimWallClockNanos, lltypes.I64)
 	b := fn.NewBlock("entry")

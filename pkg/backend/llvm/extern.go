@@ -148,6 +148,25 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		}
 		markBoolCrossings(declared)
 	}
+	// **Variadic-ness is on the emitted signature, not on the call.** LLVM renders a
+	// variadic declaration as `declare i32 @printf(ptr, ...)` and requires every call to
+	// it to name that signature explicitly — `call i32 (ptr, ...) @printf(…)` — which llir
+	// does off `Sig.Variadic` alone. Setting it here is therefore the whole of the
+	// backend's part: the call path needs no case for it, and cannot get it wrong for a
+	// symbol declared through this function.
+	//
+	// Without it the call is emitted at fixed arity, which links and is silently wrong on
+	// every target whose variadic convention differs from its ordinary one — Apple aarch64
+	// puts variadic arguments on the stack while the fixed convention puts them in
+	// registers, so the callee reads whatever the stack happened to hold.
+	//
+	// **It is stamped before the comparison below, not after** (09/18): `...` is part of
+	// the signature the libc table is compared against, and a compiler-declared `ioctl` or
+	// `snprintf` is variadic too, so stamping afterwards made a correct variadic extern
+	// read as a conflict whenever the runtime had declared the symbol first.
+	if ext.Signature != nil && ext.Signature.IsVariadic {
+		declared.Sig.Variadic = true
+	}
 	// The compiler declares libc functions of its own — `write` for `print`, `memcpy`,
 	// `realloc` — and a C symbol has one declaration per module, so an extern naming one
 	// of them shares that declaration rather than emitting a second. Here there *is* an
@@ -162,20 +181,6 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		}
 		l.module.Funcs = removeFunc(l.module.Funcs, declared)
 		declared = prior
-	}
-	// **Variadic-ness is on the emitted signature, not on the call.** LLVM renders a
-	// variadic declaration as `declare i32 @printf(ptr, ...)` and requires every call to
-	// it to name that signature explicitly — `call i32 (ptr, ...) @printf(…)` — which llir
-	// does off `Sig.Variadic` alone. Setting it here is therefore the whole of the
-	// backend's part: the call path needs no case for it, and cannot get it wrong for a
-	// symbol declared through this function.
-	//
-	// Without it the call is emitted at fixed arity, which links and is silently wrong on
-	// every target whose variadic convention differs from its ordinary one — Apple aarch64
-	// puts variadic arguments on the stack while the fixed convention puts them in
-	// registers, so the callee reads whatever the stack happened to hold.
-	if ext.Signature != nil && ext.Signature.IsVariadic {
-		declared.Sig.Variadic = true
 	}
 	l.externs[symbol] = externDecl{fn: declared, signature: ext.Signature, at: ext.NameLocation}
 	if plan != nil {

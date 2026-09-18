@@ -242,6 +242,81 @@ let main = () -> void => {
 	}
 }
 
+// …and so may every *other* C symbol the runtime declares, which is the version of the
+// same bug that survived the fix above (09/18).
+//
+// `declareLibc` shares one declaration with a program's `extern`, but only the libc
+// functions declared *through* it were covered, and eleven were not: the terminal, clock,
+// entropy, input and allocator shims each called `module.NewFunc` directly. `std.io`
+// declares `extern read`, and `read_key`'s shim declared its own `read`, so the first
+// program to use both — `examples/calendar`, reading an events file and the keyboard —
+// was an invalid module. This declares an extern for every one of them beside the builtin
+// that declares it, so a new shim that bypasses `declareLibc` fails here, named.
+//
+// The variadic two (`ioctl`, and `snprintf`, which printing a float uses) are here too:
+// converting them showed `declareLibc` compared an extern against a signature with no
+// `...`, so a correctly declared variadic extern read as a conflict.
+//
+// The calls sit behind a branch that is false at run time and unknown at compile time, so
+// everything is emitted and nothing touches the terminal.
+func TestExec_ExternsMayNameEveryLibcSymbolTheRuntimeUses(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+unsafe extern getchar: () -> i32
+unsafe extern clock_gettime: (clock: i32, ts: ^u8) -> i32
+unsafe extern time: (out: ^u8) -> i64
+unsafe extern getentropy: (buf: ^u8, len: u64) -> i32
+unsafe extern malloc: (size: u64) -> ^u8
+unsafe extern free: (p: ^u8) -> void
+unsafe extern tcgetattr: (fd: i32, t: ^u8) -> i32
+unsafe extern tcsetattr: (fd: i32, when: i32, t: ^u8) -> i32
+unsafe extern cfmakeraw: (t: ^u8) -> void
+unsafe extern read: (fd: i32, buf: ^mut u8, count: u64) -> i64
+unsafe extern ioctl: (fd: i32, request: u64, ...) -> i32
+unsafe extern poll: (fds: ^u8, n: u64, timeout: i32) -> i32
+unsafe extern snprintf: (buf: ^u8, n: u64, format: ^u8, ...) -> i32
+
+let builtins = () -> void => {
+  let _ = read_line()
+  let _ = wall_clock_nanos()
+  let _ = random_seed()
+  set_raw_mode(true)
+  let _ = read_key()
+  let _ = terminal_size()
+  let _ = wait_for_key_ms(0)
+  println("${1.5}")
+}
+
+let externs = () -> void => {
+  unsafe {
+    let _ = getchar()
+    let _ = clock_gettime(0, nullptr)
+    let _ = time(nullptr)
+    let _ = getentropy(nullptr, 0)
+    free(malloc(8))
+    let _ = tcgetattr(0, nullptr)
+    let _ = tcsetattr(0, 0, nullptr)
+    cfmakeraw(nullptr)
+    let _ = read(0, nullptr, 0)
+    let _ = ioctl(0, 0)
+    let _ = poll(nullptr, 0, 0)
+    let _ = snprintf(nullptr, 0, nullptr)
+  }
+}
+
+let main = () -> void => {
+  if program_arg_count() > 99 {
+    builtins()
+    externs()
+  }
+  println("compiled")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "compiled" {
+		t.Errorf("printed %q; want \"compiled\"", got)
+	}
+}
+
 // …and a signature that disagrees with the compiler's own use of that symbol is refused
 // by name, because only one of the two can describe what will be linked.
 func TestEmit_AnExternDisagreeingWithACompilerSymbolIsRefused(t *testing.T) {
