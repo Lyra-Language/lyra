@@ -114,3 +114,56 @@ let main = () -> u8 => u8(one.getOne() + two.getTwo())`,
 		t.Errorf("expected 7 + 10 = 17, got %d", got)
 	}
 }
+
+// **A name declared in two modules keeps its identity inside an array inside a generic.**
+//
+// `Maybe<[]Entry>` crashed the backend (09/18) whenever another module also declared an
+// `Entry` — `examples/calendar` named its events `Entry`, and `std.collections` has one for
+// its HashMap. A name declared twice must carry its declaration key to be spelled
+// (types.IdentityString), and the same `Entry` reached instantiationSymbol as a keyed
+// `NamedStructType` from one path and a bare `UnresolvedType` from another. At the top level
+// of an argument that did not matter: resolveForLayout resolves the name. Inside a `[]T` it
+// did — layout never looks inside a pointer, which is what keeps recursive types finite —
+// so two spellings named two instantiations, and llir panicked storing one into the other.
+//
+// The generic is the test's own `Opt<t>`, because this harness has no prelude and because
+// the bug is any generic `data` type's, not `Maybe`'s. Every composite a type argument is
+// spelled from is here, since the missing case was one of them: a dynamic array, a fixed
+// array, a tuple holding one, a nested generic, and a type recursive through `[]`, which
+// must still terminate.
+func TestExec_SameNamedTypeInsideAnArrayInsideAGeneric(t *testing.T) {
+	other := `module other
+pub struct Entry { k: i64 }
+pub let pair = () -> Entry => Entry { k: 1 }`
+	for _, c := range []struct {
+		name, body string
+		want       int
+	}{
+		{"a dynamic array", `
+let make = () -> Opt<[]Entry> => Yep([Entry { n: 7, kids: [] }])
+let main = () -> u8 => match make() { Yep(xs) => u8(xs[0].n), Nope => 1 }`, 7},
+		{"an annotated local", `
+let main = () -> u8 => { let r: Opt<[]Entry> = Nope
+  match r { Yep(_) => 1, Nope => 5 } }`, 5},
+		{"a fixed array", `
+let make = () -> Opt<[2]Entry> => Yep(#[Entry { n: 1, kids: [] }, Entry { n: 4, kids: [] }])
+let main = () -> u8 => match make() { Yep(xs) => u8(xs[1].n), Nope => 1 }`, 4},
+		{"a tuple holding an array", `
+let make = () -> Opt<(i64, []Entry)> => Yep((5, [Entry { n: 2, kids: [] }]))
+let main = () -> u8 => match make() { Yep((a, xs)) => u8(a + xs[0].n), Nope => 1 }`, 7},
+		{"a nested generic", `
+let make = () -> Opt<[]Opt<Entry>> => Yep([Yep(Entry { n: 6, kids: [] })])
+let main = () -> u8 => match make() { Yep(xs) => match xs[0] { Yep(e) => u8(e.n), Nope => 1 }, Nope => 2 }`, 6},
+		{"a type recursive through an array", `
+let make = () -> Opt<[]Entry> => Yep([Entry { n: 8, kids: [Entry { n: 1, kids: [] }] }])
+let main = () -> u8 => match make() { Yep(xs) => u8(xs[0].n + xs[0].kids[0].n), Nope => 1 }`, 9},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			app := "import other\ndata Opt<t> = Nope | Yep(t)\nstruct Entry { n: i64, kids: []Entry }\n" +
+				c.body + "\nlet unused = () -> i64 => other.pair().k"
+			if got := buildAndRunModules(t, map[string]string{"other.lyra": other, "app.lyra": app}); got != c.want {
+				t.Errorf("exit %d, want %d", got, c.want)
+			}
+		})
+	}
+}

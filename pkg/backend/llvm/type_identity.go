@@ -170,7 +170,7 @@ func (l *lowerer) instantiationSymbol(p types.ParameterizedType) string {
 	// sharing a symbol is the truth of the matter, not a conflation.
 	args := make([]types.Type, len(p.TypeArguments))
 	for i, a := range p.TypeArguments {
-		args[i] = l.resolveForLayout(a)
+		args[i] = l.identityForm(l.resolveForLayout(a))
 	}
 	symbol := typetable.TypeSymbol(p.Name, args)
 	key := p.Key
@@ -181,4 +181,64 @@ func (l *lowerer) instantiationSymbol(p types.ParameterizedType) string {
 		return symbol
 	}
 	return mangleTypeKey(strings.TrimSuffix(key, p.Name)) + symbol
+}
+
+// identityForm finishes what resolveForLayout leaves undone **for naming**: it replaces
+// each unresolved name that a type is spelled from with its declaration's type, which
+// carries the declaration key, so that a type argument renders one way however it
+// arrived.
+//
+// **resolveForLayout stops at pointers, and naming cannot** (09/18). Layout has no reason
+// to look inside a `[]T`, `^T`, `weak T` or `shared T`: each is one pointer wide whatever
+// it points at, and pointers are where recursive types live, so not looking is what keeps
+// `struct Node { kids: []Node }` finite. But a name identifies its declaration only inside
+// the module that wrote it, and a name declared in two modules must carry its key
+// (types.IdentityString). So `Maybe<[]Entry>` — with `Entry` declared in the program and
+// also, as the HashMap's, in `std.collections` — reached here as a keyed `NamedStructType`
+// from one path and a bare `UnresolvedType` from another, named two instantiations,
+// `Maybe$DynamicArray_entry_Entry_` and `Maybe$DynamicArray_Entry_`, and llir panicked
+// storing one into a slot of the other. `Maybe<Entry>` was fine: at the top level of an
+// argument, resolveForLayout resolves the name itself.
+//
+// **It never descends into a nominal type's fields**, only through the structural
+// composites a type is *spelled* from — the same ones qualifyNominal renders — so a
+// recursive type terminates here too: the declaration's type is substituted, not walked.
+func (l *lowerer) identityForm(t types.Type) types.Type {
+	switch v := t.(type) {
+	case types.UnresolvedType:
+		if decl, ok := l.lookupTypeDeclKeyed(v.Key, v.Name); ok && decl != nil {
+			return types.WithAllocation(decl.Type, v.Allocation)
+		}
+		return t
+	case types.DynamicArrayType:
+		v.ElementType = l.identityForm(v.ElementType)
+		return v
+	case types.StaticArrayType:
+		v.ElementType = l.identityForm(v.ElementType)
+		return v
+	case types.WeakType:
+		v.Inner = l.identityForm(v.Inner)
+		return v
+	case types.RawPointerType:
+		v.Pointee = l.identityForm(v.Pointee)
+		return v
+	case types.TupleType:
+		if !types.IsAnonymousTupleName(v.Name) {
+			return v
+		}
+		elems := make([]types.Type, len(v.Elements))
+		for i, e := range v.Elements {
+			elems[i] = l.identityForm(e)
+		}
+		v.Elements = elems
+		return v
+	case types.ParameterizedType:
+		args := make([]types.Type, len(v.TypeArguments))
+		for i, a := range v.TypeArguments {
+			args[i] = l.identityForm(a)
+		}
+		v.TypeArguments = args
+		return v
+	}
+	return t
 }
