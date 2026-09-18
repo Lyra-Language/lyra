@@ -1,0 +1,113 @@
+module std.temporal
+
+/// A date and a time of day with no time zone — Temporal's `PlainDateTime`.
+///
+/// **A struct, unlike its two halves, and safely so.** The reason `PlainDate` and
+/// `PlainTime` are counts is that a struct of their fields could be forged into a value
+/// that does not exist. Every pairing of a date that exists with a time that exists is a
+/// date-time that exists, so this struct has no invalid values to forge: the invariant
+/// lives in the fields' types, where Lyra can keep it.
+pub struct PlainDateTime {
+  date: PlainDate,
+  time: PlainTime,
+}
+
+/// This date at `time` — Temporal's `toPlainDateTime`.
+///
+/// ```
+/// let meeting = day.to_plain_date_time(nine)
+/// ```
+pub let to_plain_date_time = pure (self: PlainDate, time: PlainTime) -> PlainDateTime =>
+  PlainDateTime { date: self, time: time }
+
+/// The date-time an ISO 8601 string names — `2026-09-18T14:30`, with seconds and a fraction
+/// allowed as `parse_plain_time` allows them — or `None`.
+///
+/// Exactly one `T` between the halves. Temporal also reads a space or a lowercase `t` there;
+/// nothing here writes either, so nothing reads them, and `show` and this agree.
+pub let parse_plain_date_time = pure (text: string) -> Maybe<PlainDateTime> => {
+  let Some(at) = text.index("T") else { return None }
+  let Some(date) = parse_plain_date(text.slice(0, at)) else { return None }
+  let Some(time) = time_at(text.to_runes(), at + 1) else { return None }
+  Some(PlainDateTime { date: date, time: time })
+}
+
+/// This date-time moved by `amount` — Temporal's `add`, with **constrain** overflow.
+///
+/// Temporal's order: the calendar units move the date first (a month after 31 January is
+/// the last of February), then the clock units move the time, **carrying whole days** into
+/// the date — 23:30 plus an hour is 00:30 the next day. The carry is computed in `i128`,
+/// since a duration's clock fields are each `i64` and their total in nanoseconds need not
+/// fit.
+pub let add = pure (self: PlainDateTime, amount: Duration) -> PlainDateTime => {
+  let base = duration()
+  let calendar = Duration { base | years: amount.years, months: amount.months,
+    weeks: amount.weeks, days: amount.days }
+  let total = i128(i64(self.time)) + clock_nanoseconds(amount)
+  let day_ns = i128(NS_PER_DAY)
+  let rem = total %% day_ns
+  let carry = i64((total - rem) / day_ns)
+  PlainDateTime {
+    date: self.date.add(calendar).add(days(carry)),
+    time: PlainTime(i64(rem)),
+  }
+}
+
+/// This date-time moved back by `amount`: `add` of its negation.
+pub let subtract = pure (self: PlainDateTime, amount: Duration) -> PlainDateTime => self.add(amount.negated())
+
+/// The time from this date-time to `other` — Temporal's `until`, with its default largest
+/// unit for a date-time: **days, then hours down to nanoseconds**, balanced so that no
+/// field overflows the next (never 25 hours, never 90 minutes). Every field has the sign of
+/// the whole, which is Temporal's rule, so "2 hours 10 minutes ago" is `-2h -10m` and never
+/// `-3h +50m`.
+///
+/// ```
+/// let left = now.until(meeting)   // { hours: 2, minutes: 10, … }
+/// ```
+pub let until = pure (self: PlainDateTime, other: PlainDateTime) -> Duration => {
+  let day_ns = i128(NS_PER_DAY)
+  let from = i128(i64(self.date)) * day_ns + i128(i64(self.time))
+  let to = i128(i64(other.date)) * day_ns + i128(i64(other.time))
+  balanced(to - from)
+}
+
+/// The time from `other` to this date-time: `until` the other way round.
+pub let since = pure (self: PlainDateTime, other: PlainDateTime) -> Duration => other.until(self)
+
+/// Date-times order by the date, then the time.
+impl Ord for PlainDateTime {
+  compare = pure (self, other) => match self.date <=> other.date {
+    Equal => self.time <=> other.time,
+    different => different,
+  }
+}
+
+/// A date-time as ISO 8601: `2026-09-18T14:30:00`, the date and time as each writes itself.
+impl Show for PlainDateTime {
+  show = pure (self) => "${self.date}T${self.time}"
+}
+
+// ---------------------------------------------------------------------------------------
+
+/// A signed nanosecond count as days down to nanoseconds, every field carrying the sign of
+/// the whole.
+///
+/// The magnitude is split and the sign put back on each field, rather than splitting the
+/// signed value, because truncating and flooring disagree about a negative remainder and
+/// either answer would give the fields mixed signs.
+let balanced = pure (ns: i128) -> Duration => {
+  let negative = ns < i128(0)
+  let m = if negative { i128(0) - ns } else { ns }
+  let sign = if negative { 0 - 1 } else { 1 }
+  let base = duration()
+  Duration { base |
+    days: sign * i64(m / i128(NS_PER_DAY)),
+    hours: sign * i64(m / i128(NS_PER_HOUR) % i128(24)),
+    minutes: sign * i64(m / i128(NS_PER_MINUTE) % i128(60)),
+    seconds: sign * i64(m / i128(NS_PER_SECOND) % i128(60)),
+    milliseconds: sign * i64(m / i128(1000000) % i128(1000)),
+    microseconds: sign * i64(m / i128(1000) % i128(1000)),
+    nanoseconds: sign * i64(m % i128(1000)),
+  }
+}

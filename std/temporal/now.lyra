@@ -9,9 +9,21 @@ module std.temporal
 ///
 /// Not `pure` and not `det`: it reads the clock, which is the point of it. Code that wants
 /// to be testable takes a `PlainDate` as a parameter and calls this once, at the edge.
-pub let today = () -> PlainDate => {
-  let seconds = floor_div(wall_clock_nanos(), 1000000000)
-  PlainDate(floor_div(seconds + local_offset_seconds(seconds), 86400))
+pub let today = () -> PlainDate => now_plain_date_time().date
+
+/// The date and time of day where the program is running — Temporal's
+/// `Now.plainDateTimeISO()`: the system clock, moved by the local zone's current offset.
+///
+/// A wall-clock reading, not an instant: two calls either side of a daylight-saving change
+/// can go backwards, which is the right answer for "what does the clock on the wall say"
+/// and the wrong one for timing anything. `today`'s rule about calling it once at the edge
+/// applies here too.
+pub let now_plain_date_time = () -> PlainDateTime => {
+  let ns = wall_clock_nanos()
+  let epoch_seconds = floor_div(ns, 1000000000)
+  let local = ns + local_offset_seconds(epoch_seconds) * 1000000000
+  let time = local %% NS_PER_DAY
+  PlainDateTime { date: PlainDate(floor_div(local - time, NS_PER_DAY)), time: PlainTime(time) }
 }
 
 /// The local zone's offset from UTC at `epoch_seconds`, in seconds east of Greenwich —

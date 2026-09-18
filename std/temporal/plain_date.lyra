@@ -242,14 +242,8 @@ let weeks_in_year = pure (year: i64) -> i64 => {
 /// which is wrong by one for a negative `a` that `b` does not divide.
 let floor_div = pure (a: i64, b: i64) -> i64 => (a - a %% b) / b
 
-/// The whole days in a duration's clock fields, truncated toward zero. Summed in `i128`,
-/// because the fields are each `i64` and their total in nanoseconds need not fit.
-let whole_days = pure (d: Duration) -> i64 => {
-  let ns = i128(d.hours) * i128(3600000000000) + i128(d.minutes) * i128(60000000000) +
-    i128(d.seconds) * i128(1000000000) + i128(d.milliseconds) * i128(1000000) +
-    i128(d.microseconds) * i128(1000) + i128(d.nanoseconds)
-  i64(ns / i128(86400000000000))
-}
+/// The whole days in a duration's clock fields, truncated toward zero.
+let whole_days = pure (d: Duration) -> i64 => i64(clock_nanoseconds(d) / i128(86400000000000))
 
 /// A year as ISO 8601 writes it: four digits within 0–9999, a sign and six outside.
 let iso_year = pure (year: i64) -> string => {

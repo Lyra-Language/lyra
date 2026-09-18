@@ -91,6 +91,106 @@ pub let days = pure (n: i64) -> Duration => {
   Duration { none | days: n }
 }
 
+/// `n` hours.
+pub let hours = pure (n: i64) -> Duration => {
+  let none = duration()
+  Duration { none | hours: n }
+}
+
+/// `n` minutes.
+pub let minutes = pure (n: i64) -> Duration => {
+  let none = duration()
+  Duration { none | minutes: n }
+}
+
+/// `n` seconds.
+pub let seconds = pure (n: i64) -> Duration => {
+  let none = duration()
+  Duration { none | seconds: n }
+}
+
+/// The duration an ISO 8601 string names — `PT30M`, `P1DT2H`, `-P1W`, `PT1.5S` — or `None`.
+///
+/// Temporal's `Duration.from(string)`. The fields are kept **as written, not balanced**:
+/// `PT90M` is ninety minutes, not an hour and a half, which is Temporal's rule and matters
+/// because the two are different durations once a date is involved.
+///
+/// What is refused, and why:
+///
+///   - units out of order (`P1D1Y`) or repeated (`P1D2D`), which ISO 8601 forbids;
+///   - a `P` with nothing after it, and a `T` with no clock unit after it;
+///   - a fraction on anything but seconds. ISO 8601 and Temporal allow `PT1.5H`; nothing
+///     here has written one, so it is refused rather than half-supported.
+pub let parse_duration = pure (text: string) -> Maybe<Duration> => {
+  let runes = text.to_runes()
+  var i = 0
+  var sign = 1
+  if i < runes.len() && (runes[i] == '+' || runes[i] == '-') {
+    if runes[i] == '-' { sign = 0 - 1 }
+    i += 1
+  }
+  if i >= runes.len() || runes[i] != 'P' { return None }
+  i += 1
+  var out = duration()
+  var any = false
+  // The date units, in order: each must come after the last one seen.
+  var rank = 0
+  for i < runes.len() && runes[i] != 'T' {
+    let Some((n, next)) = number_at(runes, i) else { return None }
+    if next >= runes.len() { return None }
+    let unit = runes[next]
+    let r = date_rank(unit)
+    if r <= rank { return None }
+    rank = r
+    if unit == 'Y' { out = Duration { out | years: sign * n } }
+    else if unit == 'M' { out = Duration { out | months: sign * n } }
+    else if unit == 'W' { out = Duration { out | weeks: sign * n } }
+    else { out = Duration { out | days: sign * n } }
+    any = true
+    i = next + 1
+  }
+  if i < runes.len() {
+    // After a `T`: the clock units, in order, and at least one of them.
+    i += 1
+    if i >= runes.len() { return None }
+    var clock_rank = 0
+    for i < runes.len() {
+      let Some((n, next)) = number_at(runes, i) else { return None }
+      if next >= runes.len() { return None }
+      if runes[next] == '.' {
+        // A fraction, which only seconds may carry.
+        let Some((f, after)) = number_at(runes, next + 1) else { return None }
+        if after >= runes.len() || runes[after] != 'S' || clock_rank >= 3 { return None }
+        let written = after - (next + 1)
+        if written > 9 { return None }
+        var ns = f
+        for _ in 0..<(9 - written) { ns = ns * 10 }
+        out = Duration { out |
+          seconds: sign * n,
+          milliseconds: sign * (ns / 1000000),
+          microseconds: sign * (ns / 1000 % 1000),
+          nanoseconds: sign * (ns % 1000),
+        }
+        clock_rank = 3
+        any = true
+        i = after + 1
+        continue
+      }
+      let unit = runes[next]
+      let r = clock_rank_of(unit)
+      if r <= clock_rank { return None }
+      clock_rank = r
+      if unit == 'H' { out = Duration { out | hours: sign * n } }
+      else if unit == 'M' { out = Duration { out | minutes: sign * n } }
+      else { out = Duration { out | seconds: sign * n } }
+      any = true
+      i = next + 1
+    }
+    if clock_rank == 0 { return None }
+  }
+  if any { Some(out) } else { None }
+}
+
 /// The same duration pointing the other way: every field negated.
 ///
 /// Temporal's `negated()`, and what `subtract` is made of — subtracting a duration is
@@ -100,4 +200,32 @@ pub let negated = pure (self: Duration) -> Duration => Duration {
   days: 0 - self.days, hours: 0 - self.hours, minutes: 0 - self.minutes,
   seconds: 0 - self.seconds, milliseconds: 0 - self.milliseconds,
   microseconds: 0 - self.microseconds, nanoseconds: 0 - self.nanoseconds,
+}
+
+/// The clock fields as one count of nanoseconds, in `i128`: each field is an `i64`, and
+/// their total need not fit in one. Shared by `PlainDate.add`, which counts it in whole
+/// days, and `PlainDateTime.add`, which carries it into the time.
+let clock_nanoseconds = pure (d: Duration) -> i128 =>
+  i128(d.hours) * i128(3600000000000) + i128(d.minutes) * i128(60000000000) +
+  i128(d.seconds) * i128(1000000000) + i128(d.milliseconds) * i128(1000000) +
+  i128(d.microseconds) * i128(1000) + i128(d.nanoseconds)
+
+/// The decimal number at `runes[from..]` and the index just past it, or `None` when there
+/// is no digit there.
+let number_at = pure (runes: []rune, from: i64) -> Maybe<(i64, i64)> => {
+  var i = from
+  for i < runes.len() && runes[i].is_ascii_digit() { i += 1 }
+  if i == from { return None }
+  let Some(n) = digits(runes, from, i) else { return None }
+  Some((n, i))
+}
+
+/// A date unit's place in `P…` order, or 0 for a letter that is not one.
+let date_rank = pure (unit: rune) -> i64 => match unit {
+  'Y' => 1, 'M' => 2, 'W' => 3, 'D' => 4, _ => 0 - 1,
+}
+
+/// A clock unit's place in `T…` order, or -1 for a letter that is not one.
+let clock_rank_of = pure (unit: rune) -> i64 => match unit {
+  'H' => 1, 'M' => 2, 'S' => 3, _ => 0 - 1,
 }

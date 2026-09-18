@@ -241,7 +241,7 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 - `index`/`contains`/`split` are generic over `pub trait Needle`, implemented for `rune` and `string`. Two methods: `found_at(haystack, offset)` returns an `(Index, Length)` span and **walks from rune 0** (a rune offset is only reachable by counting), and `matches_at(haystack, rune_at, byte_at, here)` tests one position, which is what lets a stepping caller stay linear. `matches_at` is defaulted in terms of `found_at`, so an existing needle keeps working and only pays the old cost. `split` walks once and cuts parts out of the bytes, so it is **linear** (it was quadratic in both respects until 09/17: 600 K runes took 4.7 s, now ~10 ms). `split` on an empty separator traps, naming `to_runes() -> []rune`.
 - `split` keeps empty parts (`"a,,b"` → 3); `split_when(pred)` **collapses** runs of boundaries and drops leading/trailing empties.
 - `lines()` splits on terminators, not on `\n`: `\r\n` is one, a trailing newline does not make a last empty line (`"a\nb\n"` → 2), and an interior blank line is a line. An empty string has none.
-- `pad_start(width, fill = " ")` pads to `width` runes; a longer fill repeats and is cut to fit (JavaScript's `padStart`), and a string already at least `width` long is returned whole, never truncated.
+- `pad_start(width, fill = " ")` / `pad_end(width, fill = " ")` pad to `width` runes; a longer fill repeats and is cut to fit (JavaScript's `padStart`), and a string already at least `width` long is returned whole, never truncated.
 - `strip_prefix`/`strip_suffix` answer `Maybe<string>` — the affix removed, or `None` when it was not there, so the affix's length is never written twice.
 - `s.byte_offset(i) -> Maybe<i64>`: rune position → byte offset; end position answers `Some(byte_len)`; negative is `None`.
 - ASCII classifiers (name is the boundary): `is_ascii_upper`, `_lower`, `_alpha`, `_digit`, `_punctuation`, `_printable` (space..`~`, not "not a control code"), `_control_code`, `is_ascii_space`. `is_ascii_alpha` splits `héllo`; use `is_ascii_space` for non-ASCII text.
@@ -300,8 +300,24 @@ by slice against `examples/calendar`; what exists is what that program has neede
   `struct tm` has **one layout on both platforms** (56 bytes, `tm_gmtoff` at 40 — measured),
   unlike `struct dirent`. It reads the clock, so it is neither `pure` nor `det`; take a
   `PlainDate` parameter and call it once at the edge.
-- Not built: `PlainTime`, `PlainDateTime`, `Instant`, `ZonedDateTime` and zone rules, a
-  `reject` overflow on arithmetic, month and weekday **names** (Temporal leaves those to
+- **`PlainTime`** — `newtype PlainTime = i64`, nanoseconds since midnight, for `PlainDate`'s
+  reason. `plain_time(h, m = 0, s = 0) -> Maybe` rejects `24:00` and `:60`;
+  `parse_plain_time` reads `HH:MM`, `HH:MM:SS` and a one-to-nine-digit fraction; `show`
+  writes seconds always and a fraction only when there is one. `hour()`/`minute()`/
+  `second()`, `Ord`. A day is exactly 24 hours: a wall-clock time has no zone.
+- **`PlainDateTime`** — a **struct** `{ date, time }`, safely: any existing date with any
+  existing time exists, so the invariant lives in the fields' types. `d.to_plain_date_time(t)`,
+  `parse_plain_date_time("…T…")` (a `T`, not a space), `add`/`subtract` (calendar units
+  first, then clock units **carrying whole days**: 23:30 + 1h is the next day),
+  `until`/`since` balanced **days down to nanoseconds**, every field sharing the whole's sign.
+- `Duration` clock builders `hours`/`minutes`/`seconds(n)`, and **`parse_duration`** for ISO
+  8601 (`PT30M`, `-P1DT2H3.5S`) — fields **as written, not balanced** (`PT90M` stays ninety
+  minutes); refuses units out of order or repeated, an empty `P` or `T`, and a fraction on
+  anything but seconds.
+- **`now_plain_date_time()`** — `Now.plainDateTimeISO()`, the clock plus the local offset;
+  `today()` is its date. A wall-clock reading, so it can go backwards across a DST change.
+- Not built: `Instant`, `ZonedDateTime` and zone rules, a `reject` overflow on arithmetic,
+  rounding, sub-second accessors, and month and weekday **names** (Temporal leaves those to
   `Intl`; the calendar holds its own).
 
 ### Lazy sequences

@@ -1,0 +1,103 @@
+module std.temporal
+
+/// A time of day with no date and no time zone — Temporal's `PlainTime`.
+///
+/// **Nanoseconds since midnight, for `PlainDate`'s reason**: a struct of hour, minute and
+/// second could be forged as 25:61 by any module, since Lyra has no field privacy, and a
+/// count has no invalid values in range. The fields are computed on demand.
+///
+/// A day is exactly 24 hours here, because a `PlainTime` has no zone and so no
+/// daylight-saving change to make one 23 or 25. That is Temporal's model too: a wall-clock
+/// time is what a clock on the wall says, not an amount of elapsed time.
+pub newtype PlainTime = i64 where range(0..<86400000000000)
+
+/// The time `hour`:`minute`:`second`, or `None` when there is no such time.
+///
+/// Rejects rather than clamps, like `plain_date`: `24:00` and `12:60` are `None`. Seconds
+/// are 0 to 59 — ISO 8601 allows a leap second (`:60`), and Temporal accepts one and
+/// constrains it to `:59`; nothing here has asked for it, so it is refused.
+///
+/// ```
+/// let Some(noon) = plain_time(12) else { return }
+/// ```
+pub let plain_time = pure (hour: i64, minute: i64 = 0, second: i64 = 0) -> Maybe<PlainTime> => {
+  if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
+    return None
+  }
+  Some(PlainTime((hour * 3600 + minute * 60 + second) * NS_PER_SECOND))
+}
+
+/// The time an ISO 8601 string names — `14:30`, `14:30:05` or `14:30:05.25` — or `None`.
+///
+/// Every field is exactly two digits and the fraction is one to nine digits after a `.`,
+/// which is what Temporal reads and what `show` writes, so the two round-trip. ISO's
+/// compact forms (`1430`) are not read: nothing here writes them.
+pub let parse_plain_time = pure (text: string) -> Maybe<PlainTime> => time_at(text.to_runes(), 0)
+
+/// The hour, 0 to 23.
+pub let hour = pure (self: PlainTime) -> i64 => i64(self) / NS_PER_HOUR
+
+/// The minute, 0 to 59.
+pub let minute = pure (self: PlainTime) -> i64 => i64(self) / NS_PER_MINUTE % 60
+
+/// The second, 0 to 59.
+pub let second = pure (self: PlainTime) -> i64 => i64(self) / NS_PER_SECOND % 60
+
+/// Times order by when in the day they are.
+impl Ord for PlainTime {
+  compare = pure (self, other) => i64(self) <=> i64(other)
+}
+
+/// A time as Temporal writes it: `14:30:00`, always with seconds, and with a fraction only
+/// when there is one — `14:30:05.25`, trailing zeros dropped.
+impl Show for PlainTime {
+  show = pure (self) => {
+    let whole = "${two(self.hour())}:${two(self.minute())}:${two(self.second())}"
+    let fraction = i64(self) % NS_PER_SECOND
+    if fraction == 0 { return whole }
+    var written = "${fraction}".pad_start(9, "0")
+    for written.ends_with("0") { written = written.strip_suffix("0").unwrap_or(written) }
+    whole ++ "." ++ written
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+
+const NS_PER_SECOND = 1000000000
+const NS_PER_MINUTE = 60000000000
+const NS_PER_HOUR = 3600000000000
+const NS_PER_DAY = 86400000000000
+
+/// Two digits, zero-padded: every ISO clock field is written this way.
+let two = pure (n: i64) -> string => "${n}".pad_start(2, "0")
+
+/// The time written at `runes[from..]` to the end, or `None`. Shared by
+/// `parse_plain_time` and `parse_plain_date_time`, which reads the time after a `T`, so
+/// the two cannot disagree about what a time looks like.
+let time_at = pure (runes: []rune, from: i64) -> Maybe<PlainTime> => {
+  let n = runes.len() - from
+  // HH:MM, then optionally :SS, then optionally .f to .fffffffff — so 5, 8, or 10 to 18
+  // characters (`HH:MM:SS.` is nine, and one to nine digits follow it).
+  if n != 5 && n != 8 && (n < 10 || n > 18) { return None }
+  if runes[from + 2] != ':' { return None }
+  let Some(hh) = digits(runes, from, from + 2) else { return None }
+  let Some(mm) = digits(runes, from + 3, from + 5) else { return None }
+  var ss = 0
+  var ns = 0
+  if n >= 8 {
+    if runes[from + 5] != ':' { return None }
+    let Some(s) = digits(runes, from + 6, from + 8) else { return None }
+    ss = s
+  }
+  if n >= 10 {
+    if runes[from + 8] != '.' { return None }
+    let Some(f) = digits(runes, from + 9, runes.len()) else { return None }
+    // A fraction is a count of the *leading* digits, so `.5` is 500 ms: scale it up to
+    // nine digits by the ones that were not written.
+    var scaled = f
+    for _ in 0..<(9 - (n - 9)) { scaled = scaled * 10 }
+    ns = scaled
+  }
+  let Some(t) = plain_time(hh, mm, ss) else { return None }
+  Some(PlainTime(i64(t) + ns))
+}

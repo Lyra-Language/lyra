@@ -1,0 +1,21 @@
+# Sample events for examples/calendar:
+#
+#   build/calendar --events examples/calendar/events.txt
+#
+# One event per line, in ISO 8601 throughout:
+#   a date-time, an optional duration, a title    2026-09-18T09:00 PT1H Planning
+#   a date-time and a title (a moment)            2026-09-18T17:00 Ship it
+#   a date alone (all day)                        2026-09-20 Alice's birthday
+
+2026-09-14T10:00 PT1H Sprint planning
+2026-09-16T12:30 PT45M Lunch with Sam
+2026-09-18 Release day
+2026-09-18T09:00 PT1H Planning
+2026-09-18T14:30 PT30M Standup
+2026-09-18T17:00 Ship it
+2026-09-18T23:30 PT2H Late deploy
+2026-09-20 Alice's birthday
+2026-09-22T15:00 PT1H30M Design review
+2026-09-25T18:00 PT3H Team dinner
+2026-10-01T10:00 PT1H30M Retro
+2026-10-12 Holiday

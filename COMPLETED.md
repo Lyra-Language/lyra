@@ -9,6 +9,81 @@ Newest first.
 
 ## Dated log
 
+### 09/18/26 — calendar events, and the four compiler bugs they walked into
+
+The calendar's second slice puts a day's events beside it, read from a file written in ISO
+8601 throughout — `2026-09-18T09:00 PT1H Planning`, `2026-09-20 Alice's birthday` — so every
+field is handed to `std.temporal`'s own parser and the example has no date format of its
+own. It brought **`PlainTime`**, **`PlainDateTime`**, `Duration`'s clock units with
+**`parse_duration`**, and **`now_plain_date_time()`**, and it found more compiler bugs than
+any slice of any probe so far. Four are fixed; the fifth is recorded.
+
+**The library side, briefly.** `PlainTime` is nanoseconds since midnight, for `PlainDate`'s
+reason (no field privacy). `PlainDateTime` is a struct, and safely — every existing date
+with every existing time is a date-time that exists, so the invariant lives in the fields'
+types. Its `add` applies calendar units then clock units, carrying whole days (23:30 on 31
+December plus an hour is the next *year*), and `until` balances into days down to
+nanoseconds with every field sharing the whole's sign, which is Temporal's rule.
+`parse_duration` keeps fields as written (`PT90M` is ninety minutes). An end time is
+`start.add(length)`, so an event running past midnight says `+1`. `pad_end` joined the
+prelude with two callers.
+
+**One bug in my own code, caught by its test:** a nine-digit fraction (`.000000001`) was
+refused, because `HH:MM:SS.` is nine characters and the bound said seventeen.
+
+**1. The purity checker crashed on a `var` reassigned in a loop inside a trait method.** A
+trait-method clause records no scope, so its bindings are collected by a hand walk, and
+that walk handed a `for` loop's `Init` — a `*VarDeclStmt`, nil for `for cond { … }` —
+straight to a function taking `ast.Statement`. A nil pointer in a non-nil interface is
+hazard 3's typed nil: it matched `case *ast.VarDeclStmt` and was dereferenced. Six other
+passes visit that field and all six guard it first; this one had drifted from a
+`collectBody` it claimed to mirror and which no longer exists. `std.temporal`'s `Show for
+PlainTime` was the first program to write the shape.
+
+**2. The backend named one instantiation two ways.** `Maybe<[]Entry>` panicked in llir
+whenever another module also declared an `Entry` — the calendar named its events `Entry`,
+and `std.collections` has one. A name declared in two modules must carry its declaration
+key to be spelled, and the same `Entry` reached `instantiationSymbol` as a keyed
+`NamedStructType` from one path and a bare `UnresolvedType` from another. At the top of an
+argument that is harmless — `resolveForLayout` resolves the name. Inside a `[]T` it was
+not: layout never looks inside a pointer, **which is exactly what keeps recursive types
+finite**, so the obvious fix (give `resolveForLayout` a `DynamicArrayType` case) would have
+turned `struct Node { kids: []Node }` into infinite recursion. The fix is a separate walk,
+`identityForm`, that resolves the names a type is *spelled* from — through arrays,
+pointers, tuples and generic arguments — without ever entering a nominal type's fields.
+
+**3. The runtime declared libc behind its own helper's back.** `std.io` declares `extern
+read`, and `read_key`'s shim declared `read` with a raw `module.NewFunc`, so the first
+program to read a file and the keyboard was an invalid module. `declareLibc` exists for
+exactly this — it fixed `write` on 09/08 — and eleven shims (terminal, clock, entropy,
+input, allocator) had never been moved onto it. All are now, and CLAUDE.md's table of
+single answers names it.
+
+**…and converting them exposed a fourth.** `declareLibc` built the signature it compares a
+program's `extern` against with no way to say `...`, and the extern side stamped its own
+`Variadic` only *after* comparing. So a correctly declared `extern ioctl(fd, req, ...)`
+read as a conflict with the runtime's `ioctl` — and `snprintf`, which printing a float
+uses, had the same latent flaw. `declareLibcVariadic` makes `...` part of the compared
+signature, and the extern side stamps before it compares, so the two orders agree.
+
+**lyrafmt, too.** The first field of a record update written across lines sat a level
+deeper than the rest, because a comma starts a fresh line-owner and the `|` after the base
+did not. The fix checks the `|`'s parent, since `|` also means bitwise-or, a constructor
+separator and a comprehension section — all continuations.
+
+**5, recorded rather than fixed: an early `return` out of an `if let` leaks** its scrutinee
+when that is an owned `Maybe` wrapping a retained element of something else (todo.md has
+the four-line repro). It is 32 bytes once at exit in the calendar and it lives in the
+statement-temporary machinery, the most delicate part of the backend — it deserves its own
+session with `LEAKS=1 ./asan.sh`, not the tail of this one.
+
+Every compiler fix has a must-fire test: reverted, each fails with the original symptom
+(the panic, the llir mismatch, the refused extern, the double indent). The events tests pin
+sorting (all-day, then time, then title), a moment with no end, the midnight carry, the grid
+marks, four refusals by file and line, and `now_plain_date_time()` against Go's clock in
+three zones. The interactive mode was checked in the desktop terminal panel against the real
+clock: past events quiet, "Ship it in 29m".
+
 ### 09/18/26 — `std.temporal` and a calendar, after the web's Temporal API
 
 A third probe, and the first aimed at one library rather than a layer: `examples/calendar`

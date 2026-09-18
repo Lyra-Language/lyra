@@ -102,11 +102,19 @@ Package management, versioning and separate compilation are out of scope by deci
     and was innocent; `sample` named the real culprit in one run.
 
 - **[PARTIAL] `std.temporal` and `examples/calendar`**, after the web's Temporal API. The
-  month grid landed 09/18: `PlainDate`, `Duration`'s date fields, and `today()` through
-  the local offset, in a TUI with a `--print` mode the tests use. Next slice: **events**
-  beside the selected day, read from a file — which is what brings `PlainTime`,
-  `PlainDateTime`, clock-field durations and ISO date-time parsing. `ZonedDateTime` and
-  zone rules stay out until something needs a date to cross a DST change.
+  month grid and then **events** landed 09/18: `PlainDate`, `PlainTime`, `PlainDateTime`,
+  `Duration` with ISO parsing, and `today()`/`now_plain_date_time()` through the local
+  offset, in a TUI reading an ISO 8601 events file. Next, if the calendar grows: a
+  default events file (which forces environment variables — `std` has none) and editing.
+  `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
+- **[OPEN] An early `return` out of an `if let` or `match` body leaks the scrutinee** when
+  it is an owned `Maybe` whose payload is a retained element of something else. Minimal:
+  `struct Bag { xs: []string }`, `first_of = (self: Bag) -> Maybe<string> => Some(self.xs[0])`,
+  then `if let Some(w) = b.first_of() { return 0 }` leaks the string (32 bytes); the same
+  without the `return` does not, and neither does an `if let` over a freshly built
+  `Maybe`. Statement temporaries on an early exit — flushStmtTemps territory, rule 17.
+  Found 09/18 by `examples/calendar`'s `main` (`args.value(…)`); verify with
+  `LEAKS=1 ./asan.sh`.
 - **[OPEN] A record update's base must be a name.** `P { make() | x: 1 }` does not parse;
   `let b = make()` then `P { b | x: 1 }` does. A call is the natural base — `std.temporal`
   binds a local four times over it.

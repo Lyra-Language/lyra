@@ -379,6 +379,33 @@ pub let pad_start = pure (self: string, width: i64, fill: string = " ") -> strin
   [i in 0..<missing | pattern[i % pattern.len()]].join("") ++ self
 }
 
+/// `self` padded at the end with `fill` until it is `width` runes long — `pad_start`'s
+/// mirror, with the same rules: never truncated, and a longer fill repeated and cut.
+///
+/// `"09:00".pad_end(8)` is `"09:00   "`, which is how a column of left-aligned text keeps
+/// what follows it lined up. Added 09/18 with two callers in `examples/calendar`: the
+/// event list's time column, and centring a title, which had been building the right-hand
+/// padding out of `"".pad_start(n)`.
+///
+/// # Complexity
+///
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(w)    | O(w)  |
+/// | **Memory** | O(n) | O(w)    | O(w)  |
+///
+/// # Examples
+///
+/// ```
+/// println("${name.pad_end(12)}${value}")
+/// ```
+pub let pad_end = pure (self: string, width: i64, fill: string = " ") -> string => {
+  let missing = width - self.len()
+  if missing <= 0 || fill.len() == 0 { return self }
+  let pattern = fill.to_runes()
+  self ++ [i in 0..<missing | pattern[i % pattern.len()]].join("")
+}
+
 /// `self` without `prefix`, or `None` if it does not start with it.
 ///
 /// **The `Maybe` is the point.** `starts_with` then `slice` asks the same question twice

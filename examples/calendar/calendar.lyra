@@ -2,85 +2,180 @@
 //
 //   build/lyrac build -o build/calendar examples/calendar/calendar.lyra
 //   build/calendar                       # interactive: arrows move, q quits
+//   build/calendar --events examples/calendar/events.txt   # with the sample events
 //   build/calendar --print 2026-09-18    # the month as plain text, once
+//
+// An events file is one event per line, in ISO 8601 throughout — the same strings
+// `std.temporal` reads and writes, so nothing here has a date format of its own:
+//
+//   2026-09-18T09:00 PT1H Planning        a start and an ISO duration
+//   2026-09-18T14:30 Standup              a start alone is a moment
+//   2026-09-20 Alice's birthday           a date alone is all day
+//   # a comment, and blank lines, are skipped
 //
 // `lyrafmt` probes the compiler and `lyra-md` the text half of the standard library. This
 // probes **dates**: `std.temporal` is modelled on the web's Temporal API, and nothing goes
 // into it until this program needs it. The first slice is the month grid — calendar
-// arithmetic, weekdays, ISO week numbers, and "today" in the local time zone. Events are
-// the next slice, and they are what will bring times of day and durations shorter than one.
+// arithmetic, weekdays, ISO week numbers, and "today" in the local time zone. The second
+// is events, which brought times of day, date-times, clock durations and ISO parsing.
 //
 // **Weeks start on Monday**, because the library's `day_of_week` is ISO 8601's (Monday is
 // 1) and so are its week numbers — a Sunday-first grid would put the week-number column
 // beside rows that are not ISO weeks.
 //
-// Exit 0, or 2 for usage.
+// Exit 0; 1 when the events file cannot be read or has a line it cannot parse; 2 for usage.
 
 import std.collections.{ parse_args }
-import std.temporal.{ PlainDate, today, parse_plain_date, days, weeks, months }
+import std.io.{ read_file }
+import std.temporal.{
+  PlainDate, PlainTime, PlainDateTime, Duration, duration, plain_time,
+  now_plain_date_time, parse_plain_date, parse_plain_date_time, parse_duration,
+  days, weeks, months,
+}
 import std.tui.{
   renderer, render, invalidate, event_reader, next_event, event_available, Event, Key,
   alt_screen_enter, alt_screen_leave, cursor_hide, cursor_show, clear,
-  inverse, bold, reset, fit, status_bar,
+  inverse, bold, fg, reset, fit, status_bar,
 }
 
 let main = () -> u8 => {
-  let args = parse_args(["--print"])
+  let args = parse_args(["--print", "--events"])
+  var events: []Entry = []
+  if let Some(path) = args.value("--events") {
+    let Some(text) = read_file(path) else {
+      println("calendar: cannot read ${path}")
+      return 1
+    }
+    // **A line that does not parse stops the calendar**, rather than being skipped: a
+    // calendar that silently drops an event is worse than one that refuses to start,
+    // since the one thing its user cannot see is the event that is not there.
+    match parse_events(text) {
+      Ok(parsed) => { events = parsed },
+      Err(problem) => {
+        println("calendar: ${path}:${problem}")
+        return 1
+      },
+    }
+  }
   if let Some(when) = args.value("--print") {
     let Some(date) = parse_plain_date(when) else {
       println("calendar: --print wants a date like 2026-09-18, not ${when}")
       return 2
     }
-    for row in grid(date, date, false) { println(row) }
-    for line in panel(date, date) { println(line) }
+    // The printed date's midnight stands in for "now", so relative times are a function
+    // of the arguments and the output is the same on every run.
+    let now = date.to_plain_date_time(midnight())
+    for row in grid(date, now, events, false) { println(row) }
+    for line in panel(date, now, events) { println(line) }
     return 0
   }
-  interactive(today())
+  interactive(events)
   0
 }
 
-/// The interactive calendar, starting on `now`, until `q`.
+/// Something that happens on a day: a title and when it happens. `Entry` rather than
+/// `Event`, which is `std.tui`'s name for a keypress or a click.
+struct Entry {
+  date: PlainDate,
+  when: When,
+  title: string,
+}
+
+/// When an event happens in its day: all of it, or from a time for a duration — a zero
+/// duration being a moment, like a deadline.
+data When =
+  AllDay
+  | At(PlainTime, Duration)
+
+/// Every event in an events file, or the first line that is not one, as `line: problem`.
+let parse_events = pure (text: string) -> Result<[]Entry, string> => {
+  var out: []Entry = []
+  var number = 0
+  for line in text.lines() {
+    number += 1
+    let trimmed = line.trim()
+    if trimmed == "" || trimmed.starts_with("#") { continue }
+    match parse_event(trimmed) {
+      Ok(event) => out.push(event),
+      Err(problem) => { return Err("${number}: ${problem}") },
+    }
+  }
+  Ok(out)
+}
+
+/// One line of an events file: a date or a date-time, an optional ISO duration after a
+/// date-time, and the title.
 ///
-/// `now` is read **once**, at the edge, and passed down — the rule `today()`'s own doc
-/// gives: everything below is `pure` and takes the date it is told, which is what lets
-/// `--print` and the tests render a month without a clock. A session that runs past
-/// midnight keeps yesterday highlighted, which is the cost, and a small one.
-let interactive = (now: PlainDate) -> void => {
+/// **Each field is handed to the library's own parser**, which is the point of writing
+/// the file in ISO 8601: this function decides only *which* parser a word goes to, so it
+/// cannot disagree with `std.temporal` about what a date looks like.
+let parse_event = pure (line: string) -> Result<Entry, string> => {
+  let words = line.split_when((c) => c.is_ascii_space())
+  let head = words[0]
+  if head.contains("T") {
+    let Some(start) = parse_plain_date_time(head) else {
+      return Err("`${head}` is not a date-time like 2026-09-18T14:30")
+    }
+    let has_length = words.len() > 1 && (words[1].starts_with("P") || words[1].starts_with("-P"))
+    var length = duration()
+    if has_length {
+      let Some(d) = parse_duration(words[1]) else {
+        return Err("`${words[1]}` is not an ISO duration like PT30M")
+      }
+      length = d
+    }
+    let title = words.slice(if has_length { 2 } else { 1 }, words.len()).join(" ")
+    if title == "" { return Err("the event at ${head} has no title") }
+    return Ok(Entry { date: start.date, when: At(start.time, length), title: title })
+  }
+  let Some(date) = parse_plain_date(head) else {
+    return Err("`${head}` is not a date like 2026-09-18")
+  }
+  let title = words.slice(1, words.len()).join(" ")
+  if title == "" { return Err("the event on ${head} has no title") }
+  Ok(Entry { date: date, when: AllDay, title: title })
+}
+
+/// The interactive calendar, from today, until `q`.
+///
+/// **The clock is read once per frame, at this edge, and passed down** — the rule
+/// `today()`'s own doc gives. Everything below is `pure` and takes the moment it is told,
+/// which is what lets `--print` and the tests render a month without a clock. Reading it
+/// per frame rather than once is what makes "in 12 minutes" count down and today's
+/// highlight move at midnight; `render` writes nothing for a frame that did not change, so
+/// the cost of the fresh read is computing the frame, not drawing it.
+let interactive = (events: []Entry) -> void => {
   // Raw mode first, then the screen; torn down in reverse. Leaving either on strands the
   // terminal with no echo, or with the calendar still painted over the shell.
   set_raw_mode(true)
   alt_screen_enter()
   cursor_hide()
   var screen = renderer()
-  var events = event_reader()
-  var selected = now
+  var input = event_reader()
+  var selected = now_plain_date_time().date
   var running = true
-  let (cols0, rows0) = terminal_size()
-  var last_cols = cols0
-  var last_rows = rows0
-  screen.render(frame(selected, now, cols0, rows0))
+  var last_cols = 0
+  var last_rows = 0
   for running {
-    // **Poll rather than block, so a resize is noticed without a keypress** (09/18). A
-    // terminal that changes size reflows what it shows, and one that shrinks keeps the
-    // cursor visible by pushing rows off the *top* — so a calendar whose cursor sat on the
-    // status bar lost its title and weekday header the moment a new terminal tab settled
-    // its size, and got them back on the next key, which re-read the size and redrew.
-    // `examples/tui/viewer.lyra` found this first and says so; this loop had copied the
-    // blocking shape it replaced.
-    if !events.event_available(200) {
-      let (cols, rows) = terminal_size()
-      if cols != last_cols || rows != last_rows {
-        last_cols = cols
-        last_rows = rows
-        // The terminal reflowed the screen behind the renderer's back, so what it
-        // remembers no longer describes what is there: clear, forget, draw whole.
-        clear()
-        screen.invalidate()
-        screen.render(frame(selected, now, cols, rows))
-      }
-      continue
+    let (cols, rows) = terminal_size()
+    if cols != last_cols || rows != last_rows {
+      // **A resize is noticed without a keypress** (09/18). A terminal that changes size
+      // reflows what it shows, and one that shrinks keeps the cursor visible by pushing
+      // rows off the *top* — so the calendar lost its title and weekday header the
+      // moment a new terminal tab settled its size, and got them back on the next key.
+      // `examples/tui/viewer.lyra` found this first. The renderer's memory of the screen
+      // no longer describes it, so: clear, forget, draw whole.
+      last_cols = cols
+      last_rows = rows
+      clear()
+      screen.invalidate()
     }
-    match events.next_event() {
+    let now = now_plain_date_time()
+    screen.render(frame(selected, now, events, cols, rows))
+    // Poll rather than block, so the loop comes back round to notice a resize and to
+    // move the clock on even when nobody is typing.
+    if !input.event_available(200) { continue }
+    match input.next_event() {
       None => { running = false },
       Some(Keyboard(key)) => match key {
         Left => { selected = selected.subtract(days(1)) },
@@ -91,19 +186,15 @@ let interactive = (now: PlainDate) -> void => {
         // which is what makes paging through months land on a day that exists.
         PageUp => { selected = selected.subtract(months(1)) },
         PageDown => { selected = selected.add(months(1)) },
-        Home => { selected = now },
+        Home => { selected = now.date },
         Escape => { running = false },
         Char(c) => {
-          if c == 'q' { running = false } else if c == 't' { selected = now }
+          if c == 'q' { running = false } else if c == 't' { selected = now.date }
         },
         _ => {},
       },
       Some(_) => {},
     }
-    let (cols, rows) = terminal_size()
-    last_cols = cols
-    last_rows = rows
-    screen.render(frame(selected, now, cols, rows))
   }
   cursor_show()
   alt_screen_leave()
@@ -121,19 +212,22 @@ const GRID = 26
 /// few runes of escape sequence wrapped round three columns of text, so fitting a styled
 /// row would cut it short by the length of its escapes. The grid is built to exactly
 /// `GRID` visible columns instead, and the plain panel is fitted to what is left.
-let frame = pure (selected: PlainDate, now: PlainDate, cols: i64, rows: i64) -> []string => {
+let frame = pure (selected: PlainDate, now: PlainDateTime, events: []Entry, cols: i64, rows: i64) -> []string => {
   if cols < GRID + 2 || rows < 10 {
     return [fit("calendar needs at least ${GRID + 2}x10", cols)]
   }
-  let left = grid(selected, now, true)
-  let right = panel(selected, now)
+  let left = grid(selected, now, events, true)
+  let right = panel(selected, now, events)
   var out: []string = []
   for i in 0..<(rows - 1) {
     let days_part = if i < left.len() { left[i] } else { "".pad_start(GRID) }
     let text = if i < right.len() { right[i] } else { "" }
     out.push(days_part ++ fit("  " ++ text, cols - GRID))
   }
-  out.push(status_bar(" arrows day/week   PgUp/PgDn month   t today   q quit", cols))
+  // With no events loaded, say where they come from: a calendar that is empty because it
+  // was never given a file looks exactly like one whose file is empty.
+  let hint = if events.len() == 0 { "   (no events: --events FILE)" } else { "" }
+  out.push(status_bar(" arrows day/week   PgUp/PgDn month   t today   q quit${hint}", cols))
   out
 }
 
@@ -144,10 +238,10 @@ let frame = pure (selected: PlainDate, now: PlainDate, cols: i64, rows: i64) -> 
 /// not change height as the months go by — a height that jumps moves the status bar and
 /// makes paging read as flicker.
 ///
-/// `styled` marks the selected day in reverse video and today in bold; unstyled, the
-/// selected day is `>`-prefixed and today is not marked at all, so the plain form depends
-/// on nothing but its arguments.
-let grid = pure (selected: PlainDate, now: PlainDate, styled: bool) -> []string => {
+/// `styled` marks the selected day in reverse video, today in bold and a day with events in
+/// colour; unstyled, the selected day is `>`-prefixed, a day with events `*`-prefixed, and
+/// today is not marked, so the plain form depends on nothing but its arguments.
+let grid = pure (selected: PlainDate, now: PlainDateTime, events: []Entry, styled: bool) -> []string => {
   let start = selected.with_day(1)
   let lead = start.day_of_week() - 1
   let length = selected.days_in_month()
@@ -163,7 +257,10 @@ let grid = pure (selected: PlainDate, now: PlainDate, styled: bool) -> []string 
     var row = " "
     for col in 0..<7 {
       let n = week * 7 + col - lead + 1
-      let text = if n < 1 || n > length { "   " } else { cell(n, n == selected.day(), start.with_day(n) == now, styled) }
+      let text = if n < 1 || n > length { "   " } else {
+        let day = start.with_day(n)
+        cell(n, n == selected.day(), day == now.date, on(events, day).len() > 0, styled)
+      }
       row = row ++ text
     }
     out.push(row ++ "${monday.week_of_year()}".pad_start(4))
@@ -174,24 +271,84 @@ let grid = pure (selected: PlainDate, now: PlainDate, styled: bool) -> []string 
 }
 
 /// One day of the grid, three columns wide.
-let cell = pure (n: i64, selected: bool, is_today: bool, styled: bool) -> string => {
+let cell = pure (n: i64, selected: bool, is_today: bool, busy: bool, styled: bool) -> string => {
   let number = "${n}".pad_start(2)
-  if !styled { return if selected { ">" ++ number } else { " " ++ number } }
-  let emphasis = if is_today { bold() } else { "" }
+  if !styled {
+    let mark = if selected { ">" } else if busy { "*" } else { " " }
+    return mark ++ number
+  }
+  let emphasis = (if is_today { bold() } else { "" }) ++ (if busy { fg(39) } else { "" })
   if selected { " " ++ inverse() ++ emphasis ++ number ++ reset() } else { " " ++ emphasis ++ number ++ reset() }
 }
 
-/// The lines beside the grid: the selected date in full, where it falls in its year, and
-/// how far it is from today.
-let panel = pure (selected: PlainDate, now: PlainDate) -> []string => [
-  "${weekday_name(selected.day_of_week())} ${selected.day()} ${month_name(selected.month())} ${selected.year()}",
-  "${selected}",
-  "",
-  "day ${selected.day_of_year()} of ${selected.days_in_year()}, week ${selected.week_of_year()}",
-  "${selected.days_in_month()} days in ${month_name(selected.month())}",
-  "",
-  relative(now.until(selected).days),
-]
+/// The events on `day`: all-day ones first, then by start time, then by title — so a
+/// file's order does not decide what a reader sees first.
+let on = pure (events: []Entry, day: PlainDate) -> []Entry =>
+  events.filter((e) => e.date == day).sorted_by((a, b) => match (a.when, b.when) {
+    (AllDay, At(_, _)) => Less,
+    (At(_, _), AllDay) => Greater,
+    (At(x, _), At(y, _)) => if x == y { a.title <=> b.title } else { x <=> y },
+    _ => a.title <=> b.title,
+  })
+
+/// The lines beside the grid: the selected date in full, where it falls in its year, how
+/// far it is from today, and its events.
+let panel = pure (selected: PlainDate, now: PlainDateTime, events: []Entry) -> []string => {
+  var out = [
+    "${weekday_name(selected.day_of_week())} ${selected.day()} ${month_name(selected.month())} ${selected.year()}",
+    "${selected}",
+    "",
+    "day ${selected.day_of_year()} of ${selected.days_in_year()}, week ${selected.week_of_year()}",
+    "${selected.days_in_month()} days in ${month_name(selected.month())}",
+    "",
+    relative(now.date.until(selected).days),
+  ]
+  let today_events = on(events, selected)
+  if today_events.len() > 0 { out.push("") }
+  for e in today_events { out.push(describe(e, now)) }
+  out
+}
+
+/// One event as a line of the panel: its hours, its title, and — on the day it is on —
+/// how long until it starts.
+///
+/// **The end is `start.add(length)`, not the time plus a number of minutes**, so a meeting
+/// that runs past midnight ends on the next day and says so, which is what a `PlainDateTime`
+/// carrying its day is for.
+let describe = pure (e: Entry, now: PlainDateTime) -> string => match e.when {
+  AllDay => "${"all day".pad_end(SPAN)}${e.title}",
+  At(time, length) => {
+    let start = e.date.to_plain_date_time(time)
+    let end = start.add(length)
+    let span = if end == start {
+      clock(time)
+    } else {
+      let carried = start.date.until(end.date).days
+      "${clock(time)}-${clock(end.time)}" ++ (if carried > 0 { "+${carried}" } else { "" })
+    }
+    "${span.pad_end(SPAN)}${e.title}${soon(start, end, now)}"
+  },
+}
+
+/// The width of the time column: the longest span, `23:30-01:30+1`, and a space.
+const SPAN = 14
+
+/// How soon an event is, when it is on today and has not finished: "  in 2h 10m", or
+/// "  now" while it runs. Nothing for a past event or one on another day.
+let soon = pure (start: PlainDateTime, end: PlainDateTime, now: PlainDateTime) -> string => {
+  if start.date != now.date || end < now { return "" }
+  if start <= now { return "  now" }
+  let left = now.until(start)
+  if left.hours == 0 { return "  in ${left.minutes}m" }
+  if left.minutes == 0 { "  in ${left.hours}h" } else { "  in ${left.hours}h ${left.minutes}m" }
+}
+
+/// A time of day as a calendar writes it: hours and minutes, `09:05`.
+let clock = pure (t: PlainTime) -> string => "${"${t.hour()}".pad_start(2, "0")}:${"${t.minute()}".pad_start(2, "0")}"
+
+/// The start of a day, which `plain_time(0)` always is — the `unwrap_or` fallback is the
+/// same value and is never used.
+let midnight = pure () -> PlainTime => match plain_time(0) { Some(t) => t, None => PlainTime(0) }
 
 /// A distance in days as a person would say it.
 let relative = pure (n: i64) -> string => {
@@ -204,7 +361,7 @@ let relative = pure (n: i64) -> string => {
 /// `text` centred in `width` columns, the odd column going to the right.
 let centred = pure (text: string, width: i64) -> string => {
   let left = (width - text.len()) / 2
-  "".pad_start(left) ++ text ++ "".pad_start(width - text.len() - left)
+  (text.pad_start(text.len() + left)).pad_end(width)
 }
 
 // The names are the program's, not the library's, as Temporal leaves them to `Intl`: a
