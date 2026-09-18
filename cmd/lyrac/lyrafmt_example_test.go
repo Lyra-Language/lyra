@@ -62,6 +62,10 @@ func TestExample_LyrafmtRoundTrips(t *testing.T) {
 	// between `=` and a constructor), a run of blank lines, spacing missing, forbidden and
 	// doubled around `,` `:` `=>`, and a trailing newline.
 	//
+	// A record update written across lines puts every field at one level, the first
+	// included: the `|` after its base is a separator, as a comma is (09/18). Before, the
+	// first field read as continuing the base and sat a level deeper than the rest.
+	//
 	// The inline-block rule is here too: braces that share a line hold their contents one
 	// space away (`{n + 1}`, an arm list closing tight), empty braces close up to `{}`, and
 	// an interpolation's `${…}` is not a block — those braces stay against the expression,
@@ -112,6 +116,11 @@ let tight = (n: i64) -> i64 => {n + 1}
 let arm = (n: i64) -> i64 => match n { 1 => 2, _ => 3}
 let empty = () -> void => { }
 let interp = (n: i64) -> string => {"x${n}y"}
+struct Pt { x: i64, y: i64 }
+let updated = (p: Pt) -> Pt => Pt { p |
+        x: 1,
+    y: 2,
+  }
 let hidden = () -> f64 => 1.0e30 + 2.5e-3
 let raw_line = () -> string =>
   `+bt+`starts a line`+bt+`
@@ -153,6 +162,11 @@ let tight = (n: i64) -> i64 => { n + 1 }
 let arm = (n: i64) -> i64 => match n { 1 => 2, _ => 3 }
 let empty = () -> void => {}
 let interp = (n: i64) -> string => { "x${n}y" }
+struct Pt { x: i64, y: i64 }
+let updated = (p: Pt) -> Pt => Pt { p |
+  x: 1,
+  y: 2,
+}
 let hidden = () -> f64 => 1.0e30 + 2.5e-3
 let raw_line = () -> string =>
   ` + bt + `starts a line` + bt + `

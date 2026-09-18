@@ -268,7 +268,7 @@ let collect_leaves = (node: Node, owner: i64, anchor: i64, parent: string, out: 
   var after_attributes = false
   for i in 0..<n {
     let c = child(node, i)
-    let after_separator = separates(last_code_kind(out))
+    let after_separator = separates(last_code_kind(out)) || after_update_bar(out)
     // An attribute sits on its own line above what it marks (`@link("z")` above
     // `module`, `@must_release(f)` above `pub struct`), inside the declaration's node:
     // the declaration proper begins fresh after it.
@@ -303,6 +303,24 @@ let is_block_like = pure (k: string) -> bool =>
 /// fresh. Comments are looked past (last_code_kind): a doc comment above a field is
 /// preceded by the comma, and the field after it still is.
 let separates = pure (k: string) -> bool => opens(k) || k == ","
+
+/// Whether the last code token is the `|` of a record update — `P { base |` — after which
+/// each field is its own owner, exactly as after a comma.
+///
+/// **By its parent, because `|` means four things**: bitwise-or, a `data` type's
+/// constructor separator and a comprehension's section break are all `|` too, and each of
+/// those is a continuation. Without this the *first* field of a record update written
+/// across lines read as continuing `base` and sat a level deeper than the fields after it,
+/// which each followed a comma (09/18, found formatting `std.temporal`).
+let after_update_bar = pure (out: []Leaf) -> bool => {
+  var i = out.len() - 1
+  for i >= 0 {
+    let k = out[i].kind
+    if k != "comment" && k != "doc_comment" { return k == "|" && out[i].parent == "struct_update" }
+    i -= 1
+  }
+  false
+}
 
 /// The kind of the last token in `out` that is not a comment, or "" with none.
 let last_code_kind = pure (out: []Leaf) -> string => {
