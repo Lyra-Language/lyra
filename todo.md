@@ -87,10 +87,23 @@ Package management, versioning and separate compilation are out of scope by deci
 
 - **[PARTIAL] `lyra-md`, a Markdown renderer, as the standard library's forcing function.**
   The block level (headings, fenced code, paragraphs, escaping) renders and is pinned by
-  `cmd/lyrac/lyra_md_example_test.go`; writing it added `lines`, `strip_prefix` and
-  `strip_suffix` to the prelude. Next: inline spans (`code`, emphasis, links), which is
-  where a string builder and `replace` are expected to be wanted; then a site pass over a
-  directory, which is what should force `std.path` and a Set.
+  `cmd/lyrac/lyra_md_example_test.go`, and **inline spans** (code, emphasis, links,
+  images, backslash escapes) landed 09/17 beside it. The block level added `lines`,
+  `strip_prefix` and `strip_suffix` to the prelude; **spans added nothing**, and the
+  string builder and `replace` this entry predicted were both unnecessary (COMPLETED.md).
+  Next: a site pass over a directory, which is what should force `std.path` and a Set.
+  - **[OPEN] The renderer is ~90× slower than its own inner loop's floor, and nothing
+    here explains it.** Measured 09/17, warm, best of three: 200 KB as one paragraph
+    renders in 526 ms — 2.6 µs per character for a scan that is five comparisons, a call
+    and a push — while pushing a one-rune string per character and joining the result over
+    the same input is **12 ms**. It is the span scanner rather than the block layer (the
+    one-paragraph file barely touches the block layer). A quadratic `slice` was found and
+    fixed the same day and is *not* this; what is left is a constant factor with no
+    account of where it goes. Profile before changing anything.
+  - **Measuring here has a trap worth writing down**: a freshly built binary's first run
+    costs ~270 ms on this machine before `main` starts, which is most of a small
+    measurement. Warm the binary and take the best of several runs, or the numbers are
+    about the loader.
 
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.

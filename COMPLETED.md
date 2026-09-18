@@ -9,6 +9,61 @@ Newest first.
 
 ## Dated log
 
+### 09/17/26 — lyra-md: inline spans, and a quadratic hiding in a rune-indexed slice
+
+Code spans, emphasis, strong, links, images and backslash escapes, rendered inside
+paragraphs and headings and nowhere else — a fence holding `**stars**` means them.
+
+**Escaping stops being one pass, which is the whole difficulty of spans.** At the block
+level the answer was "escape everything"; a span renderer emits tags, which must *not* be
+escaped, so escaping moves to the pieces — each literal run, each code span's content,
+each attribute — and nothing is concatenated raw except a tag this file wrote. Attribute
+escaping is a second function rather than a flag on the first, because `"` matters in an
+attribute and not in text, and a caller that has to remember which mode to pass will one
+day pass the wrong one. (My own test expected `&quot;` in text and was wrong; the program
+was right.)
+
+**Three rules about what is *not* a delimiter, each with a sentence that needs it.** A run
+with a space beside it cannot close (CommonMark's flanking test), or `and so does **this`
+closes the emphasis opened half a sentence earlier. A run is stepped over whole rather than
+entered, or the run just refused as a closer gets reconsidered from its second character —
+which emitted `*</em>this`. And a closer of the *same width* is preferred over a longer
+one, or `*a **b** c*` renders as `<em>a **b</em>* c*`, ending the emphasis mid-sentence and
+leaving the strong unpaired. `_` keeps its intraword refusal, which this repo needs more
+than most: `snake_case_names` is ordinary prose here.
+
+**The standard library got nothing this slice, and that is the result rather than a
+shortfall.** `todo.md` predicted a string builder and `replace` would be wanted. Neither
+was: `var out = []` plus `join("")` is the builder, escaping is one pass over the runes,
+and the prelude's classifiers (`is_ascii_space`, `_punctuation`, `_alpha`, `_digit`) and
+rune-indexed `slice` covered the rest. The one improvement came from an existing *language*
+feature the first draft failed to use — `if let`, which deleted an `is_some()` +
+`unwrap_or(empty)` dance and the empty value that existed only to feed it.
+
+**The bug worth the whole exercise: a scanner that slices is quadratic.** A string is
+rune-indexed, so `s.slice(i, j)` walks from the start to find rune `i` — and the scanner
+sliced at its cursor once per character. LANGUAGE.md warns about `s[i]` in a loop; `slice`
+is the same hazard and said nothing. 200 KB as one paragraph took **26 s**; off the rune
+array (`to_runes()` once, `runes.slice` for substrings, which costs what it copies rather
+than where it starts) the same document renders in **0.53 s**, a 48× difference on text a
+dev blog could plausibly contain. The same 200 KB as two thousand paragraphs took 1.1 s
+either way, which is why it hid: only a cursor that gets far from the start pays.
+
+**What is left is unexplained and is now an open item**, stated with its measurement
+rather than a guess: the scanner still costs 2.6 µs per character where the equivalent
+push-and-join loop costs 0.06 µs. Ninety times is not a design choice, and no reading of
+the code accounts for it.
+
+A measuring trap, recorded because it nearly produced a confident wrong answer: a freshly
+built binary's **first** run costs ~270 ms here before `main` starts. Three of the first
+timings were mostly loader, and the "byte buffer is no faster than strings" conclusion
+drawn from them was an artefact. Warm the binary, take the best of several runs.
+
+Tests: nineteen more cases through the built binary — each span kind, code beating
+emphasis, nesting both ways, the three not-a-delimiter rules, intraword underscores,
+backslash escapes, code-span padding, attribute escaping, and a link with a title (which
+is not a link here, so it stays literal). Zero leaks over the span fixture.
+
 ### 09/17/26 — `lyra-md`: a second probe, aimed at the standard library
 
 lyrafmt probes the compiler by being a *large* Lyra program. `examples/lyra-md` probes the
