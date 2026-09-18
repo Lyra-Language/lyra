@@ -1,0 +1,45 @@
+module std.temporal
+
+/// Today's date where the program is running — Temporal's `Now.plainDateISO()`.
+///
+/// The system clock gives an instant; **the local time zone decides which date that
+/// instant falls on**, so this reads the zone's current UTC offset from the C library and
+/// applies it. At 23:30 in New York it is already tomorrow in UTC, and a calendar that
+/// highlighted the UTC date would be wrong for the last few hours of every evening.
+///
+/// Not `pure` and not `det`: it reads the clock, which is the point of it. Code that wants
+/// to be testable takes a `PlainDate` as a parameter and calls this once, at the edge.
+pub let today = () -> PlainDate => {
+  let seconds = floor_div(wall_clock_nanos(), 1000000000)
+  PlainDate(floor_div(seconds + local_offset_seconds(seconds), 86400))
+}
+
+/// The local zone's offset from UTC at `epoch_seconds`, in seconds east of Greenwich —
+/// what `localtime_r` writes into `tm_gmtoff`.
+///
+/// **This is a Lyra `extern`, where `dir_names` had to be a compiler builtin, and the
+/// difference is measured rather than assumed** (09/18). `readdir` answers a `struct
+/// dirent` whose `d_name` sits at 21 on macOS and 19 on Linux, and Lyra source cannot ask
+/// which platform it is on. `struct tm` has **one layout on both**: 56 bytes, nine `int`s
+/// and then `tm_gmtoff` as a `long` at offset 40, 8-byte aligned — `offsetof` through each
+/// platform's own `time.h`, on macOS arm64 and Linux glibc aarch64. And `localtime_r` links
+/// under its plain name on both, with none of the `$INODE64`-style renaming that made the
+/// symbol the sharper half of the `readdir` problem. So the rule is not "a C struct is the
+/// compiler's"; it is "a C struct whose layout depends on the platform is".
+///
+/// Being 8-byte aligned, the struct is passed as seven `i64`s and `tm_gmtoff` is element
+/// 5 — read as a native integer, with no byte assembly and no endianness question.
+///
+/// It is the *current* offset at that instant, not a time zone: it answers "where is the
+/// wall clock now", which is what `today` asks, and not how the offset will change across a
+/// daylight-saving transition, which is `ZonedDateTime`'s question and not yet built.
+let local_offset_seconds = (epoch_seconds: i64) -> i64 => {
+  let time: []i64 = [epoch_seconds]
+  var tm: []i64 = [0; 7]
+  unsafe { localtime_r(&time[0], &mut tm[0]) }
+  tm[5]
+}
+
+// `struct tm *localtime_r(const time_t *, struct tm *)`. `time_t` is 64 bits on both LP64
+// targets; the returned pointer is `result` again and is not read.
+unsafe extern localtime_r: (time: ^i64, result: ^mut i64) -> ^u8

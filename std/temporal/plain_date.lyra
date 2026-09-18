@@ -1,0 +1,271 @@
+module std.temporal
+
+/// A calendar date with no time of day and no time zone — Temporal's `PlainDate`.
+///
+/// **Stored as a count of days since 1970-01-01, not as a year, a month and a day**, and
+/// the reason is a language fact rather than a preference: Lyra has no field privacy, so a
+/// struct of three fields could be built by any module as `{ year: 2026, month: 2, day:
+/// 30 }` — a date that does not exist, wearing a type that promises it does. A day count
+/// has no invalid values. Every integer in range *is* a date, so a value forged with
+/// `PlainDate(n)` is merely a different date, never a broken one, and the year, month and
+/// day are computed on demand (O(1), a dozen integer operations).
+///
+/// The range is Temporal's: from `-271821-04-19` to `+275760-09-13`, which is ±10⁸ days
+/// around the epoch with one extra day at the start (Temporal lets a date sit a day before
+/// the earliest instant, so that every instant has a date in some time zone).
+pub newtype PlainDate = i64 where range(-100000001..<=100000000)
+
+/// The date `year`-`month`-`day`, or `None` when there is no such date.
+///
+/// Temporal's `new Temporal.PlainDate(y, m, d)`, which *rejects* rather than clamps: 30
+/// February is `None`, not 28 or 29 February. That is the right default for a date spelled
+/// out in full, where an impossible one is a mistake or bad input. Clamping is what
+/// **arithmetic** does (`add`, `with_day`), where the day is a side effect of moving.
+///
+/// ```
+/// let Some(launch) = plain_date(2026, 9, 18) else { return }
+/// ```
+pub let plain_date = pure (year: i64, month: i64, day: i64) -> Maybe<PlainDate> => {
+  // Out-of-range years are refused before the arithmetic, which would otherwise overflow
+  // on a year near `i64`'s limits rather than answer.
+  if year < -271821 || year > 275760 { return None }
+  if month < 1 || month > 12 { return None }
+  if day < 1 || day > days_in(year, month) { return None }
+  let n = days_from_civil(year, month, day)
+  if n < -100000001 || n > 100000000 { return None }
+  Some(PlainDate(n))
+}
+
+/// The date an ISO 8601 string names, or `None` if it does not name one.
+///
+/// Two forms, which are Temporal's: `2026-09-18`, with a four-digit year, and
+/// `+275760-09-13` / `-000001-01-01`, with a sign and six digits for a year outside
+/// 0–9999. The date must exist (`2026-02-30` is `None`) and every field must be exactly as
+/// wide as written — `2026-9-18` is not ISO 8601, and accepting it would make `parse` and
+/// `show` disagree about what a date looks like. `-000000` is refused, as Temporal refuses
+/// it: year zero has one spelling.
+///
+/// ```
+/// match parse_plain_date(arg) { Some(d) => show_month(d), None => usage() }
+/// ```
+pub let parse_plain_date = pure (text: string) -> Maybe<PlainDate> => {
+  let runes = text.to_runes()
+  let signed = runes.len() > 0 && (runes[0] == '+' || runes[0] == '-')
+  let year_digits = if signed { 6 } else { 4 }
+  let start = if signed { 1 } else { 0 }
+  // sign? YYYY(YY) - MM - DD
+  if runes.len() != start + year_digits + 6 { return None }
+  let dash = start + year_digits
+  if runes[dash] != '-' || runes[dash + 3] != '-' { return None }
+  let Some(magnitude) = digits(runes, start, dash) else { return None }
+  let Some(mm) = digits(runes, dash + 1, dash + 3) else { return None }
+  let Some(dd) = digits(runes, dash + 4, dash + 6) else { return None }
+  if signed && runes[0] == '-' && magnitude == 0 { return None }
+  let yyyy = if signed && runes[0] == '-' { 0 - magnitude } else { magnitude }
+  plain_date(yyyy, mm, dd)
+}
+
+/// The year, proleptic Gregorian: 1 BC is year 0 and 2 BC is year -1, as ISO 8601 counts.
+pub let year = pure (self: PlainDate) -> i64 => {
+  let (y, _, _) = civil_from_days(i64(self))
+  y
+}
+
+/// The month, 1 (January) to 12 (December).
+pub let month = pure (self: PlainDate) -> i64 => {
+  let (_, m, _) = civil_from_days(i64(self))
+  m
+}
+
+/// The day of the month, from 1.
+pub let day = pure (self: PlainDate) -> i64 => {
+  let (_, _, d) = civil_from_days(i64(self))
+  d
+}
+
+/// The day of the week, **1 (Monday) to 7 (Sunday)** — ISO 8601's numbering and
+/// Temporal's, not C's 0-for-Sunday.
+///
+/// The epoch was a Thursday (4), and the rest is a floored remainder: `%%` rather than
+/// `%`, because a date before 1970 is a negative day count and the truncated remainder of
+/// a negative number is negative.
+pub let day_of_week = pure (self: PlainDate) -> i64 => (i64(self) + 3) %% 7 + 1
+
+/// The day of the year, from 1 (1 January) to 365 or 366.
+pub let day_of_year = pure (self: PlainDate) -> i64 => {
+  let (y, _, _) = civil_from_days(i64(self))
+  i64(self) - days_from_civil(y, 1, 1) + 1
+}
+
+/// The ISO 8601 week number, 1 to 52 or 53.
+///
+/// **A week belongs to the year that holds its Thursday**, so the first few days of
+/// January can sit in the last week of the previous year and the last few of December in
+/// week 1 of the next: 3 January 2021 is in week 53 of 2020, and 30 December 2024 is in
+/// week 1 of 2025. Temporal's `weekOfYear`, which is where calendars that print week
+/// numbers get them.
+pub let week_of_year = pure (self: PlainDate) -> i64 => {
+  let (y, _, _) = civil_from_days(i64(self))
+  let week = (self.day_of_year() - self.day_of_week() + 10) / 7
+  if week < 1 { return weeks_in_year(y - 1) }
+  if week > weeks_in_year(y) { return 1 }
+  week
+}
+
+/// How many days this date's month has: 28 to 31.
+pub let days_in_month = pure (self: PlainDate) -> i64 => {
+  let (y, m, _) = civil_from_days(i64(self))
+  days_in(y, m)
+}
+
+/// Whether this date's year is a leap year: divisible by 4, except centuries, except those
+/// divisible by 400.
+pub let in_leap_year = pure (self: PlainDate) -> bool => is_leap(self.year())
+
+/// How many days this date's year has: 365, or 366 in a leap year.
+pub let days_in_year = pure (self: PlainDate) -> i64 => if self.in_leap_year() { 366 } else { 365 }
+
+/// The time from this date to `other`, in days — Temporal's `until`, with its default
+/// largest unit for a date.
+///
+/// **Days, not months**, which is Temporal's default and the honest one: "one month" from
+/// 31 January is 28 days and from 1 March is 31, so a difference in months needs a rule
+/// about which end to count from, and a caller asking in days has asked for the one unit
+/// that is not ambiguous. Positive when `other` is later.
+///
+/// ```
+/// let left = today().until(deadline).days
+/// ```
+pub let until = pure (self: PlainDate, other: PlainDate) -> Duration => days(i64(other) - i64(self))
+
+/// The time from `other` to this date: `until` the other way round, so `a.since(b)` and
+/// `b.until(a)` are the same duration.
+pub let since = pure (self: PlainDate, other: PlainDate) -> Duration => other.until(self)
+
+/// This date moved by `amount` — Temporal's `add`, with its default **constrain**
+/// overflow.
+///
+/// **Years and months first, then weeks and days**, which is Temporal's order and the only
+/// one that answers "one month after 31 January" sensibly: move the month, and clamp the
+/// day to the new month's length (28 or 29 February), *then* add days. Adding days first
+/// would make `add` depend on how the duration was spelled.
+///
+/// A duration's clock fields count in **whole days** — a date has no time of day to carry
+/// the remainder — so 36 hours is one day and 23 hours is none.
+///
+/// ```
+/// let due = invoice.add(days(30))
+/// ```
+pub let add = pure (self: PlainDate, amount: Duration) -> PlainDate => {
+  let (y, m, d) = civil_from_days(i64(self))
+  let total = (m - 1) + amount.months + amount.years * 12
+  let to_year = y + floor_div(total, 12)
+  let to_month = total %% 12 + 1
+  let to_day = if d > days_in(to_year, to_month) { days_in(to_year, to_month) } else { d }
+  PlainDate(days_from_civil(to_year, to_month, to_day) + amount.weeks * 7 + amount.days + whole_days(amount))
+}
+
+/// This date moved back by `amount`: `add` of its negation, so the two cannot disagree.
+pub let subtract = pure (self: PlainDate, amount: Duration) -> PlainDate => self.add(amount.negated())
+
+/// This date with its day of the month replaced, clamped to the month's length —
+/// Temporal's `with({ day })`. `with_day(1)` is the first of the month; `with_day(31)` is
+/// the last, whatever month it is.
+pub let with_day = pure (self: PlainDate, day: i64) -> PlainDate => {
+  let (y, m, _) = civil_from_days(i64(self))
+  let clamped = if day < 1 { 1 } else if day > days_in(y, m) { days_in(y, m) } else { day }
+  PlainDate(days_from_civil(y, m, clamped))
+}
+
+/// Dates order by when they are, so `<`, `sorted()` and `max` read as a calendar does.
+impl Ord for PlainDate {
+  compare = pure (self, other) => i64(self) <=> i64(other)
+}
+
+/// A date as ISO 8601: `2026-09-18`, or `+275760-09-13` / `-000001-01-01` for a year
+/// outside 0–9999 — exactly the forms `parse_plain_date` reads, so the two round-trip.
+impl Show for PlainDate {
+  show = pure (self) => {
+    let (y, m, d) = civil_from_days(i64(self))
+    "${iso_year(y)}-${"${m}".pad_start(2, "0")}-${"${d}".pad_start(2, "0")}"
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The civil calendar. Howard Hinnant's algorithms ("chrono-Compatible Low-Level Date
+// Algorithms"), which are exact over the whole proleptic Gregorian range and written for
+// division that truncates toward zero — Lyra's `/`. The trick that makes them work for
+// negative years is the `era`: a 400-year cycle is exactly 146097 days, so the year is
+// reduced into [0, 400) before anything that would care about sign, and the months are
+// counted from March so that the leap day falls at the end of the year.
+
+/// Days since 1970-01-01 of a date known to exist.
+let days_from_civil = pure (year: i64, month: i64, day: i64) -> i64 => {
+  let y = if month <= 2 { year - 1 } else { year }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = if month > 2 { month - 3 } else { month + 9 }
+  let doy = (153 * mp + 2) / 5 + day - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+/// The year, month and day of a count of days since 1970-01-01.
+let civil_from_days = pure (days: i64) -> (i64, i64, i64) => {
+  let z = days + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+let is_leap = pure (year: i64) -> bool => year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+
+let days_in = pure (year: i64, month: i64) -> i64 => {
+  if month == 2 { return if is_leap(year) { 29 } else { 28 } }
+  if month == 4 || month == 6 || month == 9 || month == 11 { 30 } else { 31 }
+}
+
+/// ISO weeks in a year: 53 when it starts on a Thursday, or on a Wednesday in a leap
+/// year — the years whose Thursdays number 53 — and 52 otherwise.
+let weeks_in_year = pure (year: i64) -> i64 => {
+  let jan1 = PlainDate(days_from_civil(year, 1, 1)).day_of_week()
+  if jan1 == 4 || (jan1 == 3 && is_leap(year)) { 53 } else { 52 }
+}
+
+/// `a / b` rounded toward negative infinity, for a positive `b`. Lyra's `/` truncates,
+/// which is wrong by one for a negative `a` that `b` does not divide.
+let floor_div = pure (a: i64, b: i64) -> i64 => (a - a %% b) / b
+
+/// The whole days in a duration's clock fields, truncated toward zero. Summed in `i128`,
+/// because the fields are each `i64` and their total in nanoseconds need not fit.
+let whole_days = pure (d: Duration) -> i64 => {
+  let ns = i128(d.hours) * i128(3600000000000) + i128(d.minutes) * i128(60000000000) +
+    i128(d.seconds) * i128(1000000000) + i128(d.milliseconds) * i128(1000000) +
+    i128(d.microseconds) * i128(1000) + i128(d.nanoseconds)
+  i64(ns / i128(86400000000000))
+}
+
+/// A year as ISO 8601 writes it: four digits within 0–9999, a sign and six outside.
+let iso_year = pure (year: i64) -> string => {
+  if year >= 0 && year <= 9999 { return "${year}".pad_start(4, "0") }
+  let sign = if year < 0 { "-" } else { "+" }
+  let magnitude = if year < 0 { 0 - year } else { year }
+  sign ++ "${magnitude}".pad_start(6, "0")
+}
+
+/// The number written by `runes[from..<to]`, or `None` unless every one is an ASCII digit.
+let digits = pure (runes: []rune, from: i64, to: i64) -> Maybe<i64> => {
+  var n = 0
+  for i in from..<to {
+    let c = runes[i]
+    if !c.is_ascii_digit() { return None }
+    n = n * 10 + (i64(c) - i64('0'))
+  }
+  Some(n)
+}

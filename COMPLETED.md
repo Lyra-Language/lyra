@@ -9,6 +9,81 @@ Newest first.
 
 ## Dated log
 
+### 09/18/26 — `std.temporal` and a calendar, after the web's Temporal API
+
+A third probe, and the first aimed at one library rather than a layer: `examples/calendar`
+is a month view in the terminal, and `std.temporal` — modelled on Temporal, which has the
+best-thought-out date API there is — gets a function only when the calendar asks for one.
+This slice is the grid: `PlainDate`, `Duration`'s date fields, and `today()`.
+
+**Temporal's central idea is kept: a wall-clock value and an exact instant are different
+types.** A `PlainDate` is "18 September" as a person writes it, with no zone, and its
+arithmetic is calendar arithmetic — a month after 31 January is 28 or 29 February
+(Temporal's default *constrain* overflow), years and months applied before weeks and days
+so the answer does not depend on how the duration was spelled. `Duration` keeps Temporal's
+ten fields rather than a count of nanoseconds, because a month has no fixed length until it
+meets a date.
+
+**Three language facts shaped the mapping, and one of them changed the representation.**
+
+- No associated functions (`lyra-E035`), so `new Temporal.PlainDate(…)` is
+  `plain_date(…)` and `Temporal.Now.plainDateISO()` is `today()`. The house style already.
+- Default parameters exist, so an option bag becomes a defaulted parameter.
+- **No field privacy.** A probe module wrote `Date { year: 2026, month: 2, day: 30 }` into
+  another module's struct and it compiled. A library whose whole promise is "this date
+  exists" cannot store three fields, so **`PlainDate` is a day count**: `newtype PlainDate =
+  i64`, where every integer in range is a real date. A value forged with `PlainDate(n)` is a
+  different date, never a broken one, and `year()`/`month()`/`day()` are O(1) computed
+  methods over Howard Hinnant's civil algorithms — exact across the proleptic Gregorian
+  range, and written for truncating division, which is Lyra's `/`.
+
+**The range claim was computed, not remembered**: Temporal's `-271821-04-19` is day
+−100000001 and `+275760-09-13` is day 100000000 — ±10⁸ days, one extra at the start.
+
+**`today()` is an `extern`, where `dir_names` was a builtin, and the difference is the
+refinement worth keeping.** Yesterday's rule was "an answer that arrives inside a C struct
+is the compiler's." Measured today: `struct tm` has **one layout on both platforms** — 56
+bytes, `tm_gmtoff` at offset 40, on macOS arm64 and Linux glibc — and `localtime_r` links
+under its plain name, with none of `readdir`'s `$INODE64` renaming. So the rule is *a struct
+whose layout depends on the platform* is the compiler's; this one can be read from Lyra, and
+is, as seven `i64`s with the offset at element 5 — no byte assembly, no endianness. The test
+compares against Go's own clock and zone database in UTC, UTC+14 and UTC−11, because in UTC
+a misread offset of a zeroed buffer could come back 0 and pass; at the time of writing
+Kiritimati was already on the 19th, and `today()` said so.
+
+**What the calendar took into the prelude: `pad_start`**, and only after two callers —
+ISO's zero-padded fields and the grid's right-aligned day numbers. JavaScript's semantics
+(a longer fill repeats and is cut to fit), and never truncating, since a pad that cuts turns
+a formatting slip into a wrong value.
+
+**Two gaps found and recorded rather than fixed.** A record update's base must be a name —
+`Duration { duration() | days: n }` does not parse, so the library binds a local four times
+over. And `std.tui` has warned on every program that imports it (a local `first` shadowing
+the prelude's `seq` combinator), which only a new importer made anyone look at.
+
+**The width test caught what my eyes and my own exact-match test did not**: the weekday
+header was one column short, so `Mo` sat over the space before each day's digits. The
+expected output had been copied from the buggy render and agreed with it; the invariant
+"every grid row is 26 columns" did not.
+
+**The first frame lost its top two rows in a new terminal tab**, and got them back on any
+key. A tab settles its size just after the program starts; a terminal that shrinks keeps the
+cursor visible by pushing rows off the *top*, and the cursor sat on the status bar. The loop
+blocked in `next_event`, so it could not notice — and a keypress re-read the size and redrew.
+`examples/tui/viewer.lyra` had found this and documented it; the calendar had copied the
+blocking loop it replaced. It now polls (`event_available(200)`) and on a size change clears,
+invalidates the renderer and draws whole. Reproduced and confirmed in the desktop app's
+terminal panel, since a fixed-size pseudo-terminal cannot show it.
+
+Verified against the system: every weekday and ISO week number in the tests agrees with
+`date +%A`/`+%V`, and the interactive mode was driven through a pseudo-terminal (→ → PgDn q:
+Fri 18 Sep → Sat 19 "tomorrow" → Sun 20 "in 2 days" → Tue 20 Oct, clean exit).
+
+Tests: the calendar's arithmetic cases, a round trip of 31,429 days across ±300 years (each
+day to fields and back, and consecutive days consecutive), `parse`/`show` agreement including
+signed six-digit years and nine refusals, `today()` in three zones, and the calendar's
+`--print` of three months chosen for their edges.
+
 ### 09/17/26 — `split` was quadratic, and so was every line-oriented program
 
 `lyra-md` rendered 200 KB in about a second and nothing in it explained where the time

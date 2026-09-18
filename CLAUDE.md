@@ -514,7 +514,7 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/ffi.lyra`, `std/io.lyra`.
+  `std/tui/`, `std/temporal/`, `std/ffi.lyra`, `std/io.lyra`.
 
 ## Testing
 
@@ -566,6 +566,10 @@ and both editors reach it through `lyra-lsp`; nothing in it decides that a line 
 keeps finding **compiler** bugs rather than formatter ones: a `let … else` use-after-free, a
 destructuring release that never happened, and an interpolation that swallows source to the
 next `}` — each found by the first Lyra program large enough to hit them.
+
+**`examples/calendar` does the same for dates**: `std.temporal`, after the web's Temporal
+API, grows only as the calendar needs it (the month grid landed 09/18). `PlainDate` is a day
+count rather than three fields because Lyra has no field privacy — see LANGUAGE.md.
 
 **`lyra-md` is the standard library's forcing function**, and the deliberate contrast with
 lyrafmt: an *ordinary* program — text, files, collections — whose every hand-written helper

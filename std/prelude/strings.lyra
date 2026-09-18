@@ -348,6 +348,37 @@ pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
 pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
   self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
 
+/// `self` padded at the start with `fill` until it is `width` runes long.
+///
+/// `"7".pad_start(2, "0")` is `"07"`; `"18".pad_start(3)` is `" 18"`. A string already at
+/// least `width` long comes back unchanged — never truncated, because a pad that cuts
+/// content turns a formatting slip into a wrong value. A fill longer than one rune repeats
+/// and is cut to fit, so `"5".pad_start(4, "ab")` is `"aba5"`: JavaScript's `padStart`,
+/// which is the semantics the most people already carry around.
+///
+/// Added 09/18 for `std.temporal`, which zero-pads every ISO field, and for the calendar
+/// example's grid, which right-aligns day numbers — the two callers that made it more
+/// than a guess.
+///
+/// # Complexity
+///
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(w)    | O(w)  |
+/// | **Memory** | O(n) | O(w)    | O(w)  |
+///
+/// # Examples
+///
+/// ```
+/// let mm = "${month}".pad_start(2, "0")
+/// ```
+pub let pad_start = pure (self: string, width: i64, fill: string = " ") -> string => {
+  let missing = width - self.len()
+  if missing <= 0 || fill.len() == 0 { return self }
+  let pattern = fill.to_runes()
+  [i in 0..<missing | pattern[i % pattern.len()]].join("") ++ self
+}
+
 /// `self` without `prefix`, or `None` if it does not start with it.
 ///
 /// **The `Maybe` is the point.** `starts_with` then `slice` asks the same question twice

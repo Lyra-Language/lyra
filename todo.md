@@ -101,6 +101,19 @@ Package management, versioning and separate compilation are out of scope by deci
     about the loader. Localizing by reasoning has a worse one — the scanner looked guilty
     and was innocent; `sample` named the real culprit in one run.
 
+- **[PARTIAL] `std.temporal` and `examples/calendar`**, after the web's Temporal API. The
+  month grid landed 09/18: `PlainDate`, `Duration`'s date fields, and `today()` through
+  the local offset, in a TUI with a `--print` mode the tests use. Next slice: **events**
+  beside the selected day, read from a file — which is what brings `PlainTime`,
+  `PlainDateTime`, clock-field durations and ISO date-time parsing. `ZonedDateTime` and
+  zone rules stay out until something needs a date to cross a DST change.
+- **[OPEN] A record update's base must be a name.** `P { make() | x: 1 }` does not parse;
+  `let b = make()` then `P { b | x: 1 }` does. A call is the natural base — `std.temporal`
+  binds a local four times over it.
+- **[OPEN] `std.tui` warns on every program that imports it**: `std/tui/event.lyra:83`
+  names a local `first`, which shadows the prelude's `seq` combinator (`lyra-W001`).
+  Predates 09/18; a rename.
+
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute

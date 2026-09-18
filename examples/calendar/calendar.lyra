@@ -1,0 +1,227 @@
+// calendar — a month view in the terminal. `std.temporal`'s forcing function.
+//
+//   build/lyrac build -o build/calendar examples/calendar/calendar.lyra
+//   build/calendar                       # interactive: arrows move, q quits
+//   build/calendar --print 2026-09-18    # the month as plain text, once
+//
+// `lyrafmt` probes the compiler and `lyra-md` the text half of the standard library. This
+// probes **dates**: `std.temporal` is modelled on the web's Temporal API, and nothing goes
+// into it until this program needs it. The first slice is the month grid — calendar
+// arithmetic, weekdays, ISO week numbers, and "today" in the local time zone. Events are
+// the next slice, and they are what will bring times of day and durations shorter than one.
+//
+// **Weeks start on Monday**, because the library's `day_of_week` is ISO 8601's (Monday is
+// 1) and so are its week numbers — a Sunday-first grid would put the week-number column
+// beside rows that are not ISO weeks.
+//
+// Exit 0, or 2 for usage.
+
+import std.collections.{ parse_args }
+import std.temporal.{ PlainDate, today, parse_plain_date, days, weeks, months }
+import std.tui.{
+  renderer, render, invalidate, event_reader, next_event, event_available, Event, Key,
+  alt_screen_enter, alt_screen_leave, cursor_hide, cursor_show, clear,
+  inverse, bold, reset, fit, status_bar,
+}
+
+let main = () -> u8 => {
+  let args = parse_args(["--print"])
+  if let Some(when) = args.value("--print") {
+    let Some(date) = parse_plain_date(when) else {
+      println("calendar: --print wants a date like 2026-09-18, not ${when}")
+      return 2
+    }
+    for row in grid(date, date, false) { println(row) }
+    for line in panel(date, date) { println(line) }
+    return 0
+  }
+  interactive(today())
+  0
+}
+
+/// The interactive calendar, starting on `now`, until `q`.
+///
+/// `now` is read **once**, at the edge, and passed down — the rule `today()`'s own doc
+/// gives: everything below is `pure` and takes the date it is told, which is what lets
+/// `--print` and the tests render a month without a clock. A session that runs past
+/// midnight keeps yesterday highlighted, which is the cost, and a small one.
+let interactive = (now: PlainDate) -> void => {
+  // Raw mode first, then the screen; torn down in reverse. Leaving either on strands the
+  // terminal with no echo, or with the calendar still painted over the shell.
+  set_raw_mode(true)
+  alt_screen_enter()
+  cursor_hide()
+  var screen = renderer()
+  var events = event_reader()
+  var selected = now
+  var running = true
+  let (cols0, rows0) = terminal_size()
+  var last_cols = cols0
+  var last_rows = rows0
+  screen.render(frame(selected, now, cols0, rows0))
+  for running {
+    // **Poll rather than block, so a resize is noticed without a keypress** (09/18). A
+    // terminal that changes size reflows what it shows, and one that shrinks keeps the
+    // cursor visible by pushing rows off the *top* — so a calendar whose cursor sat on the
+    // status bar lost its title and weekday header the moment a new terminal tab settled
+    // its size, and got them back on the next key, which re-read the size and redrew.
+    // `examples/tui/viewer.lyra` found this first and says so; this loop had copied the
+    // blocking shape it replaced.
+    if !events.event_available(200) {
+      let (cols, rows) = terminal_size()
+      if cols != last_cols || rows != last_rows {
+        last_cols = cols
+        last_rows = rows
+        // The terminal reflowed the screen behind the renderer's back, so what it
+        // remembers no longer describes what is there: clear, forget, draw whole.
+        clear()
+        screen.invalidate()
+        screen.render(frame(selected, now, cols, rows))
+      }
+      continue
+    }
+    match events.next_event() {
+      None => { running = false },
+      Some(Keyboard(key)) => match key {
+        Left => { selected = selected.subtract(days(1)) },
+        Right => { selected = selected.add(days(1)) },
+        Up => { selected = selected.subtract(weeks(1)) },
+        Down => { selected = selected.add(weeks(1)) },
+        // A month on from 31 January is 28 or 29 February — `add`'s constrain overflow,
+        // which is what makes paging through months land on a day that exists.
+        PageUp => { selected = selected.subtract(months(1)) },
+        PageDown => { selected = selected.add(months(1)) },
+        Home => { selected = now },
+        Escape => { running = false },
+        Char(c) => {
+          if c == 'q' { running = false } else if c == 't' { selected = now }
+        },
+        _ => {},
+      },
+      Some(_) => {},
+    }
+    let (cols, rows) = terminal_size()
+    last_cols = cols
+    last_rows = rows
+    screen.render(frame(selected, now, cols, rows))
+  }
+  cursor_show()
+  alt_screen_leave()
+  set_raw_mode(false)
+}
+
+/// The width of the grid in columns: a margin, seven three-column days, and a four-column
+/// week number.
+const GRID = 26
+
+/// Every row of the screen: the grid on the left, the selected day beside it, and the keys
+/// at the bottom — each exactly `cols` wide, which is `render`'s contract.
+///
+/// **Only the panel goes through `fit`.** `fit` counts runes, and a styled grid cell is a
+/// few runes of escape sequence wrapped round three columns of text, so fitting a styled
+/// row would cut it short by the length of its escapes. The grid is built to exactly
+/// `GRID` visible columns instead, and the plain panel is fitted to what is left.
+let frame = pure (selected: PlainDate, now: PlainDate, cols: i64, rows: i64) -> []string => {
+  if cols < GRID + 2 || rows < 10 {
+    return [fit("calendar needs at least ${GRID + 2}x10", cols)]
+  }
+  let left = grid(selected, now, true)
+  let right = panel(selected, now)
+  var out: []string = []
+  for i in 0..<(rows - 1) {
+    let days_part = if i < left.len() { left[i] } else { "".pad_start(GRID) }
+    let text = if i < right.len() { right[i] } else { "" }
+    out.push(days_part ++ fit("  " ++ text, cols - GRID))
+  }
+  out.push(status_bar(" arrows day/week   PgUp/PgDn month   t today   q quit", cols))
+  out
+}
+
+/// The month holding `selected` as rows of exactly `GRID` visible columns: a title, the
+/// weekday names, then one row per ISO week with its week number.
+///
+/// **Always eight rows**, padding a five-week month with a blank sixth, so the grid does
+/// not change height as the months go by — a height that jumps moves the status bar and
+/// makes paging read as flicker.
+///
+/// `styled` marks the selected day in reverse video and today in bold; unstyled, the
+/// selected day is `>`-prefixed and today is not marked at all, so the plain form depends
+/// on nothing but its arguments.
+let grid = pure (selected: PlainDate, now: PlainDate, styled: bool) -> []string => {
+  let start = selected.with_day(1)
+  let lead = start.day_of_week() - 1
+  let length = selected.days_in_month()
+  let title = "${month_name(selected.month())} ${selected.year()}"
+  // The margin, then each name in its day's three columns, so `Mo` sits over the two
+  // digits of the day beneath it.
+  var out: []string = [centred(title, GRID), "  Mo Tu We Th Fr Sa Su  wk"]
+  var week = 0
+  for week * 7 - lead < length {
+    // The Monday that starts this row, which may sit in the previous month; an ISO week
+    // runs Monday to Sunday, so its week number is the row's.
+    let monday = start.add(days(week * 7 - lead))
+    var row = " "
+    for col in 0..<7 {
+      let n = week * 7 + col - lead + 1
+      let text = if n < 1 || n > length { "   " } else { cell(n, n == selected.day(), start.with_day(n) == now, styled) }
+      row = row ++ text
+    }
+    out.push(row ++ "${monday.week_of_year()}".pad_start(4))
+    week += 1
+  }
+  for out.len() < 8 { out.push("".pad_start(GRID)) }
+  out
+}
+
+/// One day of the grid, three columns wide.
+let cell = pure (n: i64, selected: bool, is_today: bool, styled: bool) -> string => {
+  let number = "${n}".pad_start(2)
+  if !styled { return if selected { ">" ++ number } else { " " ++ number } }
+  let emphasis = if is_today { bold() } else { "" }
+  if selected { " " ++ inverse() ++ emphasis ++ number ++ reset() } else { " " ++ emphasis ++ number ++ reset() }
+}
+
+/// The lines beside the grid: the selected date in full, where it falls in its year, and
+/// how far it is from today.
+let panel = pure (selected: PlainDate, now: PlainDate) -> []string => [
+  "${weekday_name(selected.day_of_week())} ${selected.day()} ${month_name(selected.month())} ${selected.year()}",
+  "${selected}",
+  "",
+  "day ${selected.day_of_year()} of ${selected.days_in_year()}, week ${selected.week_of_year()}",
+  "${selected.days_in_month()} days in ${month_name(selected.month())}",
+  "",
+  relative(now.until(selected).days),
+]
+
+/// A distance in days as a person would say it.
+let relative = pure (n: i64) -> string => {
+  if n == 0 { return "today" }
+  if n == 1 { return "tomorrow" }
+  if n == 0 - 1 { return "yesterday" }
+  if n > 0 { "in ${n} days" } else { "${0 - n} days ago" }
+}
+
+/// `text` centred in `width` columns, the odd column going to the right.
+let centred = pure (text: string, width: i64) -> string => {
+  let left = (width - text.len()) / 2
+  "".pad_start(left) ++ text ++ "".pad_start(width - text.len() - left)
+}
+
+// The names are the program's, not the library's, as Temporal leaves them to `Intl`: a
+// month's *name* is a locale's business, and the library knows only the ISO calendar.
+// Functions rather than `const` arrays, since a `const` is inlined at every use and an
+// array literal would be a fresh allocation each time.
+
+/// A month's English name, 1 to 12.
+let month_name = pure (m: i64) -> string => match m {
+  1 => "January", 2 => "February", 3 => "March", 4 => "April", 5 => "May", 6 => "June",
+  7 => "July", 8 => "August", 9 => "September", 10 => "October", 11 => "November",
+  _ => "December",
+}
+
+/// A weekday's English name, 1 (Monday) to 7 (Sunday) — ISO's numbering, as `day_of_week`
+/// answers it.
+let weekday_name = pure (d: i64) -> string => match d {
+  1 => "Monday", 2 => "Tuesday", 3 => "Wednesday", 4 => "Thursday", 5 => "Friday",
+  6 => "Saturday", _ => "Sunday",
+}

@@ -241,6 +241,7 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 - `index`/`contains`/`split` are generic over `pub trait Needle`, implemented for `rune` and `string`. Two methods: `found_at(haystack, offset)` returns an `(Index, Length)` span and **walks from rune 0** (a rune offset is only reachable by counting), and `matches_at(haystack, rune_at, byte_at, here)` tests one position, which is what lets a stepping caller stay linear. `matches_at` is defaulted in terms of `found_at`, so an existing needle keeps working and only pays the old cost. `split` walks once and cuts parts out of the bytes, so it is **linear** (it was quadratic in both respects until 09/17: 600 K runes took 4.7 s, now ~10 ms). `split` on an empty separator traps, naming `to_runes() -> []rune`.
 - `split` keeps empty parts (`"a,,b"` → 3); `split_when(pred)` **collapses** runs of boundaries and drops leading/trailing empties.
 - `lines()` splits on terminators, not on `\n`: `\r\n` is one, a trailing newline does not make a last empty line (`"a\nb\n"` → 2), and an interior blank line is a line. An empty string has none.
+- `pad_start(width, fill = " ")` pads to `width` runes; a longer fill repeats and is cut to fit (JavaScript's `padStart`), and a string already at least `width` long is returned whole, never truncated.
 - `strip_prefix`/`strip_suffix` answer `Maybe<string>` — the affix removed, or `None` when it was not there, so the affix's length is never written twice.
 - `s.byte_offset(i) -> Maybe<i64>`: rune position → byte offset; end position answers `Some(byte_len)`; negative is `None`.
 - ASCII classifiers (name is the boundary): `is_ascii_upper`, `_lower`, `_alpha`, `_digit`, `_punctuation`, `_printable` (space..`~`, not "not a control code"), `_control_code`, `is_ascii_space`. `is_ascii_alpha` splits `héllo`; use `is_ascii_space` for non-ASCII text.
@@ -267,6 +268,41 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 - Objects keep members in order with duplicates; `field` answers the last.
 - Numbers are `f64`: exact up to 18 significant digits with exponent within 22; longer may be an ulp or two off.
 - Parser is `pure` (threads a byte offset).
+
+### Dates (`std.temporal`)
+
+After the web's **Temporal** API: a wall-clock value and an exact instant are different
+types, and arithmetic on a date is calendar arithmetic. ISO 8601 calendar only. Built slice
+by slice against `examples/calendar`; what exists is what that program has needed.
+
+- **`PlainDate`** — `newtype PlainDate = i64`, days since 1970-01-01, range `-271821-04-19`
+  to `+275760-09-13` (Temporal's; ±10⁸ days, one extra at the start). **A day count because
+  Lyra has no field privacy**: a three-field struct could be forged as 30 February by any
+  module, and a day count has no invalid values. `year()`/`month()`/`day()` are O(1)
+  computed methods (Howard Hinnant's civil algorithms).
+- **Constructors are bare functions** (no associated functions, `lyra-E035`):
+  `plain_date(y, m, d) -> Maybe<PlainDate>` **rejects** a date that does not exist, like
+  Temporal's constructor; `parse_plain_date(s)` reads `YYYY-MM-DD` and `±YYYYYY-MM-DD`
+  exactly (not `2026-9-18`, not `-000000`), and `show` writes the same forms.
+- Properties: `day_of_week()` (**1 = Monday**, ISO), `day_of_year()`, `week_of_year()` (ISO:
+  a week belongs to the year of its Thursday), `days_in_month()`, `days_in_year()`,
+  `in_leap_year()`.
+- `add(d)`/`subtract(d)` take a `Duration` with Temporal's default **constrain** overflow:
+  years and months first, the day clamped to the new month (31 Jan + 1 month = 28/29 Feb),
+  then weeks and days; clock fields count in whole days. `with_day(n)` clamps.
+  `until(other)`/`since(other)` answer days. `Ord`, so `<` and `sorted()` work.
+- **`Duration`** — Temporal's ten fields, not a count of nanoseconds, since a month has no
+  fixed length. Builders `years`/`months`/`weeks`/`days(n)`, `duration()` for the zero,
+  `negated()`. No field privacy, so a mixed-sign duration can be written; `add` applies it
+  in Temporal's field order.
+- **`today()`** — `Now.plainDateISO()`: the system clock plus the local zone's current UTC
+  offset, read from `localtime_r`'s `tm_gmtoff`. An `extern` rather than a builtin, because
+  `struct tm` has **one layout on both platforms** (56 bytes, `tm_gmtoff` at 40 — measured),
+  unlike `struct dirent`. It reads the clock, so it is neither `pure` nor `det`; take a
+  `PlainDate` parameter and call it once at the edge.
+- Not built: `PlainTime`, `PlainDateTime`, `Instant`, `ZonedDateTime` and zone rules, a
+  `reject` overflow on arithmetic, month and weekday **names** (Temporal leaves those to
+  `Intl`; the calendar holds its own).
 
 ### Lazy sequences
 

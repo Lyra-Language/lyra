@@ -1,0 +1,103 @@
+module std.temporal
+//! Dates, times and durations, after the web's **Temporal** API.
+//!
+//! Temporal's central idea is the one this module keeps: **a wall-clock value and an exact
+//! instant are different types.** A `PlainDate` is a calendar date with no time zone —
+//! "18 September", the way a person writes it on a calendar — and arithmetic on it is
+//! calendar arithmetic, so adding a month to 31 January lands on the last day of February
+//! rather than wherever 30 days happens to reach. That is the right default for a calendar
+//! and the wrong one for a timestamp, which is why the two never convert implicitly.
+//!
+//! The mapping from Temporal, stated once so each declaration need not:
+//!
+//!   - **Constructors are bare functions**, because Lyra has no associated functions
+//!     (`lyra-E035`): Temporal's `new Temporal.PlainDate(2026, 9, 18)` is
+//!     `plain_date(2026, 9, 18)`, and `Temporal.Now.plainDateISO()` is `today()`.
+//!   - **Properties are methods** in snake_case: `date.dayOfWeek` is `d.day_of_week()`.
+//!   - **An option bag is a defaulted parameter**, and Temporal's default is kept.
+//!   - **Temporal throws `RangeError`; Lyra answers `None`** where the input can be bad
+//!     (a date that does not exist, a string that does not parse), and traps where it can
+//!     only be a program bug (arithmetic past the representable range).
+//!   - **ISO 8601 only.** Temporal's other calendars need CLDR data, and nothing here has
+//!     asked for them.
+//!
+//! Built slice by slice against `examples/calendar`, which is what decides what exists: a
+//! function arrives when the calendar needs it, shaped the way Temporal shapes it.
+//!
+//! ```
+//! import std.temporal.{ today, months }
+//!
+//! let next = today().add(months(1))   // 31 Jan → 28 or 29 Feb
+//! ```
+
+/// An amount of time, field by field — Temporal's `Duration`.
+///
+/// **Ten fields, not a count of nanoseconds**, because "one month" is not a number of
+/// seconds: it is 28, 29, 30 or 31 days depending on where it is added. A duration stays a
+/// bag of calendar and clock units until it meets a date, and the date decides what each
+/// one means. That is also why `{ days: 1 }` and `{ hours: 24 }` are different durations —
+/// across a daylight-saving change they are different lengths of time.
+///
+/// Temporal refuses a duration whose fields disagree in sign. Lyra has no field privacy, so
+/// nothing can stop one being written as a struct literal; `add` applies the fields in
+/// Temporal's order (years and months, then weeks and days), and a mixed-sign duration
+/// means whatever that order computes. Build one from the functions below and the question
+/// never arises.
+pub struct Duration {
+  years: i64,
+  months: i64,
+  weeks: i64,
+  days: i64,
+  hours: i64,
+  minutes: i64,
+  seconds: i64,
+  milliseconds: i64,
+  microseconds: i64,
+  nanoseconds: i64,
+}
+
+/// The empty duration — every field zero. The base for a record update when a duration
+/// needs more than one unit: `let d = duration()`, then `Duration { d | days: 1, hours: 2 }`.
+///
+/// Bound first because a record update's base must be a name: `Duration { duration() | … }`
+/// does not parse (todo.md).
+pub let duration = pure () -> Duration => Duration {
+  years: 0, months: 0, weeks: 0, days: 0, hours: 0, minutes: 0, seconds: 0,
+  milliseconds: 0, microseconds: 0, nanoseconds: 0,
+}
+
+/// `n` years.
+pub let years = pure (n: i64) -> Duration => {
+  let none = duration()
+  Duration { none | years: n }
+}
+
+/// `n` months. Added to a date, it keeps the day of the month where that day exists and
+/// clamps it to the month's last day where it does not.
+pub let months = pure (n: i64) -> Duration => {
+  let none = duration()
+  Duration { none | months: n }
+}
+
+/// `n` weeks — exactly `7 * n` days, whatever the month.
+pub let weeks = pure (n: i64) -> Duration => {
+  let none = duration()
+  Duration { none | weeks: n }
+}
+
+/// `n` days.
+pub let days = pure (n: i64) -> Duration => {
+  let none = duration()
+  Duration { none | days: n }
+}
+
+/// The same duration pointing the other way: every field negated.
+///
+/// Temporal's `negated()`, and what `subtract` is made of — subtracting a duration is
+/// adding its negation, so the two can never disagree.
+pub let negated = pure (self: Duration) -> Duration => Duration {
+  years: 0 - self.years, months: 0 - self.months, weeks: 0 - self.weeks,
+  days: 0 - self.days, hours: 0 - self.hours, minutes: 0 - self.minutes,
+  seconds: 0 - self.seconds, milliseconds: 0 - self.milliseconds,
+  microseconds: 0 - self.microseconds, nanoseconds: 0 - self.nanoseconds,
+}
