@@ -107,14 +107,6 @@ Package management, versioning and separate compilation are out of scope by deci
   offset, in a TUI reading an ISO 8601 events file. Next, if the calendar grows: a
   default events file (which forces environment variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
-- **[OPEN] An early `return` out of an `if let` or `match` body leaks the scrutinee** when
-  it is an owned `Maybe` whose payload is a retained element of something else. Minimal:
-  `struct Bag { xs: []string }`, `first_of = (self: Bag) -> Maybe<string> => Some(self.xs[0])`,
-  then `if let Some(w) = b.first_of() { return 0 }` leaks the string (32 bytes); the same
-  without the `return` does not, and neither does an `if let` over a freshly built
-  `Maybe`. Statement temporaries on an early exit — flushStmtTemps territory, rule 17.
-  Found 09/18 by `examples/calendar`'s `main` (`args.value(…)`); verify with
-  `LEAKS=1 ./asan.sh`.
 - **[OPEN] A record update's base must be a name.** `P { make() | x: 1 }` does not parse;
   `let b = make()` then `P { b | x: 1 }` does. A call is the natural base — `std.temporal`
   binds a local four times over it.

@@ -763,8 +763,8 @@ func (l *lowerer) regionExits(dt *domTree, from *ir.Block) ([]*ir.Block, bool) {
 // block to move them to.
 func (l *lowerer) flushTemps() error { return l.flushStmtTemps(nil, nil) }
 
-// exitRelease is one `break`/`continue`'s deferred obligation: the temporaries the
-// jump skipped past, and the block it jumps from.
+// exitRelease is one early exit's deferred obligation — a `break`, `continue` or
+// `return`: the temporaries the jump skipped past, and the block it jumps from.
 type exitRelease struct {
 	block *ir.Block
 	temps []pendingTemp
@@ -785,6 +785,19 @@ func (l *lowerer) recordExitReleases(block *ir.Block, tempBase int) {
 	}
 	temps := make([]pendingTemp, len(l.pendingReleases)-tempBase)
 	copy(temps, l.pendingReleases[tempBase:])
+	l.exitReleases = append(l.exitReleases, exitRelease{block: block, temps: temps})
+}
+
+// recordExitReleasesBelow notes that a `return` in block owes releases for the
+// temporaries of the statements it leaves mid-flight — pendingReleases[:top]. A return
+// leaves the function, so unlike a loop exit there is no outer statement whose own
+// flush would reach them afterwards; the bottom of the stack is the right base.
+func (l *lowerer) recordExitReleasesBelow(block *ir.Block, top int) {
+	if top <= 0 || top > len(l.pendingReleases) {
+		return
+	}
+	temps := make([]pendingTemp, top)
+	copy(temps, l.pendingReleases[:top])
 	l.exitReleases = append(l.exitReleases, exitRelease{block: block, temps: temps})
 }
 

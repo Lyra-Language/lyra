@@ -93,7 +93,26 @@ func paramIsByRef(param ast.Parameter) bool {
 // entry for a tail return, the `return` statement's block for an explicit one); it
 // lets flushStmtTemps release a temp used before a branch at `block` (after the
 // whole expression) instead of prematurely in its production block.
+//
+// **A return also owes every *enclosing* statement's temporaries** (09/18). The flush
+// above covers only this statement's — those at or above pendingBase — and a `return`
+// nested in a block is its own statement, so the scrutinee of the `if let` or `match`
+// around it sat below pendingBase and was released by nothing on this path: the
+// enclosing statement's flush is never reached, because control has left the function.
+// `if let Some(w) = bag.first_of() { return 0 }` leaked the string on every early exit.
+// break/continue had this right all along (recordExitReleases); a return is the same
+// jump to a further place, so it records the same way, from the bottom of the stack
+// rather than from a loop's base, since nothing outside a function flushes after it.
 func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
+	return l.emitReturnOwing(start, block, val, l.pendingBase)
+}
+
+// emitReturnOwing is emitReturn with the enclosing statements' boundary given
+// explicitly: the temporaries below `owed` belong to statements this return leaves
+// mid-flight. Only `?` needs to say it: it raises pendingBase over its own statement's
+// temporaries before returning, having released them itself, and recording everything
+// below the raised base would release those a second time.
+func (l *lowerer) emitReturnOwing(start, block *ir.Block, val value.Value, owed int) error {
 	if err := l.flushStmtTemps(start, block); err != nil {
 		return err
 	}
@@ -111,6 +130,11 @@ func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
 	if err := l.releaseAllManagedFrames(block); err != nil {
 		return err
 	}
+	// Deferred to the end of the function like a break's, because only then is the
+	// dominator tree final: a temporary produced on a branch this path never took is
+	// skipped (a leak) rather than freed (a double free). Recorded after the inlined-
+	// sequence branch above, which leaves only the inlined body, not the function.
+	l.recordExitReleasesBelow(block, owed)
 	if l.entryABI {
 		if val == nil {
 			block.NewRet(i32c(0))

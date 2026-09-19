@@ -265,5 +265,7 @@ func (l *lowerer) lowerTryPropagate(block, preBranch *ir.Block, transferred, scr
 	l.pendingBase = len(l.pendingReleases)
 	defer func() { l.pendingBase = savedBase }()
 
-	return l.emitReturn(block, block, propagated)
+	// The statements enclosing this one are owed from savedBase down — not from the
+	// raised base, which would include this statement's temporaries, just released.
+	return l.emitReturnOwing(block, block, propagated, savedBase)
 }

@@ -9,6 +9,53 @@ Newest first.
 
 ## Dated log
 
+### 09/18/26 — a `return` releases what the statements around it still held
+
+`if let Some(w) = bag.first_of() { return 0 }` leaked the string on every early exit, and
+so did a `match` arm that returned, `?` inside such a body, and a `return` in a later call
+argument while an earlier argument's temporary was still waiting. The calendar's `main`
+does the first shape twice, which is how it was found.
+
+**The mechanism is one line of bookkeeping.** Temporaries wait on one stack and
+`pendingBase` marks where the current statement's begin; a statement's flush releases from
+there up. A `return` inside a block is its own statement, so the flush it runs covers its
+own temporaries and nothing below them — and the `if let`'s scrutinee sits below, belonging
+to the *enclosing* statement. That statement's flush releases it on every path that gets
+there, and a return is the one path that never does: control has left the function. The IR
+said it plainly — the early-return block dropped the local `Bag` and returned; the
+fall-through block dropped the `Bag` and then the `Maybe`.
+
+**`break` and `continue` had this right all along**, which made the fix a matter of
+copying them rather than designing anything. A loop exit records the temporaries it skips
+past, and the end of the function releases each one whose producing block dominates the
+jump, which is the only point where the dominator tree is final — a temporary produced on a
+branch this path never took is skipped (a leak) rather than released (a double free). A
+return records the same way, from the bottom of the stack rather than from a loop's base,
+because nothing outside a function flushes after it.
+
+**`?` needed the one exception.** It releases its own statement's temporaries itself and
+then *raises* `pendingBase` over them, so that the return it performs will not release them
+again. Recording everything below the raised base would have undone exactly that. So the
+boundary is explicit — `emitReturnOwing` — and `?` passes the base from before it raised
+it.
+
+**The fix's own failure mode is the opposite bug**, a release too many, so the tests run
+every shape under ASan: returning the borrowed payload itself, `?` inside the body, an
+argument in flight, an `if let` inside a `match` arm, and `break` as the unchanged control.
+With the fix reverted, every return shape fails under LeakSanitizer and `break` passes.
+
+**A test-design note worth keeping**: three of those cases passed with the fix reverted at
+first, because their early return was in `main`. LeakSanitizer scans conservatively at
+exit, and a leaked pointer still sitting in `main`'s dead stack slots reads as reachable —
+while `leaks` on macOS reported the same shape as lost. Each early exit now sits in a helper
+called twice, and all of them fail without the fix.
+
+The whole backend suite runs clean under ASan on Linux, and the calendar is 0 leaks. One
+thing is **not** explained: the first leak check after the fix saw the calendar spin at full
+CPU for two minutes under `MallocStackLogging` + `leaks`. It has not recurred in twelve runs
+since — six under `leaks`, five under ASan, and plain — and ASan finds no memory error in the
+calendar that could cause it. Recorded here rather than guessed at.
+
 ### 09/18/26 — calendar events, and the four compiler bugs they walked into
 
 The calendar's second slice puts a day's events beside it, read from a file written in ISO
