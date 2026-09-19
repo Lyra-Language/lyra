@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 09/19/26 — the `split` guard timed the wrong thing, and CI said so
+
+`TestExec_SplitIsNotQuadratic` failed on CI's first run after the early-return fix: "4000
+lines 8.6 ms, 8000 lines 39 ms, ratio 4.6". It was not a regression — the quadratic `split`
+took 3 s and 12 s at those sizes, and the fix it followed touches no code `split` runs. It
+was the test measuring the process instead of the call: at a few milliseconds a whole
+process's startup on a shared runner is most of the time, and its noise is a large fraction
+of it.
+
+The guard now times `split` **inside the program**, with `wall_clock_nanos()` around the call
+alone, and takes the best of seven runs — so the loader, the input's construction and a
+runner's one-off stalls are all outside the measurement. It stays a ratio, and it still
+fires: against the prelude from before the linear rewrite it measures 3.4 s against 13.2 s,
+**3.9**, and fails. Eight runs in a row pass on Linux. When the test was written the note
+said "if it ever flakes, the fix is bigger input sizes"; measuring the call instead is the
+better fix, because bigger sizes would have made a regression take minutes to report.
+
 ### 09/18/26 — a `return` releases what the statements around it still held
 
 `if let Some(w) = bag.first_of() { return 0 }` leaked the string on every early exit, and
