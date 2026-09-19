@@ -104,8 +104,9 @@ Package management, versioning and separate compilation are out of scope by deci
 - **[PARTIAL] `std.temporal` and `examples/calendar`**, after the web's Temporal API. The
   month grid and then **events** landed 09/18: `PlainDate`, `PlainTime`, `PlainDateTime`,
   `Duration` with ISO parsing, and `today()`/`now_plain_date_time()` through the local
-  offset, in a TUI reading an ISO 8601 events file. Next, if the calendar grows: a
-  default events file (which forces environment variables — `std` has none) and editing.
+  offset, in a TUI reading an ISO 8601 events file; `PlainTime` and `Duration` arithmetic
+  09/19. Next, if the calendar grows: a default events file (which forces environment
+  variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
 - **[OPEN] A record update's base must be a name.** `P { make() | x: 1 }` does not parse;
   `let b = make()` then `P { b | x: 1 }` does. A call is the natural base — `std.temporal`

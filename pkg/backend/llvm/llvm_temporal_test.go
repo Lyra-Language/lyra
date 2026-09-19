@@ -308,3 +308,56 @@ let main = () -> void => println("${now_plain_date_time()}")
 		}
 	}
 }
+
+// `PlainTime` arithmetic wraps at midnight and `until` never does; `Duration` arithmetic
+// refuses the calendar units, which have no length without a date, and balances up to the
+// larger of the two largest units written — Temporal's rule, so `PT90M + PT30M` stays in
+// minutes while `PT1H + PT90M` is `PT2H30M` (09/19).
+func TestExec_PlainTimeAndDurationArithmetic(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+import std.temporal.{
+  PlainTime, Duration, TimeUnit, parse_plain_time, parse_duration, compare_durations,
+  duration, hours, minutes, seconds, days, weeks, months,
+}
+let at = pure (s: string) -> PlainTime => parse_plain_time(s).unwrap_or(PlainTime(0))
+let p = pure (s: string) -> Duration => parse_duration(s).unwrap_or(duration())
+let f = pure (d: Duration) -> string =>
+  "${d.days}d${d.hours}h${d.minutes}m${d.seconds}s${d.milliseconds}ms${d.nanoseconds}ns"
+let m = pure (d: Maybe<Duration>) -> string => match d { Some x => f(x), None => "none" }
+let o = pure (x: Maybe<Ordering>) -> string => match x {
+  Some(Less) => "<", Some(Equal) => "=", Some(Greater) => ">", None => "none",
+}
+let tot = pure (x: Maybe<f64>) -> string => match x { Some v => "${v}", None => "none" }
+let main = () -> void => {
+  // add wraps both ways; days and calendar units are ignored.
+  let late = at("23:30");
+  println("${late.add(hours(1))} ${at("00:15").subtract(minutes(30))} ${late.add(days(3))} ${late.add(hours(-48))} ${at("12:00").add(p("PT0.5S"))}");
+  // until is hours down, never wraps, and since is its negation.
+  println("${f(at("09:00").until(at("17:45:30.25")))} ${f(at("23:00").until(at("01:00")))} ${f(at("09:00").since(at("17:45")))}");
+  // Duration.add balances to the larger largest unit, and a day is 24 hours.
+  println("${m(p("PT1H").add(p("PT90M")))} ${m(p("PT90M").add(p("PT30M")))} ${m(p("P1D").add(hours(30)))} ${m(duration().add(duration()))}");
+  // Signs: every field takes the whole's sign; subtract is add of the negation.
+  println("${m(hours(1).subtract(p("PT90M")))} ${m(p("PT1H30M").subtract(p("PT1H30M")))}");
+  // Calendar units are refused.
+  println("${m(months(1).add(days(1)))} ${m(days(1).add(weeks(1)))}");
+  // compare: exact lengths; calendar units only when identical.
+  println("${o(compare_durations(p("PT90M"), p("PT1H30M")))} ${o(compare_durations(hours(25), days(1)))} ${o(compare_durations(minutes(-1), duration()))} ${o(compare_durations(months(1), months(1)))} ${o(compare_durations(months(1), days(30)))}");
+  // total counts in a unit, fraction included.
+  println("${tot(p("PT1H30M").total(Hours))} ${tot(p("P1DT12H").total(Days))} ${tot(p("PT1.5S").total(Milliseconds))} ${tot(minutes(-90).total(Hours))} ${tot(weeks(1).total(Days))}");
+}
+`
+	want := strings.Join([]string{
+		"00:30:00 23:45:00 23:30:00 23:30:00 12:00:00.5",
+		"0d8h45m30s250ms0ns 0d-22h0m0s0ms0ns 0d-8h-45m0s0ms0ns",
+		"0d2h30m0s0ms0ns 0d0h120m0s0ms0ns 2d6h0m0s0ms0ns 0d0h0m0s0ms0ns",
+		"0d0h-30m0s0ms0ns 0d0h0m0s0ms0ns",
+		"none none",
+		"= > < = none",
+		"1.5 1.5 1500 -1.5 none",
+	}, "\n")
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("PlainTime/Duration arithmetic =\n%s\nwant\n%s", got, want)
+	}
+}

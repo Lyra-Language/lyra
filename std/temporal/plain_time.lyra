@@ -43,6 +43,31 @@ pub let minute = pure (self: PlainTime) -> i64 => i64(self) / NS_PER_MINUTE % 60
 /// The second, 0 to 59.
 pub let second = pure (self: PlainTime) -> i64 => i64(self) / NS_PER_SECOND % 60
 
+/// This time moved by `amount`, **wrapping at midnight** — Temporal's `PlainTime.add`.
+///
+/// A time has no date to carry a day into, so 23:30 plus an hour is 00:30 and the day is
+/// dropped; the calendar units, days included, have nothing to act on and are ignored, as
+/// Temporal ignores them. Add to a `PlainDateTime` when the day matters.
+///
+/// ```
+/// let ends = starts.add(minutes(45))
+/// ```
+pub let add = pure (self: PlainTime, amount: Duration) -> PlainTime =>
+  PlainTime(i64((i128(i64(self)) + clock_nanoseconds(amount)) %% i128(NS_PER_DAY)))
+
+/// This time moved back by `amount`, wrapping at midnight: `add` of its negation.
+pub let subtract = pure (self: PlainTime, amount: Duration) -> PlainTime => self.add(amount.negated())
+
+/// The time from this time to `other` on the same day — Temporal's `until`, with its
+/// default largest unit for a time: **hours down to nanoseconds**, balanced. Negative when
+/// `other` is earlier; it never wraps, so 23:00 until 01:00 is `-22h`, not `2h` — which of
+/// the two was meant takes a date to say.
+pub let until = pure (self: PlainTime, other: PlainTime) -> Duration =>
+  balanced_to(i128(i64(other)) - i128(i64(self)), 1)
+
+/// The time from `other` to this time: `until` the other way round.
+pub let since = pure (self: PlainTime, other: PlainTime) -> Duration => other.until(self)
+
 /// Times order by when in the day they are.
 impl Ord for PlainTime {
   compare = pure (self, other) => i64(self) <=> i64(other)

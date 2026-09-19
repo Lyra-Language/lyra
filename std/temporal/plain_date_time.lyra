@@ -69,7 +69,7 @@ pub let until = pure (self: PlainDateTime, other: PlainDateTime) -> Duration => 
   let day_ns = i128(NS_PER_DAY)
   let from = i128(i64(self.date)) * day_ns + i128(i64(self.time))
   let to = i128(i64(other.date)) * day_ns + i128(i64(other.time))
-  balanced(to - from)
+  balanced_to(to - from, 0)
 }
 
 /// The time from `other` to this date-time: `until` the other way round.
@@ -86,28 +86,4 @@ impl Ord for PlainDateTime {
 /// A date-time as ISO 8601: `2026-09-18T14:30:00`, the date and time as each writes itself.
 impl Show for PlainDateTime {
   show = pure (self) => "${self.date}T${self.time}"
-}
-
-// ---------------------------------------------------------------------------------------
-
-/// A signed nanosecond count as days down to nanoseconds, every field carrying the sign of
-/// the whole.
-///
-/// The magnitude is split and the sign put back on each field, rather than splitting the
-/// signed value, because truncating and flooring disagree about a negative remainder and
-/// either answer would give the fields mixed signs.
-let balanced = pure (ns: i128) -> Duration => {
-  let negative = ns < i128(0)
-  let m = if negative { i128(0) - ns } else { ns }
-  let sign = if negative { 0 - 1 } else { 1 }
-  let base = duration()
-  Duration { base |
-    days: sign * i64(m / i128(NS_PER_DAY)),
-    hours: sign * i64(m / i128(NS_PER_HOUR) % i128(24)),
-    minutes: sign * i64(m / i128(NS_PER_MINUTE) % i128(60)),
-    seconds: sign * i64(m / i128(NS_PER_SECOND) % i128(60)),
-    milliseconds: sign * i64(m / i128(1000000) % i128(1000)),
-    microseconds: sign * i64(m / i128(1000) % i128(1000)),
-    nanoseconds: sign * i64(m % i128(1000)),
-  }
 }

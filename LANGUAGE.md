@@ -316,6 +316,16 @@ by slice against `examples/calendar`; what exists is what that program has neede
   anything but seconds.
 - **`now_plain_date_time()`** — `Now.plainDateTimeISO()`, the clock plus the local offset;
   `today()` is its date. A wall-clock reading, so it can go backwards across a DST change.
+- **`PlainTime` arithmetic**: `add`/`subtract` **wrap at midnight** and ignore the calendar
+  units, days included (a time has no date to carry into); `until`/`since` never wrap and
+  balance **hours down to nanoseconds** (23:00 until 01:00 is `-22h`).
+- **`Duration` arithmetic** — `add`/`subtract -> Maybe<Duration>`, `None` when either side
+  has years, months or weeks (their length needs a date); a day is 24 hours. The sum is
+  balanced up to the **larger of the two largest units written**, Temporal's rule:
+  `PT90M + PT30M` is `PT120M`, `PT1H + PT90M` is `PT2H30M`.
+  `compare_durations(a, b) -> Maybe<Ordering>` — a function, not `Ord`, since the order is
+  partial; field-identical durations are `Equal` even with calendar units.
+  `total(unit: TimeUnit) -> Maybe<f64>`, `TimeUnit` being `Days` down to `Nanoseconds`.
 - Not built: `Instant`, `ZonedDateTime` and zone rules, a `reject` overflow on arithmetic,
   rounding, sub-second accessors, and month and weekday **names** (Temporal leaves those to
   `Intl`; the calendar holds its own).

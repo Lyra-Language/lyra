@@ -202,6 +202,74 @@ pub let negated = pure (self: Duration) -> Duration => Duration {
   microseconds: 0 - self.microseconds, nanoseconds: 0 - self.nanoseconds,
 }
 
+/// A unit of exact time, largest first — Temporal's unit strings from `"day"` down, for
+/// `total` to count in. **The calendar units are not here**: a year, month or week has no
+/// fixed length without a date to measure from, and Temporal refuses them there too.
+pub data TimeUnit =
+  Days
+  | Hours
+  | Minutes
+  | Seconds
+  | Milliseconds
+  | Microseconds
+  | Nanoseconds
+
+/// The sum of two durations — Temporal's `add` — or `None` when either carries years,
+/// months or weeks.
+///
+/// **Calendar units are refused** because their sum needs a date to mean anything: a month
+/// and 30 days is 58 days from 1 February and 61 from 1 July. Temporal throws there, and
+/// `None` is this module's throw. A day is exactly 24 hours, as Temporal counts one
+/// without a date.
+///
+/// The result is **balanced up to the larger of the two largest units written**: `PT1H`
+/// plus `PT90M` is `PT2H30M`, while `PT90M` plus `PT30M` is `PT120M`, since neither side
+/// mentioned hours. Every field carries the sign of the whole.
+///
+/// ```
+/// let Some(both) = travel.add(meeting) else { return }
+/// ```
+pub let add = pure (self: Duration, other: Duration) -> Maybe<Duration> => {
+  if has_calendar_units(self) || has_calendar_units(other) { return None }
+  let largest = min(largest_rank(self), largest_rank(other))
+  Some(balanced_to(exact_nanoseconds(self) + exact_nanoseconds(other), largest))
+}
+
+/// This duration less `other`: `add` of its negation, so the two cannot disagree.
+pub let subtract = pure (self: Duration, other: Duration) -> Maybe<Duration> => self.add(other.negated())
+
+/// Which of two durations is longer — Temporal's `Duration.compare` — or `None` when
+/// either carries years, months or weeks and they are not field for field the same.
+///
+/// A bare function, not `Ord`, because the order is **partial**: whether a month is longer
+/// than 30 days depends on the month. `PT90M` and `PT1H30M` compare `Equal` — the same
+/// length, written differently — and a negative duration is shorter than zero.
+///
+/// ```
+/// if compare_durations(elapsed, limit) == Some(Greater) { … }
+/// ```
+pub let compare_durations = pure (a: Duration, b: Duration) -> Maybe<Ordering> => {
+  if a == b { return Some(Equal) }
+  if has_calendar_units(a) || has_calendar_units(b) { return None }
+  Some(exact_nanoseconds(a) <=> exact_nanoseconds(b))
+}
+
+/// This duration counted in `unit`, fraction included — Temporal's `total` — or `None`
+/// when it carries years, months or weeks, which have no fixed length to count.
+///
+/// ```
+/// let h = minutes(90).total(Hours)   // Some(1.5)
+/// ```
+///
+/// The whole units and the remainder are converted separately, so a total below 2⁵³ of
+/// its unit is exact in the integer part however many nanoseconds the duration holds.
+pub let total = pure (self: Duration, unit: TimeUnit) -> Maybe<f64> => {
+  if has_calendar_units(self) { return None }
+  let ns = exact_nanoseconds(self)
+  let size = rank_nanoseconds(unit_rank(unit))
+  Some(f64(ns / size) + f64(ns % size) / f64(size))
+}
+
 /// The clock fields as one count of nanoseconds, in `i128`: each field is an `i64`, and
 /// their total need not fit in one. Shared by `PlainDate.add`, which counts it in whole
 /// days, and `PlainDateTime.add`, which carries it into the time.
@@ -228,4 +296,63 @@ let date_rank = pure (unit: rune) -> i64 => match unit {
 /// A clock unit's place in `T…` order, or -1 for a letter that is not one.
 let clock_rank_of = pure (unit: rune) -> i64 => match unit {
   'H' => 1, 'M' => 2, 'S' => 3, _ => 0 - 1,
+}
+
+/// Whether a duration has a unit whose length depends on the date it meets.
+let has_calendar_units = pure (d: Duration) -> bool => d.years != 0 || d.months != 0 || d.weeks != 0
+
+/// The days and clock fields as one count of nanoseconds, a day being 24 hours.
+let exact_nanoseconds = pure (d: Duration) -> i128 => i128(d.days) * i128(NS_PER_DAY) + clock_nanoseconds(d)
+
+/// The rank of a duration's largest nonzero unit from days down — Temporal's default
+/// largest unit — or nanoseconds for the zero duration.
+let largest_rank = pure (d: Duration) -> i64 => {
+  if d.days != 0 { return 0 }
+  if d.hours != 0 { return 1 }
+  if d.minutes != 0 { return 2 }
+  if d.seconds != 0 { return 3 }
+  if d.milliseconds != 0 { return 4 }
+  if d.microseconds != 0 { return 5 }
+  6
+}
+
+/// A `TimeUnit`'s rank, 0 for days to 6 for nanoseconds: the order `balanced_to` fills in.
+let unit_rank = pure (unit: TimeUnit) -> i64 => match unit {
+  Days => 0, Hours => 1, Minutes => 2, Seconds => 3, Milliseconds => 4, Microseconds => 5,
+  Nanoseconds => 6,
+}
+
+/// The length of the unit at `rank`, in nanoseconds.
+let rank_nanoseconds = pure (rank: i64) -> i128 => match rank {
+  0 => i128(NS_PER_DAY),
+  1 => i128(NS_PER_HOUR),
+  2 => i128(NS_PER_MINUTE),
+  3 => i128(NS_PER_SECOND),
+  4 => i128(1000000),
+  5 => i128(1000),
+  _ => i128(1),
+}
+
+/// A signed nanosecond count as a duration whose largest unit is the one at `largest`
+/// (0 for days), each smaller field under the next — never 25 hours below a day, never 90
+/// minutes below an hour — and every field carrying the sign of the whole.
+///
+/// The magnitude is split and the sign put back on each field, rather than splitting the
+/// signed value, because truncating and flooring disagree about a negative remainder and
+/// either answer would give the fields mixed signs.
+let balanced_to = pure (ns: i128, largest: i64) -> Duration => {
+  let negative = ns < i128(0)
+  var rest = if negative { i128(0) - ns } else { ns }
+  let sign = if negative { 0 - 1 } else { 1 }
+  var fields = [0, 0, 0, 0, 0, 0, 0]
+  for rank in largest..<7 {
+    let size = rank_nanoseconds(rank)
+    fields[rank] = sign * i64(rest / size)
+    rest = rest % size
+  }
+  let base = duration()
+  Duration { base |
+    days: fields[0], hours: fields[1], minutes: fields[2], seconds: fields[3],
+    milliseconds: fields[4], microseconds: fields[5], nanoseconds: fields[6],
+  }
 }

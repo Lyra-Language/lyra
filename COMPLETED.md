@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 09/19/26 — `PlainTime` arithmetic and `Duration` add/compare/total
+
+Filled in ahead of the calendar rather than by it, so each is shaped strictly after
+Temporal, and each departure is one Temporal would make with Lyra's tools:
+
+- **`Duration.add`/`subtract` answer `Maybe`, and `None` for years, months or weeks.**
+  Temporal throws there because the sum needs a date: a month and 30 days is 58 days from
+  1 February and 61 from 1 July. `None` is this module's throw. A day is 24 hours, as
+  Temporal counts one without a date.
+- **The sum is balanced up to the larger of the two largest units *written*** —
+  Temporal's `DefaultTemporalLargestUnit` — so `PT90M + PT30M` is `PT120M` and
+  `PT1H + PT90M` is `PT2H30M`. Surprising, but it is Temporal's answer and the one a
+  program ported from JavaScript expects.
+- **Comparison is `compare_durations(a, b) -> Maybe<Ordering>`, not `Ord`**: the order
+  is partial (is a month longer than 30 days?), and `Ord` is total. Field-identical
+  durations compare `Equal` even with calendar units, as in Temporal.
+- **`total(unit)` takes a new `TimeUnit`** (days down to nanoseconds). The calendar units
+  are left out of the type, not refused at run time, since without a date they can never
+  answer; a duration *carrying* one still answers `None`.
+- **`PlainTime.add` wraps at midnight and ignores the calendar units, days included;
+  `until` never wraps** (23:00 until 01:00 is `-22h`) and balances from hours down.
+- `PlainDateTime`'s private `balanced` became `balanced_to(ns, largest)` in
+  `duration.lyra`, shared by all three: one place decides that every field carries the
+  sign of the whole.
+
 ### 09/19/26 — the `split` guard timed the wrong thing, and CI said so
 
 `TestExec_SplitIsNotQuadratic` failed on CI's first run after the early-return fix: "4000
