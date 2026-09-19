@@ -51,6 +51,15 @@ fires: against the prelude from before the linear rewrite it measures 3.4 s agai
 said "if it ever flakes, the fix is bigger input sizes"; measuring the call instead is the
 better fix, because bigger sizes would have made a regression take minutes to report.
 
+**It flaked again the same day**, locally under a loaded `go test ./...`: 2.4 ms against
+8.4 ms, 3.5. Timing the call had removed one noise source but not the real weakness, **the
+sizes were too close**: doubling gives linear 2 and quadratic 4.0, so a bound of 3 sat 1.5×
+from linear. The sizes are now **500 against 8000 lines** — sixteen times — where linear
+measures 15.8–16.2 on macOS (idle and under the full parallel suite) and 17 on Linux, the
+quadratic prelude 214, and the bound is 64, 4× from each. The rounds **alternate** the two
+sizes so both see the same load, and stop once a second is spent, which answers the worry
+above about bigger sizes: the quadratic prelude fails after one round, in 17 s.
+
 ### 09/18/26 — a `return` releases what the statements around it still held
 
 `if let Some(w) = bag.first_of() { return 0 }` leaked the string on every early exit, and

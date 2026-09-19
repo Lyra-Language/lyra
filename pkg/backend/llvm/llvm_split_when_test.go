@@ -155,50 +155,62 @@ let main = () -> void => {
 // again to cut the part out. 4000 lines took 3 s and 8000 took 12 s; linear, they take a
 // millisecond or two, and `lines` — so every line-oriented program — was quadratic with it.
 //
-// The assertion is a **ratio, not a wall-clock bound**, and it is **timed inside the
-// program, around `split` alone, best of seven**. The first version timed the whole
-// process from Go and flaked on CI (09/19): at a few milliseconds the process's own startup
-// on a shared runner dominates, and one run measured 8.6 ms against 39 ms — a "ratio" of
-// 4.6 on code that is linear, where the quadratic version took seconds. Timing the call
-// itself leaves out the loader and the input's construction, and the minimum of several
-// runs leaves out a runner's one-off stalls. Linear gives ~2; the old code gave 4.0; 3
-// separates them.
+// The assertion is a **ratio, not a wall-clock bound**, timed **inside the program**
+// around `split` alone, best of several rounds. Two flakes shaped it:
+//
+//   - timing the whole process from Go (09/19) let startup on a shared runner dominate:
+//     8.6 ms against 39 ms, a "ratio" of 4.6 on linear code;
+//   - timing in-process at 4000 against 8000 lines still failed under a loaded
+//     `go test ./...` (3.5), because the sizes were too close — linear gives 2 and the
+//     quadratic code gave 4.0, so a bound of 3 left noise a margin of 1.5×.
+//
+// So the sizes are **500 against 8000 lines, sixteen times as many**: linear gives ~16 and
+// quadratic ~256, and a bound of 64 is 4× from each. The rounds **alternate the sizes** so
+// both see the same load, and stop once the total passes a second, so a quadratic
+// regression fails in one round of seconds rather than seven.
 func TestExec_SplitIsNotQuadratic(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
 let main = () -> void => {
   let args = program_args()
-  let n = match args[1].parse_i64() { Some(v) => v, None => 0 }
-  let text = ["lyra lyra lyra lyra lyra lyra lyra lyra"; n].join("\n")
-  var best = 0
-  var parts = 0
-  for round in 0..<7 {
-    let start = wall_clock_nanos()
-    parts = text.split("\n").len()
-    let took = wall_clock_nanos() - start
-    if round == 0 || took < best { best = took }
+  let small = text_of(match args[1].parse_i64() { Some(v) => v, None => 0 })
+  let large = text_of(match args[2].parse_i64() { Some(v) => v, None => 0 })
+  var best_small = 0
+  var best_large = 0
+  var parts_small = 0
+  var parts_large = 0
+  var spent = 0
+  for round in 0..<9 {
+    let s0 = wall_clock_nanos()
+    parts_small = small.split("\n").len()
+    let s1 = wall_clock_nanos()
+    parts_large = large.split("\n").len()
+    let s2 = wall_clock_nanos()
+    if round == 0 || s1 - s0 < best_small { best_small = s1 - s0 }
+    if round == 0 || s2 - s1 < best_large { best_large = s2 - s1 }
+    spent += s2 - s0
+    if spent > 1000000000 { break }
   }
-  println("${parts} ${best}")
+  println("${parts_small} ${parts_large} ${best_small} ${best_large}")
 }
+let text_of = pure (n: i64) -> string => ["lyra lyra lyra lyra lyra lyra lyra lyra"; n].join("\n")
 `
-	bin := preludeBinary(t, src)
-	elapsed := func(lines int) int64 {
-		out, err := exec.Command(bin, strconv.Itoa(lines)).Output()
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-		var parts int
-		var ns int64
-		if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%d %d", &parts, &ns); err != nil || parts != lines {
-			t.Fatalf("unexpected output %q for %d lines", out, lines)
-		}
-		return ns
+	const small, large = 500, 8000
+	out, err := exec.Command(preludeBinary(t, src), strconv.Itoa(small), strconv.Itoa(large)).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
 	}
-	small := elapsed(4000)
-	large := elapsed(8000)
-	if ratio := float64(large) / float64(small); ratio > 3 {
-		t.Errorf("doubling the input multiplied split's time by %.1f (want < 3); split looks quadratic again:"+
-			" 4000 lines %v, 8000 lines %v", ratio, time.Duration(small), time.Duration(large))
+	var partsSmall, partsLarge int
+	var nsSmall, nsLarge int64
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%d %d %d %d", &partsSmall, &partsLarge, &nsSmall, &nsLarge); err != nil ||
+		partsSmall != small || partsLarge != large {
+		t.Fatalf("unexpected output %q", out)
+	}
+	ratio := float64(nsLarge) / float64(max(nsSmall, 1))
+	t.Logf("%d lines %v, %d lines %v: ratio %.1f", small, time.Duration(nsSmall), large, time.Duration(nsLarge), ratio)
+	if ratio > 64 {
+		t.Errorf("16× the input took %.0f× the time (linear is ~16, want < 64); split looks quadratic again:"+
+			" %d lines %v, %d lines %v", ratio, small, time.Duration(nsSmall), large, time.Duration(nsLarge))
 	}
 }
