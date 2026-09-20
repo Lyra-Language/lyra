@@ -109,9 +109,14 @@ jobs:
       # against the code they exercise. Without it those packages read as
       # near-zero. Coverage is informational only — the profile is uploaded
       # as an artifact but does not gate the build.
+      #
+      # -v so that a passing test's `t.Logf` reaches the log: the timing guards
+      # (TestExec_SplitIsNotQuadratic) print the ratio they measured, and the
+      # runner's own numbers are the ones worth watching drift in — without -v
+      # they are visible only on the run that already failed.
       - name: Test with coverage
         working-directory: lyra
-        run: go test -coverpkg=./... -coverprofile=cover.out ./...
+        run: go test -v -coverpkg=./... -coverprofile=cover.out ./...
 
       - name: Report total coverage
         working-directory: lyra
