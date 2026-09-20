@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/19/26 — a record update's base is any postfix expression
+
+`P { make() | x: 1 }` did not parse: the base was `identifier | const_identifier`, so every
+builder bound a throwaway local first, which `std.temporal` did eleven times in one file.
+The base is now `_postfix_expr` — a call, a field, an index, a parenthesized anything.
+
+- **`_postfix_expr`, not `expression`**, because `|` is also bitwise or. A postfix form has
+  no top-level operator, so the `|` after it is the only one in question; a base that needs
+  an operator is parenthesized, which is a `_primary_expr` and so a postfix form.
+- **The remaining ambiguity is GLR's, not a precedence's**: `{ a | …` starts both an update
+  and a bitwise or inside a block, and only the text after the `|` decides — `x: 1`
+  completes the update, an operand the or. `[$.struct_update, $._math_operand]` is the
+  conflict entry; both corpus readings are pinned.
+- **It cost nothing.** STATE_COUNT is 8194 before and after, which is worth writing down
+  because the last change in this region (a struct literal as a postfix head) cost +26.
+- **The AST slot widened from `*IdentifierExpr` to `Expression`**, which deleted
+  `rewriteIdentSlot` — the two record-update bases were the "narrow slots" its comment
+  called the one place a rewrite could be silently dropped, and now there are none. The
+  collector also reads the base by its labelled field rather than by falling back to a
+  node's first named child, which had been the same node by coincidence.
+- **The risk is lifetime, not parsing**: a named base outlives the update, a call's result
+  is the statement's temporary. The update deep-retains the managed fields it keeps and the
+  temporary is released at the end of the statement, so the existing machinery was already
+  right — `TestExec_RecordUpdateBaseIsAnyPostfixExpr` is what says so, seven base shapes
+  under ASan with LeakSanitizer on Linux, each base read twice where a release placed one
+  statement early would show.
+
 ### 09/19/26 — `PlainTime` arithmetic and `Duration` add/compare/total
 
 Filled in ahead of the calendar rather than by it, so each is shaped strictly after

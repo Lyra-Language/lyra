@@ -40,8 +40,7 @@ pub let parse_plain_date_time = pure (text: string) -> Maybe<PlainDateTime> => {
 /// since a duration's clock fields are each `i64` and their total in nanoseconds need not
 /// fit.
 pub let add = pure (self: PlainDateTime, amount: Duration) -> PlainDateTime => {
-  let base = duration()
-  let calendar = Duration { base | years: amount.years, months: amount.months,
+  let calendar = Duration { duration() | years: amount.years, months: amount.months,
     weeks: amount.weeks, days: amount.days }
   let total = i128(i64(self.time)) + clock_nanoseconds(amount)
   let day_ns = i128(NS_PER_DAY)

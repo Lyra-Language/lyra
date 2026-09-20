@@ -27,16 +27,14 @@ func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	structShorthandNode := cst.Field(structBodyNode, "struct_shorthand")
 	structFieldsNode := cst.Field(structBodyNode, "struct_fields")
 
-	baseStruct := (*ast.IdentifierExpr)(nil)
+	baseStruct := ast.Expression(nil)
 	fields := []ast.StructField(nil)
 	if structUpdateNode != nil {
-		baseStructNode := cst.Field(structUpdateNode, "base")
-		if baseStructNode == nil {
+		baseStruct = collectBaseStruct(structUpdateNode, ctx)
+		if baseStruct == nil {
 			ctx.AddError(node, diag.SeverityError, "struct update must have a base struct")
 			return nil
 		}
-		expr := ctx.CollectExpr(baseStructNode)
-		baseStruct = expr.(*ast.IdentifierExpr)
 		fields = collectStructFields(structUpdateNode, ctx)
 	} else if structShorthandNode != nil {
 		fields = collectStructShorthandFields(structShorthandNode, ctx)
@@ -58,7 +56,7 @@ func collectAnonymousStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx
 	structBodyNode := cst.Field(node, "struct_body")
 
 	fields := []ast.StructField(nil)
-	var baseStructIdentifier *ast.IdentifierExpr
+	var baseStructIdentifier ast.Expression
 	if structBodyNode != nil {
 		structUpdateNode := cst.Field(structBodyNode, "struct_update")
 		structShorthandNode := cst.Field(structBodyNode, "struct_shorthand")
@@ -79,15 +77,17 @@ func collectAnonymousStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx
 	}
 }
 
-func collectBaseStruct(structUpdateNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.IdentifierExpr {
-	baseStruct := ctx.CollectExpr(structUpdateNode)
-	identifierExpr, ok := baseStruct.(*ast.IdentifierExpr)
-	if ok {
-		return identifierExpr
-	} else {
-		ctx.AddError(structUpdateNode, diag.SeverityError, "expected identifier, got %s", baseStruct.GetName())
+// The expression a record update copies from: `b` in `P { b | x: 1 }`, and since 09/19
+// any postfix form — a call, a field, an index — so this collects it like any other
+// expression. Read by the labelled field rather than by position: the CST fallback
+// recurses into a node's first named child, which happened to be the base and would go
+// on happening to be it until the rule gained a child.
+func collectBaseStruct(structUpdateNode *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression {
+	baseNode := cst.Field(structUpdateNode, "base")
+	if baseNode == nil {
 		return nil
 	}
+	return ctx.CollectExpr(baseNode)
 }
 
 func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.StructField {

@@ -41,24 +41,6 @@ func rewriteBlock(b *BlockExpr, rewrite func(Expression) Expression) {
 	}
 }
 
-// rewriteIdentSlot rewrites a slot whose static type is *IdentifierExpr rather than
-// Expression, storing the result back only if it is still an identifier.
-//
-// **The narrow slots are the one place a rewrite can be dropped**, and there are two:
-// the two BaseStruct fields (a record-update target). Each is
-// a binding's *name*, not an arbitrary expression — the grammar admits nothing else
-// there — so a callback that wants to turn one into some other node kind is asking for
-// something the AST cannot represent, and silently keeping the identifier is the only
-// available answer. Callers that care must check these slots themselves.
-func rewriteIdentSlot(slot **IdentifierExpr, rewrite func(Expression) Expression) {
-	if *slot == nil {
-		return
-	}
-	if out, ok := RewriteExpr(*slot, rewrite).(*IdentifierExpr); ok {
-		*slot = out
-	}
-}
-
 func rewriteStmtChildren(stmt Statement, rewrite func(Expression) Expression) {
 	switch s := stmt.(type) {
 	case *VarDeclStmt:
@@ -189,12 +171,12 @@ func rewriteExprChildren(expr Expression, rewrite func(Expression) Expression) {
 			e.Segments[i] = RewriteExpr(e.Segments[i], rewrite)
 		}
 	case *StructInstanceExpr:
-		rewriteIdentSlot(&e.BaseStruct, rewrite)
+		e.BaseStruct = RewriteExpr(e.BaseStruct, rewrite)
 		for i := range e.Fields {
 			e.Fields[i].Value = RewriteExpr(e.Fields[i].Value, rewrite)
 		}
 	case *AnonymousStructInstanceExpr:
-		rewriteIdentSlot(&e.BaseStruct, rewrite)
+		e.BaseStruct = RewriteExpr(e.BaseStruct, rewrite)
 		for i := range e.Fields {
 			e.Fields[i].Value = RewriteExpr(e.Fields[i].Value, rewrite)
 		}

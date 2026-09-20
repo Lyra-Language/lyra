@@ -56,58 +56,34 @@ pub struct Duration {
   nanoseconds: i64,
 }
 
-/// The empty duration — every field zero. The base for a record update when a duration
-/// needs more than one unit: `let d = duration()`, then `Duration { d | days: 1, hours: 2 }`.
-///
-/// Bound first because a record update's base must be a name: `Duration { duration() | … }`
-/// does not parse (todo.md).
+/// The empty duration — every field zero, and the base for a record update when a duration
+/// needs more than one unit: `Duration { duration() | days: 1, hours: 2 }`.
 pub let duration = pure () -> Duration => Duration {
   years: 0, months: 0, weeks: 0, days: 0, hours: 0, minutes: 0, seconds: 0,
   milliseconds: 0, microseconds: 0, nanoseconds: 0,
 }
 
 /// `n` years.
-pub let years = pure (n: i64) -> Duration => {
-  let none = duration()
-  Duration { none | years: n }
-}
+pub let years = pure (n: i64) -> Duration => Duration { duration() | years: n }
 
 /// `n` months. Added to a date, it keeps the day of the month where that day exists and
 /// clamps it to the month's last day where it does not.
-pub let months = pure (n: i64) -> Duration => {
-  let none = duration()
-  Duration { none | months: n }
-}
+pub let months = pure (n: i64) -> Duration => Duration { duration() | months: n }
 
 /// `n` weeks — exactly `7 * n` days, whatever the month.
-pub let weeks = pure (n: i64) -> Duration => {
-  let none = duration()
-  Duration { none | weeks: n }
-}
+pub let weeks = pure (n: i64) -> Duration => Duration { duration() | weeks: n }
 
 /// `n` days.
-pub let days = pure (n: i64) -> Duration => {
-  let none = duration()
-  Duration { none | days: n }
-}
+pub let days = pure (n: i64) -> Duration => Duration { duration() | days: n }
 
 /// `n` hours.
-pub let hours = pure (n: i64) -> Duration => {
-  let none = duration()
-  Duration { none | hours: n }
-}
+pub let hours = pure (n: i64) -> Duration => Duration { duration() | hours: n }
 
 /// `n` minutes.
-pub let minutes = pure (n: i64) -> Duration => {
-  let none = duration()
-  Duration { none | minutes: n }
-}
+pub let minutes = pure (n: i64) -> Duration => Duration { duration() | minutes: n }
 
 /// `n` seconds.
-pub let seconds = pure (n: i64) -> Duration => {
-  let none = duration()
-  Duration { none | seconds: n }
-}
+pub let seconds = pure (n: i64) -> Duration => Duration { duration() | seconds: n }
 
 /// The duration an ISO 8601 string names — `PT30M`, `P1DT2H`, `-P1W`, `PT1.5S` — or `None`.
 ///
@@ -350,8 +326,7 @@ let balanced_to = pure (ns: i128, largest: i64) -> Duration => {
     fields[rank] = sign * i64(rest / size)
     rest = rest % size
   }
-  let base = duration()
-  Duration { base |
+  Duration { duration() |
     days: fields[0], hours: fields[1], minutes: fields[2], seconds: fields[3],
     milliseconds: fields[4], microseconds: fields[5], nanoseconds: fields[6],
   }

@@ -108,9 +108,6 @@ Package management, versioning and separate compilation are out of scope by deci
   09/19. Next, if the calendar grows: a default events file (which forces environment
   variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
-- **[OPEN] A record update's base must be a name.** `P { make() | x: 1 }` does not parse;
-  `let b = make()` then `P { b | x: 1 }` does. A call is the natural base — `std.temporal`
-  binds a local four times over it.
 - **[OPEN] `std.tui` warns on every program that imports it**: `std/tui/event.lyra:83`
   names a local `first`, which shadows the prelude's `seq` combinator (`lyra-W001`).
   Predates 09/18; a rename.

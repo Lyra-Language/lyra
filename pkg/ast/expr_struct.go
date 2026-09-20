@@ -8,8 +8,12 @@ type StructInstanceExpr struct {
 	ExprBase
 	Name        string
 	GenericArgs []types.Type
-	BaseStruct  *IdentifierExpr // For record update syntax, the base struct being updated (e.g. `existingPlayer` in `Player { existingPlayer | health: newHealth }`)
-	Fields      []StructField
+	// The base a record update copies from — `existingPlayer` in
+	// `Player { existingPlayer | health: newHealth }`. Any postfix expression, a call
+	// included (`Duration { duration() | days: 1 }`), so it is an Expression and not
+	// an *IdentifierExpr: it was the latter until 09/19, when the grammar widened.
+	BaseStruct Expression
+	Fields     []StructField
 }
 
 func (s *StructInstanceExpr) GetName() string {
@@ -18,7 +22,7 @@ func (s *StructInstanceExpr) GetName() string {
 
 type AnonymousStructInstanceExpr struct {
 	ExprBase
-	BaseStruct *IdentifierExpr
+	BaseStruct Expression
 	Fields     []StructField
 }
 
