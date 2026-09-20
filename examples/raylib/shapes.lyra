@@ -18,27 +18,86 @@ module main
 //! learned the same lesson the same way.
 
 import bindings.raylib.{
-  init_window, close_window, should_close, set_target_fps,
-  begin_drawing, end_drawing, clear_background, elapsed,
-  Vector2, vec2, rect,
-  draw_pixel, draw_pixel_v, draw_line, draw_line_ex, draw_line_bezier, draw_line_dashed, draw_line_strip,
-  draw_circle, draw_circle_lines, draw_circle_gradient, draw_circle_sector,
-  draw_circle_sector_lines, draw_ellipse, draw_ellipse_lines, draw_ring, draw_ring_lines,
-  draw_rectangle, draw_rectangle_v, draw_rectangle_pro, draw_rectangle_lines,
-  draw_rectangle_rounded, draw_rectangle_rounded_lines, draw_rectangle_gradient,
-  draw_triangle, draw_triangle_lines, draw_triangle_fan, draw_triangle_strip,
-  draw_poly, draw_poly_lines, draw_poly_lines_ex, turns,
-  draw_spline_linear, draw_spline_basis, draw_spline_catmull_rom,
-  draw_spline_bezier_quadratic, draw_spline_bezier_cubic,
-  draw_spline_segment_linear, draw_spline_segment_basis, draw_spline_segment_catmull_rom,
-  draw_spline_segment_bezier_quadratic, draw_spline_segment_bezier_cubic,
-  spline_point_linear, spline_point_basis, spline_point_catmull_rom,
-  spline_point_bezier_quadratic, spline_point_bezier_cubic,
-  rects_overlap, circles_overlap, circle_hits_rect, circle_hits_line,
-  point_in_rect, point_in_circle, point_in_triangle, point_in_line, point_in_poly,
-  lines_intersect, collision_rect,
-  draw_text, mouse_position,
-  RAYWHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY, LIGHTGRAY,
+  init_window,
+  close_window,
+  should_close,
+  set_target_fps,
+  begin_drawing,
+  end_drawing,
+  clear_background,
+  elapsed,
+  Vector2,
+  vec2,
+  rect,
+  draw_pixel,
+  draw_pixel_v,
+  draw_line,
+  draw_line_ex,
+  draw_line_bezier,
+  draw_line_dashed,
+  draw_line_strip,
+  draw_circle,
+  draw_circle_lines,
+  draw_circle_gradient,
+  draw_circle_sector,
+  draw_circle_sector_lines,
+  draw_ellipse,
+  draw_ellipse_lines,
+  draw_ring,
+  draw_ring_lines,
+  draw_rectangle,
+  draw_rectangle_v,
+  draw_rectangle_pro,
+  draw_rectangle_lines,
+  draw_rectangle_rounded,
+  draw_rectangle_rounded_lines,
+  draw_rectangle_gradient,
+  draw_triangle,
+  draw_triangle_lines,
+  draw_triangle_fan,
+  draw_triangle_strip,
+  draw_poly,
+  draw_poly_lines,
+  draw_poly_lines_ex,
+  turns,
+  draw_spline_linear,
+  draw_spline_basis,
+  draw_spline_catmull_rom,
+  draw_spline_bezier_quadratic,
+  draw_spline_bezier_cubic,
+  draw_spline_segment_linear,
+  draw_spline_segment_basis,
+  draw_spline_segment_catmull_rom,
+  draw_spline_segment_bezier_quadratic,
+  draw_spline_segment_bezier_cubic,
+  spline_point_linear,
+  spline_point_basis,
+  spline_point_catmull_rom,
+  spline_point_bezier_quadratic,
+  spline_point_bezier_cubic,
+  rects_overlap,
+  circles_overlap,
+  circle_hits_rect,
+  circle_hits_line,
+  point_in_rect,
+  point_in_circle,
+  point_in_triangle,
+  point_in_line,
+  point_in_poly,
+  lines_intersect,
+  collision_rect,
+  draw_text,
+  mouse_position,
+  RAYWHITE,
+  BLACK,
+  RED,
+  GREEN,
+  BLUE,
+  YELLOW,
+  ORANGE,
+  PURPLE,
+  DARKGRAY,
+  LIGHTGRAY,
 }
 import std.math.{ TAU }
 
@@ -104,8 +163,16 @@ let run_checks = () -> u8 => {
   failures += check_case("circle_hits_line, clear",
     circle_hits_line(vec2(5.0, 50.0), 2.0, vec2(0.0, 0.0), vec2(10.0, 0.0)), false)
 
-  failures += check_case("point_in_rect, inside", point_in_rect(vec2(5.0, 5.0), unit), true)
-  failures += check_case("point_in_rect, outside", point_in_rect(vec2(50.0, 5.0), unit), false)
+  failures += check_case(
+    "point_in_rect, inside",
+    point_in_rect(vec2(5.0, 5.0), unit),
+    true
+  )
+  failures += check_case(
+    "point_in_rect, outside",
+    point_in_rect(vec2(50.0, 5.0), unit),
+    false
+  )
 
   failures += check_case("point_in_circle, inside",
     point_in_circle(vec2(1.0, 1.0), vec2(0.0, 0.0), 5.0), true)
@@ -126,23 +193,46 @@ let run_checks = () -> u8 => {
   failures += check_case("point_in_line, off it",
     point_in_line(vec2(5.0, 9.0), vec2(0.0, 0.0), vec2(10.0, 0.0), 1), false)
 
-  let square: []Vector2 = [vec2(0.0, 0.0), vec2(10.0, 0.0), vec2(10.0, 10.0), vec2(0.0, 10.0)]
-  failures += check_case("point_in_poly, inside", point_in_poly(vec2(5.0, 5.0), square), true)
-  failures += check_case("point_in_poly, outside", point_in_poly(vec2(50.0, 5.0), square), false)
+  let square: []Vector2 = [
+    vec2(0.0, 0.0),
+    vec2(10.0, 0.0),
+    vec2(10.0, 10.0),
+    vec2(0.0, 10.0)
+  ]
+  failures += check_case(
+    "point_in_poly, inside",
+    point_in_poly(vec2(5.0, 5.0), square),
+    true
+  )
+  failures += check_case(
+    "point_in_poly, outside",
+    point_in_poly(vec2(50.0, 5.0), square),
+    false
+  )
   // The empty-list guard: the binding answers false where `data()` would trap.
   let none_at_all: []Vector2 = []
   failures += check_case("point_in_poly, empty list is false",
     point_in_poly(vec2(5.0, 5.0), none_at_all), false)
 
   // The diagonals of a 10x10 square cross at its centre.
-  match lines_intersect(vec2(0.0, 0.0), vec2(10.0, 10.0), vec2(0.0, 10.0), vec2(10.0, 0.0)) {
+  match lines_intersect(
+    vec2(0.0, 0.0),
+    vec2(10.0, 10.0),
+    vec2(0.0, 10.0),
+    vec2(10.0, 0.0)
+  ) {
     Some(hit) => {
       failures += check_case("lines_intersect x", near(hit.x, 5.0), true)
       failures += check_case("lines_intersect y", near(hit.y, 5.0), true)
     },
     None => { failures += check_case("lines_intersect, crossing", false, true) },
   }
-  match lines_intersect(vec2(0.0, 0.0), vec2(10.0, 0.0), vec2(0.0, 5.0), vec2(10.0, 5.0)) {
+  match lines_intersect(
+    vec2(0.0, 0.0),
+    vec2(10.0, 0.0),
+    vec2(0.0, 5.0),
+    vec2(10.0, 5.0)
+  ) {
     Some(_) => { failures += check_case("lines_intersect, parallel", true, false) },
     None => { failures += check_case("lines_intersect, parallel is None", true, true) },
   }
@@ -285,19 +375,35 @@ let draw_rects_panel = (x: f32, y: f32, t: f32) -> void => {
   draw_rectangle_lines(rect(x + 160.0, y, 60.0, 40.0), 3.0, BLUE)
 
   draw_rectangle_rounded(rect(x, y + 60.0, 60.0, 40.0), 0.5, 8, PURPLE)
-  draw_rectangle_rounded_lines(rect(x + 80.0, y + 60.0, 60.0, 40.0), 0.5, 8, 3.0, DARKGRAY)
+  draw_rectangle_rounded_lines(
+    rect(x + 80.0, y + 60.0, 60.0, 40.0),
+    0.5,
+    8,
+    3.0,
+    DARKGRAY
+  )
 
   draw_rectangle_gradient(rect(x, y + 120.0, 140.0, 50.0), RED, YELLOW, GREEN, BLUE)
 
   // Rotated about its own centre, so it spins in place rather than orbiting.
   let spin = turns(wrap01(t * 0.1))
-  draw_rectangle_pro(rect(x + 190.0, y + 145.0, 50.0, 50.0), vec2(25.0, 25.0), spin, ORANGE)
+  draw_rectangle_pro(
+    rect(x + 190.0, y + 145.0, 50.0, 50.0),
+    vec2(25.0, 25.0),
+    spin,
+    ORANGE
+  )
 }
 
 let draw_polys_panel = (x: f32, y: f32, t: f32) -> void => {
   // Counter-clockwise, which `draw_triangle` requires and silently culls without.
   draw_triangle(vec2(x + 40.0, y), vec2(x, y + 60.0), vec2(x + 80.0, y + 60.0), RED)
-  draw_triangle_lines(vec2(x + 140.0, y), vec2(x + 100.0, y + 60.0), vec2(x + 180.0, y + 60.0), BLUE)
+  draw_triangle_lines(
+    vec2(x + 140.0, y),
+    vec2(x + 100.0, y + 60.0),
+    vec2(x + 180.0, y + 60.0),
+    BLUE
+  )
 
   // **The rim runs anticlockwise *on screen*, which means subtracting the sine.** raylib
   // culls a clockwise triangle, and screen y grows downward — so the textbook
@@ -331,13 +437,20 @@ let draw_polys_panel = (x: f32, y: f32, t: f32) -> void => {
 
 let draw_splines_panel = (x: f32, y: f32, t: f32) -> void => {
   let control: []Vector2 = [
-    vec2(x, y + 60.0), vec2(x + 70.0, y), vec2(x + 140.0, y + 90.0), vec2(x + 210.0, y + 20.0),
+    vec2(x, y + 60.0),
+    vec2(x + 70.0, y),
+    vec2(x + 140.0, y + 90.0),
+    vec2(x + 210.0, y + 20.0),
   ]
   draw_spline_linear(control, 2.0, LIGHTGRAY)
   draw_spline_basis(control, 3.0, BLUE)
   draw_spline_catmull_rom(control, 3.0, RED)
 
-  let quad_pts: []Vector2 = [vec2(x, y + 130.0), vec2(x + 100.0, y + 100.0), vec2(x + 200.0, y + 130.0)]
+  let quad_pts: []Vector2 = [
+    vec2(x, y + 130.0),
+    vec2(x + 100.0, y + 100.0),
+    vec2(x + 200.0, y + 130.0)
+  ]
   draw_spline_bezier_quadratic(quad_pts, 3.0, GREEN)
   draw_spline_bezier_cubic(control, 2.0, PURPLE)
 
@@ -379,8 +492,17 @@ let draw_collision_panel = (x: f32, y: f32, cursor: Vector2) -> void => {
   let line_b = vec2(x + 640.0, y + 70.0)
 
   draw_rectangle(box, if point_in_rect(cursor, box) { GREEN } else { LIGHTGRAY })
-  draw_circle(circle_at, 40.0, if point_in_circle(cursor, circle_at, 40.0) { GREEN } else { LIGHTGRAY })
-  draw_triangle(t1, t2, t3, if point_in_triangle(cursor, t1, t2, t3) { GREEN } else { LIGHTGRAY })
+  draw_circle(
+    circle_at,
+    40.0,
+    if point_in_circle(cursor, circle_at, 40.0) { GREEN } else { LIGHTGRAY }
+  )
+  draw_triangle(
+    t1,
+    t2,
+    t3,
+    if point_in_triangle(cursor, t1, t2, t3) { GREEN } else { LIGHTGRAY }
+  )
   draw_poly(poly_at, 4, 42.0, 45.0,
     if point_in_poly(cursor, poly) { GREEN } else { LIGHTGRAY })
   draw_line_ex(line_a, line_b, 6.0,
@@ -390,7 +512,11 @@ let draw_collision_panel = (x: f32, y: f32, cursor: Vector2) -> void => {
   // the pair that a game actually reaches for.
   let touching_box = circle_hits_rect(cursor, 18.0, box)
   let touching_line = circle_hits_line(cursor, 18.0, line_a, line_b)
-  draw_circle_lines(cursor, 18.0, if touching_box || touching_line { RED } else { DARKGRAY })
+  draw_circle_lines(
+    cursor,
+    18.0,
+    if touching_box || touching_line { RED } else { DARKGRAY }
+  )
 
   // A fixed rectangle and one that follows the cursor: their overlap is drawn where it is.
   let follower = rect(cursor.x - 30.0, cursor.y - 20.0, 60.0, 40.0)
@@ -404,7 +530,12 @@ let draw_collision_panel = (x: f32, y: f32, cursor: Vector2) -> void => {
   let diag_a = vec2(x + 520.0, y + 70.0)
   let diag_b = vec2(x + 640.0, y + 10.0)
   draw_line(diag_a, diag_b, DARKGRAY)
-  match lines_intersect(diag_a, diag_b, vec2(cursor.x - 40.0, cursor.y), vec2(cursor.x + 40.0, cursor.y)) {
+  match lines_intersect(
+    diag_a,
+    diag_b,
+    vec2(cursor.x - 40.0, cursor.y),
+    vec2(cursor.x + 40.0, cursor.y)
+  ) {
     Some(hit) => draw_circle(hit, 6.0, RED),
     None => {},
   }

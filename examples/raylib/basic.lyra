@@ -62,8 +62,16 @@ let main = () -> void => {
 
     // A crosshair on the cursor, then a box around it — `Vector2` and `Rectangle` both
     // cross by value, and both are just structs here.
-    draw_line(Vector2 { x: m.x - 12.0, y: m.y }, Vector2 { x: m.x + 12.0, y: m.y }, DARKGRAY)
-    draw_line(Vector2 { x: m.x, y: m.y - 12.0 }, Vector2 { x: m.x, y: m.y + 12.0 }, DARKGRAY)
+    draw_line(
+      Vector2 { x: m.x - 12.0, y: m.y },
+      Vector2 { x: m.x + 12.0, y: m.y },
+      DARKGRAY
+    )
+    draw_line(
+      Vector2 { x: m.x, y: m.y - 12.0 },
+      Vector2 { x: m.x, y: m.y + 12.0 },
+      DARKGRAY
+    )
     draw_rectangle(
       Rectangle { x: m.x - 34.0, y: m.y - 24.0, width: 68.0, height: 48.0 },
       rgba(60, 60, 90, 40),

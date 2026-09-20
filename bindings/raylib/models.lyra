@@ -200,25 +200,44 @@ pub let draw_model = (model: Model, position: Vector3, scale: f32, tint: Color) 
   unsafe { rl_draw_model(model, position, scale, tint) }
 
 /// Draw a model rotated about an axis and scaled per axis.
-pub let draw_model_ex =
-  (model: Model, position: Vector3, axis: Vector3, angle: Degrees, scale: Vector3,
-  tint: Color) -> void =>
-    unsafe { rl_draw_model_ex(model, position, axis, f32(angle), scale, tint) }
+pub let draw_model_ex = (
+  model: Model,
+  position: Vector3,
+  axis: Vector3,
+  angle: Degrees,
+  scale: Vector3,
+  tint: Color
+) -> void =>
+  unsafe { rl_draw_model_ex(model, position, axis, f32(angle), scale, tint) }
 
-pub let draw_model_wires = (model: Model, position: Vector3, scale: f32, tint: Color) -> void =>
+pub let draw_model_wires = (
+  model: Model,
+  position: Vector3,
+  scale: f32,
+  tint: Color
+) -> void =>
   unsafe { rl_draw_model_wires(model, position, scale, tint) }
 
-pub let draw_model_wires_ex =
-  (model: Model, position: Vector3, axis: Vector3, angle: Degrees, scale: Vector3,
-  tint: Color) -> void =>
-    unsafe { rl_draw_model_wires_ex(model, position, axis, f32(angle), scale, tint) }
+pub let draw_model_wires_ex = (
+  model: Model,
+  position: Vector3,
+  axis: Vector3,
+  angle: Degrees,
+  scale: Vector3,
+  tint: Color
+) -> void =>
+  unsafe { rl_draw_model_wires_ex(model, position, axis, f32(angle), scale, tint) }
 
 /// A bounding box's edges — for seeing what [model_bounding_box] actually answered.
 pub let draw_bounding_box = (box: BoundingBox, color: Color) -> void =>
   unsafe { rl_draw_bounding_box(box, color) }
 
 /// Draw one of the model's meshes with a different one of its materials.
-pub let set_model_mesh_material = (self: mut Model, mesh_id: i32, material_id: i32) -> void =>
+pub let set_model_mesh_material = (
+  self: mut Model,
+  mesh_id: i32,
+  material_id: i32
+) -> void =>
   unsafe { rl_set_model_mesh_material(&mut self, mesh_id, material_id) }
 
 // ---------------------------------------------------------------------------------------
@@ -232,15 +251,28 @@ pub let gen_mesh_poly = (sides: i32, radius: f32) -> Maybe<Mesh> =>
   if window_ready() { Some(unsafe { rl_gen_mesh_poly(sides, radius) }) } else { None }
 
 /// A flat plane in the XZ plane, subdivided `res_x` by `res_z`.
-pub let gen_mesh_plane = (width: f32, length: f32, res_x: i32, res_z: i32) -> Maybe<Mesh> =>
+pub let gen_mesh_plane = (
+  width: f32,
+  length: f32,
+  res_x: i32,
+  res_z: i32
+) -> Maybe<Mesh> =>
   if window_ready() { Some(unsafe { rl_gen_mesh_plane(width, length, res_x, res_z) }) }
   else { None }
 
 pub let gen_mesh_cube = (width: f32, height: f32, length: f32) -> Maybe<Mesh> =>
-  if window_ready() { Some(unsafe { rl_gen_mesh_cube(width, height, length) }) } else { None }
+  if window_ready() { Some(unsafe { rl_gen_mesh_cube(
+    width,
+    height,
+    length
+  ) }) } else { None }
 
 pub let gen_mesh_sphere = (radius: f32, rings: i32, slices: i32) -> Maybe<Mesh> =>
-  if window_ready() { Some(unsafe { rl_gen_mesh_sphere(radius, rings, slices) }) } else { None }
+  if window_ready() { Some(unsafe { rl_gen_mesh_sphere(
+    radius,
+    rings,
+    slices
+  ) }) } else { None }
 
 pub let gen_mesh_hemisphere = (radius: f32, rings: i32, slices: i32) -> Maybe<Mesh> =>
   if window_ready() { Some(unsafe { rl_gen_mesh_hemisphere(radius, rings, slices) }) }
@@ -251,26 +283,46 @@ pub let gen_mesh_cylinder = (radius: f32, height: f32, slices: i32) -> Maybe<Mes
   else { None }
 
 pub let gen_mesh_cone = (radius: f32, height: f32, slices: i32) -> Maybe<Mesh> =>
-  if window_ready() { Some(unsafe { rl_gen_mesh_cone(radius, height, slices) }) } else { None }
+  if window_ready() { Some(unsafe { rl_gen_mesh_cone(
+    radius,
+    height,
+    slices
+  ) }) } else { None }
 
 /// A torus: `radius` to the tube's centre, `size` the tube's thickness.
-pub let gen_mesh_torus = (radius: f32, size: f32, segments: i32, sides: i32) -> Maybe<Mesh> =>
+pub let gen_mesh_torus = (
+  radius: f32,
+  size: f32,
+  segments: i32,
+  sides: i32
+) -> Maybe<Mesh> =>
   if window_ready() { Some(unsafe { rl_gen_mesh_torus(radius, size, segments, sides) }) }
   else { None }
 
 /// A trefoil knot — the classic test shape for lighting, since it has no flat face.
-pub let gen_mesh_knot = (radius: f32, size: f32, segments: i32, sides: i32) -> Maybe<Mesh> =>
+pub let gen_mesh_knot = (
+  radius: f32,
+  size: f32,
+  segments: i32,
+  sides: i32
+) -> Maybe<Mesh> =>
   if window_ready() { Some(unsafe { rl_gen_mesh_knot(radius, size, segments, sides) }) }
   else { None }
 
 /// Terrain from an image's brightness: white is `size.y` high, black is the floor.
 pub let gen_mesh_heightmap = (heightmap: Image, size: Vector3) -> Maybe<Mesh> =>
-  if window_ready() { Some(unsafe { rl_gen_mesh_heightmap(heightmap, size) }) } else { None }
+  if window_ready() { Some(unsafe { rl_gen_mesh_heightmap(
+    heightmap,
+    size
+  ) }) } else { None }
 
 /// A level from an image: every white pixel becomes a cube of `cube_size`. What the old
 /// first-person dungeon demos were built from.
 pub let gen_mesh_cubicmap = (cubicmap: Image, cube_size: Vector3) -> Maybe<Mesh> =>
-  if window_ready() { Some(unsafe { rl_gen_mesh_cubicmap(cubicmap, cube_size) }) } else { None }
+  if window_ready() { Some(unsafe { rl_gen_mesh_cubicmap(
+    cubicmap,
+    cube_size
+  ) }) } else { None }
 
 // ---------------------------------------------------------------------------------------
 // Working with a mesh
@@ -298,7 +350,12 @@ pub let upload_mesh = (self: mut Mesh, dynamic: bool) -> void => {
 /// Overwrite part of one of the mesh's GPU buffers — `index` is the attribute slot
 /// (0 positions, 1 texcoords, 2 normals, …) and `offset` is in bytes. An empty array
 /// writes nothing; so does a call with no window.
-pub let update_mesh_buffer = (mesh: Mesh, index: i32, bytes: []u8, offset: i32) -> void => {
+pub let update_mesh_buffer = (
+  mesh: Mesh,
+  index: i32,
+  bytes: []u8,
+  offset: i32
+) -> void => {
   if bytes.len() > 0 && window_ready() {
     var copy = bytes
     unsafe { rl_update_mesh_buffer(mesh, index, copy.data(), i32(copy.len()), offset) }
@@ -329,10 +386,19 @@ pub let draw_mesh = (mesh: Mesh, material: Material, transform: Matrix) -> void 
 /// screenshot of `examples/raylib/models.lyra` showed a single cube where there should
 /// have been nine. [material_supports_instancing] is the test, so a caller who needs the
 /// batching can tell whether it is getting it.
-pub let draw_mesh_instanced = (mesh: Mesh, material: Material, transforms: []Matrix) -> void => {
+pub let draw_mesh_instanced = (
+  mesh: Mesh,
+  material: Material,
+  transforms: []Matrix
+) -> void => {
   if transforms.len() == 0 { return }
   if material_supports_instancing(material) {
-    unsafe { rl_draw_mesh_instanced(mesh, material, transforms.data(), i32(transforms.len())) }
+    unsafe { rl_draw_mesh_instanced(
+      mesh,
+      material,
+      transforms.data(),
+      i32(transforms.len())
+    ) }
   } else {
     for t in transforms { draw_mesh(mesh, material, t) }
   }
@@ -407,7 +473,11 @@ pub let unload_material = (material: Material) -> void =>
   unsafe { rl_unload_material(material) }
 
 /// Put a texture in one of the material's slots — one of the `MATERIAL_MAP_*` constants.
-pub let set_material_texture = (self: mut Material, map: i32, texture: Texture2D) -> void =>
+pub let set_material_texture = (
+  self: mut Material,
+  map: i32,
+  texture: Texture2D
+) -> void =>
   unsafe { rl_set_material_texture(&mut self, map, texture) }
 
 // ---------------------------------------------------------------------------------------
@@ -434,7 +504,11 @@ pub let model_mesh_material = pure (model: Model, mesh: i64) -> i64 => {
 
 /// Whether slot `map` of material `material` holds a texture — raylib's shared 1x1 default
 /// counts, since the slot is bound either way.
-pub let model_material_has_texture = pure (model: Model, material: i64, map: i32) -> bool =>
+pub let model_material_has_texture = pure (
+  model: Model,
+  material: i64,
+  map: i32
+) -> bool =>
   unsafe { slot_at(model, material, map)^.texture.id } != 0
 
 /// The colour raylib keeps beside a slot's texture. For a glTF material the albedo slot's is
@@ -450,17 +524,24 @@ pub let model_material_value = pure (model: Model, material: i64, map: i32) -> f
 /// Put a texture in a slot of one of the model's materials. **The model takes it** — hence
 /// `own` — and [unload_model] frees it with the rest. A texture the slot held before is freed
 /// here unless another slot of the model still holds it, or it is raylib's default.
-pub let set_model_material_texture =
-  (model: Model, material: i64, map: i32, texture: own Texture2D) -> void => {
-    let slot = slot_at(model, material, map)
-    let old = unsafe { slot^.texture.id }
-    // Freed before the slot is overwritten, so the texture is released from where it is
-    // held rather than copied out into a binding first.
-    if old != 0 && old != unsafe { rl_texture_id_default() } && texture_holders(model, old) == 1 {
-      unsafe { rl_unload_texture(slot^.texture) }
-    }
-    unsafe { slot^.texture = texture }
+pub let set_model_material_texture = (
+  model: Model,
+  material: i64,
+  map: i32,
+  texture: own Texture2D
+) -> void => {
+  let slot = slot_at(model, material, map)
+  let old = unsafe { slot^.texture.id }
+  // Freed before the slot is overwritten, so the texture is released from where it is
+  // held rather than copied out into a binding first.
+  if old != 0 && old != unsafe { rl_texture_id_default() } && texture_holders(
+    model,
+    old
+  ) == 1 {
+    unsafe { rl_unload_texture(slot^.texture) }
   }
+  unsafe { slot^.texture = texture }
+}
 
 /// Draw one of the model's meshes, with its own material, at a transform of its own.
 ///
@@ -475,7 +556,12 @@ pub let draw_model_mesh = (model: Model, mesh: i64, transform: Matrix) -> void =
 
 /// [draw_model_mesh] as a wireframe in `color`, which [draw_model_wires] is for a whole
 /// model: the material's albedo colour is multiplied by `color` for the one draw and put back.
-pub let draw_model_mesh_wires = (model: Model, mesh: i64, transform: Matrix, color: Color) -> void => {
+pub let draw_model_mesh_wires = (
+  model: Model,
+  mesh: i64,
+  transform: Matrix,
+  color: Color
+) -> void => {
   let slot = slot_at(model, model_mesh_material(model, mesh), MATERIAL_MAP_ALBEDO)
   let saved = unsafe { slot^.color }
   unsafe { slot^.color = tinted(saved, color) }
@@ -495,12 +581,21 @@ let tinted = pure (c: Color, by: Color) -> Color => Color {
 /// Set what happens outside the bounds of the texture in one of a model's material slots —
 /// one of the `WRAP_*` constants. raylib's glTF loader leaves every texture repeating,
 /// whatever the file's sampler says.
-pub let set_model_material_texture_wrap = (model: Model, material: i64, map: i32, wrap: i32) -> void =>
+pub let set_model_material_texture_wrap = (
+  model: Model,
+  material: i64,
+  map: i32,
+  wrap: i32
+) -> void =>
   unsafe { rl_set_texture_wrap(slot_at(model, material, map)^.texture, wrap) }
 
 /// Draw one of the model's materials with a shader of your own. **The shader is borrowed**:
 /// [unload_model] leaves it alone, so unload it after the last model drawn with it.
-pub let set_model_material_shader = (model: Model, material: i64, shader: Shader) -> void =>
+pub let set_model_material_shader = (
+  model: Model,
+  material: i64,
+  shader: Shader
+) -> void =>
   unsafe { material_at(model, material)^.shader = shader }
 
 /// Put one of the model's materials back on raylib's default, unlit shader.
@@ -585,18 +680,29 @@ pub let animation_frame_count = pure (anims: Animations, index: i64) -> i64 =>
 
 /// Pose a model at a frame of one clip. `frame` is fractional in raylib 6.0, so a clip
 /// plays smoothly at any frame rate rather than stepping.
-pub let update_animation = (model: Model, anims: Animations, index: i64, frame: f32) -> void =>
+pub let update_animation = (
+  model: Model,
+  anims: Animations,
+  index: i64,
+  frame: f32
+) -> void =>
   unsafe { rl_update_model_animation(model, clip_at(anims, index), frame) }
 
 /// Pose a model between two clips — `blend` 0.0 is all of the first, 1.0 all of the second.
 /// What a walk turning into a run is made of.
-pub let update_animation_blend =
-  (model: Model, anims: Animations, first: i64, first_frame: f32, second: i64,
-  second_frame: f32, blend: f32) -> void =>
-    unsafe {
-      rl_update_model_animation_ex(model, clip_at(anims, first), first_frame,
-        clip_at(anims, second), second_frame, blend)
-    }
+pub let update_animation_blend = (
+  model: Model,
+  anims: Animations,
+  first: i64,
+  first_frame: f32,
+  second: i64,
+  second_frame: f32,
+  blend: f32
+) -> void =>
+  unsafe {
+    rl_update_model_animation_ex(model, clip_at(anims, first), first_frame,
+      clip_at(anims, second), second_frame, blend)
+  }
 
 /// Whether a clip was made for this model's skeleton.
 pub let animation_valid = (model: Model, anims: Animations, index: i64) -> bool =>
@@ -646,18 +752,23 @@ unsafe extern rl_unload_model: (model: Model) -> void
 @symbol("GetModelBoundingBox")
 unsafe extern rl_model_bounding_box: (model: Model) -> BoundingBox
 @symbol("DrawModel")
-unsafe extern rl_draw_model: (model: Model, position: Vector3, scale: f32, tint: Color) -> void
+unsafe extern rl_draw_model: (
+  model: Model,
+  position: Vector3,
+  scale: f32,
+  tint: Color
+) -> void
 @symbol("DrawModelEx")
 unsafe extern rl_draw_model_ex:
   (model: Model, position: Vector3, axis: Vector3, angle: f32, scale: Vector3,
-  tint: Color) -> void
+    tint: Color) -> void
 @symbol("DrawModelWires")
 unsafe extern rl_draw_model_wires:
   (model: Model, position: Vector3, scale: f32, tint: Color) -> void
 @symbol("DrawModelWiresEx")
 unsafe extern rl_draw_model_wires_ex:
   (model: Model, position: Vector3, axis: Vector3, angle: f32, scale: Vector3,
-  tint: Color) -> void
+    tint: Color) -> void
 @symbol("DrawBoundingBox")
 unsafe extern rl_draw_bounding_box: (box: BoundingBox, color: Color) -> void
 @symbol("SetModelMeshMaterial")
@@ -679,9 +790,19 @@ unsafe extern rl_gen_mesh_cylinder: (radius: f32, height: f32, slices: i32) -> M
 @symbol("GenMeshCone")
 unsafe extern rl_gen_mesh_cone: (radius: f32, height: f32, slices: i32) -> Mesh
 @symbol("GenMeshTorus")
-unsafe extern rl_gen_mesh_torus: (radius: f32, size: f32, segments: i32, sides: i32) -> Mesh
+unsafe extern rl_gen_mesh_torus: (
+  radius: f32,
+  size: f32,
+  segments: i32,
+  sides: i32
+) -> Mesh
 @symbol("GenMeshKnot")
-unsafe extern rl_gen_mesh_knot: (radius: f32, size: f32, segments: i32, sides: i32) -> Mesh
+unsafe extern rl_gen_mesh_knot: (
+  radius: f32,
+  size: f32,
+  segments: i32,
+  sides: i32
+) -> Mesh
 @symbol("GenMeshHeightmap")
 unsafe extern rl_gen_mesh_heightmap: (heightmap: Image, size: Vector3) -> Mesh
 @symbol("GenMeshCubicmap")
@@ -736,6 +857,6 @@ unsafe extern rl_update_model_animation:
 @symbol("UpdateModelAnimationEx")
 unsafe extern rl_update_model_animation_ex:
   (model: Model, first: ModelAnimation, first_frame: f32, second: ModelAnimation,
-  second_frame: f32, blend: f32) -> void
+    second_frame: f32, blend: f32) -> void
 @symbol("IsModelAnimationValid")
 unsafe extern rl_model_animation_valid: (model: Model, anim: ModelAnimation) -> u8

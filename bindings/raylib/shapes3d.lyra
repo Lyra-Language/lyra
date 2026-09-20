@@ -123,13 +123,18 @@ pub let update_camera = (self: mut Camera3D, mode: i32) -> void =>
 /// `movement` is forward/right/up in world units and `rotation` is yaw/pitch/roll in
 /// **degrees**, which is why it is a [Degrees] triple rather than three bare floats — the
 /// unit mistake this binding set catches everywhere else.
-pub let update_camera_pro =
-  (self: mut Camera3D, movement: Vector3, yaw: Degrees, pitch: Degrees, roll: Degrees,
-  zoom: f32) -> void =>
-    unsafe {
-      rl_update_camera_pro(&mut self, movement,
-        vec3(f32(yaw), f32(pitch), f32(roll)), zoom)
-    }
+pub let update_camera_pro = (
+  self: mut Camera3D,
+  movement: Vector3,
+  yaw: Degrees,
+  pitch: Degrees,
+  roll: Degrees,
+  zoom: f32
+) -> void =>
+  unsafe {
+    rl_update_camera_pro(&mut self, movement,
+      vec3(f32(yaw), f32(pitch), f32(roll)), zoom)
+  }
 
 /// The camera's view-projection matrix, which is what a shader uniform wants.
 pub let camera_matrix = pure (camera: Camera3D) -> Matrix =>
@@ -168,11 +173,21 @@ pub let draw_point_3d = (position: Vector3, color: Color) -> void =>
   unsafe { rl_draw_point_3d(position, color) }
 
 /// A circle in the plane perpendicular to `axis`, turned `angle` about it.
-pub let draw_circle_3d =
-  (center: Vector3, radius: f32, axis: Vector3, angle: Degrees, color: Color) -> void =>
-    unsafe { rl_draw_circle_3d(center, radius, axis, f32(angle), color) }
+pub let draw_circle_3d = (
+  center: Vector3,
+  radius: f32,
+  axis: Vector3,
+  angle: Degrees,
+  color: Color
+) -> void =>
+  unsafe { rl_draw_circle_3d(center, radius, axis, f32(angle), color) }
 
-pub let draw_triangle_3d = (v1: Vector3, v2: Vector3, v3: Vector3, color: Color) -> void =>
+pub let draw_triangle_3d = (
+  v1: Vector3,
+  v2: Vector3,
+  v3: Vector3,
+  color: Color
+) -> void =>
   unsafe { rl_draw_triangle_3d(v1, v2, v3, color) }
 
 /// Triangles each sharing an edge with the last. An empty list draws nothing rather than
@@ -194,53 +209,100 @@ pub let draw_sphere = (center: Vector3, radius: f32, color: Color) -> void =>
 
 /// A sphere at a chosen tessellation — fewer rings and slices is a visibly faceted ball,
 /// which is sometimes the look and always the cheaper draw.
-pub let draw_sphere_ex =
-  (center: Vector3, radius: f32, rings: i32, slices: i32, color: Color) -> void =>
-    unsafe { rl_draw_sphere_ex(center, radius, rings, slices, color) }
+pub let draw_sphere_ex = (
+  center: Vector3,
+  radius: f32,
+  rings: i32,
+  slices: i32,
+  color: Color
+) -> void =>
+  unsafe { rl_draw_sphere_ex(center, radius, rings, slices, color) }
 
-pub let draw_sphere_wires =
-  (center: Vector3, radius: f32, rings: i32, slices: i32, color: Color) -> void =>
-    unsafe { rl_draw_sphere_wires(center, radius, rings, slices, color) }
+pub let draw_sphere_wires = (
+  center: Vector3,
+  radius: f32,
+  rings: i32,
+  slices: i32,
+  color: Color
+) -> void =>
+  unsafe { rl_draw_sphere_wires(center, radius, rings, slices, color) }
 
 /// A cone or cylinder standing at `position`: equal radii give a cylinder, a zero top
 /// radius a cone, and unequal ones a frustum.
-pub let draw_cylinder =
-  (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
-  color: Color) -> void =>
-    unsafe { rl_draw_cylinder(position, radius_top, radius_bottom, height, slices, color) }
+pub let draw_cylinder = (
+  position: Vector3,
+  radius_top: f32,
+  radius_bottom: f32,
+  height: f32,
+  slices: i32,
+  color: Color
+) -> void =>
+  unsafe { rl_draw_cylinder(
+    position,
+    radius_top,
+    radius_bottom,
+    height,
+    slices,
+    color
+  ) }
 
 /// The same shape given as the segment between two points, which is what a limb or a pipe
 /// is described by.
-pub let draw_cylinder_ex =
-  (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
-  color: Color) -> void =>
-    unsafe { rl_draw_cylinder_ex(start, finish, start_radius, end_radius, sides, color) }
+pub let draw_cylinder_ex = (
+  start: Vector3,
+  finish: Vector3,
+  start_radius: f32,
+  end_radius: f32,
+  sides: i32,
+  color: Color
+) -> void =>
+  unsafe { rl_draw_cylinder_ex(start, finish, start_radius, end_radius, sides, color) }
 
-pub let draw_cylinder_wires =
-  (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
-  color: Color) -> void =>
-    unsafe {
-      rl_draw_cylinder_wires(position, radius_top, radius_bottom, height, slices, color)
-    }
+pub let draw_cylinder_wires = (
+  position: Vector3,
+  radius_top: f32,
+  radius_bottom: f32,
+  height: f32,
+  slices: i32,
+  color: Color
+) -> void =>
+  unsafe {
+    rl_draw_cylinder_wires(position, radius_top, radius_bottom, height, slices, color)
+  }
 
-pub let draw_cylinder_wires_ex =
-  (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
-  color: Color) -> void =>
-    unsafe {
-      rl_draw_cylinder_wires_ex(start, finish, start_radius, end_radius, sides, color)
-    }
+pub let draw_cylinder_wires_ex = (
+  start: Vector3,
+  finish: Vector3,
+  start_radius: f32,
+  end_radius: f32,
+  sides: i32,
+  color: Color
+) -> void =>
+  unsafe {
+    rl_draw_cylinder_wires_ex(start, finish, start_radius, end_radius, sides, color)
+  }
 
 /// A capsule — a cylinder with a hemisphere on each end, which is the collision shape
 /// almost every character controller uses.
-pub let draw_capsule =
-  (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
-  color: Color) -> void =>
-    unsafe { rl_draw_capsule(start, finish, radius, slices, rings, color) }
+pub let draw_capsule = (
+  start: Vector3,
+  finish: Vector3,
+  radius: f32,
+  slices: i32,
+  rings: i32,
+  color: Color
+) -> void =>
+  unsafe { rl_draw_capsule(start, finish, radius, slices, rings, color) }
 
-pub let draw_capsule_wires =
-  (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
-  color: Color) -> void =>
-    unsafe { rl_draw_capsule_wires(start, finish, radius, slices, rings, color) }
+pub let draw_capsule_wires = (
+  start: Vector3,
+  finish: Vector3,
+  radius: f32,
+  slices: i32,
+  rings: i32,
+  color: Color
+) -> void =>
+  unsafe { rl_draw_capsule_wires(start, finish, radius, slices, rings, color) }
 
 /// A flat quad in the XZ plane. **`size` is a `Vector2`**, since a plane has two extents
 /// and raylib says so.
@@ -255,25 +317,42 @@ pub let draw_grid = (slices: i32, spacing: f32) -> void =>
   unsafe { rl_draw_grid(slices, spacing) }
 
 /// A texture that always faces the camera — a tree, a particle, a health bar.
-pub let draw_billboard =
-  (camera: Camera3D, texture: Texture2D, position: Vector3, scale: f32,
-  tint: Color) -> void =>
-    unsafe { rl_draw_billboard(camera, texture, position, scale, tint) }
+pub let draw_billboard = (
+  camera: Camera3D,
+  texture: Texture2D,
+  position: Vector3,
+  scale: f32,
+  tint: Color
+) -> void =>
+  unsafe { rl_draw_billboard(camera, texture, position, scale, tint) }
 
 /// A billboard from part of a texture, at a size in world units — a sprite sheet in 3D.
-pub let draw_billboard_rec =
-  (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
-  size: Vector2, tint: Color) -> void =>
-    unsafe { rl_draw_billboard_rec(camera, texture, source, position, size, tint) }
+pub let draw_billboard_rec = (
+  camera: Camera3D,
+  texture: Texture2D,
+  source: Rectangle,
+  position: Vector3,
+  size: Vector2,
+  tint: Color
+) -> void =>
+  unsafe { rl_draw_billboard_rec(camera, texture, source, position, size, tint) }
 
 /// The whole billboard: its own up vector, origin and rotation.
-pub let draw_billboard_pro =
-  (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
-  up: Vector3, size: Vector2, origin: Vector2, rotation: Degrees, tint: Color) -> void =>
-    unsafe {
-      rl_draw_billboard_pro(camera, texture, source, position, up, size, origin,
-        f32(rotation), tint)
-    }
+pub let draw_billboard_pro = (
+  camera: Camera3D,
+  texture: Texture2D,
+  source: Rectangle,
+  position: Vector3,
+  up: Vector3,
+  size: Vector2,
+  origin: Vector2,
+  rotation: Degrees,
+  tint: Color
+) -> void =>
+  unsafe {
+    rl_draw_billboard_pro(camera, texture, source, position, up, size, origin,
+      f32(rotation), tint)
+  }
 
 // ---------------------------------------------------------------------------------------
 // Collision
@@ -414,27 +493,27 @@ unsafe extern rl_draw_sphere_wires:
 @symbol("DrawCylinder")
 unsafe extern rl_draw_cylinder:
   (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
-  color: Color) -> void
+    color: Color) -> void
 @symbol("DrawCylinderEx")
 unsafe extern rl_draw_cylinder_ex:
   (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
-  color: Color) -> void
+    color: Color) -> void
 @symbol("DrawCylinderWires")
 unsafe extern rl_draw_cylinder_wires:
   (position: Vector3, radius_top: f32, radius_bottom: f32, height: f32, slices: i32,
-  color: Color) -> void
+    color: Color) -> void
 @symbol("DrawCylinderWiresEx")
 unsafe extern rl_draw_cylinder_wires_ex:
   (start: Vector3, finish: Vector3, start_radius: f32, end_radius: f32, sides: i32,
-  color: Color) -> void
+    color: Color) -> void
 @symbol("DrawCapsule")
 unsafe extern rl_draw_capsule:
   (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
-  color: Color) -> void
+    color: Color) -> void
 @symbol("DrawCapsuleWires")
 unsafe extern rl_draw_capsule_wires:
   (start: Vector3, finish: Vector3, radius: f32, slices: i32, rings: i32,
-  color: Color) -> void
+    color: Color) -> void
 @symbol("DrawPlane")
 unsafe extern rl_draw_plane: (center: Vector3, size: Vector2, color: Color) -> void
 @symbol("DrawRay")
@@ -444,15 +523,15 @@ unsafe extern rl_draw_grid: (slices: i32, spacing: f32) -> void
 @symbol("DrawBillboard")
 unsafe extern rl_draw_billboard:
   (camera: Camera3D, texture: Texture2D, position: Vector3, scale: f32,
-  tint: Color) -> void
+    tint: Color) -> void
 @symbol("DrawBillboardRec")
 unsafe extern rl_draw_billboard_rec:
   (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
-  size: Vector2, tint: Color) -> void
+    size: Vector2, tint: Color) -> void
 @symbol("DrawBillboardPro")
 unsafe extern rl_draw_billboard_pro:
   (camera: Camera3D, texture: Texture2D, source: Rectangle, position: Vector3,
-  up: Vector3, size: Vector2, origin: Vector2, rotation: f32, tint: Color) -> void
+    up: Vector3, size: Vector2, origin: Vector2, rotation: f32, tint: Color) -> void
 
 @symbol("CheckCollisionSpheres")
 unsafe extern pure rl_spheres_overlap:

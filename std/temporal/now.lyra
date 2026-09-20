@@ -23,7 +23,10 @@ pub let now_plain_date_time = () -> PlainDateTime => {
   let epoch_seconds = floor_div(ns, 1000000000)
   let local = ns + local_offset_seconds(epoch_seconds) * 1000000000
   let time = local %% NS_PER_DAY
-  PlainDateTime { date: PlainDate(floor_div(local - time, NS_PER_DAY)), time: PlainTime(time) }
+  PlainDateTime {
+    date: PlainDate(floor_div(local - time, NS_PER_DAY)),
+    time: PlainTime(time)
+  }
 }
 
 /// The local zone's offset from UTC at `epoch_seconds`, in seconds east of Greenwich —

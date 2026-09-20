@@ -59,26 +59,100 @@ import gltf.{ NodeAnimation, load_node_animation, node_clip_count, node_clip_nam
 import bindings.jpeg.{ decode_jpeg, is_jpeg_mime }
 import std.ffi.{ data }
 import bindings.raylib.{
-  init_window, close_window, should_close, set_target_fps, set_config_flags, window_ready,
-  FLAG_WINDOW_HIDDEN, begin_drawing, end_drawing, clear_background, elapsed,
-  Model, Animations, Vector3, Matrix, BoundingBox, Degrees, vec3, camera_3d, begin_mode_3d, end_mode_3d,
-  load_model, unload_model, model_bounding_box, draw_model,
-  draw_model_mesh, draw_model_mesh_wires, update_texture, set_backface_culling, set_depth_write,
-  MATERIAL_MAP_HEIGHT, MATERIAL_MAP_ALBEDO, set_model_material_texture_wrap,
-  Image, Texture2D, PIXELFORMAT_R8G8B8A8,
-  gen_mesh_sphere, model_from_mesh, Shader, Color, load_shader_from_memory, bind_shader_map,
-  unload_shader, set_model_material_shader, reset_model_material_shader,
-  set_model_material_texture, model_material_has_texture, model_material_value,
-  model_material_color, model_mesh_has_normals, model_mesh_material, MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL, MATERIAL_MAP_ROUGHNESS,
-  MATERIAL_MAP_OCCLUSION, MATERIAL_MAP_EMISSION, gen_image_color, texture_from_image,
-  unload_image, image_from_screen, image_color_at,
-  load_animations, unload_animations, animation_name, animation_frame_count,
-  animation_valid, update_animation, update_animation_blend,
-  matrix_translation, matrix_multiply, matrix_rotate_x, matrix_rotate_y, matrix_scale,
-  mouse_down, mouse_delta, mouse_wheel, MOUSE_BUTTON_LEFT,
-  key_pressed, KEY_SPACE, KEY_LEFT, KEY_RIGHT, KEY_R, KEY_W, KEY_L,
-  file_dropped, dropped_files, file_name, has_extension,
-  draw_text, measure_text, WHITE, BLACK, DARKGRAY, rgb,
+  init_window,
+  close_window,
+  should_close,
+  set_target_fps,
+  set_config_flags,
+  window_ready,
+  FLAG_WINDOW_HIDDEN,
+  begin_drawing,
+  end_drawing,
+  clear_background,
+  elapsed,
+  Model,
+  Animations,
+  Vector3,
+  Matrix,
+  BoundingBox,
+  Degrees,
+  vec3,
+  camera_3d,
+  begin_mode_3d,
+  end_mode_3d,
+  load_model,
+  unload_model,
+  model_bounding_box,
+  draw_model,
+  draw_model_mesh,
+  draw_model_mesh_wires,
+  update_texture,
+  set_backface_culling,
+  set_depth_write,
+  MATERIAL_MAP_HEIGHT,
+  MATERIAL_MAP_ALBEDO,
+  set_model_material_texture_wrap,
+  Image,
+  Texture2D,
+  PIXELFORMAT_R8G8B8A8,
+  gen_mesh_sphere,
+  model_from_mesh,
+  Shader,
+  Color,
+  load_shader_from_memory,
+  bind_shader_map,
+  unload_shader,
+  set_model_material_shader,
+  reset_model_material_shader,
+  set_model_material_texture,
+  model_material_has_texture,
+  model_material_value,
+  model_material_color,
+  model_mesh_has_normals,
+  model_mesh_material,
+  MATERIAL_MAP_METALNESS,
+  MATERIAL_MAP_NORMAL,
+  MATERIAL_MAP_ROUGHNESS,
+  MATERIAL_MAP_OCCLUSION,
+  MATERIAL_MAP_EMISSION,
+  gen_image_color,
+  texture_from_image,
+  unload_image,
+  image_from_screen,
+  image_color_at,
+  load_animations,
+  unload_animations,
+  animation_name,
+  animation_frame_count,
+  animation_valid,
+  update_animation,
+  update_animation_blend,
+  matrix_translation,
+  matrix_multiply,
+  matrix_rotate_x,
+  matrix_rotate_y,
+  matrix_scale,
+  mouse_down,
+  mouse_delta,
+  mouse_wheel,
+  MOUSE_BUTTON_LEFT,
+  key_pressed,
+  KEY_SPACE,
+  KEY_LEFT,
+  KEY_RIGHT,
+  KEY_R,
+  KEY_W,
+  KEY_L,
+  file_dropped,
+  dropped_files,
+  file_name,
+  has_extension,
+  draw_text,
+  measure_text,
+  WHITE,
+  BLACK,
+  DARKGRAY,
+  rgb,
 }
 
 /// The size, in world units, every model is scaled to. The camera is placed for this.
@@ -182,7 +256,11 @@ let close = (o: Opened) -> void => {
 let framing = pure (o: Opened, yaw: Degrees, pitch: Degrees, zoom: f32) -> Matrix => {
   let largest = max3(o.dims.x, o.dims.y, o.dims.z)
   let s = if largest > 0.0 { FIT / largest * zoom } else { zoom }
-  let centred = matrix_translation(vec3(0.0 - o.centre.x, 0.0 - o.centre.y, 0.0 - o.centre.z))
+  let centred = matrix_translation(vec3(
+    0.0 - o.centre.x,
+    0.0 - o.centre.y,
+    0.0 - o.centre.z
+  ))
   let turned = matrix_multiply(matrix_multiply(centred, matrix_rotate_y(yaw)),
     matrix_rotate_x(pitch))
   matrix_multiply(turned, matrix_scale(s, s, s))
@@ -195,7 +273,12 @@ let framing = pure (o: Opened, yaw: Degrees, pitch: Degrees, zoom: f32) -> Matri
 /// draws in file order, so a car's windscreen hid the seats. A node-animated mesh adds its
 /// pose before the framing. Back faces are drawn throughout, since a glTF material may be
 /// double-sided and the lighting shader turns a back face's normal round.
-let draw_opened = (o: Opened, transform: Matrix, wires: bool, posed: Maybe<[]Matrix>) -> void => {
+let draw_opened = (
+  o: Opened,
+  transform: Matrix,
+  wires: bool,
+  posed: Maybe<[]Matrix>
+) -> void => {
   set_backface_culling(false)
   draw_pass(o, transform, wires, posed, false)
   set_depth_write(false)
@@ -249,7 +332,11 @@ let run_check = (path: string) -> u8 => {
   var failures = 0
   let lit = load_lighting()
   failures += check("both lighting shaders compile", lit.is_some(), true)
-  failures += check("a lit sphere is brighter on the side facing the light", sphere_lit(lit), true)
+  failures += check(
+    "a lit sphere is brighter on the side facing the light",
+    sphere_lit(lit),
+    true
+  )
   match open(path) {
     Some(o) => {
       println("${file_name(path)}")
@@ -317,7 +404,11 @@ let run_check = (path: string) -> u8 => {
           }
           failures += check("the node animation accounts for every mesh",
             node_mesh_count(na), i64(o.model.mesh_count))
-          failures += check("every node clip poses finite transforms", poses_finite(na), true)
+          failures += check(
+            "every node clip poses finite transforms",
+            poses_finite(na),
+            true
+          )
         },
         None => {},
       }
@@ -536,8 +627,14 @@ let run_viewer = (paths: []string) -> void => {
         draw_text(status, 500 - w / 2, 350, TEXT, DARKGRAY)
       },
     }
-    draw_text("drag: turn  |  wheel: zoom  |  space: play/pause  |  left/right: clip  |  " ++
-        "l: lighting  |  w: wireframe  |  r: reset  |  drop a file", 20, 690, 16, DARKGRAY)
+    draw_text(
+      "drag: turn  |  wheel: zoom  |  space: play/pause  |  left/right: clip  |  " ++
+        "l: lighting  |  w: wireframe  |  r: reset  |  drop a file",
+      20,
+      690,
+      16,
+      DARKGRAY
+    )
     end_drawing()
   }
 
@@ -671,9 +768,14 @@ let plain_params_for = pure (model: Model) -> []MaterialParams => {
     let rough = model_material_value(model, i, MATERIAL_MAP_ROUGHNESS)
     let e = model_material_color(model, i, MATERIAL_MAP_EMISSION)
     let unset = metal <= 0.0 && rough <= 0.0
-    out.push(plain_material(if unset { 0.0 } else { metal }, if unset { 0.8 } else { rough },
-      f32(e.r) / 255.0, f32(e.g) / 255.0, f32(e.b) / 255.0,
-      model_material_color(model, i, MATERIAL_MAP_ALBEDO).a < 255))
+    out.push(plain_material(
+      if unset { 0.0 } else { metal },
+      if unset { 0.8 } else { rough },
+      f32(e.r) / 255.0,
+      f32(e.g) / 255.0,
+      f32(e.b) / 255.0,
+      model_material_color(model, i, MATERIAL_MAP_ALBEDO).a < 255
+    ))
   }
   out
 }
@@ -796,13 +898,20 @@ let set_params = (model: Model, material: i64, floats: []f32) -> void => {
   var texels: []Color = []
   for f in floats {
     let bits = float_bits(f)
-    texels.push(Color { r: u8(bits & 255), g: u8((bits >> 8) & 255), b: u8((bits >> 16) & 255),
-      a: u8((bits >> 24) & 255) })
+    texels.push(Color {
+      r: u8(bits & 255),
+      g: u8((bits >> 8) & 255),
+      b: u8((bits >> 16) & 255),
+      a: u8((bits >> 24) & 255)
+    })
   }
   let image = gen_image_color(i32(texels.len()), 1, BLACK)
   match texture_from_image(image) {
     Some(t) => {
-      if !update_texture(t, texels) { println("material ${material}: parameters not uploaded") }
+      if !update_texture(
+        t,
+        texels
+      ) { println("material ${material}: parameters not uploaded") }
       set_model_material_texture(model, material, MATERIAL_MAP_HEIGHT, t)
     },
     None => {},
@@ -860,7 +969,11 @@ let sphere_lit = (lit: Maybe<Lighting>) -> bool => {
         end_mode_3d()
         match image_from_screen() {
           Some(shot) => {
-            let toward = image_color_at(shot, shot.width * 35 / 100, shot.height * 35 / 100)
+            let toward = image_color_at(
+              shot,
+              shot.width * 35 / 100,
+              shot.height * 35 / 100
+            )
             let away = image_color_at(shot, shot.width * 65 / 100, shot.height * 65 / 100)
             brighter = channel_sum(toward) > channel_sum(away) + 60
             unload_image(shot)

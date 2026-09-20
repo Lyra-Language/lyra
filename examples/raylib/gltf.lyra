@@ -36,8 +36,19 @@ module gltf
 //! a skinned file's animations, which raylib plays. **Malformed data never traps**: a channel
 //! whose accessor does not check out is skipped, and a file with nothing usable answers `None`.
 
-import std.json.{ parse_json, JsonValue, JsonNull, field, element, elements, as_number, as_int,
-  as_text, as_bool, kind }
+import std.json.{
+  parse_json,
+  JsonValue,
+  JsonNull,
+  field,
+  element,
+  elements,
+  as_number,
+  as_int,
+  as_text,
+  as_bool,
+  kind
+}
 import bindings.raylib.{ Matrix, Vector3, Vector4, vec3, matrix_multiply, matrix_invert,
   matrix_identity, matrix_translation, matrix_scale, quaternion_to_matrix,
   quaternion_normalize, quaternion_slerp, read_file_bytes, decode_base64,
@@ -81,7 +92,10 @@ pub let load_node_animation = (path: string) -> Maybe<NodeAnimation> => {
 pub let node_clip_count = pure (self: NodeAnimation) -> i64 => self.clips.len()
 
 /// A clip's name, or `animation N` for one the file left unnamed.
-pub let node_clip_name = pure (self: NodeAnimation, clip: i64) -> string => nth_clip(self, clip).name
+pub let node_clip_name = pure (
+  self: NodeAnimation,
+  clip: i64
+) -> string => nth_clip(self, clip).name
 
 /// A clip's length in seconds: its last keyframe.
 pub let node_clip_duration = pure (self: NodeAnimation, clip: i64) -> f32 =>
@@ -187,21 +201,40 @@ pub let load_material_params = (path: string) -> Maybe<[]MaterialParams> => {
     None => return None,
   }
   var out: []MaterialParams = []
-  for m in member(file.json, "materials").elements() { out.push(material_from(file.json, m)) }
+  for m in member(
+    file.json,
+    "materials"
+  ).elements() { out.push(material_from(file.json, m)) }
   Some(out)
 }
 
 /// A material described by the few numbers a non-glTF file gives raylib: every texture on
 /// the first UV set untransformed, at full strength, with no extensions.
-pub let plain_material = pure (metallic: f32, roughness: f32, emissive_r: f32, emissive_g: f32,
-  emissive_b: f32, blended: bool) -> MaterialParams => {
+pub let plain_material = pure (
+  metallic: f32,
+  roughness: f32,
+  emissive_r: f32,
+  emissive_g: f32,
+  emissive_b: f32,
+  blended: bool
+) -> MaterialParams => {
   var slots: []TexSlot = []
   for _ in 0..<5 { slots.push(plain_slot()) }
   MaterialParams {
-    slots: slots, normal_scale: 1.0, occlusion_strength: 1.0, metallic: metallic,
-    roughness: roughness, emissive_r: emissive_r, emissive_g: emissive_g, emissive_b: emissive_b,
-    emissive_strength: 1.0, transmission: 0.0, clearcoat: 0.0, clearcoat_roughness: 0.0,
-    alpha_mode: if blended { ALPHA_BLEND } else { ALPHA_OPAQUE }, alpha_cutoff: 0.5,
+    slots: slots,
+    normal_scale: 1.0,
+    occlusion_strength: 1.0,
+    metallic: metallic,
+    roughness: roughness,
+    emissive_r: emissive_r,
+    emissive_g: emissive_g,
+    emissive_b: emissive_b,
+    emissive_strength: 1.0,
+    transmission: 0.0,
+    clearcoat: 0.0,
+    clearcoat_roughness: 0.0,
+    alpha_mode: if blended { ALPHA_BLEND } else { ALPHA_OPAQUE },
+    alpha_cutoff: 0.5,
   }
 }
 
@@ -238,7 +271,10 @@ let material_from = pure (doc: JsonValue, m: JsonValue) -> MaterialParams => {
 /// its own, which then wins over the reference's.
 let slot_of = pure (doc: JsonValue, info: JsonValue) -> TexSlot => {
   let xf = member(member(info, "extensions"), "KHR_texture_transform")
-  let uv = member(xf, "texCoord").as_int().unwrap_or(member(info, "texCoord").as_int().unwrap_or(0))
+  let uv = member(
+    xf,
+    "texCoord"
+  ).as_int().unwrap_or(member(info, "texCoord").as_int().unwrap_or(0))
   TexSlot {
     uv: uv,
     offset_x: number_at(member(xf, "offset"), 0, 0.0),
@@ -260,7 +296,10 @@ let image_of = pure (doc: JsonValue, index: i64) -> i64 =>
 /// for a texture with no sampler or one whose two axes disagree.
 let wrap_of = pure (doc: JsonValue, index: i64) -> i64 => {
   let texture = member(doc, "textures").element(index).unwrap_or(JsonNull)
-  let sampler = member(doc, "samplers").element(member(texture, "sampler").as_int().unwrap_or(0 - 1))
+  let sampler = member(
+    doc,
+    "samplers"
+  ).element(member(texture, "sampler").as_int().unwrap_or(0 - 1))
     .unwrap_or(JsonNull)
   let s = member(sampler, "wrapS").as_int().unwrap_or(GL_REPEAT)
   let t = member(sampler, "wrapT").as_int().unwrap_or(GL_REPEAT)
@@ -277,8 +316,16 @@ const WRAP_CLAMP_MODE: i64 = 1
 const WRAP_MIRROR_MODE: i64 = 2
 
 let plain_slot = pure () -> TexSlot =>
-  TexSlot { uv: 0, offset_x: 0.0, offset_y: 0.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0,
-    wrap: WRAP_REPEAT_MODE, image: 0 - 1 }
+  TexSlot {
+    uv: 0,
+    offset_x: 0.0,
+    offset_y: 0.0,
+    rotation: 0.0,
+    scale_x: 1.0,
+    scale_y: 1.0,
+    wrap: WRAP_REPEAT_MODE,
+    image: 0 - 1
+  }
 
 let alpha_mode_of = pure (m: string) -> i64 =>
   if m == "MASK" { ALPHA_MASK } else if m == "BLEND" { ALPHA_BLEND } else { ALPHA_OPAQUE }
@@ -499,17 +546,38 @@ let read_clip = pure (doc: JsonValue, buffers: [][]u8, anim: JsonValue, index: i
     let target = member(c, "target")
     let node = member(target, "node").as_int().unwrap_or(0 - 1)
     let path = path_of(member(target, "path").as_text().unwrap_or(""))
-    let sampler = samplers.element(member(c, "sampler").as_int().unwrap_or(0 - 1)).unwrap_or(JsonNull)
-    let interpolation = interpolation_of(member(sampler, "interpolation").as_text().unwrap_or("LINEAR"))
+    let sampler = samplers.element(member(
+      c,
+      "sampler"
+    ).as_int().unwrap_or(0 - 1)).unwrap_or(JsonNull)
+    let interpolation = interpolation_of(member(
+      sampler,
+      "interpolation"
+    ).as_text().unwrap_or("LINEAR"))
     let width = if path == PATH_ROTATION { 4 } else { 3 }
     let per_key = if interpolation == CUBICSPLINE { 3 * width } else { width }
     if node >= 0 && node < node_count && path >= 0 && interpolation >= 0 {
-      match read_floats(doc, buffers, member(sampler, "input").as_int().unwrap_or(0 - 1), 1) {
-        Some(times) => match read_floats(doc, buffers, member(sampler, "output").as_int().unwrap_or(0 - 1), width) {
+      match read_floats(
+        doc,
+        buffers,
+        member(sampler, "input").as_int().unwrap_or(0 - 1),
+        1
+      ) {
+        Some(times) => match read_floats(
+          doc,
+          buffers,
+          member(sampler, "output").as_int().unwrap_or(0 - 1),
+          width
+        ) {
           Some(values) => {
             if times.len() > 0 && values.len() >= times.len() * per_key {
-              channels.push(AnimChannel { node: node, path: path, interpolation: interpolation,
-                times: times, values: values })
+              channels.push(AnimChannel {
+                node: node,
+                path: path,
+                interpolation: interpolation,
+                times: times,
+                values: values
+              })
               let last = times[times.len() - 1]
               if last > duration { duration = last }
             }
@@ -583,7 +651,13 @@ let element_of = pure (ch: AnimChannel, e: i64, width: i64) -> Vector4 => {
 
 /// glTF's cubic Hermite spline between key `k` and the next: the two values, key `k`'s
 /// out-tangent and the next key's in-tangent, the tangents scaled by the span between them.
-let hermite = pure (ch: AnimChannel, k: i64, s: f32, span: f32, width: i64) -> Vector4 => {
+let hermite = pure (
+  ch: AnimChannel,
+  k: i64,
+  s: f32,
+  span: f32,
+  width: i64
+) -> Vector4 => {
   let p0 = element_of(ch, 3 * k + 1, width)
   let m0 = scale4(element_of(ch, 3 * k + 2, width), span)
   let m1 = scale4(element_of(ch, 3 * k + 3, width), span)
@@ -595,7 +669,11 @@ let hermite = pure (ch: AnimChannel, k: i64, s: f32, span: f32, width: i64) -> V
   if width == 4 { quaternion_normalize(v) } else { v }
 }
 
-let mix4 = pure (a: Vector4, b: Vector4, s: f32) -> Vector4 => add4(scale4(a, 1.0 - s), scale4(b, s))
+let mix4 = pure (
+  a: Vector4,
+  b: Vector4,
+  s: f32
+) -> Vector4 => add4(scale4(a, 1.0 - s), scale4(b, s))
 let add4 = pure (a: Vector4, b: Vector4) -> Vector4 =>
   Vector4 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z, w: a.w + b.w }
 let scale4 = pure (a: Vector4, k: f32) -> Vector4 =>
@@ -640,7 +718,12 @@ let load_buffers = (doc: JsonValue, path: string, bin: []u8) -> Maybe<[][]u8> =>
 /// Accessor `index` as floats, `width` to an element, or `None` if it is not that shape or
 /// its bytes are not all there. Integers count only when `normalized`, which is the only
 /// way glTF lets animation data be integers.
-let read_floats = pure (doc: JsonValue, buffers: [][]u8, index: i64, width: i64) -> Maybe<[]f32> => {
+let read_floats = pure (
+  doc: JsonValue,
+  buffers: [][]u8,
+  index: i64,
+  width: i64
+) -> Maybe<[]f32> => {
   let acc = match member(doc, "accessors").element(index) {
     Some(a) => a,
     None => return None,
@@ -650,16 +733,25 @@ let read_floats = pure (doc: JsonValue, buffers: [][]u8, index: i64, width: i64)
   let ctype = member(acc, "componentType").as_int().unwrap_or(0)
   let size = component_size(ctype)
   if size == 0 { return None }
-  if ctype != FLOAT && !member(acc, "normalized").as_bool().unwrap_or(false) { return None }
+  if ctype != FLOAT && !member(
+    acc,
+    "normalized"
+  ).as_bool().unwrap_or(false) { return None }
   let n = member(acc, "count").as_int().unwrap_or(0)
-  let view = match member(doc, "bufferViews").element(member(acc, "bufferView").as_int().unwrap_or(0 - 1)) {
+  let view = match member(
+    doc,
+    "bufferViews"
+  ).element(member(acc, "bufferView").as_int().unwrap_or(0 - 1)) {
     Some(v) => v,
     None => return None,
   }
   let buffer = member(view, "buffer").as_int().unwrap_or(0 - 1)
   if buffer < 0 || buffer >= buffers.len() { return None }
   let data = buffers[buffer]
-  let start = member(view, "byteOffset").as_int().unwrap_or(0) + member(acc, "byteOffset").as_int().unwrap_or(0)
+  let start = member(
+    view,
+    "byteOffset"
+  ).as_int().unwrap_or(0) + member(acc, "byteOffset").as_int().unwrap_or(0)
   let stride = member(view, "byteStride").as_int().unwrap_or(size * width)
   if n < 0 || start < 0 || stride <= 0 { return None }
   if n > 0 && start + (n - 1) * stride + size * width > data.len() { return None }
@@ -710,7 +802,10 @@ let u32_at = pure (b: []u8, at: i64) -> u32 =>
 let u16_at = pure (b: []u8, at: i64) -> i64 => i64(b[at]) | (i64(b[at + 1]) << 8)
 
 /// `v` read as a two's-complement integer of `range` values.
-let signed = pure (v: i64, range: i64) -> i64 => if v >= range / 2 { v - range } else { v }
+let signed = pure (
+  v: i64,
+  range: i64
+) -> i64 => if v >= range / 2 { v - range } else { v }
 
 let at_least = pure (v: f32, floor: f32) -> f32 => if v < floor { floor } else { v }
 
@@ -769,7 +864,10 @@ const GLB_MAGIC: u32 = 1179937895 // "glTF"
 const CHUNK_JSON: u32 = 1313821514 // "JSON"
 const CHUNK_BIN: u32 = 5130562 // "BIN\0"
 
-let member = pure (v: JsonValue, key: string) -> JsonValue => v.field(key).unwrap_or(JsonNull)
+let member = pure (
+  v: JsonValue,
+  key: string
+) -> JsonValue => v.field(key).unwrap_or(JsonNull)
 
 let vec3_of = pure (v: JsonValue, fallback: f32) -> Vector3 =>
   vec3(number_at(v, 0, fallback), number_at(v, 1, fallback), number_at(v, 2, fallback))
@@ -783,10 +881,22 @@ let rotation_of = pure (v: JsonValue) -> Vector4 =>
 let matrix_of = pure (v: JsonValue) -> Maybe<Matrix> => {
   if v.elements().len() != 16 { return None }
   Some(Matrix {
-    m0: number_at(v, 0, 0.0), m1: number_at(v, 1, 0.0), m2: number_at(v, 2, 0.0), m3: number_at(v, 3, 0.0),
-    m4: number_at(v, 4, 0.0), m5: number_at(v, 5, 0.0), m6: number_at(v, 6, 0.0), m7: number_at(v, 7, 0.0),
-    m8: number_at(v, 8, 0.0), m9: number_at(v, 9, 0.0), m10: number_at(v, 10, 0.0), m11: number_at(v, 11, 0.0),
-    m12: number_at(v, 12, 0.0), m13: number_at(v, 13, 0.0), m14: number_at(v, 14, 0.0), m15: number_at(v, 15, 1.0),
+    m0: number_at(v, 0, 0.0),
+    m1: number_at(v, 1, 0.0),
+    m2: number_at(v, 2, 0.0),
+    m3: number_at(v, 3, 0.0),
+    m4: number_at(v, 4, 0.0),
+    m5: number_at(v, 5, 0.0),
+    m6: number_at(v, 6, 0.0),
+    m7: number_at(v, 7, 0.0),
+    m8: number_at(v, 8, 0.0),
+    m9: number_at(v, 9, 0.0),
+    m10: number_at(v, 10, 0.0),
+    m11: number_at(v, 11, 0.0),
+    m12: number_at(v, 12, 0.0),
+    m13: number_at(v, 13, 0.0),
+    m14: number_at(v, 14, 0.0),
+    m15: number_at(v, 15, 1.0),
   })
 }
 

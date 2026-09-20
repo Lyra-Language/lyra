@@ -58,11 +58,22 @@ let show = pure (xs: []u8) -> string => {
 /// The fourth parameter is a **C function pointer**, written as the Lyra function type it
 /// accepts. Every type in a callback's own signature must cross too, checked with the same
 /// predicate the outer parameters take.
-unsafe extern qsort: (base: ^mut u8, count: u64, size: u64, cmp: (^u8, ^u8) -> i32) -> void
+unsafe extern qsort: (
+  base: ^mut u8,
+  count: u64,
+  size: u64,
+  cmp: (^u8, ^u8) -> i32
+) -> void
 
 /// `void *bsearch(const void *key, const void *base, size_t n, size_t size, int (*cmp)(…))`
 /// — the same comparator, a different API. A context-carrying callback
 /// (`sqlite3_exec`, `curl`'s write callback, every event loop) is declared the same way,
 /// with C's `void *` written as a `^mut u8`: the callback reads and writes through it
 /// instead of capturing, which is the difference the module note describes.
-unsafe extern bsearch: (key: ^u8, base: ^u8, count: u64, size: u64, cmp: (^u8, ^u8) -> i32) -> ^u8
+unsafe extern bsearch: (
+  key: ^u8,
+  base: ^u8,
+  count: u64,
+  size: u64,
+  cmp: (^u8, ^u8) -> i32
+) -> ^u8

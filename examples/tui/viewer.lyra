@@ -134,7 +134,15 @@ let teardown = () => {
 /// is cheap and comparing is cheaper than a wrong answer about what changed. A program that
 /// tried to skip building the unchanged rows would need to know which inputs each row
 /// depends on, which is the bookkeeping this design exists to avoid.
-let draw = (self: mut Renderer, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
+let draw = (
+  self: mut Renderer,
+  cols: i64,
+  rows: i64,
+  zoom: i64,
+  mx: i64,
+  my: i64,
+  events: i64
+) -> void => {
   var rows_out: []string = []
   // rows - 1, leaving the last line for the status bar. Drawing into the final row and
   // then emitting a newline scrolls the screen, which is what makes a full-height frame
@@ -150,7 +158,14 @@ let draw = (self: mut Renderer, cols: i64, rows: i64, zoom: i64, mx: i64, my: i6
 
 /// One row of the frame, as a string. Built by concatenation into a single row rather
 /// than printed per cell.
-let render_row = pure (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
+let render_row = pure (
+  row: i64,
+  cols: i64,
+  span_rows: i64,
+  zoom: i64,
+  mx: i64,
+  my: i64
+) -> string => {
   var out = ""
   for col in 0..<cols {
     // **Exactly one character per cell, marker included.** A terminal has no notion of
@@ -196,7 +211,14 @@ let band = pure noalloc (pos: i64, span: i64) -> i64 =>
 /// gain and lose digits. `status_split` cuts the *left* when the two do not fit, which is
 /// the right way round here — a narrow window loses the end of the state, not the key that
 /// quits.
-let status = pure (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string =>
+let status = pure (
+  cols: i64,
+  rows: i64,
+  zoom: i64,
+  mx: i64,
+  my: i64,
+  events: i64
+) -> string =>
   status_split(
     " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}",
     "arrows/click move · wheel zooms · q quits ",

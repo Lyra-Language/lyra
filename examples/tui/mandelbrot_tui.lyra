@@ -148,7 +148,12 @@ let frame_geometry = pure (term_cols: i64, term_rows: i64) -> (i64, i64, i64, i6
 /// The view as a rectangle, with the vertical span derived so a cell stays square.
 let window_for = pure (v: View, cols: i64, rows: i64) -> Window => {
   let y_len = v.x_len * f64(rows) * CELL_ASPECT / f64(cols)
-  Window { x_min: v.cx - v.x_len / 2.0, y_min: v.cy - y_len / 2.0, x_len: v.x_len, y_len: y_len }
+  Window {
+    x_min: v.cx - v.x_len / 2.0,
+    y_min: v.cy - y_len / 2.0,
+    x_len: v.x_len,
+    y_len: y_len
+  }
 }
 
 /// Scale the view by `factor` **about the cell under (mx, my)**, so the complex point
@@ -162,7 +167,16 @@ let window_for = pure (v: View, cols: i64, rows: i64) -> Window => {
 /// The arithmetic: the pointer sits at fraction `u` across the window, so the point under
 /// it is `x_min + u * x_len`. After scaling, the centre that puts the same point at the
 /// same fraction is `p + x_len' * (0.5 - u)`.
-let zoom_at = pure (self: View, cols: i64, rows: i64, left: i64, top: i64, mx: i64, my: i64, factor: f64) -> View => {
+let zoom_at = pure (
+  self: View,
+  cols: i64,
+  rows: i64,
+  left: i64,
+  top: i64,
+  mx: i64,
+  my: i64,
+  factor: f64
+) -> View => {
   let w = window_for(self, cols, rows)
   // `+ 1` on each, matching `render_row`'s far-edge mapping — the pointer must resolve
   // to the same complex point the cell under it was drawn from.
@@ -210,7 +224,14 @@ let teardown = () => {
 /// through. The frame was correct until you touched anything, then stretched to full
 /// width. A parameter that must be pre-processed by every caller is a parameter that will
 /// eventually not be.
-let draw = (self: mut Renderer, term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> void => {
+let draw = (
+  self: mut Renderer,
+  term_cols: i64,
+  term_rows: i64,
+  view: View,
+  mx: i64,
+  my: i64
+) -> void => {
   // The status bar owns the last row, so the set is fitted into what is left rather than
   // into the whole terminal — otherwise it is one row too tall and the bottom is lost
   // under the bar.
@@ -261,7 +282,14 @@ let spaces = pure (n: i64) -> string => {
 /// centring offsets before calling. A click arrives in terminal cells, and without that
 /// translation the marker would land offset by exactly the left margin, which reads as
 /// the click being inaccurate rather than as a coordinate-space mixup.
-let render_row = pure (row: i64, rows: i64, cols: i64, w: Window, mx: i64, my: i64) -> string => {
+let render_row = pure (
+  row: i64,
+  rows: i64,
+  cols: i64,
+  w: Window,
+  mx: i64,
+  my: i64
+) -> string => {
   var out = ""
   // **A background escape is emitted only where the colour changes.** Repeating it per
   // cell costs about half the frame time and three to four times the bytes, and a

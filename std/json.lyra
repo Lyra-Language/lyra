@@ -331,7 +331,10 @@ let parse_number = pure (b: []u8, start: i64) -> Result<(JsonValue, i64), JsonEr
   var scale = 0
   if byte_at(b, i) == 48 {
     i += 1
-    if is_digit(byte_at(b, i)) { return Err(fail("a number may not have a leading zero", i)) }
+    if is_digit(byte_at(
+      b,
+      i
+    )) { return Err(fail("a number may not have a leading zero", i)) }
   } else {
     for is_digit(byte_at(b, i)) {
       if digits < 18 {
@@ -364,7 +367,10 @@ let parse_number = pure (b: []u8, start: i64) -> Result<(JsonValue, i64), JsonEr
       exp_negative = sign == 45
       i += 1
     }
-    if !is_digit(byte_at(b, i)) { return Err(fail("expected a digit in the exponent", i)) }
+    if !is_digit(byte_at(
+      b,
+      i
+    )) { return Err(fail("expected a digit in the exponent", i)) }
     var exp = 0
     for is_digit(byte_at(b, i)) {
       if exp < 100000 { exp = exp * 10 + (byte_at(b, i) - 48) }
@@ -397,7 +403,12 @@ let pow10 = pure (e: i64) -> f64 => {
   p
 }
 
-let literal = pure (b: []u8, at: i64, word: string, value: JsonValue) -> Result<(JsonValue, i64), JsonError> => {
+let literal = pure (
+  b: []u8,
+  at: i64,
+  word: string,
+  value: JsonValue
+) -> Result<(JsonValue, i64), JsonError> => {
   let w = word.encode_utf8()
   for k in 0..<w.len() {
     if byte_at(b, at + k) != i64(w[k]) { return Err(fail("expected `${word}`", at)) }
@@ -417,4 +428,7 @@ let skip_space = pure (b: []u8, from: i64) -> i64 => {
 let is_space = pure (c: i64) -> bool => c == 32 || c == 9 || c == 10 || c == 13
 let is_digit = pure (c: i64) -> bool => c >= 48 && c <= 57
 
-let fail = pure (message: string, at: i64) -> JsonError => JsonError { message: message, offset: at }
+let fail = pure (
+  message: string,
+  at: i64
+) -> JsonError => JsonError { message: message, offset: at }

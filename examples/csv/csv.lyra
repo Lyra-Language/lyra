@@ -161,8 +161,16 @@ let scan_bare = pure (runes: []rune, start: i64) -> Result<Field, CsvError> => {
   var i = start
   for i < runes.len() {
     let c = runes[i]
-    if c == ',' { return Ok(Field { text: text.join(""), next: i + 1, ends_record: false }) }
-    if c == '\n' { return Ok(Field { text: text.join(""), next: i + 1, ends_record: true }) }
+    if c == ',' { return Ok(Field {
+      text: text.join(""),
+      next: i + 1,
+      ends_record: false
+    }) }
+    if c == '\n' { return Ok(Field {
+      text: text.join(""),
+      next: i + 1,
+      ends_record: true
+    }) }
     if c == '"' { return Err(UnexpectedQuote(position_of(runes, i))) }
     if c != '\r' { text.push(c) }
     i += 1
@@ -191,7 +199,11 @@ let scan_quoted = pure (runes: []rune, start: i64) -> Result<Field, CsvError> =>
 }
 
 // What follows a closing quote must be a separator or the end of the file.
-let after_quote = pure (runes: []rune, text: string, close: i64) -> Result<Field, CsvError> => {
+let after_quote = pure (
+  runes: []rune,
+  text: string,
+  close: i64
+) -> Result<Field, CsvError> => {
   var i = close
   if i < runes.len() && runes[i] == '\r' { i += 1 }
   if i >= runes.len() { return Ok(Field { text: text, next: i, ends_record: true }) }
@@ -201,12 +213,20 @@ let after_quote = pure (runes: []rune, text: string, close: i64) -> Result<Field
 }
 
 // Every record after the header, checked against its width.
-let check_widths = pure (runes: []rune, records: []Record, want: i64) -> Result<[][]string, CsvError> => {
+let check_widths = pure (
+  runes: []rune,
+  records: []Record,
+  want: i64
+) -> Result<[][]string, CsvError> => {
   var rows: [][]string = []
   for i, record in records {
     if i > 0 {
       if record.fields.len() != want {
-        return Err(WrongFieldCount(position_of(runes, record.start), want, record.fields.len()))
+        return Err(WrongFieldCount(
+          position_of(runes, record.start),
+          want,
+          record.fields.len()
+        ))
       }
       rows.push(record.fields)
     }

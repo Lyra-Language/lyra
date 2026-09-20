@@ -336,9 +336,13 @@ pub let crop_wave = (self: mut Wave, first_frame: i64, last_frame: i64) -> void 
   unsafe { rl_wave_crop(&mut self, i32(first_frame), i32(last_frame)) }
 
 /// Convert a wave's sample rate, bit depth or channel count, in place.
-pub let format_wave =
-  (self: mut Wave, sample_rate: i64, sample_size: i64, channels: i64) -> void =>
-    unsafe { rl_wave_format(&mut self, i32(sample_rate), i32(sample_size), i32(channels)) }
+pub let format_wave = (
+  self: mut Wave,
+  sample_rate: i64,
+  sample_size: i64,
+  channels: i64
+) -> void =>
+  unsafe { rl_wave_format(&mut self, i32(sample_rate), i32(sample_size), i32(channels)) }
 
 /// A wave's samples as `[]f32`, one entry per frame per channel, normalised to -1.0..1.0.
 ///
@@ -380,8 +384,16 @@ pub let master_volume = pure () -> f32 => unsafe { rl_master_volume() }
 // ---------------------------------------------------------------------------------------
 
 /// A stream a program feeds itself. `sample_size` is bits per sample: 8, 16 or 32.
-pub let load_audio_stream = (sample_rate: i64, sample_size: i64, channels: i64) -> Maybe<AudioStream> => {
-  let s = unsafe { rl_load_audio_stream(u32(sample_rate), u32(sample_size), u32(channels)) }
+pub let load_audio_stream = (
+  sample_rate: i64,
+  sample_size: i64,
+  channels: i64
+) -> Maybe<AudioStream> => {
+  let s = unsafe { rl_load_audio_stream(
+    u32(sample_rate),
+    u32(sample_size),
+    u32(channels)
+  ) }
   if audio_stream_valid(s) { Some(s) } else { None }
 }
 
@@ -394,7 +406,11 @@ pub let unload_audio_stream = (stream: AudioStream) -> void =>
 
 /// Hand the stream more samples. Ask [audio_stream_processed] first — writing to a stream
 /// that has not drained its buffer drops the data.
-pub let update_audio_stream = (stream: AudioStream, samples: []u8, frames: i64) -> bool => {
+pub let update_audio_stream = (
+  stream: AudioStream,
+  samples: []u8,
+  frames: i64
+) -> bool => {
   if samples.len() == 0 {
     false
   } else {
@@ -514,7 +530,11 @@ unsafe extern pure rl_audio_stream_valid: (stream: AudioStream) -> u8
 @symbol("UnloadAudioStream")
 unsafe extern rl_unload_audio_stream: (stream: AudioStream) -> void
 @symbol("UpdateAudioStream")
-unsafe extern rl_update_audio_stream: (stream: AudioStream, data: ^u8, frames: i32) -> void
+unsafe extern rl_update_audio_stream: (
+  stream: AudioStream,
+  data: ^u8,
+  frames: i32
+) -> void
 @symbol("IsAudioStreamProcessed")
 unsafe extern rl_audio_stream_processed: (stream: AudioStream) -> u8
 @symbol("PlayAudioStream")

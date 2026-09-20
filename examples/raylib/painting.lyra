@@ -86,7 +86,11 @@ let run_checks = () -> u8 => {
   failures += same("paint_line", at(canvas, 7, 14), RED)
 
   canvas.paint_line_ex(vec2(0.0, 8.0), vec2(15.0, 8.0), 3, ORANGE)
-  failures += same("paint_line_ex, thick enough to cover the row above", at(canvas, 7, 7), ORANGE)
+  failures += same(
+    "paint_line_ex, thick enough to cover the row above",
+    at(canvas, 7, 7),
+    ORANGE
+  )
 
   canvas.paint_circle(vec2(12.0, 3.0), 2, WHITE)
   failures += same("paint_circle", at(canvas, 12, 3), WHITE)
@@ -177,7 +181,11 @@ let run_checks = () -> u8 => {
   var half = gen_image_color(4, 4, rgba(255, 255, 255, 128))
   half.alpha_premultiply()
   let hp = at_color(half, 0, 0)
-  failures += check("alpha_premultiply halves the channels", hp.r < 200 && hp.a == 128, true)
+  failures += check(
+    "alpha_premultiply halves the channels",
+    hp.r < 200 && hp.a == 128,
+    true
+  )
 
   // A mask takes its alpha from another image's brightness: black masks to nothing.
   var masked = gen_image_color(8, 8, RED)
@@ -202,7 +210,11 @@ let run_checks = () -> u8 => {
   // kernel is normalised rather than darkening what it touches.
   var soft = image_copy(flat)
   soft.blur(2)
-  failures += check("blur keeps a flat colour flat", near_color(at_color(soft, 4, 4), RED), true)
+  failures += check(
+    "blur keeps a flat colour flat",
+    near_color(at_color(soft, 4, 4), RED),
+    true
+  )
 
   var bright = image_copy(flat)
   bright.brightness(25)
@@ -220,7 +232,11 @@ let run_checks = () -> u8 => {
 
   // `5-6-5` is one of the three packings raylib has, so it applies and the format drops.
   var dithered = gen_image_gradient_linear(16, 16, 0, RED, BLUE)
-  failures += check("dither, a supported packing applies", dithered.dither(5, 6, 5, 0), true)
+  failures += check(
+    "dither, a supported packing applies",
+    dithered.dither(5, 6, 5, 0),
+    true
+  )
   failures += check("dither drops to a 16bpp format", dithered.format != RGBA8, true)
 
   // `2-2-2-0` is not, and raylib's own answer to it is an image in pixel format 0 that
@@ -256,11 +272,23 @@ let run_checks = () -> u8 => {
   // trims to the count it reports, which is the whole reason it takes one.
   var two = gen_image_color(4, 4, RED)
   two.paint_rectangle(rect(0.0, 0.0, 2.0, 4.0), BLUE)
-  failures += check("image_palette counts distinct colours", "${image_palette(two, 8).len()}", "2")
-  failures += check("image_palette, a limit of zero", "${image_palette(two, 0).len()}", "0")
+  failures += check(
+    "image_palette counts distinct colours",
+    "${image_palette(two, 8).len()}",
+    "2"
+  )
+  failures += check(
+    "image_palette, a limit of zero",
+    "${image_palette(two, 0).len()}",
+    "0"
+  )
 
   // --- text, the one call that is not headless -----------------------------------------
-  failures += check("image_text is None with no window", image_text("hi", 20, BLACK).is_none(), true)
+  failures += check(
+    "image_text is None with no window",
+    image_text("hi", 20, BLACK).is_none(),
+    true
+  )
   failures += check("image_text_ex is None with an unloaded font",
     image_text_ex(default_font(), "hi", 20.0, 1.0, BLACK).is_none(), true)
   failures += check("the built-in font is not loaded before init_window",
@@ -358,7 +386,13 @@ let run_gallery = () -> void => {
   for !should_close() {
     begin_drawing()
     clear_background(RAYWHITE)
-    draw_text("painted in Lyra, uploaded once - no assets on disk", 30, 18, LABEL, DARKGRAY)
+    draw_text(
+      "painted in Lyra, uploaded once - no assets on disk",
+      30,
+      18,
+      LABEL,
+      DARKGRAY
+    )
 
     var i = 0
     for p in panels {
@@ -440,7 +474,13 @@ let text_panel = () -> Image => {
 
 /// The picture every filter panel is a copy of — enough structure for a filter to show on.
 let scene = () -> Image => {
-  var c = gen_image_gradient_linear(CELL_W, CELL_H, 0, rgb(30, 60, 120), rgb(220, 200, 120))
+  var c = gen_image_gradient_linear(
+    CELL_W,
+    CELL_H,
+    0,
+    rgb(30, 60, 120),
+    rgb(220, 200, 120)
+  )
   c.reformat(RGBA8)
   c.paint_circle(vec2(60.0, 60.0), 34, rgb(240, 90, 60))
   c.paint_circle(vec2(150.0, 50.0), 22, rgb(250, 230, 90))
@@ -502,7 +542,12 @@ let tone_panel = () -> Image => {
   var bottom = scene()
   bottom.contrast(60.0)
   let half = f32(CELL_H) / 2.0
-  c.paint_image(top, rect(0.0, 0.0, f32(CELL_W), half), rect(0.0, 0.0, f32(CELL_W), half), WHITE)
+  c.paint_image(
+    top,
+    rect(0.0, 0.0, f32(CELL_W), half),
+    rect(0.0, 0.0, f32(CELL_W), half),
+    WHITE
+  )
   c.paint_image(bottom, rect(0.0, half, f32(CELL_W), half),
     rect(0.0, half, f32(CELL_W), half), WHITE)
   c.paint_line(vec2(0.0, half), vec2(f32(CELL_W), half), BLACK)

@@ -61,13 +61,24 @@ pub let image_text = (text: string, size: i32, color: Color) -> Maybe<Image> => 
 /// `None` when `font` is invalid, for [image_text]'s reason: `ImageTextEx` walks the glyph
 /// array without checking it, so an unloaded or failed font is a crash rather than blank
 /// text. Here it is the caller's font being tested rather than the ambient one.
-pub let image_text_ex =
-  (font: Font, text: string, size: f32, spacing: f32, tint: Color) -> Maybe<Image> => {
-    if !font_valid(font) { None }
-    else {
-      Some(text.with_cstring((t) => unsafe { rl_image_text_ex(font, t, size, spacing, tint) }))
-    }
+pub let image_text_ex = (
+  font: Font,
+  text: string,
+  size: f32,
+  spacing: f32,
+  tint: Color
+) -> Maybe<Image> => {
+  if !font_valid(font) { None }
+  else {
+    Some(text.with_cstring((t) => unsafe { rl_image_text_ex(
+      font,
+      t,
+      size,
+      spacing,
+      tint
+    ) }))
   }
+}
 
 // ---------------------------------------------------------------------------------------
 // Editing in place
@@ -117,10 +128,15 @@ pub let to_power_of_two = (self: mut Image, fill: Color) -> void =>
 
 /// Resize the canvas without scaling the picture: the existing pixels land at
 /// (`offset_x`, `offset_y`) and everything else becomes `fill`. Negative offsets crop.
-pub let resize_canvas =
-  (self: mut Image, width: i32, height: i32, offset_x: i32, offset_y: i32,
-  fill: Color) -> void =>
-    unsafe { rl_image_resize_canvas(&mut self, width, height, offset_x, offset_y, fill) }
+pub let resize_canvas = (
+  self: mut Image,
+  width: i32,
+  height: i32,
+  offset_x: i32,
+  offset_y: i32,
+  fill: Color
+) -> void =>
+  unsafe { rl_image_resize_canvas(&mut self, width, height, offset_x, offset_y, fill) }
 
 /// Generate the mipmap chain, in place.
 ///
@@ -145,16 +161,21 @@ pub let gen_mipmaps = (self: mut Image) -> void =>
 /// untouched when it was not. A `bool` rather than a trap because the depths are usually
 /// constants a reader can check, and rather than a `Maybe<Image>` because the operation is
 /// in place.
-pub let dither =
-  (self: mut Image, r_bits: i32, g_bits: i32, b_bits: i32, a_bits: i32) -> bool => {
-    let packing = "${r_bits}-${g_bits}-${b_bits}-${a_bits}"
-    if packing == "5-6-5-0" || packing == "5-5-5-1" || packing == "4-4-4-4" {
-      unsafe { rl_image_dither(&mut self, r_bits, g_bits, b_bits, a_bits) }
-      true
-    } else {
-      false
-    }
+pub let dither = (
+  self: mut Image,
+  r_bits: i32,
+  g_bits: i32,
+  b_bits: i32,
+  a_bits: i32
+) -> bool => {
+  let packing = "${r_bits}-${g_bits}-${b_bits}-${a_bits}"
+  if packing == "5-6-5-0" || packing == "5-5-5-1" || packing == "4-4-4-4" {
+    unsafe { rl_image_dither(&mut self, r_bits, g_bits, b_bits, a_bits) }
+    true
+  } else {
+    false
   }
+}
 
 /// Push the channels away from or toward the midpoint. `amount` runs -100.0 to 100.0.
 ///
@@ -262,19 +283,34 @@ pub let paint_triangle = (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2
     unsafe { rl_image_draw_triangle(&mut self, v1, v2, v3, color) }
 
 /// A triangle with a colour at each corner, interpolated across the face.
-pub let paint_triangle_gradient =
-  (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2, c1: Color, c2: Color,
-  c3: Color) -> void =>
-    unsafe { rl_image_draw_triangle_ex(&mut self, v1, v2, v3, c1, c2, c3) }
+pub let paint_triangle_gradient = (
+  self: mut Image,
+  v1: Vector2,
+  v2: Vector2,
+  v3: Vector2,
+  c1: Color,
+  c2: Color,
+  c3: Color
+) -> void =>
+  unsafe { rl_image_draw_triangle_ex(&mut self, v1, v2, v3, c1, c2, c3) }
 
 pub let paint_triangle_lines = (self: mut Image, v1: Vector2, v2: Vector2, v3: Vector2,
   color: Color) -> void =>
     unsafe { rl_image_draw_triangle_lines(&mut self, v1, v2, v3, color) }
 
 /// Triangles all sharing `points[0]`. An empty list paints nothing rather than trapping.
-pub let paint_triangle_fan = (self: mut Image, points: []Vector2, color: Color) -> void => {
+pub let paint_triangle_fan = (
+  self: mut Image,
+  points: []Vector2,
+  color: Color
+) -> void => {
   if points.len() > 0 {
-    unsafe { rl_image_draw_triangle_fan(&mut self, points.data(), i32(points.len()), color) }
+    unsafe { rl_image_draw_triangle_fan(
+      &mut self,
+      points.data(),
+      i32(points.len()),
+      color
+    ) }
   }
 }
 
@@ -315,15 +351,29 @@ pub let paint_text = (self: mut Image, text: string, x: i32, y: i32, size: i32,
 }
 
 /// Text in a loaded font, with letter spacing. Paints nothing if `font` is invalid.
-pub let paint_text_ex =
-  (self: mut Image, font: Font, text: string, position: Vector2, size: f32, spacing: f32,
-  tint: Color) -> void => {
-    if font_valid(font) {
-      // Outside the lambda, for [paint_text]'s reason.
-      var c = text.cstring()
-      unsafe { rl_image_draw_text_ex(&mut self, font, c.data(), position, size, spacing, tint) }
-    }
+pub let paint_text_ex = (
+  self: mut Image,
+  font: Font,
+  text: string,
+  position: Vector2,
+  size: f32,
+  spacing: f32,
+  tint: Color
+) -> void => {
+  if font_valid(font) {
+    // Outside the lambda, for [paint_text]'s reason.
+    var c = text.cstring()
+    unsafe { rl_image_draw_text_ex(
+      &mut self,
+      font,
+      c.data(),
+      position,
+      size,
+      spacing,
+      tint
+    ) }
   }
+}
 
 // ---------------------------------------------------------------------------------------
 // The externs
@@ -365,7 +415,7 @@ unsafe extern rl_image_to_pot: (image: ^mut Image, fill: Color) -> void
 @symbol("ImageResizeCanvas")
 unsafe extern rl_image_resize_canvas:
   (image: ^mut Image, width: i32, height: i32, offset_x: i32, offset_y: i32,
-  fill: Color) -> void
+    fill: Color) -> void
 @symbol("ImageMipmaps")
 unsafe extern rl_image_mipmaps: (image: ^mut Image) -> void
 @symbol("ImageDither")
@@ -416,7 +466,7 @@ unsafe extern rl_image_draw_triangle:
 @symbol("ImageDrawTriangleEx")
 unsafe extern rl_image_draw_triangle_ex:
   (dst: ^mut Image, v1: Vector2, v2: Vector2, v3: Vector2, c1: Color, c2: Color,
-  c3: Color) -> void
+    c3: Color) -> void
 @symbol("ImageDrawTriangleLines")
 unsafe extern rl_image_draw_triangle_lines:
   (dst: ^mut Image, v1: Vector2, v2: Vector2, v3: Vector2, color: Color) -> void
@@ -435,4 +485,4 @@ unsafe extern rl_image_draw_text:
 @symbol("ImageDrawTextEx")
 unsafe extern rl_image_draw_text_ex:
   (dst: ^mut Image, font: Font, text: ^u8, position: Vector2, size: f32, spacing: f32,
-  tint: Color) -> void
+    tint: Color) -> void

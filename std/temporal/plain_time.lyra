@@ -20,7 +20,11 @@ pub newtype PlainTime = i64 where range(0..<86400000000000)
 /// ```
 /// let Some(noon) = plain_time(12) else { return }
 /// ```
-pub let plain_time = pure (hour: i64, minute: i64 = 0, second: i64 = 0) -> Maybe<PlainTime> => {
+pub let plain_time = pure (
+  hour: i64,
+  minute: i64 = 0,
+  second: i64 = 0
+) -> Maybe<PlainTime> => {
   if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
     return None
   }
@@ -32,7 +36,10 @@ pub let plain_time = pure (hour: i64, minute: i64 = 0, second: i64 = 0) -> Maybe
 /// Every field is exactly two digits and the fraction is one to nine digits after a `.`,
 /// which is what Temporal reads and what `show` writes, so the two round-trip. ISO's
 /// compact forms (`1430`) are not read: nothing here writes them.
-pub let parse_plain_time = pure (text: string) -> Maybe<PlainTime> => time_at(text.to_runes(), 0)
+pub let parse_plain_time = pure (text: string) -> Maybe<PlainTime> => time_at(
+  text.to_runes(),
+  0
+)
 
 /// The hour, 0 to 23.
 pub let hour = pure (self: PlainTime) -> i64 => i64(self) / NS_PER_HOUR
@@ -56,7 +63,10 @@ pub let add = pure (self: PlainTime, amount: Duration) -> PlainTime =>
   PlainTime(i64((i128(i64(self)) + clock_nanoseconds(amount)) %% i128(NS_PER_DAY)))
 
 /// This time moved back by `amount`, wrapping at midnight: `add` of its negation.
-pub let subtract = pure (self: PlainTime, amount: Duration) -> PlainTime => self.add(amount.negated())
+pub let subtract = pure (
+  self: PlainTime,
+  amount: Duration
+) -> PlainTime => self.add(amount.negated())
 
 /// The time from this time to `other` on the same day — Temporal's `until`, with its
 /// default largest unit for a time: **hours down to nanoseconds**, balanced. Negative when

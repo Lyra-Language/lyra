@@ -17,7 +17,12 @@ pub struct Color {
 pub let rgb = pure (r: u8, g: u8, b: u8) -> Color => Color { r: r, g: g, b: b, a: 255 }
 
 /// A colour with an alpha channel, 0 transparent through 255 opaque.
-pub let rgba = pure (r: u8, g: u8, b: u8, a: u8) -> Color => Color { r: r, g: g, b: b, a: a }
+pub let rgba = pure (
+  r: u8,
+  g: u8,
+  b: u8,
+  a: u8
+) -> Color => Color { r: r, g: g, b: b, a: a }
 
 // **The named colours are constants**, which they could not be until 09/09: a struct
 // literal was refused as a `const` initializer. It computes nothing and is constant exactly

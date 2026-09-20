@@ -137,9 +137,17 @@ let classify = pure (raw: RawEvent) -> Event => {
   } else if kind == EVENT_MOUSE_MOTION {
     MouseMotion(unsafe { raw.motion.x }, unsafe { raw.motion.y })
   } else if kind == EVENT_MOUSE_BUTTON_DOWN {
-    MouseDown(unsafe { raw.button.button }, unsafe { raw.button.x }, unsafe { raw.button.y })
+    MouseDown(
+      unsafe { raw.button.button },
+      unsafe { raw.button.x },
+      unsafe { raw.button.y }
+    )
   } else if kind == EVENT_MOUSE_BUTTON_UP {
-    MouseUp(unsafe { raw.button.button }, unsafe { raw.button.x }, unsafe { raw.button.y })
+    MouseUp(
+      unsafe { raw.button.button },
+      unsafe { raw.button.x },
+      unsafe { raw.button.y }
+    )
   } else {
     Other(kind)
   }

@@ -212,7 +212,10 @@ pub let add = pure (self: Duration, other: Duration) -> Maybe<Duration> => {
 }
 
 /// This duration less `other`: `add` of its negation, so the two cannot disagree.
-pub let subtract = pure (self: Duration, other: Duration) -> Maybe<Duration> => self.add(other.negated())
+pub let subtract = pure (
+  self: Duration,
+  other: Duration
+) -> Maybe<Duration> => self.add(other.negated())
 
 /// Which of two durations is longer — Temporal's `Duration.compare` — or `None` when
 /// either carries years, months or weeks and they are not field for field the same.

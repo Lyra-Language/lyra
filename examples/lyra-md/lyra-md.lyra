@@ -252,12 +252,20 @@ let link_at = pure (runes: []rune, open: i64) -> Maybe<Link> => {
     j += 1
   }
   if j >= runes.len() { return None }
-  Some(Link { text: chunk(runes, open + 1, close), url: chunk(runes, close + 2, j), end: j + 1 })
+  Some(Link {
+    text: chunk(runes, open + 1, close),
+    url: chunk(runes, close + 2, j),
+    end: j + 1
+  })
 }
 
 /// The runes in `[from..<to)` as a string — the scanner's substring, costing what it
 /// copies rather than where it starts.
-let chunk = pure (runes: []rune, from: i64, to: i64) -> string => runes.slice(from, to).join("")
+let chunk = pure (
+  runes: []rune,
+  from: i64,
+  to: i64
+) -> string => runes.slice(from, to).join("")
 
 /// One rune, escaped: the three characters HTML cannot take literally become entities and
 /// everything else is itself. `escape`'s single-character case, without a string slice to
@@ -316,7 +324,13 @@ let closing_run = pure (runes: []rune, from: i64, c: rune, width: i64) -> Maybe<
 
 /// `closing_run`'s scan: the first run that can close, of exactly `width` when `same` and
 /// of at least `width` otherwise.
-let first_closing_run = pure (runes: []rune, from: i64, c: rune, width: i64, same: bool) -> Maybe<i64> => {
+let first_closing_run = pure (
+  runes: []rune,
+  from: i64,
+  c: rune,
+  width: i64,
+  same: bool
+) -> Maybe<i64> => {
   var i = from
   for i < runes.len() {
     if runes[i] == c {

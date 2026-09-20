@@ -406,7 +406,11 @@ let refine_edges = (buffer: mut []Color, width: i64, height: i64,
         // light — the channels are what a display will gamma-decode. For a palette
         // invented to make structure legible there is no true colour to be wrong about,
         // and the alternative costs a pow per sample.
-        buffer[py * width + px] = rgb(u8(sum_r / taken), u8(sum_g / taken), u8(sum_b / taken))
+        buffer[py * width + px] = rgb(
+          u8(sum_r / taken),
+          u8(sum_g / taken),
+          u8(sum_b / taken)
+        )
       }
     }
   }

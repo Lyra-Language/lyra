@@ -128,7 +128,11 @@ let run_checks = () -> u8 => {
 
   let pad_buttons: []i32 = gamepad_button_codes()
   failures += contiguous("gamepad buttons", pad_buttons)
-  failures += check("gamepad buttons start at UNKNOWN = 0", "${GAMEPAD_BUTTON_UNKNOWN}", "0")
+  failures += check(
+    "gamepad buttons start at UNKNOWN = 0",
+    "${GAMEPAD_BUTTON_UNKNOWN}",
+    "0"
+  )
   failures += check("gamepad button count", "${pad_buttons.len()}", "18")
 
   let pad_axes: []i32 = [
@@ -172,20 +176,44 @@ let run_checks = () -> u8 => {
   failures += check("the character queue is empty", next_char_pressed().is_none(), true)
   failures += check("no mouse button is down", mouse_down(MOUSE_BUTTON_LEFT), false)
   failures += check("every mouse button is up", mouse_up(MOUSE_BUTTON_LEFT), true)
-  failures += check("no mouse button was pressed", mouse_pressed(MOUSE_BUTTON_LEFT), false)
-  failures += check("no mouse button was released", mouse_released(MOUSE_BUTTON_LEFT), false)
+  failures += check(
+    "no mouse button was pressed",
+    mouse_pressed(MOUSE_BUTTON_LEFT),
+    false
+  )
+  failures += check(
+    "no mouse button was released",
+    mouse_released(MOUSE_BUTTON_LEFT),
+    false
+  )
   failures += check("the wheel has not moved", "${mouse_wheel()}", "0")
   failures += check("nothing is touching", "${touch_count()}", "0")
 
   // An out-of-range pad index answers false rather than reading past the array — the
   // reason to test it is that C would not have stopped it.
-  failures += check("gamepad 0 is unavailable with no window", gamepad_available(0), false)
-  failures += check("an out-of-range gamepad index is false", gamepad_available(99), false)
+  failures += check(
+    "gamepad 0 is unavailable with no window",
+    gamepad_available(0),
+    false
+  )
+  failures += check(
+    "an out-of-range gamepad index is false",
+    gamepad_available(99),
+    false
+  )
   // raylib answers a non-NULL *empty string* for every index, so this is the binding's
   // own guard rather than the NULL convention — see gamepad_name. It failed when written.
-  failures += check("an out-of-range gamepad has no name", gamepad_name(99).is_none(), true)
+  failures += check(
+    "an out-of-range gamepad has no name",
+    gamepad_name(99).is_none(),
+    true
+  )
   failures += check("a disconnected gamepad has no name", gamepad_name(0).is_none(), true)
-  failures += check("no gamepad button was pressed", last_gamepad_button().is_none(), true)
+  failures += check(
+    "no gamepad button was pressed",
+    last_gamepad_button().is_none(),
+    true
+  )
 
   // An empty mapping string adds no mappings, and says so rather than crashing.
   failures += check("empty gamepad mappings add none", "${set_gamepad_mappings("")}", "0")
@@ -399,7 +427,12 @@ let draw_keyboard = (x: i32, y: i32, typed: string, recent: []string, pressed: i
   }
   row += 34
   col = x + 12
-  for pair in [("left", KEY_LEFT), ("right", KEY_RIGHT), ("up", KEY_UP), ("down", KEY_DOWN)] {
+  for pair in [
+    ("left", KEY_LEFT),
+    ("right", KEY_RIGHT),
+    ("up", KEY_UP),
+    ("down", KEY_DOWN)
+  ] {
     lamp(col, row, pair.0, key_down(pair.1))
     col += 78
   }
@@ -466,8 +499,13 @@ let draw_mouse = (x: i32, y: i32, wheel_total: f64, cursor: i64,
   row += 40
 
   // pressed/released are edge events, so they show as a flash rather than a state.
-  draw_text("left pressed ${mouse_pressed(MOUSE_BUTTON_LEFT)}   released ${mouse_released(MOUSE_BUTTON_LEFT)}",
-    x + 12, row, 16, DARKGRAY)
+  draw_text(
+    "left pressed ${mouse_pressed(MOUSE_BUTTON_LEFT)}   released ${mouse_released(MOUSE_BUTTON_LEFT)}",
+    x + 12,
+    row,
+    16,
+    DARKGRAY
+  )
   row += 20
   draw_text("left up ${mouse_up(MOUSE_BUTTON_LEFT)}", x + 12, row, 16, DARKGRAY)
   row += 28
@@ -574,11 +612,21 @@ let draw_one_gamepad = (x: i32, y: i32, pad: i64) -> i32 => {
     }
   }
   row += 36
-  draw_text("A pressed ${gamepad_pressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  released ${gamepad_released(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}",
-    x + 12, row, 16, DARKGRAY)
+  draw_text(
+    "A pressed ${gamepad_pressed(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  released ${gamepad_released(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}",
+    x + 12,
+    row,
+    16,
+    DARKGRAY
+  )
   row += 18
-  draw_text("A up ${gamepad_up(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  (press A to rumble)",
-    x + 12, row, 16, DARKGRAY)
+  draw_text(
+    "A up ${gamepad_up(pad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)}  (press A to rumble)",
+    x + 12,
+    row,
+    16,
+    DARKGRAY
+  )
   row += 24
 
   let axes = gamepad_axis_count(pad)

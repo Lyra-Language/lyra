@@ -80,7 +80,10 @@ let repeat = pure (piece: string, n: i64) -> string => {
   } else {
     let bytes = piece.encode_utf8()
     let w = bytes.len()
-    let filled: []u8 = if w == 1 { [bytes[0]; n] } else { [j in 0..<n, k in 0..<w | bytes[k]] }
+    let filled: []u8 = if w == 1 { [bytes[0]; n] } else { [
+      j in 0..<n,
+      k in 0..<w | bytes[k]
+    ] }
     filled.decode_utf8()
   }
 }

@@ -75,7 +75,10 @@ pub let expect<t, e> = pure noalloc (self: Result<t, e>, msg: string) -> t {
 ///
 /// Traps with `unwrap on an Err` when `self` is an `Err`. `expect` takes a message
 /// naming what was expected, which is all a crash report will have.
-pub let unwrap<t, e> = pure noalloc (self: Result<t, e>) -> t => expect(self, "unwrap on an Err")
+pub let unwrap<t, e> = pure noalloc (
+  self: Result<t,
+  e>
+) -> t => expect(self, "unwrap on an Err")
 
 /// The success value as a `Maybe`, discarding the error.
 pub let ok<t, e> = pure noalloc (self: Result<t, e>) -> Maybe<t> {
@@ -107,7 +110,11 @@ pub let map<t, u, e> = pure noalloc (self: Result<t, e>, f: (t) -> u) -> Result<
 ///
 /// Where the conversion is the same at every call site, an `impl From<JsonError> for
 /// ConfigError` lets `?` apply it on its own.
-pub let map_err<t, e, f> = pure noalloc (self: Result<t, e>, f: (e) -> f) -> Result<t, f> {
+pub let map_err<t, e, f> = pure noalloc (
+  self: Result<t,
+  e>,
+  f: (e) -> f
+) -> Result<t, f> {
   (Ok v, _) => Ok v,
   (Err err, f) => Err(f(err)),
 }
@@ -115,7 +122,12 @@ pub let map_err<t, e, f> = pure noalloc (self: Result<t, e>, f: (e) -> f) -> Res
 /// Applies `f` to the success value and returns its result, without nesting.
 ///
 /// Chains a second fallible step onto the first. Both must fail with the same `e`.
-pub let flat_map<t, u, e> = pure noalloc (self: Result<t, e>, f: (t) -> Result<u, e>) -> Result<u, e> {
+pub let flat_map<t, u, e> = pure noalloc (
+  self: Result<t,
+  e>,
+  f: (t) -> Result<u,
+  e>
+) -> Result<u, e> {
   (Ok v, f) => f(v),
   (Err err, _) => Err err,
 }
@@ -131,7 +143,11 @@ pub let flat_map<t, u, e> = pure noalloc (self: Result<t, e>, f: (t) -> Result<u
 /// ```
 /// let big = Ok(10).filter((n) => n > 5).ok_or("too small")   // Ok 10
 /// ```
-pub let filter<t, e> = pure noalloc (self: Result<t, e>, predicate: (t) -> bool) -> Maybe<t> {
+pub let filter<t, e> = pure noalloc (
+  self: Result<t,
+  e>,
+  predicate: (t) -> bool
+) -> Maybe<t> {
   (Ok v, pred) => if pred(v) { Some v } else { None },
   (Err _, _) => None,
 }

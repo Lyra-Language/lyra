@@ -64,7 +64,12 @@ pub let parser_delete = (parser: own Parser) -> void => unsafe { ts_parser_delet
 /// `has_error` reports.
 pub let parse = (parser: Parser, source: string) -> Maybe<Tree> => {
   let bytes = source.cstring()
-  let raw = unsafe { ts_parser_parse_string(parser.raw, nullptr, bytes.data(), u32(bytes.len() - 1)) }
+  let raw = unsafe { ts_parser_parse_string(
+    parser.raw,
+    nullptr,
+    bytes.data(),
+    u32(bytes.len() - 1)
+  ) }
   if raw.is_null() { None } else { Some(Tree { raw: raw }) }
 }
 
@@ -116,7 +121,12 @@ unsafe extern ts_parser_delete: (parser: ^u8) -> void
 @symbol("ts_parser_set_language")
 unsafe extern ts_parser_set_language: (parser: ^u8, language: ^u8) -> bool
 @symbol("ts_parser_parse_string")
-unsafe extern ts_parser_parse_string: (parser: ^u8, old_tree: ^u8, source: ^u8, length: u32) -> ^u8
+unsafe extern ts_parser_parse_string: (
+  parser: ^u8,
+  old_tree: ^u8,
+  source: ^u8,
+  length: u32
+) -> ^u8
 @symbol("ts_tree_delete")
 unsafe extern ts_tree_delete: (tree: ^u8) -> void
 @symbol("ts_tree_root_node")

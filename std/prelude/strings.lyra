@@ -576,7 +576,10 @@ impl Needle for string {
   // offset past the end simply does not match. The span is the needle's **rune** length,
   // which is what the caller steps by.
   matches_at = pure (needle, haystack, rune_at, byte_at, here) =>
-    if haystack.compare_bytes_at(byte_at, needle) == 0 { Some(needle.len()) } else { None }
+    if haystack.compare_bytes_at(
+      byte_at,
+      needle
+    ) == 0 { Some(needle.len()) } else { None }
 
   found_at = pure (needle, haystack, offset) => {
     if offset < 0 {
@@ -628,14 +631,22 @@ impl Needle for string {
 /// ```
 /// let at = "a::b::c".index("::").unwrap_or(-1)   // 1
 /// ```
-pub let index<t> where t: Needle = pure noalloc(self: string, needle: t, offset: Index = 0) -> Maybe<Index> =>
+pub let index<t> where t: Needle = pure noalloc(
+  self: string,
+  needle: t,
+  offset: Index = 0
+) -> Maybe<Index> =>
   match needle.found_at(self, offset) {
     None => None,
     Some((idx, _)) => Some(idx)
   }
 
 /// Whether `needle` occurs in `self` at or after `offset`.
-pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offset: Index = 0) -> bool =>
+pub let contains<t> where t: Needle = pure noalloc(
+  self: string,
+  needle: t,
+  offset: Index = 0
+) -> bool =>
   self.index(needle, offset).is_some()
 
 /// The string's runes, one element each.

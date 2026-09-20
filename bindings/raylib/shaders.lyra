@@ -31,7 +31,11 @@ import std.ffi.{ with_cstrings }
 /// the failure a `None` rather than a model that silently stayed flat.
 pub let load_shader_from_memory = (vertex: string, fragment: string) -> Maybe<Shader> => {
   if !window_ready() { return None }
-  let s = with_cstrings(vertex, fragment, (v, f) => unsafe { rl_load_shader_from_memory(v, f) })
+  let s = with_cstrings(
+    vertex,
+    fragment,
+    (v, f) => unsafe { rl_load_shader_from_memory(v, f) }
+  )
   if s.id != 0 && s.id != unsafe { rl_shader_id_default() } { Some(s) } else { None }
 }
 

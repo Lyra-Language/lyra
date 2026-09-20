@@ -117,7 +117,10 @@ impl FromJson for bool {
 }
 
 /// Field `name` of `obj` as a `t`, which the caller's annotation chooses.
-let required<t> where t: FromJson = pure (obj: JsonValue, name: string) -> Result<t, ConfigError> => {
+let required<t> where t: FromJson = pure (
+  obj: JsonValue,
+  name: string
+) -> Result<t, ConfigError> => {
   let value = obj.field(name).ok_or(MissingField(name))?
   let decoded: Result<t, string> = FromJson::from_json(value)
   decoded.map_err((want) => WrongKind(name, want, value.kind()))

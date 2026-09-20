@@ -136,7 +136,10 @@ pub let days_in_year = pure (self: PlainDate) -> i64 => if self.in_leap_year() {
 /// ```
 /// let left = today().until(deadline).days
 /// ```
-pub let until = pure (self: PlainDate, other: PlainDate) -> Duration => days(i64(other) - i64(self))
+pub let until = pure (
+  self: PlainDate,
+  other: PlainDate
+) -> Duration => days(i64(other) - i64(self))
 
 /// The time from `other` to this date: `until` the other way round, so `a.since(b)` and
 /// `b.until(a)` are the same duration.
@@ -162,18 +165,28 @@ pub let add = pure (self: PlainDate, amount: Duration) -> PlainDate => {
   let to_year = y + floor_div(months_from_zero, 12)
   let to_month = months_from_zero %% 12 + 1
   let to_day = if d > days_in(to_year, to_month) { days_in(to_year, to_month) } else { d }
-  PlainDate(days_from_civil(to_year, to_month, to_day) + amount.weeks * 7 + amount.days + whole_days(amount))
+  PlainDate(days_from_civil(
+    to_year,
+    to_month,
+    to_day
+  ) + amount.weeks * 7 + amount.days + whole_days(amount))
 }
 
 /// This date moved back by `amount`: `add` of its negation, so the two cannot disagree.
-pub let subtract = pure (self: PlainDate, amount: Duration) -> PlainDate => self.add(amount.negated())
+pub let subtract = pure (
+  self: PlainDate,
+  amount: Duration
+) -> PlainDate => self.add(amount.negated())
 
 /// This date with its day of the month replaced, clamped to the month's length —
 /// Temporal's `with({ day })`. `with_day(1)` is the first of the month; `with_day(31)` is
 /// the last, whatever month it is.
 pub let with_day = pure (self: PlainDate, day: i64) -> PlainDate => {
   let (y, m, _) = civil_from_days(i64(self))
-  let clamped = if day < 1 { 1 } else if day > days_in(y, m) { days_in(y, m) } else { day }
+  let clamped = if day < 1 { 1 } else if day > days_in(
+    y,
+    m
+  ) { days_in(y, m) } else { day }
   PlainDate(days_from_civil(y, m, clamped))
 }
 

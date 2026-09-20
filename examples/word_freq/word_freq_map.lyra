@@ -9,7 +9,16 @@
 //
 // The map's iteration order is the table's, so the report is sorted here by count.
 
-import std.collections.{ HashMap, hashmap_new, update, entries, ProgramArgs, parse_args, has, value }
+import std.collections.{
+  HashMap,
+  hashmap_new,
+  update,
+  entries,
+  ProgramArgs,
+  parse_args,
+  has,
+  value
+}
 import std.io.{ read_file, read_stdin }
 
 let main = () -> u8 => {

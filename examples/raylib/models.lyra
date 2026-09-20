@@ -78,7 +78,11 @@ let run_checks = () -> u8 => {
       failures += check("gen_mesh_cube vertex count", "${cube.vertex_count}", "24")
       failures += check("gen_mesh_cube triangle count", "${cube.triangle_count}", "12")
       let b = mesh_bounding_box(cube)
-      failures += check("mesh_bounding_box", "${two(b.min.x)}..${two(b.max.x)}", "-1.00..1.00")
+      failures += check(
+        "mesh_bounding_box",
+        "${two(b.min.x)}..${two(b.max.x)}",
+        "-1.00..1.00"
+      )
 
       // A ray from z=10 down -Z meets the cube's +Z face after nine units. Translated along
       // x it misses; translated back along z it travels three units further. That is also
@@ -88,10 +92,17 @@ let run_checks = () -> u8 => {
         hit(ray_hits_mesh(down, cube, matrix_identity())), "9.00")
       failures += check("ray_hits_mesh, moved along x",
         hit(ray_hits_mesh(down, cube, matrix_translation(vec3(5.0, 0.0, 0.0)))), "miss")
-      failures += check("ray_hits_mesh, moved along z",
-        hit(ray_hits_mesh(down, cube, matrix_translation(vec3(0.0, 0.0, 0.0 - 3.0)))), "12.00")
+      failures += check(
+        "ray_hits_mesh, moved along z",
+        hit(ray_hits_mesh(down, cube, matrix_translation(vec3(0.0, 0.0, 0.0 - 3.0)))),
+        "12.00"
+      )
 
-      failures += check("export_mesh", export_mesh(cube, "/tmp/lyra-models-cube.obj"), true)
+      failures += check(
+        "export_mesh",
+        export_mesh(cube, "/tmp/lyra-models-cube.obj"),
+        true
+      )
 
       // **`own`**: the model takes the cube, and unloading the model frees it. Unloading
       // the cube as well would be a double free — which is why this does not compile if
@@ -100,7 +111,11 @@ let run_checks = () -> u8 => {
         Some(model) => {
           failures += check("model_from_mesh holds one mesh", "${model.mesh_count}", "1")
           failures += check("and the default material", "${model.material_count}", "1")
-          failures += check("model_bounding_box", two(model_bounding_box(model).max.y), "1.00")
+          failures += check(
+            "model_bounding_box",
+            two(model_bounding_box(model).max.y),
+            "1.00"
+          )
           unload_model(model)
         },
         None => failures += check("model_from_mesh", "None", "Some"),
@@ -131,8 +146,16 @@ let run_checks = () -> u8 => {
   failures += check("gen_mesh_knot", counts(gen_mesh_knot(1.0, 0.3, 8, 8)), true)
   let height = gen_image_gradient_linear(8, 8, 0, BLACK, WHITE)
   let blocks = gen_image_checked(4, 4, 1, 1, WHITE, BLACK)
-  failures += check("gen_mesh_heightmap", counts(gen_mesh_heightmap(height, vec3(4.0, 1.0, 4.0))), true)
-  failures += check("gen_mesh_cubicmap", counts(gen_mesh_cubicmap(blocks, vec3(1.0, 1.0, 1.0))), true)
+  failures += check(
+    "gen_mesh_heightmap",
+    counts(gen_mesh_heightmap(height, vec3(4.0, 1.0, 4.0))),
+    true
+  )
+  failures += check(
+    "gen_mesh_cubicmap",
+    counts(gen_mesh_cubicmap(blocks, vec3(1.0, 1.0, 1.0))),
+    true
+  )
   unload_image(height)
   unload_image(blocks)
 
@@ -215,7 +238,12 @@ let run_scene = () -> void => {
   placed.place("poly", gen_mesh_poly(6, 1.2), 7, rgb(140, 200, 120))
   placed.place("plane", gen_mesh_plane(2.0, 2.0, 4, 4), 8, rgb(200, 180, 90))
   let height = gen_image_gradient_linear(16, 16, 45, BLACK, WHITE)
-  placed.place("heightmap", gen_mesh_heightmap(height, vec3(2.4, 1.2, 2.4)), 9, rgb(120, 160, 90))
+  placed.place(
+    "heightmap",
+    gen_mesh_heightmap(height, vec3(2.4, 1.2, 2.4)),
+    9,
+    rgb(120, 160, 90)
+  )
   unload_image(height)
   let blocks = gen_image_checked(4, 4, 1, 1, WHITE, BLACK)
   placed.place("cubicmap", gen_mesh_cubicmap(blocks, vec3(0.5, 0.5, 0.5)), 10, DARKGRAY)
@@ -283,7 +311,13 @@ let run_scene = () -> void => {
     }
     end_mode_3d()
 
-    draw_text("raylib models - orbital camera, move the mouse to pick", 24, 16, LABEL, DARKGRAY)
+    draw_text(
+      "raylib models - orbital camera, move the mouse to pick",
+      24,
+      16,
+      LABEL,
+      DARKGRAY
+    )
     let name = if picked >= 0 { placed[picked].name } else { "nothing" }
     draw_text("picked: ${name}", 24, 42, LABEL, BLACK)
     // Above each model with room to spare — the tall ones reach past two units — and lifted

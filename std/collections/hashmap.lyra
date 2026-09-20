@@ -133,7 +133,12 @@ pub let hashmap_with_capacity<k, v> = pure (capacity: i64) -> HashMap<k, v> => {
 ///
 /// The worst case is the insert that grows the table: n entries move to a buffer twice
 /// the size. Amortized over the inserts that filled it, that is O(1) each.
-pub let insert<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, value: v) -> void => {
+pub let insert<k, v> where k: Hash = det (
+  self: mut HashMap<k,
+  v>,
+  key: k,
+  value: v
+) -> void => {
   let _ = self.replace(key, value)
 }
 
@@ -142,7 +147,12 @@ pub let insert<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, value
 ///
 /// `insert` is this with the answer dropped. A discarded `Maybe` warns (`lyra-W006`), so
 /// reach for this one only when the previous value is wanted.
-pub let replace<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, value: v) -> Maybe<v> => {
+pub let replace<k, v> where k: Hash = det (
+  self: mut HashMap<k,
+  v>,
+  key: k,
+  value: v
+) -> Maybe<v> => {
   let hash = hash_key(key)
   match self.find_index(key, hash) {
     Some(i) => {
@@ -165,7 +175,13 @@ pub let replace<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, valu
 /// `counts.insert(word, counts.get_or(word, 0) + 1)` says, without finding the key twice.
 /// `default` is evaluated whether or not it is used, being an ordinary argument; `f`
 /// runs exactly once. A new key may trigger a grow, as `insert` may.
-pub let update<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, default: v, f: (v) -> v) -> void => {
+pub let update<k, v> where k: Hash = det (
+  self: mut HashMap<k,
+  v>,
+  key: k,
+  default: v,
+  f: (v) -> v
+) -> void => {
   let hash = hash_key(key)
   match self.find_index(key, hash) {
     Some(i) => match self.slots[i] {
@@ -183,7 +199,11 @@ pub let update<k, v> where k: Hash = det (self: mut HashMap<k, v>, key: k, defau
 /// The value mapped to `key`, or `None` if there is none.
 ///
 /// Expected O(1): a probe from the key's hash, confirmed with `==`.
-pub let get<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k) -> Maybe<v> =>
+pub let get<k, v> where k: Hash = pure noalloc (
+  self: HashMap<k,
+  v>,
+  key: k
+) -> Maybe<v> =>
   match self.find_index(key, hash_key(key)) {
     Some(i) => match self.slots[i] { Some(e) => Some(e.value), None => None },
     None => None,
@@ -193,11 +213,20 @@ pub let get<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k) -> 
 ///
 /// `fallback` is evaluated whether or not it is used, being an ordinary argument — the
 /// same rule as `Maybe`'s `unwrap_or`, which this is one call over.
-pub let get_or<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k, fallback: v) -> v =>
+pub let get_or<k, v> where k: Hash = pure noalloc (
+  self: HashMap<k,
+  v>,
+  key: k,
+  fallback: v
+) -> v =>
   self.get(key).unwrap_or(fallback)
 
 /// Whether the map has an entry for `key`.
-pub let contains_key<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k) -> bool =>
+pub let contains_key<k, v> where k: Hash = pure noalloc (
+  self: HashMap<k,
+  v>,
+  key: k
+) -> bool =>
   self.find_index(key, hash_key(key)).is_some()
 
 /// Removes `key`'s entry, answering the value it had, or `None` if there was none.
@@ -205,7 +234,11 @@ pub let contains_key<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, ke
 /// Expected O(1). The table never shrinks; the capacity stays for the entries that
 /// replace the removed one. When the value is not wanted, `let _ = m.remove(key)` is
 /// how to say so — a discarded `Maybe` warns.
-pub let remove<k, v> where k: Hash = det noalloc (self: mut HashMap<k, v>, key: k) -> Maybe<v> => {
+pub let remove<k, v> where k: Hash = det noalloc (
+  self: mut HashMap<k,
+  v>,
+  key: k
+) -> Maybe<v> => {
   match self.find_index(key, hash_key(key)) {
     None => None,
     Some(found) => {
@@ -298,7 +331,12 @@ pub let hash_combine = pure noalloc (h: u64, next: u64) -> u64 =>
 // The loop is bounded by the slot count rather than infinite: the load-factor cap
 // guarantees an empty slot, but a bound makes the function's termination visible on the
 // page rather than an invariant the reader has to trust.
-let find_index<k, v> where k: Hash = pure noalloc (self: HashMap<k, v>, key: k, hash: u64) -> Maybe<i64> => {
+let find_index<k, v> where k: Hash = pure noalloc (
+  self: HashMap<k,
+  v>,
+  key: k,
+  hash: u64
+) -> Maybe<i64> => {
   let mask = u64(self.slots.len() - 1)
   var i = i64(hash & mask)
   for _ in 0..<self.slots.len() {

@@ -212,7 +212,13 @@ const GRID = 26
 /// few runes of escape sequence wrapped round three columns of text, so fitting a styled
 /// row would cut it short by the length of its escapes. The grid is built to exactly
 /// `GRID` visible columns instead, and the plain panel is fitted to what is left.
-let frame = pure (selected: PlainDate, now: PlainDateTime, events: []Entry, cols: i64, rows: i64) -> []string => {
+let frame = pure (
+  selected: PlainDate,
+  now: PlainDateTime,
+  events: []Entry,
+  cols: i64,
+  rows: i64
+) -> []string => {
   if cols < GRID + 2 || rows < 10 {
     return [fit("calendar needs at least ${GRID + 2}x10", cols)]
   }
@@ -227,7 +233,10 @@ let frame = pure (selected: PlainDate, now: PlainDateTime, events: []Entry, cols
   // With no events loaded, say where they come from: a calendar that is empty because it
   // was never given a file looks exactly like one whose file is empty.
   let hint = if events.len() == 0 { "   (no events: --events FILE)" } else { "" }
-  out.push(status_bar(" arrows day/week   PgUp/PgDn month   t today   q quit${hint}", cols))
+  out.push(status_bar(
+    " arrows day/week   PgUp/PgDn month   t today   q quit${hint}",
+    cols
+  ))
   out
 }
 
@@ -241,7 +250,12 @@ let frame = pure (selected: PlainDate, now: PlainDateTime, events: []Entry, cols
 /// `styled` marks the selected day in reverse video, today in bold and a day with events in
 /// colour; unstyled, the selected day is `>`-prefixed, a day with events `*`-prefixed, and
 /// today is not marked, so the plain form depends on nothing but its arguments.
-let grid = pure (selected: PlainDate, now: PlainDateTime, events: []Entry, styled: bool) -> []string => {
+let grid = pure (
+  selected: PlainDate,
+  now: PlainDateTime,
+  events: []Entry,
+  styled: bool
+) -> []string => {
   let start = selected.with_day(1)
   let lead = start.day_of_week() - 1
   let length = selected.days_in_month()
@@ -271,7 +285,13 @@ let grid = pure (selected: PlainDate, now: PlainDateTime, events: []Entry, style
 }
 
 /// One day of the grid, three columns wide.
-let cell = pure (n: i64, selected: bool, is_today: bool, busy: bool, styled: bool) -> string => {
+let cell = pure (
+  n: i64,
+  selected: bool,
+  is_today: bool,
+  busy: bool,
+  styled: bool
+) -> string => {
   let number = "${n}".pad_start(2)
   if !styled {
     let mark = if selected { ">" } else if busy { "*" } else { " " }
@@ -293,7 +313,11 @@ let on = pure (events: []Entry, day: PlainDate) -> []Entry =>
 
 /// The lines beside the grid: the selected date in full, where it falls in its year, how
 /// far it is from today, and its events.
-let panel = pure (selected: PlainDate, now: PlainDateTime, events: []Entry) -> []string => {
+let panel = pure (
+  selected: PlainDate,
+  now: PlainDateTime,
+  events: []Entry
+) -> []string => {
   var out = [
     "${weekday_name(selected.day_of_week())} ${selected.day()} ${month_name(selected.month())} ${selected.year()}",
     "${selected}",
@@ -335,7 +359,11 @@ const SPAN = 14
 
 /// How soon an event is, when it is on today and has not finished: "  in 2h 10m", or
 /// "  now" while it runs. Nothing for a past event or one on another day.
-let soon = pure (start: PlainDateTime, end: PlainDateTime, now: PlainDateTime) -> string => {
+let soon = pure (
+  start: PlainDateTime,
+  end: PlainDateTime,
+  now: PlainDateTime
+) -> string => {
   if start.date != now.date || end < now { return "" }
   if start <= now { return "  now" }
   let left = now.until(start)
@@ -348,7 +376,10 @@ let clock = pure (t: PlainTime) -> string => "${"${t.hour()}".pad_start(2, "0")}
 
 /// The start of a day, which `plain_time(0)` always is — the `unwrap_or` fallback is the
 /// same value and is never used.
-let midnight = pure () -> PlainTime => match plain_time(0) { Some(t) => t, None => PlainTime(0) }
+let midnight = pure () -> PlainTime => match plain_time(0) {
+  Some(t) => t,
+  None => PlainTime(0)
+}
 
 /// A distance in days as a person would say it.
 let relative = pure (n: i64) -> string => {

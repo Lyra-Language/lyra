@@ -117,7 +117,11 @@ let version = pure () -> string => {
 ///
 /// The `u64(…)` is where the boundary's width stops: `crc32` answers a `CULong`, and
 /// everything above this line is in Lyra's own fixed widths.
-let checksum = pure (xs: []u8) -> u64 => u64(unsafe { crc32(0, xs.data(), u32(xs.len())) })
+let checksum = pure (xs: []u8) -> u64 => u64(unsafe { crc32(
+  0,
+  xs.data(),
+  u32(xs.len())
+) })
 
 /// The bytes to round-trip: repetitive, so zlib has something to find.
 let sample = pure () -> []u8 => {
@@ -181,11 +185,21 @@ unsafe extern pure compressBound: (sourceLen: CULong) -> CULong
 /// decide which ones meant `long`. The alias is the *boundary's*: the Lyra functions above
 /// convert to a fixed width at their edge, so the target-dependent type stops there.
 @link("z")
-unsafe extern det noalloc compress: (dest: ^mut u8, destLen: ^mut CULong, source: ^u8, sourceLen: CULong) -> i32
+unsafe extern det noalloc compress: (
+  dest: ^mut u8,
+  destLen: ^mut CULong,
+  source: ^u8,
+  sourceLen: CULong
+) -> i32
 
 /// `int uncompress(Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen)`.
 @link("z")
-unsafe extern det noalloc uncompress: (dest: ^mut u8, destLen: ^mut CULong, source: ^u8, sourceLen: CULong) -> i32
+unsafe extern det noalloc uncompress: (
+  dest: ^mut u8,
+  destLen: ^mut CULong,
+  source: ^u8,
+  sourceLen: CULong
+) -> i32
 
 /// `const char *zlibVersion(void)` — a pointer into zlib's own static storage, which is
 /// why nothing here frees it. Ownership does not cross the boundary in either direction.

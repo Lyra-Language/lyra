@@ -113,7 +113,10 @@ let main = () -> void => {
         ball = Vector2 { x: ball.x + vel.x * dt, y: ball.y + vel.y * dt }
 
         // Walls: left, right and top reflect; the floor costs a life.
-        if ball.x <= BALL_R || ball.x >= WIDTH - BALL_R { vel = Vector2 { x: -vel.x, y: vel.y } }
+        if ball.x <= BALL_R || ball.x >= WIDTH - BALL_R { vel = Vector2 {
+          x: -vel.x,
+          y: vel.y
+        } }
         if ball.y <= BALL_R { vel = Vector2 { x: vel.x, y: -vel.y } }
         if ball.y >= HEIGHT + BALL_R {
           lives -= 1

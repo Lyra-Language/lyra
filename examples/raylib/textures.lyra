@@ -24,27 +24,97 @@ module main
 //! places it looks for `assets/`.
 
 import bindings.raylib.{
-  init_window, close_window, should_close, set_target_fps, elapsed,
-  begin_drawing, end_drawing, clear_background,
-  Vector2, vec2, rect, draw_rectangle, draw_rectangle_lines, draw_circle, draw_line_ex,
-  draw_text, mouse_position, key_pressed, KEY_SPACE,
-  Color, rgb, rgba,
-  Image, Texture2D, RenderTexture, NPatchInfo, Degrees,
-  gen_image_color, gen_image_checked, gen_image_gradient_linear, gen_image_gradient_radial,
-  gen_image_gradient_square, gen_image_white_noise, gen_image_perlin_noise,
-  gen_image_cellular, gen_image_text,
-  image_valid, unload_image, image_color_at, image_colors, export_image, load_image,
-  image_from_memory, image_from_texture, image_from_screen,
-  resize, resize_nearest, crop, rotate, flip_vertical, flip_horizontal,
-  grayscale, invert, tint, reformat,
-  texture_from_image, texture_valid, unload_texture, update_texture, update_texture_rect,
-  load_texture, set_texture_filter, set_texture_wrap, gen_mipmaps,
-  load_render_texture, render_texture_valid, unload_render_texture,
-  begin_texture_mode, end_texture_mode,
-  draw_texture, draw_texture_v, draw_texture_ex, draw_texture_rect, draw_texture_pro,
+  init_window,
+  close_window,
+  should_close,
+  set_target_fps,
+  elapsed,
+  begin_drawing,
+  end_drawing,
+  clear_background,
+  Vector2,
+  vec2,
+  rect,
+  draw_rectangle,
+  draw_rectangle_lines,
+  draw_circle,
+  draw_line_ex,
+  draw_text,
+  mouse_position,
+  key_pressed,
+  KEY_SPACE,
+  Color,
+  rgb,
+  rgba,
+  Image,
+  Texture2D,
+  RenderTexture,
+  NPatchInfo,
+  Degrees,
+  gen_image_color,
+  gen_image_checked,
+  gen_image_gradient_linear,
+  gen_image_gradient_radial,
+  gen_image_gradient_square,
+  gen_image_white_noise,
+  gen_image_perlin_noise,
+  gen_image_cellular,
+  gen_image_text,
+  image_valid,
+  unload_image,
+  image_color_at,
+  image_colors,
+  export_image,
+  load_image,
+  image_from_memory,
+  image_from_texture,
+  image_from_screen,
+  resize,
+  resize_nearest,
+  crop,
+  rotate,
+  flip_vertical,
+  flip_horizontal,
+  grayscale,
+  invert,
+  tint,
+  reformat,
+  texture_from_image,
+  texture_valid,
+  unload_texture,
+  update_texture,
+  update_texture_rect,
+  load_texture,
+  set_texture_filter,
+  set_texture_wrap,
+  gen_mipmaps,
+  load_render_texture,
+  render_texture_valid,
+  unload_render_texture,
+  begin_texture_mode,
+  end_texture_mode,
+  draw_texture,
+  draw_texture_v,
+  draw_texture_ex,
+  draw_texture_rect,
+  draw_texture_pro,
   draw_texture_npatch,
-  FILTER_POINT, FILTER_BILINEAR, WRAP_CLAMP, NPATCH_NINE, PIXELFORMAT_R8G8B8A8,
-  RAYWHITE, WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY, LIGHTGRAY,
+  FILTER_POINT,
+  FILTER_BILINEAR,
+  WRAP_CLAMP,
+  NPATCH_NINE,
+  PIXELFORMAT_R8G8B8A8,
+  RAYWHITE,
+  WHITE,
+  BLACK,
+  RED,
+  GREEN,
+  BLUE,
+  YELLOW,
+  ORANGE,
+  PURPLE,
+  DARKGRAY,
+  LIGHTGRAY,
 }
 
 /// One sprite frame, and how many `assets/sprites.png` holds.
@@ -395,85 +465,89 @@ let solid_block = pure (width: i64, height: i64, color: Color) -> []Color => {
 
 let min_i64 = pure (a: i64, b: i64) -> i64 => if a < b { a } else { b }
 
-let loop_frames =
-  (sheet: Texture2D, panel: Texture2D, scene: Texture2D, sepia: Texture2D,
+let loop_frames = (sheet: Texture2D, panel: Texture2D, scene: Texture2D, sepia: Texture2D,
   target: Maybe<RenderTexture>) -> void => {
-    var shot: Maybe<Texture2D> = None
-    for !should_close() {
-      let t = f32(elapsed())
-      let cursor = mouse_position()
-      let frame = i64(f64(t * 6.0).floor()) %% FRAMES
+  var shot: Maybe<Texture2D> = None
+  for !should_close() {
+    let t = f32(elapsed())
+    let cursor = mouse_position()
+    let frame = i64(f64(t * 6.0).floor()) %% FRAMES
 
-      // Space takes a screenshot: the framebuffer becomes an `Image`, the `Image` goes
-      // to a PNG, and the PNG is loaded straight back as a texture and shown as a
-      // thumbnail — a realistic gesture that exercises four bindings at once.
-      if key_pressed(KEY_SPACE) {
-        match capture_to_texture() {
-          Some(fresh) => {
-            // The previous thumbnail is released *before* the name is rebound, because
-            // rebinding over a live resource is the one leak lyra-W022 cannot attribute
-            // to a scope end — it is the caller's to get right.
-            match shot {
-              Some(old) => unload_texture(old),
-              None => {},
-            }
-            shot = Some(fresh)
-          },
-          None => {},
-        }
-      }
-
-      // **Drawn into first, outside the frame's own drawing.** A texture-mode block does
-      // not nest inside `begin_drawing`, so the framebuffer is filled before the screen
-      // is, and then drawn back below like any other texture.
-      match target {
-        Some(rt) => render_into(rt, sheet, scene, t),
+    // Space takes a screenshot: the framebuffer becomes an `Image`, the `Image` goes
+    // to a PNG, and the PNG is loaded straight back as a texture and shown as a
+    // thumbnail — a realistic gesture that exercises four bindings at once.
+    if key_pressed(KEY_SPACE) {
+      match capture_to_texture() {
+        Some(fresh) => {
+          // The previous thumbnail is released *before* the name is rebound, because
+          // rebinding over a live resource is the one leak lyra-W022 cannot attribute
+          // to a scope end — it is the caller's to get right.
+          match shot {
+            Some(old) => unload_texture(old),
+            None => {},
+          }
+          shot = Some(fresh)
+        },
         None => {},
       }
-
-      begin_drawing()
-      clear_background(RAYWHITE)
-
-      draw_scene_panel(scene, 30.0, 70.0)
-      draw_transformed_panel(scene, 420.0, 70.0, t)
-      draw_filter_panel(sheet, 810.0, 70.0)
-      draw_edited_panel(sepia, 30.0, 300.0)
-      draw_sheet_panel(sheet, 420.0, 300.0, frame)
-      draw_npatch_panel(panel, 810.0, 300.0, cursor)
-
-      match target {
-        Some(rt) => draw_render_texture_panel(rt.texture, 30.0, 530.0),
-        None => draw_text("unavailable", 30, 530, CAPTION, DARKGRAY),
-      }
-
-      draw_text("as loaded / tinted", 30, 36, LABEL, DARKGRAY)
-      draw_text("_ex and _pro", 420, 36, LABEL, DARKGRAY)
-      draw_text("point / bilinear", 810, 36, LABEL, DARKGRAY)
-      draw_text("update_texture", 30, 266, LABEL, DARKGRAY)
-      draw_text("sprite sheet", 420, 266, LABEL, DARKGRAY)
-      draw_text("nine-patch", 810, 266, LABEL, DARKGRAY)
-      draw_text("render texture", 30, 496, LABEL, DARKGRAY)
-      draw_text("screenshot", 420, 496, LABEL, DARKGRAY)
-
-      match shot {
-        Some(tex) => {
-          draw_rectangle_lines(rect(420.0, 530.0, 260.0, 176.0), 2.0, DARKGRAY)
-          draw_texture_pro(tex, rect(0.0, 0.0, f32(tex.width), f32(tex.height)),
-            rect(422.0, 532.0, 256.0, 172.0), vec2(0.0, 0.0), 0.0, WHITE)
-        },
-        None => draw_text("press space", 420, 530, CAPTION, DARKGRAY),
-      }
-      end_drawing()
     }
-    match shot {
-      Some(tex) => unload_texture(tex),
+
+    // **Drawn into first, outside the frame's own drawing.** A texture-mode block does
+    // not nest inside `begin_drawing`, so the framebuffer is filled before the screen
+    // is, and then drawn back below like any other texture.
+    match target {
+      Some(rt) => render_into(rt, sheet, scene, t),
       None => {},
     }
+
+    begin_drawing()
+    clear_background(RAYWHITE)
+
+    draw_scene_panel(scene, 30.0, 70.0)
+    draw_transformed_panel(scene, 420.0, 70.0, t)
+    draw_filter_panel(sheet, 810.0, 70.0)
+    draw_edited_panel(sepia, 30.0, 300.0)
+    draw_sheet_panel(sheet, 420.0, 300.0, frame)
+    draw_npatch_panel(panel, 810.0, 300.0, cursor)
+
+    match target {
+      Some(rt) => draw_render_texture_panel(rt.texture, 30.0, 530.0),
+      None => draw_text("unavailable", 30, 530, CAPTION, DARKGRAY),
+    }
+
+    draw_text("as loaded / tinted", 30, 36, LABEL, DARKGRAY)
+    draw_text("_ex and _pro", 420, 36, LABEL, DARKGRAY)
+    draw_text("point / bilinear", 810, 36, LABEL, DARKGRAY)
+    draw_text("update_texture", 30, 266, LABEL, DARKGRAY)
+    draw_text("sprite sheet", 420, 266, LABEL, DARKGRAY)
+    draw_text("nine-patch", 810, 266, LABEL, DARKGRAY)
+    draw_text("render texture", 30, 496, LABEL, DARKGRAY)
+    draw_text("screenshot", 420, 496, LABEL, DARKGRAY)
+
+    match shot {
+      Some(tex) => {
+        draw_rectangle_lines(rect(420.0, 530.0, 260.0, 176.0), 2.0, DARKGRAY)
+        draw_texture_pro(tex, rect(0.0, 0.0, f32(tex.width), f32(tex.height)),
+          rect(422.0, 532.0, 256.0, 172.0), vec2(0.0, 0.0), 0.0, WHITE)
+      },
+      None => draw_text("press space", 420, 530, CAPTION, DARKGRAY),
+    }
+    end_drawing()
   }
+  match shot {
+    Some(tex) => unload_texture(tex),
+    None => {},
+  }
+}
 
 /// Fill the framebuffer with something this program drew, so what comes back is visibly
 /// not a blank rectangle.
-let render_into = (rt: RenderTexture, sheet: Texture2D, scene: Texture2D, t: f32) -> void => {
+let render_into = (
+  rt: RenderTexture,
+  sheet: Texture2D,
+  scene: Texture2D,
+  t: f32
+) -> void => {
   begin_texture_mode(rt)
   clear_background(rgb(30, 30, 46))
   draw_texture_ex(scene, vec2(10.0, 24.0), 0.0, 0.9, rgba(255, 255, 255, 150))
@@ -509,7 +583,13 @@ let draw_transformed_panel = (scene: Texture2D, x: f32, y: f32, t: f32) -> void 
   draw_texture_pro(scene, rect(0.0, 0.0, 160.0, 100.0),
     rect(x + 250.0, y + 60.0, 130.0, 82.0), vec2(65.0, 41.0), spin, WHITE)
   draw_text("_ex", i32(x.round()) + 30, i32(y.round()) + 130, CAPTION, DARKGRAY)
-  draw_text("_pro, centred", i32(x.round()) + 190, i32(y.round()) + 130, CAPTION, DARKGRAY)
+  draw_text(
+    "_pro, centred",
+    i32(x.round()) + 190,
+    i32(y.round()) + 130,
+    CAPTION,
+    DARKGRAY
+  )
 }
 
 /// One frame of the sheet at a time — what `draw_texture_rect` is for. The second copy
@@ -558,7 +638,14 @@ let draw_filter_panel = (sheet: Texture2D, x: f32, y: f32) -> void => {
   set_texture_filter(sheet, FILTER_POINT)
   draw_texture_pro(sheet, source, rect(x, y, 110.0, 110.0), vec2(0.0, 0.0), 0.0, WHITE)
   set_texture_filter(sheet, FILTER_BILINEAR)
-  draw_texture_pro(sheet, source, rect(x + 130.0, y, 110.0, 110.0), vec2(0.0, 0.0), 0.0, WHITE)
+  draw_texture_pro(
+    sheet,
+    source,
+    rect(x + 130.0, y, 110.0, 110.0),
+    vec2(0.0, 0.0),
+    0.0,
+    WHITE
+  )
   set_texture_filter(sheet, FILTER_POINT)
   draw_text("point", i32(x.round()), i32(y.round()) + 118, CAPTION, DARKGRAY)
   draw_text("bilinear", i32(x.round()) + 130, i32(y.round()) + 118, CAPTION, DARKGRAY)
