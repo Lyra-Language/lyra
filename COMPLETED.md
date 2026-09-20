@@ -9,6 +9,53 @@ Newest first.
 
 ## Dated log
 
+### 09/19/26 — lyrafmt breaks a long line, at 90 columns
+
+The last of the formatter's opinions, and the one that needed a decision rather than a
+rule: **90 columns**, because it is what the repo already writes — the 95th percentile line
+across `std`, `examples` and `bindings` was 91, and doc comments wrap near 90 — so the
+budget enforces the house style instead of importing someone else's.
+
+- **Render, measure, break, render again**, up to eight passes. A break's effect on the
+  lines around it is whatever the indentation rules make of it, so the honest way to know a
+  line's width after breaking is to lay the file out again and look; predicting it is the
+  same computation done twice, and wrong the second time. Each pass explodes the
+  **outermost** list on each over-long line, so a nested one is reached by the pass after,
+  at the widths it actually has by then.
+- **Exploded, not filled**: every element of a broken list goes on its own line. Filling
+  makes a one-element edit reflow its neighbours, so a diff shows lines that did not
+  change. The style was confirmed against a file formatted by hand — `--check` passes on it
+  unchanged, which is a better test of a formatter's taste than any assertion I could
+  write.
+- **Break-only, with exactly one join.** A line the author split stays split, so the
+  formatter can only ever make a line shorter; the exception is a parameter list's `(`
+  sitting alone under its `=`, which is pulled up to the declaration. Not for looks: a
+  delimiter's contents indent from the line its opener is on, and an opener alone on a
+  continuation line is not a line anything should indent from.
+- **It found an indentation bug that predates it.** A delimiter that *begins* a line had
+  its contents indented from its construct's line, which put exploded elements level with
+  their own `[` and the closer at the margin. Contents now indent from the opener's own
+  line when the opener starts one, and from the construct's line otherwise — `if a &&` /
+  `b {` still indents its body from the `if`, which is what the anchor rule was for.
+- **What says it is safe**, over all 44 files the rule changes: the output parses; it is
+  **identical to the input with all whitespace stripped**, so no token was added, lost or
+  moved; and formatting twice equals formatting once. The whitespace-stripped comparison is
+  the one that would catch a break landing inside a string literal, which is why the
+  planner refuses any list at or inside a `${`.
+
+### 09/19/26 — the shadow warnings that fired on correct code are gone
+
+`lyra-W001` fired on every program importing `std.tui` (`event.lyra`'s local `first`, over
+the prelude's `seq` combinator), and the `Duration.total` added the same day put two more in
+`std.temporal` (`total` in `plain_date.add` and `plain_date_time.add`). A warning that fires
+on correct code teaches the reader to skip warnings, which is the whole cost: the calendar
+now compiles silent. Renamed rather than suppressed — there is no suppression syntax, and
+the local's name was the less descriptive of the two in every case (`lead`, `clock_ns`,
+`months_from_zero`).
+
+The sweep that found them — `build/lyrac check` over every example — turned up five more in
+the examples themselves, shadowing the prelude's `count` and `lines`.
+
 ### 09/19/26 — a record update's base is any postfix expression
 
 `P { make() | x: 1 }` did not parse: the base was `identifier | const_identifier`, so every

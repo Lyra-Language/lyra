@@ -227,8 +227,33 @@ let format_source = (parser: Parser, name: string, source: string, rule: bool) -
   // Byte offsets index the source's bytes, not its runes; `cstring` is the byte view (its
   // trailing NUL is past every offset the tree reports).
   let bytes = source.cstring()
-  let text = format(bytes, bytes.len() - 1, leaves, rule).decode_utf8()
+  let text = lay_out(bytes, bytes.len() - 1, leaves, rule).decode_utf8()
   Ok(Formatted { source: source, text: text })
+}
+
+/// The file laid out: `format` run until no line is over the budget that breaking can fix.
+///
+/// **Render, measure, break, render again.** A break's effect on the lines around it is
+/// what the existing indentation rules say it is, so the honest way to know a line's width
+/// after a break is to lay the file out again and look — rather than to predict it, which
+/// is the same computation done twice and wrong the second time. Each pass explodes the
+/// *outermost* list on each over-long line, so a nested one is reached by the pass after,
+/// with the widths it actually has by then.
+///
+/// The pass cap is what makes this terminate whatever the planner does. Each pass must add
+/// a break or it stops, so the cap is only reached by a file nested deeper than it — and a
+/// line that is still long then is one no further break would shorten.
+let lay_out = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
+  var breaks = [false; leaves.len()]
+  var cols = [0; leaves.len()]
+  var lines = [0; leaves.len()]
+  var out = format(bytes, len, leaves, rule, breaks, cols, lines)
+  if !rule { return out }
+  for _ in 0..<BREAK_PASSES {
+    if !plan_breaks(bytes, leaves, cols, lines, breaks) { return out }
+    out = format(bytes, len, leaves, rule, breaks, cols, lines)
+  }
+  out
 }
 
 /// A token of the source: where it is, what the grammar calls it, and where the thing it
@@ -348,7 +373,8 @@ struct Scope {
 /// The formatted bytes: every leaf as it was, and between leaves the source's own bytes —
 /// except, with the rule on, the whitespace that begins a line, which becomes the
 /// indentation the enclosing delimiters call for.
-let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
+let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
+  cols: mut []i64, lines: mut []i64) -> []u8 => {
   var out: []u8 = []
   // One entry per delimiter still open, innermost last.
   var scopes: []Scope = []
@@ -361,7 +387,11 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
   var last_kind = ""
   var last_parent = ""
   var cursor = 0
-  for leaf in leaves {
+  // The line each token lands on and the column it starts at, reported back for the
+  // planner: it decides from the layout as rendered, never from a prediction of it.
+  var line = 0
+  for i in 0..<leaves.len() {
+    let leaf = leaves[i]
     var closer_level = 0
     if rule && closes(leaf.kind) && scopes.len() > 0 {
       closer_level = scopes[scopes.len() - 1].closer
@@ -369,8 +399,19 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
     }
     let nl = last_newline(bytes, cursor, leaf.start)
     let plain = all_whitespace(bytes, cursor, leaf.start)
-    if rule && plain && nl >= 0 {
-      push_line_breaks(bytes, cursor, nl + 1, out)
+    // Whether this token begins its line, which is what an opener's contents indent from
+    // when the opener is the line's first token (below).
+    var starts_line = false
+    if rule && plain && nl >= 0 && joins_up(leaf, last_kind) {
+      // The one break the formatter removes: a parameter list that begins a line of its
+      // own under its `=`. It is a list's opener, so the lines below it indent from the
+      // line it sits on — and left where it was, that is the continuation line rather
+      // than the declaration's, which puts the parameters one level too shallow and the
+      // `)` at the margin. Pulled up, the header reads `pub let draw_ring = (` and the
+      // parameters sit under the name, which is how this repo writes them by hand.
+      push_spacing(leaf.start - cursor, last_kind, last_parent, leaf, out)
+    } else if rule && plain && nl >= 0 {
+      line += push_line_breaks(bytes, cursor, nl + 1, out)
       let base = if closes(leaf.kind) {
         closer_level
       } else if scopes.len() == 0 {
@@ -394,6 +435,26 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
       } else {
         base
       }
+      starts_line = true
+      push_indent(line_level, out)
+    } else if rule && plain && breaks[i] {
+      // A break the planner asked for, where the source had a space. It starts a line, so
+      // it answers the same two questions a source line break answers — and it is never a
+      // continuation: the planner only breaks after an opener or a comma and before a
+      // closer, which are the positions where the enclosing delimiter's own level is the
+      // right one.
+      out.push(10)
+      line += 1
+      previous_line_level = line_level
+      previous_line_last_kind = last_kind
+      line_level = if closes(leaf.kind) {
+        closer_level
+      } else if scopes.len() == 0 {
+        0
+      } else {
+        scopes[scopes.len() - 1].level
+      }
+      starts_line = true
       push_indent(line_level, out)
     } else if rule && plain {
       push_spacing(leaf.start - cursor, last_kind, last_parent, leaf, out)
@@ -401,13 +462,22 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
       copy_bytes(bytes, cursor, leaf.start, out)
     }
     level_at.insert(leaf.start, line_level)
+    cols[i] = column_of(out)
+    lines[i] = line
     copy_bytes(bytes, leaf.start, leaf.end, out)
     cursor = leaf.end
     last_kind = leaf.kind
     last_parent = leaf.parent
     if rule && opens(leaf.kind) {
+      // Contents indent from the line of the construct that opened the delimiter — except
+      // where the delimiter **is** the first token on its line, and then from its own
+      // line. The two differ only when the construct began on an earlier, shallower line:
+      // `if a &&` / `  b {` indents its body from the `if` (the anchor), while a list
+      // whose `[` was pushed onto a continuation line of its own indents from that line,
+      // where an anchor would put the elements level with their own opener.
       let anchor_level = level_at.get_or(leaf.anchor, line_level)
-      scopes.push(Scope { level: anchor_level + 1, closer: anchor_level })
+      let base = if starts_line { line_level } else { anchor_level }
+      scopes.push(Scope { level: base + 1, closer: base })
     }
   }
   // What follows the last leaf is normally a newline and possibly blank lines, and a file
@@ -421,6 +491,164 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
     if rule && (len == 0 || bytes[len - 1] != 10) { out.push(10) }
   }
   out
+}
+
+/// The width a line may reach before the formatter breaks it, and the cap on how many
+/// render-and-break passes one file gets.
+///
+/// **90 is what this repo already writes**: the 95th percentile line in `std` and
+/// `examples` is 91 columns and doc comments wrap near 90, so the budget enforces the
+/// house style rather than imposing a new one. Counted in **bytes**, so a line carrying
+/// non-ASCII text measures a little wider than it looks; every such line here is prose in
+/// a comment, which this never breaks.
+const WIDTH = 90
+const BREAK_PASSES = 8
+
+/// Plans the breaks for one pass: on every line over the budget, explodes **one** comma
+/// list — the outermost one the line has to offer. Answers whether it planned anything,
+/// which is what ends the loop.
+///
+/// **Exploding, not filling.** A list that must break puts every element on its own line,
+/// rather than packing as many as fit per line. Packing makes a one-element edit reflow
+/// the elements after it, so a diff shows lines that did not change; exploding makes an
+/// edit touch one line. It is what the code in this repo already does by hand.
+///
+/// **Only breaking, never joining**: a line the author split stays split even if it would
+/// now fit. The formatter can make a line shorter and never longer, which is what keeps a
+/// deliberate layout — an aligned table of match arms, a struct literal grouped by meaning
+/// — from being flattened by a tool that cannot know why it was written that way.
+let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
+  breaks: mut []bool) -> bool => {
+  if leaves.len() == 0 { return false }
+  // The delimiter each token sits directly inside, and whether any string interpolation
+  // encloses it — inside one, the "whitespace" between tokens is a string's own bytes and
+  // a newline there would rewrite the string.
+  var inside = [0 - 1; leaves.len()]
+  var closer_of = [0 - 1; leaves.len()]
+  var in_interp = [false; leaves.len()]
+  var open_stack: []i64 = []
+  var interp_depth = 0
+  for i in 0..<leaves.len() {
+    let kind = leaves[i].kind
+    if closes(kind) && open_stack.len() > 0 {
+      let opener = open_stack[open_stack.len() - 1]
+      open_stack = open_stack.slice(0, open_stack.len() - 1)
+      closer_of[opener] = i
+      if leaves[opener].kind == `${` { interp_depth -= 1 }
+    }
+    inside[i] = if open_stack.len() > 0 { open_stack[open_stack.len() - 1] } else { 0 - 1 }
+    in_interp[i] = interp_depth > 0
+    if opens(kind) {
+      if kind == `${` { interp_depth += 1 }
+      open_stack.push(i)
+    }
+  }
+  // How wide each line came out: the far edge of its last token.
+  var widest = [0; lines[leaves.len() - 1] + 1]
+  for i in 0..<leaves.len() {
+    let edge = cols[i] + (leaves[i].end - leaves[i].start)
+    if edge > widest[lines[i]] { widest[lines[i]] = edge }
+  }
+  var planned = false
+  var i = 0
+  for i < leaves.len() {
+    let line = lines[i]
+    var last = i
+    for last + 1 < leaves.len() && lines[last + 1] == line { last += 1 }
+    if widest[line] > WIDTH {
+      let chosen = widest_list(leaves, inside, in_interp, closer_of, i, last)
+      if chosen >= 0 && explode(bytes, leaves, inside, closer_of, chosen, breaks) {
+        planned = true
+      }
+    }
+    i = last + 1
+  }
+  planned
+}
+
+/// The list to break on a line that is too long: the **outermost** delimiter with a comma
+/// of its own on that line.
+///
+/// Outermost, because breaking it is what shortens the line the most and what leaves the
+/// remaining pieces whole: exploding the inner list of `f(g(a, b), c)` leaves `f(g(` at
+/// the front of a line that still holds everything else, while exploding `f`'s arguments
+/// puts `g(a, b)` on a line of its own — where the next pass can break it in turn if it is
+/// still too long.
+///
+/// A delimiter with no comma on this line is not a list here and is passed over; a `${` is
+/// refused outright, along with everything inside one, since its gaps are a string's bytes.
+let widest_list = pure (leaves: []Leaf, inside: []i64, in_interp: []bool, closer_of: []i64,
+  from: i64, to: i64) -> i64 => {
+  var best = 0 - 1
+  var best_depth = 0
+  for i in from..<=to {
+    if leaves[i].kind != "," || in_interp[i] { continue }
+    let owner = inside[i]
+    if owner < 0 || closer_of[owner] < 0 { continue }
+    if leaves[owner].kind == `${` { continue }
+    let depth = nesting(inside, owner)
+    if best < 0 || depth < best_depth {
+      best = owner
+      best_depth = depth
+    }
+  }
+  best
+}
+
+/// How many delimiters enclose the one at `i`, itself included.
+let nesting = pure (inside: []i64, i: i64) -> i64 => {
+  var depth = 0
+  var at = i
+  for at >= 0 {
+    depth += 1
+    at = inside[at]
+  }
+  depth
+}
+
+/// Puts every element of the list opened at `opener` on a line of its own: a break after
+/// the opener, after each of its commas, and before its closer. Answers whether it planned
+/// a break that was not already planned — a list already exploded is how a pass runs out
+/// of work on a line it cannot shorten further.
+///
+/// **A position whose gap is not plain whitespace is left alone, and takes the whole list
+/// with it.** The gap between two tokens is normally the space between them, but the
+/// grammar hides source in some gaps (a raw string's backticks), and a break there would
+/// move bytes that are not whitespace. Refusing the list rather than that one position
+/// keeps the result something a reader recognizes: a list is exploded or it is not.
+let explode = (bytes: []u8, leaves: []Leaf, inside: []i64, closer_of: []i64, opener: i64,
+  breaks: mut []bool) -> bool => {
+  let closer = closer_of[opener]
+  var wanted: []i64 = []
+  if opener + 1 < closer { wanted.push(opener + 1) }
+  for i in (opener + 1)..<closer {
+    if leaves[i].kind == "," && inside[i] == opener && i + 1 < closer { wanted.push(i + 1) }
+  }
+  if wanted.len() == 0 { return false }
+  wanted.push(closer)
+  for at in wanted {
+    if !all_whitespace(bytes, leaves[at - 1].end, leaves[at].start) { return false }
+  }
+  var added = false
+  for at in wanted {
+    if !breaks[at] {
+      breaks[at] = true
+      added = true
+    }
+  }
+  added
+}
+
+/// The column the next byte would be written at: how far `out` has run since its last
+/// newline.
+let column_of = pure (out: []u8) -> i64 => {
+  var i = out.len() - 1
+  var n = 0
+  for i >= 0 && out[i] != 10 {
+    n += 1
+    i -= 1
+  }
+  n
 }
 
 /// Whether every byte of `bytes[from..<to]` is a space, tab, carriage return or newline —
@@ -439,7 +667,7 @@ let all_whitespace = pure (bytes: []u8, from: i64, to: i64) -> bool => {
 /// the caller), so the whitespace is trailing and is dropped, and a run of newlines is cut
 /// to at most two — one line ending, one blank line. Anything else is copied, which cannot
 /// happen between two leaves and is the leak-safe direction if it ever does.
-let push_line_breaks = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
+let push_line_breaks = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> i64 => {
   var newlines = 0
   for i in from..<to {
     let b = bytes[i]
@@ -450,6 +678,7 @@ let push_line_breaks = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> 
       out.push(b)
     }
   }
+  if newlines > 2 { 2 } else { newlines }
 }
 
 /// Emits the space between two tokens on one line: **one space, or none**. None where a
@@ -510,6 +739,18 @@ let closes_braces = pure (k: string, parent: string) -> bool =>
 /// characters, as `"${"` begins an interpolation.
 let opens = pure (k: string) -> bool =>
   k == "{" || k == "(" || k == "[" || k == "#[" || k == ".{" || k == `${`
+
+/// Whether a token that begins a line is one the formatter moves back onto the line
+/// above: a parameter list's `(` directly under the `=` that binds the function.
+///
+/// **The only join in the formatter**, and deliberately the only one. Breaking is safe in
+/// a way joining is not — a break can always be read, while a join can undo a layout the
+/// author meant — so joining is confined to the one shape where the alternative is a
+/// parameter list the indentation rules cannot place: its contents indent from the line
+/// its `(` is on, and a `(` alone on a continuation line is not a line anything should
+/// indent from.
+let joins_up = pure (leaf: Leaf, before: string) -> bool =>
+  leaf.kind == "(" && leaf.parent == "parameter_list" && before == "="
 
 /// Whether a token at the end of a line introduces a body on the next: `=>` before a
 /// lambda's or an arm's, `=` before a declaration's value or a `data` type's constructors.

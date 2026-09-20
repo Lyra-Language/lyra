@@ -49,12 +49,13 @@ Entries rot: re-run an open entry's own reproduction before acting on it.
 Package management, versioning and separate compilation are out of scope by decision.
 
 - **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** Round trip,
-  indentation, whitespace, spacing and inline blocks are in; the repo is formatted by it, a
+  indentation, whitespace, spacing, inline blocks and **line breaking** (09/19: 90 columns,
+  comma lists exploded one element per line) are in; the repo is formatted by it, a
   directory argument is every `.lyra` file beneath it, and both editors format through
-  `lyra-lsp`. **Nothing in it decides when a line should break** — that is where a
-  formatter becomes opinionated: it needs a width budget, a list of breakable constructs and
-  re-indentation of what it broke. What is left is the bootstrap proper, which starts with
-  the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/17.)
+  `lyra-lsp`. Breaking covers comma lists only — **a method chain and a long boolean
+  condition are still left as written**, which are the next two constructs and each needs
+  its own indentation rule. What is left after that is the bootstrap proper, which starts
+  with the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
   - **[OPEN] One thing stands between `lyrafmt --check .` and a CI step**: every file in
     the repo is formatted as of 09/17, and `cmd/lyrac/testdata/syntax.lyra` does not parse
     *on purpose*, so the run reports it and exits 1 from the root for ever. Skipping an
@@ -108,9 +109,6 @@ Package management, versioning and separate compilation are out of scope by deci
   09/19. Next, if the calendar grows: a default events file (which forces environment
   variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
-- **[OPEN] `std.tui` warns on every program that imports it**: `std/tui/event.lyra:83`
-  names a local `first`, which shadows the prelude's `seq` combinator (`lyra-W001`).
-  Predates 09/18; a rename.
 
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
