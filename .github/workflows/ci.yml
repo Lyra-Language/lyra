@@ -94,7 +94,27 @@ jobs:
           sudo grep -rlE 'dl\.google\.com|packages\.microsoft\.com' \
             /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
           sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev
+          sudo apt-get install -y clang zlib1g-dev pkg-config
+
+      # The formatter (`examples/lyrafmt`) links the tree-sitter **runtime** as a system
+      # library, and `TestExample_LyrafmtRoundTrips` skips without it — which it silently
+      # did on every run before 09/20, so the self-hosting probe was verified only on a
+      # developer's machine while CI reported green.
+      #
+      # **Built from source, pinned, rather than `apt-get install libtree-sitter-dev`**:
+      # the generated parser is ABI 15 (`LANGUAGE_VERSION` in src/parser.c) and Ubuntu's
+      # package is far older, so the distro version installs, satisfies pkg-config, ends
+      # the skip, and then fails at run time on a version mismatch — the one outcome worse
+      # than skipping. The pin matches the `tree-sitter-cli` that generates the parser
+      # (tree-sitter-lyra/package.json); bump the two together.
+      - name: Install the tree-sitter runtime
+        env:
+          TREE_SITTER_VERSION: 0.25.10
+        run: |
+          curl -fsSL "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v${TREE_SITTER_VERSION}.tar.gz" | tar xz
+          sudo make -C "tree-sitter-${TREE_SITTER_VERSION}" install PREFIX=/usr/local
+          sudo ldconfig
+          pkg-config --modversion tree-sitter
 
       - name: Build
         working-directory: lyra

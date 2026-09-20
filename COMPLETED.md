@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 09/20/26 — CI was skipping the formatter's test, quietly
+
+`TestExample_LyrafmtRoundTrips` skips when the tree-sitter runtime is absent, and it was
+absent on every CI run there has ever been: the workflow installs clang and zlib, not the
+runtime. So the self-hosting probe — the thing this project points at its own compiler —
+was verified only on a developer's machine, while CI reported green. Found by reading the
+log of a run that had just been made verbose for an unrelated reason (`-v`, the same day),
+which is the argument for `-v`: a skip is invisible without it.
+
+The runtime is now **built from source and pinned**, not installed from the distro:
+`libtree-sitter-dev` is 0.20 on both Debian bookworm and Ubuntu 24.04 (measured, in
+containers), the generated parser is **ABI 15**, and a runtime that old satisfies
+`pkg-config` and then refuses the grammar at run time — which would turn a silent skip into
+a confusing failure. The pin matches the `tree-sitter-cli` that generates `parser.c`; the
+two move together. The README told Linux readers to install that same too-old package, and
+now gives the source build instead.
+
 ### 09/19/26 — lyrafmt breaks a long line, at 90 columns
 
 The last of the formatter's opinions, and the one that needed a decision rather than a
