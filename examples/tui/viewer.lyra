@@ -39,13 +39,13 @@ let main = () => {
   var zoom = 0
   var mx = 0
   var my = 0
-  var count = 0
+  var events_seen = 0
   var running = true
   var events = event_reader()
 
   var screen = renderer()
   let (cols0, rows0) = terminal_size()
-  screen.draw(cols0, rows0, zoom, mx, my, count)
+  screen.draw(cols0, rows0, zoom, mx, my, events_seen)
 
   var last_cols = cols0
   var last_rows = rows0
@@ -67,13 +67,13 @@ let main = () => {
         // remembers no longer describe the screen. Without this the next frame writes only
         // what *it* thinks changed, over a screen that changed underneath it.
         screen.invalidate()
-        screen.draw(poll_cols, poll_rows, zoom, mx, my, count)
+        screen.draw(poll_cols, poll_rows, zoom, mx, my, events_seen)
       }
     } else {
       match events.next_event() {
         None => { running = false },
         Some(e) => {
-          count += 1
+          events_seen += 1
           let (cols, rows) = terminal_size()
           last_cols = cols
           last_rows = rows
@@ -97,7 +97,7 @@ let main = () => {
           mx = clamp(mx, 0, cols - 1)
           my = clamp(my, 0, rows - 2)
           zoom = clamp(zoom, 0, 99)
-          screen.draw(cols, rows, zoom, mx, my, count)
+          screen.draw(cols, rows, zoom, mx, my, events_seen)
         }
       }
     }
@@ -109,7 +109,7 @@ let main = () => {
   // re-reads the size whenever the poll comes back empty. There is still no SIGWINCH
   // handler — this notices a resize within `redraw_interval_ms` rather than instantly,
   // which for a terminal is indistinguishable.
-  println("marker ended at ${mx},${my} after ${count} events")
+  println("marker ended at ${mx},${my} after ${events_seen} events")
 }
 
 let setup = () => {
@@ -135,17 +135,17 @@ let teardown = () => {
 /// tried to skip building the unchanged rows would need to know which inputs each row
 /// depends on, which is the bookkeeping this design exists to avoid.
 let draw = (self: mut Renderer, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
-  var lines: []string = []
+  var rows_out: []string = []
   // rows - 1, leaving the last line for the status bar. Drawing into the final row and
   // then emitting a newline scrolls the screen, which is what makes a full-height frame
   // jitter. The same count is also the vertical span the gradient spreads over — passing
   // the terminal's full height instead would leave the top band unused.
   let span_rows = rows - 1
   for row in 0..<span_rows {
-    lines.push(render_row(row, cols, span_rows, zoom, mx, my))
+    rows_out.push(render_row(row, cols, span_rows, zoom, mx, my))
   }
-  lines.push(status(cols, rows, zoom, mx, my, events))
-  self.render(lines)
+  rows_out.push(status(cols, rows, zoom, mx, my, events))
+  self.render(rows_out)
 }
 
 /// One row of the frame, as a string. Built by concatenation into a single row rather

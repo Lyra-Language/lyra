@@ -158,9 +158,9 @@ pub let since = pure (self: PlainDate, other: PlainDate) -> Duration => other.un
 /// ```
 pub let add = pure (self: PlainDate, amount: Duration) -> PlainDate => {
   let (y, m, d) = civil_from_days(i64(self))
-  let total = (m - 1) + amount.months + amount.years * 12
-  let to_year = y + floor_div(total, 12)
-  let to_month = total %% 12 + 1
+  let months_from_zero = (m - 1) + amount.months + amount.years * 12
+  let to_year = y + floor_div(months_from_zero, 12)
+  let to_month = months_from_zero %% 12 + 1
   let to_day = if d > days_in(to_year, to_month) { days_in(to_year, to_month) } else { d }
   PlainDate(days_from_civil(to_year, to_month, to_day) + amount.weeks * 7 + amount.days + whole_days(amount))
 }

@@ -176,17 +176,17 @@ let step = pure (grid: [][]bool) -> [][]bool => {
 let neighbours = pure (grid: [][]bool, x: i64, y: i64) -> i64 => {
   let height = grid.len()
   let width = grid[0].len()
-  var count = 0
+  var alive = 0
   for dy in -1..<=1 {
     for dx in -1..<=1 {
       // The cell itself is not its own neighbour, and it is the one case the double loop
       // gets wrong for free.
       if dx != 0 || dy != 0 {
-        if grid[wrap(y + dy, height)][wrap(x + dx, width)] { count += 1 }
+        if grid[wrap(y + dy, height)][wrap(x + dx, width)] { alive += 1 }
       }
     }
   }
-  count
+  alive
 }
 
 /// `i` brought into `0..<limit` by wrapping, for a neighbour one step off either edge.

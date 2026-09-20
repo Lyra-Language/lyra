@@ -42,10 +42,10 @@ pub let parse_plain_date_time = pure (text: string) -> Maybe<PlainDateTime> => {
 pub let add = pure (self: PlainDateTime, amount: Duration) -> PlainDateTime => {
   let calendar = Duration { duration() | years: amount.years, months: amount.months,
     weeks: amount.weeks, days: amount.days }
-  let total = i128(i64(self.time)) + clock_nanoseconds(amount)
+  let clock_ns = i128(i64(self.time)) + clock_nanoseconds(amount)
   let day_ns = i128(NS_PER_DAY)
-  let rem = total %% day_ns
-  let carry = i64((total - rem) / day_ns)
+  let rem = clock_ns %% day_ns
+  let carry = i64((clock_ns - rem) / day_ns)
   PlainDateTime {
     date: self.date.add(calendar).add(days(carry)),
     time: PlainTime(i64(rem)),

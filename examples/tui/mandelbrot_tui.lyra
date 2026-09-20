@@ -222,9 +222,9 @@ let draw = (self: mut Renderer, term_cols: i64, term_rows: i64, view: View, mx: 
   let w = window_for(view, cols, rows)
   let canvas_rows = term_rows - 1
 
-  var lines: []string = []
+  var rows_out: []string = []
   for _ in 1..<=top {
-    lines.push(spaces(term_cols))
+    rows_out.push(spaces(term_cols))
   }
   for row in 0..<rows {
     // **Every line is exactly `term_cols` wide**, blanks included. The frame is redrawn
@@ -236,13 +236,13 @@ let draw = (self: mut Renderer, term_cols: i64, term_rows: i64, view: View, mx: 
     // sequences, so its `len()` is nothing like its width in cells, and `fit` would
     // truncate it to ribbons.
     let painted = render_row(row, rows, cols, w, mx - left, my - top)
-    lines.push(spaces(left) ++ (painted ++ spaces(term_cols - cols - left)))
+    rows_out.push(spaces(left) ++ (painted ++ spaces(term_cols - cols - left)))
   }
   for _ in 1..<=(canvas_rows - rows - top) {
-    lines.push(spaces(term_cols))
+    rows_out.push(spaces(term_cols))
   }
-  lines.push(status(term_cols, term_rows, view))
-  self.render(lines)
+  rows_out.push(status(term_cols, term_rows, view))
+  self.render(rows_out)
 }
 
 /// `n` spaces, and none for a negative count — the padding arithmetic can ask for a

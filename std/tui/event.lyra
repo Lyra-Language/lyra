@@ -80,11 +80,11 @@ pub let event_reader = pure () -> EventReader => EventReader { pending: None }
 /// Escape too quickly to be a timeout is read, found not to be a sequence introducer, and
 /// handed back on the next call rather than dropped.
 pub let next_event = (self: mut EventReader) -> Maybe<Event> => {
-  let first = match self.pending {
+  let lead = match self.pending {
     Some(r) => { self.pending = None; Some(r) },
     None => read_key()
   }
-  match first {
+  match lead {
     None => None,
     Some(c) => if c == '\e' { self.decode_escape() } else { Some(Keyboard(classify(c))) }
   }
