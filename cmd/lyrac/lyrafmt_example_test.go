@@ -245,4 +245,29 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	if got, want := string(named), "let f = () -> i64 => { 1 }\n"; got != want {
 		t.Errorf("a named dotfile formatted to %q, want %q", got, want)
 	}
+
+	// **`.lyrafmtignore` states what the walk skips**, which is what lets `--check .` be a
+	// CI step in a repo that keeps a file meant not to parse (`cmd/lyrac/testdata`). A
+	// directory prefix takes everything under it, a comment and a blank line say nothing,
+	// and — the rule that matters — a path named on the command line is formatted anyway,
+	// exactly as a dotfile is.
+	ignore := "# a comment\n\nsub/deep/\na.lyra\n"
+	if err := os.WriteFile(filepath.Join(tree, ".lyrafmtignore"), []byte(ignore), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ignored, err := exec.Command(bin, "--check", tree).Output()
+	if err == nil {
+		t.Errorf("--check over a tree still needing changes exited 0")
+	}
+	if got, want := string(ignored), "would reformat "+filepath.Join(tree, "sub", "b.lyra")+"\n"; got != want {
+		t.Errorf("with .lyrafmtignore the walk reported:\n%s\nwant:\n%s", got, want)
+	}
+	// The ignored file, asked for by name.
+	askedFor, err := exec.Command(bin, filepath.Join(tree, "a.lyra")).Output()
+	if err != nil {
+		t.Fatalf("formatting an ignored file by name: %v", err)
+	}
+	if got, want := string(askedFor), "let f = () -> i64 => { 1 }\n"; got != want {
+		t.Errorf("an ignored file named on the command line formatted to %q, want %q", got, want)
+	}
 }

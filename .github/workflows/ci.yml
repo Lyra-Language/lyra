@@ -138,6 +138,19 @@ jobs:
         working-directory: lyra
         run: go test -v -coverpkg=./... -coverprofile=cover.out ./...
 
+      # `lyrafmt --check .` over the repo, which is a step at all only because the walk now
+      # reads `.lyrafmtignore` (the compiler's fixtures include a file meant not to parse).
+      # It runs after the tests so a formatting complaint never hides a test result.
+      #
+      # It builds the formatter to do it, so it also covers `build.sh` and proves the
+      # formatter *runs* on this architecture — which is not idle: it segfaulted on x86-64
+      # until 09/20, and every machine in this project is aarch64.
+      - name: Check formatting
+        working-directory: lyra
+        run: |
+          ./build.sh
+          build/lyrafmt --check .
+
       - name: Report total coverage
         working-directory: lyra
         run: |

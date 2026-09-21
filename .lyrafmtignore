@@ -1,0 +1,9 @@
+# Paths `lyrafmt` skips while walking a directory. One prefix per line, relative to the
+# directory the walk began in; a name given on the command line is always formatted.
+#
+# The compiler's fixtures are inputs, not source: `syntax.lyra` is *meant* not to parse —
+# it is what `lyrac check` is pointed at to produce a syntax error — so a formatter that
+# walked into it would report it for ever and `lyrafmt --check .` could never be a CI step.
+# The rest of the directory is here for the same reason: a fixture's text is the test, and
+# the next one may be misformatted on purpose too.
+cmd/lyrac/testdata/

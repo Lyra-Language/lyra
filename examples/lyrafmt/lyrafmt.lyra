@@ -147,16 +147,60 @@ let expand = (paths: []string) -> []string => {
   var out: []string = []
   for path in paths {
     match read_dir(path) {
-      Some(names) => walk(path, names, out),
+      Some(names) => {
+        let skipped = ignored_prefixes(path)
+        walk(path, names, path, skipped, out)
+      },
       None => out.push(path),
     }
   }
   out
 }
 
+/// The path prefixes `<root>/.lyrafmtignore` names, or none.
+///
+/// **The repo states what the formatter skips; the formatter infers nothing.** The
+/// alternative was to pass over any file that fails to parse, and that is the rule that
+/// makes `--check` in CI worthless: a file that stops parsing for a real reason would be
+/// skipped in silence, which is the one failure the check exists to report. A file that is
+/// *meant* not to parse — `cmd/lyrac/testdata/syntax.lyra`, a compiler fixture whose whole
+/// point is the error — is a fact about this repo, and belongs in a file the repo owns.
+///
+/// One prefix per line, relative to the directory being walked; `#` begins a comment and a
+/// blank line is nothing. A prefix ending in `/` is a directory and everything under it.
+/// No globs: every exclusion this repo has needed is a path, and a pattern language is
+/// worth having only when there is something to say that a path cannot.
+///
+/// **Only the walk consults it.** A path named on the command line is formatted whatever
+/// the file says, which is the rule the dotfile skip already follows: asking for a file by
+/// name is asking.
+let ignored_prefixes = (root: string) -> []string => {
+  let Some(text) = read_file(root ++ "/.lyrafmtignore") else { return [] }
+  var out: []string = []
+  for line in text.lines() {
+    let trimmed = line.trim()
+    if trimmed.len() == 0 || trimmed.starts_with("#") { continue }
+    out.push(trimmed)
+  }
+  out
+}
+
+/// Whether `path` is under one of the walk's ignored prefixes. `root` is where the walk
+/// began, and the prefixes are relative to it.
+let is_ignored = pure (path: string, root: string, prefixes: []string) -> bool => {
+  let Some(rest) = path.strip_prefix(root ++ "/") else { return false }
+  for prefix in prefixes {
+    if rest == prefix || rest.starts_with(prefix) { return true }
+    // A directory may be written with or without its slash; both name the tree.
+    if rest.starts_with(prefix ++ "/") { return true }
+  }
+  false
+}
+
 /// Appends every `.lyra` file at or below `dir` — whose entries are `names` — to `out`.
 ///
-/// **A name beginning with `.` is skipped**, and only while walking: `.git` holds no Lyra
+/// **A name beginning with `.` is skipped**, as is anything `.lyrafmtignore` names, and
+/// only while walking: `.git` holds no Lyra
 /// to format and is most of the work of walking a repo, and a file the author hid is not
 /// one a formatter should find on its own. A path named on the command line is never
 /// filtered — it was asked for by name, which is the convention every tool that skips
@@ -164,7 +208,13 @@ let expand = (paths: []string) -> []string => {
 ///
 /// Recursion rather than a work list because a directory tree is one, and the depth is the
 /// tree's: a repo is tens deep at worst.
-let walk = (dir: string, names: []string, out: mut []string) -> void => {
+let walk = (
+  dir: string,
+  names: []string,
+  root: string,
+  skipped: []string,
+  out: mut []string
+) -> void => {
   for name in names {
     if name.starts_with(".") { continue }
     // `entry`, not `child`: the grammar binding exports a `child`, and a local of that
@@ -176,8 +226,12 @@ let walk = (dir: string, names: []string, out: mut []string) -> void => {
       // an ancestor would not terminate at all. A symlinked *file* is still formatted —
       // it is a file, and the caller could have named it — which is where every walker
       // that refuses symlinked directories lands.
-      Some(names_below) => if !is_symlink(entry) { walk(entry, names_below, out) },
-      None => if entry.ends_with(".lyra") { out.push(entry) },
+      Some(names_below) => if !is_symlink(entry) && !is_ignored(entry, root, skipped) {
+        walk(entry, names_below, root, skipped, out)
+      },
+      None => if entry.ends_with(".lyra") && !is_ignored(entry, root, skipped) {
+        out.push(entry)
+      },
     }
   }
 }

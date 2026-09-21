@@ -562,8 +562,11 @@ constraint — `match_unreachable_arm_test.go` never runs on arm64 and `go test`
 **`lyrafmt` — the formatter written in Lyra — as the self-hosting probe** (`todo.md`,
 Modules and tooling). The round-trip baseline, indentation, spacing and inline-block rules
 are in, the repo is formatted by it, a directory argument is every `.lyra` file beneath it,
-and both editors reach it through `lyra-lsp`; nothing in it decides that a line should
-*break*. Its value is that it
+and both editors reach it through `lyra-lsp`. **Line breaking landed 09/19** — 90 columns,
+comma lists exploded one element per line — and **CI runs `lyrafmt --check .`** over the
+repo, skipping what `.lyrafmtignore` names (the compiler's fixtures, one of which is meant
+not to parse). Method chains and long boolean conditions are still left as written. Its
+value is that it
 keeps finding **compiler** bugs rather than formatter ones: a `let … else` use-after-free, a
 destructuring release that never happened, and an interpolation that swallows source to the
 next `}` — each found by the first Lyra program large enough to hit them.

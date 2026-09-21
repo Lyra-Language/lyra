@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/20/26 — `lyrafmt --check .` is a CI step, and `.lyrafmtignore` is what made it one
+
+The blocker was never the formatter: `cmd/lyrac/testdata/syntax.lyra` does not parse *on
+purpose* — it is what `lyrac check` is pointed at to produce a syntax error — so a walk from
+the repo root reported it and exited 1 for ever.
+
+**The repo states the exclusion; the formatter infers nothing.** The tempting rule was to
+pass over any file that fails to parse, and it is the rule that would make the check
+worthless: a file that stops parsing for a *real* reason would be skipped in silence, which
+is the single failure the check exists to report. `.lyrafmtignore` at the walk root lists
+path prefixes, `#` comments, no globs — every exclusion this repo has needed is a path. The
+whole of `cmd/lyrac/testdata/` is listed rather than the one file, because a fixture's text
+is the test and the next one may be misformatted on purpose too.
+
+**Only the walk consults it**: a path named on the command line is formatted whatever the
+file says, which is the rule the dotfile skip already follows — asking for a file by name is
+asking. Both halves are pinned in `TestExample_LyrafmtRoundTrips`, and the must-fire check
+is the formatter reading a name that does not exist: the walk then reports the ignored files
+again and the test fails.
+
+The step builds the formatter to run it, so it also covers `build.sh` and says the formatter
+**runs** on x86-64 — which the same day proved was not idle.
+
 ### 09/20/26 — the formatter crashed on x86-64, and had for as long as it existed
 
 Installing the tree-sitter runtime in CI stopped the formatter's test skipping, and it

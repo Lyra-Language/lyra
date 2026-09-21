@@ -56,13 +56,6 @@ Package management, versioning and separate compilation are out of scope by deci
   condition are still left as written**, which are the next two constructs and each needs
   its own indentation rule. What is left after that is the bootstrap proper, which starts
   with the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
-  - **[OPEN] One thing stands between `lyrafmt --check .` and a CI step**: every file in
-    the repo is formatted as of 09/17, and `cmd/lyrac/testdata/syntax.lyra` does not parse
-    *on purpose*, so the run reports it and exits 1 from the root for ever. Skipping an
-    unparseable file found by walking (while still reporting one named explicitly) would
-    match the dotfile rule — but a formatter check that silently ignores broken files is
-    worse for CI than one that flags them, so the answer is probably an exclusion the repo
-    states rather than a rule the formatter infers. Scope it before building.
 
 
 ## Language surface
