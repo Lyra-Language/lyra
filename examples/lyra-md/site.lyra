@@ -1,0 +1,143 @@
+// site — a directory of Markdown rendered into a directory of HTML.
+//
+//   build/lyrac build -o build/site examples/lyra-md/site.lyra
+//   build/site docs build/site-out          # every .md under docs/, rendered
+//   build/site docs build/site-out --title "Lyra"
+//
+// The second probe of the standard library, and deliberately a different shape from
+// `lyra-md`: that one reads a file and writes to standard output, which needs almost
+// nothing of `std`. This walks a tree, decides where each output file goes, makes the
+// directories to put it in, and writes an index — which is path handling, and `std` had
+// none. `std.path` and `std.io.create_dir_all` were written for this program, in that
+// order, as it needed them.
+//
+// Exit 0 when every page rendered, 1 when any could not be read or written, 2 for usage.
+
+import std.collections.{ parse_args }
+import std.io.{ read_file, write_file, read_dir, is_symlink, create_dir_all }
+import std.path.{ child, base, stem, extension, with_extension, parent }
+import markdown.{ render }
+
+let main = () -> u8 => {
+  let args = parse_args(["--title"])
+  if args.positional.len() < 2 {
+    println("usage: site <source-dir> <output-dir> [--title <name>]")
+    return 2
+  }
+  let source = args.positional[0]
+  let out = args.positional[1]
+  let title = args.value("--title").unwrap_or("Site")
+  let Some(names) = read_dir(source) else {
+    println("site: cannot read ${source}")
+    return 1
+  }
+  var pages: []string = []
+  collect(source, names, pages)
+  if !create_dir_all(out) {
+    println("site: cannot make ${out}")
+    return 1
+  }
+  var failures = 0
+  for page in pages {
+    if !build_page(source, out, page, title) { failures += 1 }
+  }
+  if !write_index(source, out, pages, title) { failures += 1 }
+  println("site: ${pages.len()} page(s) into ${out}")
+  if failures == 0 { 0 } else { 1 }
+}
+
+/// Appends every `.md` file at or below `dir` to `out`, in `read_dir`'s order, which is
+/// sorted — so a run over a tree renders the same pages in the same order everywhere and
+/// the index below is reproducible.
+///
+/// A name beginning with `.` is skipped and a symlinked directory is not descended, for
+/// the reasons `lyrafmt`'s walk gives: a repo's `.git` holds no pages, and a link into an
+/// ancestor never terminates.
+let collect = (dir: string, names: []string, out: mut []string) -> void => {
+  for name in names {
+    if name.starts_with(".") { continue }
+    let entry = dir.child(name)
+    match read_dir(entry) {
+      Some(below) => if !is_symlink(entry) { collect(entry, below, out) },
+      None => if entry.extension() == Some("md") { out.push(entry) },
+    }
+  }
+}
+
+/// Renders one page and writes it under `out`, answering whether it got there.
+///
+/// **The output mirrors the input's shape**: a page at `docs/guide/intro.md` becomes
+/// `<out>/guide/intro.html`, so the tree a reader browses is the tree the author wrote.
+/// That is the whole reason this program needed `std.path` — the output path is the input
+/// path with its root swapped and its extension changed, and every part of that sentence
+/// was string surgery before.
+let build_page = (source: string, out: string, page: string, title: string) -> bool => {
+  let Some(text) = read_file(page) else {
+    println("site: cannot read ${page}")
+    return false
+  }
+  let target = out.child(relative(source, page)).with_extension("html")
+  match target.parent() {
+    Some(dir) => if !create_dir_all(dir) {
+      println("site: cannot make ${dir}")
+      return false
+    },
+    None => {},
+  }
+  if !write_file(target, page_html(heading(text, page), title, render(text))) {
+    println("site: cannot write ${target}")
+    return false
+  }
+  true
+}
+
+/// The index: a link to every page, in the order they were found.
+let write_index = (
+  source: string,
+  out: string,
+  pages: []string,
+  title: string
+) -> bool => {
+  var items: []string = []
+  for page in pages {
+    let href = relative(source, page).with_extension("html")
+    items.push("<li><a href=\"${href}\">${heading(read_file(page).unwrap_or(""), page)}</a></li>")
+  }
+  let body = "<ul>\n" ++ items.join("\n") ++ "\n</ul>"
+  let target = out.child("index.html")
+  if !write_file(target, page_html(title, title, body)) {
+    println("site: cannot write ${target}")
+    return false
+  }
+  true
+}
+
+/// A page's own title: the text of its first `# ` heading, or its file name when it has
+/// none — a page with no heading still needs something to be called in the index.
+let heading = pure (text: string, page: string) -> string => {
+  for line in text.lines() {
+    match line.strip_prefix("# ") {
+      Some(rest) => return rest.trim(),
+      None => {},
+    }
+  }
+  page.base().stem()
+}
+
+/// One page's HTML document, around the rendered body.
+///
+/// The index is the page whose own title *is* the site's, and `Lyra Docs — Lyra Docs` is
+/// not a title anyone writes, so the two collapse to one.
+let page_html = pure (title: string, site: string, body: string) -> string => {
+  let head = if title == site { title } else { "${title} — ${site}" }
+  "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n" ++
+    "<title>${head}</title>\n</head>\n<body>\n" ++ body ++ "\n</body>\n</html>\n"
+}
+
+/// `page` as it is written under `source`: the path the output mirrors.
+///
+/// A page always sits under the directory it was found in, so the prefix is always there;
+/// the fallback is the page's own name, which keeps a caller that broke that rule from
+/// writing outside the output directory.
+let relative = pure (source: string, page: string) -> string =>
+  page.strip_prefix(source ++ "/").unwrap_or(page.base())

@@ -30,6 +30,8 @@ module std.io
 //! }
 //! ```
 
+import std.path.{ parent }
+
 /// The whole of the file at `path` as one string, or `None` if it cannot be opened —
 /// missing, unreadable, a directory.
 ///
@@ -220,8 +222,39 @@ const STDIN: i32 = 0
 // `mode_t` is 16 bits on macOS and 32 on Linux, so the parameter is written as the wider
 // one: the value fits either, and aarch64 passes both in the same register with the
 // callee reading the width it declared.
+/// Creates the directory at `path` and every missing directory above it, answering
+/// whether it exists afterwards.
+///
+/// **Already there counts as success**, which is what a caller means by "make sure this
+/// exists": a build that writes into `build/docs` twice should not fail the second time.
+/// That also stands in for the `errno` this module does not read — `mkdir` reports
+/// "exists" and "refused" alike with -1, so what settles it is asking again whether the
+/// directory can be read, the same test `read_dir` is for.
+///
+/// The parents are made first and one at a time, since `mkdir` makes one directory and
+/// fails when its parent is missing.
+///
+/// ```
+/// if !create_dir_all("build/docs/guide") { println("cannot make the output directory") }
+/// ```
+pub let create_dir_all = (path: string) -> bool => {
+  if path.len() == 0 { return false }
+  if read_dir(path).is_some() { return true }
+  match path.parent() {
+    Some(up) => if !create_dir_all(up) { return false },
+    None => {},
+  }
+  // 0o755: readable and enterable by everyone, writable by the owner — what a build
+  // directory is, and what the shell's own `mkdir` uses under the default umask.
+  if unsafe { mkdir(path.cstring_ptr(), 0o755) } == 0 { return true }
+  // -1 may mean "it appeared between the two calls" as easily as "refused", and the
+  // question was only ever whether it is there now.
+  read_dir(path).is_some()
+}
+
 unsafe extern open: (path: ^u8, flags: i32, ...) -> i32
 unsafe extern creat: (path: ^u8, mode: u32) -> i32
+unsafe extern mkdir: (path: ^u8, mode: u32) -> i32
 unsafe extern read: (fd: i32, buf: ^mut u8, count: u64) -> i64
 unsafe extern write: (fd: i32, buf: ^u8, count: u64) -> i64
 unsafe extern close: (fd: i32) -> i32

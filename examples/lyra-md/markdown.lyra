@@ -1,0 +1,395 @@
+module markdown
+//! Markdown to HTML — the renderer `lyra-md` and `site` share.
+//!
+//! **A module rather than a copy**, since the day a second program wanted it: `lyra-md`
+//! renders one file to standard output and `site` renders a directory into a tree, and
+//! the one thing they must agree on is what the HTML looks like. A shared module is how
+//! they cannot drift; two copies would have drifted the first time a rule changed.
+//!
+//! What it is not: a CommonMark implementation. The subset is the one a dev blog writes,
+//! and every rule it does implement follows CommonMark where they overlap.
+
+/// The HTML for a whole document: every block rendered, one per line.
+pub let render = pure (source: string) -> string =>
+  [block in blocks(source) | render_block(block)].join("\n") ++ "\n"
+
+/// A run of lines that becomes one HTML element.
+///
+/// The payloads are what the renderer needs and nothing more: a heading carries its level
+/// and its text, a code fence its content and the language it named (`""` when bare), a
+/// paragraph its lines already joined.
+data Block =
+  Heading(i64, string)
+  | Code(string, string)
+  | Paragraph(string)
+
+/// The document's blocks, in order.
+///
+/// **A blank line ends a block and belongs to none**, which is the one rule the whole
+/// block level rests on. Inside a fence it is ordinary content, so the fence is tested
+/// before anything else — a blank line in a code block is part of the code.
+let blocks = pure (source: string) -> []Block => {
+  var out: []Block = []
+  var paragraph: []string = []
+  var fence: []string = []
+  var language = ""
+  var fenced = false
+  for line in source.lines() {
+    if fenced {
+      if is_fence(line) {
+        out.push(Code(fence.join("\n"), language))
+        fence = []
+        fenced = false
+      } else {
+        fence.push(line)
+      }
+      continue
+    }
+    if is_fence(line) {
+      flush_paragraph(paragraph, out)
+      paragraph = []
+      language = fence_language(line)
+      fenced = true
+      continue
+    }
+    if line.trim() == "" {
+      flush_paragraph(paragraph, out)
+      paragraph = []
+      continue
+    }
+    let level = heading_level(line)
+    if level > 0 {
+      flush_paragraph(paragraph, out)
+      paragraph = []
+      let text = line.trim()
+      out.push(Heading(level, text.slice(level, text.len()).trim()))
+      continue
+    }
+    paragraph.push(line.trim())
+  }
+  // A document that ends without a blank line still ends its last block, and an unclosed
+  // fence renders as the code it looks like rather than being dropped.
+  if fenced {
+    out.push(Code(fence.join("\n"), language))
+  } else {
+    flush_paragraph(paragraph, out)
+  }
+  out
+}
+
+/// Appends the paragraph built so far, if any, to `out`.
+///
+/// Its lines are joined with a space rather than a newline: a paragraph wrapped by the
+/// author is one paragraph, and where it was wrapped is not content.
+let flush_paragraph = pure (lines_so_far: []string, out: mut []Block) -> void => {
+  if lines_so_far.len() > 0 { out.push(Paragraph(lines_so_far.join(" "))) }
+}
+
+/// One block as HTML.
+///
+/// **Code content is escaped but never otherwise touched**, which is what makes a fenced
+/// block safe to put anything in — a fence holding `**stars**` or `<html>` means them
+/// literally, so spans are rendered in the two text positions and nowhere else. A language
+/// becomes the `class` CommonMark recommends, so a highlighter downstream has something to
+/// read.
+let render_block = pure (block: Block) -> string => match block {
+  Heading(level, text) => "<h${level}>${render_inline(text)}</h${level}>",
+  Code(content, language) => {
+    let open = if language == "" { "<pre><code>" } else { "<pre><code class=\"language-${escape(language)}\">" }
+    "${open}${escape(content)}</code></pre>"
+  },
+  Paragraph(text) => "<p>${render_inline(text)}</p>",
+}
+
+/// A block's text as HTML: the inline spans rendered, and every character that is not part
+/// of one escaped.
+///
+/// **Escaping stops being one pass here, and that is the whole difficulty of spans.** At
+/// the block level the answer was "escape everything"; a span renderer emits tags, which
+/// must *not* be escaped, so escaping moves to the pieces — each literal run, each code
+/// span's content, each attribute — and every piece goes through `escape` or `escape_attr`
+/// on its way into `out`. Nothing is concatenated raw except a tag this file wrote.
+///
+/// **Nothing here touches the string after `to_runes()`, and that is a performance rule
+/// rather than a style one.** A string is rune-indexed, so `s[i]` and `s.slice(i, j)` both
+/// walk from the start to find rune `i` — which makes a scanner that slices at its cursor
+/// quadratic. Measured 09/17: the same 200 KB of text took 1.1 s as two thousand
+/// paragraphs and **26 s as one**, since only the second has a cursor that gets far from
+/// the start. Off the rune array the same document renders in 0.4 s. LANGUAGE.md warns
+/// about `s[i]` in a loop; `slice` is the same hazard and now says so too.
+///
+/// Precedence is CommonMark's, and only the part that is unambiguous: a code span binds
+/// tightest, so `` `*not emphasis*` `` is code; then links; then emphasis. A delimiter
+/// that never closes is literal text rather than an error, which is what makes a
+/// half-written sentence render instead of failing.
+let render_inline = pure (text: string) -> string => {
+  let runes = text.to_runes()
+  var out: []string = []
+  var i = 0
+  for i < runes.len() {
+    let c = runes[i]
+    // A backslash escapes an ASCII punctuation mark and nothing else — before `\n` in a
+    // prose line means a literal backslash, not a line break.
+    if c == '\\' && i + 1 < runes.len() && runes[i + 1].is_ascii_punctuation() {
+      out.push(escape_rune(runes[i + 1]))
+      i += 2
+      continue
+    }
+    if c == '`' {
+      let width = run_length(runes, i, '`')
+      if let Some(j) = closing_run(runes, i + width, '`', width) {
+        out.push("<code>${escape(code_content(chunk(runes, i + width, j)))}</code>")
+        i = j + width
+        continue
+      }
+    }
+    if c == '!' && i + 1 < runes.len() && runes[i + 1] == '[' {
+      if let Some(image) = link_at(runes, i + 1) {
+        out.push("<img src=\"${escape_attr(image.url)}\" alt=\"${escape_attr(image.text)}\" />")
+        i = image.end
+        continue
+      }
+    }
+    if c == '[' {
+      if let Some(link) = link_at(runes, i) {
+        // The link's text is rendered, not escaped: `[**bold** link](url)` is a link
+        // holding emphasis, and the recursion is on a strictly shorter slice.
+        out.push("<a href=\"${escape_attr(link.url)}\">${render_inline(link.text)}</a>")
+        i = link.end
+        continue
+      }
+    }
+    if c == '*' || c == '_' {
+      let run = run_length(runes, i, c)
+      let width = if run >= 2 { 2 } else { 1 }
+      if can_open(runes, i, c, width) {
+        if let Some(j) = closing_run(runes, i + width, c, width) {
+          let tag = if width == 2 { "strong" } else { "em" }
+          out.push("<${tag}>${render_inline(chunk(runes, i + width, j))}</${tag}>")
+          i = j + width
+          continue
+        }
+      }
+    }
+    out.push(escape_rune(runes[i]))
+    i += 1
+  }
+  out.join("")
+}
+
+/// What a `[text](url)` span holds, and where it ends.
+struct Link {
+  text: string,
+  url: string,
+  /// The position just past the closing `)`, where the scan resumes.
+  end: i64,
+}
+
+/// The link starting at `open` (a `[`), or `None` if what follows is not one.
+///
+/// **Brackets nest and parentheses do not**, which is the asymmetry worth stating: link
+/// text may itself contain a bracketed span, so the closing `]` is found by depth; a URL
+/// may not contain a space or a parenthesis, so its end is the first `)`. A URL that needs
+/// either is CommonMark's angle-bracket form, which this slice does not do.
+let link_at = pure (runes: []rune, open: i64) -> Maybe<Link> => {
+  var depth = 0
+  var i = open
+  for i < runes.len() {
+    let c = runes[i]
+    if c == '[' { depth += 1 }
+    if c == ']' {
+      depth -= 1
+      if depth == 0 { break }
+    }
+    i += 1
+  }
+  if i >= runes.len() || depth != 0 { return None }
+  let close = i
+  if close + 1 >= runes.len() || runes[close + 1] != '(' { return None }
+  var j = close + 2
+  for j < runes.len() {
+    let c = runes[j]
+    if c == ')' { break }
+    if c == ' ' || c == '(' { return None }
+    j += 1
+  }
+  if j >= runes.len() { return None }
+  Some(Link {
+    text: chunk(runes, open + 1, close),
+    url: chunk(runes, close + 2, j),
+    end: j + 1
+  })
+}
+
+/// The runes in `[from..<to)` as a string — the scanner's substring, costing what it
+/// copies rather than where it starts.
+let chunk = pure (
+  runes: []rune,
+  from: i64,
+  to: i64
+) -> string => runes.slice(from, to).join("")
+
+/// One rune, escaped: the three characters HTML cannot take literally become entities and
+/// everything else is itself. `escape`'s single-character case, without a string slice to
+/// get there.
+let escape_rune = pure (c: rune) -> string => match c {
+  '&' => "&amp;",
+  '<' => "&lt;",
+  '>' => "&gt;",
+  _ => "${c}",
+}
+
+/// A code span's content, with the one padding space CommonMark strips removed.
+///
+/// A span that begins *and* ends with a space drops one of each, which is what lets a code
+/// span hold a backtick at either end — `` ` `` is written `` `` ` `` `` and would
+/// otherwise come out with the padding that made it writable. Content that is nothing but
+/// spaces is left alone, since stripping there would empty it.
+let code_content = pure (content: string) -> string => {
+  if content.len() < 2 || content.trim() == "" { return content }
+  if !content.starts_with(" ") || !content.ends_with(" ") { return content }
+  content.slice(1, content.len() - 1)
+}
+
+/// How many times `c` repeats starting at `from`.
+let run_length = pure (runes: []rune, from: i64, c: rune) -> i64 => {
+  var n = 0
+  for from + n < runes.len() && runes[from + n] == c { n += 1 }
+  n
+}
+
+/// Where the closing run of `width` `c`s begins at or after `from`, or `None`.
+///
+/// The content must be non-empty (`**` alone is not emphasis, and ```` `` ```` is not an
+/// empty code span), and a run shorter than `width` is not a closer — so `*a**` closes on
+/// neither of the last two stars and stays literal.
+///
+/// **A run with a space before it does not close**, which is the rule that keeps a
+/// sentence with loose asterisks readable: in `an unclosed *delimiter and so does **this`,
+/// the `**` is plainly *opening* something — it has a space to its left and a word to its
+/// right — so treating it as the closer of the earlier `*` would put `</em>` in the middle
+/// of the sentence and swallow the stars. This is CommonMark's right-flanking test,
+/// without the punctuation subtleties: what is next to the run decides what it can be.
+/// Backticks are exempt, since a code span's delimiters carry no such rule.
+let closing_run = pure (runes: []rune, from: i64, c: rune, width: i64) -> Maybe<i64> => {
+  // **A run of the same width is preferred over a longer one**, and the sentence that
+  // needs it is `*a **b** c*`: scanning for the first run that merely *can* close makes
+  // the `**` after `b` close the opening `*`, giving `<em>a **b</em>* c*` — the emphasis
+  // ends in the middle and the inner strong never pairs. Closing on the final `*` instead
+  // leaves `a **b** c` as the content, and the recursion renders the strong inside it.
+  // Only when no run of the same width closes does a longer one do it, which is what
+  // makes `*a**` end at the pair (`<em>a</em>*`).
+  let exact = first_closing_run(runes, from, c, width, true)
+  if exact.is_some() { return exact }
+  first_closing_run(runes, from, c, width, false)
+}
+
+/// `closing_run`'s scan: the first run that can close, of exactly `width` when `same` and
+/// of at least `width` otherwise.
+let first_closing_run = pure (
+  runes: []rune,
+  from: i64,
+  c: rune,
+  width: i64,
+  same: bool
+) -> Maybe<i64> => {
+  var i = from
+  for i < runes.len() {
+    if runes[i] == c {
+      // **A run is stepped over whole, never entered.** Advancing one rune at a time let a
+      // run that had just been refused as a closer be reconsidered from its second
+      // character, where the rune "before" it is the run itself rather than the space that
+      // disqualified it — so `and so does **this` closed on the second star and emitted
+      // `*</em>this`. The interior of a delimiter run is not a delimiter.
+      let n = run_length(runes, i, c)
+      let fits = if same { n == width } else { n >= width }
+      if fits && i > from && can_close(runes, i, c, width) { return Some(i) }
+      i += n
+      continue
+    }
+    i += 1
+  }
+  None
+}
+
+/// Whether a delimiter run at `i` of `width` may **open** emphasis.
+///
+/// Two rules, and each has a sentence this repo would otherwise render wrong:
+///
+///   - **a run with a space after it does not open** (`a * b` is arithmetic in prose, not
+///     an unterminated emphasis);
+///   - **`_` does not open inside a word**, which is CommonMark's rule and the one this
+///     repo needs most: `snake_case_names` are ordinary prose here, and under a naive rule
+///     the middle of one becomes emphasis and the underscores vanish. `*` needs no such
+///     restriction, because nothing writes `*` inside a word.
+let can_open = pure (runes: []rune, i: i64, c: rune, width: i64) -> bool => {
+  if c == '`' { return true }
+  if i + width >= runes.len() || runes[i + width].is_ascii_space() { return false }
+  if c != '_' { return true }
+  i == 0 || !is_word(runes[i - 1])
+}
+
+/// Whether the run at `j` may **close** emphasis: the mirror of `can_open`, testing the
+/// rune before the run rather than after it, and `_`'s intraword rule at the other end.
+let can_close = pure (runes: []rune, j: i64, c: rune, width: i64) -> bool => {
+  if c == '`' { return true }
+  if j == 0 || runes[j - 1].is_ascii_space() { return false }
+  if c != '_' { return true }
+  j + width >= runes.len() || !is_word(runes[j + width])
+}
+
+/// Whether `c` is the kind of character a word is made of, for the `_` rule.
+let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() ||
+  c.is_ascii_digit() ||
+  c == '_'
+
+/// `text` with the three characters HTML cannot take literally replaced by their entities.
+///
+/// **One pass over the runes, not three passes of a replace**, and it is the escaping every
+/// other renderer here goes through: a program that escapes in two places escapes
+/// differently in two places. `&` must be first in any multi-pass version, which is exactly
+/// the bug a single pass cannot have.
+let escape = pure (text: string) -> string => [c in text | escape_rune(c)].join("")
+
+/// `value` escaped for an HTML attribute: `escape`'s three characters and the quote that
+/// would otherwise end the attribute.
+///
+/// A separate function rather than a flag on `escape`, because the two answer different
+/// questions and a caller that has to remember which mode to pass is a caller that will
+/// one day pass the wrong one. Attribute values are the only place `"` matters, and text
+/// is the only place it does not.
+let escape_attr = pure (value: string) -> string =>
+  [c in value | match c {
+    '&' => "&amp;",
+    '<' => "&lt;",
+    '>' => "&gt;",
+    '"' => "&quot;",
+    _ => "${c}",
+  }].join("")
+
+/// The heading level of `line` — the number of leading `#`, or 0 when it is not a heading.
+///
+/// A run of more than six is not a heading, and `#`s must be followed by a space: `#tag` is
+/// a paragraph, which is CommonMark's rule and the one a post written by a human wants.
+let heading_level = pure (line: string) -> i64 => {
+  let text = line.trim()
+  var level = 0
+  for c in text {
+    if c != '#' { break }
+    level += 1
+  }
+  if level == 0 || level > 6 { return 0 }
+  if text.len() == level { return level }
+  if text.to_runes()[level] != ' ' { return 0 }
+  level
+}
+
+/// Whether `line` opens or closes a fenced code block.
+let is_fence = pure (line: string) -> bool => line.trim().starts_with("```")
+
+/// The language a fence names, or `""` for a bare one: whatever follows the backticks
+/// `is_fence` matched.
+let fence_language = pure (line: string) -> string => {
+  let text = line.trim()
+  text.strip_prefix("```").unwrap_or("").trim()
+}

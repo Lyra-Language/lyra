@@ -644,6 +644,44 @@ pub let index<t> where t: Needle = pure noalloc(
     Some((idx, _)) => Some(idx)
   }
 
+/// The offset of the **last** occurrence of `needle` at or after `offset`, or `None`.
+///
+/// What `index` answers from the other end, and the one a path needs: a file's name is
+/// what follows its *last* `/`, and its extension what follows its *last* `.`. Written
+/// here rather than in `std.path` because it is a fact about strings, and the second
+/// caller would have copied it.
+///
+/// # Complexity
+///
+/// Every match is visited, so this is `index`'s cost times the number of occurrences —
+/// O(n) over a haystack with a handful of them, which is what a path is. A needle that
+/// occurs on every byte makes it O(n·m), as `index`'s own table says.
+///
+/// # Examples
+///
+/// ```
+/// let at = "a::b::c".last_index("::").unwrap_or(-1)   // 4
+/// ```
+pub let last_index<t> where t: Needle = pure noalloc (
+  self: string,
+  needle: t,
+  offset: Index = 0
+) -> Maybe<Index> => {
+  var found: Maybe<Index> = None
+  var at = offset
+  var searching = true
+  for searching {
+    match self.index(needle, at) {
+      None => { searching = false },
+      Some(i) => {
+        found = Some(i)
+        at = i + 1
+      },
+    }
+  }
+  found
+}
+
 /// Whether `needle` occurs in `self` at or after `offset`.
 pub let contains<t> where t: Needle = pure noalloc(
   self: string,

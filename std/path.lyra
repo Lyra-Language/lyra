@@ -1,0 +1,125 @@
+module std.path
+//! Paths as text: joining, and the three questions a file name answers — where it lives,
+//! what it is called, and what kind of file it is.
+//!
+//! **Text, not a type.** A `Path` newtype would buy an invariant only if there were an
+//! invalid path to refuse, and there is not: every string names a path on some system,
+//! and the ones this refuses (an empty component, a `..` that escapes) are refused by the
+//! filesystem, which answers a better error than a constructor could. So these are
+//! functions over `string`, and a program that has a path in hand may call them.
+//!
+//! **`/` only.** A separator that varies by platform cannot be written in Lyra source,
+//! which has no way to ask which platform it is compiling for — the same wall
+//! `std.io`'s directory reading hit — and a backslash-aware implementation would be
+//! guessing at a Windows this compiler does not yet target. On the systems it does, `/`
+//! is the separator.
+//!
+//! ```
+//! import std.path.{ child, base, stem, extension, with_extension }
+//!
+//! let out = "build".child(page.with_extension("html"))
+//! ```
+
+/// `other` appended to `self`, with exactly one separator between them.
+///
+/// **Called `child` because `join` is taken**, by the prelude's `join` over an array — and
+/// a name may not be exported by two modules at once, so a `std.path.join` would be
+/// unusable in any program that also joins a list of strings, which is most of them. The
+/// name that remains says what the result is: the path to something under `self`.
+///
+/// **An absolute `other` wins**, as it does in every language's join: `"docs".child("/etc")`
+/// is `/etc`, because a caller who wrote a leading `/` said where they meant. An empty
+/// `self` is no prefix at all, so `"".child("a")` is `a` rather than `/a`.
+pub let child = pure (self: string, other: string) -> string => {
+  if other.is_absolute() || self.len() == 0 { return other }
+  if other.len() == 0 { return self }
+  if self.ends_with("/") { self ++ other } else { self ++ "/" ++ other }
+}
+
+/// The directory `self` names a file in, or `None` when it names no directory — a bare
+/// name, or the root itself.
+///
+/// ```
+/// "docs/guide/intro.md".parent()   // Some("docs/guide")
+/// "intro.md".parent()              // None
+/// "/intro.md".parent()             // Some("/")
+/// ```
+pub let parent = pure (self: string) -> Maybe<string> => {
+  let trimmed = self.without_trailing_slashes()
+  let Some(at) = trimmed.last_index("/") else { return None }
+  if at == 0 { Some("/") } else { Some(trimmed.slice(0, at)) }
+}
+
+/// The file name at the end of `self` — what follows its last separator.
+///
+/// Trailing separators are not part of a name: `"docs/guide/"` is a way of writing
+/// `"docs/guide"`, and both are called `guide`. The root is called `/`, having nothing
+/// else to be called.
+pub let base = pure (self: string) -> string => {
+  let trimmed = self.without_trailing_slashes()
+  if trimmed == "/" || trimmed.len() == 0 { return "/" }
+  let Some(at) = trimmed.last_index("/") else { return trimmed }
+  trimmed.slice(at + 1, trimmed.len())
+}
+
+/// The file name without its extension: `"docs/intro.md"` has the stem `intro`.
+pub let stem = pure (self: string) -> string => {
+  let name = self.base()
+  let Some(at) = name.extension_dot() else { return name }
+  name.slice(0, at)
+}
+
+/// The extension after the file name's last `.`, without the dot, or `None`.
+///
+/// **A leading dot is not an extension**: `.gitignore` is a file called `.gitignore`, not
+/// an extensionless file with the extension `gitignore`, and every tool that gets this
+/// wrong hides dotfiles' names. A trailing dot is not one either — `"notes."` has no
+/// extension to name — and `"archive.tar.gz"` has the extension `gz`, the last one being
+/// the one that says what the file is.
+pub let extension = pure (self: string) -> Maybe<string> => {
+  let name = self.base()
+  let Some(at) = name.extension_dot() else { return None }
+  Some(name.slice(at + 1, name.len()))
+}
+
+/// `self` with its extension replaced by `ext`, which is written without a dot. A path
+/// with no extension gains one; an `ext` of `""` removes it.
+///
+/// ```
+/// "docs/intro.md".with_extension("html")   // "docs/intro.html"
+/// ```
+pub let with_extension = pure (self: string, ext: string) -> string => {
+  let trimmed = self.without_trailing_slashes()
+  let name = trimmed.base()
+  let stem_of = match name.extension_dot() {
+    Some(at) => name.slice(0, at),
+    None => name,
+  }
+  let renamed = if ext.len() == 0 { stem_of } else { stem_of ++ "." ++ ext }
+  match trimmed.parent() {
+    Some(dir) => dir.child(renamed),
+    None => renamed,
+  }
+}
+
+/// Whether `self` begins at the root.
+pub let is_absolute = pure noalloc (self: string) -> bool => self.starts_with("/")
+
+// ---------------------------------------------------------------------------------------
+
+/// `self` without the separators at its end, which name the same directory it does. The
+/// root is left alone: `/` without its slash is the empty string, which names nothing.
+let without_trailing_slashes = pure (self: string) -> string => {
+  var end = self.len()
+  for end > 1 && self.slice(end - 1, end) == "/" { end -= 1 }
+  self.slice(0, end)
+}
+
+/// Where a file name's extension begins — the offset of the `.` that starts it — or
+/// `None`. The one place the rules above are written down, so `stem`, `extension` and
+/// `with_extension` cannot disagree about what an extension is.
+let extension_dot = pure (self: string) -> Maybe<i64> => {
+  let Some(at) = self.last_index(".") else { return None }
+  if at == 0 || at + 1 >= self.len() { return None }
+  Some(at)
+}
