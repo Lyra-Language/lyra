@@ -128,7 +128,10 @@ pub let is_ascii_digit = pure noalloc (self: rune) -> bool => {
 /// let d = '—'.is_ascii_punctuation()   // false — an em dash is outside ASCII
 /// ```
 pub let is_ascii_punctuation = pure noalloc (self: rune) -> bool => {
-  self.is_ascii_printable() && !self.is_ascii_alpha() && !self.is_ascii_digit() && !self.is_ascii_space()
+  self.is_ascii_printable() &&
+    !self.is_ascii_alpha() &&
+    !self.is_ascii_digit() &&
+    !self.is_ascii_space()
 }
 
 /// This rune folded to ASCII lowercase — unchanged if it is not an ASCII uppercase letter.

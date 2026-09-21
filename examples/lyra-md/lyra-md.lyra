@@ -377,7 +377,9 @@ let can_close = pure (runes: []rune, j: i64, c: rune, width: i64) -> bool => {
 }
 
 /// Whether `c` is the kind of character a word is made of, for the `_` rule.
-let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_'
+let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() ||
+  c.is_ascii_digit() ||
+  c == '_'
 
 /// `text` with the three characters HTML cannot take literally replaced by their entities.
 ///

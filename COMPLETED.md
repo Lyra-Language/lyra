@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/21/26 — lyrafmt breaks a boolean condition, after the operator
+
+The third breakable construct, and the only one whose shape the **language** fixes rather
+than taste: a line beginning with `&&` does not continue the statement above it. Only `.`,
+`|`, `else` and `where` do, so a leading `&&` is re-read as two address-of operators and
+the file stops compiling — checked, `lyra-E011`, before a line of the rule was written. The
+conditions already written by hand in this repo trail their operators for the same reason,
+and every formatter that puts the operator first would be wrong here.
+
+- **One precedence level at a time, the loosest on the line.** With both present the `||`s
+  break and the `&&`s stay whole, so each line starts a top-level disjunct and the `&&`
+  groups read as the units they are. Breaking both would put operands of different
+  precedence at one indent — a formatter lying about grouping, which is worse than a long
+  line.
+- **Not a condition a body follows on the same line.** `if a || b || c { … } else { … }`
+  broke into operands with the whole of `{ … } else { … }` trailing the last one, reading
+  as though the body belonged to that operand. Moving the body too is a rule about `if`,
+  not about conditions; until it exists, a header stays long. That alone took the changed
+  files from 5 to 4, and the two it dropped were the two worth dropping.
+- **Two operators at least**, as a chain needs two links.
+
+**The leaf is the token, not the rule.** The first version matched the grammar's node names
+(`and`, `or`) and found nothing: the grammar wraps each operator in a named node whose only
+child is the token, and a leaf is the token — `"&&"`. The trace that showed it printed the
+kinds on the line, which is the shortest way to settle what a tree actually holds.
+
+The tests assert their own premise — every input line must be over the budget — and caught
+five cases of mine that merely fit. One case moved between tests: `c.f() || c.g()` was the
+chain test's example of *not* a chain, and is now the condition rule's, which is the
+distinction stated twice over.
+
 ### 09/21/26 — lyrafmt breaks a method chain, and only a method chain
 
 A line per call, the receiver keeping the first line, each link one level deeper — the

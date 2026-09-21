@@ -278,7 +278,9 @@ let clock_rank_of = pure (unit: rune) -> i64 => match unit {
 }
 
 /// Whether a duration has a unit whose length depends on the date it meets.
-let has_calendar_units = pure (d: Duration) -> bool => d.years != 0 || d.months != 0 || d.weeks != 0
+let has_calendar_units = pure (d: Duration) -> bool => d.years != 0 ||
+  d.months != 0 ||
+  d.weeks != 0
 
 /// The days and clock fields as one count of nanoseconds, a day being 24 hours.
 let exact_nanoseconds = pure (d: Duration) -> i128 => i128(d.days) * i128(NS_PER_DAY) + clock_nanoseconds(d)

@@ -303,9 +303,12 @@ func TestExample_LyrafmtBreaksChains(t *testing.T) {
 			"let names = () -> string => people()\n  .filter(is_active)\n  .map(full_name)\n  .sorted()\n  .join(\", \")\n  .trim()\n",
 		},
 		{
-			"calls joined by an operator are not a chain",
+			// Not a chain, and the condition rule takes it instead — a break after each
+			// `||`, never one before a `.`. It is the same line either rule would have
+			// claimed, and which one claims it is the whole distinction.
+			"calls joined by an operator break as a condition, not as a chain",
 			"let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_'\n",
-			"let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_'\n",
+			"let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() ||\n  c.is_ascii_digit() ||\n  c == '_'\n",
 		},
 		{
 			"a walk through fields is not a chain",
@@ -325,6 +328,71 @@ func TestExample_LyrafmtBreaksChains(t *testing.T) {
 			// first draft of this test had three that did.
 			if width := len(strings.TrimRight(c.src, "\n")); width <= 90 {
 				t.Fatalf("the input is %d columns, so nothing would break it; make it longer", width)
+			}
+			path := filepath.Join(t.TempDir(), "in.lyra")
+			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := exec.Command(bin, path).Output()
+			if err != nil {
+				t.Fatalf("formatting: %v", err)
+			}
+			if string(got) != c.want {
+				t.Errorf("formatted:\n%s\nwant:\n%s", got, c.want)
+			}
+		})
+	}
+}
+
+// **A long boolean condition breaks after its operators, at one precedence level** — the
+// third breakable construct, and the one the language constrains rather than taste (09/21).
+//
+// **After, never before.** A line beginning with `&&` does not continue the statement
+// above it: only `.`, `|`, `else` and `where` do, so a leading `&&` is re-read as two
+// address-of operators and the file stops compiling. That is why the conditions written by
+// hand in this repo trail their operators, and why this rule could never have matched the
+// leading-operator style other languages' formatters use.
+//
+// **One level at a time**: with both present the `||`s break and the `&&`s stay, so the
+// `&&` groups read as the units they are. Breaking both would put operands of different
+// precedence at one indent — a formatter lying about grouping, which is worse than a long
+// line.
+func TestExample_LyrafmtBreaksConditions(t *testing.T) {
+	bin := buildLyrafmt(t)
+	cases := []struct{ name, src, want string }{
+		{
+			"operands break after the operator, which is where they may",
+			"let punct = pure (c: rune) -> bool => {\n  c.is_printable() && !c.is_alpha() && !c.is_digit() && !c.is_space() && !c.is_ascii_control()\n}\n",
+			"let punct = pure (c: rune) -> bool => {\n  c.is_printable() &&\n    !c.is_alpha() &&\n    !c.is_digit() &&\n    !c.is_space() &&\n    !c.is_ascii_control()\n}\n",
+		},
+		{
+			"only the loosest operator breaks, so the groups stay whole",
+			"let pick = pure (a: bool, b: bool, c: bool, d: bool) -> bool => {\n  a && longer_name(b) || b && other_name(c) || c && third_name(d) || d && last_name_here(a)\n}\n",
+			"let pick = pure (a: bool, b: bool, c: bool, d: bool) -> bool => {\n  a && longer_name(b) ||\n    b && other_name(c) ||\n    c && third_name(d) ||\n    d && last_name_here(a)\n}\n",
+		},
+		{
+			"a condition a body follows on the same line is left alone",
+			"let f = (n: f64) -> bool => {\n  if n >= 0.0 - 9.0e18 && n <= 9.0e18 && n - f64(n.floor()) <= 0.0 { true } else { false_v }\n}\n",
+			"let f = (n: f64) -> bool => {\n  if n >= 0.0 - 9.0e18 && n <= 9.0e18 && n - f64(n.floor()) <= 0.0 { true } else { false_v }\n}\n",
+		},
+		{
+			"one operator is not a condition to break",
+			"let both = pure (a: bool, b: bool) -> bool => {\n  first_of_a_really_quite_long_name_here_now(a) && second_of_a_really_long_name_as_well_too(b)\n}\n",
+			"let both = pure (a: bool, b: bool) -> bool => {\n  first_of_a_really_quite_long_name_here_now(a) && second_of_a_really_long_name_as_well_too(b)\n}\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// The condition's own line must be over the budget, or the case proves
+			// nothing — the same self-check the chain test needed.
+			widest := 0
+			for _, line := range strings.Split(c.src, "\n") {
+				if len(line) > widest {
+					widest = len(line)
+				}
+			}
+			if widest <= 90 {
+				t.Fatalf("the widest input line is %d columns, so nothing would break it", widest)
 			}
 			path := filepath.Join(t.TempDir(), "in.lyra")
 			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {

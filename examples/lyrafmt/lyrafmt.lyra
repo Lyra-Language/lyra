@@ -311,15 +311,16 @@ let format_source = (
 /// line that is still long then is one no further break would shorten.
 let lay_out = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
   var breaks = [false; leaves.len()]
-  // Which tokens a chain breaks before — a continuation, indented like one.
-  var chain_break = [false; leaves.len()]
+  // The tokens a chain or a condition breaks before. Both continue the line above and
+  // indent alike, so one marker serves both.
+  var continued = [false; leaves.len()]
   var cols = [0; leaves.len()]
   var lines = [0; leaves.len()]
-  var out = format(bytes, len, leaves, rule, breaks, chain_break, cols, lines)
+  var out = format(bytes, len, leaves, rule, breaks, continued, cols, lines)
   if !rule { return out }
   for _ in 0..<BREAK_PASSES {
-    if !plan_breaks(bytes, leaves, cols, lines, breaks, chain_break) { return out }
-    out = format(bytes, len, leaves, rule, breaks, chain_break, cols, lines)
+    if !plan_breaks(bytes, leaves, cols, lines, breaks, continued) { return out }
+    out = format(bytes, len, leaves, rule, breaks, continued, cols, lines)
   }
   out
 }
@@ -451,7 +452,7 @@ struct Scope {
 /// except, with the rule on, the whitespace that begins a line, which becomes the
 /// indentation the enclosing delimiters call for.
 let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
-  chain_break: []bool, cols: mut []i64, lines: mut []i64) -> []u8 => {
+  continued: []bool, cols: mut []i64, lines: mut []i64) -> []u8 => {
   var out: []u8 = []
   // One entry per delimiter still open, innermost last.
   var scopes: []Scope = []
@@ -518,7 +519,7 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
       }
       starts_line = true
       push_indent(line_level, out)
-    } else if rule && plain && chain_break[i] {
+    } else if rule && plain && continued[i] {
       // A break before a chain's `.`. Unlike a list's it opens no delimiter, so the line
       // is a **continuation** and takes a continuation's level: one deeper than the
       // enclosing delimiter's contents, which is exactly what the branch above computes
@@ -617,7 +618,7 @@ const BREAK_PASSES = 8
 /// deliberate layout — an aligned table of match arms, a struct literal grouped by meaning
 /// — from being flattened by a tool that cannot know why it was written that way.
 let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
-  breaks: mut []bool, chain_break: mut []bool) -> bool => {
+  breaks: mut []bool, continued: mut []bool) -> bool => {
   if leaves.len() == 0 { return false }
   // The delimiter each token sits directly inside, and whether any string interpolation
   // encloses it — inside one, the "whitespace" between tokens is a string's own bytes and
@@ -670,8 +671,10 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
         closer_of,
         i,
         last,
-        chain_break
+        continued
       ) {
+        planned = true
+      } else if break_condition(bytes, leaves, inside, in_interp, i, last, continued) {
         planned = true
       }
     }
@@ -711,7 +714,7 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
 /// own bytes. Neither is a tuple index (`pair.0`) — `.0` on a line of its own reads as a
 /// mistake — nor a `.` whose gap holds anything but whitespace.
 let break_chain = (bytes: []u8, leaves: []Leaf, inside: []i64, in_interp: []bool,
-  closer_of: []i64, from: i64, to: i64, chain_break: mut []bool) -> bool => {
+  closer_of: []i64, from: i64, to: i64, continued: mut []bool) -> bool => {
   var shallowest = 0 - 1
   for i in from..<=to {
     if !is_chain_dot(leaves, in_interp, i) { continue }
@@ -732,13 +735,105 @@ let break_chain = (bytes: []u8, leaves: []Leaf, inside: []i64, in_interp: []bool
   }
   var added = false
   for at in dots {
-    if !chain_break[at] {
-      chain_break[at] = true
+    if !continued[at] {
+      continued[at] = true
       added = true
     }
   }
   added
 }
+
+/// Breaks a long boolean condition after its operators, and answers whether it planned
+/// anything new.
+///
+/// **After, never before**, which is the language's rule and not a taste: a line beginning
+/// with `&&` does not continue the statement above it — only `.`, `|`, `else` and `where`
+/// do (LANGUAGE.md) — so a leading `&&` is re-read as two address-of operators and the
+/// file stops compiling (`lyra-E011`, checked). The conditions written by hand in this
+/// repo trail their operators for the same reason.
+///
+/// **One precedence level at a time, the loosest on the line**: with both present the
+/// `||`s break and the `&&`s stay, so what starts each line is a top-level disjunct and
+/// the `&&` groups read as the units they are. Breaking both would put operands of
+/// different precedence at one indent and make the expression look flatter than it is —
+/// a formatter lying about grouping, which is worse than a long line.
+///
+/// Two operators at least, for the reason a chain needs two links: a single `&&` on an
+/// over-long line is usually one long operand, and splitting there moves the tail down
+/// without making the condition clearer.
+let break_condition = (
+  bytes: []u8,
+  leaves: []Leaf,
+  inside: []i64,
+  in_interp: []bool,
+  from: i64,
+  to: i64,
+  continued: mut []bool
+) -> bool => {
+  var shallowest = 0 - 1
+  for i in from..<=to {
+    if !is_condition_operator(leaves, in_interp, i) { continue }
+    let depth = nesting(inside, i)
+    if shallowest < 0 || depth < shallowest { shallowest = depth }
+  }
+  if shallowest < 0 { return false }
+  // The loosest operator present at that depth decides which ones break.
+  var loosest = "&&"
+  for i in from..<=to {
+    if breaks_here(leaves, in_interp, inside, i, shallowest) && leaves[i].kind == "||" {
+      loosest = "||"
+    }
+  }
+  var operands: []i64 = []
+  for i in from..<=to {
+    if breaks_here(
+      leaves,
+      in_interp,
+      inside,
+      i,
+      shallowest
+    ) && leaves[i].kind == loosest &&
+      i + 1 <= to {
+      operands.push(i + 1)
+    }
+  }
+  if operands.len() < 2 { return false }
+  for at in operands {
+    if !all_whitespace(bytes, leaves[at - 1].end, leaves[at].start) { return false }
+  }
+  // **Not a condition that a body follows on the same line.** `if a || b || c { … } else
+  // { … }` breaks into operands with the whole of `{ … } else { … }` trailing the last of
+  // them, which reads as though the body belonged to that operand. Moving the body too is
+  // a rule about `if`, not about conditions, and it is not this one; until it exists, a
+  // header stays long.
+  for i in from..<=to {
+    if leaves[i].kind == "{" && nesting(inside, i) == shallowest && i > operands[0] {
+      return false
+    }
+  }
+  var added = false
+  for at in operands {
+    if !continued[at] {
+      continued[at] = true
+      added = true
+    }
+  }
+  added
+}
+
+/// Whether the leaf at `i` is a boolean operator on this line's outermost level.
+let breaks_here = pure (leaves: []Leaf, in_interp: []bool, inside: []i64, i: i64,
+  shallowest: i64) -> bool =>
+    is_condition_operator(leaves, in_interp, i) && nesting(inside, i) == shallowest
+
+/// Whether the leaf at `i` is a boolean operator this may break after: `&&` or `||`, and
+/// not inside a string interpolation, whose gaps are a string's own bytes.
+///
+/// **By the token, which is what a leaf is.** The grammar wraps each in a named node
+/// (`and`, `or`), and a leaf is the token inside it — so the kind to match is `"&&"`, not
+/// `"and"`, and matching the rule name found nothing at all.
+let is_condition_operator = pure (leaves: []Leaf, in_interp: []bool, i: i64) -> bool =>
+  (leaves[i].kind == "&&" || leaves[i].kind == "||") && !in_interp[i]
 
 /// The longest run of calls that are **one chain**: each link applied to what the link
 /// before it returned, with nothing in between.
