@@ -102,6 +102,38 @@ pub let with_extension = pure (self: string, ext: string) -> string => {
   }
 }
 
+/// `self` with its `.` and `..` components resolved as text: `"docs/guide/../intro.md"` is
+/// `"docs/intro.md"`.
+///
+/// **Lexical, not on disk**, which is a real difference and the reason this says so: where
+/// `guide` is a symlink, the filesystem's answer to `guide/..` is wherever the link points
+/// and this one is `docs`. For deciding what a link in a page *refers to* the lexical
+/// answer is the right one — a reader following `../intro.md` from `guide/deep.md` means
+/// the page beside `guide`, whatever the disk has done.
+///
+/// A `..` with nothing to pop is kept in a relative path (`"../x"` names something outside
+/// and cannot be simplified) and dropped in an absolute one (`"/.."` is `/`). An empty
+/// result is `"."`, the directory a bare path is relative to.
+pub let normalize = pure (self: string) -> string => {
+  let rooted = self.is_absolute()
+  var parts: []string = []
+  for part in self.split("/") {
+    if part == "" || part == "." { continue }
+    if part != ".." {
+      parts.push(part)
+      continue
+    }
+    let last = parts.len() - 1
+    if last >= 0 && parts[last] != ".." {
+      parts = parts.slice(0, last)
+    } else if !rooted {
+      parts.push("..")
+    }
+  }
+  let joined = parts.join("/")
+  if rooted { "/" ++ joined } else if joined.len() == 0 { "." } else { joined }
+}
+
 /// Whether `self` begins at the root.
 pub let is_absolute = pure noalloc (self: string) -> bool => self.starts_with("/")
 

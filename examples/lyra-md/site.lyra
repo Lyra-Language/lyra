@@ -13,9 +13,9 @@
 //
 // Exit 0 when every page rendered, 1 when any could not be read or written, 2 for usage.
 
-import std.collections.{ parse_args }
+import std.collections.{ parse_args, Set, set_new, add, has }
 import std.io.{ read_file, write_file, read_dir, is_symlink, create_dir_all }
-import std.path.{ child, base, stem, extension, with_extension, parent }
+import std.path.{ child, base, stem, extension, with_extension, parent, normalize }
 import markdown.{ render }
 
 let main = () -> u8 => {
@@ -37,13 +37,18 @@ let main = () -> u8 => {
     println("site: cannot make ${out}")
     return 1
   }
+  // Every page, by the path a link to it would spell — the set a link is looked up in.
+  var known = set_new::<string>()
+  for page in pages { let _ = known.add(relative(source, page)) }
   var failures = 0
+  var broken: []string = []
   for page in pages {
-    if !build_page(source, out, page, title) { failures += 1 }
+    if !build_page(source, out, page, title, known, broken) { failures += 1 }
   }
   if !write_index(source, out, pages, title) { failures += 1 }
-  println("site: ${pages.len()} page(s) into ${out}")
-  if failures == 0 { 0 } else { 1 }
+  for report in broken { println("site: ${report}") }
+  println("site: ${pages.len()} page(s) into ${out}, ${broken.len()} broken link(s)")
+  if failures == 0 && broken.len() == 0 { 0 } else { 1 }
 }
 
 /// Appends every `.md` file at or below `dir` to `out`, in `read_dir`'s order, which is
@@ -71,7 +76,14 @@ let collect = (dir: string, names: []string, out: mut []string) -> void => {
 /// That is the whole reason this program needed `std.path` — the output path is the input
 /// path with its root swapped and its extension changed, and every part of that sentence
 /// was string surgery before.
-let build_page = (source: string, out: string, page: string, title: string) -> bool => {
+let build_page = (
+  source: string,
+  out: string,
+  page: string,
+  title: string,
+  known: Set<string>,
+  broken: mut []string
+) -> bool => {
   let Some(text) = read_file(page) else {
     println("site: cannot read ${page}")
     return false
@@ -84,7 +96,10 @@ let build_page = (source: string, out: string, page: string, title: string) -> b
     },
     None => {},
   }
-  if !write_file(target, page_html(heading(text, page), title, render(text))) {
+  let here = relative(source, page)
+  let (body, problems) = rewrite_links(render(text), here, known)
+  for problem in problems { broken.push(problem) }
+  if !write_file(target, page_html(heading(text, page), title, body)) {
     println("site: cannot write ${target}")
     return false
   }
@@ -111,6 +126,81 @@ let write_index = (
   }
   true
 }
+
+/// The rendered HTML with every link to a page rewritten to the page's output name, and
+/// every link that goes nowhere reported.
+///
+/// **An author links the file they wrote**, `[intro](../intro.md)`, because that is the
+/// link that works while reading the sources — in an editor, or on the forge that renders
+/// them. The reader of the built site needs `../intro.html`. Rewriting is what lets both
+/// be true, and it is the reason this program keeps a set of its pages at all: a link is
+/// rewritten when it names a page and reported when it does not, and telling those apart
+/// is a membership test.
+///
+/// **A link that goes nowhere is left as written.** The point is to report it, not to
+/// point it at a file that does not exist either — a broken link that still says `.md`
+/// names the file the author meant, which is what a person fixing it needs to see.
+/// Answers the rewritten HTML and the links that went nowhere, rather than taking a
+/// `mut` list to append them to. **Not a style choice**: a function writing through a
+/// `mut` parameter is today inferred *pure* — `EffectMut` covers a mutated receiver and
+/// not a mutated argument (todo.md) — so the out-parameter version was a `pure` function
+/// that changed its caller's array, which is a claim this program should not be making
+/// while the gap is open. Returning them says the same thing and is true.
+let rewrite_links = pure (
+  html: string,
+  page: string,
+  known: Set<string>
+) -> (string, []string) => {
+  var out = ""
+  var broken: []string = []
+  var at = 0
+  var scanning = true
+  for scanning {
+    let Some(start) = html.index("href=\"", at) else { break }
+    let opened = start + 6
+    let Some(closed) = html.index("\"", opened) else { break }
+    let (link, report) = retarget(html.slice(opened, closed), page, known)
+    match report {
+      Some(problem) => broken.push(problem),
+      None => {},
+    }
+    out = out ++ html.slice(at, opened) ++ link
+    at = closed
+  }
+  (out ++ html.slice(at, html.len()), broken)
+}
+
+/// One link, as the built site should spell it, and what to report about it.
+let retarget = pure (
+  url: string,
+  page: string,
+  known: Set<string>
+) -> (string, Maybe<string>) => {
+  if !is_internal(url) { return (url, None) }
+  let hash = url.index("#").unwrap_or(url.len())
+  let target = url.slice(0, hash)
+  let anchor = url.slice(hash, url.len())
+  if !target.ends_with(".md") { return (url, None) }
+  // Resolved from the page's own directory, since that is where the author was writing.
+  let dir = match page.parent() {
+    Some(d) => d,
+    None => "",
+  }
+  if !known.has(dir.child(target).normalize()) {
+    return (url, Some("${page}: ${url} goes nowhere"))
+  }
+  (target.with_extension("html") ++ anchor, None)
+}
+
+/// Whether a link points inside the site: no scheme, no host, and not an anchor on the
+/// page itself. A root-relative link is somebody else's business — it depends on where the
+/// site is served from, which this program does not know.
+let is_internal = pure (url: string) -> bool =>
+  url.len() > 0 &&
+  !url.contains("://") &&
+  !url.starts_with("#") &&
+  !url.starts_with("/") &&
+  !url.starts_with("mailto:")
 
 /// A page's own title: the text of its first `# ` heading, or its file name when it has
 /// none — a page with no heading still needs something to be called in the index.

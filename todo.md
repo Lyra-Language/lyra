@@ -80,13 +80,18 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Standard library and bindings
 
-- **[PARTIAL] `lyra-md`, a Markdown renderer, as the standard library's forcing function.**
+- **[PARTIAL] `lyra-md`, a Markdown renderer, and `site`, a directory builder, as the
+  standard library's forcing functions.**
   The block level (headings, fenced code, paragraphs, escaping) renders and is pinned by
   `cmd/lyrac/lyra_md_example_test.go`, and **inline spans** (code, emphasis, links,
   images, backslash escapes) landed 09/17 beside it. The block level added `lines`,
   `strip_prefix` and `strip_suffix` to the prelude; **spans added nothing**, and the
   string builder and `replace` this entry predicted were both unnecessary (COMPLETED.md).
-  Next: a site pass over a directory, which is what should force `std.path` and a Set.
+  **The site pass landed 09/21** and forced exactly what this entry predicted: `std.path`
+  (`child`, `parent`, `base`, `stem`, `extension`, `with_extension`, `normalize`),
+  `last_index` in the prelude, `std.io.create_dir_all`, and a `Set` for the link check.
+  Next for it: assets (a `.png` beside a page is not copied), and a link to a *directory*
+  (`../guide/`) is reported as broken rather than resolved to its index.
   - The ~90× slowdown this entry recorded on 09/17 was **`split` being quadratic**, not
     anything in the renderer; profiled, fixed the same day, and the renderer went from
     1081 ms to 18 ms over 200 KB (COMPLETED.md).
@@ -104,6 +109,12 @@ Package management, versioning and separate compilation are out of scope by deci
   variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
 
+- **[OPEN] A `mut` parameter that is not the receiver is not an effect.** A function
+  writing through one is inferred `pure`, and accepts the annotation: `EffectMut` covers a
+  mutated *receiver* only. Found writing `examples/lyra-md/site.lyra`, whose link checker
+  took a `mut []string` of reports and was told it had no observable effect; it now returns
+  them instead. Either the class widens to any `mut` parameter, or the rule is written down
+  as deliberate — a caller cannot tell the two apart today.
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute

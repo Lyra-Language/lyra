@@ -1,0 +1,53 @@
+module std.collections
+//! `Set<t>` — the membership half of a map, for the question "have I seen this?".
+//!
+//! **A `HashMap<t, bool>` underneath**, and openly so: the map is already written, already
+//! tested and already fast, and a second open-addressing table would be the same code with
+//! the values deleted. What a `Set` adds is what the type says at a call site — a program
+//! holding one cannot ask what a key maps to, because there is nothing to map to.
+//!
+//! **Its methods are not `insert`, `contains` and `len`**, which read better and are taken:
+//! every file under `std/collections/` is one module, `HashMap` declares those three, and a
+//! module may not declare a name twice. Lyra cannot yet pick a function by its receiver's
+//! type (todo.md), so the names here are the ones left — `add`, `has`, `size` — and the
+//! cost of that language gap is a standard library whose two collections count themselves
+//! differently.
+//!
+//! ```
+//! import std.collections.{ Set, set_new, add, has }
+//!
+//! var seen = set_new::<string>()
+//! seen.add("intro.md")
+//! if seen.has(link) { … }
+//! ```
+
+/// A set of `t`, unordered.
+pub struct Set<t> {
+  items: HashMap<t, bool>,
+}
+
+/// An empty set.
+pub let set_new<t> = pure () -> Set<t> => Set { items: hashmap_new::<t, bool>() }
+
+/// Adds `item`, and answers whether it was new — so a caller can tell the first sight of
+/// something from the rest without asking twice.
+pub let add<t> where t: Hash = det (self: mut Set<t>, item: t) -> bool => {
+  let fresh = !self.items.contains_key(item)
+  self.items.insert(item, true)
+  fresh
+}
+
+/// Whether `item` is in the set.
+pub let has<t> where t: Hash = pure noalloc (self: Set<t>, item: t) -> bool =>
+  self.items.contains_key(item)
+
+/// Removes `item`, answering whether it was there.
+pub let discard<t> where t: Hash = det noalloc (self: mut Set<t>, item: t) -> bool =>
+  self.items.remove(item).is_some()
+
+/// How many items the set holds.
+pub let size<t> = pure noalloc (self: Set<t>) -> i64 => self.items.len()
+
+/// The items, in no order — `HashMap`'s key order, which is the table's and not the
+/// insertion's.
+pub let members<t> = pure (self: Set<t>) -> []t => self.items.keys()

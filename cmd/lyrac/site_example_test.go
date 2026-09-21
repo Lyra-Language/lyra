@@ -36,10 +36,12 @@ func TestExample_SiteRendersATree(t *testing.T) {
 		}
 	}
 	files := map[string]string{
-		"intro.md":                          "# Getting Started\n\nWelcome to *Lyra*.\n",
-		"plain.md":                          "no heading here\n",
-		"notes.txt":                         "not markdown\n",
-		filepath.Join("guide", "deep.md"):   "# The Guide\n\nDeeper.\n",
+		"intro.md":  "# Getting Started\n\nWelcome to *Lyra*.\n",
+		"plain.md":  "no heading here\n",
+		"notes.txt": "not markdown\n",
+		filepath.Join("guide", "deep.md"): "# The Guide\n\nSee the [intro](../intro.md), " +
+			"the [missing](../nope.md), an [anchor](../intro.md#start), " +
+			"[elsewhere](https://example.com/x.md) and [here](#here).\n",
 		filepath.Join(".hidden", "skip.md"): "# Hidden\n",
 	}
 	for name, body := range files {
@@ -51,8 +53,14 @@ func TestExample_SiteRendersATree(t *testing.T) {
 	// The output directory does not exist yet: making it, and the `guide/` under it, is
 	// half of what this program is for.
 	out := filepath.Join(t.TempDir(), "does", "not", "exist")
-	if stdout, err := exec.Command(bin, source, out, "--title", "Lyra Docs").CombinedOutput(); err != nil {
-		t.Fatalf("building the site failed: %v\n%s", err, stdout)
+	// **A broken link fails the build**, which is what makes this a checker as well as a
+	// builder: a site whose links do not resolve is the thing a reader notices first.
+	stdout, err := exec.Command(bin, source, out, "--title", "Lyra Docs").CombinedOutput()
+	if err == nil {
+		t.Errorf("a site with a broken link exited 0:\n%s", stdout)
+	}
+	if !strings.Contains(string(stdout), "guide/deep.md: ../nope.md goes nowhere") {
+		t.Errorf("the broken link was not reported:\n%s", stdout)
 	}
 
 	// **Every `.md` and nothing else**, at the path it was written at, with `.html` for
@@ -103,6 +111,25 @@ func TestExample_SiteRendersATree(t *testing.T) {
 	if !strings.Contains(index, "<title>Lyra Docs</title>") {
 		t.Errorf("the index's title doubles the site's name:\n%s", index)
 	}
+	// **A link names the file the author wrote, and the reader needs the file that was
+	// built.** Rewriting is what lets both be true, and it is the whole reason the program
+	// keeps a set of its pages: a link is rewritten when it names one and reported when it
+	// does not. The four that must survive untouched are as much the rule as the one that
+	// changes — an anchor keeps its fragment, another site's `.md` is not ours to rewrite,
+	// and a bare `#here` never left the page.
+	deep := read(filepath.Join("guide", "deep.html"))
+	for _, want := range []string{
+		`href="../intro.html"`,            // rewritten to the built page
+		`href="../nope.md"`,               // broken: left as written, so the author sees what they meant
+		`href="../intro.html#start"`,      // the fragment survives the rewrite
+		`href="https://example.com/x.md"`, // another site's page is not ours
+		`href="#here"`,                    // an anchor on this page
+	} {
+		if !strings.Contains(deep, want) {
+			t.Errorf("guide/deep.html has no %s:\n%s", want, deep)
+		}
+	}
+
 	// The shared renderer did the body: this is `lyra-md`'s output, not a second one.
 	if page := read("intro.html"); !strings.Contains(page, "<p>Welcome to <em>Lyra</em>.</p>") {
 		t.Errorf("intro.html was not rendered by the shared renderer:\n%s", page)
