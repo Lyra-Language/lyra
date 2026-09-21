@@ -90,8 +90,10 @@ Package management, versioning and separate compilation are out of scope by deci
   **The site pass landed 09/21** and forced exactly what this entry predicted: `std.path`
   (`child`, `parent`, `base`, `stem`, `extension`, `with_extension`, `normalize`),
   `last_index` in the prelude, `std.io.create_dir_all`, and a `Set` for the link check.
-  Next for it: assets (a `.png` beside a page is not copied), and a link to a *directory*
-  (`../guide/`) is reported as broken rather than resolved to its index.
+  **Assets landed 09/21** — everything that is not a page is copied where it stands, byte
+  for byte through `std.io.copy_file`. Next for it: a link to a *directory* (`../guide/`)
+  is reported as broken rather than resolved to its index, and a page's mode is not copied
+  with it (`stat` is a struct this module cannot write).
   - The ~90× slowdown this entry recorded on 09/17 was **`split` being quadratic**, not
     anything in the renderer; profiled, fixed the same day, and the renderer went from
     1081 ms to 18 ms over 200 KB (COMPLETED.md).

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,7 @@ func TestExample_SiteRendersATree(t *testing.T) {
 	}
 
 	source := t.TempDir()
-	for _, dir := range []string{"guide", ".hidden"} {
+	for _, dir := range []string{"guide", ".hidden", "img"} {
 		if err := os.MkdirAll(filepath.Join(source, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -39,6 +40,7 @@ func TestExample_SiteRendersATree(t *testing.T) {
 		"intro.md":  "# Getting Started\n\nWelcome to *Lyra*.\n",
 		"plain.md":  "no heading here\n",
 		"notes.txt": "not markdown\n",
+		"style.css": "body { color: red }\n",
 		filepath.Join("guide", "deep.md"): "# The Guide\n\nSee the [intro](../intro.md), " +
 			"the [missing](../nope.md), an [anchor](../intro.md#start), " +
 			"[elsewhere](https://example.com/x.md) and [here](#here).\n",
@@ -48,6 +50,13 @@ func TestExample_SiteRendersATree(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(source, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// A file that is not text, and not valid UTF-8 anywhere in it: the bytes a `string`
+	// would mangle if the copy went through one. 0xC3 opens a two-byte sequence that 0x28
+	// does not continue, and 0xFF is no sequence at all.
+	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xC3, 0x28, 0x00, 0x80}
+	if err := os.WriteFile(filepath.Join(source, "img", "diagram.png"), png, 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	// The output directory does not exist yet: making it, and the `guide/` under it, is
@@ -78,9 +87,35 @@ func TestExample_SiteRendersATree(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{filepath.Join("guide", "deep.html"), "index.html", "intro.html", "plain.html"}
+	// Pages rendered, and **everything else copied where it was** — a page saying
+	// `<img src="diagram.png">` means the file beside it. The dotted directory is still
+	// skipped, being the one thing a walk should not find on its own.
+	want := []string{
+		filepath.Join("guide", "deep.html"),
+		filepath.Join("img", "diagram.png"),
+		"index.html",
+		"intro.html",
+		"notes.txt",
+		"plain.html",
+		"style.css",
+	}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("the output tree is\n  %v\nwant\n  %v", got, want)
+	}
+
+	// **Byte for byte**, including the bytes that are not UTF-8 at all.
+	//
+	// This pins the property, not the path: swapping `copy_file` for a `read_file` and a
+	// `write_file` still passes, because a Lyra `string` carries bytes it never decoded
+	// and hands them back unchanged — measured, not assumed. `copy_file` exists because
+	// that string is a lie about what it holds (its `len` counts runes, so it disagrees
+	// with the file's size, and every operation a string offers means nothing on a PNG),
+	// which is a claim about the *library*, and one no test can make. What this can say is
+	// that whichever path the program takes, the file arrives intact.
+	if copied, err := os.ReadFile(filepath.Join(out, "img", "diagram.png")); err != nil {
+		t.Fatal(err)
+	} else if !bytes.Equal(copied, png) {
+		t.Errorf("the image arrived as % x, want % x", copied, png)
 	}
 
 	read := func(name string) string {

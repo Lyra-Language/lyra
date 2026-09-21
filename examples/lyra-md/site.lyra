@@ -14,7 +14,7 @@
 // Exit 0 when every page rendered, 1 when any could not be read or written, 2 for usage.
 
 import std.collections.{ parse_args, Set, set_new, add, has }
-import std.io.{ read_file, write_file, read_dir, is_symlink, create_dir_all }
+import std.io.{ read_file, write_file, read_dir, is_symlink, create_dir_all, copy_file }
 import std.path.{ child, base, stem, extension, with_extension, parent, normalize }
 import markdown.{ render }
 
@@ -32,7 +32,8 @@ let main = () -> u8 => {
     return 1
   }
   var pages: []string = []
-  collect(source, names, pages)
+  var assets: []string = []
+  collect(source, names, pages, assets)
   if !create_dir_all(out) {
     println("site: cannot make ${out}")
     return 1
@@ -45,26 +46,44 @@ let main = () -> u8 => {
   for page in pages {
     if !build_page(source, out, page, title, known, broken) { failures += 1 }
   }
+  for asset in assets {
+    if !copy_asset(source, out, asset) { failures += 1 }
+  }
   if !write_index(source, out, pages, title) { failures += 1 }
   for report in broken { println("site: ${report}") }
-  println("site: ${pages.len()} page(s) into ${out}, ${broken.len()} broken link(s)")
+  println("site: ${pages.len()} page(s), ${assets.len()} asset(s) into ${out}, " ++
+      "${broken.len()} broken link(s)")
   if failures == 0 && broken.len() == 0 { 0 } else { 1 }
 }
 
-/// Appends every `.md` file at or below `dir` to `out`, in `read_dir`'s order, which is
-/// sorted — so a run over a tree renders the same pages in the same order everywhere and
-/// the index below is reproducible.
+/// Sorts every file at or below `dir` into the pages to render and the assets to copy, in
+/// `read_dir`'s order, which is sorted — so a run over a tree renders the same pages in
+/// the same order everywhere and the index below is reproducible.
+///
+/// **Everything that is not a page is an asset**, rather than a list of blessed
+/// extensions: a site's `.css`, its images, its fonts, the `.txt` somebody linked — the
+/// author put the file in the tree, and a builder that silently drops what it does not
+/// recognize is one you find out about from a reader.
 ///
 /// A name beginning with `.` is skipped and a symlinked directory is not descended, for
 /// the reasons `lyrafmt`'s walk gives: a repo's `.git` holds no pages, and a link into an
 /// ancestor never terminates.
-let collect = (dir: string, names: []string, out: mut []string) -> void => {
+let collect = (
+  dir: string,
+  names: []string,
+  pages: mut []string,
+  assets: mut []string
+) -> void => {
   for name in names {
     if name.starts_with(".") { continue }
     let entry = dir.child(name)
     match read_dir(entry) {
-      Some(below) => if !is_symlink(entry) { collect(entry, below, out) },
-      None => if entry.extension() == Some("md") { out.push(entry) },
+      Some(below) => if !is_symlink(entry) { collect(entry, below, pages, assets) },
+      None => if entry.extension() == Some("md") {
+        pages.push(entry)
+      } else {
+        assets.push(entry)
+      },
     }
   }
 }
@@ -101,6 +120,30 @@ let build_page = (
   for problem in problems { broken.push(problem) }
   if !write_file(target, page_html(heading(text, page), title, body)) {
     println("site: cannot write ${target}")
+    return false
+  }
+  true
+}
+
+/// Copies one asset to where the pages expect it, answering whether it arrived.
+///
+/// **At the same path as in the source**, for the reason the pages mirror theirs: a page
+/// saying `<img src="diagram.png">` means the file beside it, and a builder that moved
+/// assets somewhere tidier would break every link it did not write.
+///
+/// Byte for byte, through `copy_file` rather than a read and a write: an image is not text
+/// and a `string` in the middle would claim it was.
+let copy_asset = (source: string, out: string, asset: string) -> bool => {
+  let target = out.child(relative(source, asset))
+  match target.parent() {
+    Some(dir) => if !create_dir_all(dir) {
+      println("site: cannot make ${dir}")
+      return false
+    },
+    None => {},
+  }
+  if !copy_file(asset, target) {
+    println("site: cannot copy ${asset}")
     return false
   }
   true

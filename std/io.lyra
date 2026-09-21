@@ -222,6 +222,56 @@ const STDIN: i32 = 0
 // `mode_t` is 16 bits on macOS and 32 on Linux, so the parameter is written as the wider
 // one: the value fits either, and aarch64 passes both in the same register with the
 // callee reading the width it declared.
+/// Copies the file at `from` to `to`, byte for byte, answering whether it arrived.
+///
+/// **Bytes, never a string**, and that is the whole point of this function existing beside
+/// `read_file` and `write_file`. Those two do copy a file's bytes intact — measured — but
+/// they hand the program a `string` in between, and a `string` holding a PNG is a lie in
+/// two directions: its `len` counts runes, so it disagrees with the file's size, and every
+/// operation a string offers means nothing on it. A program copying an asset wants the
+/// file moved, not decoded, and this is that sentence in the library rather than a comment
+/// at each call site.
+///
+/// The destination is created or truncated, with the same mode `write_file` uses. What is
+/// *not* copied is the source's mode: an executable copied here arrives without its
+/// executable bit, because `stat` is a struct whose layout this module cannot write (see
+/// the note on directories above).
+///
+/// A partial `write` is retried, as `write_all` retries one: a short write is a fact about
+/// the descriptor, not an error.
+pub let copy_file = (from: string, to: string) -> bool => {
+  let src = unsafe { open(from.cstring_ptr(), O_RDONLY) }
+  if src < 0 { return false }
+  let dst = unsafe { creat(to.cstring_ptr(), FILE_MODE) }
+  if dst < 0 {
+    unsafe { close(src) }
+    return false
+  }
+  var buf: []u8 = [0; CHUNK]
+  var moved = true
+  for {
+    let n = unsafe { read(src, &mut buf[0], u64(CHUNK)) }
+    if n == 0 { break }
+    if n < 0 {
+      moved = false
+      break
+    }
+    var written = 0
+    for written < n {
+      let put = unsafe { write(dst, &buf[written], u64(n - written)) }
+      if put <= 0 { break }
+      written += put
+    }
+    if written != n {
+      moved = false
+      break
+    }
+  }
+  unsafe { close(src) }
+  unsafe { close(dst) }
+  moved
+}
+
 /// Creates the directory at `path` and every missing directory above it, answering
 /// whether it exists afterwards.
 ///

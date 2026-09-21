@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 09/21/26 — a site builder, and the standard library it went looking for
+
+`examples/lyra-md/site.lyra` renders a directory of Markdown into a directory of HTML:
+it walks a tree, mirrors its shape, makes the directories to write into, rewrites the links
+between pages, copies everything that is not a page, and indexes what it built. The point
+of it is the standard library — `lyra-md` reads one file and writes to standard output,
+which needs almost nothing of `std`, and this needs paths, directories, membership and
+bytes.
+
+**What it forced, each written when the program reached for it and not before:**
+
+- **`std.path`** — `child`, `parent`, `base`, `stem`, `extension`, `with_extension`,
+  `normalize`, `is_absolute`. An output path is an input path with its root swapped and its
+  extension changed, and every part of that was string surgery.
+- **`last_index` in the prelude**, since there was only `index`: a name follows the last
+  `/` and an extension the last `.`.
+- **`std.io.create_dir_all`** — the library could write a file but not make a directory to
+  put it in.
+- **`Set<t>`** — the membership test that tells a link worth rewriting from one worth
+  reporting.
+- **`std.io.copy_file`** — bytes, never a string.
+
+**Three decisions the language made for me:**
+
+- **`child`, not `join`.** The prelude exports `join` for arrays and a name may not be
+  exported by two modules at once, so a `std.path.join` would be unusable in any program
+  that also joins a list of strings.
+- **`add`/`has`/`size`, not `insert`/`contains`/`len`.** Every file under
+  `std/collections/` is one module and `HashMap` declares those three. Lyra cannot pick a
+  function by its receiver's type, and the cost of that gap is now visible in the library:
+  two collections that count themselves differently.
+- **The link checker returns its reports** rather than appending to a `mut []string`,
+  because a function writing through a non-receiver `mut` parameter is inferred **pure**
+  today — `EffectMut` covers a mutated receiver only — and the compiler offered `pure` on a
+  function that changes its caller's array. Both gaps are in todo.md.
+
+**What the asset test can and cannot say.** It pins that a PNG arrives byte for byte,
+including bytes that are not UTF-8. It does *not* pin that `copy_file` was the path:
+swapping in a `read_file` and a `write_file` still passes, because a Lyra `string` carries
+bytes it never decoded and returns them unchanged — measured, since the reason to write
+`copy_file` was that a `string` holding a PNG is a lie about what it holds, and that is a
+claim about the library rather than a behaviour a test can catch.
+
 ### 09/21/26 — the body after `=>` goes on its own line, and the budget counts characters
 
 The fourth and last break, and the cheapest: one break, both halves fit. It is what the
