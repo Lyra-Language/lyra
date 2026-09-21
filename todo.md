@@ -61,6 +61,10 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Language surface
 
+- **[OPEN] W012's message is wrong for a real shadow's neighbour.** It says "this
+  declaration wins", which is true for a shadow and was printed for an overload until
+  09/21; the overload case is now skipped, but the wording still promises a winner where
+  the reader may have meant one. It could name what it shadows and what to do about it.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
@@ -111,6 +115,18 @@ Package management, versioning and separate compilation are out of scope by deci
   variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
 
+- **[OPEN] No rotate.** `wrapping_*`/`saturating_*`/`checked_*` are builtin on every width
+  (LANGUAGE.md §Overflow) and a rotate is not, so `examples/checksum` writes
+  `(x >> n) | (x << (32 - n))` itself — which is most of what a hash does. It belongs in
+  that table: the shift already truncates rather than traps, so the builtin is a lowering,
+  not a new semantics.
+- **[OPEN] A module-level `const` array indexed from a function can panic the backend.**
+  `const HEX_DIGITS: []rune = [...]` in `std/prelude/format.lyra`, read by `to_hex`, panics
+  compiling `TestExec_RaylibShadersAndMaterials`: "invalid gep source type; expected pointer
+  or vector of pointers type, got *types.StructType". A standalone module with the same
+  shape does not reproduce, so something in that program's types is needed too. Repro: make
+  `to_hex`'s digit table a `const` and run that test. `examples/checksum` avoids it the same
+  way, with a function for the round constants.
 - **[OPEN] A `mut` parameter that is not the receiver is not an effect.** A function
   writing through one is inferred `pure`, and accepts the annotation: `EffectMut` covers a
   mutated *receiver* only. Found writing `examples/lyra-md/site.lyra`, whose link checker

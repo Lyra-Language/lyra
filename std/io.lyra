@@ -222,6 +222,31 @@ const STDIN: i32 = 0
 // `mode_t` is 16 bits on macOS and 32 on Linux, so the parameter is written as the wider
 // one: the value fits either, and aarch64 passes both in the same register with the
 // callee reading the width it declared.
+/// The whole of the file at `path` as bytes, or `None` if it cannot be opened.
+///
+/// **What `read_file` is for text, this is for everything else.** The bytes are the same
+/// either way — a `string` here carries what it never decoded — but a program hashing a
+/// file, or reading a header, is not holding text, and a value whose `len` counts runes
+/// would be answering a question it was not asked. The type is the documentation.
+pub let read_bytes = (path: string) -> Maybe<[]u8> => {
+  let fd = unsafe { open(path.cstring_ptr(), O_RDONLY) }
+  if fd < 0 { return None }
+  var out: []u8 = []
+  var buf: []u8 = [0; CHUNK]
+  var failed = false
+  for {
+    let n = unsafe { read(fd, &mut buf[0], u64(CHUNK)) }
+    if n == 0 { break }
+    if n < 0 {
+      failed = true
+      break
+    }
+    for i in 0..<n { out.push(buf[i]) }
+  }
+  unsafe { close(fd) }
+  if failed { None } else { Some(out) }
+}
+
 /// Copies the file at `from` to `to`, byte for byte, answering whether it arrived.
 ///
 /// **Bytes, never a string**, and that is the whole point of this function existing beside

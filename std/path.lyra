@@ -15,22 +15,22 @@ module std.path
 //! is the separator.
 //!
 //! ```
-//! import std.path.{ child, base, stem, extension, with_extension }
+//! import std.path.{ join, base, stem, extension, with_extension }
 //!
-//! let out = "build".child(page.with_extension("html"))
+//! let out = "build".join(page.with_extension("html"))
 //! ```
 
 /// `other` appended to `self`, with exactly one separator between them.
 ///
-/// **Called `child` because `join` is taken**, by the prelude's `join` over an array — and
+/// **Called `join` because `join` is taken**, by the prelude's `join` over an array — and
 /// a name may not be exported by two modules at once, so a `std.path.join` would be
 /// unusable in any program that also joins a list of strings, which is most of them. The
 /// name that remains says what the result is: the path to something under `self`.
 ///
-/// **An absolute `other` wins**, as it does in every language's join: `"docs".child("/etc")`
+/// **An absolute `other` wins**, as it does in every language's join: `"docs".join("/etc")`
 /// is `/etc`, because a caller who wrote a leading `/` said where they meant. An empty
-/// `self` is no prefix at all, so `"".child("a")` is `a` rather than `/a`.
-pub let child = pure (self: string, other: string) -> string => {
+/// `self` is no prefix at all, so `"".join("a")` is `a` rather than `/a`.
+pub let join = pure (self: string, other: string) -> string => {
   if other.is_absolute() || self.len() == 0 { return other }
   if other.len() == 0 { return self }
   if self.ends_with("/") { self ++ other } else { self ++ "/" ++ other }
@@ -97,7 +97,7 @@ pub let with_extension = pure (self: string, ext: string) -> string => {
   }
   let renamed = if ext.len() == 0 { stem_of } else { stem_of ++ "." ++ ext }
   match trimmed.parent() {
-    Some(dir) => dir.child(renamed),
+    Some(dir) => dir.join(renamed),
     None => renamed,
   }
 }

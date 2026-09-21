@@ -24,6 +24,7 @@ import (
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/modules"
 	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -488,6 +489,51 @@ func preludeOf(units []modules.Unit) string {
 	return ""
 }
 
+// overloadsRatherThanShadows reports whether the declaration at `loc` takes a name that
+// already exists **on a different receiver** — which is an overload, not a shadow.
+//
+// Both warnings say "this declaration wins", and for an overload that is simply untrue:
+// `join` on a `string` beside the prelude's on a `[]t` leaves both callable, each chosen
+// by what it is called on, and `std.path` and `std.collections.Set` are built on exactly
+// that (09/21). Warning there is the failure mode this project treats as worst — a
+// diagnostic that fires on correct code, teaching the reader to stop reading them.
+//
+// A name that arrives without a receiver, or on the *same* receiver head, is a real
+// shadow and still warns: only one of those two can be called.
+func overloadsRatherThanShadows(symTable *symbols.SymbolTable, name string, loc ast.Location) bool {
+	mine, ok := symTable.LookupFunctionFrom(name, loc)
+	if !ok {
+		return false
+	}
+	head, ok := receiverHead(mine)
+	if !ok {
+		return false
+	}
+	others := symTable.FunctionsNamed(name)
+	if len(others) < 2 {
+		return false
+	}
+	for _, other := range others {
+		if other == mine {
+			continue
+		}
+		theirs, ok := receiverHead(other)
+		if !ok || theirs == head {
+			return false
+		}
+	}
+	return true
+}
+
+// receiverHead is the type head a function dispatches on, and whether it has one.
+func receiverHead(fn *ast.LambdaExpr) (string, bool) {
+	recv, ok := ast.ReceiverParam(fn)
+	if !ok {
+		return "", false
+	}
+	return types.HeadName(recv.Type)
+}
+
 // shadowWarnings turns each user declaration that took a name reaching it from elsewhere
 // into a warning. A warning rather than an error, for both sources: the prelude is
 // implicitly in scope, so rejecting a clash would make every name it exports permanently
@@ -507,6 +553,9 @@ func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
 	}
 	out := make([]diag.Diagnostic, 0, len(symTable.Shadowed))
 	for _, s := range symTable.Shadowed {
+		if overloadsRatherThanShadows(symTable, s.Name, s.Loc) {
+			continue
+		}
 		d := diag.Diagnostic{
 			Location: s.Loc,
 			Severity: diag.SeverityWarning,

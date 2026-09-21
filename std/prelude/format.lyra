@@ -105,3 +105,23 @@ pub let to_fixed = pure (self: f64, places: i64) -> string => {
     sign ++ "${whole}" ++ "." ++ digits
   }
 }
+
+/// The bytes as lowercase hexadecimal, two characters each and nothing between them.
+///
+/// What a checksum is written as, and what a byte dump is read as. Lowercase because that
+/// is what `sha256sum`, `git` and every checksum file in the wild write, and a comparison
+/// against one of those is the point of having the digest at all.
+///
+/// The digit table is a local rather than a module-level `const`, which is not a
+/// preference: a `const []rune` indexed from a prelude function panics the backend while
+/// compiling the raylib shader test (todo.md). The local form is what compiles today.
+pub let to_hex = pure (self: []u8) -> string => {
+  let digits: []rune = ['0', '1', '2', '3', '4', '5', '6', '7',
+    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']
+  var out: []rune = []
+  for b in self {
+    out.push(digits[i64(b) / 16])
+    out.push(digits[i64(b) % 16])
+  }
+  out.join("")
+}

@@ -13,9 +13,9 @@
 //
 // Exit 0 when every page rendered, 1 when any could not be read or written, 2 for usage.
 
-import std.collections.{ parse_args, Set, set_new, add, has }
+import std.collections.{ parse_args, Set, set_new, insert, contains }
 import std.io.{ read_file, write_file, read_dir, is_symlink, create_dir_all, copy_file }
-import std.path.{ child, base, stem, extension, with_extension, parent, normalize }
+import std.path.{ join, base, stem, extension, with_extension, parent, normalize }
 import markdown.{ render }
 
 let main = () -> u8 => {
@@ -40,7 +40,7 @@ let main = () -> u8 => {
   }
   // Every page, by the path a link to it would spell — the set a link is looked up in.
   var known = set_new::<string>()
-  for page in pages { let _ = known.add(relative(source, page)) }
+  for page in pages { let _ = known.insert(relative(source, page)) }
   var failures = 0
   var broken: []string = []
   for page in pages {
@@ -76,7 +76,7 @@ let collect = (
 ) -> void => {
   for name in names {
     if name.starts_with(".") { continue }
-    let entry = dir.child(name)
+    let entry = dir.join(name)
     match read_dir(entry) {
       Some(below) => if !is_symlink(entry) { collect(entry, below, pages, assets) },
       None => if entry.extension() == Some("md") {
@@ -107,7 +107,7 @@ let build_page = (
     println("site: cannot read ${page}")
     return false
   }
-  let target = out.child(relative(source, page)).with_extension("html")
+  let target = out.join(relative(source, page)).with_extension("html")
   match target.parent() {
     Some(dir) => if !create_dir_all(dir) {
       println("site: cannot make ${dir}")
@@ -134,7 +134,7 @@ let build_page = (
 /// Byte for byte, through `copy_file` rather than a read and a write: an image is not text
 /// and a `string` in the middle would claim it was.
 let copy_asset = (source: string, out: string, asset: string) -> bool => {
-  let target = out.child(relative(source, asset))
+  let target = out.join(relative(source, asset))
   match target.parent() {
     Some(dir) => if !create_dir_all(dir) {
       println("site: cannot make ${dir}")
@@ -162,7 +162,7 @@ let write_index = (
     items.push("<li><a href=\"${href}\">${heading(read_file(page).unwrap_or(""), page)}</a></li>")
   }
   let body = "<ul>\n" ++ items.join("\n") ++ "\n</ul>"
-  let target = out.child("index.html")
+  let target = out.join("index.html")
   if !write_file(target, page_html(title, title, body)) {
     println("site: cannot write ${target}")
     return false
@@ -229,7 +229,7 @@ let retarget = pure (
     Some(d) => d,
     None => "",
   }
-  if !known.has(dir.child(target).normalize()) {
+  if !known.contains(dir.join(target).normalize()) {
     return (url, Some("${page}: ${url} goes nowhere"))
   }
   (target.with_extension("html") ++ anchor, None)

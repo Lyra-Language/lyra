@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 09/21/26 — a SHA-256 tool, and the two compiler bugs it walked into
+
+`examples/checksum` is the standard library's third probe and the first program here made
+of **arithmetic**: `u32` that wraps rather than traps, shifts, xor, and a file read as
+numbers. `lyrafmt`, `lyra-md` and `site` are all text, structs and files, and nothing had
+yet leaned on the integer half of the language.
+
+**It is also the first example with an answer somebody else computed.** A renderer's test
+says the output is what the renderer produced the day it was written; a digest is
+specified, so the test compares against Go's `crypto/sha256` at the sizes padding gets
+wrong — 55, 56, 64, 65 — and a one-bit error in the rotate fails all sixteen of them
+(checked). A wrong `wrapping_add`, a rotate off by one, or a length written little-endian
+all produce a confident, plausible, wrong digest, which is why the oracle matters.
+
+**The overload bug, and the wrong conclusion I drew from it first.** A generic function
+sharing its name with a prelude generic emitted the *same symbol* and a call landed in
+whichever won: `contains` on a `Box<string>` against the prelude's on a `string` failed as
+"expects 3 argument(s), got 2". The discriminator that exists to prevent exactly this —
+the receiver's type head — was asked for through `OverloadSets`, and **a set holds one
+module's declarations**, so two modules declaring one name are in no set together and both
+got none. It now falls back to asking whether the name is declared anywhere else visible,
+which `FunctionsNamed` already answered across modules.
+
+That matters twice over, because **the day's earlier conclusion was wrong**: `std.path`'s
+`child` and `Set`'s `add`/`has`/`size` were named around a belief that Lyra cannot pick a
+function by its receiver's type. It can — a non-generic overload of a prelude name works
+today (`join` on a `string` beside the prelude's on a `[]t`, measured), and a generic one
+works now that the discriminator reaches across modules. **They are renamed to the obvious
+ones**: `join`, and `insert`/`contains`/`remove`/`len`, each beside the prelude's or
+`HashMap`'s and told apart by what it is called on.
+
+**And the warning had to go with them.** `lyra-W012` fired on every one of those
+declarations — "this declaration wins" — which for an overload is simply untrue: both stay
+callable. A diagnostic that fires on correct code is the failure mode this project treats
+as worst, so the shadow check now asks whether the name arrives on a *different receiver
+head* and says nothing when it does. A name with no receiver, or one on the same head, is
+a real shadow and still warns (checked both).
+
+**The second bug is unexplained and recorded as such.** A `const []rune` in the prelude,
+indexed from `to_hex`, panics the backend while compiling the raylib shader test —
+"invalid gep source type … got *types.StructType" — and the same shape in a standalone
+module does not reproduce. Both `to_hex` and the digest's round constants use a local array
+or a function instead, with a comment saying why, and todo.md carries the recipe.
+
 ### 09/21/26 — a site builder, and the standard library it went looking for
 
 `examples/lyra-md/site.lyra` renders a directory of Markdown into a directory of HTML:

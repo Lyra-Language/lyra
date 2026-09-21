@@ -6,19 +6,19 @@ module std.collections
 //! the values deleted. What a `Set` adds is what the type says at a call site — a program
 //! holding one cannot ask what a key maps to, because there is nothing to map to.
 //!
-//! **Its methods are not `insert`, `contains` and `len`**, which read better and are taken:
-//! every file under `std/collections/` is one module, `HashMap` declares those three, and a
-//! module may not declare a name twice. Lyra cannot yet pick a function by its receiver's
-//! type (todo.md), so the names here are the ones left — `add`, `has`, `size` — and the
-//! cost of that language gap is a standard library whose two collections count themselves
-//! differently.
+//! **Its methods are `HashMap`'s names**, on a different receiver: overloads are told
+//! apart by the receiver's type, so `set.insert(x)` and `map.insert(k, v)` are two
+//! functions and `set.len()` is not the map's. They were `add`/`has`/`size` for a day,
+//! on the belief that one module could not declare a name twice — false, though the
+//! *generic* case did emit one symbol for two overloads until the discriminator learned to
+//! reach across modules, which is the bug this rename waited on (09/21).
 //!
 //! ```
-//! import std.collections.{ Set, set_new, add, has }
+//! import std.collections.{ Set, set_new, insert, contains }
 //!
 //! var seen = set_new::<string>()
-//! seen.add("intro.md")
-//! if seen.has(link) { … }
+//! seen.insert("intro.md")
+//! if seen.contains(link) { … }
 //! ```
 
 /// A set of `t`, unordered.
@@ -31,22 +31,22 @@ pub let set_new<t> = pure () -> Set<t> => Set { items: hashmap_new::<t, bool>() 
 
 /// Adds `item`, and answers whether it was new — so a caller can tell the first sight of
 /// something from the rest without asking twice.
-pub let add<t> where t: Hash = det (self: mut Set<t>, item: t) -> bool => {
+pub let insert<t> where t: Hash = det (self: mut Set<t>, item: t) -> bool => {
   let fresh = !self.items.contains_key(item)
   self.items.insert(item, true)
   fresh
 }
 
 /// Whether `item` is in the set.
-pub let has<t> where t: Hash = pure noalloc (self: Set<t>, item: t) -> bool =>
+pub let contains<t> where t: Hash = pure noalloc (self: Set<t>, item: t) -> bool =>
   self.items.contains_key(item)
 
 /// Removes `item`, answering whether it was there.
-pub let discard<t> where t: Hash = det noalloc (self: mut Set<t>, item: t) -> bool =>
+pub let remove<t> where t: Hash = det noalloc (self: mut Set<t>, item: t) -> bool =>
   self.items.remove(item).is_some()
 
 /// How many items the set holds.
-pub let size<t> = pure noalloc (self: Set<t>) -> i64 => self.items.len()
+pub let len<t> = pure noalloc (self: Set<t>) -> i64 => self.items.len()
 
 /// The items, in no order — `HashMap`'s key order, which is the table's and not the
 /// insertion's.

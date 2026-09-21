@@ -646,7 +646,36 @@ func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr, name string) st
 			}
 		}
 	}
+	// **An overload set holds one module's declarations, and an overload may span two.**
+	// A generic that shares its name with one the *prelude* declares is in no set with it
+	// — the prelude is another module — so both instantiated at the same argument emitted
+	// one symbol, and a call landed in whichever won: `contains` on a `Box<string>`
+	// against the prelude's on a `string` failed as "expects 3 argument(s), got 2", which
+	// is the arity of the other one (09/21, found writing the checksum example).
+	//
+	// So the receiver's head answers here too, for a name declared anywhere else that is
+	// visible. Only a name with a rival gets a discriminant, which keeps every symbol that
+	// had none exactly as it was.
+	if tc.nameIsDeclaredElsewhere(name, lambda) {
+		head, _ := types.HeadName(recv.Type)
+		return head
+	}
 	return ""
+}
+
+// nameIsDeclaredElsewhere reports whether some *other* declaration — in this module or in
+// one it imports, the prelude included — binds `name` to a function. It is the question
+// "is this an overload", asked across the module boundary that `OverloadSets` stops at.
+func (tc *TypeChecker) nameIsDeclaredElsewhere(name string, lambda *ast.LambdaExpr) bool {
+	if tc.symTable == nil {
+		return false
+	}
+	for _, other := range tc.symTable.FunctionsNamed(name) {
+		if other != lambda {
+			return true
+		}
+	}
+	return false
 }
 
 // localDiscPrefix marks the discriminant of a generic declared inside a function.

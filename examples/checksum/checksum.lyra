@@ -1,0 +1,98 @@
+// checksum — SHA-256 digests, in the shape `sha256sum` writes them.
+//
+//   build/lyrac build -o build/checksum examples/checksum/checksum.lyra
+//   build/checksum notes.txt            # <hex>  notes.txt
+//   build/checksum -                    # digests standard input
+//   build/checksum --check sums.txt     # verifies a list this wrote
+//
+// The third probe of the standard library, and the first one made of arithmetic: every
+// other example here is about text, structs and files, and nothing had yet leaned on `u32`
+// that wraps, shifts, xor, or a file read as numbers. What it found is in todo.md —
+// chiefly that the language has no rotate, which is most of what a hash does.
+//
+// The output format is `sha256sum`'s, two spaces and all, because that is what makes the
+// answer checkable: `build/checksum f | sha256sum --check -` is the test a reader can run.
+//
+// Exit 0 when every file hashed and every checked line matched, 1 otherwise, 2 for usage.
+
+import std.collections.{ parse_args }
+import std.io.{ read_bytes, read_stdin, read_file }
+import sha256.{ sha256 }
+
+let main = () -> u8 => {
+  let args = parse_args(["--check"])
+  match args.value("--check") {
+    Some(list) => return check(list),
+    None => {},
+  }
+  if args.positional.len() == 0 {
+    println("usage: checksum <file>... | - | --check <list>")
+    return 2
+  }
+  var failures = 0
+  for path in args.positional {
+    if path == "-" {
+      println("${sha256(read_stdin().encode_utf8()).to_hex()}  -")
+      continue
+    }
+    match read_bytes(path) {
+      Some(data) => println("${sha256(data).to_hex()}  ${path}"),
+      None => {
+        println("checksum: cannot read ${path}")
+        failures += 1
+      },
+    }
+  }
+  if failures == 0 { 0 } else { 1 }
+}
+
+/// Verifies a list of digests this program wrote, printing a line per entry and answering
+/// the exit code.
+///
+/// **A missing file is a failure, not a skip.** A checksum list is a claim that these files
+/// are here and are these bytes, and half of it going missing is the claim failing.
+let check = (list: string) -> u8 => {
+  let Some(text) = read_file(list) else {
+    println("checksum: cannot read ${list}")
+    return 1
+  }
+  var failures = 0
+  for line in text.lines() {
+    if line.trim().len() == 0 { continue }
+    let Some(entry) = split_entry(line) else {
+      println("checksum: cannot read a digest from ${line}")
+      failures += 1
+      continue
+    }
+    let (want, path) = entry
+    match read_bytes(path) {
+      Some(data) => {
+        let got = sha256(data).to_hex()
+        if got == want {
+          println("${path}: OK")
+        } else {
+          println("${path}: FAILED")
+          failures += 1
+        }
+      },
+      None => {
+        println("${path}: cannot read")
+        failures += 1
+      },
+    }
+  }
+  if failures == 0 { 0 } else { 1 }
+}
+
+/// One line of a checksum list, as a digest and the path it claims — the format this
+/// program prints, which is `sha256sum`'s: sixty-four hex characters, two spaces, the path.
+///
+/// The path is taken as the rest of the line rather than split on spaces, since a file may
+/// have them in its name and the digest's width says where it ends.
+let split_entry = pure (line: string) -> Maybe<(string, string)> => {
+  let trimmed = line.trim_end()
+  if trimmed.len() < 67 { return None }
+  let digest = trimmed.slice(0, 64)
+  if trimmed.slice(64, 66) != "  " { return None }
+  Some((digest, trimmed.slice(66, trimmed.len())))
+}
