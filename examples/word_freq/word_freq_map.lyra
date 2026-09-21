@@ -47,7 +47,10 @@ let main = () -> u8 => {
 
   // A valued flag with a default: absent, not a number, or negative means every word.
   let ranked = by_count(word_counts.entries())
-  let shown = match args.value("-n").flat_map((s) => s.parse_i64()).filter((n) => n >= 0) {
+  let shown = match args
+    .value("-n")
+    .flat_map((s) => s.parse_i64())
+    .filter((n) => n >= 0) {
     Some(n) => ranked.take(n),
     None => ranked,
   }

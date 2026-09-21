@@ -14,7 +14,13 @@ import (
 // among others, and the indentation rule must fix a badly indented file once and then
 // leave it alone. Needs the tree-sitter runtime (`brew install tree-sitter`) and a C
 // compiler for the grammar; skips without them, since the question is about the linker.
-func TestExample_LyrafmtRoundTrips(t *testing.T) {
+// buildLyrafmt compiles the formatter and answers the binary's path, skipping the test
+// when the pieces a linker needs are absent — a C compiler, the tree-sitter runtime, and
+// the grammar checked out beside this repo. The skip is about the linker, not the rule
+// under test, which is why it is a skip and not a failure; CI installs all three, and did
+// not until 09/20, which is how an x86-64 crash lived here unseen.
+func buildLyrafmt(t *testing.T) string {
+	t.Helper()
 	root := repoRoot(t)
 	clang, err := exec.LookPath("clang")
 	if err != nil {
@@ -46,6 +52,12 @@ func TestExample_LyrafmtRoundTrips(t *testing.T) {
 	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "lyrafmt", "lyrafmt.lyra")); code != 0 {
 		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
 	}
+	return bin
+}
+
+func TestExample_LyrafmtRoundTrips(t *testing.T) {
+	root := repoRoot(t)
+	bin := buildLyrafmt(t)
 	files := []string{
 		filepath.Join(root, "examples", "primes.lyra"),
 		filepath.Join(root, "examples", "lyrafmt", "lyrafmt.lyra"),
@@ -269,5 +281,62 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	}
 	if got, want := string(askedFor), "let f = () -> i64 => { 1 }\n"; got != want {
 		t.Errorf("an ignored file named on the command line formatted to %q, want %q", got, want)
+	}
+}
+
+// **A chain breaks a line per call; a line that merely holds several calls does not**
+// (09/21). The rule is what separates the two, and both halves are the test: each case
+// here is one line over the 90-column budget, and half of them must come back untouched.
+//
+// What is a chain is the whole question. Its links apply to one another — `a.b().c()` —
+// so a break before each `.` puts one step of a pipeline on each line, with the receiver
+// keeping the first. What looks like a chain and is not: `c.f() || c.g()`, whose second
+// call applies to `c` again, and `p.a.b.c`, a walk through fields rather than calls. The
+// first version of this rule broke both, and the output — a `c` stranded at the end of a
+// line, a column of field names — is what sent it back.
+func TestExample_LyrafmtBreaksChains(t *testing.T) {
+	bin := buildLyrafmt(t)
+	cases := []struct{ name, src, want string }{
+		{
+			"a chain of calls breaks, one call per line",
+			"let names = () -> string => people().filter(is_active).map(full_name).sorted().join(\", \").trim()\n",
+			"let names = () -> string => people()\n  .filter(is_active)\n  .map(full_name)\n  .sorted()\n  .join(\", \")\n  .trim()\n",
+		},
+		{
+			"calls joined by an operator are not a chain",
+			"let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_'\n",
+			"let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_'\n",
+		},
+		{
+			"a walk through fields is not a chain",
+			"let id = (m: Model) -> i64 => m.materials.offsets.maps.textures.entries.first.id.value.inner\n",
+			"let id = (m: Model) -> i64 => m.materials.offsets.maps.textures.entries.first.id.value.inner\n",
+		},
+		{
+			"one call is not a chain, however long the line",
+			"let only = () -> string => people_of_the_longest_possible_name_there_is().joined_at_last(\"-\")\n",
+			"let only = () -> string => people_of_the_longest_possible_name_there_is().joined_at_last(\"-\")\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// **Each case must be over the budget to be a case at all**: a line the
+			// formatter leaves alone proves nothing about chains if it simply fits. The
+			// first draft of this test had three that did.
+			if width := len(strings.TrimRight(c.src, "\n")); width <= 90 {
+				t.Fatalf("the input is %d columns, so nothing would break it; make it longer", width)
+			}
+			path := filepath.Join(t.TempDir(), "in.lyra")
+			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := exec.Command(bin, path).Output()
+			if err != nil {
+				t.Fatalf("formatting: %v", err)
+			}
+			if string(got) != c.want {
+				t.Errorf("formatted:\n%s\nwant:\n%s", got, c.want)
+			}
+		})
 	}
 }

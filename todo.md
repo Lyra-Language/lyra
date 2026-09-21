@@ -52,9 +52,9 @@ Package management, versioning and separate compilation are out of scope by deci
   indentation, whitespace, spacing, inline blocks and **line breaking** (09/19: 90 columns,
   comma lists exploded one element per line) are in; the repo is formatted by it, a
   directory argument is every `.lyra` file beneath it, and both editors format through
-  `lyra-lsp`. Breaking covers comma lists only — **a method chain and a long boolean
-  condition are still left as written**, which are the next two constructs and each needs
-  its own indentation rule. What is left after that is the bootstrap proper, which starts
+  `lyra-lsp`. Breaking covers comma lists and **method chains** (09/21: a line per call,
+  the receiver keeping the first line) — **a long boolean condition is still left as
+  written**, the last of the three and the one whose break position precedence decides. What is left after that is the bootstrap proper, which starts
   with the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
 
 

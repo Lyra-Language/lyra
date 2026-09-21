@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 09/21/26 — lyrafmt breaks a method chain, and only a method chain
+
+A line per call, the receiver keeping the first line, each link one level deeper — the
+second breakable construct after comma lists. **The work was not the breaking; it was
+saying what a chain is**, and the first two answers were wrong in ways the repo showed at
+once:
+
+- **Every `.` is not a link.** `model.materials.offset(i)^.maps.offset(map)^.texture.id`
+  came back as seven lines, one per field, replacing a 91-column line with something worse
+  in every way. A link must be a **call**: a call carries its own parentheses and arguments,
+  so a line per call is a line per step, while a column of field names says nothing. So the
+  `.` must be followed by a name and a `(`.
+- **Calls on a line are not a chain.** `c.is_ascii_alpha() || c.is_ascii_digit()` has two
+  call dots at one depth and is not a pipeline — the second applies to `c` again — and
+  breaking it stranded a `c` at the end of a line. A chain's links apply to one another, so
+  two dots continue a chain only when the second follows the first's closing `)`, give or
+  take the `^`/`?` that may cling to it. Restricting to that took the repo's changed files
+  from 6 to 3, and the three that remain read better than what they replace.
+
+**The bug worth keeping**, found by the idempotence sweep rather than by reading: a chain
+break indented from the chain's own line, while the *source* rule indents a continuation
+from the enclosing delimiter. A chain inside a call came out at 4 spaces and then 6 when
+the file was formatted again — the second pass reading its own break as the author's. The
+synthetic rule now computes exactly what the source rule computes. **A formatter's two
+paths to the same layout must agree, and only formatting twice asks them.**
+
+The test asserts its own premise — every case must be over the budget, or a line left alone
+proves nothing — and caught two cases of mine that merely fit.
+
 ### 09/20/26 — `lyrafmt --check .` is a CI step, and `.lyrafmtignore` is what made it one
 
 The blocker was never the formatter: `cmd/lyrac/testdata/syntax.lyra` does not parse *on

@@ -311,13 +311,15 @@ let format_source = (
 /// line that is still long then is one no further break would shorten.
 let lay_out = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
   var breaks = [false; leaves.len()]
+  // Which tokens a chain breaks before — a continuation, indented like one.
+  var chain_break = [false; leaves.len()]
   var cols = [0; leaves.len()]
   var lines = [0; leaves.len()]
-  var out = format(bytes, len, leaves, rule, breaks, cols, lines)
+  var out = format(bytes, len, leaves, rule, breaks, chain_break, cols, lines)
   if !rule { return out }
   for _ in 0..<BREAK_PASSES {
-    if !plan_breaks(bytes, leaves, cols, lines, breaks) { return out }
-    out = format(bytes, len, leaves, rule, breaks, cols, lines)
+    if !plan_breaks(bytes, leaves, cols, lines, breaks, chain_break) { return out }
+    out = format(bytes, len, leaves, rule, breaks, chain_break, cols, lines)
   }
   out
 }
@@ -449,7 +451,7 @@ struct Scope {
 /// except, with the rule on, the whitespace that begins a line, which becomes the
 /// indentation the enclosing delimiters call for.
 let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
-  cols: mut []i64, lines: mut []i64) -> []u8 => {
+  chain_break: []bool, cols: mut []i64, lines: mut []i64) -> []u8 => {
   var out: []u8 = []
   // One entry per delimiter still open, innermost last.
   var scopes: []Scope = []
@@ -514,6 +516,24 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
       } else {
         base
       }
+      starts_line = true
+      push_indent(line_level, out)
+    } else if rule && plain && chain_break[i] {
+      // A break before a chain's `.`. Unlike a list's it opens no delimiter, so the line
+      // is a **continuation** and takes a continuation's level: one deeper than the
+      // enclosing delimiter's contents, which is exactly what the branch above computes
+      // for a continuation the author wrote by hand.
+      //
+      // **The two must agree or the formatter is not idempotent**, and they did not: this
+      // indented from the chain's own line, so a chain inside a call came out at 4 spaces
+      // and then at 6 when the file was formatted again, the second pass reading its own
+      // break as the source-written kind. Found by the idempotence check over the repo,
+      // which is the check that exists for exactly this.
+      out.push(10)
+      line += 1
+      previous_line_level = line_level
+      previous_line_last_kind = last_kind
+      line_level = if scopes.len() == 0 { 1 } else { scopes[scopes.len() - 1].level + 1 }
       starts_line = true
       push_indent(line_level, out)
     } else if rule && plain && breaks[i] {
@@ -597,7 +617,7 @@ const BREAK_PASSES = 8
 /// deliberate layout — an aligned table of match arms, a struct literal grouped by meaning
 /// — from being flattened by a tool that cannot know why it was written that way.
 let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
-  breaks: mut []bool) -> bool => {
+  breaks: mut []bool, chain_break: mut []bool) -> bool => {
   if leaves.len() == 0 { return false }
   // The delimiter each token sits directly inside, and whether any string interpolation
   // encloses it — inside one, the "whitespace" between tokens is a string's own bytes and
@@ -635,8 +655,23 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
     var last = i
     for last + 1 < leaves.len() && lines[last + 1] == line { last += 1 }
     if widest[line] > WIDTH {
+      // A comma list first, and a chain only when the line has no list to explode. The
+      // list is the bigger win where both are present — it is what holds the arguments a
+      // chain's links are made of — and breaking one thing per line per pass means a line
+      // that is still long after the list comes back here with the chain intact.
       let chosen = widest_list(leaves, inside, in_interp, closer_of, i, last)
-      if chosen >= 0 && explode(bytes, leaves, inside, closer_of, chosen, breaks) {
+      if chosen >= 0 {
+        if explode(bytes, leaves, inside, closer_of, chosen, breaks) { planned = true }
+      } else if break_chain(
+        bytes,
+        leaves,
+        inside,
+        in_interp,
+        closer_of,
+        i,
+        last,
+        chain_break
+      ) {
         planned = true
       }
     }
@@ -644,6 +679,129 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
   }
   planned
 }
+
+/// Breaks the longest method chain on a line before each of its `.`s, and answers whether
+/// it planned anything new.
+///
+/// ```
+/// let names = people.filter(is_active).map(full_name).sorted().join(", ")
+/// ```
+/// becomes a line per link, each indented one level from the line the chain began on:
+/// ```
+/// let names = people
+///   .filter(is_active)
+///   .map(full_name)
+///   .sorted()
+///   .join(", ")
+/// ```
+///
+/// **The receiver keeps the first line**, which is what makes the result readable: the
+/// thing being transformed stays with the name it is bound to, and the transformations
+/// line up under it.
+///
+/// **Two links at least.** One `.` on an over-long line is a long *argument* or a long
+/// name, and breaking before it moves the line's tail down one level without making it
+/// shorter in any way that helps — the classic formatter output that reads as damage.
+///
+/// **The shallowest `.`s on the line**, so `a.b(c.d().e()).f()` breaks on `a`'s chain and
+/// not on `c`'s: the outer one is what the line's width is made of, and a later pass takes
+/// the inner one if it is still too long.
+///
+/// A `.` inside a string interpolation is never a candidate: the gaps there are a string's
+/// own bytes. Neither is a tuple index (`pair.0`) — `.0` on a line of its own reads as a
+/// mistake — nor a `.` whose gap holds anything but whitespace.
+let break_chain = (bytes: []u8, leaves: []Leaf, inside: []i64, in_interp: []bool,
+  closer_of: []i64, from: i64, to: i64, chain_break: mut []bool) -> bool => {
+  var shallowest = 0 - 1
+  for i in from..<=to {
+    if !is_chain_dot(leaves, in_interp, i) { continue }
+    let depth = nesting(inside, i)
+    if shallowest < 0 || depth < shallowest { shallowest = depth }
+  }
+  if shallowest < 0 { return false }
+  var candidates: []i64 = []
+  for i in from..<=to {
+    if is_chain_dot(leaves, in_interp, i) && nesting(inside, i) == shallowest {
+      candidates.push(i)
+    }
+  }
+  let dots = longest_run(leaves, closer_of, candidates, to)
+  if dots.len() < 2 { return false }
+  for at in dots {
+    if !all_whitespace(bytes, leaves[at - 1].end, leaves[at].start) { return false }
+  }
+  var added = false
+  for at in dots {
+    if !chain_break[at] {
+      chain_break[at] = true
+      added = true
+    }
+  }
+  added
+}
+
+/// The longest run of calls that are **one chain**: each link applied to what the link
+/// before it returned, with nothing in between.
+///
+/// This is the rule that separates a chain from a line that merely holds several calls.
+/// `c.is_ascii_alpha() || c.is_ascii_digit()` has two call dots at the same depth and is
+/// not a chain — the second applies to `c` again, not to the first's result — and breaking
+/// before its dots produced `c` stranded at the end of a line, which is how the first
+/// version of this rule announced it was wrong. So two dots continue a chain only when the
+/// second follows the first's closing `)` immediately, give or take the postfix sigils
+/// that may cling to it (`^`, `?`).
+///
+/// Ties go to the first run, which is the leftmost and so the one whose break shortens the
+/// line most.
+let longest_run = pure (
+  leaves: []Leaf,
+  closer_of: []i64,
+  dots: []i64,
+  to: i64
+) -> []i64 => {
+  var best: []i64 = []
+  var run: []i64 = []
+  var i = 0
+  for i < dots.len() {
+    let dot = dots[i]
+    if run.len() > 0 && !continues_chain(leaves, closer_of, run[run.len() - 1], dot, to) {
+      if run.len() > best.len() { best = run }
+      run = []
+    }
+    run.push(dot)
+    i += 1
+  }
+  if run.len() > best.len() { best = run }
+  best
+}
+
+/// Whether the link opened at `dot` runs straight into `next` — its call's `)`, then any
+/// `^` or `?` hanging off it, then that next `.` and nothing else.
+let continues_chain = pure (leaves: []Leaf, closer_of: []i64, dot: i64, next: i64,
+  to: i64) -> bool => {
+  let open_paren = dot + 2
+  if open_paren > to { return false }
+  let closer = closer_of[open_paren]
+  if closer < 0 { return false }
+  var at = closer + 1
+  for at < next && (leaves[at].kind == "^" || leaves[at].kind == "?") { at += 1 }
+  at == next
+}
+
+/// Whether the leaf at `i` is a `.` that joins two links of a chain — **a `.` whose member
+/// is called**, `.map(f)` and not `.length`.
+///
+/// A field read is not a link, and treating it as one produced the output that sent this
+/// rule back for a second try: `model.materials.offset(i)^.maps.offset(map)^.texture.id`
+/// came back as seven lines, one per field, which is worse in every way than the 91-column
+/// line it replaced. A call carries its own parentheses and arguments, so a line per call
+/// is a line per step; a field is a noun, and a column of nouns says nothing.
+///
+/// Also not a link: a tuple index (`pair.0`), and anything inside a string interpolation,
+/// whose gaps are a string's own bytes.
+let is_chain_dot = pure (leaves: []Leaf, in_interp: []bool, i: i64) -> bool =>
+  i > 0 && i + 2 < leaves.len() && leaves[i].kind == "." &&
+  leaves[i].parent != "tuple_index_expr" && !in_interp[i] && leaves[i + 2].kind == "("
 
 /// The list to break on a line that is too long: the **outermost** delimiter with a comma
 /// of its own on that line.

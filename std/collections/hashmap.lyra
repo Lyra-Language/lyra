@@ -320,7 +320,10 @@ pub let hash_key<k> where k: Hash = pure noalloc (key: k) -> u64 => mix(key.hash
 /// Order matters, so `(1, 2)` and `(2, 1)` hash differently. Each step mixes, so the
 /// fields' own hashes may be as plain as the primitives' are.
 pub let hash_combine = pure noalloc (h: u64, next: u64) -> u64 =>
-  mix(h ~ next.wrapping_add(11400714819323198485).wrapping_add(h << 6).wrapping_add(h >> 2))
+  mix(h ~ next
+      .wrapping_add(11400714819323198485)
+      .wrapping_add(h << 6)
+      .wrapping_add(h >> 2))
 
 // ---- private helpers ----
 
