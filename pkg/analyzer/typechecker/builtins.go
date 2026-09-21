@@ -30,6 +30,18 @@ var intBinaryOps = map[string]bool{
 	"saturating_add": true,
 	"saturating_sub": true,
 	"saturating_mul": true,
+	// The rotates are here rather than in a family of their own because they have this
+	// shape — `(T, T) -> T` on a concrete width — and because they are the same kind of
+	// thing: an operation the *operator* set cannot express. `<<` and `>>` drop the bits
+	// they push out, which is right for a shift and is exactly what a rotate must not do,
+	// so every program needing one wrote `(x >> n) | (x << (32 - n))` by hand — one
+	// width baked in, and undefined at `n == 0`, where `x << 32` is not a shift the
+	// hardware defines. `examples/checksum` wrote that line before this existed (09/21).
+	//
+	// **The amount is taken modulo the width**, which is LLVM's funnel-shift rule and
+	// Rust's: a rotate by the width is the identity, and every amount names a rotation.
+	"rotate_left":  true,
+	"rotate_right": true,
 }
 
 // checkedIntBinaryOps are the third member of that family, and the one that answers

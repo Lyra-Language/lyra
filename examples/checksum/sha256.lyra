@@ -2,6 +2,11 @@ module sha256
 //! SHA-256, after FIPS 180-4 — the standard library's third probe, and the first one made
 //! of arithmetic rather than text.
 //!
+//! **The rotates are the language's own** (`x.rotate_right(7)`): they were
+//! `(x >> n) | (x << (32 - n))` written here until this program showed the gap, and
+//! `rotate_left`/`rotate_right` joined `wrapping_*` as builtins on every width the same
+//! day — which is what a forcing function is for.
+//!
 //! **Why a hash, when the other examples render and format.** `lyrafmt` is the compiler's
 //! probe and `lyra-md`/`site` are the library's, and all three are programs about strings,
 //! structs and files. Nothing in this repo had yet leaned on the *integer* half of the
@@ -64,8 +69,8 @@ let schedule = pure (padded: []u8, at: i64) -> []u32 => {
         (u32(padded[j + 2]) << 8) | u32(padded[j + 3]))
   }
   for i in 16..<64 {
-    let s0 = rotate_right(w[i - 15], 7) ~ rotate_right(w[i - 15], 18) ~ (w[i - 15] >> 3)
-    let s1 = rotate_right(w[i - 2], 17) ~ rotate_right(w[i - 2], 19) ~ (w[i - 2] >> 10)
+    let s0 = w[i - 15].rotate_right(7) ~ w[i - 15].rotate_right(18) ~ (w[i - 15] >> 3)
+    let s1 = w[i - 2].rotate_right(17) ~ w[i - 2].rotate_right(19) ~ (w[i - 2] >> 10)
     w.push(w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1))
   }
   w
@@ -87,10 +92,10 @@ let compress = pure (state: []u32, w: []u32, k: []u32) -> []u32 => {
   var g = state[6]
   var h = state[7]
   for i in 0..<64 {
-    let s1 = rotate_right(e, 6) ~ rotate_right(e, 11) ~ rotate_right(e, 25)
+    let s1 = e.rotate_right(6) ~ e.rotate_right(11) ~ e.rotate_right(25)
     let ch = (e & f) ~ (~e & g)
     let temp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(k[i]).wrapping_add(w[i])
-    let s0 = rotate_right(a, 2) ~ rotate_right(a, 13) ~ rotate_right(a, 22)
+    let s0 = a.rotate_right(2) ~ a.rotate_right(13) ~ a.rotate_right(22)
     let maj = (a & b) ~ (a & c) ~ (b & c)
     let temp2 = s0.wrapping_add(maj)
     h = g
@@ -109,16 +114,6 @@ let compress = pure (state: []u32, w: []u32, k: []u32) -> []u32 => {
     state[6].wrapping_add(g), state[7].wrapping_add(h),
   ]
 }
-
-/// `x` rotated right by `n` bits, the operation SHA-256 is mostly made of.
-///
-/// **Written here because the language has no rotate.** `wrapping_*`, `saturating_*` and
-/// `checked_*` are builtin on every width (LANGUAGE.md); a rotate belongs in that table and
-/// is not in it, so every program needing one writes this line. A shift is the only part
-/// that has to be primitive — `>>` and `<<` truncate rather than trap, which is what makes
-/// the two halves recombine — and `n` is never 0 or 32 here, where `x << 32` would be the
-/// shift the hardware leaves undefined.
-let rotate_right = pure noalloc (x: u32, n: u32) -> u32 => (x >> n) | (x << (32 - n))
 
 /// The eight starting words: the fractional parts of the square roots of the first eight
 /// primes, as FIPS 180-4 tabulates them.

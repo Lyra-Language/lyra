@@ -95,6 +95,7 @@ Integer `+ - * /` **trap** on overflow. Explicit alternatives, builtin on every 
 | `wrapping_*` | `add` `sub` `mul` | modular two's complement |
 | `saturating_*` | `add` `sub` `mul` | clamped |
 | `checked_*` | `add` `sub` `mul` `div` `rem` `rem_floor` | `Maybe<T>`; `div`, `rem` and `rem_floor` are `None` on a zero divisor and on `INT_MIN ÷ -1` |
+| `rotate_*` | `left` `right` | the bits that leave one end arrive at the other; the amount is **modulo the width**, so `rotate_right(0)` and `rotate_right(32)` on a `u32` are both the identity. Bit-level, so signedness does not enter (LLVM `fshl`/`fshr`) |
 
 `checked_rem` is `%` and `checked_rem_floor` is `%%` — see the two remainders below.
 `INT_MIN % -1` answers `None` although its mathematical value is 0: the name means "the

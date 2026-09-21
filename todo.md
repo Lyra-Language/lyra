@@ -115,11 +115,6 @@ Package management, versioning and separate compilation are out of scope by deci
   variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
 
-- **[OPEN] No rotate.** `wrapping_*`/`saturating_*`/`checked_*` are builtin on every width
-  (LANGUAGE.md §Overflow) and a rotate is not, so `examples/checksum` writes
-  `(x >> n) | (x << (32 - n))` itself — which is most of what a hash does. It belongs in
-  that table: the shift already truncates rather than traps, so the builtin is a lowering,
-  not a new semantics.
 - **[OPEN] A module-level `const` array indexed from a function can panic the backend.**
   `const HEX_DIGITS: []rune = [...]` in `std/prelude/format.lyra`, read by `to_hex`, panics
   compiling `TestExec_RaylibShadersAndMaterials`: "invalid gep source type; expected pointer

@@ -35,6 +35,8 @@ var intOverflowMethods = map[string]intOverflowMethod{
 	"saturating_add": {"add", true},
 	"saturating_sub": {"sub", true},
 	"saturating_mul": {"mul", true},
+	"rotate_left":    {"rotl", false},
+	"rotate_right":   {"rotr", false},
 }
 
 // lowerIntOverflowMethod lowers a wrapping/saturating integer method call
@@ -84,8 +86,39 @@ func (l *lowerer) emitWrappingOp(block *ir.Block, op string, left, right value.V
 		return block.NewSub(left, right), block, nil
 	case "mul":
 		return block.NewMul(left, right), block, nil
+	case "rotl", "rotr":
+		return l.emitRotate(block, op, left, right)
 	}
 	return nil, nil, fmt.Errorf("llvm: unknown wrapping op %q", op)
+}
+
+// emitRotate is a rotation by LLVM's **funnel shift**: `fshl(x, x, n)` shifts the pair
+// `x:x` left by `n` and keeps the top half, which for one value repeated is a rotate, and
+// `fshr` is the same from the other end.
+//
+// **The intrinsic rather than `(x << n) | (x >> (w - n))`**, which is what a program writes
+// by hand and is wrong at one point: at `n == 0` the second shift is by the full width,
+// which LLVM and the hardware leave undefined. `fsh{l,r}` takes its amount modulo the
+// width, so every amount names a rotation and the zero case is the identity. It also
+// lowers to the single instruction the target has — `rol`/`ror` on x86, `ror` on aarch64 —
+// rather than to three.
+func (l *lowerer) emitRotate(block *ir.Block, op string, left, right value.Value) (value.Value, *ir.Block, error) {
+	intTy, ok := left.Type().(*lltypes.IntType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: rotate on a non-integer receiver (%s)", left.Type())
+	}
+	direction := "fshl"
+	if op == "rotr" {
+		direction = "fshr"
+	}
+	name := fmt.Sprintf("llvm.%s.i%d", direction, intTy.BitSize)
+	fn, ok := l.overflowIntrinsics[name]
+	if !ok {
+		fn = l.module.NewFunc(name, intTy,
+			ir.NewParam("", intTy), ir.NewParam("", intTy), ir.NewParam("", intTy))
+		l.overflowIntrinsics[name] = fn
+	}
+	return block.NewCall(fn, left, left, right), block, nil
 }
 
 // emitSaturatingOp clamps the result to the integer type's range on overflow

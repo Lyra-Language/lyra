@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/21/26 — `rotate_left`/`rotate_right`, the family that was missing
+
+The fourth integer family, beside `wrapping_*`, `saturating_*` and `checked_*`. Those three
+say what overflow should do and none of them moves a bit from one end to the other, so
+every hash, cipher and CRC — which are mostly rotations — wrote
+`(x >> n) | (x << (32 - n))` by hand. `examples/checksum` wrote exactly that line the day
+before, which is how the gap got named.
+
+- **The hand-written form is wrong at one point.** At `n == 0` it shifts by the full width,
+  which LLVM and the hardware leave undefined; it is the case that never arises until a
+  loop's first turn passes zero. The builtin takes its amount **modulo the width**, so
+  every amount names a rotation and zero is the identity — LLVM's funnel-shift rule, and
+  Rust's.
+- **Lowered to `fshl`/`fshr`**, the funnel shifts: `fshl(x, x, n)` shifts the pair `x:x`
+  and keeps the top half, which for one value repeated is a rotate. That is also the single
+  instruction the target already has (`rol`/`ror`), rather than the three the by-hand form
+  compiles to.
+- **Bit-level, so signedness does not enter**: `-2` rotated right by one is `0x7FFFFFFF`,
+  and the test says so on an `i32` receiver as well as on `u8`, `u32` and `u64`.
+
+**The proof is the example, not the unit test.** `examples/checksum` now calls the builtin,
+and its digests still match Go's `crypto/sha256` at sixteen sizes — a second implementation
+of a published standard agreeing bit for bit, which is a far stronger statement about a
+rotate than any assertion I could write about it directly. The unit test's own expected
+values were computed in Python rather than read off the compiler, and three of the ones I
+wrote by hand were wrong before that check; the compiler was right each time.
+
 ### 09/21/26 — a SHA-256 tool, and the two compiler bugs it walked into
 
 `examples/checksum` is the standard library's third probe and the first program here made
