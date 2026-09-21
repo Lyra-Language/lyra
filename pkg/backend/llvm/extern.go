@@ -80,17 +80,37 @@ func markBoolCrossings(fn *ir.Func) {
 }
 
 // callWithDeclaredAttrs emits a call to fn carrying the parameter and return attributes
-// its declaration has — `zeroext` on a `bool` crossing to C — so the caller's side of the
-// convention matches the callee's.
+// its declaration has — `zeroext` on a `bool` crossing to C, `byval` and `sret` on an
+// aggregate the ABI passes in memory — so the caller's side of the convention matches the
+// callee's.
+//
+// **A call site's attributes are the ones that lower the call**, not the declaration's,
+// which is the whole reason this function exists and what made dropping `byval` a bug
+// rather than untidiness (09/20): with `byval` on the `declare` alone, LLVM passed a
+// pointer in a register while the C function read a copy on the stack. On x86-64 that is a
+// segmentation fault the first time the callee dereferences a field. **On aarch64 it is
+// invisible**, because a MEMORY aggregate is passed there as a plain pointer and clang
+// emits no attribute at all — so every machine in this project agreed the formatter worked,
+// while it crashed on the architecture CI runs, and the one test that would have said so
+// was skipping for want of a library.
 func callWithDeclaredAttrs(block *ir.Block, fn *ir.Func, args []value.Value) *ir.InstCall {
 	callArgs := make([]value.Value, len(args))
 	for i, a := range args {
 		callArgs[i] = a
 		if i < len(fn.Params) {
+			var mirrored []ir.ParamAttribute
 			for _, attr := range fn.Params[i].Attrs {
-				if attr == enum.ParamAttrZeroExt {
-					callArgs[i] = ir.NewArg(a, enum.ParamAttrZeroExt)
+				switch attr.(type) {
+				case ir.Byval, ir.SRet, ir.Align:
+					mirrored = append(mirrored, attr)
+				default:
+					if attr == enum.ParamAttrZeroExt || attr == enum.ParamAttrSignExt {
+						mirrored = append(mirrored, attr)
+					}
 				}
+			}
+			if len(mirrored) > 0 {
+				callArgs[i] = ir.NewArg(a, mirrored...)
 			}
 		}
 	}

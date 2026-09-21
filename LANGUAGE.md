@@ -583,6 +583,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 A struct, union, tuple or fixed array crosses **by value**; a `data` type never does (its tag has no C type).
 - Layout matches C; the per-target calling convention comes from **`pkg/abi`**, verified against clang for every shape, target and position. Targets disagree (e.g. `{i32 × 4}` is `[2 x i64]` on aarch64 but two `i64` parameters on x86-64 SysV; `{double × 3}` is registers vs. memory).
 - On a target with no classifier the **backend** refuses by name; `lyrac check` answers the same on every machine.
+- **The attributes go on the call site, not only the `declare`** (`byval`, `sret`): a call site's own attributes are what lower it. Dropping them passed a MEMORY aggregate's address in a register to a callee expecting a stack copy — a crash on x86-64, invisible on aarch64, where such an aggregate is passed as a plain pointer anyway (09/20).
 - `examples/raylib/basic.lyra` is the proof.
 
 ### `@must_release(fn)`

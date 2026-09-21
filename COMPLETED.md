@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 09/20/26 — the formatter crashed on x86-64, and had for as long as it existed
+
+Installing the tree-sitter runtime in CI stopped the formatter's test skipping, and it
+failed at once: **segmentation fault**, on a two-line file. Rebuilt from the commit before
+the day's line-breaking work, it crashed identically — the bug was as old as the binding,
+and had never been run on the architecture that has it.
+
+**The cause: a call site's ABI attributes are the ones that lower the call.** The backend
+put `byval` and `sret` on the `declare` and `callWithDeclaredAttrs` mirrored only
+`zeroext` onto the call, so LLVM passed a MEMORY aggregate's address in a register while
+the C function read a copy from the stack. Proven by A/B/A in an x86-64 container — unfixed
+139, fixed 0, unfixed 139 — with nothing changing but that one file.
+
+**Why no machine here ever saw it.** On aarch64 a MEMORY aggregate *is* passed as a plain
+pointer and clang emits no attribute at all (the comment in `abi_lower.go` says as much),
+so the omission changes nothing; macOS, the Linux container and the arm64 VM all agreed the
+formatter worked. CI runs x86-64 and could not say so, because the one test that walks a
+CST — passing a 32-byte `TSNode` to C thousands of times — skipped for want of a library.
+Three things had to be true at once, and each looked like someone else's problem.
+
+**The diagnosis is worth keeping, because most of it was wrong.** The prime suspect was the
+aggregate ABI in `pkg/abi`, which `LANGUAGE.md` says is verified against clang: it is, and
+it was right. A minimal probe of the same 32-byte shape through one and two Lyra parameter
+hops into C **passed**, and so does the existing `TestExec_FFIFixture_AggregatesByValue`
+with its 20-byte `Big` — on x86-64, with the unfixed compiler. LLVM often recovers the
+attribute from the callee's declaration on a direct call, which is why only some calls
+break; the tree-sitter ones do. Bisecting the crash by printing — down to "`start_byte`
+through a parameter works, `child_count` through a parameter faults" — found it where
+reasoning about the ABI did not.
+
+**What guards it now.** `TestEmit_CallSiteCarriesTheAggregateAttributes` asserts the
+attributes on the *call* for a named x86-64 target, so it fails on an aarch64 developer's
+machine where running the code would not (checked by reverting the fix: it fails, and
+prints the call lines it emitted instead). The end-to-end guard is the formatter's own
+test, which is exactly the thing that crashed — and which CI now runs.
+
 ### 09/20/26 — CI was skipping the formatter's test, quietly
 
 `TestExample_LyrafmtRoundTrips` skips when the tree-sitter runtime is absent, and it was
