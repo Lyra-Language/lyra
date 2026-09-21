@@ -342,7 +342,8 @@ let place = (self: mut []Placed, name: string, mesh: Maybe<Mesh>, slot: i64,
   tint: Color) -> void =>
     match mesh {
       Some(m) => match model_from_mesh(m) {
-        Some(model) => self.push(Placed { name: name, model: model, at: ring(slot), tint: tint }),
+        Some(model) =>
+          self.push(Placed { name: name, model: model, at: ring(slot), tint: tint }),
         None => println("could not build a model for ${name}"),
       },
       None => println("could not generate ${name}"),

@@ -646,7 +646,7 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
   // How wide each line came out: the far edge of its last token.
   var widest = [0; lines[leaves.len() - 1] + 1]
   for i in 0..<leaves.len() {
-    let edge = cols[i] + (leaves[i].end - leaves[i].start)
+    let edge = cols[i] + rune_width(bytes, leaves[i].start, leaves[i].end)
     if edge > widest[lines[i]] { widest[lines[i]] = edge }
   }
   var planned = false
@@ -660,22 +660,32 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
       // list is the bigger win where both are present — it is what holds the arguments a
       // chain's links are made of — and breaking one thing per line per pass means a line
       // that is still long after the list comes back here with the chain intact.
-      let chosen = widest_list(leaves, inside, in_interp, closer_of, i, last)
-      if chosen >= 0 {
-        if explode(bytes, leaves, inside, closer_of, chosen, breaks) { planned = true }
-      } else if break_chain(
-        bytes,
-        leaves,
-        inside,
-        in_interp,
-        closer_of,
-        i,
-        last,
-        continued
-      ) {
+      // **One break per line per pass**, and the body after `=>` is the first candidate:
+      // it is the cheapest fix there is — one break, and both halves fit — so a
+      // declaration whose *body* is the long part keeps its parameter list on one line.
+      // Whatever fires, the line is done for this pass; the next pass sees what it did
+      // and decides again from the widths it actually produced.
+      if break_arrow(bytes, leaves, inside, in_interp, cols, widest[line], i, last,
+        continued) {
         planned = true
-      } else if break_condition(bytes, leaves, inside, in_interp, i, last, continued) {
-        planned = true
+      } else {
+        let chosen = widest_list(leaves, inside, in_interp, closer_of, i, last)
+        if chosen >= 0 {
+          if explode(bytes, leaves, inside, closer_of, chosen, breaks) { planned = true }
+        } else if break_chain(
+          bytes,
+          leaves,
+          inside,
+          in_interp,
+          closer_of,
+          i,
+          last,
+          continued
+        ) {
+          planned = true
+        } else if break_condition(bytes, leaves, inside, in_interp, i, last, continued) {
+          planned = true
+        }
       }
     }
     i = last + 1
@@ -741,6 +751,72 @@ let break_chain = (bytes: []u8, leaves: []Leaf, inside: []i64, in_interp: []bool
     }
   }
   added
+}
+
+/// Moves the body after `=>` onto its own line, and answers whether it did.
+///
+/// ```
+/// let is_word = pure (c: rune) -> bool => c.is_alpha() || c.is_digit() || c == '_'
+/// ```
+/// becomes
+/// ```
+/// let is_word = pure (c: rune) -> bool =>
+///   c.is_alpha() || c.is_digit() || c == '_'
+/// ```
+/// which is what this repo writes by hand, and which the other rules could only
+/// approximate: the condition rule alone left the first operand stranded on the
+/// declaration's line, because it may break *after* an operator and the first operand has
+/// none before it.
+///
+/// **Only when the one break settles the line.** The head through `=>` must fit, and so
+/// must the body at its new indent — otherwise this spends a line and leaves the problem,
+/// and the rules below (which break *inside* the body or the parameter list) are the ones
+/// that can actually solve it. A declaration whose parameter list is the long part
+/// therefore keeps its `=>` and explodes the list instead, which is the arrangement
+/// `bindings/raylib` was formatted into by hand.
+///
+/// **Never before a `{`.** `=> {` opens a block whose contents already take lines of their
+/// own, so breaking there buys nothing and leaves a brace alone on a line.
+let break_arrow = (
+  bytes: []u8,
+  leaves: []Leaf,
+  inside: []i64,
+  in_interp: []bool,
+  cols: []i64,
+  width: i64,
+  from: i64,
+  to: i64,
+  continued: mut []bool
+) -> bool => {
+  var shallowest = 0 - 1
+  for i in from..<=to {
+    if leaves[i].kind != "=>" || in_interp[i] { continue }
+    let depth = nesting(inside, i)
+    if shallowest < 0 || depth < shallowest { shallowest = depth }
+  }
+  if shallowest < 0 { return false }
+  for i in from..<=to {
+    if leaves[i].kind != "=>" || in_interp[i] { continue }
+    if nesting(inside, i) != shallowest { continue }
+    // **Not a `=>` inside a `(` or a `[`.** There it belongs to a lambda passed as an
+    // argument, and breaking after it splits an expression down the middle, leaving the
+    // call's `))` trailing a line that starts mid-argument:
+    // `copy_c_string(path.with_cstring((p) =>` / `  unsafe { … })).unwrap_or("")`. A `=>`
+    // at the top level or directly inside a brace is a declaration's or a match arm's,
+    // and those are the two this repo writes with the body on the next line.
+    if inside[i] >= 0 && leaves[inside[i]].kind != "{" { continue }
+    if i + 1 > to || leaves[i + 1].kind == "{" { continue }
+    if continued[i + 1] { continue }
+    if !all_whitespace(bytes, leaves[i].end, leaves[i + 1].start) { continue }
+    // The head is everything through the `=>`; the body moves to one level past the line
+    // it was on, which is two columns past where that line starts.
+    let head = cols[i] + 2
+    let body = cols[from] + 2 + (width - cols[i + 1])
+    if head > WIDTH || body > WIDTH { continue }
+    continued[i + 1] = true
+    return true
+  }
+  false
 }
 
 /// Breaks a long boolean condition after its operators, and answers whether it planned
@@ -983,8 +1059,27 @@ let column_of = pure (out: []u8) -> i64 => {
   var i = out.len() - 1
   var n = 0
   for i >= 0 && out[i] != 10 {
-    n += 1
+    if !is_continuation(out[i]) { n += 1 }
     i -= 1
+  }
+  n
+}
+
+/// Whether a byte continues a UTF-8 character rather than starting one — `10xxxxxx`.
+///
+/// **The budget counts characters, not bytes**, and the difference is not academic here:
+/// `std/tui/box.lyra` draws with `└` and `┘`, three bytes each, so a line 86 columns wide
+/// measured 92 and was broken for running past a limit it was nowhere near. Counting code
+/// points is not the same as counting columns — a wide glyph still occupies two — but it
+/// is right for everything this repo writes, and byte counting was wrong for a file it
+/// already had.
+let is_continuation = pure (b: u8) -> bool => b & 192 == 128
+
+/// How many characters `bytes[from..<to]` holds.
+let rune_width = pure (bytes: []u8, from: i64, to: i64) -> i64 => {
+  var n = 0
+  for i in from..<to {
+    if !is_continuation(bytes[i]) { n += 1 }
   }
   n
 }

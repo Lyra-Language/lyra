@@ -41,10 +41,12 @@ pub let matrix_scale = pure (x: f32, y: f32, z: f32) -> Matrix =>
 pub let matrix_invert = pure (m: Matrix) -> Matrix => unsafe { rl_matrix_invert(m) }
 
 /// A rotation quaternion `(x, y, z, w)` as a matrix — glTF's order, and raylib's.
-pub let quaternion_to_matrix = pure (q: Vector4) -> Matrix => unsafe { rl_quaternion_to_matrix(q) }
+pub let quaternion_to_matrix = pure (q: Vector4) -> Matrix =>
+  unsafe { rl_quaternion_to_matrix(q) }
 
 /// `q` scaled to unit length, which a rotation must be.
-pub let quaternion_normalize = pure (q: Vector4) -> Vector4 => unsafe { rl_quaternion_normalize(q) }
+pub let quaternion_normalize = pure (q: Vector4) -> Vector4 =>
+  unsafe { rl_quaternion_normalize(q) }
 
 /// The rotation `t` of the way from `a` to `b` along the shorter arc, `t` from 0 to 1.
 pub let quaternion_slerp = pure (a: Vector4, b: Vector4, t: f32) -> Vector4 =>

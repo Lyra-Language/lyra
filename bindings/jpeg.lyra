@@ -67,7 +67,8 @@ pub let decode_jpeg = (bytes: []u8) -> Maybe<Jpeg> => {
 }
 
 /// Whether a MIME type names a JPEG, as a glTF's `mimeType` states it.
-pub let is_jpeg_mime = pure (mime: string) -> bool => mime == "image/jpeg" || mime == "image/jpg"
+pub let is_jpeg_mime = pure (mime: string) -> bool =>
+  mime == "image/jpeg" || mime == "image/jpg"
 
 /// `TJINIT_DECOMPRESS`, `TJPF_RGBA` and the two header parameters, by their position in
 /// TurboJPEG's enums — C enumerators, which carry no symbol to link against.

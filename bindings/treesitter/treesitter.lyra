@@ -57,7 +57,8 @@ pub let new_parser = (language: Language) -> Maybe<Parser> => {
 }
 
 /// Releases a parser.
-pub let parser_delete = (parser: own Parser) -> void => unsafe { ts_parser_delete(parser.raw) }
+pub let parser_delete = (parser: own Parser) -> void =>
+  unsafe { ts_parser_delete(parser.raw) }
 
 /// Parses `source` into a tree, or `None` if the parser has no language or was
 /// cancelled. A syntax error is not a failure here: the tree carries `ERROR` nodes, which

@@ -63,7 +63,8 @@ pub let next_char_pressed = () -> Maybe<rune> => {
 /// `KEY_F1`, `KEY_ENTER` and every other non-printing key answer nothing at all. It also
 /// needs [init_window] to have run, since the layout comes from the window system.
 /// Measured, all three.
-pub let key_name = (key: i32) -> Maybe<string> => copy_c_string(unsafe { rl_key_name(key) })
+pub let key_name = (key: i32) -> Maybe<string> =>
+  copy_c_string(unsafe { rl_key_name(key) })
 
 /// The key that closes the window, `KEY_ESCAPE` by default. `KEY_NULL` disables it, which
 /// a program that wants to confirm before quitting needs.
@@ -73,9 +74,11 @@ pub let set_exit_key = (key: i32) -> void => unsafe { rl_set_exit_key(key) }
 // Mouse
 // ---------------------------------------------------------------------------------------
 
-pub let mouse_pressed = pure (button: i32) -> bool => unsafe { rl_mouse_pressed(button) } != 0
+pub let mouse_pressed = pure (button: i32) -> bool =>
+  unsafe { rl_mouse_pressed(button) } != 0
 pub let mouse_down = pure (button: i32) -> bool => unsafe { rl_mouse_down(button) } != 0
-pub let mouse_released = pure (button: i32) -> bool => unsafe { rl_mouse_released(button) } != 0
+pub let mouse_released = pure (button: i32) -> bool =>
+  unsafe { rl_mouse_released(button) } != 0
 pub let mouse_up = pure (button: i32) -> bool => unsafe { rl_mouse_up(button) } != 0
 
 /// The pointer, in screen coordinates.

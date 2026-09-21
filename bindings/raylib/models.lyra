@@ -337,7 +337,8 @@ pub let mesh_bounding_box = (mesh: Mesh) -> BoundingBox =>
   unsafe { rl_mesh_bounding_box(mesh) }
 
 /// Compute tangents from the normals and texture coordinates, which a normal map needs.
-pub let gen_tangents = (self: mut Mesh) -> void => unsafe { rl_gen_mesh_tangents(&mut self) }
+pub let gen_tangents = (self: mut Mesh) -> void =>
+  unsafe { rl_gen_mesh_tangents(&mut self) }
 
 /// Upload a mesh built by hand. The `gen_mesh_*` functions already have; this is for a mesh
 /// whose vertex arrays were filled some other way. Does nothing with no window.

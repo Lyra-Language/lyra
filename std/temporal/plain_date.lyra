@@ -123,7 +123,8 @@ pub let days_in_month = pure (self: PlainDate) -> i64 => {
 pub let in_leap_year = pure (self: PlainDate) -> bool => is_leap(self.year())
 
 /// How many days this date's year has: 365, or 366 in a leap year.
-pub let days_in_year = pure (self: PlainDate) -> i64 => if self.in_leap_year() { 366 } else { 365 }
+pub let days_in_year = pure (self: PlainDate) -> i64 =>
+  if self.in_leap_year() { 366 } else { 365 }
 
 /// The time from this date to `other`, in days — Temporal's `until`, with its default
 /// largest unit for a date.
@@ -237,7 +238,8 @@ let civil_from_days = pure (days: i64) -> (i64, i64, i64) => {
   (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-let is_leap = pure (year: i64) -> bool => year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+let is_leap = pure (year: i64) -> bool =>
+  year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 
 let days_in = pure (year: i64, month: i64) -> i64 => {
   if month == 2 { return if is_leap(year) { 29 } else { 28 } }
@@ -256,7 +258,8 @@ let weeks_in_year = pure (year: i64) -> i64 => {
 let floor_div = pure (a: i64, b: i64) -> i64 => (a - a %% b) / b
 
 /// The whole days in a duration's clock fields, truncated toward zero.
-let whole_days = pure (d: Duration) -> i64 => i64(clock_nanoseconds(d) / i128(86400000000000))
+let whole_days = pure (d: Duration) -> i64 =>
+  i64(clock_nanoseconds(d) / i128(86400000000000))
 
 /// A year as ISO 8601 writes it: four digits within 0–9999, a sign and six outside.
 let iso_year = pure (year: i64) -> string => {

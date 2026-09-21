@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 09/21/26 — the body after `=>` goes on its own line, and the budget counts characters
+
+The fourth and last break, and the cheapest: one break, both halves fit. It is what the
+repo writes by hand — `bindings/` is full of `pub let f = (…) -> T =>` with the call below
+it — and what the other rules could only approximate, since the condition rule breaks
+*after* an operator and the first operand has none before it, so it left that operand
+stranded on the declaration's line.
+
+- **Tried first, and only when the one break settles the line**: the head through `=>` must
+  fit and so must the body at its new indent. A declaration whose *parameter list* is the
+  long part therefore keeps its `=>` and explodes the list instead, which is how
+  `bindings/raylib` was formatted by hand.
+- **One break per line per pass.** The first version let the `=>` break fire and then fell
+  through to the chain and condition rules on the same line, so a body that now fitted was
+  broken again anyway. Each pass takes one decision per line and re-renders; the next pass
+  sees what it actually produced.
+- **Never before a `{`**, which gains nothing and leaves a brace alone on a line, and
+  **never inside a `(`**, where the `=>` belongs to a lambda passed as an argument:
+  breaking there split `copy_c_string(path.with_cstring((p) =>` from its own `))`.
+
+**The budget now counts characters, not bytes**, which the sweep forced: `std/tui/box.lyra`
+draws with `└` and `┘`, three bytes each, so an 89-column line measured 93 and was broken
+for exceeding a limit it was nowhere near. Counting code points is still not counting
+columns — a wide glyph occupies two — but it is right for everything this repo writes, and
+byte counting was wrong for a file it already had.
+
+**The tests moved as the rules did.** The chain and condition cases now sit in block bodies,
+because at the top level the `=>` rule takes those lines first — which is correct, and is
+tested where that rule is. Their premise check also had to be fixed: it measured the whole
+source rather than each line, so a multi-line case passed the check while every line of it
+fitted.
+
 ### 09/21/26 — lyrafmt breaks a boolean condition, after the operator
 
 The third breakable construct, and the only one whose shape the **language** fixes rather

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // `examples/lyrafmt/lyrafmt.lyra` is the self-hosting probe: a Lyra program that parses
@@ -298,36 +299,46 @@ func TestExample_LyrafmtBreaksChains(t *testing.T) {
 	bin := buildLyrafmt(t)
 	cases := []struct{ name, src, want string }{
 		{
+			// In a block body, so the `=>` rule has nothing to take and the chain rule is
+			// the one under test. Left at the top level these lines break after the `=>`
+			// first, which is right and is tested where that rule is.
 			"a chain of calls breaks, one call per line",
-			"let names = () -> string => people().filter(is_active).map(full_name).sorted().join(\", \").trim()\n",
-			"let names = () -> string => people()\n  .filter(is_active)\n  .map(full_name)\n  .sorted()\n  .join(\", \")\n  .trim()\n",
+			"let names = () -> string => {\n  people().filter(is_active).map(full_name).sorted().join(\", \").trim().to_upper_case_here()\n}\n",
+			"let names = () -> string => {\n  people()\n    .filter(is_active)\n    .map(full_name)\n    .sorted()\n    .join(\", \")\n    .trim()\n    .to_upper_case_here()\n}\n",
 		},
 		{
 			// Not a chain, and the condition rule takes it instead — a break after each
 			// `||`, never one before a `.`. It is the same line either rule would have
 			// claimed, and which one claims it is the whole distinction.
 			"calls joined by an operator break as a condition, not as a chain",
-			"let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_'\n",
-			"let is_word = pure (c: rune) -> bool => c.is_ascii_alpha() ||\n  c.is_ascii_digit() ||\n  c == '_'\n",
+			"let is_word = pure (c: rune) -> bool => {\n  c.is_ascii_alpha() || c.is_ascii_digit() || c == '_' || c == '-' || c == '+' || c == '~' || c == '?'\n}\n",
+			"let is_word = pure (c: rune) -> bool => {\n  c.is_ascii_alpha() ||\n    c.is_ascii_digit() ||\n    c == '_' ||\n    c == '-' ||\n    c == '+' ||\n    c == '~' ||\n    c == '?'\n}\n",
 		},
 		{
 			"a walk through fields is not a chain",
-			"let id = (m: Model) -> i64 => m.materials.offsets.maps.textures.entries.first.id.value.inner\n",
-			"let id = (m: Model) -> i64 => m.materials.offsets.maps.textures.entries.first.id.value.inner\n",
+			"let id = (m: Model) -> i64 => {\n  m.materials.offsets.maps.textures.entries.first.id.value.inner.deeper.deepest.end.last.tail\n}\n",
+			"let id = (m: Model) -> i64 => {\n  m.materials.offsets.maps.textures.entries.first.id.value.inner.deeper.deepest.end.last.tail\n}\n",
 		},
 		{
 			"one call is not a chain, however long the line",
-			"let only = () -> string => people_of_the_longest_possible_name_there_is().joined_at_last(\"-\")\n",
-			"let only = () -> string => people_of_the_longest_possible_name_there_is().joined_at_last(\"-\")\n",
+			"let only = () -> string => {\n  people_of_the_longest_possible_name_there_is_here_now_ok().joined_up_at_last_for_good(\"-\")\n}\n",
+			"let only = () -> string => {\n  people_of_the_longest_possible_name_there_is_here_now_ok().joined_up_at_last_for_good(\"-\")\n}\n",
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			// **Each case must be over the budget to be a case at all**: a line the
-			// formatter leaves alone proves nothing about chains if it simply fits. The
-			// first draft of this test had three that did.
-			if width := len(strings.TrimRight(c.src, "\n")); width <= 90 {
-				t.Fatalf("the input is %d columns, so nothing would break it; make it longer", width)
+			// formatter leaves alone proves nothing about chains if it simply fits. Per
+			// *line*, which the first version got wrong — it measured the whole source,
+			// so a multi-line case passed the check while every line of it fitted.
+			widest := 0
+			for _, line := range strings.Split(c.src, "\n") {
+				if n := utf8.RuneCountInString(line); n > widest {
+					widest = n
+				}
+			}
+			if widest <= 90 {
+				t.Fatalf("the widest input line is %d characters, so nothing would break it", widest)
 			}
 			path := filepath.Join(t.TempDir(), "in.lyra")
 			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
@@ -393,6 +404,81 @@ func TestExample_LyrafmtBreaksConditions(t *testing.T) {
 			}
 			if widest <= 90 {
 				t.Fatalf("the widest input line is %d columns, so nothing would break it", widest)
+			}
+			path := filepath.Join(t.TempDir(), "in.lyra")
+			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := exec.Command(bin, path).Output()
+			if err != nil {
+				t.Fatalf("formatting: %v", err)
+			}
+			if string(got) != c.want {
+				t.Errorf("formatted:\n%s\nwant:\n%s", got, c.want)
+			}
+		})
+	}
+}
+
+// **The body after `=>` moves to its own line when that one break settles the line**
+// (09/21) — the cheapest fix there is, and the one this repo writes by hand: `bindings/`
+// is full of `pub let f = (…) -> T =>` with the call below it.
+//
+// It is tried before the others so a declaration whose *body* is the long part keeps its
+// parameter list on one line. The refusals are where the rule earns its keep: a `{` body
+// gains nothing (a block takes lines of its own and the brace would sit alone), a `=>`
+// inside a `(` belongs to a lambda passed as an argument and breaking there splits an
+// expression down the middle, and a break that leaves either half still too long has spent
+// a line for nothing — the rules that break *inside* the body should take it instead.
+//
+// The last case is about measurement rather than breaking: `std/tui/box.lyra` draws with
+// `└` and `┘`, three bytes each, and counting bytes made an 89-column line measure 93 and
+// broke it. The budget counts characters.
+func TestExample_LyrafmtBreaksAfterArrow(t *testing.T) {
+	bin := buildLyrafmt(t)
+	cases := []struct{ name, src, want string }{
+		{
+			"a long body moves to its own line, and needs no other break",
+			"let clock = pure (t: PlainTime) -> string => \"${t.hour()}:${t.minute()}:${t.second()}\" ++ suffix(t)\n",
+			"let clock = pure (t: PlainTime) -> string =>\n  \"${t.hour()}:${t.minute()}:${t.second()}\" ++ suffix(t)\n",
+		},
+		{
+			"a block body stays, and the parameter list breaks instead",
+			"let blocky = pure (a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 => { a + b }\n",
+			"let blocky = pure (\n  a: i64,\n  b: i64,\n  c: i64,\n  d: i64,\n  e: i64,\n  f: i64,\n  g: i64\n) -> i64 => { a + b }\n",
+		},
+		{
+			"a lambda's => inside a call is left alone",
+			"let prev = (path: string) -> string =>\n  copy_c_string(path.with_cstring((p) => unsafe { rl_prev_directory_path(p) })).unwrap_or(\"\")\n",
+			"let prev = (path: string) -> string =>\n  copy_c_string(path.with_cstring((p) => unsafe { rl_prev_directory_path(p) })).unwrap_or(\"\")\n",
+		},
+		{
+			"a line wide in bytes but not in characters is left alone",
+			"pub let box_bottom = pure (width: i64) -> string => \"└\" ++ (rule(interior(width)) ++ \"┘\")\n",
+			"pub let box_bottom = pure (width: i64) -> string => \"└\" ++ (rule(interior(width)) ++ \"┘\")\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Each case's premise, asserted: the first three must be over the budget in
+			// characters, and the last over it in bytes while under it in characters —
+			// which is the only way it tests what it claims to.
+			widestRunes, widestBytes := 0, 0
+			for _, line := range strings.Split(c.src, "\n") {
+				if n := utf8.RuneCountInString(line); n > widestRunes {
+					widestRunes = n
+				}
+				if n := len(line); n > widestBytes {
+					widestBytes = n
+				}
+			}
+			if strings.Contains(c.name, "characters") {
+				if widestBytes <= 90 || widestRunes > 90 {
+					t.Fatalf("this case needs a line over 90 bytes and under 90 characters; got %d and %d",
+						widestBytes, widestRunes)
+				}
+			} else if widestRunes <= 90 {
+				t.Fatalf("the widest input line is %d characters, so nothing would break it", widestRunes)
 			}
 			path := filepath.Join(t.TempDir(), "in.lyra")
 			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {

@@ -52,11 +52,10 @@ Package management, versioning and separate compilation are out of scope by deci
   indentation, whitespace, spacing, inline blocks and **line breaking** (09/19: 90 columns,
   comma lists exploded one element per line) are in; the repo is formatted by it, a
   directory argument is every `.lyra` file beneath it, and both editors format through
-  `lyra-lsp`. Breaking covers comma lists, **method chains** and **boolean conditions**
-  (09/21: after the operator, one precedence level at a time). Left as written: a condition
-  a body follows on the same line (`if a || b { … }` — moving the body is a rule about
-  `if`), and a long body after `=>`, which the repo writes on the next line by hand and the
-  formatter does not yet break. What is left after that is the bootstrap proper, which starts
+  `lyra-lsp`. Breaking covers comma lists, **method chains**, **boolean conditions** and
+  **the body after `=>`** (09/21). Left as written: a condition a body follows on the same
+  line (`if a || b { … }` — moving the body is a rule about `if`, not about conditions),
+  and a `=>` inside a `(`, which belongs to a lambda passed as an argument. What is left after that is the bootstrap proper, which starts
   with the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
 
 

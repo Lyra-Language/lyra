@@ -54,7 +54,8 @@ pub let turns = pure (fraction: f32) -> Degrees => Degrees(360.0 * fraction)
 ///
 /// **This is the conversion the type exists for.** Without it the mistake is invisible:
 /// an `f32` from `atan2` looks exactly like an `f32` of degrees, and raylib takes either.
-pub let from_radians = pure (radians: f32) -> Degrees => Degrees(radians * DEGREES_PER_RADIAN)
+pub let from_radians = pure (radians: f32) -> Degrees =>
+  Degrees(radians * DEGREES_PER_RADIAN)
 
 /// Radians from degrees, for handing an angle back to trigonometry.
 pub let to_radians = pure (angle: Degrees) -> f32 => f32(angle) * RADIANS_PER_DEGREE

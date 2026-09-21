@@ -99,7 +99,8 @@ pub let window_state = (flag: u32) -> bool => unsafe { rl_window_state(flag) } !
 pub let set_window_state = (flags: u32) -> void => unsafe { rl_set_window_state(flags) }
 
 /// Turn `FLAG_*` bits off.
-pub let clear_window_state = (flags: u32) -> void => unsafe { rl_clear_window_state(flags) }
+pub let clear_window_state = (flags: u32) -> void =>
+  unsafe { rl_clear_window_state(flags) }
 
 /// Set `FLAG_*` bits **before** [init_window]. Afterwards they do nothing; use
 /// [set_window_state].

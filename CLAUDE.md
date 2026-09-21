@@ -563,8 +563,9 @@ constraint — `match_unreachable_arm_test.go` never runs on arm64 and `go test`
 Modules and tooling). The round-trip baseline, indentation, spacing and inline-block rules
 are in, the repo is formatted by it, a directory argument is every `.lyra` file beneath it,
 and both editors reach it through `lyra-lsp`. **Line breaking landed 09/19** — 90 columns,
-comma lists exploded one element per line, **method chains** a line per call and **boolean
-conditions** after the operator (09/21) — and **CI runs `lyrafmt --check .`** over the repo,
+comma lists exploded one element per line, **method chains** a line per call, **boolean
+conditions** after the operator and **the body after `=>`** on its own line (09/21) — and
+**CI runs `lyrafmt --check .`** over the repo,
 skipping what `.lyrafmtignore` names (the compiler's fixtures, one of which is meant not to
 parse). Its
 value is that it
