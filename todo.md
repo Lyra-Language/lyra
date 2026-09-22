@@ -123,8 +123,12 @@ Package management, versioning and separate compilation are out of scope by deci
   (`examples/schedule/when.lyra`) and the design held: it needed nothing that was not
   already there. **The POSIX footer landed the same day**, so an instant past the table's
   end (~2037) follows the zone's stated rule rather than freezing at the last offset —
-  checked against Go at every transition to 2100. What is left for zones: leap seconds
-  (the records are skipped), and `TZDIR`, which needs `std.env`.
+  checked against Go at every transition to 2100. `parse_zoned_date_time` and
+  `parse_instant` close the round trip 09/22 — what `Show` writes is now readable back.
+  What is left for zones: leap seconds (the records are skipped), and `TZDIR`, which needs
+  `std.env`. **Custom formatting and parsing are deliberately absent**, as they are from
+  Temporal, which leaves them to `Intl`: a pattern language wants a program driving it, and
+  the one that would is a log analyser.
 
 - **[OPEN] An unimported type is refused in a signature and accepted in a struct field.**
   `struct Holder { at: PlainTime }` compiles and runs without importing `PlainTime`, while

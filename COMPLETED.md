@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — reading back what `Show` writes
+
+`ZonedDateTime` could render RFC 9557 — `2026-09-22T14:30:00-04:00[America/New_York]` — and
+nothing could read it, which broke at the one type you would most want to put in a file the
+round-trip property the other four temporal types had. `parse_zoned_date_time` closes it,
+and `parse_instant` does the same for `…Z`.
+
+**The offset in the string decides.** That is why the notation carries one beside the zone:
+`01:30-04:00` and `01:30-05:00` on a fall-back morning are one clock reading and two
+instants, and the string says which. Written without an offset, the local time is resolved
+by `Compatible` like any other; written with one the zone never used, it is refused, since
+a record of a clock that never read that is not a moment and guessing would be inventing
+data.
+
+**Two must-fire checks found nothing, and both times the mistake was mine, in the comment.**
+The parser scans back for the offset's sign, and I wrote that it scans "from the right,
+because a date is full of the same `-`". Loosening the scan's bound changed no test — and
+should not have, because the anchor is not the bound: it is the test *below* it, which asks
+whether the sign that was found sits before the `T`. Mutating that guard fails at once. The
+first correction was also wrong (it claimed the `T`-anchored start was what mattered), and
+the second mutation is what proved it. **A must-fire check tests the sentence as well as the
+code**, and here the code had been right twice while the explanation was wrong twice.
+
+**And the property test could not have found it either.** `Show` always writes an offset, so
+rendering and re-reading never produces the offsetless form the guard exists for — the
+round trip passed with the guard removed. The edge cases that a round trip cannot reach are
+now a table of their own: no offset, a wrong offset, an unknown zone, no brackets, nonsense.
+
 ### 09/22/26 — the POSIX footer, and the years a table does not cover
 
 A zone file lists transitions to about 2037 and then stops, because a table of every future

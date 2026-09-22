@@ -265,3 +265,196 @@ func offsetString(seconds int) string {
 	}
 	return out
 }
+
+// **What `Show` writes, `parse_zoned_date_time` reads back** (09/22) — the round trip the
+// other four temporal types already had and this one did not, at the type you would most
+// want to store in a file.
+//
+// The property is checked over every instant the zone tests sample, ±1s around every
+// transition to 2100: render it, read it back, and demand the same moment. **The repeated
+// hour is where this earns its keep** — `01:30-04:00` and `01:30-05:00` are the same clock
+// reading and two different instants, and a round trip that lost the offset would collapse
+// them onto one without ever failing loudly.
+func TestExample_ZonedDateTimeRoundTrips(t *testing.T) {
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
+		t.Skip("no /usr/share/zoneinfo on this machine")
+	}
+	probe := filepath.Join(t.TempDir(), "probe.lyra")
+	if err := os.WriteFile(probe, []byte(`module main
+import std.collections.{ parse_args }
+import std.temporal.{
+  load_time_zone, instant, to_zoned_date_time, parse_zoned_date_time, to_instant,
+  epoch_second,
+}
+
+/// Renders each instant in the zone, reads the rendering back, and prints the moment that
+/// came out — so a round trip that loses information shows up as a different number.
+let main = () -> u8 => {
+  let args = parse_args([])
+  let Some(zone) = load_time_zone(args.positional[0]) else {
+    println("no such zone")
+    return 1
+  }
+  for i in 1..<args.positional.len() {
+    let at = match args.positional[i].parse_i64() { Some(v) => v, None => 0 }
+    let Some(moment) = instant(at) else {
+      println("out of range")
+      continue
+    }
+    let written = "${moment.to_zoned_date_time(zone)}"
+    match parse_zoned_date_time(written) {
+      Some(read_back) => println("${read_back.to_instant().epoch_second()}"),
+      None => println("unreadable: ${written}"),
+    }
+  }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "probe")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, probe); code != 0 {
+		t.Fatalf("building the probe exited %d\nstderr: %s", code, stderr)
+	}
+
+	for _, name := range []string{
+		"UTC", "America/New_York", "Europe/Berlin", "Asia/Kathmandu",
+		"Australia/Lord_Howe", "Pacific/Chatham",
+	} {
+		t.Run(name, func(t *testing.T) {
+			loc, err := time.LoadLocation(name)
+			if err != nil {
+				t.Skipf("Go cannot load %s either: %v", name, err)
+			}
+			instants := sampleInstants(loc)
+			args := append([]string{name, "--"}, formatInts(instants)...)
+			out, err := exec.Command(bin, args...).Output()
+			if err != nil {
+				t.Fatalf("probing %s failed: %v", name, err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			if len(lines) != len(instants) {
+				t.Fatalf("%s: got %d lines for %d instants", name, len(lines), len(instants))
+			}
+			ambiguous := 0
+			for i, at := range instants {
+				if lines[i] != strconv.FormatInt(at, 10) {
+					t.Errorf("%s: %d came back as %q", name, at, lines[i])
+				}
+				// Count the readings a zone shows twice, to know this test met any.
+				if _, offset := time.Unix(at, 0).In(loc).Zone(); offset != 0 {
+					if _, earlier := time.Unix(at-3600, 0).In(loc).Zone(); earlier != offset {
+						ambiguous++
+					}
+				}
+			}
+			if name != "UTC" && ambiguous == 0 {
+				t.Errorf("%s: no instant near a change of offset, so the round trip was never hard", name)
+			}
+		})
+	}
+}
+
+// **The forms the round trip never produces.** `Show` always writes an offset, so the
+// property test above cannot reach an input without one — removing the parser's `T` anchor,
+// which only matters for that case, passed it untouched. These are the edges, written out:
+// the offset omitted, the offset wrong, the zone unknown, the brackets missing.
+//
+// The assertions are **relationships rather than instants** wherever a zone decides them —
+// that the two readings of a repeated hour are an hour apart, and that the offsetless form
+// agrees with the earlier of them — so this keeps holding when a country next changes its
+// rules, which is the event the whole database exists to record.
+func TestExample_ParseZonedDateTimeEdges(t *testing.T) {
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
+		t.Skip("no /usr/share/zoneinfo on this machine")
+	}
+	probe := filepath.Join(t.TempDir(), "probe.lyra")
+	if err := os.WriteFile(probe, []byte(`module main
+import std.io.{ read_stdin }
+import std.temporal.{ parse_zoned_date_time, parse_instant, to_instant, epoch_second }
+
+/// One string per line in, its instant (or "none") out — read both ways, since a string
+/// with an offset and no zone is an instant and not a zoned date-time.
+let main = () -> u8 => {
+  for line in read_stdin().lines() {
+    let text = line.trim()
+    if text.len() == 0 { continue }
+    match parse_zoned_date_time(text) {
+      Some(z) => println("${z.to_instant().epoch_second()}"),
+      None => match parse_instant(text) {
+        Some(i) => println("instant ${i.epoch_second()}"),
+        None => println("none"),
+      },
+    }
+  }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "probe")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, probe); code != 0 {
+		t.Fatalf("building the probe exited %d\nstderr: %s", code, stderr)
+	}
+
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("Go cannot load America/New_York")
+	}
+	fall, ok := fallBackAfter(loc, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Skip("New York no longer puts its clocks back, and half of this is about that")
+	}
+	// An hour before the clocks go back, written three ways.
+	repeated := time.Unix(fall-1800, 0).In(loc).Format("2006-01-02T15:04:05")
+	_, before := time.Unix(fall-1, 0).In(loc).Zone()
+	_, after := time.Unix(fall, 0).In(loc).Zone()
+	inputs := []string{
+		repeated + offsetString(before) + "[America/New_York]", // the first reading
+		repeated + offsetString(after) + "[America/New_York]",  // the second, an hour later
+		repeated + "[America/New_York]",                        // no offset: the rule decides
+		repeated + "+09:00[America/New_York]",                  // an offset the zone never had
+		repeated + offsetString(before) + "[Nowhere/Nope]",     // a zone that does not exist
+		repeated + offsetString(before),                        // no brackets: an instant
+		"2026-09-22T18:32:29Z",                                 // Instant's own rendering
+		"not a time at all",
+	}
+	out := runFeeding(t, bin, nil, strings.Join(inputs, "\n")+"\n")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != len(inputs) {
+		t.Fatalf("got %d lines for %d inputs:\n%s", len(lines), len(inputs), out)
+	}
+	first, err := strconv.ParseInt(lines[0], 10, 64)
+	if err != nil {
+		t.Fatalf("the first reading did not parse: %q", lines[0])
+	}
+	second, err := strconv.ParseInt(lines[1], 10, 64)
+	if err != nil {
+		t.Fatalf("the second reading did not parse: %q", lines[1])
+	}
+	if second-first != int64(before-after) {
+		t.Errorf("the two readings are %d seconds apart, want %d", second-first, before-after)
+	}
+	if lines[2] != lines[0] {
+		t.Errorf("without an offset the rule should take the first reading: %q vs %q", lines[2], lines[0])
+	}
+	if lines[3] != "none" {
+		t.Errorf("an offset the zone never used should be refused, got %q", lines[3])
+	}
+	if lines[4] != "none" {
+		t.Errorf("an unknown zone should be refused, got %q", lines[4])
+	}
+	if lines[5] != "instant "+lines[0] {
+		t.Errorf("without brackets it is an instant, not a zoned date-time: %q", lines[5])
+	}
+	if lines[6] != "instant 1790101949" {
+		t.Errorf("a UTC instant should read back exactly, got %q", lines[6])
+	}
+	if lines[7] != "none" {
+		t.Errorf("nonsense should be refused, got %q", lines[7])
+	}
+}
