@@ -115,13 +115,6 @@ Package management, versioning and separate compilation are out of scope by deci
   variables — `std` has none) and editing.
   `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
 
-- **[OPEN] A module-level `const` array indexed from a function can panic the backend.**
-  `const HEX_DIGITS: []rune = [...]` in `std/prelude/format.lyra`, read by `to_hex`, panics
-  compiling `TestExec_RaylibShadersAndMaterials`: "invalid gep source type; expected pointer
-  or vector of pointers type, got *types.StructType". A standalone module with the same
-  shape does not reproduce, so something in that program's types is needed too. Repro: make
-  `to_hex`'s digit table a `const` and run that test. `examples/checksum` avoids it the same
-  way, with a function for the round constants.
 - **[OPEN] A `mut` parameter that is not the receiver is not an effect.** A function
   writing through one is inferred `pure`, and accepts the annotation: `EffectMut` covers a
   mutated *receiver* only. Found writing `examples/lyra-md/site.lyra`, whose link checker

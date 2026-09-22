@@ -112,16 +112,19 @@ pub let to_fixed = pure (self: f64, places: i64) -> string => {
 /// is what `sha256sum`, `git` and every checksum file in the wild write, and a comparison
 /// against one of those is the point of having the digest at all.
 ///
-/// The digit table is a local rather than a module-level `const`, which is not a
-/// preference: a `const []rune` indexed from a prelude function panics the backend while
-/// compiling the raylib shader test (todo.md). The local form is what compiles today.
+/// The digit table is a module-level `const`, built once rather than per call. It was a
+/// local for a day: a `const` here indexed from this function crashed the backend on any
+/// program importing `bindings/raylib`, which has a private `HEX_DIGITS` of its own —
+/// consts were keyed by bare name, so one module's replaced the other's (COMPLETED.md).
 pub let to_hex = pure (self: []u8) -> string => {
-  let digits: []rune = ['0', '1', '2', '3', '4', '5', '6', '7',
-    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']
   var out: []rune = []
   for b in self {
-    out.push(digits[i64(b) / 16])
-    out.push(digits[i64(b) % 16])
+    out.push(HEX_DIGITS[i64(b) / 16])
+    out.push(HEX_DIGITS[i64(b) % 16])
   }
   out.join("")
 }
+
+/// Hex digits, low to high.
+const HEX_DIGITS: []rune = ['0', '1', '2', '3', '4', '5', '6', '7',
+  '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']

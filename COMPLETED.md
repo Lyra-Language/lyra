@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 09/21/26 — two modules' private consts were one slot, and the crash was the lucky part
+
+A `const []rune` in the prelude, indexed from `to_hex`, crashed the backend on any program
+importing `bindings/raylib` — "invalid gep source type … got *types.StructType" — while the
+same shape alone compiled fine. Filed the day before as unexplained, because minimising it
+by *shape* was the wrong axis: nothing was wrong with the const or the index.
+
+**The name was the bug.** `bindings/raylib/files.lyra` has a private
+`const HEX_DIGITS: string`; the prelude now had a private `const HEX_DIGITS: []rune`. A
+`const` has no storage — a reference inlines its value expression — and the backend kept
+them in a map keyed by the **bare name**, so one module's declaration replaced the other's
+and `to_hex` inlined a *string* where it expected an array. The fix is the per-module key
+`l.globals` and `l.funcs` already use, whose comments say the same thing: a bare name is one
+slot for the whole program, and a private declaration is not the whole program's.
+
+**What made it worth chasing is the shape that does not crash.** Two constants of one name
+and *the same type* inline the wrong value in silence: a module's function reading its own
+`const TAG: i64 = 111` returned `222`, the program's, with no diagnostic anywhere. That is
+the regression test — the crash was the case loud enough to be found.
+
+**How it was found, since the first attempt failed.** Minimising the program by hand said
+"any raylib import triggers it", which sounds like a type-system interaction and is a dead
+end. Printing the const's *recorded type* at the inline site answered it in one run:
+`HEX_DIGITS` arrived as a `StringLiteralExpr` of type `string`, which is not something the
+prelude declares — so the lookup, not the lowering, was wrong. **Ask what the compiler
+thinks it has, not what the program looks like.**
+
+Both workarounds are gone: `to_hex` reads a `const` table again, and `examples/checksum`'s
+round constants and initial state are `const` rather than functions rebuilt per digest.
+
 ### 09/21/26 — `rotate_left`/`rotate_right`, the family that was missing
 
 The fourth integer family, beside `wrapping_*`, `saturating_*` and `checked_*`. Those three

@@ -22,12 +22,11 @@ module sha256
 /// println(digest.to_hex())
 /// ```
 pub let sha256 = pure (data: []u8) -> []u8 => {
-  let k = round_constants()
-  var h = initial_state()
+  var h = INITIAL_STATE
   let padded = pad(data)
   var at = 0
   for at < padded.len() {
-    h = compress(h, schedule(padded, at), k)
+    h = compress(h, schedule(padded, at))
     at += 64
   }
   var out: []u8 = []
@@ -82,7 +81,7 @@ let schedule = pure (padded: []u8, at: i64) -> []u32 => {
 /// writing through a `mut` receiver is `EffectMut`, and a `pure` function may not call
 /// something that has it. Eight words copied per block is the price, and it buys a hash
 /// that is a function of its input in the language's own terms.
-let compress = pure (state: []u32, w: []u32, k: []u32) -> []u32 => {
+let compress = pure (state: []u32, w: []u32) -> []u32 => {
   var a = state[0]
   var b = state[1]
   var c = state[2]
@@ -94,7 +93,7 @@ let compress = pure (state: []u32, w: []u32, k: []u32) -> []u32 => {
   for i in 0..<64 {
     let s1 = e.rotate_right(6) ~ e.rotate_right(11) ~ e.rotate_right(25)
     let ch = (e & f) ~ (~e & g)
-    let temp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(k[i]).wrapping_add(w[i])
+    let temp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i])
     let s0 = a.rotate_right(2) ~ a.rotate_right(13) ~ a.rotate_right(22)
     let maj = (a & b) ~ (a & c) ~ (b & c)
     let temp2 = s0.wrapping_add(maj)
@@ -117,7 +116,7 @@ let compress = pure (state: []u32, w: []u32, k: []u32) -> []u32 => {
 
 /// The eight starting words: the fractional parts of the square roots of the first eight
 /// primes, as FIPS 180-4 tabulates them.
-let initial_state = pure () -> []u32 => [
+const INITIAL_STATE: []u32 = [
   0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
   0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ]
@@ -125,10 +124,10 @@ let initial_state = pure () -> []u32 => [
 /// The sixty-four round constants: the fractional parts of the cube roots of the first
 /// sixty-four primes.
 ///
-/// A function rather than a `const`, and built once per digest rather than per block: a
-/// module-level `const []u32` indexed from a function panics the backend on one of the
-/// raylib tests (todo.md), and the shape that compiles everywhere is this one.
-let round_constants = pure () -> []u32 => [
+/// A `const`, built once for the program rather than once per digest. It was a function
+/// for a day, around a backend crash that turned out to be two modules' private consts
+/// sharing one slot (COMPLETED.md, 09/21).
+const K: []u32 = [
   0x428a2f98,
   0x71374491,
   0xb5c0fbcf,

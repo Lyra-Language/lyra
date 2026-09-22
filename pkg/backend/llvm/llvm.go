@@ -207,7 +207,14 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 			continue
 		}
 		if vd.BindingKind == ast.BindingConst {
-			l.consts[vd.Name] = vd
+			// **Keyed per module, as globals and functions are.** Two modules may each
+			// declare a private `const` of one name, and under the bare spelling the
+			// second overwrote the first: `bindings/raylib` has a private
+			// `HEX_DIGITS: string` and the prelude a private `HEX_DIGITS: []rune`, so a
+			// program importing raylib inlined the *string* into the prelude's `to_hex`
+			// and the backend crashed indexing it (09/21). The crash was the lucky case —
+			// two consts of one width would have silently inlined the wrong value.
+			l.consts[l.funcKey(vd.Name, vd.GetLocation())] = vd
 			continue
 		}
 		if _, isFunc := vd.Value.(*ast.LambdaExpr); !isFunc && vd.Value != nil {
@@ -919,7 +926,7 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		// a compile-time constant, immutable, with no storage of its own). The value
 		// node carries the width the typechecker recorded for it, matching this use's
 		// type. The optimizer folds any repeated constant computation.
-		if cd, ok := l.consts[e.Name]; ok && cd.Value != nil {
+		if cd, ok := l.consts[l.funcKey(e.Name, e.GetLocation())]; ok && cd.Value != nil {
 			return l.lowerExpr(block, cd.Value)
 		}
 		// A top-level function named in value position (`apply(double, 3)`): build a
