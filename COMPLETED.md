@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — disambiguation: where a wall clock is not a moment
+
+Slice three, and the one with the semantics: going from a local time to an instant, where
+`02:30` never happens on the morning the clocks go forward and `01:30` happens twice on the
+morning they go back. `possible_instants` answers the underlying question (0, 1 or 2
+candidates) and is public, because a program that wants to *ask* — "did you mean 01:30 EDT
+or 01:30 EST?" — needs the candidates rather than a rule that picks one. `Compatible`,
+`Earlier`, `Later` and `Reject` are Temporal's four rules, with its defaults.
+
+**How a candidate is tested**: a local time and a candidate offset propose an instant, and
+the zone is asked what offset it was really using then. An offset that agrees with itself
+names a real reading; one that does not is a clock the zone never showed. The candidates
+are the offsets in force two days either side.
+
+**`ZonedDateTime.add` is the payoff.** Calendar units move the wall clock and clock units
+move the timeline: a week after 09:00 is 09:00, while 168 hours after it is 08:00 or 10:00
+where the clocks changed. That is what keeping a `Duration`'s calendar and clock fields
+apart has been *for* since the type was written, and until now nothing had exercised it.
+Planting "add everything as exact time" fails 4800 comparisons.
+
+**Two lessons about oracles, both learned the hard way in one sitting.**
+
+- **Go was the wrong oracle and says so.** Its documentation states that for an ambiguous or
+  missing local time "the choice of time zone, and therefore the time, is not guaranteed" —
+  so the most-used implementation in reach could not say what the right answer *is*.
+  Python's `zoneinfo` implements PEP 495's `fold`, which is specified and maps onto these
+  rules exactly. **An oracle has to be pinned down harder than the thing it judges.**
+- **Then the oracle was wrong anyway.** The arithmetic test failed on its third column, and
+  the failure was Python's: adding a `timedelta` to an *aware* datetime is wall-clock
+  arithmetic, not absolute, so the "exact" column was quietly computing the calendar answer
+  a second time. Converting to UTC first fixed it. The Lyra side had been right, and the
+  temptation in that moment is to "fix" the code to match a green bar.
+
 ### 09/22/26 — `Instant` and `ZonedDateTime`
 
 Slice two of the zone work: the moment, and the moment seen from somewhere.

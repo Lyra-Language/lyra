@@ -116,11 +116,11 @@ Package management, versioning and separate compilation are out of scope by deci
   **Zone rules landed 09/22** (slice one): `TimeZone` over the system's IANA database, with
   the offset, abbreviation and daylight-ness at an instant, checked against Go's `time` at
   ±1s around every transition 1965–2035 in nine zones. **`Instant` and `ZonedDateTime`
-  landed 09/22** (slice two), checked the same way. Next: the **disambiguation** rules —
-  naming a local time and asking which instant it was, where a time may not exist or may
-  happen twice — then the POSIX footer rule for instants past the table's end (~2037). The
-  app meant to drive those is a recurring-schedule tool, which cannot be written without
-  them.
+  landed 09/22** (slice two), and the **disambiguation** rules and DST-aware arithmetic the
+  same day (slice three), checked against Python's `zoneinfo` at every transition of six
+  zones. Next: the POSIX footer rule for instants past the table's end (~2037), and then
+  the recurring-schedule tool the whole thing was for — which is now writable, and is the
+  real test of whether the design holds.
 
 - **[OPEN] `std` cannot read an environment variable.** `std.temporal` hardcodes
   `/usr/share/zoneinfo` because there is no way to consult `TZDIR`, and the calendar still

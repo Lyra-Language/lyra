@@ -1,0 +1,142 @@
+module std.temporal
+
+/// What to do with a local time a zone does not have exactly once — Temporal's
+/// `disambiguation` option.
+///
+/// **Twice a year a wall clock is not a moment.** Where the clocks go forward, `02:30`
+/// never happens; where they go back, `01:30` happens twice, an hour apart. A program
+/// converting a written time into an instant has to answer for both, and the honest
+/// spellings are these four.
+pub data Disambiguation =
+  /// The rule every calendar application ends up at, and Temporal's default: a time that
+  /// does not exist moves **forward** past the gap, and one that happens twice takes the
+  /// **first**. It is "compatible" because it is what `mktime` and the Java and JavaScript
+  /// libraries before Temporal already did.
+  Compatible
+  /// The earlier of the two readings: back across the gap, or the first of a repeat.
+  | Earlier
+  /// The later: forward across the gap, or the second of a repeat.
+  | Later
+  /// Neither — answer `None` and make the caller decide. What an alarm clock or a billing
+  /// system wants, where guessing is worse than asking.
+  | Reject
+
+/// Every instant whose local time in `zone` is exactly `self` — Temporal's
+/// `getPossibleInstantsFor`. **Two of them on the morning the clocks go back, none on the
+/// morning they go forward, and one on every other day of the year.**
+///
+/// This is the question underneath the whole slice, and it is worth having in the API
+/// rather than only inside it: a program that wants to *report* an ambiguity — "did you
+/// mean 01:30 EDT or 01:30 EST?" — needs the candidates, not a rule that picks one.
+///
+/// **How it is answered**: a local time and a candidate offset propose an instant, and the
+/// zone is asked what offset it was really using then. An offset that agrees with itself
+/// names a real instant; one that does not is a reading the zone never showed. The
+/// candidates are the offsets in force two days either side, which is far enough that any
+/// transition near this time is between them and close enough that no second transition
+/// can hide.
+pub let possible_instants = pure (self: PlainDateTime, zone: TimeZone) -> []Instant => {
+  let wall = self.local_second()
+  let before = zone.offset_at(wall - 2 * 86400)
+  let after = zone.offset_at(wall + 2 * 86400)
+  var out: []Instant = []
+  for offset in [before, after] {
+    let candidate = wall - offset
+    if zone.offset_at(candidate) != offset { continue }
+    if out.len() == 1 && i128(out[0]) == self.at_second(candidate) { continue }
+    out.push(Instant(self.at_second(candidate)))
+  }
+  out
+}
+
+/// This local time in `zone`, resolved by `how` — Temporal's
+/// `PlainDateTime.toZonedDateTime`.
+///
+/// `None` when `how` is `Reject` and the time is ambiguous or missing, and when the result
+/// would leave the range an `Instant` can hold.
+///
+/// ```
+/// let Some(zone) = load_time_zone("America/New_York") else { return }
+/// let Some(meeting) = parse_plain_date_time("2026-11-01T01:30") else { return }
+/// let Some(first) = meeting.to_zoned_date_time(zone) else { return }     // 01:30 EDT
+/// let Some(second) = meeting.to_zoned_date_time(zone, Later) else { return } // 01:30 EST
+/// ```
+pub let to_zoned_date_time = pure (
+  self: PlainDateTime,
+  zone: TimeZone,
+  how: Disambiguation = Compatible
+) -> Maybe<ZonedDateTime> => {
+  let candidates = possible_instants(self, zone)
+  if candidates.len() == 1 { return Some(candidates[0].to_zoned_date_time(zone)) }
+  if how == Reject { return None }
+  if candidates.len() > 1 {
+    let chosen = if how == Later { candidates[1] } else { candidates[0] }
+    return Some(chosen.to_zoned_date_time(zone))
+  }
+  // A gap: no reading of the clock is this time, so the answer is the instant the
+  // requested one *would* have been, moved by the size of the jump. Forward for
+  // `Compatible` and `Later`, back for `Earlier` — Temporal's rule, and the reason a
+  // 02:30 alarm rings at 03:30 rather than being skipped.
+  let wall = self.local_second()
+  let before = zone.offset_at(wall - 2 * 86400)
+  let after = zone.offset_at(wall + 2 * 86400)
+  let gap = after - before
+  let moved = if how == Earlier { wall - gap - before } else { wall + gap - after }
+  Some(Instant(self.at_second(moved)).to_zoned_date_time(zone))
+}
+
+/// This moment moved by `amount`, in the way a person here would mean it — Temporal's
+/// `ZonedDateTime.add`.
+///
+/// **The calendar units move the clock; the clock units move the timeline.** A week after
+/// 09:00 is 09:00, whatever the zone did in between, because "next Monday's meeting" is a
+/// statement about the wall clock. 168 hours after 09:00 is 08:00 or 10:00 if the clocks
+/// changed, because an hour is an hour. Temporal separates them for this reason, and it is
+/// the whole payoff of keeping a `Duration`'s calendar and clock fields apart.
+///
+/// So: the calendar part is added to the local date-time and resolved by `how` (landing in
+/// a gap is possible — a monthly meeting at 02:30 meets the March morning that has no
+/// 02:30), and the clock part is then added to the instant, exactly.
+pub let add = pure (
+  self: ZonedDateTime,
+  amount: Duration,
+  how: Disambiguation = Compatible
+) -> Maybe<ZonedDateTime> => {
+  let calendar = Duration { duration() | years: amount.years, months: amount.months,
+    weeks: amount.weeks, days: amount.days }
+  var moment = self.instant
+  if has_calendar_part(calendar) {
+    let local = self.to_plain_date_time().add(calendar)
+    let Some(resolved) = local.to_zoned_date_time(self.zone, how) else { return None }
+    moment = resolved.instant
+  }
+  let exact = Duration { duration() | hours: amount.hours, minutes: amount.minutes,
+    seconds: amount.seconds, milliseconds: amount.milliseconds,
+    microseconds: amount.microseconds, nanoseconds: amount.nanoseconds }
+  let Some(shifted) = moment.add(exact) else { return None }
+  Some(shifted.to_zoned_date_time(self.zone))
+}
+
+/// This moment moved back by `amount`: `add` of its negation, so the two cannot disagree.
+pub let subtract = pure (
+  self: ZonedDateTime,
+  amount: Duration,
+  how: Disambiguation = Compatible
+) -> Maybe<ZonedDateTime> => self.add(amount.negated(), how)
+
+// ---------------------------------------------------------------------------------------
+
+/// The local date-time as a count of seconds, read as though the offset were zero — the
+/// number a candidate offset is subtracted from to propose an instant.
+let local_second = pure (self: PlainDateTime) -> i64 =>
+  i64(self.date) * 86400 + i64(self.time) / NS_PER_SECOND
+
+/// That instant's nanoseconds, keeping the sub-second part of the local time: an offset
+/// never carries one, so the fraction survives the conversion untouched.
+let at_second = pure (self: PlainDateTime, epoch_second: i64) -> i128 =>
+  i128(epoch_second) * i128(NS_PER_SECOND) + i128(i64(self.time) % NS_PER_SECOND)
+
+/// Whether a duration has a part that has to be added on the calendar rather than the
+/// timeline.
+let has_calendar_part = pure (d: Duration) -> bool =>
+  d.years != 0 || d.months != 0 || d.weeks != 0 || d.days != 0
