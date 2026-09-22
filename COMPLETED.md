@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the scheduler, and whether the design held
+
+`examples/schedule/when.lyra` prints the next occurrences of a recurring event in a zone.
+It is the program the whole zone slice was built for, and the point of writing it is that
+**every piece of `std.temporal`'s zone support was added because this was argued to need
+it** — an argument that stays untested until somebody writes the program.
+
+**It held: the tool needed nothing that was not already there.** The three things it uses
+that nothing else in the repo had needed are exactly the three the slices were for — a
+local time resolved into an instant where the zone has it twice or not at all, calendar
+arithmetic that keeps the wall clock across a transition, and the `Duration` split that
+lets those two be different questions.
+
+Three behaviours are worth stating, since each is a decision:
+
+- **An occurrence is computed from the first, never from the one before it.** A monthly
+  event on the 31st clamps to the 28th in February and is back on the 31st in March;
+  computed from its predecessor it would walk backwards through the year and never return.
+  Planting that mistake gives March the 28th, and the test says so.
+- **An occurrence the zone moved says so.** A 02:30 alarm that silently becomes 03:30 once
+  a year, or a job that silently runs twice in the repeated hour, is the bug this work is
+  about; the rule that was applied is worth a line of output.
+- **The tests find the transitions rather than naming them.** A test that hardcodes "the
+  clocks go forward on 2026-03-08" fails the day a country changes its mind, which is what
+  the zone database is a record of.
+
+**One inconsistency fell out of writing it**: an unimported exported type is refused in a
+function signature (`lyra-E001`, with the message saying to import it) and *accepted* in a
+struct field, where it compiles and runs. The error's own wording says the field is the
+leak. In todo.md.
+
 ### 09/22/26 — disambiguation: where a wall clock is not a moment
 
 Slice three, and the one with the semantics: going from a local time to an instant, where

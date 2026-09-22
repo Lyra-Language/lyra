@@ -1,0 +1,201 @@
+// when — the next few occurrences of a recurring event, in a time zone.
+//
+//   build/lyrac build -o build/when examples/schedule/when.lyra
+//   build/when "weekly Monday 09:00" --zone Europe/Berlin --count 6
+//   build/when "daily 02:30" --zone America/New_York --from 2026-03-06 --count 4
+//   build/when "monthly 31 12:00" --zone UTC --from 2026-01-01 --count 4
+//
+// **The program `std.temporal`'s zone work was built for**, and the test of whether that
+// design holds: every piece of it was added because this was argued to need it, and an
+// argument is not a demonstration. What it needs, and what nothing else here has needed:
+//
+//   - a **local** time resolved into an instant, twice a year ambiguously or not at all;
+//   - **calendar arithmetic on the wall clock** — next Monday's 09:00 is 09:00 whatever
+//     the zone did in between, which 168 hours would not be;
+//   - the two kept apart, which is why a `Duration` has calendar fields and clock fields.
+//
+// Exit 0 when it printed a schedule, 2 for usage.
+
+import std.collections.{ parse_args }
+import std.temporal.{
+  PlainDate,
+  PlainTime,
+  PlainDateTime,
+  TimeZone,
+  ZonedDateTime,
+  Disambiguation,
+  Compatible,
+  Earlier,
+  Later,
+  Reject,
+  load_time_zone,
+  parse_plain_date,
+  parse_plain_time,
+  plain_time,
+  to_plain_date_time,
+  to_zoned_date_time,
+  possible_instants,
+  add,
+  day_of_week,
+  days,
+  weeks,
+  months,
+  now_in_zone,
+  to_plain_date,
+  to_instant,
+  epoch_second,
+}
+
+let main = () -> u8 => {
+  let args = parse_args(["--zone", "--from", "--count", "--rule"])
+  if args.positional.len() == 0 {
+    println("usage: when \"<daily|weekly <day>|monthly <n>> HH:MM\" [--zone NAME] " ++
+        "[--from YYYY-MM-DD] [--count N] [--rule compatible|earlier|later|reject]")
+    return 2
+  }
+  let zone_name = args.value("--zone").unwrap_or("UTC")
+  let Some(zone) = load_time_zone(zone_name) else {
+    println("when: no zone called ${zone_name}")
+    return 2
+  }
+  let Some(rule) = read_rule(args.value("--rule").unwrap_or("compatible")) else {
+    println("when: --rule is compatible, earlier, later or reject")
+    return 2
+  }
+  let Some(recurrence) = read_recurrence(args.positional[0]) else {
+    println("when: cannot read \"${args.positional[0]}\" as a recurrence")
+    return 2
+  }
+  let from = match args.value("--from") {
+    Some(text) => match parse_plain_date(text) {
+      Some(date) => date,
+      None => {
+        println("when: --from wants a date like 2026-03-08")
+        return 2
+      },
+    },
+    None => now_in_zone(zone).to_plain_date(),
+  }
+  let how_many = match args.value("--count") {
+    Some(text) => text.parse_i64().unwrap_or(5),
+    None => 5,
+  }
+  print_schedule(recurrence, from, zone, rule, how_many)
+  0
+}
+
+/// What recurs, and when in the day.
+struct Recurrence {
+  /// `Daily`, `Weekly` or `Monthly`.
+  kind: string,
+  /// The ISO weekday for `Weekly` (1 is Monday), or the day of the month for `Monthly`.
+  ordinal: i64,
+  /// The wall-clock time the event is written at — which is the part a zone can take away.
+  at: PlainTime,
+}
+
+/// Prints `count` occurrences, each as the moment it happens and what the clock will say.
+///
+/// **Each occurrence is computed from the first, not from the one before it.** A monthly
+/// event on the 31st lands on the 28th in February, and adding a month to *that* would
+/// walk the event backwards through the year; adding `k` months to the original keeps it
+/// on the 31st wherever there is one. Temporal's `add` clamps, and this is the arrangement
+/// that makes clamping a local answer instead of an accumulating one.
+let print_schedule = (
+  recurrence: Recurrence,
+  from: PlainDate,
+  zone: TimeZone,
+  rule: Disambiguation,
+  wanted: i64
+) -> void => {
+  let base = first_date(recurrence, from)
+  var found = 0
+  var k = 0
+  for found < wanted && k < wanted * 40 {
+    let local = step(recurrence, base, k).to_plain_date_time(recurrence.at)
+    k += 1
+    match local.to_zoned_date_time(zone, rule) {
+      Some(moment) => {
+        println("${moment}${note(local, zone)}")
+        found += 1
+      },
+      None => println("${local} — refused: the clock here shows it twice or not at all"),
+    }
+  }
+}
+
+/// What to say about an occurrence the zone did not have exactly once.
+///
+/// **The point of printing it.** A schedule that silently moves an event is how a 02:30
+/// alarm becomes a 03:30 alarm once a year with nobody told; one that silently picks the
+/// first of a repeated hour is how a job runs twice. The rule that was applied is worth a
+/// line either way.
+let note = pure (local: PlainDateTime, zone: TimeZone) -> string => {
+  let candidates = possible_instants(local, zone).len()
+  if candidates == 1 { return "" }
+  if candidates == 0 { return "  (${local.time} does not exist here — moved)" }
+  "  (${local.time} happens twice here — took this one)"
+}
+
+/// The date of the first occurrence at or after `from`.
+let first_date = pure (recurrence: Recurrence, from: PlainDate) -> PlainDate => {
+  if recurrence.kind == "weekly" {
+    let ahead = (recurrence.ordinal - from.day_of_week() + 7) %% 7
+    return from.add(days(ahead))
+  }
+  if recurrence.kind == "monthly" {
+    let this_month = from.with_day(recurrence.ordinal)
+    return if this_month >= from { this_month } else { from
+        .add(months(1))
+        .with_day(recurrence.ordinal) }
+  }
+  from
+}
+
+/// The `k`th occurrence's date, counted from the first.
+let step = pure (recurrence: Recurrence, base: PlainDate, k: i64) -> PlainDate => {
+  if recurrence.kind == "weekly" { return base.add(weeks(k)) }
+  if recurrence.kind == "monthly" { return base.add(months(k)) }
+  base.add(days(k))
+}
+
+/// `daily 09:00`, `weekly Monday 09:00`, `monthly 31 12:00`.
+let read_recurrence = pure (text: string) -> Maybe<Recurrence> => {
+  let words = text.trim().split(" ")
+  if words.len() < 2 { return None }
+  let at_text = words[words.len() - 1]
+  let Some(at) = parse_plain_time(at_text) else { return None }
+  if words[0] == "daily" && words.len() == 2 {
+    return Some(Recurrence { kind: "daily", ordinal: 0, at: at })
+  }
+  if words[0] == "weekly" && words.len() == 3 {
+    let Some(day) = read_weekday(words[1]) else { return None }
+    return Some(Recurrence { kind: "weekly", ordinal: day, at: at })
+  }
+  if words[0] == "monthly" && words.len() == 3 {
+    let Some(day) = words[1].parse_i64() else { return None }
+    if day < 1 || day > 31 { return None }
+    return Some(Recurrence { kind: "monthly", ordinal: day, at: at })
+  }
+  None
+}
+
+/// A weekday's ISO number, 1 for Monday — the numbering `day_of_week` answers in.
+let read_weekday = pure (name: string) -> Maybe<i64> => {
+  let lower = name.to_ascii_lower()
+  let days_of_week = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday"]
+  for i in 0..<days_of_week.len() {
+    if lower == days_of_week[i] { return Some(i + 1) }
+  }
+  None
+}
+
+/// The disambiguation rule a `--rule` names.
+let read_rule = pure (name: string) -> Maybe<Disambiguation> => {
+  if name == "compatible" { return Some(Compatible) }
+  if name == "earlier" { return Some(Earlier) }
+  if name == "later" { return Some(Later) }
+  if name == "reject" { return Some(Reject) }
+  None
+}

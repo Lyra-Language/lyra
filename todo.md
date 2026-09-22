@@ -119,9 +119,17 @@ Package management, versioning and separate compilation are out of scope by deci
   landed 09/22** (slice two), and the **disambiguation** rules and DST-aware arithmetic the
   same day (slice three), checked against Python's `zoneinfo` at every transition of six
   zones. Next: the POSIX footer rule for instants past the table's end (~2037), and then
-  the recurring-schedule tool the whole thing was for — which is now writable, and is the
-  real test of whether the design holds.
+  the recurring-schedule tool the whole thing was for. **That tool landed 09/22**
+  (`examples/schedule/when.lyra`) and the design held: it needed nothing that was not
+  already there. What is left is the POSIX footer rule for instants past the table's end
+  (~2037), which a schedule projecting a decade ahead would reach.
 
+- **[OPEN] An unimported type is refused in a signature and accepted in a struct field.**
+  `struct Holder { at: PlainTime }` compiles and runs without importing `PlainTime`, while
+  `let f = (t: PlainTime) -> …` is `lyra-E001` with the "module exports it, but this file
+  does not import it" message. One of the two is wrong; the error's own wording says the
+  field is the leak. Found writing `examples/schedule` (09/22). The cascade is poor too —
+  the signature case then reports "cannot assign PlainTime to PlainTime".
 - **[OPEN] `std` cannot read an environment variable.** `std.temporal` hardcodes
   `/usr/share/zoneinfo` because there is no way to consult `TZDIR`, and the calendar still
   has no way to find `$HOME`. One `getenv` extern and a `std.env` would answer both.

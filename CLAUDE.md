@@ -573,9 +573,14 @@ keeps finding **compiler** bugs rather than formatter ones: a `let … else` use
 destructuring release that never happened, and an interpolation that swallows source to the
 next `}` — each found by the first Lyra program large enough to hit them.
 
-**`examples/calendar` does the same for dates**: `std.temporal`, after the web's Temporal
-API, grows only as the calendar needs it (the month grid landed 09/18). `PlainDate` is a day
-count rather than three fields because Lyra has no field privacy — see LANGUAGE.md.
+**`examples/calendar` does the same for dates**, and **`examples/schedule/when.lyra` for
+zones**: `std.temporal`, after the web's Temporal API, grows only as they need it (the month
+grid 09/18; `TimeZone`, `Instant`, `ZonedDateTime` and the disambiguation rules 09/22).
+`PlainDate` is a day count rather than three fields because Lyra has no field privacy — see
+LANGUAGE.md. The scheduler is the zone work's forcing function and its proof: it prints the
+next occurrences of a recurring event, which needs a local time resolved when the clock
+shows it twice or not at all, and calendar arithmetic that keeps the wall clock across a
+transition.
 
 **`lyra-md` is the standard library's forcing function**, and the deliberate contrast with
 lyrafmt: an *ordinary* program — text, files, collections — whose every hand-written helper
