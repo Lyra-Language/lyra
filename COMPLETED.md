@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the POSIX footer, and the years a table does not cover
+
+A zone file lists transitions to about 2037 and then stops, because a table of every future
+Sunday would be a table without end. What follows is a sentence in the notation `TZ` has
+used since the 1980s — `EST5EDT,M3.2.0,M11.1.0` — saying what the zone will keep doing.
+Until this, every instant past the table took the last recorded offset, so a schedule
+projecting a decade ahead was simply wrong half the year.
+
+- **POSIX writes its offsets west-positive.** `EST5` is five hours *west*, so its offset
+  east is −18000. This is the format's oldest trap and the sign is inverted exactly once,
+  at the parse; taking it at face value fails 963 comparisons.
+- **`Mm.w.d` with `w` of 5 means the last such weekday**, however many the month has, which
+  is not the same as the fifth — not clamping fails 117.
+- **The footer governs from the last transition on**, RFC 8536's rule, and both hemispheres
+  are the same test read in order: where summer straddles the new year the period runs from
+  one year's end into the next, so the question is "outside the winter" rather than "inside
+  the summer".
+
+**The test had the same hole the code did**, which is the part worth keeping: it walked
+transitions from 1965 to **2035** — inside every table — so an implementation ignoring the
+footer entirely passed it. Walking to 2100 closes that, and now ignoring the footer fails
+497 comparisons. A differential test is only as wide as the range it samples, and the range
+had been chosen to match what the code already did.
+
+The scheduler now projects correctly into 2049, which was the point of the exercise.
+
 ### 09/22/26 — the scheduler, and whether the design held
 
 `examples/schedule/when.lyra` prints the next occurrences of a recurring event in a zone.

@@ -120,9 +120,15 @@ func sampleInstants(loc *time.Location) []int64 {
 		1000000000,  // 2001
 		1773000000,  // 2026
 		2000000000,  // 2033, near the end of many tables
+		2500000000,  // 2049, past every table and into the footer's rule
+		4102444800,  // 2100
 	}
+	// **To 2100, which is well past where the table stops.** A zone file lists transitions
+	// to about 2037 and then leaves a POSIX rule for the rest; walking only to 2035 tested
+	// the table and nothing else, and an implementation that ignored the footer — as this
+	// one did until 09/22 — passed. Go applies the footer too, so it stays the oracle.
 	at := time.Date(1965, 1, 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 	_, previous := at.In(loc).Zone()
 	for at.Before(end) {
 		next := at.AddDate(0, 0, 1)

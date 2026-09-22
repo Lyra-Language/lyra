@@ -1,0 +1,315 @@
+module std.temporal
+//! The POSIX `TZ` rule a zone file ends with — `EST5EDT,M3.2.0,M11.1.0` — and what it
+//! says about instants past the last transition the file lists.
+//!
+//! **A table has an end; a rule does not.** A zone file records transitions to about 2037
+//! and then stops, because a table of every future Sunday would be a table without end.
+//! What follows is a sentence in the notation `TZ` has used since the 1980s, saying what
+//! the zone will keep doing: two abbreviations, two offsets, and the two Sundays. Without
+//! reading it, every instant past the table takes the last recorded offset — so a
+//! schedule projecting a decade ahead is simply wrong half the year, which is what this
+//! fixes.
+//!
+//! **The sign is inverted, and that is the format's oldest trap.** `EST5` means five hours
+//! *west* of Greenwich, so its offset east is −5·3600. Everything else about the
+//! notation is ordinary; this one thing has been wrong in implementations for forty years.
+
+/// A zone's behaviour after its table ends: what it is called, how far east it is, and —
+/// when it keeps daylight saving — the two rules that say when.
+struct PosixZone {
+  std_abbreviation: string,
+  std_offset: i64,
+  dst_abbreviation: string,
+  dst_offset: i64,
+  has_dst: bool,
+  /// When daylight saving begins, read in **standard** time, as POSIX specifies.
+  start: PosixRule,
+  /// When it ends, read in **daylight** time.
+  end: PosixRule,
+}
+
+/// One end of the daylight period, in one of the three spellings POSIX admits.
+struct PosixRule {
+  /// `0` for `Mm.w.d`, `1` for `Jn` (a day count that never counts 29 February), `2` for
+  /// a bare `n` (a zero-based day count that does).
+  kind: i64,
+  month: i64,
+  /// Which of that weekday in the month, 1 to 5, where 5 means the last one however many
+  /// there are.
+  week: i64,
+  /// The weekday, 0 for Sunday — POSIX's numbering, not ISO's.
+  weekday: i64,
+  /// The day count, for the two counting forms.
+  ordinal: i64,
+  /// Seconds into the day, which POSIX lets run negative or past 24 hours.
+  at_second: i64,
+}
+
+/// The rule in effect at `epoch_second` under `zone`'s footer.
+let posix_type = pure (zone: PosixZone, epoch_second: i64) -> ZoneType => {
+  let standard = ZoneType {
+    offset: zone.std_offset,
+    is_dst: false,
+    abbreviation: zone.std_abbreviation,
+  }
+  if !zone.has_dst { return standard }
+  let daylight = ZoneType {
+    offset: zone.dst_offset,
+    is_dst: true,
+    abbreviation: zone.dst_abbreviation,
+  }
+  // The year is the one the *local* clock is in, since the rules are written in local
+  // terms — an instant in the small hours of 1 January is a different year west of
+  // Greenwich, and asking in UTC would apply the wrong year's rules to it.
+  let (
+    local_year,
+    _,
+    _
+  ) = civil_from_days(floor_div(epoch_second + zone.std_offset, 86400))
+  let begins = rule_instant(zone.start, local_year, zone.std_offset)
+  let ends = rule_instant(zone.end, local_year, zone.dst_offset)
+  // **Northern and southern hemispheres are the same rule read in order.** Where summer
+  // straddles the new year the period runs from the end of one year to the start of the
+  // next, so the test is "outside the winter" rather than "inside the summer".
+  if begins <= ends {
+    if epoch_second >= begins && epoch_second < ends { daylight } else { standard }
+  } else if epoch_second >= begins || epoch_second < ends {
+    daylight
+  } else {
+    standard
+  }
+}
+
+/// The first instant at or after `epoch_second` at which the footer's rules change the
+/// offset, or `None` for a zone whose footer keeps one offset for ever.
+///
+/// Four candidates are enough: this year's two firings and next year's, since the
+/// question is only ever asked about an instant inside a year and the earliest candidate
+/// that has not already passed is the answer. A zone whose summer straddles the new year
+/// is why next year's are needed at all.
+let posix_next_transition = pure (zone: PosixZone, epoch_second: i64) -> Maybe<i64> => {
+  if !zone.has_dst { return None }
+  let (
+    local_year,
+    _,
+    _
+  ) = civil_from_days(floor_div(epoch_second + zone.std_offset, 86400))
+  var soonest = 0
+  var found = false
+  for year in local_year..<=(local_year + 1) {
+    for moment in [
+      rule_instant(zone.start, year, zone.std_offset),
+      rule_instant(zone.end, year, zone.dst_offset),
+    ] {
+      if moment < epoch_second { continue }
+      if !found || moment < soonest {
+        soonest = moment
+        found = true
+      }
+    }
+  }
+  if found { Some(soonest) } else { None }
+}
+
+/// The instant a rule fires in `year`, given the offset in force just before it.
+let rule_instant = pure (rule: PosixRule, year: i64, offset: i64) -> i64 =>
+  rule_day(rule, year) * 86400 + rule.at_second - offset
+
+/// The day the rule names, as a count of days since the epoch.
+let rule_day = pure (rule: PosixRule, year: i64) -> i64 => {
+  if rule.kind == 1 {
+    // `Jn` never counts 29 February, so the ordinal is a day of a common year: turn it
+    // into a month and day through a non-leap year and ask the calendar for that date.
+    let (in_month, of_month) = common_year_date(rule.ordinal)
+    return days_from_civil(year, in_month, of_month)
+  }
+  if rule.kind == 2 { return days_from_civil(year, 1, 1) + rule.ordinal }
+  // `Mm.w.d`: the `w`th `d`-day of month `m`, with 5 meaning the last one.
+  let month_start = days_from_civil(year, rule.month, 1)
+  let target = if rule.weekday == 0 { 7 } else { rule.weekday }
+  let ahead = (target - PlainDate(month_start).day_of_week() + 7) %% 7
+  var of_month = 1 + ahead + (rule.week - 1) * 7
+  for of_month > days_in(year, rule.month) { of_month -= 7 }
+  days_from_civil(year, rule.month, of_month)
+}
+
+/// The month and day that `ordinal` names in a year without a 29 February, counting from
+/// 1 for 1 January.
+let common_year_date = pure (ordinal: i64) -> (i64, i64) => {
+  let lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  var left = if ordinal < 1 { 1 } else { ordinal }
+  var which = 1
+  for which < 12 && left > lengths[which - 1] {
+    left -= lengths[which - 1]
+    which += 1
+  }
+  (which, left)
+}
+
+/// The footer of a zone file, parsed — or `None` when there is none, or it is a spelling
+/// this does not read.
+let parse_posix_tz = pure (text: string) -> Maybe<PosixZone> => {
+  let runes = text.to_runes()
+  if runes.len() == 0 { return None }
+  let Some((std_name, after_name)) = scan_abbreviation(runes, 0) else { return None }
+  let Some((std_west, after_offset)) = scan_offset(runes, after_name) else { return None }
+  let std_east = 0 - std_west
+  if after_offset >= runes.len() {
+    return Some(quiet_zone(std_name, std_east))
+  }
+  let Some((dst_name, after_dst)) = scan_abbreviation(
+    runes,
+    after_offset
+  ) else { return None }
+  // A daylight offset may be left out, and then it is one hour east of standard time.
+  var dst_east = std_east + 3600
+  var at = after_dst
+  if at < runes.len() && runes[at] != ',' {
+    let Some((dst_west, after_dst_offset)) = scan_offset(runes, at) else { return None }
+    dst_east = 0 - dst_west
+    at = after_dst_offset
+  }
+  // Without the two rules there is nothing to say when daylight saving applies, and POSIX
+  // leaves it implementation-defined. Refusing is the honest answer.
+  if at >= runes.len() || runes[at] != ',' { return None }
+  let Some((start, after_start)) = scan_rule(runes, at + 1) else { return None }
+  if after_start >= runes.len() || runes[after_start] != ',' { return None }
+  let Some((end, _)) = scan_rule(runes, after_start + 1) else { return None }
+  Some(PosixZone {
+    std_abbreviation: std_name,
+    std_offset: std_east,
+    dst_abbreviation: dst_name,
+    dst_offset: dst_east,
+    has_dst: true,
+    start: start,
+    end: end,
+  })
+}
+
+/// A zone that never changes its clocks: the standard rule, and two that never fire.
+let quiet_zone = pure (name: string, offset: i64) -> PosixZone => {
+  let never = PosixRule {
+    kind: 0,
+    month: 1,
+    week: 1,
+    weekday: 0,
+    ordinal: 0,
+    at_second: 0
+  }
+  PosixZone {
+    std_abbreviation: name,
+    std_offset: offset,
+    dst_abbreviation: name,
+    dst_offset: offset,
+    has_dst: false,
+    start: never,
+    end: never,
+  }
+}
+
+/// An abbreviation: letters, or anything at all between `<` and `>` — which is how a zone
+/// whose name is `+0530` spells it, the bare form being unable to hold a sign or a digit.
+let scan_abbreviation = pure (runes: []rune, at: i64) -> Maybe<(string, i64)> => {
+  if at >= runes.len() { return None }
+  var i = at
+  var out: []rune = []
+  if runes[i] == '<' {
+    i += 1
+    for i < runes.len() && runes[i] != '>' {
+      out.push(runes[i])
+      i += 1
+    }
+    if i >= runes.len() { return None }
+    return Some((out.join(""), i + 1))
+  }
+  for i < runes.len() && runes[i].is_ascii_alpha() {
+    out.push(runes[i])
+    i += 1
+  }
+  if out.len() < 3 { return None }
+  Some((out.join(""), i))
+}
+
+/// An offset, in seconds **west** as POSIX writes them: `5`, `5:30`, `-4:30:00`.
+let scan_offset = pure (runes: []rune, at: i64) -> Maybe<(i64, i64)> => {
+  var i = at
+  var sign = 1
+  if i < runes.len() && (runes[i] == '+' || runes[i] == '-') {
+    if runes[i] == '-' { sign = 0 - 1 }
+    i += 1
+  }
+  let Some((hours_part, after_hours)) = scan_number(runes, i) else { return None }
+  var span = hours_part * 3600
+  i = after_hours
+  if i < runes.len() && runes[i] == ':' {
+    let Some((minutes_part, after_minutes)) = scan_number(
+      runes,
+      i + 1
+    ) else { return None }
+    span += minutes_part * 60
+    i = after_minutes
+    if i < runes.len() && runes[i] == ':' {
+      let Some((seconds_part, after_seconds)) = scan_number(
+        runes,
+        i + 1
+      ) else { return None }
+      span += seconds_part
+      i = after_seconds
+    }
+  }
+  Some((sign * span, i))
+}
+
+/// One of the three rule spellings, with the time of day POSIX defaults to 02:00.
+let scan_rule = pure (runes: []rune, at: i64) -> Maybe<(PosixRule, i64)> => {
+  if at >= runes.len() { return None }
+  var i = at
+  var rule = PosixRule {
+    kind: 2,
+    month: 0,
+    week: 0,
+    weekday: 0,
+    ordinal: 0,
+    at_second: 7200
+  }
+  if runes[i] == 'M' {
+    let Some((month, after_month)) = scan_number(runes, i + 1) else { return None }
+    if after_month >= runes.len() || runes[after_month] != '.' { return None }
+    let Some((week, after_week)) = scan_number(
+      runes,
+      after_month + 1
+    ) else { return None }
+    if after_week >= runes.len() || runes[after_week] != '.' { return None }
+    let Some((weekday, after_weekday)) = scan_number(
+      runes,
+      after_week + 1
+    ) else { return None }
+    rule = PosixRule { rule | kind: 0, month: month, week: week, weekday: weekday }
+    i = after_weekday
+  } else if runes[i] == 'J' {
+    let Some((ordinal, after_ordinal)) = scan_number(runes, i + 1) else { return None }
+    rule = PosixRule { rule | kind: 1, ordinal: ordinal }
+    i = after_ordinal
+  } else {
+    let Some((ordinal, after_ordinal)) = scan_number(runes, i) else { return None }
+    rule = PosixRule { rule | kind: 2, ordinal: ordinal }
+    i = after_ordinal
+  }
+  if i < runes.len() && runes[i] == '/' {
+    let Some((into_day, after_time)) = scan_offset(runes, i + 1) else { return None }
+    return Some((PosixRule { rule | at_second: into_day }, after_time))
+  }
+  Some((rule, i))
+}
+
+/// A run of digits.
+let scan_number = pure (runes: []rune, at: i64) -> Maybe<(i64, i64)> => {
+  var i = at
+  var value = 0
+  for i < runes.len() && runes[i].is_ascii_digit() {
+    value = value * 10 + (i64(runes[i]) - 48)
+    i += 1
+  }
+  if i == at { return None }
+  Some((value, i))
+}

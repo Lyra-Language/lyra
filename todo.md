@@ -121,8 +121,10 @@ Package management, versioning and separate compilation are out of scope by deci
   zones. Next: the POSIX footer rule for instants past the table's end (~2037), and then
   the recurring-schedule tool the whole thing was for. **That tool landed 09/22**
   (`examples/schedule/when.lyra`) and the design held: it needed nothing that was not
-  already there. What is left is the POSIX footer rule for instants past the table's end
-  (~2037), which a schedule projecting a decade ahead would reach.
+  already there. **The POSIX footer landed the same day**, so an instant past the table's
+  end (~2037) follows the zone's stated rule rather than freezing at the last offset —
+  checked against Go at every transition to 2100. What is left for zones: leap seconds
+  (the records are skipped), and `TZDIR`, which needs `std.env`.
 
 - **[OPEN] An unimported type is refused in a signature and accepted in a struct field.**
   `struct Holder { at: PlainTime }` compiles and runs without importing `PlainTime`, while

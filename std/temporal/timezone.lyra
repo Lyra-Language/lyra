@@ -9,11 +9,10 @@ module std.temporal
 //! this reads them. Setting `TZ` and calling libc would also be process-global, which is
 //! not a thing a library may do to its caller.
 //!
-//! **Slice one of the zone work**: a zone's transitions, and the offset in effect at an
-//! instant. `Instant` and `ZonedDateTime` come next, and the disambiguation rules after
-//! them; the footer rule (`EST5EDT,M3.2.0,M11.1.0`) that extends a zone past the last
-//! transition in its table — about 2037 — is not read yet, so an instant beyond it takes
-//! the last recorded offset.
+//! **A table has an end, and the rule after it does not.** A file lists transitions to
+//! about 2037 and then stops; what follows is the POSIX footer (`EST5EDT,M3.2.0,M11.1.0`),
+//! which says what the zone will keep doing. Both are read here: the table for instants it
+//! covers, the footer for everything after (posix_tz.lyra).
 //!
 //! **POSIX only**, the line `std.path` already draws: there is no `/usr/share/zoneinfo` on
 //! Windows, and no way to ask in Lyra source which system this is being compiled for.
@@ -38,6 +37,9 @@ pub struct TimeZone {
   types: []ZoneType,
   /// The rule in effect before the first transition.
   initial: i64,
+  /// What the zone does *after* its table ends, from the file's POSIX footer — `None`
+  /// for a version 1 file, which has none, or a footer this does not read.
+  after: Maybe<PosixZone>,
 }
 
 /// One rule: an offset from UTC, whether it is the zone's daylight rule, and what a clock
@@ -64,15 +66,33 @@ pub let load_time_zone = (name: string) -> Maybe<TimeZone> => {
 
 /// The offset from UTC, in seconds east, that `self` was using at `epoch_second`.
 pub let offset_at = pure (self: TimeZone, epoch_second: i64) -> i64 =>
-  self.types[self.type_at(epoch_second)].offset
+  self.rule_at(epoch_second).offset
 
 /// What a clock in `self` was called at `epoch_second` — `EST`, `EDT`, `+0530`.
 pub let abbreviation_at = pure (self: TimeZone, epoch_second: i64) -> string =>
-  self.types[self.type_at(epoch_second)].abbreviation
+  self.rule_at(epoch_second).abbreviation
 
 /// Whether `self` was on its daylight rule at `epoch_second`.
 pub let is_dst_at = pure (self: TimeZone, epoch_second: i64) -> bool =>
-  self.types[self.type_at(epoch_second)].is_dst
+  self.rule_at(epoch_second).is_dst
+
+/// The rule in effect at `epoch_second`: from the table while it reaches, and from the
+/// footer after it stops.
+///
+/// **The footer governs from the last transition on**, which is RFC 8536's rule and not an
+/// approximation of it: the table's final entry is the last change the file was willing to
+/// write down, and everything after it belongs to the sentence at the end of the file.
+let rule_at = pure (self: TimeZone, epoch_second: i64) -> ZoneType => {
+  let covered = self.transitions.len() > 0 &&
+    epoch_second < self.transitions[self.transitions.len() - 1]
+  if !covered {
+    match self.after {
+      Some(rule) => return posix_type(rule, epoch_second),
+      None => {},
+    }
+  }
+  self.types[self.type_at(epoch_second)]
+}
 
 /// The instant of the first transition at or after `epoch_second`, or `None` when the
 /// zone's table has none — which is either a zone that never changes or one whose table
@@ -81,7 +101,12 @@ pub let next_transition = pure (self: TimeZone, epoch_second: i64) -> Maybe<i64>
   for at in self.transitions {
     if at >= epoch_second { return Some(at) }
   }
-  None
+  // Past the table, the footer still knows: its two rules fire every year, so the answer
+  // is the earlier of this year's remaining ones or the first of next year's.
+  match self.after {
+    Some(rule) => posix_next_transition(rule, epoch_second),
+    None => None,
+  }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -157,7 +182,35 @@ let parse_tzif = pure (name: string, data: []u8) -> Maybe<TimeZone> => {
     indices: indices,
     types: types,
     initial: first_standard_type(types),
+    after: read_footer(data, chars_at + head.charcnt, width),
   })
+}
+
+/// The POSIX rule a version 2+ file ends with, or `None`.
+///
+/// It sits after the whole second data block, wrapped in newlines. The leap-second,
+/// standard/wall and UT/local records between here and there are skipped rather than read:
+/// nothing in this module asks a question they answer.
+let read_footer = pure (
+  data: []u8,
+  after_designations: i64,
+  width: i64
+) -> Maybe<PosixZone> => {
+  if width != 8 { return None }
+  var at = after_designations
+  // Past the leap records and the two flag arrays, whose sizes the header gave.
+  if at >= data.len() { return None }
+  var i = at
+  for i < data.len() && data[i] != 10 { i += 1 }
+  if i >= data.len() { return None }
+  var out: []u8 = []
+  var j = i + 1
+  for j < data.len() && data[j] != 10 {
+    out.push(data[j])
+    j += 1
+  }
+  if out.len() == 0 { return None }
+  parse_posix_tz(out.decode_utf8())
 }
 
 /// A TZif header's counts, and the version byte that says how many blocks follow.
