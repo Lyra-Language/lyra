@@ -170,3 +170,105 @@ func TestExample_SiteRendersATree(t *testing.T) {
 		t.Errorf("intro.html was not rendered by the shared renderer:\n%s", page)
 	}
 }
+
+// **A link to a directory is a link to the page that stands for it**, the way a reader's
+// browser resolves it — and the shape the checker used to skip. `retarget` tested for
+// `.md` and returned everything else untouched, so `../guide/` was neither rewritten nor
+// reported, and `nowhere/` passed a check whose entire job is to catch it. Silence on the
+// one link that goes nowhere is worse than the false report todo.md recorded here.
+//
+// Two things had to move with it. The **author's own `index.md` now wins** over the
+// generated listing: both land on `index.html`, the listing was written last, and a page
+// that cannot survive being written is one `../` can never resolve to. And an asset keeps
+// its **executable bit** (`std.io.is_executable`, over `access`), so a copied script still
+// runs — the rest of the mode still does not travel, for the `stat` reason `std.io` gives.
+func TestExample_SiteResolvesDirectoryLinks(t *testing.T) {
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	bin := filepath.Join(t.TempDir(), "site")
+	if _, stderr, code := captureRun(t, "build", "-o", bin,
+		filepath.Join(root, "examples", "lyra-md", "site.lyra")); code != 0 {
+		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
+	}
+
+	source := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "guide"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"index.md":                         "# Home\n\nThe [guide](guide/), and [nothing](nowhere/).\n",
+		filepath.Join("guide", "index.md"): "# Guide\n\nBack [home](..).\n",
+		// Every directory spelling that can only be a directory, plus the two that must
+		// stay untouched: a bare `guide` is equally an extensionless file, and `.md`
+		// still resolves the old way.
+		filepath.Join("guide", "deep.md"): "# Deep\n\n[here](.), [up](..), " +
+			"[anchored](./#top), [sibling](../guide/), [named](index.md), " +
+			"[bare](guide), [other](https://example.com/g/).\n",
+	} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := "#!/bin/sh\necho built\n"
+	if err := os.WriteFile(filepath.Join(source, "run.sh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "style.css"), []byte("body{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(t.TempDir(), "out")
+	stdout, err := exec.Command(bin, source, out, "--title", "Lyra Docs").CombinedOutput()
+	// One broken link and one only: `nowhere/` names a directory with no index page.
+	if err == nil {
+		t.Errorf("a directory link that goes nowhere exited 0:\n%s", stdout)
+	}
+	if !strings.Contains(string(stdout), "index.md: nowhere/ has no index page") {
+		t.Errorf("the missing index was not reported:\n%s", stdout)
+	}
+	if n := strings.Count(string(stdout), "site: index.md:") + strings.Count(string(stdout), "site: guide/"); n != 1 {
+		t.Errorf("want exactly one broken link reported, got %d:\n%s", n, stdout)
+	}
+
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(out, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	deep := read(filepath.Join("guide", "deep.html"))
+	for _, want := range []string{
+		`href="./index.html"`,           // `.` — this directory's index
+		`href="../index.html"`,          // `..` — the parent's
+		`href="./index.html#top"`,       // the fragment survives the rewrite
+		`href="../guide/index.html"`,    // a named directory, trailing slash
+		`href="index.html"`,             // a `.md` still resolves the old way
+		`href="guide"`,                  // no trailing slash: a file, left alone
+		`href="https://example.com/g/"`, // another site's directory is not ours
+	} {
+		if !strings.Contains(deep, want) {
+			t.Errorf("guide/deep.html has no %s:\n%s", want, deep)
+		}
+	}
+	// A directory that goes nowhere is left as written, like any broken link: the author
+	// needs to see what they meant.
+	if home := read("index.html"); !strings.Contains(home, `href="nowhere/"`) {
+		t.Errorf("the broken directory link was rewritten anyway:\n%s", home)
+	} else if !strings.Contains(home, "<title>Home — Lyra Docs</title>") {
+		// The author's page, not the generated listing, which would be `<title>Lyra Docs`.
+		t.Errorf("the generated index overwrote the author's own:\n%s", home)
+	}
+
+	// The executable bit travels; the rest of the mode is 0644 either way.
+	for name, wantExec := range map[string]bool{"run.sh": true, "style.css": false} {
+		info, err := os.Stat(filepath.Join(out, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotExec := info.Mode()&0o100 != 0; gotExec != wantExec {
+			t.Errorf("%s copied with mode %v, want executable=%v", name, info.Mode(), wantExec)
+		}
+	}
+}

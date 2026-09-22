@@ -49,7 +49,14 @@ let main = () -> u8 => {
   for asset in assets {
     if !copy_asset(source, out, asset) { failures += 1 }
   }
-  if !write_index(source, out, pages, title) { failures += 1 }
+  // **The author's own index wins.** A generated listing is what a site gets when nobody
+  // wrote a front page; writing it anyway put the one file nobody asked for on top of the
+  // one they did, silently, since both land on `index.html`. It also made a link to the
+  // site root uncheckable: `../` resolves to the root's `index.md`, and that page could
+  // not be made to survive.
+  if !known.contains("index.md") {
+    if !write_index(source, out, pages, title) { failures += 1 }
+  }
   for report in broken { println("site: ${report}") }
   println("site: ${pages.len()} page(s), ${assets.len()} asset(s) into ${out}, " ++
       "${broken.len()} broken link(s)")
@@ -150,6 +157,8 @@ let copy_asset = (source: string, out: string, asset: string) -> bool => {
 }
 
 /// The index: a link to every page, in the order they were found.
+///
+/// Written only when the source has no `index.md` of its own — see the call.
 let write_index = (
   source: string,
   out: string,
@@ -223,17 +232,44 @@ let retarget = pure (
   let hash = url.index("#").unwrap_or(url.len())
   let target = url.slice(0, hash)
   let anchor = url.slice(hash, url.len())
-  if !target.ends_with(".md") { return (url, None) }
   // Resolved from the page's own directory, since that is where the author was writing.
   let dir = match page.parent() {
     Some(d) => d,
     None => "",
   }
+  // A link to a directory is a link to the page that stands for it, the way a reader's
+  // browser would resolve it. Silence was the old answer and the wrong one: `../guide/`
+  // and `nowhere/` were both left alone and neither was reported, so the one link a
+  // checker exists to catch was the one shape it skipped.
+  if target.is_directory_link() {
+    let index_page = target.directory_index()
+    if !known.contains(dir.join(index_page).normalize()) {
+      return (url, Some("${page}: ${url} has no index page"))
+    }
+    return (index_page.with_extension("html") ++ anchor, None)
+  }
+  if !target.ends_with(".md") { return (url, None) }
   if !known.contains(dir.join(target).normalize()) {
     return (url, Some("${page}: ${url} goes nowhere"))
   }
   (target.with_extension("html") ++ anchor, None)
 }
+
+/// Whether a link names a directory rather than a file.
+///
+/// **A trailing slash, or `.`/`..` exactly** — the spellings that can only be a directory.
+/// A bare `guide` is left alone deliberately: it is equally an extensionless file, and a
+/// checker that guessed would report the author's `LICENSE` link as a missing index.
+let is_directory_link = pure (self: string) -> bool =>
+  self.ends_with("/") || self == "." || self == ".."
+
+/// The source page a directory link resolves to: its `index.md`.
+///
+/// Spelled by appending rather than by `join`, so the link keeps the shape the author
+/// wrote — `../` stays relative, and `.` becomes `./index.md` rather than being
+/// normalized away to a path the reader's browser would resolve from elsewhere.
+let directory_index = pure (self: string) -> string =>
+  if self.ends_with("/") { self ++ "index.md" } else { self ++ "/index.md" }
 
 /// Whether a link points inside the site: no scheme, no host, and not an anchor on the
 /// page itself. A root-relative link is somebody else's business — it depends on where the

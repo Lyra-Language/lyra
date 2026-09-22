@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the link shape the checker skipped, and the bit a copy dropped
+
+Two "next for it" items on the site builder, and the first was recorded backwards. todo.md
+said a link to `../guide/` was *reported as broken*; it was neither reported nor rewritten.
+`retarget` tested `ends_with(".md")` and returned everything else untouched, so `nowhere/`
+passed a check that exists to catch exactly that. Reproducing the marker before believing
+it is the standing rule here, and this is the second time this month it paid.
+
+A directory link now resolves to that directory's `index.md` and is reported when there is
+none. The shapes admitted are a trailing slash and `.`/`..` exactly — a bare `guide` is
+left alone deliberately, being equally an extensionless file, and a checker guessing there
+would report an author's `LICENSE` link as a missing index. The index path is built by
+appending rather than by `join`, so `../` stays relative and `.` becomes `./index.html`
+instead of a normalized path the reader's browser would resolve from somewhere else.
+
+That forced a third change. A link to the site root resolves to the root's `index.md`, and
+that page could not be made to survive: the generated listing and the author's page both
+land on `index.html`, and the listing was written last. So the author's own index now wins,
+and the listing is what a site gets when nobody wrote a front page. It was always a bug —
+the one file nobody asked for, silently on top of the one they did — but it was invisible
+until a link had to resolve to it.
+
+The executable bit travels through `access`, not `stat`. Reading a mode means `stat`, whose
+`st_mode` offset differs by platform *and* architecture, which `std.io` cannot write for
+the same reason it cannot write `dirent`'s — and unlike `dirent` there is a struct-free
+call that answers the one question a copy asks. `access(path, X_OK)` answers about this
+process rather than about the file, which for a build copying files it owns is the same
+answer, and is documented as the narrower claim it is. It is the trade `is_symlink` already
+makes with `readlink` into a one-byte buffer, which is why both are Lyra here rather than
+builtins. The rest of the mode still does not travel; carrying it wants a `stat` builtin,
+and that is a decision about the FFI boundary rather than a gap in this program.
+
 ### 09/22/26 — the import list breaks a tie, it does not gate the call
 
 Left over from the privacy fix earlier today: should `args.value(…)` require `value` in the

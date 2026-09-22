@@ -93,12 +93,17 @@ Package management, versioning and separate compilation are out of scope by deci
   `strip_prefix` and `strip_suffix` to the prelude; **spans added nothing**, and the
   string builder and `replace` this entry predicted were both unnecessary (COMPLETED.md).
   **The site pass landed 09/21** and forced exactly what this entry predicted: `std.path`
-  (`child`, `parent`, `base`, `stem`, `extension`, `with_extension`, `normalize`),
+  (`join`, `parent`, `base`, `stem`, `extension`, `with_extension`, `normalize`),
   `last_index` in the prelude, `std.io.create_dir_all`, and a `Set` for the link check.
   **Assets landed 09/21** — everything that is not a page is copied where it stands, byte
-  for byte through `std.io.copy_file`. Next for it: a link to a *directory* (`../guide/`)
-  is reported as broken rather than resolved to its index, and a page's mode is not copied
-  with it (`stat` is a struct this module cannot write).
+  for byte through `std.io.copy_file`. **Directory links and the executable bit landed
+  09/22**: `../guide/` resolves to that directory's `index.md` and is reported when there
+  is none (it was silently *skipped* before, not reported broken as this entry claimed),
+  an author's own `index.md` now survives the generated listing, and `copy_file` carries
+  the executable bit through `std.io.is_executable`. The rest of the mode still does not
+  travel: reading it means `stat`, whose `st_mode` offset differs by platform and
+  architecture, so it wants a builtin like `dir_names` rather than a wider guess in
+  `std.io`.
   - The ~90× slowdown this entry recorded on 09/17 was **`split` being quadratic**, not
     anything in the renderer; profiled, fixed the same day, and the renderer went from
     1081 ms to 18 ms over 200 KB (COMPLETED.md).
