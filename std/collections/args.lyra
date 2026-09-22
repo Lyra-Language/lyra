@@ -46,8 +46,24 @@ pub let parse_args = (valued: []string) -> ProgramArgs => {
     positional: [],
   }
   var i = 1
+  var only_operands = false
   for i < args.len() {
     let arg = args[i]
+    // **`--` ends the flags**, and everything after it is an operand however it begins —
+    // POSIX's tenth utility guideline, and the only way to name a file called `-x` or to
+    // pass a negative number. Without it `-2208988800` was read as a switch and vanished
+    // from `positional`, which is how this came to be written (09/22). The `--` itself is
+    // not an operand.
+    if only_operands {
+      parsed.positional.push(arg)
+      i += 1
+      continue
+    }
+    if arg == "--" {
+      only_operands = true
+      i += 1
+      continue
+    }
     // A bare `-` is **standard input**, by the convention every Unix tool keeps, so it is
     // an operand and not a flag — `cat -`, `lyrafmt -`. Reading it as a switch is what a
     // leading-dash test does on its own, and it makes the one spelling for "the input is

@@ -113,8 +113,18 @@ Package management, versioning and separate compilation are out of scope by deci
   offset, in a TUI reading an ISO 8601 events file; `PlainTime` and `Duration` arithmetic
   09/19. Next, if the calendar grows: a default events file (which forces environment
   variables — `std` has none) and editing.
-  `ZonedDateTime` and zone rules stay out until a date has to cross a DST change.
+  **Zone rules landed 09/22** (slice one): `TimeZone` over the system's IANA database, with
+  the offset, abbreviation and daylight-ness at an instant, checked against Go's `time` at
+  ±1s around every transition 1965–2035 in nine zones. Next: `Instant` and `ZonedDateTime`,
+  then the **disambiguation** rules (a local time that does not exist, or happens twice),
+  then the POSIX footer rule for instants past the table's end (~2037). The app meant to
+  drive those is a recurring-schedule tool, which cannot be written without them.
 
+- **[OPEN] `std` cannot read an environment variable.** `std.temporal` hardcodes
+  `/usr/share/zoneinfo` because there is no way to consult `TZDIR`, and the calendar still
+  has no way to find `$HOME`. One `getenv` extern and a `std.env` would answer both.
+- **[IDEA] Big-endian byte reads want a home.** The TZif parser has private `read_int` over
+  `[]u8`; a second binary format would copy it. `std.bytes` when there is one.
 - **[OPEN] A `mut` parameter that is not the receiver is not an effect.** A function
   writing through one is inferred `pure`, and accepts the annotation: `EffectMut` covers a
   mutated *receiver* only. Found writing `examples/lyra-md/site.lyra`, whose link checker

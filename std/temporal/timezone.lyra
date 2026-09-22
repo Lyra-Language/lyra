@@ -1,0 +1,230 @@
+module std.temporal
+//! Time zones, read from the system's IANA database — the rules that turn an instant into
+//! a local time and back.
+//!
+//! **The files, not `localtime_r`.** libc can tell you what a zone is doing *now*, and
+//! that is all: it cannot say when the next transition is, whether a local time exists, or
+//! whether it happens twice — the three questions Temporal's `ZonedDateTime` is built on.
+//! The answers are in `/usr/share/zoneinfo`, in the binary format RFC 8536 specifies, and
+//! this reads them. Setting `TZ` and calling libc would also be process-global, which is
+//! not a thing a library may do to its caller.
+//!
+//! **Slice one of the zone work**: a zone's transitions, and the offset in effect at an
+//! instant. `Instant` and `ZonedDateTime` come next, and the disambiguation rules after
+//! them; the footer rule (`EST5EDT,M3.2.0,M11.1.0`) that extends a zone past the last
+//! transition in its table — about 2037 — is not read yet, so an instant beyond it takes
+//! the last recorded offset.
+//!
+//! **POSIX only**, the line `std.path` already draws: there is no `/usr/share/zoneinfo` on
+//! Windows, and no way to ask in Lyra source which system this is being compiled for.
+//!
+//! ```
+//! let Some(zone) = load_time_zone("America/New_York") else { return }
+//! println("${zone.offset_at(1773000000)} ${zone.abbreviation_at(1773000000)}")
+//! ```
+
+import std.io.{ read_bytes }
+import std.path.{ join }
+
+/// A zone's rules: when it changed, and what it changed to.
+pub struct TimeZone {
+  /// The IANA name it was loaded under, `America/New_York`.
+  name: string,
+  /// The instants, in epoch seconds and ascending, at which a rule takes effect.
+  transitions: []i64,
+  /// For each transition, the index into `types` of the rule it begins.
+  indices: []i64,
+  /// The distinct rules this zone has ever used.
+  types: []ZoneType,
+  /// The rule in effect before the first transition.
+  initial: i64,
+}
+
+/// One rule: an offset from UTC, whether it is the zone's daylight rule, and what a clock
+/// showing it is called.
+pub struct ZoneType {
+  /// Seconds **east** of UTC, so New York in winter is -18000.
+  offset: i64,
+  is_dst: bool,
+  /// The abbreviation, `EST` or `EDT`. Not unique across zones, and not parseable back
+  /// into one — two zones' `CST` are different offsets.
+  abbreviation: string,
+}
+
+/// The zone the system knows by `name`, or `None` when it has no such zone.
+///
+/// **The name is a path component, and is checked like one.** It reaches the filesystem,
+/// so `..` and a leading `/` are refused rather than joined: a caller passing along
+/// something a user typed should not be able to read `/etc/passwd` by calling it a zone.
+pub let load_time_zone = (name: string) -> Maybe<TimeZone> => {
+  if !names_a_zone(name) { return None }
+  let Some(data) = read_bytes(ZONEINFO_DIR.join(name)) else { return None }
+  parse_tzif(name, data)
+}
+
+/// The offset from UTC, in seconds east, that `self` was using at `epoch_second`.
+pub let offset_at = pure (self: TimeZone, epoch_second: i64) -> i64 =>
+  self.types[self.type_at(epoch_second)].offset
+
+/// What a clock in `self` was called at `epoch_second` — `EST`, `EDT`, `+0530`.
+pub let abbreviation_at = pure (self: TimeZone, epoch_second: i64) -> string =>
+  self.types[self.type_at(epoch_second)].abbreviation
+
+/// Whether `self` was on its daylight rule at `epoch_second`.
+pub let is_dst_at = pure (self: TimeZone, epoch_second: i64) -> bool =>
+  self.types[self.type_at(epoch_second)].is_dst
+
+/// The instant of the first transition at or after `epoch_second`, or `None` when the
+/// zone's table has none — which is either a zone that never changes or one whose table
+/// has run out (the footer rule is not read yet).
+pub let next_transition = pure (self: TimeZone, epoch_second: i64) -> Maybe<i64> => {
+  for at in self.transitions {
+    if at >= epoch_second { return Some(at) }
+  }
+  None
+}
+
+// ---------------------------------------------------------------------------------------
+
+/// Where the system keeps the database. A `const` rather than a lookup of `TZDIR`, since
+/// `std` has no way to read an environment variable yet (todo.md).
+const ZONEINFO_DIR = "/usr/share/zoneinfo"
+
+/// Whether `name` is a zone name rather than a way out of the database's directory.
+let names_a_zone = pure (name: string) -> bool =>
+  name.len() > 0 && !name.starts_with("/") && !name.contains("..")
+
+/// The index into `types` of the rule in effect at `epoch_second`.
+///
+/// A binary search for the last transition at or before the instant: a zone has a few
+/// hundred of them, and this is asked once per conversion.
+let type_at = pure (self: TimeZone, epoch_second: i64) -> i64 => {
+  if self.transitions.len() == 0 || epoch_second < self.transitions[0] { return self.initial }
+  var low = 0
+  var high = self.transitions.len() - 1
+  for low < high {
+    let mid = (low + high + 1) / 2
+    if self.transitions[mid] <= epoch_second { low = mid } else { high = mid - 1 }
+  }
+  self.indices[low]
+}
+
+/// The zone described by `data`, or `None` when it is not a TZif file this understands.
+///
+/// **The 64-bit block is the one read.** A version 2 or later file carries the whole zone
+/// twice — once with 32-bit transition times, for readers older than 1996, and again with
+/// 64-bit ones — and the first copy cannot represent a transition past 2038. So the v1
+/// block is measured only to know where to skip to, and everything below is read from the
+/// second header on. A version 1 file has no second copy and is read where it stands.
+let parse_tzif = pure (name: string, data: []u8) -> Maybe<TimeZone> => {
+  let Some(first) = read_header(data, 0) else { return None }
+  var head = first
+  var at = 44
+  var width = 4
+  if first.version >= 50 {
+    // '2' is 50: the second header sits past the first block, and its times are 8 bytes.
+    let Some(second) = read_header(data, 44 + block_size(first, 4)) else { return None }
+    head = second
+    at = 44 + block_size(first, 4) + 44
+    width = 8
+  }
+  if at + block_size(head, width) > data.len() { return None }
+
+  var transitions: []i64 = []
+  for i in 0..<head.timecnt {
+    transitions.push(read_int(data, at + i * width, width))
+  }
+  at += head.timecnt * width
+  var indices: []i64 = []
+  for i in 0..<head.timecnt { indices.push(i64(data[at + i])) }
+  at += head.timecnt
+
+  let types_at = at
+  let chars_at = at + head.typecnt * 6
+  var types: []ZoneType = []
+  for i in 0..<head.typecnt {
+    let base = types_at + i * 6
+    types.push(ZoneType {
+      offset: read_int(data, base, 4),
+      is_dst: data[base + 4] != 0,
+      abbreviation: read_designation(data, chars_at + i64(data[base + 5]), chars_at + head.charcnt),
+    })
+  }
+  if types.len() == 0 { return None }
+  Some(TimeZone {
+    name: name,
+    transitions: transitions,
+    indices: indices,
+    types: types,
+    initial: first_standard_type(types),
+  })
+}
+
+/// A TZif header's counts, and the version byte that says how many blocks follow.
+struct Header {
+  version: i64,
+  isutcnt: i64,
+  isstdcnt: i64,
+  leapcnt: i64,
+  timecnt: i64,
+  typecnt: i64,
+  charcnt: i64,
+}
+
+/// The header at `at`, or `None` when the magic is not `TZif`.
+let read_header = pure (data: []u8, at: i64) -> Maybe<Header> => {
+  if at + 44 > data.len() { return None }
+  if data[at] != 84 || data[at + 1] != 90 || data[at + 2] != 105 || data[at + 3] != 102 {
+    return None
+  }
+  Some(Header {
+    version: i64(data[at + 4]),
+    isutcnt: read_int(data, at + 20, 4),
+    isstdcnt: read_int(data, at + 24, 4),
+    leapcnt: read_int(data, at + 28, 4),
+    timecnt: read_int(data, at + 32, 4),
+    typecnt: read_int(data, at + 36, 4),
+    charcnt: read_int(data, at + 40, 4),
+  })
+}
+
+/// How many bytes a data block occupies, given the width of a transition time. The leap
+/// records carry a time of that width and a 32-bit count beside it.
+let block_size = pure (head: Header, width: i64) -> i64 =>
+  head.timecnt * width + head.timecnt + head.typecnt * 6 + head.charcnt +
+  head.leapcnt * (width + 4) + head.isstdcnt + head.isutcnt
+
+/// The big-endian signed integer of `width` bytes at `at`.
+///
+/// **Sign-extended by hand**, since the bytes are assembled into an `i64` and a four-byte
+/// negative offset would otherwise read as a large positive one: New York's -18000 arrives
+/// as 0xFFFFB9B0, which is 4294949296 until the high bit is given its meaning.
+let read_int = pure (data: []u8, at: i64, width: i64) -> i64 => {
+  var value = 0
+  for i in 0..<width { value = (value << 8) | i64(data[at + i]) }
+  if width == 8 { return value }
+  let sign_bit = 1 << (width * 8 - 1)
+  if value >= sign_bit { value - sign_bit * 2 } else { value }
+}
+
+/// The NUL-terminated abbreviation beginning at `at`.
+let read_designation = pure (data: []u8, at: i64, end: i64) -> string => {
+  var out: []u8 = []
+  var i = at
+  for i < end && data[i] != 0 {
+    out.push(data[i])
+    i += 1
+  }
+  out.decode_utf8()
+}
+
+/// The rule in effect before a zone's first transition: the first that is not a daylight
+/// rule, and the first of all when every one of them is. That is RFC 8536's advice, and
+/// the reason it is not simply type 0 is a zone whose earliest record happens to be a
+/// summer one.
+let first_standard_type = pure (types: []ZoneType) -> i64 => {
+  for i in 0..<types.len() {
+    if !types[i].is_dst { return i }
+  }
+  0
+}

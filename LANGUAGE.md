@@ -327,7 +327,8 @@ by slice against `examples/calendar`; what exists is what that program has neede
   `compare_durations(a, b) -> Maybe<Ordering>` — a function, not `Ord`, since the order is
   partial; field-identical durations are `Equal` even with calendar units.
   `total(unit: TimeUnit) -> Maybe<f64>`, `TimeUnit` being `Days` down to `Nanoseconds`.
-- Not built: `Instant`, `ZonedDateTime` and zone rules, a `reject` overflow on arithmetic,
+- **`TimeZone`** — a zone's rules, read from the system's IANA database (`/usr/share/zoneinfo`, RFC 8536), not from libc: `load_time_zone(name)`, `offset_at`, `abbreviation_at`, `is_dst_at`, `next_transition`, all in epoch seconds. The **64-bit block** is the one read, so a transition past 2038 survives; the footer rule (`EST5EDT,M3.2.0,M11.1.0`) that extends a zone past its last transition is not read yet, so an instant beyond the table takes the last recorded offset. POSIX only, as `std.path` is. A name reaching the filesystem is checked: `..` and a leading `/` are refused.
+- Not built: `Instant`, `ZonedDateTime` and the disambiguation rules, a `reject` overflow on arithmetic,
   rounding, sub-second accessors, and month and weekday **names** (Temporal leaves those to
   `Intl`; the calendar holds its own).
 

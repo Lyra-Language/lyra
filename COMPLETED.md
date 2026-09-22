@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — time zones, read from the database rather than asked of libc
+
+Slice one of the zone work: `std.temporal.TimeZone` parses the system's IANA files (RFC
+8536) and answers the offset, abbreviation and daylight-ness at an instant, plus the next
+transition.
+
+**The files, not `localtime_r`.** libc can say what a zone is doing *now* and nothing else —
+not when it next changes, not whether a local time exists, not whether it happens twice —
+and those three are what `ZonedDateTime` is made of. Setting `TZ` around a call would also
+be process-global, which is not a thing a library may do to its caller.
+
+- **The 64-bit block is the one read.** A version 2+ file carries the zone twice, once with
+  32-bit times for readers older than 1996; the first copy cannot represent a transition
+  past 2038, so the v1 block is measured only to know what to skip.
+- **Sign extension by hand**: New York's −18000 arrives as `0xFFFFB9B0`, which is
+  4294949296 until the high bit is given its meaning.
+- **The name is a path component and is checked like one** — `..` and a leading `/` refused,
+  since a caller may be passing along something a user typed.
+
+**`parse_args` grew `--` on the way.** The probe passes negative instants, and a leading `-`
+made them switches: they vanished from `positional` with no error. POSIX's tenth guideline
+is the fix, and it was simply missing.
+
+**The lesson is about the test, not the code.** The first version sampled transitions by
+bisecting between a date and two years later — and a zone is usually in the *same season*
+two years on, so the offsets matched, the scan concluded "no transitions", and every zone
+was compared at five round numbers. It passed. Planting an off-by-one in the binary search
+still passed it, which is how the hole was found: **a must-fire check tests the test.** A
+predicate that is not monotone cannot be bisected; walking days and bisecting *within* the
+day that changes is sound, and now the same off-by-one fails 556 comparisons and reading
+the 32-bit block fails 5.
+
 ### 09/21/26 — two modules' private consts were one slot, and the crash was the lucky part
 
 A `const []rune` in the prelude, indexed from `to_hex`, crashed the backend on any program
