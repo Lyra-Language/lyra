@@ -58,11 +58,10 @@ Package management, versioning and separate compilation are out of scope by deci
   and a `=>` inside a `(`, which belongs to a lambda passed as an argument. What is left after that is the bootstrap proper, which starts
   with the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
 
-- **[OPEN] Should a method call require the method's name in the import?** Today
-  `import std.collections.{ parse_args }` is enough to write `args.value(…)`: the module
-  must be imported and the function `pub`, but the import list is not consulted. Requiring
-  the name would be the bare-name rule applied to methods — Rust's trait-import rule — and
-  would touch nearly every file here. (LANGUAGE.md §6; the privacy half was fixed 09/22.)
+- **[DECIDED] A method call does not require the method's name in the import; the list
+  breaks ties instead.** Gating was measured against this repo — 44 call sites, 13 files,
+  mostly accessors on types with no public fields — and rejected: it taxes what the lack of
+  field privacy forces and drags names like `day` into the bare scope. (COMPLETED.md, 09/22.)
 
 
 ## Language surface

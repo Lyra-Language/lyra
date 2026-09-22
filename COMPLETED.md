@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the import list breaks a tie, it does not gate the call
+
+Left over from the privacy fix earlier today: should `args.value(…)` require `value` in the
+import, the way a bare `value(args, …)` does? The strict rule is the tidier sentence — one
+rule for every name, and a file's imports list everything it uses — so it was worth
+measuring rather than arguing.
+
+Measured: 44 call sites across 13 files. Small enough to migrate, which is not the reason
+it was rejected. The names are: `year`, `month`, `day`, `hour`, `minute`, `field`, `value`,
+`has`. They are accessors, and they are methods because Lyra has no field privacy —
+`PlainDate` is a newtype over `i64`, so `d.day()` is the only spelling there can be. The
+rule would tax hardest exactly the pattern the language forces, and the tax compounds: each
+accessor also enters the file's bare-name scope, where `import std.temporal.{ day }` makes
+the natural `let day = d.day()` warn `lyra-W001`. The import that the call required breaks
+the line the call was for.
+
+It is also not Rust's rule, which is what the earlier note claimed. Rust imports a *trait*
+and the method names never bind; a name-gated UFCS binds every one of them. Two other
+things that note got wrong: "would touch every file in this repo" (13), and the implication
+that gating was the only alternative to doing nothing.
+
+The third option came out of asking what a reader would actually *try* on seeing the
+ambiguity error. They would import the one they meant — and that silently did nothing,
+because the list decided bare names and was never consulted for methods. So the list now
+**breaks** ties without **gating** calls: a local declaration wins first (unchanged), then
+an import naming exactly one candidate. Naming both leaves it ambiguous, since that is the
+file asking for both rather than an answer. Nothing that compiled before stops compiling —
+the rule only fires where the program was already refused.
+
+The message follows the same reasoning: it offers the import fix when the file names no
+candidate, and advises dropping one when it names two, rather than telling a reader to do
+what they have just done.
+
 ### 09/22/26 — a trait's bound is a promise, so stop re-deriving it
 
 "Impurity of an imported function" had stood as an unscoped todo item since 09/16. The

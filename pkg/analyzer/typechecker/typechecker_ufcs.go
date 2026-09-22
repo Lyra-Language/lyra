@@ -148,11 +148,21 @@ func (tc *TypeChecker) callViaUFCS(objType types.Type, methodName string, member
 // A candidate failing any of these is not an error here: the call falls through to "has no
 // method", whose hint names the near-miss (`ufcsHint`).
 //
-// **A local declaration wins a tie.** Two reachable candidates accepting one receiver is
-// otherwise ambiguous, and the module doing the asking is the one whose intent is least in
-// doubt — the same rule the scope chain applies everywhere else. A tie that survives that
-// is reported rather than broken arbitrarily, since the alternative is a call whose meaning
-// depends on which module the resolver happened to visit first.
+// **A local declaration wins a tie**, then **the import list breaks one**. Two reachable
+// candidates accepting one receiver is otherwise ambiguous, and the module doing the
+// asking is the one whose intent is least in doubt — the same rule the scope chain applies
+// everywhere else. Failing that, a file that wrote `import a.{ squish }` has said which
+// `squish` it means as plainly as it can, and that is the fix the ambiguity message asks
+// for; until 09/22 writing it changed nothing, because the list was consulted for bare
+// names and ignored here. A tie that survives both is reported rather than broken
+// arbitrarily, since the alternative is a call whose meaning depends on which module the
+// resolver happened to visit first.
+//
+// The list **breaks** ties and does not **gate** calls: leaving a method out of it is not
+// an error, so `import std.collections.{ parse_args }` still admits `args.value(…)`.
+// Gating was measured and rejected (todo.md, 09/22) — it costs an accessor-heavy API a
+// bare-name import per accessor, and names like `day` and `value` then shadow the locals
+// they are usually assigned to.
 func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, member *ast.MemberExpr, loc ast.Location) (*ast.LambdaExpr, ufcsResult) {
 	var matches []*ast.LambdaExpr
 	for _, fn := range tc.symTable.FunctionsNamed(methodName) {
@@ -176,9 +186,13 @@ func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, membe
 	if local := tc.localCandidate(matches, loc); local != nil {
 		return local, ufcsMatch
 	}
+	if named := tc.importedCandidate(methodName, matches, loc); named != nil {
+		return named, ufcsMatch
+	}
 	tc.addError(member.GetLocation(), SeverityError,
-		"%s.%s is ambiguous: %s each define a %s taking this receiver — name the one you mean through its module, e.g. `%s.%s(%s, …)`",
+		"%s.%s is ambiguous: %s each define a %s taking this receiver — %s, or name the one you mean through its module, e.g. `%s.%s(%s, …)`",
 		exprText(member.Object), methodName, tc.modulesOf(matches), methodName,
+		tc.importAdvice(methodName, matches, loc),
 		tc.namespaceHint(matches, loc), methodName, exprText(member.Object))
 	return nil, ufcsRefused
 }
@@ -217,6 +231,72 @@ func (tc *TypeChecker) localCandidate(matches []*ast.LambdaExpr, loc ast.Locatio
 		}
 		if found != nil {
 			return nil // two in one module: registration would have refused this
+		}
+		found = fn
+	}
+	return found
+}
+
+// importAdvice is the first half of the ambiguity message: the fix to reach for before
+// qualifying every call.
+//
+// It is only offered when the file names *none* of the candidates. Having named one, the
+// reader has already used the tiebreak and it did not settle this — they named two — so
+// advising the thing they did would read as the compiler not having looked.
+func (tc *TypeChecker) importAdvice(name string, matches []*ast.LambdaExpr, loc ast.Location) string {
+	var module string
+	for _, fn := range matches {
+		declared := tc.symTable.ModuleOfFile[fn.GetLocation().File]
+		for _, imp := range tc.symTable.ImportsFor(loc.File) {
+			if imp.Path != declared || imp.IsNamespace() {
+				continue
+			}
+			if _, listed := imp.Members[name]; listed {
+				return "drop the one you do not mean from its import"
+			}
+		}
+		// The prelude is reachable because nothing names it, so it cannot be the
+		// module to import from; any other candidate can.
+		if module == "" && declared != "" && declared != tc.symTable.PreludeModule {
+			module = declared
+		}
+	}
+	if module == "" {
+		return "name the one you mean through its module"
+	}
+	return fmt.Sprintf("import the one you mean by name (`import %s.{ %s }`)", module, name)
+}
+
+// importedCandidate returns the one candidate whose module this file imports *by this
+// name*, when exactly one is — the second tiebreak ufcsFunction describes.
+//
+// A namespace import names no members, so it picks nothing here: `import a` says which
+// module, not which function, and both candidates may be reachable through one. That is
+// also why this cannot be the reachability rule itself — see ufcsImportedIn.
+//
+// Two imports naming the same method from different modules is not resolved: the file has
+// asked for both, which is the ambiguity rather than an answer to it. It is already
+// lyra-W016 at the second import.
+func (tc *TypeChecker) importedCandidate(name string, matches []*ast.LambdaExpr, loc ast.Location) *ast.LambdaExpr {
+	imports := tc.symTable.ImportsFor(loc.File)
+	var found *ast.LambdaExpr
+	for _, fn := range matches {
+		module := tc.symTable.ModuleOfFile[fn.GetLocation().File]
+		named := false
+		for _, imp := range imports {
+			if imp.Path != module || imp.IsNamespace() {
+				continue
+			}
+			if _, listed := imp.Members[name]; listed {
+				named = true
+				break
+			}
+		}
+		if !named {
+			continue
+		}
+		if found != nil {
+			return nil
 		}
 		found = fn
 	}
@@ -309,11 +389,10 @@ func ufcsImportedIn(symTable *symbols.SymbolTable, name string, fn *ast.LambdaEx
 	// a `trim` that `lib` kept to itself, and that private function has no other spelling
 	// from here at all: it cannot be called, only collided with.
 	//
-	// **The import list is still not consulted beyond the module**, and that is a language
-	// decision rather than an oversight: requiring `value` in the list to write
-	// `args.value(…)` would be the bare-name rule applied to methods, which is Rust's
-	// trait-import rule and would touch every file in this repo. It is written down in
-	// todo.md as a question, not settled here by a bug fix.
+	// **The import list does not gate this**, decided 09/22 after measuring: requiring
+	// `value` in the list to write `args.value(…)` costs 44 call sites here, most of them
+	// accessors on types that cannot have public fields, and binds names like `day` in the
+	// bare scope. It breaks *ties* instead — see importedCandidate.
 	//
 	// The name comes from the call site, never from the lambda: a lambda's own GetName is
 	// not the name its binding gave it, the trap `instantiationDisc` documents.

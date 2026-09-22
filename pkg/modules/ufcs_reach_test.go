@@ -109,3 +109,89 @@ func hasErrorContaining(res *driver.Result, substring string) bool {
 	}
 	return false
 }
+
+// **The import list breaks a tie, but never gates the call.** Two modules exporting a
+// `squish` that takes a string leaves a call with two candidates and no way to choose;
+// naming one in the import is the plainest statement of which is meant, and it is the fix
+// the ambiguity message asks for. Until 09/22 writing it changed nothing — the list
+// decided bare names and was not consulted here — so the obvious fix silently failed.
+//
+// Gating was measured against this repo and rejected: requiring the name would cost 44
+// call sites across 13 files, most of them accessors on types that cannot have public
+// fields (`d.day()`, `v.field(…)`), and would put names like `day` and `value` into the
+// file's bare scope, where they shadow the locals those calls are usually assigned to.
+func TestUFCS_TheImportListBreaksATie(t *testing.T) {
+	both := map[string]string{
+		"a.lyra": `module a
+pub let squish = (self: string) -> string => self
+pub let alpha = () -> i64 => 1`,
+		"b.lyra": `module b
+pub let squish = (self: string) -> string => self
+pub let beta = () -> i64 => 2`,
+	}
+	app := func(importA string) map[string]string {
+		files := map[string]string{
+			"app.lyra": importA + `
+import b.{ beta }
+let main = () -> u8 => {
+  let squished = "x".squish()
+  u8(alpha() + beta())
+}`,
+		}
+		for k, v := range both {
+			files[k] = v
+		}
+		return files
+	}
+
+	t.Run("named in one import, resolved", func(t *testing.T) {
+		res := analyzeWithReceiverPrelude(t, app("import a.{ alpha, squish }"))
+		if errs := res.Errors(); len(errs) != 0 {
+			t.Errorf("naming one is the answer to the ambiguity; got %v", errs)
+		}
+	})
+
+	// The mirror: without the name the tie stands, so the test above cannot be passing
+	// by having stopped reporting ambiguity altogether.
+	t.Run("named in neither, still ambiguous", func(t *testing.T) {
+		res := analyzeWithReceiverPrelude(t, app("import a.{ alpha }"))
+		if !hasErrorContaining(res, "is ambiguous") {
+			t.Errorf("two candidates and no choice is still ambiguous; got %v", res.Diagnostics)
+		}
+		// The advice has to be the one that works from here.
+		if !hasErrorContaining(res, "import the one you mean by name (`import a.{ squish }`)") {
+			t.Errorf("the message should offer the import fix; got %v", res.Errors())
+		}
+	})
+
+	// Naming both is the file asking for both: the list has been used and did not settle
+	// it, so the advice changes rather than repeating what the reader already did.
+	t.Run("named in both, the advice changes", func(t *testing.T) {
+		files := app("import a.{ alpha, squish }")
+		files["app.lyra"] = strings.Replace(files["app.lyra"],
+			"import b.{ beta }", "import b.{ beta, squish }", 1)
+		res := analyzeWithReceiverPrelude(t, files)
+		if !hasErrorContaining(res, "drop the one you do not mean from its import") {
+			t.Errorf("want the drop-one advice; got %v", res.Errors())
+		}
+	})
+}
+
+// A method the import list does not name is still callable — the tiebreak above must not
+// have quietly become a gate. This is the rule the whole repo relies on: importing
+// `parse_args` from a module is enough to call `args.value(…)`.
+func TestUFCS_AMethodNeedNotBeNamedInTheImport(t *testing.T) {
+	res := analyzeWithReceiverPrelude(t, map[string]string{
+		"lib.lyra": `module lib
+pub let squish = (self: string) -> string => self
+pub let alpha = () -> i64 => 1`,
+		"app.lyra": `import lib.{ alpha }
+let main = () -> u8 => {
+  let squished = "x".squish()
+  u8(alpha())
+}`,
+	})
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("the import list breaks ties, it does not gate calls; got %v", errs)
+	}
+}
