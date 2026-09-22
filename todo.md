@@ -125,8 +125,7 @@ Package management, versioning and separate compilation are out of scope by deci
   end (~2037) follows the zone's stated rule rather than freezing at the last offset —
   checked against Go at every transition to 2100. `parse_zoned_date_time` and
   `parse_instant` close the round trip 09/22 — what `Show` writes is now readable back.
-  What is left for zones: leap seconds (the records are skipped), and `TZDIR`, which needs
-  `std.env`. **Custom formatting and parsing are deliberately absent**, as they are from
+  What is left for zones: leap seconds, whose records are skipped. **Custom formatting and parsing are deliberately absent**, as they are from
   Temporal, which leaves them to `Intl`: a pattern language wants a program driving it, and
   the one that would is a log analyser.
 
@@ -136,9 +135,6 @@ Package management, versioning and separate compilation are out of scope by deci
   does not import it" message. One of the two is wrong; the error's own wording says the
   field is the leak. Found writing `examples/schedule` (09/22). The cascade is poor too —
   the signature case then reports "cannot assign PlainTime to PlainTime".
-- **[OPEN] `std` cannot read an environment variable.** `std.temporal` hardcodes
-  `/usr/share/zoneinfo` because there is no way to consult `TZDIR`, and the calendar still
-  has no way to find `$HOME`. One `getenv` extern and a `std.env` would answer both.
 - **[IDEA] Big-endian byte reads want a home.** The TZif parser has private `read_int` over
   `[]u8`; a second binary format would copy it. `std.bytes` when there is one.
 - **[OPEN] A `mut` parameter that is not the receiver is not an effect.** A function

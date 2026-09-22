@@ -26,7 +26,9 @@
 // Exit 0; 1 when the events file cannot be read or has a line it cannot parse; 2 for usage.
 
 import std.collections.{ parse_args }
+import std.env.{ lookup }
 import std.io.{ read_file }
+import std.path.{ join }
 import std.temporal.{
   PlainDate, PlainTime, PlainDateTime, Duration, duration, plain_time,
   now_plain_date_time, parse_plain_date, parse_plain_date_time, parse_duration,
@@ -41,18 +43,28 @@ import std.tui.{
 let main = () -> u8 => {
   let args = parse_args(["--print", "--events"])
   var events: []Entry = []
-  if let Some(path) = args.value("--events") {
-    let Some(text) = read_file(path) else {
-      println("calendar: cannot read ${path}")
-      return 1
-    }
-    // **A line that does not parse stops the calendar**, rather than being skipped: a
-    // calendar that silently drops an event is worse than one that refuses to start,
-    // since the one thing its user cannot see is the event that is not there.
-    match parse_events(text) {
-      Ok(parsed) => { events = parsed },
-      Err(problem) => {
-        println("calendar: ${path}:${problem}")
+  // **A named file must be there; the default one need not be.** `--events nope.txt` is a
+  // mistake worth stopping for, while having written no events file yet is the ordinary
+  // state of a calendar nobody has filled in.
+  let named = args.value("--events")
+  let chosen = match named {
+    Some(path) => Some(path),
+    None => default_events_file(),
+  }
+  if let Some(path) = chosen {
+    match read_file(path) {
+      // **A line that does not parse stops the calendar**, rather than being skipped: a
+      // calendar that silently drops an event is worse than one that refuses to start,
+      // since the one thing its user cannot see is the event that is not there.
+      Some(text) => match parse_events(text) {
+        Ok(parsed) => { events = parsed },
+        Err(problem) => {
+          println("calendar: ${path}:${problem}")
+          return 1
+        },
+      },
+      None => if named.is_some() {
+        println("calendar: cannot read ${path}")
         return 1
       },
     }
@@ -88,6 +100,29 @@ data When =
   | At(PlainTime, Duration)
 
 /// Every event in an events file, or the first line that is not one, as `line: problem`.
+/// The events file to read when `--events` names none: `lyra-calendar/events.txt` under
+/// the config directory, if there is one.
+///
+/// **`XDG_CONFIG_HOME`, then `$HOME/.config`**, which is the convention Linux states and
+/// macOS tolerates. The alternative — a dotfile in the home directory — is the older one,
+/// and putting a second one there is how home directories became what they are.
+///
+/// `None` when neither variable is set, which is the case in a build system or a container
+/// and is not an error: it means there is no default to offer.
+let default_events_file = () -> Maybe<string> => {
+  if let Some(config) = non_empty(lookup("XDG_CONFIG_HOME")) {
+    return Some(config.join("lyra-calendar").join("events.txt"))
+  }
+  let Some(home) = non_empty(lookup("HOME")) else { return None }
+  Some(home.join(".config").join("lyra-calendar").join("events.txt"))
+}
+
+/// A variable that is set but empty says nothing, whatever POSIX lets it mean elsewhere.
+let non_empty = pure (value: Maybe<string>) -> Maybe<string> => match value {
+  Some(text) => if text.len() == 0 { None } else { Some(text) },
+  None => None,
+}
+
 let parse_events = pure (text: string) -> Result<[]Entry, string> => {
   var out: []Entry = []
   var number = 0

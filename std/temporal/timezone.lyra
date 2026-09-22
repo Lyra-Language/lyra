@@ -22,6 +22,7 @@ module std.temporal
 //! println("${zone.offset_at(1773000000)} ${zone.abbreviation_at(1773000000)}")
 //! ```
 
+import std.env.{ lookup }
 import std.io.{ read_bytes }
 import std.path.{ join }
 
@@ -60,7 +61,7 @@ pub struct ZoneType {
 /// something a user typed should not be able to read `/etc/passwd` by calling it a zone.
 pub let load_time_zone = (name: string) -> Maybe<TimeZone> => {
   if !names_a_zone(name) { return None }
-  let Some(data) = read_bytes(ZONEINFO_DIR.join(name)) else { return None }
+  let Some(data) = read_bytes(zoneinfo_dir().join(name)) else { return None }
   parse_tzif(name, data)
 }
 
@@ -111,9 +112,23 @@ pub let next_transition = pure (self: TimeZone, epoch_second: i64) -> Maybe<i64>
 
 // ---------------------------------------------------------------------------------------
 
-/// Where the system keeps the database. A `const` rather than a lookup of `TZDIR`, since
-/// `std` has no way to read an environment variable yet (todo.md).
-const ZONEINFO_DIR = "/usr/share/zoneinfo"
+/// Where the system keeps the database: `TZDIR` when it says, and the usual place
+/// otherwise.
+///
+/// **`TZDIR` is how a test pins the data it reads.** A zone's rules change when a country
+/// decides they do, so a program checked against the system database is checked against a
+/// moving target; pointing `TZDIR` at a fixed copy is the escape, and it is the reason to
+/// consult the variable at all rather than hardcode the path.
+///
+/// A variable set to nothing is treated as unset. POSIX distinguishes the two and
+/// `std.env` keeps the distinction, but "look for zones in the directory called `""`" is
+/// not a thing anybody means.
+let zoneinfo_dir = () -> string => {
+  let Some(named) = lookup("TZDIR") else { return DEFAULT_ZONEINFO_DIR }
+  if named.len() == 0 { DEFAULT_ZONEINFO_DIR } else { named }
+}
+
+const DEFAULT_ZONEINFO_DIR = "/usr/share/zoneinfo"
 
 /// Whether `name` is a zone name rather than a way out of the database's directory.
 let names_a_zone = pure (name: string) -> bool =>

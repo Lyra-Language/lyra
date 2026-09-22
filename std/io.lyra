@@ -15,11 +15,17 @@ module std.io
 //! is therefore the compiler's — the `dir_names` builtin, which answers exactly what libc
 //! reported — and `read_dir` below is the arithmetic over it, the same split
 //! `program_arg`/`program_args` has. Written the way `std.ffi` is
-//! written — `unsafe` appears in this file so it need not appear at a call site — but
-//! not *over* `std.ffi`: importing it would bring its exported `get` into every program
-//! that also uses `std.collections`, whose `HashMap` exports one too, and a name may not
-//! yet be exported by two modules at once. The two crossings are one builtin and one
-//! address-of each, so nothing is lost.
+//! written — `unsafe` appears in this file so it need not appear at a call site — but not
+//! *over* `std.ffi`, which costs nothing here: the two crossings are one builtin and one
+//! address-of each.
+//!
+//! **The reason given for that until 09/22 was wrong**, and is corrected rather than
+//! deleted because it was load-bearing for a decision. It said importing `std.ffi` would
+//! bring its `get` into every program that also uses `std.collections`, whose `HashMap`
+//! exports one too. A module's imports are its own: `std.env` imports `std.ffi`, and a
+//! program importing `std.env` alongside `std.collections.{ get }` compiles — measured.
+//! What is true is narrower: a *program* importing both names bare must rename one
+//! (`import std.collections.{ get as … }`), which the clash error now says.
 //!
 //! ```
 //! import std.io.{ read_file, write_file, append_file, read_stdin }

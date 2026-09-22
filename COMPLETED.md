@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — `std.env`, and the note it proved wrong
+
+`lookup(name) -> Maybe<string>` over `getenv`, which two things had been waiting for: the
+zone reader could not consult `TZDIR`, and the calendar could not find a config directory.
+
+**A variable set to nothing is `Some("")`.** POSIX distinguishes set-empty from unset and
+so do the tools that read them; a wrapper answering `""` for both makes the difference
+unsayable. Where the difference is *not* meaningful — "look for zones in the directory
+called `""`" — the caller collapses it, and `zoneinfo_dir` does exactly that, which is a
+decision better made at the call than in the library.
+
+**Reading only.** `setenv` changes a process-wide table the C library, the zone reader and
+every thread share, so a library offering it hands its caller a way to change another
+library's answers underneath it.
+
+**It also settled a claim `std.io` had been carrying.** That file explains why it calls
+libc directly rather than through `std.ffi`, and the reason given was that importing
+`std.ffi` "would bring its exported `get` into every program that also uses
+`std.collections`". Not so: a module's imports are its own. `std.env` imports `std.ffi`,
+and a program importing `std.env` alongside `std.collections.{ get }` compiles — measured
+before relying on it. What is true is narrower, and is about a *program* importing both
+names bare, which the clash error now tells you to fix with `as`. The comment is corrected
+rather than deleted, because a wrong reason for a decision is worth more visible than a
+missing one.
+
+**`TZDIR` is worth more than tidiness**: a zone's rules change when a country decides they
+do, so every test reading the system database is checked against a moving target. Pointing
+`TZDIR` at a fixed copy is the escape, and the test for it uses a deliberate lie — one
+zone's file under another's name — so a pass cannot come from quietly reading the system
+copy instead.
+
 ### 09/22/26 — reading back what `Show` writes
 
 `ZonedDateTime` could render RFC 9557 — `2026-09-22T14:30:00-04:00[America/New_York]` — and
