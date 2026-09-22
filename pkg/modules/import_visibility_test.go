@@ -188,3 +188,55 @@ pub let mk = pure (n: i64) -> Point => Point { x: n }`,
 		t.Errorf("a value-carried type must stay usable without an import; got %v", errs)
 	}
 }
+
+// **Every position that writes a type's name takes the same rule** (09/22), which until
+// then it did not: a parameter and a local annotation were refused while a return type, a
+// struct field and a `type` alias were accepted, so whether the import boundary applied
+// depended on which resolver reached the name first and how.
+//
+// The fix was to stop asking inside a resolver at all. `TypeRefs` records every *written*
+// occurrence of a type name with its position, which is exactly the set the boundary
+// governs, and one pass asks the question over all of them — so a position added to the
+// language later is covered by having a name in it, rather than by somebody remembering
+// to add a check.
+func TestImportVisibility_EveryWrittenPositionIsRefused(t *testing.T) {
+	for _, c := range []struct{ name, source string }{
+		{"a parameter", `let take = pure (p: Point) -> i64 => p.x
+let main = () -> u8 => 0`},
+		{"a local annotation", `let main = () -> u8 => {
+  let p: Point = Point { x: 1 }
+  u8(p.x)
+}`},
+		{"a return type", `let make = pure () -> Point => Point { x: 1 }
+let main = () -> u8 => u8(make().x)`},
+		{"a struct field", `struct Holder { at: Point }
+let main = () -> u8 => 0`},
+		{"a type alias", `type Spot = Point
+let main = () -> u8 => 0`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := analyze(t, buildTree(t, visTree(t, "import lib.{ listed }\n"+c.source)))
+			if !errorsContaining(res, `unknown type "Point"`) {
+				t.Errorf("%s naming an unimported type should be refused; got %v", c.name, res.Errors())
+			}
+		})
+	}
+}
+
+// And with the import written, every one of them is silent — the half that says the rule
+// is about the import and not about the position.
+func TestImportVisibility_EveryWrittenPositionAcceptsAnImport(t *testing.T) {
+	res := analyze(t, buildTree(t, visTree(t, `import lib.{ Point, listed }
+struct Holder { at: Point }
+type Spot = Point
+let take = pure (p: Point) -> i64 => p.x
+let make = pure () -> Point => Point { x: 1 }
+let main = () -> u8 => {
+  let p: Point = Point { x: 1 }
+  let h = Holder { at: p }
+  u8(take(h.at) + make().x + listed())
+}`)))
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("an imported type should be usable everywhere; got %v", errs)
+	}
+}

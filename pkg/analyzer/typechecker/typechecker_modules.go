@@ -159,6 +159,40 @@ func (tc *TypeChecker) writesTypeName(name, file string) bool {
 	return false
 }
 
+// checkWrittenTypeNames reports every type name a file *writes* that it cannot reach —
+// exported by some module, imported by none that this file asked.
+//
+// **One pass over the written occurrences, rather than a check inside one resolver.** The
+// rule is about what a file names, so it belongs where the names are: `TypeRefs` records
+// every written type name with its position, which is exactly the set the import boundary
+// governs. Asked from inside `resolveNameReporting` instead, the rule held only where that
+// path ran — a parameter and a local annotation were refused while a return type, a struct
+// field and a `type` alias sailed through, since those reach their types lazily or by
+// another route (09/22). Consistency there cannot be got by adding the check to each of
+// them; it is got by asking once, here.
+//
+// A name a value merely *carries* across the boundary is untouched: `m.col` on a value
+// whose type arrived through a constructor payload writes no name, so there is no
+// occurrence to refuse, and refusing it would make such values unusable.
+func (tc *TypeChecker) checkWrittenTypeNames() {
+	if tc.symTable == nil || tc.symTable.TypeRefs == nil {
+		return
+	}
+	for _, ref := range tc.symTable.TypeRefs.All() {
+		if tc.symTable.ResolvedReachably(ref.Name, ref.Loc) {
+			continue
+		}
+		// Exported by somebody: this is the import case. A name nobody exports is either
+		// private to another module (reportPrivateType's message) or a typo, and both of
+		// those are reported where the reference is resolved.
+		if _, exported := tc.symTable.LookupTypeFrom(ref.Name, ref.Loc); !exported {
+			continue
+		}
+		tc.addError(ref.Loc, SeverityError, "unknown type %q%s",
+			ref.Name, tc.unimportedHint(ref.Name, ref.Loc))
+	}
+}
+
 // reportPrivateType turns a failed type lookup into "not yours" when some other module
 // does declare the name, without exporting it. Reports true when it did.
 //

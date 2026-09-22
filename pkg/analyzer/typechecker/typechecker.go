@@ -257,6 +257,9 @@ func (tc *TypeChecker) prepare(program *ast.Program) {
 	// first walk that would follow its base chain, and that is not a walk this pass
 	// controls the order of.
 	tc.checkNewtypeCycles()
+	// Before the bodies: a file naming a type it never imported is answered once, for
+	// every position that names one, rather than by whichever resolver happens to reach it.
+	tc.checkWrittenTypeNames()
 	tc.checkImplCoherence()
 	// Trait default-method bodies, checked once each with Self abstract. After the impls
 	// are collected: a call inside a default publishes one candidate per implementing
@@ -2689,24 +2692,13 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 	// answer for every other module — the same hazard that kept the visibility check
 	// below out of the cache when the key was a bare name.
 	key := tc.symTable.TypeKey(tt.Name, loc)
-	// A name this file *writes* without being able to reach — resolvable only through
-	// the export rung — is refused, and before the cache is consulted: the cache is
-	// keyed by the resolved identity, which the exporting module's own (legal)
-	// references share, so checking after the cache would admit exactly the reference
-	// the import boundary exists to refuse. That is how the old bare-name cache key
-	// leaked unimported types for as long as it existed.
-	//
-	// The written-occurrence test (TypeRefs) is what draws the line the language means:
-	// `let p: Point` in a file that never imported `Point` is the author naming a type
-	// they have not asked for, while `m.col` on a value whose type arrived through a
-	// constructor payload writes no name at all — the value carried its type across the
-	// import boundary, and refusing to resolve it would make such values unusable.
-	if !tc.symTable.ResolvedReachably(tt.Name, loc) && tc.writesTypeName(tt.Name, loc.File) {
-		if _, exported := tc.symTable.LookupTypeFrom(tt.Name, loc); exported {
-			tc.addError(loc, SeverityError, "unknown type %q%s", tt, tc.unimportedHint(tt.Name, loc))
-			return tt
-		}
-	}
+	// **The import boundary is not checked here**, and that is deliberate as of 09/22.
+	// It used to be, which made the rule a property of *this resolution path* rather than
+	// of the language: a parameter and a local annotation were refused, while a return
+	// type, a struct field and a `type` alias were not — they reach their types by other
+	// routes, or lazily, or not at all. `checkWrittenTypeNames` (typechecker_modules.go)
+	// asks the same question once over every written occurrence, so every position is
+	// answered alike and none of them depends on who resolved what first.
 	if cached, ok := tc.resolvedTypes[key]; ok {
 		return types.WithAllocation(cached, tt.Allocation)
 	}

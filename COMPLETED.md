@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the import rule was a property of one resolver, not of the language
+
+Filed as "an unimported type is refused in a signature and accepted in a struct field".
+Measuring it first turned a two-sided inconsistency into a five-sided one: **parameter and
+local annotation refused; return type, struct field and `type` alias accepted.** That
+spread is the tell — the rule was not being applied to *positions* at all.
+
+It was asked inside `resolveNameReporting`, so it held exactly where that path ran, and
+the three that escaped reach their types lazily, or by another route, or never. Adding the
+check to each of them would have been three more places to forget, and a sixth position
+added later would have escaped too.
+
+**So it moved to where the names are.** `TypeRefs` already records every *written*
+occurrence of a type name with its position — collected for the language server, to answer
+"what is under the cursor" — and that set is exactly what the import boundary governs. One
+pass over it asks the question once, and a position added to the grammar tomorrow is
+covered by having a name in it.
+
+Two things fell out. The confusing cascade is gone: the old check returned the unresolved
+type, which then produced `cannot assign PlainTime to PlainTime` under the real error.
+And **the whole suite passed unchanged** — twenty packages, `std`, every example — so
+nothing in the repo had been leaning on the leak, which is the cheapest evidence that
+tightening it was safe.
+
 ### 09/22/26 — `std.env`, and the note it proved wrong
 
 `lookup(name) -> Maybe<string>` over `getenv`, which two things had been waiting for: the

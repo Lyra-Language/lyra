@@ -466,6 +466,7 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 - `import lib.{ listed }` admits `listed` only — no other exports, no types.
 - `import lib` binds `lib.x` and no bare names. An alias binds only its local name.
 - Resolution: **own scope → imports → prelude**. Using an export you didn't import names the fix (`add import lib.{ … }`), distinct from a missing `pub`.
+- **Every position that writes a type's name takes the rule**: parameter, return type, local annotation, struct field, `type` alias. It is one pass over the written occurrences (`TypeRefs`), not a check inside a resolver — until 09/22 it was the latter, and the first two were refused while the last three were not. A type a value merely *carries* across the boundary is untouched: `m.col` on a value from a constructor payload writes no name, so there is nothing to refuse.
 
 ### Shadowing
 

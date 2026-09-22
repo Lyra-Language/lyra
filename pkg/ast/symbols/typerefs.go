@@ -84,6 +84,34 @@ func (t *TypeRefTable) Refs(file string) []TypeRef {
 	return t.byFile[file]
 }
 
+// All returns every reference in the program, ordered by file and then by position.
+//
+// **Ordered, because a diagnostic's place in a list is part of its output.** The table is
+// keyed by file and Go randomizes a map's iteration, so a pass reporting as it walks would
+// emit the same errors in a different order on every run.
+func (t *TypeRefTable) All() []TypeRef {
+	if t == nil {
+		return nil
+	}
+	files := make([]string, 0, len(t.byFile))
+	for file := range t.byFile {
+		files = append(files, file)
+	}
+	sort.Strings(files)
+	var out []TypeRef
+	for _, file := range files {
+		refs := append([]TypeRef(nil), t.byFile[file]...)
+		sort.SliceStable(refs, func(i, j int) bool {
+			if refs[i].Loc.StartLine != refs[j].Loc.StartLine {
+				return refs[i].Loc.StartLine < refs[j].Loc.StartLine
+			}
+			return refs[i].Loc.StartCol < refs[j].Loc.StartCol
+		})
+		out = append(out, refs...)
+	}
+	return out
+}
+
 // Named returns every reference to `name`, across every file in the program.
 //
 // Program-wide rather than per-file because that is what "find every use of this type"

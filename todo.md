@@ -129,12 +129,6 @@ Package management, versioning and separate compilation are out of scope by deci
   Temporal, which leaves them to `Intl`: a pattern language wants a program driving it, and
   the one that would is a log analyser.
 
-- **[OPEN] An unimported type is refused in a signature and accepted in a struct field.**
-  `struct Holder { at: PlainTime }` compiles and runs without importing `PlainTime`, while
-  `let f = (t: PlainTime) -> …` is `lyra-E001` with the "module exports it, but this file
-  does not import it" message. One of the two is wrong; the error's own wording says the
-  field is the leak. Found writing `examples/schedule` (09/22). The cascade is poor too —
-  the signature case then reports "cannot assign PlainTime to PlainTime".
 - **[IDEA] Big-endian byte reads want a home.** The TZif parser has private `read_int` over
   `[]u8`; a second binary format would copy it. `std.bytes` when there is one.
 - **[OPEN] A `mut` parameter that is not the receiver is not an effect.** A function
