@@ -10,7 +10,7 @@ module markdown
 //! and every rule it does implement follows CommonMark where they overlap.
 
 /// The HTML for a whole document: every block rendered, one per line.
-pub let render = pure (source: string) -> string =>
+pub let render = det (source: string) -> string =>
   [block in blocks(source) | render_block(block)].join("\n") ++ "\n"
 
 /// A run of lines that becomes one HTML element.
@@ -28,7 +28,7 @@ data Block =
 /// **A blank line ends a block and belongs to none**, which is the one rule the whole
 /// block level rests on. Inside a fence it is ordinary content, so the fence is tested
 /// before anything else — a blank line in a code block is part of the code.
-let blocks = pure (source: string) -> []Block => {
+let blocks = det (source: string) -> []Block => {
   var out: []Block = []
   var paragraph: []string = []
   var fence: []string = []
@@ -81,7 +81,7 @@ let blocks = pure (source: string) -> []Block => {
 ///
 /// Its lines are joined with a space rather than a newline: a paragraph wrapped by the
 /// author is one paragraph, and where it was wrapped is not content.
-let flush_paragraph = pure (lines_so_far: []string, out: mut []Block) -> void => {
+let flush_paragraph = det (lines_so_far: []string, out: mut []Block) -> void => {
   if lines_so_far.len() > 0 { out.push(Paragraph(lines_so_far.join(" "))) }
 }
 

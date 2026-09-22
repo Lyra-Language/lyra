@@ -1100,7 +1100,7 @@ let all_whitespace = pure (bytes: []u8, from: i64, to: i64) -> bool => {
 /// the caller), so the whitespace is trailing and is dropped, and a run of newlines is cut
 /// to at most two — one line ending, one blank line. Anything else is copied, which cannot
 /// happen between two leaves and is the leak-safe direction if it ever does.
-let push_line_breaks = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> i64 => {
+let push_line_breaks = det (bytes: []u8, from: i64, to: i64, out: mut []u8) -> i64 => {
   var newlines = 0
   for i in from..<to {
     let b = bytes[i]
@@ -1124,7 +1124,7 @@ let push_line_breaks = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> 
 /// formatter makes to be one — two files with the same tokens format the same way, which
 /// is the point of running it, and an alignment the formatter cannot produce itself is one
 /// it cannot promise to keep.
-let push_spacing = pure (gap: i64, before: string, before_parent: string,
+let push_spacing = det (gap: i64, before: string, before_parent: string,
   after: Leaf, out: mut []u8) -> void => {
   let want = wanted_space(before, before_parent, after.kind, after.parent)
   if want < 0 { return }
@@ -1214,11 +1214,11 @@ let last_newline = pure (bytes: []u8, from: i64, to: i64) -> i64 => {
 }
 
 /// Appends two spaces per level.
-let push_indent = pure (depth: i64, out: mut []u8) -> void => {
+let push_indent = det (depth: i64, out: mut []u8) -> void => {
   for _ in 0..<(depth * 2) { out.push(32) }
 }
 
 /// Appends `bytes[from..<to]` to `out`.
-let copy_bytes = pure (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
+let copy_bytes = det (bytes: []u8, from: i64, to: i64, out: mut []u8) -> void => {
   for i in from..<to { out.push(bytes[i]) }
 }

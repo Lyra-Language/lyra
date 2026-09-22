@@ -131,12 +131,6 @@ Package management, versioning and separate compilation are out of scope by deci
 
 - **[IDEA] Big-endian byte reads want a home.** The TZif parser has private `read_int` over
   `[]u8`; a second binary format would copy it. `std.bytes` when there is one.
-- **[OPEN] A `mut` parameter that is not the receiver is not an effect.** A function
-  writing through one is inferred `pure`, and accepts the annotation: `EffectMut` covers a
-  mutated *receiver* only. Found writing `examples/lyra-md/site.lyra`, whose link checker
-  took a `mut []string` of reports and was told it had no observable effect; it now returns
-  them instead. Either the class widens to any `mut` parameter, or the rule is written down
-  as deliberate — a caller cannot tell the two apart today.
 - **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
   nothing needs it yet.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute

@@ -24,6 +24,11 @@ type MethodTable struct {
 	// nothing else today. Separate from `builtins` rather than a value on it,
 	// because "is a builtin" and "allocates" are asked by different passes.
 	builtinAllocs map[*ast.FunctionCallExpr]bool
+
+	// builtinMutates is the same bookkeeping for a builtin that writes to its receiver:
+	// `xs.push(v)`. Without it the purity pass, which treats every builtin as
+	// effect-free, could not see the write.
+	builtinMutates map[*ast.FunctionCallExpr]bool
 	// boundCandidates[call][concreteType] is the impl a `where`-bound call resolves to
 	// once a specialization fixes the receiver's type variable. See SetBoundCandidates.
 	boundCandidates map[*ast.FunctionCallExpr]map[string]Resolution
@@ -64,10 +69,11 @@ type BoundMethodRef struct {
 
 func NewMethodTable() *MethodTable {
 	return &MethodTable{
-		entries:       make(map[*ast.FunctionCallExpr]*ast.TraitMethodImpl),
-		boundCalls:    make(map[*ast.FunctionCallExpr]BoundMethodRef),
-		builtins:      make(map[*ast.FunctionCallExpr]bool),
-		builtinAllocs: make(map[*ast.FunctionCallExpr]bool),
+		entries:        make(map[*ast.FunctionCallExpr]*ast.TraitMethodImpl),
+		boundCalls:     make(map[*ast.FunctionCallExpr]BoundMethodRef),
+		builtins:       make(map[*ast.FunctionCallExpr]bool),
+		builtinAllocs:  make(map[*ast.FunctionCallExpr]bool),
+		builtinMutates: make(map[*ast.FunctionCallExpr]bool),
 	}
 }
 
@@ -100,13 +106,16 @@ func NewMethodTable() *MethodTable {
 // because there are *three* copies of the "what does this call call?" ladder in
 // the purity pass and a builtin that allocates is invisible to all of them
 // otherwise: `noalloc` would accept a function that allocates on every call.
-func (t *MethodTable) SetBuiltinMethod(call *ast.FunctionCallExpr, allocates bool) {
+func (t *MethodTable) SetBuiltinMethod(call *ast.FunctionCallExpr, allocates, mutates bool) {
 	if t == nil {
 		return
 	}
 	t.builtins[call] = true
 	if allocates {
 		t.builtinAllocs[call] = true
+	}
+	if mutates {
+		t.builtinMutates[call] = true
 	}
 }
 
@@ -120,6 +129,15 @@ func (t *MethodTable) IsBuiltinMethod(call *ast.FunctionCallExpr) bool {
 // the heap. Only `s.slice(…)` does today. Nil-receiver-safe, like Get.
 func (t *MethodTable) BuiltinMethodAllocates(call *ast.FunctionCallExpr) bool {
 	return t != nil && t.builtinAllocs[call]
+}
+
+// BuiltinMethodMutates reports whether this builtin-method call writes to its receiver —
+// `xs.push(v)` and its three siblings. Nil-receiver-safe, like Get.
+//
+// Recorded rather than re-derived for the reason `allocates` is: the name alone cannot
+// say, since the receiver's type decides and only the typechecker saw it.
+func (t *MethodTable) BuiltinMethodMutates(call *ast.FunctionCallExpr) bool {
+	return t != nil && t.builtinMutates[call]
 }
 
 func (t *MethodTable) Set(call *ast.FunctionCallExpr, method *ast.TraitMethodImpl) {

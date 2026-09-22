@@ -2265,6 +2265,29 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				if inf.methodTable.BuiltinMethodAllocates(ex) {
 					found |= EffectAlloc
 				}
+				// **A builtin that writes to its receiver is a mutation like any other.**
+				// `xs.push(v)` on a `mut` parameter is a write the caller sees, and the
+				// same three cases apply as for `xs[0] = v` above: through a borrow or a
+				// capture it escapes, and on a local it does not. Until 09/22 a builtin
+				// was effect-free whatever it did, so the assignment was refused from a
+				// `pure` function and the push was not.
+				if inf.methodTable.BuiltinMethodMutates(ex) {
+					if member, isMember := ex.Function.(*ast.MemberExpr); isMember {
+						switch root := rootIdentName(member.Object); {
+						case root == "":
+							// A receiver with no identifier at its root — a call's result,
+							// say — is a value this function alone can see.
+						case c.mutBorrows[root]:
+							found |= EffectMut
+							c.pure(ex.GetLocation(),
+								"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
+						case !c.declares(root):
+							found |= EffectMut
+							c.pure(ex.GetLocation(),
+								"pure function mutates captured binding %q; mutation must not escape the function", root)
+						}
+					}
+				}
 			} else if method, ok := inf.methodTable.Get(ex); ok {
 				// The method's own base effect **plus** whatever this site supplies for
 				// its callback parameters. The second half is what the free-function walk

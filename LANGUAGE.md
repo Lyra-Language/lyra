@@ -447,7 +447,8 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 
 - **`lyra-W018`**: a top-level function or trait-impl method with no observable effect that does not say `pure`. Nothing is refused: a `pure` function may call an unannotated one inferred clean. The bound decides **where blame lands** when an effect is later added — at the `println` in a marked helper, versus at the `pure` caller of an unmarked one.
 - Only `pure` warns (`det`/`noalloc` candidates are too common to be useful). Not warned: inline closures, `main`, impl methods whose trait declares the bound. No `#[allow]` exists.
-- Effect classes referenced elsewhere: `EffectInput` (stdin, `program_arg*`, `read_key`, `wait_for_key_ms`, `terminal_size`), `EffectOutput` (`set_raw_mode`; `det`-legal), `EffectRand` (`random_seed`), `EffectTime` (`wall_clock_nanos`), `EffectMut` (mutating own receiver; `det`-legal). `det` permits output.
+- Effect classes referenced elsewhere: `EffectInput` (stdin, `program_arg*`, `read_key`, `wait_for_key_ms`, `terminal_size`), `EffectOutput` (`set_raw_mode`; `det`-legal), `EffectRand` (`random_seed`), `EffectTime` (`wall_clock_nanos`), `EffectMut` (a write the caller sees; `det`-legal). `det` permits output.
+- **`EffectMut` is charged the same way whichever spelling writes**: `xs[0] = v`, `p.x = v`, and the mutating builtins `push`/`push_utf8`/`reserve`/`clear`. Through a `mut` parameter or a capture the write escapes and `pure` refuses it; on a local it does not and `pure` is fine. The builtins were exempt until 09/22, so `xs[0] = v` was refused from a `pure` function while `xs.push(v)` was accepted — and W018 *suggested* `pure` for a function whose only effect was the push.
 
 ---
 

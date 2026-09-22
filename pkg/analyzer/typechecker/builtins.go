@@ -790,6 +790,25 @@ func builtinMethodAllocates(recv types.Type, name string) bool {
 	return false
 }
 
+// builtinMethodMutates reports whether a builtin method writes to its receiver.
+//
+// **Recorded on the call for the same reason `allocates` is**: the purity pass treats
+// every builtin method as effect-free, so a mutating one is invisible to it — and
+// `xs.push(v)` through a `mut` parameter is a write the caller sees. That made `pure`
+// accept, and *suggest itself for*, a function that changes its caller's array
+// (todo.md, 09/22). An assignment through the same parameter was already refused, so the
+// rule held for `xs[0] = v` and not for `xs.push(v)`, which is a distinction no author
+// could be expected to predict.
+//
+// The four are the dynamic array's: `push` and `push_utf8` add, `reserve` changes the
+// buffer, `clear` empties it. `slice` and the rest read.
+func builtinMethodMutates(recv types.Type, name string) bool {
+	if _, isDyn := recv.(types.DynamicArrayType); !isDyn {
+		return false
+	}
+	return name == "push" || name == "push_utf8" || name == "reserve" || name == "clear"
+}
+
 // isBuiltinPrintFn reports whether name is one of the compiler-provided output
 // builtins (print/println). They are free functions, not methods, resolved by
 // name in inferIdentifierCall only after scope resolution misses — so a user

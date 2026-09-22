@@ -630,11 +630,16 @@ let main = () -> void => {
 // **`noalloc` permits it**, unlike `push` and `push_utf8` — it frees nothing and allocates
 // nothing, it writes a length. A `noalloc` function that clears and refills is refused at
 // the refill, which is where the allocation is.
+//
+// The bound is `det`, not `pure`: writing through a `mut` parameter is `EffectMut`, which
+// `det` permits and `pure` does not (09/22). The fixture said `pure` while the rule was
+// unenforced for a builtin — which is exactly the mislabelling that made enforcing it
+// worth doing, and this test is about `noalloc` either way.
 func TestCheck_ClearIsAllowedByNoalloc(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-let reset = pure noalloc (xs: mut []i64) -> void => { xs.clear() }
+let reset = det noalloc (xs: mut []i64) -> void => { xs.clear() }
 let main = () -> void => { var a: []i64 = [1, 2]; reset(a) }
 `
 	if diags := checkWithPrelude(t, src); len(diags) != 0 {
@@ -809,5 +814,67 @@ let main = () -> void => { let xs: []i64 = [1, 2]; xs.reserve(64) }
 	}
 	if !strings.Contains(diags[0], "deeply immutable") {
 		t.Errorf("expected the interior-immutability diagnostic; got: %s", diags[0])
+	}
+}
+
+// **A builtin that writes to its receiver is a mutation, and `pure` refuses it** (09/22).
+//
+// `xs[0] = v` through a `mut` parameter had always been refused and `xs.push(v)` had
+// always been allowed, because the purity pass treats every compiler builtin as
+// effect-free — so the rule held for the assignment and not for the call, which is a
+// distinction no author could predict. Worse than allowing it, the compiler *suggested*
+// it: an unannotated function whose only effect was the push was told it had none and
+// offered `pure` (lyra-W018).
+//
+// The three cases are the same three the assignment already distinguished, and the last
+// two are what keep this from being a blunt ban: a local array is this function's own
+// business, and `det` is the bound that permits the write.
+func TestCheck_MutatingBuiltinIsAnEffect(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, src string
+		wantErr   bool
+	}{
+		{"push through a mut parameter escapes to the caller", `
+module main
+let fill = pure (xs: mut []i64) -> void => { xs.push(1) }
+let main = () -> void => { var a: []i64 = []; fill(a) }
+`, true},
+		{"so do clear and reserve", `
+module main
+let reset = pure (xs: mut []i64) -> void => { xs.clear() }
+let main = () -> void => { var a: []i64 = [1]; reset(a) }
+`, true},
+		{"a captured binding is refused as an assignment to one is", `
+module main
+var seen: []i64 = []
+let note = pure (n: i64) -> void => { seen.push(n) }
+let main = () -> void => note(1)
+`, true},
+		{"a local array is the function's own business", `
+module main
+let count_to = pure (n: i64) -> i64 => {
+  var xs: []i64 = []
+  for i in 0..<n { xs.push(i) }
+  xs.len()
+}
+let main = () -> void => println("${count_to(3)}")
+`, false},
+		{"det permits the write, which is what these helpers are", `
+module main
+let fill = det (xs: mut []i64) -> void => { xs.push(1) }
+let main = () -> void => { var a: []i64 = []; fill(a) }
+`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			diags := checkWithPrelude(t, c.src)
+			if c.wantErr && len(diags) == 0 {
+				t.Errorf("a write the caller sees should be refused from `pure`")
+			}
+			if !c.wantErr && len(diags) != 0 {
+				t.Errorf("should be accepted; got %v", diags)
+			}
+		})
 	}
 }

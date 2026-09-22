@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — a mutating builtin is a mutation
+
+Filed as "a `mut` parameter that is not the receiver is not an effect", from writing the
+site builder's link checker: it took a `mut []string` of reports, and the compiler told it
+it had no observable effect and offered `pure`.
+
+**Measuring it first moved the boundary.** It is not receiver versus parameter: `xs[0] = v`
+and `p.x = v` through a `mut` parameter were already refused, and so were `sort` and
+`clear` on a `HashMap` — those are Lyra functions whose bodies assign, so the effect is
+inferred. What escaped was `xs.push(v)`, because `push` is a **compiler builtin**, and the
+purity pass treats every builtin as effect-free: "pure arithmetic, no effect". So the rule
+held for the assignment and not for the call, a distinction no author could predict.
+
+The fix follows the path already there for allocation. `SetBuiltinMethod` records
+`allocates` on the call — "part of the resolution, not a property of the name", since the
+receiver's type decides and only the typechecker saw it — and now records `mutates` beside
+it. The purity pass then charges `EffectMut` with the same three cases the assignment
+already distinguished: through a `mut` borrow or a capture the write escapes and `pure`
+refuses it; on a local it does not.
+
+**It found four mislabelled functions in this repo**, in `lyrafmt` and the Markdown
+renderer: builder helpers appending into a `mut out` parameter, every one of them marked
+`pure` *because the compiler had suggested it*. They are `det` — deterministic, and
+`EffectMut` is `det`-legal — and are now written that way. A backend test's fixture said
+`pure noalloc` for the same reason and is corrected too; the test was about `noalloc`.
+
+**A guard test caught the omission this change invited.** `TestClone_MentionsEveryTableField`
+fails when a table gains a field that `Clone` does not copy — which is exactly what I did,
+and the message ("a field left out is shared with the table it was cloned from, so one
+keystroke's results reach the next") names the bug it would have been in the language
+server.
+
 ### 09/22/26 — the import rule was a property of one resolver, not of the language
 
 Filed as "an unimported type is refused in a signature and accepted in a struct field".

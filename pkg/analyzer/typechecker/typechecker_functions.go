@@ -1416,7 +1416,8 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		// Whether it allocates travels with the resolution, because only here is the
 		// receiver's type still in hand: `slice` is a string method and nothing else,
 		// but a consumer testing the bare name would have to take that on faith.
-		tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(objType, methodName))
+		tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(objType, methodName),
+			builtinMethodMutates(objType, methodName))
 		tc.checkBuiltinMutatesReceiver(objType, methodName, member)
 		tc.requireUnsafeBuiltin(objType, methodName, member)
 		tc.checkSliceBounds(methodName, call)
@@ -1474,7 +1475,8 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				}
 				tc.typeTable.Set(member.Object, base)
 				tc.typeTable.Set(member, sig)
-				tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(base, methodName))
+				tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(base, methodName),
+					builtinMethodMutates(base, methodName))
 				// A newtype is transparent to its base's methods, so it is transparent to
 				// their argument rules too — `newtype Name = string` slices exactly as a
 				// string does, and a negative bound is as wrong through the wrapper.
