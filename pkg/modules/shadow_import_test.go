@@ -31,7 +31,7 @@ let main = () -> u8 => u8(map(1))`,
 	if errs := res.Errors(); len(errs) != 0 {
 		t.Fatalf("a local declaration over an imported name must be allowed; got %v", errs)
 	}
-	if !warnsWith(res, diag.CodeImportShadowed, "map shadows the map imported from module") {
+	if !warnsWith(res, diag.CodeImportShadowed, `map takes the name imported from module "util.seq"`) {
 		t.Errorf("expected a shadow warning for the imported name; got %v", res.Diagnostics)
 	}
 }
@@ -94,7 +94,7 @@ func TestModules_AnAliasShadowsUnderItsLocalName(t *testing.T) {
 let remap = (n: i64) -> i64 => n + 1
 let main = () -> u8 => u8(remap(1))`
 	res := analyze(t, buildTree(t, files))
-	if !warnsWith(res, diag.CodeImportShadowed, "remap shadows the remap imported from module") {
+	if !warnsWith(res, diag.CodeImportShadowed, `remap takes the name imported from module "util.seq"`) {
 		t.Errorf("the alias's local name should shadow; got %v", res.Diagnostics)
 	}
 
@@ -181,7 +181,7 @@ let main = () -> u8 => {
 	if errs := res.Errors(); len(errs) != 0 {
 		t.Fatalf("a local type over an imported one must be allowed; got %v", errs)
 	}
-	if !warnsWith(res, diag.CodeImportShadowed, "Point shadows") {
+	if !warnsWith(res, diag.CodeImportShadowed, "Point takes the name imported from module") {
 		t.Errorf("expected a shadow warning for the type; got %v", res.Diagnostics)
 	}
 }

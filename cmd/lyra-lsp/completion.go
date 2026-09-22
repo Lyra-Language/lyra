@@ -135,7 +135,7 @@ func ufcsCompletions(recv types.Type, analysis *docAnalysis) []lsp.CompletionIte
 			// `map` once, described by the Maybe overload, rather than dropping the name
 			// because it was not a single declaration.
 			for _, fn := range candidateLambdas(named) {
-				if !typechecker.UFCSCallable(analysis.symTable, fn, recv, loc) {
+				if !typechecker.UFCSCallable(analysis.symTable, name, fn, recv, loc) {
 					continue
 				}
 				seen[name] = true

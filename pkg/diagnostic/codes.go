@@ -1032,8 +1032,14 @@ const (
 	// the code still compiles and runs.
 	CodeConstantComparison = "lyra-W011"
 
-	// CodePreludeShadowed: a declaration takes a name the prelude exports. The
-	// declaration wins. A warning rather than an error because the prelude is
+	// CodePreludeShadowed: a declaration takes a name the prelude exports, **on the same
+	// receiver or on none** — with different receivers the two are an overload and nothing
+	// is reported (09/21). Inside the declaring module the name means the new declaration
+	// and the prelude's is out of reach; other modules are unaffected. The message says
+	// which of the two reasons applies, since an author who has seen overloading work is
+	// otherwise left guessing why it did not here.
+	//
+	// A warning rather than an error because the prelude is
 	// implicitly in scope everywhere: rejecting the clash would make every name it
 	// exports permanently unusable, and adding a name to the prelude later would
 	// break programs that never mentioned it.
@@ -1070,9 +1076,9 @@ const (
 	// outright (lyra-E039).
 	CodeInertOperatorMethod = "lyra-W015"
 
-	// CodeImportShadowed: a declaration takes a name a module this one imports
-	// exports. The declaration wins and the imported one stays reachable through its
-	// namespace (`seq.map`).
+	// CodeImportShadowed: a declaration takes a name a module this one imports exports,
+	// on the same receiver or on none (W012's rule). The declaration wins and the imported
+	// one stays reachable through its namespace (`seq.map`) or under another name.
 	//
 	// This was a hard error until 08/08 — `import util.seq` plus an ordinary
 	// `let map = …` simply would not compile — which read as "the module you imported

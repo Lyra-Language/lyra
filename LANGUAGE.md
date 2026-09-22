@@ -384,7 +384,7 @@ Opt in by naming the first parameter `self`.
 
 - **UFCS:** `m.unwrap_or(0)` → `unwrap_or(m, 0)`, rewritten before anything downstream. `own` receivers refused. A type-parameter receiver resolves against functions generic in their receiver (`a.max(b)` under `where t: Ord`).
 - **Receiver-keyed overloading:** one module may declare a name several times if each takes `self` with a different receiver type head (`Maybe<t>` vs `Result<t,e>`); a second `Maybe<…>` is refused. A name still may not be exported by two modules.
-- Method calls resolve against the receiver's type and need no import of the underlying free function.
+- Method calls resolve against the receiver's type and need no import of the underlying free function — but the function must be one this file could have named: `pub`, in a module this file imports (in any form), in this file's own module, or in the prelude. A module's **private** function is not a method anywhere else, which is what privacy has to mean: before 09/22 it was still a *candidate*, so importing one name from a module made an unrelated call ambiguous with a function the caller could not name, let alone call. Listing the method's name in the import is **not** required — `import std.collections.{ parse_args }` is enough to write `args.value(…)`.
 - A type named inside a declaration — a constructor's payload, a field — means what it means in the **declaring** module. `Cons(n) =>` in an importer binds `n` at the library's `Node`, even when `Node` is private there or the importer declares its own; naming the private type explicitly is still refused.
 
 ### Show

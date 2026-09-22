@@ -71,6 +71,9 @@ Each of these produces something that looks like it works. Other docs cite them 
      `LookupType(name)` answers the program-wide meaning and is wrong inside a module that
      declares its own.
    - A key is not a source name — user-facing text reads `decl.Name`.
+   - **A visibility question is not answered by an import list.** UFCS candidacy asked
+     only whether the callee's module was imported, which let another module's *private*
+     functions collide with prelude methods; it asks `ExportingModules` too (09/22).
    - A `pub` check asks about the declaration a reference *resolved to* (`declVisibility`);
      inside the table use `BindingIn(module, name)`, not `BindingOf(name)`.
      `DeclaringModule` is last-writer-wins.

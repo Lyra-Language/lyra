@@ -489,6 +489,38 @@ func preludeOf(units []modules.Unit) string {
 	return ""
 }
 
+// shadowReason says *why* a declaration shadows rather than overloads, as a clause to
+// append to either warning — or "" when there is nothing useful to add.
+//
+// **It is the question the reader now has.** Two functions of one name on different
+// receivers are an overload and warn about nothing (09/21), so an author who has seen that
+// work and then meets this warning is owed the difference: either the two dispatch on the
+// same type, or the new one has no receiver to dispatch on at all. Without that, "it
+// shadows" reads as "overloading did not work this time" with no hint as to what would.
+//
+// A shadowed *type* or *binding* gets no clause: there is no receiver in either, so there
+// was never an overload to be had and naming one would only confuse.
+func shadowReason(symTable *symbols.SymbolTable, name string, loc ast.Location) string {
+	mine, ok := symTable.LookupFunctionFrom(name, loc)
+	if !ok {
+		return ""
+	}
+	head, hasReceiver := receiverHead(mine)
+	if !hasReceiver {
+		return ", since it takes no `self` receiver and so cannot be told apart by one"
+	}
+	for _, other := range symTable.FunctionsNamed(name) {
+		if other == mine {
+			continue
+		}
+		if theirs, ok := receiverHead(other); ok && theirs == head {
+			return fmt.Sprintf(", since both take a `%s` receiver and so are one name rather"+
+				" than two overloads", head)
+		}
+	}
+	return ""
+}
+
 // overloadsRatherThanShadows reports whether the declaration at `loc` takes a name that
 // already exists **on a different receiver** — which is an overload, not a shadow.
 //
@@ -556,20 +588,24 @@ func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
 		if overloadsRatherThanShadows(symTable, s.Name, s.Loc) {
 			continue
 		}
+		why := shadowReason(symTable, s.Name, s.Loc)
 		d := diag.Diagnostic{
 			Location: s.Loc,
 			Severity: diag.SeverityWarning,
 			Code:     diag.CodePreludeShadowed,
 			Message: fmt.Sprintf(
-				"%s shadows the prelude's %s — this declaration wins; rename it if that was not intended",
-				s.Name, s.Name),
+				"%s takes the prelude's name: inside this module %s now means this declaration and"+
+					" the prelude's is out of reach%s. Rename it if that was not intended;"+
+					" a module that does not declare or import this name still gets the prelude's",
+				s.Name, s.Name, why),
 		}
 		if s.Source != "" {
 			d.Code = diag.CodeImportShadowed
 			d.Message = fmt.Sprintf(
-				"%s shadows the %s imported from module %q — this declaration wins;"+
-					" rename it, or import the other under another name (`import %s.{ %s as … }`)",
-				s.Name, s.Name, s.Source, s.Source, s.Name)
+				"%s takes the name imported from module %q: inside this module %s now means this"+
+					" declaration%s. Rename it, or import the other under another name"+
+					" (`import %s.{ %s as … }`)",
+				s.Name, s.Source, s.Name, why, s.Source, s.Name)
 		}
 		out = append(out, d)
 	}

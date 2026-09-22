@@ -160,7 +160,7 @@ func (tc *TypeChecker) receiverFallback(name string, recvType types.Type, call *
 		if _, isReceiver := ast.ReceiverParam(fn); !isReceiver {
 			continue
 		}
-		if !tc.ufcsImported(fn, loc) || !receiverAccepts(fn, recvType) {
+		if !tc.ufcsImported(name, fn, loc) || !receiverAccepts(fn, recvType) {
 			continue
 		}
 		matches = append(matches, fn)

@@ -79,7 +79,7 @@ func TestPrelude_UserDeclarationShadowsWithWarning(t *testing.T) {
 			if errs := res.Errors(); len(errs) != 0 {
 				t.Fatalf("shadowing the prelude must not be an error; got %v", errs)
 			}
-			if !warningsContaining(res, "shadows the prelude's") {
+			if !warningsContaining(res, "takes the prelude's name") {
 				t.Errorf("expected a shadowing warning; got %v", res.Diagnostics)
 			}
 		})
@@ -147,7 +147,7 @@ pub let fromBystander = () -> i64 => unwrapOr(Some(3), 0)`,
 			if errs := res.Errors(); len(errs) != 0 {
 				t.Fatalf("a shadow in one module must not disturb another; got %v", errs)
 			}
-			if !warningsContaining(res, "shadows the prelude's") {
+			if !warningsContaining(res, "takes the prelude's name") {
 				t.Errorf("expected a shadowing warning; got %v", res.Diagnostics)
 			}
 			// Both resolution paths, since they are separate mechanisms that must

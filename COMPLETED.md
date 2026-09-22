@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — what a shadow warning could not truthfully say
+
+W012 told you a declaration "shadows the prelude's", which names the relation and leaves
+every question a reader actually has. Two were worth answering. **What it now means**:
+inside this module the name is this declaration and the prelude's is out of reach — the
+consequence, rather than the label. **Why it is a shadow and not an overload**: since
+receiver overloading makes a same-named declaration ordinarily fine, the warning says
+which of the two ways it failed to be one — no `self` receiver, so nothing tells the two
+apart, or the same receiver head, so they are one name rather than two overloads
+(`shadowReason`). W016, the imported-name twin, got the same treatment.
+
+The third clause was going to be "other modules are unaffected", and checking it before
+writing it is what this entry is really about. It was false, and for a reason that had
+nothing to do with warnings: a module declaring a `trim` **privately** still made
+`"x".trim()` ambiguous in any file that imported anything at all from it. Method calls
+asked "is that module imported here", which admits every function the module declares,
+including the ones it deliberately does not export. The collision was that private
+function's only observable effect anywhere else — the caller cannot name it, cannot call
+it, and can only be blocked by it. `ufcsImportedIn` now also asks whether the module
+*exports* that name.
+
+What it deliberately does **not** ask is whether the import *lists* the name. That rule
+would be defensible — it is Rust's trait-import rule, and it is what bare names already
+obey — but it is a language decision, not a bug fix: applied here it refused
+`args.value(…)` in every program that imports `parse_args`, which is most of
+`examples/`. It is written down as an open question (todo.md, Modules and tooling)
+instead of settled by a warning's wording.
+
+The name the check tests is the **call site's**, threaded through from the caller. Using
+`fn.GetName()` looks equivalent and is not: a lambda's own name is not the name its
+binding gave it, the trap `instantiationDisc` already documents, and it failed the suite
+immediately.
+
 ### 09/22/26 — a mutating builtin is a mutation
 
 Filed as "a `mut` parameter that is not the receiver is not an effect", from writing the

@@ -159,7 +159,7 @@ func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, membe
 		if _, isReceiver := ufcsReceiverParam(fn); !isReceiver {
 			continue
 		}
-		if !tc.ufcsImported(fn, loc) {
+		if !tc.ufcsImported(methodName, fn, loc) {
 			continue
 		}
 		if !receiverAcceptsValue(fn, member.Object, objType) {
@@ -290,17 +290,42 @@ func ufcsReceiverParam(fn *ast.LambdaExpr) (*ast.Parameter, bool) {
 // ufcsImported reports whether the file at loc may reach fn's module: its own module
 // needs no import, the prelude is implicitly imported everywhere, and anything else must
 // be named in the file's imports.
-func (tc *TypeChecker) ufcsImported(fn *ast.LambdaExpr, loc ast.Location) bool {
-	return ufcsImportedIn(tc.symTable, fn, loc)
+func (tc *TypeChecker) ufcsImported(name string, fn *ast.LambdaExpr, loc ast.Location) bool {
+	return ufcsImportedIn(tc.symTable, name, fn, loc)
 }
 
-func ufcsImportedIn(symTable *symbols.SymbolTable, fn *ast.LambdaExpr, loc ast.Location) bool {
+func ufcsImportedIn(symTable *symbols.SymbolTable, name string, fn *ast.LambdaExpr, loc ast.Location) bool {
 	callee := symTable.ModuleOfFile[fn.GetLocation().File]
 	if callee == symTable.ModuleOfFile[loc.File] {
 		return true
 	}
 	if symTable.PreludeModule != "" && callee == symTable.PreludeModule {
 		return true
+	}
+	// **A module's private functions are not candidates here** (09/22). The test used to
+	// be "does this file import that module", which admitted every function in it —
+	// including the ones it deliberately did not export. A file writing
+	// `import lib.{ here }` found `"x".trim()` ambiguous between the prelude's `trim` and
+	// a `trim` that `lib` kept to itself, and that private function has no other spelling
+	// from here at all: it cannot be called, only collided with.
+	//
+	// **The import list is still not consulted beyond the module**, and that is a language
+	// decision rather than an oversight: requiring `value` in the list to write
+	// `args.value(…)` would be the bare-name rule applied to methods, which is Rust's
+	// trait-import rule and would touch every file in this repo. It is written down in
+	// todo.md as a question, not settled here by a bug fix.
+	//
+	// The name comes from the call site, never from the lambda: a lambda's own GetName is
+	// not the name its binding gave it, the trap `instantiationDisc` documents.
+	exported := false
+	for _, module := range symTable.ExportingModules(name) {
+		if module == callee {
+			exported = true
+			break
+		}
+	}
+	if !exported {
+		return false
 	}
 	for _, imp := range symTable.ImportsFor(loc.File) {
 		if imp.Path == callee {
@@ -321,12 +346,12 @@ func ufcsImportedIn(symTable *symbols.SymbolTable, fn *ast.LambdaExpr, loc ast.L
 // The `own` receiver is *not* rejected here. Refusing it is a diagnostic the checker
 // owns, and a completion list that silently omits the function would leave the user with
 // no way to learn why — the error naming the call form is the better teacher.
-func UFCSCallable(symTable *symbols.SymbolTable, fn *ast.LambdaExpr, objType types.Type, loc ast.Location) bool {
+func UFCSCallable(symTable *symbols.SymbolTable, name string, fn *ast.LambdaExpr, objType types.Type, loc ast.Location) bool {
 	recv, ok := ufcsReceiverParam(fn)
 	if !ok || symTable == nil || objType == nil {
 		return false
 	}
-	if !ufcsImportedIn(symTable, fn, loc) {
+	if !ufcsImportedIn(symTable, name, fn, loc) {
 		return false
 	}
 	return unifyGenericTarget(recv.Type, objType, lambdaTypeVars(fn), map[string]types.Type{})
@@ -379,7 +404,7 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 			if _, isRecv := ufcsReceiverParam(candidate); !isRecv {
 				continue
 			}
-			if !tc.ufcsImported(candidate, loc) {
+			if !tc.ufcsImported(methodName, candidate, loc) {
 				return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style",
 					methodName, tc.symTable.ModuleOfFile[candidate.GetLocation().File])
 			}
@@ -398,7 +423,7 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 	}
 	// Reachable because resolution's export rung answers for a module this file never
 	// imported — which is exactly the case where naming the import is the hint.
-	if !tc.ufcsImported(fn, loc) {
+	if !tc.ufcsImported(methodName, fn, loc) {
 		return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style",
 			methodName, tc.symTable.ModuleOfFile[fn.GetLocation().File])
 	}
@@ -433,7 +458,7 @@ func (tc *TypeChecker) fixedArrayHint(methodName string, recv types.Type, loc as
 	}
 	for _, fn := range tc.symTable.FunctionsNamed(methodName) {
 		param, isReceiver := ufcsReceiverParam(fn)
-		if !isReceiver || param.Type == nil || !tc.ufcsImported(fn, loc) {
+		if !isReceiver || param.Type == nil || !tc.ufcsImported(methodName, fn, loc) {
 			continue
 		}
 		if _, wantsDyn := tc.resolveTypeIfKnown(param.Type, fn.GetLocation()).(types.DynamicArrayType); !wantsDyn {
