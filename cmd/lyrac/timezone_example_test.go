@@ -152,3 +152,110 @@ func transitionBetween(loc *time.Location, lo, hi time.Time) int64 {
 	}
 	return hi.Unix()
 }
+
+// **`ZonedDateTime`'s rendering, against Go's** (09/22) — the second slice: an instant seen
+// from a zone, written as Temporal writes one,
+// `2026-09-22T14:30:00-04:00[America/New_York]`.
+//
+// Slice one's test compared offsets, which is the zone table. This compares the *local
+// date and clock* those offsets produce, which is the arithmetic on top: a moment that is
+// tomorrow in Greenwich and still today here, an offset of 45 minutes, and — before a zone
+// was standardized — an offset with seconds in it, which a formatter assuming whole
+// minutes rounds away in silence.
+func TestExample_ZonedDateTimeMatchesGo(t *testing.T) {
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
+		t.Skip("no /usr/share/zoneinfo on this machine")
+	}
+	probe := filepath.Join(t.TempDir(), "probe.lyra")
+	if err := os.WriteFile(probe, []byte(`module main
+import std.collections.{ parse_args }
+import std.temporal.{ load_time_zone, instant, to_zoned_date_time }
+
+let main = () -> u8 => {
+  let args = parse_args([])
+  let Some(zone) = load_time_zone(args.positional[0]) else {
+    println("no such zone")
+    return 1
+  }
+  for i in 1..<args.positional.len() {
+    let at = match args.positional[i].parse_i64() { Some(v) => v, None => 0 }
+    let Some(moment) = instant(at) else {
+      println("out of range")
+      continue
+    }
+    println("${moment.to_zoned_date_time(zone)}")
+  }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "probe")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, probe); code != 0 {
+		t.Fatalf("building the probe exited %d\nstderr: %s", code, stderr)
+	}
+
+	for _, name := range []string{
+		"UTC",
+		"America/New_York",
+		"Asia/Kathmandu",     // +05:45
+		"Pacific/Chatham",    // +12:45 and +13:45
+		"Asia/Kolkata",       // an offset with *seconds* before 1906
+		"Pacific/Kiritimati", // +14:00, the far side of the date line
+	} {
+		t.Run(name, func(t *testing.T) {
+			loc, err := time.LoadLocation(name)
+			if err != nil {
+				t.Skipf("Go cannot load %s either: %v", name, err)
+			}
+			instants := sampleInstants(loc)
+			args := append([]string{name, "--"}, formatInts(instants)...)
+			out, err := exec.Command(bin, args...).Output()
+			if err != nil {
+				t.Fatalf("probing %s failed: %v", name, err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			if len(lines) != len(instants) {
+				t.Fatalf("%s: got %d lines for %d instants:\n%s", name, len(lines), len(instants), out)
+			}
+			for i, at := range instants {
+				local := time.Unix(at, 0).In(loc)
+				_, offset := local.Zone()
+				want := local.Format("2006-01-02T15:04:05") + offsetString(offset) + "[" + name + "]"
+				if lines[i] != want {
+					t.Errorf("%s at %d: got %q, want %q", name, at, lines[i], want)
+				}
+			}
+		})
+	}
+}
+
+func formatInts(values []int64) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		out = append(out, strconv.FormatInt(v, 10))
+	}
+	return out
+}
+
+// offsetString writes an offset as ISO 8601 does, including the seconds a pre-standard
+// zone has and omitting them when it does not — the same rule the Lyra side states, spelled
+// out here rather than borrowed, so the two are not one implementation agreeing with
+// itself.
+func offsetString(seconds int) string {
+	if seconds == 0 {
+		return "Z"
+	}
+	sign := "+"
+	if seconds < 0 {
+		sign = "-"
+		seconds = -seconds
+	}
+	out := fmt.Sprintf("%s%02d:%02d", sign, seconds/3600, (seconds%3600)/60)
+	if seconds%60 != 0 {
+		out += fmt.Sprintf(":%02d", seconds%60)
+	}
+	return out
+}

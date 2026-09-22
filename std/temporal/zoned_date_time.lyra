@@ -1,0 +1,108 @@
+module std.temporal
+
+/// An instant, seen from a time zone — Temporal's `ZonedDateTime`.
+///
+/// **The instant is what it is; the rest is a view.** A zoned date-time stores the moment
+/// and the zone, and works out the offset, the date and the wall clock from the zone's
+/// rules on demand. Storing the local fields instead would make the type a lie twice a
+/// year: the clock reading `01:30` in New York on the November morning the clocks go back
+/// names two different instants, and a struct holding `01:30` cannot say which.
+///
+/// **This slice converts one way**, from an instant. Going the other way — naming a local
+/// time and asking which instant it was — is where a time that does not exist or happens
+/// twice has to be resolved, which is Temporal's `disambiguation` option and the next
+/// slice (todo.md).
+pub struct ZonedDateTime {
+  instant: Instant,
+  zone: TimeZone,
+}
+
+/// This instant as `zone` shows it.
+///
+/// ```
+/// let Some(zone) = load_time_zone("America/New_York") else { return }
+/// println("${now_instant().to_zoned_date_time(zone)}")
+/// ```
+pub let to_zoned_date_time = pure (self: Instant, zone: TimeZone) -> ZonedDateTime =>
+  ZonedDateTime { instant: self, zone: zone }
+
+/// The clock in `zone` right now — Temporal's `Now.zonedDateTimeISO(tz)`. Reads the clock,
+/// so it is neither `pure` nor `det`.
+pub let now_in_zone = (zone: TimeZone) -> ZonedDateTime =>
+  now_instant().to_zoned_date_time(zone)
+
+/// The moment itself, with the zone forgotten.
+pub let to_instant = pure (self: ZonedDateTime) -> Instant => self.instant
+
+/// The zone's offset from UTC at this moment, in seconds east.
+pub let offset_seconds = pure (self: ZonedDateTime) -> i64 =>
+  self.zone.offset_at(self.instant.epoch_second())
+
+/// What a clock showing this moment is called here — `EST`, `EDT`, `+0530`.
+pub let abbreviation = pure (self: ZonedDateTime) -> string =>
+  self.zone.abbreviation_at(self.instant.epoch_second())
+
+/// Whether the zone is on its daylight rule at this moment.
+pub let is_dst = pure (self: ZonedDateTime) -> bool =>
+  self.zone.is_dst_at(self.instant.epoch_second())
+
+/// The date and wall-clock time a person here would read off a clock.
+pub let to_plain_date_time = pure (self: ZonedDateTime) -> PlainDateTime => {
+  let local = i128(self.instant) + i128(self.offset_seconds()) * i128(NS_PER_SECOND)
+  let day_ns = i128(NS_PER_DAY)
+  let into_day = local %% day_ns
+  PlainDateTime {
+    date: PlainDate(i64((local - into_day) / day_ns)),
+    time: PlainTime(i64(into_day)),
+  }
+}
+
+/// The date here, which is not always the date in UTC — at 23:30 in New York it is already
+/// tomorrow in Greenwich.
+pub let to_plain_date = pure (self: ZonedDateTime) -> PlainDate =>
+  self.to_plain_date_time().date
+
+/// The wall-clock time here.
+pub let to_plain_time = pure (self: ZonedDateTime) -> PlainTime =>
+  self.to_plain_date_time().time
+
+/// Zoned date-times order by their **instant**, not by their clocks: 09:00 in Berlin comes
+/// before 09:00 in New York, because it happened first, and a clock-by-clock comparison
+/// would have them the other way round.
+///
+/// **Ordering and equality answer differently, deliberately.** One moment seen from two
+/// zones is neither before nor after itself, so `<=>` says `Equal`; `==` is structural and
+/// says false, the zone being part of the value. That is Temporal's split between
+/// `compare` (the instants) and `equals` (the instant *and* the zone), and each is right
+/// for its question: a sort wants the first, and "is this the same reading" the second.
+impl Ord for ZonedDateTime {
+  compare = pure (self, other) => self.instant <=> other.instant
+}
+
+/// As Temporal writes one: `2026-09-22T14:30:00-04:00[America/New_York]` — the local
+/// date-time, the offset in force, and the zone that decided it.
+///
+/// **All three, because any two of them are ambiguous.** The offset alone cannot say which
+/// zone (several share -05:00) and so cannot say what the clock will do next; the zone
+/// alone cannot say which of a repeated hour this was. The bracketed name is Temporal's
+/// notation, and RFC 9557's.
+impl Show for ZonedDateTime {
+  show = pure (self) =>
+    "${self.to_plain_date_time()}${show_offset(self.offset_seconds())}[${self.zone.name}]"
+}
+
+// ---------------------------------------------------------------------------------------
+
+/// An offset as ISO 8601 writes one: `+05:30`, `-04:00`, and `Z` for Greenwich itself.
+///
+/// Seconds appear only when the offset has them, which for a zone means a reading from
+/// before it was standardized — New York's `-04:56:02` until 1883, which is the sort of
+/// thing a formatter that assumed whole minutes rounds away silently.
+let show_offset = pure (seconds: i64) -> string => {
+  if seconds == 0 { return "Z" }
+  let sign = if seconds < 0 { "-" } else { "+" }
+  let east = if seconds < 0 { 0 - seconds } else { seconds }
+  let rest = east % 3600
+  let head = "${sign}${two(east / 3600)}:${two(rest / 60)}"
+  if rest % 60 == 0 { head } else { "${head}:${two(rest % 60)}" }
+}

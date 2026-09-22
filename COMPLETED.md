@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — `Instant` and `ZonedDateTime`
+
+Slice two of the zone work: the moment, and the moment seen from somewhere.
+
+- **`Instant` is `i128` nanoseconds**, because an `i64` of them runs out in 2262, which is
+  inside the range a calendar is asked about. It refuses a duration's calendar units — a
+  day is not a fixed length of time where a zone changes offset, so "tomorrow" is a
+  question for a `ZonedDateTime` and has no answer on the timeline.
+- **`ZonedDateTime` stores the instant and the zone and computes the rest.** Storing the
+  local fields would make the type a lie twice a year: `01:30` on a fall-back morning names
+  two different instants, and a struct holding `01:30` cannot say which. The same fact is
+  why this slice converts only *from* an instant; the other direction is the disambiguation
+  slice.
+- **`Show` writes all three parts** — local time, offset, bracketed zone — because any two
+  are ambiguous: the offset cannot say which zone (several share −05:00, and so cannot say
+  what the clock does next), and the zone cannot say which of a repeated hour this was.
+- **Ordering and equality answer differently, on purpose**: `<=>` compares instants, so one
+  moment seen from two zones is neither before nor after itself; `==` is structural and
+  says false. That is Temporal's `compare`/`equals` split, and each is right for its
+  question.
+
+**The overload fix from yesterday is what made the module readable.** `add`, `until`,
+`since` and `to_plain_date_time` now each exist on several receivers — `PlainDate`,
+`PlainDateTime`, `Duration`, `Instant`, `ZonedDateTime` — which a week ago would have meant
+five invented names.
+
+**A measurement lesson, not a code one.** The must-fire check for the local-day arithmetic
+(flooring vs truncating) reported *zero* failures, and I nearly believed it: I was counting
+lines containing "want", and the mutation does not produce a mismatch — it makes the probe
+**trap**, exit 101, and fail the test a different way. The newtype range on `PlainTime`
+caught the negative value, which is the constraint doing exactly its job. **Grep for the
+failure you expect and you will measure your expectation.**
+
 ### 09/22/26 — time zones, read from the database rather than asked of libc
 
 Slice one of the zone work: `std.temporal.TimeZone` parses the system's IANA files (RFC

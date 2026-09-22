@@ -1,0 +1,102 @@
+module std.temporal
+
+/// A fixed point on the timeline, the same moment everywhere — Temporal's `Instant`.
+///
+/// **Nanoseconds since the epoch, in `i128`.** The unit is Temporal's and the width is
+/// forced by it: an `i64` of nanoseconds runs out in 2262, which is inside the range a
+/// calendar is asked about. `PlainDate` counts days and `PlainTime` counts nanoseconds
+/// since midnight for the same reason this counts nanoseconds since 1970 — a count has no
+/// invalid values, and Lyra has no field privacy to protect a struct's.
+///
+/// **An instant is not a time of day.** It has no offset, no zone and no date until one is
+/// named: `instant.to_zoned_date_time(zone)` is where those come from, and there is no
+/// `hour()` here for the same reason there is no `year()`.
+pub newtype Instant = i128
+  where range(-8640000000000000000000..<=8640000000000000000000)
+
+/// The instant `epoch_second` seconds after the epoch, plus `nanosecond`, or `None` when
+/// that is outside the range Temporal admits (±10⁸ days).
+pub let instant = pure (epoch_second: i64, nanosecond: i64 = 0) -> Maybe<Instant> => {
+  let nanos = i128(epoch_second) * i128(NS_PER_SECOND) + i128(nanosecond)
+  if nanos < i128(0) - MAX_INSTANT || nanos > MAX_INSTANT { return None }
+  Some(Instant(nanos))
+}
+
+/// The instant the system clock is reading — Temporal's `Now.instant()`.
+///
+/// Not `pure` and not `det`, for the reason `today` is neither: it reads the clock. Unlike
+/// `now_plain_date_time` it cannot go backwards across a daylight-saving change, because
+/// an instant has no wall clock to be moved — which is what makes it the right thing to
+/// time with and to store.
+pub let now_instant = () -> Instant => Instant(i128(wall_clock_nanos()))
+
+/// Whole seconds since the epoch, rounded **down** — so the second an instant falls in,
+/// for instants before 1970 as well as after.
+pub let epoch_second = pure (self: Instant) -> i64 =>
+  i64(floor_div_i128(i128(self), i128(NS_PER_SECOND)))
+
+/// Nanoseconds since the epoch, the whole of what an instant is.
+pub let epoch_nanosecond = pure (self: Instant) -> i128 => i128(self)
+
+/// How far into its second the instant is, 0 to 999999999 — the remainder `epoch_second`
+/// floors away, and never negative.
+pub let nanosecond_of_second = pure (self: Instant) -> i64 =>
+  i64(i128(self) - i128(self.epoch_second()) * i128(NS_PER_SECOND))
+
+/// This instant moved by `amount`, or `None` when the duration carries calendar units or
+/// the result leaves the representable range.
+///
+/// **Years, months, weeks and days are refused**, which is Temporal's rule and the whole
+/// difference between an instant and a date: a day is not a fixed number of seconds where
+/// a zone changes offset, so "tomorrow" is a question for a `ZonedDateTime` and has no
+/// answer here. Hours and smaller are exact.
+pub let add = pure (self: Instant, amount: Duration) -> Maybe<Instant> => {
+  if amount.years != 0 || amount.months != 0 || amount.weeks != 0 || amount.days != 0 {
+    return None
+  }
+  let moved = i128(self) + clock_nanoseconds(amount)
+  if moved < i128(0) - MAX_INSTANT || moved > MAX_INSTANT { return None }
+  Some(Instant(moved))
+}
+
+/// This instant moved back by `amount`: `add` of its negation.
+pub let subtract = pure (self: Instant, amount: Duration) -> Maybe<Instant> =>
+  self.add(amount.negated())
+
+/// The time from this instant to `other` — Temporal's `until`, with its default largest
+/// unit for an instant: **hours down to nanoseconds**, and never days, since a day is not
+/// a fixed length of time anywhere a zone changes.
+pub let until = pure (self: Instant, other: Instant) -> Duration =>
+  balanced_to(i128(other) - i128(self), 1)
+
+/// The time from `other` to this instant: `until` the other way round.
+pub let since = pure (self: Instant, other: Instant) -> Duration => other.until(self)
+
+/// Instants order by when they are, everywhere and for everyone — which is the property a
+/// wall-clock reading does not have, and the reason to store one of these.
+impl Ord for Instant {
+  compare = pure (self, other) => i128(self) <=> i128(other)
+}
+
+/// An instant as ISO 8601 in UTC: `2026-09-22T18:32:29Z`, with a fraction only when there
+/// is one, as `PlainTime` writes one.
+impl Show for Instant {
+  show = pure (self) => {
+    let sec = self.epoch_second()
+    let epoch_day = floor_div(sec, 86400)
+    let clock = PlainTime((sec - epoch_day * 86400) * NS_PER_SECOND + self.nanosecond_of_second())
+    "${PlainDate(epoch_day)}T${clock}Z"
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+
+/// Temporal's limit: 10⁸ days either side of the epoch, in nanoseconds.
+const MAX_INSTANT: i128 = 8640000000000000000000
+
+/// `a / b` rounded toward negative infinity, for `i128` — the prelude's `floor_div` is
+/// `i64`, and an instant's arithmetic is not.
+let floor_div_i128 = pure (a: i128, b: i128) -> i128 => {
+  let quotient = a / b
+  if a %% b != i128(0) && (a < i128(0)) != (b < i128(0)) { quotient - i128(1) } else { quotient }
+}
