@@ -67,10 +67,6 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Language surface
 
-- **[OPEN] W012's message is wrong for a real shadow's neighbour.** It says "this
-  declaration wins", which is true for a shadow and was printed for an overload until
-  09/21; the overload case is now skipped, but the wording still promises a winner where
-  the reader may have meant one. It could name what it shadows and what to do about it.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
@@ -189,12 +185,16 @@ Item numbers (#3–#8) are cited from code comments.
   noisy to default on.
 - **[OPEN] (#3) Purity inference phase 2 for trait-method clauses.** Method clauses re-walk
   the AST because `CollectLambdaClause` records no scope.
-- **[OPEN] Impurity of an imported function.** `pkg/analyzer/checker/README.md` calls this
-  open and points here for it; it had never been written down — the third README→`todo.md`
-  reference found dangling on 09/16, after the typechecker's tuple/array narrowing marker
-  and its generic-type bound. Scope it before building: what a caller in another module can
-  know about an imported function's effects, and whether the answer is inference across the
-  merged program or a declared bound at the boundary.
+- **[PARTIAL] Impurity of an imported function.** Scoped and mostly answered 09/22: the
+  answer is **both** — inference across the merged program for free functions, and a
+  declared bound at the boundary for trait methods, which a bound call now believes instead
+  of joining over every impl. (COMPLETED.md, 09/22.)
+- **[OPEN] W018 advises the impl, never the trait.** With no bound on a trait method, a
+  bound call is scored as the join over all impls, so one impure impl anywhere blames the
+  generic that called it. Marking the *impl* `pure` — the only thing W018 suggests — does
+  not help, since an impl says nothing about its siblings. Advising the trait is the useful
+  nudge and a real API commitment (it binds every future impl, including downstream ones),
+  so it wants a decision before a diagnostic.
 - **[OPEN] (#4) `ref`/`mut`/`own` outside parameter position**, driving move/copy/borrow
   semantics.
 - **[OPEN] (#5) Allocation, remaining:** a nested `shared data` sub-pattern errors loudly;

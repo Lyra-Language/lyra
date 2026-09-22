@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — a trait's bound is a promise, so stop re-deriving it
+
+"Impurity of an imported function" had stood as an unscoped todo item since 09/16. The
+scoping question it posed — inference across the merged program, or a declared bound at
+the boundary — turned out to have been answered twice over and contradicted once.
+
+Inference across the merged program already works: a `pure` function calling an imported
+impure one is refused, and so is one calling an imported combinator with an impure
+callback. The gap was elsewhere. A call dispatched through a `where` bound was scored as
+the join over every impl of that trait method in the program — pure only if all of them
+are — **even when the trait declared `pure say`**. The declared bound was enforced at each
+impl and then not believed anywhere, so a broken promise was reported twice: once at the
+impl, correctly, and once inside whatever generic function made the abstract call. That
+second report is the interesting one, because the generic is usually a library, it did
+nothing wrong, the diagnostic lands on its line, and it fires even when the generic is
+never instantiated at the offending type. A library had no way to stay compiling
+regardless of what its users implement, which is the whole point of a bound.
+
+`boundCallEffect` now subtracts what the trait promises. It cannot admit a bad program:
+either every impl honours the bound, or the impl that does not is already an error. Where
+the trait declares nothing the join still runs, because then the impls are the only
+evidence there is.
+
+The subtraction is **per impl, keyed by pointer**, not per `BoundMethodRef`. The ref is a
+(trait name, method name) pair, so its group can lump two same-named traits from different
+modules together; that over-approximates, which is the safe direction, and a fix keyed on
+the ref would have inherited the imprecision as a *promise*. Resolution is
+`traitMethodDecl` → `LookupTraitFrom` at the impl's own location, so this adds no name
+index — the same rule 4 hazard that once let an impl inherit a different module's trait's
+bound. A default body is recorded the same way through `DefaultImpl()`, since it is an
+impl of its own method and `checkTraitDefaultBounds` already holds it to the bound.
+
+Left open, and deliberately: W018 advises marking the *impl* `pure`, which buys a bound
+call nothing, because an impl says nothing about its siblings. The useful advice is to
+bound the trait, but that binds every future impl including downstream ones — an API
+decision, not a mechanical fix, so it is a todo item rather than a new diagnostic.
+
 ### 09/22/26 — what a shadow warning could not truthfully say
 
 W012 told you a declaration "shadows the prelude's", which names the relation and leaves

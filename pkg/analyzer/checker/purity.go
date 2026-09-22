@@ -71,7 +71,8 @@ func CheckPurity(program *ast.Program, symTable *symbols.SymbolTable, scopeTable
 	// a nested lambda that captures allocates its environment box, one that does not
 	// is the shared pinned static (closures.go's emptyEnv) and stays free.
 	alloc := buildAllocContext(program, typeTable, caps)
-	inf := newInference(signatures, methodTable, boundGroups, frames, alloc)
+	inf := newInference(signatures, methodTable, boundGroups,
+		collectDeclaredMethodBounds(program, symTable), frames, alloc)
 	inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, inf)
 	c := &purityChecker{
 		inference: inf,
@@ -221,6 +222,7 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 		collectMethodSignatures(program, nil),
 		nil, // no MethodTable: nil-safe, and this entry point runs without a typechecker
 		collectTraitMethodGroups(program),
+		nil, // and so no declared trait bounds either, for the same reason
 		frames,
 		buildAllocContext(program, nil, nil),
 	)
@@ -541,6 +543,11 @@ type inference struct {
 	// boundGroups maps a (trait, method) to every impl providing it, so a call resolved by
 	// abstract bound dispatch can be scored as the join over those impls' effects.
 	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl
+	// guaranteed holds, per impl method, the effects its trait's declaration *promises*
+	// it does not have (`trait Speak { pure say: … }`). Keyed by impl pointer and
+	// resolved through LookupTraitFrom, so it adds no name index (rule 4). Empty when
+	// there is no SymbolTable to resolve a trait with, which costs only precision.
+	guaranteed map[*ast.TraitMethodImpl]Effect
 	// frames builds a lambda's flat scope-bindings frame from the collector's Scope tree.
 	frames *scopeFrames
 	// allocSites is where the inference records *which* expression allocated, so lyra-E016
@@ -555,6 +562,7 @@ func newInference(
 	signatures map[*ast.TraitMethodImpl]*types.LambdaType,
 	methodTable *typetable.MethodTable,
 	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl,
+	guaranteed map[*ast.TraitMethodImpl]Effect,
 	frames *scopeFrames,
 	alloc *allocContext,
 ) *inference {
@@ -566,6 +574,7 @@ func newInference(
 		signatures:      signatures,
 		methodTable:     methodTable,
 		boundGroups:     boundGroups,
+		guaranteed:      guaranteed,
 		frames:          frames,
 		allocSites:      alloc,
 	}
@@ -1723,6 +1732,53 @@ func collectMethodSignatures(program *ast.Program, symTable *symbols.SymbolTable
 	return sigs
 }
 
+// collectDeclaredMethodBounds records, for every trait-impl method, the effects its
+// trait's declaration guarantees it does not have. It is the *believing* half of a
+// declared bound, the enforcing half being effectiveMethodBounds.
+//
+// It only reads the trait's own annotation, never the impl's: an impl that marks itself
+// `pure` says nothing about its siblings, and a bound call reaches all of them. The
+// trait's word is the only one that covers every impl, which is what makes it the thing
+// an abstract call can rely on.
+func collectDeclaredMethodBounds(program *ast.Program, symTable *symbols.SymbolTable) map[*ast.TraitMethodImpl]Effect {
+	bounds := map[*ast.TraitMethodImpl]Effect{}
+	record := func(m *ast.TraitMethodImpl, td *ast.TraitMethod) {
+		var e Effect
+		if td.IsPure {
+			e |= PurityEffects
+		}
+		if td.IsDet {
+			e |= DetEffects
+		}
+		if td.IsNoAlloc {
+			e |= EffectAlloc
+		}
+		if e != EffectNone {
+			bounds[m] = e
+		}
+	}
+	for _, node := range program.Statements {
+		switch decl := node.(type) {
+		case *ast.TraitImplStmt:
+			for i := range decl.Methods {
+				if td := traitMethodDecl(symTable, decl, decl.Methods[i].Name); td != nil {
+					record(&decl.Methods[i], td)
+				}
+			}
+		case *ast.TraitDeclStmt:
+			// A default body is an impl of its own method (DefaultImpl), reachable
+			// through a bound like any other, and held to the bound at the declaration
+			// by checkTraitDefaultBounds. It promises exactly the same thing.
+			for i := range decl.Methods {
+				if m := decl.Methods[i].DefaultImpl(); m != nil {
+					record(m, &decl.Methods[i])
+				}
+			}
+		}
+	}
+	return bounds
+}
+
 // clauseParams maps a trait-impl method's bound parameter names to their positions in the
 // *signature*, so a call through one can be recognized in the body. Position 0 is the
 // receiver: a trait signature includes `Self`, while a call site writes it as the receiver
@@ -1818,7 +1874,20 @@ func collectTraitMethodGroups(program *ast.Program) map[typetable.BoundMethodRef
 func boundCallEffect(ref typetable.BoundMethodRef, inf *inference) Effect {
 	var found Effect
 	for _, m := range inf.boundGroups[ref] {
-		found |= inf.impureMethods[m]
+		// **What the trait declares is what the caller gets.** An impl is held to its
+		// trait's bound at the impl (effectiveMethodBounds), so an impl that breaks it
+		// is already an error there, and charging the bound call for the same break
+		// reports one mistake twice — the second time inside whatever generic function
+		// made the call, which is usually a library that did nothing wrong. Subtracting
+		// the promise cannot admit a bad program: either every impl honours the bound,
+		// or the impl that does not is reported.
+		//
+		// The join over the rest stays: a method the trait says nothing about has no
+		// contract to rely on, so the only honest answer is what its impls actually do.
+		// That join is over a *name*-keyed group, so it can lump two same-named traits
+		// together; over-approximating is the safe direction, which is why the fix here
+		// is per impl rather than per ref.
+		found |= inf.impureMethods[m] &^ inf.guaranteed[m]
 	}
 	return found
 }

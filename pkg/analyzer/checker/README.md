@@ -63,7 +63,12 @@ key presence, not value. `TestPurity_IsIdempotent` is the standing check.
 
 Lambda scopes come from the collector's `ScopeTable` (`scopeFrames.forLambda`, pruned at nested
 function scopes). Trait-method clauses still re-walk (`directScopeBindingsForClause`) because
-`CollectLambdaClause` pushes no scope. Impurity of imported functions is open (`todo.md`).
+`CollectLambdaClause` pushes no scope. Impurity of imported functions is largely answered (09/22): a free function's effects are
+inferred across the merged program, and a **trait method's declared bound is now believed**
+at a bound-dispatched call (`boundCallEffect` subtracts `inference.guaranteed`) rather than
+re-derived by joining over every impl, which reported an impl's broken promise a second time
+inside whatever generic called it. What is left is the advice, not the analysis — W018 points
+at the impl, never at the trait (`todo.md`).
 
 ### Resolving callees
 
