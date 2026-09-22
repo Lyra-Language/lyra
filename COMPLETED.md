@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — one message for two ambiguities, only one of which had a fix
+
+Found by the reconciliation pass the same day. A call matching several trait impls printed
+"call to `show` is ambiguous between traits Show, Show; use TraitName::show(...) to
+disambiguate" — the trait's name twice, and advice that cannot work, since both impls are
+of that trait. The sentence was written for a different situation and applied to this one.
+
+They are genuinely two situations. **Two traits** providing one method name for a receiver
+is a question with an answer: the traits differ, so `Pilot::fly(bird)` picks a side.
+**Two impls of one trait** with overlapping targets is not: overlapping impls are not
+ranked, so nothing written at the call site can choose, and the only fixes are at the
+impls — narrow one's target, or merge them. Telling an author to qualify a call that cannot
+be qualified sends them looking for a spelling that does not exist, and "traits Show, Show"
+makes the compiler look broken while it is in fact reporting something real.
+
+`reportAmbiguousTraitCall` now asks which it is and names the impls' *targets* in the
+overlapping case, those being what differs when the trait name is one word twice. Both
+messages were checked by following their own advice to a compiling program, which is the
+only way to know a diagnostic's fix is real: the qualified call picks Pilot's, and
+narrowing `Box<t>` to `Box<string>` makes `Box<i64>` the one match.
+
+The ranking question is untouched and still open. A more specific impl does not win, and
+whether it should is a design decision nothing has forced yet — a diagnostic that explains
+the current rule is not the same as changing it.
+
 ### 09/22/26 — the rung that was not there, found by reading the to-do list
 
 A reconciliation pass over todo.md — every cited path and diagnostic code, and the

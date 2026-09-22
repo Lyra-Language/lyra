@@ -179,3 +179,36 @@ let f = (n: i64) -> i64 => {
 	res := parseCollectAndCheck(t, source, false)
 	assertErrorsAre(t, res, "add: argument 1: cannot assign string to i64")
 }
+
+// **Two impls of one trait is a different ambiguity, and the message has to say so.**
+// The test above is two *traits*, where `Trait::fly(...)` settles it because the traits
+// differ. Overlapping targets — `Box<t>` beside `Box<i64>` — printed that same sentence
+// until 09/22: "ambiguous between traits Show, Show", naming one trait twice and advising
+// a qualifier that cannot choose between two impls of that trait. It read as a compiler
+// bug rather than as the decision it was asking the author to make.
+//
+// Nothing at a call site can pick an impl — overlapping impls are not ranked (todo.md) —
+// so the honest message names the targets, which are what differ, and points at the two
+// fixes that exist: narrow one, or merge them.
+func TestTraitDispatch_OverlappingImplsOfOneTraitNameTheirTargets(t *testing.T) {
+	source := `
+struct Box<t> {
+    value: t
+}
+trait Show {
+    show: (Self) -> string
+}
+impl Show<t> for Box<t> {
+    show = (self) => "generic"
+}
+impl Show for Box<i64> {
+    show = (self) => "specific"
+}
+let f = (b: Box<i64>) -> string => {
+    b.show()
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res, `call to "show" matches 2 impls of trait Show, for Box<t>, Box<i64> `+
+		`— overlapping impls are not ranked, so neither is more specific and nothing at the `+
+		`call site can choose between them. Narrow one impl's target, or merge them`)
+}

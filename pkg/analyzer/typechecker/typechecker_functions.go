@@ -1327,9 +1327,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 
 	if matches := tc.resolveTraitMethod(objType, methodName, ""); len(matches) > 0 {
 		if len(matches) > 1 {
-			tc.addError(call.GetLocation(), SeverityError,
-				"call to %q is ambiguous between traits %s; use TraitName::%s(...) to disambiguate",
-				methodName, traitNamesOf(matches), methodName)
+			tc.reportAmbiguousTraitCall(methodName, matches, call.GetLocation())
 			return nil
 		}
 		pinReceiver()

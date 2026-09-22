@@ -372,10 +372,11 @@ emittable constants.
   both highlight query files when built.
 - **[OPEN] Overlapping impls** (`impl Show for Box<t>` beside `Box<i64>`) are not ranked;
   only identical targets are refused (`lyra-E037`). A call that could take either is
-  refused rather than mis-dispatched (`lyra-E001`), which is the safe half — but the
-  message names the *trait* twice ("ambiguous between traits Show2, Show2") where it means
-  two impls of one trait, so it reads as a compiler bug rather than the choice it is
-  asking for. Confirmed 09/22.
+  refused rather than mis-dispatched (`lyra-E001`), which is the safe half, and **the
+  message now names the impls' targets** and the two fixes that exist — narrow one, or
+  merge them (09/22; it used to name the trait twice and advise a qualifier that cannot
+  choose). What is still open is the ranking itself: a more specific impl does not win,
+  and whether it should is a decision nothing has yet forced.
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
   `Ordering`; deferred until something needs it. A bit-pattern `total_cmp` for sorting
   floats is also unbuilt (`sort_by` with a comparator works meanwhile).

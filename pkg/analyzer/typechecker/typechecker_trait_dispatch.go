@@ -32,8 +32,9 @@ type resolvedTraitMethod struct {
 // structurally equals receiverType (via types.TypesEqual) and that provides
 // an identifier-named method called methodName, optionally restricted to a
 // single trait (requiredTrait != ""). Multiple matches without requiredTrait
-// mean the call is genuinely ambiguous (two different traits implementing the
-// same method name for the same type) — the caller decides what to do with
+// mean the call is ambiguous — either two different traits implementing the same
+// method name for the same type, or two overlapping impls of *one* trait, which
+// reportAmbiguousTraitCall tells apart because only the first has a fix — the caller decides what to do with
 // len(matches) > 1.
 //
 // Only identifier-named methods participate here: an operator-overload method like
@@ -583,6 +584,51 @@ func findTraitMethodNamed(trait *ast.TraitDeclStmt, name ast.MethodName) *ast.Tr
 		}
 	}
 	return nil
+}
+
+// reportAmbiguousTraitCall says which of the two ambiguities this is, because the fix for
+// one is not available for the other.
+//
+// **Two traits** providing the same method name for one receiver is the case the message
+// has always described, and `Trait::method(...)` settles it: the traits differ, so naming
+// one picks a side.
+//
+// **Two impls of one trait** — overlapping targets, `Box<t>` beside `Box<i64>` — is the
+// other, and until 09/22 it printed the same sentence: "ambiguous between traits Show,
+// Show", naming one trait twice and advising a qualifier that cannot disambiguate
+// anything, both impls being of that trait. It reads as a compiler bug rather than the
+// choice it is asking for. There is no spelling that picks an impl (todo.md: overlapping
+// impls are not ranked), so the honest message names the targets and says so.
+func (tc *TypeChecker) reportAmbiguousTraitCall(methodName string, matches []resolvedTraitMethod, loc ast.Location) {
+	trait := matches[0].Impl.TraitName
+	overlapping := true
+	for _, m := range matches[1:] {
+		if m.Impl.TraitName != trait {
+			overlapping = false
+			break
+		}
+	}
+	if overlapping {
+		tc.addError(loc, SeverityError,
+			"call to %q matches %d impls of trait %s, for %s — overlapping impls are not ranked, "+
+				"so neither is more specific and nothing at the call site can choose between them. "+
+				"Narrow one impl's target, or merge them",
+			methodName, len(matches), trait, implTargetsOf(matches))
+		return
+	}
+	tc.addError(loc, SeverityError,
+		"call to %q is ambiguous between traits %s; use TraitName::%s(...) to disambiguate",
+		methodName, traitNamesOf(matches), methodName)
+}
+
+// implTargetsOf renders the impl *targets* of matches, e.g. `Box<t>, Box<i64>` — what
+// distinguishes two impls of one trait, their trait name being the same word twice.
+func implTargetsOf(matches []resolvedTraitMethod) string {
+	targets := make([]string, len(matches))
+	for i, m := range matches {
+		targets[i] = m.Impl.Type.String()
+	}
+	return strings.Join(targets, ", ")
 }
 
 // traitNamesOf renders the trait names of matches for an ambiguity message,
