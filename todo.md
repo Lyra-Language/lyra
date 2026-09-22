@@ -5,7 +5,14 @@ the compiler does today is in `CLAUDE.md`.
 
 Tags: **[OPEN]** not started · **[PARTIAL]** landed in part · **[DECIDED]** settled, not
 built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberately later.
-Entries rot: re-run an open entry's own reproduction before acting on it.
+
+**Entries rot: re-run an open entry's own reproduction before acting on it.** Reconciled
+against the compiler on **09/22**, which is the date to trust an unedited entry from. That
+pass found one entry describing the *opposite* of the behaviour — it claimed a callback
+through an array element was charged conservatively when it was not charged at all, which
+was a hole in `pure` that the entry's wording had been hiding — three entries describing
+work already finished, and one using a word the codebase had renamed. This line is a rule,
+not a formality.
 
 ## In progress
 
@@ -117,8 +124,8 @@ Package management, versioning and separate compilation are out of scope by deci
   month grid and then **events** landed 09/18: `PlainDate`, `PlainTime`, `PlainDateTime`,
   `Duration` with ISO parsing, and `today()`/`now_plain_date_time()` through the local
   offset, in a TUI reading an ISO 8601 events file; `PlainTime` and `Duration` arithmetic
-  09/19. Next, if the calendar grows: a default events file (which forces environment
-  variables — `std` has none) and editing.
+  09/19. The **default events file landed 09/22** with `std.env` under it
+  (`XDG_CONFIG_HOME`, then `$HOME/.config`), so what is left of that note is editing.
   **Zone rules landed 09/22** (slice one): `TimeZone` over the system's IANA database, with
   the offset, abbreviation and daylight-ness at an instant, checked against Go's `time` at
   ±1s around every transition 1965–2035 in nine zones. **`Instant` and `ZonedDateTime`
@@ -151,9 +158,12 @@ Package management, versioning and separate compilation are out of scope by deci
 
 ## Array comprehensions
 
-- **[OPEN] A generator whose source depends on an earlier one** (`[row in grid, cell in
-  row | cell]`). Sources are materialized before the loops to compute capacity; this needs
-  materialization inside the enclosing loop.
+- **[OPEN] A comprehension clause whose source depends on an earlier one** (`[row in grid,
+  cell in row | cell]`). Sources are materialized before the loops to compute capacity;
+  this needs materialization inside the enclosing loop. Refused loudly, with the
+  comprehension-over-a-comprehension workaround in the message (confirmed 09/22). Called a
+  *clause* here because a bare "generator" names a `gen` function — the 09/17 convention
+  CLAUDE.md states and the backend's own message already follows.
 
 ## Lazy sequences — `gen` and `Seq<t>`
 
@@ -179,8 +189,14 @@ Package management, versioning and separate compilation are out of scope by deci
 
 Item numbers (#3–#8) are cited from code comments.
 
-- **[OPEN] Callbacks reached through a struct field, call result or array element** are
-  charged `AllEffects`; only parameters and bindings are effect-polymorphic.
+- **[PARTIAL] Only parameters and bindings are effect-polymorphic.** A callback reached
+  through a **struct field** is charged `AllEffects` — conservative, so a *pure* callback
+  in a field is refused too, which is the remaining gap. Reaching one through an array
+  element, another call's result, or a lambda literal in call position was charged
+  **nothing** until 09/22, which was a hole in `pure` rather than conservatism: the effect
+  ran. Now charged (a literal by its own body, the rest `AllEffects`). This entry used to
+  claim all three were already `AllEffects`, which is how the hole survived being read.
+  (COMPLETED.md, 09/22.)
 - **[OPEN] A declared callback bound is not inferred.** Forwarding an unconstrained
   parameter into a bounded slot is rejected instead of propagating the bound outward.
 - **[IDEA] A suppression syntax** (`#[allow]`-like). Becomes a gap once a second
@@ -355,7 +371,11 @@ emittable constants.
   arithmetic does to the parameters; blocked on const generics. Add `fixed_point_type` to
   both highlight query files when built.
 - **[OPEN] Overlapping impls** (`impl Show for Box<t>` beside `Box<i64>`) are not ranked;
-  only identical targets are refused (`lyra-E037`).
+  only identical targets are refused (`lyra-E037`). A call that could take either is
+  refused rather than mis-dispatched (`lyra-E001`), which is the safe half — but the
+  message names the *trait* twice ("ambiguous between traits Show2, Show2") where it means
+  two impls of one trait, so it reads as a compiler bug rather than the choice it is
+  asking for. Confirmed 09/22.
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
   `Ordering`; deferred until something needs it. A bit-pattern `total_cmp` for sorting
   floats is also unbuilt (`sort_by` with a comparator works meanwhile).

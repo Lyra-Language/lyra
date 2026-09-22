@@ -1202,3 +1202,52 @@ let f = pure (v: f64) -> i64 => { counter = 1; round(v) }`)
 		t.Errorf("expected the captured-mutation violation, got %q", errs[0].Message)
 	}
 }
+
+// **A callee with no name is still a call.** The resolution ladder used to sit entirely
+// inside `calleeName(...) != ""`, so a callee that could not be named — an array element,
+// another call's result — fell past every rung including the one that charges AllEffects
+// for a callee it cannot *resolve*. Nothing was charged at all, and a `pure` function
+// calling an impure callback out of an array compiled, ran, and printed (09/22).
+//
+// Hazard 8 in its quietest form: the missing rung is the fall-through, so the gap has no
+// symptom until the effect runs. todo.md had recorded these as charged AllEffects — the
+// opposite way round — which is how it survived a reader.
+func TestPurity_AnUnnameableCalleeIsChargedNotIgnored(t *testing.T) {
+	for _, c := range []struct{ name, callee string }{
+		{"array element", "fs[0](n)"},
+		{"another call's result", "pick()(n)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := `
+let noisy = (n: i64) -> i64 => {
+    println(n)
+    n
+}
+let pick = () -> (i64) -> i64 => noisy
+let caller = pure (fs: [](i64) -> i64, n: i64) -> i64 => ` + c.callee + `
+let main = () -> u8 => u8(caller([noisy], 1))`
+			assertPurityCount(t, checkPurity(t, src), 1)
+		})
+	}
+}
+
+// A lambda *literal* in call position has no name either, and must not be swept up by the
+// rule above: it needs no name, the body being right there and scored by the same fixpoint
+// as any other lambda. Both directions are pinned, because a fix that refused this would
+// look like the hole was closed while having made `pure` unusable over an inline callback.
+func TestPurity_ALambdaLiteralInCallPositionIsScoredByItsBody(t *testing.T) {
+	pure := `let f = pure (n: i64) -> i64 => ((x: i64) -> i64 => x + 1)(n)
+let main = () -> u8 => u8(f(1))`
+	assertPurityCount(t, checkPurity(t, pure), 0)
+
+	impure := `let f = pure (n: i64) -> i64 => ((x: i64) -> i64 => {
+    println(x)
+    x
+})(n)
+let main = () -> u8 => u8(f(1))`
+	diags := checkPurity(t, impure)
+	assertPurityCount(t, diags, 1)
+	if !strings.Contains(diags[0].Message, "function literal that writes output") {
+		t.Errorf("the message should name what the body does; got %q", diags[0].Message)
+	}
+}

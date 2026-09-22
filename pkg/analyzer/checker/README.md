@@ -77,6 +77,10 @@ at the impl, never at the trait (`todo.md`).
 - **Namespace-qualified callee** (`resolveCallee`): `maybe.map` resolves through its last segment,
   only when the object segment names no binding (mirrors backend `namespaceCallee`).
 - **Unresolvable callee** → `AllEffects` (`PurityEffects | EffectAlloc`).
+- **Unnameable callee** → `AllEffects` too, and that rung was missing until 09/22: the
+  ladder sat inside `calleeName(...) != ""`, so `fs[0](n)` and `pick()(n)` were charged
+  nothing and an effect escaped a `pure` function at runtime. A **lambda literal** in call
+  position is the exception, scored by its own body — it has no name because it needs none.
 - **Callee the typechecker refused** (`typetable.SetUnresolvedCallee`) → charged nothing,
   reported nowhere (no cascade). Don't re-derive this locally: "resolves nowhere here" also matches
   merely-unseeable callees.

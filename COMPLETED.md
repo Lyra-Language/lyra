@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the rung that was not there, found by reading the to-do list
+
+A reconciliation pass over todo.md — every cited path and diagnostic code, and the
+reproduction of all 22 open entries. Most held. One did not, and it was not a stale entry
+so much as a hole with a cover story.
+
+It read: "Callbacks reached through a struct field, call result or array element are charged
+`AllEffects`; only parameters and bindings are effect-polymorphic." The struct field is.
+The other two were charged **nothing**. A `pure` function calling `fs[0](n)` or `pick()(n)`
+with an impure callback compiled, ran, and printed. A lambda literal invoked in place was
+the third shape of it.
+
+The cause is one `if`. The whole call-resolution ladder sat inside
+`if name := calleeName(ex.Function); name != ""`, and its last rung charges `AllEffects`
+for a callee it cannot *resolve*. A callee it cannot even *name* is strictly less known and
+never reached that rung — it fell out of the switch arm entirely. Hazard 8 in its quietest
+form: the missing rung is the fall-through, so there is no symptom until the effect runs.
+
+Worth separating the two failures. The bug is ordinary. What kept it alive is that the
+to-do entry described the behaviour **backwards**, and backwards in the reassuring
+direction: a reader budgeting attention sees "charged AllEffects" and files it under false
+positives, which is a nuisance rather than a soundness bug. An entry that had simply said
+nothing would have been safer than one that said the opposite.
+
+A lambda literal in call position is now scored by its own body rather than by the
+unknown-callee worst case — it has no name because it needs none, and charging it
+`AllEffects` would refuse `((x) => x + 1)(n)` from `pure` code for having nothing to look
+up. Both directions are pinned, since a fix that closed the hole by refusing every inline
+callback would have looked identical from the outside.
+
+Nothing in `std`, `examples` or `bindings` is refused by the tightening — checked file by
+file, not inferred from a green suite.
+
 ### 09/22/26 — the link shape the checker skipped, and the bit a copy dropped
 
 Two "next for it" items on the site builder, and the first was recorded backwards. todo.md

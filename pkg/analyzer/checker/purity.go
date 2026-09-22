@@ -1871,6 +1871,40 @@ func collectTraitMethodGroups(program *ast.Program) map[typetable.BoundMethodRef
 // every concrete impl of that trait method. A `pure`/`det`/`noalloc` caller is
 // only safe if *all* impls of the bound method are — the bound admits any of
 // them. With no impls in scope the join is empty (EffectNone).
+// describeUnnamedCallee names the shape of a callee `calleeName` could not name, for the
+// unknown-callee diagnostic. The shape is the whole content of the message: there is no
+// name to print, which is precisely the problem being reported.
+func describeUnnamedCallee(callee ast.Expression) string {
+	switch callee.(type) {
+	case *ast.IndexExpr:
+		return "a function taken from an array element"
+	case *ast.FunctionCallExpr:
+		return "a function returned by another call"
+	case *ast.TupleIndexExpr:
+		return "a function taken from a tuple element"
+	}
+	return "a function reached by an expression"
+}
+
+// describeEffects says what a literal body was found to do, for the one diagnostic that
+// has a body to point at rather than a name. Ordered as nondeterminismDescription orders
+// its own, and falling back to the general word rather than inventing a specific one.
+func describeEffects(e Effect) string {
+	switch {
+	case e.Has(EffectOutput):
+		return "writes output"
+	case e.Has(EffectInput):
+		return "reads input"
+	case e.Has(EffectRand):
+		return "reads randomness"
+	case e.Has(EffectTime):
+		return "reads the clock"
+	case e.Has(EffectMut):
+		return "mutates state its caller can see"
+	}
+	return "has an observable effect"
+}
+
 func boundCallEffect(ref typetable.BoundMethodRef, inf *inference) Effect {
 	var found Effect
 	for _, m := range inf.boundGroups[ref] {
@@ -2432,6 +2466,37 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					found |= AllEffects
 					c.pure(ex.GetLocation(), "pure function calls impure function %q", name)
 				}
+			} else if lam, isLiteral := ex.Function.(*ast.LambdaExpr); isLiteral {
+				// **A literal in call position is its own answer.** It has no name because
+				// it needs none: the body is right there, the fixpoint scored it like any
+				// other lambda, and charging it the unknown-callee worst case below would
+				// refuse `((x) => x + 1)(n)` from `pure` code for having no name to look up.
+				eff := inf.impureLambdas[lam]
+				found |= eff
+				if eff&PurityEffects != 0 {
+					c.pure(ex.GetLocation(),
+						"pure function calls a function literal that %s", describeEffects(eff))
+				}
+			} else {
+				// **A callee with no name is still a call**, and until 09/22 this rung did
+				// not exist: the whole ladder above sat inside `name != ""`, so a callee
+				// that `calleeName` could not name — `fs[0](n)`, `pick()(n)` — was charged
+				// *nothing*. Not conservatively, not partially: a `pure` function calling
+				// an impure callback out of an array compiled, ran, and printed. The rung
+				// below it already charges AllEffects for a callee it cannot *resolve*;
+				// one it cannot even name is strictly less known, and was the safer case.
+				//
+				// Hazard 8 in its quietest form — a resolution ladder whose missing rung
+				// is the fall-through, so the gap has no symptom until the effect runs.
+				// todo.md recorded these as charged AllEffects, the opposite way round,
+				// which is how it survived: the entry said the risk ran toward false
+				// positives.
+				found |= AllEffects
+				c.pure(ex.GetLocation(),
+					"pure function calls %s, which cannot be resolved to a function here, "+
+						"so its effects are unknown; bind it to a name or take it as a parameter, "+
+						"either of which can be checked",
+					describeUnnamedCallee(ex.Function))
 			}
 		case *ast.StructInstanceExpr, *ast.TupleLiteralExpr, *ast.DataConstructorExpr,
 			*ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr, *ast.ArrayCompExpr:
