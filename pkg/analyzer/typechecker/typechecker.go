@@ -1034,6 +1034,14 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		tc.foldPatternConstants(p)
 		tc.checkScalarPattern(p, t)
 
+	case *ast.OrPattern:
+		// An alternation binds nothing (its alternatives are literals and ranges), so it
+		// is a test like the arm above — each alternative checked against the same type,
+		// so `1 | "s"` is reported on the string rather than on the alternation.
+		for _, alt := range p.Alternatives {
+			tc.walkDestructuredPattern(alt, t, bind)
+		}
+
 	case *ast.WildcardPattern:
 		// Matches anything and binds nothing.
 

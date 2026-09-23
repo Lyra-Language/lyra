@@ -61,6 +61,13 @@ func WalkPatternChildren(p Pattern, onPattern func(Pattern) bool) {
 		WalkPattern(pat.Pattern, onPattern)
 	case *BindingPattern:
 		WalkPattern(pat.Pattern, onPattern)
+	case *OrPattern:
+		// Its alternatives are patterns, so a walk must reach them even though none of
+		// them binds — a literal's *width* is still checked per pattern, and a walk that
+		// stopped here would leave `1 | 300` against a `u8` unchecked on the second.
+		for _, alt := range pat.Alternatives {
+			WalkPattern(alt, onPattern)
+		}
 	case *IdentifierPattern, *LiteralPattern, *RestPattern, *RangePattern,
 		*WildcardPattern, *RegexPattern:
 		// Leaves: nothing inside to visit.

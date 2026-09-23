@@ -348,6 +348,29 @@ func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern as
 	// than given a case, so the three delegates below (float, string, integer) each need no
 	// knowledge of the wrapper.
 	pattern = ast.UnwrapBinding(pattern)
+	// **An alternation is the `or` of its alternatives' tests**, and it belongs here rather
+	// than in the three delegates below. The rule does not depend on what the scrutinee is,
+	// so putting it in front of the dispatch gives strings, floats, runes and integers the
+	// same answer from one place — where a case per delegate would be three copies free to
+	// disagree, which is hazard 8's shape.
+	if or, isOr := pattern.(*ast.OrPattern); isOr {
+		if len(or.Alternatives) == 0 {
+			return nil, fmt.Errorf("llvm: alternation with no alternatives")
+		}
+		var test value.Value
+		for _, alt := range or.Alternatives {
+			one, err := l.scalarMatchTest(block, scrut, alt, isBool, signed)
+			if err != nil {
+				return nil, err
+			}
+			if test == nil {
+				test = one
+				continue
+			}
+			test = block.NewOr(test, one)
+		}
+		return test, nil
+	}
 	if _, isFloat := scrut.Type().(*lltypes.FloatType); isFloat {
 		return l.floatScalarMatchTest(block, scrut, pattern)
 	}
@@ -444,6 +467,10 @@ func constIntFromExpr(e ast.Expression, ty *lltypes.IntType) (value.Value, bool)
 		c := constant.NewInt(ty, 0)
 		c.X = v.BigValue()
 		return c, true
+	case *ast.CharacterLiteralExpr:
+		// A rune bound (`'0'..<='9'`) is its code point, which is what the scrutinee
+		// holds — the same pre-decoding a rune *literal* pattern gets one arm up.
+		return constant.NewInt(ty, int64(v.Value)), true
 	case *ast.NegationExpr:
 		if inner, ok := v.Operand.(*ast.IntegerLiteralExpr); ok {
 			c := constant.NewInt(ty, 0)

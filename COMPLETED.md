@@ -42,6 +42,48 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — rune ranges and `|`, the two gaps the collector kept running into
+
+Both were written down this morning as measured `[OPEN]` entries rather than hunches, which
+is why building them was mostly mechanical: the question of *whether* they were worth having
+had already been answered by the code that wanted them.
+
+**A range pattern on a rune is written in runes.** The grammar's `range_pattern` gained a
+`char_literal` bound, the typechecker admits one on a rune scrutinee and refuses a numeric
+one there, and the backend folds it like any other constant — a code point is what the
+scrutinee holds, which is the same pre-decoding a rune *literal* pattern already got. The
+refusal of `48..<=57` is the point rather than strictness: it is the same set with its
+meaning removed, and a reader would have to know ASCII to check it.
+
+**A pattern may name alternatives with `|`.** Literals and ranges only, which the grammar
+enforces. An alternative that *binds* raises a rule every language with or-patterns states
+explicitly — Rust requires each alternative to bind the same names at the same types — and
+nothing has needed it, so `Some(x) | None` is a syntax error rather than a shape whose
+meaning is undecided. Worth keeping: `|` is also the bitwise operator, and a precedence
+above `BITWISE_OR` is what lets `match a | b { 3 | 7 => … }` read the scrutinee as arithmetic
+and the arm as an alternation.
+
+Two design choices did the work, both of the "one place rather than four" kind.
+
+The **lowering** sits in `scalarMatchTest` *before* it dispatches on the scrutinee's shape,
+so an alternation is the `or` of its alternatives' own tests for strings, runes, floats and
+integers alike. A case in each of the three delegates would have been three copies free to
+disagree.
+
+**Exhaustiveness** expands an alternation into one arm per alternative, once, where every
+analysis picks up `arms` — so the bool checker, the numeric interval analysis and the
+Maranget matrix each see rows they already understand and none of them learned a new node.
+The arms it builds share the original's body pointer, which is safe only because nothing
+downstream of that point reads a body; copying one would need a cloner the compiler does not
+have.
+
+Two things the mutation tests caught, both about the tests rather than the code. The rune
+bound folding to 0 failed nothing until the case asserted a *value* rather than a match.
+And the exhaustiveness expansion failed nothing at all, because the case exercising it used
+a **numeric** match — non-exhaustive numerics are a warning, so it compiled either way. Bool
+is an error, so the case is bool now. A mutation that fires on nothing is the only way to
+find a test that proves less than it appears to, and that is twice this week.
+
 ### 09/23/26 — the related link pointed at the file you were already in
 
 Reported from the editor: a `lyra-W001` shadowing warning's "previously declared here" link

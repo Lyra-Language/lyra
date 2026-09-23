@@ -1253,6 +1253,8 @@ func (c *Collector) collectPatternByKind(patternNode *sitter.Node) ast.Pattern {
 		return c.collectDataPattern(patternNode)
 	case "range_pattern":
 		return c.collectRangePattern(patternNode)
+	case "or_pattern":
+		return c.collectOrPattern(patternNode)
 	case "binding_pattern":
 		return c.collectBindingPattern(patternNode)
 	case "wildcard_pattern":
@@ -1479,6 +1481,31 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 	for _, bound := range []ast.Expression{pattern.Start, pattern.End} {
 		if id, isName := bound.(*ast.IdentifierExpr); isName {
 			pattern.ConstBounds = append(pattern.ConstBounds, id)
+		}
+	}
+	return pattern
+}
+
+// collectOrPattern lowers `1 | 2 | 3` into an OrPattern.
+//
+// The grammar admits only literals and ranges as alternatives, so there is nothing here to
+// check about bindings — see ast.OrPattern for why that restriction is the language's
+// answer rather than this function's.
+func (c *Collector) collectOrPattern(node *sitter.Node) ast.Pattern {
+	pattern := &ast.OrPattern{
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
+	}
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		// A comment is a named node and can sit between alternatives (hazard 16).
+		if cst.IsComment(child) {
+			continue
+		}
+		// A nil alternative would be an unknown pattern kind, which the grammar cannot
+		// produce here; dropping it rather than appending nil keeps rule 3's promise that
+		// no nil reaches the AST.
+		if alt := c.CollectPattern(child); alt != nil {
+			pattern.Alternatives = append(pattern.Alternatives, alt)
 		}
 	}
 	return pattern

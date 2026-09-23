@@ -398,7 +398,16 @@ type matchKind struct {
 // them. Until that strip, a newtype scrutinee matched none of these and got no kind
 // policing and no exhaustiveness check at all.
 func (tc *TypeChecker) matchKindOf(scrutineeType, kindType types.Type, expr *ast.MatchExpr) (matchKind, bool) {
-	arms := expr.MatchArms
+	// **Every exhaustiveness analysis sees an alternation as the arms it stands for.**
+	// `true | false => …` covers bool, `1 | 2` covers two values of a numeric domain, and
+	// a Maranget matrix wants one row per constructor — so the expansion is done once here
+	// rather than as a case in each analysis, which is three or four places to teach and
+	// three or four places to forget (hazard 8).
+	//
+	// Only the *exhaustiveness* closures below take the expanded arms. The per-kind
+	// `checkArm` still walks the patterns as written, because a diagnostic should point at
+	// the alternative the author wrote rather than at a row this function invented.
+	arms := expandAlternations(expr.MatchArms)
 	switch {
 	case types.IsBoolean(kindType):
 		return matchKind{
@@ -914,6 +923,12 @@ func MatchGaps(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, ty
 // is a type error.
 func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
 	switch p := pattern.(type) {
+	case *ast.OrPattern:
+		// **An alternation is its alternatives**, each held to the same rule, so a bad one
+		// is reported where it is written rather than as "this pattern is not allowed".
+		for _, alt := range p.Alternatives {
+			tc.checkStringMatchArm(alt)
+		}
 	case *ast.WildcardPattern, *ast.IdentifierPattern:
 		return
 	case *ast.RegexPattern:
@@ -968,6 +983,12 @@ func isRuneType(t types.Type) bool {
 // wildcard. A number/string/bool literal, a range, or a regex is a type error.
 func (tc *TypeChecker) checkRuneMatchArm(pattern ast.Pattern) {
 	switch p := pattern.(type) {
+	case *ast.OrPattern:
+		// **An alternation is its alternatives**, each held to the same rule, so a bad one
+		// is reported where it is written rather than as "this pattern is not allowed".
+		for _, alt := range p.Alternatives {
+			tc.checkRuneMatchArm(alt)
+		}
 	case *ast.WildcardPattern, *ast.IdentifierPattern:
 		return
 	case *ast.BindingPattern:
@@ -978,8 +999,29 @@ func (tc *TypeChecker) checkRuneMatchArm(pattern ast.Pattern) {
 				"literal pattern %s is not a rune (character) value", p.Value)
 		}
 	case *ast.RangePattern:
-		tc.addError(p.GetLocation(), SeverityError,
-			"range patterns are not allowed on a rune scrutinee")
+		// **A rune range is written in runes** (`'0'..<='9'`, 09/23). A code point is
+		// ordered, so a range over one is meaningful in a way arithmetic on it is not —
+		// which is why `rune` is excluded from IsNumeric and still belongs here. The
+		// bounds must be rune literals: `48..<=57` is the same set with its meaning
+		// removed, and admitting it would make the scrutinee's type stop deciding how its
+		// patterns are spelled.
+		// **One diagnostic for the range, not one per bound.** `0..<=9` is a single
+		// mistake written twice over, and reporting it twice is the noise rule 3 exists
+		// to avoid in the collector.
+		var written []string
+		for _, bound := range []ast.Expression{p.Start, p.End} {
+			if bound == nil {
+				continue // an open bound is the type's own edge, and names no value
+			}
+			if _, isRune := bound.(*ast.CharacterLiteralExpr); !isRune {
+				written = append(written, bound.GetName())
+			}
+		}
+		if len(written) > 0 {
+			tc.addError(p.GetLocation(), SeverityError,
+				"a range pattern on a rune scrutinee takes rune bounds: write %s as a character literal",
+				strings.Join(written, " and "))
+		}
 	case *ast.RegexPattern:
 		tc.addError(p.GetLocation(), SeverityError,
 			"regex patterns are not allowed on a rune scrutinee")
@@ -987,6 +1029,40 @@ func (tc *TypeChecker) checkRuneMatchArm(pattern ast.Pattern) {
 		tc.addError(pattern.GetLocation(), SeverityError,
 			"this pattern is not allowed on a rune scrutinee")
 	}
+}
+
+// expandAlternations rewrites each arm whose pattern is an alternation into one arm per
+// alternative, leaving every other arm as it is.
+//
+// The arms it builds are for reading only — they share the original's body pointer, which
+// is safe precisely because nothing downstream of here looks at a body: exhaustiveness asks
+// about patterns and guards. Copying the body would need a cloner the compiler does not
+// have, and a shared subtree with two parents is the hazard that argues against one.
+func expandAlternations(arms []ast.MatchArm) []ast.MatchArm {
+	expanded := false
+	for i := range arms {
+		if _, isOr := ast.UnwrapBinding(arms[i].Pattern).(*ast.OrPattern); isOr {
+			expanded = true
+			break
+		}
+	}
+	if !expanded {
+		return arms // the common case allocates nothing
+	}
+	out := make([]ast.MatchArm, 0, len(arms)+2)
+	for _, arm := range arms {
+		or, isOr := ast.UnwrapBinding(arm.Pattern).(*ast.OrPattern)
+		if !isOr {
+			out = append(out, arm)
+			continue
+		}
+		for _, alt := range or.Alternatives {
+			row := arm
+			row.Pattern = alt
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 // isNumericMatchExhaustive reports whether the arms of a numeric match
@@ -1175,6 +1251,10 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 	// does 300 fit a u8, is 200 inside Percent's range — is checkPatternLiterals's
 	// (lyra-E048), which runs for every arm before the kind dispatch.
 	switch p := pattern.(type) {
+	case *ast.OrPattern:
+		for _, alt := range p.Alternatives {
+			tc.checkNumericMatchArm(alt, scrutineeType)
+		}
 	case *ast.RangePattern:
 		// A bound is a number literal or a folded `const` (range_pattern_consts.go), so
 		// its kind can still be wrong: `0.5..` on an integer has no integer to compare
@@ -1220,6 +1300,12 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 // Only true/false literal patterns, wildcards, and identifiers are valid.
 func (tc *TypeChecker) checkBoolMatchArm(pattern ast.Pattern) {
 	switch p := pattern.(type) {
+	case *ast.OrPattern:
+		// **An alternation is its alternatives**, each held to the same rule, so a bad one
+		// is reported where it is written rather than as "this pattern is not allowed".
+		for _, alt := range p.Alternatives {
+			tc.checkBoolMatchArm(alt)
+		}
 	case *ast.WildcardPattern, *ast.IdentifierPattern:
 		return
 	case *ast.BindingPattern:

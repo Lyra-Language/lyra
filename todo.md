@@ -177,16 +177,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
-- **[OPEN] A match arm cannot name alternatives** (`"a" | "b" => …`): `|` does not parse
-  in pattern position. Literal patterns themselves are fine — a `string` scrutinee with
-  `"a" => 1` works — so what is missing is only the alternation, and with it a set of kinds
-  sharing one body has no spelling but repeating the body per arm. `collect_type` in
-  `examples/collector/collect.lyra` is the standing example, and it stays an `||` chain for
-  that reason: its six primitive kinds all answer the same thing, where `collect_expr`
-  beside it is a `match` precisely because every arm differs. There is no fallback either:
-  `contains` on a `[]string` is `member access on non-struct type DynamicArray<string>`, the
-  prelude's being the substring one, so array membership does not stand in for it.
-  (Measured 09/23.)
+- **[DONE 09/23] A match arm names alternatives with `|`** (`1 | 2`, `"get" | "post"`),
+  over literals and ranges. A binding alternative stays refused, deliberately — see
+  LANGUAGE.md § patterns. (COMPLETED.md, 09/23.)
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
@@ -290,20 +283,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[IDEA] Open-ended expression ranges (`0..`)**, now possible over `Seq`. Patterns and
   constraints already allow open bounds; the expression form deliberately does not yet.
 
-- **[OPEN] A range pattern cannot be written in the units its scrutinee is in.** Classifying
-  a `rune` is the case that shows it: `'0'..<='9'` does not parse, and neither does a bound
-  computed from one (`i64('0')..<=i64('9')` — a pattern bound is not an expression). A
-  `const` does not rescue it, because folding for a bound accepts a literal, arithmetic on
-  literals and another const, but **not a conversion** — `const ZERO: i64 = i64('0')` is
-  "does not fold to one", and so is `i64(48)`, so it is conversions rather than runes. What
-  is left is `match i64(d) { 48..<=57 => … }`, which is the same rule with its meaning
-  removed: a reader has to know ASCII to check it, where `d >= '0' && d <= '9'` says it.
-  So `digit_value` in `examples/collector/collect.lyra` is an `if` chain, and that is a
-  language gap rather than a style choice — the `match` form would otherwise be better,
-  being exhaustive by shape with an explicit fallback instead of a bare trailing `0`.
-  Either half fixes it: rune bounds in a range pattern, or folding a conversion of a
-  literal. (Measured 09/23; a bare `const B: rune = '0'` as an equality arm is separately
-  refused, "this pattern is not allowed on a rune scrutinee".)
+- **[DONE 09/23] A range pattern is written in its scrutinee's units.** `'0'..<='9'` on a
+  rune; numeric bounds there are refused. (COMPLETED.md, 09/23.)
 
 ## Pit of Success
 

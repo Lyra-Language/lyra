@@ -50,6 +50,9 @@ func TestTypeCheck_RuneMatchExpr_StringLiteral_Error(t *testing.T) {
 	assertErrorsAre(t, res, `literal pattern "a" is not a rune (character) value`)
 }
 
+// A range over a rune is legal as of 09/23 — but written in runes. `0..<=9` is the same
+// set as `'0'..<='9'` with its meaning removed, and the scrutinee's type is what decides
+// how its patterns are spelled.
 func TestTypeCheck_RuneMatchExpr_RangePattern_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let c: rune = 'a'
@@ -58,7 +61,8 @@ func TestTypeCheck_RuneMatchExpr_RangePattern_Error(t *testing.T) {
     _ => 0,
   }
 	`, false)
-	assertErrorsAre(t, res, "range patterns are not allowed on a rune scrutinee")
+	assertErrorsAre(t, res,
+		"a range pattern on a rune scrutinee takes rune bounds: write 0 and 9 as a character literal")
 }
 
 func TestTypeCheck_RuneMatchExpr_IdentifierPattern_Ok(t *testing.T) {
@@ -119,4 +123,34 @@ func TestTypeCheck_RuneMatchExpr_Guard_Ok(t *testing.T) {
   }
 	`, false)
 	assertNoErrors(t, res)
+}
+
+// A rune range written in runes is accepted, and its bounds may be open on either side —
+// an open bound names the type's own edge rather than a value, so there is nothing there to
+// be in the wrong units.
+func TestTypeCheck_RuneMatchExpr_RuneBoundedRange_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+  let c: rune = 'a'
+  match c {
+    '0'..<='9' => 1,
+    'a'..     => 2,
+    _ => 0,
+  }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// **An alternation is checked alternative by alternative**, so a bad one is reported where
+// it is written. Here the rune scrutinee's rule rejects the numeric bound in the second
+// alternative and says nothing about the first.
+func TestTypeCheck_RuneMatchExpr_AlternationChecksEachAlternative(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+  let c: rune = 'a'
+  match c {
+    '0'..<='9' | 48..<=57 => 1,
+    _ => 0,
+  }
+	`, false)
+	assertErrorsAre(t, res,
+		"a range pattern on a rune scrutinee takes rune bounds: write 48 and 57 as a character literal")
 }

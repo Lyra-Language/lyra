@@ -55,6 +55,18 @@ A literal that cannot hold its value is a compile error **in every position, flo
 - Step: `0..<10:2`, a **magnitude**. Negative literal step is an error; a non-positive step known only at run time traps (`lyra: range step must be positive`). A comprehension with a degenerate step yields an empty array.
 - `for-in` **terminates at the type's edge**: `0..<=hi` with `hi` at the type max visits max and exits; a large step cannot leap an exclusive end.
 - As a match pattern or newtype constraint a range is a set: `..>`/`..>=` there are `lyra-E034`.
+- **A range pattern on a `rune` is written in runes** (`'0'..<='9'`), and numeric bounds
+  there are refused: `48..<=57` is the same set with its meaning removed, so the scrutinee's
+  type decides how its patterns are spelled. An open bound names the type's own edge and so
+  has no units to be wrong in.
+- **A pattern may name alternatives with `|`** — `1 | 2 | 3`, `"get" | "post"`,
+  `'a'..<='f' | 'A'..<='F'` — matching when any of them does, and counting as all of them
+  for exhaustiveness (`true | false` covers `bool`). **Literals and ranges only**: an
+  alternative that binds raises a rule every language with or-patterns states explicitly
+  (Rust requires every alternative to bind the same names at the same types) and nothing has
+  needed it, so `Some(x) | None` is a syntax error rather than an undecided meaning. `|` is
+  also the bitwise operator; position tells them apart, so `match a | b { 3 | 7 => … }` is a
+  bitor scrutinee matched against an alternation.
 
 ### Newtypes
 

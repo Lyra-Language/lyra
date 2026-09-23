@@ -189,6 +189,32 @@ func (p *RangePattern) GetName() string {
 	return fmt.Sprintf("%s..%s%s", start, p.EndOperator, end)
 }
 
+// OrPattern matches when **any** alternative matches: `1 | 2 | 3`, `"get" | "post"`,
+// `'a'..<='f' | 'A'..<='F'`.
+//
+// **Alternatives are literals and ranges only**, which the grammar enforces and which is a
+// language decision rather than a limit of this node. An alternative that *binds* raises a
+// question every language with or-patterns answers explicitly — Rust requires every
+// alternative to bind the same names at the same types — and nothing needs it yet: what it
+// was wanted for is a set of literals sharing one arm. So no alternative binds, which is
+// why EachPatternBinding has nothing to do here and why the exhaustiveness matrix can treat
+// the node as the union of its rows.
+type OrPattern struct {
+	PatternBase
+	Alternatives []Pattern
+}
+
+func (p *OrPattern) patternNode() {}
+
+// GetName renders the pattern back to its source form.
+func (p *OrPattern) GetName() string {
+	parts := make([]string, len(p.Alternatives))
+	for i, alt := range p.Alternatives {
+		parts[i] = alt.GetName()
+	}
+	return strings.Join(parts, " | ")
+}
+
 type WildcardPattern struct {
 	PatternBase
 }
