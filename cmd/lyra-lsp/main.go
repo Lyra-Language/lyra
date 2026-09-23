@@ -299,7 +299,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 	own := diagnosticsFor(res.Diagnostics, file)
 	diags := make([]lsp.Diagnostic, 0, len(own))
 	for i := range own {
-		diags = append(diags, diagToLSP(uri, source, own[i]))
+		diags = append(diags, h.diagToLSP(uri, source, own[i]))
 	}
 
 	// Persist the analysis for hover/definition/etc. Program is nil only on a
@@ -390,7 +390,7 @@ func lspPos(oneBased int) int {
 
 // diagToLSP converts a diag.Diagnostic to an lsp.Diagnostic for publishing.
 // source is the document text, needed to convert byte columns to UTF-16.
-func diagToLSP(uri lsp.DocumentURI, source string, d diag.Diagnostic) lsp.Diagnostic {
+func (h *Handler) diagToLSP(uri lsp.DocumentURI, source string, d diag.Diagnostic) lsp.Diagnostic {
 	sev := lsp.DiagnosticSeverity(0)
 	switch d.Severity {
 	case diag.SeverityWarning:
@@ -407,7 +407,7 @@ func diagToLSP(uri lsp.DocumentURI, source string, d diag.Diagnostic) lsp.Diagno
 		Source:             "lyra",
 		Message:            d.Message,
 		Tags:               tagsToLSP(d.Tags),
-		RelatedInformation: toLSPRelatedInfo(uri, source, d.RelatedInformation),
+		RelatedInformation: h.toLSPRelatedInfo(uri, source, d.RelatedInformation),
 	}
 }
 
@@ -430,7 +430,19 @@ func tagsToLSP(tags []diag.Tag) []lsp.DiagnosticTag {
 	return out
 }
 
-func toLSPRelatedInfo(uri lsp.DocumentURI, source string, related []diag.RelatedInformation) []lsp.DiagnosticRelatedInformation {
+// **A related location may be in another file, and usually is.** The one this exists for
+// is shadowing: `let index = …` shadows the prelude's `index`, whose declaration is in
+// `std/prelude/strings.lyra`. Until 09/23 every related entry was published under the
+// *current* document's URI with its range converted against the current document's text,
+// so the link opened this file at the prelude's line number — line 637 of a 190-line file,
+// which an editor clamps to the end. The link went somewhere, which is why it read as a
+// jump to nowhere rather than as a missing feature.
+//
+// `sourceOf` is the same resolver `locationIn` uses for go-to-definition (definition.go),
+// and reaching for it here rather than writing the lookup again is the point: "turn an
+// ast.Location into an LSP Location" already had one answer, and this was a second, weaker
+// copy of it that dropped the file.
+func (h *Handler) toLSPRelatedInfo(uri lsp.DocumentURI, source string, related []diag.RelatedInformation) []lsp.DiagnosticRelatedInformation {
 	if len(related) == 0 {
 		return nil
 	}
@@ -439,10 +451,23 @@ func toLSPRelatedInfo(uri lsp.DocumentURI, source string, related []diag.Related
 		if r.Location.StartLine == 0 {
 			continue
 		}
+		targetURI, targetSource := uri, source
+		// An empty File means "this document" — a diagnostic built before the unit was
+		// known — so it keeps the current one rather than resolving nothing.
+		if r.Location.File != "" && !sameFile(r.Location.File, uriToPath(string(uri))) {
+			resolved, text, ok := h.sourceOf(r.Location.File)
+			if !ok {
+				// The file cannot be read, so there is no honest range to publish for
+				// it. Dropping the entry loses a link; keeping it points at the wrong
+				// file, which is what this whole function is fixing.
+				continue
+			}
+			targetURI, targetSource = lsp.DocumentURI(resolved), text
+		}
 		out = append(out, lsp.DiagnosticRelatedInformation{
 			Location: lsp.Location{
-				URI:   uri,
-				Range: locToRange(source, r.Location),
+				URI:   targetURI,
+				Range: locToRange(targetSource, r.Location),
 			},
 			Message: r.Message,
 		})

@@ -42,6 +42,32 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — the related link pointed at the file you were already in
+
+Reported from the editor: a `lyra-W001` shadowing warning's "previously declared here" link
+jumped to the end of the open file instead of to the prelude declaration it names.
+
+`toLSPRelatedInfo` published **every** related entry under the current document's URI,
+ignoring `Location.File`, and converted its range against the current document's text. The
+shadowed `index` is declared at `std/prelude/strings.lyra:637`; the open file was about 190
+lines, so line 637 of *it* is past the end, and an editor clamps that to the last line. The
+link went somewhere, which is exactly why it read as a jump to nowhere rather than as a
+feature that had not been built.
+
+`h.sourceOf` already answers "give me that file's URI and text", and `locationIn` already
+uses it for go-to-definition. So this was a second, weaker copy of "turn an `ast.Location`
+into an LSP `Location`" that happened to drop the file — hazard 8's shape in a place with no
+switch in it. A related location whose file cannot be read is now dropped rather than
+published against the wrong one: losing a link beats pointing at a lie.
+
+The test asserts both halves, because the URI alone would not have caught it. The target's
+basename is `strings.lyra`, *and* the range starts past line 10, which a four-line document
+cannot produce — the second is what proves the range was converted against the right text
+rather than merely labelled with the right name.
+
+This reaches every diagnostic carrying related information, not only shadowing. Shadowing is
+where it shows first because the other file is almost always the prelude.
+
 ### 09/23/26 — the bootstrap's fifth slice: two nodes that scored nothing, and four that cashed in
 
 `FunctionCallExpr` and `BlockExpr` landed and matched **no new goldens at all**. Measuring
