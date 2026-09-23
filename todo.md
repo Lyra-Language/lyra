@@ -121,8 +121,8 @@ An expression tree is the first program here that needs a type containing itself
 neither way of writing an **optional child** works. `shared` on a plain field is fine
 (`struct BinOp { left: shared Expr }` builds and runs); the hole is `Maybe` over one.
 
-- **[OPEN] A cycle through a generic type's argument is not caught by `lyra-E014`, and
-  crashes the compiler.** `struct Lambda { body: Maybe<Expr> }` where `Expr` holds a
+- **[FIXED 09/23] A cycle through a generic type's argument was not caught by `lyra-E014`,
+  and crashed the compiler.** `struct Lambda { body: Maybe<Expr> }` where `Expr` holds a
   `Lambda` is accepted at declaration and stack-overflows as soon as a value is built:
   `ownership.ownsManaged` → `eachComponent` → `resolveNamedType`, forever. E014 catches
   every direct shape (struct→struct, data→struct→data), and `ownership.go`'s own comment
@@ -130,7 +130,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   `shared` field (lyra-E014), which is managed, so the recursion returns". The cycle
   through `Maybe<…>` slips past, so the pass runs on a type it assumes cannot exist. A
   cycle through `[]Expr` is *correctly* accepted: an array is boxed, so the type is
-  finitely sized.
+  finitely sized. **Fixed:** `collectByValueNames` walks a parameterized type's arguments
+  (its closing comment had listed the kind among those "bounded by construction"), and the
+  driver skips the ownership passes when the program already has errors — they feed only
+  the backend, which never runs on one, and the crash had been swallowing the diagnostic
+  that was already in hand. (COMPLETED.md, 09/23.)
 
   ```lyra
   data Expr = Lit(i64) | Lam(Lambda)

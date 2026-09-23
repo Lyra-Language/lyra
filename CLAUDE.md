@@ -106,6 +106,11 @@ Each of these produces something that looks like it works. Other docs cite them 
      charged builtin methods nothing, wrong for allocating `slice`). Copies that disagree can
      be a soundness hole: purity now has **one** walk, `bodyEffects` over a `callable`, with
      enforcement re-running it through `callable.reportPure`.
+   - **A generic type's arguments are contained by value**, and a walk that skips the kind
+     misses them. `collectByValueNames` had no `ParameterizedType` case and called the kind
+     "bounded by construction", so a cycle through `Maybe<Expr>` escaped `lyra-E014` — and
+     the ownership pass, which *documents* E014 as the invariant it rests on, walked the
+     cycle until the stack was gone, swallowing the diagnostics already produced (09/23).
    - **Two switches can disagree about a case neither names** (`nominalHead` lacked
      `*ConstrainedType` while `types.HeadName` gives a newtype a head).
    - **Adding an expression kind: grep for the kind it is a variant of.** List every file

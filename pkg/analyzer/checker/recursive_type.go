@@ -165,13 +165,37 @@ func collectByValueNames(t types.Type, decls map[string]*ast.TypeDeclStmt, seen 
 			collectByValueNames(e, decls, seen, deps)
 		}
 
+	case types.ParameterizedType:
+		// **A generic type's arguments are contained by value**, and the list below used
+		// to call this kind "bounded by construction". `Maybe<Expr>` holds an `Expr`
+		// inline — `Maybe<t>`'s payload is a data payload, not a box — so a cycle running
+		// through one is infinite exactly as a bare field is.
+		//
+		// It was not merely unreported. `ownership.go` states the invariant it relies on —
+		// "a recursive type's cycle must pass through a `shared` field (lyra-E014), which
+		// is managed, so the recursion returns before re-entering the cycle" — so a cycle
+		// this check misses is a pass running on a type it was promised cannot exist:
+		// `ownsManaged` → `eachComponent` → `resolveNamedType`, until the stack is gone.
+		// A compiler crash rather than a diagnostic, found 09/23 by the bootstrap's AST,
+		// whose `Lambda` wants an optional child.
+		//
+		// The **arguments** are what carries the cycle, not the head: `Maybe`'s own
+		// constructor parameter is the variable `t`, which names nothing. An argument
+		// written `shared` breaks it here as everywhere else, since addIfByValue asks.
+		for _, arg := range t.TypeArguments {
+			collectByValueNames(arg, decls, seen, deps)
+		}
+
 	case types.WeakType:
 		// A `weak` field is a non-owning pointer (pointer-sized), so it breaks a
 		// recursive size cycle exactly like a `shared` field — its referent is not
 		// contained by value. Deliberately do NOT recurse into the inner type.
 
-		// Primitives, generics, lambdas, pointers, void, fixed-point, constrained,
-		// range, parameterized — either not nominal types or bounded by construction.
+		// Primitives, generics, lambdas, pointers, void, fixed-point, constrained and
+		// range — either not nominal types or bounded by construction. A **dynamic
+		// array** is bounded for a different reason worth keeping straight: `[]Expr` is a
+		// box pointer, so a cycle through one is finite and correctly accepted, which is
+		// how `JsonValue` is written.
 	}
 }
 

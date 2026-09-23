@@ -311,7 +311,23 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// Ownership analysis (retain/release-temp decisions for managed values) runs
 	// after typechecking — it reads the TypeTable to identify managed types. It
 	// produces no diagnostics; the backend consumes the table.
-	res.Ownership = ownership.Analyze(program, symTable, tt, res.MethodTable)
+	//
+	// **It does not run on a program that already has errors**, and that is a soundness
+	// rule rather than a saving. `ownership.go` states the invariant it rests on — "a
+	// recursive type's cycle must pass through a `shared` field (lyra-E014), which is
+	// managed, so the recursion returns before re-entering the cycle" — and a program
+	// `lyra-E014` has just refused is precisely one where that does not hold. Running it
+	// anyway walked the cycle forever and took the process down with it, so the
+	// diagnostic that had already been produced was never printed: the compiler reported
+	// a stack overflow where it had the right answer in hand (09/23).
+	//
+	// The passes below still run: they produce diagnostics, and a program with one error
+	// should report the rest of them. Only the ownership tables are skipped, and their
+	// only consumer is the backend, which never runs on a failing program.
+	ownershipIsSound := !res.HasErrors()
+	if ownershipIsSound {
+		res.Ownership = ownership.Analyze(program, symTable, tt, res.MethodTable)
+	}
 	// Close the instantiation set *before* the per-specialization ownership pass below,
 	// not after: a specialization discovered later would have no table of its own and
 	// would fall back to the program-wide one, which is analyzed generically — where a
@@ -327,6 +343,9 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// nothing looks up, at types that are not real.
 	res.OwnershipBySpec = map[string]*ownership.Table{}
 	for _, inst := range res.Instantiations.Concrete() {
+		if !ownershipIsSound {
+			break
+		}
 		res.OwnershipBySpec[inst.Key()] = ownership.AnalyzeLambda(inst.Func, symTable, tt, inst.Subst, res.MethodTable)
 	}
 	// …and once per trait-method specialization. `Analyze` above walks top-level
@@ -337,6 +356,9 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// the type *argument*, so the answer at `t = string` is not the answer at `t = i64`.
 	res.OwnershipByMethod = map[string]*ownership.Table{}
 	for _, r := range res.MethodTable.Specializations() {
+		if !ownershipIsSound {
+			break
+		}
 		lam, err := r.Lambda()
 		if err != nil {
 			// A method with no declared signature cannot be given one here. The

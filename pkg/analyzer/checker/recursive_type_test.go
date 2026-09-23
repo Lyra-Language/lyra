@@ -238,3 +238,61 @@ struct S { u: U }
 func TestRecursiveTypes_UnionThroughAPointerIsFine(t *testing.T) {
 	assertNoRecursiveTypeErrors(t, `union U { next: ^U, n: u32 }`)
 }
+
+// **A cycle through a generic type's argument is a cycle.** `Maybe<Expr>` holds its
+// payload inline, so a `Lambda` reached through one is contained by value exactly as a
+// bare field would be — and `collectByValueNames` had no case for a parameterized type at
+// all, its closing comment listing the kind among those "bounded by construction".
+//
+// It was not merely unreported. `ownership.go` states the invariant it rests on — "a
+// recursive type's cycle must pass through a `shared` field (lyra-E014), which is managed,
+// so the recursion returns before re-entering the cycle" — so a cycle this check misses is
+// a pass walking a type it was promised cannot exist. The symptom was a **stack overflow
+// out of lyrac**, which also swallowed the diagnostics already produced, since a process
+// that dies prints nothing. Found 09/23 by the bootstrap's AST, whose `Lambda` wants an
+// optional child.
+func TestRecursiveTypes_CycleThroughAGenericArgument(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		source string
+		want   bool // want an E014
+	}{
+		{
+			"a data type reached through Maybe",
+			`data Expr = Lit(i64) | Lam(Lambda)
+struct Lambda { body: Maybe<Expr> }`,
+			true,
+		},
+		{
+			// The spelling the diagnostic tells you to write: `shared` on the argument
+			// breaks the cycle there exactly as it does on a bare field.
+			"shared on the argument breaks it",
+			`data Expr = Lit(i64) | Lam(Lambda)
+struct Lambda { body: Maybe<shared Expr> }`,
+			false,
+		},
+		{
+			// **A cycle through an array is finite and must stay legal.** `[]Expr` is a
+			// box pointer, which is how `std.json`'s `JsonValue` is written — flagging
+			// this would refuse the shape the standard library already uses.
+			"an array breaks it",
+			`data Expr = Lit(i64) | Many([]Expr)`,
+			false,
+		},
+		{
+			// A generic instantiation that is not a cycle at all: the check must look at
+			// the arguments rather than refusing every parameterized field.
+			"a generic field with no cycle",
+			`struct P { n: i64 }
+struct Holder { p: Maybe<P> }`,
+			false,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			diags := checkRecursiveTypes(t, c.source)
+			if got := len(diags) > 0; got != c.want {
+				t.Errorf("E014 reported = %v, want %v (diagnostics: %v)", got, c.want, diags)
+			}
+		})
+	}
+}

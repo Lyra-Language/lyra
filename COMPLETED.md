@@ -42,6 +42,43 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — the check had the answer and the crash threw it away
+
+Third of the three the bootstrap's AST found, and the one where two separate mistakes had
+to line up.
+
+**`collectByValueNames` had no case for a parameterized type**, and its closing comment
+listed the kind among those "bounded by construction". `Maybe<Expr>` is not: `Maybe<t>`'s
+payload is a data payload, inline, so a cycle running through one is infinite exactly as a
+bare field is. The arguments carry the cycle rather than the head — `Maybe`'s own
+constructor parameter is the variable `t`, which names nothing — so the walk recurses into
+`TypeArguments`, where an argument written `shared` breaks it as it does anywhere else.
+
+That alone would have made this an ordinary missing-case bug, hazard 8's shape. What made
+it a *crash* is the second half. `ownership.go` states the invariant it rests on — "a
+recursive type's cycle must pass through a `shared` field (lyra-E014), which is managed, so
+the recursion returns before re-entering the cycle" — and the driver ran it on a program
+E014 had refused, which is precisely where that does not hold.
+
+The compounding detail is the one worth keeping. By the time ownership ran, **the
+diagnostic had already been produced**. A process that dies prints nothing, so the compiler
+reported `fatal error: stack overflow` while holding the right answer — and the missing
+E014 case looked, from outside, like there was no check at all. Fixing only the walk left
+the crash; fixing only the driver left the program silently accepted. Each half hid the
+other.
+
+Ownership now runs only on an error-free program. That is a soundness rule rather than a
+saving: the pass produces no diagnostics and feeds the backend, which never runs on a
+failing program either. The diagnostic passes after it still run, because a program with
+one error should report the rest of them.
+
+Both halves must-fire, and the driver one fails by taking the test binary down — a stack
+overflow is not recoverable, and that is the only signal this class of fault has.
+
+A cycle through `[]Expr` stays legal, and that is checked rather than assumed: an array is
+a box pointer, so the type is finitely sized, and it is how `std.json`'s `JsonValue` is
+written. Refusing it would have broken the standard library.
+
 ### 09/23/26 — "a borrowed parameter is allocation-polymorphic and is skipped"
 
 That comment sat at the argument check and was the bug, written down. A `shared` value
