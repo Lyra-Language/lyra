@@ -42,6 +42,41 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — the bootstrap's fifth slice: two nodes that scored nothing, and four that cashed in
+
+`FunctionCallExpr` and `BlockExpr` landed and matched **no new goldens at all**. Measuring
+before assuming what that meant is the whole entry: they left **92 goldens blocked by
+exactly one missing node**, because nearly every golden that uses a call or a block also
+uses something further out. The reach was there and the score was not.
+
+The postfix family — `MemberExpr`, `IndexExpr`, `TupleIndexExpr` — is what turned four of
+those into matches, so the slice ends at 20 of 238 rather than 16. They are three of the
+smallest nodes in the language, and they only paid because calls and blocks were already
+underneath them.
+
+Two things worth keeping.
+
+**The emptiness rule is recursive, and a block is where that shows.** `() => { }` now has a
+body — an empty `BlockExpr` — and `basic_function_declaration_without_params` broke the
+moment it did, because the lambda was no longer "empty" by a check that asked only whether
+a body was present. The Go printer drops a field whose composite is empty, and emptiness
+goes all the way down: an empty block makes the lambda empty, which makes the `Value:`
+holding it disappear. A test written three slices ago caught it.
+
+**The Go collector is now an oracle directly**, not only through its stored goldens. The
+goldens are curated, and a slice can add a construct that no *matching* golden exercises in
+isolation — which is precisely what calls and blocks were: written, working, and covered by
+nothing. Pinning them with hand-written expectations would have rebuilt the weakness slice
+4 deleted, so instead both collectors run on the same source and their printed ASTs are
+compared, for any source either can be given. Ten cases, and two mutations confirm it
+fails: dropping the argument unwrapper fails three, swapping `Index` and `Object` fails two.
+
+One self-inflicted note, since the recovery is the lesson: `git checkout` on `printer.lyra`
+to undo a mutation reverted the file to HEAD and took the whole slice's printer work with
+it. The mutations either side of it were restored from copies made for the purpose; that
+one was not. Rebuilt from the same transformations, and the golden count confirmed the
+rebuild was complete rather than approximately so.
+
 ### 09/23/26 — the check had the answer and the crash threw it away
 
 Third of the three the bootstrap's AST found, and the one where two separate mistakes had

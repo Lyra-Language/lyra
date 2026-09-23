@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 13 of the 238 goldens whose sources can be recovered match today. The number is not
+// 20 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -60,6 +60,12 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"lambda_expression_with_no_return_type", "\n\tlet double = (x: i64) => x * 2"},
 		{"lambda_expression", "\n\t(a: i64, b: i64) -> i64 => a + b"},
 		{"rune_type_annotation", "let f = (c: rune) -> rune => c"},
+		// Slice 5: the postfix family. `pair.0.1` is the one that pins the recursion —
+		// a tuple index whose object is itself one.
+		{"postfix_property_access", "let name = person.name"},
+		{"postfix_array_indexing", "let first = array[0]"},
+		{"postfix_tuple_index", "let x = pair.0"},
+		{"postfix_nested_tuple_index", "let x = pair.0.1"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

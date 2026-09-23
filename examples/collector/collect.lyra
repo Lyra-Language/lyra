@@ -15,7 +15,8 @@ import bindings.treesitter.{ Node, kind, field, named_child, named_child_count, 
 import ast.{
   Program, Stmt, VarDecl, ExprStmt, Expr,
   IntegerLiteral, CharacterLiteral, StringLiteral, Identifier, MathBinaryOp, Lambda,
-  Parameter, Pattern, TypeNode, ReturnType,
+  Parameter, TypeNode, ReturnType, FunctionCall, Block,
+  MemberAccess, IndexAccess, TupleIndexAccess,
 }
 
 /// Every statement at the file's top level.
@@ -40,22 +41,23 @@ pub let collect = (root: Node, source: []u8) -> Program => {
 /// growing subset wants to say "this kind is not collected yet", and a comment is not an
 /// uncollected construct, it is not a construct.
 let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
-  let k = kind(node)
-  if k == "comment" { return None }
-  if k == "declaration" { return Some(collect_declaration(node, source)) }
-  if k == "expression_statement" {
-    // The statement wraps one expression; if that expression is a kind this slice does
-    // not know, the statement is not collected either — a wrapper around nothing is a
-    // node this did not understand, not an empty one.
-    if named_child_count(node) > 0 {
-      match collect_expr(named_child(node, 0), source) {
-        Some(expr) => return Some(ExpressionStmt(ExprStmt { expression: expr })),
-        None => return None,
+  return match kind(node) {
+    "comment" => None,
+    "declaration" => Some(collect_declaration(node, source)),
+    "expression_statement" => {
+      // The statement wraps one expression; if that expression is a kind this slice does
+      // not know, the statement is not collected either — a wrapper around nothing is a
+      // node this did not understand, not an empty one.
+      if named_child_count(node) > 0 {
+        return match collect_expr(named_child(node, 0), source) {
+          Some(expr) => Some(ExpressionStmt(ExprStmt { expression: expr })),
+          None => None,
+        }
       }
-    }
-    return None
+      None
+    },
+    _ => None
   }
-  None
 }
 
 /// `let x = 1`, `pub var y = 2`.
@@ -89,16 +91,99 @@ let collect_declaration = (node: Node, source: []u8) -> Stmt => {
 
 /// One expression, or `None` for a kind this slice does not collect.
 let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let k = kind(node)
-  if k == "integer_literal" { return Some(collect_integer(node, source)) }
-  if k == "char_literal" { return Some(collect_character(node, source)) }
-  if k == "string_literal" { return Some(collect_string(node, source)) }
-  if k == "lambda_expr" { return Some(collect_lambda(node, source)) }
-  if k == "identifier" {
-    return Some(IdentifierExpr(Identifier { name: text(node, source) }))
+  return match kind(node) {
+    "integer_literal" => Some(collect_integer(node, source)),
+    "char_literal" => Some(collect_character(node, source)),
+    "string_literal" => Some(collect_string(node, source)),
+    "lambda_expr" => Some(collect_lambda(node, source)),
+    "identifier" => Some(IdentifierExpr(Identifier { name: text(node, source) })),
+    "binary_expr" => collect_binary(node, source),
+    "call_expr" => collect_call(node, source),
+    "block" => Some(collect_block(node, source)),
+    "member_expr" => collect_member(node, source),
+    "index_expr" => collect_index(node, source),
+    "tuple_index_expr" => collect_tuple_index(node, source),
+    _ => None
   }
-  if k == "binary_expr" { return collect_binary(node, source) }
-  None
+}
+
+/// `person.name`.
+let collect_member = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let object_node = field(node, "object")?
+  let property_node = field(node, "property")?
+  let object = collect_expr(object_node, source)?
+  let property = collect_expr(property_node, source)?
+  Some(MemberExpr(MemberAccess { object: object, property: property }))
+}
+
+/// `array[0]`.
+let collect_index = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let object_node = field(node, "object")?
+  let index_node = field(node, "index")?
+  let object = collect_expr(object_node, source)?
+  let subscript = collect_expr(index_node, source)?
+  Some(IndexExpr(IndexAccess { index: subscript, object: object }))
+}
+
+/// `pair.0` — the position is read from the text, the grammar having already decided it
+/// is a decimal integer.
+let collect_tuple_index = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let object_node = field(node, "object")?
+  let index_node = field(node, "index")?
+  let object = collect_expr(object_node, source)?
+  Some(TupleIndexExpr(TupleIndexAccess {
+    index: digits_value(text(index_node, source).to_runes(), 10),
+    object: object,
+  }))
+}
+
+/// `foo()`, `bar(1, x)`.
+///
+/// `None` when the callee is a shape this slice does not collect: a call whose function is
+/// missing is not a call, and printing it with the callee left out would be a node that
+/// never occurs.
+let collect_call = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let callee_node = field(node, "function")?
+  let callee = collect_expr(callee_node, source)?
+  var arguments: []shared Expr = []
+  match field(node, "arguments") {
+    Some(list) => {
+      var i = 0
+      for i < named_child_count(list) {
+        // **Each argument is wrapped in a `value` node** by the grammar, so the
+        // expression is one level down; a walk that took the wrapper would ask for the
+        // kind of a node that is never an expression and collect nothing.
+        let wrapper = named_child(list, i)
+        let inner = if kind(wrapper) == "value" && named_child_count(wrapper) > 0 {
+          named_child(wrapper, 0)
+        } else {
+          wrapper
+        }
+        match collect_expr(inner, source) {
+          Some(argument) => arguments.push(argument),
+          None => {},
+        }
+        i += 1
+      }
+    },
+    None => {},
+  }
+  Some(FunctionCallExpr(FunctionCall { arguments: arguments, function: callee }))
+}
+
+/// `{ … }` — the statements it holds, in order.
+///
+/// It reuses `collect_statement`, so a block's contents are collected by exactly the rule
+/// the file's top level is, comment-skipping included.
+let collect_block = (node: Node, source: []u8) -> shared Expr => {
+  var statements: []Stmt = []
+  for i in 0..<named_child_count(node) {
+    match collect_statement(named_child(node, i), source) {
+      Some(statement) => statements.push(statement),
+      None => {},
+    }
+  }
+  BlockExpr(Block { statements: statements })
 }
 
 /// `(x: i64) -> i64 => x * 2`.
@@ -107,7 +192,7 @@ let collect_lambda = (node: Node, source: []u8) -> shared Expr => {
   match field(node, "parameters") {
     Some(list) => {
       var i = 0
-      for i < named_child_count(list) {
+      for i in 0..<named_child_count(list) {
         let child = named_child(list, i)
         if kind(child) == "parameter" {
           match collect_parameter(child, source) {
@@ -115,7 +200,6 @@ let collect_lambda = (node: Node, source: []u8) -> shared Expr => {
             None => {},
           }
         }
-        i += 1
       }
     },
     None => {},
@@ -138,7 +222,7 @@ let collect_lambda = (node: Node, source: []u8) -> shared Expr => {
 /// `None` when the pattern is a form this slice does not collect, since a parameter with
 /// no pattern is not a parameter.
 let collect_parameter = (node: Node, source: []u8) -> Maybe<Parameter> => {
-  let Some(pattern_node) = field(node, "pattern") else { return None }
+  let pattern_node = field(node, "pattern")?
   if kind(pattern_node) != "identifier" { return None }
   Some(Parameter {
     pattern: IdentifierPattern(Identifier { name: text(pattern_node, source) }),
@@ -151,7 +235,7 @@ let collect_parameter = (node: Node, source: []u8) -> Maybe<Parameter> => {
 
 /// `-> i64`.
 let collect_return_type = (node: Node, source: []u8) -> Maybe<ReturnType> => {
-  let Some(declared) = field(node, "type") else { return None }
+  let declared = field(node, "type")?
   match collect_type(declared, source) {
     Some(collected) => Some(ReturnType { type_annotation: collected }),
     None => None,
@@ -177,12 +261,12 @@ let collect_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
 /// (`BooleanBinaryOpExpr`), so one is not collected here rather than collected as this:
 /// printing the wrong node is worse than printing none, which a diff shows plainly.
 let collect_binary = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let Some(operator) = field(node, "operator") else { return None }
+  let operator = field(node, "operator")?
   if !is_math_operator(kind(operator)) { return None }
-  let Some(left_node) = field(node, "left") else { return None }
-  let Some(right_node) = field(node, "right") else { return None }
-  let Some(left) = collect_expr(left_node, source) else { return None }
-  let Some(right) = collect_expr(right_node, source) else { return None }
+  let left_node = field(node, "left")?
+  let right_node = field(node, "right")?
+  let left = collect_expr(left_node, source)?
+  let right = collect_expr(right_node, source)?
   Some(MathBinaryOpExpr(MathBinaryOp {
     left: left,
     operator: text(operator, source),
@@ -191,7 +275,7 @@ let collect_binary = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 }
 
 /// Whether an operator node's kind is one of the arithmetic ones.
-let is_math_operator = (k: string) -> bool =>
+let is_math_operator = pure (k: string) -> bool =>
   k == "add_operator" || k == "sub_operator" || k == "mul_operator" ||
   k == "div_operator" || k == "rem_operator" || k == "rem_floor_operator"
 
@@ -214,11 +298,12 @@ let collect_integer = (node: Node, source: []u8) -> shared Expr => {
 /// `hexadecimal_int`, one named child of the literal.
 let integer_base = (node: Node) -> i64 => {
   if named_child_count(node) == 0 { return 10 }
-  let k = kind(named_child(node, 0))
-  if k == "binary_int" { return 2 }
-  if k == "octal_int" { return 8 }
-  if k == "hexadecimal_int" { return 16 }
-  10
+  return match kind(named_child(node, 0)) {
+    "binary_int" => 2,
+    "octal_int" => 8,
+    "hexadecimal_int" => 16,
+    _ => 10
+  }
 }
 
 /// `'a'`, `'\n'` — the code point, quotes stripped and the escape decoded.

@@ -59,6 +59,16 @@ pub data Expr =
   | IdentifierExpr(Identifier)
   /// `a + b` — the arithmetic operators.
   | MathBinaryOpExpr(MathBinaryOp)
+  /// `foo(1, x)` — a call, whatever the callee expression is.
+  | FunctionCallExpr(FunctionCall)
+  /// `person.name` — a named member of a value.
+  | MemberExpr(MemberAccess)
+  /// `array[0]` — an element at a computed position.
+  | IndexExpr(IndexAccess)
+  /// `pair.0` — a tuple element, whose position is written rather than computed.
+  | TupleIndexExpr(TupleIndexAccess)
+  /// `{ … }` — statements in a scope, used as a value.
+  | BlockExpr(Block)
   /// `(a, b) => …` — a function literal.
   | LambdaExpr(Lambda)
 
@@ -95,6 +105,43 @@ pub struct MathBinaryOp {
   left: shared Expr,
   operator: string,
   right: shared Expr,
+}
+
+/// A call.
+///
+/// The callee is an expression rather than a name: `foo()` and `table[i]()` are the same
+/// node, which is why the field is `function` and not something narrower.
+pub struct FunctionCall {
+  arguments: []shared Expr,
+  function: shared Expr,
+}
+
+/// `person.name`. The property is an expression node, as the Go AST has it, even though
+/// only an identifier can appear there.
+pub struct MemberAccess {
+  object: shared Expr,
+  property: shared Expr,
+}
+
+/// `array[0]`.
+pub struct IndexAccess {
+  index: shared Expr,
+  object: shared Expr,
+}
+
+/// `pair.0`.
+///
+/// **The index is a number, not a node** — it prints as `Index: 0` on one line rather
+/// than as a nested literal, because a tuple's position is part of the access and not a
+/// value computed at it. That is the one place in this AST where an `Index` is a scalar.
+pub struct TupleIndexAccess {
+  index: i64,
+  object: shared Expr,
+}
+
+/// A block used as a value — a lambda's body, or an arm's.
+pub struct Block {
+  statements: []Stmt,
 }
 
 /// A function literal.

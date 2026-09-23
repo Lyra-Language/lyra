@@ -24,10 +24,18 @@ module printer
 //! field added to the AST and forgotten here shows up as a golden that no longer matches.
 
 import ast.{
-  Program, Stmt, VarDeclStmt, VarDecl, ExpressionStmt, ExprStmt, Expr, IntegerLiteralExpr,
-  CharacterLiteralExpr, StringLiteralExpr, IdentifierExpr, MathBinaryOpExpr, LambdaExpr,
-  IntegerLiteral, CharacterLiteral, StringLiteral, Identifier, MathBinaryOp, Lambda,
-  Parameter, Pattern, IdentifierPattern, TypeNode, PrimitiveType, ReturnType,
+  Program,
+  Stmt,
+  VarDecl,
+  Expr,
+  Identifier,
+  Lambda,
+  Parameter,
+  Pattern,
+  TypeNode,
+  ReturnType,
+  FunctionCall,
+  Block,
 }
 
 /// A whole program, as `pkg/printer.PrintAST` would render it.
@@ -97,14 +105,66 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
     scalar("Operator", op.operator, depth + 1) ++
     node_field("Right", print_expr(op.right, depth + 2), depth + 1) ++
     close(depth),
+  // Arguments before Function — alphabetical, and an empty argument list is omitted like
+  // any other empty composite, so `foo()` prints with only its callee.
+  FunctionCallExpr(call) => print_call(call, depth),
+  BlockExpr(block) => print_block(block, depth),
+  MemberExpr(member) =>
+    header_unnamed("MemberExpr", depth) ++
+    node_field("Object", print_expr(member.object, depth + 2), depth + 1) ++
+    node_field("Property", print_expr(member.property, depth + 2), depth + 1) ++
+    close(depth),
+  IndexExpr(access) =>
+    header_unnamed("IndexExpr", depth) ++
+    node_field("Index", print_expr(access.index, depth + 2), depth + 1) ++
+    node_field("Object", print_expr(access.object, depth + 2), depth + 1) ++
+    close(depth),
+  // `Index` here is the position the access names, so it prints as a scalar on one line
+  // rather than as a nested literal — the one `Index` in this AST that is not a node.
+  TupleIndexExpr(access) =>
+    header_unnamed("TupleIndexExpr", depth) ++
+    scalar("Index", "${access.index}", depth + 1) ++
+    node_field("Object", print_expr(access.object, depth + 2), depth + 1) ++
+    close(depth),
   LambdaExpr(lambda) => print_lambda(lambda, depth),
+}
+
+/// `FunctionCallExpr { Arguments, Function }`.
+let print_call = pure (call: FunctionCall, depth: i64) -> string => {
+  var out = header_unnamed("FunctionCallExpr", depth)
+  if call.arguments.len() > 0 {
+    var items = ""
+    for argument in call.arguments {
+      items = items ++ print_expr(argument, depth + 2)
+    }
+    out = out ++ node_field("Arguments", items, depth + 1)
+  }
+  out = out ++ node_field("Function", print_expr(call.function, depth + 2), depth + 1)
+  out ++ close(depth)
+}
+
+/// `BlockExpr { Statements }`.
+let print_block = pure (block: Block, depth: i64) -> string => {
+  var out = header_unnamed("BlockExpr", depth)
+  if block.statements.len() > 0 {
+    var items = ""
+    for statement in block.statements {
+      items = items ++ print_stmt(statement, depth + 2)
+    }
+    out = out ++ node_field("Statements", items, depth + 1)
+  }
+  out ++ close(depth)
 }
 
 /// `LambdaExpr { Body, Parameters, ReturnType }`, each omitted when absent or empty.
 let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
   var out = header_unnamed("LambdaExpr", depth)
   match lambda.body {
-    Some(body) => {
+    // **An empty body is omitted like an absent one**, which is the emptiness rule applied
+    // through a field rather than to a node: `() => { }` has a `BlockExpr` with no
+    // statements, and the Go printer drops a field whose composite is empty. Printing
+    // `Body: { BlockExpr { } }` looks right and matches nothing.
+    Some(body) => if !expr_is_empty(body) {
       out = out ++ node_field("Body", print_expr(body, depth + 2), depth + 1)
     },
     None => {},
@@ -188,6 +248,13 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   // Never empty: every operand is itself a node. The arm exists because the rule is per
   // node, and a missing one is a silent wrong answer rather than a compile error.
   MathBinaryOpExpr(op) => false,
+  // A call always has a callee and each access always has an object, so none of these is
+  // ever empty; a block with no statements is.
+  FunctionCallExpr(call) => false,
+  MemberExpr(member) => false,
+  IndexExpr(access) => false,
+  TupleIndexExpr(access) => false,
+  BlockExpr(block) => block.statements.len() == 0,
   // A zero base with a zero value is not reachable from the grammar — a literal always has
   // a base — so this is the honest reading of the rule rather than a live case.
   IntegerLiteralExpr(lit) => lit.base == 0 && lit.value == 0,
@@ -202,7 +269,9 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
 /// operand of `&&` here.
 let lambda_is_empty = pure (lambda: Lambda) -> bool => {
   match lambda.body {
-    Some(_) => return false,
+    // Recursive for the same reason: a lambda whose only content is an empty block has
+    // nothing in it, so the lambda is empty and its holder drops it in turn.
+    Some(body) => if !expr_is_empty(body) { return false },
     None => {},
   }
   match lambda.return_type {
@@ -240,10 +309,8 @@ let close = pure (depth: i64) -> string => tabs(depth) ++ "}\n"
 /// rebuilds it from the depth, which is the same string and one fewer thing to thread.
 let tabs = pure (depth: i64) -> string => {
   var out = ""
-  var i = 0
-  for i < depth {
+  for _ in 0..<depth {
     out = out ++ "\t"
-    i += 1
   }
   out
 }
