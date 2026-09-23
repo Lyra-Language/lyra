@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the bootstrap's second slice: an oracle before a collector
+
+The AST in Lyra and a printer for it, for the subset the smallest goldens use. No collector
+yet, which is the point of the ordering: each case hand-builds the tree the Go collector
+would produce and asserts the printed text **is the golden file, byte for byte** — the same
+file the Go collector is held to. Pinning the format now means slice 3 debugs a walk rather
+than a walk and a format at once, and a mismatch there will mean the walk.
+
+Six goldens match, and the two chosen deliberately are the ones about *absence*.
+`let foo = () => { }` prints **no `Value:` line at all**: every field of the lambda is zero,
+and the Go printer omits a field whose composite is empty. `let blank = ""` reaches the same
+rule from the other side. A printer that emitted `Value: { LambdaExpr { } }` would look
+perfectly reasonable and match nothing, so the rule is a named function with an arm per
+node rather than a condition inline. Removing it fails three of the six.
+
+Two decisions worth writing down.
+
+**The AST mirrors the Go type and field names**, which is a real constraint — Lyra writes
+`base` and `value` while the golden says `Base` and `Value`, so each node carries both
+spellings. It buys the 245 golden files as an oracle against an independent implementation,
+which is the same reason `std.temporal` was checked against Go's `time` and Python's
+`zoneinfo` rather than against itself. A bootstrap checked only against its own output
+tests nothing.
+
+**A node is a struct and the `data` constructor wraps it**, even for `CharacterLiteralExpr`,
+whose single field would sit in the constructor directly. The Go AST gains fields steadily;
+a positional payload makes each new one an edit at every construction site in the port,
+while a struct makes it an edit at the ones that care.
+
+Lyra has no reflection, so where the Go printer walks fields generically this one names them.
+That reads as pure cost and is not: the alphabetical order and the omission rules are
+written down at each node instead of emerging from a walk, so a field added to the AST and
+forgotten in the printer surfaces as a golden that stops matching, rather than as a field
+that silently prints in the wrong place.
+
 ### 09/22/26 — the bootstrap's first slice: what a collector asks that a formatter never does
 
 `lyrafmt` proved the language could parse itself and rebuild the text. It did not prove the

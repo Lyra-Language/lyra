@@ -1,0 +1,79 @@
+module examples.collector.ast
+//! The Lyra AST, in Lyra — the bootstrap's second slice.
+//!
+//! **Every node mirrors the Go AST's type and field names exactly**, and that constraint is
+//! the whole reason this is checkable. `pkg/printer` dumps the Go AST by reflection, and
+//! `pkg/analyzer/collector/tests/testdata` holds 245 golden files of those dumps; a printer
+//! here that produces the same text turns every one of them into a differential test
+//! against an independent implementation — the trick `std.temporal` used against Go's
+//! `time` and Python's `zoneinfo`. An AST of its own design would leave the bootstrap
+//! checked only against itself, which is no check at all.
+//!
+//! So `Base` and `Value` are the field names even though Lyra writes `base` and `value`:
+//! the printer spells the Go names, and these structs spell Lyra ones. The two are kept
+//! together, one per node, rather than reconciled by a table nobody would maintain.
+//!
+//! **A node is a struct, and the `data` constructor wraps it**, even where one field would
+//! fit in the constructor directly (`CharacterLiteralExpr`). The Go AST gains fields
+//! steadily, and a positional payload makes each new one an edit at every construction
+//! site in the port; a struct makes it an edit at the ones that care.
+
+/// A whole file: the statements at its top level, in source order.
+pub struct Program {
+  statements: []Stmt,
+}
+
+/// A statement. One constructor per Go statement type, named as Go names it.
+pub data Stmt =
+  /// `let x = 1`, `var y = 2`, `pub let z = 3`.
+  VarDeclStmt(VarDecl)
+
+/// A binding declaration.
+pub struct VarDecl {
+  /// `let` or `var` — the word as written, which is what the golden prints.
+  binding_kind: string,
+  /// True for `pub`. Printed only when true, the printer omitting zero values.
+  is_public: bool,
+  /// The bound name, which is also the label in the node's header line.
+  name: string,
+  /// The initialiser. `None` for a declaration without one.
+  value: Maybe<Expr>,
+}
+
+/// An expression. One constructor per Go expression type, named as Go names it.
+pub data Expr =
+  /// `42`, `0x2A`, `0b101010` — the value, and the base it was written in.
+  IntegerLiteralExpr(IntegerLiteral)
+  /// `'\n'` — the rune's code point.
+  | CharacterLiteralExpr(CharacterLiteral)
+  /// `"hello"` — the text, escapes already decoded.
+  | StringLiteralExpr(StringLiteral)
+  /// `(a, b) => …` — a function literal.
+  | LambdaExpr(Lambda)
+
+/// An integer literal.
+pub struct IntegerLiteral {
+  /// 10, 16, 8 or 2, as the source spelled it.
+  base: i64,
+  value: i64,
+}
+
+/// A character literal, as a code point.
+pub struct CharacterLiteral {
+  value: i64,
+}
+
+/// A string literal, escapes decoded.
+pub struct StringLiteral {
+  value: string,
+}
+
+/// A function literal.
+///
+/// Empty in this slice, and that is not a placeholder: `let foo = () => { }` prints with
+/// **no `Value:` line at all**, because every field of the lambda is zero and the Go
+/// printer omits a composite whose fields are all zero. Modelling the empty lambda is what
+/// makes that rule testable before parameters or bodies exist.
+pub struct Lambda {
+  parameters: []string,
+}

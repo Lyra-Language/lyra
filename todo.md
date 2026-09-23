@@ -74,11 +74,15 @@ Package management, versioning and separate compilation are out of scope by deci
     `named_child`/`named_child_count`, `is_missing`, and `text(node, bytes)` taking the
     source's **bytes**, since every offset tree-sitter reports counts bytes while a Lyra
     `string` slices by rune.
-  - **Slice 2: the AST in Lyra, and a printer matching `pkg/printer`'s format.** The
-    decision this turns on: mirror the Go AST's node and field names exactly, and the
-    **245 existing golden files become the oracle** — the same trick `std.temporal` used
-    against Go's `time` and Python's `zoneinfo`. Inventing a different AST means checking
-    the bootstrap only against itself, which is no check at all.
+  - **Slice 2 landed 09/22: the AST in Lyra (`examples/collector/ast.lyra`) and a printer
+    matching `pkg/printer`'s format** (`print.lyra`), for the subset the smallest goldens
+    use — `VarDeclStmt` over integer, character, string and lambda literals. Six goldens
+    match byte for byte from hand-built trees, there being no collector yet, which pins the
+    *format* before slice 3 has to debug a walk at the same time. The AST mirrors the Go
+    type and field names, so the **245 goldens are the oracle**. Lyra has no reflection, so
+    where Go walks fields generically the printer names them one at a time: alphabetical
+    order and the two omission rules are written per node, and a field added to the AST and
+    forgotten there shows up as a golden that stops matching.
   - **Slice 3: collect a subset** — top-level declarations, lambdas, literals, calls —
     and pass the goldens that only use it. Then grow the subset until they all pass.
   - The `SymbolTable` is a second axis, deliberately after the AST: the Go collector builds

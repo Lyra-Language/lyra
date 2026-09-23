@@ -1,0 +1,134 @@
+module examples.collector.print
+//! The AST printer, in the format `pkg/printer` produces by reflection.
+//!
+//! Matching it byte for byte is what makes the 245 golden files in
+//! `pkg/analyzer/collector/tests/testdata` an oracle for the bootstrap, so the rules are
+//! copied deliberately rather than invented:
+//!
+//!   - a node is `TypeName {`, its fields one tab deeper, then `}` at the node's own level;
+//!   - a node with a non-empty `Name` field is `TypeName(that name) {`, and `Program` is
+//!     `Program(N statements) {`;
+//!   - **fields print in alphabetical order of their Go names**, not declaration order;
+//!   - a **zero** field is omitted entirely — `false`, `0`, `""`, an empty list, `None`;
+//!   - a field holding a composite whose own fields are all zero is omitted too, which is
+//!     not the same rule and is the one that surprises: `let foo = () => { }` prints no
+//!     `Value:` line at all, the lambda being empty, and `let blank = ""` prints none
+//!     either;
+//!   - a composite field is `Name: {`, its value one tab deeper, then `}`; a scalar field
+//!     is `Name: value` on one line;
+//!   - the indent is a **tab**, and the last line ends with a newline.
+//!
+//! Lyra has no reflection, so where Go walks fields generically this names them one at a
+//! time. That is a cost per node and a benefit at the same time: the alphabetical order and
+//! the omission rules are written down at each node rather than emerging from a walk, so a
+//! field added to the AST and forgotten here shows up as a golden that no longer matches.
+
+import examples.collector.ast.{
+  Program, Stmt, VarDeclStmt, VarDecl, Expr, IntegerLiteralExpr, CharacterLiteralExpr,
+  StringLiteralExpr, LambdaExpr, IntegerLiteral, CharacterLiteral, StringLiteral, Lambda,
+}
+
+/// A whole program, as `pkg/printer.PrintAST` would render it.
+pub let print_ast = pure (program: Program) -> string => {
+  // `Program(N statements)` is the one header the Go printer special-cases, and it counts
+  // the statements even when it is about to omit the empty list below.
+  var out = "Program(${program.statements.len()} statements) {\n"
+  if program.statements.len() > 0 {
+    out = out ++ field_open("Statements", 1)
+    for stmt in program.statements {
+      out = out ++ print_stmt(stmt, 2)
+    }
+    out = out ++ close(1)
+  }
+  out ++ close(0)
+}
+
+/// One statement at `depth`.
+let print_stmt = pure (stmt: Stmt, depth: i64) -> string => match stmt {
+  VarDeclStmt(decl) => print_var_decl(decl, depth),
+}
+
+/// `VarDeclStmt(name) { … }`.
+///
+/// Fields in the Go type's alphabetical order — `BindingKind`, `IsPublic`, `Name`,
+/// `Value` — each omitted when zero.
+let print_var_decl = pure (decl: VarDecl, depth: i64) -> string => {
+  var out = header("VarDeclStmt", decl.name, depth)
+  out = out ++ scalar("BindingKind", decl.binding_kind, depth + 1)
+  if decl.is_public { out = out ++ scalar("IsPublic", "true", depth + 1) }
+  out = out ++ scalar("Name", decl.name, depth + 1)
+  match decl.value {
+    Some(value) => if !expr_is_empty(value) {
+      out = out ++ field_open("Value", depth + 1)
+      out = out ++ print_expr(value, depth + 2)
+      out = out ++ close(depth + 1)
+    },
+    None => {},
+  }
+  out ++ close(depth)
+}
+
+/// One expression at `depth`.
+let print_expr = pure (expr: Expr, depth: i64) -> string => match expr {
+  IntegerLiteralExpr(lit) =>
+    header_unnamed("IntegerLiteralExpr", depth) ++
+    scalar("Base", "${lit.base}", depth + 1) ++
+    scalar("Value", "${lit.value}", depth + 1) ++
+    close(depth),
+  CharacterLiteralExpr(lit) =>
+    header_unnamed("CharacterLiteralExpr", depth) ++
+    scalar("Value", "${lit.value}", depth + 1) ++
+    close(depth),
+  StringLiteralExpr(lit) =>
+    header_unnamed("StringLiteralExpr", depth) ++
+    scalar("Value", lit.value, depth + 1) ++
+    close(depth),
+  LambdaExpr(lambda) => header_unnamed("LambdaExpr", depth) ++ close(depth),
+}
+
+/// Whether every field of `expr` is zero, which is what makes the **field holding it**
+/// disappear rather than print as an empty node.
+///
+/// The Go printer answers this by walking fields, so it is one rule there and one arm per
+/// node here. Getting it wrong is invisible in the common case and changes two of the five
+/// smallest goldens, which is why it is a named function rather than a condition inline.
+let expr_is_empty = pure (expr: Expr) -> bool => match expr {
+  // A zero base with a zero value is not reachable from the grammar — a literal always has
+  // a base — so this is the honest reading of the rule rather than a live case.
+  IntegerLiteralExpr(lit) => lit.base == 0 && lit.value == 0,
+  CharacterLiteralExpr(lit) => lit.value == 0,
+  StringLiteralExpr(lit) => lit.value == "",
+  LambdaExpr(lambda) => lambda.parameters.len() == 0,
+}
+
+/// `TypeName(label) {` at `depth`, or `TypeName {` when the label is empty.
+let header = pure (type_name: string, label: string, depth: i64) -> string =>
+  if label == "" { header_unnamed(type_name, depth) }
+  else { tabs(depth) ++ "${type_name}(${label}) {\n" }
+
+/// `TypeName {` at `depth`.
+let header_unnamed = pure (type_name: string, depth: i64) -> string =>
+  tabs(depth) ++ "${type_name} {\n"
+
+/// `Name: {` at `depth` — a field whose value is a node or a list.
+let field_open = pure (name: string, depth: i64) -> string =>
+  tabs(depth) ++ "${name}: {\n"
+
+/// `Name: value` at `depth` — a field whose value fits on the line.
+let scalar = pure (name: string, value: string, depth: i64) -> string =>
+  tabs(depth) ++ "${name}: ${value}\n"
+
+/// `}` at `depth`.
+let close = pure (depth: i64) -> string => tabs(depth) ++ "}\n"
+
+/// `depth` tabs. The Go printer builds its indent by appending `"\t"` as it descends; this
+/// rebuilds it from the depth, which is the same string and one fewer thing to thread.
+let tabs = pure (depth: i64) -> string => {
+  var out = ""
+  var i = 0
+  for i < depth {
+    out = out ++ "\t"
+    i += 1
+  }
+  out
+}
