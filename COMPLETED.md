@@ -42,6 +42,40 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — "a borrowed parameter is allocation-polymorphic and is skipped"
+
+That comment sat at the argument check and was the bug, written down. A `shared` value
+passed to a plain parameter compiled and trapped (`match not exhaustive` — the tag read out
+of a box pointer); a plain value passed to a `shared` parameter **segfaulted**, an inline
+aggregate dereferenced as a box. Both silent at compile time.
+
+The `own` path was no better, which is what made the comment misleading rather than merely
+wrong: it does call `checkAllocationCompat`, but that fires only when *both* flavors are
+concrete, and an unwritten one is Unspecified. So `own` and borrowed alike crossed unchecked.
+
+**A binding really is polymorphic and a parameter is not**, and the difference is the whole
+fix. `let q: E = s` inherits the flavor, and the backend unboxes for it — measured, it
+prints the right answer. A function is compiled once and its parameter has exactly one
+representation, so at a call there is no context left to inherit from. `checkArgumentAllocation`
+takes exactly the pair `firstAllocationMismatch` exempts — one side Unspecified — so the two
+never report the same mistake twice.
+
+Two positions stay polymorphic, and both had to be exempted for real reasons rather than to
+quiet the check. A **construction** has no flavor of its own and takes the parameter's,
+which is why `f(Lit(3))` against a `shared` parameter is correct. A **generic** parameter
+takes whatever the instantiation binds, and refusing there would reject every generic
+function called with a `shared` value — most of the prelude's combinator layer.
+
+The suite found the third case, which is the one worth recording: a **`match` whose arms are
+constructions**. The arms took the flavor and the match node's own recorded type did not say
+so. That cost nothing while nothing read it, and became a false report the instant this
+check asked what it was being handed. The node now takes the flavor its arms took, which is
+simply the truth about the value.
+
+Nothing in `std`, `examples` or `bindings` is refused by the new rule — checked file by
+file. That is the expected result rather than a lucky one: code that would now be refused
+did not work before, it crashed.
+
 ### 09/23/26 — a context's flavor stopped where its type did
 
 The bootstrap's slice 4 is an expression tree, the first program here to need a type

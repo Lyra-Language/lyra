@@ -454,6 +454,15 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   parameter, either of which can be checked; a lambda literal called in place is the
   exception, judged by its body. Until 09/22 these were charged nothing at all, and an
   effect reached through one escaped a `pure` function.
+- **A parameter's storage flavor is concrete even when unwritten, and a call across the
+  `shared`/stack boundary is refused** (`lyra-E018`). A *binding* is polymorphic — `let q: E = s`
+  inherits the flavor and the value is unboxed for it — but a function is compiled once and
+  its parameter has one representation, so there is nothing left to inherit from at a call.
+  Two positions stay polymorphic and are not refused: a **construction** (including a
+  `match` or `if` whose arms are constructions) has no flavor of its own and takes the
+  parameter's, and a **generic** parameter takes whatever the instantiation binds. Until
+  09/23 the crossing was neither coerced nor reported: a `shared` argument in a plain
+  parameter trapped, and a plain one in a `shared` parameter segfaulted.
 - Effect classes referenced elsewhere: `EffectInput` (stdin, `program_arg*`, `read_key`, `wait_for_key_ms`, `terminal_size`), `EffectOutput` (`set_raw_mode`; `det`-legal), `EffectRand` (`random_seed`), `EffectTime` (`wall_clock_nanos`), `EffectMut` (a write the caller sees; `det`-legal). `det` permits output.
 - **`EffectMut` is charged the same way whichever spelling writes**: `xs[0] = v`, `p.x = v`, and the mutating builtins `push`/`push_utf8`/`reserve`/`clear`. Through a `mut` parameter or a capture the write escapes and `pure` refuses it; on a local it does not and `pure` is fine. The builtins were exempt until 09/22, so `xs[0] = v` was refused from a `pure` function while `xs.push(v)` was accepted — and W018 *suggested* `pure` for a function whose only effect was the push.
 

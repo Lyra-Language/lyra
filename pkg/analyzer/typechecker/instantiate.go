@@ -586,6 +586,8 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		// report it" rule applies.
 		tc.checkLiteralRange(
 			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, params[i])
+		tc.checkArgumentAllocation(
+			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, tc.inferExprType(arg), params[i])
 	}
 	// Checked after the solve and before the instantiation is recorded: every
 	// variable now has the concrete type this call binds it to, which is the only

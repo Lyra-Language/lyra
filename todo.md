@@ -141,8 +141,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   }
   ```
 
-- **[OPEN] A `shared` value passed to a plain parameter is not checked, and the callee
-  misreads it.** `describe(b.left)` where `left: shared Expr` and `describe` takes
+- **[FIXED 09/23] A `shared` value passed to a plain parameter was not checked, and the
+  callee misread it.** `describe(b.left)` where `left: shared Expr` and `describe` takes
   `(e: Expr)` compiles, then traps at runtime (`match not exhaustive`): the callee reads
   the pointer as an inline value. `lyra-E018` covers this crossing at annotated init,
   reassignment, interior writes, **`own` arguments** and non-borrow returns — a *borrowed*

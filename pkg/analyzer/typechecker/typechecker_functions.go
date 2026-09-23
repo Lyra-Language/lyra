@@ -588,6 +588,10 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 		// A function type has no parameter names to quote, so the subject is positional.
 		tc.checkLiteralRange(
 			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, param.Type)
+		// The indirect path is the direct path's pair — hazard 8, and this check was
+		// written on one side first.
+		tc.checkArgumentAllocation(
+			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, argType, param.Type)
 	}
 
 	return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
@@ -1810,13 +1814,23 @@ func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter
 		if param.TypeModifier == types.Mut {
 			tc.checkMutArgument(calleeName, i+1, paramName, arg, resolvedParamType)
 		}
+		subject := fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName)
 		if paramOwnsArgument(param.TypeModifier) {
-			// An `own` parameter adopts the argument into its own storage, so
-			// the flavors must match; a borrowed parameter is allocation-
-			// polymorphic and is skipped.
-			tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(),
-				fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName))
+			// An `own` parameter adopts the argument into its own storage, so the
+			// flavors must match, structurally as well as at the top level.
+			tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(), subject)
 		}
+		// **And a borrowed parameter is not allocation-polymorphic**, which the line
+		// above used to say it was. A function is compiled once and its parameter has one
+		// representation, so there is no context left for an Unspecified flavor to
+		// inherit from at a call — the backend picked inline and read a box pointer as
+		// one (09/23). Re-read the argument's type: the push above may just have given a
+		// construction the parameter's flavor, which is the case that must *not* report.
+		current := argType
+		if updated, ok := tc.typeTable.Get(arg); ok {
+			current = updated
+		}
+		tc.checkArgumentAllocation(subject, arg, current, resolvedParamType)
 	}
 }
 

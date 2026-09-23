@@ -1061,3 +1061,49 @@ func isUntypedIntType(t types.Type) bool {
 	p, ok := t.(types.PrimitiveType)
 	return ok && (p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt)
 }
+
+// checkArgumentAllocation reports passing a value across the `shared`/stack boundary at a
+// call, which the backend cannot do and did not refuse: until 09/23 it emitted a read of
+// the wrong shape either way round. A `shared` argument in a plain parameter trapped
+// (`match not exhaustive`, the tag read out of a box pointer) and a plain argument in a
+// `shared` parameter **segfaulted**, an inline aggregate dereferenced as a box.
+//
+// **A parameter's flavor is concrete even when unwritten**, which is the rule
+// firstAllocationMismatch cannot apply. It treats Unspecified as "inherit from context",
+// right for a binding — `let q: E = s` genuinely does inherit, and the backend unboxes for
+// it — and wrong for a parameter, because a function is compiled once and its parameter has
+// exactly one representation. There is no context left to inherit from at a call.
+//
+// **A generic parameter is the exception and stays polymorphic**, because it really is: a
+// call monomorphizes the body, so `t` takes the flavor of whatever this instantiation binds
+// it to. Firing here would refuse every generic function called with a `shared` value,
+// which is most of the prelude's combinator layer.
+func (tc *TypeChecker) checkArgumentAllocation(subject string, arg ast.Expression, argType, paramType types.Type) {
+	if argType == nil || paramType == nil || !mentionsNoTypeVar(paramType) {
+		return
+	}
+	from, to := types.AllocationOf(argType), types.AllocationOf(paramType)
+	if from == to {
+		return
+	}
+	// **Exactly the pair firstAllocationMismatch exempts.** Two concrete, differing
+	// flavors are already checkAllocationCompat's to report on the `own` path, and
+	// reporting them here as well would say one mistake twice. What is left is the case
+	// it calls polymorphic — one side Unspecified — which is the case that miscompiled.
+	if from != types.Unspecified && to != types.Unspecified {
+		return
+	}
+	switch {
+	case to == types.Shared:
+		tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeAllocationMismatch,
+			"%s: a `shared %s` parameter takes a `shared` value, and this one is not — "+
+				"bind it `shared` where it is built, or construct it in the argument",
+			subject, paramType)
+	case from == types.Shared:
+		tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeAllocationMismatch,
+			"%s: this is a `shared %s` and the parameter takes a plain one — "+
+				"declare the parameter `shared %s`, since a function has one representation "+
+				"and cannot take either",
+			subject, argType, paramType)
+	}
+}

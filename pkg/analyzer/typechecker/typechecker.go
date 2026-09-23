@@ -3800,6 +3800,11 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			tc.propagateExpected(arm.Body, expected, viaNewtype)
 		}
 		tc.recordUntypedValueNode(e, expected)
+		// **And the node itself takes the flavor its arms just took.** The arms build
+		// `shared` values, so the match *is* one, and until 09/23 its recorded type did
+		// not say so — harmless while nothing read it, and a false report the moment an
+		// argument check asked what flavor it was being handed.
+		tc.stampSharedConstruction(e, expected)
 		return
 	case *ast.IfExpr:
 		if e.Then != nil {
@@ -3809,6 +3814,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			tc.propagateExpected(e.Else, expected, viaNewtype)
 		}
 		tc.recordUntypedValueNode(e, expected)
+		tc.stampSharedConstruction(e, expected)
 		return
 	case *ast.BlockExpr:
 		// A block's value is its last statement, when that's an expression.

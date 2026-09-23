@@ -41,5 +41,9 @@ Modifiers: `Unspecified` (`""`, inherit from context, default stack), `Stack`, `
   `firstAllocationMismatch` + `tc.checkAllocationCompat` (`typechecker/assignable.go`) report owning
   a value across `stack`↔`shared` as `lyra-E018`, recursing into elements. Checked at annotated
   init, destructuring annotation, reassignment, interior writes, `own` arguments and non-borrow
-  returns; fires only when both sides are concrete and differ. Not checked on the
+  returns; fires only when both sides are concrete and differ. **An argument is checked
+  separately** (`checkArgumentAllocation`) for exactly the pair this one exempts — one side
+  Unspecified — because a parameter has one representation and no context to inherit from,
+  unlike a binding. A construction, a `match` over constructions and a generic parameter
+  stay polymorphic there. Not checked on the
   `LambdaType`-callee path (`inferLambdaCallFromType`), which has no parameter modes.
