@@ -31,7 +31,13 @@ saw the errors.
 
 **Nothing type-checked the examples**, which is why it took a person opening a file to
 notice, so the guard is broader than the bug: every `.lyra` file in `std`, `examples` and
-`bindings` now checks under **both** roots. It immediately found a second one —
+`bindings` now checks under **both** roots. The first version of it pointed the second root
+at `build/` and went red on main within the minute: CI never runs `build.sh`, so `build/std`
+does not exist there and every standard-library file "failed" for want of a symlink. A test
+depending on an artifact of someone's local build tests the artifact. It now *constructs*
+the shape it means — a temp directory holding only `std` and `bindings` symlinks — which is
+the half that has to run everywhere, since it is the half the other root cannot see. Checked
+by deleting `build/` and running it, which is what should have happened before the push. It immediately found a second one —
 `examples/raylib/painting.lyra` used `Rectangle` without importing it, failing under either
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.

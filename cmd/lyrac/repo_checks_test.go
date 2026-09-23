@@ -26,6 +26,26 @@ import (
 // path resolved only when the root was the repo root, and the Zed extension showed 11
 // errors on a file the command line called clean. They are siblings now, as every other
 // example's modules are, and this test is the thing that would have said so.
+// editorRoot builds the module root a language server sees: a directory holding **only**
+// `std` and `bindings`, as `build/` does after `./build.sh` links them there.
+//
+// Built here rather than pointed at `build/`, which is what the first version did and why
+// it failed in CI: CI never runs `build.sh`, so `build/std` does not exist and every
+// standard-library file "failed" for want of a symlink. A test that depends on an artifact
+// of someone's local build tests the artifact. Constructing the shape makes the second root
+// exist everywhere, which matters more here than anywhere — it is the half that catches the
+// bug the other root cannot see.
+func editorRoot(t *testing.T, repo string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"std", "bindings"} {
+		if err := os.Symlink(filepath.Join(repo, name), filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
 func TestRepo_EveryLyraFileChecksUnderBothRoots(t *testing.T) {
 	root := repoRoot(t)
 	var files []string
@@ -50,9 +70,7 @@ func TestRepo_EveryLyraFileChecksUnderBothRoots(t *testing.T) {
 
 	for _, roots := range []struct{ name, std string }{
 		{"repo root", root},
-		// What an editor's language server uses: `std` and `bindings` are symlinks there,
-		// and nothing else is.
-		{"beside the executable", filepath.Join(root, "build")},
+		{"beside the executable", editorRoot(t, root)},
 	} {
 		t.Run(roots.name, func(t *testing.T) {
 			t.Setenv("LYRA_STD", roots.std)
