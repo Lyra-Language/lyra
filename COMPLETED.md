@@ -9,6 +9,68 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — clean on the command line, eleven errors in the editor
+
+Reported from Zed, which is the only place it was visible: 11 errors and 8 warnings on
+`examples/collector/collect.lyra`, a file `lyrac check` called clean. The warning count
+matched exactly and the error count did not, which said the disagreement was about
+resolution rather than about the code.
+
+`lyrac` finds the standard library beside its own executable, so a language server resolves
+modules against **`build/`**, where `std` and `bindings` are symlinks and nothing else is.
+A command line passes the repo root. I had named the collector's modules by dotted path —
+`examples.collector.ast` — so a test could import them from a temp directory, and that path
+exists only under the repo root. Checking with `LYRA_STD=build` reproduced 11 and 8 exactly.
+
+The fix is the convention the repo already had: sibling modules, as `lyra-md`'s `markdown`
+is, with the test copying them beside its probe instead. `printer` rather than `print`,
+since a module name sitting on top of the `print` builtin is a question nobody needs to
+answer. A test-only convenience had been allowed to set a source layout, and it cost the
+editor — the worse half of that trade, because the build still passed and only the reader
+saw the errors.
+
+**Nothing type-checked the examples**, which is why it took a person opening a file to
+notice, so the guard is broader than the bug: every `.lyra` file in `std`, `examples` and
+`bindings` now checks under **both** roots. It immediately found a second one —
+`examples/raylib/painting.lyra` used `Rectangle` without importing it, failing under either
+root since a formatting commit in the same file. The diagnostic named the fix, which is the
+sort of error that survives only where nothing is looking.
+
+### 09/22/26 — the bootstrap's third slice: source in, golden out
+
+The CST→AST walk, and `collector.lyra` around it: a Lyra program that reads a `.lyra` file
+and prints its AST in `pkg/printer`'s format. **13 of the 238 goldens whose sources can be
+recovered now match from source**, byte for byte, against what an independent
+implementation produced for the same text. No hand-built trees.
+
+The ordering earned its keep. Slice 1's accessors were checked against the grammar and
+slice 2's printer against these same goldens from trees built by hand, so every mismatch
+today was this walk — which is what that sequencing was for, and it meant each failure had
+one candidate cause.
+
+Two things the goldens taught that reading the grammar would not have.
+
+**`char_literal_expr_unicode_escape` is `'é'`** — a literal rune, not an escape, whatever
+its name says. It passed immediately, and passing was the interesting part: it is the
+end-to-end proof that slice 1's byte-indexed `text` is right, since a rune-indexed read
+would take different bytes and produce a different number. The `\U0001F600` case next to it
+does *not* pass, and is left undecoded deliberately: a wrong answer that looks like a right
+one is the thing to avoid while a subset is growing.
+
+**A comment at the top level is a named child of the root.** The compiler's own hazard 16,
+and the mutation test is what exposed that the code did not really handle it — the catch-all
+dropped comments along with every other unknown kind, so making a comment collect as a
+declaration changed nothing and the "skipped by name" comment beside it was a claim about
+code that was not there. Naming it matters for what comes next: a growing subset wants to
+say "this kind is not collected yet", and a comment is not an uncollected construct, it is
+not a construct. The test now checks the statement *count*, which is the number a reader
+trusts first.
+
+What is deliberately still missing is `Location`. Every Go node carries one, the goldens do
+not show it (`pkg/printer` omits `print:"-"` fields), and nothing can report a diagnostic
+without it. Adding it while the goldens cannot see it would be building against no oracle
+at all, so it is a slice of its own rather than a detail of this one.
+
 ### 09/22/26 — the bootstrap's second slice: an oracle before a collector
 
 The AST in Lyra and a printer for it, for the subset the smallest goldens use. No collector

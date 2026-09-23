@@ -83,8 +83,21 @@ Package management, versioning and separate compilation are out of scope by deci
     where Go walks fields generically the printer names them one at a time: alphabetical
     order and the two omission rules are written per node, and a field added to the AST and
     forgotten there shows up as a golden that stops matching.
-  - **Slice 3: collect a subset** — top-level declarations, lambdas, literals, calls —
-    and pass the goldens that only use it. Then grow the subset until they all pass.
+  - **Its modules are siblings** (`ast`, `printer`, `collect`), as every example's are.
+    They were dotted paths for a few hours so a test could import them from a temp
+    directory, which resolved only when the module root was the repo root — the editor's
+    is `build/`, so Zed showed 11 errors on files the command line called clean.
+    `TestRepo_EveryLyraFileChecksUnderBothRoots` is the guard.
+  - **Slice 3 landed 09/22: the CST→AST walk** (`collect.lyra`) and `collector.lyra`, which
+    prints a file's AST in the goldens' format. **13 of the 238 goldens whose sources can
+    be recovered now match from source**, hand-built trees gone. A kind outside the subset
+    is skipped rather than guessed, so growth fails by printing too little — visible in a
+    diff — rather than by inventing a node. Grow it by making more goldens match; the next
+    ones want `\x`/`\u` escapes, lambda parameters and bodies, and the other statement
+    kinds.
+  - **The `Location` every node carries is not modelled yet**, and the goldens do not show
+    it (`pkg/printer` omits `print:"-"` fields, which is what `NameLocation` is). It has to
+    arrive before anything reports a diagnostic, and choosing when is a slice of its own.
   - The `SymbolTable` is a second axis, deliberately after the AST: the Go collector builds
     both in one walk, and doing the same here before the AST is checked would mean two
     unverified things at once.

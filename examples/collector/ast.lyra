@@ -1,4 +1,4 @@
-module examples.collector.ast
+module ast
 //! The Lyra AST, in Lyra — the bootstrap's second slice.
 //!
 //! **Every node mirrors the Go AST's type and field names exactly**, and that constraint is

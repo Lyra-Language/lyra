@@ -91,12 +91,26 @@ func TestCollector_LyraPrinterMatchesTheGoldens(t *testing.T) {
 		},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
-			probe := filepath.Join(t.TempDir(), "probe.lyra")
-			program := `import examples.collector.ast.{
+			dir := t.TempDir()
+			// The modules are siblings, as every example's are, so the probe is built
+			// beside copies of them rather than importing them by a dotted path. The
+			// dotted form resolved only when the module root was the repo root, which
+			// is not what an editor uses — it broke the LSP for these files (09/22).
+			for _, module := range []string{"ast.lyra", "printer.lyra"} {
+				body, err := os.ReadFile(filepath.Join(root, "examples", "collector", module))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, module), body, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			probe := filepath.Join(dir, "probe.lyra")
+			program := `import ast.{
   Program, Stmt, VarDeclStmt, VarDecl, Expr, IntegerLiteralExpr, CharacterLiteralExpr,
   StringLiteralExpr, LambdaExpr, IntegerLiteral, CharacterLiteral, StringLiteral, Lambda,
 }
-import examples.collector.print.{ print_ast }
+import printer.{ print_ast }
 
 // ` + c.source + `
 let main = () -> u8 => {

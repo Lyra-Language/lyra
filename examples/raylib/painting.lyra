@@ -20,7 +20,7 @@ module main
 import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps,
   begin_drawing, end_drawing, clear_background,
-  Image, Texture2D, Color, Vector2, vec2, rect,
+  Image, Texture2D, Color, Vector2, Rectangle, vec2, rect,
   gen_image_color, gen_image_gradient_linear, unload_image, image_color_at, image_colors,
   reformat, texture_from_image, unload_texture, draw_texture, draw_text, measure_text,
   image_copy, image_region, image_channel, image_text, image_text_ex,

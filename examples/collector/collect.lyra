@@ -1,0 +1,174 @@
+module collect
+//! CST to AST — the bootstrap's third slice, and the first that does the compiler's own job.
+//!
+//! Slices 1 and 2 built what this stands on: the accessors a collector asks for
+//! (`bindings/treesitter`) and a printer whose output the Go collector's 245 golden files
+//! can judge (`print.lyra`). So a mismatch here is a mistake in this walk, which is the
+//! whole reason for that order.
+//!
+//! The subset is what the smallest goldens use: a `let`/`var` declaration over an integer,
+//! character or string literal, or an empty lambda. Anything else is skipped rather than
+//! guessed at — a node kind this does not know yields no statement, so the test that grows
+//! the subset fails by printing too little rather than by printing something invented.
+
+import bindings.treesitter.{ Node, kind, field, named_child, named_child_count, text }
+import ast.{
+  Program, Stmt, VarDecl, Expr,
+  IntegerLiteral, CharacterLiteral, StringLiteral, Lambda,
+}
+
+/// Every statement at the file's top level.
+pub let collect = (root: Node, source: []u8) -> Program => {
+  var statements: []Stmt = []
+  var i = 0
+  for i < named_child_count(root) {
+    match collect_statement(named_child(root, i), source) {
+      Some(stmt) => statements.push(stmt),
+      None => {},
+    }
+    i += 1
+  }
+  Program { statements: statements }
+}
+
+/// One statement, or `None` for a node this slice does not collect.
+///
+/// **A comment is a named node** — verified, not assumed: `// x` at the top level is a
+/// named child of the root, beside the declarations. That is the compiler's own hazard 16.
+/// The catch-all below would drop it anyway, so naming it is for what comes next: a
+/// growing subset wants to say "this kind is not collected yet", and a comment is not an
+/// uncollected construct, it is not a construct.
+let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
+  let k = kind(node)
+  if k == "comment" { return None }
+  if k == "declaration" { return Some(collect_declaration(node, source)) }
+  None
+}
+
+/// `let x = 1`, `pub var y = 2`.
+///
+/// Every field is optional in the grammar even where it reads as required, so each is a
+/// `field` lookup with an answer for the absent case rather than an unwrap.
+let collect_declaration = (node: Node, source: []u8) -> Stmt => {
+  let binding_kind = match field(node, "keyword") {
+    Some(keyword) => text(keyword, source),
+    None => "let",
+  }
+  let name = match field(node, "name") {
+    Some(identifier) => text(identifier, source),
+    None => "",
+  }
+  let value = match field(node, "value") {
+    Some(expr) => collect_expr(expr, source),
+    None => None,
+  }
+  VarDeclStmt(VarDecl {
+    binding_kind: binding_kind,
+    // The field's presence *is* the answer; `pub` is the only thing it can say.
+    is_public: match field(node, "visibility") {
+      Some(_) => true,
+      None => false,
+    },
+    name: name,
+    value: value,
+  })
+}
+
+/// One expression, or `None` for a kind this slice does not collect.
+let collect_expr = (node: Node, source: []u8) -> Maybe<Expr> => {
+  let k = kind(node)
+  if k == "integer_literal" { return Some(collect_integer(node, source)) }
+  if k == "char_literal" { return Some(collect_character(node, source)) }
+  if k == "string_literal" { return Some(collect_string(node, source)) }
+  if k == "lambda_expr" { return Some(LambdaExpr(Lambda { parameters: [] })) }
+  None
+}
+
+/// `42`, `0x2A`, `0b101010`, `0o52`.
+///
+/// The base is the **child's kind**, not something re-derived from the text: the grammar
+/// already decided, and two answers to one question is how they come to disagree.
+let collect_integer = (node: Node, source: []u8) -> Expr => {
+  let base = integer_base(node)
+  let digits = text(node, source).to_runes()
+  // A prefix is two runes (`0x`, `0b`, `0o`); base 10 has none.
+  let start = if base == 10 { 0 } else { 2 }
+  IntegerLiteralExpr(IntegerLiteral {
+    base: base,
+    value: digits_value(digits.slice(start, digits.len()), base),
+  })
+}
+
+/// The base the grammar recognised: `decimal_int`, `binary_int`, `octal_int` or
+/// `hexadecimal_int`, one named child of the literal.
+let integer_base = (node: Node) -> i64 => {
+  if named_child_count(node) == 0 { return 10 }
+  let k = kind(named_child(node, 0))
+  if k == "binary_int" { return 2 }
+  if k == "octal_int" { return 8 }
+  if k == "hexadecimal_int" { return 16 }
+  10
+}
+
+/// `'a'`, `'\n'` — the code point, quotes stripped and the escape decoded.
+let collect_character = (node: Node, source: []u8) -> Expr => {
+  let raw = text(node, source).to_runes()
+  let inner = raw.slice(1, raw.len() - 1)
+  let decoded = decode_escapes(inner).to_runes()
+  CharacterLiteralExpr(CharacterLiteral {
+    // An empty literal does not parse, so the guard is for a malformed tree rather than a
+    // program: answering 0 keeps one bad node from taking the file down with it.
+    value: if decoded.len() == 0 { 0 } else { i64(decoded[0]) },
+  })
+}
+
+/// `"hi"` — the text, quotes stripped and escapes decoded.
+let collect_string = (node: Node, source: []u8) -> Expr => {
+  let raw = text(node, source).to_runes()
+  StringLiteralExpr(StringLiteral { value: decode_escapes(raw.slice(1, raw.len() - 1)) })
+}
+
+/// The runes with their escape sequences resolved.
+///
+/// The common escapes only. `\x41` and `\u{1F600}` are **not** decoded here and are left as
+/// written, which is visible in a golden rather than silent: this slice's goldens do not
+/// reach them, and a wrong answer that looks like a right one is the thing to avoid while
+/// the subset is still growing.
+let decode_escapes = pure (runes: []rune) -> string => {
+  var out = ""
+  var i = 0
+  for i < runes.len() {
+    let c = runes[i]
+    if c != '\\' || i + 1 >= runes.len() {
+      out = out ++ "${c}"
+      i += 1
+      continue
+    }
+    let next = runes[i + 1]
+    if next == 'n' { out = out ++ "\n" }
+    else if next == 't' { out = out ++ "\t" }
+    else if next == 'r' { out = out ++ "\r" }
+    else if next == '0' { out = out ++ "${'\0'}" }
+    else { out = out ++ "${next}" }
+    i += 2
+  }
+  out
+}
+
+/// The value of `digits` read in `base`, underscores ignored as the grammar allows them.
+let digits_value = pure (digits: []rune, base: i64) -> i64 => {
+  var total = 0
+  for d in digits {
+    if d == '_' { continue }
+    total = total * base + digit_value(d)
+  }
+  total
+}
+
+/// One digit's value, in any base up to 16.
+let digit_value = pure (d: rune) -> i64 => {
+  if d >= '0' && d <= '9' { return i64(d) - i64('0') }
+  if d >= 'a' && d <= 'f' { return i64(d) - i64('a') + 10 }
+  if d >= 'A' && d <= 'F' { return i64(d) - i64('A') + 10 }
+  0
+}

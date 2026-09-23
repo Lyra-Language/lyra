@@ -1,0 +1,59 @@
+// collector — the Lyra AST of a Lyra file, printed, in Lyra.
+//
+//   examples/lyrafmt/libs.sh
+//   LIBRARY_PATH=build/lib:$(pkg-config --variable=libdir tree-sitter) \
+//     build/lyrac build -o build/collector examples/collector/collector.lyra
+//   build/collector file.lyra      # the AST, in pkg/printer's format
+//   build/collector -              # the same, from standard input
+//
+// The bootstrap's third slice. The output is the format `pkg/printer` produces for the Go
+// AST, so it can be compared against the Go collector's own golden files — 245 of them,
+// each an independent implementation's answer for the same source. That comparison is the
+// point of the format, and the reason this program prints rather than returns.
+//
+// The subset is small (a declaration over a literal or an empty lambda) and grows by
+// making more goldens match. A construct outside it is skipped, so the output is short
+// rather than wrong.
+
+import std.collections.{ parse_args }
+import std.io.{ read_file, read_stdin }
+import bindings.treesitter.{
+  lyra_language, new_parser, parser_delete, parse, tree_delete, root, has_error,
+}
+import std.ffi.{ cstring }
+import collect.{ collect }
+import printer.{ print_ast }
+
+let main = () -> u8 => {
+  let args = parse_args([])
+  if args.positional.len() == 0 {
+    println("usage: collector <file.lyra | ->")
+    return 2
+  }
+  let path = args.positional[0]
+  let Some(source) = read_source(path) else {
+    println("collector: cannot read ${path}")
+    return 1
+  }
+  let Some(parser) = new_parser(lyra_language()) else {
+    println("collector: the tree-sitter runtime refused the Lyra grammar")
+    return 1
+  }
+  let Some(tree) = parse(parser, source) else {
+    println("collector: ${path} did not parse")
+    parser_delete(parser)
+    return 1
+  }
+  // A tree with an error still has a shape, and printing what was understood is more use
+  // than printing nothing — but the exit code says so, since a caller comparing output
+  // against a golden should not read a partial answer as agreement.
+  let broken = has_error(root(tree))
+  print(print_ast(collect(root(tree), source.cstring())))
+  tree_delete(tree)
+  parser_delete(parser)
+  if broken { 1 } else { 0 }
+}
+
+/// The file's text, or standard input for `-`.
+let read_source = (path: string) -> Maybe<string> =>
+  if path == "-" { Some(read_stdin()) } else { read_file(path) }

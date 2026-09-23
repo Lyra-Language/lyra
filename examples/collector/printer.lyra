@@ -1,4 +1,4 @@
-module examples.collector.print
+module printer
 //! The AST printer, in the format `pkg/printer` produces by reflection.
 //!
 //! Matching it byte for byte is what makes the 245 golden files in
@@ -23,7 +23,7 @@ module examples.collector.print
 //! the omission rules are written down at each node rather than emerging from a walk, so a
 //! field added to the AST and forgotten here shows up as a golden that no longer matches.
 
-import examples.collector.ast.{
+import ast.{
   Program, Stmt, VarDeclStmt, VarDecl, Expr, IntegerLiteralExpr, CharacterLiteralExpr,
   StringLiteralExpr, LambdaExpr, IntegerLiteral, CharacterLiteral, StringLiteral, Lambda,
 }
