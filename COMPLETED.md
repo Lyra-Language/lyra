@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/22/26 — the bootstrap's first slice: what a collector asks that a formatter never does
+
+`lyrafmt` proved the language could parse itself and rebuild the text. It did not prove the
+tree was *reachable*, because a formatter and a collector ask different questions. The
+formatter walks to the leaves by index and rebuilds from their bytes; it never asks what a
+child is. A collector asks almost nothing else — `cst.Field(node, "name")` is the most-used
+call in the Go one — and `bindings/treesitter` had no field access at all. Nothing could
+have been collected in Lyra before this, which is worth knowing before planning slices
+around it.
+
+Two of the five accessors are shaped deliberately unlike the Go binding they mirror.
+
+**`field` answers a `Maybe`.** In C an absent field is a *null node*: a value indistinguishable
+from a real one until used. That is the compiler's own hazard 2, and its symptom is nastier
+than a crash — Go's `ChildByFieldName` returns a real nil whose `ChildCount` **hangs inside
+the CGO binding**, so the mistake reaches a user as a wedged editor. Binding it as a `Maybe`
+deletes the shape: there is no Node to call anything on, and the program that forgets the
+case does not compile. A bootstrap that reproduces its host's hazards is not worth writing,
+and this is the first place that was a choice rather than a slogan.
+
+**`text` takes the source's bytes, not the string.** Every offset tree-sitter reports counts
+bytes; a Lyra `string` slices by rune. Passing the string would read shifted text for any
+file that is not ASCII, and read it silently. The test puts eight multi-byte runes above the
+declaration it checks, so a rune-indexed slice does not merely differ — it reads garbage,
+which is the version of that bug a test can catch.
+
+The slicing after this is set by one decision: **mirror the Go AST's node and field names,
+and the 245 existing golden files become the oracle**. Same trick `std.temporal` used
+against Go's `time` and Python's `zoneinfo`, and the reason to take the constraint. An AST
+of its own design would leave the bootstrap checked only against itself.
+
 ### 09/22/26 — one message for two ambiguities, only one of which had a fix
 
 Found by the reconciliation pass the same day. A call matching several trait impls printed

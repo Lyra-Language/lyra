@@ -62,8 +62,28 @@ Package management, versioning and separate compilation are out of scope by deci
   `lyra-lsp`. Breaking covers comma lists, **method chains**, **boolean conditions** and
   **the body after `=>`** (09/21). Left as written: a condition a body follows on the same
   line (`if a || b { … }` — moving the body is a rule about `if`, not about conditions),
-  and a `=>` inside a `(`, which belongs to a lambda passed as an argument. What is left after that is the bootstrap proper, which starts
-  with the collector. (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
+  and a `=>` inside a `(`, which belongs to a lambda passed as an argument.
+  (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
+
+- **[PARTIAL] The collector in Lyra — the bootstrap proper.** The Go collector is ~7.8k
+  lines over a ~5.6k-line AST, so this is sliced rather than attempted.
+  - **Slice 1 landed 09/22: the CST accessors a collector needs**, which are not the ones a
+    formatter needs. `lyrafmt` walks to leaves by index and never asks what a child *is*;
+    a collector asks almost nothing else. `bindings/treesitter` gained `field` (a `Maybe`,
+    so C's null node cannot be used as one — hazard 2 made unrepresentable),
+    `named_child`/`named_child_count`, `is_missing`, and `text(node, bytes)` taking the
+    source's **bytes**, since every offset tree-sitter reports counts bytes while a Lyra
+    `string` slices by rune.
+  - **Slice 2: the AST in Lyra, and a printer matching `pkg/printer`'s format.** The
+    decision this turns on: mirror the Go AST's node and field names exactly, and the
+    **245 existing golden files become the oracle** — the same trick `std.temporal` used
+    against Go's `time` and Python's `zoneinfo`. Inventing a different AST means checking
+    the bootstrap only against itself, which is no check at all.
+  - **Slice 3: collect a subset** — top-level declarations, lambdas, literals, calls —
+    and pass the goldens that only use it. Then grow the subset until they all pass.
+  - The `SymbolTable` is a second axis, deliberately after the AST: the Go collector builds
+    both in one walk, and doing the same here before the AST is checked would mean two
+    unverified things at once.
 
 - **[DECIDED] A method call does not require the method's name in the import; the list
   breaks ties instead.** Gating was measured against this repo — 44 call sites, 13 files,

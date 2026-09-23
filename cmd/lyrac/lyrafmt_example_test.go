@@ -22,6 +22,15 @@ import (
 // not until 09/20, which is how an x86-64 crash lived here unseen.
 func buildLyrafmt(t *testing.T) string {
 	t.Helper()
+	root := treeSitterEnv(t)
+	return buildLinkedToTreeSitter(t, filepath.Join(root, "examples", "lyrafmt", "lyrafmt.lyra"))
+}
+
+// treeSitterEnv establishes what a build linking the runtime needs — the grammar archive
+// and LYRA_STD/LIBRARY_PATH — and skips when any of the three pieces a linker needs is
+// missing. Answers the repo root, which every caller wants next.
+func treeSitterEnv(t *testing.T) string {
+	t.Helper()
 	root := repoRoot(t)
 	clang, err := exec.LookPath("clang")
 	if err != nil {
@@ -49,9 +58,19 @@ func buildLyrafmt(t *testing.T) string {
 	}
 	t.Setenv("LYRA_STD", root)
 	t.Setenv("LIBRARY_PATH", lib+string(os.PathListSeparator)+strings.TrimSpace(string(libdir)))
-	bin := filepath.Join(t.TempDir(), "lyrafmt")
-	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "lyrafmt", "lyrafmt.lyra")); code != 0 {
-		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
+	return root
+}
+
+// buildLinkedToTreeSitter compiles one Lyra program that links the runtime, once the
+// environment buildLyrafmt establishes is in place. Split out for the tests that exercise
+// `bindings/treesitter` directly rather than through the formatter: the skip conditions
+// and the grammar archive are the same three questions, and a second copy of them would
+// answer one of them differently the first time any of this moves.
+func buildLinkedToTreeSitter(t *testing.T, source string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "linked")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, source); code != 0 {
+		t.Fatalf("building %s exited %d\nstderr: %s", filepath.Base(source), code, stderr)
 	}
 	return bin
 }
