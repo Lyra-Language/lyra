@@ -24,8 +24,10 @@ module printer
 //! field added to the AST and forgotten here shows up as a golden that no longer matches.
 
 import ast.{
-  Program, Stmt, VarDeclStmt, VarDecl, Expr, IntegerLiteralExpr, CharacterLiteralExpr,
-  StringLiteralExpr, LambdaExpr, IntegerLiteral, CharacterLiteral, StringLiteral, Lambda,
+  Program, Stmt, VarDeclStmt, VarDecl, ExpressionStmt, ExprStmt, Expr, IntegerLiteralExpr,
+  CharacterLiteralExpr, StringLiteralExpr, IdentifierExpr, MathBinaryOpExpr, LambdaExpr,
+  IntegerLiteral, CharacterLiteral, StringLiteral, Identifier, MathBinaryOp, Lambda,
+  Parameter, Pattern, IdentifierPattern, TypeNode, PrimitiveType, ReturnType,
 }
 
 /// A whole program, as `pkg/printer.PrintAST` would render it.
@@ -46,6 +48,10 @@ pub let print_ast = pure (program: Program) -> string => {
 /// One statement at `depth`.
 let print_stmt = pure (stmt: Stmt, depth: i64) -> string => match stmt {
   VarDeclStmt(decl) => print_var_decl(decl, depth),
+  ExpressionStmt(statement) =>
+    header_unnamed("ExpressionStmt", depth) ++
+    node_field("Expression", print_expr(statement.expression, depth + 2), depth + 1) ++
+    close(depth),
 }
 
 /// `VarDeclStmt(name) { … }`.
@@ -69,7 +75,7 @@ let print_var_decl = pure (decl: VarDecl, depth: i64) -> string => {
 }
 
 /// One expression at `depth`.
-let print_expr = pure (expr: Expr, depth: i64) -> string => match expr {
+let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
   IntegerLiteralExpr(lit) =>
     header_unnamed("IntegerLiteralExpr", depth) ++
     scalar("Base", "${lit.base}", depth + 1) ++
@@ -83,8 +89,93 @@ let print_expr = pure (expr: Expr, depth: i64) -> string => match expr {
     header_unnamed("StringLiteralExpr", depth) ++
     scalar("Value", lit.value, depth + 1) ++
     close(depth),
-  LambdaExpr(lambda) => header_unnamed("LambdaExpr", depth) ++ close(depth),
+  IdentifierExpr(identifier) => print_named("IdentifierExpr", identifier, depth),
+  // Left, Operator, Right — alphabetical, and the operator is the symbol itself.
+  MathBinaryOpExpr(op) =>
+    header_unnamed("MathBinaryOpExpr", depth) ++
+    node_field("Left", print_expr(op.left, depth + 2), depth + 1) ++
+    scalar("Operator", op.operator, depth + 1) ++
+    node_field("Right", print_expr(op.right, depth + 2), depth + 1) ++
+    close(depth),
+  LambdaExpr(lambda) => print_lambda(lambda, depth),
 }
+
+/// `LambdaExpr { Body, Parameters, ReturnType }`, each omitted when absent or empty.
+let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
+  var out = header_unnamed("LambdaExpr", depth)
+  match lambda.body {
+    Some(body) => {
+      out = out ++ node_field("Body", print_expr(body, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  if lambda.parameters.len() > 0 {
+    var items = ""
+    for parameter in lambda.parameters {
+      items = items ++ print_parameter(parameter, depth + 2)
+    }
+    out = out ++ node_field("Parameters", items, depth + 1)
+  }
+  match lambda.return_type {
+    Some(declared) => {
+      out = out ++ node_field(
+        "ReturnType",
+        print_return_type(declared, depth + 2),
+        depth + 1
+      )
+    },
+    None => {},
+  }
+  out ++ close(depth)
+}
+
+/// `Parameter { Pattern, Type }` — **no label**, the node having no `Name` of its own.
+let print_parameter = pure (parameter: Parameter, depth: i64) -> string => {
+  var out = header_unnamed("Parameter", depth)
+  out = out ++ node_field(
+    "Pattern",
+    print_pattern(parameter.pattern, depth + 2),
+    depth + 1
+  )
+  match parameter.type_annotation {
+    Some(declared) => {
+      out = out ++ node_field("Type", print_type(declared, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  out ++ close(depth)
+}
+
+/// `ReturnType(i64) { Type }` — labelled by the type it names, not by a field of its own.
+let print_return_type = pure (declared: ReturnType, depth: i64) -> string =>
+  header("ReturnType", type_name(declared.type_annotation), depth) ++
+  node_field("Type", print_type(declared.type_annotation, depth + 2), depth + 1) ++
+  close(depth)
+
+/// One pattern.
+let print_pattern = pure (pattern: Pattern, depth: i64) -> string => match pattern {
+  IdentifierPattern(identifier) => print_named("IdentifierPattern", identifier, depth),
+}
+
+/// One written type.
+let print_type = pure (declared: TypeNode, depth: i64) -> string => match declared {
+  PrimitiveType(identifier) => print_named("PrimitiveType", identifier, depth),
+}
+
+/// The name a type node carries, for a label that is not the node's own field.
+let type_name = pure (declared: TypeNode) -> string => match declared {
+  PrimitiveType(identifier) => identifier.name,
+}
+
+/// `Kind(name) { Name: name }` — the shape every named leaf shares.
+let print_named = pure (
+  node_kind: string,
+  identifier: Identifier,
+  depth: i64
+) -> string =>
+  header(node_kind, identifier.name, depth) ++
+  scalar("Name", identifier.name, depth + 1) ++
+  close(depth)
 
 /// Whether every field of `expr` is zero, which is what makes the **field holding it**
 /// disappear rather than print as an empty node.
@@ -92,13 +183,33 @@ let print_expr = pure (expr: Expr, depth: i64) -> string => match expr {
 /// The Go printer answers this by walking fields, so it is one rule there and one arm per
 /// node here. Getting it wrong is invisible in the common case and changes two of the five
 /// smallest goldens, which is why it is a named function rather than a condition inline.
-let expr_is_empty = pure (expr: Expr) -> bool => match expr {
+let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
+  IdentifierExpr(identifier) => identifier.name == "",
+  // Never empty: every operand is itself a node. The arm exists because the rule is per
+  // node, and a missing one is a silent wrong answer rather than a compile error.
+  MathBinaryOpExpr(op) => false,
   // A zero base with a zero value is not reachable from the grammar — a literal always has
   // a base — so this is the honest reading of the rule rather than a live case.
   IntegerLiteralExpr(lit) => lit.base == 0 && lit.value == 0,
   CharacterLiteralExpr(lit) => lit.value == 0,
   StringLiteralExpr(lit) => lit.value == "",
-  LambdaExpr(lambda) => lambda.parameters.len() == 0,
+  LambdaExpr(lambda) => lambda_is_empty(lambda),
+}
+
+/// Whether a lambda has nothing in it — no body, no parameters, no declared return.
+///
+/// Its own function because the rule is three questions joined, and a `match` is not an
+/// operand of `&&` here.
+let lambda_is_empty = pure (lambda: Lambda) -> bool => {
+  match lambda.body {
+    Some(_) => return false,
+    None => {},
+  }
+  match lambda.return_type {
+    Some(_) => return false,
+    None => {},
+  }
+  lambda.parameters.len() == 0
 }
 
 /// `TypeName(label) {` at `depth`, or `TypeName {` when the label is empty.
@@ -113,6 +224,10 @@ let header_unnamed = pure (type_name: string, depth: i64) -> string =>
 /// `Name: {` at `depth` — a field whose value is a node or a list.
 let field_open = pure (name: string, depth: i64) -> string =>
   tabs(depth) ++ "${name}: {\n"
+
+/// A whole field whose value is already-rendered lines: `Name: {`, them, then `}`.
+let node_field = pure (name: string, rendered: string, depth: i64) -> string =>
+  field_open(name, depth) ++ rendered ++ close(depth)
 
 /// `Name: value` at `depth` — a field whose value fits on the line.
 let scalar = pure (name: string, value: string, depth: i64) -> string =>

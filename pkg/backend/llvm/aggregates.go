@@ -588,7 +588,8 @@ func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltype
 		}
 		return coerceIntWidth(block, v, signed, dstInt), nil
 	}
-	return nil, fmt.Errorf("llvm: aggregate element type mismatch: cannot store %s into %s", v.Type(), dst)
+	return nil, fmt.Errorf("llvm: aggregate element type mismatch: cannot store %s into %s (at %s)",
+		v.Type(), dst, src.GetLocation().Pretty())
 }
 
 // lowerAnonymousStructInstanceExpr builds `{ x: 1, y: "s" }`.

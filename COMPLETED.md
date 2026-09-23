@@ -42,6 +42,75 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — a context's flavor stopped where its type did
+
+The bootstrap's slice 4 is an expression tree, the first program here to need a type
+containing itself. Writing it found two compiler bugs; fixing the blocking one is most of
+this entry.
+
+**An optional recursive child had no spelling at all.** `Maybe<Expr>` is infinitely sized
+and crashes the compiler (a separate bug, below). `Maybe<shared Expr>` type-checked and
+then died in the backend:
+
+    llvm: aggregate element type mismatch: cannot store %Expr into { i64, i64, %Expr }*
+
+Which is rule 5 doing its job — a wrong store refused rather than emitted — and it took
+instrumenting the failure site to see why, because the answer was three layers up. The
+payload's recorded type was `Expr` with no flavor, while the field it was going into held
+`Maybe<shared Expr>`. Following it back: the context arrived at the `Some(…)` node with its
+argument's `shared` intact, and stopped there.
+
+The guard is `stampableDataType`, and it is **right about types**. It declines to re-stamp a
+payload whose type came from a decision the program made rather than from the expression's
+own defaults — `Some(Lit(1))`'s payload is a real constructor, not a guess, so a context has
+no business re-typing it. But **allocation is not part of type identity**: `TypesEqual`
+ignores it, by design and documented. So `Maybe<shared Expr>` and `Maybe<Expr>` agree on
+everything that guard can see, and the flavor — which *was* new information — was refused
+along with the re-typing it had nothing to do with.
+
+`stampPayloadAllocation` is the flavor's own path: it sets allocation, never a type, so it
+is safe exactly where the type push declines. Two halves, and the second was not obvious —
+it also stamps the **construction's own instantiation**, because a node's payload slot is
+laid out from the type arguments recorded on that node. A payload stamped shared under a
+node still reading `Maybe<Expr>` is the identical mismatch one level out, which is how the
+collector failed after the first half landed.
+
+Worth recording that the first version of the regression test did not cover that second
+half: the mutation deleting it failed nothing. The case that needs it is a **`return` whose
+declared type supplies the context**, which is the shape the collector hit and the bindings
+in the test did not. A mutation test that fires on nothing is the only way to find a test
+that proves less than it appears to.
+
+Two other things found on the way, both recorded in todo.md rather than fixed here. A cycle
+through a generic argument (`Maybe<Expr>`) slips past `lyra-E014` and stack-overflows the
+ownership pass, whose own comment states the invariant E014 is supposed to guarantee. And a
+`shared` value passed to a **plain** parameter compiles and misreads the pointer as an
+inline value — `lyra-E018` covers `own` arguments and not borrowed ones, which is the
+common spelling. That one is silent, so it is the worse of the two.
+
+### 09/23/26 — the bootstrap's fourth slice: the expression tree
+
+`IdentifierExpr`, `MathBinaryOpExpr`, `ExpressionStmt`, and the lambda's real shape:
+`Parameter` carrying an `IdentifierPattern` and a `PrimitiveType`, and a `ReturnType`
+labelled by the type it names. 16 of 238 goldens match from source, up from 13.
+
+The count moves slowly on purpose. `IdentifierExpr` appears in 134 of the failing goldens
+and `PrimitiveType` in 54, so the *reach* of this slice is much wider than its score — what
+the remaining ones want next is `BlockExpr` and `FunctionCallExpr`, and those sit on the
+tree this slice built.
+
+Every field holding an expression is `shared`, and so is every parameter taking one. That
+is not a workaround for the bug above: a tree whose nodes hold nodes inline has no finite
+size, and boxing them is how it is written in any language. What the bug cost was the
+*optional* child specifically.
+
+The slice-2 test is **deleted**, not repaired. It hand-built trees to pin the printer's
+format before a collector existed, and its six goldens are now all covered by slice 3's test
+— from source, exercising the collector and the printer together. Repairing its literals
+when the AST gained fields would have been maintaining a second, weaker construction of the
+same trees, and the drift would be silent. It was scaffolding, and it came down when the
+thing it supported was standing.
+
 ### 09/22/26 — the bootstrap's third slice: source in, golden out
 
 The CST→AST walk, and `collector.lyra` around it: a Lyra program that reads a `.lyra` file

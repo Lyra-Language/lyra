@@ -13,8 +13,9 @@ module collect
 
 import bindings.treesitter.{ Node, kind, field, named_child, named_child_count, text }
 import ast.{
-  Program, Stmt, VarDecl, Expr,
-  IntegerLiteral, CharacterLiteral, StringLiteral, Lambda,
+  Program, Stmt, VarDecl, ExprStmt, Expr,
+  IntegerLiteral, CharacterLiteral, StringLiteral, Identifier, MathBinaryOp, Lambda,
+  Parameter, Pattern, TypeNode, ReturnType,
 }
 
 /// Every statement at the file's top level.
@@ -42,6 +43,18 @@ let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
   let k = kind(node)
   if k == "comment" { return None }
   if k == "declaration" { return Some(collect_declaration(node, source)) }
+  if k == "expression_statement" {
+    // The statement wraps one expression; if that expression is a kind this slice does
+    // not know, the statement is not collected either — a wrapper around nothing is a
+    // node this did not understand, not an empty one.
+    if named_child_count(node) > 0 {
+      match collect_expr(named_child(node, 0), source) {
+        Some(expr) => return Some(ExpressionStmt(ExprStmt { expression: expr })),
+        None => return None,
+      }
+    }
+    return None
+  }
   None
 }
 
@@ -75,20 +88,118 @@ let collect_declaration = (node: Node, source: []u8) -> Stmt => {
 }
 
 /// One expression, or `None` for a kind this slice does not collect.
-let collect_expr = (node: Node, source: []u8) -> Maybe<Expr> => {
+let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => {
   let k = kind(node)
   if k == "integer_literal" { return Some(collect_integer(node, source)) }
   if k == "char_literal" { return Some(collect_character(node, source)) }
   if k == "string_literal" { return Some(collect_string(node, source)) }
-  if k == "lambda_expr" { return Some(LambdaExpr(Lambda { parameters: [] })) }
+  if k == "lambda_expr" { return Some(collect_lambda(node, source)) }
+  if k == "identifier" {
+    return Some(IdentifierExpr(Identifier { name: text(node, source) }))
+  }
+  if k == "binary_expr" { return collect_binary(node, source) }
   None
 }
+
+/// `(x: i64) -> i64 => x * 2`.
+let collect_lambda = (node: Node, source: []u8) -> shared Expr => {
+  var parameters: []Parameter = []
+  match field(node, "parameters") {
+    Some(list) => {
+      var i = 0
+      for i < named_child_count(list) {
+        let child = named_child(list, i)
+        if kind(child) == "parameter" {
+          match collect_parameter(child, source) {
+            Some(parameter) => parameters.push(parameter),
+            None => {},
+          }
+        }
+        i += 1
+      }
+    },
+    None => {},
+  }
+  LambdaExpr(Lambda {
+    body: match field(node, "body") {
+      Some(body) => collect_expr(body, source),
+      None => None,
+    },
+    parameters: parameters,
+    return_type: match field(node, "return_type") {
+      Some(declared) => collect_return_type(declared, source),
+      None => None,
+    },
+  })
+}
+
+/// `x: i64` — a pattern and the type annotating it.
+///
+/// `None` when the pattern is a form this slice does not collect, since a parameter with
+/// no pattern is not a parameter.
+let collect_parameter = (node: Node, source: []u8) -> Maybe<Parameter> => {
+  let Some(pattern_node) = field(node, "pattern") else { return None }
+  if kind(pattern_node) != "identifier" { return None }
+  Some(Parameter {
+    pattern: IdentifierPattern(Identifier { name: text(pattern_node, source) }),
+    type_annotation: match field(node, "type") {
+      Some(declared) => collect_type(declared, source),
+      None => None,
+    },
+  })
+}
+
+/// `-> i64`.
+let collect_return_type = (node: Node, source: []u8) -> Maybe<ReturnType> => {
+  let Some(declared) = field(node, "type") else { return None }
+  match collect_type(declared, source) {
+    Some(collected) => Some(ReturnType { type_annotation: collected }),
+    None => None,
+  }
+}
+
+/// A written type, or `None` for a form this slice does not collect.
+///
+/// The primitives are exactly the kinds the grammar names for them, so the *kind* decides
+/// and the text is only the name — no list of spellings to fall out of date.
+let collect_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+  let k = kind(node)
+  if k == "signed_integer_type" || k == "unsigned_integer_type" || k == "float_type" ||
+    k == "boolean_type" || k == "string_type" || k == "rune_type" {
+    return Some(PrimitiveType(Identifier { name: text(node, source) }))
+  }
+  None
+}
+
+/// `a + b`, `x * 2` — the arithmetic operators only.
+///
+/// A comparison or a boolean operator is a **different node** in the Go AST
+/// (`BooleanBinaryOpExpr`), so one is not collected here rather than collected as this:
+/// printing the wrong node is worse than printing none, which a diff shows plainly.
+let collect_binary = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let Some(operator) = field(node, "operator") else { return None }
+  if !is_math_operator(kind(operator)) { return None }
+  let Some(left_node) = field(node, "left") else { return None }
+  let Some(right_node) = field(node, "right") else { return None }
+  let Some(left) = collect_expr(left_node, source) else { return None }
+  let Some(right) = collect_expr(right_node, source) else { return None }
+  Some(MathBinaryOpExpr(MathBinaryOp {
+    left: left,
+    operator: text(operator, source),
+    right: right,
+  }))
+}
+
+/// Whether an operator node's kind is one of the arithmetic ones.
+let is_math_operator = (k: string) -> bool =>
+  k == "add_operator" || k == "sub_operator" || k == "mul_operator" ||
+  k == "div_operator" || k == "rem_operator" || k == "rem_floor_operator"
 
 /// `42`, `0x2A`, `0b101010`, `0o52`.
 ///
 /// The base is the **child's kind**, not something re-derived from the text: the grammar
 /// already decided, and two answers to one question is how they come to disagree.
-let collect_integer = (node: Node, source: []u8) -> Expr => {
+let collect_integer = (node: Node, source: []u8) -> shared Expr => {
   let base = integer_base(node)
   let digits = text(node, source).to_runes()
   // A prefix is two runes (`0x`, `0b`, `0o`); base 10 has none.
@@ -111,7 +222,7 @@ let integer_base = (node: Node) -> i64 => {
 }
 
 /// `'a'`, `'\n'` — the code point, quotes stripped and the escape decoded.
-let collect_character = (node: Node, source: []u8) -> Expr => {
+let collect_character = (node: Node, source: []u8) -> shared Expr => {
   let raw = text(node, source).to_runes()
   let inner = raw.slice(1, raw.len() - 1)
   let decoded = decode_escapes(inner).to_runes()
@@ -123,7 +234,7 @@ let collect_character = (node: Node, source: []u8) -> Expr => {
 }
 
 /// `"hi"` — the text, quotes stripped and escapes decoded.
-let collect_string = (node: Node, source: []u8) -> Expr => {
+let collect_string = (node: Node, source: []u8) -> shared Expr => {
   let raw = text(node, source).to_runes()
   StringLiteralExpr(StringLiteral { value: decode_escapes(raw.slice(1, raw.len() - 1)) })
 }

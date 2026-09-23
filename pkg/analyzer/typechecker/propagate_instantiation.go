@@ -345,6 +345,16 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 	}
 	dt, ok := tc.stampableDataType(node, inst)
 	if !ok {
+		// **The type may be settled while the flavor is not.** stampableDataType refuses a
+		// re-stamp when the payload's type came from a decision the program made rather
+		// than from this expression's defaults — right for types, and wrong for allocation,
+		// which is *not part of type identity* (`TypesEqual` ignores it). So
+		// `Maybe<shared Expr>` and `Maybe<Expr>` agree on everything this guard can see,
+		// and the `shared` the context carries stopped here: the payload lowered inline,
+		// where the field's slot holds a pointer, and the backend refused the store
+		// (rule 5). Found 09/23 by the bootstrap's AST, whose `Lambda` wants an optional
+		// child — the first program here to need one.
+		tc.stampPayloadAllocation(node, inst)
 		return false
 	}
 	decl, ok := tc.symTable.LookupTypeRef(inst.Name, inst.Key, node.GetLocation())
@@ -479,6 +489,96 @@ func (tc *TypeChecker) stampableDataType(node ast.Expression, inst types.Paramet
 		return dt, isData
 	}
 	return types.DataType{}, false
+}
+
+// stampPayloadAllocation pushes a context's **allocation** onto a construction's payloads,
+// touching nothing else.
+//
+// The type-directed push cannot do this. It descends only when the payload's type is still
+// open to being decided, because re-typing a settled payload is how a context clobbers a
+// choice the program made. Allocation is the other axis: it is never part of identity, so
+// a payload whose type is settled may still be waiting to be told where it lives, and the
+// only thing that knows is the context.
+//
+// It sets the flavor and recurses; it never changes a type, which is what makes it safe to
+// run on the path the type push declines.
+func (tc *TypeChecker) stampPayloadAllocation(node ast.Expression, inst types.ParameterizedType) {
+	elements := constructionPayloads(node)
+	if len(elements) == 0 {
+		return
+	}
+	recorded, ok := tc.typeTable.Get(node)
+	if !ok {
+		return
+	}
+	if r, isInst := recorded.(types.ParameterizedType); isInst {
+		if r.Name != inst.Name || !types.TypesEqual(r, inst) {
+			return
+		}
+		// **The construction's own instantiation takes the context's flavor too.** Its
+		// payload slot is laid out from the type arguments recorded *here*, so stamping
+		// the payload shared while this node still reads `Maybe<Expr>` puts a pointer in
+		// an inline slot — the same mismatch one level out. Equal by `TypesEqual` above,
+		// which ignores allocation, so this changes the flavor and nothing else.
+		tc.typeTable.Set(node, inst)
+	}
+	decl, found := tc.symTable.LookupTypeRef(inst.Name, inst.Key, node.GetLocation())
+	if !found || decl == nil || len(decl.GenericParams) != len(inst.TypeArguments) {
+		return
+	}
+	dt, isData := decl.Type.(types.DataType)
+	if !isData {
+		return
+	}
+	subst := ast.BindGenericParams(decl.GenericParams, inst.TypeArguments)
+	var declared []types.Type
+	for _, c := range dt.Constructors {
+		if c.Name == constructionName(node) {
+			declared = c.FieldTypes()
+			break
+		}
+	}
+	for i, elem := range elements {
+		if i >= len(declared) {
+			return
+		}
+		want := types.Substitute(declared[i], subst)
+		alloc := types.AllocationOf(want)
+		if alloc == types.Unspecified {
+			continue
+		}
+		if t, hasType := tc.typeTable.Get(elem); hasType {
+			tc.typeTable.Set(elem, types.WithAllocation(t, alloc))
+		}
+		// A payload that is itself a construction passes it on: `Some(Some(x))` against
+		// `Maybe<Maybe<shared Expr>>` has to reach the inner one.
+		if nested, isInst := want.(types.ParameterizedType); isInst {
+			tc.stampPayloadAllocation(elem, nested)
+		}
+	}
+}
+
+// constructionPayloads returns the argument expressions of an applied data constructor,
+// under either spelling the parser produces for one.
+func constructionPayloads(node ast.Expression) []ast.Expression {
+	switch e := node.(type) {
+	case *ast.TupleLiteralExpr:
+		return e.Elements
+	case *ast.DataConstructorExpr:
+		return nil // nullary: nothing to carry a flavor
+	}
+	return nil
+}
+
+// constructionName is the constructor an applied construction names.
+func constructionName(node ast.Expression) string {
+	switch e := node.(type) {
+	case *ast.TupleLiteralExpr:
+		return e.Name
+	case *ast.DataConstructorExpr:
+		return e.Constructor
+	}
+	return ""
 }
 
 // mentionsGenericParam reports whether t still contains any of the named type

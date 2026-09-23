@@ -27,6 +27,13 @@ pub struct Program {
 pub data Stmt =
   /// `let x = 1`, `var y = 2`, `pub let z = 3`.
   VarDeclStmt(VarDecl)
+  /// An expression standing alone as a statement.
+  | ExpressionStmt(ExprStmt)
+
+/// An expression used for its own sake.
+pub struct ExprStmt {
+  expression: shared Expr,
+}
 
 /// A binding declaration.
 pub struct VarDecl {
@@ -37,7 +44,7 @@ pub struct VarDecl {
   /// The bound name, which is also the label in the node's header line.
   name: string,
   /// The initialiser. `None` for a declaration without one.
-  value: Maybe<Expr>,
+  value: Maybe<shared Expr>,
 }
 
 /// An expression. One constructor per Go expression type, named as Go names it.
@@ -48,6 +55,10 @@ pub data Expr =
   | CharacterLiteralExpr(CharacterLiteral)
   /// `"hello"` — the text, escapes already decoded.
   | StringLiteralExpr(StringLiteral)
+  /// `x` — a name standing for a value.
+  | IdentifierExpr(Identifier)
+  /// `a + b` — the arithmetic operators.
+  | MathBinaryOpExpr(MathBinaryOp)
   /// `(a, b) => …` — a function literal.
   | LambdaExpr(Lambda)
 
@@ -68,12 +79,61 @@ pub struct StringLiteral {
   value: string,
 }
 
+/// A name, used as an expression, a pattern or a type — the three places one appears, all
+/// printed as `Kind(name) { Name: name }` and so all one struct.
+pub struct Identifier {
+  name: string,
+}
+
+/// `a + b`, `x * 2`.
+///
+/// **The operand fields are `shared`**, which is what makes the type finitely sized: an
+/// expression holding expressions inline has no size at all. That is the ordinary way to
+/// write a tree here, not a workaround — though a cycle through `Maybe<Expr>` *is* one
+/// today, and crashes the compiler rather than being refused (todo.md, 09/22).
+pub struct MathBinaryOp {
+  left: shared Expr,
+  operator: string,
+  right: shared Expr,
+}
+
 /// A function literal.
 ///
-/// Empty in this slice, and that is not a placeholder: `let foo = () => { }` prints with
-/// **no `Value:` line at all**, because every field of the lambda is zero and the Go
-/// printer omits a composite whose fields are all zero. Modelling the empty lambda is what
-/// makes that rule testable before parameters or bodies exist.
+/// An empty one still prints with **no `Value:` line at all**: every field is zero, and the
+/// Go printer omits a composite whose fields are all zero. That rule was pinned before
+/// parameters and bodies existed, and it keeps `basic_function_declaration_without_params`
+/// passing now for a better reason than it did in slice 2.
 pub struct Lambda {
-  parameters: []string,
+  body: Maybe<shared Expr>,
+  parameters: []Parameter,
+  return_type: Maybe<ReturnType>,
+}
+
+/// One parameter: the pattern it binds and the type it was annotated with.
+///
+/// It prints with **no label** — `Parameter {`, not `Parameter(x) {` — because it has no
+/// `Name` field of its own. The name lives in the pattern.
+pub struct Parameter {
+  pattern: Pattern,
+  /// Spelled `type_annotation` and printed `Type`: `type` is not a field name Lyra will
+  /// take, and the golden's word is not negotiable.
+  type_annotation: Maybe<TypeNode>,
+}
+
+/// A parameter's binding form. One constructor per Go pattern type.
+pub data Pattern =
+  /// `x` — a plain name.
+  IdentifierPattern(Identifier)
+
+/// A written type. One constructor per Go type node.
+pub data TypeNode =
+  /// `i64`, `bool`, `string` — a type the language names itself.
+  PrimitiveType(Identifier)
+
+/// `-> i64`, the declared result.
+///
+/// Its label is the **type's** name (`ReturnType(i64)`), which the Go node answers through
+/// `GetName()` rather than a `Name` field — so the printer here spells that out.
+pub struct ReturnType {
+  type_annotation: TypeNode,
 }

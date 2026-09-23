@@ -54,6 +54,12 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"simple_string_literal_expr", `let greeting = "Hello, World!"`},
 		{"string_literal_expr_with_simple_escapes", `let line = "Hello\n\tWorld\\!"`},
 		{"string_literal_expr_with_hash_escape", `let s = "Phone \#: not an interp"`},
+		// Slice 4: a lambda's real shape. Parameters with primitive annotations, a
+		// declared return, an arithmetic operator and the identifiers around it — and
+		// `ExpressionStmt`, for a lambda standing alone as a statement.
+		{"lambda_expression_with_no_return_type", "\n\tlet double = (x: i64) => x * 2"},
+		{"lambda_expression", "\n\t(a: i64, b: i64) -> i64 => a + b"},
+		{"rune_type_annotation", "let f = (c: rune) -> rune => c"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

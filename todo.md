@@ -95,6 +95,13 @@ Package management, versioning and separate compilation are out of scope by deci
     diff — rather than by inventing a node. Grow it by making more goldens match; the next
     ones want `\x`/`\u` escapes, lambda parameters and bodies, and the other statement
     kinds.
+  - **Slice 4 landed 09/23: the expression tree.** `IdentifierExpr`, `MathBinaryOpExpr`,
+    `ExpressionStmt`, and a lambda's real shape — `Parameter` with `IdentifierPattern` and
+    `PrimitiveType`, and `ReturnType`. **16 of 238 goldens** match from source, up from 13;
+    the count moves slowly because most of the rest want `BlockExpr` and `FunctionCallExpr`,
+    but the recursive tree behind them is now in place. Every field holding an expression is
+    `shared`, which is the only way a tree is finitely sized — and writing it found two
+    compiler bugs and tripped over a third (above).
   - **The `Location` every node carries is not modelled yet**, and the goldens do not show
     it (`pkg/printer` omits `print:"-"` fields, which is what `NameLocation` is). It has to
     arrive before anything reports a diagnostic, and choosing when is a slice of its own.
@@ -107,6 +114,50 @@ Package management, versioning and separate compilation are out of scope by deci
   mostly accessors on types with no public fields — and rejected: it taxes what the lack of
   field privacy forces and drags names like `day` into the bare scope. (COMPLETED.md, 09/22.)
 
+
+### Recursive types — two bugs the bootstrap's AST walked into (09/22)
+
+An expression tree is the first program here that needs a type containing itself, and
+neither way of writing an **optional child** works. `shared` on a plain field is fine
+(`struct BinOp { left: shared Expr }` builds and runs); the hole is `Maybe` over one.
+
+- **[OPEN] A cycle through a generic type's argument is not caught by `lyra-E014`, and
+  crashes the compiler.** `struct Lambda { body: Maybe<Expr> }` where `Expr` holds a
+  `Lambda` is accepted at declaration and stack-overflows as soon as a value is built:
+  `ownership.ownsManaged` → `eachComponent` → `resolveNamedType`, forever. E014 catches
+  every direct shape (struct→struct, data→struct→data), and `ownership.go`'s own comment
+  states the invariant it is relying on — "a recursive type's cycle must pass through a
+  `shared` field (lyra-E014), which is managed, so the recursion returns". The cycle
+  through `Maybe<…>` slips past, so the pass runs on a type it assumes cannot exist. A
+  cycle through `[]Expr` is *correctly* accepted: an array is boxed, so the type is
+  finitely sized.
+
+  ```lyra
+  data Expr = Lit(i64) | Lam(Lambda)
+  struct Lambda { body: Maybe<Expr> }
+  let main = () -> u8 => {
+    let e = Lam(Lambda { body: Some(Lit(1)) })
+    0
+  }
+  ```
+
+- **[OPEN] A `shared` value passed to a plain parameter is not checked, and the callee
+  misreads it.** `describe(b.left)` where `left: shared Expr` and `describe` takes
+  `(e: Expr)` compiles, then traps at runtime (`match not exhaustive`): the callee reads
+  the pointer as an inline value. `lyra-E018` covers this crossing at annotated init,
+  reassignment, interior writes, **`own` arguments** and non-borrow returns — a *borrowed*
+  argument is the gap, and it is the common spelling. Silent wrong behaviour rather than a
+  loud error, so it is the worse kind. Pre-existing (reproduced with a plain `shared`
+  struct field, no `Maybe` involved), found 09/23 beside the two below.
+
+- **[FIXED 09/23] `Maybe<shared T>` did not lower.** `aggregate element type mismatch: cannot
+  store %Expr into { i64, i64, %Expr }*`, as a struct field and as a data payload alike.
+  The backend refusing loudly is rule 5 working, but it leaves an optional child with **no
+  spelling at all**: `Maybe<Expr>` crashes the front end and `Maybe<shared Expr>` stops at
+  the backend, while `[]Expr` and `[]shared Expr` both build and run. Blocks the
+  bootstrap's slice 4, whose `Lambda` needs an optional body and return type. **Fixed:**
+  `stampPayloadAllocation` — a context's *allocation* now reaches a construction's payload
+  even where its *type* is settled, which the type-directed push declines by design.
 
 ## Language surface
 
