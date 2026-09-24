@@ -87,6 +87,56 @@ A literal that cannot hold its value is a compile error **in every position, flo
 - `lyra-E054`: lookbehind or DFA past `regex.MaxTableStates`. As a value (`let re = r"…"`) it is `lyra-E052`.
 - There is no `regex` type: `(re: regex)` declares a type variable.
 
+### Allocation flavor (`shared`, `stack`, `weak`)
+
+**A flavor is written at the use, never at the declaration.** `shared struct Node { … }`
+does not parse. `shared` goes on a field, a parameter, a binding's annotation, an array
+element or a type argument — so one `Node` may be shared in one place and plain in another,
+and the type itself has no opinion.
+
+The difference is what a second name gets. A plain aggregate is an inline value and
+**copies**; a `shared` one is a reference-counted box and **aliases**:
+
+```lyra
+var a = Counter { n: 0 }
+var b = a                       // a copy: writing through b leaves a at 0
+var s: shared Counter = Counter { n: 0 }
+var t: shared Counter = s       // the same object: writing through t is visible in s
+```
+
+Everything else follows from that:
+
+- **A type that contains itself needs one** — `struct Node { next: Node }` is `lyra-E014`,
+  unbounded size — **unless the cycle already passes through an array**, which is a box:
+  `struct Tree { children: []Tree }` is fine as written. So `shared` is for a single
+  recursive child, not a list of them. `weak T` breaks the size cycle the same way and
+  takes only the weak half of the refcount, which is how a cycle avoids leaking.
+- **Two names that must see one value need one.** If a write through one has to be visible
+  through the other, they have to be the same object.
+- **Nothing else does.** A scalar, a small struct, a value with one owner, a value being
+  returned — a refcount is a cost, and copying two `i64`s is not.
+
+**Flavor is not part of a type's identity** — the type check ignores it, so `Node` and
+`shared Node` unify — and a mismatch is reported by a separate check, `lyra-E018`.
+
+- **A binding inherits, a parameter cannot.** `let p: Node = s` takes a `shared` value and
+  unboxes it, because the binding has no representation of its own to conflict with; a
+  function is compiled once and its parameter has exactly one, so there is nothing to
+  inherit from at a call and a crossing there is refused. **Inheritance runs one way
+  today**: `shared` into a plain annotation unboxes, and a plain binding into a `shared`
+  annotation does not box — it fails in the backend (todo.md).
+- **Two positions stay polymorphic and are never refused**: a **construction written in
+  place** (including an `if` or `match` whose arms are all constructions), which has no
+  flavor of its own and takes the position's, and a **generic parameter**, which takes
+  whatever the instantiation binds. `f(Node { … })` is always legal; `let n = Node { … }`
+  followed by `f(n)` may not be.
+- **So pick a flavor at each boundary and keep it.** In a recursive tree, once one edge is
+  `shared` every reference to that node type wants to be — `examples/collector/ast.lyra`
+  writes `shared Expr`, `shared Pattern` and `shared TypeNode` everywhere for that reason,
+  and the uniformity was forced by E018 rather than chosen.
+
+**Not every position reports the crossing yet** — see `todo.md`, "Allocation flavor".
+
 ---
 
 ## 2. Operators and Assignment

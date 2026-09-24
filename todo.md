@@ -173,13 +173,24 @@ Package management, versioning and separate compilation are out of scope by deci
     the field is `GenericArgs` here where a call and a tuple literal spell it
     `GenericArguments`, and the instance's field node prints as `StructField` — the same
     name a *declaration's* field prints under, with different fields. (COMPLETED.md.)
-  - **What blocks the rest, measured rather than guessed.** Sole blockers, by goldens:
-    `ForInLoopExpr` 5, `IfExpr` 5, `TuplePattern` 4, `ArrayPattern` 3, `RegexLiteralExpr`
-    3, then a tail of twos. Travelling together: `ArrayCompExpr` with `Generator` (4),
-    `ForLoopExpr` with `MathAssignOpExpr` (4). **114 use only supported kinds against 111
-    matching**, and the three are the orphans below — so nothing field-level is hiding.
-    What is left is the structural slice: control flow (`IfExpr`, `MatchExpr`, the two
-    loops) and the pattern kinds it travels with.
+  - **Control flow landed 09/24: 111 to 163**, the largest single move. `IfExpr`, the two
+    loops with `MathAssignOpExpr`, `VarReassignmentStmt`, `BreakStmt`/`ContinueStmt`,
+    `MatchExpr` with `MatchArm` and `GuardExpr` — and **the pattern kinds**, which are
+    most of the score: a destructuring `let` and a match arm take the same node, so
+    collecting one collected the other. Literal, wildcard, range, tuple, array, or,
+    struct (four shapes of field), rest and binding patterns.
+    Two things worth keeping: **`break x` records `x` as a label, not a value** (the
+    grammar reads a bare name that way), and a **character pattern prints as a quoted
+    rune** where every other literal pattern prints its source text — Go's field is `any`
+    and a rune goes in as a type whose `String()` the printer finds. Exact for ASCII;
+    a non-printable non-ASCII rune would differ, which the code states. (COMPLETED.md.)
+  - **What blocks the rest is now a long flat tail**, which is the shape to expect from
+    here: **166 goldens use only supported kinds against 163 matching**, the three being
+    the orphans below, and no remaining node blocks more than 3. Sole blockers:
+    `LambdaClause` 3, `RegexLiteralExpr` 3, then a run of twos — `AnonymousStructType`,
+    `LiteralUnionConstraint`, `IfDestructuringStmt`, `AddressOfExpr`, `ComposeExpr`,
+    `SizeofExpr`, `VoidType` — and singles after that. `ArrayCompExpr` with `Generator`
+    is the largest pair at 4. A slice from here is a themed handful rather than one node.
   - **Three goldens have no test.** `if_then_expr`, `if_then_expr_multiple_lines` and
     `if_then_expr_with_else_if` are referenced from nothing and record an `if/then/end`
     syntax the grammar no longer has — their contents are the identifiers `else` and `end`
@@ -196,6 +207,62 @@ Package management, versioning and separate compilation are out of scope by deci
   mostly accessors on types with no public fields — and rejected: it taxes what the lack of
   field privacy forces and drags names like `day` into the bare scope. (COMPLETED.md, 09/22.)
 
+
+### Allocation flavor — `lyra-E018` covers two positions of nine (09/24)
+
+Found while writing LANGUAGE.md's new **Allocation flavor** section, by running the same
+stack→`shared` crossing through every position that can hold a value. Two are reported,
+one is correctly accepted, and **six reach the backend or run wrong**.
+
+- **[OPEN] A `stack`-annotated argument into a `shared` parameter segfaults, silently.**
+  This is the 09/23 borrowed-argument hole, half closed: the fix added
+  `checkArgumentAllocation`, which fires where `firstAllocationMismatch` *exempts* — one
+  side `Unspecified` — so the common spelling (`let n = Node { … }`) is now reported. The
+  concrete pair is still not checked on a borrowed argument at all, so writing the flavor
+  out makes the program worse than leaving it off. `lyrac check` exits 0, the build
+  succeeds, and the binary dies with SIGSEGV. **Silent wrong behaviour, so this is the one
+  to fix first.**
+
+  ```lyra
+  struct Node { value: i64 }
+  let peek = pure (n: shared Node) -> i64 => n.value
+  let main = () -> u8 => {
+    let n: stack Node = Node { value: 1 }   // drop `stack` and it is reported
+    println("${peek(n)}")
+    0
+  }
+  ```
+
+- **[OPEN] Six positions report nothing and fail in the backend** with `aggregate element
+  type mismatch`, which is rule 5 working and rule 14 not: loud, but with no location, no
+  code and no fix named. With an `Unspecified` source — again the common spelling — that is
+  **annotated init, a data constructor payload, a struct literal's field value, an array
+  element, a tuple element, a reassignment and an interior write**. With an explicit
+  `stack` source all but two of those are reported, which leaves **a data payload and a
+  struct field value uncovered in both spellings**:
+
+  ```lyra
+  struct Node { value: i64 }
+  data Holder = Wrap(shared Node)
+  let main = () -> u8 => {
+    let n = Node { value: 1 }
+    let w = Wrap(n)                          // no diagnostic; dies in the backend
+    0
+  }
+  ```
+
+  Two of the six are worse than a clean backend error. `let s: shared Node = p` emits
+  **invalid IR** — `invalid cast opcode for cast from '%Node' to 'ptr'` out of clang, not
+  out of `lyrac` — which is past the point rule 5 is meant to stop at. Note the direction:
+  the reverse, `let p: Node = s`, unboxes correctly and runs, so binding inheritance works
+  one way and silently does not work the other.
+
+  The shape behind all of it: `firstAllocationMismatch` "fires only when both sides are
+  concrete and differ", and a value built by a plain construction and bound to a name is
+  `Unspecified`, not `Stack`. `checkArgumentAllocation` was written to cover exactly that
+  exempted pair — for arguments. Every other position inherited the exemption and has no
+  counterpart. The fix is likely one predicate the checked positions share rather than
+  seven more call sites.
 
 ### Recursive types — two bugs the bootstrap's AST walked into (09/22)
 
