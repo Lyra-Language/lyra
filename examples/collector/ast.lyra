@@ -33,6 +33,12 @@ pub data Stmt =
   | TypeDeclStmt(TypeDecl)
   /// `let Some x = m` — a binding whose left side is a pattern rather than a name.
   | DestructuringDeclStmt(DestructuringDecl)
+  /// `x = 2` — a write to a name already bound.
+  | VarReassignmentStmt(VarReassignment)
+  /// `break`, `break outer`, `break outer 1`.
+  | BreakStmt(Break)
+  /// `continue`, `continue outer`.
+  | ContinueStmt(Continue)
 
 /// An expression used for its own sake.
 pub struct ExprStmt {
@@ -97,6 +103,18 @@ pub data Expr =
   | TupleIndexExpr(TupleIndexAccess)
   /// `{ … }` — statements in a scope, used as a value.
   | BlockExpr(Block)
+  /// `if x > 0` on a match arm — the condition wrapped in a node of its own.
+  | GuardExpr(Guard)
+  /// `if c { … } else { … }` — an expression here, not a statement.
+  | IfExpr(Conditional)
+  /// `for i in xs { … }` — an expression too, since `break x` gives it a value.
+  | ForInLoopExpr(ForInLoop)
+  /// `for var i = 0; i < n; i += 1 { … }`, and its shorter forms.
+  | ForLoopExpr(ForLoop)
+  /// `i += 1` — a compound assignment, which is an expression here.
+  | MathAssignOpExpr(BinaryOp)
+  /// `match x { … }`.
+  | MatchExpr(Match)
   /// `Point { x: 1 }` — a struct built inline.
   | StructInstanceExpr(StructInstance)
   /// `{ x: 1 }` — the same thing without a name. A constructor rather than a struct of
@@ -318,6 +336,73 @@ pub struct Block {
   statements: []Stmt,
 }
 
+/// A match arm's guard.
+pub struct Guard {
+  condition: shared Expr,
+}
+
+/// `x = 2`.
+pub struct VarReassignment {
+  name: string,
+  value: shared Expr,
+}
+
+/// `break outer 1`.
+///
+/// **`break x` records `x` as the label, not as the value** — the grammar reads a bare
+/// name after `break` that way, and a value needs a label before it. The golden for
+/// `break item` says so, which is worth knowing before reading one: the field is what the
+/// grammar decided, not what the program meant.
+pub struct Break {
+  label: string,
+  value: Maybe<shared Expr>,
+}
+
+/// `continue outer`. No value: a `continue` produces nothing.
+pub struct Continue {
+  label: string,
+}
+
+/// `for item, idx in xs { … }`.
+///
+/// `Key` is the first binding and `Value` the second, whichever way the loop is read —
+/// an array's index and element, a map's key and value. One name fills `Key`.
+pub struct ForInLoop {
+  body: shared Expr,
+  iterable: shared Expr,
+  key: string,
+  label: string,
+  value: string,
+}
+
+/// `for var i = 0; i < n; i += 1 { … }`.
+///
+/// Every part but the body is optional, and each combination parses: `for { … }` is the
+/// infinite loop, `for c { … }` the while, `for c; p { … }` the two-part form.
+pub struct ForLoop {
+  body: shared Expr,
+  condition: Maybe<shared Expr>,
+  /// The `var i = 0`, which is a declaration rather than an expression — the one place a
+  /// statement is held by a field instead of by a list.
+  init: Maybe<VarDecl>,
+  label: string,
+  post: Maybe<shared Expr>,
+}
+
+/// `if c { a } else { b }`.
+///
+/// **`else if` is an `else` holding another `IfExpr`**, not a chain of conditions: the
+/// grammar nests them and the AST keeps the nesting, so nothing here flattens a ladder
+/// into a list. Both branches are optional — a bodiless `if` does not parse, but the AST
+/// admits one, and the printer drops an absent branch like any other zero.
+pub struct Conditional {
+  condition: shared Expr,
+  /// Spelled `else_branch` and printed `Else`: `else` is a keyword.
+  else_branch: Maybe<shared Expr>,
+  /// Spelled `then_branch` for symmetry with its sibling, and printed `Then`.
+  then_branch: Maybe<shared Expr>,
+}
+
 /// An interpolated string: its segments in written order.
 ///
 /// A text run is a `StringLiteralExpr` segment, so a reader of the segments needs no
@@ -357,12 +442,92 @@ pub struct Parameter {
   type_annotation: Maybe<shared TypeNode>,
 }
 
-/// A parameter's binding form. One constructor per Go pattern type.
+/// A binding form — a parameter's, a declaration's left side, or a match arm's. One
+/// constructor per Go pattern type.
 pub data Pattern =
   /// `x` — a plain name.
   IdentifierPattern(Identifier)
   /// `Some x` — a constructor and what it binds.
   | DataPattern(DataPatternDef)
+  /// `42`, `"s"`, `'a'` — a value to equal.
+  | LiteralPattern(LiteralPatternDef)
+  /// `_` — matches anything and binds nothing. **A node with no fields at all**, which
+  /// the Go printer keeps rather than dropping: a composite with nothing in it is empty,
+  /// but one with no fields *to* be empty is a unit whose presence is the content.
+  | WildcardPattern
+  /// `0..<=9` — a range of values.
+  | RangePattern(PatternRange)
+  /// `(a, b)`.
+  | TuplePattern(PatternList)
+  /// `[a, b]`.
+  | ArrayPattern(PatternList)
+  /// `1 | 2` — any one of several.
+  | OrPattern(PatternList)
+  /// `{ x, y: 0 }`.
+  | StructPattern(StructPatternDef)
+  /// `...rest` — the elements no other element named.
+  | RestPattern(Rest)
+  /// `all @ [x]` — bind the whole value *and* match inside it.
+  | BindingPattern(BindingPatternDef)
+
+/// `42`, `"s"`, `'a'`.
+///
+/// **The raw source text**, quotes and all — `"foo"` prints as `"foo"` — except a
+/// character literal, which keeps its decoded code point as a number. The Go field is
+/// `any` holding one or the other, and this is the one place the printed form differs
+/// between two things that look alike in the source.
+pub struct LiteralPatternDef {
+  value: string,
+}
+
+/// `0..<=9`, `0..`, `..<0`.
+///
+/// The bounds are expressions rather than patterns, and the operator is text here where a
+/// range *expression* holds it as a value: `RangePattern.EndOperator` is `""` exactly when
+/// there is no end, which is the sentinel `RangeEndOperator` was introduced to remove —
+/// but the Go field is a string and the golden prints what it holds.
+pub struct PatternRange {
+  end: Maybe<shared Expr>,
+  end_operator: string,
+  start: Maybe<shared Expr>,
+}
+
+/// The elements of a tuple, array or or-pattern.
+///
+/// One struct behind three node kinds, which print the list under two different names —
+/// `Elements` for the two containers and `Alternatives` for the choice — so the name is
+/// the printer's business and not the payload's.
+pub struct PatternList {
+  elements: []shared Pattern,
+}
+
+/// `{ x, y: 0 }`, and `Pt { x }` for the named form.
+pub struct StructPatternDef {
+  fields: []StructPatternField,
+  name: string,
+}
+
+/// One field of a struct pattern: `x`, `y: 0`, or `...rest`.
+///
+/// A shorthand field carries **no pattern at all** — `{ a }` prints `StructPatternField(a)`
+/// with only its name — where `y: 0` carries one. A rest element is a field whose name is
+/// the literal `...`, which is the Go collector's spelling and not a placeholder.
+pub struct StructPatternField {
+  name: string,
+  pattern: Maybe<shared Pattern>,
+}
+
+/// `...rest`.
+pub struct Rest {
+  /// Printed `Identifier`, which is the Go field's name.
+  identifier: string,
+}
+
+/// `all @ [x]`.
+pub struct BindingPatternDef {
+  name: string,
+  pattern: shared Pattern,
+}
 
 /// `Some x`: the constructor's name and the pattern for its payload.
 pub struct DataPatternDef {
@@ -381,6 +546,21 @@ pub struct DestructuringDecl {
   keyword: string,
   pattern: shared Pattern,
   value: Maybe<shared Expr>,
+}
+
+/// `match x { … }`.
+pub struct Match {
+  match_arms: []MatchArm,
+  scrutinee: shared Expr,
+}
+
+/// One arm: what it matches, the condition it may add, and what it answers.
+pub struct MatchArm {
+  body: shared Expr,
+  /// `if x > 0` — a node of its own (`GuardExpr`) rather than a bare condition, which is
+  /// why this is not simply a `Maybe<shared Expr>`.
+  guard: Maybe<shared Expr>,
+  pattern: shared Pattern,
 }
 
 /// A type declaration: the name it binds and the type it binds to it.

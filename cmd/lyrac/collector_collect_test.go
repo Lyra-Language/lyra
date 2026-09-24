@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 111 of the 238 goldens whose sources can be recovered match today. The number is not
+// 163 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -241,6 +241,88 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"struct_with_generics_and_spread_field_values", "let p = Point::<i32> { x: ...xs }"},
 		{"struct_shorthand_with_multiple_spread_values", "let merged = Point { ...base, ...extra }"},
 		{"array_repeat_initialization_with_structs", "let arr = [Vec3 { x: 0, y: 0, z: 0 }; 100]"},
+		// **Control flow (09/24)**, the structural slice: `if`, the two loops, `match`, and
+		// the pattern kinds `match` travels with. 111 to 163, the largest single move, and
+		// most of it is patterns — a destructuring `let` and a match arm take the same
+		// pattern node, so collecting one collected the other.
+		//
+		// `else if` is an `else` holding another `IfExpr`, not a flattened ladder, and the
+		// fields print alphabetically — `Condition`, `Else`, `Then` — so reading a golden
+		// top to bottom is not reading the program.
+		{"simple_if_block_expr", "\n\tif x == 3 {\n\t\tprintln(\"x is 3\")\n\t}"},
+		{"if_block_expr_with_else", "\n\tif x == 3 {\n\t\tprintln(\"x is 3\")\n\t} else {\n\t\tprintln(\"x is not 3\")\n\t}"},
+		{"if_block_expr_with_else_if", "\n\tif x == 3 {\n\t\tprintln(\"x is 3\")\n\t} else if x == 4 {\n\t\tprintln(\"x is 4\")\n\t} else {\n\t\tprintln(\"x is not 3 or 4\")\n\t}"},
+		{"nested_if_block_expr", "\n\tif x == 0 {\n\t\tif y == 0 {\n\t\t\tprintln(\"At Origin\")\n\t\t} else {\n\t\t\tprintln(\"On Vertical Axis\")\n\t\t}\n\t} else {\n\t\tif y == 0 {\n\t\t\tprintln(\"On Horizontal Axis\")\n\t\t} else {\n\t\t\tprintln(\"At ${x},${y}\")\n\t\t}\n\t}"},
+		{"interpolated_string_expr_nested", "let greeting = \"Hello, ${if is_male { \"Mr. ${last_name}\" } else { \"Mrs. ${last_name}\" }}!\""},
+		// A `for/in` loop's parts are children rather than fields, and which binding is
+		// which comes from the child's kind: `Key` is the first name and `Value` the
+		// second. `break item` records `item` as a **label**, not as a value — the grammar
+		// reads a bare name that way, and only `break outer i + j` has both.
+		{"for_in_loop_with_identifier", "\n\tfor item in my_collection {\n\t\tprintln(item)\n\t}"},
+		{"for_in_loop_with_key_and_value", "\n\tfor item, idx in [1, 2, 3] {\n\t\tprintln(item)\n\t}"},
+		{"for_in_loop_with_range", "\n\tfor i in 1..<=3 {\n\t\tprintln(\"i == ${i}\")\n\t}"},
+		{"for_in_loop_with_tuple", "\n\tfor i in (1, \"2\", 3) {\n\t\tprintln(\"i == ${i}\")\n\t}"},
+		{"for_in_loop_with_postfix_expr", "\n\tfor item in get_array() {\n\t\tprintln(item)\n\t}"},
+		{"for_in_loop_as_expression", "\n\tlet found = for item in items {\n\t\tif item > 10 {\n\t\t\tbreak item\n\t\t}\n\t}"},
+		{"labeled_for_in_loop", "\n\touter: for item in [1, 2, 3] {\n\t\tbreak outer\n\t}"},
+		{"labeled_for_loop_break_with_value", "\n\tlet result = outer: for i in 0..<=10 {\n\t\tfor j in 0..<=10 {\n\t\t\tbreak outer i + j\n\t\t}\n\t}"},
+		// The C-style loop, in all five combinations its three optional header parts
+		// make. `Init` is a declaration held by a field, the one place in this AST a
+		// statement is not in a list — and it is the same `declaration` node under another
+		// kind, so it reuses the declaration collector.
+		{"infinite_for_loop", "\n\tfor {\n\t\tprintln(\"All work and no play makes Homer something something...\")\n\t}"},
+		{"for_loop_with_condition", "\n\tvar i = 0\n\tfor i < 10 {\n\t\tprintln(\"i == ${i}\")\n\t\ti += 1\n\t}"},
+		{"for_loop_with_condition_and_post", "\n\tvar i = 0\n\tfor i < 10; i += 1 {\n\t\tprintln(\"i == ${i}\")\n\t}"},
+		{"for_loop_with_init_and_condition", "\n\tfor var i = 0; i < 10 {\n\t\tprintln(\"i == ${i}\")\n\t\ti += 1\n\t}"},
+		{"for_loop_with_init_and_condition_and_post", "\n\tfor var i = 0; i < 10; i += 1 {\n\t\tprintln(\"i == ${i}\")\n\t}"},
+		{"for_loop_as_expression", "\n\tlet result = for var i = 0; i < 100; i += 1 {\n\t\tif i * i > 50 {\n\t\t\tbreak i * i\n\t\t}\n\t}"},
+		{"for_loop_with_break", "\n\tfor var i = 0; i < 10; i += 1 {\n\t\tbreak\n\t}"},
+		{"for_loop_with_continue", "\n\tfor var i = 0; i < 10; i += 1 {\n\t\tif i % 2 == 0 {\n\t\t\tcontinue\n\t\t}\n\t\tprintln(\"i == ${i}\")\n\t}"},
+		{"labeled_for_loop_with_break", "\n\touter: for var i = 0; i < 10; i += 1 {\n\t\tfor var y = 0; y < 10; y += 1 {\n\t\t\tif y == 5 {\n\t\t\t\tbreak outer\n\t\t\t}\n\t\t\tprintln(\"y == ${y}\")\n\t\t}\n\t}"},
+		{"labeled_for_loop_with_continue", "\n\touter: for var i = 0; i < 10; i += 1 {\n\t\tfor var y = 0; y < 10; y += 1 {\n\t\t\tif y % 2 == 0 {\n\t\t\t\tcontinue outer\n\t\t\t}\n\t\t\tprintln(\"y == ${y}\")\n\t\t}\n\t}"},
+		// A compound assignment is an expression with its own node kind, so `+=` is never
+		// reached by the arithmetic operator table. A reassignment's name has **no field**
+		// — it is the first named child, which is how the Go collector reads it, and
+		// asking for `name` made the statement disappear.
+		{"math_assign_op_expr", "\n\tvar x = 5\n\tx += 3\n\tx -= 1\n\tx *= 3\n\tx /= 3\n\tx %= 3\n\tx %%= 3\n\t"},
+		{"stmt_var_reassignment", "\n\tvar x = 1\n\tx = 2"},
+		{"variable_declaration_without_value", "\n\tvar the_answer\n\tthe_answer = 42"},
+		// `match`: arms are children, the scrutinee is a field, and a guard is a node of
+		// its own (`GuardExpr`) rather than a bare condition. A character pattern keeps
+		// its **decoded code point** where every other literal pattern keeps raw source
+		// text — `"foo"` prints with its quotes.
+		{"match_expression", "\n\tlet bar = match foo {\n\t\tSome 42 => \"The Answer!\",\n\t\tSome _ => \"Just some number\",\n\t\tNone => \"huh?\",\n\t}"},
+		{"match_expression_with_blocks", "\n\tmatch foo {\n\t\t[a] => {\n\t\t\tprintln(\"An array with one element\")\n\t\t},\n\t\t[a, b] => {\n\t\t\tprintln(\"An array with two elements\")\n\t\t},\n\t\t_ => {\n\t\t\tprintln(\"A wildcard match\")\n\t\t},\n\t}"},
+		{"match_expression_with_guards", "\n\tmatch foo {\n\t\tSome x if x > 0 && x < 10 => print(\"1-9\"),\n\t\tSome x if x >= 10 && x < 100 => print(\"10-99\"),\n\t\tNone => print(\"No number!\"),\n\t}"},
+		{"match_expression_with_range_patterns", "\n\tmatch foo {\n\t\t0..<=9 => print(\"one digit\"),\n\t\t42 => print(\"The Answer!\"),\n\t\t10..<=99 => print(\"two digits\"),\n\t\t_ => print(\"lots of digits!\"),\n\t}"},
+		{"match_expression_with_structs_returned", "\n\tlet foo = match bar {\n\t\t\"foo\" => { a: \"b\" },\n\t\t\"bar\" => { b: \"a\" },\n\t\t_ => { c: \"d\" },\n\t}"},
+		// The pattern kinds, met through a destructuring `let` rather than a match: the
+		// two positions take the same node, which is why this slice scored twice. A rest
+		// element is legal at either end of a tuple pattern and in its middle.
+		{"destructuring_array", `let [a, b, c] = some_array`},
+		{"destructuring_array_with_var", `var [a, b, c] = some_array`},
+		{"destructuring_array_with_rest_at_end", `let [a, b, c, ...tail] = some_array`},
+		{"destructuring_tuple", `let (x, y, z) = ThreeInts(1, 2, 3)`},
+		{"destructuring_tuple_from_identifier", `let (x, y, z) = some_tuple`},
+		{"destructuring_tuple_with_rest_at_beginning", `let (...rest, x, y, z) = some_tuple`},
+		{"destructuring_tuple_with_rest_in_middle", `let (x, y, ...rest, z) = some_tuple`},
+		{"destructuring_tuple_with_rest_at_end", `let (x, y, z, ...rest) = some_tuple`},
+		{"destructuring_struct", `let {a, b, c} = some_struct`},
+		{"destructuring_struct_with_rename", `let {a: foo, b: bar, c: baz} = some_struct`},
+		{"destructuring_struct_with_rest", `let {a, b, ...rest} = some_struct`},
+		{"destructuring_struct_with_sub_patterns", `let {a: [x, y, z], b: (a, b), c: {d, e, f}} = some_struct`},
+		{"destructuring_data_with_array_pattern", `let Some [x, y, z] = some_data`},
+		{"destructuring_data_with_tuple_pattern", `let Some (x, y) = some_data`},
+		{"destructuring_data_with_struct_pattern", `let Some {x, y, z} = some_data`},
+		{"destructuring_data_with_data_pattern", `let Some AnotherData(x, y) = some_data`},
+		// A struct pattern has **four shapes of field**: a bare name with no pattern at
+		// all, `y: 0` with one, `a: foo` which renames (a `new_name`, not a pattern), and
+		// `...rest`, which becomes a field literally named `...`.
+		{"binding_pattern_in_destructuring", `let all @ [a, b, ...rest] = some_array`},
+		{"binding_pattern_in_match", "\n\tmatch xs {\n\t\tall @ [head, ...tail] => print(all),\n\t\t_ => print(\"no match\"),\n\t}"},
+		{"binding_pattern_nested", "\n\tmatch point {\n\t\t{ x: px @ 0..<=100, y } => print(px),\n\t\t_ => print(\"out of range\"),\n\t}"},
+		{"complex_patterns_destructuring", "\n\tlet {\n\t\tfoo: [a, b, ...rest],\n\t\tbar: (c, Some d),\n\t\tbaz: {e, f, ...rest}\n\t} = some_complex_struct"},
+		{"complex_patterns_pattern_matching", "\n\tmatch some_complex_struct {\n\t\t{ foo: [a, b, ...rest] } => print(\"An array with three elements\"),\n\t\t{ bar: (c, Some d) } => print(\"A tuple with two elements\"),\n\t\t{ baz: {e, f, ...rest} } => print(\"A struct with three elements\"),\n\t\t_ => print(\"No match\"),\n\t}"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

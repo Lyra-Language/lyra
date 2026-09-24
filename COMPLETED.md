@@ -9,6 +9,47 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — control flow, and the patterns that came with it
+
+111 goldens to 163, the largest single move the bootstrap has made. `IfExpr`, the two
+loops with `MathAssignOpExpr` and `VarReassignmentStmt`, `BreakStmt`/`ContinueStmt`,
+`MatchExpr` with `MatchArm` and `GuardExpr` — and the pattern kinds, which are most of the
+score for a reason worth naming: **a destructuring `let` and a match arm take the same
+pattern node**, so collecting one collected the other. Twenty-one goldens fell to patterns
+alone without a `match` in them.
+
+Four things the goldens taught that reading the grammar would not have:
+
+- **`break x` records `x` as a label, not as a value.** The golden for `break item` says
+  `Label: item`, and `break outer i + j` is the only shape with both. The grammar reads a
+  bare name after `break` as a label, and the AST records what was decided rather than what
+  was meant.
+- **A character pattern prints as a quoted rune.** Go's `LiteralPattern.Value` is `any`;
+  every literal puts its raw source text in it, and a character literal puts a
+  `RunePatternValue` — an integer type with a `String()` method that the printer's `%v`
+  finds. So one field prints two ways depending on what was put in it. The escape set is
+  pinned by differential cases; ASCII is exact, and a non-printable *non*-ASCII rune would
+  differ, since Go decides printability from Unicode tables there is no equivalent of here.
+- **A struct pattern has four shapes of field**, not two: a bare name carrying no pattern
+  at all, `y: 0` carrying one, `a: foo` which *renames* — a `new_name` node, not a pattern,
+  so it has to be turned into the identifier pattern the Go collector builds — and
+  `...rest`, which becomes a field literally named `...`.
+- **A reassignment's name has no field.** It is the first named child, which is how the Go
+  collector reads it; asking for a `name` field answered nothing and the statement vanished
+  from the output. The same shape as the `const` in the last harvest: a node collected as
+  *nothing* rather than collected wrong, which is the failure this walk is built to make
+  visible.
+
+The `else if` ladder keeps its nesting — an `else` holding another `IfExpr` — and the
+fields print alphabetically, so `Condition`, `Else`, `Then` puts the else branch above the
+then branch and reading a golden top to bottom is not reading the program.
+
+Where this leaves the bootstrap: **166 goldens use only kinds already built and 163 match**,
+the three being the orphans, so nothing field-level is hiding. What remains is a long flat
+tail — no node blocks more than three goldens — so a slice from here is a themed handful
+(`LambdaClause`, `RegexLiteralExpr`, the comprehension's `ArrayCompExpr` with `Generator`)
+rather than one node with a number behind it.
+
 ### 09/24/26 — struct instances: four shapes, one node, and a name that is taken
 
 101 goldens to 111, which is every stored golden that builds a struct. The measurement had

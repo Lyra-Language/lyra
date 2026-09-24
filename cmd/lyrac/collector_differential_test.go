@@ -182,6 +182,36 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"a spread in a call argument", "let a = f(...xs)"},
 		{"a spread in an array literal", "let a = [...xs, 1]"},
 		{"a spread in a tuple literal", "let a = (...xs, 1)"},
+		// Control flow, in the compositions the goldens do not isolate.
+		{"an if with no else as a value", "let a = if c { 1 }"},
+		{"an if inside a call argument", "let a = f(if c { 1 } else { 2 })"},
+		{"an if inside a loop body", "for x in xs {\n  if x > 1 {\n    f(x)\n  }\n}"},
+		{"a loop whose body holds a loop", "for x in xs {\n  for y in ys {\n    f(y)\n  }\n}"},
+		{"a loop over a member", "for x in obj.items {\n  f(x)\n}"},
+		{"a labeled c-style loop with no header", "outer: for {\n  break outer\n}"},
+		{"a break with a label and a value", "for {\n  break outer 1 + 2\n}"},
+		{"a compound assignment to a member", "p.x += 1"},
+		{"a compound assignment to an index", "xs[0] *= 2"},
+		{"a match inside a match arm", "let a = match x {\n  1 => match y {\n    2 => 3,\n  },\n}"},
+		{"a match as a loop's iterable", "for x in match y {\n  _ => xs,\n} {\n  f(x)\n}"},
+		{"a guard calling a function", "let a = match x {\n  y if f(y) => 1,\n}"},
+		// The pattern kinds no golden reaches. **A character pattern prints as a quoted
+		// rune** where every other literal pattern prints its source text — the Go field
+		// is `any`, and a rune goes in as a type whose `String()` the printer's `%v`
+		// finds. These pin the escape set, which is where the two could drift.
+		{"a rune pattern", `let a = match x {` + "\n  'a' => 1,\n}"},
+		{"an escaped rune pattern", `let a = match x {` + "\n  '\\n' => 1,\n}"},
+		{"a nul rune pattern", `let a = match x {` + "\n  '\\0' => 1,\n}"},
+		{"a non-ascii rune pattern", `let a = match x {` + "\n  'é' => 1,\n}"},
+		{"a rune range pattern", `let a = match x {` + "\n  'a'..<='z' => 1,\n}"},
+		{"an or pattern of three", "let a = match x {\n  1 | 2 | 3 => 4,\n}"},
+		{"an or pattern of strings", `let a = match x {` + "\n  \"a\" | \"b\" => 1,\n}"},
+		{"an open-ended range pattern", "let a = match x {\n  0.. => 1,\n}"},
+		{"a range pattern with no start", "let a = match x {\n  ..<0 => 1,\n}"},
+		{"a nested tuple pattern", "let a = match x {\n  ((a, b), c) => 1,\n}"},
+		{"an array pattern inside a tuple pattern", "let a = match x {\n  ([a], b) => 1,\n}"},
+		{"a wildcard inside a tuple pattern", "let a = match x {\n  (_, b) => 1,\n}"},
+		{"a named struct pattern", "let a = match x {\n  Pt { x, y } => 1,\n}"},
 		// No case for a float too large for an `f64` (`1.0e400`): the Go collector reports
 		// an error there, and this test fails on one rather than comparing. The two do
 		// agree on the tree — it places a zero-valued node, which prints nothing, and so
