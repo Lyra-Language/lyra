@@ -42,6 +42,40 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — the bootstrap's sixth slice: the measurement paying out
+
+`BooleanBinaryOpExpr`, `NegationExpr`, `TryExpr`, `RangeExpr`. **33 of 238 goldens**, up
+from 20 — thirteen in one slice, against slice 5's zero-then-four. That is the same
+groundwork cashing in: these are small nodes, and every one of them sits on the expression
+tree slices 4 and 5 built. The count moving now is the prediction from measuring rather
+than guessing, which is the part worth keeping.
+
+Three shapes the CST decided and this walk did not have to.
+
+**The grammar already tells math from logic**: `binary_expr` and `boolean_expr` are
+different kinds, so nothing here classifies an operator — the node's kind is the answer and
+the symbol is only recorded. Two constructors share one `BinaryOp` payload, since the Go
+AST's two node types hold the same three fields.
+
+**A range's bounds are each wrapped** (`range_start`, `range_end`, `range_step`), the same
+shape an argument has. Taking the wrapper rather than its child collects nothing, and a
+range would have printed as an empty node rather than a wrong one — which is the failure
+mode that looks like a missing feature. The mutation fails six goldens.
+
+**`NegationExpr` and `TryExpr` are one field under two names**, so they are one collector
+taking a flag and one payload struct. Swapping which name it builds fails three goldens,
+which is the check that the flag is threaded rather than ignored.
+
+Eight differential cases cover the compositions no single golden has: a try inside a call
+argument, a negation of a member, a range over member expressions, a range whose step is a
+call. The stored goldens are curated; the Go collector is not.
+
+**85 goldens remain blocked by exactly one node**, so the next slice should score like this
+one. What is left by count is `TypeDeclStmt` (29), `DestructuringDeclStmt` (24) and
+`InterpolatedStringExpr` (22), then the written-type kinds — `GenericType`,
+`UnresolvedType`, `ParameterType` at 14 each, which travel together and are one slice rather
+than three.
+
 ### 09/23/26 — a more specific impl wins, and W018 points at the trait
 
 Two entries that each said a decision was wanted before the code. Both decisions came in

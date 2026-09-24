@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 20 of the 238 goldens whose sources can be recovered match today. The number is not
+// 33 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -66,6 +66,24 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"postfix_array_indexing", "let first = array[0]"},
 		{"postfix_tuple_index", "let x = pair.0"},
 		{"postfix_nested_tuple_index", "let x = pair.0.1"},
+		// Slice 6. The comparison operators are one node kind with the symbol recorded,
+		// so all six are one code path checked six ways; `a < b && c > d` is the nesting.
+		{"expr_boolean_binary_eq", "let x = a == b"},
+		{"expr_boolean_binary_neq", "let x = a != b"},
+		{"expr_boolean_binary_lt", "let x = a < b"},
+		{"expr_boolean_binary_lte", "let x = a <= b"},
+		{"expr_boolean_binary_gt", "let x = a > b"},
+		{"expr_boolean_binary_gte", "let x = a >= b"},
+		{"expr_boolean_binary_chained", "let x = a < b && c > d"},
+		{"expr_negation", "let x = -42"},
+		{"expr_negation_of_expr", "let x = -foo()"},
+		{"postfix_try_expression", `let file = open_file("foo.txt")?`},
+		// A range's bounds are each wrapped by the grammar, and its parts are each
+		// optional: no step here, a step there, and expressions rather than literals in
+		// the third — where taking the wrapper instead of its child would print nothing.
+		{"simple_range_expression", "0..<10"},
+		{"range_expression_with_step", "0..<=10:2"},
+		{"range_expression_with_start_expression", "start*2..<=end-1"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

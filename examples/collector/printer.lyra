@@ -36,6 +36,8 @@ import ast.{
   ReturnType,
   FunctionCall,
   Block,
+  BinaryOp,
+  Range,
 }
 
 /// A whole program, as `pkg/printer.PrintAST` would render it.
@@ -99,12 +101,18 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
     close(depth),
   IdentifierExpr(identifier) => print_named("IdentifierExpr", identifier, depth),
   // Left, Operator, Right — alphabetical, and the operator is the symbol itself.
-  MathBinaryOpExpr(op) =>
-    header_unnamed("MathBinaryOpExpr", depth) ++
-    node_field("Left", print_expr(op.left, depth + 2), depth + 1) ++
-    scalar("Operator", op.operator, depth + 1) ++
-    node_field("Right", print_expr(op.right, depth + 2), depth + 1) ++
+  MathBinaryOpExpr(op) => print_binary("MathBinaryOpExpr", op, depth),
+  BooleanBinaryOpExpr(op) => print_binary("BooleanBinaryOpExpr", op, depth),
+  // `NegationExpr` and `TryExpr` are one field under two names.
+  NegationExpr(unary) =>
+    header_unnamed("NegationExpr", depth) ++
+    node_field("Operand", print_expr(unary.operand, depth + 2), depth + 1) ++
     close(depth),
+  TryExpr(unary) =>
+    header_unnamed("TryExpr", depth) ++
+    node_field("Operand", print_expr(unary.operand, depth + 2), depth + 1) ++
+    close(depth),
+  RangeExpr(range) => print_range(range, depth),
   // Arguments before Function — alphabetical, and an empty argument list is omitted like
   // any other empty composite, so `foo()` prints with only its callee.
   FunctionCallExpr(call) => print_call(call, depth),
@@ -152,6 +160,42 @@ let print_block = pure (block: Block, depth: i64) -> string => {
       items = items ++ print_stmt(statement, depth + 2)
     }
     out = out ++ node_field("Statements", items, depth + 1)
+  }
+  out ++ close(depth)
+}
+
+/// `Left`, `Operator`, `Right` — alphabetical, and the operator is the symbol itself.
+let print_binary = pure (node_kind: string, op: BinaryOp, depth: i64) -> string =>
+  header_unnamed(node_kind, depth) ++
+  node_field("Left", print_expr(op.left, depth + 2), depth + 1) ++
+  scalar("Operator", op.operator, depth + 1) ++
+  node_field("Right", print_expr(op.right, depth + 2), depth + 1) ++
+  close(depth)
+
+/// `RangeExpr { End, EndOperator, Start, Step }` — alphabetical, each omitted when absent,
+/// which for a range is the common case rather than the exception.
+let print_range = pure (range: Range, depth: i64) -> string => {
+  var out = header_unnamed("RangeExpr", depth)
+  match range.end {
+    Some(e) => {
+      out = out ++ node_field("End", print_expr(e, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  if range.end_operator != "" {
+    out = out ++ scalar("EndOperator", range.end_operator, depth + 1)
+  }
+  match range.start {
+    Some(e) => {
+      out = out ++ node_field("Start", print_expr(e, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  match range.step {
+    Some(e) => {
+      out = out ++ node_field("Step", print_expr(e, depth + 2), depth + 1)
+    },
+    None => {},
   }
   out ++ close(depth)
 }
@@ -248,6 +292,11 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   // Never empty: every operand is itself a node. The arm exists because the rule is per
   // node, and a missing one is a silent wrong answer rather than a compile error.
   MathBinaryOpExpr(op) => false,
+  BooleanBinaryOpExpr(op) => false,
+  NegationExpr(unary) => false,
+  TryExpr(unary) => false,
+  // A range with no bound and no step does not parse, so one is always present.
+  RangeExpr(range) => false,
   // A call always has a callee and each access always has an object, so none of these is
   // ever empty; a block with no statements is.
   FunctionCallExpr(call) => false,

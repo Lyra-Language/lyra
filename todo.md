@@ -114,6 +114,13 @@ Package management, versioning and separate compilation are out of scope by deci
     their printed ASTs are compared. The goldens are a curated set, and a slice can add a
     construct none of them exercises *in isolation* — which is exactly what calls and
     blocks were.
+  - **Slice 6 landed 09/23: `BooleanBinaryOpExpr`, `NegationExpr`, `TryExpr`, `RangeExpr`.**
+    **33 of 238**, up from 20 — the payoff slice 5's measurement predicted, since these are
+    small nodes sitting on the tree it built. **85 goldens are still blocked by exactly one
+    node**, so the next slice should score similarly. By count the remaining ones are
+    `TypeDeclStmt` (29), `DestructuringDeclStmt` (24), `InterpolatedStringExpr` (22), then
+    the written-type kinds — `GenericType`, `UnresolvedType`, `ParameterType` (14 each),
+    which travel together and are one slice rather than three.
   - **The `Location` every node carries is not modelled yet**, and the goldens do not show
     it (`pkg/printer` omits `print:"-"` fields, which is what `NameLocation` is). It has to
     arrive before anything reports a diagnostic, and choosing when is a slice of its own.

@@ -58,7 +58,15 @@ pub data Expr =
   /// `x` — a name standing for a value.
   | IdentifierExpr(Identifier)
   /// `a + b` — the arithmetic operators.
-  | MathBinaryOpExpr(MathBinaryOp)
+  | MathBinaryOpExpr(BinaryOp)
+  /// `a < b`, `p && q` — comparison and logic.
+  | BooleanBinaryOpExpr(BinaryOp)
+  /// `-x` — arithmetic negation.
+  | NegationExpr(Unary)
+  /// `read()?` — propagate a failure to the enclosing function.
+  | TryExpr(Unary)
+  /// `0..<10`, `0..<=9:2` — a range as a value.
+  | RangeExpr(Range)
   /// `foo(1, x)` — a call, whatever the callee expression is.
   | FunctionCallExpr(FunctionCall)
   /// `person.name` — a named member of a value.
@@ -95,16 +103,40 @@ pub struct Identifier {
   name: string,
 }
 
-/// `a + b`, `x * 2`.
+/// `a + b`, `x < y`, `p && q` — two operands and the operator between them.
+///
+/// **One struct for two node kinds.** `MathBinaryOpExpr` and `BooleanBinaryOpExpr` are
+/// distinct in the Go AST and print under their own names, but they hold the same three
+/// fields, so the constructor carries the distinction and the payload does not repeat
+/// itself.
 ///
 /// **The operand fields are `shared`**, which is what makes the type finitely sized: an
 /// expression holding expressions inline has no size at all. That is the ordinary way to
 /// write a tree here, not a workaround — though a cycle through `Maybe<Expr>` *is* one
 /// today, and crashes the compiler rather than being refused (todo.md, 09/22).
-pub struct MathBinaryOp {
+pub struct BinaryOp {
   left: shared Expr,
   operator: string,
   right: shared Expr,
+}
+
+/// One operand and the operator applied to it — `NegationExpr` and `TryExpr` share the
+/// shape, differing only in the node name the printer gives them. `TryExpr` has no operator
+/// of its own to record: the `?` is the node.
+pub struct Unary {
+  operand: shared Expr,
+}
+
+/// `0..<10:2`.
+///
+/// Every part is optional but the operator: an open range omits a bound (`0..`, `..<10`),
+/// and most have no step. The printer drops each absent one, which is why they are `Maybe`
+/// rather than a sentinel.
+pub struct Range {
+  end: Maybe<shared Expr>,
+  end_operator: string,
+  start: Maybe<shared Expr>,
+  step: Maybe<shared Expr>,
 }
 
 /// A call.

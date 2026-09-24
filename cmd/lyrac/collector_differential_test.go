@@ -38,6 +38,16 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"indexing a call's result", "let j = rows()[0]"},
 		{"a member of an index", "let k = grid[1].name"},
 		{"a tuple index of a member", "let l = pair.first.0"},
+		// Slice 6, in the compositions no single golden covers: the new nodes nest inside
+		// each other and inside what slice 5 built.
+		{"a try inside a call argument", "let m = wrap(read()?)"},
+		{"a negation of a member", "let n = -point.x"},
+		{"a boolean over calls", "let o = left() < right()"},
+		{"a range over member expressions", "let p = a.lo..<b.hi"},
+		{"a range whose step is a call", "let q = 0..<n:step()"},
+		{"a try on a member call", "let r = handle.read()?"},
+		{"logic mixing comparison and calls", "let s = a < b && c() != d"},
+		{"a negation inside a range bound", "let t = -5..<5"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")
