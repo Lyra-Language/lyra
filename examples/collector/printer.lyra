@@ -46,6 +46,7 @@ import ast.{
   DataTypeConstructor,
   DestructuringDecl,
   DataPatternDef,
+  GenericParam,
   RangeEndOperator,
 }
 
@@ -82,8 +83,15 @@ let print_stmt = pure (stmt: Stmt, depth: i64) -> string => match stmt {
 let print_var_decl = pure (decl: VarDecl, depth: i64) -> string => {
   var out = header("VarDeclStmt", decl.name, depth)
   out = out ++ scalar("BindingKind", decl.binding_kind, depth + 1)
+  out = out ++ generic_params_field(decl.generic_params, depth + 1)
   if decl.is_public { out = out ++ scalar("IsPublic", "true", depth + 1) }
   out = out ++ scalar("Name", decl.name, depth + 1)
+  match decl.type_annotation {
+    Some(declared) => {
+      out = out ++ node_field("Type", print_type(declared, depth + 2), depth + 1)
+    },
+    None => {},
+  }
   match decl.value {
     Some(value) => if !expr_is_empty(value) {
       out = out ++ field_open("Value", depth + 1)
@@ -107,14 +115,7 @@ let print_type_decl = pure (decl: TypeDecl, depth: i64) -> string => {
     }
     out = out ++ node_field("Derives", items, depth + 1)
   }
-  if decl.generic_params.len() > 0 {
-    var params = ""
-    for p in decl.generic_params {
-      params = params ++ header("GenericParam", p.name, depth + 2) ++
-        scalar("Name", p.name, depth + 3) ++ close(depth + 2)
-    }
-    out = out ++ node_field("GenericParams", params, depth + 1)
-  }
+  out = out ++ generic_params_field(decl.generic_params, depth + 1)
   if decl.is_public { out = out ++ scalar("IsPublic", "true", depth + 1) }
   out = out ++ scalar("Name", decl.name, depth + 1)
   out ++ node_field(
@@ -122,6 +123,21 @@ let print_type_decl = pure (decl: TypeDecl, depth: i64) -> string => {
     print_type(decl.declared, depth + 2),
     depth + 1
   ) ++ close(depth)
+}
+
+/// `GenericParams: { GenericParam(t) { Name: t } … }`, or nothing at all for a declaration
+/// that binds none — an empty list being omitted like any other.
+///
+/// Shared by the two declarations that can carry them, which `let sum<n> = …` is what
+/// made worth naming: a type declaration's `<t>` and a binding's are the same field.
+let generic_params_field = pure (params: []GenericParam, depth: i64) -> string => {
+  if params.len() == 0 { return "" }
+  var items = ""
+  for p in params {
+    items = items ++ header("GenericParam", p.name, depth + 1) ++
+      scalar("Name", p.name, depth + 2) ++ close(depth + 1)
+  }
+  node_field("GenericParams", items, depth)
 }
 
 /// `DestructuringDeclStmt { Keyword, Pattern, Value }` — no label, the node having no
@@ -163,7 +179,13 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
     header_unnamed("StringLiteralExpr", depth) ++
     scalar("Value", lit.value, depth + 1) ++
     close(depth),
-  IdentifierExpr(identifier) => print_named("IdentifierExpr", identifier, depth),
+  // `IsConst` before `Name`, and only here: `print_named` serves the patterns and types
+  // too, and neither can be const.
+  IdentifierExpr(identifier) =>
+    header("IdentifierExpr", identifier.name, depth) ++
+    (if identifier.is_const { scalar("IsConst", "true", depth + 1) } else { "" }) ++
+    scalar("Name", identifier.name, depth + 1) ++
+    close(depth),
   // Left, Operator, Right — alphabetical, and the operator is the symbol itself.
   MathBinaryOpExpr(op) => print_binary("MathBinaryOpExpr", op, depth),
   BooleanBinaryOpExpr(op) => print_binary("BooleanBinaryOpExpr", op, depth),
@@ -184,12 +206,14 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
   MemberExpr(member) =>
     header_unnamed("MemberExpr", depth) ++
     node_field("Object", print_expr(member.object, depth + 2), depth + 1) ++
+    (if member.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
     node_field("Property", print_expr(member.property, depth + 2), depth + 1) ++
     close(depth),
   IndexExpr(access) =>
     header_unnamed("IndexExpr", depth) ++
     node_field("Index", print_expr(access.index, depth + 2), depth + 1) ++
     node_field("Object", print_expr(access.object, depth + 2), depth + 1) ++
+    (if access.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
     close(depth),
   // `Index` here is the position the access names, so it prints as a scalar on one line
   // rather than as a nested literal — the one `Index` in this AST that is not a node.
@@ -290,6 +314,8 @@ let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
     },
     None => {},
   }
+  if lambda.is_async { out = out ++ scalar("IsAsync", "true", depth + 1) }
+  if lambda.is_pure { out = out ++ scalar("IsPure", "true", depth + 1) }
   if lambda.parameters.len() > 0 {
     var items = ""
     for parameter in lambda.parameters {
@@ -310,9 +336,15 @@ let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
   out ++ close(depth)
 }
 
-/// `Parameter { Pattern, Type }` — **no label**, the node having no `Name` of its own.
+/// `Parameter { DefaultValue, Pattern, Type }` — **no label**, the node having no `Name` of its own.
 let print_parameter = pure (parameter: Parameter, depth: i64) -> string => {
   var out = header_unnamed("Parameter", depth)
+  match parameter.default_value {
+    Some(value) => {
+      out = out ++ node_field("DefaultValue", print_expr(value, depth + 2), depth + 1)
+    },
+    None => {},
+  }
   out = out ++ node_field(
     "Pattern",
     print_pattern(parameter.pattern, depth + 2),
@@ -438,16 +470,52 @@ let print_data_constructor = pure (c: DataTypeConstructor, depth: i64) -> string
   out ++ close(depth)
 }
 
-/// The name a type node carries, for a label that is not the node's own field.
+/// The name a type node **answers when asked**, which for a tuple is not its `Name` field.
+///
+/// `ReturnType`'s label goes through Go's `GetName()`, and `TupleType.GetName()` renders
+/// the elements too — `AnonymousTuple(i64, boolean)` for one written inline, `RGBA(i64,
+/// f64)` for a declared one. The node's own header line takes the `Name` field instead and
+/// prints `TupleType(?)`, so the two spellings of "the tuple's name" are both live and
+/// only one of them is a field.
 let type_name = pure (declared: shared TypeNode) -> string => match declared {
   PrimitiveType(identifier) => identifier.name,
   UnresolvedType(identifier) => identifier.name,
   GenericType(identifier) => identifier.name,
   ConstrainedType(def) => def.name,
   NamedStructType(def) => def.name,
-  TupleType(def) => def.name,
+  TupleType(def) => tuple_type_name(def),
   DataType(def) => def.name,
 }
+
+/// `AnonymousTuple(i64, boolean)` — a tuple's head and its elements.
+let tuple_type_name = pure (def: TupleTypeDef) -> string => {
+  var elements = ""
+  for e in def.elements {
+    if elements != "" { elements = elements ++ ", " }
+    elements = elements ++ type_string(e)
+  }
+  let head = if is_anonymous_tuple(def.name) { "AnonymousTuple" } else { def.name }
+  "${head}(${elements})"
+}
+
+/// What a type renders as **inside another type's name** — Go's `Type.String()`, which is
+/// not `GetName()`: a *named* tuple is its bare name there, an anonymous one structural.
+/// The split is what keeps one instantiation from reaching two symbols, and it is visible
+/// here only through a tuple nested in a tuple.
+let type_string = pure (declared: shared TypeNode) -> string => match declared {
+  TupleType(def) =>
+    if is_anonymous_tuple(def.name) { tuple_type_name(def) } else { def.name },
+  PrimitiveType(identifier) => identifier.name,
+  UnresolvedType(identifier) => identifier.name,
+  GenericType(identifier) => identifier.name,
+  ConstrainedType(def) => def.name,
+  NamedStructType(def) => def.name,
+  DataType(def) => def.name,
+}
+
+/// The two names that mark a tuple as anonymous: `""`, a tuple built without one, and `?`,
+/// the placeholder for a tuple written with no leading name.
+let is_anonymous_tuple = pure (name: string) -> bool => name == "" || name == "?"
 
 /// `Kind(name) { Name: name }` — the shape every named leaf shares.
 let print_named = pure (
@@ -483,10 +551,16 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   TupleIndexExpr(access) => false,
   BlockExpr(block) => block.statements.len() == 0,
   InterpolatedStringExpr(interpolated) => interpolated.segments.len() == 0,
-  // A zero base with a zero value is not reachable from the grammar — a literal always has
-  // a base — so this is the honest reading of the rule rather than a live case.
-  IntegerLiteralExpr(lit) => lit.base == 0 && lit.value == 0,
-  CharacterLiteralExpr(lit) => lit.value == 0,
+  // **An integer field is never zero for this rule**, whatever its value.
+  // `pkg/printer`'s `isZeroValue` switches on the reflected kind and has no integer case
+  // at all, so it answers `false` for one — where a `bool`, a `string`, a slice and a
+  // struct each have a case that can answer `true`. So `'\0'` prints `Value: 0` and a
+  // literal `0` prints `Value: 0` beside its base, and a node holding only integers is
+  // never an empty composite. This read `lit.value == 0` until the harvest ran
+  // `char_literal_expr_nul_escape` (09/24), which is the only golden where the two rules
+  // disagree.
+  IntegerLiteralExpr(lit) => false,
+  CharacterLiteralExpr(lit) => false,
   StringLiteralExpr(lit) => lit.value == "",
   LambdaExpr(lambda) => lambda_is_empty(lambda),
 }

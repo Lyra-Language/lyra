@@ -12,20 +12,6 @@ import (
 
 const diffMaxOutputLines = 500
 
-// normalizeWhitespace normalizes a string for comparison: leading and trailing
-// newlines are removed; each line is trimmed and runs of whitespace (spaces/tabs)
-// are collapsed to a single space. This lets tests start the want string with a
-// newline for formatting and ignore indentation differences.
-func normalizeWhitespace(s string) string {
-	s = strings.TrimLeft(s, "\n")
-	s = strings.TrimRight(s, "\n")
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		lines[i] = strings.Join(strings.Fields(line), " ")
-	}
-	return strings.Join(lines, "\n")
-}
-
 // checkGolden compares got against the golden file at goldenPath. If the file
 // does not exist or is empty, it is created with got as its content and the
 // test is failed so it can be re-run for verification. Otherwise got is
@@ -63,13 +49,19 @@ func checkGolden(t *testing.T, got, goldenPath string) {
 	}
 }
 
-// cmpOutput compares got and expected and returns an empty string if equal, otherwise a diff message.
-// Comparison ignores whitespace: lines are trimmed and runs of spaces/tabs are collapsed,
-// so you can write the expected string without matching indentation exactly.
-// The diff is produced by github.com/sergi/go-diff (DiffPrettyText).
-// Use in tests: if msg := cmpOutput(got, expected); msg != "" { t.Error(msg) }
+// cmpOutput compares got and expected **byte for byte**, answering an empty string when
+// they are equal and a diff message otherwise. The diff is produced by
+// github.com/sergi/go-diff (DiffPrettyText).
+//
+// It used to trim each line and collapse runs of spaces and tabs, so that an inline
+// `want` string need not match the printer's indentation. Nothing writes one any more —
+// every caller is a golden file, which the printer wrote — and the leniency was hiding
+// drift rather than absorbing formatting: five goldens had been hand-edited into shapes
+// the printer does not produce, three with mangled indentation and two having lost the
+// leading space of a string's value, and the comparison said nothing. The Lyra collector
+// reading these same files byte for byte is what found them (09/24).
 func cmpOutput(got, expected string) string {
-	if normalizeWhitespace(got) == normalizeWhitespace(expected) {
+	if got == expected {
 		return ""
 	}
 	dmp := diffmatchpatch.New()

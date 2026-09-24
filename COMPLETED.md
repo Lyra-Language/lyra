@@ -9,6 +9,57 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — the harvest: 50 goldens to 75, and the oracle that was not one
+
+The bootstrap had been growing by **node kind** — name the kind the most goldens are
+blocked on, collect it, count. Before picking the next one I measured what was actually
+left: for each of the 245 goldens, which node kinds it uses that the Lyra printer does not
+have. The answer changed the plan. **78 goldens used only kinds already built**, and the
+test listed 50. The other 28 were not blocked by a missing node at all.
+
+That is a class of gap the kind-by-kind measurement cannot see: a node is "done" while a
+*field* on it is never read. Optional chaining, a const name, `pure`/`async`, a parameter's
+default, a declaration's generic parameters and its written type annotation — each sits on
+a node the walk already collects, and each was silently dropped. Collecting them is what
+turned 50 into 75.
+
+**Three of the 28 needed no code, because the golden was wrong.** `expr_boolean_binary_and`
+had a space before its first tab; `interpolated_string_expr_leading` had lost the leading
+space of `" is here"`. The Lyra collector was right and the file on disk was not. The
+reason nothing had caught it: `cmpOutput` trimmed every line and collapsed runs of
+whitespace before comparing, so a hand-edited golden still passed. The leniency was there
+for inline `want` strings, and nothing writes one any more — every caller is a golden the
+printer produced. It compares bytes now, and five goldens were regenerated. **A test whose
+comparison is more forgiving than its subject is not an oracle**, and the thing that
+noticed was a second implementation reading the same files strictly.
+
+Two more disagreements came out of the differential test, both invisible to every golden:
+
+- **`bool`'s AST name is `boolean`.** Every other primitive takes its name from the source
+  text, and the Go collector maps `boolean_type` to `types.Boolean` instead. No matching
+  golden carries a boolean annotation, so reading the text was right 100% of the time until
+  a `-> (i64, bool)` existed to say otherwise.
+- **`ReturnType`'s label is not a `Name` field.** It goes through Go's `GetName()`, and
+  `TupleType.GetName()` renders the elements — `AnonymousTuple(i64, boolean)` — where the
+  node's own header line prints `TupleType(?)` from the field. Two live spellings of "the
+  tuple's name", one of which is not stored anywhere.
+
+And one asymmetry worth the fix on its own: `let pure add(…) => …` hangs the modifiers off
+the **declaration** (`fn_modifiers`) where `let add = pure (…) => …` hangs them off the
+lambda. One program in two spellings, and the Go AST records both on the lambda, so the
+declaration hands down what it found.
+
+The printer's emptiness rule was wrong too, and `'\0'` is the only golden that can tell:
+`pkg/printer`'s `isZeroValue` switches on the reflected kind and **has no integer case**,
+so an integer field is never zero and a node holding only integers is never an empty
+composite. This printer had been dropping `CharacterLiteralExpr { Value: 0 }` entirely.
+
+What the measurement says about the next slice: the literal family
+(`FloatLiteralExpr` 8, `StringConcatExpr` 6, `TupleLiteralExpr` 6, `ArrayLiteralExpr` and
+`ArrayRepeatExpr` 3 each) blocks the most goldens on its own, and control flow
+(`IfExpr`, `MatchExpr`, the two loops) is the structural one, travelling with the pattern
+kinds.
+
 ### 09/22/26 — clean on the command line, eleven errors in the editor
 
 Reported from Zed, which is the only place it was visible: 11 errors and 8 warnings on

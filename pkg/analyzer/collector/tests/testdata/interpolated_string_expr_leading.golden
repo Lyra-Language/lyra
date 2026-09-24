@@ -10,7 +10,7 @@ Program(1 statements) {
 							Name: name
 						}
 						StringLiteralExpr {
-							Value: is here
+							Value:  is here
 						}
 					}
 				}

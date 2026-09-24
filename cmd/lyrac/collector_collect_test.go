@@ -21,13 +21,17 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 50 of the 238 goldens whose sources can be recovered match today. The number is not
+// 75 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
 func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 	bin := buildCollector(t)
 	root := repoRoot(t)
+
+	// A Lyra raw string is backtick-delimited, and a backtick cannot appear inside a Go
+	// raw string — so the cases exercising them are concatenated in.
+	const bt = "\x60"
 
 	for _, c := range []struct{ golden, source string }{
 		// A declaration whose value is a lambda with nothing in it: the lambda's fields
@@ -113,6 +117,61 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"interpolated_string_expr_with_arithmetic", `let msg = "Total: ${price * qty}"`},
 		{"interpolated_string_expr_complex_expression", `let msg = "Hello, ${employee.get_name()}!"`},
 		{"interpolated_string_expr_escaped_hash", `let s = "Phone \#: ${phone_num}"`},
+		// **The harvest (09/24).** None of these was blocked by a missing *node kind* —
+		// every one uses nodes slices 2 to 8 already built. What stopped them was a field
+		// on a node already collected, which is the class of gap a curated golden set
+		// hides: the subset looks complete node by node while a flag on one of them is
+		// never read. Measuring which goldens use only supported kinds, and then running
+		// them, is what turned 50 into 75.
+		//
+		// The first three needed no code at all — they were failing against goldens that
+		// had been hand-edited into shapes the Go printer does not produce, which the
+		// whitespace-insensitive comparison in `pkg/analyzer/collector/tests` had been
+		// absorbing. See `cmpOutput`.
+		{"expr_boolean_binary_and", `let x = a && b`},
+		{"expr_boolean_binary_or", `let x = a || b`},
+		{"interpolated_string_expr_leading", `let greeting = "${name} is here"`},
+		{"basic_function_declaration_with_params", "\n\tlet add(a: Int, b: String) => a + b"},
+		// The numeric escapes, in a char and in a string. `\0` is the one that found the
+		// printer's emptiness rule: `pkg/printer` never treats an integer field as zero,
+		// so `Value: 0` prints and `CharacterLiteralExpr` is never an empty composite —
+		// where this printer had been dropping it. No other golden can tell the two rules
+		// apart.
+		{"char_literal_expr_hex_escape", `let a = '\x41'`},
+		{"char_literal_expr_large_unicode_escape", `let emoji = '\U0001F600'`},
+		{"char_literal_expr_nul_escape", `let nul = '\0'`},
+		{"char_literal_expr_unicode_directly", "let e_accent = 'é'"},
+		{"string_literal_expr_with_numeric_escapes", `let s = "A=\x41 e=é A'=\o101"`},
+		// Raw strings, where the point is that nothing inside is an escape: the first
+		// carries a `\n` that stays two characters and a `${…}` that stays text, and the
+		// second is delimited by `##` so the content may hold a backtick.
+		{"empty_raw_string_literal_expr", "let s = " + bt + bt},
+		{"raw_string_literal_expr", "let s = " + bt + `C:\new ${name}` + bt},
+		{"raw_string_literal_expr_with_hashes",
+			"let s = ##" + bt + "a " + bt + " and " + bt + "# inside" + bt + "##"},
+		// Optional chaining is a **node kind of its own** (`optional_member_expr`), not a
+		// flag on `.`, and a const name likewise (`const_identifier`) — so neither is read
+		// off the text. The chains are the ones that compose them with calls and `?`.
+		{"postfix_optional_property_access", "let name = person?.name"},
+		{"postfix_optional_array_indexing", "let first = array?[0]"},
+		{"postfix_chained_optional_index_access", "let value = matrix?[0]?[1]"},
+		{"postfix_chained_optional_member_calls", "let data = open_file(path)?.read()?.parse()?"},
+		{"postfix_complex_chain", `let foo = struct.function("arg")?[0].property`},
+		{"postfix_member_const_property_access", "let max = limits.MAX"},
+		// The declaration's own fields: modifiers, generic parameters and a written type
+		// annotation. **Both spellings put `pure` in the same place in the AST** — written
+		// before the name it is a field of the declaration, written after the `=` it is a
+		// field of the lambda — so these two are the juxtaposed form deliberately.
+		{"pure_function_declaration", "\n\tlet pure add(a: i64, b: i64) -> i64 => a + b"},
+		{"pure_async_function_declaration", "\n\tlet pure async compute(n: i64) -> i64 => n * 2"},
+		{"function_with_generic_params", "\n\tlet sum<n>(a: n, b: n) -> n => a + b"},
+		{"function_declaration_with_default_parameter_values",
+			"\n\tlet greet = (name: string, prefix: string = \"Hello\") -> string => \"${prefix} ${name}\""},
+		{"variable_declaration_with_var", "var the_answer: i64 = 42"},
+		{"expr_negation_narrow_min", "let x: i8 = -128"},
+		// A tuple type written inside another one, which is the same anonymous tuple a
+		// packed data payload carries and prints under the same `?` name.
+		{"tuple_type_declaration_with_nested_tuple", "tuple RGBA((i64, i64, i64), f64)"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

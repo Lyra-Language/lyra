@@ -324,8 +324,17 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
     Some(identifier) => text(identifier, source),
     None => "",
   }
+  // **The modifiers may sit on the declaration rather than on the lambda.**
+  // `let add = pure (…) => …` writes them inside the lambda, and `let pure add(…) => …`
+  // writes them before the name, where the grammar hangs them off the declaration as
+  // `fn_modifiers`. The two spellings are one program and the Go AST records both on the
+  // lambda, so what the declaration found is handed down to it.
+  let (is_pure, is_async) = declaration_modifiers(node)
   let value = match field(node, "value") {
-    Some(expr) => collect_expr(expr, source),
+    Some(expr) => match kind(expr) {
+      "lambda_expr" => Some(collect_lambda(expr, source, is_pure, is_async)),
+      _ => collect_expr(expr, source)
+    },
     None => None,
   }
   // **The same node in two shapes**, told apart by which field it carries. A `pattern`
@@ -343,14 +352,44 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
   }
   Some(VarDeclStmt(VarDecl {
     binding_kind: binding_kind,
+    generic_params: collect_generic_params(node, source),
     // The field's presence *is* the answer; `pub` is the only thing it can say.
     is_public: match field(node, "visibility") {
       Some(_) => true,
       None => false,
     },
     name: name,
+    // **The annotation sits in a wrapper of its own** (`type_annotation`), holding the
+    // written type in a `type` field — the same shape a return type has, and not the
+    // shape the value fields have.
+    type_annotation: match field(node, "type_annotation") {
+      Some(wrapper) => match field(wrapper, "type") {
+        Some(declared) => collect_type(declared, source),
+        None => None,
+      },
+      None => None,
+    },
     value: value,
   }))
+}
+
+/// The `pure` and `async` a declaration may carry ahead of its name, as `(pure, async)`.
+///
+/// Answering a pair rather than reading the fields at the two use sites: they are written
+/// together, they travel together, and a caller that asked for one and forgot the other is
+/// the mistake this shape rules out.
+let declaration_modifiers = (node: Node) -> (bool, bool) => {
+  let Some(list) = field(node, "modifiers") else { return (false, false) }
+  var is_pure = false
+  var is_async = false
+  for i in 0..<named_child_count(list) {
+    match kind(named_child(list, i)) {
+      "pure_modifier" => { is_pure = true },
+      "async_modifier" => { is_async = true },
+      _ => {}
+    }
+  }
+  (is_pure, is_async)
 }
 
 /// One pattern, or `None` for a form this slice does not collect.
@@ -359,65 +398,83 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
 /// the fourth wrapper in this walk — so it is unwrapped like the others rather than given
 /// a case of its own.
 let collect_pattern = (node: Node, source: []u8) -> Maybe<shared Pattern> => {
-  let k = kind(node)
-  if k == "destructuring_only_pattern" {
-    if named_child_count(node) == 0 { return None }
-    return collect_pattern(named_child(node, 0), source)
-  }
-  if k == "identifier" {
-    return Some(IdentifierPattern(Identifier { name: text(node, source) }))
-  }
-  if k == "data_pattern" {
-    let name_node = field(node, "name")?
-    return Some(DataPattern(DataPatternDef {
-      name: text(name_node, source),
-      pattern: match field(node, "pattern") {
-        Some(inner) => collect_pattern(inner, source),
-        None => None,
-      },
-    }))
-  }
-  None
-}
-
-/// One expression, or `None` for a kind this slice does not collect.
-let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  return match kind(node) {
-    "integer_literal" => Some(collect_integer(node, source)),
-    "char_literal" => Some(collect_character(node, source)),
-    "string_literal" => Some(collect_string(node, source)),
-    "lambda_expr" => Some(collect_lambda(node, source)),
-    "identifier" => Some(IdentifierExpr(Identifier { name: text(node, source) })),
-    "binary_expr" => collect_binary(node, source),
-    "call_expr" => collect_call(node, source),
-    "block" => Some(collect_block(node, source)),
-    "member_expr" => collect_member(node, source),
-    "index_expr" => collect_index(node, source),
-    "tuple_index_expr" => collect_tuple_index(node, source),
-    "boolean_expr" => collect_boolean(node, source),
-    "negation" => collect_unary(node, source, false),
-    "try_expr" => collect_unary(node, source, true),
-    "range_expr" => collect_range(node, source),
+  match kind(node) {
+    "destructuring_only_pattern" => {
+      if named_child_count(node) == 0 { return None }
+      return collect_pattern(named_child(node, 0), source)
+    },
+    "identifier" =>
+      return Some(IdentifierPattern(Identifier { name: text(node, source) })),
+    "data_pattern" => {
+      let name_node = field(node, "name")?
+      return Some(DataPattern(DataPatternDef {
+        name: text(name_node, source),
+        pattern: match field(node, "pattern") {
+          Some(inner) => collect_pattern(inner, source),
+          None => None,
+        },
+      }))
+    },
     _ => None
   }
 }
 
+/// One expression, or `None` for a kind this slice does not collect.
+let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => match kind(node) {
+  "integer_literal" => Some(collect_integer(node, source)),
+  "char_literal" => Some(collect_character(node, source)),
+  "string_literal" => Some(collect_string(node, source)),
+  "raw_string_literal" => Some(collect_raw_string(node, source)),
+  // A lambda met as an expression carries whatever modifiers it was written with; only
+  // a declaration can hand it more.
+  "lambda_expr" => Some(collect_lambda(node, source, false, false)),
+  "identifier" => Some(IdentifierExpr(Identifier { name: text(node, source) })),
+  // A const name is a **kind of its own**, so nothing here reads the spelling to decide
+  // — `MAX` is const because the grammar said so, not because it is upper case.
+  "const_identifier" =>
+    Some(IdentifierExpr(Identifier { is_const: true, name: text(node, source) })),
+  "binary_expr" => collect_binary(node, source),
+  "call_expr" => collect_call(node, source),
+  "block" => Some(collect_block(node, source)),
+  // `a?.b` and `a?[i]` are **separate node kinds**, not a flag on the ordinary ones, so
+  // the optional-ness is decided here and carried into one collector rather than
+  // re-derived from the text.
+  "member_expr" => collect_member(node, source, false),
+  "optional_member_expr" => collect_member(node, source, true),
+  "index_expr" => collect_index(node, source, false),
+  "optional_index_expr" => collect_index(node, source, true),
+  "tuple_index_expr" => collect_tuple_index(node, source),
+  "boolean_expr" => collect_boolean(node, source),
+  "negation" => collect_unary(node, source, false),
+  "try_expr" => collect_unary(node, source, true),
+  "range_expr" => collect_range(node, source),
+  _ => None
+}
+
 /// `person.name`.
-let collect_member = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+let collect_member = (node: Node, source: []u8, optional: bool) -> Maybe<shared Expr> => {
   let object_node = field(node, "object")?
   let property_node = field(node, "property")?
   let object = collect_expr(object_node, source)?
   let property = collect_expr(property_node, source)?
-  Some(MemberExpr(MemberAccess { object: object, property: property }))
+  Some(MemberExpr(MemberAccess {
+    object: object,
+    optional: optional,
+    property: property,
+  }))
 }
 
 /// `array[0]`.
-let collect_index = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+let collect_index = (node: Node, source: []u8, optional: bool) -> Maybe<shared Expr> => {
   let object_node = field(node, "object")?
   let index_node = field(node, "index")?
   let object = collect_expr(object_node, source)?
   let subscript = collect_expr(index_node, source)?
-  Some(IndexExpr(IndexAccess { index: subscript, object: object }))
+  Some(IndexExpr(IndexAccess {
+    index: subscript,
+    object: object,
+    optional: optional,
+  }))
 }
 
 /// `pair.0` — the position is read from the text, the grammar having already decided it
@@ -480,11 +537,25 @@ let collect_block = (node: Node, source: []u8) -> shared Expr => {
 }
 
 /// `(x: i64) -> i64 => x * 2`.
-let collect_lambda = (node: Node, source: []u8) -> shared Expr => {
+/// Whether `node` carries the named field at all, which for a modifier is the whole
+/// question: `pure` is a field the grammar sets and has no value to read.
+///
+/// Its own function because a `match` is not an operand of `||`, and the alternative was
+/// a `var` and two statements ahead of a struct literal that reads well as one expression.
+let has_field = (node: Node, name: string) -> bool => match field(node, name) {
+  Some(_) => true,
+  None => false,
+}
+
+let collect_lambda = (
+  node: Node,
+  source: []u8,
+  declared_pure: bool,
+  declared_async: bool
+) -> shared Expr => {
   var parameters: []Parameter = []
   match field(node, "parameters") {
     Some(list) => {
-      var i = 0
       for i in 0..<named_child_count(list) {
         let child = named_child(list, i)
         if kind(child) == "parameter" {
@@ -502,6 +573,8 @@ let collect_lambda = (node: Node, source: []u8) -> shared Expr => {
       Some(body) => collect_expr(body, source),
       None => None,
     },
+    is_async: declared_async || has_field(node, "is_async"),
+    is_pure: declared_pure || has_field(node, "is_pure"),
     parameters: parameters,
     return_type: match field(node, "return_type") {
       Some(declared) => collect_return_type(declared, source),
@@ -518,6 +591,14 @@ let collect_parameter = (node: Node, source: []u8) -> Maybe<Parameter> => {
   let pattern_node = field(node, "pattern")?
   if kind(pattern_node) != "identifier" { return None }
   Some(Parameter {
+    // The default sits in a `default_value` wrapper holding an `expression` field.
+    default_value: match field(node, "default_value") {
+      Some(wrapper) => match field(wrapper, "expression") {
+        Some(expr) => collect_expr(expr, source),
+        None => None,
+      },
+      None => None,
+    },
     pattern: IdentifierPattern(Identifier { name: text(pattern_node, source) }),
     type_annotation: match field(node, "type") {
       Some(declared) => collect_type(declared, source),
@@ -541,7 +622,13 @@ let collect_return_type = (node: Node, source: []u8) -> Maybe<ReturnType> => {
 /// and the text is only the name — no list of spellings to fall out of date.
 let collect_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
   return match kind(node) {
-    "signed_integer_type" | "unsigned_integer_type" | "float_type" | "boolean_type" | "string_type"
+    // **`bool` is the one primitive whose AST name is not what was written**: the Go
+    // collector maps `boolean_type` to `types.Boolean`, which is spelled `boolean`, where
+    // every other primitive takes its name from the source text. Reading the text here
+    // gave `bool`, which no golden could see — none of the ones matching uses a boolean
+    // annotation — and the differential test did (09/24).
+    "boolean_type" => Some(PrimitiveType(Identifier { name: "boolean" })),
+    "signed_integer_type" | "unsigned_integer_type" | "float_type" | "string_type"
       | "rune_type" => Some(PrimitiveType(Identifier { name: text(node, source) })),
     // A name the program declared. The collector records what was written and does not
     // look it up — resolution is the typechecker's, which is what "unresolved" says.
@@ -549,6 +636,13 @@ let collect_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
       Some(UnresolvedType(Identifier { name: text(node, source) })),
     // A variable the enclosing declaration bound.
     "generic_type" => Some(GenericType(Identifier { name: text(node, source) })),
+    // `(i64, i64)` written inside another type — the same node a packed data payload
+    // carries, and named `?` for the same reason: an unnamed tuple answers that when
+    // asked for its name.
+    "anonymous_tuple_type" => Some(TupleType(TupleTypeDef {
+      elements: collect_tuple_elements(node, source),
+      name: "?",
+    })),
     _ => None
   }
 }
@@ -722,10 +816,17 @@ let has_interpolation = (node: Node) -> bool => {
 
 /// The runes with their escape sequences resolved.
 ///
-/// The common escapes only. `\x41` and `\u{1F600}` are **not** decoded here and are left as
-/// written, which is visible in a golden rather than silent: this slice's goldens do not
-/// reach them, and a wrong answer that looks like a right one is the thing to avoid while
-/// the subset is still growing.
+/// The set is `pkg/analyzer/collector/expressions/string_literal.go`'s: the simple escapes,
+/// `\oNNN`, `\xNN`, `\uNNNN` and `\UNNNNNNNN`. A sequence too short for its digits is left
+/// as written rather than half-read — the grammar does not produce one, and inventing a
+/// value for a malformed literal is how a collector comes to disagree with the compiler
+/// about what a program says.
+///
+/// **One divergence, deliberate and narrow.** Go writes `\xNN` as a *byte*, so `"\xE9"`
+/// there is one byte that is not valid UTF-8 on its own; this writes the code point. Below
+/// 128 the two agree, which is every `\x` any golden uses. Fixing it properly wants the
+/// value to be a byte string rather than runes, which is a decision for the AST and not
+/// for this function.
 let decode_escapes = pure (runes: []rune) -> string => {
   var out = ""
   var i = 0
@@ -737,14 +838,65 @@ let decode_escapes = pure (runes: []rune) -> string => {
       continue
     }
     let next = runes[i + 1]
-    if next == 'n' { out = out ++ "\n" }
-    else if next == 't' { out = out ++ "\t" }
-    else if next == 'r' { out = out ++ "\r" }
-    else if next == '0' { out = out ++ "${'\0'}" }
-    else { out = out ++ "${next}" }
+    let width = numeric_escape_width(next)
+    if width > 0 && i + 1 + width < runes.len() {
+      let base = if next == 'o' { 8 } else { 16 }
+      let digits = runes.slice(i + 2, i + 2 + width)
+      out = out ++ "${rune(digits_value(digits, base))}"
+      i += 2 + width
+      continue
+    }
+    out = out ++ "${simple_escape(next)}"
     i += 2
   }
   out
+}
+
+/// How many digits follow `\o`, `\x`, `\u` or `\U`, and 0 for an escape that takes none.
+///
+/// A fixed width per prefix rather than "digits until one stops": `"\012"` is NUL followed
+/// by `12`, not a newline, because Lyra spells octal `\o` and so has no run for `\0` to
+/// begin. That is the one place this could quietly inherit C's rule.
+let numeric_escape_width = pure (c: rune) -> i64 => match c {
+  'o' => 3,
+  'x' => 2,
+  'u' => 4,
+  'U' => 8,
+  _ => 0,
+}
+
+/// The rune a one-letter escape stands for.
+///
+/// The final arm covers `\\`, `\'`, `\"` and `\#`, which each stand for themselves — and
+/// anything else, which the grammar does not admit. Answering the character as written is
+/// the reading that loses no source.
+let simple_escape = pure (c: rune) -> rune => match c {
+  '0' => rune(0),
+  'a' => rune(7),
+  'b' => rune(8),
+  'e' => rune(27),
+  'f' => rune(12),
+  'n' => '\n',
+  'r' => '\r',
+  't' => '\t',
+  'v' => rune(11),
+  _ => c,
+}
+
+/// `` `C:\new` `` — a raw string, whose whole point is that nothing in it is an escape.
+///
+/// The delimiters are hidden tokens rather than children, so the content node is asked for
+/// directly instead of slicing the literal's own text: `##` ` ##` has two of them at each
+/// end and slicing a fixed width would take the wrong bytes. An empty raw string has no
+/// content child at all.
+let collect_raw_string = (node: Node, source: []u8) -> shared Expr => {
+  for i in 0..<named_child_count(node) {
+    let child = named_child(node, i)
+    if kind(child) == "raw_string_content" {
+      return StringLiteralExpr(StringLiteral { value: text(child, source) })
+    }
+  }
+  StringLiteralExpr(StringLiteral { value: "" })
 }
 
 /// The value of `digits` read in `base`, underscores ignored as the grammar allows them.

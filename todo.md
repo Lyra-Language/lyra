@@ -133,6 +133,28 @@ Package management, versioning and separate compilation are out of scope by deci
     a newtype's `where` constraints, and the pattern kinds beyond an identifier and a data
     pattern — **tuple, array and struct patterns**, which is what stops
     `let Some (Ok v) = m` from agreeing with the Go collector.
+  - **The harvest, 09/24: 50 goldens to 75, with no new node kind.** Measuring which
+    goldens use only *kinds* already built found 78 against a test listing 50 — the other
+    28 were blocked by a **field** on a node already collected, which the kind-by-kind
+    count cannot see. Optional chaining and const names (separate CST kinds, not flags),
+    `pure`/`async` (on the declaration in the juxtaposed spelling, on the lambda in the
+    other), a parameter's default, a declaration's generic parameters and its written type
+    annotation, the numeric escapes and raw strings. Three needed no code: the golden was
+    hand-edited and the whitespace-insensitive comparison in
+    `pkg/analyzer/collector/tests` had been absorbing it — it compares bytes now.
+    Two more came from the differential test: `bool`'s AST name is `boolean`, and a
+    `ReturnType`'s label renders a tuple's elements rather than its `Name` field.
+    (COMPLETED.md, 09/24.)
+  - **What blocks the rest, measured rather than guessed.** Sole blockers, by goldens:
+    `FloatLiteralExpr` 8, `StringConcatExpr` 6, `TupleLiteralExpr` 6, `IfExpr` 5,
+    `StructInstanceExpr` 5, `ArrayLiteralExpr` 3, `ArrayRepeatExpr` 3, `ForInLoopExpr` 3,
+    the tuple and array patterns 3 each, `ForLoopExpr` with `MathAssignOpExpr` 4 together.
+    The literal family is the cheap slice; control flow is the structural one and travels
+    with the pattern kinds and `MatchExpr`.
+  - **Three goldens have no test.** `if_then_expr`, `if_then_expr_multiple_lines` and
+    `if_then_expr_with_else_if` are referenced from nothing and record an `if/then/end`
+    syntax the grammar no longer has — their contents are the identifiers `else` and `end`
+    collected as statements. Delete them with whatever next touches that directory.
   - **The `Location` every node carries is not modelled yet**, and the goldens do not show
     it (`pkg/printer` omits `print:"-"` fields, which is what `NameLocation` is). It has to
     arrive before anything reports a diagnostic, and choosing when is a slice of its own.

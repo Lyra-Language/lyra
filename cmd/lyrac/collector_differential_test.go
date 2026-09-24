@@ -25,6 +25,10 @@ import (
 // the file on disk, for any source either can be given.
 func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 	bin := buildCollector(t)
+
+	// As in the golden test: a Lyra raw string's backticks cannot sit inside a Go one.
+	const bt2 = "\x60"
+
 	for _, c := range []struct{ name, source string }{
 		// Slice 5's two, in the shapes no matching golden covers.
 		{"a call with no arguments", "let a = foo()"},
@@ -76,6 +80,45 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"an ascending inclusive range", "let r = 0..<=10"},
 		{"a descending exclusive range", "let r = 10..>0"},
 		{"a descending inclusive range", "let r = 10..>=0"},
+		// **The harvest's new fields (09/24)**, in the compositions the goldens do not
+		// isolate — and two of these found real disagreements rather than confirming
+		// agreement, which is what the oracle is for.
+		//
+		// The escapes: `\u` at four digits and `\o` in a *char* appear in no golden at
+		// all, and the lettered ones only as `\n` and `\t`. A fixed width per prefix is
+		// what makes `"\012"` NUL followed by `12` rather than a newline.
+		{"a four-digit unicode escape in a char", `let c = '\u00E9'`},
+		{"a four-digit unicode escape in a string", `let s = "\u2603 snow"`},
+		{"an octal escape in a char", `let c = '\o101'`},
+		{"the lettered escapes", `let s = "\a\b\e\f\v"`},
+		{"an escaped quote and backslash", `let s = "a \" b \\ c"`},
+		{"a raw string with escape-looking text", "let s = " + bt2 + `${not} \n` + bt2},
+		// Optional chaining composed with what slices 5 and 6 built.
+		{"an optional index on a call result", "let a = rows()?[0]"},
+		{"an optional member inside an interpolation", `let s = "${a?.b}"`},
+		{"a bare const name", "let m = MAX"},
+		{"a const name indexed", "let m = LIMITS[0]"},
+		// A lambda carrying only `async`, where both goldens carry `pure` too — and the
+		// declaration form of the modifiers beside generic parameters, which is where the
+		// two spellings of `pure` have to agree.
+		{"a lambda with only async", "let f = async () => 1"},
+		{"modifiers and generics together", "let pure id<t>(x: t) -> t => x"},
+		{"a generic parameter list with two variables", "let pair<a, b> = (x: a, y: b) => x"},
+		// A default that is not a literal, which is the only golden's shape.
+		{"a default value that is an expression", "let f = (n: i64 = 1 + 2) => n"},
+		{"a default value that is a call", "let f = (n: i64 = size()) => n"},
+		// A written annotation in the shapes the two goldens do not reach: a declared type
+		// rather than a primitive, and a declaration with no value at all.
+		{"an annotated declaration of a declared type", "let p: Point = make()"},
+		{"a var with an annotation and no value", "var x: i64"},
+		// An anonymous tuple away from a `tuple` declaration. **The return type is the
+		// case that found two bugs**: `ReturnType`'s label goes through Go's `GetName()`,
+		// which renders a tuple's elements rather than its `Name` field, and `bool`'s AST
+		// name is `boolean` — the one primitive whose name is not what the source wrote.
+		// Neither is visible in any matching golden.
+		{"an anonymous tuple as a struct field type", "struct S { pair: (i64, i64) }"},
+		{"an anonymous tuple as a return type", "let f = () -> (i64, bool) => t"},
+		{"a nested anonymous tuple", "tuple T(((i64, i64), i64))"},
 		// No case for an *absent* end operator: `0..` is deliberately not an expression
 		// yet (todo.md, Ranges), and a range with an end always writes one. So
 		// `end_operator: None` is currently reachable only through pattern ranges, which

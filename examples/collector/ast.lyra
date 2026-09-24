@@ -43,10 +43,18 @@ pub struct ExprStmt {
 pub struct VarDecl {
   /// `let` or `var` — the word as written, which is what the golden prints.
   binding_kind: string,
+  /// `let sum<n> = …` — the variables the declaration binds. On the declaration rather
+  /// than on the lambda: `<n>` is written before the `=`, and that is where the Go AST
+  /// records it too.
+  generic_params: []GenericParam = [],
   /// True for `pub`. Printed only when true, the printer omitting zero values.
   is_public: bool,
   /// The bound name, which is also the label in the node's header line.
   name: string,
+  /// `var x: i64 = 42` — the written annotation, which is not the lambda's return type
+  /// and is absent far more often than present. Spelled `type_annotation` and printed
+  /// `Type`, as `Parameter` is.
+  type_annotation: Maybe<shared TypeNode> = None,
   /// The initialiser. `None` for a declaration without one.
   value: Maybe<shared Expr>,
 }
@@ -106,6 +114,10 @@ pub struct StringLiteral {
 /// A name, used as an expression, a pattern or a type — the three places one appears, all
 /// printed as `Kind(name) { Name: name }` and so all one struct.
 pub struct Identifier {
+  /// True for a **const** name — `limits.MAX`, which the grammar tells apart as a node
+  /// kind of its own rather than by its spelling. Only an `IdentifierExpr` prints it: a
+  /// pattern binds a name and a type names one, and neither can be const.
+  is_const: bool = false,
   name: string,
 }
 
@@ -181,6 +193,8 @@ pub struct FunctionCall {
 /// only an identifier can appear there.
 pub struct MemberAccess {
   object: shared Expr,
+  /// True for `a?.b` — a different CST node, not a flag the grammar hangs off `.`.
+  optional: bool = false,
   property: shared Expr,
 }
 
@@ -188,6 +202,8 @@ pub struct MemberAccess {
 pub struct IndexAccess {
   index: shared Expr,
   object: shared Expr,
+  /// True for `a?[i]`, as `MemberAccess.optional` is for `a?.b`.
+  optional: bool = false,
 }
 
 /// `pair.0`.
@@ -222,6 +238,11 @@ pub struct Interpolated {
 /// passing now for a better reason than it did in slice 2.
 pub struct Lambda {
   body: Maybe<shared Expr>,
+  /// `async (…) => …`.
+  is_async: bool = false,
+  /// `pure (…) => …`. Each modifier is a field on the CST node, so the collector reads
+  /// its presence rather than scanning the text before the parameters.
+  is_pure: bool = false,
   parameters: []Parameter,
   return_type: Maybe<ReturnType>,
 }
@@ -231,6 +252,8 @@ pub struct Lambda {
 /// It prints with **no label** — `Parameter {`, not `Parameter(x) {` — because it has no
 /// `Name` field of its own. The name lives in the pattern.
 pub struct Parameter {
+  /// `(prefix: string = "Hello")` — the expression after `=`, or `None`.
+  default_value: Maybe<shared Expr> = None,
   pattern: shared Pattern,
   /// Spelled `type_annotation` and printed `Type`: `type` is not a field name Lyra will
   /// take, and the golden's word is not negotiable.

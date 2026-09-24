@@ -535,7 +535,11 @@ UPDATE_GOLDEN=1 go test ./pkg/analyzer/collector/tests/...   # regenerate golden
 
 **Collector golden tests** (`pkg/analyzer/collector/tests/`): `runGoldenTest(t, source,
 "name")` (no extension) against `testdata/*.golden`; a new golden is created and fails on
-first run. `parseAndCollect(t, source)` returns `program` and `table` directly.
+first run. **The comparison is byte for byte.** It trimmed lines and collapsed whitespace
+until 09/24, which let five hand-edited goldens pass in shapes the printer does not
+produce — found by the Lyra collector reading the same files strictly. A golden is machine
+output; do not reintroduce leniency to make one pass.
+`parseAndCollect(t, source)` returns `program` and `table` directly.
 
 **Typechecker tests** (`pkg/analyzer/typechecker/tests/`):
 `res := parseCollectAndCheck(t, source, false)`, then `assertNoErrors(t, res)` or

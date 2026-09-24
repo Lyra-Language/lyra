@@ -6,19 +6,19 @@ Program(1 statements) {
 			Value: {
 				LambdaExpr {
 					Body: {
-							MathBinaryOpExpr {
-									Left: {
-											IdentifierExpr(a) {
-													Name: a
-											}
-									}
-									Operator: +
-									Right: {
-											IdentifierExpr(b) {
-													Name: b
-											}
-									}
+						MathBinaryOpExpr {
+							Left: {
+								IdentifierExpr(a) {
+									Name: a
+								}
 							}
+							Operator: +
+							Right: {
+								IdentifierExpr(b) {
+									Name: b
+								}
+							}
+						}
 					}
 					Parameters: {
 						Parameter {
