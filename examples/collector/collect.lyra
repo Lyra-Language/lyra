@@ -17,6 +17,13 @@ import ast.{
   IntegerLiteral, CharacterLiteral, StringLiteral, Identifier, BinaryOp, Lambda,
   Parameter, TypeNode, ReturnType, FunctionCall, Block,
   MemberAccess, IndexAccess, TupleIndexAccess, Unary, Range,
+  TypeDecl,
+  StructTypeDef,
+  StructField,
+  TupleTypeDef,
+  DataTypeDef,
+  DataTypeConstructor,
+  GenericParam,
 }
 
 /// Every statement at the file's top level.
@@ -42,6 +49,7 @@ let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
   return match kind(node) {
     "comment" => None,
     "declaration" => Some(collect_declaration(node, source)),
+    "type_declaration" => collect_type_declaration(node, source),
     "expression_statement" => {
       // The statement wraps one expression; if that expression is a kind this slice does
       // not know, the statement is not collected either — a wrapper around nothing is a
@@ -56,6 +64,229 @@ let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
     },
     _ => None
   }
+}
+
+/// `struct Point { … }`, `tuple Pair(…)`, `data Color = …`.
+///
+/// The keyword's node is a child rather than a field, so which of the three it is comes
+/// from that child's kind — the same "the grammar already decided" the binary/boolean split
+/// rests on.
+let collect_type_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
+  if named_child_count(node) == 0 { return None }
+  let body = named_child(node, 0)
+  let k = kind(body)
+  let declared = if k == "struct_type" { collect_struct_type(body, source) }
+  else if k == "named_tuple_type" { collect_tuple_type(body, source) }
+  else if k == "data_type" { collect_data_type(body, source) }
+  else { return None }
+  let Some(declared_type) = declared else { return None }
+  Some(TypeDeclStmt(TypeDecl {
+    derives: [],
+    generic_params: collect_generic_params(body, source),
+    is_public: match field(body, "visibility") {
+      Some(_) => true,
+      None => false,
+    },
+    name: type_name_of(declared_type),
+    declared: declared_type,
+  }))
+}
+
+/// `struct Point { x: i64, y: i64 = 0 }`.
+let collect_struct_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+  var name = ""
+  var fields: []StructField = []
+  for i in 0..<named_child_count(node) {
+    let child = named_child(node, i)
+    let k = kind(child)
+    if k == "struct_name" { name = text(child, source) }
+    if k == "struct_type_body" {
+      for j in 0..<named_child_count(child) {
+        let member = named_child(child, j)
+        if kind(member) == "struct_member" {
+          match collect_struct_field(member, source) {
+            Some(f) => fields.push(f),
+            None => {},
+          }
+        }
+      }
+    }
+  }
+  Some(NamedStructType(StructTypeDef { fields: fields, name: name }))
+}
+
+/// `x: i64`, `y: i64 = 0`.
+let collect_struct_field = (node: Node, source: []u8) -> Maybe<StructField> => {
+  var name = ""
+  var declared: Maybe<TypeNode> = None
+  for i in 0..<named_child_count(node) {
+    let child = named_child(node, i)
+    let k = kind(child)
+    if k == "field_name" { name = text(child, source) }
+    // The type sits inside a `field_type` wrapper, as a range's bounds do.
+    if k == "field_type" && named_child_count(child) > 0 {
+      declared = collect_type(named_child(child, 0), source)
+    }
+  }
+  let Some(declared_type) = declared else { return None }
+  Some(StructField {
+    default_value: match field(node, "default_value") {
+      Some(wrapper) => collect_wrapped_at(wrapper, source),
+      None => None,
+    },
+    name: name,
+    declared: declared_type,
+  })
+}
+
+/// `tuple Point2D(f64, f64)`.
+let collect_tuple_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+  var name = ""
+  match field(node, "name") {
+    Some(n) => {
+      name = text(n, source)
+    },
+    None => {},
+  }
+  Some(TupleType(TupleTypeDef {
+    elements: collect_tuple_elements(node, source),
+    name: name,
+  }))
+}
+
+/// `data Color = Red | Hex(HexStr)`.
+let collect_data_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+  var name = ""
+  var constructors: []DataTypeConstructor = []
+  for i in 0..<named_child_count(node) {
+    let child = named_child(node, i)
+    let k = kind(child)
+    if k == "data_type_name" { name = text(child, source) }
+    if k == "data_type_constructor" {
+      constructors.push(DataTypeConstructor {
+        name: match field(child, "name") {
+          Some(n) => text(n, source),
+          None => "",
+        },
+        packed: has_packed_payload(child),
+        // A nullary constructor has no payload at all, which is an empty list rather than
+        // an absent one.
+        params: collect_constructor_params(child, source),
+      })
+    }
+  }
+  Some(DataType(DataTypeDef { constructors: constructors, name: name }))
+}
+
+/// Whether a constructor's payload was written in parentheses.
+let has_packed_payload = (node: Node) -> bool => {
+  for i in 0..<named_child_count(node) {
+    if kind(named_child(node, i)) == "anonymous_tuple_type" { return true }
+  }
+  false
+}
+
+/// The payload types of one data constructor.
+///
+/// **The two payload spellings are different shapes.** `Wrap(t)` carries one anonymous
+/// tuple whose elements are the written types; `Some t` carries those types directly.
+/// Flattening the parenthesised form into the juxtaposed one reads as tidier and is a
+/// different tree — the Go collector was the thing that said so, since no stored golden
+/// uses the packed form.
+///
+/// The anonymous tuple is named `?`, which is what an unnamed one answers when asked.
+let collect_constructor_params = (node: Node, source: []u8) -> []TypeNode => {
+  var params: []TypeNode = []
+  for i in 0..<named_child_count(node) {
+    let child = named_child(node, i)
+    if kind(child) == "anonymous_tuple_type" {
+      params.push(TupleType(TupleTypeDef {
+        elements: collect_tuple_elements(child, source),
+        name: "?",
+      }))
+      return params
+    }
+    // A juxtaposed payload: each type sits beside the name as a child of its own.
+    match collect_type(child, source) {
+      Some(collected) => params.push(collected),
+      None => {},
+    }
+  }
+  params
+}
+
+/// The element types of a `tuple_type_body` under `node`, each unwrapped from the
+/// `tuple_type_element` the grammar wraps it in.
+let collect_tuple_elements = (node: Node, source: []u8) -> []TypeNode => {
+  var elements: []TypeNode = []
+  var i = 0
+  for i < named_child_count(node) {
+    let child = named_child(node, i)
+    if kind(child) != "tuple_type_body" {
+      i += 1
+      continue
+    }
+    var j = 0
+    for j < named_child_count(child) {
+      let element = named_child(child, j)
+      if kind(element) == "tuple_type_element" {
+        match field(element, "type") {
+          Some(t) => match collect_type(t, source) {
+            Some(collected) => elements.push(collected),
+            None => {},
+          },
+          None => {},
+        }
+      }
+      j += 1
+    }
+    i += 1
+  }
+  elements
+}
+
+/// `<t, u>` — the variables a declaration binds, or none.
+let collect_generic_params = (node: Node, source: []u8) -> []GenericParam => {
+  var params: []GenericParam = []
+  // **Found among the children rather than by field name.** `named_tuple_type` exposes a
+  // `generic_parameters` field and `struct_type`/`data_type` do not, so asking for the
+  // field collects a tuple's variables and silently none of the other two's — which is
+  // the shape of bug that prints a *shorter* tree rather than a wrong one.
+  var list = node
+  var found = false
+  for c in 0..<named_child_count(node) {
+    if kind(named_child(node, c)) == "generic_parameters" {
+      list = named_child(node, c)
+      found = true
+    }
+  }
+  if !found { return params }
+  for i in 0..<named_child_count(list) {
+    let child = named_child(list, i)
+    if kind(child) == "generic_parameter" {
+      match field(child, "name") {
+        Some(n) => params.push(GenericParam { name: text(n, source) }),
+        None => {},
+      }
+    }
+  }
+  params
+}
+
+/// The name a declared type carries, which is also the declaration's own.
+let type_name_of = pure (declared: TypeNode) -> string => match declared {
+  NamedStructType(def) => def.name,
+  TupleType(def) => def.name,
+  DataType(def) => def.name,
+  PrimitiveType(identifier) => identifier.name,
+  UnresolvedType(identifier) => identifier.name,
+  GenericType(identifier) => identifier.name,
+}
+
+/// The expression inside an already-located wrapper node.
+let collect_wrapped_at = (wrapper: Node, source: []u8) -> Maybe<shared Expr> => {
+  if named_child_count(wrapper) == 0 { return None }
+  collect_expr(named_child(wrapper, 0), source)
 }
 
 /// `let x = 1`, `pub var y = 2`.
@@ -250,6 +481,12 @@ let collect_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
   return match kind(node) {
     "signed_integer_type" | "unsigned_integer_type" | "float_type" | "boolean_type" | "string_type"
       | "rune_type" => Some(PrimitiveType(Identifier { name: text(node, source) })),
+    // A name the program declared. The collector records what was written and does not
+    // look it up — resolution is the typechecker's, which is what "unresolved" says.
+    "user_defined_type_name" =>
+      Some(UnresolvedType(Identifier { name: text(node, source) })),
+    // A variable the enclosing declaration bound.
+    "generic_type" => Some(GenericType(Identifier { name: text(node, source) })),
     _ => None
   }
 }

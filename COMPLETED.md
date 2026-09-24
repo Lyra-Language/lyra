@@ -42,6 +42,43 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/24/26 — the bootstrap's seventh slice: declarations, and a shape the goldens hid
+
+`TypeDeclStmt` over the three declaration forms with their generic parameters, plus the
+written types they hold. **41 of 238**, up from 33.
+
+The slice found its own bug, and the finding is the entry. `Wrap(t)` and `Some t` are not
+two spellings of one payload: the parenthesised form is **packed**, carrying a single
+anonymous tuple whose elements are the written types, where the juxtaposed form carries
+those types directly. Flattening the first into the second reads as tidier and produces a
+different tree. **No stored golden uses the packed form**, so the goldens would have
+accepted the wrong shape indefinitely — it was the differential test against the Go
+collector that said otherwise, which is exactly the gap that test was added to cover in
+slice 5. The anonymous tuple is named `?`, which is what an unnamed one answers when asked.
+
+Two smaller traps, both of the "prints a shorter tree rather than a wrong one" kind.
+`generic_parameters` is a **field** on `named_tuple_type` and a plain **child** on
+`struct_type` and `data_type`, so asking for the field collects a tuple's variables and
+silently none of the other two's. And a struct field's type sits inside a `field_type`
+wrapper, as a range's bounds and a call's arguments do — the third wrapper in three slices,
+which is starting to look like the grammar's habit rather than a special case.
+
+Worth recording a process failure, since it cost three rebuilds. Twice I edited text that
+had been rewritten since I last read it — `collect_statement` and `collect_type` are both
+`match` expressions now, and my insertions were written against the `if` chains they
+replaced. They applied cleanly to nothing and the build stayed green, so the symptom was a
+golden that did not match rather than an error. Reading the function before editing it is
+the cheap fix, and "the patch applied" is not evidence that it landed anywhere.
+
+`TestCollector_SkipsWhatItDoesNotYetCollect` failed and was right to: its struct is
+collected now. It names the subset's boundary, so it moves when the boundary does — a trait
+and an impl stand there instead.
+
+The tail of this domain is a sub-domain of its own. `ConstrainedType` blocks 11 of the
+remaining declaration goldens and brings the newtype constraint expressions with it, which
+is a slice rather than a finish. The larger wins are elsewhere: `DestructuringDeclStmt` (24)
+and `InterpolatedStringExpr` (22).
+
 ### 09/23/26 — the bootstrap's sixth slice: the measurement paying out
 
 `BooleanBinaryOpExpr`, `NegationExpr`, `TryExpr`, `RangeExpr`. **33 of 238 goldens**, up

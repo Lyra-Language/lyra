@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 33 of the 238 goldens whose sources can be recovered match today. The number is not
+// 41 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -84,6 +84,19 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"simple_range_expression", "0..<10"},
 		{"range_expression_with_step", "0..<=10:2"},
 		{"range_expression_with_start_expression", "start*2..<=end-1"},
+		// Slice 7: type declarations. The three forms, each with and without the parts
+		// that are optional — visibility, generic parameters, a field default.
+		{"tuple_type_declaration", "tuple Point2D(f64, f64)"},
+		{"tuple_type_declaration_with_visibility", "pub tuple Point2D(f64, f64)"},
+		{"tuple_type_declaration_with_generic_parameters", "tuple Point2D<t>(t, t)"},
+		{"struct_no_derive", "\n\t\tstruct Point {\n\t\t\tx: f32,\n\t\t\ty: f32,\n\t\t}\n\t"},
+		{"basic_struct_type_declaration", "\n\t\tpub struct Point {\n\t\t\tx: i64,\n\t\t\ty: i64 = 0,\n\t\t}\n\t"},
+		{"basic_data_type", "pub data ColorName = Red | Green | Blue"},
+		{"struct_type_declaration_with_generic_parameters", "\n\t\tpub struct Point<t> {\n\t\t\tx: t,\n\t\t\ty: t,\n\t\t}\n\t"},
+		// `Some t` is the *juxtaposed* payload — one type directly. Its parenthesised
+		// sibling `Some(t)` is a different tree, not a different spelling, which no
+		// stored golden covers and the differential test does.
+		{"data_type_with_generic_parameter", "pub data Maybe<t> = Nil | Some t"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")
@@ -114,8 +127,11 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 func TestCollector_SkipsWhatItDoesNotYetCollect(t *testing.T) {
 	bin := buildCollector(t)
 	source := filepath.Join(t.TempDir(), "in.lyra")
-	// A struct declaration and a trait are not in the subset; the two `let`s are.
-	program := "struct Point { x: i64 }\nlet a = 1\ntrait Show2 { show2: (Self) -> string }\nlet b = 2\n"
+	// A trait and an impl are not in the subset; the two `let`s are. The struct that used
+	// to stand here was collected by slice 7, which is the right way for this test to
+	// fail — it names the boundary, so it moves when the boundary does.
+	program := "trait Show2 { show2: (Self) -> string }\nlet a = 1\n" +
+		"impl Show2 for i64 { show2 = (self) => \"n\" }\nlet b = 2\n"
 	if err := os.WriteFile(source, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}

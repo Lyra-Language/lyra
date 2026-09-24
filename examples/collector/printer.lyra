@@ -38,6 +38,12 @@ import ast.{
   Block,
   BinaryOp,
   Range,
+  TypeDecl,
+  StructTypeDef,
+  StructField,
+  TupleTypeDef,
+  DataTypeDef,
+  DataTypeConstructor,
 }
 
 /// A whole program, as `pkg/printer.PrintAST` would render it.
@@ -58,6 +64,7 @@ pub let print_ast = pure (program: Program) -> string => {
 /// One statement at `depth`.
 let print_stmt = pure (stmt: Stmt, depth: i64) -> string => match stmt {
   VarDeclStmt(decl) => print_var_decl(decl, depth),
+  TypeDeclStmt(decl) => print_type_decl(decl, depth),
   ExpressionStmt(statement) =>
     header_unnamed("ExpressionStmt", depth) ++
     node_field("Expression", print_expr(statement.expression, depth + 2), depth + 1) ++
@@ -82,6 +89,35 @@ let print_var_decl = pure (decl: VarDecl, depth: i64) -> string => {
     None => {},
   }
   out ++ close(depth)
+}
+
+/// `TypeDeclStmt(Name) { Derives, IsPublic, Name, Type }`.
+let print_type_decl = pure (decl: TypeDecl, depth: i64) -> string => {
+  var out = header("TypeDeclStmt", decl.name, depth)
+  if decl.derives.len() > 0 {
+    // **Bare names, not nodes.** A derive is a word the declaration carries, so the Go
+    // printer renders each as itself — a list of strings, one per line.
+    var items = ""
+    for name in decl.derives {
+      items = items ++ tabs(depth + 2) ++ "${name}\n"
+    }
+    out = out ++ node_field("Derives", items, depth + 1)
+  }
+  if decl.generic_params.len() > 0 {
+    var params = ""
+    for p in decl.generic_params {
+      params = params ++ header("GenericParam", p.name, depth + 2) ++
+        scalar("Name", p.name, depth + 3) ++ close(depth + 2)
+    }
+    out = out ++ node_field("GenericParams", params, depth + 1)
+  }
+  if decl.is_public { out = out ++ scalar("IsPublic", "true", depth + 1) }
+  out = out ++ scalar("Name", decl.name, depth + 1)
+  out ++ node_field(
+    "Type",
+    print_type(decl.declared, depth + 2),
+    depth + 1
+  ) ++ close(depth)
 }
 
 /// One expression at `depth`.
@@ -264,11 +300,89 @@ let print_pattern = pure (pattern: Pattern, depth: i64) -> string => match patte
 /// One written type.
 let print_type = pure (declared: TypeNode, depth: i64) -> string => match declared {
   PrimitiveType(identifier) => print_named("PrimitiveType", identifier, depth),
+  UnresolvedType(identifier) => print_named("UnresolvedType", identifier, depth),
+  GenericType(identifier) => print_named("GenericType", identifier, depth),
+  NamedStructType(def) => print_struct_type(def, depth),
+  TupleType(def) => print_tuple_type(def, depth),
+  DataType(def) => print_data_type(def, depth),
+}
+
+/// `NamedStructType(Name) { Fields, Name }`.
+let print_struct_type = pure (def: StructTypeDef, depth: i64) -> string => {
+  var out = header("NamedStructType", def.name, depth)
+  if def.fields.len() > 0 {
+    var items = ""
+    for f in def.fields {
+      items = items ++ print_struct_field(f, depth + 2)
+    }
+    out = out ++ node_field("Fields", items, depth + 1)
+  }
+  out ++ scalar("Name", def.name, depth + 1) ++ close(depth)
+}
+
+/// `StructField(name) { DefaultValue, Name, Type }`.
+let print_struct_field = pure (f: StructField, depth: i64) -> string => {
+  var out = header("StructField", f.name, depth)
+  match f.default_value {
+    Some(value) => {
+      out = out ++ node_field("DefaultValue", print_expr(value, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  out = out ++ scalar("Name", f.name, depth + 1)
+  out ++ node_field("Type", print_type(f.declared, depth + 2), depth + 1) ++ close(depth)
+}
+
+/// `TupleType(Name) { Elements, Name }`.
+let print_tuple_type = pure (def: TupleTypeDef, depth: i64) -> string => {
+  var out = header("TupleType", def.name, depth)
+  if def.elements.len() > 0 {
+    var items = ""
+    for e in def.elements {
+      items = items ++ print_type(e, depth + 2)
+    }
+    out = out ++ node_field("Elements", items, depth + 1)
+  }
+  out ++ scalar("Name", def.name, depth + 1) ++ close(depth)
+}
+
+/// `DataType(Name) { Constructors, Name }`.
+let print_data_type = pure (def: DataTypeDef, depth: i64) -> string => {
+  var out = header("DataType", def.name, depth)
+  if def.constructors.len() > 0 {
+    var items = ""
+    for c in def.constructors {
+      items = items ++ print_data_constructor(c, depth + 2)
+    }
+    out = out ++ node_field("Constructors", items, depth + 1)
+  }
+  out ++ scalar("Name", def.name, depth + 1) ++ close(depth)
+}
+
+/// `DataTypeConstructor(Name) { Name, Params }` — a nullary constructor carries no Params
+/// field at all, an empty list being omitted like any other.
+let print_data_constructor = pure (c: DataTypeConstructor, depth: i64) -> string => {
+  var out = header("DataTypeConstructor", c.name, depth)
+  out = out ++ scalar("Name", c.name, depth + 1)
+  if c.packed { out = out ++ scalar("Packed", "true", depth + 1) }
+  if c.params.len() > 0 {
+    var items = ""
+    for p in c.params {
+      items = items ++ print_type(p, depth + 2)
+    }
+    out = out ++ node_field("Params", items, depth + 1)
+  }
+  out ++ close(depth)
 }
 
 /// The name a type node carries, for a label that is not the node's own field.
 let type_name = pure (declared: TypeNode) -> string => match declared {
   PrimitiveType(identifier) => identifier.name,
+  UnresolvedType(identifier) => identifier.name,
+  GenericType(identifier) => identifier.name,
+  NamedStructType(def) => def.name,
+  TupleType(def) => def.name,
+  DataType(def) => def.name,
 }
 
 /// `Kind(name) { Name: name }` — the shape every named leaf shares.

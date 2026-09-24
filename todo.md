@@ -121,6 +121,12 @@ Package management, versioning and separate compilation are out of scope by deci
     `TypeDeclStmt` (29), `DestructuringDeclStmt` (24), `InterpolatedStringExpr` (22), then
     the written-type kinds — `GenericType`, `UnresolvedType`, `ParameterType` (14 each),
     which travel together and are one slice rather than three.
+  - **Slice 7 landed 09/24: type declarations.** `TypeDeclStmt` over the three forms
+    (`NamedStructType`, `TupleType`, `DataType`) with generic parameters, plus the written
+    types they hold — `UnresolvedType` and `GenericType`. **41 of 238**, up from 33. The
+    tail of this domain is a sub-domain of its own: `ConstrainedType` blocks 11 of the
+    remaining declaration goldens and brings the newtype constraint expressions with it.
+    Bigger wins elsewhere: `DestructuringDeclStmt` (24) and `InterpolatedStringExpr` (22).
   - **The `Location` every node carries is not modelled yet**, and the goldens do not show
     it (`pkg/printer` omits `print:"-"` fields, which is what `NameLocation` is). It has to
     arrive before anything reports a diagnostic, and choosing when is a slice of its own.

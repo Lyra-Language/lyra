@@ -48,6 +48,14 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"a try on a member call", "let r = handle.read()?"},
 		{"logic mixing comparison and calls", "let s = a < b && c() != d"},
 		{"a negation inside a range bound", "let t = -5..<5"},
+		// Slice 7, in the shapes the stored goldens do not isolate: a declared name used
+		// as a field type (UnresolvedType) and a bound variable used as one (GenericType),
+		// which no matching golden reached until these existed.
+		{"a struct field of a declared type", "struct Holder { inner: Point }"},
+		{"a struct with a generic parameter", "struct Cell<t> { value: t }"},
+		{"a data constructor carrying a declared type", "data Color = Named(CSSName)"},
+		{"a data constructor carrying a variable", "data Holder<t> = Wrap(t)"},
+		{"a tuple of mixed declared and primitive types", "tuple Row(Name, i64)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

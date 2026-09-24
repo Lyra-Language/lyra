@@ -29,6 +29,8 @@ pub data Stmt =
   VarDeclStmt(VarDecl)
   /// An expression standing alone as a statement.
   | ExpressionStmt(ExprStmt)
+  /// `struct Point { … }`, `data Color = …`, `tuple Pair(i64, i64)`.
+  | TypeDeclStmt(TypeDecl)
 
 /// An expression used for its own sake.
 pub struct ExprStmt {
@@ -204,10 +206,79 @@ pub data Pattern =
   /// `x` — a plain name.
   IdentifierPattern(Identifier)
 
+/// A type declaration: the name it binds and the type it binds to it.
+pub struct TypeDecl {
+  /// `@derive(Eq, Hash)` — bare names, printed as themselves rather than as nodes.
+  derives: []string,
+  /// `<t>` — the variables the declaration binds, in order.
+  generic_params: []GenericParam,
+  is_public: bool,
+  name: string,
+  /// Spelled `declared` and printed `Type`, for the reason `Parameter` gives.
+  declared: TypeNode,
+}
+
+/// One declared type variable.
+pub struct GenericParam {
+  name: string,
+}
+
 /// A written type. One constructor per Go type node.
 pub data TypeNode =
   /// `i64`, `bool`, `string` — a type the language names itself.
   PrimitiveType(Identifier)
+  /// `t` — a type variable, in a declaration that binds one.
+  | GenericType(Identifier)
+  /// A name the program declared. Unresolved because the collector does not look it up —
+  /// that is the typechecker's job, and the AST records what was written.
+  | UnresolvedType(Identifier)
+  /// `struct Point { x: i64 }`.
+  | NamedStructType(StructTypeDef)
+  /// `tuple Point2D(f64, f64)`.
+  | TupleType(TupleTypeDef)
+  /// `data Color = Red | Green`.
+  | DataType(DataTypeDef)
+
+/// The body of a struct declaration.
+///
+/// **The cycle through here is finite because the field list is an array**: a `TypeNode`
+/// holds a `StructTypeDef` holds `[]StructField` holds a `TypeNode`, and an array is a box
+/// pointer, so the type has a size. That is the same reason `std.json`'s `JsonValue` works,
+/// and it is why none of these needs `shared`.
+pub struct StructTypeDef {
+  fields: []StructField,
+  name: string,
+}
+
+/// One field: its name, its type, and the default it may carry.
+pub struct StructField {
+  default_value: Maybe<shared Expr>,
+  name: string,
+  declared: TypeNode,
+}
+
+/// The body of a named-tuple declaration.
+pub struct TupleTypeDef {
+  elements: []TypeNode,
+  name: string,
+}
+
+/// The body of a data declaration.
+pub struct DataTypeDef {
+  constructors: []DataTypeConstructor,
+  name: string,
+}
+
+/// One constructor, and the types of the payload it carries.
+pub struct DataTypeConstructor {
+  name: string,
+  /// True when the payload was written in parentheses (`Wrap(t)`) rather than juxtaposed
+  /// (`Some t`). The two are different shapes, not spellings of one: a packed constructor
+  /// carries a **single anonymous tuple** whose elements are the written types, where a
+  /// juxtaposed one carries those types directly.
+  packed: bool,
+  params: []TypeNode,
+}
 
 /// `-> i64`, the declared result.
 ///
