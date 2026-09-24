@@ -13,9 +13,10 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
-// missingPureBounds runs the same pipeline checkPurity does and returns the
-// warning half — the names lyra-W018 reports, in source order.
-func missingPureBounds(t *testing.T, source string) []string {
+// missingPureBoundDiags runs the same pipeline checkPurity does and returns the warnings
+// whole. Split from missingPureBounds so a test that asserts on a message's *advice* and
+// one that asserts on the names it reports share one pipeline rather than two copies of it.
+func missingPureBoundDiags(t *testing.T, source string) []diag.Diagnostic {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -28,6 +29,14 @@ func missingPureBounds(t *testing.T, source string) []string {
 	tc.Check(program)
 	caps := captures.Analyze(program, symTable, tt)
 	_, warnings := checker.CheckPurity(program, symTable, scopeTable, tt, tc.MethodTable(), caps)
+	return warnings
+}
+
+// missingPureBounds is that pipeline's warning half as the *names* it reports, in source
+// order — the view most of these tests want.
+func missingPureBounds(t *testing.T, source string) []string {
+	t.Helper()
+	warnings := missingPureBoundDiags(t, source)
 	var names []string
 	for _, w := range warnings {
 		if w.Code != diag.CodeMissingPureBound {
@@ -176,4 +185,53 @@ func TestMissingPureBound_DetAndNoAllocNotReported(t *testing.T) {
 	assertWarned(t, missingPureBounds(t, `
 let cursor_hide = () -> void => print("\e[?25l")
 `))
+}
+
+// **W018 on a trait method advises the trait, not the impl** (09/23).
+//
+// A `where t: Speak` call is scored against every impl of `Speak::say`, so what it can rely
+// on is the trait's bound — an impl says nothing about its siblings. The diagnostic used to
+// suggest marking the impl and nothing else, which is advice that leaves untouched the case
+// it is most needed for: one impure impl elsewhere still blames the generic that called it.
+//
+// The trait is named first because it is the single action that covers everything — an impl
+// inherits its trait's bound, so writing it there satisfies this warning at every impl at
+// once, which the second case checks by following the advice.
+func TestMissingPureBound_TraitMethodAdvisesTheTrait(t *testing.T) {
+	src := `
+trait Speak { say: (Self) -> i64 }
+struct Soft { n: i64 }
+impl Speak for Soft {
+    say = (self) => self.n
+}`
+	warnings := missingPureBoundDiags(t, src)
+	if len(warnings) != 1 {
+		t.Fatalf("want one missing-bound warning; got %v", warnings)
+	}
+	for _, want := range []string{
+		"declare the bound on the trait",
+		"trait Speak { pure say: … }",
+		"Marking this impl `pure` binds only this one",
+		"where t: Speak",
+	} {
+		if !strings.Contains(warnings[0].Message, want) {
+			t.Errorf("the advice should contain %q; got %q", want, warnings[0].Message)
+		}
+	}
+}
+
+// Following that advice silences it — at the impl as well, since an impl inherits the
+// trait's bound. Advice that does not resolve the thing it is attached to is worse than
+// none, and this is the half that checks it does.
+func TestMissingPureBound_BoundingTheTraitSilencesTheImpl(t *testing.T) {
+	src := `
+trait Speak { pure say: (Self) -> i64 }
+struct Soft { n: i64 }
+impl Speak for Soft {
+    say = (self) => self.n
+}`
+	warnings := missingPureBoundDiags(t, src)
+	if len(warnings) != 0 {
+		t.Errorf("bounding the trait should satisfy the impl too; got %v", warnings)
+	}
 }

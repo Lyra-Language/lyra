@@ -180,17 +180,12 @@ let f = (n: i64) -> i64 => {
 	assertErrorsAre(t, res, "add: argument 1: cannot assign string to i64")
 }
 
-// **Two impls of one trait is a different ambiguity, and the message has to say so.**
-// The test above is two *traits*, where `Trait::fly(...)` settles it because the traits
-// differ. Overlapping targets — `Box<t>` beside `Box<i64>` — printed that same sentence
-// until 09/22: "ambiguous between traits Show, Show", naming one trait twice and advising
-// a qualifier that cannot choose between two impls of that trait. It read as a compiler
-// bug rather than as the decision it was asking the author to make.
-//
-// Nothing at a call site can pick an impl — overlapping impls are not ranked (todo.md) —
-// so the honest message names the targets, which are what differ, and points at the two
-// fixes that exist: narrow one, or merge them.
-func TestTraitDispatch_OverlappingImplsOfOneTraitNameTheirTargets(t *testing.T) {
+// **A more specific impl wins** (09/23). `impl Show for Box<i64>` beside
+// `impl Show<t> for Box<t>` is not an ambiguity: `Box<t>` matches `Box<i64>` and
+// `Box<i64>` matches `Box<t>` not at all, so the concrete one subsumes the general one and
+// the call takes it. Ranking runs in resolveTraitMethodNamed, so operator dispatch,
+// `.method()` and `Trait::method` all get the same answer.
+func TestTraitDispatch_AMoreSpecificImplWins(t *testing.T) {
 	source := `
 struct Box<t> {
     value: t
@@ -208,7 +203,96 @@ let f = (b: Box<i64>) -> string => {
     b.show()
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res, `call to "show" matches 2 impls of trait Show, for Box<t>, Box<i64> `+
-		`— overlapping impls are not ranked, so neither is more specific and nothing at the `+
-		`call site can choose between them. Narrow one impl's target, or merge them`)
+	assertNoErrors(t, res)
+}
+
+// ...and the general impl still applies where nothing is more specific, which is what
+// makes the rule a *ranking* rather than the concrete impl shadowing the generic one.
+func TestTraitDispatch_TheGeneralImplStillAppliesElsewhere(t *testing.T) {
+	source := `
+struct Box<t> {
+    value: t
+}
+trait Show {
+    show: (Self) -> string
+}
+impl Show<t> for Box<t> {
+    show = (self) => "generic"
+}
+impl Show for Box<i64> {
+    show = (self) => "specific"
+}
+let f = (b: Box<string>) -> string => {
+    b.show()
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// **Two impls of one trait is a different ambiguity, and the message has to say so.**
+// The test above is two *traits*, where `Trait::fly(...)` settles it because the traits
+// differ. Same-trait targets printed that same sentence until 09/22: "ambiguous between
+// traits Show, Show", naming one trait twice and advising a qualifier that cannot choose
+// between two impls of that trait.
+//
+// Since ranking landed (09/23) this is the case ranking cannot settle: `Pair<i64, b>` and
+// `Pair<a, i64>` are **incomparable** — each covers values the other does not, so neither
+// subsumes the other and no rule about specificity applies. `Box<t>` beside `Box<i64>` no
+// longer reaches here at all, which is the point of the two tests above.
+func TestTraitDispatch_IncomparableImplsOfOneTraitNameTheirTargets(t *testing.T) {
+	source := `
+struct Pair<a, b> {
+    x: a,
+    y: b
+}
+trait Show {
+    show: (Self) -> string
+}
+impl Show<b> for Pair<i64, b> {
+    show = (self) => "left"
+}
+impl Show<a> for Pair<a, i64> {
+    show = (self) => "right"
+}
+let f = (p: Pair<i64, i64>) -> string => {
+    p.show()
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res, `call to "show" matches 2 impls of trait Show, for Pair<i64, b>, Pair<a, i64> `+
+		`— neither target is more specific than the other, so nothing at the call site can `+
+		`choose between them. Narrow one impl's target, or merge them`)
+}
+
+// **Ranking compares impls of one trait, never across traits.** `impl Pilot<t> for Box<t>`
+// beside `impl Wizard for Box<i64>` has comparable *targets* — `Box<t>` subsumes
+// `Box<i64>` — so a specificity rule that ignored the trait would quietly hand the call to
+// Wizard. But the traits differ, which makes this the choice the author has to state
+// (`Pilot::fly(b)`), not a question about which target is narrower.
+//
+// The earlier two-trait test cannot catch this: its targets are identical (`Bird` and
+// `Bird`), so neither subsumes the other whether the guard is there or not. Removing the
+// guard failed nothing until this case existed.
+func TestTraitDispatch_RankingDoesNotReachAcrossTraits(t *testing.T) {
+	source := `
+struct Box<t> {
+    value: t
+}
+trait Pilot {
+    fly: (Self) -> i64
+}
+trait Wizard {
+    fly: (Self) -> i64
+}
+impl Pilot<t> for Box<t> {
+    fly = (self) => 1
+}
+impl Wizard for Box<i64> {
+    fly = (self) => 2
+}
+let f = (b: Box<i64>) -> i64 => {
+    b.fly()
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		`call to "fly" is ambiguous between traits Pilot, Wizard; use TraitName::fly(...) to disambiguate`)
 }

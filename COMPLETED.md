@@ -42,6 +42,47 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/23/26 — a more specific impl wins, and W018 points at the trait
+
+Two entries that each said a decision was wanted before the code. Both decisions came in
+one sentence, and the implementations are small because the thinking was the work.
+
+**Ranking.** Where several impls of one trait match a receiver, the one the others subsume
+is taken. Specificity needed no new machinery: `implTargetMatches` already answers "does
+this target match this type" one-directionally, treating the target's variables as
+wildcards, so asking it twice *is* the subsumption test. `Box<t>` matches `Box<i64>` and
+`Box<i64>` matches `Box<t>` not at all, so the concrete one wins.
+
+Two limits, both deliberate. **Incomparable targets stay ambiguous** — `Pair<i64, b>` and
+`Pair<a, i64>` each cover values the other does not, so no rule about specificity applies
+and the fix is at the impls. And ranking **never reaches across traits**: two traits
+providing one method name have comparable targets often enough, and picking one because its
+target read as narrower would answer a question the program never asked — that call is a
+choice the author states with `Pilot::fly(b)`.
+
+The cross-trait guard is the part worth recording, because the mutation test found it
+untested. Deleting it failed nothing: the existing two-trait case has *identical* targets
+(`Bird` and `Bird`), so neither subsumes the other whether the guard is there or not. It
+took `impl Pilot<t> for Box<t>` beside `impl Wizard for Box<i64>` — comparable targets,
+different traits — to make the guard load-bearing in a test. Third time this week a
+mutation firing on nothing found a test proving less than it appeared to.
+
+Yesterday's diagnostic needed rewording rather than removing. It said "overlapping impls
+are not ranked", which is no longer true: they are ranked, and the ones that reach it are
+**incomparable**, which is a different thing and the reason the fix is at the impls.
+
+**W018.** On a trait-impl method the advice is now to bound the *trait*. Marking the impl
+`pure` binds only that impl, while a `where t: Speak` call is scored against every impl of
+`Speak::say` — so the impl's own bound is the one thing that cannot help the case the
+warning exists for. The trait is named first because it is the single action that covers
+everything: an impl inherits its trait's bound, so writing it there satisfies this warning
+at every impl at once, which a test checks by following the advice and watching it go quiet.
+
+The impl is still offered, and that is not hedging. Bounding a trait binds every future
+impl, including ones in code that does not exist yet, so for a method reached only by direct
+dispatch the impl really is the smaller commitment. The diagnostic says which buys what
+rather than picking for the reader.
+
 ### 09/23/26 — rune ranges and `|`, the two gaps the collector kept running into
 
 Both were written down this morning as measured `[OPEN]` entries rather than hunches, which

@@ -153,7 +153,7 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 			}
 		}
 	}
-	return matches
+	return mostSpecific(matches)
 }
 
 // defaultMatch is the trait's default clause for methodName presented as an impl method,
@@ -181,6 +181,58 @@ func (tc *TypeChecker) defaultMatch(trait *ast.TraitDeclStmt, methodName ast.Met
 	// type-checks abstractly and fails to lower. See publishDefaultBodyCandidates.
 	tc.publishDefaultBodyCandidates(trait, traitMethod, receiverType, bindings)
 	return traitMethod.DefaultImpl(), sig, true
+}
+
+// mostSpecific keeps only the matches no other match is strictly more specific than.
+//
+// **One impl is more specific than another when the other's target matches it and its own
+// does not match the other's.** `impl Show for Box<i64>` beside `impl Show<t> for Box<t>`:
+// `Box<t>` matches `Box<i64>` by binding `t`, and `Box<i64>` matches `Box<t>` not at all,
+// so the concrete one wins. That is subsumption, and it needs no new machinery —
+// implTargetMatches already answers "does this target match this type" one-directionally,
+// which is exactly the question asked twice.
+//
+// **Incomparable matches stay ambiguous.** Two different traits providing one method name
+// for a receiver have identical targets, so neither subsumes the other and the call is
+// refused as before, with the message that names the traits. Ranking is not a way to make
+// every ambiguity go away — it is the answer to the one case where the program has already
+// said which impl is more particular.
+//
+// Ranking here rather than at the call sites is the point: operator dispatch, `.method()`
+// calls and `Trait::method` paths all arrive through this function, and specificity is a
+// property of the impls rather than of how they were reached.
+func mostSpecific(matches []resolvedTraitMethod) []resolvedTraitMethod {
+	if len(matches) < 2 {
+		return matches
+	}
+	kept := make([]resolvedTraitMethod, 0, len(matches))
+	for i := range matches {
+		beaten := false
+		for j := range matches {
+			if i != j && strictlyMoreSpecific(matches[j].Impl, matches[i].Impl) {
+				beaten = true
+				break
+			}
+		}
+		if !beaten {
+			kept = append(kept, matches[i])
+		}
+	}
+	return kept
+}
+
+// strictlyMoreSpecific reports whether a's target is subsumed by b's and not the reverse.
+func strictlyMoreSpecific(a, b *ast.TraitImplStmt) bool {
+	// Only impls of the *same* trait are comparable. Two traits that both provide a method
+	// for one receiver are a genuine choice for the caller to make, and silently picking
+	// one because its target happened to read as narrower would answer a question the
+	// program never asked.
+	if a.TraitName != b.TraitName {
+		return false
+	}
+	_, bMatchesA := implTargetMatches(b.Type, a.Type)
+	_, aMatchesB := implTargetMatches(a.Type, b.Type)
+	return bMatchesA && !aMatchesB
 }
 
 // implTargetMatches reports whether an impl's target type matches receiverType.
@@ -609,9 +661,14 @@ func (tc *TypeChecker) reportAmbiguousTraitCall(methodName string, matches []res
 		}
 	}
 	if overlapping {
+		// Ranking has already run (mostSpecific) and left these standing, so the targets
+		// are **incomparable** rather than unranked: neither matches the other, which is
+		// a different thing from one being narrower. `Pair<i64, b>` and `Pair<a, i64>`
+		// each cover values the other does not, and no rule about specificity can pick
+		// between them — which is why the fix is at the impls.
 		tc.addError(loc, SeverityError,
-			"call to %q matches %d impls of trait %s, for %s — overlapping impls are not ranked, "+
-				"so neither is more specific and nothing at the call site can choose between them. "+
+			"call to %q matches %d impls of trait %s, for %s — neither target is more "+
+				"specific than the other, so nothing at the call site can choose between them. "+
 				"Narrow one impl's target, or merge them",
 			methodName, len(matches), trait, implTargetsOf(matches))
 		return

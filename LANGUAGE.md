@@ -395,6 +395,15 @@ trait Named {
 Opt in by naming the first parameter `self`.
 
 - **UFCS:** `m.unwrap_or(0)` → `unwrap_or(m, 0)`, rewritten before anything downstream. `own` receivers refused. A type-parameter receiver resolves against functions generic in their receiver (`a.max(b)` under `where t: Ord`).
+- **A more specific impl wins** (09/23). Where several impls of *one* trait match a
+  receiver, the one whose target the others subsume is taken: `impl Show for Box<i64>`
+  beside `impl Show<t> for Box<t>` dispatches to the concrete one for a `Box<i64>` and to
+  the generic one for everything else. Specificity is subsumption — `Box<t>` matches
+  `Box<i64>` and `Box<i64>` matches `Box<t>` not at all. **Incomparable targets stay
+  ambiguous** (`Pair<i64, b>` beside `Pair<a, i64>`: each covers values the other does not),
+  and ranking never reaches **across traits** — two traits providing one method name is a
+  choice for the caller to state (`Pilot::fly(b)`), not a question about which target is
+  narrower. Identical targets are still refused at the impls (`lyra-E037`).
 - **Receiver-keyed overloading:** one module may declare a name several times if each takes `self` with a different receiver type head (`Maybe<t>` vs `Result<t,e>`); a second `Maybe<…>` is refused. A name still may not be exported by two modules.
 - Method calls resolve against the receiver's type and need no import of the underlying free function — but the function must be one this file could have named: `pub`, in a module this file imports (in any form), in this file's own module, or in the prelude. A module's **private** function is not a method anywhere else, which is what privacy has to mean: before 09/22 it was still a *candidate*, so importing one name from a module made an unrelated call ambiguous with a function the caller could not name, let alone call.
 - **The import list breaks a tie between methods; it does not gate the call.** Two reachable candidates accepting one receiver is ambiguous (`lyra-E001`), and naming one of them in an import settles it — as does declaring your own, which wins first. Leaving a method out of the list is **not** an error: `import std.collections.{ parse_args }` still admits `args.value(…)`. Requiring the name was measured and rejected (todo.md, 09/22): accessors on types that cannot have public fields are ordinary methods here, so the rule would tax exactly the code the lack of field privacy forces, and would put names like `day` and `value` in the file's bare scope, where they shadow the locals those calls are assigned to. It is also **not** Rust's rule, which imports a *trait* and never binds the method name.
@@ -460,6 +469,11 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 
 - **`lyra-W018`**: a top-level function or trait-impl method with no observable effect that does not say `pure`. Nothing is refused: a `pure` function may call an unannotated one inferred clean. The bound decides **where blame lands** when an effect is later added — at the `println` in a marked helper, versus at the `pure` caller of an unmarked one.
 - Only `pure` warns (`det`/`noalloc` candidates are too common to be useful). Not warned: inline closures, `main`, impl methods whose trait declares the bound. No `#[allow]` exists.
+- On a **trait-impl method** the advice is to bound the **trait**, not the impl: a
+  `where t: Trait` call is scored against every impl, so only the trait's bound is
+  something a generic caller can rely on — and an impl inherits it, so writing it there
+  satisfies every impl at once. Marking the impl alone is still offered, being the smaller
+  commitment for a method reached only by direct dispatch.
 - **A bound declared on a trait method is a contract, and an abstract call relies on it.** `trait Speak { pure say: (Self) -> i64 }` obliges every impl — and any default body — to be pure, reported at the impl that breaks it; in exchange, a `pure` function calling `x.say()` through `where t: Speak` is clean without consulting the impls at all. **With no bound declared there is nothing to rely on**, so the same call is scored as the join over every impl in the program: pure only if all of them are. That fallback is whole-program rather than modular, and the difference shows: until 09/22 the join ran even where a bound was declared, so one impure impl in *your* module made a library's `pure` generic fail to compile — on the library's line, for a type the generic was never instantiated at. A declared bound is how a library stays correct regardless of what implements its traits.
 - **A call whose callee has no name is charged every effect.** `fs[0](n)` and `pick()(n)`
   cannot be resolved to a declaration, so `pure` refuses them and asks for a name or a

@@ -74,14 +74,44 @@ func (c *purityChecker) missingPureBounds(program *ast.Program) []diag.Diagnosti
 				if c.impureMethods[m]&PurityEffects != 0 {
 					continue
 				}
-				// `Trait::method` is the spelling the language has for naming one,
-				// and the impl's own location is where the annotation goes.
-				diags = append(diags, missingPureBound(m.Clause.GetLocation(),
-					fmt.Sprintf("%s::%s", decl.TraitName, m.Name.Value), c.impureMethods[m]))
+				// `Trait::method` is the spelling the language has for naming one, and
+				// the impl's own location is where the reader is looking.
+				diags = append(diags, missingTraitMethodBound(m.Clause.GetLocation(),
+					decl.TraitName, m.Name.Value, c.impureMethods[m]))
 			}
 		}
 	}
 	return diags
+}
+
+// missingTraitMethodBound is W018 for a trait-impl method, where the advice is not the
+// same as a free function's.
+//
+// **Marking the impl `pure` does not help a bound call.** A `where t: Speak` call is scored
+// against every impl of `Speak::say`, so what it can rely on is the *trait's* bound; an
+// impl says nothing about its siblings. Until 09/23 this diagnostic suggested the impl and
+// nothing else, which is advice that leaves the case it was most needed for untouched — one
+// impure impl elsewhere still blamed the generic that called it.
+//
+// The trait is named first because it is the single action that covers everything: an impl
+// inherits its trait's bound (effectiveMethodBounds), so writing it there satisfies this
+// warning as well, at every impl at once. The impl is still offered, since for a method
+// reached only by direct dispatch it is the smaller commitment — and bounding a trait binds
+// every future impl, including ones in code that does not exist yet.
+func missingTraitMethodBound(loc ast.Location, traitName, methodName string, effects Effect) diag.Diagnostic {
+	qualified := fmt.Sprintf("%s::%s", traitName, methodName)
+	msg := fmt.Sprintf(
+		"%q has no observable effect; declare the bound on the trait (`trait %s { pure %s: … }`), which every impl inherits. Marking this impl `pure` binds only this one, and a call through `where t: %s` is scored against every impl — so the trait's bound is the one a generic caller can rely on. Nothing is refused today — purity is inferred — but until the bound is written, an effect added here later is reported at whatever calls %q rather than at the edit",
+		qualified, traitName, methodName, traitName, qualified)
+	if effects.Has(EffectAlloc) {
+		msg += ". It allocates, which `pure` permits: allocation is a `noalloc` concern, not a purity one"
+	}
+	return diag.Diagnostic{
+		Location: loc,
+		Severity: diag.SeverityWarning,
+		Code:     diag.CodeMissingPureBound,
+		Message:  msg,
+	}
 }
 
 // missingPureBound builds the diagnostic for one callable. The message names the

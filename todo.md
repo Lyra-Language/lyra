@@ -319,12 +319,10 @@ Item numbers (#3–#8) are cited from code comments.
   answer is **both** — inference across the merged program for free functions, and a
   declared bound at the boundary for trait methods, which a bound call now believes instead
   of joining over every impl. (COMPLETED.md, 09/22.)
-- **[OPEN] W018 advises the impl, never the trait.** With no bound on a trait method, a
-  bound call is scored as the join over all impls, so one impure impl anywhere blames the
-  generic that called it. Marking the *impl* `pure` — the only thing W018 suggests — does
-  not help, since an impl says nothing about its siblings. Advising the trait is the useful
-  nudge and a real API commitment (it binds every future impl, including downstream ones),
-  so it wants a decision before a diagnostic.
+- **[DONE 09/23] W018 on a trait method advises the trait.** An impl's own bound says
+  nothing about its siblings, so only the trait's is what a `where t: Trait` call can rely
+  on — and an impl inherits it, so the trait is the one action that covers every impl.
+  (COMPLETED.md, 09/23.)
 - **[OPEN] (#4) `ref`/`mut`/`own` outside parameter position**, driving move/copy/borrow
   semantics.
 - **[OPEN] (#5) Allocation, remaining:** a nested `shared data` sub-pattern errors loudly;
@@ -480,13 +478,9 @@ emittable constants.
   purpose (binary-scaled determinism vs decimal money, which a newtype serves) and what
   arithmetic does to the parameters; blocked on const generics. Add `fixed_point_type` to
   both highlight query files when built.
-- **[OPEN] Overlapping impls** (`impl Show for Box<t>` beside `Box<i64>`) are not ranked;
-  only identical targets are refused (`lyra-E037`). A call that could take either is
-  refused rather than mis-dispatched (`lyra-E001`), which is the safe half, and **the
-  message now names the impls' targets** and the two fixes that exist — narrow one, or
-  merge them (09/22; it used to name the trait twice and advise a qualifier that cannot
-  choose). What is still open is the ranking itself: a more specific impl does not win,
-  and whether it should is a decision nothing has yet forced.
+- **[DONE 09/23] Overlapping impls are ranked.** A more specific target wins by
+  subsumption; incomparable targets stay ambiguous and ranking never reaches across traits.
+  Identical targets are still `lyra-E037`. (COMPLETED.md, 09/23.)
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
   `Ordering`; deferred until something needs it. A bit-pattern `total_cmp` for sorting
   floats is also unbuilt (`sort_by` with a comparator works meanwhile).
