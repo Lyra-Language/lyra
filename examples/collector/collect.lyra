@@ -33,6 +33,9 @@ import ast.{
   TupleLiteral,
   ArrayLiteral,
   ArrayRepeat,
+  StructInstance,
+  StructInstanceField,
+  Spread,
   RangeEndOperator,
 }
 
@@ -454,6 +457,11 @@ let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => match kin
   "tuple_index_expr" => collect_tuple_index(node, source),
   "boolean_expr" => collect_boolean(node, source),
   "string_concat_expr" => collect_string_concat(node, source),
+  // Named and anonymous are separate CST kinds and separate AST nodes, and one walk:
+  // what differs is a name the anonymous form does not have.
+  "named_struct_literal" => Some(collect_struct_instance(node, source, true)),
+  "anonymous_struct_literal" => Some(collect_struct_instance(node, source, false)),
+  "spread_expr" => collect_spread(node, source),
   "tuple_literal" => Some(collect_tuple_literal(node, source)),
   "array_literal" => Some(collect_array_literal(node, source)),
   "array_repeat_init" => collect_array_repeat(node, source),
@@ -726,6 +734,93 @@ let collect_string_concat = (node: Node, source: []u8) -> Maybe<shared Expr> => 
     operator: text(operator, source),
     right: right,
   }))
+}
+
+/// `Point { x: 1 }`, `{ x: 1 }`, `Player { p | health: h }`.
+///
+/// The body holds exactly one of three shapes and they are collected into the same list:
+/// `struct_fields` (named), `struct_shorthand` (positional, so each field has a value and
+/// no name) and `struct_update` (a base and the fields that change).
+let collect_struct_instance = (node: Node, source: []u8, named: bool) -> shared Expr => {
+  var fields: []StructInstanceField = []
+  var base: Maybe<shared Expr> = None
+  match field(node, "struct_body") {
+    Some(body) => {
+      for i in 0..<named_child_count(body) {
+        let part = named_child(body, i)
+        let k = kind(part)
+        match k {
+          "struct_fields" | "struct_update" => {
+            for f in collect_struct_instance_fields(part, source) {
+              fields.push(f)
+            }
+            if k == "struct_update" {
+              base = match field(part, "base") {
+                Some(b) => collect_expr(b, source),
+                None => None,
+              }
+            }
+          },
+          "struct_shorthand" => {
+            for j in 0..<named_child_count(part) {
+              let value_node = named_child(part, j)
+              if kind(value_node) != "field_value" { continue }
+              match collect_wrapped_at(value_node, source) {
+                Some(value) =>
+                  fields.push(StructInstanceField { name: "", value: value }),
+                None => {},
+              }
+            }
+          },
+          _ => {},
+        }
+      }
+    },
+    None => {},
+  }
+  let instance = StructInstance {
+    base_struct: base,
+    fields: fields,
+    generic_args: collect_generic_arguments(node, source),
+    name: match field(node, "struct_name") {
+      Some(name) => text(name, source),
+      None => "",
+    },
+  }
+  if named { StructInstanceExpr(instance) } else { AnonymousStructInstanceExpr(instance) }
+}
+
+/// The `struct_field` children of `node`: `x: 1`, each value inside a `field_value`.
+///
+/// Shared by the named and the record-update shapes, whose fields are the same node —
+/// `struct_update` names them `field_updates` and holds the same kind.
+let collect_struct_instance_fields = (
+  node: Node,
+  source: []u8
+) -> []StructInstanceField => {
+  var fields: []StructInstanceField = []
+  for i in 0..<named_child_count(node) {
+    let child = named_child(node, i)
+    if kind(child) != "struct_field" { continue }
+    let Some(value_node) = field(child, "field_value") else { continue }
+    match collect_wrapped_at(value_node, source) {
+      Some(value) => fields.push(StructInstanceField {
+        name: match field(child, "field_name") {
+          Some(name) => text(name, source),
+          None => "",
+        },
+        value: value,
+      }),
+      None => {},
+    }
+  }
+  fields
+}
+
+/// `...xs`.
+let collect_spread = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let value = collect_expr(field(node, "value")?, source)?
+  Some(SpreadExpr(Spread { value: value }))
 }
 
 /// `(1, 2)` and `Point(1, 2)`.

@@ -97,6 +97,14 @@ pub data Expr =
   | TupleIndexExpr(TupleIndexAccess)
   /// `{ … }` — statements in a scope, used as a value.
   | BlockExpr(Block)
+  /// `Point { x: 1 }` — a struct built inline.
+  | StructInstanceExpr(StructInstance)
+  /// `{ x: 1 }` — the same thing without a name. A constructor rather than a struct of
+  /// its own: the Go AST has two node types, and they hold the same fields minus the two
+  /// an anonymous one cannot have, which the printer drops as zero anyway.
+  | AnonymousStructInstanceExpr(StructInstance)
+  /// `...base` — a value spread into the position it sits in.
+  | SpreadExpr(Spread)
   /// `(1, 2)`, `Point(1, 2)` — a tuple built inline, named or not.
   | TupleLiteralExpr(TupleLiteral)
   /// `[1, 2, 3]`, `#[1, 2, 3]` — a list of elements, dynamic or fixed.
@@ -252,6 +260,41 @@ pub struct TupleLiteral {
   /// ordinary spelling.
   generic_arguments: []shared TypeNode,
   name: string,
+}
+
+/// `Point { x: 1, y: 2 }`, `{ x: 1 }`, `Player { p | health: h }`.
+///
+/// **One struct behind two node kinds.** `AnonymousStructInstanceExpr` is the same shape
+/// without `Name` or `GenericArgs`, and both are zero on an anonymous one — so the
+/// constructor carries the distinction and the payload does not repeat itself, as
+/// `BinaryOp` does for the three binary kinds.
+pub struct StructInstance {
+  /// `Player { existingPlayer | … }` — what a record update copies from. Any postfix
+  /// expression, a call included, so it is an `Expr` rather than a name.
+  base_struct: Maybe<shared Expr>,
+  fields: []StructInstanceField,
+  /// Spelled `GenericArgs` in the golden, **not** `GenericArguments`: the call and the
+  /// tuple literal use the longer name and this node uses the shorter one. Two spellings
+  /// of one idea in the Go AST, and the printer owes each node the one it has.
+  generic_args: []shared TypeNode,
+  name: string,
+}
+
+/// One field of a struct *instance*: `x: 1`, or just `1` in the shorthand.
+///
+/// **Not `StructField`, which is taken.** Go has two types of that name in different
+/// packages — `ast.StructField` here, `types.StructField` for a declaration's field — and
+/// both print under the bare name. Lyra has one module, so this one is spelled out and the
+/// printer supplies the shared spelling.
+pub struct StructInstanceField {
+  /// Empty in the shorthand (`Point { 1, 2 }`), where position names the field.
+  name: string,
+  value: shared Expr,
+}
+
+/// `...xs`.
+pub struct Spread {
+  value: shared Expr,
 }
 
 /// `[1, 2, 3]` and `#[1, 2, 3]`.

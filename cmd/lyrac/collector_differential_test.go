@@ -163,6 +163,25 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"a generic call whose callee is a member", "let a = xs.fold::<i64>(0, f)"},
 		{"a generic call nested in a generic call", "let a = outer::<i64>(inner::<bool>(x))"},
 		{"a generic call with a tuple type argument", "let a = make::<(i64, bool)>(1)"},
+		// Struct instances, in the compositions the goldens do not reach. The record
+		// update's base is **any postfix expression**, a call included — it was an
+		// identifier until the grammar widened, which is the kind of narrowing a walk
+		// inherits without noticing.
+		{"a record update whose base is a call", "let a = Duration { duration() | days: 1 }"},
+		{"a record update whose base is a member", "let a = P { holder.inner | x: 1 }"},
+		{"a record update whose base is an index", "let a = P { xs[0] | x: 1 }"},
+		{"an anonymous record update with two fields", "let a = { p | x: 1, y: 2 }"},
+		{"a struct instance nested in a struct instance", "let a = Outer { inner: Inner { x: 1 } }"},
+		{"a struct instance as a call argument", "let a = f(Point { x: 1 })"},
+		{"a struct instance in a tuple literal", "let a = (Point { x: 1 }, 2)"},
+		{"a struct field holding a lambda", "let a = Handler { on: (x) => x }"},
+		{"a named struct with two generic arguments", "let a = Pair::<i32, string> { a: 1, b: s }"},
+		{"a member of a struct instance", "let a = Point { x: 1 }.x"},
+		{"a shorthand with an expression value", "let a = Point { 1 + 2, y }"},
+		// A spread away from a struct field, which is the only place a golden has one.
+		{"a spread in a call argument", "let a = f(...xs)"},
+		{"a spread in an array literal", "let a = [...xs, 1]"},
+		{"a spread in a tuple literal", "let a = (...xs, 1)"},
 		// No case for a float too large for an `f64` (`1.0e400`): the Go collector reports
 		// an error there, and this test fails on one rather than comparing. The two do
 		// agree on the tree — it places a zero-valued node, which prints nothing, and so

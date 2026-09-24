@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 101 of the 238 goldens whose sources can be recovered match today. The number is not
+// 111 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -223,6 +223,24 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"variable_declaration_with_const", "const PI: f64 = 3.14159"},
 		{"function_that_accepts_lambda_as_parameter",
 			"\n\tlet nums = [1, 2, 3]\n\tlet doubled = map::<i64, i64>(nums, (x) => 2 * x)"},
+		// **Struct instances (09/24)**, the cheapest node left by the measurement and 101
+		// to 111 — every stored golden that builds a struct. Four shapes behind one node:
+		// named fields, the positional shorthand, a record update, and the anonymous
+		// literal, which is a *second node kind* over the same fields.
+		{"struct_instance", "let point = Point { x: 1, y: 2 }"},
+		{"struct_instance_shorthand", "let point = Point { 1, 2 }"},
+		{"struct_instance_with_generic_arguments", "let point = Point::<i32> { x: 1, y: 2 }"},
+		{"anonymous_struct_instance", "let point = { x: 1, y: 2 }"},
+		{"record_update_single_field", "Player { existingPlayer | health: newHealth }"},
+		{"record_update_multiple_fields",
+			"Player { existingPlayer | health: newHealth, stamina: 100 }"},
+		{"record_update_with_expression_fields",
+			"let p = { player | health: player.health - 10, x: player.x + dx }"},
+		// `...xs` is its own node, met first as a field's value. One spread alone is a
+		// parse error (`Point { ...base }`), so the shorthand case carries two.
+		{"struct_with_generics_and_spread_field_values", "let p = Point::<i32> { x: ...xs }"},
+		{"struct_shorthand_with_multiple_spread_values", "let merged = Point { ...base, ...extra }"},
+		{"array_repeat_initialization_with_structs", "let arr = [Vec3 { x: 0, y: 0, z: 0 }; 100]"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

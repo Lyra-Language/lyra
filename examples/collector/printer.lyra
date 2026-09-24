@@ -49,6 +49,8 @@ import ast.{
   TupleLiteral,
   ArrayLiteral,
   ArrayRepeat,
+  StructInstance,
+  StructInstanceField,
   GenericParam,
   RangeEndOperator,
 }
@@ -234,10 +236,64 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
     scalar("Index", "${access.index}", depth + 1) ++
     node_field("Object", print_expr(access.object, depth + 2), depth + 1) ++
     close(depth),
+  StructInstanceExpr(instance) =>
+    print_struct_instance("StructInstanceExpr", instance, depth),
+  AnonymousStructInstanceExpr(instance) =>
+    print_struct_instance("AnonymousStructInstanceExpr", instance, depth),
+  SpreadExpr(spread) =>
+    header_unnamed("SpreadExpr", depth) ++
+    node_field("Value", print_expr(spread.value, depth + 2), depth + 1) ++
+    close(depth),
   TupleLiteralExpr(lit) => print_tuple_literal(lit, depth),
   ArrayLiteralExpr(lit) => print_array_literal(lit, depth),
   ArrayRepeatExpr(repeat) => print_array_repeat(repeat, depth),
   LambdaExpr(lambda) => print_lambda(lambda, depth),
+}
+
+/// `StructInstanceExpr(Name) { BaseStruct, Fields, GenericArgs, Name }`, and the same
+/// function for the anonymous kind — whose `Name` and `GenericArgs` are zero, so the
+/// header loses its label and the two fields print nothing, which is the whole difference.
+let print_struct_instance = pure (
+  node_kind: string,
+  instance: StructInstance,
+  depth: i64
+) -> string => {
+  var out = header(node_kind, instance.name, depth)
+  match instance.base_struct {
+    Some(base) => {
+      out = out ++ node_field("BaseStruct", print_expr(base, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  if instance.fields.len() > 0 {
+    var items = ""
+    for f in instance.fields {
+      items = items ++ print_struct_instance_field(f, depth + 2)
+    }
+    out = out ++ node_field("Fields", items, depth + 1)
+  }
+  if instance.generic_args.len() > 0 {
+    var items = ""
+    for a in instance.generic_args {
+      items = items ++ print_type(a, depth + 2)
+    }
+    out = out ++ node_field("GenericArgs", items, depth + 1)
+  }
+  if instance.name != "" { out = out ++ scalar("Name", instance.name, depth + 1) }
+  out ++ close(depth)
+}
+
+/// `StructField(x) { Name, Value }` — **the instance's field, not a declaration's**, which
+/// prints under the same name with `DefaultValue` and `Type` instead. In the shorthand the
+/// name is empty, so the node loses both its label and its `Name` line and is told from a
+/// named one by what is missing.
+let print_struct_instance_field = pure (
+  f: StructInstanceField,
+  depth: i64
+) -> string => {
+  var out = header("StructField", f.name, depth)
+  if f.name != "" { out = out ++ scalar("Name", f.name, depth + 1) }
+  out ++ node_field("Value", print_expr(f.value, depth + 2), depth + 1) ++ close(depth)
 }
 
 /// `TupleLiteralExpr(Name) { Elements, GenericArguments, Name }`.
@@ -640,9 +696,24 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   // literal never is, since even an anonymous one carries `?` as its name.
   ArrayLiteralExpr(lit) => lit.elements.len() == 0 && !lit.fixed,
   ArrayRepeatExpr(repeat) => false,
+  SpreadExpr(spread) => false,
+  // Empty only with nothing at all in it — no name, no fields, no base, no type
+  // arguments — which an anonymous literal with no fields would be.
+  StructInstanceExpr(instance) => struct_instance_is_empty(instance),
+  AnonymousStructInstanceExpr(instance) => struct_instance_is_empty(instance),
   TupleLiteralExpr(lit) => false,
   StringLiteralExpr(lit) => lit.value == "",
   LambdaExpr(lambda) => lambda_is_empty(lambda),
+}
+
+/// Whether a struct instance has nothing in it, which both of its node kinds answer the
+/// same way — the fields are the same fields.
+let struct_instance_is_empty = pure (instance: StructInstance) -> bool => {
+  match instance.base_struct {
+    Some(_) => return false,
+    None => {},
+  }
+  instance.name == "" && instance.fields.len() == 0 && instance.generic_args.len() == 0
 }
 
 /// Whether a lambda has nothing in it — no body, no parameters, no declared return.

@@ -166,13 +166,20 @@ Package management, versioning and separate compilation are out of scope by deci
     kinds are collected and whose source can be recovered now matches**: 104 use only
     supported kinds, 101 match, and the three-golden difference is the orphans below.
     So the next slice is a *kind* slice again, with nothing field-level hiding under it.
+  - **Struct instances landed 09/24: 101 to 111** — every stored golden that builds a
+    struct. Four shapes behind one node (named fields, the positional shorthand, a record
+    update, and the anonymous literal, which is a second *node kind* over the same
+    fields), plus `SpreadExpr`, met first as a field's value. Two names worth knowing:
+    the field is `GenericArgs` here where a call and a tuple literal spell it
+    `GenericArguments`, and the instance's field node prints as `StructField` — the same
+    name a *declaration's* field prints under, with different fields. (COMPLETED.md.)
   - **What blocks the rest, measured rather than guessed.** Sole blockers, by goldens:
-    `StructInstanceExpr` 6, `ForInLoopExpr` 5, `IfExpr` 5, `TuplePattern` 4,
-    `ArrayPattern` 3, `RegexLiteralExpr` 3, then a tail of twos. Travelling together:
-    `ArrayCompExpr` with `Generator` (4), `ForLoopExpr` with `MathAssignOpExpr` (4), the
-    struct pattern with its fields (3), the rest pattern with the tuple one (3).
-    Control flow (`IfExpr`, `MatchExpr`, the two loops) is the structural slice and
-    travels with the pattern kinds; `StructInstanceExpr` is the cheapest single node left.
+    `ForInLoopExpr` 5, `IfExpr` 5, `TuplePattern` 4, `ArrayPattern` 3, `RegexLiteralExpr`
+    3, then a tail of twos. Travelling together: `ArrayCompExpr` with `Generator` (4),
+    `ForLoopExpr` with `MathAssignOpExpr` (4). **114 use only supported kinds against 111
+    matching**, and the three are the orphans below — so nothing field-level is hiding.
+    What is left is the structural slice: control flow (`IfExpr`, `MatchExpr`, the two
+    loops) and the pattern kinds it travels with.
   - **Three goldens have no test.** `if_then_expr`, `if_then_expr_multiple_lines` and
     `if_then_expr_with_else_if` are referenced from nothing and record an `if/then/end`
     syntax the grammar no longer has — their contents are the identifiers `else` and `end`

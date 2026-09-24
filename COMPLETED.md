@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — struct instances: four shapes, one node, and a name that is taken
+
+101 goldens to 111, which is every stored golden that builds a struct. The measurement had
+named `StructInstanceExpr` the cheapest node left and it was, but not because it is simple:
+the CST has **four shapes** under it and they collect into one list.
+
+`Point { x: 1 }` is `struct_fields`; `Point { 1, 2 }` is `struct_shorthand`, where position
+names the field and the field node has a value and no name; `Player { p | health: h }` is
+`struct_update`, a base and the fields that change. And `{ x: 1 }` is a *second node kind*
+over the same fields — `AnonymousStructInstanceExpr` — which is a constructor here rather
+than a second struct, the way `BinaryOp` serves three binary kinds. Its `Name` and
+`GenericArgs` are zero, so the header loses its label and the two fields print nothing:
+the whole difference between the two nodes is what is missing.
+
+Two naming traps, both the kind that only a byte-exact oracle catches:
+
+- **`GenericArgs`, not `GenericArguments`.** A call and a tuple literal spell the field the
+  long way and this node spells it short. One idea, two spellings in the Go AST, and the
+  printer owes each node the one it has.
+- **`StructField` is taken.** Go has two types of that name in different packages —
+  `ast.StructField` for an instance's field (`Name`, `Value`) and `types.StructField` for a
+  declaration's (`Name`, `Type`, `DefaultValue`) — and both print under the bare name. Lyra
+  has one module, so the instance's is `StructInstanceField` and the printer supplies the
+  shared spelling.
+
+`SpreadExpr` came with them, met first as a field's value. One spread alone does not parse
+(`Point { ...base }` is an ERROR node), so the golden that exercises the shorthand carries
+two; the differential cases put a spread in a call, an array and a tuple, which no golden
+does.
+
+The record update's base is **any postfix expression** — a call included, since the grammar
+widened on 09/19 — so it is collected as an expression rather than as a name. That is the
+narrowing a walk inherits without noticing, and it has three differential cases now.
+
 ### 09/24/26 — the second harvest pass, and the field-level gap closed
 
 Ninety-nine to 101, which is a small number with a useful shape behind it. The first
