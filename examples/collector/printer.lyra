@@ -46,6 +46,7 @@ import ast.{
   DataTypeConstructor,
   DestructuringDecl,
   DataPatternDef,
+  RangeEndOperator,
 }
 
 /// A whole program, as `pkg/printer.PrintAST` would render it.
@@ -245,8 +246,11 @@ let print_range = pure (range: Range, depth: i64) -> string => {
     },
     None => {},
   }
-  if range.end_operator != "" {
-    out = out ++ scalar("EndOperator", range.end_operator, depth + 1)
+  match range.end_operator {
+    Some(operator) => {
+      out = out ++ scalar("EndOperator", range_operator_symbol(operator), depth + 1)
+    },
+    None => {},
   }
   match range.start {
     Some(e) => {
@@ -262,6 +266,16 @@ let print_range = pure (range: Range, depth: i64) -> string => {
   }
   out ++ close(depth)
 }
+
+/// The symbol a range's end operator is written with — the one place the spelling lives,
+/// which is what holding the operator as a value rather than as its text buys.
+let range_operator_symbol = pure (operator: RangeEndOperator) -> string =>
+  match operator {
+    LessThan => "<",
+    LessThanOrEqual => "<=",
+    GreaterThan => ">",
+    GreaterThanOrEqual => ">=",
+  }
 
 /// `LambdaExpr { Body, Parameters, ReturnType }`, each omitted when absent or empty.
 let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {

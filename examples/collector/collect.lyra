@@ -29,6 +29,7 @@ import ast.{
   ConstrainedTypeDef,
   Interpolated,
   Pattern,
+  RangeEndOperator,
 }
 
 /// Every statement at the file's top level.
@@ -603,13 +604,28 @@ let collect_range = (node: Node, source: []u8) -> Maybe<shared Expr> => {
   Some(RangeExpr(Range {
     end: collect_wrapped(node, "end", source),
     end_operator: match field(node, "end_operator") {
-      Some(operator) => text(operator, source),
-      None => "",
+      Some(operator) => range_end_operator(text(operator, source)),
+      None => None,
     },
     start: collect_wrapped(node, "start", source),
     step: collect_wrapped(node, "step", source),
   }))
 }
+
+/// The operator a range's end was written with.
+///
+/// `None` for anything else, which the grammar cannot produce — `range_end_operator` is
+/// `choice("<=", ">=", "<", ">")`. The arm exists because a set the grammar guarantees is
+/// still a set this function has to be total over, and answering `None` is the honest
+/// reading of "not one of them".
+let range_end_operator = pure (symbol: string) -> Maybe<RangeEndOperator> =>
+  match symbol {
+    "<" => Some(LessThan),
+    "<=" => Some(LessThanOrEqual),
+    ">" => Some(GreaterThan),
+    ">=" => Some(GreaterThanOrEqual),
+    _ => None,
+  }
 
 /// A field whose value the grammar wraps in a node of its own: the expression inside it, or
 /// `None` when the field is absent — an open bound, or a range with no step.

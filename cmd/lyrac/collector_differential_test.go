@@ -69,6 +69,18 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"adjacent interpolations with no text between", `let s = "${a}${b}"`},
 		{"an interpolation at the start and end", `let s = "${a} mid ${b}"`},
 		{"a newtype over a declared type", "newtype Id = UserKey"},
+		// All four range end operators. The descending pair is legal in an expression and
+		// appears in no golden, so without these the data type modelling the operator
+		// would have two constructors nothing ever built.
+		{"an ascending exclusive range", "let r = 0..<10"},
+		{"an ascending inclusive range", "let r = 0..<=10"},
+		{"a descending exclusive range", "let r = 10..>0"},
+		{"a descending inclusive range", "let r = 10..>=0"},
+		// No case for an *absent* end operator: `0..` is deliberately not an expression
+		// yet (todo.md, Ranges), and a range with an end always writes one. So
+		// `end_operator: None` is currently reachable only through pattern ranges, which
+		// this subset does not collect — the Maybe models a state the grammar permits and
+		// this position does not yet reach.
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

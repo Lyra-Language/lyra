@@ -133,6 +133,27 @@ pub struct Unary {
   operand: shared Expr,
 }
 
+/// The four operators a range's end may take.
+///
+/// **A closed set, so a data type rather than the symbol as text.** The grammar admits
+/// exactly `<`, `<=`, `>` and `>=`, and holding the spelling made "an operator" and "any
+/// string" the same type — `end_operator: "nonsense"` was representable and `""` meant
+/// *absent*. The symbol now lives in one function (`range_operator_symbol`) instead of
+/// being scattered as literals.
+///
+/// The binary operators beside this one stay as text deliberately: their sets are larger
+/// (six arithmetic, eight comparison and logical) and carry no absent case, so the trade
+/// that pays here does not obviously pay there.
+pub data RangeEndOperator =
+  /// `..<` — ascending, exclusive.
+  LessThan
+  /// `..<=` — ascending, inclusive.
+  | LessThanOrEqual
+  /// `..>` — descending, exclusive. Legal in an expression; `lyra-E034` in a pattern.
+  | GreaterThan
+  /// `..>=` — descending, inclusive.
+  | GreaterThanOrEqual
+
 /// `0..<10:2`.
 ///
 /// Every part is optional but the operator: an open range omits a bound (`0..`, `..<10`),
@@ -140,7 +161,9 @@ pub struct Unary {
 /// rather than a sentinel.
 pub struct Range {
   end: Maybe<shared Expr>,
-  end_operator: string,
+  /// `None` when the range has no end operator at all (`0..`), which the empty string used
+  /// to stand for — a sentinel a `Maybe` carries better.
+  end_operator: Maybe<RangeEndOperator>,
   start: Maybe<shared Expr>,
   step: Maybe<shared Expr>,
 }
