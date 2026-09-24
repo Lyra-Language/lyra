@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — the second harvest pass, and the field-level gap closed
+
+Ninety-nine to 101, which is a small number with a useful shape behind it. The first
+harvest's lesson was that a node reads as finished while a *field* on it is never read, so
+the measurement was re-run after the literal family rather than going straight to the next
+kind. Two goldens used only kinds already built and still differed.
+
+- **A `const` is the same declaration under another node kind.** The grammar gives it
+  `const_declaration`, the Go collector routes it into the same collector as `declaration`,
+  and its `keyword` field carries the word — so the fix is the kind's name in one `match`
+  arm and nothing else. It had been collected as *nothing at all*, which is the honest
+  failure this walk is built for: a file with a `const` in it printed one statement short.
+- **A call can carry type arguments at its callee.** `map::<i64, i64>(xs, f)` is
+  `GenericArguments` on `FunctionCallExpr` — the same field `TupleLiteral` already had for
+  `Point::<i32>(1, 2)`, which is the same syntax over a different node. Collecting one and
+  not the other is the shape hazard 8 describes: two nodes that are variants of each other,
+  one of them updated.
+
+What makes this pass worth recording is where it ends. **104 goldens use only kinds already
+built, and 101 match** — the three-golden difference is the orphan `if_then_expr*` files,
+which no test references and whose syntax the grammar no longer has. Nothing field-level is
+left hiding under the next slice, so the count moves by node kinds again: `StructInstanceExpr`
+(6), then control flow with the pattern kinds.
+
 ### 09/24/26 — the literal family, and a float that has to be a number
 
 Five nodes: `FloatLiteralExpr`, `StringConcatExpr`, `TupleLiteralExpr`, `ArrayLiteralExpr`,

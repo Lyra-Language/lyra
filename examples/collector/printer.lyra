@@ -286,7 +286,7 @@ let print_array_repeat = pure (repeat: ArrayRepeat, depth: i64) -> string => {
   ) ++ close(depth)
 }
 
-/// `FunctionCallExpr { Arguments, Function }`.
+/// `FunctionCallExpr { Arguments, Function, GenericArguments }`.
 let print_call = pure (call: FunctionCall, depth: i64) -> string => {
   var out = header_unnamed("FunctionCallExpr", depth)
   if call.arguments.len() > 0 {
@@ -297,6 +297,13 @@ let print_call = pure (call: FunctionCall, depth: i64) -> string => {
     out = out ++ node_field("Arguments", items, depth + 1)
   }
   out = out ++ node_field("Function", print_expr(call.function, depth + 2), depth + 1)
+  if call.generic_arguments.len() > 0 {
+    var items = ""
+    for a in call.generic_arguments {
+      items = items ++ print_type(a, depth + 2)
+    }
+    out = out ++ node_field("GenericArguments", items, depth + 1)
+  }
   out ++ close(depth)
 }
 

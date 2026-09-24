@@ -58,7 +58,10 @@ pub let collect = (root: Node, source: []u8) -> Program => {
 let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
   return match kind(node) {
     "comment" => None,
-    "declaration" => collect_declaration(node, source),
+    // **A `const` is the same declaration under another kind.** The Go collector routes
+    // `const_declaration` into the same collector, and the `keyword` field carries the
+    // word, so nothing here is special-cased beyond the name of the node.
+    "declaration" | "const_declaration" => collect_declaration(node, source),
     "type_declaration" => collect_type_declaration(node, source),
     "expression_statement" => {
       // The statement wraps one expression; if that expression is a kind this slice does
@@ -527,7 +530,27 @@ let collect_call = (node: Node, source: []u8) -> Maybe<shared Expr> => {
     },
     None => {},
   }
-  Some(FunctionCallExpr(FunctionCall { arguments: arguments, function: callee }))
+  Some(FunctionCallExpr(FunctionCall {
+    arguments: arguments,
+    function: callee,
+    generic_arguments: collect_generic_arguments(node, source),
+  }))
+}
+
+/// `::<i64, i64>` — the type arguments written at a callee or a tuple name, or none.
+///
+/// The types sit directly under the `generic_arguments` node rather than in a wrapper
+/// each, which is why this is a walk over its children and not over a field.
+let collect_generic_arguments = (node: Node, source: []u8) -> []shared TypeNode => {
+  var arguments: []shared TypeNode = []
+  let Some(list) = field(node, "generic_arguments") else { return arguments }
+  for i in 0..<named_child_count(list) {
+    match collect_type(named_child(list, i), source) {
+      Some(argument) => arguments.push(argument),
+      None => {},
+    }
+  }
+  arguments
 }
 
 /// `{ … }` — the statements it holds, in order.

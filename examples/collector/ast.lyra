@@ -208,6 +208,10 @@ pub struct Range {
 pub struct FunctionCall {
   arguments: []shared Expr,
   function: shared Expr,
+  /// `map::<i64, i64>(xs, f)` — the type arguments written at the callee, and an empty
+  /// list for the ordinary spelling. The same field a `TupleLiteral` carries, since
+  /// `Point::<i32>(1, 2)` is the same syntax over a different node.
+  generic_arguments: []shared TypeNode = [],
 }
 
 /// `person.name`. The property is an expression node, as the Go AST has it, even though

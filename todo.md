@@ -157,16 +157,22 @@ Package management, versioning and separate compilation are out of scope by deci
     exponent. A literal too large for an `f64` collects as zero, agreeing with the Go
     collector's placeholder on the tree though not yet on the diagnostic.
     (COMPLETED.md, 09/24.)
-  - **What blocks the rest, measured rather than guessed.** Sole blockers, by goldens
-    (re-measured after the literal family): `StructInstanceExpr` 6, `ForInLoopExpr` 5,
-    `IfExpr` 5, `TuplePattern` 4, `ArrayPattern` 3, `RegexLiteralExpr` 3, then a long tail
-    of twos. Travelling together: `ArrayCompExpr` with `Generator` (4), `ForLoopExpr` with
-    `MathAssignOpExpr` (4), the struct pattern with its fields (3), the rest pattern with
-    the tuple one (3). **104 goldens now use only kinds already built** against 99
-    matching, so a handful are again field-level rather than kind-level — worth a harvest
-    pass before the next slice rather than after it.
-    Control flow (`IfExpr`, `MatchExpr`, the two loops) is the structural one and travels
-    with the pattern kinds; `StructInstanceExpr` is the cheapest single node left.
+  - **The second harvest pass, 09/24: 99 to 101, and the field-level gap is closed.**
+    Run because the first pass's lesson is that a finished node still hides fields. Two
+    goldens used only kinds already built and still differed: a `const` is the same
+    declaration under another node kind (`const_declaration`, whose `keyword` field
+    carries the word), and a **call** can carry type arguments at its callee
+    (`map::<i64, i64>(…)`) — the field `TupleLiteral` already had. **Every golden whose
+    kinds are collected and whose source can be recovered now matches**: 104 use only
+    supported kinds, 101 match, and the three-golden difference is the orphans below.
+    So the next slice is a *kind* slice again, with nothing field-level hiding under it.
+  - **What blocks the rest, measured rather than guessed.** Sole blockers, by goldens:
+    `StructInstanceExpr` 6, `ForInLoopExpr` 5, `IfExpr` 5, `TuplePattern` 4,
+    `ArrayPattern` 3, `RegexLiteralExpr` 3, then a tail of twos. Travelling together:
+    `ArrayCompExpr` with `Generator` (4), `ForLoopExpr` with `MathAssignOpExpr` (4), the
+    struct pattern with its fields (3), the rest pattern with the tuple one (3).
+    Control flow (`IfExpr`, `MatchExpr`, the two loops) is the structural slice and
+    travels with the pattern kinds; `StructInstanceExpr` is the cheapest single node left.
   - **Three goldens have no test.** `if_then_expr`, `if_then_expr_multiple_lines` and
     `if_then_expr_with_else_if` are referenced from nothing and record an `if/then/end`
     syntax the grammar no longer has — their contents are the identifiers `else` and `end`

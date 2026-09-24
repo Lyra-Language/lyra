@@ -154,6 +154,15 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"a float inside an interpolation", `let s = "${1.5}"`},
 		{"a negated float", "let a = -1.5"},
 		{"a float in a range", "let a = 0.5..<1.5"},
+		// The second harvest pass's two, in the shapes the goldens do not reach.
+		{"a const with no annotation", `const NAME = "lyra"`},
+		{"a public const", "pub const SIZE: i64 = 8"},
+		{"a const holding an array", "const ORIGIN = #[0, 0]"},
+		{"a generic call with one argument", "let a = parse::<i64>(s)"},
+		{"a generic call with no value arguments", "let a = empty::<string>()"},
+		{"a generic call whose callee is a member", "let a = xs.fold::<i64>(0, f)"},
+		{"a generic call nested in a generic call", "let a = outer::<i64>(inner::<bool>(x))"},
+		{"a generic call with a tuple type argument", "let a = make::<(i64, bool)>(1)"},
 		// No case for a float too large for an `f64` (`1.0e400`): the Go collector reports
 		// an error there, and this test fails on one rather than comparing. The two do
 		// agree on the tree — it places a zero-valued node, which prints nothing, and so

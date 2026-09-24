@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 99 of the 238 goldens whose sources can be recovered match today. The number is not
+// 101 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -214,6 +214,15 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"array_repeat_initialization", "let arr = #[0; 8]"},
 		{"array_repeat_initialization_with_compile_time_constant_count", "let arr = #[0; SIZE]"},
 		{"dynamic_array_repeat_initialization", "let arr = [0; n]"},
+		// **A second harvest pass (09/24)**, run because the first one's lesson is that a
+		// finished node still hides fields: after the literal family, two goldens used
+		// only kinds already built and still differed. A `const` is the same declaration
+		// under another node kind — the Go collector routes `const_declaration` into the
+		// same collector and the `keyword` field carries the word — and a call can carry
+		// type arguments at its callee, the field `TupleLiteral` already had.
+		{"variable_declaration_with_const", "const PI: f64 = 3.14159"},
+		{"function_that_accepts_lambda_as_parameter",
+			"\n\tlet nums = [1, 2, 3]\n\tlet doubled = map::<i64, i64>(nums, (x) => 2 * x)"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")
