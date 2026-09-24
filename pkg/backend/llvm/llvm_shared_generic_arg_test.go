@@ -131,3 +131,78 @@ let main = () -> u8 => {
 		})
 	}
 }
+
+// **A builtin method's argument is a context too**, which `inferLambdaCallFromType` did
+// not say until 09/24.
+//
+// `xs.push(v)` is checked against a LambdaType built from the receiver, and that path
+// called `checkLiteralRange` but never `propagateExpectedType` — so a *construction* passed
+// to one never received the parameter's allocation flavor. Pushing `A(7)` into a
+// `[]shared T` built the value inline and the backend refused the store:
+//
+//	llvm: aggregate element type mismatch: cannot store %T into { i64, i64, %T }*
+//
+// Rule 9 already said where this belonged: allocation rides the expected type, and a new
+// context is one call to it. The bootstrap's AST found it, by being the first thing here to
+// keep a list of `shared` nodes.
+func TestExec_BuiltinMethodArgumentTakesTheParametersFlavor(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// The construction is the argument, so the flavor has nowhere else to come from.
+			"a construction pushed into a shared-element array",
+			`data T = A(i64) | B(i64)
+let main = () -> u8 => {
+  var xs: []shared T = []
+  xs.push(A(7))
+  match xs[0] {
+    A(n) => u8(n),
+    B(_) => 0,
+  }
+}`,
+			7,
+		},
+		{
+			// A value already bound `shared` was never the broken case, and must stay working.
+			"a shared binding pushed into the same array",
+			`data T = A(i64) | B(i64)
+let main = () -> u8 => {
+  var xs: []shared T = []
+  let v: shared T = A(5)
+  xs.push(v)
+  match xs[0] {
+    A(n) => u8(n),
+    B(_) => 0,
+  }
+}`,
+			5,
+		},
+		{
+			// The plain case keeps its plain flavor: this is a push of context, not a
+			// blanket boxing of everything handed to a builtin.
+			"a construction pushed into a plain array",
+			`data T = A(i64) | B(i64)
+let main = () -> u8 => {
+  var xs: []T = []
+  xs.push(A(3))
+  match xs[0] {
+    A(n) => u8(n),
+    B(_) => 0,
+  }
+}`,
+			3,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASanWithPrelude(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}

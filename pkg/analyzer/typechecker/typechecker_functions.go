@@ -583,6 +583,14 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 				calleeName, i+1, got, want)
 			continue
 		}
+		// **The parameter type is this argument's context here too**, which this path did
+		// not say until 09/24. It is the path a *builtin method* takes — `xs.push(v)` is a
+		// LambdaType built from the receiver — so a construction passed to one never got
+		// the parameter's allocation flavor: `xs.push(A(7))` into a `[]shared T` built the
+		// value inline and the backend refused the store (`cannot store %T into
+		// { i64, i64, %T }*`). Rule 9's "allocation flavor rides the expected type, and a
+		// new context is one call to it", with this the context that was missing.
+		tc.propagateExpectedType(arg, param.Type)
 		// A call *through a function-typed value* is still an argument position, and a
 		// literal too wide for the parameter is the same error here as at a direct call.
 		// A function type has no parameter names to quote, so the subject is positional.
@@ -590,8 +598,12 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, param.Type)
 		// The indirect path is the direct path's pair — hazard 8, and this check was
 		// written on one side first.
+		current := argType
+		if updated, ok := tc.typeTable.Get(arg); ok {
+			current = updated
+		}
 		tc.checkArgumentAllocation(
-			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, argType, param.Type)
+			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, current, param.Type)
 	}
 
 	return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
