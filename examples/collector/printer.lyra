@@ -46,6 +46,9 @@ import ast.{
   DataTypeConstructor,
   DestructuringDecl,
   DataPatternDef,
+  TupleLiteral,
+  ArrayLiteral,
+  ArrayRepeat,
   GenericParam,
   RangeEndOperator,
 }
@@ -166,6 +169,14 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
     header_unnamed("CharacterLiteralExpr", depth) ++
     scalar("Value", "${lit.value}", depth + 1) ++
     close(depth),
+  // **Lyra's float formatting is Go's `%v`**, which the printer uses: both render the
+  // shortest decimal that reads back as the same double, so `1.0` is `1` and `1.0e21` is
+  // `1e+21` in either language. That agreement is what lets the value travel as a number
+  // rather than as the text it was written in.
+  FloatLiteralExpr(lit) =>
+    header_unnamed("FloatLiteralExpr", depth) ++
+    scalar("Value", "${lit.value}", depth + 1) ++
+    close(depth),
   InterpolatedStringExpr(interpolated) => {
     var items = ""
     for segment in interpolated.segments {
@@ -189,6 +200,7 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
   // Left, Operator, Right — alphabetical, and the operator is the symbol itself.
   MathBinaryOpExpr(op) => print_binary("MathBinaryOpExpr", op, depth),
   BooleanBinaryOpExpr(op) => print_binary("BooleanBinaryOpExpr", op, depth),
+  StringConcatExpr(op) => print_binary("StringConcatExpr", op, depth),
   // `NegationExpr` and `TryExpr` are one field under two names.
   NegationExpr(unary) =>
     header_unnamed("NegationExpr", depth) ++
@@ -222,7 +234,56 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
     scalar("Index", "${access.index}", depth + 1) ++
     node_field("Object", print_expr(access.object, depth + 2), depth + 1) ++
     close(depth),
+  TupleLiteralExpr(lit) => print_tuple_literal(lit, depth),
+  ArrayLiteralExpr(lit) => print_array_literal(lit, depth),
+  ArrayRepeatExpr(repeat) => print_array_repeat(repeat, depth),
   LambdaExpr(lambda) => print_lambda(lambda, depth),
+}
+
+/// `TupleLiteralExpr(Name) { Elements, GenericArguments, Name }`.
+let print_tuple_literal = pure (lit: TupleLiteral, depth: i64) -> string => {
+  var out = header("TupleLiteralExpr", lit.name, depth)
+  if lit.elements.len() > 0 {
+    var items = ""
+    for e in lit.elements {
+      items = items ++ print_expr(e, depth + 2)
+    }
+    out = out ++ node_field("Elements", items, depth + 1)
+  }
+  if lit.generic_arguments.len() > 0 {
+    var items = ""
+    for a in lit.generic_arguments {
+      items = items ++ print_type(a, depth + 2)
+    }
+    out = out ++ node_field("GenericArguments", items, depth + 1)
+  }
+  out ++ scalar("Name", lit.name, depth + 1) ++ close(depth)
+}
+
+/// `ArrayLiteralExpr { Elements, Fixed }` — `Fixed` omitted when false, as every bool is.
+let print_array_literal = pure (lit: ArrayLiteral, depth: i64) -> string => {
+  var out = header_unnamed("ArrayLiteralExpr", depth)
+  if lit.elements.len() > 0 {
+    var items = ""
+    for e in lit.elements {
+      items = items ++ print_expr(e, depth + 2)
+    }
+    out = out ++ node_field("Elements", items, depth + 1)
+  }
+  if lit.fixed { out = out ++ scalar("Fixed", "true", depth + 1) }
+  out ++ close(depth)
+}
+
+/// `ArrayRepeatExpr { Count, Fixed, Value }`.
+let print_array_repeat = pure (repeat: ArrayRepeat, depth: i64) -> string => {
+  var out = header_unnamed("ArrayRepeatExpr", depth)
+  out = out ++ node_field("Count", print_expr(repeat.count, depth + 2), depth + 1)
+  if repeat.fixed { out = out ++ scalar("Fixed", "true", depth + 1) }
+  out ++ node_field(
+    "Value",
+    print_expr(repeat.value, depth + 2),
+    depth + 1
+  ) ++ close(depth)
 }
 
 /// `FunctionCallExpr { Arguments, Function }`.
@@ -561,6 +622,18 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   // disagree.
   IntegerLiteralExpr(lit) => false,
   CharacterLiteralExpr(lit) => false,
+  // A float is **not** an integer for this rule: `isZeroValue` has a Float case, so `0.0`
+  // is zero and a literal `0.0` prints no `Value:` line at all — the opposite of `0`.
+  // Written as two comparisons because `== 0.0` earns lyra-W008, whose advice is right in
+  // general and beside the point here: zero is the one value every float holds exactly,
+  // and Go's rule is this equality.
+  FloatLiteralExpr(lit) => !(lit.value < 0.0) && !(lit.value > 0.0),
+  StringConcatExpr(op) => false,
+  // `[]` is empty and `#[]` is not, the flavor being a field like any other; a tuple
+  // literal never is, since even an anonymous one carries `?` as its name.
+  ArrayLiteralExpr(lit) => lit.elements.len() == 0 && !lit.fixed,
+  ArrayRepeatExpr(repeat) => false,
+  TupleLiteralExpr(lit) => false,
   StringLiteralExpr(lit) => lit.value == "",
   LambdaExpr(lambda) => lambda_is_empty(lambda),
 }

@@ -145,12 +145,28 @@ Package management, versioning and separate compilation are out of scope by deci
     Two more came from the differential test: `bool`'s AST name is `boolean`, and a
     `ReturnType`'s label renders a tuple's elements rather than its `Name` field.
     (COMPLETED.md, 09/24.)
-  - **What blocks the rest, measured rather than guessed.** Sole blockers, by goldens:
-    `FloatLiteralExpr` 8, `StringConcatExpr` 6, `TupleLiteralExpr` 6, `IfExpr` 5,
-    `StructInstanceExpr` 5, `ArrayLiteralExpr` 3, `ArrayRepeatExpr` 3, `ForInLoopExpr` 3,
-    the tuple and array patterns 3 each, `ForLoopExpr` with `MathAssignOpExpr` 4 together.
-    The literal family is the cheap slice; control flow is the structural one and travels
-    with the pattern kinds and `MatchExpr`.
+  - **The literal family landed 09/24: 75 goldens to 99**, the best-scoring slice so far
+    and the one the harvest's measurement predicted. `FloatLiteralExpr`,
+    `StringConcatExpr`, `TupleLiteralExpr`, `ArrayLiteralExpr`, `ArrayRepeatExpr` — five
+    small nodes on the tree slices 4 to 6 built, which is the shape that pays.
+    A float travels as a **number**: Lyra's formatting is Go's `%v` (both shortest
+    round-trip), and the parse is exact in the range every written literal lives in
+    (Clinger's fast path). Past it the last digits can differ, and a mantissa beyond an
+    i64 used to *trap* — one bad literal took the whole file down rather than collecting
+    imprecisely, the compiler's own hazard 3 — so digits past capacity now move into the
+    exponent. A literal too large for an `f64` collects as zero, agreeing with the Go
+    collector's placeholder on the tree though not yet on the diagnostic.
+    (COMPLETED.md, 09/24.)
+  - **What blocks the rest, measured rather than guessed.** Sole blockers, by goldens
+    (re-measured after the literal family): `StructInstanceExpr` 6, `ForInLoopExpr` 5,
+    `IfExpr` 5, `TuplePattern` 4, `ArrayPattern` 3, `RegexLiteralExpr` 3, then a long tail
+    of twos. Travelling together: `ArrayCompExpr` with `Generator` (4), `ForLoopExpr` with
+    `MathAssignOpExpr` (4), the struct pattern with its fields (3), the rest pattern with
+    the tuple one (3). **104 goldens now use only kinds already built** against 99
+    matching, so a handful are again field-level rather than kind-level — worth a harvest
+    pass before the next slice rather than after it.
+    Control flow (`IfExpr`, `MatchExpr`, the two loops) is the structural one and travels
+    with the pattern kinds; `StructInstanceExpr` is the cheapest single node left.
   - **Three goldens have no test.** `if_then_expr`, `if_then_expr_multiple_lines` and
     `if_then_expr_with_else_if` are referenced from nothing and record an `if/then/end`
     syntax the grammar no longer has — their contents are the identifiers `else` and `end`

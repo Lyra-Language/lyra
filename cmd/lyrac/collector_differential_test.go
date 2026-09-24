@@ -119,6 +119,45 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"an anonymous tuple as a struct field type", "struct S { pair: (i64, i64) }"},
 		{"an anonymous tuple as a return type", "let f = () -> (i64, bool) => t"},
 		{"a nested anonymous tuple", "tuple T(((i64, i64), i64))"},
+		// **The literal family (09/24)**, in the shapes the goldens do not reach. The
+		// emptiness rule is the first one: `[]` is an empty composite and disappears,
+		// `#[]` is not — the flavor is a field, so a fixed empty array has a non-zero one
+		// — and `0.0` disappears where `0` does not, floats having a zero case in
+		// `isZeroValue` where integers have none.
+		{"an empty dynamic array literal", "let a = []"},
+		{"an empty fixed array literal", "let a = #[]"},
+		{"a float of zero", "let a = 0.0"},
+		{"a float that is a whole number", "let a = 1.0"},
+		// The float parse, at and past the range where it is exact. 10^22 is the last
+		// power of ten a double holds exactly; the long mantissas are the ones that used
+		// to **trap**, taking the whole file down rather than collecting imprecisely.
+		{"a float at the top of the exact range", "let a = 1.0e22"},
+		{"a float at the bottom of the exact range", "let a = 1.0e-22"},
+		{"a float with seventeen significant digits", "let a = 1.2345678901234567"},
+		{"a float with more digits than a mantissa holds", "let a = 1.234567890123456789012345"},
+		{"a float whose integer part overruns the mantissa",
+			"let a = 123456789012345678901234567890.5"},
+		// Nesting, which is where a wrapper taken for an element would show.
+		{"nested array literals", "let a = [[1, 2], [3]]"},
+		{"an array of tuples", "let a = [(1, 2), (3, 4)]"},
+		{"a tuple holding an array", "let a = ([1, 2], 3)"},
+		{"a fixed array inside a dynamic one", "let a = [#[1], #[2]]"},
+		{"a repeat whose value is an array", "let a = [[0]; 4]"},
+		{"a repeat whose count is an expression", "let a = [0; n * 2]"},
+		{"a tuple literal with one element", "let a = (1,)"},
+		{"a named tuple with two generic arguments", "let a = Pair::<i32, string>(1, s)"},
+		// And composed with what the earlier slices built.
+		{"an array literal as a call argument", "let a = f([1, 2])"},
+		{"an array literal indexed", "let a = [1, 2][0]"},
+		{"a concat of members", "let s = a.left ++ b.right"},
+		{"a concat inside an interpolation", `let s = "${a ++ b}"`},
+		{"a float inside an interpolation", `let s = "${1.5}"`},
+		{"a negated float", "let a = -1.5"},
+		{"a float in a range", "let a = 0.5..<1.5"},
+		// No case for a float too large for an `f64` (`1.0e400`): the Go collector reports
+		// an error there, and this test fails on one rather than comparing. The two do
+		// agree on the tree — it places a zero-valued node, which prints nothing, and so
+		// does this — but the agreement has to be stated here rather than asserted.
 		// No case for an *absent* end operator: `0..` is deliberately not an expression
 		// yet (todo.md, Ranges), and a range with an end always writes one. So
 		// `end_operator: None` is currently reachable only through pattern ranges, which

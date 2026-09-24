@@ -65,6 +65,9 @@ pub data Expr =
   IntegerLiteralExpr(IntegerLiteral)
   /// `'\n'` — the rune's code point.
   | CharacterLiteralExpr(CharacterLiteral)
+  /// `3.14159` — the value, not the spelling: `0.03141592e2` and `314.1592e-2` are one
+  /// number and collect identically.
+  | FloatLiteralExpr(FloatLiteral)
   /// `"hello"` — the text, escapes already decoded.
   | StringLiteralExpr(StringLiteral)
   /// `"a ${x} b"` — the pieces in order, text and expression alike.
@@ -75,6 +78,9 @@ pub data Expr =
   | MathBinaryOpExpr(BinaryOp)
   /// `a < b`, `p && q` — comparison and logic.
   | BooleanBinaryOpExpr(BinaryOp)
+  /// `"a" ++ b` — the third node sharing `BinaryOp`'s shape, and the only operator whose
+  /// node kind the grammar decides on its own rather than by the symbol.
+  | StringConcatExpr(BinaryOp)
   /// `-x` — arithmetic negation.
   | NegationExpr(Unary)
   /// `read()?` — propagate a failure to the enclosing function.
@@ -91,6 +97,12 @@ pub data Expr =
   | TupleIndexExpr(TupleIndexAccess)
   /// `{ … }` — statements in a scope, used as a value.
   | BlockExpr(Block)
+  /// `(1, 2)`, `Point(1, 2)` — a tuple built inline, named or not.
+  | TupleLiteralExpr(TupleLiteral)
+  /// `[1, 2, 3]`, `#[1, 2, 3]` — a list of elements, dynamic or fixed.
+  | ArrayLiteralExpr(ArrayLiteral)
+  /// `[0; n]`, `#[0; 8]` — one value repeated.
+  | ArrayRepeatExpr(ArrayRepeat)
   /// `(a, b) => …` — a function literal.
   | LambdaExpr(Lambda)
 
@@ -104,6 +116,15 @@ pub struct IntegerLiteral {
 /// A character literal, as a code point.
 pub struct CharacterLiteral {
   value: i64,
+}
+
+/// A float literal, as a number.
+///
+/// **The value, not the text.** `0.03141592e2` prints as `3.141592`, so the collector
+/// parses and the printer formats — the one literal in this AST that is not carried as
+/// either its digits or its spelling.
+pub struct FloatLiteral {
+  value: f64,
 }
 
 /// A string literal, escapes decoded.
@@ -214,6 +235,35 @@ pub struct IndexAccess {
 pub struct TupleIndexAccess {
   index: i64,
   object: shared Expr,
+}
+
+/// `(1, 2)` and `Point(1, 2)`.
+///
+/// The two are one node with a name or without: an anonymous tuple is named `?`, the
+/// placeholder an unnamed tuple answers when asked, which is the same sentinel
+/// `TupleTypeDef` carries.
+pub struct TupleLiteral {
+  elements: []shared Expr,
+  /// `Point::<i32>(1, 2)` — the arguments written at the name, and an empty list for the
+  /// ordinary spelling.
+  generic_arguments: []shared TypeNode,
+  name: string,
+}
+
+/// `[1, 2, 3]` and `#[1, 2, 3]`.
+pub struct ArrayLiteral {
+  elements: []shared Expr,
+  /// **The opener is the flavor**: `#[` builds a fixed `[N]T` and `[` a dynamic `[]T`.
+  /// Nothing infers it, here or in the compiler — the grammar exposes the `#[` as a field
+  /// and this records whether it was there.
+  fixed: bool,
+}
+
+/// `[0; n]` and `#[0; 8]`.
+pub struct ArrayRepeat {
+  count: shared Expr,
+  fixed: bool,
+  value: shared Expr,
 }
 
 /// A block used as a value — a lambda's body, or an arm's.

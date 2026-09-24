@@ -29,6 +29,10 @@ import ast.{
   ConstrainedTypeDef,
   Interpolated,
   Pattern,
+  FloatLiteral,
+  TupleLiteral,
+  ArrayLiteral,
+  ArrayRepeat,
   RangeEndOperator,
 }
 
@@ -423,6 +427,7 @@ let collect_pattern = (node: Node, source: []u8) -> Maybe<shared Pattern> => {
 let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => match kind(node) {
   "integer_literal" => Some(collect_integer(node, source)),
   "char_literal" => Some(collect_character(node, source)),
+  "float_literal" => Some(collect_float(node, source)),
   "string_literal" => Some(collect_string(node, source)),
   "raw_string_literal" => Some(collect_raw_string(node, source)),
   // A lambda met as an expression carries whatever modifiers it was written with; only
@@ -445,6 +450,10 @@ let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => match kin
   "optional_index_expr" => collect_index(node, source, true),
   "tuple_index_expr" => collect_tuple_index(node, source),
   "boolean_expr" => collect_boolean(node, source),
+  "string_concat_expr" => collect_string_concat(node, source),
+  "tuple_literal" => Some(collect_tuple_literal(node, source)),
+  "array_literal" => Some(collect_array_literal(node, source)),
+  "array_repeat_init" => collect_array_repeat(node, source),
   "negation" => collect_unary(node, source, false),
   "try_expr" => collect_unary(node, source, true),
   "range_expr" => collect_range(node, source),
@@ -681,6 +690,94 @@ let collect_boolean = (node: Node, source: []u8) -> Maybe<shared Expr> => {
   }))
 }
 
+/// `"a" ++ b`.
+///
+/// A node kind of its own, as `boolean_expr` is — so `++` is never classified here, and a
+/// concatenation cannot be collected as arithmetic by an operator table that grew a case.
+let collect_string_concat = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let operator = field(node, "operator")?
+  let left = collect_expr(field(node, "left")?, source)?
+  let right = collect_expr(field(node, "right")?, source)?
+  Some(StringConcatExpr(BinaryOp {
+    left: left,
+    operator: text(operator, source),
+    right: right,
+  }))
+}
+
+/// `(1, 2)` and `Point(1, 2)`.
+///
+/// Each element is wrapped in a `tuple_value`, as an argument is in a `value`. An unnamed
+/// tuple has no `tuple_name` field and takes `?`, the placeholder the Go collector uses
+/// and `TupleTypeDef` already carries.
+let collect_tuple_literal = (node: Node, source: []u8) -> shared Expr => {
+  var elements: []shared Expr = []
+  var arguments: []shared TypeNode = []
+  for i in 0..<named_child_count(node) {
+    let child = named_child(node, i)
+    match kind(child) {
+      "tuple_value" if named_child_count(child) > 0 => {
+        match collect_expr(named_child(child, 0), source) {
+          Some(element) => elements.push(element),
+          None => {},
+        }
+      },
+      "generic_arguments" => {
+        for j in 0..<named_child_count(child) {
+          match collect_type(named_child(child, j), source) {
+            Some(argument) => arguments.push(argument),
+            None => {},
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  TupleLiteralExpr(TupleLiteral {
+    elements: elements,
+    generic_arguments: arguments,
+    name: match field(node, "tuple_name") {
+      Some(name) => text(name, source),
+      None => "?",
+    },
+  })
+}
+
+/// `[1, 2, 3]` and `#[1, 2, 3]`.
+///
+/// The elements are children directly rather than through a wrapper — the one list in this
+/// walk that is not wrapped — and `#[` is exposed as a `fixed` field, so the flavor is read
+/// rather than derived from the text.
+let collect_array_literal = (node: Node, source: []u8) -> shared Expr => {
+  var elements: []shared Expr = []
+  for i in 0..<named_child_count(node) {
+    match collect_expr(named_child(node, i), source) {
+      Some(element) => elements.push(element),
+      None => {},
+    }
+  }
+  ArrayLiteralExpr(ArrayLiteral {
+    elements: elements,
+    fixed: has_field(node, "fixed"),
+  })
+}
+
+/// `[0; n]` and `#[0; 8]`.
+///
+/// The count sits in an `array_repeat_count` wrapper and the value does not, which is why
+/// only one of the two is unwrapped.
+let collect_array_repeat = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+  let value = collect_expr(field(node, "value")?, source)?
+  let count_node = field(node, "count")?
+  if named_child_count(count_node) == 0 { return None }
+  let repeated = collect_expr(named_child(count_node, 0), source)?
+  Some(ArrayRepeatExpr(ArrayRepeat {
+    count: repeated,
+    fixed: has_field(node, "fixed"),
+    value: value,
+  }))
+}
+
 /// `-x` and `read()?` — one operand under two node names.
 let collect_unary = (node: Node, source: []u8, is_try: bool) -> Maybe<shared Expr> => {
   let operand = collect_expr(field(node, "operand")?, source)?
@@ -897,6 +994,104 @@ let collect_raw_string = (node: Node, source: []u8) -> shared Expr => {
     }
   }
   StringLiteralExpr(StringLiteral { value: "" })
+}
+
+/// `3.14159`, `0.03141592e2`, `3.141_59`.
+let collect_float = (node: Node, source: []u8) -> shared Expr =>
+  FloatLiteralExpr(FloatLiteral { value: float_value(text(node, source).to_runes()) })
+
+/// The number a float literal denotes.
+///
+/// Mantissa digits into an integer, then one scaling by a power of ten — Clinger's fast
+/// path. **It is exact where it applies**: a mantissa below 2^53 and a power of ten at or
+/// under 10^22 are each exactly representable, so the single multiply or divide is
+/// correctly rounded and lands on the same double `strconv.ParseFloat` does. Every float a
+/// person writes is in that range.
+///
+/// Outside it the answer can differ in its last digits, where Go falls back to arbitrary
+/// precision: `1.0e308` comes out `9.999999999999998e+307` here, because ten to the 308th
+/// is built by multiplying and that rounds at every step. A real limit, stated rather than
+/// hidden — closing it is a big-integer algorithm, not a tweak.
+///
+/// **Digits past the mantissa's capacity are dropped, not accumulated.** Multiplying an
+/// i64 past its range *traps*, so a 25-digit literal took the whole file down with it
+/// rather than being collected imprecisely — one bad literal, no output at all, which is
+/// the compiler's own hazard 3. A dropped digit before the point still shifts the
+/// magnitude, so it moves into the exponent; one after the point is below the precision
+/// already lost and simply goes.
+///
+/// A literal too large for an `f64` collects as **zero**, which is not a guess: the Go
+/// collector reports `lyra-E…` and places a zero-valued node, and a zero float prints no
+/// `Value:` line, so the two agree on the tree. The diagnostic itself is a later slice.
+let float_value = pure (runes: []rune) -> f64 => {
+  // (2^63 - 1) / 10, the largest mantissa another digit can still be appended to.
+  let mantissa_limit = 922337203685477580
+  var mantissa = 0
+  var fraction_digits = 0
+  var dropped_digits = 0
+  var exponent = 0
+  var exponent_sign = 1
+  var in_exponent = false
+  var after_point = false
+  for c in runes {
+    match c {
+      '_' | '+' => { continue },
+      '.' => {
+        after_point = true
+        continue
+      },
+      'e' | 'E' => {
+        in_exponent = true
+        continue
+      },
+      '-' => {
+        exponent_sign = -1
+        continue
+      },
+      _ => {}
+    }
+    if in_exponent {
+      exponent = exponent * 10 + digit_value(c)
+      continue
+    }
+    if mantissa > mantissa_limit {
+      if !after_point { dropped_digits += 1 }
+      continue
+    }
+    mantissa = mantissa * 10 + digit_value(c)
+    if after_point { fraction_digits += 1 }
+  }
+  let scaled = scale_by_power_of_ten(
+    f64(mantissa),
+    exponent_sign * exponent - fraction_digits + dropped_digits
+  )
+  if is_finite(scaled) { scaled } else { 0.0 }
+}
+
+/// Whether `value` is a real number rather than an infinity or a NaN.
+///
+/// Written as two comparisons against an infinity built on the spot: the prelude has no
+/// predicate for it, and the usual `value != value` earns lyra-W008. A NaN fails both, an
+/// infinity fails one.
+let is_finite = pure (value: f64) -> bool => {
+  let infinity = 1.0e308 * 10.0
+  value > -infinity && value < infinity
+}
+
+/// `value` times ten to the `power` — dividing rather than multiplying by a negative one,
+/// since `1e-5` is not exactly representable and `1e5` is: `x / 1e5` rounds once where
+/// `x * 1e-5` rounds twice.
+let scale_by_power_of_ten = pure (value: f64, power: i64) -> f64 =>
+  if power >= 0 { value * power_of_ten(power) } else { value / power_of_ten(-power) }
+
+/// Ten to the `power`, built by multiplication — exact through 10^22, the last power of
+/// ten a double holds exactly.
+let power_of_ten = pure (power: i64) -> f64 => {
+  var result = 1.0
+  for _ in 0..<power {
+    result = result * 10.0
+  }
+  result
 }
 
 /// The value of `digits` read in `base`, underscores ignored as the grammar allows them.

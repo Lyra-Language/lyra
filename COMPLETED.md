@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — the literal family, and a float that has to be a number
+
+Five nodes: `FloatLiteralExpr`, `StringConcatExpr`, `TupleLiteralExpr`, `ArrayLiteralExpr`,
+`ArrayRepeatExpr`. **75 goldens to 99**, the best-scoring slice so far, and the one the
+harvest's measurement had named — small nodes on the tree slices 4 to 6 already built,
+which is the shape that pays. The other four were straightforward. The float was not.
+
+**A float cannot travel as its text.** `0.03141592e2`, `314.1592e-2` and `3.141592` are one
+number and the Go AST holds one `float64`, printed by `%v`. So the collector has to parse
+and the printer has to format, and both have to land where Go does. The formatting turned
+out free: Lyra's float rendering *is* Go's `%v` — both the shortest decimal that reads back
+as the same double, so `1.0` is `1` and `1.0e21` is `1e+21` in either language.
+
+The parse is Clinger's fast path: mantissa digits into an integer, then one scaling by a
+power of ten. **Exact where it applies**, and that is not a hope — a mantissa below 2^53
+and a power of ten at or under 10^22 are each exactly representable, so the single divide
+is correctly rounded and lands on the same double `strconv.ParseFloat` does. `3.14159` is
+`314159 / 100000`, and the true quotient is the literal, so the nearest double to the
+quotient is the nearest double to the literal. Dividing rather than multiplying by a
+negative power is the part that has to be right: `1e-5` is not representable and `1e5` is,
+so `x / 1e5` rounds once where `x * 1e-5` rounds twice.
+
+Past that range the last digits can differ — `1.0e308` comes out `9.999999999999998e+307`,
+because ten to the 308th is built by multiplying and that rounds at every step. Stated
+rather than hidden; closing it is a big-integer algorithm, not a tweak.
+
+**The bug worth the slice**: a 25-digit literal *trapped*. Multiplying an i64 past its
+range is a trap in Lyra, so `1.234567890123456789012345` took the entire file down — no
+output at all, from one literal — which is exactly what the compiler's hazard 3 exists to
+prevent, met from the other side. Digits past the mantissa's capacity are dropped now, and
+a dropped digit *before* the point moves into the exponent because it still carries
+magnitude. A literal too large for an `f64` collects as zero: the Go collector reports an
+error and places a zero-valued node, and a zero float prints no `Value:` line, so the two
+agree on the tree. The diagnostic is a later slice.
+
+Two rules the goldens would not have shown, both in the emptiness test:
+
+- **`0.0` disappears where `0` does not.** `isZeroValue` has a Float case and no integer
+  case, so a zero float is a zero field and a zero integer is not — the opposite readings
+  of the same literal digit.
+- **`[]` is an empty composite and `#[]` is not.** The `#[` opener is a *field*, so a fixed
+  empty array has a non-zero one and prints; a dynamic empty array prints nothing.
+
+Both are differential cases now, since no stored golden writes either.
+
 ### 09/24/26 — the harvest: 50 goldens to 75, and the oracle that was not one
 
 The bootstrap had been growing by **node kind** — name the kind the most goldens are

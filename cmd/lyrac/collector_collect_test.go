@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 75 of the 238 goldens whose sources can be recovered match today. The number is not
+// 99 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -172,6 +172,48 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		// A tuple type written inside another one, which is the same anonymous tuple a
 		// packed data payload carries and prints under the same `?` name.
 		{"tuple_type_declaration_with_nested_tuple", "tuple RGBA((i64, i64, i64), f64)"},
+		// **The literal family (09/24).** Five small nodes on the tree slices 4 to 6
+		// built, and the best-scoring slice so far: 75 to 99. The measurement predicted
+		// it — these were the sole blocker of more goldens than anything else, exactly as
+		// the postfix family was in slice 5.
+		//
+		// A float travels as a **number**, not as its digits: `0.03141592e2`,
+		// `314.1592e-2` and `3.141592` are one value and collect identically. That works
+		// because Lyra's float formatting is Go's `%v` — both render the shortest decimal
+		// that reads back as the same double — and because the parse is exact in this
+		// range (`float_value`).
+		{"simple_float_literal_expr", "let pi = 3.14159"},
+		{"float_literal_expr_with_exponent", "let pi = 0.03141592e2"},
+		{"float_literal_expr_with_positive_exponent", "let pi = 0.03141592e+2"},
+		{"float_literal_expr_with_negative_exponent", "let pi = 314.1592e-2"},
+		{"float_literal_expr_with_underscores", "let pi = 3.141_59"},
+		{"variable_declaration_with_let", "let pi: f64 = 3.14159"},
+		{"variable_declaration_without_type_annotation", "let pi = 3.14159"},
+		// `++` is a node kind of its own, so nothing here classifies an operator — the
+		// third node sharing `BinaryOp`'s shape, after the arithmetic and boolean ones.
+		{"expr_string_concat_literals", `"hello" ++ " world"`},
+		{"expr_string_concat_variables", "greeting ++ name"},
+		{"expr_string_concat", `let greeting = "Hello, " ++ name`},
+		{"expr_string_concat_in_let_declaration", `let s = "Hello, " ++ name`},
+		{"expr_string_concat_chained", `let s = "a" ++ "b" ++ "c"`},
+		{"expr_string_concat_function_call_operands", "foo() ++ bar()"},
+		// A tuple literal is one node named or not: `(1, 2)` takes `?`, the same
+		// placeholder an unnamed tuple *type* carries, and `Point(1, 2)` is not a call.
+		{"simple_anonymous_tuple_literal", "let point: (i64, i64) = (1, 2)"},
+		{"simple_anonymous_tuple_literal_assigned_to_named_tuple", "let point: Point = (1, 2)"},
+		{"simple_named_tuple_literal", "let point = Point(1, 2)"},
+		{"simple_named_tuple_literal_with_generic_parameters", "let point = Point::<i32>(1, 2)"},
+		{"simple_named_tuple_literal_assigned_to_named_tuple",
+			"\ntuple Point(i32, i32)\nlet point: Point = Point(1, 2)\n\t"},
+		{"variable_declaration_with_tuple_type", "let the_answer: (i64, i64) = (42, 13)"},
+		// **The opener is the flavor**: `#[` is a fixed `[N]T` and `[` a dynamic `[]T`,
+		// exposed as a `fixed` field so nothing infers it from the text. Both spellings of
+		// both nodes are here for that reason.
+		{"simple_static_array_literal", "let arr = #[1, 2, 3]"},
+		{"array_literal_with_expression", "let arr = [1, 2 * PI, 3]"},
+		{"array_repeat_initialization", "let arr = #[0; 8]"},
+		{"array_repeat_initialization_with_compile_time_constant_count", "let arr = #[0; SIZE]"},
+		{"dynamic_array_repeat_initialization", "let arr = [0; n]"},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")
