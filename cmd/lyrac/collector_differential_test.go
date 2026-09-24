@@ -56,6 +56,19 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"a data constructor carrying a declared type", "data Color = Named(CSSName)"},
 		{"a data constructor carrying a variable", "data Holder<t> = Wrap(t)"},
 		{"a tuple of mixed declared and primitive types", "tuple Row(Name, i64)"},
+		// Destructuring, interpolation and newtypes, in compositions no golden isolates.
+		// A nullary constructor, which carries no Pattern field at all — the shape that
+		// checks the field is omitted rather than printed empty. `let Some (Ok v) = m`
+		// would belong here too, but its inner `(Ok v)` is a *tuple pattern*, a kind this
+		// subset does not collect (todo.md), and a case asserting agreement on a construct
+		// the walk skips would be asserting the skip.
+		{"a destructuring of a nullary constructor", "let None = m"},
+		{"a destructuring with a var keyword", "var Some x = m"},
+		{"an interpolation holding a range", `let s = "${a..<b}"`},
+		{"an interpolation holding an index", `let s = "${xs[0]}"`},
+		{"adjacent interpolations with no text between", `let s = "${a}${b}"`},
+		{"an interpolation at the start and end", `let s = "${a} mid ${b}"`},
+		{"a newtype over a declared type", "newtype Id = UserKey"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")

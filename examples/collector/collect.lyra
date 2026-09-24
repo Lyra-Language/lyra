@@ -24,6 +24,11 @@ import ast.{
   DataTypeDef,
   DataTypeConstructor,
   GenericParam,
+  DestructuringDecl,
+  DataPatternDef,
+  ConstrainedTypeDef,
+  Interpolated,
+  Pattern,
 }
 
 /// Every statement at the file's top level.
@@ -48,7 +53,7 @@ pub let collect = (root: Node, source: []u8) -> Program => {
 let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
   return match kind(node) {
     "comment" => None,
-    "declaration" => Some(collect_declaration(node, source)),
+    "declaration" => collect_declaration(node, source),
     "type_declaration" => collect_type_declaration(node, source),
     "expression_statement" => {
       // The statement wraps one expression; if that expression is a kind this slice does
@@ -74,11 +79,13 @@ let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
 let collect_type_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
   if named_child_count(node) == 0 { return None }
   let body = named_child(node, 0)
-  let k = kind(body)
-  let declared = if k == "struct_type" { collect_struct_type(body, source) }
-  else if k == "named_tuple_type" { collect_tuple_type(body, source) }
-  else if k == "data_type" { collect_data_type(body, source) }
-  else { return None }
+  let declared = match kind(body) {
+    "struct_type" => collect_struct_type(body, source),
+    "named_tuple_type" => collect_tuple_type(body, source),
+    "data_type" => collect_data_type(body, source),
+    "constrained_type" => collect_constrained_type(body, source),
+    _ => return None
+  }
   let Some(declared_type) = declared else { return None }
   Some(TypeDeclStmt(TypeDecl {
     derives: [],
@@ -93,7 +100,7 @@ let collect_type_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
 }
 
 /// `struct Point { x: i64, y: i64 = 0 }`.
-let collect_struct_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+let collect_struct_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
   var name = ""
   var fields: []StructField = []
   for i in 0..<named_child_count(node) {
@@ -118,7 +125,7 @@ let collect_struct_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
 /// `x: i64`, `y: i64 = 0`.
 let collect_struct_field = (node: Node, source: []u8) -> Maybe<StructField> => {
   var name = ""
-  var declared: Maybe<TypeNode> = None
+  var declared: Maybe<shared TypeNode> = None
   for i in 0..<named_child_count(node) {
     let child = named_child(node, i)
     let k = kind(child)
@@ -140,7 +147,7 @@ let collect_struct_field = (node: Node, source: []u8) -> Maybe<StructField> => {
 }
 
 /// `tuple Point2D(f64, f64)`.
-let collect_tuple_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+let collect_tuple_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
   var name = ""
   match field(node, "name") {
     Some(n) => {
@@ -155,7 +162,7 @@ let collect_tuple_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
 }
 
 /// `data Color = Red | Hex(HexStr)`.
-let collect_data_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+let collect_data_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
   var name = ""
   var constructors: []DataTypeConstructor = []
   for i in 0..<named_child_count(node) {
@@ -195,8 +202,8 @@ let has_packed_payload = (node: Node) -> bool => {
 /// uses the packed form.
 ///
 /// The anonymous tuple is named `?`, which is what an unnamed one answers when asked.
-let collect_constructor_params = (node: Node, source: []u8) -> []TypeNode => {
-  var params: []TypeNode = []
+let collect_constructor_params = (node: Node, source: []u8) -> []shared TypeNode => {
+  var params: []shared TypeNode = []
   for i in 0..<named_child_count(node) {
     let child = named_child(node, i)
     if kind(child) == "anonymous_tuple_type" {
@@ -217,8 +224,8 @@ let collect_constructor_params = (node: Node, source: []u8) -> []TypeNode => {
 
 /// The element types of a `tuple_type_body` under `node`, each unwrapped from the
 /// `tuple_type_element` the grammar wraps it in.
-let collect_tuple_elements = (node: Node, source: []u8) -> []TypeNode => {
-  var elements: []TypeNode = []
+let collect_tuple_elements = (node: Node, source: []u8) -> []shared TypeNode => {
+  var elements: []shared TypeNode = []
   var i = 0
   for i < named_child_count(node) {
     let child = named_child(node, i)
@@ -243,6 +250,19 @@ let collect_tuple_elements = (node: Node, source: []u8) -> []TypeNode => {
     i += 1
   }
   elements
+}
+
+/// `newtype Angle = f64`.
+///
+/// The constraints a newtype may carry (`where range(…)`) are not collected yet, which is
+/// why the goldens that have them still differ — an honest gap rather than a silent one.
+let collect_constrained_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
+  let name_node = field(node, "name")?
+  let base = collect_type(field(node, "type")?, source)?
+  Some(ConstrainedType(ConstrainedTypeDef {
+    name: text(name_node, source),
+    declared: base,
+  }))
 }
 
 /// `<t, u>` — the variables a declaration binds, or none.
@@ -274,7 +294,8 @@ let collect_generic_params = (node: Node, source: []u8) -> []GenericParam => {
 }
 
 /// The name a declared type carries, which is also the declaration's own.
-let type_name_of = pure (declared: TypeNode) -> string => match declared {
+let type_name_of = pure (declared: shared TypeNode) -> string => match declared {
+  ConstrainedType(def) => def.name,
   NamedStructType(def) => def.name,
   TupleType(def) => def.name,
   DataType(def) => def.name,
@@ -293,7 +314,7 @@ let collect_wrapped_at = (wrapper: Node, source: []u8) -> Maybe<shared Expr> => 
 ///
 /// Every field is optional in the grammar even where it reads as required, so each is a
 /// `field` lookup with an answer for the absent case rather than an unwrap.
-let collect_declaration = (node: Node, source: []u8) -> Stmt => {
+let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
   let binding_kind = match field(node, "keyword") {
     Some(keyword) => text(keyword, source),
     None => "let",
@@ -306,7 +327,20 @@ let collect_declaration = (node: Node, source: []u8) -> Stmt => {
     Some(expr) => collect_expr(expr, source),
     None => None,
   }
-  VarDeclStmt(VarDecl {
+  // **The same node in two shapes**, told apart by which field it carries. A `pattern`
+  // means the left side matches rather than names, and there is no `name` to read.
+  match field(node, "pattern") {
+    Some(pattern_node) => {
+      let Some(pattern) = collect_pattern(pattern_node, source) else { return None }
+      return Some(DestructuringDeclStmt(DestructuringDecl {
+        keyword: binding_kind,
+        pattern: pattern,
+        value: value,
+      }))
+    },
+    None => {},
+  }
+  Some(VarDeclStmt(VarDecl {
     binding_kind: binding_kind,
     // The field's presence *is* the answer; `pub` is the only thing it can say.
     is_public: match field(node, "visibility") {
@@ -315,7 +349,34 @@ let collect_declaration = (node: Node, source: []u8) -> Stmt => {
     },
     name: name,
     value: value,
-  })
+  }))
+}
+
+/// One pattern, or `None` for a form this slice does not collect.
+///
+/// The grammar wraps a destructuring declaration's pattern in `destructuring_only_pattern`,
+/// the fourth wrapper in this walk — so it is unwrapped like the others rather than given
+/// a case of its own.
+let collect_pattern = (node: Node, source: []u8) -> Maybe<shared Pattern> => {
+  let k = kind(node)
+  if k == "destructuring_only_pattern" {
+    if named_child_count(node) == 0 { return None }
+    return collect_pattern(named_child(node, 0), source)
+  }
+  if k == "identifier" {
+    return Some(IdentifierPattern(Identifier { name: text(node, source) }))
+  }
+  if k == "data_pattern" {
+    let name_node = field(node, "name")?
+    return Some(DataPattern(DataPatternDef {
+      name: text(name_node, source),
+      pattern: match field(node, "pattern") {
+        Some(inner) => collect_pattern(inner, source),
+        None => None,
+      },
+    }))
+  }
+  None
 }
 
 /// One expression, or `None` for a kind this slice does not collect.
@@ -477,7 +538,7 @@ let collect_return_type = (node: Node, source: []u8) -> Maybe<ReturnType> => {
 ///
 /// The primitives are exactly the kinds the grammar names for them, so the *kind* decides
 /// and the text is only the name — no list of spellings to fall out of date.
-let collect_type = (node: Node, source: []u8) -> Maybe<TypeNode> => {
+let collect_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
   return match kind(node) {
     "signed_integer_type" | "unsigned_integer_type" | "float_type" | "boolean_type" | "string_type"
       | "rune_type" => Some(PrimitiveType(Identifier { name: text(node, source) })),
@@ -604,8 +665,43 @@ let collect_character = (node: Node, source: []u8) -> shared Expr => {
 
 /// `"hi"` — the text, quotes stripped and escapes decoded.
 let collect_string = (node: Node, source: []u8) -> shared Expr => {
+  // **An interpolation makes it a different node**, not a string with extra parts: the Go
+  // AST has `InterpolatedStringExpr` with segments, where a text run is itself a
+  // `StringLiteralExpr` segment. The list is homogeneous, so a reader needs no second
+  // shape for "the parts that are not expressions".
+  if has_interpolation(node) {
+    var segments: []shared Expr = []
+    var i = 0
+    for i < named_child_count(node) {
+      let child = named_child(node, i)
+      let k = kind(child)
+      if k == "string_content" {
+        segments.push(StringLiteralExpr(StringLiteral {
+          value: decode_escapes(text(child, source).to_runes()),
+        }))
+      }
+      if k == "string_interpolation" && named_child_count(child) > 0 {
+        match collect_expr(named_child(child, 0), source) {
+          Some(expr) => segments.push(expr),
+          None => {},
+        }
+      }
+      i += 1
+    }
+    return InterpolatedStringExpr(Interpolated { segments: segments })
+  }
   let raw = text(node, source).to_runes()
   StringLiteralExpr(StringLiteral { value: decode_escapes(raw.slice(1, raw.len() - 1)) })
+}
+
+/// Whether a string literal holds at least one `${…}`.
+let has_interpolation = (node: Node) -> bool => {
+  var i = 0
+  for i < named_child_count(node) {
+    if kind(named_child(node, i)) == "string_interpolation" { return true }
+    i += 1
+  }
+  false
 }
 
 /// The runes with their escape sequences resolved.

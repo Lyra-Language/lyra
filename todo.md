@@ -127,6 +127,12 @@ Package management, versioning and separate compilation are out of scope by deci
     tail of this domain is a sub-domain of its own: `ConstrainedType` blocks 11 of the
     remaining declaration goldens and brings the newtype constraint expressions with it.
     Bigger wins elsewhere: `DestructuringDeclStmt` (24) and `InterpolatedStringExpr` (22).
+  - **Slice 8 landed 09/24: destructuring, interpolation and newtypes.**
+    `DestructuringDeclStmt` with `DataPattern`, `InterpolatedStringExpr`, `ConstrainedType`.
+    **50 of 238**, up from 41. Still uncollected and worth naming rather than discovering:
+    a newtype's `where` constraints, and the pattern kinds beyond an identifier and a data
+    pattern — **tuple, array and struct patterns**, which is what stops
+    `let Some (Ok v) = m` from agreeing with the Go collector.
   - **The `Location` every node carries is not modelled yet**, and the goldens do not show
     it (`pkg/printer` omits `print:"-"` fields, which is what `NameLocation` is). It has to
     arrive before anything reports a diagnostic, and choosing when is a slice of its own.

@@ -44,6 +44,8 @@ import ast.{
   TupleTypeDef,
   DataTypeDef,
   DataTypeConstructor,
+  DestructuringDecl,
+  DataPatternDef,
 }
 
 /// A whole program, as `pkg/printer.PrintAST` would render it.
@@ -65,6 +67,7 @@ pub let print_ast = pure (program: Program) -> string => {
 let print_stmt = pure (stmt: Stmt, depth: i64) -> string => match stmt {
   VarDeclStmt(decl) => print_var_decl(decl, depth),
   TypeDeclStmt(decl) => print_type_decl(decl, depth),
+  DestructuringDeclStmt(decl) => print_destructuring_decl(decl, depth),
   ExpressionStmt(statement) =>
     header_unnamed("ExpressionStmt", depth) ++
     node_field("Expression", print_expr(statement.expression, depth + 2), depth + 1) ++
@@ -120,6 +123,21 @@ let print_type_decl = pure (decl: TypeDecl, depth: i64) -> string => {
   ) ++ close(depth)
 }
 
+/// `DestructuringDeclStmt { Keyword, Pattern, Value }` — no label, the node having no
+/// `Name` of its own: what it binds lives in the pattern.
+let print_destructuring_decl = pure (decl: DestructuringDecl, depth: i64) -> string => {
+  var out = header_unnamed("DestructuringDeclStmt", depth)
+  out = out ++ scalar("Keyword", decl.keyword, depth + 1)
+  out = out ++ node_field("Pattern", print_pattern(decl.pattern, depth + 2), depth + 1)
+  match decl.value {
+    Some(value) => {
+      out = out ++ node_field("Value", print_expr(value, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  out ++ close(depth)
+}
+
 /// One expression at `depth`.
 let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
   IntegerLiteralExpr(lit) =>
@@ -131,6 +149,15 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
     header_unnamed("CharacterLiteralExpr", depth) ++
     scalar("Value", "${lit.value}", depth + 1) ++
     close(depth),
+  InterpolatedStringExpr(interpolated) => {
+    var items = ""
+    for segment in interpolated.segments {
+      items = items ++ print_expr(segment, depth + 2)
+    }
+    header_unnamed("InterpolatedStringExpr", depth) ++
+      node_field("Segments", items, depth + 1) ++
+      close(depth)
+  },
   StringLiteralExpr(lit) =>
     header_unnamed("StringLiteralExpr", depth) ++
     scalar("Value", lit.value, depth + 1) ++
@@ -293,19 +320,41 @@ let print_return_type = pure (declared: ReturnType, depth: i64) -> string =>
   close(depth)
 
 /// One pattern.
-let print_pattern = pure (pattern: Pattern, depth: i64) -> string => match pattern {
-  IdentifierPattern(identifier) => print_named("IdentifierPattern", identifier, depth),
+let print_pattern = pure (pattern: shared Pattern, depth: i64) -> string =>
+  match pattern {
+    IdentifierPattern(identifier) => print_named("IdentifierPattern", identifier, depth),
+    DataPattern(def) => print_data_pattern(def, depth),
+  }
+
+/// `DataPattern(Name) { Name, Pattern }` — a nullary constructor carries no Pattern field,
+/// an absent one being omitted like any other.
+let print_data_pattern = pure (def: DataPatternDef, depth: i64) -> string => {
+  var out = header("DataPattern", def.name, depth)
+  out = out ++ scalar("Name", def.name, depth + 1)
+  match def.pattern {
+    Some(inner) => {
+      out = out ++ node_field("Pattern", print_pattern(inner, depth + 2), depth + 1)
+    },
+    None => {},
+  }
+  out ++ close(depth)
 }
 
 /// One written type.
-let print_type = pure (declared: TypeNode, depth: i64) -> string => match declared {
-  PrimitiveType(identifier) => print_named("PrimitiveType", identifier, depth),
-  UnresolvedType(identifier) => print_named("UnresolvedType", identifier, depth),
-  GenericType(identifier) => print_named("GenericType", identifier, depth),
-  NamedStructType(def) => print_struct_type(def, depth),
-  TupleType(def) => print_tuple_type(def, depth),
-  DataType(def) => print_data_type(def, depth),
-}
+let print_type = pure (declared: shared TypeNode, depth: i64) -> string =>
+  match declared {
+    PrimitiveType(identifier) => print_named("PrimitiveType", identifier, depth),
+    UnresolvedType(identifier) => print_named("UnresolvedType", identifier, depth),
+    GenericType(identifier) => print_named("GenericType", identifier, depth),
+    NamedStructType(def) => print_struct_type(def, depth),
+    TupleType(def) => print_tuple_type(def, depth),
+    DataType(def) => print_data_type(def, depth),
+    ConstrainedType(def) =>
+      header("ConstrainedType", def.name, depth) ++
+      scalar("Name", def.name, depth + 1) ++
+      node_field("Type", print_type(def.declared, depth + 2), depth + 1) ++
+      close(depth),
+  }
 
 /// `NamedStructType(Name) { Fields, Name }`.
 let print_struct_type = pure (def: StructTypeDef, depth: i64) -> string => {
@@ -376,10 +425,11 @@ let print_data_constructor = pure (c: DataTypeConstructor, depth: i64) -> string
 }
 
 /// The name a type node carries, for a label that is not the node's own field.
-let type_name = pure (declared: TypeNode) -> string => match declared {
+let type_name = pure (declared: shared TypeNode) -> string => match declared {
   PrimitiveType(identifier) => identifier.name,
   UnresolvedType(identifier) => identifier.name,
   GenericType(identifier) => identifier.name,
+  ConstrainedType(def) => def.name,
   NamedStructType(def) => def.name,
   TupleType(def) => def.name,
   DataType(def) => def.name,
@@ -418,6 +468,7 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   IndexExpr(access) => false,
   TupleIndexExpr(access) => false,
   BlockExpr(block) => block.statements.len() == 0,
+  InterpolatedStringExpr(interpolated) => interpolated.segments.len() == 0,
   // A zero base with a zero value is not reachable from the grammar — a literal always has
   // a base — so this is the honest reading of the rule rather than a live case.
   IntegerLiteralExpr(lit) => lit.base == 0 && lit.value == 0,

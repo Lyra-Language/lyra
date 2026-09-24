@@ -31,6 +31,8 @@ pub data Stmt =
   | ExpressionStmt(ExprStmt)
   /// `struct Point { … }`, `data Color = …`, `tuple Pair(i64, i64)`.
   | TypeDeclStmt(TypeDecl)
+  /// `let Some x = m` — a binding whose left side is a pattern rather than a name.
+  | DestructuringDeclStmt(DestructuringDecl)
 
 /// An expression used for its own sake.
 pub struct ExprStmt {
@@ -57,6 +59,8 @@ pub data Expr =
   | CharacterLiteralExpr(CharacterLiteral)
   /// `"hello"` — the text, escapes already decoded.
   | StringLiteralExpr(StringLiteral)
+  /// `"a ${x} b"` — the pieces in order, text and expression alike.
+  | InterpolatedStringExpr(Interpolated)
   /// `x` — a name standing for a value.
   | IdentifierExpr(Identifier)
   /// `a + b` — the arithmetic operators.
@@ -178,6 +182,15 @@ pub struct Block {
   statements: []Stmt,
 }
 
+/// An interpolated string: its segments in written order.
+///
+/// A text run is a `StringLiteralExpr` segment, so a reader of the segments needs no
+/// second shape for "the parts that are not expressions" — which is what the Go AST does
+/// and the reason the list is homogeneous.
+pub struct Interpolated {
+  segments: []shared Expr,
+}
+
 /// A function literal.
 ///
 /// An empty one still prints with **no `Value:` line at all**: every field is zero, and the
@@ -195,16 +208,37 @@ pub struct Lambda {
 /// It prints with **no label** — `Parameter {`, not `Parameter(x) {` — because it has no
 /// `Name` field of its own. The name lives in the pattern.
 pub struct Parameter {
-  pattern: Pattern,
+  pattern: shared Pattern,
   /// Spelled `type_annotation` and printed `Type`: `type` is not a field name Lyra will
   /// take, and the golden's word is not negotiable.
-  type_annotation: Maybe<TypeNode>,
+  type_annotation: Maybe<shared TypeNode>,
 }
 
 /// A parameter's binding form. One constructor per Go pattern type.
 pub data Pattern =
   /// `x` — a plain name.
   IdentifierPattern(Identifier)
+  /// `Some x` — a constructor and what it binds.
+  | DataPattern(DataPatternDef)
+
+/// `Some x`: the constructor's name and the pattern for its payload.
+pub struct DataPatternDef {
+  name: string,
+  /// The payload's pattern. `None` for a nullary constructor — `None` matches nothing
+  /// further, and the field disappears rather than printing as empty.
+  pattern: Maybe<shared Pattern>,
+}
+
+/// A declaration that binds by matching.
+///
+/// The same grammar node as a `VarDeclStmt`, told apart by which field it carries: a
+/// `pattern` rather than a `name`. So the two are one collector asking which it got, not
+/// two walks over the same shape.
+pub struct DestructuringDecl {
+  keyword: string,
+  pattern: shared Pattern,
+  value: Maybe<shared Expr>,
+}
 
 /// A type declaration: the name it binds and the type it binds to it.
 pub struct TypeDecl {
@@ -215,7 +249,7 @@ pub struct TypeDecl {
   is_public: bool,
   name: string,
   /// Spelled `declared` and printed `Type`, for the reason `Parameter` gives.
-  declared: TypeNode,
+  declared: shared TypeNode,
 }
 
 /// One declared type variable.
@@ -238,6 +272,8 @@ pub data TypeNode =
   | TupleType(TupleTypeDef)
   /// `data Color = Red | Green`.
   | DataType(DataTypeDef)
+  /// `newtype Angle = f64` — a name over a base type, with constraints it may carry.
+  | ConstrainedType(ConstrainedTypeDef)
 
 /// The body of a struct declaration.
 ///
@@ -254,12 +290,12 @@ pub struct StructTypeDef {
 pub struct StructField {
   default_value: Maybe<shared Expr>,
   name: string,
-  declared: TypeNode,
+  declared: shared TypeNode,
 }
 
 /// The body of a named-tuple declaration.
 pub struct TupleTypeDef {
-  elements: []TypeNode,
+  elements: []shared TypeNode,
   name: string,
 }
 
@@ -267,6 +303,14 @@ pub struct TupleTypeDef {
 pub struct DataTypeDef {
   constructors: []DataTypeConstructor,
   name: string,
+}
+
+/// The body of a `newtype` declaration.
+pub struct ConstrainedTypeDef {
+  name: string,
+  /// The base it wraps. `shared` because a `TypeNode` holding one directly is a cycle with
+  /// no array to break it — the other type bodies reach their children through lists.
+  declared: shared TypeNode,
 }
 
 /// One constructor, and the types of the payload it carries.
@@ -277,7 +321,7 @@ pub struct DataTypeConstructor {
   /// carries a **single anonymous tuple** whose elements are the written types, where a
   /// juxtaposed one carries those types directly.
   packed: bool,
-  params: []TypeNode,
+  params: []shared TypeNode,
 }
 
 /// `-> i64`, the declared result.
@@ -285,5 +329,5 @@ pub struct DataTypeConstructor {
 /// Its label is the **type's** name (`ReturnType(i64)`), which the Go node answers through
 /// `GetName()` rather than a `Name` field — so the printer here spells that out.
 pub struct ReturnType {
-  type_annotation: TypeNode,
+  type_annotation: shared TypeNode,
 }

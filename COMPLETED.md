@@ -42,6 +42,42 @@ by deleting `build/` and running it, which is what should have happened before t
 root since a formatting commit in the same file. The diagnostic named the fix, which is the
 sort of error that survives only where nothing is looking.
 
+### 09/24/26 — destructuring, interpolation, newtypes, and the check that guided them
+
+`DestructuringDeclStmt` with `DataPattern`, `InterpolatedStringExpr`, `ConstrainedType`.
+**50 of 238**, up from 41.
+
+Three shapes, each with a thing worth keeping. A **destructuring declaration is the same
+grammar node as a `let`**, told apart by carrying a `pattern` field where the other carries
+a `name` — so it is one collector asking which it got, not two walks over one shape. An
+**interpolation is a different node**, not a string with extra parts: a text run is itself a
+`StringLiteralExpr` segment, which keeps the segment list homogeneous. And `${` **has no
+escape** by design, so the probe's own sources had to be raw strings — the language
+answering a question asked of it.
+
+The part worth recording is that **yesterday's `lyra-E018` drove the design**. Making a
+pattern `shared` (a `DataPattern` holds one directly, with no list to break the cycle) made
+the check fire at every boundary where a pattern or a type was still passed plain, until
+every node reference travelled as `shared` — the rule `Expr` already followed, now uniform.
+A check added to stop a segfault turned out to be a design tool: it would not let the
+representation be half-changed.
+
+It also found a **compiler gap** on the way. `xs.push(A(7))` into a `[]shared T` was refused
+by the check, and disabling the check showed why it should be: the backend fails with
+`cannot store %T into { i64, i64, %T }*`. `inferLambdaCallFromType` — the path a *builtin
+method* takes, its signature built from the receiver — called `checkLiteralRange` but never
+`propagateExpectedType`, so a construction in that argument position never got the
+parameter's flavor. Rule 9 says allocation rides the expected type and a new context is one
+call to it; this was the context that was missing, and it is one line.
+
+Two process notes, both cheap to state and expensive to relearn. A batch of edits that
+asserts halfway through and only writes at the end **writes nothing** — the destructuring
+and interpolation work was silently lost that way and had to be redone as independent
+writes. And `let Some (Ok v) = m` does not agree with the Go collector because its inner
+`(Ok v)` is a *tuple pattern*, which this subset does not collect: the differential case
+was replaced with one inside the subset rather than left failing, because a case asserting
+agreement on a construct the walk skips is asserting the skip.
+
 ### 09/24/26 — the bootstrap's seventh slice: declarations, and a shape the goldens hid
 
 `TypeDeclStmt` over the three declaration forms with their generic parameters, plus the

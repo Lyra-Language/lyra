@@ -21,7 +21,7 @@ import (
 // one of those tests changes its source, its golden changes with it and the case here
 // fails rather than quietly testing something else.
 //
-// 41 of the 238 goldens whose sources can be recovered match today. The number is not
+// 50 of the 238 goldens whose sources can be recovered match today. The number is not
 // asserted — it would be a test about a count rather than about behaviour — but it is the
 // honest measure of where the subset stands, and the slice grows by making more of them
 // match.
@@ -97,6 +97,22 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		// sibling `Some(t)` is a different tree, not a different spelling, which no
 		// stored golden covers and the differential test does.
 		{"data_type_with_generic_parameter", "pub data Maybe<t> = Nil | Some t"},
+		// A `newtype`. Its `where` constraints are not collected yet, so the goldens that
+		// carry them still differ — these two are the forms without.
+		{"basic_constrained_type_without_constraints", "newtype Angle = f64"},
+		{"parameterized_constrained_type", "newtype Point<t> = Tuple"},
+		// A declaration whose left side matches rather than names. The same grammar node
+		// as a `let`, carrying a `pattern` field instead of a `name`.
+		{"destructuring_simple_data", "let Some x = some_data"},
+		// Interpolation, where a text run is itself a StringLiteralExpr segment — so the
+		// segment list is homogeneous. The escaped-hash case is the one that checks a
+		// text run's escapes are decoded like any other string's.
+		{"interpolated_string_expr_only", `let v = "${name}"`},
+		{"interpolated_string_expr_simple", `let greeting = "Hello, ${name}!"`},
+		{"interpolated_string_expr_multiple_segments", `let point = "At (${x}, ${y})"`},
+		{"interpolated_string_expr_with_arithmetic", `let msg = "Total: ${price * qty}"`},
+		{"interpolated_string_expr_complex_expression", `let msg = "Hello, ${employee.get_name()}!"`},
+		{"interpolated_string_expr_escaped_hash", `let s = "Phone \#: ${phone_num}"`},
 	} {
 		t.Run(c.golden, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "in.lyra")
