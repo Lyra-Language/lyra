@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — NES sound: an APU in Lyra, pushed to SDL
+
+Rung 4 (todo.md): `examples/SDL3/apu.lyra` is the 2A03's two pulse channels, triangle and
+noise; `sound.lyra` plays an original four-channel loop on it, with a coin and an
+explosion that borrow a channel from the music the way NES effects had to.
+
+- **Push, not pull.** SDL3's callback shape would run Lyra on SDL's audio thread; the
+  queue shape (`put_audio`, topped up to three ticks ahead each frame) needs nothing the
+  language lacks and costs 50 ms of latency.
+- **Two clocks, as on the console**: samples at 44.1 kHz, envelopes and the sequencer on a
+  735-sample tick. So the tempo follows the audio, not the display — measured: this Mac
+  runs the loop at 120 Hz, and after 1.5 s the song was exactly where 1.5 s of audio puts it.
+- **Verified without speakers.** `--check` holds the APU to documented 2A03 facts (noise
+  periods 32767 and 93, each triangle level twice, the four duty cycles measured from
+  filtered output). `--wav` renders the song, and diffing renders with and without the
+  effects showed each starting on its tick and handing its channel back: loudness equal
+  before, +34%/+24% during, within 4% after — the residue is oscillator phase and the
+  noise register's position, not a stuck channel. `SDL_AUDIO_DRIVER=dummy` ran the live
+  queue path with no device.
+- **`std.io.write_bytes`** was the gap a WAV writer found: `read_bytes` had no pair, and
+  `write_file` takes a `string`. `write_all` became a wrapper over the bytes loop, so there
+  is still one place a short write is retried.
+
 ### 09/25/26 — `min`, `max` and `clamp` for floats, and the one ranking overloading has
 
 `input.lyra` hand-wrote `within` because `x.clamp(lo, hi)` refused an `f32`: floats have

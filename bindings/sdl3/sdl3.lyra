@@ -50,6 +50,10 @@ import std.ffi.{ cstring_len }
 /// `SDL_INIT_VIDEO`, which implies the event subsystem.
 pub const INIT_VIDEO: u32 = 0x00000020
 
+/// `SDL_INIT_AUDIO`, for `open_audio`. `init` may be called again to add it to what is
+/// already up, so a program can treat a failure here as "no sound" rather than "no SDL".
+pub const INIT_AUDIO: u32 = 0x00000010
+
 /// `SDL_INIT_GAMEPAD`, which implies the joystick and event subsystems. Combine with
 /// `|`: `init(INIT_VIDEO | INIT_GAMEPAD)`.
 pub const INIT_GAMEPAD: u32 = 0x00002000

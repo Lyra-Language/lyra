@@ -1,0 +1,99 @@
+module bindings.sdl3
+//! Audio out, as a stream the program **pushes** samples into.
+//!
+//! SDL3 offers two shapes: a callback SDL calls from its audio thread when it wants more,
+//! or a queue the program tops up. This binds only the second. A callback would be Lyra
+//! code running on a thread the language knows nothing about, and the queue costs
+//! nothing a game notices: fill it to a few frames ahead each time round the loop, and
+//! latency is those few frames.
+//!
+//! Samples are mono or interleaved `f32` in -1.0..1.0, at the rate the stream was opened
+//! with; SDL converts to whatever the device wants. Needs `INIT_AUDIO`.
+
+import std.ffi
+
+/// An open playback stream, bound to the default output device. Released by
+/// [close_audio].
+@must_release(close_audio)
+pub struct AudioStream {
+  handle: ^u8,
+  channels: i32,
+}
+
+/// `SDL_AudioSpec` — what the program will push.
+struct AudioSpec {
+  format: u32,
+  channels: i32,
+  freq: i32,
+}
+
+/// `SDL_AUDIO_F32` on a little-endian host, which every target Lyra builds for is.
+const AUDIO_F32: u32 = 0x8120
+
+/// `SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK`: whatever the system is set to play through, and
+/// following it if the user switches devices.
+const DEFAULT_PLAYBACK: u32 = 0xFFFFFFFF
+
+@symbol("SDL_OpenAudioDeviceStream")
+unsafe extern sdl_open_audio_device_stream: (
+  device: u32,
+  spec: ^AudioSpec,
+  callback: ^u8,
+  userdata: ^u8,
+) -> ^u8
+
+@symbol("SDL_ResumeAudioStreamDevice")
+unsafe extern sdl_resume_audio_stream_device: (stream: ^u8) -> u8
+
+@symbol("SDL_PutAudioStreamData")
+unsafe extern sdl_put_audio_stream_data: (stream: ^u8, buf: ^f32, len: i32) -> u8
+
+@symbol("SDL_GetAudioStreamQueued")
+unsafe extern sdl_get_audio_stream_queued: (stream: ^u8) -> i32
+
+@symbol("SDL_DestroyAudioStream")
+unsafe extern sdl_destroy_audio_stream: (stream: ^u8) -> void
+
+/// A stream to the default device taking `f32` samples at `sample_rate`, `channels` of
+/// them interleaved per frame — or `None` when there is no device (a headless machine, a
+/// container), which a program should treat as "run silently", not as fatal.
+///
+/// The device starts playing immediately; until samples arrive it plays silence.
+pub let open_audio = (sample_rate: i32, channels: i32) -> Maybe<AudioStream> => {
+  let spec = AudioSpec { format: AUDIO_F32, channels: channels, freq: sample_rate }
+  let handle = unsafe { sdl_open_audio_device_stream(
+    DEFAULT_PLAYBACK,
+    &spec,
+    nullptr,
+    nullptr
+  ) }
+  if handle == nullptr {
+    None
+  } else {
+    // A stream opened this way starts paused, which no program pushing samples wants.
+    unsafe { sdl_resume_audio_stream_device(handle) }
+    Some(AudioStream { handle: handle, channels: channels })
+  }
+}
+
+/// Stop the device and free the stream. Queued samples not yet played are dropped.
+pub let close_audio = (stream: AudioStream) -> void =>
+  unsafe { sdl_destroy_audio_stream(stream.handle) }
+
+/// Queue `samples` to play after everything already queued. An empty array queues
+/// nothing and succeeds.
+pub let put_audio = (stream: AudioStream, samples: []f32) -> bool => {
+  if samples.len() == 0 {
+    true
+  } else {
+    let bytes = i32(samples.len() * 4)
+    unsafe { sdl_put_audio_stream_data(stream.handle, samples.data(), bytes) } != 0
+  }
+}
+
+/// How many frames (one sample per channel) are queued and not yet played — what a loop
+/// compares against its target to decide how much more to render.
+pub let queued_frames = (stream: AudioStream) -> i64 => {
+  let bytes = unsafe { sdl_get_audio_stream_queued(stream.handle) }
+  if bytes < 0 { 0 } else { i64(bytes) / (4 * i64(stream.channels)) }
+}

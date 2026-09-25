@@ -55,12 +55,15 @@ SDL3 (3.4); `@link("SDL3")` on the header. Grown **by example**, towards an NES-
 | `video.lyra` | `create_window(title, w, h, flags)` with `WINDOW_*` flags; `set_fullscreen` (borderless desktop). |
 | `render.lyra` | `Color` (`SDL_Color`) and `rgb`; points, lines, outlined/filled `Rect`s; `debug_text`, SDL's 8×8 ASCII font (`DEBUG_TEXT_SIZE`). `set_logical_presentation(…, PRESENT_INTEGER_SCALE)` is the pixel-art screen: everything, text included, scales by a whole number. `set_vsync` paces the loop. `save_screenshot` (ReadPixels → BMP) must run **before** `present` and saves at window resolution. |
 | `texture.lyra` | `Texture` (handle + size) is `@must_release(destroy_texture)`. **Set `set_default_scale_mode(…, SCALE_NEAREST)` before loading** — a texture takes the mode in force when made, and the default blurs pixel art. `draw_texture(src, dst)`, `draw_texture_flipped` (`FLIP_*`). `set_texture_color`/`set_texture_alpha` are the **texture's state**, not the draw's: reset them after a tinted draw. `adopt_texture` is `unsafe` (it keeps a pointer) and is how other bindings hand a texture over. |
+| `audio.lyra` | **Push model only**: `open_audio(rate, channels)` → a stream on the default device (`None` with no device — run silently), `put_audio([]f32)`, `queued_frames` to top the queue up to a target each frame. No callback: that would be Lyra running on SDL's audio thread. `AudioStream` is `@must_release(close_audio)`. Needs `init(INIT_AUDIO)`, which may be called after the first `init` — so a failure means "no sound", not "no SDL". `SDL_AUDIO_DRIVER=dummy` exercises it with no speakers. |
 | `timer.lyra` | `delay`, `ticks`. |
 
 **Examples** (`examples/SDL3/`): `basic.lyra` (a bouncing square, bindings only);
 `screen.lyra` (a 256×240 logical screen: palette, lines, points, text); `sprites.lyra` (a
 PNG sheet: flips, tints, fades); `input.lyra` (an on-screen NES controller; `--check` tests
-the pad logic headlessly). Sibling modules:
+the pad logic headlessly); `sound.lyra` (a four-channel loop, coin and explosion effects
+that borrow a channel, meters and an oscilloscope; `--check` tests the APU, `--wav <file>`
+renders the song). Sibling modules:
 - `console.lyra` — `open_screen`/`close_screen` (init video+gamepad, window, 256×240
   integer-scaled renderer, vsync, nearest sampling), `end_frame` (the `--shot` logic, then
   present; answers `Continue`/`Stop(code)`), `wants_quit`. Pieces, not a loop: captures
@@ -69,6 +72,10 @@ the pad logic headlessly). Sibling modules:
   one-frame `pressed`, pure), `read_buttons(Maybe<Gamepad>)` merging keyboard and pad,
   opposite directions cancelled. Mapping table in its module doc.
 - `palette.lyra` — the NES 2C02 palette as `nes(index)`.
+- `apu.lyra` — the 2A03's pulse ×2, triangle (32 steps, freezes when silenced) and noise
+  (15-bit LFSR, long/short mode, NTSC period table), nesdev's linear mixer and a ~28 Hz
+  high-pass. Two clocks: `render` at 44.1 kHz, `tick` per 735 samples (1/60 s) for
+  envelopes and music — so tempo follows the audio clock, not the display's refresh.
 `assets/sprites.png` is committed and made by `assets/generate.py` (standard library only;
 reads the palette from `palette.lyra`; 16×16 cells, ≤3 colours each). Examples find
 `assets/` from the repo root or beside themselves. Every graphical example takes **`--shot <file.bmp>`** (and optionally `--at <frame>`):

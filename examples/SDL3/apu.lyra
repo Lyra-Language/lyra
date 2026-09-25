@@ -1,0 +1,200 @@
+module apu
+//! The NES's sound chip — four of its five channels — as sample-generating Lyra.
+//!
+//! **Two pulse waves, a triangle, and noise**, each shaped the way the 2A03 shaped it:
+//!
+//! - **Pulse**: a square wave whose duty cycle is one of four the hardware had — 12.5%,
+//!   25%, 50%, 75% — and a 4-bit volume. Thin duty cycles are the nasal lead sound.
+//! - **Triangle**: no volume control at all, only on or off, and its ramp is **32 steps**
+//!   of a 4-bit level rather than a smooth line — the buzz in every NES bass line. When it
+//!   is silenced it *freezes* at its current step rather than dropping to zero, which is
+//!   why it never clicks.
+//! - **Noise**: a 15-bit linear-feedback shift register, clocked at one of sixteen rates
+//!   from the console's period table. **Long mode** taps bits 0 and 1 and repeats after
+//!   32767 steps — hiss, for drums and explosions. **Short mode** taps bits 0 and 6 and
+//!   repeats after 93 — a metallic, pitched buzz.
+//!
+//! The fifth channel, delta-modulation sample playback, is left out.
+//!
+//! **Time has two clocks, as on the console.** Samples are generated at [SAMPLE_RATE]; the
+//! envelopes decay once per [TICK_SAMPLES] samples — 1/60 s, the NTSC frame — which is
+//! when NES music engines ran too. [tick] is that frame clock and [render] the sample one.
+//!
+//! **Mixing** uses nesdev's linear approximation of the 2A03's non-linear mixer, then a
+//! one-pole high-pass filter like the one on the console's output, which removes the DC
+//! offset that all-positive channel levels would otherwise leave in the signal.
+
+/// Samples per second.
+pub const SAMPLE_RATE: i32 = 44100
+
+/// Samples per 1/60 s tick — the frame clock envelopes and music run on.
+pub const TICK_SAMPLES: i64 = 735
+
+/// The four duty cycles the pulse channels had.
+pub const DUTY_12: f64 = 0.125
+pub const DUTY_25: f64 = 0.25
+pub const DUTY_50: f64 = 0.5
+pub const DUTY_75: f64 = 0.75
+
+/// NTSC noise timer periods, in CPU cycles per shift-register step. Index 0 is the
+/// highest pitch.
+const NOISE_PERIODS: []i64 = [
+  4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+]
+
+/// The NTSC CPU clock, which the noise periods count.
+const CPU_HZ: f64 = 1789773.0
+
+/// A pulse channel: frequency in Hz (0 is silent), duty, and a volume 0–15 that falls
+/// by `decay` each tick.
+pub struct Pulse {
+  hz: f64,
+  duty: f64,
+  volume: f64,
+  decay: f64,
+  phase: f64,
+}
+
+/// The triangle channel: on while `ticks_left` is positive, frozen otherwise.
+pub struct Triangle {
+  hz: f64,
+  ticks_left: i64,
+  phase: f64,
+}
+
+/// The noise channel: `period` indexes the period table, `short` picks the 93-step mode.
+pub struct Noise {
+  period: i64,
+  short: bool,
+  volume: f64,
+  decay: f64,
+  lfsr: i64,
+  clock: f64,
+}
+
+/// The whole chip, plus the high-pass filter's memory.
+pub struct Apu {
+  pulse1: Pulse,
+  pulse2: Pulse,
+  triangle: Triangle,
+  noise: Noise,
+  last_in: f64,
+  last_out: f64,
+}
+
+/// Silence: every channel off, the shift register at its power-on value of 1.
+pub const SILENT: Apu = Apu {
+  pulse1: Pulse { hz: 0.0, duty: DUTY_50, volume: 0.0, decay: 0.0, phase: 0.0 },
+  pulse2: Pulse { hz: 0.0, duty: DUTY_50, volume: 0.0, decay: 0.0, phase: 0.0 },
+  triangle: Triangle { hz: 0.0, ticks_left: 0, phase: 0.0 },
+  noise: Noise { period: 0, short: false, volume: 0.0, decay: 0.0, lfsr: 1, clock: 0.0 },
+  last_in: 0.0,
+  last_out: 0.0,
+}
+
+/// The frequency of MIDI note `note` (60 is middle C, 69 the A at 440 Hz).
+pub let note_hz = pure (note: i64) -> f64 => 440.0 * 2.0.pow(f64(note - 69) / 12.0)
+
+/// This pulse channel restarted on `note`, at `volume` (0–15) falling by `decay` a tick.
+/// The phase is kept, as the hardware kept it, so a new note does not click.
+pub let play = pure (
+  self: Pulse,
+  note: i64,
+  duty: f64,
+  volume: f64,
+  decay: f64
+) -> Pulse =>
+  Pulse { self | hz: note_hz(note), duty: duty, volume: volume, decay: decay }
+
+/// The triangle sounding `note` for `ticks` ticks.
+pub let play = pure (self: Triangle, note: i64, ticks: i64) -> Triangle =>
+  Triangle { self | hz: note_hz(note), ticks_left: ticks }
+
+/// The noise channel struck at `period` (0–15, 0 highest), in short or long mode.
+pub let play = pure (
+  self: Noise,
+  period: i64,
+  short: bool,
+  volume: f64,
+  decay: f64
+) -> Noise =>
+  Noise { self | period: period, short: short, volume: volume, decay: decay }
+
+/// One frame-clock tick: every envelope decays by its rate, the triangle's length counts
+/// down. Call it once per [TICK_SAMPLES] samples.
+pub let tick = (apu: mut Apu) -> void => {
+  apu.pulse1.volume = fade(apu.pulse1.volume, apu.pulse1.decay)
+  apu.pulse2.volume = fade(apu.pulse2.volume, apu.pulse2.decay)
+  apu.noise.volume = fade(apu.noise.volume, apu.noise.decay)
+  if apu.triangle.ticks_left > 0 { apu.triangle.ticks_left -= 1 }
+}
+
+/// Append `count` samples of the mixed output to `out`.
+pub let render = (apu: mut Apu, out: mut []f32, count: i64) -> void => {
+  for _ in 0..<count {
+    let mixed = 0.00752 * (pulse_level(apu.pulse1) + pulse_level(apu.pulse2)) +
+      0.00851 * triangle_level(apu.triangle) +
+      0.00494 * noise_level(apu.noise)
+    step(apu)
+    // A one-pole high-pass at about 28 Hz: the channels' levels are all positive, and
+    // without this the output would sit off-centre and thump as channels start and stop.
+    let filtered = mixed - apu.last_in + 0.996 * apu.last_out
+    apu.last_in = mixed
+    apu.last_out = filtered
+    out.push(f32(filtered * 2.0))
+  }
+}
+
+/// The per-channel levels, 0–15, as they stand — for meters.
+pub let levels = pure (apu: Apu) -> (f64, f64, f64, f64) =>
+  (
+    pulse_level(apu.pulse1),
+    pulse_level(apu.pulse2),
+    triangle_level(apu.triangle),
+    noise_level(apu.noise)
+  )
+
+/// The noise channel's shift register advanced one step. Pure, so its period — 32767
+/// long, 93 short — can be checked by counting.
+pub let lfsr_next = pure (lfsr: i64, short: bool) -> i64 => {
+  let tap = if short { 6 } else { 1 }
+  let feedback = (lfsr & 1) ~ ((lfsr >> tap) & 1)
+  (lfsr >> 1) | (feedback << 14)
+}
+
+/// The level of the triangle's `step` (0–31): down 15→0, then up 0→15.
+pub let triangle_step_level = pure (step: i64) -> f64 =>
+  f64(if step < 16 { 15 - step } else { step - 16 })
+
+/// Advance every channel's oscillator by one sample.
+let step = (apu: mut Apu) -> void => {
+  let rate = f64(SAMPLE_RATE)
+  apu.pulse1.phase = wrap(apu.pulse1.phase + apu.pulse1.hz / rate)
+  apu.pulse2.phase = wrap(apu.pulse2.phase + apu.pulse2.hz / rate)
+  if apu.triangle.ticks_left > 0 {
+    apu.triangle.phase = wrap(apu.triangle.phase + apu.triangle.hz / rate)
+  }
+  apu.noise.clock += CPU_HZ / f64(NOISE_PERIODS[apu.noise.period]) / rate
+  for apu.noise.clock >= 1.0 {
+    apu.noise.clock -= 1.0
+    apu.noise.lfsr = lfsr_next(apu.noise.lfsr, apu.noise.short)
+  }
+}
+
+let pulse_level = pure (p: Pulse) -> f64 =>
+  if p.hz > 0.0 && p.phase < p.duty { whole(p.volume) } else { 0.0 }
+
+/// Where the 32-step ramp stands — heard even while frozen, as the hardware did.
+let triangle_level = pure (t: Triangle) -> f64 =>
+  if t.hz > 0.0 { triangle_step_level((t.phase * 32.0).floor()) } else { 0.0 }
+
+/// Bit 0 of the register *clear* lets the volume through.
+let noise_level = pure (n: Noise) -> f64 =>
+  if n.lfsr & 1 == 0 { whole(n.volume) } else { 0.0 }
+
+/// The 4-bit DAC: an envelope decays smoothly, but only whole levels reach the output.
+let whole = pure (volume: f64) -> f64 => f64(volume.floor())
+
+let fade = pure (volume: f64, decay: f64) -> f64 => (volume - decay).max(0.0)
+
+let wrap = pure (phase: f64) -> f64 => if phase >= 1.0 { phase - 1.0 } else { phase }

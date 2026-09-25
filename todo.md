@@ -548,6 +548,7 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   3. `input.lyra` — NES pad (D-pad, A, B, Start, Select) from keyboard state and gamepads,
      with pressed-this-frame edges. **Done 09/25**, with the shared `console.lyra`.
   4. `sound.lyra` — APU-style pulse/triangle/noise pushed to an audio stream from the loop.
+     **Done 09/25.**
   5. `tilemap.lyra` — scrolling tile background, camera, fixed 60 Hz timestep.
   6. The game.
 - **[OPEN] raylib gaps:** `SetShaderValue*` uniforms (a `const void *` no Lyra pointer

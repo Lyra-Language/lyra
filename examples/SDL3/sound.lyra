@@ -1,0 +1,487 @@
+// NES sound: a four-channel loop on the APU in `apu.lyra`, with an oscilloscope and a meter
+// per channel.
+//
+// A plays a coin, B an explosion, Start stops and starts the music. **Sound effects take
+// a channel over**, as NES games did: the coin borrows the second pulse channel from the
+// arpeggio and the explosion borrows noise from the drums, and each hands it back when
+// it is done — the console had four voices, and a sound effect had to come from one.
+//
+// **The audio is pushed, not pulled.** Each time round the loop the queue is topped up to
+// a few ticks ahead ([AHEAD_TICKS]); the music advances on the APU's own 1/60 s tick, so
+// its tempo is sample-exact whatever the display's refresh rate.
+//
+// Headless modes, for checking without a window or speakers:
+//
+// - `--check` tests the APU against facts about the 2A03 (the noise register's periods,
+//   the triangle's 32 steps, the pulse duty cycles) and answers non-zero on a failure.
+// - `--wav <file.wav>` renders one pass of the song, with a coin and an explosion in it,
+//   to a 16-bit mono WAV.
+//
+// Escape quits; `--shot <file.bmp>` as in `console.lyra` (and silent).
+
+import bindings.sdl3.{
+  init, last_error, INIT_AUDIO,
+  Renderer, Rect, set_draw_color, clear, fill_rect, draw_rect, draw_point, debug_text,
+  poll_event,
+  AudioStream, open_audio, close_audio, put_audio, queued_frames,
+}
+import std.io.{ write_bytes }
+import console.{ Screen, open_screen, close_screen, end_frame, wants_quit }
+import pad.{ RELEASED, advance, read_buttons }
+import palette.{ nes }
+import apu.{
+  Apu, SILENT, SAMPLE_RATE, TICK_SAMPLES, DUTY_12, DUTY_25, DUTY_50, DUTY_75,
+  render, tick, note_hz, lfsr_next, triangle_step_level,
+}
+
+let main = () -> u8 => {
+  if has_flag("--check") { return run_checks() }
+  match flag_value("--wav") {
+    Some(path) => { return write_song(path) },
+    None => {},
+  }
+  match open_screen("Lyra NES sound") {
+    None => 1,
+    Some(screen) => {
+      let code = with_audio(screen)
+      close_screen(screen)
+      code
+    },
+  }
+}
+
+/// Open the audio device and run — or run silently when there is none, or when `--shot`
+/// wants a frame whose contents do not depend on how fast a device drains its queue.
+let with_audio = (screen: Screen) -> u8 => {
+  if has_flag("--shot") || !init(INIT_AUDIO) { return run(screen, None) }
+  match open_audio(SAMPLE_RATE, 1) {
+    None => {
+      println("no audio device (${last_error()}); running silently")
+      run(screen, None)
+    },
+    Some(stream) => {
+      let code = run(screen, Some(stream))
+      close_audio(stream)
+      code
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The song and the player
+// ---------------------------------------------------------------------------------------
+
+/// Ticks per step: an eighth note at 150 beats a minute is 12 sixtieths of a second.
+const STEP_TICKS: i64 = 12
+
+/// A step that sustains the previous note rather than striking a new one.
+const HOLD: i64 = -1
+
+/// A step that silences the channel.
+const REST: i64 = 0
+
+/// Four bars — C, A minor, F, G — of eighth notes, as MIDI note numbers.
+const MELODY: []i64 = [
+  72, HOLD, 76, HOLD, 79, HOLD, 76, 74,
+  72, HOLD, 69, HOLD, 72, HOLD, 76, HOLD,
+  77, HOLD, 76, HOLD, 74, HOLD, 72, HOLD,
+  74, HOLD, 71, HOLD, 67, HOLD, HOLD, REST,
+]
+const ARPEGGIO: []i64 = [
+  60, 64, 67, 72, 67, 64, 60, 64,
+  57, 60, 64, 69, 64, 60, 57, 60,
+  53, 57, 60, 65, 60, 57, 53, 57,
+  55, 59, 62, 67, 62, 59, 55, 59,
+]
+const BASS: []i64 = [
+  48, 60, 48, 60, 48, 60, 48, 60,
+  45, 57, 45, 57, 45, 57, 45, 57,
+  41, 53, 41, 53, 41, 53, 41, 53,
+  43, 55, 43, 55, 43, 55, 43, 55,
+]
+
+/// Drums, one per step: kick, snare, hi-hat, or none.
+const KICK: i64 = 1
+const SNARE: i64 = 2
+const HAT: i64 = 3
+const DRUMS: []i64 = [
+  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
+  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
+  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
+  KICK, HAT, SNARE, HAT, KICK, HAT, SNARE, SNARE,
+]
+
+/// How long each sound effect keeps its channel, in ticks.
+const COIN_TICKS: i64 = 24
+const BOOM_TICKS: i64 = 45
+
+/// Where the song is, whether it is playing, and which effects hold a channel.
+struct Player {
+  ticks: i64,
+  music: bool,
+  coin_left: i64,
+  boom_left: i64,
+}
+
+const START: Player = Player { ticks: 0, music: true, coin_left: 0, boom_left: 0 }
+
+/// A coin: two quick notes a fourth apart on the second pulse channel — the second one
+/// struck by [play_tick] four ticks in.
+let coin = (player: mut Player, chip: mut Apu) -> void => {
+  chip.pulse2 = chip.pulse2.play(83, DUTY_50, 12.0, 0.0)
+  player.coin_left = COIN_TICKS
+}
+
+/// An explosion: long-mode noise at a low rate, decaying over most of a second.
+let boom = (player: mut Player, chip: mut Apu) -> void => {
+  chip.noise = chip.noise.play(14, false, 15.0, 0.35)
+  player.boom_left = BOOM_TICKS
+}
+
+/// One 1/60 s tick of the song and the effects, then the chip's own envelopes.
+let play_tick = (player: mut Player, chip: mut Apu) -> void => {
+  if player.ticks % STEP_TICKS == 0 && player.music {
+    let at = (player.ticks / STEP_TICKS) % MELODY.len()
+    let lead = MELODY[at]
+    if lead > 0 { chip.pulse1 = chip.pulse1.play(lead, DUTY_50, 10.0, 0.15) }
+    if lead == REST { chip.pulse1 = chip.pulse1.play(60, DUTY_50, 0.0, 0.0) }
+    if player.coin_left == 0 { chip.pulse2 = chip.pulse2.play(
+      ARPEGGIO[at],
+      DUTY_12,
+      5.0,
+      0.3
+    ) }
+    chip.triangle = chip.triangle.play(BASS[at], 10)
+    if player.boom_left == 0 { drum(chip, DRUMS[at]) }
+  }
+  if player.coin_left == COIN_TICKS - 4 {
+    chip.pulse2 = chip.pulse2.play(88, DUTY_50, 12.0, 0.6)
+  }
+  if player.coin_left > 0 { player.coin_left -= 1 }
+  if player.boom_left > 0 { player.boom_left -= 1 }
+  tick(chip)
+  player.ticks += 1
+}
+
+let drum = (chip: mut Apu, kind: i64) -> void => {
+  if kind == KICK { chip.noise = chip.noise.play(12, false, 12.0, 1.5) }
+  if kind == SNARE { chip.noise = chip.noise.play(6, false, 11.0, 1.0) }
+  if kind == HAT { chip.noise = chip.noise.play(1, false, 6.0, 2.0) }
+}
+
+/// Run `ticks` ticks, appending their samples to `out`.
+let perform = (player: mut Player, chip: mut Apu, out: mut []f32, ticks: i64) -> void => {
+  for _ in 0..<ticks {
+    play_tick(player, chip)
+    render(chip, out, TICK_SAMPLES)
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The window
+// ---------------------------------------------------------------------------------------
+
+/// How far ahead the queue is kept: three ticks, 50 ms — enough to ride out a slow frame,
+/// short enough that a button press is heard at once.
+const AHEAD_TICKS: i64 = 3
+
+let run = (screen: Screen, audio: Maybe<AudioStream>) -> u8 => {
+  var player = START
+  var chip = SILENT
+  var previous = RELEASED
+  var scope: []f32 = []
+  var frame: i64 = 0
+  var status: u8 = 0
+  var running = true
+  let silent = match audio {
+    Some(_) => false,
+    None => true,
+  }
+
+  for running {
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        Some(event) => {
+          if wants_quit(event) { running = false }
+        },
+      }
+    }
+
+    let now = read_buttons(None)
+    let pad = advance(previous, now)
+    previous = now
+    if pad.pressed.a { coin(player, chip) }
+    if pad.pressed.b { boom(player, chip) }
+    if pad.pressed.start { player.music = !player.music }
+
+    match audio {
+      Some(stream) => {
+        for queued_frames(stream) < AHEAD_TICKS * TICK_SAMPLES {
+          var chunk: []f32 = []
+          perform(player, chip, chunk, 1)
+          put_audio(stream, chunk)
+          scope = chunk
+        }
+      },
+      // With no device, one tick a frame keeps the picture moving at the song's pace.
+      None => {
+        var chunk: []f32 = []
+        perform(player, chip, chunk, 1)
+        scope = chunk
+      },
+    }
+
+    draw(screen.renderer, chip, player, scope, silent)
+    match end_frame(screen, frame) {
+      Stop(code) => {
+        status = code
+        running = false
+      },
+      Continue => {},
+    }
+    frame += 1
+  }
+  status
+}
+
+let draw = (
+  r: Renderer,
+  chip: Apu,
+  player: Player,
+  scope: []f32,
+  silent: bool
+) -> void => {
+  set_draw_color(r, nes(0x0F))
+  clear(r)
+  set_draw_color(r, nes(0x30))
+  debug_text(r, 16.0, 16.0, "NES APU")
+  if silent {
+    set_draw_color(r, nes(0x16))
+    debug_text(r, 88.0, 16.0, "(NO AUDIO)")
+  }
+
+  // A meter per channel: the envelope's level, 0-15, four pixels a step.
+  meter(r, 32.0, "SQ1", chip.pulse1.volume, 0x16)
+  meter(r, 88.0, "SQ2", chip.pulse2.volume, 0x2A)
+  meter(r, 144.0, "TRI", if chip.triangle.ticks_left > 0 { 15.0 } else { 0.0 }, 0x21)
+  meter(r, 200.0, "NOI", chip.noise.volume, 0x28)
+
+  // The oscilloscope: the most recent tick's samples, every third one across 240 pixels.
+  set_draw_color(r, nes(0x00))
+  draw_rect(r, Rect { x: 7.0, y: 131.0, w: 242.0, h: 66.0 })
+  set_draw_color(r, nes(0x30))
+  if scope.len() >= 720 {
+    for x in 0..<240 {
+      let s = f32(scope[x * 3]).clamp(-1.0, 1.0)
+      draw_point(r, 8.0 + f32(x), 164.0 - s * 60.0)
+    }
+  }
+
+  set_draw_color(r, nes(0x00))
+  debug_text(r, 16.0, 204.0, "A:COIN  B:BOOM  START:MUSIC")
+  set_draw_color(r, nes(0x10))
+  let step = (player.ticks / STEP_TICKS) % MELODY.len()
+  let state = if player.music { "PLAYING" } else { "STOPPED" }
+  debug_text(r, 16.0, 216.0, "MUSIC ${state}  STEP ${step + 1}/${MELODY.len()}")
+}
+
+let meter = (r: Renderer, x: f32, label: string, volume: f64, colour: i64) -> void => {
+  let height = f32(volume.floor()) * 4.0
+  set_draw_color(r, nes(0x2D))
+  fill_rect(r, Rect { x: x, y: 48.0, w: 24.0, h: 60.0 })
+  set_draw_color(r, nes(colour))
+  fill_rect(r, Rect { x: x, y: 108.0 - height, w: 24.0, h: height })
+  set_draw_color(r, nes(0x10))
+  debug_text(r, x, 114.0, label)
+}
+
+// ---------------------------------------------------------------------------------------
+// --wav: the song to a file
+// ---------------------------------------------------------------------------------------
+
+/// One pass of the song — 32 steps — with a coin at one second and an explosion at three.
+let write_song = (path: string) -> u8 => {
+  var player = START
+  var chip = SILENT
+  var samples: []f32 = []
+  let total = STEP_TICKS * MELODY.len()
+  for t in 0..<total {
+    if t == 60 { coin(player, chip) }
+    if t == 180 { boom(player, chip) }
+    perform(player, chip, samples, 1)
+  }
+  if write_bytes(path, wav(samples)) {
+    println("wrote ${path}: ${samples.len()} samples, ${f64(samples.len()) / f64(SAMPLE_RATE)} s")
+    0
+  } else {
+    println("could not write ${path}")
+    1
+  }
+}
+
+/// `samples` as a 16-bit mono PCM WAV file: the 44-byte RIFF header, then little-endian
+/// samples.
+let wav = (samples: []f32) -> []u8 => {
+  var out: []u8 = []
+  let data = samples.len() * 2
+  let rate = i64(SAMPLE_RATE)
+  ascii(out, "RIFF")
+  u32_le(out, 36 + data)
+  ascii(out, "WAVEfmt ")
+  u32_le(out, 16)
+  u16_le(out, 1)
+  u16_le(out, 1)
+  u32_le(out, rate)
+  u32_le(out, rate * 2)
+  u16_le(out, 2)
+  u16_le(out, 16)
+  ascii(out, "data")
+  u32_le(out, data)
+  for s in samples {
+    // Two's complement: the low 16 bits of a negative i64 are the i16's bits.
+    u16_le(out, (f64(s).clamp(-1.0, 1.0) * 32767.0).round() & 0xFFFF)
+  }
+  out
+}
+
+let ascii = (out: mut []u8, text: string) -> void => {
+  for b in text.encode_utf8() { out.push(b) }
+}
+
+let u16_le = (out: mut []u8, v: i64) -> void => {
+  out.push(u8(v & 255))
+  out.push(u8((v >> 8) & 255))
+}
+
+let u32_le = (out: mut []u8, v: i64) -> void => {
+  u16_le(out, v & 0xFFFF)
+  u16_le(out, (v >> 16) & 0xFFFF)
+}
+
+// ---------------------------------------------------------------------------------------
+// --check: the APU against the hardware's documented behaviour
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  // The noise register's two modes repeat after 32767 and 93 steps from power-on.
+  failures += check_that(
+    "long-mode noise repeats every 32767 steps",
+    lfsr_period(false) == 32767
+  )
+  failures += check_that(
+    "short-mode noise repeats every 93 steps",
+    lfsr_period(true) == 93
+  )
+
+  // The triangle's 32 steps visit each of the 16 levels exactly twice, down then up.
+  var seen: []i64 = [0; 16]
+  for s in 0..<32 { seen[triangle_step_level(s).floor()] += 1 }
+  var twice = true
+  for n in seen {
+    if n != 2 { twice = false }
+  }
+  failures += check_that("the triangle visits every level twice", twice)
+  failures += check_that(
+    "the triangle ramps down then up",
+    triangle_step_level(0).floor() == 15 &&
+      triangle_step_level(15).floor() == 0 &&
+      triangle_step_level(31).floor() == 15
+  )
+
+  // Each pulse duty cycle, measured as the share of a filtered second spent above zero.
+  for duty in [DUTY_12, DUTY_25, DUTY_50, DUTY_75] {
+    let share = high_share(duty)
+    failures += check_that(
+      "pulse duty ${duty} measures ${share}",
+      (share - duty).abs() < 0.02
+    )
+  }
+
+  // Tuning, and silence staying silent.
+  failures += check_that("A4 is 440 Hz", (note_hz(69) - 440.0).abs() < 0.000001)
+  failures += check_that("an octave doubles", (note_hz(81) - 880.0).abs() < 0.000001)
+  var chip = SILENT
+  var quiet: []f32 = []
+  render(chip, quiet, 1000)
+  var silent = true
+  for s in quiet {
+    if s > 0.0 || s < 0.0 { silent = false }
+  }
+  failures += check_that("a silent chip renders zeros", silent)
+
+  // An envelope reaches zero and stays there.
+  var fading = SILENT
+  fading.pulse1 = fading.pulse1.play(69, DUTY_50, 10.0, 1.0)
+  for _ in 0..<12 { tick(fading) }
+  failures += check_that(
+    "an envelope fades to zero, not below",
+    fading.pulse1.volume.floor() == 0 && fading.pulse1.volume >= 0.0
+  )
+
+  if failures == 0 {
+    println("all checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+/// Steps until the register returns to its power-on value of 1.
+let lfsr_period = pure (short: bool) -> i64 => {
+  var lfsr = lfsr_next(1, short)
+  var steps = 1
+  for lfsr != 1 && steps < 40000 {
+    lfsr = lfsr_next(lfsr, short)
+    steps += 1
+  }
+  steps
+}
+
+/// The share of samples above zero over one second of a lone pulse wave at 441 Hz (after
+/// a settling second, so the high-pass filter has centred it).
+let high_share = (duty: f64) -> f64 => {
+  var chip = SILENT
+  chip.pulse1 = chip.pulse1.play(69, duty, 15.0, 0.0)
+  var settle: []f32 = []
+  render(chip, settle, i64(SAMPLE_RATE))
+  var second: []f32 = []
+  render(chip, second, i64(SAMPLE_RATE))
+  var high = 0
+  for s in second {
+    if s > 0.0 { high += 1 }
+  }
+  f64(high) / f64(second.len())
+}
+
+let check_that = (what: string, ok: bool) -> i64 => {
+  if ok {
+    0
+  } else {
+    println("FAIL: ${what}")
+    1
+  }
+}
+
+/// Whether `name` is among the arguments.
+let has_flag = (name: string) -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == name { found = true }
+  }
+  found
+}
+
+/// The argument after `name`, when there is one.
+let flag_value = (name: string) -> Maybe<string> => {
+  let args = program_args()
+  var found: Maybe<string> = None
+  for i in 1..<args.len() - 1 {
+    if args[i] == name { found = Some(args[i + 1]) }
+  }
+  found
+}
