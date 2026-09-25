@@ -439,7 +439,7 @@ such changes on a user module.
 | `pkg/printer` | Reflection AST printer for golden tests | below |
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
-| `bindings/` | Per-library FFI binding modules (SDL3, raylib, jpeg) | [README](bindings/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter) | [README](bindings/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
 semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
@@ -585,6 +585,10 @@ value is that it
 keeps finding **compiler** bugs rather than formatter ones: a `let … else` use-after-free, a
 destructuring release that never happened, and an interpolation that swallows source to the
 next `}` — each found by the first Lyra program large enough to hit them.
+
+**`examples/SDL3/` does the same for FFI**: SDL3 bindings grown one example at a time
+towards an NES-style game (ladder in `todo.md`). Its first rung found that a computed `u8`
+crossed to C without `zeroext` (COMPLETED.md 09/25).
 
 **`examples/calendar` does the same for dates**, and **`examples/schedule/when.lyra` for
 zones**: `std.temporal`, after the web's Temporal API, grows only as they need it (the month

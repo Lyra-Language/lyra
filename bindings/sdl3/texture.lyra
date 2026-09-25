@@ -1,0 +1,138 @@
+module bindings.sdl3
+//! Textures: images on the GPU, drawn whole or a cell at a time, flipped, and tinted.
+//!
+//! SDL itself only makes a texture from pixels or a surface; loading one from a PNG is
+//! `bindings.sdl3_image`'s [load_texture], a separate library with its own module.
+
+/// An `SDL_Texture *` together with its size, so a program can lay out a sprite sheet
+/// without asking SDL.
+///
+/// **A struct rather than a newtype** because `@must_release` needs one (todo.md), and a
+/// texture is exactly the resource it is for: GPU memory SDL frees only on request.
+/// `handle` is SDL's and nothing outside these bindings reads it.
+@must_release(destroy_texture)
+pub struct Texture {
+  handle: ^u8,
+  width: f32,
+  height: f32,
+}
+
+/// `SDL_ScaleMode`, for [set_default_scale_mode].
+///
+/// `SCALE_NEAREST` is what pixel art wants: the default, `SCALE_LINEAR`, blurs every edge
+/// the logical presentation scales up. `SCALE_PIXELART` (SDL 3.4) is nearest sampling
+/// that stays crisp at non-integer scales too.
+pub const SCALE_NEAREST: i32 = 0
+pub const SCALE_LINEAR: i32 = 1
+pub const SCALE_PIXELART: i32 = 2
+
+/// `SDL_FlipMode`, for [draw_texture_flipped]. `FLIP_BOTH` is both at once — a 180°
+/// turn, not a diagonal flip.
+pub const FLIP_NONE: i32 = 0
+pub const FLIP_HORIZONTAL: i32 = 1
+pub const FLIP_VERTICAL: i32 = 2
+pub const FLIP_BOTH: i32 = 3
+
+/// `SDL_FPoint` — the rotation centre [draw_texture_flipped] leaves NULL (the middle).
+struct Point {
+  x: f32,
+  y: f32,
+}
+
+@symbol("SDL_DestroyTexture")
+unsafe extern sdl_destroy_texture: (texture: ^u8) -> void
+
+@symbol("SDL_GetTextureSize")
+unsafe extern sdl_get_texture_size: (texture: ^u8, w: ^mut f32, h: ^mut f32) -> u8
+
+@symbol("SDL_SetDefaultTextureScaleMode")
+unsafe extern sdl_set_default_texture_scale_mode: (renderer: Renderer, mode: i32) -> u8
+
+@symbol("SDL_RenderTexture")
+unsafe extern sdl_render_texture: (
+  renderer: Renderer,
+  texture: ^u8,
+  src: ^Rect,
+  dst: ^Rect
+) -> u8
+
+@symbol("SDL_RenderTextureRotated")
+unsafe extern sdl_render_texture_rotated: (
+  renderer: Renderer,
+  texture: ^u8,
+  src: ^Rect,
+  dst: ^Rect,
+  angle: f64,
+  center: ^Point,
+  flip: i32,
+) -> u8
+
+@symbol("SDL_SetTextureColorMod")
+unsafe extern sdl_set_texture_color_mod: (texture: ^u8, r: u8, g: u8, b: u8) -> u8
+
+@symbol("SDL_SetTextureAlphaMod")
+unsafe extern sdl_set_texture_alpha_mod: (texture: ^u8, alpha: u8) -> u8
+
+/// Take ownership of a texture another binding made, reading its size — or `None` for
+/// NULL, which is how every SDL constructor reports failure.
+///
+/// **`unsafe` because the pointer is kept**: nothing can check that `handle` is a live
+/// `SDL_Texture *` rather than any other pointer, and the result will be destroyed as one.
+/// It is how `bindings.sdl3_image` hands its textures over.
+pub let adopt_texture = unsafe (handle: ^u8) -> Maybe<Texture> => {
+  if handle == nullptr {
+    None
+  } else {
+    var w: f32 = 0.0
+    var h: f32 = 0.0
+    sdl_get_texture_size(handle, &mut w, &mut h)
+    Some(Texture { handle: handle, width: w, height: h })
+  }
+}
+
+/// Free a texture. It must not be drawn afterwards.
+pub let destroy_texture = (texture: Texture) -> void =>
+  unsafe { sdl_destroy_texture(texture.handle) }
+
+/// How textures created *from now on* are sampled when scaled. Set it before loading.
+pub let set_default_scale_mode = (renderer: Renderer, mode: i32) -> bool =>
+  unsafe { sdl_set_default_texture_scale_mode(renderer, mode) } != 0
+
+/// Draw the `src` part of a texture into `dst`, stretching it to fit — for a sprite sheet,
+/// `src` is one cell and `dst` the same size where it goes on screen.
+pub let draw_texture = (
+  renderer: Renderer,
+  texture: Texture,
+  src: Rect,
+  dst: Rect
+) -> bool =>
+  unsafe { sdl_render_texture(renderer, texture.handle, &src, &dst) } != 0
+
+/// [draw_texture], mirrored by a `FLIP_*` constant. The NES flipped sprites in hardware so
+/// one drawing could face both ways; this is the same economy.
+pub let draw_texture_flipped = (
+  renderer: Renderer,
+  texture: Texture,
+  src: Rect,
+  dst: Rect,
+  flip: i32,
+) -> bool =>
+  unsafe { sdl_render_texture_rotated(
+    renderer,
+    texture.handle,
+    &src,
+    &dst,
+    0.0,
+    nullptr,
+    flip
+  ) } != 0
+
+/// Multiply every texel by `color` when drawing (its `a` is ignored — see
+/// [set_texture_alpha]). White leaves the texture as it is, so a sprite drawn in light
+/// greys can be tinted into several palettes.
+pub let set_texture_color = (texture: Texture, color: Color) -> bool =>
+  unsafe { sdl_set_texture_color_mod(texture.handle, color.r, color.g, color.b) } != 0
+
+/// Multiply every texel's alpha by `alpha / 255` when drawing.
+pub let set_texture_alpha = (texture: Texture, alpha: u8) -> bool =>
+  unsafe { sdl_set_texture_alpha_mod(texture.handle, alpha) } != 0

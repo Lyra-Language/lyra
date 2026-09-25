@@ -1,0 +1,138 @@
+// A 256×240 screen — the NES's — blown up to fill a window, drawn with nothing but
+// points, lines, rectangles and SDL's built-in 8×8 font.
+//
+// **The logical presentation does the pixel-art work.** Everything below is drawn in
+// NES coordinates, and SDL scales it by a whole number and letterboxes the rest, so every
+// logical pixel stays square however the window is resized. Vsync paces the loop, so
+// there is no timing code either. `console.lyra` sets all of that up.
+//
+// Escape quits; F11 toggles fullscreen. `--shot <file.bmp>` saves one frame and exits.
+
+import bindings.sdl3.{
+  set_fullscreen,
+  Renderer, Rect, set_draw_color, clear, draw_point, draw_line, draw_rect, fill_rect,
+  debug_text, DEBUG_TEXT_SIZE,
+  poll_event, KEY_F11,
+}
+import console.{ Screen, open_screen, close_screen, end_frame, wants_quit }
+import palette.{ nes, BLACK }
+import std.math.{ PI }
+
+let main = () -> u8 => match open_screen("Lyra NES screen") {
+  None => 1,
+  Some(screen) => {
+    let code = run(screen)
+    close_screen(screen)
+    code
+  },
+}
+
+let run = (screen: Screen) -> u8 => {
+  var frame: i64 = 0
+  var fullscreen = false
+  var status: u8 = 0
+  var running = true
+
+  for running {
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        Some(event) => {
+          if wants_quit(event) { running = false }
+          match event {
+            KeyDown(key) => {
+              if key == KEY_F11 {
+                fullscreen = !fullscreen
+                set_fullscreen(screen.window, fullscreen)
+              }
+            },
+            _ => {},
+          }
+        },
+      }
+    }
+
+    draw(screen.renderer, frame)
+    match end_frame(screen, frame) {
+      Stop(code) => {
+        status = code
+        running = false
+      },
+      Continue => {},
+    }
+    frame += 1
+  }
+  status
+}
+
+/// One frame: a title-safe border, the palette, a spinning star, a wave and some text.
+let draw = (renderer: Renderer, frame: i64) -> void => {
+  let t = f32(frame) / 60.0
+
+  set_draw_color(renderer, nes(BLACK))
+  clear(renderer)
+
+  // Televisions cropped roughly 8 pixels on every side, so NES games kept anything that
+  // mattered inside this line.
+  set_draw_color(renderer, nes(0x00))
+  draw_rect(renderer, Rect { x: 8.0, y: 8.0, w: 240.0, h: 224.0 })
+
+  set_draw_color(renderer, nes(0x30))
+  debug_text(renderer, 16.0, 16.0, "LYRA X SDL3")
+  set_draw_color(renderer, nes(0x10))
+  debug_text(renderer, 16.0, 28.0, "256X240, INTEGER SCALED")
+
+  draw_palette(renderer, 16.0, 44.0)
+  draw_star(renderer, 64.0, 164.0, 40.0, t)
+  draw_wave(renderer, 120.0, 164.0, 120, t)
+
+  // Blink at half a second on, half off, the way a title screen asks for a button.
+  if (frame / 30) % 2 == 0 {
+    set_draw_color(renderer, nes(0x28))
+    let prompt = "PUSH START"
+    debug_text(
+      renderer,
+      (256.0 - f32(prompt.len()) * DEBUG_TEXT_SIZE) / 2.0,
+      216.0,
+      prompt
+    )
+  }
+}
+
+/// All 64 colours, one swatch each, laid out as the PPU indexes them: hue across, brightness
+/// down.
+let draw_palette = (renderer: Renderer, left: f32, top: f32) -> void => {
+  for row in 0..<4 {
+    for column in 0..<16 {
+      let x = left + f32(column) * 14.0
+      let y = top + f32(row) * 14.0
+      set_draw_color(renderer, nes(row * 16 + column))
+      fill_rect(renderer, Rect { x: x, y: y, w: 12.0, h: 12.0 })
+    }
+  }
+}
+
+/// Twelve spokes from a centre, turning once every four seconds.
+let draw_star = (renderer: Renderer, cx: f32, cy: f32, radius: f32, t: f32) -> void => {
+  for spoke in 0..<12 {
+    let angle = f32(spoke) / 12.0 * 2.0 * f32(PI) + t * f32(PI) / 2.0
+    set_draw_color(renderer, nes(0x21 + spoke % 12))
+    draw_line(renderer, cx, cy, cx + angle.cos() * radius, cy + angle.sin() * radius)
+  }
+}
+
+/// A travelling sine wave, one point per logical pixel of width.
+let draw_wave = (
+  renderer: Renderer,
+  left: f32,
+  middle: f32,
+  width: i64,
+  t: f32
+) -> void => {
+  set_draw_color(renderer, nes(0x2A))
+  for i in 0..<width {
+    let x = f32(i)
+    draw_point(renderer, left + x, middle + (x / 12.0 - t * 4.0).sin() * 24.0)
+  }
+}

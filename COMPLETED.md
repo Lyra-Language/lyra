@@ -9,6 +9,122 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — `min`, `max` and `clamp` for floats, and the one ranking overloading has
+
+`input.lyra` hand-wrote `within` because `x.clamp(lo, hi)` refused an `f32`: floats have
+no `Ord`, deliberately, for NaN. But `min`/`max`/`clamp` need no total order — only an
+answer for NaN — so they now have concrete `f16`/`f32`/`f64` overloads, and floats still
+cannot be *sorted* generically.
+
+**The NaN rule is a trap**, chosen over the two IEEE answers by what each does to a bug:
+`minNum` (C's `fmin`, Rust's `min`) answers the other operand and silently heals a NaN
+into a plausible number — `clamp(NaN, 0, 255)` handing back a bound is exactly the
+silently-wrong answer the generic `clamp`'s own `lo > hi` trap exists to refuse — and
+`minimum` (JS, Go) propagates it, so it surfaces downstream of its cause. `floor`/`round`
+already trap on NaN, so this is that rule applied again. The trap test was confirmed to
+fail with one operand's check removed — and the removed check produced `minNum`'s answer.
+
+**The mechanism was the real decision.** The prelude's generic `min<t> where t: Ord` is a
+UFCS candidate that claims every receiver, and builtins are tried after UFCS, so a float
+builtin would never be reached; a concrete float overload beside the generic displaced it
+outright, since a `self: t` could not be an overload member. Three routes were weighed:
+distinct names (`fmin`), a failed bound falling through to builtins (SFINAE in miniature,
+and "has no method min" in place of today's precise "does not implement Ord"), and a
+**generic fallback** — one `self: t` member per set, ranked below every concrete one. The
+last won: "this type beats any type" is the least contentious ranking there is, and needs
+no order between concrete types, which is the ordering this design still refuses.
+
+Three things it found:
+
+- **The ranking has to be applied at every site that picks among receiver matches**
+  (`resolveOverload`, `ufcsFunction`, `receiverFallback`), or `x.min(y)` and `min(x, y)`
+  resolve differently — one helper, `preferConcrete`, at all three.
+- **`resolveOverload` read an untyped literal receiver raw**, where the method path reads
+  it at its default, so `min(1.5, 2.0)` missed `self: f64` and fell to the fallback. It
+  uses `receiverAcceptsValue` now, as UFCS always did.
+- **`x != x` drew the float-equality warning** — the one float comparison with no
+  precision question in it, since it is exact and true for NaN alone. A bare name compared
+  with itself is exempt; `f() != f()` is not.
+
+`symbols.overloadRefusal` turned out to be a second copy of the admission rule (it words
+the "already defined" message) and still said a receiver needed "a concrete type of its
+own"; it knows about the fallback now.
+
+### 09/25/26 — the NES pad, and the setup three examples shared
+
+Rung 3 (todo.md): `examples/SDL3/input.lyra`, an on-screen NES controller driven by the
+keyboard or a gamepad. Bindings: `keyboard.lyra` (held keys by scancode), `gamepad.lyra`,
+and `GamepadAdded`/`GamepadRemoved` events.
+
+- **`console.lyra` holds pieces, not a loop.** A loop that took the example's body as a
+  callback was the obvious shape and is closed off by a language rule: captures are by
+  value, so the body could not update the example's `var`s, and threading every example's
+  state through a generic `step` would make each example about the plumbing. So the
+  module opens and closes the screen and ends a frame (`Continue`/`Stop(code)`), and
+  each example keeps its own `for running`. `screen` and `sprites` moved onto it and
+  render **byte-identically** (compared BMPs at the same frame).
+- **`pad.lyra` separates the pure part.** `advance(previous, now)` is the NES's own edge
+  detection — keep last frame's byte, compare — and being `pure` it is tested by
+  `input.lyra --check` with no window. The checks were confirmed to fail with the edge
+  removed. A forced-input screenshot confirmed the real loop too: A held five frames and
+  B held twenty-one each counted one press.
+- **Opposite directions cancel.** Keys can press left and right together, which no D-pad
+  can, and NES games were written assuming that.
+- **`--at <frame>`** replaced editing a constant in a scratch copy to see a later frame.
+- **Floats have no `clamp`** (no `Ord`, for NaN). Deliberate and documented, and a game
+  will want it constantly — recorded in todo.md as a question about a NaN rule.
+
+### 09/25/26 — SDL3 sprites, and a second library as a second module
+
+Rung 2 (todo.md): `examples/SDL3/sprites.lyra` draws a committed PNG sheet through
+SDL3_image — flipped, tinted and faded — and found nothing wrong with the compiler, which
+after rung 1 is itself the result: `u8`s cross clean now, and a new library bound on the
+first try.
+
+- **SDL3_image is `bindings/sdl3_image.lyra`, not a file in `bindings/sdl3/`.** `@link`
+  is per module, so a separate library in the same module would make every SDL program
+  link it. The cost is a hand-over: the image module makes a pointer and `bindings.sdl3`
+  owns the `Texture` type, so `adopt_texture` is **`pub unsafe`** — it keeps a pointer it
+  cannot check, which is exactly what `unsafe` marks in `std.ffi`'s rule.
+- **`Texture` is a struct, not a newtype,** only because `@must_release` needs a struct
+  (todo.md). It carries the size, which a sprite-sheet layout wants anyway.
+- **The NES palette swap is a colour mod here**, a multiplication: the slime is drawn in
+  greys so tinting reaches real hues. It is an approximation — a true swap would remap
+  indices — and good enough until a game needs exact palettes.
+- **Scale mode is fixed at creation**, so `set_default_scale_mode` must precede loading;
+  and colour/alpha mods are texture state that outlives the draw. Both are written into
+  the binding's docs, where the next program will look.
+
+### 09/25/26 — an NES screen in SDL3, and the `u8` that crossed dirty
+
+First rung of the SDL3 ladder (todo.md): `examples/SDL3/screen.lyra`, a 256×240 logical
+screen integer-scaled into a resizable window, drawn with points, lines, rectangles and
+`SDL_RenderDebugText`, with the NES palette as a sibling module. The bindings grew only
+what it draws with. `Color` replaced `set_draw_color`'s four loose `u8`s and
+`create_window` took its flags — one spelling each, `basic.lyra` updated.
+
+**It found a compiler bug before it found anything about SDL.** The first screenshot drew
+the grey border cyan and every red spoke white. The palette values printed correctly, so
+the fault was the crossing: `SDL_SetRenderDrawColor` was declared `i8 %p.r` where clang
+declares `i8 zeroext`. Apple's arm64 convention makes the *caller* extend a sub-`int`
+argument, x86-64 compilers assume it too, and SDL trusted the whole register — so a
+component computed by `(packed >> 8) & 255` arrived with the shift's leftovers above it and
+clamped to 255. `bool` had had `zeroext` since 09/15; the rule was never generalised,
+because nothing had passed a *computed* narrow integer to C. `basic.lyra` passed
+freshly-rounded values, which are clean by accident — which is why the bug survived a
+working example.
+
+`markBoolCrossings` became `markNarrowCrossings`: signedness from the **Lyra** signature
+(LLVM's `i8` has none), newtypes seen through, and the planned path's flattened
+parameters counted slot by slot past an `sret`. The call mirror learned `signext` returns.
+`TestEmit_NarrowIntegersCrossExtended` checks the IR for both targets and fails with the
+fix disabled — the IR, not a run, because a run passes whenever the register happens to
+be clean.
+
+**`save_screenshot` is what made this checkable.** Every graphical SDL example takes
+`--shot`, draws a fixed number of frames and saves one; the bug was visible in the first
+image and its fix in the second, with no one watching a window.
+
 ### 09/25/26 — "add import" as a quick fix, and the walk it needed
 
 The editor now offers `Import parse_args from std.collections` on the diagnostic that

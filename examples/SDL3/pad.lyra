@@ -1,0 +1,136 @@
+module pad
+//! The NES controller: a D-pad, B, A, Select and Start — eight buttons, read once a frame.
+//!
+//! **Two questions per button, as NES games asked them.** *Held* is "is it down now" —
+//! what walking wants. *Pressed* is "did it go down this frame" — what jumping, firing and
+//! menu choices want, so that holding A jumps once rather than every frame. The console
+//! kept last frame's byte and compared; [advance] is that comparison, and it is `pure`, so
+//! it can be checked without a window (`input.lyra --check`).
+//!
+//! **Keyboard and gamepad are merged** — a button is held if either source holds it — so
+//! a game reads one `Pad` whichever the player uses.
+//!
+//! | NES | keyboard | gamepad |
+//! |---|---|---|
+//! | D-pad | arrows, WASD | D-pad, left stick |
+//! | B | Z | south (Xbox A, ✕) |
+//! | A | X | east (Xbox B, ○) |
+//! | Select | right Shift, Tab | back |
+//! | Start | Return | start |
+//!
+//! B and A keep the NES's arrangement — B on the left, A on the right — rather than a
+//! modern pad's labels.
+
+import bindings.sdl3.{
+  key_held, SCANCODE_UP, SCANCODE_DOWN, SCANCODE_LEFT, SCANCODE_RIGHT, SCANCODE_W,
+  SCANCODE_A, SCANCODE_S, SCANCODE_D, SCANCODE_Z, SCANCODE_X, SCANCODE_RETURN,
+  SCANCODE_RSHIFT, SCANCODE_TAB,
+  Gamepad, gamepad_button, gamepad_axis, BUTTON_SOUTH, BUTTON_EAST, BUTTON_BACK,
+  BUTTON_START, BUTTON_DPAD_UP, BUTTON_DPAD_DOWN, BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT,
+  AXIS_LEFT_X, AXIS_LEFT_Y,
+}
+
+/// One bit per button, as the NES shifted them out of the controller.
+pub struct Buttons {
+  up: bool,
+  down: bool,
+  left: bool,
+  right: bool,
+  b: bool,
+  a: bool,
+  select: bool,
+  start: bool,
+}
+
+/// No button down — the state before the first frame.
+pub const RELEASED = Buttons {
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+  b: false,
+  a: false,
+  select: false,
+  start: false,
+}
+
+/// This frame's view of the controller.
+pub struct Pad {
+  /// Down now.
+  held: Buttons,
+  /// Down now and not last frame — true for exactly one frame per press.
+  pressed: Buttons,
+}
+
+/// How far a stick must lean, of 32767, before it counts as the D-pad: half-way, so a
+/// stick resting slightly off-centre presses nothing.
+const STICK_THRESHOLD: i16 = 16384
+
+/// This frame's `Pad`, given last frame's held buttons and this frame's.
+pub let advance = pure (previous: Buttons, now: Buttons) -> Pad => Pad {
+  held: now,
+  pressed: Buttons {
+    up: now.up && !previous.up,
+    down: now.down && !previous.down,
+    left: now.left && !previous.left,
+    right: now.right && !previous.right,
+    b: now.b && !previous.b,
+    a: now.a && !previous.a,
+    select: now.select && !previous.select,
+    start: now.start && !previous.start,
+  },
+}
+
+/// What is held right now, from the keyboard and — when there is one — a gamepad. Read it
+/// after draining the event queue, which is when SDL updates both.
+pub let read_buttons = (gamepad: Maybe<Gamepad>) -> Buttons => match gamepad {
+  None => opposites_cancel(keyboard()),
+  Some(pad) => opposites_cancel(either(keyboard(), from_gamepad(pad))),
+}
+
+/// A physical D-pad cannot press left and right at once, and NES games were written
+/// knowing it — some glitch when both arrive. Keys can, so both cancel to neither.
+pub let opposites_cancel = pure (b: Buttons) -> Buttons => Buttons { b |
+  up: b.up && !b.down,
+  down: b.down && !b.up,
+  left: b.left && !b.right,
+  right: b.right && !b.left,
+}
+
+let keyboard = () -> Buttons => Buttons {
+  up: key_held(SCANCODE_UP) || key_held(SCANCODE_W),
+  down: key_held(SCANCODE_DOWN) || key_held(SCANCODE_S),
+  left: key_held(SCANCODE_LEFT) || key_held(SCANCODE_A),
+  right: key_held(SCANCODE_RIGHT) || key_held(SCANCODE_D),
+  b: key_held(SCANCODE_Z),
+  a: key_held(SCANCODE_X),
+  select: key_held(SCANCODE_RSHIFT) || key_held(SCANCODE_TAB),
+  start: key_held(SCANCODE_RETURN),
+}
+
+let from_gamepad = (pad: Gamepad) -> Buttons => {
+  let x = gamepad_axis(pad, AXIS_LEFT_X)
+  let y = gamepad_axis(pad, AXIS_LEFT_Y)
+  Buttons {
+    up: gamepad_button(pad, BUTTON_DPAD_UP) || y <= -STICK_THRESHOLD,
+    down: gamepad_button(pad, BUTTON_DPAD_DOWN) || y >= STICK_THRESHOLD,
+    left: gamepad_button(pad, BUTTON_DPAD_LEFT) || x <= -STICK_THRESHOLD,
+    right: gamepad_button(pad, BUTTON_DPAD_RIGHT) || x >= STICK_THRESHOLD,
+    b: gamepad_button(pad, BUTTON_SOUTH),
+    a: gamepad_button(pad, BUTTON_EAST),
+    select: gamepad_button(pad, BUTTON_BACK),
+    start: gamepad_button(pad, BUTTON_START),
+  }
+}
+
+/// Held in either source.
+let either = pure (p: Buttons, q: Buttons) -> Buttons => Buttons {
+  up: p.up || q.up,
+  down: p.down || q.down,
+  left: p.left || q.left,
+  right: p.right || q.right,
+  b: p.b || q.b,
+  a: p.a || q.a,
+  select: p.select || q.select,
+  start: p.start || q.start,
+}

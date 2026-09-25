@@ -1,0 +1,34 @@
+module palette
+//! The NES's 64 colours, as the 2C02 PPU produces them.
+//!
+//! The console never stored an RGB value: a palette entry is a 6-bit index — two bits of
+//! brightness (the row) and four of hue (the column) — and the PPU turned it into an
+//! analogue signal. These RGB triples are one measured rendering of that signal; emulators
+//! differ in the details, and none of them is the one true answer.
+//!
+//! Index the way NES programmers do, in hex: `nes(0x0F)` is the black games cleared to,
+//! `nes(0x30)` white, `nes(0x16)` the red of a certain plumber's hat. Columns `0xE` and
+//! `0xF` are black in every row, and `0x0D` is "blacker than black", a value real
+//! televisions misread as a sync pulse — which is why games avoided it.
+
+import bindings.sdl3.{ Color, rgb }
+
+/// The colour at palette `index`. Only the low six bits are read, as on the console.
+pub let nes = pure (index: i64) -> Color => {
+  let packed = PALETTE[index & 63]
+  rgb(u8((packed >> 16) & 255), u8((packed >> 8) & 255), u8(packed & 255))
+}
+
+/// The NES's universal background colour — the one `0x0F` names.
+pub const BLACK: i64 = 0x0F
+
+const PALETTE: []u32 = [
+  0x626262, 0x001FB2, 0x2404C8, 0x5200B2, 0x730076, 0x800024, 0x730B00, 0x522800,
+  0x244400, 0x005700, 0x005C00, 0x005324, 0x003C76, 0x000000, 0x000000, 0x000000,
+  0xABABAB, 0x0D57FF, 0x4B30FF, 0x8A13FF, 0xBC08D6, 0xD21269, 0xC72E00, 0x9D5400,
+  0x607B00, 0x209800, 0x00A300, 0x009942, 0x007DB4, 0x000000, 0x000000, 0x000000,
+  0xFFFFFF, 0x53AEFF, 0x9085FF, 0xD365FF, 0xFF57FF, 0xFF5DCF, 0xFF7757, 0xFA9E00,
+  0xBDC700, 0x7AE700, 0x43F611, 0x26EF7E, 0x2CD5F6, 0x4E4E4E, 0x000000, 0x000000,
+  0xFFFFFF, 0xB6E1FF, 0xCED1FF, 0xE9C3FF, 0xFFBCFF, 0xFFBDF4, 0xFFC6C3, 0xFFD59A,
+  0xE9E681, 0xCEF481, 0xB6FB9A, 0xA9FAC3, 0xA9F0F4, 0xB8B8B8, 0x000000, 0x000000,
+]

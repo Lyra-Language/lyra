@@ -15,11 +15,23 @@ import std.ffi
 /// and the only operations on it are "hand it back to SDL" and "is it null".
 pub newtype Window = ^u8
 
+/// `SDL_WindowFlags` for [create_window], combined with `|`. `0` is an ordinary window.
+pub const WINDOW_FULLSCREEN: u64 = 0x0000000000000001
+pub const WINDOW_HIDDEN: u64 = 0x0000000000000008
+/// Let the user resize the window. With a logical presentation the renderer rescales
+/// on its own, so a program that set one has nothing to do when this happens.
+pub const WINDOW_RESIZABLE: u64 = 0x0000000000000020
+/// Ask for a backing store at the display's real pixel density.
+pub const WINDOW_HIGH_PIXEL_DENSITY: u64 = 0x0000000000002000
+
 @symbol("SDL_CreateWindow")
 unsafe extern sdl_create_window: (title: ^u8, w: i32, h: i32, flags: u64) -> Window
 
 @symbol("SDL_DestroyWindow")
 unsafe extern sdl_destroy_window: (window: Window) -> void
+
+@symbol("SDL_SetWindowFullscreen")
+unsafe extern sdl_set_window_fullscreen: (window: Window, fullscreen: u8) -> u8
 
 /// Open a window, or `None` if SDL could not — [last_error] says why.
 ///
@@ -32,10 +44,20 @@ unsafe extern sdl_destroy_window: (window: Window) -> void
 /// `with_cstring` lends the title's bytes for the call and takes them back, so no buffer
 /// has to be kept alive by hand — and it is `pure noalloc`, since a Lyra string already
 /// carries the NUL a C call needs.
-pub let create_window = (title: string, width: i32, height: i32) -> Maybe<Window> => {
-  let w = title.with_cstring((t) => unsafe { sdl_create_window(t, width, height, 0) })
+pub let create_window = (
+  title: string,
+  width: i32,
+  height: i32,
+  flags: u64
+) -> Maybe<Window> => {
+  let w = title.with_cstring((t) => unsafe { sdl_create_window(t, width, height, flags) })
   if w == nullptr { None } else { Some(w) }
 }
 
 /// Close a window. The handle must not be used afterwards; nothing here can check that.
 pub let destroy_window = (window: Window) -> void => unsafe { sdl_destroy_window(window) }
+
+/// Enter or leave fullscreen — SDL's borderless desktop mode, which changes no display
+/// mode and so is cheap to toggle.
+pub let set_fullscreen = (window: Window, on: bool) -> bool =>
+  unsafe { sdl_set_window_fullscreen(window, if on { 1 } else { 0 }) } != 0

@@ -40,15 +40,19 @@ module bindings.sdl3
 //! environment set up. Running the compiler from source (`go run ./cmd/lyrac`) needs
 //! `LYRA_STD=$(pwd)` from `lyra/`, for the same reason it does for the prelude.
 //!
-//! What is bound is what a small program needs: init, a window, a renderer, filled
-//! rectangles, the event queue and a delay. Deliberately not the whole of SDL — every
-//! entry point is a maintenance commitment and an ABI claim nobody checks, which is the
-//! argument that decided there would be no `std.libc` either.
+//! What is bound is what the examples in `examples/SDL3/` draw with, grown one example at a
+//! time towards an NES-style game. Deliberately not the whole of SDL — every entry point is
+//! a maintenance commitment and an ABI claim nobody checks, which is the argument that
+//! decided there would be no `std.libc` either.
 
 import std.ffi.{ cstring_len }
 
 /// `SDL_INIT_VIDEO`, which implies the event subsystem.
 pub const INIT_VIDEO: u32 = 0x00000020
+
+/// `SDL_INIT_GAMEPAD`, which implies the joystick and event subsystems. Combine with
+/// `|`: `init(INIT_VIDEO | INIT_GAMEPAD)`.
+pub const INIT_GAMEPAD: u32 = 0x00002000
 
 /// `SDL_INIT_EVENTS` alone, for a program that wants the queue and no display.
 pub const INIT_EVENTS: u32 = 0x00004000

@@ -65,6 +65,14 @@ struct MouseButtonEvent {
   y: f32,
 }
 
+/// `SDL_GamepadDeviceEvent` — a pad arriving or leaving.
+struct GamepadDeviceEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  which: u32,
+}
+
 /// `SDL_Event` — 128 bytes, read as a `u32` to find the tag and as a struct to read the
 /// payload that tag selects.
 ///
@@ -78,6 +86,7 @@ union RawEvent {
   key: KeyboardEvent,
   motion: MouseMotionEvent,
   button: MouseButtonEvent,
+  device: GamepadDeviceEvent,
   padding: [128]u8,
 }
 
@@ -87,9 +96,15 @@ const EVENT_KEY_UP: u32 = 0x301
 const EVENT_MOUSE_MOTION: u32 = 0x400
 const EVENT_MOUSE_BUTTON_DOWN: u32 = 0x401
 const EVENT_MOUSE_BUTTON_UP: u32 = 0x402
+const EVENT_GAMEPAD_ADDED: u32 = 0x653
+const EVENT_GAMEPAD_REMOVED: u32 = 0x654
 
 /// `SDLK_ESCAPE` — the virtual key code, not the physical scancode.
 pub const KEY_ESCAPE: u32 = 0x0000001b
+
+/// `SDLK_F11`. Function keys sit above bit 30 (`SDLK_SCANCODE_MASK`), since they have no
+/// character to be named by.
+pub const KEY_F11: u32 = 0x40000044
 
 /// One thing that happened, as a type that records which thing it is.
 ///
@@ -103,6 +118,8 @@ pub data Event =
   | MouseMotion(f32, f32)
   | MouseDown(u8, f32, f32)
   | MouseUp(u8, f32, f32)
+  | GamepadAdded(u32)
+  | GamepadRemoved(u32)
   | Other(u32)
 
 @symbol("SDL_PollEvent")
@@ -148,6 +165,10 @@ let classify = pure (raw: RawEvent) -> Event => {
       unsafe { raw.button.x },
       unsafe { raw.button.y }
     )
+  } else if kind == EVENT_GAMEPAD_ADDED {
+    GamepadAdded(unsafe { raw.device.which })
+  } else if kind == EVENT_GAMEPAD_REMOVED {
+    GamepadRemoved(unsafe { raw.device.which })
   } else {
     Other(kind)
   }

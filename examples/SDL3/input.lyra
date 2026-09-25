@@ -1,0 +1,305 @@
+// An NES controller on screen that lights up as you press it — keyboard or gamepad —
+// and a block it steers, which is where *held* and *pressed* stop being the same thing.
+//
+// The D-pad moves the block while held; B held makes it run. A changes its colour **once
+// per press**, however long it is held; Start pauses; Select recolours the controller.
+// A gamepad can be plugged in or pulled out while this runs. Mapping is in `pad.lyra`.
+//
+// `--check` tests the pad logic without a window (edges, cancelling opposites) and
+// answers non-zero on a failure. Escape quits; `--shot <file.bmp>` as in `console.lyra`.
+
+import bindings.sdl3.{
+  last_error,
+  Renderer, Rect, set_draw_color, clear, fill_rect, debug_text, DEBUG_TEXT_SIZE,
+  poll_event,
+  Gamepad, open_gamepad, close_gamepad, gamepad_id, gamepad_name,
+}
+import console.{ Screen, open_screen, close_screen, end_frame, wants_quit, WIDTH }
+import pad.{ Buttons, Pad, RELEASED, advance, read_buttons, opposites_cancel }
+import palette.{ nes }
+
+let main = () -> u8 => {
+  if wants_check() { return run_checks() }
+  match open_screen("Lyra NES pad") {
+    None => 1,
+    Some(screen) => {
+      let code = run(screen)
+      close_screen(screen)
+      code
+    },
+  }
+}
+
+let wants_check = () -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == "--check" { found = true }
+  }
+  found
+}
+
+// ---------------------------------------------------------------------------------------
+// The window
+// ---------------------------------------------------------------------------------------
+
+/// Colours the block cycles through on A, and the controller body through on Select.
+const BLOCK_COLOURS: []i64 = [0x30, 0x2A, 0x28, 0x24, 0x21]
+const BODY_COLOURS: []i64 = [0x3D, 0x10, 0x37, 0x31]
+
+/// The block's playfield, between the status text and the controller.
+const FIELD_TOP: f32 = 44.0
+const FIELD_BOTTOM: f32 = 88.0
+const BLOCK: f32 = 8.0
+
+let run = (screen: Screen) -> u8 => {
+  var gamepad: Maybe<Gamepad> = None
+  var gamepad_label = ""
+  var previous = RELEASED
+  var frame: i64 = 0
+  var x: f32 = 124.0
+  var y: f32 = 62.0
+  var block_colour: i64 = 0
+  var body_colour: i64 = 0
+  var a_presses: i64 = 0
+  var b_presses: i64 = 0
+  var paused = false
+  var status: u8 = 0
+  var running = true
+
+  for running {
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        // The first pad to arrive is the one read; SDL announces pads already plugged in
+        // at startup the same way, so this is also how one is found at all.
+        Some(GamepadAdded(id)) => {
+          match gamepad {
+            None => {
+              gamepad = open_gamepad(id)
+              match gamepad {
+                Some(g) => { gamepad_label = gamepad_name(g) },
+                None => { println("could not open gamepad ${id}: ${last_error()}") },
+              }
+            },
+            Some(_) => {},
+          }
+        },
+        Some(GamepadRemoved(id)) => {
+          let ours = match gamepad {
+            Some(g) => gamepad_id(g) == id,
+            None => false,
+          }
+          if ours {
+            match gamepad {
+              Some(g) => close_gamepad(g),
+              None => {},
+            }
+            gamepad = None
+          }
+        },
+        Some(event) => {
+          if wants_quit(event) { running = false }
+        },
+      }
+    }
+
+    // After the drain, which is when SDL brings the keyboard and pad state up to date.
+    let now = read_buttons(gamepad)
+    let pad = advance(previous, now)
+    previous = now
+
+    if pad.pressed.start { paused = !paused }
+    if pad.pressed.select { body_colour = (body_colour + 1) % BODY_COLOURS.len() }
+    if pad.pressed.a {
+      a_presses += 1
+      block_colour = (block_colour + 1) % BLOCK_COLOURS.len()
+    }
+    if pad.pressed.b { b_presses += 1 }
+    if !paused {
+      let speed: f32 = if pad.held.b { 2.0 } else { 1.0 }
+      if pad.held.left { x -= speed }
+      if pad.held.right { x += speed }
+      if pad.held.up { y -= speed }
+      if pad.held.down { y += speed }
+      x = x.clamp(8.0, f32(WIDTH) - 8.0 - BLOCK)
+      y = y.clamp(FIELD_TOP, FIELD_BOTTOM - BLOCK)
+    }
+
+    let r = screen.renderer
+    set_draw_color(r, nes(0x0F))
+    clear(r)
+    draw_status(r, gamepad_label, gamepad)
+    set_draw_color(r, nes(BLOCK_COLOURS[block_colour]))
+    fill_rect(r, Rect { x: x, y: y, w: BLOCK, h: BLOCK })
+    if paused {
+      set_draw_color(r, nes(0x30))
+      centred_text(r, 64.0, "PAUSED")
+    }
+    draw_controller(r, pad, BODY_COLOURS[body_colour])
+    draw_legend(r, a_presses, b_presses)
+
+    match end_frame(screen, frame) {
+      Stop(code) => {
+        status = code
+        running = false
+      },
+      Continue => {},
+    }
+    frame += 1
+  }
+
+  match gamepad {
+    Some(g) => close_gamepad(g),
+    None => {},
+  }
+  status
+}
+
+/// The title, and which input is live. A pad's name is cut to fit the 32 columns.
+let draw_status = (r: Renderer, label: string, gamepad: Maybe<Gamepad>) -> void => {
+  set_draw_color(r, nes(0x30))
+  debug_text(r, 16.0, 16.0, "NES PAD")
+  set_draw_color(r, nes(0x10))
+  let line = match gamepad {
+    Some(_) => "PAD: " ++ label.slice(0, min(label.len(), 25)),
+    None => "NO GAMEPAD - KEYBOARD ONLY",
+  }
+  debug_text(r, 16.0, 28.0, line)
+}
+
+let draw_legend = (r: Renderer, a_presses: i64, b_presses: i64) -> void => {
+  set_draw_color(r, nes(0x00))
+  debug_text(r, 16.0, 188.0, "ARROWS/WASD  Z:B  X:A")
+  debug_text(r, 16.0, 200.0, "ENTER:START  RSHIFT:SELECT")
+  set_draw_color(r, nes(0x30))
+  debug_text(r, 16.0, 216.0, "A PRESSED ${a_presses}  B PRESSED ${b_presses}")
+}
+
+/// The controller, 208×80, each button lit while held.
+let draw_controller = (r: Renderer, pad: Pad, body: i64) -> void => {
+  set_draw_color(r, nes(body))
+  fill_rect(r, Rect { x: 24.0, y: 96.0, w: 208.0, h: 80.0 })
+  set_draw_color(r, nes(0x0F))
+  fill_rect(r, Rect { x: 32.0, y: 112.0, w: 192.0, h: 56.0 })
+
+  // The D-pad: a dark cross, and each arm lit while held.
+  let held = pad.held
+  set_draw_color(r, nes(0x2D))
+  fill_rect(r, Rect { x: 46.0, y: 134.0, w: 36.0, h: 12.0 })
+  fill_rect(r, Rect { x: 58.0, y: 122.0, w: 12.0, h: 36.0 })
+  lit(r, held.up, Rect { x: 58.0, y: 122.0, w: 12.0, h: 12.0 })
+  lit(r, held.down, Rect { x: 58.0, y: 146.0, w: 12.0, h: 12.0 })
+  lit(r, held.left, Rect { x: 46.0, y: 134.0, w: 12.0, h: 12.0 })
+  lit(r, held.right, Rect { x: 70.0, y: 134.0, w: 12.0, h: 12.0 })
+
+  // Select and Start: two grey bars.
+  set_draw_color(r, nes(if held.select { 0x30 } else { 0x00 }))
+  fill_rect(r, Rect { x: 100.0, y: 146.0, w: 20.0, h: 6.0 })
+  set_draw_color(r, nes(if held.start { 0x30 } else { 0x00 }))
+  fill_rect(r, Rect { x: 132.0, y: 146.0, w: 20.0, h: 6.0 })
+  set_draw_color(r, nes(0x16))
+  debug_text(r, 94.0, 132.0, "SEL")
+  debug_text(r, 126.0, 132.0, "STA")
+
+  // B and A: red buttons, brighter while held, lettered underneath as on the original.
+  set_draw_color(r, nes(if held.b { 0x36 } else { 0x16 }))
+  fill_circle(r, 180.0, 142.0, 9.0)
+  set_draw_color(r, nes(if held.a { 0x36 } else { 0x16 }))
+  fill_circle(r, 206.0, 142.0, 9.0)
+  set_draw_color(r, nes(0x16))
+  debug_text(r, 176.0, 156.0, "B")
+  debug_text(r, 202.0, 156.0, "A")
+}
+
+/// Fill `rect` in the lit colour when `on`.
+let lit = (r: Renderer, on: bool, rect: Rect) -> void => {
+  if on {
+    set_draw_color(r, nes(0x2A))
+    fill_rect(r, rect)
+  }
+}
+
+/// A filled circle, one horizontal run per row — there is no circle primitive, and at
+/// this size a row of rectangles *is* the pixel art.
+let fill_circle = (r: Renderer, cx: f32, cy: f32, radius: f32) -> void => {
+  let rows = i64(radius.round())
+  for dy in -rows..<=rows {
+    let fy = f32(dy)
+    let half = f32((radius * radius - fy * fy).sqrt().floor())
+    fill_rect(r, Rect { x: cx - half, y: cy + fy, w: half * 2.0 + 1.0, h: 1.0 })
+  }
+}
+
+let centred_text = (r: Renderer, y: f32, text: string) -> void => {
+  debug_text(r, (f32(WIDTH) - f32(text.len()) * DEBUG_TEXT_SIZE) / 2.0, y, text)
+}
+
+// ---------------------------------------------------------------------------------------
+// The headless half — `--check`
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+  let a_only = Buttons { RELEASED | a: true }
+
+  // A press is pressed for exactly one frame, then only held.
+  let first_press = advance(RELEASED, a_only)
+  failures += check_that(
+    "a press is pressed on its first frame",
+    first_press.pressed.a && first_press.held.a
+  )
+  let second = advance(a_only, a_only)
+  failures += check_that(
+    "a held button is not pressed again",
+    !second.pressed.a && second.held.a
+  )
+  let released = advance(a_only, RELEASED)
+  failures += check_that(
+    "a release presses nothing",
+    !released.pressed.a && !released.held.a
+  )
+  failures += check_that(
+    "a press presses only itself",
+    !first_press.pressed.b && !first_press.pressed.start
+  )
+
+  // Across a trace of held states, presses are the rising edges: three here.
+  let trace: []bool = [false, true, true, false, true, false, false, true, true]
+  var previous = RELEASED
+  var presses = 0
+  for down in trace {
+    let now = Buttons { RELEASED | a: down }
+    if advance(previous, now).pressed.a { presses += 1 }
+    previous = now
+  }
+  failures += check_that("a trace counts its rising edges", presses == 3)
+
+  // Opposite directions cancel; everything else passes through.
+  let both = opposites_cancel(Buttons {
+    RELEASED | left: true,
+    right: true,
+    up: true,
+    a: true
+  })
+  failures += check_that("left and right cancel", !both.left && !both.right)
+  failures += check_that("a lone direction survives", both.up && !both.down)
+  failures += check_that("buttons pass through", both.a)
+
+  if failures == 0 {
+    println("all checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+let check_that = (what: string, ok: bool) -> i64 => {
+  if ok {
+    0
+  } else {
+    println("FAIL: ${what}")
+    1
+  }
+}

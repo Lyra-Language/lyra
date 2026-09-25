@@ -1,16 +1,19 @@
 module bindings.sdl3
-//! The 2D renderer: a draw colour, a clear, and filled rectangles.
+//! The 2D renderer: colours, primitives, debug text, a logical screen size, and reading
+//! the frame back out.
 
 /// An `SDL_Renderer *`. A newtype for the reason [Window] is one.
 pub newtype Renderer = ^u8
+
+/// An `SDL_Surface *`, which only [save_screenshot] ever holds — so it stays private.
+newtype Surface = ^u8
 
 /// `SDL_FRect` — the rectangle SDL draws, in floats.
 ///
 /// It crosses **by pointer**, which is what `SDL_RenderFillRect` asks for, so this is an
 /// ordinary struct and the boundary has nothing to be clever about. Lyra's struct layout
 /// already matches C's — the FFI fixture proves `sizeof` and every `offsetof` — so this is
-/// a transcription and nothing more. (A library that passed rectangles *by value* would
-/// need struct-by-value, which is a separate feature; SDL does not.)
+/// a transcription and nothing more.
 pub struct Rect {
   x: f32,
   y: f32,
@@ -18,11 +21,47 @@ pub struct Rect {
   h: f32,
 }
 
+/// `SDL_Color`. Components are 0–255; `a` is 255 for opaque.
+pub struct Color {
+  r: u8,
+  g: u8,
+  b: u8,
+  a: u8,
+}
+
+/// An opaque colour, which is nearly every colour a program names.
+pub let rgb = pure (r: u8, g: u8, b: u8) -> Color => Color { r: r, g: g, b: b, a: 255 }
+
+/// `SDL_RendererLogicalPresentation`, for [set_logical_presentation].
+///
+/// `PRESENT_INTEGER_SCALE` is the one a pixel-art program wants: the logical screen is
+/// scaled by a whole number and letterboxed, so every logical pixel is the same size.
+pub const PRESENT_DISABLED: i32 = 0
+pub const PRESENT_STRETCH: i32 = 1
+pub const PRESENT_LETTERBOX: i32 = 2
+pub const PRESENT_OVERSCAN: i32 = 3
+pub const PRESENT_INTEGER_SCALE: i32 = 4
+
+/// `SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE`: every [debug_text] glyph is this many pixels
+/// square, so a string is `8 * length` wide.
+pub const DEBUG_TEXT_SIZE: f32 = 8.0
+
 @symbol("SDL_CreateRenderer")
 unsafe extern sdl_create_renderer: (window: Window, name: ^u8) -> Renderer
 
 @symbol("SDL_DestroyRenderer")
 unsafe extern sdl_destroy_renderer: (renderer: Renderer) -> void
+
+@symbol("SDL_SetRenderLogicalPresentation")
+unsafe extern sdl_set_render_logical_presentation: (
+  renderer: Renderer,
+  w: i32,
+  h: i32,
+  mode: i32,
+) -> u8
+
+@symbol("SDL_SetRenderVSync")
+unsafe extern sdl_set_render_vsync: (renderer: Renderer, vsync: i32) -> u8
 
 @symbol("SDL_SetRenderDrawColor")
 unsafe extern sdl_set_draw_color: (renderer: Renderer, r: u8, g: u8, b: u8, a: u8) -> u8
@@ -30,11 +69,38 @@ unsafe extern sdl_set_draw_color: (renderer: Renderer, r: u8, g: u8, b: u8, a: u
 @symbol("SDL_RenderClear")
 unsafe extern sdl_render_clear: (renderer: Renderer) -> u8
 
+@symbol("SDL_RenderPoint")
+unsafe extern sdl_render_point: (renderer: Renderer, x: f32, y: f32) -> u8
+
+@symbol("SDL_RenderLine")
+unsafe extern sdl_render_line: (
+  renderer: Renderer,
+  x1: f32,
+  y1: f32,
+  x2: f32,
+  y2: f32
+) -> u8
+
+@symbol("SDL_RenderRect")
+unsafe extern sdl_render_rect: (renderer: Renderer, rect: ^Rect) -> u8
+
 @symbol("SDL_RenderFillRect")
 unsafe extern sdl_render_fill_rect: (renderer: Renderer, rect: ^Rect) -> u8
 
+@symbol("SDL_RenderDebugText")
+unsafe extern sdl_render_debug_text: (renderer: Renderer, x: f32, y: f32, text: ^u8) -> u8
+
 @symbol("SDL_RenderPresent")
 unsafe extern sdl_render_present: (renderer: Renderer) -> u8
+
+@symbol("SDL_RenderReadPixels")
+unsafe extern sdl_render_read_pixels: (renderer: Renderer, rect: ^Rect) -> Surface
+
+@symbol("SDL_SaveBMP")
+unsafe extern sdl_save_bmp: (surface: Surface, file: ^u8) -> u8
+
+@symbol("SDL_DestroySurface")
+unsafe extern sdl_destroy_surface: (surface: Surface) -> void
 
 /// The renderer for a window, or `None` if SDL could not make one.
 ///
@@ -49,12 +115,42 @@ pub let create_renderer = (window: Window) -> Maybe<Renderer> => {
 pub let destroy_renderer = (renderer: Renderer) -> void =>
   unsafe { sdl_destroy_renderer(renderer) }
 
-/// Set the colour subsequent drawing uses. Components are 0–255.
-pub let set_draw_color = (renderer: Renderer, r: u8, g: u8, b: u8, a: u8) -> bool =>
-  unsafe { sdl_set_draw_color(renderer, r, g, b, a) } != 0
+/// Draw in a `width` × `height` coordinate space whatever size the window is. `mode` is a
+/// `PRESENT_*` constant and says how that space is fitted to the window.
+///
+/// Everything drawn is scaled — points become squares and [debug_text] grows with them —
+/// which is exactly the look of a low-resolution screen blown up.
+pub let set_logical_presentation = (
+  renderer: Renderer,
+  width: i32,
+  height: i32,
+  mode: i32,
+) -> bool =>
+  unsafe { sdl_set_render_logical_presentation(renderer, width, height, mode) } != 0
+
+/// Wait for the display's refresh on [present], which paces a loop at the display's rate
+/// with no timing code at all. `false` turns it off.
+pub let set_vsync = (renderer: Renderer, on: bool) -> bool =>
+  unsafe { sdl_set_render_vsync(renderer, if on { 1 } else { 0 }) } != 0
+
+/// Set the colour subsequent drawing uses.
+pub let set_draw_color = (renderer: Renderer, color: Color) -> bool =>
+  unsafe { sdl_set_draw_color(renderer, color.r, color.g, color.b, color.a) } != 0
 
 /// Fill the whole target with the current draw colour.
 pub let clear = (renderer: Renderer) -> bool => unsafe { sdl_render_clear(renderer) } != 0
+
+/// Plot one point in the current draw colour.
+pub let draw_point = (renderer: Renderer, x: f32, y: f32) -> bool =>
+  unsafe { sdl_render_point(renderer, x, y) } != 0
+
+/// Draw a line between two points, both ends included.
+pub let draw_line = (renderer: Renderer, x1: f32, y1: f32, x2: f32, y2: f32) -> bool =>
+  unsafe { sdl_render_line(renderer, x1, y1, x2, y2) } != 0
+
+/// Outline one rectangle, one pixel wide, inside its bounds.
+pub let draw_rect = (renderer: Renderer, rect: Rect) -> bool =>
+  unsafe { sdl_render_rect(renderer, &rect) } != 0
 
 /// Fill one rectangle with the current draw colour.
 ///
@@ -63,6 +159,27 @@ pub let clear = (renderer: Renderer) -> bool => unsafe { sdl_render_clear(render
 pub let fill_rect = (renderer: Renderer, rect: Rect) -> bool =>
   unsafe { sdl_render_fill_rect(renderer, &rect) } != 0
 
+/// Write `text` with SDL's built-in 8×8 font, top-left corner at (`x`, `y`), in the
+/// current draw colour. It covers ASCII only — anything else draws as a placeholder.
+pub let debug_text = (renderer: Renderer, x: f32, y: f32, text: string) -> bool =>
+  text.with_cstring((t) => unsafe { sdl_render_debug_text(renderer, x, y, t) }) != 0
+
 /// Show everything drawn since the last present.
 pub let present = (renderer: Renderer) -> bool =>
   unsafe { sdl_render_present(renderer) } != 0
+
+/// Write what has been drawn this frame to `path` as a BMP. Call it **before** [present],
+/// which is what hands the frame away.
+///
+/// The image is the window's real pixels, not the logical screen's, so a 256×240 screen in
+/// a 768×720 window saves at 768×720.
+pub let save_screenshot = (renderer: Renderer, path: string) -> bool => {
+  let surface = unsafe { sdl_render_read_pixels(renderer, nullptr) }
+  if surface == nullptr {
+    false
+  } else {
+    let saved = path.with_cstring((p) => unsafe { sdl_save_bmp(surface, p) }) != 0
+    unsafe { sdl_destroy_surface(surface) }
+    saved
+  }
+}

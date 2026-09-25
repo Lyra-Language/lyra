@@ -1,0 +1,77 @@
+module bindings.sdl3
+//! Gamepads: SDL's layout-independent controller API.
+//!
+//! **A gamepad arrives as an event**, `GamepadAdded(id)`, including every pad already
+//! plugged in when SDL starts — so a program opens pads from its event loop and needs no
+//! separate enumeration. `GamepadRemoved(id)` is the cue to close one. Needs
+//! `INIT_GAMEPAD`.
+
+/// An open `SDL_Gamepad *`, closed by [close_gamepad].
+@must_release(close_gamepad)
+pub struct Gamepad {
+  handle: ^u8,
+}
+
+/// `SDL_GamepadButton`, by **position**: `BUTTON_SOUTH` is the bottom face button whatever
+/// it is labelled (Xbox A, PlayStation ✕, Nintendo B).
+pub const BUTTON_SOUTH: i32 = 0
+pub const BUTTON_EAST: i32 = 1
+pub const BUTTON_WEST: i32 = 2
+pub const BUTTON_NORTH: i32 = 3
+pub const BUTTON_BACK: i32 = 4
+pub const BUTTON_START: i32 = 6
+pub const BUTTON_DPAD_UP: i32 = 11
+pub const BUTTON_DPAD_DOWN: i32 = 12
+pub const BUTTON_DPAD_LEFT: i32 = 13
+pub const BUTTON_DPAD_RIGHT: i32 = 14
+
+/// `SDL_GamepadAxis`. A stick axis runs -32768..32767, negative left and **up**.
+pub const AXIS_LEFT_X: i32 = 0
+pub const AXIS_LEFT_Y: i32 = 1
+
+@symbol("SDL_OpenGamepad")
+unsafe extern sdl_open_gamepad: (id: u32) -> ^u8
+
+@symbol("SDL_CloseGamepad")
+unsafe extern sdl_close_gamepad: (gamepad: ^u8) -> void
+
+@symbol("SDL_GetGamepadID")
+unsafe extern sdl_get_gamepad_id: (gamepad: ^u8) -> u32
+
+@symbol("SDL_GetGamepadName")
+unsafe extern sdl_get_gamepad_name: (gamepad: ^u8) -> ^u8
+
+@symbol("SDL_GetGamepadButton")
+unsafe extern sdl_get_gamepad_button: (gamepad: ^u8, button: i32) -> u8
+
+@symbol("SDL_GetGamepadAxis")
+unsafe extern sdl_get_gamepad_axis: (gamepad: ^u8, axis: i32) -> i16
+
+/// Open the gamepad a `GamepadAdded` event named, or `None` if SDL cannot.
+pub let open_gamepad = (id: u32) -> Maybe<Gamepad> => {
+  let handle = unsafe { sdl_open_gamepad(id) }
+  if handle == nullptr { None } else { Some(Gamepad { handle: handle }) }
+}
+
+/// Close a gamepad. It must not be read afterwards.
+pub let close_gamepad = (gamepad: Gamepad) -> void =>
+  unsafe { sdl_close_gamepad(gamepad.handle) }
+
+/// The instance id — what a `GamepadRemoved` event names, to say *which* pad went.
+pub let gamepad_id = (gamepad: Gamepad) -> u32 =>
+  unsafe { sdl_get_gamepad_id(gamepad.handle) }
+
+/// The pad's name as the system reports it, or `""` if it has none.
+pub let gamepad_name = (gamepad: Gamepad) -> string => {
+  let p = unsafe { sdl_get_gamepad_name(gamepad.handle) }
+  if p == nullptr { "" } else { unsafe { p.decode_utf8(cstring_len(p)) } }
+}
+
+/// Whether a `BUTTON_*` is held. Current as of the last event-queue drain.
+pub let gamepad_button = (gamepad: Gamepad, button: i32) -> bool =>
+  unsafe { sdl_get_gamepad_button(gamepad.handle, button) } != 0
+
+/// An `AXIS_*`'s position, -32768..32767. Sticks rest near, not at, zero — give it a
+/// dead zone.
+pub let gamepad_axis = (gamepad: Gamepad, axis: i32) -> i16 =>
+  unsafe { sdl_get_gamepad_axis(gamepad.handle, axis) }

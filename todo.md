@@ -539,6 +539,17 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
   (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
   would be the natural companion.
+- **[PARTIAL] SDL3 bindings, driven by examples, towards an NES-style game.** One example
+  per rung, binding only what it uses (`bindings/README.md`). Art is PNG via **SDL3_image**
+  (`bindings/sdl3_image.lyra`).
+  1. `screen.lyra` — 256×240 integer-scaled screen, primitives, debug text. **Done 09/25.**
+  2. `sprites.lyra` — PNG sprite sheet via SDL3_image, flips, colour mod, nearest scaling.
+     **Done 09/25.**
+  3. `input.lyra` — NES pad (D-pad, A, B, Start, Select) from keyboard state and gamepads,
+     with pressed-this-frame edges. **Done 09/25**, with the shared `console.lyra`.
+  4. `sound.lyra` — APU-style pulse/triangle/noise pushed to an audio stream from the loop.
+  5. `tilemap.lyra` — scrolling tile background, camera, fixed 60 Hz timestep.
+  6. The game.
 - **[OPEN] raylib gaps:** `SetShaderValue*` uniforms (a `const void *` no Lyra pointer
   reaches); `LoadMaterials` (needs pointer reinterpretation to reach `MemFree`);
   `LoadTextureCubemap`; `ExportImageToMemory` (returns size 0).

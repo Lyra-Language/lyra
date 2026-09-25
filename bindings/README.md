@@ -44,8 +44,36 @@ notes are in [`pkg/backend/FFI.md`](../pkg/backend/FFI.md); language rules are i
 
 ## `bindings/sdl3/`
 
-SDL3; `@link("SDL3")` on the header. `SDL_Event` is a Lyra `union` exposed as a `data` type.
-`examples/SDL3/basic.lyra` is the use.
+SDL3 (3.4); `@link("SDL3")` on the header. Grown **by example**, towards an NES-style game
+(the ladder is in `todo.md`): each example binds only what it draws with.
+
+| file | what, and gotchas |
+|---|---|
+| `events.lyra` | `SDL_Event` is a Lyra `union` exposed as the `data` type `Event`; `poll_event` reads the tag, then the one member it licenses. `KEY_*` are `SDLK_` codes (function keys carry bit 30). `GamepadAdded`/`GamepadRemoved(id)` — SDL sends `Added` for pads already plugged in at startup, so no enumeration is bound. |
+| `keyboard.lyra` | `key_held(SCANCODE_*)`: held state by **position**, not label. Updated as events are pumped — read it after draining the queue. Bounds-checked against SDL's reported length. |
+| `gamepad.lyra` | `Gamepad` is `@must_release(close_gamepad)`. `BUTTON_*` are positions (`SOUTH` = Xbox A / ✕ / Nintendo B); `AXIS_LEFT_*` runs -32768..32767, negative up. Needs `INIT_GAMEPAD`. |
+| `video.lyra` | `create_window(title, w, h, flags)` with `WINDOW_*` flags; `set_fullscreen` (borderless desktop). |
+| `render.lyra` | `Color` (`SDL_Color`) and `rgb`; points, lines, outlined/filled `Rect`s; `debug_text`, SDL's 8×8 ASCII font (`DEBUG_TEXT_SIZE`). `set_logical_presentation(…, PRESENT_INTEGER_SCALE)` is the pixel-art screen: everything, text included, scales by a whole number. `set_vsync` paces the loop. `save_screenshot` (ReadPixels → BMP) must run **before** `present` and saves at window resolution. |
+| `texture.lyra` | `Texture` (handle + size) is `@must_release(destroy_texture)`. **Set `set_default_scale_mode(…, SCALE_NEAREST)` before loading** — a texture takes the mode in force when made, and the default blurs pixel art. `draw_texture(src, dst)`, `draw_texture_flipped` (`FLIP_*`). `set_texture_color`/`set_texture_alpha` are the **texture's state**, not the draw's: reset them after a tinted draw. `adopt_texture` is `unsafe` (it keeps a pointer) and is how other bindings hand a texture over. |
+| `timer.lyra` | `delay`, `ticks`. |
+
+**Examples** (`examples/SDL3/`): `basic.lyra` (a bouncing square, bindings only);
+`screen.lyra` (a 256×240 logical screen: palette, lines, points, text); `sprites.lyra` (a
+PNG sheet: flips, tints, fades); `input.lyra` (an on-screen NES controller; `--check` tests
+the pad logic headlessly). Sibling modules:
+- `console.lyra` — `open_screen`/`close_screen` (init video+gamepad, window, 256×240
+  integer-scaled renderer, vsync, nearest sampling), `end_frame` (the `--shot` logic, then
+  present; answers `Continue`/`Stop(code)`), `wants_quit`. Pieces, not a loop: captures
+  are by value, so a loop-owning callback could not update the example's `var`s.
+- `pad.lyra` — the NES pad: `Buttons` (8 bools), `advance(previous, now) -> Pad` (`held` and
+  one-frame `pressed`, pure), `read_buttons(Maybe<Gamepad>)` merging keyboard and pad,
+  opposite directions cancelled. Mapping table in its module doc.
+- `palette.lyra` — the NES 2C02 palette as `nes(index)`.
+`assets/sprites.png` is committed and made by `assets/generate.py` (standard library only;
+reads the palette from `palette.lyra`; 16×16 cells, ≤3 colours each). Examples find
+`assets/` from the repo root or beside themselves. Every graphical example takes **`--shot <file.bmp>`** (and optionally `--at <frame>`):
+draw to frame 20 (or `--at`), save it, exit — how an example is checked without anyone
+watching (run in the foreground; `sips -s format png` to view).
 
 ## `bindings/raylib/`
 
@@ -63,6 +91,13 @@ Needs struct-by-value (`pkg/abi`); nothing in the binding mentions registers.
 | `models.lyra` | **Everything touching the GPU is gated on `window_ready()`** — `GenMeshCube` with no window segfaults. A hidden window (`FLAG_WINDOW_HIDDEN`) gives a GL context for headless checks. A model owns its meshes; meshes/materials are reached by bounds-checked index, never handed out as values. `Animations` is one handle for the whole array. `draw_mesh_instanced` falls back to per-transform `draw_mesh` when the shader lacks an instance-transform attribute (raylib otherwise draws one mesh at the origin); `material_supports_instancing` says which. **`model_valid` answers false for CPU-skinned models** (bone data has no GPU buffer), so `load_model` tests "has meshes" instead. `unload_model` also frees the model's distinct textures (raylib's does not), never the shared 1x1 default; a texture set on a model is taken `own`. A glTF may carry no normals — a null `normals` pointer is the only reliable signal. `LoadMaterials` unbound: its array goes back to `MemFree(^u8)` and Lyra has no pointer reinterpretation. |
 | `raymath.lyra` | Rotations, scale, `matrix_multiply` (angles as `Degrees`); `matrix_identity`/`matrix_translation` are Lyra. `matrix_multiply(first, second)` applies `first` then `second`; translation is in `m12`/`m13`/`m14`. |
 | `shaders.lyra` | raylib's default shader is unlit. A failed compile is `None` (raylib substitutes its default). `bind_shader_map` gives a sampler a slot (`texture0..2` by name, the rest via `locs[SHADER_LOC_MAP_ALBEDO + map]`, hence `Shader.locs: ^mut i32`). Uniform values are unbound (`const void *`); pass per-material values as a texture. `set_backface_culling`/`set_depth_write`. `Shader` is `@must_release(unload_shader)`; `unload_model` does not free it. |
+
+## `bindings/sdl3_image.lyra`
+
+SDL3_image, `@link("SDL3_image")` — its own module so a program that loads no image does
+not link it. `load_texture(renderer, path) -> Maybe<Texture>` answers `bindings.sdl3`'s
+`Texture` via `adopt_texture`. `brew install sdl3_image` (Debian `libsdl3-image-dev`);
+Homebrew puts it on SDL3's `LIBRARY_PATH`.
 
 ## `bindings/jpeg.lyra`
 

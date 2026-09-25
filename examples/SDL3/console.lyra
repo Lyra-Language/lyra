@@ -1,0 +1,147 @@
+module console
+//! The part of every NES-style example that is not the example: SDL up, a window, and a
+//! 256×240 screen integer-scaled into it; the `--shot` flag; and shutting it all down.
+//!
+//! **Pieces rather than a loop.** Each example keeps its own `for running { … }`, because
+//! what a loop does with events and state is the example's subject. Owning the loop here
+//! would mean threading every example's state through a callback, and captures are by
+//! value, so that callback could not simply update a `var`.
+//!
+//! ```
+//! let main = () -> u8 => match open_screen("title") {
+//!   None => 1,
+//!   Some(screen) => {
+//!     let code = run(screen)
+//!     close_screen(screen)
+//!     code
+//!   },
+//! }
+//! ```
+//!
+//! **`--shot <file.bmp>`** draws frames until frame 20 (or `--at <n>`), saves that one
+//! and stops — how an example is checked without anyone watching. Run in the foreground:
+//! a detached process gets no window.
+
+import bindings.sdl3.{
+  init, quit, last_error, INIT_VIDEO, INIT_GAMEPAD,
+  Window, create_window, destroy_window, WINDOW_RESIZABLE,
+  Renderer, create_renderer, destroy_renderer, set_logical_presentation,
+  PRESENT_INTEGER_SCALE, set_vsync, set_default_scale_mode, SCALE_NEAREST,
+  present, save_screenshot,
+  Event, KEY_ESCAPE,
+}
+
+/// The NES picture: 256 pixels by 240 lines.
+pub const WIDTH: i32 = 256
+pub const HEIGHT: i32 = 240
+
+/// The window opens at three times that; resizing keeps whole-number scaling.
+const SCALE: i32 = 3
+
+/// The frame `--shot` saves when `--at` does not say.
+const DEFAULT_SHOT_FRAME: i64 = 20
+
+/// Everything [open_screen] made, released together by [close_screen].
+@must_release(close_screen)
+pub struct Screen {
+  window: Window,
+  renderer: Renderer,
+  /// Where `--shot` asked the frame to go, and which frame.
+  shot: Maybe<(string, i64)>,
+}
+
+/// What a loop does after [end_frame]: carry on, or stop with an exit status.
+pub data Next =
+  | Continue
+  | Stop(u8)
+
+/// Bring up SDL (video and gamepads), open the window and set up the screen — or print
+/// why not and answer `None`, with nothing left open.
+///
+/// The screen is 256×240 at whole-number scale with vsync, and textures loaded afterwards
+/// are sampled nearest-neighbour, so pixel art stays square and sharp.
+pub let open_screen = (title: string) -> Maybe<Screen> => {
+  if !init(INIT_VIDEO | INIT_GAMEPAD) {
+    println("SDL_Init failed: ${last_error()}")
+    return None
+  }
+  match create_window(title, WIDTH * SCALE, HEIGHT * SCALE, WINDOW_RESIZABLE) {
+    None => {
+      println("could not open a window: ${last_error()}")
+      quit()
+      None
+    },
+    Some(window) => match create_renderer(window) {
+      None => {
+        println("could not make a renderer: ${last_error()}")
+        destroy_window(window)
+        quit()
+        None
+      },
+      Some(renderer) => {
+        set_logical_presentation(renderer, WIDTH, HEIGHT, PRESENT_INTEGER_SCALE)
+        set_vsync(renderer, true)
+        set_default_scale_mode(renderer, SCALE_NEAREST)
+        Some(Screen { window: window, renderer: renderer, shot: shot_request() })
+      },
+    },
+  }
+}
+
+/// Release the renderer and window and shut SDL down. Textures and gamepads are the
+/// caller's to release first.
+pub let close_screen = (screen: Screen) -> void => {
+  destroy_renderer(screen.renderer)
+  destroy_window(screen.window)
+  quit()
+}
+
+/// Show the frame drawn as frame number `frame` — saving it first when `--shot` asked for
+/// this one, in which case the loop should stop.
+pub let end_frame = (screen: Screen, frame: i64) -> Next => {
+  var next = Continue
+  match screen.shot {
+    Some((path, at)) => {
+      if frame == at {
+        // Before `present`, which hands the frame away.
+        if save_screenshot(screen.renderer, path) {
+          println("saved ${path}")
+          next = Stop(0)
+        } else {
+          println("could not save ${path}: ${last_error()}")
+          next = Stop(1)
+        }
+      }
+    },
+    None => {},
+  }
+  present(screen.renderer)
+  next
+}
+
+/// Whether an event asks the program to end: the window closed, or Escape.
+pub let wants_quit = pure (event: Event) -> bool => match event {
+  Quit => true,
+  KeyDown(key) => key == KEY_ESCAPE,
+  _ => false,
+}
+
+/// `--shot <path>` and, optionally, `--at <frame>`.
+let shot_request = () -> Maybe<(string, i64)> => {
+  let args = program_args()
+  var path: Maybe<string> = None
+  var at = DEFAULT_SHOT_FRAME
+  for i in 1..<args.len() - 1 {
+    if args[i] == "--shot" { path = Some(args[i + 1]) }
+    if args[i] == "--at" {
+      match args[i + 1].parse_i64() {
+        Some(n) => { at = n },
+        None => {},
+      }
+    }
+  }
+  match path {
+    Some(p) => Some((p, at)),
+    None => None,
+  }
+}

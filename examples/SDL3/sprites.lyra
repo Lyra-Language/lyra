@@ -1,0 +1,191 @@
+// Sprites from a PNG sheet, NES style: one texture, cut into 16×16 cells, drawn flipped,
+// tinted and faded.
+//
+// **Three NES economies, done the way SDL does them.** The explorer has one drawing per
+// frame and faces left by being flipped, as the console flipped sprites in hardware. The
+// slimes are one grey drawing tinted into three palettes by SDL's colour mod — the
+// console's palette swap, approximated by multiplication. And nothing is smoothed: the
+// sheet is sampled nearest-neighbour, set *before* it is loaded.
+//
+// The sheet is `assets/sprites.png`, made by `assets/generate.py`; run from the
+// repository root or from beside this file. Needs SDL3_image:
+//
+//     LIBRARY_PATH=$(pkg-config --variable=libdir sdl3) lyrac run examples/SDL3/sprites.lyra
+//
+// Escape quits. `--shot <file.bmp>` saves one frame and exits (`console.lyra`).
+
+import bindings.sdl3.{
+  last_error,
+  Renderer, Rect, rgb, set_draw_color, clear, debug_text,
+  Texture, destroy_texture, draw_texture, draw_texture_flipped, set_texture_color,
+  set_texture_alpha, FLIP_NONE, FLIP_HORIZONTAL, FLIP_VERTICAL,
+  poll_event,
+}
+import bindings.sdl3_image.{ load_texture }
+import console.{ Screen, open_screen, close_screen, end_frame, wants_quit }
+import palette.{ nes }
+
+/// The sheet's cells, in the order `assets/generate.py` lays them out.
+const CELL: f32 = 16.0
+const EXPLORER_STRIDE: i64 = 0
+const EXPLORER_TOGETHER: i64 = 1
+const COIN_FIRST: i64 = 2
+const COIN_FRAMES: i64 = 4
+const BRICK: i64 = 6
+const SLIME_TALL: i64 = 7
+const SLIME_SQUAT: i64 = 8
+
+/// Where the explorer walks: the top of the ground, and the span it paces.
+const FLOOR: f32 = 192.0
+const WALK_LEFT: i64 = 16
+const WALK_RIGHT: i64 = 224
+
+let main = () -> u8 => match open_screen("Lyra NES sprites") {
+  None => 1,
+  Some(screen) => {
+    let code = with_sheet(screen)
+    close_screen(screen)
+    code
+  },
+}
+
+/// Load the sheet — after `open_screen`, which set the nearest-neighbour sampling it
+/// takes on creation — and run.
+let with_sheet = (screen: Screen) -> u8 => match load_sheet(screen.renderer) {
+  None => {
+    println("could not load assets/sprites.png: ${last_error()}")
+    println("run from the repository root or from examples/SDL3/")
+    1
+  },
+  Some(sheet) => {
+    let code = run(screen, sheet)
+    destroy_texture(sheet)
+    code
+  },
+}
+
+/// The sheet, from the repository root or from beside this file.
+let load_sheet = (renderer: Renderer) -> Maybe<Texture> =>
+  match load_texture(renderer, "examples/SDL3/assets/sprites.png") {
+    Some(sheet) => Some(sheet),
+    None => load_texture(renderer, "assets/sprites.png"),
+  }
+
+let run = (screen: Screen, sheet: Texture) -> u8 => {
+  var frame: i64 = 0
+  var status: u8 = 0
+  var running = true
+  for running {
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        Some(event) => {
+          if wants_quit(event) { running = false }
+        },
+      }
+    }
+
+    draw(screen.renderer, sheet, frame)
+    match end_frame(screen, frame) {
+      Stop(code) => {
+        status = code
+        running = false
+      },
+      Continue => {},
+    }
+    frame += 1
+  }
+  status
+}
+
+let draw = (renderer: Renderer, sheet: Texture, frame: i64) -> void => {
+  set_draw_color(renderer, nes(0x21))
+  clear(renderer)
+
+  set_draw_color(renderer, nes(0x0F))
+  debug_text(renderer, 16.0, 16.0, "SPRITES.PNG VIA SDL3_IMAGE")
+
+  // The ground, two bricks deep, and a floating platform with coins above it.
+  for column in 0..<16 {
+    let x = f32(column) * CELL
+    cell(renderer, sheet, BRICK, x, FLOOR + CELL)
+    cell(renderer, sheet, BRICK, x, FLOOR + CELL * 2.0)
+  }
+  for column in 5..<11 {
+    cell(renderer, sheet, BRICK, f32(column) * CELL, 112.0)
+  }
+  for column in 5..<11 {
+    // Each coin a quarter-turn behind its neighbour, so the row ripples.
+    let spin = (frame / 6 + column) % COIN_FRAMES
+    cell(renderer, sheet, COIN_FIRST + spin, f32(column) * CELL, 88.0)
+  }
+
+  // Hanging under the platform: the same slime, flipped upside down.
+  cell_flipped(renderer, sheet, SLIME_TALL, 128.0, 128.0, FLIP_VERTICAL)
+
+  draw_slimes(renderer, sheet, frame)
+  draw_explorer(renderer, sheet, frame)
+}
+
+/// One grey slime drawn in three palettes, bouncing out of step — and a fourth, faded,
+/// for the ghost.
+let draw_slimes = (renderer: Renderer, sheet: Texture, frame: i64) -> void => {
+  let tints: []i64 = [0x2A, 0x16, 0x24]
+  for i in 0..<tints.len() {
+    let squat = (frame / 16 + i) % 2 == 1
+    set_texture_color(sheet, nes(tints[i]))
+    cell(
+      renderer,
+      sheet,
+      if squat { SLIME_SQUAT } else { SLIME_TALL },
+      96.0 + f32(i) * 24.0,
+      FLOOR
+    )
+  }
+  set_texture_color(sheet, nes(0x30))
+  set_texture_alpha(sheet, 110)
+  cell(renderer, sheet, SLIME_TALL, 200.0, 60.0)
+  // Colour and alpha mods are the texture's state, not the draw call's: put them back, or
+  // every later sprite inherits them.
+  set_texture_color(sheet, rgb(255, 255, 255))
+  set_texture_alpha(sheet, 255)
+}
+
+/// The explorer pacing the floor: one pixel a frame, turning at each end, and facing the
+/// way it walks by flipping rather than by a second drawing.
+let draw_explorer = (renderer: Renderer, sheet: Texture, frame: i64) -> void => {
+  let span = WALK_RIGHT - WALK_LEFT
+  let pos = frame % (span * 2)
+  let heading_right = pos < span
+  let x = if heading_right { WALK_LEFT + pos } else { WALK_RIGHT - (pos - span) }
+  let stride = if (frame / 8) % 2 == 0 { EXPLORER_STRIDE } else { EXPLORER_TOGETHER }
+  let flip = if heading_right { FLIP_NONE } else { FLIP_HORIZONTAL }
+  cell_flipped(renderer, sheet, stride, f32(x), FLOOR, flip)
+}
+
+/// Draw sheet cell `index` with its top-left corner at (`x`, `y`), unscaled.
+let cell = (renderer: Renderer, sheet: Texture, index: i64, x: f32, y: f32) -> void => {
+  draw_texture(renderer, sheet, source(index), Rect { x: x, y: y, w: CELL, h: CELL })
+}
+
+let cell_flipped = (
+  renderer: Renderer,
+  sheet: Texture,
+  index: i64,
+  x: f32,
+  y: f32,
+  flip: i32,
+) -> void => {
+  draw_texture_flipped(
+    renderer,
+    sheet,
+    source(index),
+    Rect { x: x, y: y, w: CELL, h: CELL },
+    flip
+  )
+}
+
+/// The sheet rectangle of cell `index`: one row, cells left to right.
+let source = pure (index: i64) -> Rect =>
+  Rect { x: f32(index) * CELL, y: 0.0, w: CELL, h: CELL }

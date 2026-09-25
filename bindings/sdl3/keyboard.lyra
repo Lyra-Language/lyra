@@ -1,0 +1,42 @@
+module bindings.sdl3
+//! The keyboard as a set of held keys — the question a game asks every frame, as opposed
+//! to the event queue's "what just happened".
+
+/// `SDL_Scancode` values for [key_held]: the key's **position**, not its label, so `W` is
+/// the same physical key on an AZERTY keyboard, where it is printed `Z`. Position is what
+/// a game's controls mean. Only the keys the examples use are named.
+pub const SCANCODE_A: u32 = 4
+pub const SCANCODE_D: u32 = 7
+pub const SCANCODE_S: u32 = 22
+pub const SCANCODE_W: u32 = 26
+pub const SCANCODE_X: u32 = 27
+pub const SCANCODE_Z: u32 = 29
+pub const SCANCODE_RETURN: u32 = 40
+pub const SCANCODE_ESCAPE: u32 = 41
+pub const SCANCODE_TAB: u32 = 43
+pub const SCANCODE_RIGHT: u32 = 79
+pub const SCANCODE_LEFT: u32 = 80
+pub const SCANCODE_DOWN: u32 = 81
+pub const SCANCODE_UP: u32 = 82
+pub const SCANCODE_RSHIFT: u32 = 229
+
+@symbol("SDL_GetKeyboardState")
+unsafe extern sdl_get_keyboard_state: (numkeys: ^mut i32) -> ^u8
+
+/// Whether the key at `scancode` is down right now.
+///
+/// **Current as of the last time the event queue was drained** — SDL updates the state as
+/// it pumps events, so a loop reads it after its `poll_event` loop, not before.
+///
+/// SDL answers an array of C `bool`s (bytes) indexed by scancode, valid for the life of
+/// the program. The index is checked against the length SDL reports, so an out-of-range
+/// scancode is a key that is never held rather than a read past the array.
+pub let key_held = (scancode: u32) -> bool => {
+  var length: i32 = 0
+  let keys = unsafe { sdl_get_keyboard_state(&mut length) }
+  if keys == nullptr || i64(scancode) >= i64(length) {
+    false
+  } else {
+    unsafe { keys.offset(i64(scancode))^ } != 0
+  }
+}
