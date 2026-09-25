@@ -366,11 +366,12 @@ func (l *lowerer) emitCheckedIntOp(block *ir.Block, op string, left, right value
 // i128MulOverflow lazily defines `{ i128, i1 } @lyra_i128_mul_overflow(i128, i128)`
 // — the signed 128-bit checked multiply — and caches it.
 //
-// It exists because `llvm.smul.with.overflow.i128` is not lowered inline: the backend
-// expands it into a call to **`__muloti4`**, which lives only in compiler-rt. clang
-// links compiler-rt by default on macOS but **libgcc on Linux**, and libgcc has no
-// `__muloti4`, so `lyrac build` of an i128 multiply failed at link time there with an
-// undefined reference — while the same IR linked fine on macOS. (Division is not
+// It exists because `llvm.smul.with.overflow.i128` is not always lowered inline: on
+// AArch64 the backend expands it into a call to **`__muloti4`**, which lives only in
+// compiler-rt (x86-64 open-codes it; measured with clang 15 and 18). clang links
+// compiler-rt by default on macOS but **libgcc on Linux**, and libgcc has no
+// `__muloti4`, so `lyrac build` of an i128 multiply failed at link time on arm64 Linux
+// with an undefined reference — while the same IR linked fine on macOS. (Division is not
 // affected: `__divti3` is in both. Unsigned 128-bit multiply is not affected either,
 // since LLVM expands `llvm.umul.with.overflow.i128` inline. Signed multiply is the one
 // operation that needs this.)
@@ -383,11 +384,29 @@ func (l *lowerer) emitCheckedIntOp(block *ir.Block, op string, left, right value
 // collide, and returning `{ iN, i1 }` means the call site is identical to the
 // intrinsic's, so emitCheckedIntOp needs no special case.
 //
-// The overflow test is compiler-rt's: `a == 0` cannot overflow; `a == -1` overflows
-// exactly when `b` is the minimum (whose negation is unrepresentable); otherwise
-// `(a*b)/a != b`. The `a == -1` case is split out rather than folded into the division
-// because `sdiv INT128_MIN, -1` is itself undefined — checking it via the division it
-// exists to avoid would reintroduce the trap.
+// The overflow test must not be one LLVM can recognise as a signed multiply-with-
+// overflow, or the optimiser folds it straight back into the intrinsic this helper
+// exists to avoid. The first version used compiler-rt's own test — `(a*b)/a != b`,
+// with `a == 0` and `a == -1` split out — and InstCombine knows that idiom: at -O2
+// (lyrac build's default) it rewrote the whole body into `llvm.smul.with.overflow.i128`,
+// so every std.temporal example failed to link on arm64 Linux exactly as before. The
+// backend tests missed it because they compile the IR at clang's -O0 default.
+//
+// So the test goes through magnitudes instead, which no fold maps back to a signed
+// overflow check:
+//
+//   - |a| and |b| as unsigned 128-bit values. `0 - x` wraps, so |INT128_MIN| is 2^127,
+//     which is exactly right read as unsigned.
+//   - `llvm.umul.with.overflow.i128` on them — the unsigned intrinsic, which LLVM
+//     expands inline on every target — says whether |a|·|b| fits in 128 bits.
+//   - If it fits, the signed result fits iff the magnitude is at most INT128_MAX when
+//     the signs agree, and at most 2^127 (|INT128_MIN|) when they differ.
+//
+// That covers the INT128_MIN edges without a branch: -1 * INT128_MIN has magnitude
+// 2^127 with agreeing signs, so it overflows; 1 * INT128_MIN has the same magnitude
+// with differing signs, so it does not. There is no division, so no `sdiv INT128_MIN,
+// -1` hazard either. TestEmit_I128MulOverflowSurvivesO2 pins the fold's absence by
+// optimising the helper at -O2.
 func (l *lowerer) i128MulOverflow() *ir.Func {
 	if l.mulOverflowI128 != nil {
 		return l.mulOverflowI128
@@ -397,41 +416,35 @@ func (l *lowerer) i128MulOverflow() *ir.Func {
 	b := ir.NewParam("b", i128)
 	retTy := lltypes.NewStruct(i128, lltypes.I1)
 	fn := l.module.NewFunc("lyra_i128_mul_overflow", retTy, a, b)
-
 	entry := fn.NewBlock("entry")
-	checkNegOne := fn.NewBlock("checkNegOne")
-	negOne := fn.NewBlock("negOne")
-	divCheck := fn.NewBlock("divCheck")
-	noOverflow := fn.NewBlock("noOverflow")
-	merge := fn.NewBlock("merge")
 
-	konst := func(n int64) *constant.Int { return constant.NewInt(i128, n) }
+	zero := constant.NewInt(i128, 0)
+	umul, err := l.overflowIntrinsic("mul", false, i128)
+	if err != nil {
+		panic(err) // unsigned mul is always an intrinsic; overflowIntrinsic cannot fail here
+	}
 
-	// The product is computed unconditionally (wrapping); only the *detection* branches.
+	// The product itself is the ordinary wrapping multiply; only the detection differs.
 	product := entry.NewMul(a, b)
-	entry.NewCondBr(entry.NewICmp(enum.IPredEQ, a, konst(0)), noOverflow, checkNegOne)
 
-	// a == -1 overflows only for b == INT128_MIN.
-	bIsMin := checkNegOne.NewICmp(enum.IPredEQ, b, intMinConst(i128))
-	checkNegOne.NewCondBr(checkNegOne.NewICmp(enum.IPredEQ, a, konst(-1)), negOne, divCheck)
-	negOne.NewBr(merge)
+	aNeg := entry.NewICmp(enum.IPredSLT, a, zero)
+	bNeg := entry.NewICmp(enum.IPredSLT, b, zero)
+	absA := entry.NewSelect(aNeg, entry.NewSub(zero, a), a)
+	absB := entry.NewSelect(bNeg, entry.NewSub(zero, b), b)
 
-	// a is neither 0 nor -1, so this division can neither divide by zero nor hit the
-	// INT_MIN/-1 case: it is safe, and it is the check.
-	roundTrip := divCheck.NewSDiv(product, a)
-	divergent := divCheck.NewICmp(enum.IPredNE, roundTrip, b)
-	divCheck.NewBr(merge)
+	mag := entry.NewCall(umul, absA, absB)
+	magnitude := entry.NewExtractValue(mag, 0)
+	magOverflowed := entry.NewExtractValue(mag, 1)
 
-	noOverflow.NewBr(merge)
+	// The largest magnitude the signed result can carry: INT128_MAX for a non-negative
+	// product, 2^127 for a negative one — INT128_MIN's bit pattern, compared unsigned.
+	limit := entry.NewSelect(entry.NewXor(aNeg, bNeg), intMinConst(i128), intMaxConst(i128))
+	tooBig := entry.NewICmp(enum.IPredUGT, magnitude, limit)
+	overflowed := entry.NewOr(magOverflowed, tooBig)
 
-	overflowed := merge.NewPhi(
-		ir.NewIncoming(constant.False, noOverflow),
-		ir.NewIncoming(bIsMin, negOne),
-		ir.NewIncoming(divergent, divCheck),
-	)
-	out := merge.NewInsertValue(constant.NewUndef(retTy), product, 0)
-	out2 := merge.NewInsertValue(out, overflowed, 1)
-	merge.NewRet(out2)
+	out := entry.NewInsertValue(constant.NewUndef(retTy), product, 0)
+	out2 := entry.NewInsertValue(out, overflowed, 1)
+	entry.NewRet(out2)
 
 	l.mulOverflowI128 = fn
 	return fn
