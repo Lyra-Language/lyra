@@ -1,0 +1,335 @@
+module level
+//! A tile level and the bodies that move through it: parsing ASCII into tiles, collision
+//! against solid ones, the explorer's controls, the camera, and drawing.
+//!
+//! One character per 16×16 tile. **Solid**: `=` grass-topped ground, `%` dirt, `#` brick.
+//! **Scenery**: `o` coin (collected on touch), `c` cloud, `b` bush, `|` the goal pole, `F`
+//! its flag-topped top, `.` sky. **Spawns** — drawn as sky, returned in [Level]'s
+//! `spawns`: `s` a green slime, `r` a red one.
+//!
+//! **Collision is one axis at a time.** Moving both and then resolving cannot tell a wall
+//! from a floor at a corner; moving x, resolving, then y can, because each push-out knows
+//! which way it is moving. Every speed and height here is per 1/60 s step.
+
+import bindings.sdl3.{
+  Renderer, Rect, Texture, draw_texture, draw_texture_flipped, FLIP_NONE, FLIP_HORIZONTAL,
+}
+import console.{ WIDTH }
+import pad.{ Pad }
+
+pub const TILE: f32 = 16.0
+
+pub const SKY: i64 = 0
+pub const GRASS: i64 = 1
+pub const DIRT: i64 = 2
+pub const BRICK: i64 = 3
+pub const COIN: i64 = 4
+pub const CLOUD: i64 = 5
+pub const BUSH: i64 = 6
+pub const POLE: i64 = 7
+pub const FLAG: i64 = 8
+
+/// A spawn point's kind.
+pub const GREEN_SLIME: i64 = 1
+pub const RED_SLIME: i64 = 2
+
+/// The sheet cell each tile kind draws with, in `../assets/generate.py`'s order.
+const CELL_OF: []i64 = [0, 9, 10, 6, 2, 11, 12, 13, 14]
+
+/// Sheet cells for the bodies drawn here.
+pub const EXPLORER_STRIDE: i64 = 0
+pub const EXPLORER_TOGETHER: i64 = 1
+
+/// Where something starts, in tiles.
+pub struct Spawn {
+  column: i64,
+  row: i64,
+  kind: i64,
+}
+
+/// A parsed level. `goal` is the column of the pole, or -1 when there is none.
+pub struct Level {
+  tiles: []i64,
+  columns: i64,
+  rows: i64,
+  spawns: []Spawn,
+  goal: i64,
+}
+
+/// Something that moves and collides: a box, its velocity, and which way it faces.
+pub struct Body {
+  x: f32,
+  y: f32,
+  w: f32,
+  h: f32,
+  vx: f32,
+  vy: f32,
+  on_ground: bool,
+  facing_left: bool,
+}
+
+/// The explorer's collision box, inset from the 16×16 sprite: narrower, so walking past a
+/// ledge does not catch on its corner, and a pixel short, so a head fits a one-tile gap.
+pub const BOX_W: f32 = 12.0
+pub const BOX_H: f32 = 15.0
+pub const BOX_INSET_X: f32 = 2.0
+
+pub const WALK: f32 = 1.5
+pub const RUN: f32 = 2.5
+const ACCEL: f32 = 0.12
+const DECEL: f32 = 0.2
+pub const GRAVITY: f32 = 0.35
+pub const MAX_FALL: f32 = 6.0
+pub const JUMP: f32 = -6.8
+/// Letting go of A while still rising faster than this cuts the jump to it.
+pub const JUMP_CUT: f32 = -2.5
+
+/// The level as tiles, with its spawns lifted out and its goal found.
+pub let parse_level = pure (rows: []string) -> Level => {
+  var tiles: []i64 = []
+  var spawns: []Spawn = []
+  var goal: i64 = -1
+  for row_index, row in rows {
+    for column, ch in row {
+      if ch == 's' { spawns.push(Spawn {
+        column: column,
+        row: row_index,
+        kind: GREEN_SLIME
+      }) }
+      if ch == 'r' { spawns.push(Spawn {
+        column: column,
+        row: row_index,
+        kind: RED_SLIME
+      }) }
+      if (ch == '|' || ch == 'F') && goal < 0 { goal = column }
+      tiles.push(tile_of(ch))
+    }
+  }
+  let columns = if rows.len() == 0 { 0 } else { rows[0].len() }
+  Level { tiles: tiles, columns: columns, rows: rows.len(), spawns: spawns, goal: goal }
+}
+
+let tile_of = pure (ch: rune) -> i64 => {
+  if ch == '=' {
+    GRASS
+  } else if ch == '%' {
+    DIRT
+  } else if ch == '#' {
+    BRICK
+  } else if ch == 'o' {
+    COIN
+  } else if ch == 'c' {
+    CLOUD
+  } else if ch == 'b' {
+    BUSH
+  } else if ch == '|' {
+    POLE
+  } else if ch == 'F' {
+    FLAG
+  } else {
+    SKY
+  }
+}
+
+/// The tile at a grid position. **Past either side is solid** — the level's edges are
+/// walls — and past the top or bottom is sky, so a pit is a way out of the map.
+pub let tile_at = pure (level: Level, column: i64, row: i64) -> i64 => {
+  if column < 0 || column >= level.columns {
+    BRICK
+  } else if row < 0 || row >= level.rows {
+    SKY
+  } else {
+    level.tiles[row * level.columns + column]
+  }
+}
+
+pub let is_solid = pure (tile: i64) -> bool =>
+  tile == GRASS || tile == DIRT || tile == BRICK
+
+/// The explorer standing with its box's top-left at (`x`, `y`).
+pub let explorer_at = pure (x: f32, y: f32) -> Body => Body {
+  x: x,
+  y: y,
+  w: BOX_W,
+  h: BOX_H,
+  vx: 0.0,
+  vy: 0.0,
+  on_ground: false,
+  facing_left: false,
+}
+
+/// The explorer's velocity after this step's input and gravity — before it moves. Left and
+/// right accelerate towards walking (or, with B, running) speed; A jumps from the ground,
+/// and letting it go early cuts the jump short.
+pub let steer = pure (body: Body, pad: Pad) -> Body => {
+  let held = pad.held
+  let direction: f32 = if held.left { -1.0 } else if held.right { 1.0 } else { 0.0 }
+  let top_speed = if held.b { RUN } else { WALK }
+  var p = body
+  if direction < 0.0 { p.facing_left = true }
+  if direction > 0.0 { p.facing_left = false }
+  p.vx = if !held.left && !held.right {
+    approach(p.vx, 0.0, DECEL)
+  } else {
+    approach(p.vx, direction * top_speed, ACCEL)
+  }
+  if pad.pressed.a && p.on_ground { p.vy = JUMP }
+  if !held.a && p.vy < JUMP_CUT { p.vy = JUMP_CUT }
+  p.vy = (p.vy + GRAVITY).min(MAX_FALL)
+  p
+}
+
+/// `v` moved towards `target` by at most `step`.
+pub let approach = pure (v: f32, target: f32, step: f32) -> f32 =>
+  if v < target { (v + step).min(target) } else { (v - step).max(target) }
+
+/// The body moved by its horizontal velocity, stopped flush against a solid tile. A stop
+/// zeroes `vx`, which is how a caller tells it hit something.
+pub let move_x = pure (level: Level, body: Body) -> Body => {
+  var p = body
+  p.x += p.vx
+  let top = (p.y / TILE).floor()
+  let bottom = ((p.y + p.h - 0.01) / TILE).floor()
+  if p.vx > 0.0 {
+    let column = ((p.x + p.w - 0.01) / TILE).floor()
+    if solid_in_column(level, column, top, bottom) {
+      p.x = f32(column) * TILE - p.w
+      p.vx = 0.0
+    }
+  } else if p.vx < 0.0 {
+    let column = (p.x / TILE).floor()
+    if solid_in_column(level, column, top, bottom) {
+      p.x = f32(column + 1) * TILE
+      p.vx = 0.0
+    }
+  }
+  p
+}
+
+/// The body moved by its vertical velocity, landing on or bumping against solid tiles.
+pub let move_y = pure (level: Level, body: Body) -> Body => {
+  var p = body
+  p.y += p.vy
+  p.on_ground = false
+  let left = (p.x / TILE).floor()
+  let right = ((p.x + p.w - 0.01) / TILE).floor()
+  if p.vy > 0.0 {
+    let row = ((p.y + p.h - 0.01) / TILE).floor()
+    if solid_in_row(level, row, left, right) {
+      p.y = f32(row) * TILE - p.h
+      p.vy = 0.0
+      p.on_ground = true
+    }
+  } else if p.vy < 0.0 {
+    let row = (p.y / TILE).floor()
+    if solid_in_row(level, row, left, right) {
+      p.y = f32(row + 1) * TILE
+      p.vy = 0.0
+    }
+  }
+  p
+}
+
+let solid_in_column = pure (level: Level, column: i64, top: i64, bottom: i64) -> bool => {
+  var hit = false
+  for row in top..<=bottom {
+    if is_solid(tile_at(level, column, row)) { hit = true }
+  }
+  hit
+}
+
+let solid_in_row = pure (level: Level, row: i64, left: i64, right: i64) -> bool => {
+  var hit = false
+  for column in left..<=right {
+    if is_solid(tile_at(level, column, row)) { hit = true }
+  }
+  hit
+}
+
+/// Whether the body has fallen out of the bottom of the level.
+pub let fell_out = pure (level: Level, body: Body) -> bool =>
+  body.y > f32(level.rows) * TILE + 32.0
+
+/// Take every coin the body overlaps out of the map, answering how many.
+pub let collect_coins = (level: mut Level, body: Body) -> i64 => {
+  var taken: i64 = 0
+  for row in (body.y / TILE).floor()..<=((body.y + body.h - 0.01) / TILE).floor() {
+    for column in (body.x / TILE).floor()..<=((body.x + body.w - 0.01) / TILE).floor() {
+      if tile_at(level, column, row) == COIN {
+        level.tiles[row * level.columns + column] = SKY
+        taken += 1
+      }
+    }
+  }
+  taken
+}
+
+/// Whether the body touches the goal pole's column.
+pub let at_goal = pure (level: Level, body: Body) -> bool =>
+  level.goal >= 0 && body.x + body.w >= f32(level.goal) * TILE + 6.0
+
+/// Where the camera's left edge is: the body centred, stopped at either end of the level.
+/// Whole pixels, so tiles never land between two and shimmer.
+pub let camera_x = pure (level: Level, body: Body) -> f32 => {
+  let centred = body.x + body.w / 2.0 - f32(WIDTH) / 2.0
+  f32(centred.clamp(0.0, f32(level.columns) * TILE - f32(WIDTH)).floor())
+}
+
+/// The level's visible tiles: the sixteen columns the camera spans, plus one for the
+/// partial column when it is not on a tile boundary. Coins spin, a quarter-turn apart.
+pub let draw_level = (
+  r: Renderer,
+  sheet: Texture,
+  level: Level,
+  camera: f32,
+  steps: i64
+) -> void => {
+  let first_column = (camera / TILE).floor()
+  for row in 0..<level.rows {
+    for column in first_column..<=first_column + 16 {
+      let tile = tile_at(level, column, row)
+      if tile != SKY && column < level.columns {
+        var cell = CELL_OF[tile]
+        if tile == COIN { cell = 2 + (steps / 6 + column) % 4 }
+        draw_cell(r, sheet, cell, f32(column) * TILE - camera, f32(row) * TILE, FLIP_NONE)
+      }
+    }
+  }
+}
+
+/// The explorer's sprite for this step: striding in the air and every other eight steps
+/// while walking, facing the way it last moved.
+pub let draw_explorer = (
+  r: Renderer,
+  sheet: Texture,
+  p: Body,
+  camera: f32,
+  steps: i64
+) -> void => {
+  let walking = p.on_ground && (p.vx > 0.1 || p.vx < -0.1)
+  let cell = if !p.on_ground || (walking && (steps / 8) % 2 == 0) {
+    EXPLORER_STRIDE
+  } else {
+    EXPLORER_TOGETHER
+  }
+  let flip = if p.facing_left { FLIP_HORIZONTAL } else { FLIP_NONE }
+  draw_cell(r, sheet, cell, p.x - BOX_INSET_X - camera, p.y - (TILE - BOX_H), flip)
+}
+
+/// Sheet cell `cell` with its top-left at (`x`, `y`), flipped by a `FLIP_*`.
+pub let draw_cell = (
+  r: Renderer,
+  sheet: Texture,
+  cell: i64,
+  x: f32,
+  y: f32,
+  flip: i32
+) -> void => {
+  let source = Rect { x: f32(cell) * TILE, y: 0.0, w: TILE, h: TILE }
+  let target = Rect { x: x, y: y, w: TILE, h: TILE }
+  if flip == FLIP_NONE {
+    draw_texture(r, sheet, source, target)
+  } else {
+    draw_texture_flipped(r, sheet, source, target, flip)
+  }
+}

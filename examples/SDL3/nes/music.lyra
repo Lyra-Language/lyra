@@ -1,0 +1,220 @@
+module music
+//! The song, the sequencer that plays it on the APU, and the sound effects that interrupt
+//! it.
+//!
+//! **Effects borrow channels, as on the console.** The chip has four voices and the song
+//! uses all of them, so an effect takes one over and hands it back: tones take the second
+//! pulse channel from the arpeggio, noise hits take the noise channel from the drums. The
+//! melody (pulse 1) and the bass (triangle) are never interrupted, so the tune carries on
+//! underneath.
+//!
+//! Everything runs on the APU's 1/60 s tick ([music_tick]), so tempo and effect timing
+//! are sample-exact whatever the display does.
+
+import apu.{ Apu, DUTY_12, DUTY_25, DUTY_50, tick }
+
+/// Ticks per step: an eighth note at 150 beats a minute is 12 sixtieths of a second.
+pub const STEP_TICKS: i64 = 12
+
+/// A step that sustains the previous note rather than striking a new one.
+const HOLD: i64 = -1
+
+/// A step that silences the channel.
+const REST: i64 = 0
+
+/// Four bars — C, A minor, F, G — of eighth notes, as MIDI note numbers.
+pub const MELODY: []i64 = [
+  72, HOLD, 76, HOLD, 79, HOLD, 76, 74,
+  72, HOLD, 69, HOLD, 72, HOLD, 76, HOLD,
+  77, HOLD, 76, HOLD, 74, HOLD, 72, HOLD,
+  74, HOLD, 71, HOLD, 67, HOLD, HOLD, REST,
+]
+const ARPEGGIO: []i64 = [
+  60, 64, 67, 72, 67, 64, 60, 64,
+  57, 60, 64, 69, 64, 60, 57, 60,
+  53, 57, 60, 65, 60, 57, 53, 57,
+  55, 59, 62, 67, 62, 59, 55, 59,
+]
+const BASS: []i64 = [
+  48, 60, 48, 60, 48, 60, 48, 60,
+  45, 57, 45, 57, 45, 57, 45, 57,
+  41, 53, 41, 53, 41, 53, 41, 53,
+  43, 55, 43, 55, 43, 55, 43, 55,
+]
+
+/// Drums, one per step: kick, snare, hi-hat, or none.
+const KICK: i64 = 1
+const SNARE: i64 = 2
+const HAT: i64 = 3
+const DRUMS: []i64 = [
+  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
+  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
+  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
+  KICK, HAT, SNARE, HAT, KICK, HAT, SNARE, SNARE,
+]
+
+/// One note of a sound effect: struck `at` ticks after the effect starts.
+pub struct Note {
+  at: i64,
+  note: i64,
+  duty: f64,
+  volume: f64,
+  decay: f64,
+}
+
+/// A tone effect: its notes, and how long it keeps the channel.
+pub struct Effect {
+  notes: []Note,
+  length: i64,
+}
+
+/// Where the song is, whether it plays, and which effects hold a channel.
+pub struct Music {
+  ticks: i64,
+  playing: bool,
+  effect: Effect,
+  effect_elapsed: i64,
+  effect_left: i64,
+  noise_left: i64,
+}
+
+/// The sequencer at the top of the song, playing or not.
+pub let new_music = pure (playing: bool) -> Music => Music {
+  ticks: 0,
+  playing: playing,
+  effect: Effect { notes: [], length: 0 },
+  effect_elapsed: 0,
+  effect_left: 0,
+  noise_left: 0,
+}
+
+// ---------------------------------------------------------------------------------------
+// The effects
+// ---------------------------------------------------------------------------------------
+
+/// Two quick notes a fourth apart.
+pub const COIN: Effect = Effect {
+  notes: [
+    Note { at: 0, note: 83, duty: DUTY_50, volume: 12.0, decay: 0.0 },
+    Note { at: 4, note: 88, duty: DUTY_50, volume: 12.0, decay: 0.6 },
+  ],
+  length: 24,
+}
+
+/// A quick rising arpeggio.
+pub const JUMP: Effect = Effect {
+  notes: [
+    Note { at: 0, note: 60, duty: DUTY_25, volume: 9.0, decay: 0.8 },
+    Note { at: 1, note: 64, duty: DUTY_25, volume: 9.0, decay: 0.8 },
+    Note { at: 2, note: 67, duty: DUTY_25, volume: 9.0, decay: 0.8 },
+    Note { at: 3, note: 72, duty: DUTY_25, volume: 9.0, decay: 0.8 },
+  ],
+  length: 12,
+}
+
+/// A falling line, for a lost life.
+pub const HURT: Effect = Effect {
+  notes: [
+    Note { at: 0, note: 72, duty: DUTY_50, volume: 11.0, decay: 0.25 },
+    Note { at: 6, note: 67, duty: DUTY_50, volume: 11.0, decay: 0.25 },
+    Note { at: 12, note: 64, duty: DUTY_50, volume: 11.0, decay: 0.25 },
+    Note { at: 18, note: 60, duty: DUTY_50, volume: 11.0, decay: 0.25 },
+  ],
+  length: 40,
+}
+
+/// The course-clear fanfare: a rising arpeggio ending on a long top C.
+pub const FANFARE: Effect = Effect {
+  notes: [
+    Note { at: 0, note: 67, duty: DUTY_25, volume: 12.0, decay: 0.1 },
+    Note { at: 8, note: 72, duty: DUTY_25, volume: 12.0, decay: 0.1 },
+    Note { at: 16, note: 76, duty: DUTY_25, volume: 12.0, decay: 0.1 },
+    Note { at: 24, note: 79, duty: DUTY_25, volume: 12.0, decay: 0.1 },
+    Note { at: 32, note: 84, duty: DUTY_25, volume: 13.0, decay: 0.12 },
+  ],
+  length: 120,
+}
+
+/// A slow falling line, for the game ending.
+pub const GAME_OVER: Effect = Effect {
+  notes: [
+    Note { at: 0, note: 67, duty: DUTY_50, volume: 11.0, decay: 0.15 },
+    Note { at: 14, note: 64, duty: DUTY_50, volume: 11.0, decay: 0.15 },
+    Note { at: 28, note: 60, duty: DUTY_50, volume: 11.0, decay: 0.15 },
+    Note { at: 42, note: 55, duty: DUTY_50, volume: 11.0, decay: 0.1 },
+  ],
+  length: 110,
+}
+
+/// Start a tone effect on the second pulse channel, taking it from the arpeggio for the
+/// effect's length. Notes at tick 0 sound now; the rest as [music_tick] reaches them.
+pub let play_effect = (m: mut Music, chip: mut Apu, effect: Effect) -> void => {
+  for n in effect.notes {
+    if n.at == 0 { chip.pulse2 = chip.pulse2.play(n.note, n.duty, n.volume, n.decay) }
+  }
+  m.effect = effect
+  m.effect_elapsed = 0
+  m.effect_left = effect.length
+}
+
+/// Strike the noise channel, taking it from the drums for `length` ticks.
+pub let play_noise = (
+  m: mut Music,
+  chip: mut Apu,
+  period: i64,
+  volume: f64,
+  decay: f64,
+  length: i64,
+) -> void => {
+  chip.noise = chip.noise.play(period, false, volume, decay)
+  m.noise_left = length
+}
+
+/// An explosion: low-rate noise decaying over most of a second.
+pub let boom = (m: mut Music, chip: mut Apu) -> void =>
+  play_noise(m, chip, 14, 15.0, 0.35, 45)
+
+/// A stomp: a short, bright thud.
+pub let stomp = (m: mut Music, chip: mut Apu) -> void =>
+  play_noise(m, chip, 4, 12.0, 1.2, 12)
+
+// ---------------------------------------------------------------------------------------
+// The sequencer
+// ---------------------------------------------------------------------------------------
+
+/// One 1/60 s tick: the song's step when one falls due (leaving borrowed channels alone),
+/// the current effect's next note, then the chip's own envelopes.
+pub let music_tick = (m: mut Music, chip: mut Apu) -> void => {
+  if m.ticks % STEP_TICKS == 0 && m.playing {
+    let at = (m.ticks / STEP_TICKS) % MELODY.len()
+    let lead = MELODY[at]
+    if lead > 0 { chip.pulse1 = chip.pulse1.play(lead, DUTY_50, 10.0, 0.15) }
+    if lead == REST { chip.pulse1 = chip.pulse1.play(60, DUTY_50, 0.0, 0.0) }
+    if m.effect_left == 0 { chip.pulse2 = chip.pulse2.play(
+      ARPEGGIO[at],
+      DUTY_12,
+      5.0,
+      0.3
+    ) }
+    chip.triangle = chip.triangle.play(BASS[at], 10)
+    if m.noise_left == 0 { drum(chip, DRUMS[at]) }
+  }
+  if m.effect_left > 0 {
+    for n in m.effect.notes {
+      if n.at > 0 && n.at == m.effect_elapsed {
+        chip.pulse2 = chip.pulse2.play(n.note, n.duty, n.volume, n.decay)
+      }
+    }
+    m.effect_left -= 1
+    m.effect_elapsed += 1
+  }
+  if m.noise_left > 0 { m.noise_left -= 1 }
+  tick(chip)
+  m.ticks += 1
+}
+
+let drum = (chip: mut Apu, kind: i64) -> void => {
+  if kind == KICK { chip.noise = chip.noise.play(12, false, 12.0, 1.5) }
+  if kind == SNARE { chip.noise = chip.noise.play(6, false, 11.0, 1.0) }
+  if kind == HAT { chip.noise = chip.noise.play(1, false, 6.0, 2.0) }
+}

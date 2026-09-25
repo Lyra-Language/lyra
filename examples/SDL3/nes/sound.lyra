@@ -1,7 +1,8 @@
 // NES sound: a four-channel loop on the APU in `apu.lyra`, with an oscilloscope and a meter
 // per channel.
 //
-// A plays a coin, B an explosion, Start stops and starts the music. **Sound effects take
+// A plays a coin, B an explosion, Start stops and starts the music — the song and the
+// effects are `music.lyra`'s, shared with `game.lyra`. **Sound effects take
 // a channel over**, as NES games did: the coin borrows the second pulse channel from the
 // arpeggio and the explosion borrows noise from the drums, and each hands it back when
 // it is done — the console had four voices, and a sound effect had to come from one.
@@ -29,6 +30,7 @@ import std.io.{ write_bytes }
 import console.{ Screen, open_screen, close_screen, end_frame, wants_quit }
 import pad.{ RELEASED, advance, read_buttons }
 import palette.{ nes }
+import music.{ Music, new_music, music_tick, play_effect, boom, COIN, STEP_TICKS, MELODY }
 import apu.{
   Apu, SILENT, SAMPLE_RATE, TICK_SAMPLES, DUTY_12, DUTY_25, DUTY_50, DUTY_75,
   render, tick, note_hz, lfsr_next, triangle_step_level,
@@ -68,111 +70,13 @@ let with_audio = (screen: Screen) -> u8 => {
 }
 
 // ---------------------------------------------------------------------------------------
-// The song and the player
+// Playing
 // ---------------------------------------------------------------------------------------
 
-/// Ticks per step: an eighth note at 150 beats a minute is 12 sixtieths of a second.
-const STEP_TICKS: i64 = 12
-
-/// A step that sustains the previous note rather than striking a new one.
-const HOLD: i64 = -1
-
-/// A step that silences the channel.
-const REST: i64 = 0
-
-/// Four bars — C, A minor, F, G — of eighth notes, as MIDI note numbers.
-const MELODY: []i64 = [
-  72, HOLD, 76, HOLD, 79, HOLD, 76, 74,
-  72, HOLD, 69, HOLD, 72, HOLD, 76, HOLD,
-  77, HOLD, 76, HOLD, 74, HOLD, 72, HOLD,
-  74, HOLD, 71, HOLD, 67, HOLD, HOLD, REST,
-]
-const ARPEGGIO: []i64 = [
-  60, 64, 67, 72, 67, 64, 60, 64,
-  57, 60, 64, 69, 64, 60, 57, 60,
-  53, 57, 60, 65, 60, 57, 53, 57,
-  55, 59, 62, 67, 62, 59, 55, 59,
-]
-const BASS: []i64 = [
-  48, 60, 48, 60, 48, 60, 48, 60,
-  45, 57, 45, 57, 45, 57, 45, 57,
-  41, 53, 41, 53, 41, 53, 41, 53,
-  43, 55, 43, 55, 43, 55, 43, 55,
-]
-
-/// Drums, one per step: kick, snare, hi-hat, or none.
-const KICK: i64 = 1
-const SNARE: i64 = 2
-const HAT: i64 = 3
-const DRUMS: []i64 = [
-  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
-  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
-  KICK, HAT, SNARE, HAT, KICK, KICK, SNARE, HAT,
-  KICK, HAT, SNARE, HAT, KICK, HAT, SNARE, SNARE,
-]
-
-/// How long each sound effect keeps its channel, in ticks.
-const COIN_TICKS: i64 = 24
-const BOOM_TICKS: i64 = 45
-
-/// Where the song is, whether it is playing, and which effects hold a channel.
-struct Player {
-  ticks: i64,
-  music: bool,
-  coin_left: i64,
-  boom_left: i64,
-}
-
-const START: Player = Player { ticks: 0, music: true, coin_left: 0, boom_left: 0 }
-
-/// A coin: two quick notes a fourth apart on the second pulse channel — the second one
-/// struck by [play_tick] four ticks in.
-let coin = (player: mut Player, chip: mut Apu) -> void => {
-  chip.pulse2 = chip.pulse2.play(83, DUTY_50, 12.0, 0.0)
-  player.coin_left = COIN_TICKS
-}
-
-/// An explosion: long-mode noise at a low rate, decaying over most of a second.
-let boom = (player: mut Player, chip: mut Apu) -> void => {
-  chip.noise = chip.noise.play(14, false, 15.0, 0.35)
-  player.boom_left = BOOM_TICKS
-}
-
-/// One 1/60 s tick of the song and the effects, then the chip's own envelopes.
-let play_tick = (player: mut Player, chip: mut Apu) -> void => {
-  if player.ticks % STEP_TICKS == 0 && player.music {
-    let at = (player.ticks / STEP_TICKS) % MELODY.len()
-    let lead = MELODY[at]
-    if lead > 0 { chip.pulse1 = chip.pulse1.play(lead, DUTY_50, 10.0, 0.15) }
-    if lead == REST { chip.pulse1 = chip.pulse1.play(60, DUTY_50, 0.0, 0.0) }
-    if player.coin_left == 0 { chip.pulse2 = chip.pulse2.play(
-      ARPEGGIO[at],
-      DUTY_12,
-      5.0,
-      0.3
-    ) }
-    chip.triangle = chip.triangle.play(BASS[at], 10)
-    if player.boom_left == 0 { drum(chip, DRUMS[at]) }
-  }
-  if player.coin_left == COIN_TICKS - 4 {
-    chip.pulse2 = chip.pulse2.play(88, DUTY_50, 12.0, 0.6)
-  }
-  if player.coin_left > 0 { player.coin_left -= 1 }
-  if player.boom_left > 0 { player.boom_left -= 1 }
-  tick(chip)
-  player.ticks += 1
-}
-
-let drum = (chip: mut Apu, kind: i64) -> void => {
-  if kind == KICK { chip.noise = chip.noise.play(12, false, 12.0, 1.5) }
-  if kind == SNARE { chip.noise = chip.noise.play(6, false, 11.0, 1.0) }
-  if kind == HAT { chip.noise = chip.noise.play(1, false, 6.0, 2.0) }
-}
-
 /// Run `ticks` ticks, appending their samples to `out`.
-let perform = (player: mut Player, chip: mut Apu, out: mut []f32, ticks: i64) -> void => {
+let perform = (player: mut Music, chip: mut Apu, out: mut []f32, ticks: i64) -> void => {
   for _ in 0..<ticks {
-    play_tick(player, chip)
+    music_tick(player, chip)
     render(chip, out, TICK_SAMPLES)
   }
 }
@@ -186,7 +90,7 @@ let perform = (player: mut Player, chip: mut Apu, out: mut []f32, ticks: i64) ->
 const AHEAD_TICKS: i64 = 3
 
 let run = (screen: Screen, audio: Maybe<AudioStream>) -> u8 => {
-  var player = START
+  var player = new_music(true)
   var chip = SILENT
   var previous = RELEASED
   var scope: []f32 = []
@@ -212,9 +116,9 @@ let run = (screen: Screen, audio: Maybe<AudioStream>) -> u8 => {
     let now = read_buttons(None)
     let pad = advance(previous, now)
     previous = now
-    if pad.pressed.a { coin(player, chip) }
+    if pad.pressed.a { play_effect(player, chip, COIN) }
     if pad.pressed.b { boom(player, chip) }
-    if pad.pressed.start { player.music = !player.music }
+    if pad.pressed.start { player.playing = !player.playing }
 
     match audio {
       Some(stream) => {
@@ -249,7 +153,7 @@ let run = (screen: Screen, audio: Maybe<AudioStream>) -> u8 => {
 let draw = (
   r: Renderer,
   chip: Apu,
-  player: Player,
+  player: Music,
   scope: []f32,
   silent: bool
 ) -> void => {
@@ -283,7 +187,7 @@ let draw = (
   debug_text(r, 16.0, 204.0, "A:COIN  B:BOOM  START:MUSIC")
   set_draw_color(r, nes(0x10))
   let step = (player.ticks / STEP_TICKS) % MELODY.len()
-  let state = if player.music { "PLAYING" } else { "STOPPED" }
+  let state = if player.playing { "PLAYING" } else { "STOPPED" }
   debug_text(r, 16.0, 216.0, "MUSIC ${state}  STEP ${step + 1}/${MELODY.len()}")
 }
 
@@ -303,12 +207,12 @@ let meter = (r: Renderer, x: f32, label: string, volume: f64, colour: i64) -> vo
 
 /// One pass of the song — 32 steps — with a coin at one second and an explosion at three.
 let write_song = (path: string) -> u8 => {
-  var player = START
+  var player = new_music(true)
   var chip = SILENT
   var samples: []f32 = []
   let total = STEP_TICKS * MELODY.len()
   for t in 0..<total {
-    if t == 60 { coin(player, chip) }
+    if t == 60 { play_effect(player, chip, COIN) }
     if t == 180 { boom(player, chip) }
     perform(player, chip, samples, 1)
   }
