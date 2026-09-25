@@ -154,10 +154,21 @@ func TestAlloc_OwnParamFlavorMismatch_Error(t *testing.T) {
 		"consume: argument 1 (n): cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
 }
 
-// TestAlloc_BorrowedParamFlavorMismatch_Ok verifies the polymorphism half of
-// Decision (b): a borrowed (`ref`) parameter references the caller's value in
-// place, so it accepts any flavor — no boundary is crossed.
-func TestAlloc_BorrowedParamFlavorMismatch_Ok(t *testing.T) {
+// TestAlloc_BorrowedParamFlavorMismatch_Error is the same call this file asserted
+// was **fine** until 09/24, on Decision (b)'s reading that a borrowed parameter
+// references the caller's value in place and so crosses no boundary. It does not:
+// a borrow reads the value *through the parameter's representation*, and a
+// function is compiled once, so an inline aggregate arriving where a box is
+// expected is dereferenced as one. The program this test called clean compiled
+// clean and died with SIGSEGV — `ref` and the bare modifier alike.
+//
+// The half-fix is what made it worth a test of its own. 09/23 added
+// checkArgumentAllocation for the pair firstAllocationMismatch exempts (one side
+// Unspecified), so `let x = Node { … }` was caught here; the concrete pair was
+// left to the `own` path, which a borrow never takes. Writing `stack` out
+// therefore made the program worse than leaving it off, which is the shape of
+// bug a test asserting "Ok" keeps alive.
+func TestAlloc_BorrowedParamFlavorMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Node {
 			value: i64,
@@ -166,7 +177,26 @@ func TestAlloc_BorrowedParamFlavorMismatch_Ok(t *testing.T) {
 		let x: stack Node = Node { value: 1 }
 		peek(x)
 	`, false)
-	assertNoErrors(t, res)
+	assertErrorsAre(t, res,
+		"peek: argument 1 (n): cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
+}
+
+// TestAlloc_BorrowedParamFlavorMismatch_Unwritten is the same mistake in the
+// spelling a person actually writes — no `stack` on the binding, so the argument's
+// flavor is Unspecified and checkArgumentAllocation answers instead, with the
+// message that names the fix. The two are kept side by side because the pair used
+// to disagree: this one was refused and the one above was not.
+func TestAlloc_BorrowedParamFlavorMismatch_Unwritten(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node {
+			value: i64,
+		}
+		let peek = (n: ref shared Node) => n.value
+		let x = Node { value: 1 }
+		peek(x)
+	`, false)
+	assertErrorsAre(t, res,
+		"peek: argument 1 (n): a `shared Node` parameter takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it in the argument")
 }
 
 // TestAlloc_OwnedReturnFlavorMismatch_Error verifies E018 in return position: an

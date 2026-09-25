@@ -1087,9 +1087,10 @@ func (tc *TypeChecker) checkArgumentAllocation(subject string, arg ast.Expressio
 		return
 	}
 	// **Exactly the pair firstAllocationMismatch exempts.** Two concrete, differing
-	// flavors are already checkAllocationCompat's to report on the `own` path, and
-	// reporting them here as well would say one mistake twice. What is left is the case
-	// it calls polymorphic — one side Unspecified — which is the case that miscompiled.
+	// flavors are checkAllocationCompat's to report — which the call site now runs for
+	// every parameter, owning or borrowing, not only the owning ones — and reporting them
+	// here as well would say one mistake twice. What is left is the case it calls
+	// polymorphic, one side Unspecified, which has no other check.
 	if from != types.Unspecified && to != types.Unspecified {
 		return
 	}

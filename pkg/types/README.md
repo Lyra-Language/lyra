@@ -40,10 +40,13 @@ Modifiers: `Unspecified` (`""`, inherit from context, default stack), `Stack`, `
 - **Not part of identity** — `TypesEqual`/`isAssignable` ignore it. It is a separate axis:
   `firstAllocationMismatch` + `tc.checkAllocationCompat` (`typechecker/assignable.go`) report owning
   a value across `stack`↔`shared` as `lyra-E018`, recursing into elements. Checked at annotated
-  init, destructuring annotation, reassignment, interior writes, `own` arguments and non-borrow
-  returns; fires only when both sides are concrete and differ. **An argument is checked
-  separately** (`checkArgumentAllocation`) for exactly the pair this one exempts — one side
-  Unspecified — because a parameter has one representation and no context to inherit from,
-  unlike a binding. A construction, a `match` over constructions and a generic parameter
+  init, destructuring annotation, reassignment, interior writes, **every argument** and
+  non-borrow returns; fires only when both sides are concrete and differ. It ran on `own`
+  arguments alone until 09/24, on the reading that a borrow references the caller's value
+  in place — but a borrow reads it through the parameter's representation, and a function
+  is compiled once, so a `stack`-annotated argument in a `shared` parameter compiled clean
+  and segfaulted. **An argument is also checked** by `checkArgumentAllocation`, for exactly
+  the pair this one exempts — one side Unspecified — because a parameter has one
+  representation and no context to inherit from, unlike a binding. A construction, a `match` over constructions and a generic parameter
   stay polymorphic there. Not checked on the
   `LambdaType`-callee path (`inferLambdaCallFromType`), which has no parameter modes.

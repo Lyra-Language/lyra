@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — the borrowed argument, refused for both spellings
+
+`lyrac check` exited 0, the build succeeded, and the binary died with SIGSEGV:
+
+```lyra
+let peek = pure (n: shared Node) -> i64 => n.value
+let x: stack Node = Node { value: 1 }
+peek(x)
+```
+
+Drop the `stack` and the same program was refused with a message naming the fix. **Writing
+the flavor out made the program worse than leaving it off**, which is the detail that says
+where the bug was rather than what it was.
+
+09/23 closed this hole on the `Unspecified` side: `checkArgumentAllocation` was written to
+fire exactly where `firstAllocationMismatch` *exempts* — one side unwritten — so that a
+parameter, which has one representation and no context to inherit from, stops being treated
+like a binding, which does. The concrete pair was left to `checkAllocationCompat`, on the
+grounds that it already reports that case. It does, but only at the sites that call it, and
+the call site ran it **for an `own` parameter only**. A borrow never takes that path, so the
+pair with both flavors written had no check anywhere.
+
+The reading behind that was Decision (b): a borrowed parameter "references the caller's
+value in place, so it accepts any flavor — no boundary is crossed." It does not. A borrow
+reads the value *through the parameter's representation*, and the function is compiled once,
+so an inline aggregate arriving where a box is expected is dereferenced as one. `ref` and
+the bare modifier segfault alike; `own` was refused only because it happened to be the one
+spelling that reached the check.
+
+The fix is the call site running `checkAllocationCompat` for every parameter, which also
+closes a case nobody had reported: `firstAllocationMismatch` recurses, so an element's
+flavor inside a borrowed array argument is now checked too, where the top-level-only
+comparison in `checkArgumentAllocation` could never have seen it.
+
+**A test was asserting the miscompile was clean.** `TestAlloc_BorrowedParamFlavorMismatch_Ok`
+called `peek(x)` and asserted no errors, which is why the half-fix looked complete: the
+suite agreed with it. It is `_Error` now, with the reason written beside it, and its
+unwritten-flavor twin sits next to it so the pair that used to disagree is visible in one
+place. **A test that encodes a decision keeps the decision alive after the decision is
+wrong** — and this one had been checked against the typechecker rather than against a
+running program, which is where the two parted.
+
+Found while writing LANGUAGE.md's allocation-flavor section: the question "when do I write
+`shared`?" had no section to point at, and answering it properly meant running the crossing
+through every position that can hold a value. Six of them still reach the backend rather
+than reporting (todo.md) — loud, but with no location, code or named fix, and two of those
+emit invalid IR that clang rather than `lyrac` reports.
+
 ### 09/24/26 — control flow, and the patterns that came with it
 
 111 goldens to 163, the largest single move the bootstrap has made. `IfExpr`, the two

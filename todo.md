@@ -208,30 +208,23 @@ Package management, versioning and separate compilation are out of scope by deci
   field privacy forces and drags names like `day` into the bare scope. (COMPLETED.md, 09/22.)
 
 
-### Allocation flavor — `lyra-E018` covers two positions of nine (09/24)
+### Allocation flavor — `lyra-E018` covers three positions of nine (09/24)
 
 Found while writing LANGUAGE.md's new **Allocation flavor** section, by running the same
-stack→`shared` crossing through every position that can hold a value. Two are reported,
-one is correctly accepted, and **six reach the backend or run wrong**.
+stack→`shared` crossing through every position that can hold a value. One was silently
+wrong and is fixed; **six still reach the backend** rather than being reported.
 
-- **[OPEN] A `stack`-annotated argument into a `shared` parameter segfaults, silently.**
-  This is the 09/23 borrowed-argument hole, half closed: the fix added
-  `checkArgumentAllocation`, which fires where `firstAllocationMismatch` *exempts* — one
-  side `Unspecified` — so the common spelling (`let n = Node { … }`) is now reported. The
-  concrete pair is still not checked on a borrowed argument at all, so writing the flavor
-  out makes the program worse than leaving it off. `lyrac check` exits 0, the build
-  succeeds, and the binary dies with SIGSEGV. **Silent wrong behaviour, so this is the one
-  to fix first.**
-
-  ```lyra
-  struct Node { value: i64 }
-  let peek = pure (n: shared Node) -> i64 => n.value
-  let main = () -> u8 => {
-    let n: stack Node = Node { value: 1 }   // drop `stack` and it is reported
-    println("${peek(n)}")
-    0
-  }
-  ```
+- **[FIXED 09/24] A `stack`-annotated argument into a `shared` parameter segfaulted,
+  silently.** The 09/23 borrowed-argument fix added `checkArgumentAllocation`, which fires
+  where `firstAllocationMismatch` *exempts* — one side `Unspecified` — so the common
+  spelling was caught and the concrete pair was left to `checkAllocationCompat` on the
+  `own` path, which a borrow never takes. Writing the flavor out made the program worse
+  than leaving it off. **Fixed:** the call site runs `checkAllocationCompat` for every
+  parameter, owning or borrowing, which also closes the structural case (an element's
+  flavor inside a borrowed array argument). A test asserting the miscompile was clean
+  (`TestAlloc_BorrowedParamFlavorMismatch_Ok`) is what had kept it alive — a borrow reads
+  the value *through the parameter's representation*, so "references it in place" was
+  never true of a function compiled once. (COMPLETED.md, 09/24.)
 
 - **[OPEN] Six positions report nothing and fail in the backend** with `aggregate element
   type mismatch`, which is rule 5 working and rule 14 not: loud, but with no location, no
