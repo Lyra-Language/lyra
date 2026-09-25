@@ -281,3 +281,50 @@ let main = () -> u8 => {
 		})
 	}
 }
+
+// TestExec_TwoArrayElementFlavorsInOneFunction is a regression test for a **cache key that
+// rendered less than the generated code read** (09/24).
+//
+// `[]shared Node` holds boxed elements and `[]Node` holds inline ones, and both render
+// `DynamicArray<Node>`: allocation flavor is deliberately not part of a type's identity,
+// which is right for assignability and wrong for a map whose entries are functions. The
+// drop glue was keyed on that rendering, so a program holding one array of each got **one**
+// glue — whichever was lowered first — and the plain array's release ran the shared
+// version's loop, reading an inline `%Node` as a box pointer.
+//
+// It ran correctly right up to the end: both arrays built, both elements printed, then
+// SIGSEGV at scope exit. Either array alone is fine, which is why nothing had caught it —
+// and it was found while checking a *typechecker* change for false positives, because the
+// program is legal and had to stay that way.
+//
+// The exit code is the sum, so a wrong element read is a wrong answer rather than only a
+// crash: the test fails either way.
+func TestExec_TwoArrayElementFlavorsInOneFunction(t *testing.T) {
+	t.Parallel()
+	src := `struct Node { value: u8 }
+let main = () -> u8 => {
+  let boxed: []shared Node = [Node { value: 1 }, Node { value: 2 }]
+  let inline = [Node { value: 4 }, Node { value: 8 }]
+  boxed[0].value + boxed[1].value + inline[0].value + inline[1].value
+}`
+	if got := buildAndRun(t, src); got != 15 {
+		t.Errorf("exited %d; want 15", got)
+	}
+}
+
+// TestExec_TwoArrayElementFlavorsUnderASan is the same program with the sanitizer on, so a
+// release of the wrong shape is reported as the memory error it is rather than as a signal
+// — the difference between "it crashed" and "it freed something it did not own".
+func TestExec_TwoArrayElementFlavorsUnderASan(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	src := `struct Node { value: u8 }
+let main = () -> u8 => {
+  let boxed: []shared Node = [Node { value: 1 }, Node { value: 2 }]
+  let inline = [Node { value: 4 }, Node { value: 8 }]
+  boxed[0].value + boxed[1].value + inline[0].value + inline[1].value
+}`
+	if got := buildAndRunASan(t, clang, src); got != 15 {
+		t.Errorf("exited %d; want 15", got)
+	}
+}

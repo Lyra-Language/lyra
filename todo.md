@@ -251,26 +251,18 @@ same exemption unless it goes through `checkStoredFlavor`.
   here". Reading it only the first way refused the bootstrap's own AST.
   (COMPLETED.md, 09/24.)
 
-### A `[]shared T` and a `[]T` in one function segfault (09/24)
+### A `[]shared T` and a `[]T` in one function segfaulted (09/24)
 
-- **[OPEN]** Pre-existing — reproduced on the commit before the E018 work, which only adds
-  diagnostics. Both arrays are built correctly and printed correctly; the crash is at
-  scope exit, so it looks like the release walk taking one decision for two array types
-  that differ only in their element's flavor.
-
-  ```lyra
-  struct Node { value: i64 }
-  let main = () -> u8 => {
-    let xs: []shared Node = [Node { value: 1 }]
-    let ys = [Node { value: 8 }]
-    println("${xs[0].value} ${ys[0].value}")   // prints "1 8", then SIGSEGV
-    0
-  }
-  ```
-
-  Either array alone is fine, as is a `shared` *binding* or a `shared` tuple beside a
-  plain array — it takes two arrays. Found while checking the E018 fix for false
-  positives: the program is legal, which is what made it worth keeping.
+- **[FIXED 09/24]** Both arrays were built and printed correctly; the crash was at scope
+  exit. **The drop glue was keyed on the type's rendering**, and `DynamicArray<Node>` is
+  what both `[]shared Node` and `[]Node` render as — allocation flavor is deliberately not
+  part of a type's identity, which is right for assignability and wrong for a cache whose
+  entries are generated functions. One glue was emitted and both releases called it, so the
+  plain array's release ran the boxed loop and read an inline `%Node` as a box pointer.
+  **Fixed:** `dynArrayDropFn` keys on `dropKey`, which renders an element's flavor
+  (`elementDropKey`). The third instance of one mistake in that key — two modules' private
+  `Inner`s, every anonymous tuple in a program, now two element flavors — and they share a
+  shape: **a key that renders less than the glue reads.** (COMPLETED.md, 09/24.)
 
 ### Recursive types — two bugs the bootstrap's AST walked into (09/22)
 

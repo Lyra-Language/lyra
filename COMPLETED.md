@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — one drop glue for two element flavors
+
+```lyra
+let boxed: []shared Node = [Node { value: 1 }]
+let inline = [Node { value: 8 }]
+```
+
+Both arrays built, both elements printed, then SIGSEGV at scope exit. Either one alone is
+fine.
+
+**The drop glue was keyed on the type's rendering**, and `[]shared Node` and `[]Node` both
+render `DynamicArray<Node>`. Allocation flavor is not part of a type's identity —
+`TypesEqual` ignores it, deliberately, because it is a separate axis for assignability — and
+that is exactly wrong for a cache whose entries are *generated functions*. One glue was
+emitted, both releases called it, and the plain array's release ran the boxed loop: load
+each element as `{rc, weak, %Node}*` and `lyra_rc_release` it. The elements are inline
+`%Node`, so it released the number 8.
+
+`dynArrayDropFn` keys on `dropKey` now, which renders an element's flavor. That function's
+own comment already documented this mistake twice — two modules' private `Inner`s sharing
+one glue, and every anonymous tuple in a program collapsing onto one entry — so this is the
+third instance, and the three have one shape: **a key that renders less than the glue
+reads.** The comment says so now instead of listing instances.
+
+Worth recording about the hunt: the first fix was to `dropKey` alone and changed nothing,
+because the array glue is built by a different function with **its own call to the same
+map**. A debug print of every key computed showed the array type never reaching `dropKey`
+at all, which is what pointed at `dynArrayDropFn`. Reading the cache's key without checking
+who writes to it would have "fixed" this twice over.
+
+Found while checking the E018 work for false positives: the program is legal and had to
+stay legal, so it was run rather than only compiled. A diagnostics pass turning up a
+codegen bug is the same trade the bootstrap keeps making — the value is in running the
+thing, not in reading it.
+
+Regression tests are behavioural and paired: the sum of all four elements is the exit code,
+so a wrong element read fails as a wrong *answer* and not only as a signal, and the ASan
+twin reports a bad release as the memory error it is. `./asan.sh` and `LEAKS=1 ./asan.sh`
+both clean on Linux.
+
 ### 09/24/26 — every position that stores a value now checks the flavor
 
 The other six. `lyra-E018` covered two of the nine positions a value can be stored into;

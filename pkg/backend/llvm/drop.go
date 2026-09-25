@@ -218,9 +218,38 @@ func (l *lowerer) dropKey(t types.Type) string {
 			return l.namedDropKey("", v.Name)
 		}
 		return v.String()
+	case types.DynamicArrayType:
+		return "DynamicArray<" + l.elementDropKey(v.ElementType) + ">"
+	case types.StaticArrayType:
+		return fmt.Sprintf("StaticArray%d<%s>", v.Size, l.elementDropKey(v.ElementType))
 	default:
 		return t.String()
 	}
+}
+
+// elementDropKey is a container element's contribution to its container's key: the
+// element's own key, **prefixed with its allocation flavor**.
+//
+// The flavor is the part `String()` cannot supply, and the part that decides the glue's
+// body. `[]shared Node` holds boxes and `[]Node` holds inline values, and both render
+// `DynamicArray<Node>` — flavor is deliberately not part of a type's identity
+// (`TypesEqual` ignores it), which is right for assignability and wrong for a cache whose
+// entries *are* generated code. The two shared one entry, so whichever array was lowered
+// first gave the other its glue: a program holding one of each printed both correctly and
+// then segfaulted at scope exit, releasing an inline `%Node` as a box pointer (09/24).
+//
+// This is dropKey's third instance of one mistake — two modules' private `Inner`s, every
+// anonymous tuple in a program, and now two element flavors — and they share a shape: a
+// key that renders less than the glue reads.
+func (l *lowerer) elementDropKey(elem types.Type) string {
+	if elem == nil {
+		return "?"
+	}
+	prefix := ""
+	if a := types.AllocationOf(elem); a != types.Unspecified {
+		prefix = string(a) + " "
+	}
+	return prefix + l.dropKey(elem)
 }
 
 // namedDropKey is the cache key for a named type: the identity of the declaration it

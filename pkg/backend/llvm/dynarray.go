@@ -438,7 +438,15 @@ func (l *lowerer) dynArrayDropFn(dyn types.DynamicArrayType) (value.Value, error
 	// elements were inline and freed with the box — would leak the buffer of every
 	// dynamic array of scalars in the program. The element loop below is what is
 	// conditional on needsDrop, not the function.
-	key := dyn.String()
+	// **Keyed on the element's flavor, not only on its name.** `dyn.String()` renders
+	// `DynamicArray<Node>` for `[]shared Node` and `[]Node` alike — allocation flavor is
+	// deliberately not part of a type's identity, which is right for assignability and
+	// wrong for a cache whose entries are generated code. The two shared one entry and
+	// one glue, so a program holding one of each printed both arrays correctly and then
+	// segfaulted at scope exit, the loop below releasing an inline `%Node` as a box
+	// pointer (09/24). dropKey renders the flavor; it is the same key dropFuncFor uses,
+	// and this cache is the same map.
+	key := l.dropKey(dyn)
 	if fn, ok := l.dropFns[key]; ok {
 		return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
 	}
