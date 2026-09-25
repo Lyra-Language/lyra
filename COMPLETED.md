@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — the i128 multiply helper, folded back into the intrinsic it replaced
+
+`./asan.sh ./...` failed nine `cmd/lyrac` examples — every one that pulls in
+`std.temporal` — at link time with `undefined reference to '__muloti4'`, from inside
+`lyra_i128_mul_overflow`: the helper that exists precisely so that symbol is never needed.
+It reproduced on 552c0b47, so it predates this week's work.
+
+**The helper was right; the optimiser un-wrote it.** Its overflow test was compiler-rt's
+own — `(a*b)/a != b`, with `a == 0` and `a == -1` split out — and InstCombine recognises
+that idiom as a signed multiply-with-overflow. At -O1 and above (lyrac build defaults to
+-O2) the whole body came back out as `llvm.smul.with.overflow.i128`, which AArch64 lowers
+to a `__muloti4` call that libgcc cannot satisfy. Every backend test compiles at clang's
+-O0 default, and `TestEmit_I128_IR` checks only the *emitted* IR, so the suite could not
+see it; lyrac is the one path that optimises.
+
+**Only arm64 fails, which is why this looked platform-shaped.** x86-64 open-codes the
+intrinsic (clang 15 and 18 alike), so the same -O2 IR links on an x86 Linux box; the
+container on Apple Silicon is arm64, and that is where the call appears. Measured on the
+helper alone with `--target=aarch64-linux-gnu`: the old body references `__muloti4` at
+-O1/-O2/-O3/-Os/-Oz and not at -O0; the new one at none.
+
+**The fix detects overflow through magnitudes, which no fold maps back.**
+`llvm.umul.with.overflow.i128` (open-coded everywhere) on `|a|` and `|b|` says whether
+the magnitude fits in 128 bits; if it does, the signed result fits iff that magnitude is
+at most INT128_MAX when the signs agree and at most 2^127 when they differ. `0 - x` wraps,
+so |INT128_MIN| is 2^127 read as unsigned, and the INT128_MIN edges fall out without a
+branch: `-1 × INT128_MIN` overflows, `1 × INT128_MIN` does not. No division, so the
+`sdiv INT128_MIN, -1` hazard the old version had to route around is gone with it.
+
+Tests: `TestEmit_I128MulOverflowSurvivesO2` optimises the emitted module at -O2 and fails
+if `llvm.smul.with.overflow.i128` reappears (host-independent — the fold happens on every
+target), then builds an aarch64-linux object and fails on any `__muloti4` reference (the
+link error itself; skipped only if the clang has no AArch64 target). Both halves fail on
+the old helper. `TestExec_I128MulOverflowHelper` gains the sign-asymmetric cases
+(`±1 × INT128_MIN`, `MIN × MIN`, `MAX × MAX`, `MAX × -1`) the magnitude bound hinges on.
+
 ### 09/25/26 — SLIME TRAIL: the game the ladder was for
 
 `examples/SDL3/nes/game.lyra`: a title screen, one seven-screen level, green and red

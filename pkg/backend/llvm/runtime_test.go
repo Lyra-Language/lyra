@@ -131,19 +131,19 @@ func TestExec_RCReleaseCallsDrop(t *testing.T) {
 // TestExec_I128MulOverflowHelper drives the emitted signed-128-bit checked multiply
 // directly, because two of its cases cannot be written in Lyra at all: a 128-bit
 // literal is not representable yet (IntegerLiteralExpr.Value is an int64), so
-// INT128_MIN has no source spelling, and it is exactly the value the helper special-
-// cases.
+// INT128_MIN has no source spelling, and it is the value the helper's overflow bound
+// hinges on.
 //
-// That special case is not decoration. The general test is `(a*b)/a != b`, but for
-// a == -1 and b == INT128_MIN the product wraps back to INT128_MIN and the division
-// would be `sdiv INT128_MIN, -1` — itself undefined in LLVM, so checking that case
-// through the division it exists to detect would reintroduce the fault.
+// INT128_MIN is where the magnitude test is subtle: |INT128_MIN| is 2^127, one past
+// INT128_MAX, so it is representable only as a *negative* product. -1 * INT128_MIN
+// (agreeing signs) must overflow while 1 * INT128_MIN (differing signs) must not, and
+// the helper has no branch that special-cases either.
 //
 // Returns 42 only if every case agrees.
 func TestExec_I128MulOverflowHelper(t *testing.T) {
 	t.Parallel()
 	m := ir.NewModule()
-	l := &lowerer{module: m}
+	l := &lowerer{module: m, overflowIntrinsics: map[string]*ir.Func{}}
 	helper := l.i128MulOverflow()
 
 	i128 := lltypes.I128
@@ -161,19 +161,25 @@ func TestExec_I128MulOverflowHelper(t *testing.T) {
 		wantOv   bool
 		wantProd value.Value // nil to skip the product check
 	}{
-		// Zero short-circuits before any division.
 		{"0 * max", k(0), max, false, k(0)},
 		{"max * 0", max, k(0), false, k(0)},
-		// -1 is the special case: fine for anything but the minimum...
+		{"0 * min", k(0), min, false, k(0)},
 		{"-1 * max", k(-1), max, false, nil},
-		// ...and an overflow for it, since -INT128_MIN is unrepresentable.
+		// -INT128_MIN is unrepresentable: magnitude 2^127 with agreeing signs.
 		{"-1 * min", k(-1), min, true, nil},
 		{"min * -1", min, k(-1), true, nil},
-		// The ordinary paths, through the division check.
+		// The same magnitude with differing signs is exactly INT128_MIN.
+		{"1 * min", k(1), min, false, min},
+		{"min * 1", min, k(1), false, min},
+		{"-1 * -1", k(-1), k(-1), false, k(1)},
 		{"6 * 7", k(6), k(7), false, k(42)},
+		{"-6 * 7", k(-6), k(7), false, k(-42)},
+		{"-6 * -7", k(-6), k(-7), false, k(42)},
 		{"max * 2", max, k(2), true, nil},
 		{"min * 2", min, k(2), true, nil},
-		{"-6 * 7", k(-6), k(7), false, k(-42)},
+		{"min * min", min, min, true, nil},
+		{"max * max", max, max, true, nil},
+		{"max * -1", max, k(-1), false, nil},
 	}
 
 	block := entry

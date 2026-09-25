@@ -1,6 +1,9 @@
 package llvm
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -140,5 +143,61 @@ func TestEmit_I128_IR(t *testing.T) {
 	if strings.Contains(got, "llvm.smul.with.overflow.i128") {
 		t.Errorf("the signed 128-bit multiply is back on the intrinsic, which expands to "+
 			"compiler-rt's __muloti4 and does not link on Linux:\n%s", got)
+	}
+}
+
+// TestEmit_I128MulOverflowSurvivesO2 guards the helper against the optimiser rather
+// than against the emitter. TestEmit_I128_IR checks the *emitted* IR for the intrinsic,
+// but `lyrac build` hands that IR to clang at -O2, and the helper's first body — the
+// `(a*b)/a != b` idiom — was one InstCombine recognises: it folded the body straight
+// back into `llvm.smul.with.overflow.i128`, which on aarch64 Linux lowers to a call to
+// `__muloti4`, and every std.temporal example failed to link in the arm64 clang-15
+// container. The backend tests compile at clang's -O0 default, so nothing here saw it.
+//
+// So this optimises the module the way lyrac does and checks two things: the -O2 IR
+// has no signed 128-bit multiply-with-overflow (host-independent, and what the fold
+// produces on every target), and an aarch64-linux object built at -O2 names no
+// `__muloti4` (the link failure itself; skipped when this clang has no AArch64 target).
+func TestEmit_I128MulOverflowSurvivesO2(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	src := `let mul = (a: i128, b: i128) -> i128 => a * b
+let main = () -> void => {
+  println(mul(3, 4))
+}
+`
+	ll, err := emitSource(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.ll")
+	if err := os.WriteFile(in, []byte(ll), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	optimised, err := exec.Command(clang, "-O2", "-S", "-emit-llvm", "-Wno-override-module", in, "-o", "-").CombinedOutput()
+	if err != nil {
+		t.Fatalf("clang -O2 -emit-llvm: %v\n%s", err, optimised)
+	}
+	if !strings.Contains(string(optimised), "lyra_i128_mul_overflow") {
+		t.Fatalf("the helper did not survive to the optimised IR, so this test checks nothing:\n%s", optimised)
+	}
+	if strings.Contains(string(optimised), "llvm.smul.with.overflow.i128") {
+		t.Errorf("-O2 folded the i128 checked multiply back into llvm.smul.with.overflow.i128, "+
+			"which lowers to compiler-rt's __muloti4 and does not link against libgcc:\n%s", optimised)
+	}
+
+	obj := filepath.Join(dir, "out.o")
+	if out, err := exec.Command(clang, "--target=aarch64-linux-gnu", "-O2", "-c", "-Wno-override-module", in, "-o", obj).CombinedOutput(); err != nil {
+		t.Logf("skipping the aarch64-linux object check (no AArch64 target in this clang?): %v\n%s", err, out)
+		return
+	}
+	bytes, err := os.ReadFile(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(bytes), "__muloti4") {
+		t.Errorf("the aarch64-linux object built at -O2 references __muloti4, which libgcc does not provide")
 	}
 }
