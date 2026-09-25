@@ -199,8 +199,12 @@ pub let append_file = (path: string, contents: string) -> bool => {
 // The bytes are the string's UTF-8, copied once into a buffer this can take the address of.
 // The copy is what makes an interior NUL ordinary: a string may hold one, and the no-copy
 // path to a string's bytes (`cstring_ptr`) is the one that refuses them.
-let write_all = (fd: i32, contents: string) -> bool => {
-  var bytes = contents.encode_utf8()
+let write_all = (fd: i32, contents: string) -> bool =>
+  write_all_bytes(fd, contents.encode_utf8())
+
+// The loop itself, over bytes — `write_all` for text and `write_bytes` for everything else
+// share it, so there is one place a short write is retried.
+let write_all_bytes = (fd: i32, bytes: []u8) -> bool => {
   var written = 0
   let total = bytes.len()
   for written < total {
@@ -280,6 +284,23 @@ pub let read_bytes = (path: string) -> Maybe<[]u8> => {
   }
   unsafe { close(fd) }
   if failed { None } else { Some(out) }
+}
+
+/// The file at `path` overwritten with `bytes`, answering whether all of them landed —
+/// `write_file` for data that is not text, as `read_bytes` is `read_file`'s.
+///
+/// Created or truncated with `write_file`'s mode, and `false` on the same two failures:
+/// the path could not be opened, or the write was cut short.
+///
+/// ```
+/// if !write_bytes("tone.wav", wav) { println("could not write tone.wav") }
+/// ```
+pub let write_bytes = (path: string, bytes: []u8) -> bool => {
+  let fd = unsafe { creat(path.cstring_ptr(), FILE_MODE) }
+  if fd < 0 { return false }
+  let landed = write_all_bytes(fd, bytes)
+  unsafe { close(fd) }
+  landed
 }
 
 /// Copies the file at `from` to `to`, byte for byte, answering whether it arrived.

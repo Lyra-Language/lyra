@@ -613,6 +613,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `read_stdin()` | `std.io` | shares the chunked reader |
 | `write_file(path, contents) -> bool` | `std.io`, over `creat` | loops on short writes |
 | `append_file(path, contents) -> bool` | `std.io`, over `fopen(path, "a")` + `fileno` | creates if missing; shares `write_file`'s loop |
+| `write_bytes(path, bytes: []u8) -> bool` | `std.io`, over `creat` | `write_file` for data that is not text (`read_bytes`'s pair); same loop |
 | `read_dir(path) -> Maybe<[]string>` | `std.io`, over the `dir_names` builtin | names only, sorted, without `.`/`..`; dotfiles kept; `None` if unopenable, `Some([])` when empty |
 | `dir_names(path) -> Maybe<[]string>` | builtin | what libc reported, in its order, `.`/`..` included. A builtin because `struct dirent`'s name offset and `readdir`'s symbol both differ by platform, and Lyra cannot ask which it is on; EffectInput |
 | `is_symlink(path) -> bool` | `std.io`, over `readlink` | the link itself, not its target (`opendir` follows one); `false` for a missing path, `true` for a broken link |
