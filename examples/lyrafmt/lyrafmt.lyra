@@ -72,9 +72,9 @@
 // Exit 0 when nothing is wrong (or, under `--check`, nothing would change), 1 otherwise,
 // 2 for usage.
 
-import std.collections.{ parse_args, HashMap, hashmap_new, insert, get_or }
+import std.collections.{ parse_args, HashMap, hashmap_new }
 import std.io.{ read_file, read_stdin, write_file, read_dir, is_symlink }
-import std.ffi.{ cstring }
+import std.ffi
 import bindings.treesitter.{
   Node, Parser, lyra_language, new_parser, parser_delete, parse, tree_delete,
   root, child, child_count, start_byte, end_byte, kind, has_error,

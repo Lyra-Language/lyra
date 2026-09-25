@@ -11,7 +11,7 @@ module bindings.raylib
 //! Both are resources Lyra does not own, so both carry `@must_release` and the compiler
 //! reports a binding that goes out of scope unreleased (lyra-W022).
 
-import std.ffi.{ with_cstring, data }
+import std.ffi
 
 /// `Image` — pixels in CPU memory, 24 bytes, crossing by value.
 ///

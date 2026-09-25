@@ -36,7 +36,7 @@ module std.io
 //! }
 //! ```
 
-import std.path.{ parent }
+import std.path
 
 /// The whole of the file at `path` as one string, or `None` if it cannot be opened —
 /// missing, unreadable, a directory.

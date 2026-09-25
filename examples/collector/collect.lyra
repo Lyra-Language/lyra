@@ -11,14 +11,29 @@ module collect
 //! guessed at — a node kind this does not know yields no statement, so the test that grows
 //! the subset fails by printing too little rather than by printing something invented.
 
-import bindings.treesitter.{
-  Node, kind, field, named_child, named_child_count, text, start_byte, end_byte,
-}
+import bindings.treesitter.{ Node }
 import ast.{
-  Program, Stmt, VarDecl, ExprStmt, Expr,
-  IntegerLiteral, CharacterLiteral, StringLiteral, Identifier, BinaryOp, Lambda,
-  Parameter, TypeNode, ReturnType, FunctionCall, Block,
-  MemberAccess, IndexAccess, TupleIndexAccess, Unary, Range,
+  Program,
+  Stmt,
+  VarDecl,
+  ExprStmt,
+  Expr,
+  IntegerLiteral,
+  CharacterLiteral,
+  StringLiteral,
+  Identifier,
+  BinaryOp,
+  Lambda,
+  Parameter,
+  TypeNode,
+  ReturnType,
+  FunctionCall,
+  Block,
+  MemberAccess,
+  IndexAccess,
+  TupleIndexAccess,
+  Unary,
+  Range,
   TypeDecl,
   StructTypeDef,
   StructField,
@@ -172,7 +187,7 @@ let collect_var_reassignment = (node: Node, source: Source) -> Maybe<Stmt> => {
   let value = collect_expr(node.field("value")?, source)?
   Some(VarReassignmentStmt(VarReassignment {
     location: source.location_of(node),
-    name: text(node.named_child(0), source.bytes),
+    name: node.named_child(0).text(source.bytes),
     value: value,
   }))
 }
@@ -201,7 +216,7 @@ let jump_label = (node: Node, source: Source) -> string => match node.field("lab
 let collect_type_declaration = (node: Node, source: Source) -> Maybe<Stmt> => {
   if node.named_child_count() == 0 { return None }
   let body = node.named_child(0)
-  let declared = match kind(body) {
+  let declared = match body.kind() {
     "struct_type" => collect_struct_type(body, source),
     "named_tuple_type" => collect_tuple_type(body, source),
     "data_type" => collect_data_type(body, source),
@@ -213,7 +228,7 @@ let collect_type_declaration = (node: Node, source: Source) -> Maybe<Stmt> => {
     location: source.location_of(node),
     derives: [],
     generic_params: collect_generic_params(body, source),
-    is_public: match field(body, "visibility") {
+    is_public: match body.field("visibility") {
       Some(_) => true,
       None => false,
     },
@@ -427,8 +442,8 @@ let type_name_of = pure (declared: shared TypeNode) -> string => match declared 
 
 /// The expression inside an already-located wrapper node.
 let collect_wrapped_at = (wrapper: Node, source: Source) -> Maybe<shared Expr> => {
-  if named_child_count(wrapper) == 0 { return None }
-  collect_expr(named_child(wrapper, 0), source)
+  if wrapper.named_child_count() == 0 { return None }
+  collect_expr(wrapper.named_child(0), source)
 }
 
 /// `let x = 1`, `pub var y = 2`.
@@ -459,7 +474,7 @@ let collect_declaration = (node: Node, source: Source) -> Maybe<Stmt> => {
   }
   // **The same node in two shapes**, told apart by which field it carries. A `pattern`
   // means the left side matches rather than names, and there is no `name` to read.
-  match field(node, "pattern") {
+  match node.field("pattern") {
     Some(pattern_node) => {
       let Some(pattern) = collect_pattern(pattern_node, source) else { return None }
       return Some(DestructuringDeclStmt(DestructuringDecl {
@@ -593,7 +608,7 @@ let collect_pattern = (node: Node, source: Source) -> Maybe<shared Pattern> => {
         None => None,
       },
       end_operator: match node.field("end_operator") {
-        Some(operator) => text(operator, source.bytes),
+        Some(operator) => operator.text(source.bytes),
         None => "",
       },
       start: match node.field("start") {
@@ -728,7 +743,7 @@ let collect_struct_pattern = (node: Node, source: Source) -> shared Pattern => {
       },
       None => {},
     }
-    match field(child, "rest_pattern") {
+    match child.field("rest_pattern") {
       Some(rest) => {
         match collect_pattern(rest, source) {
           Some(inner) => fields.push(StructPatternField {
@@ -742,7 +757,7 @@ let collect_struct_pattern = (node: Node, source: Source) -> shared Pattern => {
       },
       None => {},
     }
-    match field(child, "name") {
+    match child.field("name") {
       Some(name) => fields.push(StructPatternField {
         location: source.location_of(child),
         name: name.text(source.bytes),
@@ -1129,7 +1144,7 @@ let collect_lambda = (
 /// no pattern is not a parameter.
 let collect_parameter = (node: Node, source: Source) -> Maybe<Parameter> => {
   let pattern_node = node.field("pattern")?
-  if kind(pattern_node) != "identifier" { return None }
+  if pattern_node.kind() != "identifier" { return None }
   Some(Parameter {
     location: source.location_of(node),
     // The default sits in a `default_value` wrapper holding an `expression` field.
@@ -1140,7 +1155,7 @@ let collect_parameter = (node: Node, source: Source) -> Maybe<Parameter> => {
       },
       None => None,
     },
-    pattern: IdentifierPattern(Identifier { location: source.location_of(pattern_node), name: text(pattern_node, source.bytes) }),
+    pattern: IdentifierPattern(Identifier { location: source.location_of(pattern_node), name: pattern_node.text(source.bytes) }),
     type_annotation: match node.field("type") {
       Some(declared) => collect_type(declared, source),
       None => None,
@@ -1174,7 +1189,7 @@ let collect_type = (node: Node, source: Source) -> Maybe<shared TypeNode> => {
     // A name the program declared. The collector records what was written and does not
     // look it up — resolution is the typechecker's, which is what "unresolved" says.
     "user_defined_type_name" =>
-      Some(UnresolvedType(Identifier { location: source.location_of(node), name: text(node, source.bytes) })),
+      Some(UnresolvedType(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
     // A variable the enclosing declaration bound.
     "generic_type" => Some(GenericType(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
     // `(i64, i64)` written inside another type — the same node a packed data payload
@@ -1213,7 +1228,7 @@ let collect_binary = (node: Node, source: Source) -> Maybe<shared Expr> => {
 /// A separate CST kind from `binary_expr`, so the grammar has already told the two apart
 /// and nothing here classifies an operator: the node's kind is the answer.
 let collect_boolean = (node: Node, source: Source) -> Maybe<shared Expr> => {
-  let operator = field(node, "operator")?
+  let operator = node.field("operator")?
   let left = collect_expr(node.field("left")?, source)?
   let right = collect_expr(node.field("right")?, source)?
   Some(BooleanBinaryOpExpr(BinaryOp {
@@ -1429,7 +1444,7 @@ let collect_range = (node: Node, source: Source) -> Maybe<shared Expr> => {
     location: source.location_of(node),
     end: collect_wrapped(node, "end", source),
     end_operator: match node.field("end_operator") {
-      Some(operator) => range_end_operator(text(operator, source.bytes)),
+      Some(operator) => range_end_operator(operator.text(source.bytes)),
       None => None,
     },
     start: collect_wrapped(node, "start", source),
@@ -1489,7 +1504,7 @@ let collect_integer = (node: Node, source: Source) -> shared Expr => {
 /// `hexadecimal_int`, one named child of the literal.
 let integer_base = (node: Node) -> i64 => {
   if node.named_child_count() == 0 { return 10 }
-  return match kind(node.named_child(0)) {
+  return match node.named_child(0).kind() {
     "binary_int" => 2,
     "octal_int" => 8,
     "hexadecimal_int" => 16,
@@ -1530,7 +1545,7 @@ let collect_string = (node: Node, source: Source) -> shared Expr => {
           value: decode_escapes(child.text(source.bytes).to_runes()),
         }))
       }
-      if k == "string_interpolation" && named_child_count(child) > 0 {
+      if k == "string_interpolation" && child.named_child_count() > 0 {
         match collect_expr(child.named_child(0), source) {
           Some(expr) => segments.push(expr),
           None => {},
@@ -1543,7 +1558,7 @@ let collect_string = (node: Node, source: Source) -> shared Expr => {
       segments: segments
     })
   }
-  let raw = text(node, source.bytes).to_runes()
+  let raw = node.text(source.bytes).to_runes()
   StringLiteralExpr(StringLiteral {
     location: source.location_of(node),
     value: decode_escapes(raw.slice(1, raw.len() - 1))

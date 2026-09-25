@@ -17,7 +17,7 @@ import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps,
   begin_drawing, end_drawing, clear_background, elapsed,
   Vector3, RayHit, Camera3D, vec2, vec3, rect, ray, bounding_box, camera_3d,
-  begin_mode_3d, end_mode_3d, update_camera, camera_matrix,
+  begin_mode_3d, end_mode_3d, camera_matrix,
   world_to_screen, screen_to_world_ray,
   draw_line_3d, draw_point_3d, draw_circle_3d, draw_triangle_3d, draw_triangle_strip_3d,
   draw_cube, draw_cube_wires, draw_sphere, draw_sphere_ex, draw_sphere_wires,
@@ -27,9 +27,8 @@ import bindings.raylib.{
   spheres_overlap, boxes_overlap, box_hits_sphere,
   ray_hits_sphere, ray_hits_box, ray_hits_triangle, ray_hits_quad,
   gen_image_checked, unload_image, texture_from_image, unload_texture, Texture2D,
-  draw_text, measure_text, mouse_position, turns, Degrees,
-  CAMERA_ORBITAL,
-  RAYWHITE, WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY, LIGHTGRAY,
+  draw_text, measure_text, mouse_position, turns,
+  CAMERA_ORBITAL, WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, DARKGRAY,
   rgb,
 }
 

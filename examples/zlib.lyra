@@ -27,7 +27,7 @@
 //! surviving into a language that has better ones. `?` then carries the errors, so the
 //! round-trip reads as a sequence of three steps rather than as a staircase of matches.
 
-import std.ffi.{ CBuffer, CULong, cstring_len, data, data_mut }
+import std.ffi.{ CBuffer, CULong, cstring_len }
 
 let main = () -> u8 => {
   println("zlib ${version()}")

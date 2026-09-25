@@ -57,7 +57,7 @@ import gltf.{ NodeAnimation, load_node_animation, node_clip_count, node_clip_nam
   node_clip_duration, node_mesh_count, pose, MaterialParams, load_material_params,
   plain_material, ALPHA_BLEND, ImageBytes, load_images }
 import bindings.jpeg.{ decode_jpeg, is_jpeg_mime }
-import std.ffi.{ data }
+import std.ffi
 import bindings.raylib.{
   init_window,
   close_window,

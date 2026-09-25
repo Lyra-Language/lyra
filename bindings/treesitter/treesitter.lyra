@@ -14,7 +14,7 @@ module bindings.treesitter
 //! Link with `-ltree-sitter`: `brew install tree-sitter` or `libtree-sitter-dev`, with its
 //! directory on `LIBRARY_PATH` (`pkg-config --variable=libdir tree-sitter`).
 
-import std.ffi.{ CBuffer, cstring, cstring_len, data, decode_utf8, is_null }
+import std.ffi.{ CBuffer, cstring_len }
 
 /// A grammar, as its generated `tree_sitter_<name>()` answers it.
 pub struct Language {

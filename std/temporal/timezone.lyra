@@ -24,7 +24,7 @@ module std.temporal
 
 import std.env.{ lookup }
 import std.io.{ read_bytes }
-import std.path.{ join }
+import std.path
 
 /// A zone's rules: when it changed, and what it changed to.
 pub struct TimeZone {

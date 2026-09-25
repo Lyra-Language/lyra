@@ -1,7 +1,7 @@
 module bindings.raylib
 //! Text, with raylib's built-in font.
 
-import std.ffi.{ with_cstring }
+import std.ffi
 
 @symbol("DrawText")
 unsafe extern rl_draw_text: (text: ^u8, x: i32, y: i32, size: i32, color: Color) -> void

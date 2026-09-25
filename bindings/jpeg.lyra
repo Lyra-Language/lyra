@@ -18,7 +18,7 @@ module bindings.jpeg
 //! `libturbojpeg0-dev`. The build needs its directory on `LIBRARY_PATH`:
 //! `pkg-config --variable=libdir libturbojpeg`.
 
-import std.ffi.{ data, data_mut }
+import std.ffi
 
 /// A decoded image: RGBA pixels, four bytes each, row by row from the top.
 pub struct Jpeg {

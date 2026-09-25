@@ -39,14 +39,6 @@ module gltf
 import std.json.{
   parse_json,
   JsonValue,
-  JsonNull,
-  field,
-  element,
-  elements,
-  as_number,
-  as_int,
-  as_text,
-  as_bool,
   kind
 }
 import bindings.raylib.{ Matrix, Vector3, Vector4, vec3, matrix_multiply, matrix_invert,

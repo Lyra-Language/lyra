@@ -13,9 +13,9 @@
 //
 // Exit 0 when every page rendered, 1 when any could not be read or written, 2 for usage.
 
-import std.collections.{ parse_args, Set, set_new, insert, contains }
+import std.collections.{ parse_args, Set, set_new, contains }
 import std.io.{ read_file, write_file, read_dir, is_symlink, create_dir_all, copy_file }
-import std.path.{ join, base, stem, extension, with_extension, parent, normalize }
+import std.path.{ join }
 import markdown.{ render }
 
 let main = () -> u8 => {

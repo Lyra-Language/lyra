@@ -11,7 +11,7 @@ module bindings.raylib
 //! a Lyra program does arithmetic on and `i64` is what arithmetic defaults to. The
 //! conversion is one `i32(...)` inside the wrapper, written once instead of at every call.
 
-import std.ffi.{ with_cstring, is_null, cstring_len }
+import std.ffi.{ is_null, cstring_len }
 
 // ---------------------------------------------------------------------------------------
 // Configuration flags — set *before* the window is created

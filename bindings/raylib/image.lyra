@@ -17,7 +17,7 @@ module bindings.raylib
 //! answering a *fresh* `Image` would leave the caller holding a freed one that
 //! `@must_release` would then insist on unloading.
 
-import std.ffi.{ with_cstring, cstring, data }
+import std.ffi
 
 // ---------------------------------------------------------------------------------------
 // New images from an existing one

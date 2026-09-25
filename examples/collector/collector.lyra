@@ -17,11 +17,9 @@
 
 import std.collections.{ parse_args }
 import std.io.{ read_file, read_stdin }
-import bindings.treesitter.{
-  lyra_language, new_parser, parser_delete, parse, tree_delete, root, has_error, delete,
-}
-import std.ffi.{ cstring }
-import collect.{ collect, source_of }
+import bindings.treesitter.{ lyra_language, new_parser, delete }
+import std.ffi
+import collect.{ source_of }
 import printer.{ print_ast }
 
 let main = () -> u8 => {

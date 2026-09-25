@@ -1,10 +1,20 @@
 import std.math.{ Complex }
 import std.tui.{
-  event_reader, Event, Key, event_available,
-  mouse_enable, mouse_disable,
-  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show,
-  Renderer, renderer, render, invalidate,
-  bg_rgb, reset, bold, inverse, fit
+  event_reader,
+  mouse_enable,
+  mouse_disable,
+  alt_screen_enter,
+  alt_screen_leave,
+  clear,
+  cursor_hide,
+  cursor_show,
+  Renderer,
+  renderer,
+  bg_rgb,
+  reset,
+  bold,
+  inverse,
+  fit
 }
 
 const MAX_ITER = 100

@@ -1,7 +1,7 @@
 module bindings.sdl3
 //! Windows.
 
-import std.ffi.{ with_cstring }
+import std.ffi
 
 /// An `SDL_Window *`.
 ///

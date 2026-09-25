@@ -13,7 +13,7 @@ module bindings.raylib
 // `copy_c_string` lives in `raylib.lyra` and is visible here without an import: this is
 // one module across several files, so a second copy would be a duplicate definition
 // rather than two private helpers.
-import std.ffi.{ with_cstring }
+import std.ffi
 
 // ---------------------------------------------------------------------------------------
 // Keyboard

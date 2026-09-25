@@ -7,7 +7,7 @@
 // starts with `-` is a switch, and everything else is positional. Run it with no
 // arguments too, and with a valued flag last (`--out` above), to see the two edge cases.
 
-import std.collections.{ ProgramArgs, parse_args, has, value }
+import std.collections.{ parse_args }
 
 let main = () => {
   let args = parse_args(["--name", "-n", "--out"])

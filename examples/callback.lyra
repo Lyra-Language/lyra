@@ -19,7 +19,7 @@
 //! serving two APIs; a context-carrying one is declared the same way, with the `void *`
 //! written as a `^mut u8` the caller owns.
 
-import std.ffi.{ data, data_mut }
+import std.ffi
 
 let main = () -> u8 => {
   var xs: []u8 = [50, 10, 40, 20, 30]

@@ -11,7 +11,7 @@
 // the point of a text store: the file is readable and editable without this program,
 // and a line someone typed by hand still loads.
 
-import std.collections.{ ProgramArgs, parse_args, value }
+import std.collections.{ parse_args }
 import std.io.{ read_file, write_file }
 
 let main = () -> u8 => {

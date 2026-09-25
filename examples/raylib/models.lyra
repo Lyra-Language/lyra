@@ -17,20 +17,20 @@ module main
 import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps, set_config_flags, window_ready,
   FLAG_WINDOW_HIDDEN, begin_drawing, end_drawing, clear_background, elapsed,
-  Vector3, Model, Mesh, Material, Camera3D, BoundingBox, RayHit,
-  vec2, vec3, ray, camera_3d, begin_mode_3d, end_mode_3d, update_camera, CAMERA_ORBITAL,
+  Vector3, Model, Mesh, BoundingBox, RayHit,
+  vec3, ray, camera_3d, begin_mode_3d, end_mode_3d, CAMERA_ORBITAL,
   screen_to_world_ray, world_to_screen, ray_hits_box, draw_grid,
   gen_mesh_poly, gen_mesh_plane, gen_mesh_cube, gen_mesh_sphere, gen_mesh_hemisphere,
   gen_mesh_cylinder, gen_mesh_cone, gen_mesh_torus, gen_mesh_knot, gen_mesh_heightmap,
   gen_mesh_cubicmap, unload_mesh, mesh_bounding_box, ray_hits_mesh, export_mesh,
   model_from_mesh, load_model, unload_model, model_bounding_box, model_valid,
   draw_model, draw_model_ex, draw_model_wires, draw_model_wires_ex, draw_bounding_box,
-  draw_mesh, draw_mesh_instanced,
+  draw_mesh_instanced,
   load_material_default, unload_material, material_valid, material_supports_instancing,
-  matrix_identity, matrix_translation, turns, Degrees,
+  matrix_identity, matrix_translation, turns,
   gen_image_gradient_linear, gen_image_checked, unload_image,
   draw_text, measure_text, mouse_position, Matrix, Color,
-  RAYWHITE, WHITE, BLACK, RED, GREEN, BLUE, ORANGE, PURPLE, DARKGRAY, rgb,
+  WHITE, BLACK, RED, GREEN, BLUE, ORANGE, PURPLE, DARKGRAY, rgb,
 }
 import std.math.{ TAU }
 

@@ -35,9 +35,19 @@ import std.temporal.{
   days, weeks, months,
 }
 import std.tui.{
-  renderer, render, invalidate, event_reader, next_event, event_available, Event, Key,
-  alt_screen_enter, alt_screen_leave, cursor_hide, cursor_show, clear,
-  inverse, bold, fg, reset, fit, status_bar,
+  renderer,
+  event_reader,
+  alt_screen_enter,
+  alt_screen_leave,
+  cursor_hide,
+  cursor_show,
+  clear,
+  inverse,
+  bold,
+  fg,
+  reset,
+  fit,
+  status_bar,
 }
 
 let main = () -> u8 => {

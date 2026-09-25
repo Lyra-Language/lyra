@@ -1,9 +1,19 @@
 import std.tui.{
-  event_reader, Event, Key, event_available,
-  mouse_enable, mouse_disable,
-  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show,
-  Renderer, renderer, render, invalidate,
-  fg, bg, rgb, reset, inverse, status_split
+  event_reader,
+  mouse_enable,
+  mouse_disable,
+  alt_screen_enter,
+  alt_screen_leave,
+  clear,
+  cursor_hide,
+  cursor_show,
+  Renderer,
+  renderer,
+  bg,
+  rgb,
+  reset,
+  inverse,
+  status_split
 }
 
 // A full-screen interactive skeleton: the shape a terminal viewer wants, with a colour

@@ -1,7 +1,18 @@
 import std.tui.{
-  alt_screen_enter, alt_screen_leave, clear, cursor_home, cursor_hide, cursor_show,
-  mouse_enable_motion, mouse_disable, event_reader, Event, MouseEvent, MouseButton,
-  MouseAction, Key, fg, reset, rgb, fit
+  alt_screen_enter,
+  alt_screen_leave,
+  clear,
+  cursor_home,
+  cursor_hide,
+  cursor_show,
+  mouse_enable_motion,
+  mouse_disable,
+  event_reader,
+  MouseEvent,
+  fg,
+  reset,
+  rgb,
+  fit
 }
 
 // Conway's Game of Life, animated in the terminal and sized to the window.

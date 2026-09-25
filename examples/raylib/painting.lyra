@@ -21,18 +21,12 @@ import bindings.raylib.{
   init_window, close_window, should_close, set_target_fps,
   begin_drawing, end_drawing, clear_background,
   Image, Texture2D, Color, Vector2, Rectangle, vec2, rect,
-  gen_image_color, gen_image_gradient_linear, unload_image, image_color_at, image_colors,
-  reformat, texture_from_image, unload_texture, draw_texture, draw_text, measure_text,
+  gen_image_color, gen_image_gradient_linear, unload_image, image_color_at,
+  texture_from_image, unload_texture, draw_texture, draw_text,
   image_copy, image_region, image_channel, image_text, image_text_ex,
-  alpha_crop, alpha_clear, alpha_mask, alpha_premultiply, alpha_border_of,
-  blur, convolve, to_power_of_two, resize_canvas, gen_mipmaps, dither,
-  contrast, brightness, replace_color, image_alpha_border, image_palette,
-  fill, paint_pixel, paint_line, paint_line_ex, paint_circle, paint_circle_lines,
-  paint_rectangle, paint_rectangle_lines, paint_triangle, paint_triangle_gradient,
-  paint_triangle_lines, paint_triangle_fan, paint_triangle_strip, paint_image,
-  paint_text, paint_text_ex, default_font, font_valid,
+  image_alpha_border, image_palette, default_font, font_valid,
   RAYWHITE, WHITE, BLACK, BLANK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE,
-  DARKGRAY, LIGHTGRAY, rgb, rgba,
+  DARKGRAY, rgb, rgba,
 }
 
 /// Panel label size, in one place because it decides the grid — see `shapes.lyra`.

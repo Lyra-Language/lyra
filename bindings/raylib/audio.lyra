@@ -13,7 +13,7 @@ module bindings.raylib
 //! a language feature this does not have, and inventing a half of it in a binding module
 //! would be worse than saying so.
 
-import std.ffi.{ with_cstring }
+import std.ffi
 
 /// `AudioStream` — raylib's internal playback handle. Its two pointers are opaque: nothing
 /// on this side reads through them, and they are here so the struct's **layout** matches.

@@ -13,7 +13,7 @@ module bindings.raylib
 //! does not move, and `FileTextReplace`'s return says nothing. Each is noted where it is
 //! absorbed.
 
-import std.ffi.{ with_cstring, with_cstrings, cstring, data, CLong }
+import std.ffi.{ with_cstrings, CLong }
 
 // ---------------------------------------------------------------------------------------
 // Reading and writing
