@@ -7,8 +7,16 @@ unsafe extern sdl_delay: (ms: u32) -> void
 @symbol("SDL_GetTicks")
 unsafe extern sdl_get_ticks: () -> u64
 
+@symbol("SDL_GetTicksNS")
+unsafe extern sdl_get_ticks_ns: () -> u64
+
 /// Sleep for roughly `ms` milliseconds — the simplest frame pacing there is.
 pub let delay = (ms: u32) -> void => unsafe { sdl_delay(ms) }
 
 /// Milliseconds since SDL was initialised.
 pub let ticks = () -> u64 => unsafe { sdl_get_ticks() }
+
+/// Nanoseconds since SDL was initialised — the clock a fixed timestep measures frames by.
+/// Milliseconds are too coarse for it: a 60 Hz step is 16.67 ms, so rounding each frame
+/// to whole milliseconds drifts a whole step every few seconds.
+pub let ticks_ns = () -> u64 => unsafe { sdl_get_ticks_ns() }

@@ -1,0 +1,596 @@
+// A scrolling level, NES style: a tile map four screens wide, a camera that follows the
+// explorer, and a game that updates at exactly 60 Hz whatever the display does.
+//
+// **Three pieces every side-scroller has, and nothing else.** The level is ASCII in this
+// file, one character per 16×16 tile; only the seventeen columns the camera can see are
+// drawn. The explorer walks (B runs), jumps with A — shorter if A is let go early — and
+// collides with solid tiles one axis at a time. Coins are taken out of the map when
+// touched, and a fall into a pit starts over.
+//
+// **The update is fixed, the drawing is not.** `console.lyra`'s clock hands each frame
+// the whole number of 1/60 s steps that real time has paid for, so a 120 Hz display draws
+// every state twice and the physics — every speed and height below is per step — plays
+// the same on any screen.
+//
+// `--check` tests the timestep and the physics headlessly. Escape quits; `--shot` as in
+// `console.lyra`. Arrows/WASD move, X (A) jumps, Z (B) runs.
+
+import bindings.sdl3.{
+  last_error,
+  Renderer,
+  Rect,
+  set_draw_color,
+  clear,
+  debug_text,
+  Texture,
+  destroy_texture,
+  draw_texture,
+  draw_texture_flipped,
+  FLIP_NONE,
+  FLIP_HORIZONTAL,
+  poll_event,
+}
+import bindings.sdl3_image.{ load_texture }
+import console.{
+  Screen,
+  open_screen,
+  close_screen,
+  end_frame,
+  wants_quit,
+  start_clock,
+  updates_due,
+  accrue,
+  MAX_STEPS,
+  WIDTH,
+}
+import pad.{ Buttons, Pad, RELEASED, advance, read_buttons }
+import palette.{ nes }
+
+let main = () -> u8 => {
+  if has_flag("--check") { return run_checks() }
+  match open_screen("Lyra NES tilemap") {
+    None => 1,
+    Some(screen) => {
+      let code = with_sheet(screen)
+      close_screen(screen)
+      code
+    },
+  }
+}
+
+let with_sheet = (screen: Screen) -> u8 =>
+  match load_texture(screen.renderer, "examples/SDL3/assets/sprites.png") {
+    Some(sheet) => {
+      let code = run(screen, sheet)
+      destroy_texture(sheet)
+      code
+    },
+    None => match load_texture(screen.renderer, "../assets/sprites.png") {
+      Some(sheet) => {
+        let code = run(screen, sheet)
+        destroy_texture(sheet)
+        code
+      },
+      None => {
+        println("could not load assets/sprites.png: ${last_error()}")
+        println("run from the repository root or from examples/SDL3/nes/")
+        1
+      },
+    },
+  }
+
+// ---------------------------------------------------------------------------------------
+// The level
+// ---------------------------------------------------------------------------------------
+
+/// One character per tile: `=` grass-topped ground, `%` dirt, `#` brick — the three solid
+/// ones — then `o` coin, `c` cloud, `b` bush and `.` sky.
+const LEVEL: []string = [
+  "................................................................",
+  "................................................................",
+  ".....cc.............ccc.........................................",
+  "......................................cc............cc..........",
+  ".............c..............................c...............c...",
+  "................................................................",
+  ".....................................o..........................",
+  "....................................###.........................",
+  ".........ooo................................oooo................",
+  "........#####...............................####..............##",
+  "..................ooo.........###ooo..........................##",
+  "..........................==..................................##",
+  "....b......b............==%%.............b...............b....##",
+  "==================...===%%%%=====...=============..=============",
+  "%%%%%%%%%%%%%%%%%%...%%%%%%%%%%%%...%%%%%%%%%%%%%..%%%%%%%%%%%%%",
+]
+
+const COLUMNS: i64 = 64
+const ROWS: i64 = 15
+const TILE: f32 = 16.0
+
+const SKY: i64 = 0
+const GRASS: i64 = 1
+const DIRT: i64 = 2
+const BRICK: i64 = 3
+const COIN: i64 = 4
+const CLOUD: i64 = 5
+const BUSH: i64 = 6
+
+/// The sheet cell each tile kind draws with, in `../assets/generate.py`'s order.
+const CELL_OF: []i64 = [0, 9, 10, 6, 2, 11, 12]
+const EXPLORER_STRIDE: i64 = 0
+const EXPLORER_TOGETHER: i64 = 1
+
+/// The level as tile codes, row by row.
+let parse_level = pure (rows: []string) -> []i64 => {
+  var tiles: []i64 = []
+  for row in rows {
+    for ch in row {
+      tiles.push(
+        if ch == '=' {
+          GRASS
+        } else if ch == '%' {
+          DIRT
+        } else if ch == '#' {
+          BRICK
+        } else if ch == 'o' {
+          COIN
+        } else if ch == 'c' {
+          CLOUD
+        } else if ch == 'b' {
+          BUSH
+        } else {
+          SKY
+        }
+      )
+    }
+  }
+  tiles
+}
+
+/// The tile at a grid position. **Past either side is solid** — the level's edges are
+/// walls — and past the top or bottom is sky, so a pit is a way out of the map.
+let tile_at = pure (tiles: []i64, column: i64, row: i64) -> i64 => {
+  if column < 0 || column >= COLUMNS {
+    BRICK
+  } else if row < 0 || row >= ROWS {
+    SKY
+  } else {
+    tiles[row * COLUMNS + column]
+  }
+}
+
+let is_solid = pure (tile: i64) -> bool => tile == GRASS || tile == DIRT || tile == BRICK
+
+// ---------------------------------------------------------------------------------------
+// The explorer and the world
+// ---------------------------------------------------------------------------------------
+
+/// The explorer's collision box, inset from the 16×16 sprite: narrower, so walking past
+/// a ledge does not catch on its corner, and a pixel short, so a head fits a one-tile gap.
+const BOX_W: f32 = 12.0
+const BOX_H: f32 = 15.0
+const BOX_INSET_X: f32 = 2.0
+
+/// Everything per 1/60 s step, in pixels.
+const WALK: f32 = 1.5
+const RUN: f32 = 2.5
+const ACCEL: f32 = 0.12
+const DECEL: f32 = 0.2
+const GRAVITY: f32 = 0.35
+const MAX_FALL: f32 = 6.0
+const JUMP: f32 = -6.8
+/// Letting go of A while still rising faster than this cuts the jump to it.
+const JUMP_CUT: f32 = -2.5
+
+const SPAWN_X: f32 = 34.0
+const SPAWN_Y: f32 = 193.0
+
+struct Body {
+  x: f32,
+  y: f32,
+  vx: f32,
+  vy: f32,
+  on_ground: bool,
+  facing_left: bool,
+}
+
+struct World {
+  tiles: []i64,
+  player: Body,
+  coins: i64,
+  steps: i64,
+}
+
+let new_world = pure () -> World => World {
+  tiles: parse_level(LEVEL),
+  player: spawned(),
+  coins: 0,
+  steps: 0,
+}
+
+let spawned = pure () -> Body => Body {
+  x: SPAWN_X,
+  y: SPAWN_Y,
+  vx: 0.0,
+  vy: 0.0,
+  on_ground: false,
+  facing_left: false,
+}
+
+/// One 1/60 s step of the game.
+let update = (world: mut World, pad: Pad) -> void => {
+  let held = pad.held
+  let direction: f32 = if held.left { -1.0 } else if held.right { 1.0 } else { 0.0 }
+  let top_speed = if held.b { RUN } else { WALK }
+  var p = world.player
+
+  if direction < 0.0 { p.facing_left = true }
+  if direction > 0.0 { p.facing_left = false }
+  p.vx = if !held.left && !held.right {
+    approach(p.vx, 0.0, DECEL)
+  } else {
+    approach(p.vx, direction * top_speed, ACCEL)
+  }
+
+  if pad.pressed.a && p.on_ground { p.vy = JUMP }
+  if !held.a && p.vy < JUMP_CUT { p.vy = JUMP_CUT }
+  p.vy = (p.vy + GRAVITY).min(MAX_FALL)
+
+  // **One axis at a time.** Moving both and then resolving cannot tell a wall from a
+  // floor at a corner; moving x, resolving, then y can, because each push-out knows
+  // which way it is moving.
+  p = move_x(world.tiles, p)
+  p = move_y(world.tiles, p)
+
+  if p.y > f32(ROWS) * TILE + 32.0 { p = spawned() }
+  world.player = p
+  collect_coins(world)
+  world.steps += 1
+}
+
+/// `v` moved towards `target` by at most `step`.
+let approach = pure (v: f32, target: f32, step: f32) -> f32 =>
+  if v < target { (v + step).min(target) } else { (v - step).max(target) }
+
+let move_x = pure (tiles: []i64, body: Body) -> Body => {
+  var p = body
+  p.x += p.vx
+  let top = (p.y / TILE).floor()
+  let bottom = ((p.y + BOX_H - 0.01) / TILE).floor()
+  if p.vx > 0.0 {
+    let column = ((p.x + BOX_W - 0.01) / TILE).floor()
+    if solid_in_column(tiles, column, top, bottom) {
+      p.x = f32(column) * TILE - BOX_W
+      p.vx = 0.0
+    }
+  } else if p.vx < 0.0 {
+    let column = (p.x / TILE).floor()
+    if solid_in_column(tiles, column, top, bottom) {
+      p.x = f32(column + 1) * TILE
+      p.vx = 0.0
+    }
+  }
+  p
+}
+
+let move_y = pure (tiles: []i64, body: Body) -> Body => {
+  var p = body
+  p.y += p.vy
+  p.on_ground = false
+  let left = (p.x / TILE).floor()
+  let right = ((p.x + BOX_W - 0.01) / TILE).floor()
+  if p.vy > 0.0 {
+    let row = ((p.y + BOX_H - 0.01) / TILE).floor()
+    if solid_in_row(tiles, row, left, right) {
+      p.y = f32(row) * TILE - BOX_H
+      p.vy = 0.0
+      p.on_ground = true
+    }
+  } else if p.vy < 0.0 {
+    let row = (p.y / TILE).floor()
+    if solid_in_row(tiles, row, left, right) {
+      p.y = f32(row + 1) * TILE
+      p.vy = 0.0
+    }
+  }
+  p
+}
+
+let solid_in_column = pure (tiles: []i64, column: i64, top: i64, bottom: i64) -> bool => {
+  var hit = false
+  for row in top..<=bottom {
+    if is_solid(tile_at(tiles, column, row)) { hit = true }
+  }
+  hit
+}
+
+let solid_in_row = pure (tiles: []i64, row: i64, left: i64, right: i64) -> bool => {
+  var hit = false
+  for column in left..<=right {
+    if is_solid(tile_at(tiles, column, row)) { hit = true }
+  }
+  hit
+}
+
+/// Take every coin the explorer's box overlaps out of the map.
+let collect_coins = (world: mut World) -> void => {
+  let p = world.player
+  for row in (p.y / TILE).floor()..<=((p.y + BOX_H - 0.01) / TILE).floor() {
+    for column in (p.x / TILE).floor()..<=((p.x + BOX_W - 0.01) / TILE).floor() {
+      if tile_at(world.tiles, column, row) == COIN {
+        world.tiles[row * COLUMNS + column] = SKY
+        world.coins += 1
+      }
+    }
+  }
+}
+
+/// Where the camera's left edge is: the explorer centred, stopped at either end of the
+/// level. Whole pixels, so tiles never land between two and shimmer.
+let camera_x = pure (player: Body) -> f32 => {
+  let centred = player.x + BOX_W / 2.0 - f32(WIDTH) / 2.0
+  f32(centred.clamp(0.0, f32(COLUMNS) * TILE - f32(WIDTH)).floor())
+}
+
+// ---------------------------------------------------------------------------------------
+// The window
+// ---------------------------------------------------------------------------------------
+
+let run = (screen: Screen, sheet: Texture) -> u8 => {
+  var world = new_world()
+  var clock = start_clock()
+  var previous = RELEASED
+  var frame: i64 = 0
+  var status: u8 = 0
+  var running = true
+
+  for running {
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        Some(event) => {
+          if wants_quit(event) { running = false }
+        },
+      }
+    }
+
+    for _ in 0..<updates_due(screen, clock) {
+      let now = read_buttons(None)
+      update(world, advance(previous, now))
+      previous = now
+    }
+
+    draw(screen.renderer, sheet, world)
+    match end_frame(screen, frame) {
+      Stop(code) => {
+        status = code
+        running = false
+      },
+      Continue => {},
+    }
+    frame += 1
+  }
+  status
+}
+
+let draw = (r: Renderer, sheet: Texture, world: World) -> void => {
+  set_draw_color(r, nes(0x21))
+  clear(r)
+
+  // Only the columns the camera can see: sixteen, plus one for the partial column when
+  // the camera is not on a tile boundary.
+  let camera = camera_x(world.player)
+  let first_column = (camera / TILE).floor()
+  for row in 0..<ROWS {
+    for column in first_column..<=first_column + 16 {
+      let tile = tile_at(world.tiles, column, row)
+      if tile != SKY && column < COLUMNS {
+        var cell = CELL_OF[tile]
+        // Coins spin, each a quarter-turn behind its left neighbour.
+        if tile == COIN { cell = 2 + (world.steps / 6 + column) % 4 }
+        draw_cell(r, sheet, cell, f32(column) * TILE - camera, f32(row) * TILE, FLIP_NONE)
+      }
+    }
+  }
+
+  let p = world.player
+  let walking = p.on_ground && (p.vx > 0.1 || p.vx < -0.1)
+  let cell = if !p.on_ground || (walking && (world.steps / 8) % 2 == 0) {
+    EXPLORER_STRIDE
+  } else {
+    EXPLORER_TOGETHER
+  }
+  let flip = if p.facing_left { FLIP_HORIZONTAL } else { FLIP_NONE }
+  draw_cell(r, sheet, cell, p.x - BOX_INSET_X - camera, p.y - (TILE - BOX_H), flip)
+
+  set_draw_color(r, nes(0x0F))
+  debug_text(r, 8.0, 8.0, "COINS ${world.coins}")
+  debug_text(r, 168.0, 8.0, "X ${(p.x / TILE).floor()}/${COLUMNS}")
+}
+
+let draw_cell = (
+  r: Renderer,
+  sheet: Texture,
+  cell: i64,
+  x: f32,
+  y: f32,
+  flip: i32
+) -> void => {
+  let source = Rect { x: f32(cell) * TILE, y: 0.0, w: TILE, h: TILE }
+  let target = Rect { x: x, y: y, w: TILE, h: TILE }
+  if flip == FLIP_NONE {
+    draw_texture(r, sheet, source, target)
+  } else {
+    draw_texture_flipped(r, sheet, source, target, flip)
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// --check: the timestep and the physics
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  var rectangular = LEVEL.len() == ROWS
+  for row in LEVEL {
+    if row.len() != COLUMNS { rectangular = false }
+  }
+  failures += check_that("the level is 64 by 15", rectangular)
+
+  // Ten seconds of frames at three refresh rates all buy 600 updates, give or take the
+  // one still owed at the end.
+  for hz in [60, 120, 144] {
+    let updates = updates_over(10, hz)
+    failures += check_that(
+      "${hz} Hz frames buy ${updates} updates in 10 s",
+      updates >= 599 && updates <= 600
+    )
+  }
+  let (capped, owed) = accrue(0, 2000000000)
+  failures += check_that(
+    "a two-second stall runs at most ${MAX_STEPS} updates",
+    capped == MAX_STEPS && owed == 0
+  )
+
+  // Dropped from the air, the explorer lands on the ground and rests exactly on it.
+  var landing = new_world()
+  landing.player = Body { spawned() | y: 100.0 }
+  steps(landing, RELEASED, 120)
+  failures += check_that(
+    "a fall lands on the ground",
+    landing.player.on_ground && near(landing.player.y + BOX_H, 208.0)
+  )
+
+  // Held right into the end wall, the explorer stops flush against it.
+  var walled = new_world()
+  walled.player = Body { spawned() | x: 900.0 }
+  steps(walled, Buttons { RELEASED | right: true }, 300)
+  failures += check_that(
+    "a wall stops the explorer flush",
+    near(walled.player.x + BOX_W, 62.0 * TILE) && near(walled.player.vx, 0.0)
+  )
+
+  // A held jump from the ground rises about four tiles and comes back down.
+  var jumping = new_world()
+  steps(jumping, RELEASED, 30)
+  let ground_y = jumping.player.y
+  var highest = ground_y
+  var previous = RELEASED
+  for i in 0..<90 {
+    let now = Buttons { RELEASED | a: i < 40 }
+    update(jumping, advance(previous, now))
+    previous = now
+    highest = highest.min(jumping.player.y)
+  }
+  let rise = ground_y - highest
+  failures += check_that(
+    "a held jump rises ${rise} px (60-70)",
+    rise >= 60.0 && rise <= 70.0
+  )
+  failures += check_that(
+    "and lands again",
+    jumping.player.on_ground && near(jumping.player.y, ground_y)
+  )
+
+  // A tapped jump is cut short.
+  var tapped = new_world()
+  steps(tapped, RELEASED, 30)
+  var low = tapped.player.y
+  var before = RELEASED
+  for i in 0..<60 {
+    let now = Buttons { RELEASED | a: i < 2 }
+    update(tapped, advance(before, now))
+    before = now
+    low = low.min(tapped.player.y)
+  }
+  failures += check_that("a tapped jump is shorter", ground_y - low < rise / 2.0)
+
+  // The level forgives ordinary timing: a running jump taken a tile and a half *before*
+  // the first pit's edge still clears it. A platform once hung over this pit, and its
+  // underside cut every jump short — clearable only with a frame-perfect jump at the very
+  // edge, which is a check this would have passed, so the check jumps early.
+  var leaping = new_world()
+  leaping.player = Body { spawned() | x: 12.0 * TILE }
+  steps(leaping, RELEASED, 20)
+  var fell = false
+  var was = RELEASED
+  for _ in 0..<90 {
+    let at_edge = leaping.player.x + BOX_W >= 18.0 * TILE - 24.0
+    let now = Buttons { RELEASED | right: true, b: true, a: at_edge }
+    update(leaping, advance(was, now))
+    was = now
+    if leaping.player.x < 100.0 { fell = true }
+  }
+  failures += check_that(
+    "an early running jump clears the first pit",
+    !fell && leaping.player.on_ground && leaping.player.x > 21.0 * TILE
+  )
+
+  // Touching a coin takes it out of the map.
+  var rich = new_world()
+  rich.player = Body { spawned() | x: 9.0 * TILE, y: 8.0 * TILE, on_ground: true }
+  update(rich, advance(RELEASED, RELEASED))
+  failures += check_that(
+    "a touched coin is collected",
+    rich.coins >= 1 && tile_at(rich.tiles, 9, 8) == SKY
+  )
+
+  // A fall into the first pit starts over.
+  var falling = new_world()
+  falling.player = Body { spawned() | x: 18.5 * TILE, y: 190.0 }
+  steps(falling, RELEASED, 200)
+  failures += check_that("a pit respawns the explorer", near(falling.player.x, SPAWN_X))
+
+  if failures == 0 {
+    println("all checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+/// Updates `seconds` of frames at `hz` would buy.
+let updates_over = pure (seconds: i64, hz: i64) -> i64 => {
+  let frame_ns = 1000000000 / hz
+  var owed: i64 = 0
+  var total: i64 = 0
+  for _ in 0..<seconds * hz {
+    let (n, left) = accrue(owed, frame_ns)
+    total += n
+    owed = left
+  }
+  total
+}
+
+/// `count` steps with `held` held throughout.
+let steps = (world: mut World, held: Buttons, count: i64) -> void => {
+  var previous = RELEASED
+  for _ in 0..<count {
+    update(world, advance(previous, held))
+    previous = held
+  }
+}
+
+/// Equal to within a thousandth of a pixel — positions here are set to exact tile edges,
+/// but a test should not depend on that staying true.
+let near = pure (a: f32, b: f32) -> bool => (a - b).abs() < 0.001
+
+let check_that = (what: string, ok: bool) -> i64 => {
+  if ok {
+    0
+  } else {
+    println("FAIL: ${what}")
+    1
+  }
+}
+
+let has_flag = (name: string) -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == name { found = true }
+  }
+  found
+}

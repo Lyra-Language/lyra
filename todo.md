@@ -541,7 +541,7 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   would be the natural companion.
 - **[PARTIAL] SDL3 bindings, driven by examples, towards an NES-style game.** One example
   per rung, binding only what it uses (`bindings/README.md`). Art is PNG via **SDL3_image**
-  (`bindings/sdl3_image.lyra`).
+  (`bindings/sdl3_image.lyra`). The rungs live in `examples/SDL3/nes/`.
   1. `screen.lyra` — 256×240 integer-scaled screen, primitives, debug text. **Done 09/25.**
   2. `sprites.lyra` — PNG sprite sheet via SDL3_image, flips, colour mod, nearest scaling.
      **Done 09/25.**
@@ -550,6 +550,7 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   4. `sound.lyra` — APU-style pulse/triangle/noise pushed to an audio stream from the loop.
      **Done 09/25.**
   5. `tilemap.lyra` — scrolling tile background, camera, fixed 60 Hz timestep.
+     **Done 09/25.** Keyboard only: gamepad tracking belongs in `pad.lyra` before the game.
   6. The game.
 - **[OPEN] raylib gaps:** `SetShaderValue*` uniforms (a `const void *` no Lyra pointer
   reaches); `LoadMaterials` (needs pointer reinterpretation to reach `MemFree`);

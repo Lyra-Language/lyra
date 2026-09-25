@@ -7,10 +7,10 @@
 // console's palette swap, approximated by multiplication. And nothing is smoothed: the
 // sheet is sampled nearest-neighbour, set *before* it is loaded.
 //
-// The sheet is `assets/sprites.png`, made by `assets/generate.py`; run from the
+// The sheet is `../assets/sprites.png`, made by `../assets/generate.py`; run from the
 // repository root or from beside this file. Needs SDL3_image:
 //
-//     LIBRARY_PATH=$(pkg-config --variable=libdir sdl3) lyrac run examples/SDL3/sprites.lyra
+//     LIBRARY_PATH=$(pkg-config --variable=libdir sdl3) lyrac run examples/SDL3/nes/sprites.lyra
 //
 // Escape quits. `--shot <file.bmp>` saves one frame and exits (`console.lyra`).
 
@@ -25,7 +25,7 @@ import bindings.sdl3_image.{ load_texture }
 import console.{ Screen, open_screen, close_screen, end_frame, wants_quit }
 import palette.{ nes }
 
-/// The sheet's cells, in the order `assets/generate.py` lays them out.
+/// The sheet's cells, in the order `../assets/generate.py` lays them out.
 const CELL: f32 = 16.0
 const EXPLORER_STRIDE: i64 = 0
 const EXPLORER_TOGETHER: i64 = 1
@@ -54,7 +54,7 @@ let main = () -> u8 => match open_screen("Lyra NES sprites") {
 let with_sheet = (screen: Screen) -> u8 => match load_sheet(screen.renderer) {
   None => {
     println("could not load assets/sprites.png: ${last_error()}")
-    println("run from the repository root or from examples/SDL3/")
+    println("run from the repository root or from examples/SDL3/nes/")
     1
   },
   Some(sheet) => {
@@ -68,7 +68,7 @@ let with_sheet = (screen: Screen) -> u8 => match load_sheet(screen.renderer) {
 let load_sheet = (renderer: Renderer) -> Maybe<Texture> =>
   match load_texture(renderer, "examples/SDL3/assets/sprites.png") {
     Some(sheet) => Some(sheet),
-    None => load_texture(renderer, "assets/sprites.png"),
+    None => load_texture(renderer, "../assets/sprites.png"),
   }
 
 let run = (screen: Screen, sheet: Texture) -> u8 => {

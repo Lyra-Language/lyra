@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the sprite sheet `examples/SDL3/sprites.lyra` draws.
+"""Generate the sprite sheet `examples/SDL3/nes/sprites.lyra` and `tilemap.lyra` draw.
 
 The PNG is committed, so this only needs running when the art changes — it is here so the
 image is reproducible and reviewable rather than an opaque binary that arrived somehow.
@@ -7,9 +7,12 @@ image is reproducible and reviewable rather than an opaque binary that arrived s
     python3 examples/SDL3/assets/generate.py
 
 **NES rules**: every sprite is 16×16, uses at most three colours plus transparency, and
-takes those colours from the 2C02 palette — read from `../palette.lyra`, so there is one
+takes those colours from the 2C02 palette — read from `../nes/palette.lyra`, so there is one
 copy of it. Hard edges only: the program samples with nearest-neighbour, so anti-aliasing
 would only show up as smudges.
+
+Cells 9–12 are background tiles for `tilemap.lyra`: grass-topped ground, dirt, a cloud and
+a bush — appended, so every earlier index is unchanged.
 
 The slime is drawn in greys on purpose. SDL's colour mod multiplies, so the program tints
 one grey drawing into several palettes, the way NES games reused a sprite with a
@@ -29,7 +32,7 @@ CELL = 16
 
 def nes_palette():
     """The 64 packed RGB values from palette.lyra's PALETTE table."""
-    with open(os.path.join(HERE, "..", "palette.lyra")) as f:
+    with open(os.path.join(HERE, "..", "nes", "palette.lyra")) as f:
         source = f.read()
     table = source[source.index("const PALETTE"):]
     table = table[table.index("[", table.index("=")) + 1:table.index("]", table.index("="))]
@@ -167,6 +170,39 @@ def slime(half_width, height):
     return cell
 
 
+def ground(grass):
+    """Ground: dirt (0x17) with a fixed speckle (0x07), under a grass top (0x2A/0x1A)."""
+    cell = []
+    for y in range(CELL):
+        for x in range(CELL):
+            if grass and y < 2:
+                cell.append(nes(0x2A))
+            elif grass and y < 4:
+                cell.append(nes(0x1A) if (x + y) % 3 else nes(0x2A))
+            elif (x * 7 + y * 13) % 17 == 0:
+                cell.append(nes(0x07))
+            else:
+                cell.append(nes(0x17))
+    return cell
+
+
+def blobs(circles, fill, shade, outline):
+    """A shape made of overlapping circles: outline at the rim, shade on the lower half."""
+    cell = []
+    for y in range(CELL):
+        for x in range(CELL):
+            d = min(((x - cx) ** 2 + (y - cy) ** 2) / (r * r) for cx, cy, r in circles)
+            if d > 1.0:
+                cell.append(CLEAR)
+            elif d > 0.72:
+                cell.append(nes(outline))
+            elif y > 10:
+                cell.append(nes(shade))
+            else:
+                cell.append(nes(fill))
+    return cell
+
+
 CELLS = [
     from_art(EXPLORER_TOP + EXPLORER_STRIDE, EXPLORER),
     from_art(EXPLORER_TOP + EXPLORER_TOGETHER, EXPLORER),
@@ -177,6 +213,11 @@ CELLS = [
     brick(),
     slime(7.5, 11.0),
     slime(8.0, 8.0),
+    # Background tiles, appended so the sprite indices above keep their places.
+    ground(grass=True),
+    ground(grass=False),
+    blobs([(4.5, 10.0, 4.5), (8.5, 7.0, 5.5), (12.0, 10.5, 4.0)], 0x30, 0x31, 0x21),
+    blobs([(4.0, 14.0, 5.5), (8.5, 11.5, 6.5), (12.5, 14.0, 5.0)], 0x2A, 0x1A, 0x0A),
 ]
 
 

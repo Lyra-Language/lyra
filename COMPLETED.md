@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — a scrolling level on a fixed timestep, and a check that jumped too well
+
+Rung 5 (todo.md): `examples/SDL3/tilemap.lyra`, a 64×15-tile level written as ASCII, a
+camera that follows the explorer and stops at the ends, walk/run/variable-height jump,
+tile collision one axis at a time, coins taken out of the map, and pits that respawn.
+
+- **The update is fixed at 60 Hz and the drawing is not.** `console.lyra`'s clock hands
+  each frame the whole 1/60 s steps real time has paid for (`ticks_ns`: milliseconds would
+  drift a step every few seconds), capped at five so a stall is forgiven rather than caught
+  up. This Mac draws at 120 Hz; `--check` shows 60, 120 and 144 Hz frames all buying 600
+  updates in ten seconds. Under `--shot` it is one step a frame, so screenshots reproduce.
+- **The checks were mutation-tested** — removing the jump cut, the stall cap or the wall
+  push-out each failed exactly its own check.
+- **They still missed the level being unfair.** A scripted run fell into the first pit
+  every time: a brick platform hung 33 px above the jump's start, its underside cut every
+  jump short, and only a frame-perfect jump at the very edge cleared. The pit check added
+  for it first jumped at the very edge — and passed on the broken level. A check of
+  playability has to play like a person, so it now jumps a tile and a half early: it
+  passes on the fixed level and fails on the old one. The platform became a coin arc.
+
+The NES examples and their sibling modules then moved to `examples/SDL3/nes/`, leaving
+`basic.lyra` and the shared `assets/` in `examples/SDL3/`; the sheet generator and the
+examples' beside-the-file asset path follow them.
+
 ### 09/25/26 — NES sound: an APU in Lyra, pushed to SDL
 
 Rung 4 (todo.md): `examples/SDL3/apu.lyra` is the 2A03's two pulse channels, triangle and

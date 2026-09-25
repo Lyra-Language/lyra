@@ -27,7 +27,7 @@ import bindings.sdl3.{
   Window, create_window, destroy_window, WINDOW_RESIZABLE,
   Renderer, create_renderer, destroy_renderer, set_logical_presentation,
   PRESENT_INTEGER_SCALE, set_vsync, set_default_scale_mode, SCALE_NEAREST,
-  present, save_screenshot,
+  present, save_screenshot, ticks_ns,
   Event, KEY_ESCAPE,
 }
 
@@ -143,5 +143,56 @@ let shot_request = () -> Maybe<(string, i64)> => {
   match path {
     Some(p) => Some((p, at)),
     None => None,
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// A fixed 60 Hz timestep
+// ---------------------------------------------------------------------------------------
+
+/// One NES frame, in nanoseconds: the length of every game update, whatever the display
+/// refreshes at.
+pub const STEP_NS: i64 = 16666667
+
+/// At most this many updates per displayed frame. After a stall — a window drag, a
+/// debugger — the game resumes slowed rather than running a second of updates at once,
+/// which is the "spiral of death" a bare accumulator walks into.
+pub const MAX_STEPS: i64 = 5
+
+/// Real time not yet spent on updates, and when it was last measured.
+pub struct Clock {
+  last_ns: i64,
+  owed_ns: i64,
+}
+
+/// A clock starting now, owing nothing.
+pub let start_clock = () -> Clock => Clock { last_ns: i64(ticks_ns()), owed_ns: 0 }
+
+/// How many fixed updates this frame should run.
+///
+/// **Game logic runs at exactly 60 Hz, and the display at whatever it runs at.** On a 120 Hz
+/// screen this answers 1, 0, 1, 0…; on a 144 Hz one a mix that still sums to 60 a second.
+/// Under `--shot` it is always 1, so a saved frame is the same on every machine.
+pub let updates_due = (screen: Screen, clock: mut Clock) -> i64 => {
+  let now = i64(ticks_ns())
+  let (steps, owed) = accrue(clock.owed_ns, now - clock.last_ns)
+  clock.last_ns = now
+  clock.owed_ns = owed
+  match screen.shot {
+    Some(_) => 1,
+    None => steps,
+  }
+}
+
+/// The timestep's arithmetic: given what was owed and the time just elapsed, the updates to
+/// run and what is still owed. Pure, so `--check` can feed it frame times.
+pub let accrue = pure (owed_ns: i64, elapsed_ns: i64) -> (i64, i64) => {
+  let total = owed_ns + elapsed_ns.max(0)
+  let steps = total / STEP_NS
+  if steps > MAX_STEPS {
+    // Drop the backlog: what is owed beyond the cap is forgiven, not deferred.
+    (MAX_STEPS, 0)
+  } else {
+    (steps, total % STEP_NS)
   }
 }
