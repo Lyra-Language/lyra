@@ -35,8 +35,13 @@ are in [`bindings/README.md`](../../bindings/README.md).
 | `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
 | `NULL` | `nullptr` | `...` | `...` (extern only) |
 
-  `_Bool` is `bool`: declared and called as `i1 zeroext`, clang's own spelling
-  (`markBoolCrossings`, `callWithDeclaredAttrs`); refused only inside a callback's signature
+  `_Bool` is `bool`: declared and called as `i1 zeroext`, clang's own spelling. **Every
+  scalar narrower than `int` is extended the same way** — `zeroext` for `bool`/`u8`/`u16`,
+  `signext` for `i8`/`i16`, parameters and return, seen through a newtype, on both the
+  plain and the aggregate-planned path (`markNarrowCrossings`, `callWithDeclaredAttrs`).
+  clang-compiled C trusts the caller to have cleaned the upper bits; without the attribute a
+  *computed* `u8` arrives with garbage above it (a constant hides it). Guard:
+  `TestEmit_NarrowIntegersCrossExtended`. `bool` is refused only inside a callback's signature
   (`lyra-E063`), whose thunk carries no attributes. A borrow modifier is refused.
   `CLong`/`CULong` are `pub type` aliases (not newtypes) so the LLP64 width is a grep target.
 - **C variadics (`...`)** are extern-only (`lyra-E065`); `...` must come last after at least

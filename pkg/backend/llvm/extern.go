@@ -64,23 +64,87 @@ func (l *lowerer) declareExterns(program *ast.Program) error {
 	return nil
 }
 
-// markBoolCrossings gives every `i1` parameter and return of a foreign declaration the
-// `zeroext` attribute — the spelling clang gives C's `_Bool`, so a Lyra `bool` crosses in
-// the register the callee reads. Mirrored at each call by callWithDeclaredAttrs: LLVM reads
+// markNarrowCrossings gives every parameter and return of a foreign declaration narrower
+// than 32 bits the extension attribute clang gives it: `zeroext` for `bool`, `u8` and `u16`,
+// `signext` for `i8` and `i16`. Mirrored at each call by callWithDeclaredAttrs: LLVM reads
 // ABI attributes off the call, not the callee.
-func markBoolCrossings(fn *ir.Func) {
-	for _, p := range fn.Params {
-		if lltypes.Equal(p.Typ, lltypes.I1) {
-			p.Attrs = append(p.Attrs, enum.ParamAttrZeroExt)
-		}
+//
+// **The attribute is the caller's promise that the register's upper bits are clean**, and
+// C code compiled by clang relies on it — Apple's arm64 convention makes the caller extend
+// (AAPCS64 proper does not), and x86-64 compilers have always assumed it. Without it the
+// low byte is right and the rest of the register is whatever the last computation left
+// there: `SDL_SetRenderDrawColor(r, g, b, a)` read a computed `u8` component as, say,
+// 0x3A0000C8, clamped it to 1.0, and drew cyan where the program asked for grey. It links,
+// it runs, and a constant argument hides it, because a freshly materialised constant is
+// already clean.
+//
+// **Signedness comes from the Lyra type**, since `i8` in LLVM says nothing about it — the
+// reason this reads the signature rather than the emitted parameters. A newtype over a
+// narrow integer crosses as its base, so the type is seen through first, from the extern's
+// own module (rule 4).
+//
+// A planned (aggregate-carrying) signature flattens: an `sret` pointer may lead, and an
+// aggregate parameter may become several LLVM parameters. Only a scalar slot is narrow, and
+// a scalar slot is always exactly one parameter.
+func (l *lowerer) markNarrowCrossings(fn *ir.Func, ext *ast.ExternDeclStmt, plan *externPlan) {
+	sig := ext.Signature
+	if sig == nil {
+		return
 	}
-	if lltypes.Equal(fn.Sig.RetType, lltypes.I1) {
+	defer l.enterModuleOf(ext.GetLocation())()
+	next := 0
+	if plan != nil && plan.retIndirect {
+		next = 1
+	}
+	for i, p := range sig.Parameters {
+		width := 1
+		if plan != nil && i < len(plan.params) {
+			width = len(plan.params[i].llTypes)
+		}
+		if width == 1 && next < len(fn.Params) {
+			if zext, sext := l.narrowExtension(p.Type); zext {
+				fn.Params[next].Attrs = append(fn.Params[next].Attrs, enum.ParamAttrZeroExt)
+			} else if sext {
+				fn.Params[next].Attrs = append(fn.Params[next].Attrs, enum.ParamAttrSignExt)
+			}
+		}
+		next += width
+	}
+	if plan != nil && plan.ret.aggregate {
+		return
+	}
+	if zext, sext := l.narrowExtension(sig.ReturnType.Type); zext {
 		fn.ReturnAttrs = append(fn.ReturnAttrs, enum.ReturnAttrZeroExt)
+	} else if sext {
+		fn.ReturnAttrs = append(fn.ReturnAttrs, enum.ReturnAttrSignExt)
 	}
 }
 
+// narrowExtension says how a scalar narrower than C's `int` is widened in a register:
+// zero-extended (`bool`, `u8`, `u16`), sign-extended (`i8`, `i16`), or neither.
+func (l *lowerer) narrowExtension(t types.Type) (zext, sext bool) {
+	for range 64 {
+		stripped := l.stripNewtype(l.resolveShape(l.stripNewtype(t)))
+		if types.TypesEqual(stripped, t) {
+			break
+		}
+		t = stripped
+	}
+	prim, ok := t.(types.PrimitiveType)
+	if !ok {
+		return false, false
+	}
+	switch prim.Name {
+	case "bool", "u8", "u16":
+		return true, false
+	case "i8", "i16":
+		return false, true
+	}
+	return false, false
+}
+
 // callWithDeclaredAttrs emits a call to fn carrying the parameter and return attributes
-// its declaration has — `zeroext` on a `bool` crossing to C, `byval` and `sret` on an
+// its declaration has — `zeroext`/`signext` on a narrow integer or `bool` crossing to C, `byval` and `sret` on an
 // aggregate the ABI passes in memory — so the caller's side of the convention matches the
 // callee's.
 //
@@ -116,8 +180,8 @@ func callWithDeclaredAttrs(block *ir.Block, fn *ir.Func, args []value.Value) *ir
 	}
 	call := block.NewCall(fn, callArgs...)
 	for _, attr := range fn.ReturnAttrs {
-		if attr == enum.ReturnAttrZeroExt {
-			call.ReturnAttrs = append(call.ReturnAttrs, enum.ReturnAttrZeroExt)
+		if attr == enum.ReturnAttrZeroExt || attr == enum.ReturnAttrSignExt {
+			call.ReturnAttrs = append(call.ReturnAttrs, attr)
 		}
 	}
 	return call
@@ -166,8 +230,8 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		if err != nil {
 			return nil, err
 		}
-		markBoolCrossings(declared)
 	}
+	l.markNarrowCrossings(declared, ext, plan)
 	// **Variadic-ness is on the emitted signature, not on the call.** LLVM renders a
 	// variadic declaration as `declare i32 @printf(ptr, ...)` and requires every call to
 	// it to name that signature explicitly — `call i32 (ptr, ...) @printf(…)` — which llir

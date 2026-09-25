@@ -74,3 +74,83 @@ func callLines(ir string) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// **A narrow integer crossing to C is extended, and says how** (09/25): `zeroext` for
+// `u8`/`u16`, `signext` for `i8`/`i16`, on the declaration *and* the call, in both
+// directions — the spelling clang gives the same C prototype.
+//
+// clang-compiled C relies on the caller having cleaned the upper bits (Apple arm64 makes it
+// the caller's job; x86-64 compilers assume it). Without the attribute the low byte is
+// right and the rest of the register is left over: SDL read a computed colour component as
+// a huge value, clamped it, and drew cyan instead of grey. A constant argument hides it,
+// which is why nothing here saw it until a binding passed a computed one.
+//
+// Covers both declaration paths — a plain signature, and one with an aggregate in it,
+// whose parameters are flattened and may be led by an `sret` pointer — and a newtype over
+// a narrow integer, which crosses as its base.
+func TestEmit_NarrowIntegersCrossExtended(t *testing.T) {
+	t.Parallel()
+	const src = `module main
+newtype Channel = u8
+struct Big { a: i64, b: i64, c: i64, d: i64 }
+unsafe extern narrow: (a: u8, b: i8, c: u16, d: i16, e: i32, f: Channel) -> u8
+unsafe extern narrow_signed: () -> i16
+unsafe extern planned: (v: Big, k: u8, n: i8) -> Big
+let main = () -> void => {
+  let x: i64 = 0x123456789
+  let v = unsafe { planned(Big { a: 1, b: 2, c: 3, d: 4 }, u8(x & 255), i8(x & 127)) }
+  let r = unsafe { narrow(u8(x & 255), i8(x & 127), u16(x & 65535), i16(x & 32767), 5, Channel(u8(x & 255))) }
+  println("${r} ${unsafe { narrow_signed() }} ${v.a}")
+}
+`
+	res := driver.Analyze([]byte(src))
+	if res.HasErrors() {
+		t.Fatalf("unexpected analysis errors: %v", res.Diagnostics)
+	}
+	ep, diags := driver.ResolveEntryPoint(res)
+	if ep == nil {
+		t.Fatalf("no entry point: %v", diags)
+	}
+	for _, target := range []abi.Target{abi.AArch64, abi.X86_64SysV} {
+		out, err := NewForTarget(target).Emit(res, ep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ir := string(out)
+		if !plannedCallExtends(ir) {
+			t.Errorf("%s: the planned call lost its extensions:\n%s", target, narrowLines(ir))
+		}
+		for _, want := range []struct{ what, needle string }{
+			{"the plain declaration", "declare zeroext i8 @narrow(i8 zeroext %p.a, i8 signext %p.b, i16 zeroext %p.c, i16 signext %p.d, i32 %p.e, i8 zeroext %p.f)"},
+			{"the plain call", "call zeroext i8 @narrow(i8 zeroext"},
+			{"a signed return", "declare signext i16 @narrow_signed()"},
+			// Past the `sret` pointer and the flattened aggregate: the slot arithmetic.
+			{"the planned declaration", "i8 zeroext %a1_0, i8 signext %a2_0)"},
+		} {
+			if !strings.Contains(ir, want.needle) {
+				t.Errorf("%s: %s lost its extension; wanted a line containing %q:\n%s",
+					target, want.what, want.needle, narrowLines(ir))
+			}
+		}
+	}
+}
+
+// plannedCallExtends reports whether the call to `planned` carries both extensions.
+func plannedCallExtends(ir string) bool {
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.Contains(line, "call void @planned(") {
+			return strings.Contains(line, "i8 zeroext %") && strings.Contains(line, "i8 signext %")
+		}
+	}
+	return false
+}
+
+func narrowLines(ir string) string {
+	var out []string
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.Contains(line, "@narrow") || strings.Contains(line, "@planned") {
+			out = append(out, strings.TrimSpace(line))
+		}
+	}
+	return strings.Join(out, "\n")
+}

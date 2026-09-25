@@ -204,9 +204,7 @@ func (l *lowerer) declareExternWithPlan(symbol string, plan *externPlan) *ir.Fun
 			params = append(params, p)
 		}
 	}
-	fn := l.module.NewFunc(symbol, plan.llRet, params...)
-	markBoolCrossings(fn)
-	return fn
+	return l.module.NewFunc(symbol, plan.llRet, params...)
 }
 
 // lowerExternCall emits a call to a foreign function whose signature carries an aggregate.
