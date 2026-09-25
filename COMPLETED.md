@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — SLIME TRAIL: the game the ladder was for
+
+`examples/SDL3/nes/game.lyra`: a title screen, one seven-screen level, green and red
+slimes that patrol (turning at walls and ledges, waking as they come on screen), stomps,
+three lives, a flagpole, the rung-4 song and five effects. The brief was "a platformer,
+one level, slimes that patrol, reach the end".
+
+- **Built from the rungs, not copied from them.** Tilemap's level, physics and drawing
+  became `level.lyra`; sound's song and sequencer became `music.lyra`, with effects
+  generalised to note lists that borrow a channel; gamepad tracking moved into `pad.lyra`.
+  `tilemap` and `sound` were rebuilt on those modules and verified **byte-identical** — both
+  screenshots including a 190-frame scripted run, a mid-song frame, and the rendered WAV.
+- **Fairness is checked by playing.** Rung 5's lesson applied: an autopilot (run right, jump
+  at slimes, walls and pit edges) must finish without losing a life. It does, in 733 steps,
+  stomping two slimes. Mutations each fail their own check — slimes that ignore ledges,
+  stomps that never count (which also kills the autopilot), and a last pit widened to eight
+  tiles (which it cannot clear).
+- **Two compiler findings**, both workarounds in the game and entries in todo.md: the `mut`
+  exclusivity check refuses two disjoint fields of one variable (`f(s.music, s.chip)`), and
+  `W022` does not count a release made inside a helper.
+
 ### 09/25/26 — a scrolling level on a fixed timestep, and a check that jumped too well
 
 Rung 5 (todo.md): `examples/SDL3/tilemap.lyra`, a 64×15-tile level written as ASCII, a

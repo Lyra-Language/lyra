@@ -1,0 +1,768 @@
+// SLIME TRAIL — a one-level NES-style platformer, and the rung the ladder was for.
+//
+// Run right, reach the flagpole. Slimes patrol the way: green ones slowly, red ones
+// faster, each turning at walls and at ledges rather than walking off them, and each
+// waking only as it comes on screen — as NES enemies did, so a slime is where the level
+// put it when the player first sees it. Land on one to stomp it; touch one any other way,
+// or fall in a pit, and a life is gone. Three lives.
+//
+// **Everything here is a rung's piece put together**: the screen and clock from
+// `console.lyra`, the level, physics and camera from `level.lyra`, the pad (keyboard and
+// gamepad) from `pad.lyra`, the song and effects from `music.lyra` on the APU in
+// `apu.lyra`, the art from `../assets/sprites.png`.
+//
+// Arrows/WASD or D-pad to move, X/A to jump, Z/B to run, Return/Start to start.
+//
+// - `--check` plays the game headlessly: the rules (stomp, side hit, pits, lives, the goal),
+//   slimes keeping to their platforms — and an **autopilot that must finish the level
+//   without losing a life**, which is what says the level is fair, not only that the
+//   physics works.
+// - `--autoplay` lets the autopilot play in the window.
+// - `--shot <file.bmp>` as in `console.lyra` (silent).
+
+import bindings.sdl3.{
+  init,
+  last_error,
+  INIT_AUDIO,
+  Renderer,
+  Rect,
+  rgb,
+  set_draw_color,
+  clear,
+  fill_rect,
+  draw_rect,
+  debug_text,
+  DEBUG_TEXT_SIZE,
+  Texture,
+  destroy_texture,
+  draw_texture,
+  set_texture_color,
+  FLIP_NONE,
+  poll_event,
+  Gamepad,
+  close_gamepad,
+  AudioStream,
+  open_audio,
+  close_audio,
+  put_audio,
+  queued_frames,
+}
+import bindings.sdl3_image.{ load_texture }
+import console.{
+  Screen,
+  open_screen,
+  close_screen,
+  end_frame,
+  wants_quit,
+  start_clock,
+  updates_due,
+  WIDTH
+}
+import pad.{ Buttons, Pad, RELEASED, advance, read_buttons, track_gamepad }
+import level.{
+  Level,
+  Body,
+  parse_level,
+  tile_at,
+  is_solid,
+  explorer_at,
+  steer,
+  move_x,
+  move_y,
+  fell_out,
+  collect_coins,
+  at_goal,
+  camera_x,
+  draw_level,
+  draw_explorer,
+  draw_cell,
+  TILE,
+  GRAVITY,
+  MAX_FALL,
+  JUMP,
+  RED_SLIME,
+}
+import music.{
+  Music,
+  new_music,
+  music_tick,
+  play_effect,
+  stomp,
+  COIN,
+  JUMP as JUMP_SOUND,
+  HURT,
+  FANFARE,
+  GAME_OVER,
+}
+import apu.{ Apu, SILENT, SAMPLE_RATE, TICK_SAMPLES, render }
+import palette.{ nes }
+
+let main = () -> u8 => {
+  if has_flag("--check") { return run_checks() }
+  match open_screen("SLIME TRAIL") {
+    None => 1,
+    Some(screen) => {
+      let code = with_sheet(screen)
+      close_screen(screen)
+      code
+    },
+  }
+}
+
+let with_sheet = (screen: Screen) -> u8 =>
+  match load_texture(screen.renderer, "examples/SDL3/assets/sprites.png") {
+    Some(sheet) => {
+      let code = with_audio(screen, sheet)
+      destroy_texture(sheet)
+      code
+    },
+    None => match load_texture(screen.renderer, "../assets/sprites.png") {
+      Some(sheet) => {
+        let code = with_audio(screen, sheet)
+        destroy_texture(sheet)
+        code
+      },
+      None => {
+        println("could not load assets/sprites.png: ${last_error()}")
+        println("run from the repository root or from examples/SDL3/nes/")
+        1
+      },
+    },
+  }
+
+/// Run with sound, or silently when there is no device or `--shot` wants a reproducible frame.
+let with_audio = (screen: Screen, sheet: Texture) -> u8 => {
+  if has_flag("--shot") || !init(INIT_AUDIO) { return run(screen, sheet, None) }
+  match open_audio(SAMPLE_RATE, 1) {
+    None => {
+      println("no audio device (${last_error()}); playing silently")
+      run(screen, sheet, None)
+    },
+    Some(stream) => {
+      let code = run(screen, sheet, Some(stream))
+      close_audio(stream)
+      code
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The level
+// ---------------------------------------------------------------------------------------
+
+/// Seven screens. `s`/`r` are green and red slimes; `F` and `|` the goal.
+const LEVEL: []string = [
+  "................................................................................................................",
+  "................................................................................................................",
+  ".....cc...............................cc..............................cc............................c...........",
+  "....................ccc...............................................................cc................F.......",
+  ".......................................................c................................................|.......",
+  "........................................................................................................|.......",
+  "........................................................................................................|.......",
+  "........................................................................................................|.......",
+  "............................ooo..............s..........................................................|.......",
+  "......oooo.................#####...........######...oooo.........................................#......|.......",
+  "..................................................................#.............................##......|.......",
+  "......................................r.....................#.....#............................###......|.......",
+  "...b........b..s..............b...=======.....b.............#..b..#...s...b.r.............b...####......#...b...",
+  "======================...=========%%%%%%%===========....========================...=============================",
+  "%%%%%%%%%%%%%%%%%%%%%%...%%%%%%%%%%%%%%%%%%%%%%%%%%%....%%%%%%%%%%%%%%%%%%%%%%%%...%%%%%%%%%%%%%%%%%%%%%%%%%%%%%",
+]
+
+const SPAWN_X: f32 = 34.0
+const SPAWN_Y: f32 = 193.0
+const LIVES: i64 = 3
+
+// ---------------------------------------------------------------------------------------
+// Slimes
+// ---------------------------------------------------------------------------------------
+
+/// A slime's box: the dome's width, and its height at rest, bottom-aligned in the cell.
+const SLIME_W: f32 = 14.0
+const SLIME_H: f32 = 11.0
+const GREEN_SPEED: f32 = 0.5
+const RED_SPEED: f32 = 0.9
+/// How long a stomped slime lies flattened before it is gone.
+const SQUASH_TICKS: i64 = 30
+/// How far above a slime's top the explorer's feet may be for a landing to count as a
+/// stomp. Generous, as NES games were: a stomp that registers as a hit feels like a bug.
+const STOMP_REACH: f32 = 8.0
+const STOMP_BOUNCE: f32 = -4.5
+
+const SLIME_TALL: i64 = 7
+const SLIME_SQUAT: i64 = 8
+
+struct Slime {
+  body: Body,
+  kind: i64,
+  alive: bool,
+  awake: bool,
+  squashed: i64,
+}
+
+let spawn_slimes = pure (level: Level) -> []Slime => {
+  var slimes: []Slime = []
+  for s in level.spawns {
+    let x = f32(s.column) * TILE + 1.0
+    let y = f32(s.row + 1) * TILE - SLIME_H
+    slimes.push(
+      Slime {
+        body: Body {
+          x: x,
+          y: y,
+          w: SLIME_W,
+          h: SLIME_H,
+          vx: 0.0,
+          vy: 0.0,
+          on_ground: true,
+          facing_left: true,
+        },
+        kind: s.kind,
+        alive: true,
+        awake: false,
+        squashed: 0,
+      }
+    )
+  }
+  slimes
+}
+
+/// One step of a slime: wake when it comes on screen, then patrol — turning at a wall, and
+/// at a ledge rather than stepping off it — under gravity like everything else.
+let update_slime = pure (level: Level, slime: Slime, camera: f32) -> Slime => {
+  var s = slime
+  if !s.alive {
+    if s.squashed > 0 { s.squashed -= 1 }
+    return s
+  }
+  if !s.awake && s.body.x < camera + f32(WIDTH) + TILE { s.awake = true }
+  if !s.awake { return s }
+
+  var b = s.body
+  let speed = if s.kind == RED_SLIME { RED_SPEED } else { GREEN_SPEED }
+  b.vx = if b.facing_left { -speed } else { speed }
+  b.vy = (b.vy + GRAVITY).min(MAX_FALL)
+  let moved = move_x(level, b)
+  // Pushed back short of where it was going: that is a wall.
+  if (moved.x - (b.x + b.vx)).abs() > 0.001 { b.facing_left = !b.facing_left }
+  b = Body { moved | facing_left: b.facing_left }
+  b = move_y(level, b)
+  if b.on_ground && ledge_ahead(level, b) { b.facing_left = !b.facing_left }
+  s.body = b
+  if fell_out(level, b) { s.alive = false }
+  s
+}
+
+/// Whether the ground runs out just past the body's leading edge.
+let ledge_ahead = pure (level: Level, b: Body) -> bool => {
+  let front = if b.facing_left { b.x - 1.0 } else { b.x + b.w + 1.0 }
+  let row_below = ((b.y + b.h + 1.0) / TILE).floor()
+  !is_solid(tile_at(level, (front / TILE).floor(), row_below))
+}
+
+// ---------------------------------------------------------------------------------------
+// The game
+// ---------------------------------------------------------------------------------------
+
+/// Which screen the game is on. The payloads count ticks spent there.
+data Mode =
+  | Title
+  | Playing
+  | Dying(i64)
+  | Clear(i64)
+  | Over(i64)
+
+struct Game {
+  mode: Mode,
+  level: Level,
+  player: Body,
+  slimes: []Slime,
+  camera: f32,
+  coins: i64,
+  stomps: i64,
+  lives: i64,
+  steps: i64,
+}
+
+/// The level fresh, with `lives` left, in `mode`.
+let new_game = pure (mode: Mode, lives: i64) -> Game => {
+  let level = parse_level(LEVEL)
+  Game {
+    mode: mode,
+    level: level,
+    player: explorer_at(SPAWN_X, SPAWN_Y),
+    slimes: spawn_slimes(level),
+    camera: 0.0,
+    coins: 0,
+    stomps: 0,
+    lives: lives,
+    steps: 0,
+  }
+}
+
+/// One 1/60 s step of whichever screen the game is on.
+let update = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void => {
+  game.steps += 1
+  match game.mode {
+    Title => {
+      if pad.pressed.start {
+        game = new_game(Playing, LIVES)
+        music = new_music(true)
+      }
+    },
+    Playing => play(game, music, chip, pad),
+    Dying(t) => {
+      // The classic: a hop, then a fall straight through the floor.
+      var p = game.player
+      if t > 20 {
+        p.vy = (p.vy + GRAVITY).min(MAX_FALL)
+        p.y += p.vy
+      }
+      game.player = p
+      if t >= 150 {
+        if game.lives <= 1 {
+          game.mode = Over(0)
+          play_effect(music, chip, GAME_OVER)
+        } else {
+          game = new_game(Playing, game.lives - 1)
+          music = new_music(true)
+        }
+      } else {
+        game.mode = Dying(t + 1)
+      }
+    },
+    Clear(t) => {
+      // Down the pole to its base, as the flag is taken.
+      game.player = move_y(game.level, Body { game.player | vx: 0.0, vy: 2.0 })
+      game.mode = Clear(t + 1)
+      if t > 60 && pad.pressed.start { game = new_game(Title, LIVES) }
+    },
+    Over(t) => {
+      game.mode = Over(t + 1)
+      if t > 200 { game = new_game(Title, LIVES) }
+    },
+  }
+}
+
+/// A step of play: the explorer, the slimes, and what they do to each other.
+let play = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void => {
+  let was_grounded = game.player.on_ground
+  var p = steer(game.player, pad)
+  // `steer` jumps exactly when A is pressed on the ground.
+  if was_grounded && pad.pressed.a { play_effect(music, chip, JUMP_SOUND) }
+  p = move_x(game.level, p)
+  p = move_y(game.level, p)
+  game.player = p
+  let taken = collect_coins(game.level, p)
+  if taken > 0 {
+    game.coins += taken
+    play_effect(music, chip, COIN)
+  }
+  game.camera = camera_x(game.level, p)
+
+  for i in 0..<game.slimes.len() {
+    game.slimes[i] = update_slime(game.level, game.slimes[i], game.camera)
+  }
+
+  if fell_out(game.level, game.player) {
+    die(game, music, chip)
+    return
+  }
+  for i in 0..<game.slimes.len() {
+    let s = game.slimes[i]
+    if s.alive && s.awake && overlaps(game.player, s.body) {
+      if stomps_on(game.player, s.body) {
+        game.slimes[i] = Slime { s | alive: false, squashed: SQUASH_TICKS }
+        game.stomps += 1
+        game.player = Body { game.player | vy: if pad.held.a { JUMP } else { STOMP_BOUNCE } }
+        stomp(music, chip)
+      } else {
+        die(game, music, chip)
+        return
+      }
+    }
+  }
+
+  if at_goal(game.level, game.player) {
+    game.mode = Clear(0)
+    game.player = Body { game.player | vx: 0.0 }
+    music.playing = false
+    play_effect(music, chip, FANFARE)
+  }
+}
+
+let die = (game: mut Game, music: mut Music, chip: mut Apu) -> void => {
+  game.mode = Dying(0)
+  game.player = Body { game.player | vx: 0.0, vy: -5.0 }
+  music.playing = false
+  play_effect(music, chip, HURT)
+}
+
+let overlaps = pure (a: Body, b: Body) -> bool =>
+  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+
+/// A landing from above: falling, with the feet no deeper than [STOMP_REACH] into the top.
+let stomps_on = pure (player: Body, slime: Body) -> bool =>
+  player.vy > 0.0 && player.y + player.h - slime.y <= STOMP_REACH
+
+// ---------------------------------------------------------------------------------------
+// The autopilot
+// ---------------------------------------------------------------------------------------
+
+/// What a simple player would hold: run right, and jump — a full jump — at a slime ahead
+/// on the same footing, at a wall or step ahead, or at the edge of a pit. The level is
+/// built so this is enough, which is the claim `--check` tests.
+let autopilot = pure (game: Game) -> Buttons => {
+  let p = game.player
+  let front = p.x + p.w
+  let feet = p.y + p.h
+  var slime_ahead = false
+  for s in game.slimes {
+    let gap = s.body.x - front
+    let level_with = (s.body.y + s.body.h - feet).abs() < 8.0
+    if s.alive && s.awake && gap >= 0.0 && gap < 40.0 && level_with { slime_ahead = true }
+  }
+  let ahead = ((front + 6.0) / TILE).floor()
+  let wall_ahead = is_solid(tile_at(game.level, ahead, ((feet - 4.0) / TILE).floor()))
+  let pit_ahead = !is_solid(tile_at(game.level, ahead, ((feet + 1.0) / TILE).floor()))
+  let jump = p.on_ground && (slime_ahead || wall_ahead || pit_ahead)
+  Buttons {
+    up: false,
+    down: false,
+    left: false,
+    right: true,
+    b: true,
+    a: jump || (!p.on_ground && p.vy < 0.0),
+    select: false,
+    start: game.mode == Title,
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The window
+// ---------------------------------------------------------------------------------------
+
+/// Three ticks of audio queued ahead: 50 ms.
+const AHEAD_TICKS: i64 = 3
+
+let run = (screen: Screen, sheet: Texture, audio: Maybe<AudioStream>) -> u8 => {
+  let autoplay = has_flag("--autoplay")
+  var game = new_game(Title, LIVES)
+  var music = new_music(false)
+  var chip = SILENT
+  var gamepad: Maybe<Gamepad> = None
+  var clock = start_clock()
+  var previous = RELEASED
+  var frame: i64 = 0
+  var status: u8 = 0
+  var running = true
+
+  for running {
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        Some(event) => {
+          if wants_quit(event) { running = false }
+          gamepad = track_gamepad(gamepad, event)
+        },
+      }
+    }
+
+    let due = updates_due(screen, clock)
+    for _ in 0..<due {
+      let now = if autoplay { autopilot(game) } else { read_buttons(gamepad) }
+      update(game, music, chip, advance(previous, now))
+      previous = now
+    }
+
+    match audio {
+      Some(stream) => {
+        for queued_frames(stream) < AHEAD_TICKS * TICK_SAMPLES {
+          var chunk: []f32 = []
+          music_tick(music, chip)
+          render(chip, chunk, TICK_SAMPLES)
+          put_audio(stream, chunk)
+        }
+      },
+      // Silent: keep the sequencer in step with the game anyway, one tick an update.
+      None => {
+        for _ in 0..<due { music_tick(music, chip) }
+      },
+    }
+
+    draw(screen.renderer, sheet, game)
+    match end_frame(screen, frame) {
+      Stop(code) => {
+        status = code
+        running = false
+      },
+      Continue => {},
+    }
+    frame += 1
+  }
+  match gamepad {
+    Some(pad) => close_gamepad(pad),
+    None => {},
+  }
+  status
+}
+
+let draw = (r: Renderer, sheet: Texture, game: Game) -> void => {
+  match game.mode {
+    Over(_) => {
+      set_draw_color(r, nes(0x0F))
+      clear(r)
+      set_draw_color(r, nes(0x30))
+      centred(r, 112.0, "GAME OVER")
+      return
+    },
+    _ => {},
+  }
+
+  set_draw_color(r, nes(0x21))
+  clear(r)
+  draw_level(r, sheet, game.level, game.camera, game.steps)
+  draw_slimes(r, sheet, game)
+  draw_explorer(r, sheet, game.player, game.camera, game.steps)
+
+  set_draw_color(r, nes(0x0F))
+  debug_text(r, 8.0, 8.0, "COINS ${game.coins}")
+  debug_text(r, 96.0, 8.0, "SLIMES ${game.stomps}")
+  debug_text(r, 192.0, 8.0, "LIVES ${game.lives}")
+
+  match game.mode {
+    Title => panel(r, "SLIME TRAIL", "PUSH START", game.steps, true),
+    Clear(t) => panel(
+      r,
+      "COURSE CLEAR!",
+      "COINS ${game.coins}  SLIMES ${game.stomps}",
+      game.steps,
+      t > 60
+    ),
+    _ => {},
+  }
+}
+
+/// Slimes, tinted from the one grey drawing: bouncing between two frames while awake,
+/// flattened for a moment when stomped.
+let draw_slimes = (r: Renderer, sheet: Texture, game: Game) -> void => {
+  for s in game.slimes {
+    let x = s.body.x - 1.0 - game.camera
+    let bottom = s.body.y + s.body.h
+    if s.alive || s.squashed > 0 {
+      set_texture_color(sheet, nes(if s.kind == RED_SLIME { 0x16 } else { 0x2A }))
+      if !s.alive {
+        // Squashed: the squat frame drawn at half height.
+        let source = Rect { x: f32(SLIME_SQUAT) * TILE, y: 0.0, w: TILE, h: TILE }
+        draw_texture(r, sheet, source, Rect { x: x, y: bottom - 8.0, w: TILE, h: 8.0 })
+      } else {
+        let squat = s.awake && (game.steps / 12) % 2 == 1
+        draw_cell(
+          r,
+          sheet,
+          if squat { SLIME_SQUAT } else { SLIME_TALL },
+          x,
+          bottom - TILE,
+          FLIP_NONE
+        )
+      }
+    }
+  }
+  set_texture_color(sheet, rgb(255, 255, 255))
+}
+
+/// A box in the middle of the screen with a title and a line under it; the line blinks
+/// when `blink` is set, as a "push start" does.
+let panel = (
+  r: Renderer,
+  title: string,
+  line: string,
+  steps: i64,
+  blink: bool
+) -> void => {
+  set_draw_color(r, nes(0x0F))
+  fill_rect(r, Rect { x: 32.0, y: 72.0, w: 192.0, h: 64.0 })
+  set_draw_color(r, nes(0x30))
+  draw_rect(r, Rect { x: 34.0, y: 74.0, w: 188.0, h: 60.0 })
+  centred(r, 88.0, title)
+  if !blink || (steps / 30) % 2 == 0 {
+    set_draw_color(r, nes(0x28))
+    centred(r, 112.0, line)
+  }
+}
+
+let centred = (r: Renderer, y: f32, text: string) -> void => {
+  debug_text(r, (f32(WIDTH) - f32(text.len()) * DEBUG_TEXT_SIZE) / 2.0, y, text)
+}
+
+// ---------------------------------------------------------------------------------------
+// --check
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  var rectangular = true
+  for row in LEVEL {
+    if row.len() != LEVEL[0].len() { rectangular = false }
+  }
+  let level = parse_level(LEVEL)
+  failures += check_that("the level is rectangular", rectangular && level.rows == 15)
+  failures += check_that("the level has a goal", level.goal == 104)
+  failures += check_that("the level has five slimes", spawn_slimes(level).len() == 5)
+
+  // Start leaves the title for the level.
+  var titled = new_game(Title, LIVES)
+  var music = new_music(false)
+  var chip = SILENT
+  update(titled, music, chip, advance(RELEASED, Buttons { RELEASED | start: true }))
+  failures += check_that("start begins play", titled.mode == Playing)
+
+  // A slime on a floating platform keeps to it: ten seconds of patrol, never off the bricks.
+  var patrol = new_game(Playing, LIVES)
+  var high = 0
+  for i in 0..<patrol.slimes.len() {
+    if patrol.slimes[i].body.y < patrol.slimes[high].body.y { high = i }
+  }
+  var stayed = true
+  for _ in 0..<600 {
+    patrol.slimes[high] = update_slime(patrol.level, patrol.slimes[high], 600.0)
+    let b = patrol.slimes[high].body
+    if b.x < 43.0 * TILE - 1.0 || b.x + b.w > 49.0 * TILE + 1.0 || !patrol.slimes[high].alive {
+      stayed = false
+    }
+  }
+  failures += check_that(
+    "a platform slime turns at both ledges",
+    stayed && patrol.slimes[high].awake
+  )
+
+  // Landing on a slime stomps it and bounces; walking into one costs a life.
+  var stomping = new_game(Playing, LIVES)
+  let target = stomping.slimes[0].body
+  stomping.slimes[0] = Slime { stomping.slimes[0] | awake: true }
+  stomping.player = Body {
+    stomping.player | x: target.x,
+    y: target.y - 20.0,
+    vy: 2.0,
+    on_ground: false
+  }
+  run_steps(stomping, music, chip, RELEASED, 3)
+  failures += check_that(
+    "a landing stomps",
+    !stomping.slimes[0].alive && stomping.stomps == 1 && stomping.mode == Playing
+  )
+
+  var bumped = new_game(Playing, LIVES)
+  let slime = bumped.slimes[0].body
+  bumped.slimes[0] = Slime { bumped.slimes[0] | awake: true }
+  bumped.player = Body {
+    bumped.player | x: slime.x - 14.0,
+    y: slime.y + slime.h - 15.0,
+    on_ground: true
+  }
+  run_steps(bumped, music, chip, Buttons { RELEASED | right: true }, 10)
+  failures += check_that("walking into a slime is fatal", is_dying(bumped.mode))
+
+  // A pit is fatal too, and the third loss ends the game.
+  var falling = new_game(Playing, 1)
+  falling.player = Body { falling.player | x: 23.0 * TILE, y: 190.0 }
+  run_steps(falling, music, chip, RELEASED, 400)
+  failures += check_that(
+    "the last life lost is game over",
+    is_over(falling.mode) || is_title(falling.mode)
+  )
+
+  var retry = new_game(Playing, 3)
+  retry.player = Body { retry.player | x: 23.0 * TILE, y: 190.0 }
+  run_steps(retry, music, chip, RELEASED, 250)
+  failures += check_that(
+    "a life lost restarts the level",
+    retry.mode == Playing && retry.lives == 2
+  )
+
+  // The whole level, played by the autopilot: it must reach the flag with no life lost.
+  var auto = new_game(Title, LIVES)
+  var auto_music = new_music(false)
+  var auto_chip = SILENT
+  var previous = RELEASED
+  var died = false
+  var steps = 0
+  for steps < 60 * 120 && !is_clear(auto.mode) {
+    let now = autopilot(auto)
+    update(auto, auto_music, auto_chip, advance(previous, now))
+    previous = now
+    if is_dying(auto.mode) { died = true }
+    steps += 1
+  }
+  failures += check_that(
+    "the autopilot clears the level without dying (${steps} steps, x ${auto.player.x})",
+    is_clear(auto.mode) && !died
+  )
+  failures += check_that(
+    "and stomps or passes slimes, collecting coins on the way",
+    auto.coins > 0
+  )
+  run_steps(auto, auto_music, auto_chip, RELEASED, 120)
+  failures += check_that("then slides down the pole to its base", auto.player.on_ground)
+
+  if failures == 0 {
+    println("all checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+let run_steps = (
+  game: mut Game,
+  music: mut Music,
+  chip: mut Apu,
+  held: Buttons,
+  count: i64
+) -> void => {
+  var previous = RELEASED
+  for _ in 0..<count {
+    update(game, music, chip, advance(previous, held))
+    previous = held
+  }
+}
+
+let is_dying = pure (mode: Mode) -> bool => match mode {
+  Dying(_) => true,
+  _ => false,
+}
+
+let is_clear = pure (mode: Mode) -> bool => match mode {
+  Clear(_) => true,
+  _ => false,
+}
+
+let is_over = pure (mode: Mode) -> bool => match mode {
+  Over(_) => true,
+  _ => false,
+}
+
+let is_title = pure (mode: Mode) -> bool => match mode {
+  Title => true,
+  _ => false,
+}
+
+let check_that = (what: string, ok: bool) -> i64 => {
+  if ok {
+    0
+  } else {
+    println("FAIL: ${what}")
+    1
+  }
+}
+
+let has_flag = (name: string) -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == name { found = true }
+  }
+  found
+}

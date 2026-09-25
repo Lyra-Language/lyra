@@ -66,7 +66,12 @@ the pad logic headlessly); `sound.lyra` (a four-channel loop, coin and explosion
 that borrow a channel, meters and an oscilloscope; `--check` tests the APU, `--wav <file>`
 renders the song); `tilemap.lyra` (a four-screen level scrolled by a camera, walk/run/jump
 with tile collision one axis at a time, coins taken from the map, pits; `--check` tests the
-timestep, the physics and that the first pit forgives ordinary timing). Sibling modules:
+timestep, the physics and that the first pit forgives ordinary timing); and **`game.lyra`,
+SLIME TRAIL** — the ladder's goal: title, one seven-screen level, patrolling slimes (green
+slow, red fast; they turn at walls and ledges and wake as they come on screen), stomps,
+three lives, a flagpole, music and effects. `--check` plays it, including an **autopilot
+that must clear the level without losing a life**; `--autoplay` lets it play in the window.
+`tilemap` and `sound` are built on the same modules as the game. Sibling modules:
 - `console.lyra` — `open_screen`/`close_screen` (init video+gamepad, window, 256×240
   integer-scaled renderer, vsync, nearest sampling), `end_frame` (the `--shot` logic, then
   present; answers `Continue`/`Stop(code)`), `wants_quit`, and the **fixed 60 Hz timestep**:
@@ -76,7 +81,14 @@ timestep, the physics and that the first pit forgives ordinary timing). Sibling 
   are by value, so a loop-owning callback could not update the example's `var`s.
 - `pad.lyra` — the NES pad: `Buttons` (8 bools), `advance(previous, now) -> Pad` (`held` and
   one-frame `pressed`, pure), `read_buttons(Maybe<Gamepad>)` merging keyboard and pad,
-  opposite directions cancelled. Mapping table in its module doc.
+  opposite directions cancelled, and `track_gamepad(current, event)` — the first pad added is
+  opened, closed when it is the one removed. Mapping table in its module doc.
+- `level.lyra` — ASCII levels (`s`/`r` slime spawns, `|`/`F` goal), `Body` with its own box,
+  `steer` (the explorer's controls), `move_x`/`move_y` (collision one axis at a time),
+  coins, `at_goal`, camera, and drawing the level and explorer.
+- `music.lyra` — the song, `music_tick`, and effects as note lists (`Effect`) that borrow the
+  second pulse channel (or, via `play_noise`, the noise) for their length; melody and bass
+  are never interrupted.
 - `palette.lyra` — the NES 2C02 palette as `nes(index)`.
 - `apu.lyra` — the 2A03's pulse ×2, triangle (32 steps, freezes when silenced) and noise
   (15-bit LFSR, long/short mode, NTSC period table), nesdev's linear mixer and a ~28 Hz
@@ -84,7 +96,8 @@ timestep, the physics and that the first pit forgives ordinary timing). Sibling 
   envelopes and music — so tempo follows the audio clock, not the display's refresh.
 `examples/SDL3/assets/sprites.png` is committed and made by `assets/generate.py` (standard
 library only; reads the palette from `nes/palette.lyra`; 16×16 cells, ≤3 colours each). Cells 9–12 are
-background tiles (ground, dirt, cloud, bush), **appended** so earlier indices never move. Examples find
+background tiles (ground, dirt, cloud, bush), 13–14 the goal pole, **appended** so earlier
+indices never move. Examples find
 `assets/` from the repo root or, as `../assets/`, from beside themselves in `nes/`. Every graphical example takes **`--shot <file.bmp>`** (and optionally `--at <frame>`):
 draw to frame 20 (or `--at`), save it, exit — how an example is checked without anyone
 watching (run in the foreground; `sips -s format png` to view).

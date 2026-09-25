@@ -539,6 +539,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
   (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
   would be the natural companion.
+- **[OPEN] A helper that releases is not a release.** `W022` counts only a direct call to
+  the named function, so `release_gamepad(maybe)` (a wrapper matching and calling
+  `close_gamepad`) left its caller warned; `game.lyra` inlines the match instead. An
+  attribute on the helper (`@releases`) or inference through a one-call body would do it.
 - **[PARTIAL] SDL3 bindings, driven by examples, towards an NES-style game.** One example
   per rung, binding only what it uses (`bindings/README.md`). Art is PNG via **SDL3_image**
   (`bindings/sdl3_image.lyra`). The rungs live in `examples/SDL3/nes/`.
@@ -551,7 +555,7 @@ neither way of writing an **optional child** works. `shared` on a plain field is
      **Done 09/25.**
   5. `tilemap.lyra` — scrolling tile background, camera, fixed 60 Hz timestep.
      **Done 09/25.** Keyboard only: gamepad tracking belongs in `pad.lyra` before the game.
-  6. The game.
+  6. `game.lyra` — SLIME TRAIL: one level, patrolling slimes, reach the flag. **Done 09/25.**
 - **[OPEN] raylib gaps:** `SetShaderValue*` uniforms (a `const void *` no Lyra pointer
   reaches); `LoadMaterials` (needs pointer reinterpretation to reach `MemFree`);
   `LoadTextureCubemap`; `ExportImageToMemory` (returns size 0).
@@ -646,6 +650,9 @@ annotations.
 
 - **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
   returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
+- **[OPEN] Disjoint fields count as one `mut` borrow.** `f(s.music, s.chip)` with both
+  parameters `mut` is refused — the exclusivity check keys on the variable, not the path —
+  where Rust accepts disjoint field borrows. `game.lyra` passes two variables instead (09/25).
 - **[DEFERRED] (c) Exclusivity (`mut` XOR alias)** until the job system or resizable
   interior borrows force it. Leaning toward statement-scoped projections over a static
   container freeze.

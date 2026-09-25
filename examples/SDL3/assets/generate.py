@@ -12,7 +12,8 @@ copy of it. Hard edges only: the program samples with nearest-neighbour, so anti
 would only show up as smudges.
 
 Cells 9–12 are background tiles for `tilemap.lyra`: grass-topped ground, dirt, a cloud and
-a bush — appended, so every earlier index is unchanged.
+a bush; 13–14 the goal's pole and flag-topped pole for `game.lyra`. Always appended, so
+every earlier index is unchanged.
 
 The slime is drawn in greys on purpose. SDL's colour mod multiplies, so the program tints
 one grey drawing into several palettes, the way NES games reused a sprite with a
@@ -203,6 +204,30 @@ def blobs(circles, fill, shade, outline):
     return cell
 
 
+def flag_width(y):
+    """The pennant's width on row y: seven pixels at its middle row (9), tapering to a
+    point at rows 5 and 13."""
+    return 7 - abs(y - 9) * 7 // 4
+
+
+def pole(top):
+    """The goal: a white pole (0x30, shaded 0x10). The top cell adds a green ball (0x2A)
+    and the flag (0x2A, edged 0x1A) flying to the left."""
+    cell = []
+    for y in range(CELL):
+        for x in range(CELL):
+            if top and (x - 7.5) ** 2 + (y - 2.5) ** 2 <= 5.5:
+                cell.append(nes(0x2A))
+            elif x in (7, 8) and (not top or y >= 4):
+                cell.append(nes(0x30) if x == 7 else nes(0x10))
+            elif top and 5 <= y <= 13 and 7 - flag_width(y) <= x < 7:
+                edge = x == 7 - flag_width(y)
+                cell.append(nes(0x1A) if edge else nes(0x2A))
+            else:
+                cell.append(CLEAR)
+    return cell
+
+
 CELLS = [
     from_art(EXPLORER_TOP + EXPLORER_STRIDE, EXPLORER),
     from_art(EXPLORER_TOP + EXPLORER_TOGETHER, EXPLORER),
@@ -218,6 +243,9 @@ CELLS = [
     ground(grass=False),
     blobs([(4.5, 10.0, 4.5), (8.5, 7.0, 5.5), (12.0, 10.5, 4.0)], 0x30, 0x31, 0x21),
     blobs([(4.0, 14.0, 5.5), (8.5, 11.5, 6.5), (12.5, 14.0, 5.0)], 0x2A, 0x1A, 0x0A),
+    # The goal, for `game.lyra`.
+    pole(top=False),
+    pole(top=True),
 ]
 
 
