@@ -9,6 +9,55 @@ Newest first.
 
 ## Dated log
 
+### 09/24/26 — every position that stores a value now checks the flavor
+
+The other six. `lyra-E018` covered two of the nine positions a value can be stored into;
+it covers all nine now, in both spellings, and the interesting part is why it took more
+than a predicate.
+
+**The shape was one sentence.** A value built by a plain construction and bound to a name
+is `Unspecified`, not `Stack`. `firstAllocationMismatch` fires only when both sides are
+concrete, so it exempted the *common* spelling at every site, and 09/23's
+`checkArgumentAllocation` covered that exempted pair for arguments alone. Everything else
+inherited the exemption with no counterpart: annotated init, a reassignment, an interior
+write, a struct literal's field, a data constructor's payload, an array element, a tuple
+element.
+
+**But the rule is about where the value came from, not what its type is.**
+`let s: shared Node = Node { … }` is legal and `= n` is not, for the same `Node` type
+either way — a construction has no flavor of its own and takes the slot's. A type carries
+no record of which it was, so the check walks the *expression*: per element for a container
+literal (`[Node { … }]` is fine, `[n]` is not), per branch for an `if`/`match` (a value
+every branch of which is built in place is built in place — the same reading
+`isSyntacticLiteral` gives the newtype rule), and stopping at a construction.
+
+The first attempt did compare types, and the suite caught it immediately: four tests and
+the repo check went red on legal code. That is the cheap version of this mistake.
+
+**The case that taught the distinction was the bootstrap's own AST.**
+`pattern: IdentifierPattern(Identifier { … })` into a `pattern: shared Pattern` field —
+and the collector builds an applied constructor as a **named tuple literal**, so that one
+node means two things: an anonymous tuple, whose elements are each a storing site, and a
+constructor applied, which is built here. Reading it only the first way refused
+`examples/collector`. It has a test of its own now, because a mutation of the walk showed
+the distinction was otherwise untested: the payload test I had written put the `shared` on
+the payload rather than on the slot, which exercises a different branch.
+
+Two positions needed the *concrete* check as well — a struct field and a payload called
+neither, so writing `stack` out was as silent there as leaving it off. Both call
+`checkAllocationCompat` and `checkStoredFlavor` now, and CLAUDE.md's single-answers table
+says a new storing position owes both.
+
+One structural walk, not two: `firstAllocationMismatch` took a rule parameter rather than
+gaining a copy, since a second recursion over array, tuple and anonymous-struct elements is
+how the element cases come to disagree (hazard 8).
+
+**A separate bug came out of checking for false positives**, and is in todo.md: a
+`[]shared T` and a `[]T` in the same function segfault at scope exit, with both arrays
+built and printed correctly first. Either alone is fine. Pre-existing — reproduced on the
+commit before this one — and found only because the program is *legal*, which is what the
+false-positive pass was looking for.
+
 ### 09/24/26 — the borrowed argument, refused for both spellings
 
 `lyrac check` exited 0, the build succeeded, and the binary died with SIGSEGV:

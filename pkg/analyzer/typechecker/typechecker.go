@@ -1659,7 +1659,17 @@ func (tc *TypeChecker) checkStorable(
 		}
 		return false
 	}
-	return tc.checkAllocationCompat(valueType, target, loc, subject)
+	if !tc.checkAllocationCompat(valueType, target, loc, subject) {
+		return false
+	}
+	// **And the pair that check exempts.** It treats "one side Unspecified" as polymorphic,
+	// which is true of a value written in place and false of one already materialised —
+	// and by now `propagateExpectedType` has stamped the former with the target's flavor,
+	// so re-reading the value's settled type tells the two apart. Every storing site funnels
+	// through here, so this is one call rather than five (annotated init, a reassignment,
+	// an interior write, a struct literal's field).
+	tc.checkStoredFlavor(subject, value, valueType, target, loc)
+	return true
 }
 
 // checkAssignedValue infers value and verifies it can be stored in a binding of
@@ -4575,11 +4585,21 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 						// narrowed there, and a concrete declared payload is narrowed here.
 						// Same subject, same position — after the narrowing, before assignability.
 						tc.checkLiteralRange(name, elem, expected)
-						if actual := tc.inferExprType(elem); actual != nil && !tc.assignableValue(elem, actual, expected) {
+						actual := tc.inferExprType(elem)
+						if actual != nil && !tc.assignableValue(elem, actual, expected) {
 							tc.addError(elem.GetLocation(), SeverityError,
 								"%s: cannot assign %s to %s", name, actual, expected)
 							continue
 						}
+						// **And the flavor**, both pairs of it — the concrete one and the
+						// one that check exempts. This position had neither, so a plain
+						// value in a `shared` payload (`Wrap(n)`) was recorded below as
+						// the declared type and failed in the backend. It is the same
+						// omission, in the same order, that the comment above records for
+						// the literal's width: the list of positions that check is the
+						// place to look when one of them does not.
+						tc.checkAllocationCompat(actual, expected, elem.GetLocation(), name)
+						tc.checkStoredFlavor(name, elem, actual, expected, elem.GetLocation())
 						tc.typeTable.Set(elem, expected)
 						continue
 					}
@@ -5178,6 +5198,19 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 			// did, which is hazard 8's exact shape (a list of aggregate forms with
 			// one missing) in the walk whose header warns about it.
 			tc.checkLiteralRange(expr.Name+"."+name, f.Value, expected)
+			// **Before the Set below, which is what hid this.** Recording the declared
+			// field type as the value's effective type is right for a width and wrong for
+			// a flavor: it makes a plain binding stored into a `shared` field *read back*
+			// as shared, so every later reader — including any check that consults the
+			// table — agrees with a store the backend cannot do. Re-reading here catches
+			// the construction that propagation just stamped and nothing else.
+			// Both pairs, as the data-constructor payload does: this position called
+			// neither check, so a `stack`-annotated value in a `shared` field was as
+			// silent as an unannotated one.
+			tc.checkAllocationCompat(actual, expected, f.Value.GetLocation(),
+				expr.Name+"."+name)
+			tc.checkStoredFlavor(
+				expr.Name+"."+name, f.Value, actual, expected, f.Value.GetLocation())
 			tc.typeTable.Set(f.Value, expected)
 		}
 	}

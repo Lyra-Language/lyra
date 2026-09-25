@@ -171,6 +171,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | what a value holds inline | `ownership.eachComponent` |
    | retain or release what a value owns | `emitOwnedValue` (`backend/llvm/owned_walk.go`) |
    | push a context type onto a value (width + `shared` flavor) | `propagateExpectedType` |
+   | does storing this value here cross the flavor boundary? | `checkAllocationCompat` (both sides written) **and** `checkStoredFlavor` (one side unwritten) — a new storing position needs both, and the second walks the expression |
    | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
    | is this CST node a comment? | `cst.IsComment` |
    | declare a libc function the runtime calls | `declareLibc` / `declareLibcVariadic` — **never `module.NewFunc`**, which a program's `extern` of the same name collides with |

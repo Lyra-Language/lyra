@@ -199,6 +199,169 @@ func TestAlloc_BorrowedParamFlavorMismatch_Unwritten(t *testing.T) {
 		"peek: argument 1 (n): a `shared Node` parameter takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it in the argument")
 }
 
+// The positions below are the rest of **"every place a value can be stored"**, checked
+// together because they were fixed together and for one reason: `checkAllocationCompat`
+// exempts the pair where one side is Unspecified, which is the common spelling — a value
+// built by a plain construction and bound to a name carries no flavor at all. Each of
+// these accepted it and failed in the backend, two of them past the point rule 5 stops at
+// (invalid IR, reported by clang rather than by lyrac).
+//
+// Each has a twin below it that must stay **legal**: the same slot filled by a value
+// *constructed in place*, which genuinely has no flavor of its own and takes the slot's.
+// That pairing is the whole rule, and a check written against the type alone cannot make
+// it — `Node { … }` and `n` have the same type and only one of them can be stored.
+
+func TestAlloc_AnnotatedInitFromBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let n = Node { value: 1 }
+		let s: shared Node = n
+	`, false)
+	assertErrorsAre(t, res,
+		"s: a `shared` slot takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it here")
+}
+
+func TestAlloc_AnnotatedInitFromConstruction_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let s: shared Node = Node { value: 1 }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestAlloc_ArrayElementFromBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let n = Node { value: 1 }
+		let xs: []shared Node = [n]
+	`, false)
+	assertErrorsAre(t, res,
+		"xs: a `shared` slot takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it here")
+}
+
+func TestAlloc_ArrayElementFromConstruction_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let xs: []shared Node = [Node { value: 1 }, Node { value: 2 }]
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestAlloc_TupleElementFromBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let n = Node { value: 1 }
+		let pair: (shared Node, i64) = (n, 2)
+	`, false)
+	assertErrorsAre(t, res,
+		"pair: a `shared` slot takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it here")
+}
+
+func TestAlloc_TupleElementFromConstruction_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let pair: (shared Node, i64) = (Node { value: 1 }, 2)
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestAlloc_StructFieldFromBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		struct Holder { inner: shared Node }
+		let n = Node { value: 1 }
+		let h = Holder { inner: n }
+	`, false)
+	assertErrorsAre(t, res,
+		"Holder.inner: a `shared` slot takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it here")
+}
+
+func TestAlloc_StructFieldFromConstruction_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		struct Holder { inner: shared Node }
+		let h = Holder { inner: Node { value: 1 } }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestAlloc_DataPayloadFromBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		data Holder = Wrap(shared Node)
+		let n = Node { value: 1 }
+		let w = Wrap(n)
+	`, false)
+	assertErrorsAre(t, res,
+		"Wrap: a `shared` slot takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it here")
+}
+
+// TestAlloc_DataPayloadFromConstruction_Ok is the case the bootstrap's own AST is built
+// out of: `IdentifierPattern(Identifier { … })` into a `shared Pattern` field. The
+// collector builds an applied constructor as a *named tuple literal*, so the walk has to
+// know that node means two things — an anonymous tuple, whose elements are each a storing
+// site, and a constructor applied, which is built here. Reading it the first way refused
+// `examples/collector`, which is how the distinction got written down.
+func TestAlloc_DataPayloadFromConstruction_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		data Holder = Wrap(shared Node)
+		let w = Wrap(Node { value: 1 })
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// TestAlloc_AppliedConstructorIntoSharedSlot_Ok is the shape above with the *slot* shared
+// rather than the payload — `pattern: IdentifierPattern(…)` into a `pattern: shared
+// Pattern` field, which is `examples/collector/collect.lyra` line for line. It is the case
+// that tells the two readings of a named tuple literal apart: as an anonymous tuple this
+// would recurse into elements and refuse, and as a constructor applied it is built here.
+// Without it the distinction has no test, which a mutation of the walk showed.
+func TestAlloc_AppliedConstructorIntoSharedSlot_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		data Pattern = Named(string) | Any
+		struct Parameter { pattern: shared Pattern }
+		let p = Parameter { pattern: Named("x") }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestAlloc_InteriorWriteFromBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		struct Holder { inner: shared Node }
+		var h = Holder { inner: Node { value: 1 } }
+		let n = Node { value: 2 }
+		h.inner = n
+	`, false)
+	assertErrorsAre(t, res,
+		"a `shared` slot takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it here")
+}
+
+// TestAlloc_BranchesAreCheckedPerBranch_Ok pins the recursion an `if` gets: a value every
+// branch of which is built in place is built in place, the same reading isSyntacticLiteral
+// gives the newtype rule. One branch holding a binding makes the whole value one, which is
+// its error twin.
+func TestAlloc_BranchesAreCheckedPerBranch_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let c = true
+		let s: shared Node = if c { Node { value: 1 } } else { Node { value: 2 } }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestAlloc_BranchHoldingABinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node { value: i64 }
+		let c = true
+		let n = Node { value: 1 }
+		let s: shared Node = if c { Node { value: 2 } } else { n }
+	`, false)
+	assertErrorsAre(t, res,
+		"s: a `shared` slot takes a `shared` value, and this one is not — bind it `shared` where it is built, or construct it here")
+}
+
 // TestAlloc_OwnedReturnFlavorMismatch_Error verifies E018 in return position: an
 // owned (bare) return transfers the value to the caller, so a `stack` body value
 // returned as `shared` crosses the boundary.

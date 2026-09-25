@@ -739,30 +739,61 @@ func isAssignable(from, to types.Type) bool {
 // lets the diagnostic name the actual flavors that clashed, even several levels
 // down.
 func firstAllocationMismatch(from, to types.Type) (types.AllocationModifier, types.AllocationModifier, bool) {
+	return firstFlavorMismatch(from, to, concreteFlavors)
+}
+
+// flavorRule picks which pair of flavors a walk is looking for. The two are disjoint and
+// the recursion is identical, so they are one function: a second copy of a structural walk
+// is how the element cases come to disagree (CLAUDE.md hazard 8).
+type flavorRule int
+
+const (
+	// concreteFlavors: both sides written and different — the rule above.
+	concreteFlavors flavorRule = iota
+	// polymorphicFlavors: different with exactly one side Unspecified. Compatible by the
+	// rule above, and a real crossing once the value has been materialised; see
+	// polymorphicFlavorCrossing.
+	polymorphicFlavors
+)
+
+func flavorsClash(fromA, toA types.AllocationModifier, rule flavorRule) bool {
+	if fromA == toA {
+		return false
+	}
+	oneUnspecified := fromA == types.Unspecified || toA == types.Unspecified
+	if rule == polymorphicFlavors {
+		return oneUnspecified
+	}
+	return !oneUnspecified
+}
+
+func firstFlavorMismatch(
+	from, to types.Type, rule flavorRule,
+) (types.AllocationModifier, types.AllocationModifier, bool) {
 	fromA := types.AllocationOf(from)
 	toA := types.AllocationOf(to)
-	if fromA != types.Unspecified && toA != types.Unspecified && fromA != toA {
+	if flavorsClash(fromA, toA, rule) {
 		return fromA, toA, true
 	}
 	switch f := from.(type) {
 	case types.StaticArrayType:
 		switch t := to.(type) {
 		case types.StaticArrayType:
-			return elementAllocationMismatch(f.ElementType, t.ElementType)
+			return elementFlavorMismatch(f.ElementType, t.ElementType, rule)
 		case types.DynamicArrayType:
-			return elementAllocationMismatch(f.ElementType, t.ElementType)
+			return elementFlavorMismatch(f.ElementType, t.ElementType, rule)
 		}
 	case types.DynamicArrayType:
 		switch t := to.(type) {
 		case types.DynamicArrayType:
-			return elementAllocationMismatch(f.ElementType, t.ElementType)
+			return elementFlavorMismatch(f.ElementType, t.ElementType, rule)
 		case types.StaticArrayType:
-			return elementAllocationMismatch(f.ElementType, t.ElementType)
+			return elementFlavorMismatch(f.ElementType, t.ElementType, rule)
 		}
 	case types.TupleType:
 		if t, ok := to.(types.TupleType); ok && len(f.Elements) == len(t.Elements) {
 			for i := range f.Elements {
-				if fa, ta, ok := firstAllocationMismatch(f.Elements[i], t.Elements[i]); ok {
+				if fa, ta, ok := firstFlavorMismatch(f.Elements[i], t.Elements[i], rule); ok {
 					return fa, ta, true
 				}
 			}
@@ -777,7 +808,7 @@ func firstAllocationMismatch(from, to types.Type) (types.AllocationModifier, typ
 					if ff.Name != tf.Name {
 						continue
 					}
-					if fa, ta, ok := firstAllocationMismatch(ff.Type, tf.Type); ok {
+					if fa, ta, ok := firstFlavorMismatch(ff.Type, tf.Type, rule); ok {
 						return fa, ta, true
 					}
 					break
@@ -788,13 +819,15 @@ func firstAllocationMismatch(from, to types.Type) (types.AllocationModifier, typ
 	return "", "", false
 }
 
-// elementAllocationMismatch recurses into a pair of container element types,
+// elementFlavorMismatch recurses into a pair of container element types,
 // guarding the nil element that an empty array literal ([]) carries.
-func elementAllocationMismatch(from, to types.Type) (types.AllocationModifier, types.AllocationModifier, bool) {
+func elementFlavorMismatch(
+	from, to types.Type, rule flavorRule,
+) (types.AllocationModifier, types.AllocationModifier, bool) {
 	if from == nil || to == nil {
 		return "", "", false
 	}
-	return firstAllocationMismatch(from, to)
+	return firstFlavorMismatch(from, to, rule)
 }
 
 // paramOwnsArgument reports whether passing an argument to a parameter with this
@@ -1062,6 +1095,190 @@ func isUntypedIntType(t types.Type) bool {
 	return ok && (p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt)
 }
 
+// polymorphicFlavorCrossing reports whether storing a value of valueType into a slot of
+// targetType crosses the flavor boundary in **exactly the pair `firstAllocationMismatch`
+// exempts** — the two flavors differ and one of them is Unspecified.
+//
+// That pair is the one every caller of `checkAllocationCompat` is blind to, and the
+// exemption is right where it was written: a *binding* genuinely inherits, and a value
+// written in place genuinely has no flavor of its own. What makes it wrong at a storing
+// site is that by the time this runs the expected type has already been pushed
+// (`propagateExpectedType`), so a construction has *taken* the target's flavor and is no
+// longer Unspecified. Whatever is still Unspecified here is a value that was already
+// materialised — a binding, a call's result — and storing it across the boundary is the
+// case that miscompiles.
+//
+// A target mentioning a type variable is exempt, since a generic really is polymorphic:
+// the instantiation binds the flavor.
+func polymorphicFlavorCrossing(
+	valueType, targetType types.Type,
+) (types.AllocationModifier, types.AllocationModifier, bool) {
+	if valueType == nil || targetType == nil || !mentionsNoTypeVar(targetType) {
+		return types.Unspecified, types.Unspecified, false
+	}
+	// Structural, for the reason firstAllocationMismatch is: a `[]shared Node` slot and a
+	// `[]Node` value agree at the top level, both arrays being Unspecified, and clash one
+	// level down. The array element and the tuple element were the two positions left
+	// reaching the backend after the storing sites were covered, and both are this.
+	return firstFlavorMismatch(valueType, targetType, polymorphicFlavors)
+}
+
+// checkStoredFlavor reports the same crossing as checkArgumentAllocation at a **storing**
+// site — an annotated binding, a reassignment, an interior write, a struct literal's field,
+// an array or tuple element. Those positions call `checkAllocationCompat`, which exempts
+// this pair, so until 09/24 each of them accepted a materialised plain value into a
+// `shared` slot and failed in the backend: `aggregate element type mismatch` at best, and
+// out of clang rather than out of `lyrac` for an annotated binding.
+//
+// **It walks the expression, not only the type**, because the rule is about where the value
+// came from. `let s: shared Node = Node { … }` is legal — a construction has no flavor of
+// its own and takes the slot's — and `let s: shared Node = n` is not, for the same `Node`
+// type either way. A type carries no record of which it was, so the two are told apart by
+// the syntax: a construction is built here, and anything else was materialised elsewhere.
+//
+// That is also why this is not one call to a type-pair predicate. `[Node { … }]` into a
+// `[]shared Node` is legal and `[n]` is not, so a container literal is checked **per
+// element** against the slot's element type, and an `if`/`match`/block is checked per
+// branch — the same recursion `isSyntacticLiteral` does for the newtype rule, and for the
+// same reason: a value every branch of which is built in place is built in place.
+func (tc *TypeChecker) checkStoredFlavor(
+	subject string, value ast.Expression, valueType, target types.Type, loc ast.Location,
+) {
+	if value == nil || target == nil || !mentionsNoTypeVar(target) {
+		return
+	}
+	switch e := value.(type) {
+	case *ast.ArrayLiteralExpr:
+		if elem, ok := targetElementType(target); ok {
+			for _, el := range e.Elements {
+				tc.checkStoredFlavorOfElement(subject, el, elem)
+			}
+			return
+		}
+	case *ast.ArrayRepeatExpr:
+		if elem, ok := targetElementType(target); ok {
+			tc.checkStoredFlavorOfElement(subject, e.Value, elem)
+			return
+		}
+	case *ast.TupleLiteralExpr:
+		// Two constructs under one node. Against a tuple *type* this is an anonymous
+		// tuple written here, so its elements are each a storing site: `(n, 2)` into a
+		// `(shared Node, i64)` is the crossing, one level down.
+		if t, ok := target.(types.TupleType); ok && len(t.Elements) == len(e.Elements) {
+			for i, el := range e.Elements {
+				tc.checkStoredFlavorOfElement(subject, el, t.Elements[i])
+			}
+			return
+		}
+		// Otherwise it is a **constructor applied** — `Some(x)`, and
+		// `IdentifierPattern(Identifier { … })` in the bootstrap's own AST, which the
+		// collector builds as a named tuple literal. Built here, so it takes the slot's
+		// flavor; its payload is checked against the constructor's declared type on the
+		// constructor path, which is where the declared type is known.
+		return
+	case *ast.StructInstanceExpr, *ast.AnonymousStructInstanceExpr:
+		// Built here, and its fields were checked against their declared types on the
+		// struct literal's own path.
+		return
+	case *ast.DataConstructorExpr:
+		// Also built here — `IdentifierPattern(Identifier { … })` into a `shared Pattern`
+		// field is the bootstrap's own AST, and legal. Its **payload** is a storing site
+		// of its own, though, so `Wrap(n)` where `n` was materialised elsewhere is the
+		// crossing this walk is looking for, one level down.
+		if e.Value != nil {
+			if payload, ok := constructorPayloadType(tc, e); ok {
+				tc.checkStoredFlavorOfElement(subject, e.Value, payload)
+			}
+		}
+		return
+	case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
+		if branches := valueBranches(value); len(branches) > 0 {
+			for _, b := range branches {
+				tc.checkStoredFlavorOfElement(subject, b, target)
+			}
+			return
+		}
+	}
+	tc.reportStoredFlavor(subject, valueType, target, loc)
+}
+
+// checkStoredFlavorOfElement re-enters the walk for a value written inside another one,
+// reading the type the table recorded for it. Its own location, so a diagnostic points at
+// the element rather than at the literal holding it.
+func (tc *TypeChecker) checkStoredFlavorOfElement(
+	subject string, value ast.Expression, target types.Type,
+) {
+	elemType, ok := tc.typeTable.Get(value)
+	if !ok {
+		return
+	}
+	tc.checkStoredFlavor(subject, value, elemType, target, value.GetLocation())
+}
+
+// constructorPayloadType answers the type a data constructor's payload slot declares, for
+// the one question this file asks of it: whether the slot is `shared`. It reads the
+// constructor's declaration rather than the value, since the value is what is being judged.
+func constructorPayloadType(tc *TypeChecker, e *ast.DataConstructorExpr) (types.Type, bool) {
+	dt, ok := tc.findDataTypeByConstructor(e.Constructor, e.GetLocation())
+	if !ok {
+		return nil, false
+	}
+	for _, ctor := range dt.Constructors {
+		if ctor.Name != e.Constructor {
+			continue
+		}
+		// One unpacked payload only. A packed list (`Rect(i64, i64)`) puts a tuple in
+		// Params[0] that is not the payload's own type, and a payload mentioning a type
+		// variable is a generic the instantiation gives a flavor to — neither is a
+		// question this can answer, and answering it wrongly would refuse working code.
+		if ctor.Packed || len(ctor.Params) != 1 || !mentionsNoTypeVar(ctor.Params[0]) {
+			return nil, false
+		}
+		return ctor.Params[0], true
+	}
+	return nil, false
+}
+
+// targetElementType answers the element type of either array flavor, and false for a
+// target that is not an array — a `[N]T` and a `[]T` are one case here, as they are
+// throughout the flavor rules.
+func targetElementType(target types.Type) (types.Type, bool) {
+	switch t := target.(type) {
+	case types.DynamicArrayType:
+		return t.ElementType, t.ElementType != nil
+	case types.StaticArrayType:
+		return t.ElementType, t.ElementType != nil
+	}
+	return nil, false
+}
+
+// reportStoredFlavor is the leaf of that walk: a value that was materialised elsewhere,
+// compared against the slot structurally.
+func (tc *TypeChecker) reportStoredFlavor(
+	subject string, valueType, target types.Type, loc ast.Location,
+) {
+	from, to, crossing := polymorphicFlavorCrossing(valueType, target)
+	if !crossing {
+		return
+	}
+	prefix := ""
+	if subject != "" {
+		prefix = subject + ": "
+	}
+	switch {
+	case to == types.Shared:
+		tc.addErrorCode(loc, SeverityError, diag.CodeAllocationMismatch,
+			"%sa `shared` slot takes a `shared` value, and this one is not — "+
+				"bind it `shared` where it is built, or construct it here",
+			prefix)
+	case from == types.Shared:
+		tc.addErrorCode(loc, SeverityError, diag.CodeAllocationMismatch,
+			"%sthis is a `shared` value and the slot takes a plain one — "+
+				"declare the slot `shared`, or read the value out of the box first",
+			prefix)
+	}
+}
+
 // checkArgumentAllocation reports passing a value across the `shared`/stack boundary at a
 // call, which the backend cannot do and did not refuse: until 09/23 it emitted a read of
 // the wrong shape either way round. A `shared` argument in a plain parameter trapped
@@ -1079,19 +1296,8 @@ func isUntypedIntType(t types.Type) bool {
 // it to. Firing here would refuse every generic function called with a `shared` value,
 // which is most of the prelude's combinator layer.
 func (tc *TypeChecker) checkArgumentAllocation(subject string, arg ast.Expression, argType, paramType types.Type) {
-	if argType == nil || paramType == nil || !mentionsNoTypeVar(paramType) {
-		return
-	}
-	from, to := types.AllocationOf(argType), types.AllocationOf(paramType)
-	if from == to {
-		return
-	}
-	// **Exactly the pair firstAllocationMismatch exempts.** Two concrete, differing
-	// flavors are checkAllocationCompat's to report — which the call site now runs for
-	// every parameter, owning or borrowing, not only the owning ones — and reporting them
-	// here as well would say one mistake twice. What is left is the case it calls
-	// polymorphic, one side Unspecified, which has no other check.
-	if from != types.Unspecified && to != types.Unspecified {
+	from, to, crossing := polymorphicFlavorCrossing(argType, paramType)
+	if !crossing {
 		return
 	}
 	switch {

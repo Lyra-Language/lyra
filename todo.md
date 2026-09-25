@@ -208,11 +208,13 @@ Package management, versioning and separate compilation are out of scope by deci
   field privacy forces and drags names like `day` into the bare scope. (COMPLETED.md, 09/22.)
 
 
-### Allocation flavor — `lyra-E018` covers three positions of nine (09/24)
+### Allocation flavor — `lyra-E018` covers all nine positions (09/24)
 
 Found while writing LANGUAGE.md's new **Allocation flavor** section, by running the same
 stack→`shared` crossing through every position that can hold a value. One was silently
-wrong and is fixed; **six still reach the backend** rather than being reported.
+wrong, six reached the backend, and all of them report now. Kept as a record of the shape,
+since the next position added — a `with` binding, a comprehension clause — will inherit the
+same exemption unless it goes through `checkStoredFlavor`.
 
 - **[FIXED 09/24] A `stack`-annotated argument into a `shared` parameter segfaulted,
   silently.** The 09/23 borrowed-argument fix added `checkArgumentAllocation`, which fires
@@ -226,36 +228,49 @@ wrong and is fixed; **six still reach the backend** rather than being reported.
   the value *through the parameter's representation*, so "references it in place" was
   never true of a function compiled once. (COMPLETED.md, 09/24.)
 
-- **[OPEN] Six positions report nothing and fail in the backend** with `aggregate element
-  type mismatch`, which is rule 5 working and rule 14 not: loud, but with no location, no
-  code and no fix named. With an `Unspecified` source — again the common spelling — that is
-  **annotated init, a data constructor payload, a struct literal's field value, an array
-  element, a tuple element, a reassignment and an interior write**. With an explicit
-  `stack` source all but two of those are reported, which leaves **a data payload and a
-  struct field value uncovered in both spellings**:
+- **[FIXED 09/24] Six positions reported nothing and failed in the backend** with
+  `aggregate element type mismatch` — rule 5 working and rule 14 not — and two of them
+  emitted **invalid IR**, reported by clang rather than by `lyrac`. Annotated init, a data
+  constructor payload, a struct literal's field value, an array element, a tuple element,
+  a reassignment and an interior write. **All nine positions report now, in both
+  spellings** (`checkStoredFlavor`).
+
+  The shape behind it was one sentence, and the fix followed it: a value built by a plain
+  construction and bound to a name is `Unspecified`, not `Stack`, so
+  `firstAllocationMismatch` — which fires only when both sides are concrete — exempted the
+  common spelling everywhere, and `checkArgumentAllocation` covered that exempted pair for
+  arguments alone.
+
+  What made it more than one predicate: the rule is about **where the value came from**,
+  not what its type is. `let s: shared Node = Node { … }` is legal and `= n` is not, for
+  the same `Node` either way, so the check walks the expression — per element for a
+  container literal, per branch for an `if`/`match`, and stopping at a construction. The
+  case that taught it was `examples/collector`: the collector builds an applied
+  constructor as a *named tuple literal*, so that one node means both "an anonymous tuple,
+  whose elements are each a storing site" and "a constructor applied, which is built
+  here". Reading it only the first way refused the bootstrap's own AST.
+  (COMPLETED.md, 09/24.)
+
+### A `[]shared T` and a `[]T` in one function segfault (09/24)
+
+- **[OPEN]** Pre-existing — reproduced on the commit before the E018 work, which only adds
+  diagnostics. Both arrays are built correctly and printed correctly; the crash is at
+  scope exit, so it looks like the release walk taking one decision for two array types
+  that differ only in their element's flavor.
 
   ```lyra
   struct Node { value: i64 }
-  data Holder = Wrap(shared Node)
   let main = () -> u8 => {
-    let n = Node { value: 1 }
-    let w = Wrap(n)                          // no diagnostic; dies in the backend
+    let xs: []shared Node = [Node { value: 1 }]
+    let ys = [Node { value: 8 }]
+    println("${xs[0].value} ${ys[0].value}")   // prints "1 8", then SIGSEGV
     0
   }
   ```
 
-  Two of the six are worse than a clean backend error. `let s: shared Node = p` emits
-  **invalid IR** — `invalid cast opcode for cast from '%Node' to 'ptr'` out of clang, not
-  out of `lyrac` — which is past the point rule 5 is meant to stop at. Note the direction:
-  the reverse, `let p: Node = s`, unboxes correctly and runs, so binding inheritance works
-  one way and silently does not work the other.
-
-  The shape behind all of it: `firstAllocationMismatch` "fires only when both sides are
-  concrete and differ", and a value built by a plain construction and bound to a name is
-  `Unspecified`, not `Stack`. `checkArgumentAllocation` was written to cover exactly that
-  exempted pair — for arguments. Every other position inherited the exemption and has no
-  counterpart. The fix is likely one predicate the checked positions share rather than
-  seven more call sites.
+  Either array alone is fine, as is a `shared` *binding* or a `shared` tuple beside a
+  plain array — it takes two arrays. Found while checking the E018 fix for false
+  positives: the program is legal, which is what made it worth keeping.
 
 ### Recursive types — two bugs the bootstrap's AST walked into (09/22)
 

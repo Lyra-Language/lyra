@@ -135,7 +135,9 @@ Everything else follows from that:
   writes `shared Expr`, `shared Pattern` and `shared TypeNode` everywhere for that reason,
   and the uniformity was forced by E018 rather than chosen.
 
-**Not every position reports the crossing yet** — see `todo.md`, "Allocation flavor".
+Every position that stores a value reports the crossing — an annotated binding, a
+reassignment, an interior write, an argument, a return, a struct field, a data
+constructor's payload, an array element, a tuple element.
 
 ---
 
