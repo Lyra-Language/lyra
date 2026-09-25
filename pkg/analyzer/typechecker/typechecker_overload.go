@@ -169,7 +169,9 @@ func (tc *TypeChecker) receiverFallback(name string, recvType types.Type, call *
 	case 0:
 		return nil, false
 	case 1:
-		tc.noteUFCSModule(matches[0], loc)
+		// The callee's own span: this path runs *after* the desugaring, so
+		// `call.Function` is the synthesized identifier the walk will meet.
+		tc.noteUFCSModule(matches[0], loc, call.Function.GetLocation())
 		return matches[0], true
 	}
 	if local := tc.localCandidate(matches, loc); local != nil {

@@ -75,7 +75,7 @@ func (tc *TypeChecker) ufcsCandidate(objType types.Type, methodName string, memb
 			methodName, methodName, exprText(member.Object), rest)
 		return nil, ufcsRefused
 	}
-	tc.noteUFCSModule(fn, loc)
+	tc.noteUFCSModule(fn, loc, member.Property.GetLocation())
 	tc.noteResolvedCallee(call, fn)
 	return fn, ufcsMatch
 }
@@ -322,7 +322,7 @@ func (tc *TypeChecker) modulesOf(matches []*ast.LambdaExpr) string {
 // so the unused-import check does not advise deleting the import that permitted it.
 // Only a cross-module call is recorded: a file's own module and the prelude are reachable
 // with no import, so neither can be the reason one exists.
-func (tc *TypeChecker) noteUFCSModule(fn *ast.LambdaExpr, loc ast.Location) {
+func (tc *TypeChecker) noteUFCSModule(fn *ast.LambdaExpr, loc, calleeLoc ast.Location) {
 	callee := tc.symTable.ModuleOfFile[fn.GetLocation().File]
 	if callee == "" || callee == tc.symTable.ModuleOfFile[loc.File] || callee == tc.symTable.PreludeModule {
 		return
@@ -334,6 +334,22 @@ func (tc *TypeChecker) noteUFCSModule(fn *ast.LambdaExpr, loc ast.Location) {
 		tc.ufcsModules[loc.File] = map[string]bool{}
 	}
 	tc.ufcsModules[loc.File][callee] = true
+	// **And where the call was written**, which is a different question the same fact
+	// answers. The module note above keeps the import alive; this says the *name* in the
+	// import list did no work, because a method call finds it without one. The two have to
+	// be separate: `import lib` is needed and `import lib.{ f }` lists a name that is not.
+	//
+	// A location rather than a name, because by the time the unused-import check walks the
+	// tree a UFCS callee *is* an ordinary identifier — `desugarUFCSCall` synthesized it at
+	// the method name's own position — and a name alone could not tell it from a bare use
+	// of the same name elsewhere in the file. The span is what distinguishes them.
+	if tc.ufcsCallees == nil {
+		tc.ufcsCallees = map[string]map[ast.Location]bool{}
+	}
+	if tc.ufcsCallees[loc.File] == nil {
+		tc.ufcsCallees[loc.File] = map[ast.Location]bool{}
+	}
+	tc.ufcsCallees[loc.File][calleeLoc] = true
 }
 
 // receiverIsGeneric reports whether a `self` parameter's declared type mentions a type

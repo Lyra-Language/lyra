@@ -28,7 +28,12 @@ func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic 
 	// name is not one — and immediate once type positions were, since `std.math`'s impl
 	// methods take `self: Complex<t>` and every unused `import std.math.{ Complex }`
 	// stopped warning.
-	refsByFile := collectRefsByFile(program)
+	// Two scans of the same tree, differing in one thing: whether a callee a UFCS call
+	// synthesized counts as a reference. `refsByFile` says "is this name used at all",
+	// which is what keeps the existing warning honest; `writtenByFile` says "is it used in
+	// a way the import list enabled", which is what the new one asks.
+	refsByFile := collectRefsByFile(program, nil)
+	writtenByFile := collectRefsByFile(program, used.Callees)
 
 	var warnings []diag.Diagnostic
 	for _, node := range program.Statements {
@@ -39,9 +44,18 @@ func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic 
 		loc := stmt.GetLocation()
 		refs := refsByFile[loc.File]
 		// A module this file called into method-style is used, whatever its name does or
-		// does not appear in the source. Checked before the name-based tests below, which
-		// cannot see such a use at all.
-		if used.Modules[loc.File][modulePath(stmt)] {
+		// does not appear in the source — the name-based tests below cannot see such a
+		// use at all.
+		//
+		// **It exempts the statement, not its members.** This skipped the whole import
+		// until 09/25, which was right for the question then being asked ("is this import
+		// needed?") and hid two others: a member that is genuinely unused sitting beside
+		// one that is used method-style, and a member that is *only* used method-style and
+		// so needs no listing. Both are reported below, and both are only sayable because
+		// the module-level use is known — "drop the name, keep the import" is advice that
+		// depends on the import staying.
+		usedAsModule := used.Modules[loc.File][modulePath(stmt)]
+		if usedAsModule && len(stmt.Members) == 0 {
 			continue
 		}
 		dispatched := used.Names[loc.File]
@@ -72,7 +86,34 @@ func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic 
 						Message:  fmt.Sprintf("imported name %q is never used", effective),
 						Tags:     []diag.Tag{diag.TagUnnecessary},
 					})
+					continue
 				}
+				// **Used, but not through the import.** Every reference to this name is a
+				// callee a method call synthesized, and a method call does not require the
+				// name in the list (09/22) — so the module import alone would compile, and
+				// the name is doing no work.
+				//
+				// Silent when another imported module exports it, because there the list
+				// is load-bearing: it is what breaks the tie, and deleting the name turns
+				// a working call into "receiver.f is ambiguous". The guard is deliberately
+				// coarse — any other exporter at all, not just one whose receiver would
+				// clash — since a warning that advises a change the compiler then refuses
+				// is worse than one not shown.
+				if !usedAsModule || writtenByFile[loc.File][effective] ||
+					ambiguousElsewhere(used, stmt, m.Name) {
+					continue
+				}
+				warnings = append(warnings, diag.Diagnostic{
+					Location: m.Location,
+					Severity: diag.SeverityWarning,
+					Code:     diag.CodeUnusedImport,
+					Message: fmt.Sprintf(
+						"imported name %q is only ever called method-style, which needs no "+
+							"import of the name — `import %s` alone is enough. Drop it from "+
+							"the list, or write a call that uses it (`%s(receiver, …)`)",
+						effective, modulePath(stmt), effective),
+					Tags: []diag.Tag{diag.TagUnnecessary},
+				})
 			}
 
 		case stmt.Alias != "":
@@ -128,6 +169,30 @@ type ImportUse struct {
 	Modules map[string]map[string]bool
 	// Names maps a file to the *declared* names of traits it reached by dispatch.
 	Names map[string]map[string]bool
+	// Callees maps a file to the spans of the callees a UFCS call synthesized, so a
+	// reference made *only* that way can be told from a bare one. See UFCSCallees.
+	Callees map[string]map[ast.Location]bool
+	// Exports answers which modules export a name, for the ambiguity guard below. Nil is
+	// fine: the guard then stays silent, which is the safe direction.
+	Exports func(name string) []string
+}
+
+// ambiguousElsewhere reports whether another module also exports name, in which case the
+// import list is what chooses between them and the name must stay.
+//
+// Answers true when it cannot tell — a nil `Exports` is a caller with no symbol table, and
+// silence is the safe direction for advice to delete something.
+func ambiguousElsewhere(used ImportUse, stmt *ast.ImportStmt, name string) bool {
+	if used.Exports == nil {
+		return true
+	}
+	own := modulePath(stmt)
+	for _, module := range used.Exports(name) {
+		if module != own {
+			return true
+		}
+	}
+	return false
 }
 
 // modulePath renders an import's dotted module path ("util.math"), the form the
@@ -155,14 +220,17 @@ func modulePath(stmt *ast.ImportStmt) string {
 // counts as a reference, so an import can only ever be reported unused when the name
 // genuinely appears nowhere — a false *absence* is a warning nobody can act on correctly,
 // while a false presence is only a warning not shown.
-func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
+func collectRefsByFile(
+	program *ast.Program, skip map[string]map[ast.Location]bool,
+) map[string]map[string]bool {
 	byFile := make(map[string]map[string]bool)
 	for _, node := range program.Statements {
 		stmt, ok := node.(ast.Statement)
 		if !ok {
 			continue
 		}
-		file := stmt.GetLocation().File
+		loc := stmt.GetLocation()
+		file := loc.File
 		refs, seen := byFile[file]
 		if !seen {
 			refs = make(map[string]bool)
@@ -233,7 +301,13 @@ func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
 			}
 			switch ex := e.(type) {
 			case *ast.IdentifierExpr:
-				refs[ex.Name] = true
+				// A callee a UFCS call synthesized is not a *written* reference to the
+				// name: `x.f()` wrote `f` after a dot, which finds the function whether
+				// or not the import lists it. Skipping it here is what lets the member
+				// loop below tell "used" from "used in a way the import did not enable".
+				if !skip[loc.File][ex.GetLocation()] {
+					refs[ex.Name] = true
+				}
 			case *ast.StructInstanceExpr:
 				refs[ex.Name] = true
 			case *ast.LambdaExpr:

@@ -215,6 +215,66 @@ Package management, versioning and separate compilation are out of scope by deci
     both in one walk, and doing the same here before the AST is checked would mean two
     unverified things at once.
 
+- **[DECIDED, not built] Qualified type names — `ast.Program` in a type position.**
+
+  **The gap.** A plain `import lib` binds a namespace that works for values and not for
+  types: `nums.twice(1)` resolves, `(p: nums.Pt)` is a *syntax* error before it is anything
+  else. So a module whose surface is mostly types has no namespace form, and every name has
+  to be listed — `examples/collector/collect.lyra` imports **60** names from `ast`. UFCS
+  already took the pressure off *functions* (that file's treesitter import is down to
+  `{ Node }`); types are what is left.
+
+  This is the alternative to a wildcard import, and the reason to prefer it: a wildcard
+  removes information the compiler uses. The import list **breaks UFCS ties** (the decision
+  below), and `lyra-W004` now reports a name that only a method call reaches — both go
+  silent under `import ast.{ * }`, and a collision arrives from a module nobody read. A
+  qualified name adds a spelling and takes nothing away: it binds no bare name, so it
+  cannot shadow, cannot collide, and never breaks a tie.
+
+  **Syntax.** `<namespace>.<Name>` wherever a type name may be *written* — parameter,
+  return, local annotation, struct field, `type` alias, generic argument, constructor
+  payload, `impl` target. The namespace is the one an `import` bound (its last path
+  component, or its alias), **not** an arbitrary dotted path: an import is what makes a
+  module reachable, and `std.temporal.PlainDate` from a file that imports neither would
+  resolve a module nobody asked for.
+
+  **Resolution is the value form's, which already exists.** `visibilityIn(module, name)`
+  and `LookupTypeIn` are the `In` forms written for exactly this question, and privacy
+  stays structural — a private type in another module is still "not yours", not "unknown".
+  `checkWrittenTypeNames` asks "was this name admitted?"; for a qualified reference it asks
+  "is that module imported?" instead.
+
+  **The grammar's trap.** `user_defined_type_name` is one token reused for declarations
+  *and* references through `alias` — `struct_name`, `data_type_name`, `tuple_type_name`,
+  `constrained_type_name` are all it. A qualified form must be admitted only where a type
+  is **referenced**; admitting it at a declaration would parse `struct a.B { … }`. It also
+  has to sit wherever `include/types/allocation.js` admits a type name, or `shared ast.Expr`
+  will not parse.
+
+  **Keep `Name` bare in the AST.** `types.UnresolvedType` carries the name the printer
+  prints, and 245 goldens print it; the module belongs beside it (as `TypeRefs` already
+  carries a key) rather than inside it. That keeps the golden files, the bootstrap's
+  differential test and `pkg/docgen`'s signature round-trip unaffected except where they
+  should be.
+
+  **Work, in the order the cross-project rule forces:**
+  1. `tree-sitter-lyra`: the new rule, at reference positions only. Pushed **before** the
+     dependent `lyra` change, and `parser.c` regenerated with it.
+  2. Collector: `parseType`'s new case; `TypeRefs` records the module.
+  3. Typechecker: resolve through the named module; `checkWrittenTypeNames` asks the
+     import question for a qualified ref.
+  4. `pkg/docgen`: signatures are re-rendered in source syntax and round-trip through the
+     parser (there is a guard test), so the qualified form has to render.
+  5. `lyrafmt`: leaf-driven, so likely free — wants a round-trip case, since a hidden token
+     between two leaves is the shape that has bitten it before.
+  6. **Both editors' queries**: `tree-sitter-lyra/queries/highlights.scm` and
+     `lyra-zed-ext/languages/lyra/highlights.scm` are deliberate siblings with different
+     capture names, and a new node kind wants both.
+  7. The bootstrap's `collect_type`, which the differential test will demand.
+
+  **Open:** whether a bare `import lib.{ Name }` should then warn when the qualified form
+  is used everywhere — probably not; the two spellings are a choice, as they are for values.
+
 - **[DECIDED] A method call does not require the method's name in the import; the list
   breaks ties instead.** Gating was measured against this repo — 44 call sites, 13 files,
   mostly accessors on types with no public fields — and rejected: it taxes what the lack of
@@ -294,6 +354,29 @@ same exemption unless it goes through `checkStoredFlavor`.
   than "no tooltip". Fixed where the hole was: the desugaring records
   `lambdaSignature(fn)`. **The spelling the standard library is documented in was the one
   without a signature in the editor.**
+
+### A name used only method-style is now reported (09/25)
+
+- **[FIXED 09/25] `lyra-W004` gained the case the 09/22 decision created.** A method call
+  does not require the method's name in the import list, so `import lib.{ f }` beside
+  nothing but `x.f()` lists a name doing no work — `import lib` alone compiles. It said
+  nothing, because by the time the check walks the tree a UFCS callee *is* an ordinary
+  identifier: `desugarUFCSCall` synthesized it at the method name's position, so a name
+  alone cannot tell it from a bare use. The typechecker records the callee's **span**
+  (`UFCSCallees`), and the check scans twice — once counting every reference, once
+  counting only written ones.
+- **The guard is the interesting half.** The list is what breaks a tie between two modules
+  exporting the same method name, so dropping the name turns a working call into
+  `receiver.f is ambiguous`. A second exporter silences the warning, deliberately coarsely
+  — any other exporter, not just one whose receiver would clash — since advice the
+  compiler then refuses is worse than advice not given.
+- **It also unhid a case that was never reachable**: the module-level UFCS note used to
+  exempt the whole import statement, so a genuinely unused member sitting beside a
+  method-used one was silent. It exempts the statement now, not its members.
+- Fires on about a dozen files across `std`, `bindings` and `examples`, each a real
+  redundant name — `std/io.lyra`'s `import std.path.{ parent }` beside only
+  `path.parent()`, verified to compile as `import std.path`. **Open:** whether to act on
+  them, which is a repo-wide edit and a judgement call about how the library reads.
 
 ### `module a.b` carried no location (09/25)
 

@@ -88,10 +88,11 @@ type TypeChecker struct {
 	// front by checkNewtypeCycles. Resolution refuses to hand one back, which is what
 	// makes every newtype-stripping walk in the compiler terminate — see that function.
 	circularNewtypes map[string]bool
-	ufcsModules      map[string]map[string]bool // file -> modules it reached through a UFCS call; see UFCSModules
-	defaultedCtors   map[ast.Expression]bool    // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
-	provisionalStamp bool                       // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
-	enclosingGen     *generatorContext          // the `gen` body being checked, nil outside one; see checkYieldExpr
+	ufcsModules      map[string]map[string]bool       // file -> modules it reached through a UFCS call; see UFCSModules
+	ufcsCallees      map[string]map[ast.Location]bool // file -> spans of UFCS callees; see UFCSCallees
+	defaultedCtors   map[ast.Expression]bool          // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
+	provisionalStamp bool                             // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
+	enclosingGen     *generatorContext                // the `gen` body being checked, nil outside one; see checkYieldExpr
 	// overflowReported guards checkLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
@@ -154,6 +155,19 @@ func (tc *TypeChecker) MethodTable() *typetable.MethodTable {
 // happens, so it is where the fact has to come from.
 func (tc *TypeChecker) UFCSModules() map[string]map[string]bool {
 	return tc.ufcsModules
+}
+
+// UFCSCallees reports, per file, the **spans** of the callees a UFCS call synthesized —
+// the position of `f` in `x.f(…)`.
+//
+// Its sibling above keeps an import alive; this one is how the name inside it can still be
+// reported. A method call does not require the method's name in the import list (the
+// decision of 09/22), so `import lib.{ f }` beside nothing but `x.f()` lists a name that
+// does no work — but by the time the unused-import check walks the tree that callee is an
+// ordinary `IdentifierExpr`, indistinguishable from a bare `f(x)`. The span is the only
+// thing that tells them apart, so it is what gets recorded.
+func (tc *TypeChecker) UFCSCallees() map[string]map[ast.Location]bool {
+	return tc.ufcsCallees
 }
 
 // DispatchedTraits reports, per file, the **declared names** of the traits that file
