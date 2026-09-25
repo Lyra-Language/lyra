@@ -207,6 +207,68 @@ let main = () -> void => { println("${(5).clamp(10, 0)}") }
 	}
 }
 
+// **Floats have their own `min`/`max`/`clamp`** (09/25): concrete overloads beside the
+// generic `where t: Ord` ones, which floats cannot satisfy. Both spellings, both widths,
+// (`f16` too), and an untyped literal receiver — which must read as f64 and reach the concrete member
+// rather than the generic fallback it also satisfies. Ties follow the generic rule.
+func TestExec_FloatMinMaxClamp(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let main = () -> void => {
+  let a: f32 = 1.5
+  let b: f64 = 2.5
+  print("${a.min(2.0)} ${min(b, 1.0)} ${a.max(-3.0)} ${max(1.5, 2.5)} ")
+  print("${b.clamp(0.0, 1.0)} ${(-4.0).clamp(0.0, 1.0)} ${a.clamp(0.0, 9.0)} ")
+  let z: f64 = 0.0
+  print("${3.min(4)} ${7.clamp(0, 5)} ${z.min(-z)} ${z.max(-z)} ")
+  let h: f16 = 0.5
+  print("${f64(h.min(0.25))} ${f64(h.clamp(0.75, 1.0))}")
+}
+`, "")
+	// `0.min(-0)` keeps self (0) and `0.max(-0)` takes other (-0), as the generic ties do.
+	if got := strings.TrimSpace(out); got != "1.5 1 1.5 2.5 1 0 1.5 3 5 0 -0 0.25 0.75" {
+		t.Errorf("float min/max/clamp = %q; want \"1.5 1 1.5 2.5 1 0 1.5 3 5 0 -0 0.25 0.75\"", got)
+	}
+}
+
+// **A NaN operand traps**, the rule `floor`/`round` already follow: minNum would answer
+// the other operand and hide the bug, and propagating would surface it downstream. Each
+// operand position of each function, since a check on one argument only is the likely slip.
+func TestExec_FloatMinMaxClampTrapOnNaN(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ expr, msg string }{
+		{"nan.min(1.0)", "min: NaN has no order"},
+		{"one.min(nan)", "min: NaN has no order"},
+		{"nan.max(1.0)", "max: NaN has no order"},
+		{"one.max(nan)", "max: NaN has no order"},
+		{"nan.clamp(0.0, 1.0)", "clamp: NaN has no order"},
+		{"one.clamp(nan, 1.0)", "clamp: NaN has no order"},
+		{"one.clamp(0.0, nan)", "clamp: NaN has no order"},
+		{"one.clamp(2.0, 0.0)", "lo is greater than hi"},
+	} {
+		t.Run(c.expr, func(t *testing.T) {
+			t.Parallel()
+			out, err := exec.Command(preludeBinary(t, `
+module main
+let main = () -> void => {
+  let zero: f64 = 0.0
+  let nan = zero / zero
+  let one: f64 = 1.0
+  println("${`+c.expr+`}")
+}
+`)).CombinedOutput()
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) || ee.ExitCode() != 101 {
+				t.Fatalf("%s must trap; got %v, output %q", c.expr, err, out)
+			}
+			if !strings.Contains(string(out), c.msg) {
+				t.Errorf("%s: output = %q; want %q", c.expr, out, c.msg)
+			}
+		})
+	}
+}
+
 // The primitive `Ord` impls exist **so a bound can be satisfied**, on the same footing as
 // math.lyra's arithmetic impls — and the body's `<=>` is the machine comparison, not
 // recursion, because a primitive is never routed through an impl. Asserted by demanding

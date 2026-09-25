@@ -30,6 +30,12 @@ import (
 // ordering the language does not have. That is why the ambiguity branch below reports a
 // compiler-side inconsistency rather than asking the user to disambiguate — reaching it
 // means a set was admitted that should not have been.
+//
+// **The one ranking there is: concrete before generic.** A set may hold one member whose
+// receiver is a bare type variable (`ast.GenericReceiverHead`); it matches everything, so
+// it is dropped whenever a concrete member also matches (preferConcrete). Every site that
+// picks among receiver matches applies it — this one, ufcsFunction and receiverFallback —
+// or `x.min(y)` and `min(x, y)` would resolve differently.
 
 // receiverAccepts reports whether fn's `self` parameter admits a receiver of recvType.
 func receiverAccepts(fn *ast.LambdaExpr, recvType types.Type) bool {
@@ -59,25 +65,49 @@ func receiverAcceptsValue(fn *ast.LambdaExpr, recvExpr ast.Expression, recvType 
 // A miss returns nil and leaves the diagnostic to the caller, which knows whether the
 // call was written as a method or as a plain call and can therefore phrase it in the
 // reader's own terms.
-func (tc *TypeChecker) resolveOverload(set *ast.OverloadSet, recvType types.Type) *ast.LambdaExpr {
+//
+// The receiver *expression* is passed so an untyped literal is read at its default, as the
+// method-call path reads it: `min(1.5, 2.0)` must reach `self: f64` rather than fall to a
+// generic member the literal also satisfies.
+func (tc *TypeChecker) resolveOverload(set *ast.OverloadSet, recvExpr ast.Expression, recvType types.Type) *ast.LambdaExpr {
 	if set == nil {
 		return nil
 	}
-	var match *ast.LambdaExpr
+	var matches []*ast.LambdaExpr
 	for _, member := range set.Members {
 		lam, ok := member.Value.(*ast.LambdaExpr)
-		if !ok || !receiverAccepts(lam, recvType) {
+		if !ok || !receiverAcceptsValue(lam, recvExpr, recvType) {
 			continue
 		}
-		if match != nil {
-			// Unreachable for a set that passed registration; see the header.
-			tc.addError(member.GetLocation(), SeverityError,
-				"internal: %q has two overloads accepting a %s receiver", set.Name, recvType)
-			return nil
-		}
-		match = lam
+		matches = append(matches, lam)
 	}
-	return match
+	matches = preferConcrete(matches)
+	switch len(matches) {
+	case 0:
+		return nil
+	case 1:
+		return matches[0]
+	}
+	// Unreachable for a set that passed registration; see the header.
+	tc.addError(matches[1].GetLocation(), SeverityError,
+		"internal: %q has two overloads accepting a %s receiver", set.Name, recvType)
+	return nil
+}
+
+// preferConcrete drops the generic fallbacks (`self: t`) from a list of receiver matches
+// when a concrete member also matched — the one specificity rule the language has. With
+// no concrete match the list is returned as it was, so a fallback still answers alone.
+func preferConcrete(matches []*ast.LambdaExpr) []*ast.LambdaExpr {
+	concrete := make([]*ast.LambdaExpr, 0, len(matches))
+	for _, fn := range matches {
+		if !ast.IsGenericReceiver(fn) {
+			concrete = append(concrete, fn)
+		}
+	}
+	if len(concrete) == 0 {
+		return matches
+	}
+	return concrete
 }
 
 // overloadReceiverTypes renders a set's receiver types for a diagnostic, sorted so the
@@ -115,7 +145,7 @@ func (tc *TypeChecker) inferOverloadedCall(set *ast.OverloadSet, call *ast.Funct
 		return nil
 	}
 	recvType = tc.resolveType(recvType, call.Arguments[0].GetLocation())
-	member := tc.resolveOverload(set, recvType)
+	member := tc.resolveOverload(set, call.Arguments[0], recvType)
 	if member == nil {
 		// The scope chain settled on *this* set, and nothing in it takes this receiver.
 		// Another reachable module may still declare the name for it — see
@@ -165,6 +195,7 @@ func (tc *TypeChecker) receiverFallback(name string, recvType types.Type, call *
 		}
 		matches = append(matches, fn)
 	}
+	matches = preferConcrete(matches)
 	switch len(matches) {
 	case 0:
 		return nil, false

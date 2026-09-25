@@ -2244,7 +2244,11 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 			// **clang rejected the module** — a warning about precision that stopped
 			// the program compiling at all. The relational operators never had it,
 			// since their branch propagates unconditionally.
-			if isFloatType(leftType) || isFloatType(rightType) {
+			// **Except a value compared with itself**: `x != x` raises no precision
+			// question — it is exact, and true for NaN alone, which makes it the NaN
+			// test (the prelude's float `min`/`max`/`clamp` use it). Only a bare name on
+			// both sides qualifies; `f() != f()` compares two evaluations.
+			if (isFloatType(leftType) || isFloatType(rightType)) && !isSelfComparison(expr) {
 				tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
 					"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
 			}
@@ -5865,4 +5869,16 @@ func mismatchNames(got, want types.Type) (g, w any, qualified bool) {
 func mismatchExpected(other, t types.Type) any {
 	_, named, _ := mismatchNames(other, t)
 	return named
+}
+
+// isSelfComparison reports whether a binary comparison has the same bare name on both
+// sides — `x == x`, `x != x` — which for a float is the NaN test rather than an imprecise
+// equality. One scope resolves one name to one binding, so the names agreeing is enough.
+func isSelfComparison(expr *ast.BooleanBinaryOpExpr) bool {
+	l, ok := expr.Left.(*ast.IdentifierExpr)
+	if !ok {
+		return false
+	}
+	r, ok := expr.Right.(*ast.IdentifierExpr)
+	return ok && l.Name == r.Name
 }

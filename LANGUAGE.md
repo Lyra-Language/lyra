@@ -31,6 +31,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 - **`never`** is the bottom type, the result of `panic(msg)`: assignable to every type, so `match m { Some(v) => v, None => panic("…") }` works. `panic` is EffectNone (legal in `pure`/`det`/`noalloc`).
 - **`i128`/`u128`** lower natively (LLVM `i128`): checked arithmetic, `match`, comparisons, conversions; division and `%%` via compiler-rt; `print` via `lyra_i128_to_str`. A literal's magnitude lives in a `big.Int` on the node (nil if it fits 64 bits) and stays untyped where both could hold it. Folding is arbitrary-precision (`ast.FoldBigExpr`; `FoldIntExpr` returns ok=false rather than wrapping). Value-range analysis leaves 128-bit (and `u64`) values untracked.
+- **`==`/`!=` on floats warns** (`lyra-W008`), except a bare name compared with itself: `x != x` is exact and true for NaN alone, so it is the NaN test and draws nothing.
 - **An integer literal beside a float is a float**, whether the float is typed (`x < 1`, `x + 1`) or a literal (`5 < 5.0`, `5 == 5.0`, `5 * 2.5`), in every operator; a context still narrows the pair (`let f: f32 = 5 * 2.5`). A *typed* integer against a float is refused (`n < 2.0`; convert with `f64(n)`).
 - **Float narrowing is allowed and rounds to nearest** (`f32(x)`), as integer narrowing truncates (`u8(x)`). Refused: a compile-time constant that would become infinity (`f32(1.0e40)`). Precision loss is never an error.
 
@@ -233,7 +234,8 @@ impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x, y: self.y + o.y
 
 ### `min` / `max` / `clamp`
 
-Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps `self` on a tie, `max` takes `other`. `clamp` traps on `lo > hi`. Prelude implements `Ord` for integer widths and `rune` so the bound is satisfiable (`3 < 5` stays a machine compare). **Floats excluded** (NaN): `min(1.5, 2.5)` is a compile error.
+Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps `self` on a tie, `max` takes `other`. `clamp` traps on `lo > hi`. Prelude implements `Ord` for integer widths and `rune` so the bound is satisfiable (`3 < 5` stays a machine compare).
+- **Floats have no `Ord`** (NaN), so they cannot be sorted generically — but `min`/`max`/`clamp` have **concrete `f16`/`f32`/`f64` overloads** beside the generic ones (the generic is the set's fallback, below). Same tie rules (`0.0.min(-0.0)` is `0.0`). **A NaN operand traps** (`min: NaN has no order`), as `floor`/`round` do: IEEE `minNum` (C `fmin`) would answer the other operand and hide the bug, and propagating (JS, Go) would surface it downstream of its cause.
 
 ---
 
@@ -457,6 +459,8 @@ Opt in by naming the first parameter `self`.
   choice for the caller to state (`Pilot::fly(b)`), not a question about which target is
   narrower. Identical targets are still refused at the impls (`lyra-E037`).
 - **Receiver-keyed overloading:** one module may declare a name several times if each takes `self` with a different receiver type head (`Maybe<t>` vs `Result<t,e>`); a second `Maybe<…>` is refused. A name still may not be exported by two modules.
+  - **One generic fallback per set:** a member whose receiver is a bare type variable (`self: t`) is admitted and **ranked below every concrete member** — it answers only when none accepts the receiver (the prelude's `min<t> where t: Ord` beside `min(self: f64, …)`). A second one is refused. "This type beats any type" is the only ranking; there is none between concrete types. It applies to method calls across modules too, so `x.f()` and `f(x)` agree.
+  - An untyped literal receiver is read at its default for this choice (`min(1.5, 2.0)` reaches `self: f64`).
 - Method calls resolve against the receiver's type and need no import of the underlying free function — but the function must be one this file could have named: `pub`, in a module this file imports (in any form), in this file's own module, or in the prelude. A module's **private** function is not a method anywhere else, which is what privacy has to mean: before 09/22 it was still a *candidate*, so importing one name from a module made an unrelated call ambiguous with a function the caller could not name, let alone call.
 - **The import list breaks a tie between methods; it does not gate the call.** Two reachable candidates accepting one receiver is ambiguous (`lyra-E001`), and naming one of them in an import settles it — as does declaring your own, which wins first. Leaving a method out of the list is **not** an error: `import std.collections.{ parse_args }` still admits `args.value(…)`. Requiring the name was measured and rejected (todo.md, 09/22): accessors on types that cannot have public fields are ordinary methods here, so the rule would tax exactly the code the lack of field privacy forces, and would put names like `day` and `value` in the file's bare scope, where they shadow the locals those calls are assigned to. It is also **not** Rust's rule, which imports a *trait* and never binds the method name.
 - A type named inside a declaration — a constructor's payload, a field — means what it means in the **declaring** module. `Cons(n) =>` in an importer binds `n` at the library's `Node`, even when `Node` is private there or the importer declares its own; naming the private type explicitly is still refused.

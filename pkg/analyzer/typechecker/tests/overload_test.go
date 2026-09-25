@@ -111,17 +111,41 @@ let unwrap_or<t> = pure (self: Maybe<t>, fallback: t, extra: t) -> t => fallback
 	}
 }
 
-// A type variable receiver accepts everything, so it cannot be one candidate among
-// several — there would be no receiver that picks between it and any other member.
-func TestOverload_TypeVariableReceiverRefused(t *testing.T) {
-	errs := collectOnly(t, `
+// **One generic fallback is admitted** (09/25): a bare type-variable receiver matches
+// everything, so it is ranked *below* every concrete member rather than beside them — the
+// set's catch-all. Asserted through return types, so a call reaching the wrong member
+// cannot type-check: the Maybe member answers a string, the fallback an i64.
+const concreteAndFallback = `
 data Maybe<t> = None | Some t
 
 let show<t> = pure (self: Maybe<t>) -> string => "maybe"
+let show<t> = pure (self: t) -> i64 => 0
+`
+
+func TestOverload_ConcreteBeatsTheGenericFallback(t *testing.T) {
+	res := parseCollectAndCheck(t, concreteAndFallback+`
+let m: Maybe<i64> = Some 7
+let a: string = m.show()
+let b: string = show(m)`, false)
+	assertNoErrors(t, res)
+}
+
+// With no concrete member accepting the receiver, the fallback answers — both spellings.
+func TestOverload_TheFallbackTakesEveryOtherReceiver(t *testing.T) {
+	res := parseCollectAndCheck(t, concreteAndFallback+`
+let a: i64 = 5.show()
+let b: i64 = show("text")`, false)
+	assertNoErrors(t, res)
+}
+
+// Two fallbacks would both match every receiver, and there is no ranking between them.
+func TestOverload_TwoGenericFallbacksRefused(t *testing.T) {
+	errs := collectOnly(t, `
 let show<t> = pure (self: t) -> string => "anything"
+let show<u> = pure (self: u, extra: i64) -> string => "anything else"
 `)
-	if errs == "" {
-		t.Fatal("expected a bare type-variable receiver to be refused as an overload")
+	if !strings.Contains(errs, "one generic") {
+		t.Errorf("expected a second bare type-variable receiver to be refused, got %q", errs)
 	}
 }
 

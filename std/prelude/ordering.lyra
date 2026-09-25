@@ -141,9 +141,9 @@ impl Ord for string {
 // than, equal to nor greater than anything, and a three-way answer has to pick one; an
 // `Ord` impl for `f64` would be that guess, made once here and inherited by every generic
 // that sorts, ranks or picks a maximum. The partial-ordering design (a second `Ordering`
-// type, or a fourth variant) is open in `todo.md` and is deferred rather than guessed, so
-// `min(1.5, 2.5)` is a compile error today. On concrete floats `if a < b { a } else { b }`
-// is a machine compare and works, which is what a program should write meanwhile.
+// type, or a fourth variant) is open in `todo.md` and is deferred rather than guessed —
+// so floats cannot be *sorted* generically. `min`, `max` and `clamp` do not need a total
+// order, only an answer for NaN, and have concrete float overloads below that trap on it.
 //
 // `bool` is absent because `<=>` does not take it, and there is no order on true/false
 // worth inventing here.
@@ -264,4 +264,113 @@ pub let clamp<t> where t: Ord = pure noalloc (self: t, lo: t, hi: t) -> t => {
     Less => lo,
     _ => match self.compare(hi) { Greater => hi, _ => self },
   }
+}
+
+// ---------------------------------------------------------------------------------------
+// The floats: the same three, with NaN refused
+//
+// Floats have no `Ord` (see the note above the primitive orderings), so the generic
+// `min`/`max`/`clamp` cannot take them. These are the concrete overloads beside them —
+// a receiver-keyed set's **generic fallback** is tried only when no concrete receiver
+// matches, so `x.min(y)` on an `f64` lands here and on an `i64` still lands above.
+//
+// **A NaN operand traps**, the rule `floor`/`round` already follow. The alternatives
+// were measured against what they do to a bug: IEEE's `minNum` (C's `fmin`) answers the
+// other operand and silently heals a NaN into a plausible number; `minimum` (JS, Go)
+// passes the NaN on, so it surfaces somewhere downstream of its cause. A trap names the
+// line that met it. `x != x` is the NaN test — true for NaN alone.
+//
+// Ties follow the generic versions: `min` keeps `self`, `max` takes `other`. `-0.0` and
+// `0.0` compare equal, so which zero comes back follows the same tie rule.
+// ---------------------------------------------------------------------------------------
+
+/// The smaller of two `f64`s, or `self` when they are equal.
+///
+/// # Panics
+/// Traps if either is NaN, which has no order to be the smaller of.
+pub let min = pure noalloc (self: f64, other: f64) -> f64 => {
+  if self != self || other != other { panic("min: NaN has no order") }
+  if other < self { other } else { self }
+}
+
+/// The smaller of two `f32`s, or `self` when they are equal.
+///
+/// # Panics
+/// Traps if either is NaN, which has no order to be the smaller of.
+pub let min = pure noalloc (self: f32, other: f32) -> f32 => {
+  if self != self || other != other { panic("min: NaN has no order") }
+  if other < self { other } else { self }
+}
+
+/// The smaller of two `f16`s, or `self` when they are equal.
+///
+/// # Panics
+/// Traps if either is NaN, which has no order to be the smaller of.
+pub let min = pure noalloc (self: f16, other: f16) -> f16 => {
+  if self != self || other != other { panic("min: NaN has no order") }
+  if other < self { other } else { self }
+}
+
+/// The larger of two `f64`s, or `other` when they are equal.
+///
+/// # Panics
+/// Traps if either is NaN, which has no order to be the larger of.
+pub let max = pure noalloc (self: f64, other: f64) -> f64 => {
+  if self != self || other != other { panic("max: NaN has no order") }
+  if other < self { self } else { other }
+}
+
+/// The larger of two `f32`s, or `other` when they are equal.
+///
+/// # Panics
+/// Traps if either is NaN, which has no order to be the larger of.
+pub let max = pure noalloc (self: f32, other: f32) -> f32 => {
+  if self != self || other != other { panic("max: NaN has no order") }
+  if other < self { self } else { other }
+}
+
+/// The larger of two `f16`s, or `other` when they are equal.
+///
+/// # Panics
+/// Traps if either is NaN, which has no order to be the larger of.
+pub let max = pure noalloc (self: f16, other: f16) -> f16 => {
+  if self != self || other != other { panic("max: NaN has no order") }
+  if other < self { self } else { other }
+}
+
+/// `self` restricted to `lo..=hi`.
+///
+/// ```
+/// let x = (x + dx).clamp(0.0, 248.0)
+/// ```
+///
+/// # Panics
+/// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
+/// generic [clamp].
+pub let clamp = pure noalloc (self: f64, lo: f64, hi: f64) -> f64 => {
+  if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
+  if lo > hi { panic("clamp: lo is greater than hi") }
+  if self < lo { lo } else if self > hi { hi } else { self }
+}
+
+/// `self` restricted to `lo..=hi`.
+///
+/// # Panics
+/// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
+/// generic [clamp].
+pub let clamp = pure noalloc (self: f32, lo: f32, hi: f32) -> f32 => {
+  if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
+  if lo > hi { panic("clamp: lo is greater than hi") }
+  if self < lo { lo } else if self > hi { hi } else { self }
+}
+
+/// `self` restricted to `lo..=hi`.
+///
+/// # Panics
+/// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
+/// generic [clamp].
+pub let clamp = pure noalloc (self: f16, lo: f16, hi: f16) -> f16 => {
+  if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
+  if lo > hi { panic("clamp: lo is greater than hi") }
+  if self < lo { lo } else if self > hi { hi } else { self }
 }

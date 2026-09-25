@@ -72,8 +72,50 @@ func ReceiverParam(fn *LambdaExpr) (*Parameter, bool) {
 	return recv, true
 }
 
+// GenericReceiverHead is the head a set's **generic fallback** is filed under: the one
+// member whose receiver is a bare type variable (`self: t`).
+//
+// A type variable matches every receiver, so it cannot be told apart from the other members
+// by type — instead it is *ranked* below them: resolution tries every concrete head first
+// and reaches the fallback only when none accepts the receiver. That is the whole of the
+// specificity ordering the language has — "this type" beats "any type" — and it needs no
+// partial order between concrete types, which is the ordering this design still refuses.
+// It exists so the prelude's `min<t> where t: Ord` and `min(self: f64, …)` can be one name.
+//
+// Spelled as a head so everything keyed on one keeps working: two fallbacks collide as two
+// members of one head, and the backend qualifies the symbol by it like any other.
+const GenericReceiverHead = "_"
+
+// IsGenericReceiver reports whether fn's `self` is a bare type variable of fn's own — the
+// shape of a set's generic fallback.
+func IsGenericReceiver(fn *LambdaExpr) bool {
+	return isGenericReceiver(fn, nil)
+}
+
+// isGenericReceiver is IsGenericReceiver with the declaration's own type parameters too:
+// during collection a `let min<t>`'s parameters are still on the binding (they are lifted
+// onto the lambda later), and `t` may still read as an unresolved bare name.
+func isGenericReceiver(fn *LambdaExpr, params []GenericParam) bool {
+	recv, ok := ReceiverParam(fn)
+	if !ok || recv.Type == nil {
+		return false
+	}
+	switch t := recv.Type.(type) {
+	case types.GenericType:
+		return true
+	case types.UnresolvedType:
+		for _, g := range append(append([]GenericParam{}, fn.GenericParams...), params...) {
+			if g.Name == t.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ReceiverHead returns the type head a declaration would be overloaded under, and why it
-// cannot be overloaded when it cannot.
+// cannot be overloaded when it cannot. A bare type-variable receiver heads as
+// GenericReceiverHead.
 //
 // The returned reason is a fragment for the "already defined" diagnostic, phrased to say
 // what would make the declaration admissible — a redeclaration is the reader's actual
@@ -88,10 +130,13 @@ func ReceiverHead(decl *VarDeclStmt) (head string, reason string) {
 	if !ok {
 		return "", "its first parameter is not named `self`"
 	}
+	if isGenericReceiver(lam, decl.GenericParams) {
+		return GenericReceiverHead, ""
+	}
 	head, ok = types.HeadName(recv.Type)
 	if !ok {
-		return "", "its `self` parameter has no concrete type to dispatch on" +
-			" (a type variable matches every receiver, so it cannot be one of several)"
+		return "", "its `self` parameter has no type head to dispatch on" +
+			" (a function or structural type cannot tell one overload from another)"
 	}
 	return head, ""
 }
@@ -104,7 +149,9 @@ func ReceiverHead(decl *VarDeclStmt) (head string, reason string) {
 //   - **Both take a `self` receiver.** Without one there is nothing to dispatch on.
 //   - **Their heads differ.** Two candidates matching one receiver would need a
 //     specificity ordering to rank; refusing the overlap at the declaration is a fixed
-//     error in one place instead of an ambiguity reported at every call site.
+//     error in one place instead of an ambiguity reported at every call site. The one
+//     ranking there is — concrete before a bare `self: t` — makes a single generic
+//     fallback admissible (GenericReceiverHead), and a second one collides as a head.
 //   - **They agree on `pub`.** A set is one name to the rest of the program, so whether
 //     it is exported must have one answer — a half-exported set would be findable from
 //     another module for some receivers and not others.
@@ -117,6 +164,10 @@ func OverloadableWith(set *OverloadSet, decl *VarDeclStmt) (string, bool) {
 		memberHead, memberReason := ReceiverHead(member)
 		if memberReason != "" {
 			return memberReason, false
+		}
+		if memberHead == head && head == GenericReceiverHead {
+			return "both take a bare type variable as `self` — a set may have one generic" +
+				" fallback, tried when no concrete receiver matches", false
 		}
 		if memberHead == head {
 			return "both take a `" + head + "` receiver — overloads are told apart by" +

@@ -566,6 +566,10 @@ func overloadRefusal(existing, node *ast.LambdaExpr) string {
 	if _, ok := ast.ReceiverParam(node); !ok {
 		return ""
 	}
+	if ast.IsGenericReceiver(existing) && ast.IsGenericReceiver(node) {
+		return ". Both take a bare type variable as `self`: a set may have one generic" +
+			" fallback, tried when no concrete receiver matches"
+	}
 	existingHead, _ := types.HeadName(receiverType(existing))
 	nodeHead, _ := types.HeadName(receiverType(node))
 	if existingHead != "" && existingHead == nodeHead {
@@ -573,7 +577,8 @@ func overloadRefusal(existing, node *ast.LambdaExpr) string {
 			" receiver's type, so two of one type cannot be", existingHead)
 	}
 	return ". A `self` function may be overloaded only against another declared in the" +
-		" same module, on a receiver with a concrete type of its own"
+		" same module, on a receiver of a different type (or, once per set, a bare type" +
+		" variable as the fallback)"
 }
 
 func receiverType(fn *ast.LambdaExpr) types.Type {

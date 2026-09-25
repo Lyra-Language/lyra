@@ -177,6 +177,8 @@ func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, membe
 		}
 		matches = append(matches, fn)
 	}
+	// Concrete before generic, as overload resolution ranks (preferConcrete).
+	matches = preferConcrete(matches)
 	switch len(matches) {
 	case 0:
 		return nil, ufcsNoMatch

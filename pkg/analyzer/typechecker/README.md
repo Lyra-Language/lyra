@@ -418,8 +418,15 @@ receiver heads (`types.HeadName`) differ.
 
 - Resolution is `receiverAccepts`, asked from exactly two sites: `inferOverloadedCall` (bare call)
   and the UFCS rung (before desugaring).
-- Overlap is refused at the declaration (`ast.OverloadableWith`). A `self: t` has no head and can't
-  be an overload member.
+- Overlap is refused at the declaration (`ast.OverloadableWith`). A bare `self: t` is the set's
+  **generic fallback**, filed under `ast.GenericReceiverHead` (so a second one collides, and the
+  backend's symbol is qualified by it). **`preferConcrete` drops it whenever a concrete member also
+  matches** — applied in `resolveOverload`, `ufcsFunction` and `receiverFallback`; a new site
+  choosing among receiver matches must apply it too, or the spellings disagree.
+- `resolveOverload` reads the receiver through `receiverAcceptsValue` (untyped literal at its
+  default), as UFCS does — otherwise `min(1.5, 2.0)` missed `self: f64` and fell to the fallback.
+- `symbols.overloadRefusal` words the "already defined" clause and is a second copy of the
+  admission rule; keep it in step with `OverloadableWith`.
 - **An overloaded name is absent from `SymbolTable.Functions`**; the set is in `OverloadSets` and a
   scope holds an `ast.OverloadSet`, so a pass asserting `*VarDeclStmt` fails instead of guessing.
 - **The resolved callee is published** (`TypeTable.SetCallee`); consumers read it first, then fall

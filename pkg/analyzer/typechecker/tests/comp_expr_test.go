@@ -271,3 +271,13 @@ let main = () -> void => {
 		assertErrorsAre(t, res, "operator "+op+": incompatible types: i64 and float literal")
 	}
 }
+
+// **A float compared with itself is the NaN test**, not an imprecise equality: `x != x`
+// is exact and true for NaN alone, so it draws no warning (09/25). A different name on
+// the other side still does — the exemption is the one shape, not floats in general.
+func TestTypeCheck_FloatSelfComparison_IsTheNaNTest(t *testing.T) {
+	res := parseCollectAndCheck(t, "let x: f64 = 1.5\nlet nan = x != x", false)
+	assertNoErrors(t, res)
+	res = parseCollectAndCheck(t, "let x: f64 = 1.5\nlet y: f64 = 2.5\nlet same = x != y", false)
+	assertWarningsAre(t, res, "operator !=: comparing float values with == or != may give unexpected results due to floating-point precision")
+}
