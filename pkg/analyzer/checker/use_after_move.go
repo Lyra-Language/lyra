@@ -98,6 +98,10 @@ type reportKey struct {
 type moveSite struct {
 	loc     ast.Location
 	viaLoop bool
+	// resource marks a consumed `@must_release` value, whose message is a different
+	// sentence: the callee *released* a foreign handle, so reading the binding again is a
+	// use-after-free rather than a lost uniqueness.
+	resource bool
 }
 
 // moveState maps a binding name to the move that consumed it. Absent = still owned.
@@ -111,10 +115,71 @@ func (s moveState) clone() moveState {
 	return out
 }
 
+// branchOutcome is one branch's contribution to the join: its resulting state, or **nil
+// when control cannot leave the branch**.
+//
+// A branch ending in `return`, `break` or `continue` does not flow into the code after the
+// `if` — so a release inside one has not happened on the path that reaches that code, and
+// counting it produced a false "used after it was released". `lyrafmt` is written in
+// exactly that shape twice:
+//
+//	if has_error(top) {
+//	  tree_delete(tree)
+//	  return Err(…)
+//	}
+//	…
+//	tree_delete(tree)       // not a second release: the first one returned
+//
+// The union was "conservative, matching Rust" and this is the half of Rust's rule it was
+// missing. It stayed invisible while only *managed* values could be moved, because nothing
+// in this repo releases a string down one arm and uses it after; a `@must_release` handle
+// is released down one arm all the time, since that is what an early return is for.
+func (c *useAfterMove) branchOutcome(st moveState, branch ast.Expression) moveState {
+	if branch == nil {
+		return st.clone()
+	}
+	out := c.expr(st.clone(), branch)
+	if b, ok := branch.(*ast.BlockExpr); ok && blockDiverges(b) {
+		return nil
+	}
+	return out
+}
+
+// blockDiverges reports whether control **cannot** reach the end of a block: it ends in a
+// `return`, a `break` or a `continue`, or in an `if` both of whose branches do.
+//
+// Deliberately syntactic and deliberately shallow. Answering "no" is always safe — it is
+// today's behaviour, a wider join and at worst a spurious report — so every shape this does
+// not recognise degrades to what was there before rather than to a missed move.
+func blockDiverges(b *ast.BlockExpr) bool {
+	if b == nil || len(b.Statements) == 0 {
+		return false
+	}
+	switch last := b.Statements[len(b.Statements)-1].(type) {
+	case *ast.ReturnStmt:
+		return true
+	case *ast.BreakStmt:
+		return true
+	case *ast.ContinueStmt:
+		return true
+	case *ast.ExpressionStmt:
+		if inner, ok := last.Expression.(*ast.IfExpr); ok {
+			then, thenOK := inner.Then.(*ast.BlockExpr)
+			els, elseOK := inner.Else.(*ast.BlockExpr)
+			return thenOK && elseOK && blockDiverges(then) && blockDiverges(els)
+		}
+	}
+	return false
+}
+
 // mergeMoves is the join of two branch outcomes: moved in *either* branch means
-// moved afterwards. The conservative direction — it can only add reports, never
-// miss a genuine move.
+// moved afterwards. A nil outcome is a branch control cannot leave and contributes
+// nothing. The conservative direction — it can only add reports, never miss a genuine
+// move.
 func mergeMoves(a, b moveState) moveState {
+	if a == nil {
+		a = moveState{}
+	}
 	out := a.clone()
 	for k, v := range b {
 		if _, ok := out[k]; !ok {
@@ -236,7 +301,14 @@ func (c *useAfterMove) destructuringBranches(st moveState, d *ast.DestructuringD
 	}
 	// The pattern's names are in scope in `then` — the branch that ran because the
 	// match succeeded.
-	return mergeMoves(branch(then, true), branch(els, false))
+	thenState, elseState := branch(then, true), branch(els, false)
+	if then != nil && blockDiverges(then) {
+		thenState = nil
+	}
+	if els != nil && blockDiverges(els) {
+		elseState = nil
+	}
+	return mergeMoves(thenState, elseState)
 }
 
 // letElse walks `let Some(v) = m else { … }`, which reads like a branch and is not one.
@@ -301,8 +373,8 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 	case *ast.IfExpr:
 		st = c.expr(st, v.Condition)
 		// Branches are alternatives: each starts from the state at the branch point,
-		// and the join takes the union.
-		return mergeMoves(c.expr(st.clone(), v.Then), c.expr(st.clone(), v.Else))
+		// and the join takes the union — of the branches control can **leave**.
+		return mergeMoves(c.branchOutcome(st, v.Then), c.branchOutcome(st, v.Else))
 
 	case *ast.MatchExpr:
 		st = c.expr(st, v.Scrutinee)
@@ -312,7 +384,7 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 			if g := v.MatchArms[i].Guard; g != nil {
 				arm = c.expr(arm, g.Condition)
 			}
-			merged = mergeMoves(merged, c.expr(arm, v.MatchArms[i].Body))
+			merged = mergeMoves(merged, c.branchOutcome(arm, v.MatchArms[i].Body))
 		}
 		return merged
 
@@ -366,8 +438,10 @@ func (c *useAfterMove) call(st moveState, e *ast.FunctionCallExpr) moveState {
 		// after e.Function was walked above, so the receiver's own read counts as a
 		// use *before* the move rather than after it.
 		if len(params) > 0 && params[0].TypeModifier == types.Own {
-			if name, ok := movedName(recv); ok && c.isManaged(recv) {
-				st[name] = moveSite{loc: recv.GetLocation()}
+			if name, ok := movedName(recv); ok {
+				if res, consumed := c.consumedByOwn(recv); consumed {
+					st[name] = moveSite{loc: recv.GetLocation(), resource: res}
+				}
 			}
 		}
 	}
@@ -380,8 +454,10 @@ func (c *useAfterMove) call(st moveState, e *ast.FunctionCallExpr) moveState {
 		if params[p].TypeModifier != types.Own {
 			continue // bare/`ref`/`mut` borrow — the caller keeps ownership
 		}
-		if name, ok := movedName(arg); ok && c.isManaged(arg) {
-			st[name] = moveSite{loc: arg.GetLocation()}
+		if name, ok := movedName(arg); ok {
+			if res, consumed := c.consumedByOwn(arg); consumed {
+				st[name] = moveSite{loc: arg.GetLocation(), resource: res}
+			}
 		}
 	}
 	return st
@@ -441,6 +517,14 @@ func (c *useAfterMove) movesIn(body *ast.BlockExpr) moveState {
 	found := moveState{}
 	var onExpr func(ast.Expression) bool
 	onExpr = func(e ast.Expression) bool {
+		// **A block control cannot leave contributes no loop-carried move.** The move
+		// happened on a path that returned, so the next iteration never sees it — the
+		// same rule the branch join follows, applied to the seed. `lyrafmt` releases its
+		// parser inside a `return 2` arm of a loop, which this reported as a use after
+		// the previous iteration's release.
+		if b, ok := e.(*ast.BlockExpr); ok && blockDiverges(b) {
+			return false
+		}
 		if _, isLambda := e.(*ast.LambdaExpr); isLambda {
 			return false
 		}
@@ -456,8 +540,10 @@ func (c *useAfterMove) movesIn(body *ast.BlockExpr) moveState {
 			if i >= len(lam.Parameters) || lam.Parameters[i].TypeModifier != types.Own {
 				continue
 			}
-			if name, ok := movedName(arg); ok && c.isManaged(arg) {
-				found[name] = moveSite{loc: arg.GetLocation()}
+			if name, ok := movedName(arg); ok {
+				if res, consumed := c.consumedByOwn(arg); consumed {
+					found[name] = moveSite{loc: arg.GetLocation(), resource: res}
+				}
 			}
 		}
 		return true
@@ -484,13 +570,29 @@ func (c *useAfterMove) reportIfMoved(st moveState, id *ast.IdentifierExpr) {
 			"it is moved into an `own` parameter at %s, so a later iteration of this loop would read it after the move",
 			site.loc.Pretty())
 	}
+	message := fmt.Sprintf(
+		"%q is used after it was moved: %s. An `own` parameter takes ownership — the callee releases the value, and may reuse its storage in place — so the binding is consumed. Pass a borrow (`ref`) if the callee only needs to read it, or reassign %q before reading it again",
+		id.Name, detail, id.Name)
+	if site.resource {
+		// A different sentence, because it is a different mistake: what the callee took
+		// was a handle to something Lyra does not own, and it freed it. The value is not
+		// merely consumed — it is gone, and reading it is a use-after-free that no
+		// refcount is going to make safe.
+		released := fmt.Sprintf("it was released at %s", site.loc.Pretty())
+		if site.viaLoop {
+			released = fmt.Sprintf(
+				"it is released at %s, so a later iteration of this loop would use it after the release",
+				site.loc.Pretty())
+		}
+		message = fmt.Sprintf(
+			"%q is used after it was released: %s. It holds a resource Lyra does not own, and passing it to an `own` parameter hands over the obligation to free it — so the handle is dead afterwards, however ordinary the value looks. Acquire it again if you need another, or release it later",
+			id.Name, released)
+	}
 	c.diagnostics = append(c.diagnostics, diag.Diagnostic{
 		Location: id.GetLocation(),
 		Severity: diag.SeverityError,
 		Code:     diag.CodeUseAfterMove,
-		Message: fmt.Sprintf(
-			"%q is used after it was moved: %s. An `own` parameter takes ownership — the callee releases the value, and may reuse its storage in place — so the binding is consumed. Pass a borrow (`ref`) if the callee only needs to read it, or reassign %q before reading it again",
-			id.Name, detail, id.Name),
+		Message:  message,
 	})
 }
 
@@ -526,6 +628,42 @@ func (c *useAfterMove) isManaged(e ast.Expression) bool {
 	}
 	t, ok := c.tt.Get(e)
 	return ok && ownership.IsManaged(t)
+}
+
+// consumedByOwn reports whether an `own` parameter *consumes* this argument, and whether
+// what it consumed was a foreign resource.
+//
+// Managed values are the original case: a refcounted box the callee adopts. The second is
+// a **`@must_release` type**, and it is the one where the comment above — "a non-managed
+// value is copied, so passing it leaves the original intact" — is exactly false. A
+// `Parser` is a plain stack struct holding a `^u8`; `own` copies the struct, the callee
+// frees the pointer, and the caller is left holding a copy of a handle to freed memory.
+// Nothing reported it: `parser_delete(parser)` followed by `parse(parser, …)` checked
+// clean, and so did reading a node out of a deleted tree (09/25).
+//
+// Found from the other side, through `lyra-W022`: a `delete` wrapper that *borrowed* its
+// receiver discharged no obligation, and asking why led here — the release itself was not
+// a move either.
+func (c *useAfterMove) consumedByOwn(e ast.Expression) (resource bool, consumed bool) {
+	if c.isManaged(e) {
+		return false, true
+	}
+	if c.tt == nil || c.symTable == nil {
+		return false, false
+	}
+	t, ok := c.tt.Get(e)
+	if !ok {
+		return false, false
+	}
+	name, hasHead := types.HeadName(t)
+	if !hasHead || name == "" {
+		return false, false
+	}
+	decl, ok := c.symTable.LookupTypeFrom(name, e.GetLocation())
+	if !ok || decl == nil || decl.MustRelease == "" {
+		return false, false
+	}
+	return true, true
 }
 
 // movedName returns the binding name an argument expression moves, and whether it

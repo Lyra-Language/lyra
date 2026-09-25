@@ -111,7 +111,7 @@ func (tc *TypeChecker) callViaUFCS(objType types.Type, methodName string, member
 	if recv, ok := ufcsReceiverParam(fn); !ok || !receiverIsGeneric(recv) {
 		pinReceiver()
 	}
-	desugarUFCSCall(member, call)
+	tc.desugarUFCSCall(member, call, fn)
 	// The same E011 check the bare-call path makes, because this *is* the bare call now —
 	// and the rung a reader would assume shares it. It did not: `unsafe` on a free
 	// function was enforced at `data(xs)` and silently not at `xs.data()`, so the method
@@ -443,9 +443,26 @@ func UFCSCallable(symTable *symbols.SymbolTable, name string, fn *ast.LambdaExpr
 // go-to-definition on it reaches the free function. The receiver keeps its own node and
 // location, so an argument-type error about it points where the reader wrote it. The call
 // node itself is untouched, which matters: instantiations are keyed by it.
-func desugarUFCSCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) {
+//
+// **The callee is given the function's signature**, which nothing else will do for it. A
+// callee written bare is an expression the walk visits, so it picks up a type on the way
+// past (`lambdaSignature`); this one is built here and never inferred, so its TypeTable
+// entry was missing and every reader of that entry answered nothing. What the reader
+// noticed was hover: `twice(a)` showed `twice: (i64) -> i64` and `a.twice()` showed an
+// empty tooltip, so the *documented* spelling of the standard library was the one with no
+// signature in the editor. The LSP had worked around it by falling back to the doc comment
+// alone, which is the sort of fix that leaves the next reader of the table with the same
+// hole (09/25).
+func (tc *TypeChecker) desugarUFCSCall(
+	member *ast.MemberExpr, call *ast.FunctionCallExpr, fn *ast.LambdaExpr,
+) {
 	callee := &ast.IdentifierExpr{Name: member.Property.Name}
 	callee.Location = member.Property.GetLocation()
+	if fn != nil {
+		if sig := tc.lambdaSignature(fn); sig != nil {
+			tc.typeTable.Set(callee, sig)
+		}
+	}
 	call.Arguments = append([]ast.Expression{member.Object}, call.Arguments...)
 	call.Function = callee
 }

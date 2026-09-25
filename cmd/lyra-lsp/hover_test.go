@@ -191,3 +191,40 @@ let area = pure (s: Shape) -> i64 => match s {
 		t.Errorf("hover = %q; want the data type's doc comment", hover.Contents.Value)
 	}
 }
+
+// TestHover_MethodStyleCallShowsTheSignature pins the two spellings of one call answering
+// the same thing. `twice(a)` always showed `twice: (i64) -> i64`; `a.twice()` showed an
+// empty tooltip, because `desugarUFCSCall` synthesizes the callee and nothing recorded a
+// type for it — so the *documented* spelling of the standard library was the one with no
+// signature in the editor.
+//
+// Fixed in the typechecker rather than here. The handler had a fallback that answered with
+// the doc comment alone when the callee had no type, which is why the symptom was "no
+// signature" rather than "no tooltip" for anything documented; the hole was in the
+// TypeTable, where the next reader would have found it too.
+func TestHover_MethodStyleCallShowsTheSignature(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := "\n\tlet twice = (self: i64) -> i64 => self * 2\n\tlet a = 3\n\tlet b = a.twice()\n\tlet c = twice(a)"
+	openAndWait(t, h, src)
+	method, err := h.Hover(testURI, 3, 12) // `twice` in `a.twice()`
+	if err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if method == nil {
+		t.Fatal("no hover on a method-style call")
+	}
+	free, err := h.Hover(testURI, 4, 10) // `twice` in `twice(a)`
+	if err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if free == nil {
+		t.Fatal("no hover on a function-style call")
+	}
+	if method.Contents.Value != free.Contents.Value {
+		t.Errorf("the two spellings answer differently:\n method style: %q\n free style:   %q",
+			method.Contents.Value, free.Contents.Value)
+	}
+	if !strings.Contains(method.Contents.Value, "(i64) -> i64") {
+		t.Errorf("expected the signature, got %q", method.Contents.Value)
+	}
+}

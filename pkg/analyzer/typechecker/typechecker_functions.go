@@ -1465,7 +1465,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 					return nil
 				}
 				tc.typeTable.Set(member.Object, base)
-				desugarUFCSCall(member, call)
+				tc.desugarUFCSCall(member, call, fn)
 				tc.requireUnsafeCall(methodName, fn, call)
 				return tc.inferLambdaCall(methodName, fn, call)
 			}

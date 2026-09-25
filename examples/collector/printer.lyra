@@ -63,17 +63,19 @@ import ast.{
   StructPatternField,
   GenericParam,
   RangeEndOperator,
+  Location,
 }
 
 /// A whole program, as `pkg/printer.PrintAST` would render it.
-pub let print_ast = pure (program: Program) -> string => {
+pub let print_ast = pure (program: Program, show_loc: bool) -> string => {
   // `Program(N statements)` is the one header the Go printer special-cases, and it counts
   // the statements even when it is about to omit the empty list below.
-  var out = "Program(${program.statements.len()} statements) {\n"
+  var out = "Program(${program.statements.len()} statements) {\n" ++
+    loc_line(Some(program.location), 1, show_loc)
   if program.statements.len() > 0 {
     out = out ++ field_open("Statements", 1)
     for stmt in program.statements {
-      out = out ++ print_stmt(stmt, 2)
+      out = out ++ print_stmt(stmt, 2, show_loc)
     }
     out = out ++ close(1)
   }
@@ -81,26 +83,36 @@ pub let print_ast = pure (program: Program) -> string => {
 }
 
 /// One statement at `depth`.
-let print_stmt = pure (stmt: Stmt, depth: i64) -> string => match stmt {
-  VarDeclStmt(decl) => print_var_decl(decl, depth),
-  TypeDeclStmt(decl) => print_type_decl(decl, depth),
-  DestructuringDeclStmt(decl) => print_destructuring_decl(decl, depth),
+let print_stmt = pure (stmt: Stmt, depth: i64, show_loc: bool) -> string => match stmt {
+  VarDeclStmt(decl) => print_var_decl(decl, depth, show_loc),
+  TypeDeclStmt(decl) => print_type_decl(decl, depth, show_loc),
+  DestructuringDeclStmt(decl) => print_destructuring_decl(decl, depth, show_loc),
   VarReassignmentStmt(assignment) =>
-    header("VarReassignmentStmt", assignment.name, depth) ++
+    header(
+      "VarReassignmentStmt",
+      assignment.name,
+      Some(assignment.location),
+      depth,
+      show_loc
+    ) ++
     scalar("Name", assignment.name, depth + 1) ++
-    node_field("Value", print_expr(assignment.value, depth + 2), depth + 1) ++
+    node_field("Value", print_expr(assignment.value, depth + 2, show_loc), depth + 1) ++
     close(depth),
   // A bare `break` prints as an empty node rather than disappearing: the emptiness rule
   // drops a *field* whose value has nothing in it, and a statement is a list element.
-  BreakStmt(jump) => print_break(jump, depth),
+  BreakStmt(jump) => print_break(jump, depth, show_loc),
   ContinueStmt(jump) => {
-    var out = header_unnamed("ContinueStmt", depth)
+    var out = header_unnamed("ContinueStmt", Some(jump.location), depth, show_loc)
     if jump.label != "" { out = out ++ scalar("Label", jump.label, depth + 1) }
     out ++ close(depth)
   },
   ExpressionStmt(statement) =>
-    header_unnamed("ExpressionStmt", depth) ++
-    node_field("Expression", print_expr(statement.expression, depth + 2), depth + 1) ++
+    header_unnamed("ExpressionStmt", Some(statement.location), depth, show_loc) ++
+    node_field(
+      "Expression",
+      print_expr(statement.expression, depth + 2, show_loc),
+      depth + 1
+    ) ++
     close(depth),
 }
 
@@ -108,22 +120,26 @@ let print_stmt = pure (stmt: Stmt, depth: i64) -> string => match stmt {
 ///
 /// Fields in the Go type's alphabetical order — `BindingKind`, `IsPublic`, `Name`,
 /// `Value` — each omitted when zero.
-let print_var_decl = pure (decl: VarDecl, depth: i64) -> string => {
-  var out = header("VarDeclStmt", decl.name, depth)
+let print_var_decl = pure (decl: VarDecl, depth: i64, show_loc: bool) -> string => {
+  var out = header("VarDeclStmt", decl.name, Some(decl.location), depth, show_loc)
   out = out ++ scalar("BindingKind", decl.binding_kind, depth + 1)
-  out = out ++ generic_params_field(decl.generic_params, depth + 1)
+  out = out ++ generic_params_field(decl.generic_params, depth + 1, show_loc)
   if decl.is_public { out = out ++ scalar("IsPublic", "true", depth + 1) }
   out = out ++ scalar("Name", decl.name, depth + 1)
   match decl.type_annotation {
     Some(declared) => {
-      out = out ++ node_field("Type", print_type(declared, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "Type",
+        print_type(declared, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
   match decl.value {
     Some(value) => if !expr_is_empty(value) {
       out = out ++ field_open("Value", depth + 1)
-      out = out ++ print_expr(value, depth + 2)
+      out = out ++ print_expr(value, depth + 2, show_loc)
       out = out ++ close(depth + 1)
     },
     None => {},
@@ -132,8 +148,8 @@ let print_var_decl = pure (decl: VarDecl, depth: i64) -> string => {
 }
 
 /// `TypeDeclStmt(Name) { Derives, IsPublic, Name, Type }`.
-let print_type_decl = pure (decl: TypeDecl, depth: i64) -> string => {
-  var out = header("TypeDeclStmt", decl.name, depth)
+let print_type_decl = pure (decl: TypeDecl, depth: i64, show_loc: bool) -> string => {
+  var out = header("TypeDeclStmt", decl.name, Some(decl.location), depth, show_loc)
   if decl.derives.len() > 0 {
     // **Bare names, not nodes.** A derive is a word the declaration carries, so the Go
     // printer renders each as itself — a list of strings, one per line.
@@ -143,12 +159,12 @@ let print_type_decl = pure (decl: TypeDecl, depth: i64) -> string => {
     }
     out = out ++ node_field("Derives", items, depth + 1)
   }
-  out = out ++ generic_params_field(decl.generic_params, depth + 1)
+  out = out ++ generic_params_field(decl.generic_params, depth + 1, show_loc)
   if decl.is_public { out = out ++ scalar("IsPublic", "true", depth + 1) }
   out = out ++ scalar("Name", decl.name, depth + 1)
   out ++ node_field(
     "Type",
-    print_type(decl.declared, depth + 2),
+    print_type(decl.declared, depth + 2, show_loc),
     depth + 1
   ) ++ close(depth)
 }
@@ -158,11 +174,21 @@ let print_type_decl = pure (decl: TypeDecl, depth: i64) -> string => {
 ///
 /// Shared by the two declarations that can carry them, which `let sum<n> = …` is what
 /// made worth naming: a type declaration's `<t>` and a binding's are the same field.
-let generic_params_field = pure (params: []GenericParam, depth: i64) -> string => {
+let generic_params_field = pure (
+  params: []GenericParam,
+  depth: i64,
+  show_loc: bool
+) -> string => {
   if params.len() == 0 { return "" }
   var items = ""
   for p in params {
-    items = items ++ header("GenericParam", p.name, depth + 1) ++
+    items = items ++ header(
+      "GenericParam",
+      p.name,
+      Some(p.location),
+      depth + 1,
+      show_loc
+    ) ++
       scalar("Name", p.name, depth + 2) ++ close(depth + 1)
   }
   node_field("GenericParams", items, depth)
@@ -170,13 +196,21 @@ let generic_params_field = pure (params: []GenericParam, depth: i64) -> string =
 
 /// `DestructuringDeclStmt { Keyword, Pattern, Value }` — no label, the node having no
 /// `Name` of its own: what it binds lives in the pattern.
-let print_destructuring_decl = pure (decl: DestructuringDecl, depth: i64) -> string => {
-  var out = header_unnamed("DestructuringDeclStmt", depth)
+let print_destructuring_decl = pure (
+  decl: DestructuringDecl,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header_unnamed("DestructuringDeclStmt", Some(decl.location), depth, show_loc)
   out = out ++ scalar("Keyword", decl.keyword, depth + 1)
-  out = out ++ node_field("Pattern", print_pattern(decl.pattern, depth + 2), depth + 1)
+  out = out ++ node_field(
+    "Pattern",
+    print_pattern(decl.pattern, depth + 2, show_loc),
+    depth + 1
+  )
   match decl.value {
     Some(value) => {
-      out = out ++ node_field("Value", print_expr(value, depth + 2), depth + 1)
+      out = out ++ node_field("Value", print_expr(value, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -184,12 +218,12 @@ let print_destructuring_decl = pure (decl: DestructuringDecl, depth: i64) -> str
 }
 
 /// `BreakStmt { Label, Value }`, each omitted when absent.
-let print_break = pure (jump: Break, depth: i64) -> string => {
-  var out = header_unnamed("BreakStmt", depth)
+let print_break = pure (jump: Break, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("BreakStmt", Some(jump.location), depth, show_loc)
   if jump.label != "" { out = out ++ scalar("Label", jump.label, depth + 1) }
   match jump.value {
     Some(value) => {
-      out = out ++ node_field("Value", print_expr(value, depth + 2), depth + 1)
+      out = out ++ node_field("Value", print_expr(value, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -197,105 +231,125 @@ let print_break = pure (jump: Break, depth: i64) -> string => {
 }
 
 /// One expression at `depth`.
-let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
-  IntegerLiteralExpr(lit) =>
-    header_unnamed("IntegerLiteralExpr", depth) ++
-    scalar("Base", "${lit.base}", depth + 1) ++
-    scalar("Value", "${lit.value}", depth + 1) ++
-    close(depth),
-  CharacterLiteralExpr(lit) =>
-    header_unnamed("CharacterLiteralExpr", depth) ++
-    scalar("Value", "${lit.value}", depth + 1) ++
-    close(depth),
-  // **Lyra's float formatting is Go's `%v`**, which the printer uses: both render the
-  // shortest decimal that reads back as the same double, so `1.0` is `1` and `1.0e21` is
-  // `1e+21` in either language. That agreement is what lets the value travel as a number
-  // rather than as the text it was written in.
-  FloatLiteralExpr(lit) =>
-    header_unnamed("FloatLiteralExpr", depth) ++
-    scalar("Value", "${lit.value}", depth + 1) ++
-    close(depth),
-  InterpolatedStringExpr(interpolated) => {
-    var items = ""
-    for segment in interpolated.segments {
-      items = items ++ print_expr(segment, depth + 2)
-    }
-    header_unnamed("InterpolatedStringExpr", depth) ++
-      node_field("Segments", items, depth + 1) ++
-      close(depth)
-  },
-  StringLiteralExpr(lit) =>
-    header_unnamed("StringLiteralExpr", depth) ++
-    scalar("Value", lit.value, depth + 1) ++
-    close(depth),
-  // `IsConst` before `Name`, and only here: `print_named` serves the patterns and types
-  // too, and neither can be const.
-  IdentifierExpr(identifier) =>
-    header("IdentifierExpr", identifier.name, depth) ++
-    (if identifier.is_const { scalar("IsConst", "true", depth + 1) } else { "" }) ++
-    scalar("Name", identifier.name, depth + 1) ++
-    close(depth),
-  // Left, Operator, Right — alphabetical, and the operator is the symbol itself.
-  MathBinaryOpExpr(op) => print_binary("MathBinaryOpExpr", op, depth),
-  BooleanBinaryOpExpr(op) => print_binary("BooleanBinaryOpExpr", op, depth),
-  StringConcatExpr(op) => print_binary("StringConcatExpr", op, depth),
-  // `NegationExpr` and `TryExpr` are one field under two names.
-  NegationExpr(unary) =>
-    header_unnamed("NegationExpr", depth) ++
-    node_field("Operand", print_expr(unary.operand, depth + 2), depth + 1) ++
-    close(depth),
-  TryExpr(unary) =>
-    header_unnamed("TryExpr", depth) ++
-    node_field("Operand", print_expr(unary.operand, depth + 2), depth + 1) ++
-    close(depth),
-  RangeExpr(range) => print_range(range, depth),
-  // Arguments before Function — alphabetical, and an empty argument list is omitted like
-  // any other empty composite, so `foo()` prints with only its callee.
-  FunctionCallExpr(call) => print_call(call, depth),
-  BlockExpr(block) => print_block(block, depth),
-  // Condition, Else, Then — alphabetical, which puts the `else` branch *above* the `then`
-  // one. Reading the golden top to bottom is not reading the program.
-  IfExpr(conditional) => print_if(conditional, depth),
-  ForInLoopExpr(loop) => print_for_in_loop(loop, depth),
-  ForLoopExpr(loop) => print_for_loop(loop, depth),
-  MathAssignOpExpr(op) => print_binary("MathAssignOpExpr", op, depth),
-  MatchExpr(match_expr) => print_match(match_expr, depth),
-  GuardExpr(guard) =>
-    header_unnamed("GuardExpr", depth) ++
-    node_field("Condition", print_expr(guard.condition, depth + 2), depth + 1) ++
-    close(depth),
-  MemberExpr(member) =>
-    header_unnamed("MemberExpr", depth) ++
-    node_field("Object", print_expr(member.object, depth + 2), depth + 1) ++
-    (if member.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
-    node_field("Property", print_expr(member.property, depth + 2), depth + 1) ++
-    close(depth),
-  IndexExpr(access) =>
-    header_unnamed("IndexExpr", depth) ++
-    node_field("Index", print_expr(access.index, depth + 2), depth + 1) ++
-    node_field("Object", print_expr(access.object, depth + 2), depth + 1) ++
-    (if access.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
-    close(depth),
-  // `Index` here is the position the access names, so it prints as a scalar on one line
-  // rather than as a nested literal — the one `Index` in this AST that is not a node.
-  TupleIndexExpr(access) =>
-    header_unnamed("TupleIndexExpr", depth) ++
-    scalar("Index", "${access.index}", depth + 1) ++
-    node_field("Object", print_expr(access.object, depth + 2), depth + 1) ++
-    close(depth),
-  StructInstanceExpr(instance) =>
-    print_struct_instance("StructInstanceExpr", instance, depth),
-  AnonymousStructInstanceExpr(instance) =>
-    print_struct_instance("AnonymousStructInstanceExpr", instance, depth),
-  SpreadExpr(spread) =>
-    header_unnamed("SpreadExpr", depth) ++
-    node_field("Value", print_expr(spread.value, depth + 2), depth + 1) ++
-    close(depth),
-  TupleLiteralExpr(lit) => print_tuple_literal(lit, depth),
-  ArrayLiteralExpr(lit) => print_array_literal(lit, depth),
-  ArrayRepeatExpr(repeat) => print_array_repeat(repeat, depth),
-  LambdaExpr(lambda) => print_lambda(lambda, depth),
-}
+let print_expr = pure (expr: shared Expr, depth: i64, show_loc: bool) -> string =>
+  match expr {
+    IntegerLiteralExpr(lit) =>
+      header_unnamed("IntegerLiteralExpr", Some(lit.location), depth, show_loc) ++
+      scalar("Base", "${lit.base}", depth + 1) ++
+      scalar("Value", "${lit.value}", depth + 1) ++
+      close(depth),
+    CharacterLiteralExpr(lit) =>
+      header_unnamed("CharacterLiteralExpr", Some(lit.location), depth, show_loc) ++
+      scalar("Value", "${lit.value}", depth + 1) ++
+      close(depth),
+    // **Lyra's float formatting is Go's `%v`**, which the printer uses: both render the
+    // shortest decimal that reads back as the same double, so `1.0` is `1` and `1.0e21` is
+    // `1e+21` in either language. That agreement is what lets the value travel as a number
+    // rather than as the text it was written in.
+    FloatLiteralExpr(lit) =>
+      header_unnamed("FloatLiteralExpr", Some(lit.location), depth, show_loc) ++
+      scalar("Value", "${lit.value}", depth + 1) ++
+      close(depth),
+    InterpolatedStringExpr(interpolated) => {
+      var items = ""
+      for segment in interpolated.segments {
+        items = items ++ print_expr(segment, depth + 2, show_loc)
+      }
+      header_unnamed(
+        "InterpolatedStringExpr",
+        Some(interpolated.location),
+        depth,
+        show_loc
+      ) ++
+        node_field("Segments", items, depth + 1) ++
+        close(depth)
+    },
+    StringLiteralExpr(lit) =>
+      header_unnamed("StringLiteralExpr", Some(lit.location), depth, show_loc) ++
+      scalar("Value", lit.value, depth + 1) ++
+      close(depth),
+    // `IsConst` before `Name`, and only here: `print_named` serves the patterns and types
+    // too, and neither can be const.
+    IdentifierExpr(identifier) =>
+      header(
+        "IdentifierExpr",
+        identifier.name,
+        Some(identifier.location),
+        depth,
+        show_loc
+      ) ++
+      (if identifier.is_const { scalar("IsConst", "true", depth + 1) } else { "" }) ++
+      scalar("Name", identifier.name, depth + 1) ++
+      close(depth),
+    // Left, Operator, Right — alphabetical, and the operator is the symbol itself.
+    MathBinaryOpExpr(op) => print_binary("MathBinaryOpExpr", op, depth, show_loc),
+    BooleanBinaryOpExpr(op) => print_binary("BooleanBinaryOpExpr", op, depth, show_loc),
+    StringConcatExpr(op) => print_binary("StringConcatExpr", op, depth, show_loc),
+    // `NegationExpr` and `TryExpr` are one field under two names.
+    NegationExpr(unary) =>
+      header_unnamed("NegationExpr", Some(unary.location), depth, show_loc) ++
+      node_field("Operand", print_expr(unary.operand, depth + 2, show_loc), depth + 1) ++
+      close(depth),
+    TryExpr(unary) =>
+      header_unnamed("TryExpr", Some(unary.location), depth, show_loc) ++
+      node_field("Operand", print_expr(unary.operand, depth + 2, show_loc), depth + 1) ++
+      close(depth),
+    RangeExpr(range) => print_range(range, depth, show_loc),
+    // Arguments before Function — alphabetical, and an empty argument list is omitted like
+    // any other empty composite, so `foo()` prints with only its callee.
+    FunctionCallExpr(call) => print_call(call, depth, show_loc),
+    BlockExpr(block) => print_block(block, depth, show_loc),
+    // Condition, Else, Then — alphabetical, which puts the `else` branch *above* the `then`
+    // one. Reading the golden top to bottom is not reading the program.
+    IfExpr(conditional) => print_if(conditional, depth, show_loc),
+    ForInLoopExpr(loop) => print_for_in_loop(loop, depth, show_loc),
+    ForLoopExpr(loop) => print_for_loop(loop, depth, show_loc),
+    MathAssignOpExpr(op) => print_binary("MathAssignOpExpr", op, depth, show_loc),
+    MatchExpr(match_expr) => print_match(match_expr, depth, show_loc),
+    GuardExpr(guard) =>
+      header_unnamed("GuardExpr", Some(guard.location), depth, show_loc) ++
+      node_field(
+        "Condition",
+        print_expr(guard.condition, depth + 2, show_loc),
+        depth + 1
+      ) ++
+      close(depth),
+    MemberExpr(member) =>
+      header_unnamed("MemberExpr", Some(member.location), depth, show_loc) ++
+      node_field("Object", print_expr(member.object, depth + 2, show_loc), depth + 1) ++
+      (if member.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
+      node_field(
+        "Property",
+        print_expr(member.property, depth + 2, show_loc),
+        depth + 1
+      ) ++
+      close(depth),
+    IndexExpr(access) =>
+      header_unnamed("IndexExpr", Some(access.location), depth, show_loc) ++
+      node_field("Index", print_expr(access.index, depth + 2, show_loc), depth + 1) ++
+      node_field("Object", print_expr(access.object, depth + 2, show_loc), depth + 1) ++
+      (if access.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
+      close(depth),
+    // `Index` here is the position the access names, so it prints as a scalar on one line
+    // rather than as a nested literal — the one `Index` in this AST that is not a node.
+    TupleIndexExpr(access) =>
+      header_unnamed("TupleIndexExpr", Some(access.location), depth, show_loc) ++
+      scalar("Index", "${access.index}", depth + 1) ++
+      node_field("Object", print_expr(access.object, depth + 2, show_loc), depth + 1) ++
+      close(depth),
+    StructInstanceExpr(instance) =>
+      print_struct_instance("StructInstanceExpr", instance, depth, show_loc),
+    AnonymousStructInstanceExpr(instance) =>
+      print_struct_instance("AnonymousStructInstanceExpr", instance, depth, show_loc),
+    SpreadExpr(spread) =>
+      header_unnamed("SpreadExpr", Some(spread.location), depth, show_loc) ++
+      node_field("Value", print_expr(spread.value, depth + 2, show_loc), depth + 1) ++
+      close(depth),
+    TupleLiteralExpr(lit) => print_tuple_literal(lit, depth, show_loc),
+    ArrayLiteralExpr(lit) => print_array_literal(lit, depth, show_loc),
+    ArrayRepeatExpr(repeat) => print_array_repeat(repeat, depth, show_loc),
+    LambdaExpr(lambda) => print_lambda(lambda, depth, show_loc),
+  }
 
 /// `StructInstanceExpr(Name) { BaseStruct, Fields, GenericArgs, Name }`, and the same
 /// function for the anonymous kind — whose `Name` and `GenericArgs` are zero, so the
@@ -303,26 +357,31 @@ let print_expr = pure (expr: shared Expr, depth: i64) -> string => match expr {
 let print_struct_instance = pure (
   node_kind: string,
   instance: StructInstance,
-  depth: i64
+  depth: i64,
+  show_loc: bool
 ) -> string => {
-  var out = header(node_kind, instance.name, depth)
+  var out = header(node_kind, instance.name, Some(instance.location), depth, show_loc)
   match instance.base_struct {
     Some(base) => {
-      out = out ++ node_field("BaseStruct", print_expr(base, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "BaseStruct",
+        print_expr(base, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
   if instance.fields.len() > 0 {
     var items = ""
     for f in instance.fields {
-      items = items ++ print_struct_instance_field(f, depth + 2)
+      items = items ++ print_struct_instance_field(f, depth + 2, show_loc)
     }
     out = out ++ node_field("Fields", items, depth + 1)
   }
   if instance.generic_args.len() > 0 {
     var items = ""
     for a in instance.generic_args {
-      items = items ++ print_type(a, depth + 2)
+      items = items ++ print_type(a, depth + 2, show_loc)
     }
     out = out ++ node_field("GenericArgs", items, depth + 1)
   }
@@ -336,27 +395,36 @@ let print_struct_instance = pure (
 /// named one by what is missing.
 let print_struct_instance_field = pure (
   f: StructInstanceField,
-  depth: i64
+  depth: i64,
+  show_loc: bool
 ) -> string => {
-  var out = header("StructField", f.name, depth)
+  var out = header("StructField", f.name, None, depth, show_loc)
   if f.name != "" { out = out ++ scalar("Name", f.name, depth + 1) }
-  out ++ node_field("Value", print_expr(f.value, depth + 2), depth + 1) ++ close(depth)
+  out ++ node_field(
+    "Value",
+    print_expr(f.value, depth + 2, show_loc),
+    depth + 1
+  ) ++ close(depth)
 }
 
 /// `TupleLiteralExpr(Name) { Elements, GenericArguments, Name }`.
-let print_tuple_literal = pure (lit: TupleLiteral, depth: i64) -> string => {
-  var out = header("TupleLiteralExpr", lit.name, depth)
+let print_tuple_literal = pure (
+  lit: TupleLiteral,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header("TupleLiteralExpr", lit.name, Some(lit.location), depth, show_loc)
   if lit.elements.len() > 0 {
     var items = ""
     for e in lit.elements {
-      items = items ++ print_expr(e, depth + 2)
+      items = items ++ print_expr(e, depth + 2, show_loc)
     }
     out = out ++ node_field("Elements", items, depth + 1)
   }
   if lit.generic_arguments.len() > 0 {
     var items = ""
     for a in lit.generic_arguments {
-      items = items ++ print_type(a, depth + 2)
+      items = items ++ print_type(a, depth + 2, show_loc)
     }
     out = out ++ node_field("GenericArguments", items, depth + 1)
   }
@@ -364,12 +432,16 @@ let print_tuple_literal = pure (lit: TupleLiteral, depth: i64) -> string => {
 }
 
 /// `ArrayLiteralExpr { Elements, Fixed }` — `Fixed` omitted when false, as every bool is.
-let print_array_literal = pure (lit: ArrayLiteral, depth: i64) -> string => {
-  var out = header_unnamed("ArrayLiteralExpr", depth)
+let print_array_literal = pure (
+  lit: ArrayLiteral,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header_unnamed("ArrayLiteralExpr", Some(lit.location), depth, show_loc)
   if lit.elements.len() > 0 {
     var items = ""
     for e in lit.elements {
-      items = items ++ print_expr(e, depth + 2)
+      items = items ++ print_expr(e, depth + 2, show_loc)
     }
     out = out ++ node_field("Elements", items, depth + 1)
   }
@@ -378,32 +450,44 @@ let print_array_literal = pure (lit: ArrayLiteral, depth: i64) -> string => {
 }
 
 /// `ArrayRepeatExpr { Count, Fixed, Value }`.
-let print_array_repeat = pure (repeat: ArrayRepeat, depth: i64) -> string => {
-  var out = header_unnamed("ArrayRepeatExpr", depth)
-  out = out ++ node_field("Count", print_expr(repeat.count, depth + 2), depth + 1)
+let print_array_repeat = pure (
+  repeat: ArrayRepeat,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header_unnamed("ArrayRepeatExpr", Some(repeat.location), depth, show_loc)
+  out = out ++ node_field(
+    "Count",
+    print_expr(repeat.count, depth + 2, show_loc),
+    depth + 1
+  )
   if repeat.fixed { out = out ++ scalar("Fixed", "true", depth + 1) }
   out ++ node_field(
     "Value",
-    print_expr(repeat.value, depth + 2),
+    print_expr(repeat.value, depth + 2, show_loc),
     depth + 1
   ) ++ close(depth)
 }
 
 /// `FunctionCallExpr { Arguments, Function, GenericArguments }`.
-let print_call = pure (call: FunctionCall, depth: i64) -> string => {
-  var out = header_unnamed("FunctionCallExpr", depth)
+let print_call = pure (call: FunctionCall, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("FunctionCallExpr", Some(call.location), depth, show_loc)
   if call.arguments.len() > 0 {
     var items = ""
     for argument in call.arguments {
-      items = items ++ print_expr(argument, depth + 2)
+      items = items ++ print_expr(argument, depth + 2, show_loc)
     }
     out = out ++ node_field("Arguments", items, depth + 1)
   }
-  out = out ++ node_field("Function", print_expr(call.function, depth + 2), depth + 1)
+  out = out ++ node_field(
+    "Function",
+    print_expr(call.function, depth + 2, show_loc),
+    depth + 1
+  )
   if call.generic_arguments.len() > 0 {
     var items = ""
     for a in call.generic_arguments {
-      items = items ++ print_type(a, depth + 2)
+      items = items ++ print_type(a, depth + 2, show_loc)
     }
     out = out ++ node_field("GenericArguments", items, depth + 1)
   }
@@ -411,22 +495,22 @@ let print_call = pure (call: FunctionCall, depth: i64) -> string => {
 }
 
 /// `IfExpr { Condition, Else, Then }`.
-let print_if = pure (conditional: Conditional, depth: i64) -> string => {
-  var out = header_unnamed("IfExpr", depth)
+let print_if = pure (conditional: Conditional, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("IfExpr", Some(conditional.location), depth, show_loc)
   out = out ++ node_field(
     "Condition",
-    print_expr(conditional.condition, depth + 2),
+    print_expr(conditional.condition, depth + 2, show_loc),
     depth + 1
   )
   match conditional.else_branch {
     Some(branch) => {
-      out = out ++ node_field("Else", print_expr(branch, depth + 2), depth + 1)
+      out = out ++ node_field("Else", print_expr(branch, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
   match conditional.then_branch {
     Some(branch) => {
-      out = out ++ node_field("Then", print_expr(branch, depth + 2), depth + 1)
+      out = out ++ node_field("Then", print_expr(branch, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -434,46 +518,50 @@ let print_if = pure (conditional: Conditional, depth: i64) -> string => {
 }
 
 /// `MatchExpr { MatchArms, Scrutinee }`, and each arm `{ Body, Guard, Pattern }`.
-let print_match = pure (match_expr: Match, depth: i64) -> string => {
-  var out = header_unnamed("MatchExpr", depth)
+let print_match = pure (match_expr: Match, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("MatchExpr", Some(match_expr.location), depth, show_loc)
   if match_expr.match_arms.len() > 0 {
     var items = ""
     for arm in match_expr.match_arms {
-      items = items ++ print_match_arm(arm, depth + 2)
+      items = items ++ print_match_arm(arm, depth + 2, show_loc)
     }
     out = out ++ node_field("MatchArms", items, depth + 1)
   }
   out ++ node_field(
     "Scrutinee",
-    print_expr(match_expr.scrutinee, depth + 2),
+    print_expr(match_expr.scrutinee, depth + 2, show_loc),
     depth + 1
   ) ++ close(depth)
 }
 
 /// `MatchArm { Body, Guard, Pattern }` — alphabetical, so the answer prints above the
 /// question.
-let print_match_arm = pure (arm: MatchArm, depth: i64) -> string => {
-  var out = header_unnamed("MatchArm", depth)
-  out = out ++ node_field("Body", print_expr(arm.body, depth + 2), depth + 1)
+let print_match_arm = pure (arm: MatchArm, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("MatchArm", None, depth, show_loc)
+  out = out ++ node_field("Body", print_expr(arm.body, depth + 2, show_loc), depth + 1)
   match arm.guard {
     Some(guard) => {
-      out = out ++ node_field("Guard", print_expr(guard, depth + 2), depth + 1)
+      out = out ++ node_field("Guard", print_expr(guard, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
   out ++ node_field(
     "Pattern",
-    print_pattern(arm.pattern, depth + 2),
+    print_pattern(arm.pattern, depth + 2, show_loc),
     depth + 1
   ) ++ close(depth)
 }
 
 /// `ForInLoopExpr { Body, Iterable, Key, Label, Value }` — alphabetical, which scatters
 /// the header's three names across the node and puts the body first.
-let print_for_in_loop = pure (loop: ForInLoop, depth: i64) -> string => {
-  var out = header_unnamed("ForInLoopExpr", depth)
-  out = out ++ node_field("Body", print_expr(loop.body, depth + 2), depth + 1)
-  out = out ++ node_field("Iterable", print_expr(loop.iterable, depth + 2), depth + 1)
+let print_for_in_loop = pure (loop: ForInLoop, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("ForInLoopExpr", Some(loop.location), depth, show_loc)
+  out = out ++ node_field("Body", print_expr(loop.body, depth + 2, show_loc), depth + 1)
+  out = out ++ node_field(
+    "Iterable",
+    print_expr(loop.iterable, depth + 2, show_loc),
+    depth + 1
+  )
   if loop.key != "" { out = out ++ scalar("Key", loop.key, depth + 1) }
   if loop.label != "" { out = out ++ scalar("Label", loop.label, depth + 1) }
   if loop.value != "" { out = out ++ scalar("Value", loop.value, depth + 1) }
@@ -481,25 +569,33 @@ let print_for_in_loop = pure (loop: ForInLoop, depth: i64) -> string => {
 }
 
 /// `ForLoopExpr { Body, Condition, Init, Label, Post }`.
-let print_for_loop = pure (loop: ForLoop, depth: i64) -> string => {
-  var out = header_unnamed("ForLoopExpr", depth)
-  out = out ++ node_field("Body", print_expr(loop.body, depth + 2), depth + 1)
+let print_for_loop = pure (loop: ForLoop, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("ForLoopExpr", Some(loop.location), depth, show_loc)
+  out = out ++ node_field("Body", print_expr(loop.body, depth + 2, show_loc), depth + 1)
   match loop.condition {
     Some(condition) => {
-      out = out ++ node_field("Condition", print_expr(condition, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "Condition",
+        print_expr(condition, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
   match loop.init {
     Some(init) => {
-      out = out ++ node_field("Init", print_var_decl(init, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "Init",
+        print_var_decl(init, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
   if loop.label != "" { out = out ++ scalar("Label", loop.label, depth + 1) }
   match loop.post {
     Some(post) => {
-      out = out ++ node_field("Post", print_expr(post, depth + 2), depth + 1)
+      out = out ++ node_field("Post", print_expr(post, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -507,12 +603,12 @@ let print_for_loop = pure (loop: ForLoop, depth: i64) -> string => {
 }
 
 /// `BlockExpr { Statements }`.
-let print_block = pure (block: Block, depth: i64) -> string => {
-  var out = header_unnamed("BlockExpr", depth)
+let print_block = pure (block: Block, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("BlockExpr", Some(block.location), depth, show_loc)
   if block.statements.len() > 0 {
     var items = ""
     for statement in block.statements {
-      items = items ++ print_stmt(statement, depth + 2)
+      items = items ++ print_stmt(statement, depth + 2, show_loc)
     }
     out = out ++ node_field("Statements", items, depth + 1)
   }
@@ -520,20 +616,25 @@ let print_block = pure (block: Block, depth: i64) -> string => {
 }
 
 /// `Left`, `Operator`, `Right` — alphabetical, and the operator is the symbol itself.
-let print_binary = pure (node_kind: string, op: BinaryOp, depth: i64) -> string =>
-  header_unnamed(node_kind, depth) ++
-  node_field("Left", print_expr(op.left, depth + 2), depth + 1) ++
+let print_binary = pure (
+  node_kind: string,
+  op: BinaryOp,
+  depth: i64,
+  show_loc: bool
+) -> string =>
+  header_unnamed(node_kind, Some(op.location), depth, show_loc) ++
+  node_field("Left", print_expr(op.left, depth + 2, show_loc), depth + 1) ++
   scalar("Operator", op.operator, depth + 1) ++
-  node_field("Right", print_expr(op.right, depth + 2), depth + 1) ++
+  node_field("Right", print_expr(op.right, depth + 2, show_loc), depth + 1) ++
   close(depth)
 
 /// `RangeExpr { End, EndOperator, Start, Step }` — alphabetical, each omitted when absent,
 /// which for a range is the common case rather than the exception.
-let print_range = pure (range: Range, depth: i64) -> string => {
-  var out = header_unnamed("RangeExpr", depth)
+let print_range = pure (range: Range, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("RangeExpr", Some(range.location), depth, show_loc)
   match range.end {
     Some(e) => {
-      out = out ++ node_field("End", print_expr(e, depth + 2), depth + 1)
+      out = out ++ node_field("End", print_expr(e, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -545,13 +646,13 @@ let print_range = pure (range: Range, depth: i64) -> string => {
   }
   match range.start {
     Some(e) => {
-      out = out ++ node_field("Start", print_expr(e, depth + 2), depth + 1)
+      out = out ++ node_field("Start", print_expr(e, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
   match range.step {
     Some(e) => {
-      out = out ++ node_field("Step", print_expr(e, depth + 2), depth + 1)
+      out = out ++ node_field("Step", print_expr(e, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -569,15 +670,15 @@ let range_operator_symbol = pure (operator: RangeEndOperator) -> string =>
   }
 
 /// `LambdaExpr { Body, Parameters, ReturnType }`, each omitted when absent or empty.
-let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
-  var out = header_unnamed("LambdaExpr", depth)
+let print_lambda = pure (lambda: Lambda, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("LambdaExpr", Some(lambda.location), depth, show_loc)
   match lambda.body {
     // **An empty body is omitted like an absent one**, which is the emptiness rule applied
     // through a field rather than to a node: `() => { }` has a `BlockExpr` with no
     // statements, and the Go printer drops a field whose composite is empty. Printing
     // `Body: { BlockExpr { } }` looks right and matches nothing.
     Some(body) => if !expr_is_empty(body) {
-      out = out ++ node_field("Body", print_expr(body, depth + 2), depth + 1)
+      out = out ++ node_field("Body", print_expr(body, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -586,7 +687,7 @@ let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
   if lambda.parameters.len() > 0 {
     var items = ""
     for parameter in lambda.parameters {
-      items = items ++ print_parameter(parameter, depth + 2)
+      items = items ++ print_parameter(parameter, depth + 2, show_loc)
     }
     out = out ++ node_field("Parameters", items, depth + 1)
   }
@@ -594,7 +695,7 @@ let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
     Some(declared) => {
       out = out ++ node_field(
         "ReturnType",
-        print_return_type(declared, depth + 2),
+        print_return_type(declared, depth + 2, show_loc),
         depth + 1
       )
     },
@@ -604,22 +705,34 @@ let print_lambda = pure (lambda: Lambda, depth: i64) -> string => {
 }
 
 /// `Parameter { DefaultValue, Pattern, Type }` — **no label**, the node having no `Name` of its own.
-let print_parameter = pure (parameter: Parameter, depth: i64) -> string => {
-  var out = header_unnamed("Parameter", depth)
+let print_parameter = pure (
+  parameter: Parameter,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header_unnamed("Parameter", Some(parameter.location), depth, show_loc)
   match parameter.default_value {
     Some(value) => {
-      out = out ++ node_field("DefaultValue", print_expr(value, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "DefaultValue",
+        print_expr(value, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
   out = out ++ node_field(
     "Pattern",
-    print_pattern(parameter.pattern, depth + 2),
+    print_pattern(parameter.pattern, depth + 2, show_loc),
     depth + 1
   )
   match parameter.type_annotation {
     Some(declared) => {
-      out = out ++ node_field("Type", print_type(declared, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "Type",
+        print_type(declared, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
@@ -627,46 +740,67 @@ let print_parameter = pure (parameter: Parameter, depth: i64) -> string => {
 }
 
 /// `ReturnType(i64) { Type }` — labelled by the type it names, not by a field of its own.
-let print_return_type = pure (declared: ReturnType, depth: i64) -> string =>
-  header("ReturnType", type_name(declared.type_annotation), depth) ++
-  node_field("Type", print_type(declared.type_annotation, depth + 2), depth + 1) ++
+let print_return_type = pure (
+  declared: ReturnType,
+  depth: i64,
+  show_loc: bool
+) -> string =>
+  header("ReturnType", type_name(declared.type_annotation), None, depth, show_loc) ++
+  node_field(
+    "Type",
+    print_type(declared.type_annotation, depth + 2, show_loc),
+    depth + 1
+  ) ++
   close(depth)
 
 /// One pattern.
-let print_pattern = pure (pattern: shared Pattern, depth: i64) -> string =>
+let print_pattern = pure (
+  pattern: shared Pattern,
+  depth: i64,
+  show_loc: bool
+) -> string =>
   match pattern {
-    IdentifierPattern(identifier) => print_named("IdentifierPattern", identifier, depth),
-    DataPattern(def) => print_data_pattern(def, depth),
+    IdentifierPattern(identifier) => print_named("IdentifierPattern", identifier, Some(identifier.location), depth, show_loc),
+    DataPattern(def) => print_data_pattern(def, depth, show_loc),
     LiteralPattern(def) =>
-      header_unnamed("LiteralPattern", depth) ++
+      header_unnamed("LiteralPattern", Some(def.location), depth, show_loc) ++
       scalar("Value", def.value, depth + 1) ++
       close(depth),
     // No fields, so nothing between the braces — and it still prints, a node with no
     // fields being a unit rather than an empty composite.
-    WildcardPattern => header_unnamed("WildcardPattern", depth) ++ close(depth),
-    RangePattern(range) => print_range_pattern(range, depth),
-    TuplePattern(list) => print_pattern_list("TuplePattern", "Elements", list, depth),
-    ArrayPattern(list) => print_pattern_list("ArrayPattern", "Elements", list, depth),
-    OrPattern(list) => print_pattern_list("OrPattern", "Alternatives", list, depth),
-    StructPattern(def) => print_struct_pattern(def, depth),
+    WildcardPattern(wildcard) =>
+      header_unnamed("WildcardPattern", Some(wildcard.location), depth, show_loc) ++
+      close(depth),
+    RangePattern(range) => print_range_pattern(range, depth, show_loc),
+    TuplePattern(list) =>
+      print_pattern_list("TuplePattern", "Elements", list, depth, show_loc),
+    ArrayPattern(list) =>
+      print_pattern_list("ArrayPattern", "Elements", list, depth, show_loc),
+    OrPattern(list) =>
+      print_pattern_list("OrPattern", "Alternatives", list, depth, show_loc),
+    StructPattern(def) => print_struct_pattern(def, depth, show_loc),
     RestPattern(rest) =>
-      header_unnamed("RestPattern", depth) ++
+      header_unnamed("RestPattern", Some(rest.location), depth, show_loc) ++
       scalar("Identifier", rest.identifier, depth + 1) ++
       close(depth),
     BindingPattern(def) =>
-      header("BindingPattern", def.name, depth) ++
+      header("BindingPattern", def.name, Some(def.location), depth, show_loc) ++
       scalar("Name", def.name, depth + 1) ++
-      node_field("Pattern", print_pattern(def.pattern, depth + 2), depth + 1) ++
+      node_field("Pattern", print_pattern(def.pattern, depth + 2, show_loc), depth + 1) ++
       close(depth),
   }
 
 /// `RangePattern { End, EndOperator, Start }` — the bounds are expressions, and either
 /// may be open.
-let print_range_pattern = pure (range: PatternRange, depth: i64) -> string => {
-  var out = header_unnamed("RangePattern", depth)
+let print_range_pattern = pure (
+  range: PatternRange,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header_unnamed("RangePattern", Some(range.location), depth, show_loc)
   match range.end {
     Some(e) => {
-      out = out ++ node_field("End", print_expr(e, depth + 2), depth + 1)
+      out = out ++ node_field("End", print_expr(e, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -675,7 +809,7 @@ let print_range_pattern = pure (range: PatternRange, depth: i64) -> string => {
   }
   match range.start {
     Some(e) => {
-      out = out ++ node_field("Start", print_expr(e, depth + 2), depth + 1)
+      out = out ++ node_field("Start", print_expr(e, depth + 2, show_loc), depth + 1)
     },
     None => {},
   }
@@ -688,13 +822,14 @@ let print_pattern_list = pure (
   node_kind: string,
   field_name: string,
   list: PatternList,
-  depth: i64
+  depth: i64,
+  show_loc: bool
 ) -> string => {
-  var out = header_unnamed(node_kind, depth)
+  var out = header_unnamed(node_kind, Some(list.location), depth, show_loc)
   if list.elements.len() > 0 {
     var items = ""
     for element in list.elements {
-      items = items ++ print_pattern(element, depth + 2)
+      items = items ++ print_pattern(element, depth + 2, show_loc)
     }
     out = out ++ node_field(field_name, items, depth + 1)
   }
@@ -702,12 +837,16 @@ let print_pattern_list = pure (
 }
 
 /// `StructPattern { Fields, Name }`, the name empty for the brace-only form.
-let print_struct_pattern = pure (def: StructPatternDef, depth: i64) -> string => {
-  var out = header("StructPattern", def.name, depth)
+let print_struct_pattern = pure (
+  def: StructPatternDef,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header("StructPattern", def.name, Some(def.location), depth, show_loc)
   if def.fields.len() > 0 {
     var items = ""
     for f in def.fields {
-      items = items ++ print_struct_pattern_field(f, depth + 2)
+      items = items ++ print_struct_pattern_field(f, depth + 2, show_loc)
     }
     out = out ++ node_field("Fields", items, depth + 1)
   }
@@ -719,13 +858,18 @@ let print_struct_pattern = pure (def: StructPatternDef, depth: i64) -> string =>
 /// the field disappears and the name alone says what was written.
 let print_struct_pattern_field = pure (
   f: StructPatternField,
-  depth: i64
+  depth: i64,
+  show_loc: bool
 ) -> string => {
-  var out = header("StructPatternField", f.name, depth)
+  var out = header("StructPatternField", f.name, Some(f.location), depth, show_loc)
   out = out ++ scalar("Name", f.name, depth + 1)
   match f.pattern {
     Some(inner) => {
-      out = out ++ node_field("Pattern", print_pattern(inner, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "Pattern",
+        print_pattern(inner, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
@@ -734,12 +878,20 @@ let print_struct_pattern_field = pure (
 
 /// `DataPattern(Name) { Name, Pattern }` — a nullary constructor carries no Pattern field,
 /// an absent one being omitted like any other.
-let print_data_pattern = pure (def: DataPatternDef, depth: i64) -> string => {
-  var out = header("DataPattern", def.name, depth)
+let print_data_pattern = pure (
+  def: DataPatternDef,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header("DataPattern", def.name, Some(def.location), depth, show_loc)
   out = out ++ scalar("Name", def.name, depth + 1)
   match def.pattern {
     Some(inner) => {
-      out = out ++ node_field("Pattern", print_pattern(inner, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "Pattern",
+        print_pattern(inner, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
@@ -747,28 +899,35 @@ let print_data_pattern = pure (def: DataPatternDef, depth: i64) -> string => {
 }
 
 /// One written type.
-let print_type = pure (declared: shared TypeNode, depth: i64) -> string =>
+let print_type = pure (declared: shared TypeNode, depth: i64, show_loc: bool) -> string =>
   match declared {
-    PrimitiveType(identifier) => print_named("PrimitiveType", identifier, depth),
-    UnresolvedType(identifier) => print_named("UnresolvedType", identifier, depth),
-    GenericType(identifier) => print_named("GenericType", identifier, depth),
-    NamedStructType(def) => print_struct_type(def, depth),
-    TupleType(def) => print_tuple_type(def, depth),
-    DataType(def) => print_data_type(def, depth),
+    PrimitiveType(identifier) =>
+      print_named("PrimitiveType", identifier, None, depth, show_loc),
+    UnresolvedType(identifier) =>
+      print_named("UnresolvedType", identifier, None, depth, show_loc),
+    GenericType(identifier) =>
+      print_named("GenericType", identifier, None, depth, show_loc),
+    NamedStructType(def) => print_struct_type(def, depth, show_loc),
+    TupleType(def) => print_tuple_type(def, depth, show_loc),
+    DataType(def) => print_data_type(def, depth, show_loc),
     ConstrainedType(def) =>
-      header("ConstrainedType", def.name, depth) ++
+      header("ConstrainedType", def.name, None, depth, show_loc) ++
       scalar("Name", def.name, depth + 1) ++
-      node_field("Type", print_type(def.declared, depth + 2), depth + 1) ++
+      node_field("Type", print_type(def.declared, depth + 2, show_loc), depth + 1) ++
       close(depth),
   }
 
 /// `NamedStructType(Name) { Fields, Name }`.
-let print_struct_type = pure (def: StructTypeDef, depth: i64) -> string => {
-  var out = header("NamedStructType", def.name, depth)
+let print_struct_type = pure (
+  def: StructTypeDef,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header("NamedStructType", def.name, None, depth, show_loc)
   if def.fields.len() > 0 {
     var items = ""
     for f in def.fields {
-      items = items ++ print_struct_field(f, depth + 2)
+      items = items ++ print_struct_field(f, depth + 2, show_loc)
     }
     out = out ++ node_field("Fields", items, depth + 1)
   }
@@ -776,25 +935,33 @@ let print_struct_type = pure (def: StructTypeDef, depth: i64) -> string => {
 }
 
 /// `StructField(name) { DefaultValue, Name, Type }`.
-let print_struct_field = pure (f: StructField, depth: i64) -> string => {
-  var out = header("StructField", f.name, depth)
+let print_struct_field = pure (f: StructField, depth: i64, show_loc: bool) -> string => {
+  var out = header("StructField", f.name, None, depth, show_loc)
   match f.default_value {
     Some(value) => {
-      out = out ++ node_field("DefaultValue", print_expr(value, depth + 2), depth + 1)
+      out = out ++ node_field(
+        "DefaultValue",
+        print_expr(value, depth + 2, show_loc),
+        depth + 1
+      )
     },
     None => {},
   }
   out = out ++ scalar("Name", f.name, depth + 1)
-  out ++ node_field("Type", print_type(f.declared, depth + 2), depth + 1) ++ close(depth)
+  out ++ node_field(
+    "Type",
+    print_type(f.declared, depth + 2, show_loc),
+    depth + 1
+  ) ++ close(depth)
 }
 
 /// `TupleType(Name) { Elements, Name }`.
-let print_tuple_type = pure (def: TupleTypeDef, depth: i64) -> string => {
-  var out = header("TupleType", def.name, depth)
+let print_tuple_type = pure (def: TupleTypeDef, depth: i64, show_loc: bool) -> string => {
+  var out = header("TupleType", def.name, None, depth, show_loc)
   if def.elements.len() > 0 {
     var items = ""
     for e in def.elements {
-      items = items ++ print_type(e, depth + 2)
+      items = items ++ print_type(e, depth + 2, show_loc)
     }
     out = out ++ node_field("Elements", items, depth + 1)
   }
@@ -802,12 +969,12 @@ let print_tuple_type = pure (def: TupleTypeDef, depth: i64) -> string => {
 }
 
 /// `DataType(Name) { Constructors, Name }`.
-let print_data_type = pure (def: DataTypeDef, depth: i64) -> string => {
-  var out = header("DataType", def.name, depth)
+let print_data_type = pure (def: DataTypeDef, depth: i64, show_loc: bool) -> string => {
+  var out = header("DataType", def.name, None, depth, show_loc)
   if def.constructors.len() > 0 {
     var items = ""
     for c in def.constructors {
-      items = items ++ print_data_constructor(c, depth + 2)
+      items = items ++ print_data_constructor(c, depth + 2, show_loc)
     }
     out = out ++ node_field("Constructors", items, depth + 1)
   }
@@ -816,14 +983,18 @@ let print_data_type = pure (def: DataTypeDef, depth: i64) -> string => {
 
 /// `DataTypeConstructor(Name) { Name, Params }` — a nullary constructor carries no Params
 /// field at all, an empty list being omitted like any other.
-let print_data_constructor = pure (c: DataTypeConstructor, depth: i64) -> string => {
-  var out = header("DataTypeConstructor", c.name, depth)
+let print_data_constructor = pure (
+  c: DataTypeConstructor,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header("DataTypeConstructor", c.name, None, depth, show_loc)
   out = out ++ scalar("Name", c.name, depth + 1)
   if c.packed { out = out ++ scalar("Packed", "true", depth + 1) }
   if c.params.len() > 0 {
     var items = ""
     for p in c.params {
-      items = items ++ print_type(p, depth + 2)
+      items = items ++ print_type(p, depth + 2, show_loc)
     }
     out = out ++ node_field("Params", items, depth + 1)
   }
@@ -878,12 +1049,21 @@ let type_string = pure (declared: shared TypeNode) -> string => match declared {
 let is_anonymous_tuple = pure (name: string) -> bool => name == "" || name == "?"
 
 /// `Kind(name) { Name: name }` — the shape every named leaf shares.
+///
+/// **The location is the caller's to supply, and half of them have none.** This serves an
+/// identifier *pattern*, which is an AST node and carries a span, and the three written
+/// *type* kinds, which are `pkg/types` values: a type is compared structurally, so it
+/// cannot carry a position and the Go collector keeps written types' spans in a side table
+/// instead (`SymbolTable.TypeRefs`). One payload struct, one printer, two answers — so the
+/// answer is a parameter rather than a field read.
 let print_named = pure (
   node_kind: string,
   identifier: Identifier,
-  depth: i64
+  loc: Maybe<Location>,
+  depth: i64,
+  show_loc: bool
 ) -> string =>
-  header(node_kind, identifier.name, depth) ++
+  header(node_kind, identifier.name, loc, depth, show_loc) ++
   scalar("Name", identifier.name, depth + 1) ++
   close(depth)
 
@@ -980,13 +1160,43 @@ let lambda_is_empty = pure (lambda: Lambda) -> bool => {
 }
 
 /// `TypeName(label) {` at `depth`, or `TypeName {` when the label is empty.
-let header = pure (type_name: string, label: string, depth: i64) -> string =>
-  if label == "" { header_unnamed(type_name, depth) }
-  else { tabs(depth) ++ "${type_name}(${label}) {\n" }
+let header = pure (
+  type_name: string,
+  label: string,
+  loc: Maybe<Location>,
+  depth: i64,
+  show_loc: bool
+) -> string =>
+  if label == "" { header_unnamed(type_name, loc, depth, show_loc) }
+  else { tabs(depth) ++ "${type_name}(${label}) {\n" ++ loc_line(
+    loc,
+    depth + 1,
+    show_loc
+  ) }
 
 /// `TypeName {` at `depth`.
-let header_unnamed = pure (type_name: string, depth: i64) -> string =>
-  tabs(depth) ++ "${type_name} {\n"
+let header_unnamed = pure (
+  type_name: string,
+  loc: Maybe<Location>,
+  depth: i64,
+  show_loc: bool
+) -> string =>
+  tabs(depth) ++ "${type_name} {\n" ++ loc_line(loc, depth + 1, show_loc)
+
+/// `Loc: 1:5-1:9` under a node's header, and nothing at all in the default mode.
+///
+/// **One place emits it**, which is why the two header builders take the location rather
+/// than each node arm appending a line: the rule "a node carries a span and a type value
+/// does not" is then a `Some`/`None` at each call, visible in one screen, instead of a
+/// line that can be forgotten at 44 sites.
+let loc_line = pure (loc: Maybe<Location>, depth: i64, show_loc: bool) -> string =>
+  if !show_loc { "" } else {
+    match loc {
+      Some(at) =>
+        scalar("Loc", "${at.start_line}:${at.start_col}-${at.end_line}:${at.end_col}", depth),
+      None => "",
+    }
+  }
 
 /// `Name: {` at `depth` — a field whose value is a node or a list.
 let field_open = pure (name: string, depth: i64) -> string =>

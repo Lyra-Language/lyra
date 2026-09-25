@@ -60,13 +60,15 @@ pub let new_parser = (language: Language) -> Maybe<Parser> => {
 pub let parser_delete = (parser: own Parser) -> void =>
   unsafe { ts_parser_delete(parser.raw) }
 
+pub let delete = (self: own Parser) -> void => parser_delete(self)
+
 /// Parses `source` into a tree, or `None` if the parser has no language or was
 /// cancelled. A syntax error is not a failure here: the tree carries `ERROR` nodes, which
 /// `has_error` reports.
-pub let parse = (parser: Parser, source: string) -> Maybe<Tree> => {
+pub let parse = (self: Parser, source: string) -> Maybe<Tree> => {
   let bytes = source.cstring()
   let raw = unsafe { ts_parser_parse_string(
-    parser.raw,
+    self.raw,
     nullptr,
     bytes.data(),
     u32(bytes.len() - 1)
@@ -75,41 +77,56 @@ pub let parse = (parser: Parser, source: string) -> Maybe<Tree> => {
 }
 
 /// Releases a tree; its nodes are invalid afterwards.
-pub let tree_delete = (tree: own Tree) -> void => unsafe { ts_tree_delete(tree.raw) }
+pub let tree_delete = (self: own Tree) -> void => unsafe { ts_tree_delete(self.raw) }
+pub let delete = (self: own Tree) -> void => tree_delete(self)
 
 /// The tree's root node.
-pub let root = (tree: Tree) -> Node => unsafe { ts_tree_root_node(tree.raw) }
+pub let root = (self: Tree) -> Node => unsafe { ts_tree_root_node(self.raw) }
 
 /// The node's kind, as the grammar names it (`"call_expr"`, `"identifier"`, `"("`).
-pub let kind = (node: Node) -> string => {
-  let p = unsafe { ts_node_type(node) }
+pub let kind = (self: Node) -> string => {
+  let p = unsafe { ts_node_type(self) }
   let len = unsafe { cstring_len(p) }
   CBuffer { ptr: p, len: len }.decode_utf8()
 }
 
 /// The byte offset where the node's text starts.
-pub let start_byte = (node: Node) -> i64 => i64(unsafe { ts_node_start_byte(node) })
+pub let start_byte = (self: Node) -> i64 => i64(unsafe { ts_node_start_byte(self) })
 
 /// The byte offset just past the node's text.
-pub let end_byte = (node: Node) -> i64 => i64(unsafe { ts_node_end_byte(node) })
+pub let end_byte = (self: Node) -> i64 => i64(unsafe { ts_node_end_byte(self) })
 
 /// How many children the node has, named and anonymous alike.
-pub let child_count = (node: Node) -> i64 => i64(unsafe { ts_node_child_count(node) })
+pub let child_count = (self: Node) -> i64 => i64(unsafe { ts_node_child_count(self) })
 
 /// The node's `i`th child, counting anonymous tokens.
 ///
 /// # Panics
 /// Traps when `i` is out of range, as `xs[i]` does.
-pub let child = (node: Node, i: i64) -> Node => {
-  if i < 0 || i >= child_count(node) { panic("child: index out of range") }
-  unsafe { ts_node_child(node, u32(i)) }
+pub let child = (self: Node, i: i64) -> Node => {
+  if i < 0 || i >= child_count(self) { panic("child: index out of range") }
+  unsafe { ts_node_child(self, u32(i)) }
+}
+
+/// A generator that yields a node's children.
+///
+/// # Examples
+/// ```
+/// for child in node.children() {
+///   print(child)
+/// }
+/// ```
+pub let children = gen (self: Node) -> Seq<Node> => {
+  for i in 0..<self.child_count() {
+    yield unsafe { ts_node_child(self, u32(i)) }
+  }
 }
 
 /// Whether the node is a named rule rather than an anonymous token.
-pub let is_named = (node: Node) -> bool => unsafe { ts_node_is_named(node) }
+pub let is_named = (self: Node) -> bool => unsafe { ts_node_is_named(self) }
 
 /// Whether the node or anything under it is a syntax error or a missing token.
-pub let has_error = (node: Node) -> bool => unsafe { ts_node_has_error(node) }
+pub let has_error = (self: Node) -> bool => unsafe { ts_node_has_error(self) }
 
 /// The child the grammar gives `name` for this node (`"body"`, `"condition"`), or `None`
 /// when the field is absent — an optional field the source did not fill, or a name this
@@ -123,12 +140,12 @@ pub let has_error = (node: Node) -> bool => unsafe { ts_node_has_error(node) }
 /// mistake presents as a wedged editor. Here the absent case has no Node to call anything
 /// on, and a caller that forgets it does not compile. The collector asks this question
 /// more than any other, which is what makes it worth the wrapper.
-pub let field = (node: Node, name: string) -> Maybe<Node> => {
+pub let field = (self: Node, name: string) -> Maybe<Node> => {
   // The byte length, not `name.len()`: that counts runes, and a field name being ASCII
   // today is not a reason to write the line that stops being true.
   var spelling = name.cstring()
   let found = unsafe {
-    ts_node_child_by_field_name(node, &spelling[0], u32(spelling.len() - 1))
+    ts_node_child_by_field_name(self, &spelling[0], u32(spelling.len() - 1))
   }
   if unsafe { ts_node_is_null(found) } { None } else { Some(found) }
 }
@@ -138,23 +155,37 @@ pub let field = (node: Node, name: string) -> Maybe<Node> => {
 ///
 /// A comment is a named node and can sit anywhere `extras` allows, so this count includes
 /// comments; the compiler's hazard 16 is exactly that mistake made once already.
-pub let named_child_count = (node: Node) -> i64 =>
-  i64(unsafe { ts_node_named_child_count(node) })
+pub let named_child_count = (self: Node) -> i64 =>
+  i64(unsafe { ts_node_named_child_count(self) })
 
 /// The node's `i`th named child.
 ///
 /// # Panics
 /// Traps when `i` is out of range, as `xs[i]` does.
-pub let named_child = (node: Node, i: i64) -> Node => {
-  if i < 0 || i >= named_child_count(node) { panic("named_child: index out of range") }
-  unsafe { ts_node_named_child(node, u32(i)) }
+pub let named_child = (self: Node, i: i64) -> Node => {
+  if i < 0 || i >= named_child_count(self) { panic("named_child: index out of range") }
+  unsafe { ts_node_named_child(self, u32(i)) }
+}
+
+/// A generator that yields a node's named children.
+///
+/// # Examples
+/// ```
+/// for child in node.named_children() {
+///   print(child)
+/// }
+/// ```
+pub let named_children = gen (self: Node) -> Seq<Node> => {
+  for i in 0..<self.named_child_count() {
+    yield unsafe { ts_node_named_child(self, u32(i)) }
+  }
 }
 
 /// Whether the node is one the parser *inserted* to recover — a token the grammar required
 /// and the source did not have. It occupies no bytes, so it is invisible to a walk that
 /// only reads spans, and it is not an `ERROR` node either: `has_error` is true for the tree
 /// but the node itself reads as an ordinary one of its kind.
-pub let is_missing = (node: Node) -> bool => unsafe { ts_node_is_missing(node) }
+pub let is_missing = (self: Node) -> bool => unsafe { ts_node_is_missing(self) }
 
 /// The node's own text, from the source's **bytes**.
 ///
@@ -163,8 +194,8 @@ pub let is_missing = (node: Node) -> bool => unsafe { ts_node_is_missing(node) }
 /// these numbers silently reads the wrong text the moment the file is not ASCII. Taking
 /// the byte array as a parameter makes that impossible to get wrong at a call site, and
 /// costs the caller one `cstring()` for the whole file rather than one per token.
-pub let text = (node: Node, source: []u8) -> string =>
-  source.slice(start_byte(node), end_byte(node)).decode_utf8()
+pub let text = (self: Node, source: []u8) -> string =>
+  source.slice(self.start_byte(), self.end_byte()).decode_utf8()
 
 // ---------------------------------------------------------------------------------------
 // Foreign declarations

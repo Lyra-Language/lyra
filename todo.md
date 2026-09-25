@@ -195,9 +195,22 @@ Package management, versioning and separate compilation are out of scope by deci
     `if_then_expr_with_else_if` are referenced from nothing and record an `if/then/end`
     syntax the grammar no longer has — their contents are the identifiers `else` and `end`
     collected as statements. Delete them with whatever next touches that directory.
-  - **The `Location` every node carries is not modelled yet**, and the goldens do not show
-    it (`pkg/printer` omits `print:"-"` fields, which is what `NameLocation` is). It has to
-    arrive before anything reports a diagnostic, and choosing when is a slice of its own.
+  - **Locations landed 09/25, and the slice was mostly its oracle.** The goldens cannot
+    check a span — `pkg/printer` skips the embedded `AstBase` it lives in — so the first
+    thing built was `PrintASTWithLocations` on the Go side and a `--locations` mode here,
+    and then **163 of 163** goldens agree node for node. Every payload struct carries a
+    `Location` with a zero default; the collector builds a line table once per file
+    (`Source`) and finds a byte offset's line by binary search, since scanning per node is
+    quadratic in a file this will eventually be run on.
+    Three spans are **not** the node's own and had to be learned from the oracle: an
+    interpolation's text run and a raw string both take the whole literal's span, and a
+    written *type* carries none at all — a type is compared structurally, so the Go
+    collector keeps written types' positions in a side table instead.
+    It also found a **missing** location in the Go collector (below), which is the only way
+    a missing one ever shows up. (COMPLETED.md, 09/25.)
+  - **[OPEN] Next on this axis: diagnostics.** The collector can report now — it has spans
+    and rule 3's placeholder shape to follow — and the Go collector's errors are a list
+    this can be compared against the same way the AST was.
   - The `SymbolTable` is a second axis, deliberately after the AST: the Go collector builds
     both in one walk, and doing the same here before the AST is checked would mean two
     unverified things at once.
@@ -250,6 +263,46 @@ same exemption unless it goes through `checkStoredFlavor`.
   whose elements are each a storing site" and "a constructor applied, which is built
   here". Reading it only the first way refused the bootstrap's own AST.
   (COMPLETED.md, 09/24.)
+
+### Using a released resource was not reported (09/25)
+
+- **[FIXED 09/25]** `close_it(h)` then `read_it(h)` checked clean, as did reading a node
+  out of a deleted tree. `CheckUseAfterMove` counted a move only for a **managed** value,
+  on the reading that "a non-managed value is copied, so passing it leaves the original
+  intact" — true of every struct except one holding a handle to something Lyra does not
+  own. A `@must_release` type is consumed by an `own` parameter now, and its message says
+  *released* rather than *moved*, because it is a use-after-free rather than a lost
+  uniqueness.
+- **[FIXED 09/25] A branch that returns no longer joins.** Required by the above and a
+  latent fault on its own: the union at an `if`/`match` counted a release down an arm that
+  `return`s as having happened on the path past it, and the loop seed counted one as
+  reaching the next iteration. `lyrafmt` is written in exactly that shape twice — release,
+  report, return — so the fix above reported it twice before this landed. The union was
+  "conservative, matching Rust"; this is the half of Rust's rule it was missing, invisible
+  while only managed values could move.
+- **[FIXED 09/25] `@must_release`'s second argument is reported, not dropped.** It reads
+  one release function by design, and silently ignored the rest — so
+  `@must_release(free_it, delete)` read as "either discharges it" and neither the warning
+  nor the compiler said otherwise.
+
+### A method-style call showed no signature in hover (09/25)
+
+- **[FIXED 09/25]** `twice(a)` hovered as `twice: (i64) -> i64` and `a.twice()` hovered
+  empty. `desugarUFCSCall` synthesizes the callee and nothing recorded a type for it, so
+  the TypeTable had a hole and every reader of it answered nothing — the LSP had a fallback
+  that rendered the doc comment alone, which is why the symptom was "no signature" rather
+  than "no tooltip". Fixed where the hole was: the desugaring records
+  `lambdaSignature(fn)`. **The spelling the standard library is documented in was the one
+  without a signature in the editor.**
+
+### The C-style `for` loop carried no location (09/25)
+
+- **[FIXED 09/25]** `CollectForLoopExpr` built its `ast.ForLoopExpr` with no `ExprBase`, so
+  the node's span was zero. The same gap `for/in` had until 08/18 and the same cost: a
+  diagnostic against a zero Location prints no `line:col` and escapes the driver's per-file
+  filtering (hazard 14), so a warning on a prelude loop lands on every file compiled.
+  **Found by the bootstrap** — the Lyra collector set a span, the two printed ASTs
+  disagreed, and a *missing* location has no other symptom inside one implementation.
 
 ### A `[]shared T` and a `[]T` in one function segfaulted (09/24)
 

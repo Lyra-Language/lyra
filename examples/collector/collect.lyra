@@ -11,7 +11,9 @@ module collect
 //! guessed at — a node kind this does not know yields no statement, so the test that grows
 //! the subset fails by printing too little rather than by printing something invented.
 
-import bindings.treesitter.{ Node, kind, field, named_child, named_child_count, text }
+import bindings.treesitter.{
+  Node, kind, field, named_child, named_child_count, text, start_byte, end_byte,
+}
 import ast.{
   Program, Stmt, VarDecl, ExprStmt, Expr,
   IntegerLiteral, CharacterLiteral, StringLiteral, Identifier, BinaryOp, Lambda,
@@ -37,6 +39,8 @@ import ast.{
   StructInstanceField,
   Spread,
   Conditional,
+  Location,
+  Wildcard,
   ForInLoop,
   ForLoop,
   Break,
@@ -55,11 +59,67 @@ import ast.{
   RangeEndOperator,
 }
 
+/// The file being collected: its bytes, and where each line begins.
+///
+/// **One parameter, not two.** Every collector already threaded `source` for `text`, and a
+/// location needs a line table as well; bundling them keeps each signature at one argument
+/// and means the table is built once for the file rather than rebuilt per node. Scanning
+/// for newlines at each node instead would be quadratic in the file — a collector visits
+/// every node, and `lyrafmt` is already 3000 lines.
+pub struct Source {
+  bytes: []u8,
+  /// The byte offset each line starts at, line 1 first. Strictly increasing, so a byte
+  /// offset finds its line by binary search.
+  line_starts: []i64,
+}
+
+/// A file's bytes with its line table computed.
+pub let source_of = pure (bytes: []u8) -> Source => {
+  var line_starts = [0]
+  for i in 0..<bytes.len() {
+    // `\n` ends a line wherever it appears; a `\r\n` leaves the `\r` on the previous
+    // line, which is what tree-sitter counts too — its column is a **byte** offset into
+    // the line, not a character count, so nothing here decodes UTF-8.
+    if bytes[i] == 10 { line_starts.push(i + 1) }
+  }
+  Source { bytes: bytes, line_starts: line_starts }
+}
+
+/// The span a CST node covers, 1-based, as `collector_ctx.NodeLocation` reports it.
+let location_of = (self: Source, node: Node) -> Location => {
+  let start = self.position_of(node.start_byte())
+  let end = self.position_of(node.end_byte())
+  Location {
+    start_line: start.0,
+    start_col: start.1,
+    end_line: end.0,
+    end_col: end.1,
+  }
+}
+
+/// The 1-based `(line, column)` a byte offset falls on.
+///
+/// Binary search over the line table: the line is the last one starting at or before the
+/// offset, and the column is the distance from that start. **Bytes, not runes** — a line
+/// holding `é` counts it twice, which is what tree-sitter's own point does, and agreeing
+/// with the compiler matters more here than agreeing with a text editor.
+let position_of = pure (self: Source, offset: i64) -> (i64, i64) => {
+  var low = 0
+  var high = self.line_starts.len() - 1
+  for low < high {
+    // Round up, so the loop always moves: `low` is a candidate answer and `high` shrinks
+    // toward it. Rounding down lets `low == mid` and spins forever on two entries.
+    let mid = low + (high - low + 1) / 2
+    if self.line_starts[mid] <= offset { low = mid } else { high = mid - 1 }
+  }
+  (low + 1, offset - self.line_starts[low] + 1)
+}
+
 /// Every statement at the file's top level.
-pub let collect = (root: Node, source: []u8) -> Program => {
+pub let collect = (self: Node, source: Source) -> Program => {
   var statements: []Stmt = []
-  for i in 0..<named_child_count(root) {
-    match collect_statement(named_child(root, i), source) {
+  for child in self.named_children() {
+    match collect_statement(child, source) {
       Some(stmt) => statements.push(stmt),
       None => {},
     }
@@ -74,8 +134,8 @@ pub let collect = (root: Node, source: []u8) -> Program => {
 /// The catch-all below would drop it anyway, so naming it is for what comes next: a
 /// growing subset wants to say "this kind is not collected yet", and a comment is not an
 /// uncollected construct, it is not a construct.
-let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
-  return match kind(node) {
+let collect_statement = (node: Node, source: Source) -> Maybe<Stmt> => {
+  return match node.kind() {
     "comment" => None,
     // **A `const` is the same declaration under another kind.** The Go collector routes
     // `const_declaration` into the same collector, and the `keyword` field carries the
@@ -85,14 +145,14 @@ let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
     "var_reassignment" => collect_var_reassignment(node, source),
     "break_statement" => collect_break(node, source),
     "continue_statement" =>
-      Some(ContinueStmt(Continue { label: jump_label(node, source) })),
+      Some(ContinueStmt(Continue { location: source.location_of(node), label: jump_label(node, source) })),
     "expression_statement" => {
       // The statement wraps one expression; if that expression is a kind this slice does
       // not know, the statement is not collected either — a wrapper around nothing is a
       // node this did not understand, not an empty one.
-      if named_child_count(node) > 0 {
-        return match collect_expr(named_child(node, 0), source) {
-          Some(expr) => Some(ExpressionStmt(ExprStmt { expression: expr })),
+      if node.named_child_count() > 0 {
+        return match collect_expr(node.named_child(0), source) {
+          Some(expr) => Some(ExpressionStmt(ExprStmt { location: source.location_of(node), expression: expr })),
           None => None,
         }
       }
@@ -107,27 +167,29 @@ let collect_statement = (node: Node, source: []u8) -> Maybe<Stmt> => {
 /// **The name has no field** — it is simply the first named child, which is how the Go
 /// collector reads it too. Asking for a `name` field answers nothing and the statement
 /// disappears, which is how this was written first.
-let collect_var_reassignment = (node: Node, source: []u8) -> Maybe<Stmt> => {
-  if named_child_count(node) == 0 { return None }
-  let value = collect_expr(field(node, "value")?, source)?
+let collect_var_reassignment = (node: Node, source: Source) -> Maybe<Stmt> => {
+  if node.named_child_count() == 0 { return None }
+  let value = collect_expr(node.field("value")?, source)?
   Some(VarReassignmentStmt(VarReassignment {
-    name: text(named_child(node, 0), source),
+    location: source.location_of(node),
+    name: text(node.named_child(0), source.bytes),
     value: value,
   }))
 }
 
 /// `break`, `break outer`, `break outer 1`.
-let collect_break = (node: Node, source: []u8) -> Maybe<Stmt> => Some(BreakStmt(Break {
+let collect_break = (node: Node, source: Source) -> Maybe<Stmt> => Some(BreakStmt(Break {
+  location: source.location_of(node),
   label: jump_label(node, source),
-  value: match field(node, "value") {
+  value: match node.field("value") {
     Some(value) => collect_expr(value, source),
     None => None,
   },
 }))
 
 /// The label a `break` or `continue` names, or `""` for the bare form.
-let jump_label = (node: Node, source: []u8) -> string => match field(node, "label") {
-  Some(label) => text(label, source),
+let jump_label = (node: Node, source: Source) -> string => match node.field("label") {
+  Some(label) => label.text(source.bytes),
   None => "",
 }
 
@@ -136,9 +198,9 @@ let jump_label = (node: Node, source: []u8) -> string => match field(node, "labe
 /// The keyword's node is a child rather than a field, so which of the three it is comes
 /// from that child's kind — the same "the grammar already decided" the binary/boolean split
 /// rests on.
-let collect_type_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
-  if named_child_count(node) == 0 { return None }
-  let body = named_child(node, 0)
+let collect_type_declaration = (node: Node, source: Source) -> Maybe<Stmt> => {
+  if node.named_child_count() == 0 { return None }
+  let body = node.named_child(0)
   let declared = match kind(body) {
     "struct_type" => collect_struct_type(body, source),
     "named_tuple_type" => collect_tuple_type(body, source),
@@ -148,6 +210,7 @@ let collect_type_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
   }
   let Some(declared_type) = declared else { return None }
   Some(TypeDeclStmt(TypeDecl {
+    location: source.location_of(node),
     derives: [],
     generic_params: collect_generic_params(body, source),
     is_public: match field(body, "visibility") {
@@ -160,17 +223,16 @@ let collect_type_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
 }
 
 /// `struct Point { x: i64, y: i64 = 0 }`.
-let collect_struct_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
+let collect_struct_type = (node: Node, source: Source) -> Maybe<shared TypeNode> => {
   var name = ""
   var fields: []StructField = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    let k = kind(child)
-    if k == "struct_name" { name = text(child, source) }
+  for child in node.named_children() {
+    let k = child.kind()
+    if k == "struct_name" { name = child.text(source.bytes) }
     if k == "struct_type_body" {
-      for j in 0..<named_child_count(child) {
-        let member = named_child(child, j)
-        if kind(member) == "struct_member" {
+      for j in 0..<child.named_child_count() {
+        let member = child.named_child(j)
+        if member.kind() == "struct_member" {
           match collect_struct_field(member, source) {
             Some(f) => fields.push(f),
             None => {},
@@ -183,21 +245,23 @@ let collect_struct_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> =
 }
 
 /// `x: i64`, `y: i64 = 0`.
-let collect_struct_field = (node: Node, source: []u8) -> Maybe<StructField> => {
+let collect_struct_field = (node: Node, source: Source) -> Maybe<StructField> => {
   var name = ""
   var declared: Maybe<shared TypeNode> = None
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    let k = kind(child)
-    if k == "field_name" { name = text(child, source) }
-    // The type sits inside a `field_type` wrapper, as a range's bounds do.
-    if k == "field_type" && named_child_count(child) > 0 {
-      declared = collect_type(named_child(child, 0), source)
+  for child in node.named_children() {
+    match child.kind() {
+      "field_name" => {
+        name = child.text(source.bytes)
+      },
+      "field_type" if child.named_child_count() > 0 => {
+        declared = collect_type(child.named_child(0), source)
+      },
+      _ => {}
     }
   }
   let Some(declared_type) = declared else { return None }
   Some(StructField {
-    default_value: match field(node, "default_value") {
+    default_value: match node.field("default_value") {
       Some(wrapper) => collect_wrapped_at(wrapper, source),
       None => None,
     },
@@ -207,11 +271,11 @@ let collect_struct_field = (node: Node, source: []u8) -> Maybe<StructField> => {
 }
 
 /// `tuple Point2D(f64, f64)`.
-let collect_tuple_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
+let collect_tuple_type = (node: Node, source: Source) -> Maybe<shared TypeNode> => {
   var name = ""
-  match field(node, "name") {
+  match node.field("name") {
     Some(n) => {
-      name = text(n, source)
+      name = n.text(source.bytes)
     },
     None => {},
   }
@@ -222,17 +286,16 @@ let collect_tuple_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> =>
 }
 
 /// `data Color = Red | Hex(HexStr)`.
-let collect_data_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
+let collect_data_type = (node: Node, source: Source) -> Maybe<shared TypeNode> => {
   var name = ""
   var constructors: []DataTypeConstructor = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    let k = kind(child)
-    if k == "data_type_name" { name = text(child, source) }
+  for child in node.named_children() {
+    let k = child.kind()
+    if k == "data_type_name" { name = child.text(source.bytes) }
     if k == "data_type_constructor" {
       constructors.push(DataTypeConstructor {
-        name: match field(child, "name") {
-          Some(n) => text(n, source),
+        name: match child.field("name") {
+          Some(n) => n.text(source.bytes),
           None => "",
         },
         packed: has_packed_payload(child),
@@ -247,8 +310,8 @@ let collect_data_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => 
 
 /// Whether a constructor's payload was written in parentheses.
 let has_packed_payload = (node: Node) -> bool => {
-  for i in 0..<named_child_count(node) {
-    if kind(named_child(node, i)) == "anonymous_tuple_type" { return true }
+  for child in node.named_children() {
+    if child.kind() == "anonymous_tuple_type" { return true }
   }
   false
 }
@@ -262,11 +325,10 @@ let has_packed_payload = (node: Node) -> bool => {
 /// uses the packed form.
 ///
 /// The anonymous tuple is named `?`, which is what an unnamed one answers when asked.
-let collect_constructor_params = (node: Node, source: []u8) -> []shared TypeNode => {
+let collect_constructor_params = (node: Node, source: Source) -> []shared TypeNode => {
   var params: []shared TypeNode = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    if kind(child) == "anonymous_tuple_type" {
+  for child in node.named_children() {
+    if child.kind() == "anonymous_tuple_type" {
       params.push(TupleType(TupleTypeDef {
         elements: collect_tuple_elements(child, source),
         name: "?",
@@ -284,20 +346,20 @@ let collect_constructor_params = (node: Node, source: []u8) -> []shared TypeNode
 
 /// The element types of a `tuple_type_body` under `node`, each unwrapped from the
 /// `tuple_type_element` the grammar wraps it in.
-let collect_tuple_elements = (node: Node, source: []u8) -> []shared TypeNode => {
+let collect_tuple_elements = (node: Node, source: Source) -> []shared TypeNode => {
   var elements: []shared TypeNode = []
   var i = 0
-  for i < named_child_count(node) {
-    let child = named_child(node, i)
-    if kind(child) != "tuple_type_body" {
+  for i < node.named_child_count() {
+    let child = node.named_child(i)
+    if child.kind() != "tuple_type_body" {
       i += 1
       continue
     }
     var j = 0
-    for j < named_child_count(child) {
-      let element = named_child(child, j)
-      if kind(element) == "tuple_type_element" {
-        match field(element, "type") {
+    for j < child.named_child_count() {
+      let element = child.named_child(j)
+      if element.kind() == "tuple_type_element" {
+        match element.field("type") {
           Some(t) => match collect_type(t, source) {
             Some(collected) => elements.push(collected),
             None => {},
@@ -316,17 +378,17 @@ let collect_tuple_elements = (node: Node, source: []u8) -> []shared TypeNode => 
 ///
 /// The constraints a newtype may carry (`where range(…)`) are not collected yet, which is
 /// why the goldens that have them still differ — an honest gap rather than a silent one.
-let collect_constrained_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
-  let name_node = field(node, "name")?
-  let base = collect_type(field(node, "type")?, source)?
+let collect_constrained_type = (node: Node, source: Source) -> Maybe<shared TypeNode> => {
+  let name_node = node.field("name")?
+  let base = collect_type(node.field("type")?, source)?
   Some(ConstrainedType(ConstrainedTypeDef {
-    name: text(name_node, source),
+    name: name_node.text(source.bytes),
     declared: base,
   }))
 }
 
 /// `<t, u>` — the variables a declaration binds, or none.
-let collect_generic_params = (node: Node, source: []u8) -> []GenericParam => {
+let collect_generic_params = (node: Node, source: Source) -> []GenericParam => {
   var params: []GenericParam = []
   // **Found among the children rather than by field name.** `named_tuple_type` exposes a
   // `generic_parameters` field and `struct_type`/`data_type` do not, so asking for the
@@ -334,18 +396,17 @@ let collect_generic_params = (node: Node, source: []u8) -> []GenericParam => {
   // the shape of bug that prints a *shorter* tree rather than a wrong one.
   var list = node
   var found = false
-  for c in 0..<named_child_count(node) {
-    if kind(named_child(node, c)) == "generic_parameters" {
-      list = named_child(node, c)
+  for child in node.named_children() {
+    if child.kind() == "generic_parameters" {
+      list = child
       found = true
     }
   }
   if !found { return params }
-  for i in 0..<named_child_count(list) {
-    let child = named_child(list, i)
-    if kind(child) == "generic_parameter" {
-      match field(child, "name") {
-        Some(n) => params.push(GenericParam { name: text(n, source) }),
+  for child in list.named_children() {
+    if child.kind() == "generic_parameter" {
+      match child.field("name") {
+        Some(n) => params.push(GenericParam { location: source.location_of(child), name: n.text(source.bytes) }),
         None => {},
       }
     }
@@ -365,7 +426,7 @@ let type_name_of = pure (declared: shared TypeNode) -> string => match declared 
 }
 
 /// The expression inside an already-located wrapper node.
-let collect_wrapped_at = (wrapper: Node, source: []u8) -> Maybe<shared Expr> => {
+let collect_wrapped_at = (wrapper: Node, source: Source) -> Maybe<shared Expr> => {
   if named_child_count(wrapper) == 0 { return None }
   collect_expr(named_child(wrapper, 0), source)
 }
@@ -374,13 +435,13 @@ let collect_wrapped_at = (wrapper: Node, source: []u8) -> Maybe<shared Expr> => 
 ///
 /// Every field is optional in the grammar even where it reads as required, so each is a
 /// `field` lookup with an answer for the absent case rather than an unwrap.
-let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
-  let binding_kind = match field(node, "keyword") {
-    Some(keyword) => text(keyword, source),
+let collect_declaration = (node: Node, source: Source) -> Maybe<Stmt> => {
+  let binding_kind = match node.field("keyword") {
+    Some(keyword) => keyword.text(source.bytes),
     None => "let",
   }
-  let name = match field(node, "name") {
-    Some(identifier) => text(identifier, source),
+  let name = match node.field("name") {
+    Some(identifier) => identifier.text(source.bytes),
     None => "",
   }
   // **The modifiers may sit on the declaration rather than on the lambda.**
@@ -389,8 +450,8 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
   // `fn_modifiers`. The two spellings are one program and the Go AST records both on the
   // lambda, so what the declaration found is handed down to it.
   let (is_pure, is_async) = declaration_modifiers(node)
-  let value = match field(node, "value") {
-    Some(expr) => match kind(expr) {
+  let value = match node.field("value") {
+    Some(expr) => match expr.kind() {
       "lambda_expr" => Some(collect_lambda(expr, source, is_pure, is_async)),
       _ => collect_expr(expr, source)
     },
@@ -402,6 +463,7 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
     Some(pattern_node) => {
       let Some(pattern) = collect_pattern(pattern_node, source) else { return None }
       return Some(DestructuringDeclStmt(DestructuringDecl {
+        location: source.location_of(node),
         keyword: binding_kind,
         pattern: pattern,
         value: value,
@@ -410,10 +472,11 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
     None => {},
   }
   Some(VarDeclStmt(VarDecl {
+    location: source.location_of(node),
     binding_kind: binding_kind,
     generic_params: collect_generic_params(node, source),
     // The field's presence *is* the answer; `pub` is the only thing it can say.
-    is_public: match field(node, "visibility") {
+    is_public: match node.field("visibility") {
       Some(_) => true,
       None => false,
     },
@@ -421,8 +484,8 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
     // **The annotation sits in a wrapper of its own** (`type_annotation`), holding the
     // written type in a `type` field — the same shape a return type has, and not the
     // shape the value fields have.
-    type_annotation: match field(node, "type_annotation") {
-      Some(wrapper) => match field(wrapper, "type") {
+    type_annotation: match node.field("type_annotation") {
+      Some(wrapper) => match wrapper.field("type") {
         Some(declared) => collect_type(declared, source),
         None => None,
       },
@@ -438,11 +501,11 @@ let collect_declaration = (node: Node, source: []u8) -> Maybe<Stmt> => {
 /// together, they travel together, and a caller that asked for one and forgot the other is
 /// the mistake this shape rules out.
 let declaration_modifiers = (node: Node) -> (bool, bool) => {
-  let Some(list) = field(node, "modifiers") else { return (false, false) }
+  let Some(list) = node.field("modifiers") else { return (false, false) }
   var is_pure = false
   var is_async = false
-  for i in 0..<named_child_count(list) {
-    match kind(named_child(list, i)) {
+  for child in list.named_children() {
+    match child.kind() {
       "pure_modifier" => { is_pure = true },
       "async_modifier" => { is_async = true },
       _ => {}
@@ -455,18 +518,21 @@ let declaration_modifiers = (node: Node) -> (bool, bool) => {
 ///
 /// The arms are children rather than a field, and the scrutinee is the `value` field — so
 /// a walk over the children meets the arms and nothing else, comments aside.
-let collect_match = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let scrutinee = collect_expr(field(node, "value")?, source)?
+let collect_match = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let scrutinee = collect_expr(node.field("value")?, source)?
   var arms: []MatchArm = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    if kind(child) != "match_arm" { continue }
+  for child in node.named_children() {
+    if child.kind() != "match_arm" { continue }
     match collect_match_arm(child, source) {
       Some(arm) => arms.push(arm),
       None => {},
     }
   }
-  Some(MatchExpr(Match { match_arms: arms, scrutinee: scrutinee }))
+  Some(MatchExpr(Match {
+    location: source.location_of(node),
+    match_arms: arms,
+    scrutinee: scrutinee
+  }))
 }
 
 /// One arm: `p if g => body`.
@@ -474,12 +540,12 @@ let collect_match = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 /// The guard is a node of its own in the AST (`GuardExpr`) holding the condition the
 /// grammar puts in `guard_expression`, so the wrapper is built here rather than the
 /// condition being carried bare.
-let collect_match_arm = (node: Node, source: []u8) -> Maybe<MatchArm> => {
-  let pattern = collect_pattern(field(node, "pattern")?, source)?
-  let body = collect_expr(field(node, "body")?, source)?
+let collect_match_arm = (node: Node, source: Source) -> Maybe<MatchArm> => {
+  let pattern = collect_pattern(node.field("pattern")?, source)?
+  let body = collect_expr(node.field("body")?, source)?
   Some(MatchArm {
     body: body,
-    guard: match field(node, "guard") {
+    guard: match node.field("guard") {
       Some(guard) => collect_guard(guard, source),
       None => None,
     },
@@ -488,9 +554,9 @@ let collect_match_arm = (node: Node, source: []u8) -> Maybe<MatchArm> => {
 }
 
 /// `if x > 0` on an arm.
-let collect_guard = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let condition = collect_expr(field(node, "guard_expression")?, source)?
-  Some(GuardExpr(Guard { condition: condition }))
+let collect_guard = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let condition = collect_expr(node.field("guard_expression")?, source)?
+  Some(GuardExpr(Guard { location: source.location_of(node), condition: condition }))
 }
 
 /// One pattern, or `None` for a form this slice does not collect.
@@ -498,57 +564,62 @@ let collect_guard = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 /// The grammar wraps a destructuring declaration's pattern in `destructuring_only_pattern`,
 /// the fourth wrapper in this walk — so it is unwrapped like the others rather than given
 /// a case of its own.
-let collect_pattern = (node: Node, source: []u8) -> Maybe<shared Pattern> => {
-  match kind(node) {
+let collect_pattern = (node: Node, source: Source) -> Maybe<shared Pattern> => {
+  match node.kind() {
     "destructuring_only_pattern" => {
-      if named_child_count(node) == 0 { return None }
-      return collect_pattern(named_child(node, 0), source)
+      if node.named_child_count() == 0 { return None }
+      return collect_pattern(node.named_child(0), source)
     },
     "identifier" =>
-      return Some(IdentifierPattern(Identifier { name: text(node, source) })),
+      return Some(IdentifierPattern(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
     "data_pattern" => {
-      let name_node = field(node, "name")?
+      let name_node = node.field("name")?
       return Some(DataPattern(DataPatternDef {
-        name: text(name_node, source),
-        pattern: match field(node, "pattern") {
+        location: source.location_of(node),
+        name: name_node.text(source.bytes),
+        pattern: match node.field("pattern") {
           Some(inner) => collect_pattern(inner, source),
           None => None,
         },
       }))
     },
     "literal_pattern" => return Some(collect_literal_pattern(node, source)),
-    "wildcard_pattern" => return Some(WildcardPattern),
+    "wildcard_pattern" =>
+      return Some(WildcardPattern(Wildcard { location: source.location_of(node) })),
     "range_pattern" => return Some(RangePattern(PatternRange {
-      end: match field(node, "end") {
+      location: source.location_of(node),
+      end: match node.field("end") {
         Some(e) => collect_expr(e, source),
         None => None,
       },
-      end_operator: match field(node, "end_operator") {
-        Some(operator) => text(operator, source),
+      end_operator: match node.field("end_operator") {
+        Some(operator) => text(operator, source.bytes),
         None => "",
       },
-      start: match field(node, "start") {
+      start: match node.field("start") {
         Some(e) => collect_expr(e, source),
         None => None,
       },
     })),
     "tuple_pattern" =>
-      return Some(TuplePattern(PatternList { elements: collect_pattern_list(node, source) })),
+      return Some(TuplePattern(PatternList { location: source.location_of(node), elements: collect_pattern_list(node, source) })),
     "array_pattern" =>
-      return Some(ArrayPattern(PatternList { elements: collect_pattern_list(node, source) })),
+      return Some(ArrayPattern(PatternList { location: source.location_of(node), elements: collect_pattern_list(node, source) })),
     "or_pattern" =>
-      return Some(OrPattern(PatternList { elements: collect_pattern_list(node, source) })),
+      return Some(OrPattern(PatternList { location: source.location_of(node), elements: collect_pattern_list(node, source) })),
     "rest_pattern" => return Some(RestPattern(Rest {
-      identifier: match field(node, "identifier") {
-        Some(name) => text(name, source),
+      location: source.location_of(node),
+      identifier: match node.field("identifier") {
+        Some(name) => name.text(source.bytes),
         None => "",
       },
     })),
     "binding_pattern" => {
-      let name_node = field(node, "name")?
-      let inner = collect_pattern(field(node, "pattern")?, source)?
+      let name_node = node.field("name")?
+      let inner = collect_pattern(node.field("pattern")?, source)?
       return Some(BindingPattern(BindingPatternDef {
-        name: text(name_node, source),
+        location: source.location_of(node),
+        name: name_node.text(source.bytes),
         pattern: inner,
       }))
     },
@@ -562,18 +633,21 @@ let collect_pattern = (node: Node, source: []u8) -> Maybe<shared Pattern> => {
 /// **The raw text, except for a character literal**, whose decoded code point is stored
 /// instead — the one literal whose pattern and expression forms disagree about what the
 /// value *is*, and the reason this reuses the character collector rather than the text.
-let collect_literal_pattern = (node: Node, source: []u8) -> shared Pattern => {
-  if named_child_count(node) > 0 {
-    let child = named_child(node, 0)
-    if kind(child) == "char_literal" {
+let collect_literal_pattern = (node: Node, source: Source) -> shared Pattern => {
+  if node.named_child_count() > 0 {
+    let child = node.named_child(0)
+    if child.kind() == "char_literal" {
       return match collect_character(child, source) {
         CharacterLiteralExpr(lit) =>
-          LiteralPattern(LiteralPatternDef { value: quote_rune(lit.value) }),
-        _ => LiteralPattern(LiteralPatternDef { value: text(node, source) }),
+          LiteralPattern(LiteralPatternDef { location: source.location_of(node), value: quote_rune(lit.value) }),
+        _ => LiteralPattern(LiteralPatternDef { location: source.location_of(node), value: node.text(source.bytes) }),
       }
     }
   }
-  LiteralPattern(LiteralPatternDef { value: text(node, source) })
+  LiteralPattern(LiteralPatternDef {
+    location: source.location_of(node),
+    value: node.text(source.bytes)
+  })
 }
 
 /// A code point as Go's `strconv.QuoteRune` renders it: `'a'`, `'\n'`, `'\x00'`.
@@ -610,11 +684,10 @@ let hex_digit = pure (value: i64) -> string =>
   if value < 10 { "${value}" } else { "${rune(i64('a') + value - 10)}" }
 
 /// The element patterns of a tuple, array or or-pattern, each a child directly.
-let collect_pattern_list = (node: Node, source: []u8) -> []shared Pattern => {
+let collect_pattern_list = (node: Node, source: Source) -> []shared Pattern => {
   var elements: []shared Pattern = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    if kind(child) == "comment" { continue }
+  for child in node.named_children() {
+    if child.kind() == "comment" { continue }
     match collect_pattern(child, source) {
       Some(element) => elements.push(element),
       None => {},
@@ -628,12 +701,11 @@ let collect_pattern_list = (node: Node, source: []u8) -> []shared Pattern => {
 /// Three shapes of field under one kind: a bare name (no pattern at all), a
 /// `struct_field_with_pattern`, and a rest element — which becomes a field **named
 /// `...`**, the Go collector's spelling, holding the `RestPattern`.
-let collect_struct_pattern = (node: Node, source: []u8) -> shared Pattern => {
+let collect_struct_pattern = (node: Node, source: Source) -> shared Pattern => {
   var fields: []StructPatternField = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    if kind(child) != "struct_field_pattern" { continue }
-    match field(child, "struct_field_with_pattern") {
+  for child in node.named_children() {
+    if child.kind() != "struct_field_pattern" { continue }
+    match child.field("struct_field_with_pattern") {
       Some(with_pattern) => {
         match collect_struct_pattern_field(with_pattern, source) {
           Some(f) => fields.push(f),
@@ -646,7 +718,7 @@ let collect_struct_pattern = (node: Node, source: []u8) -> shared Pattern => {
     // A rename (`a: foo`) is a fourth shape, and a *different node* from a field with a
     // pattern under it — the new name is a `new_name`, not a pattern — so it is turned
     // into the identifier pattern the Go collector builds.
-    match field(child, "struct_field_rename") {
+    match child.field("struct_field_rename") {
       Some(rename) => {
         match collect_struct_pattern_rename(rename, source) {
           Some(f) => fields.push(f),
@@ -660,6 +732,7 @@ let collect_struct_pattern = (node: Node, source: []u8) -> shared Pattern => {
       Some(rest) => {
         match collect_pattern(rest, source) {
           Some(inner) => fields.push(StructPatternField {
+            location: source.location_of(child),
             name: "...",
             pattern: Some(inner),
           }),
@@ -671,95 +744,111 @@ let collect_struct_pattern = (node: Node, source: []u8) -> shared Pattern => {
     }
     match field(child, "name") {
       Some(name) => fields.push(StructPatternField {
-        name: text(name, source),
+        location: source.location_of(child),
+        name: name.text(source.bytes),
         pattern: None,
       }),
       None => {},
     }
   }
-  StructPattern(StructPatternDef { fields: fields, name: "" })
+  StructPattern(StructPatternDef {
+    location: source.location_of(node),
+    fields: fields,
+    name: ""
+  })
 }
 
 /// `a: foo` — the field `a`, bound under the name `foo`.
 let collect_struct_pattern_rename = (
   node: Node,
-  source: []u8
+  source: Source
 ) -> Maybe<StructPatternField> => {
-  let name = field(node, "name")?
-  let new_name = field(node, "new_name")?
+  let name = node.field("name")?
+  let new_name = node.field("new_name")?
   Some(StructPatternField {
-    name: text(name, source),
-    pattern: Some(IdentifierPattern(Identifier { name: text(new_name, source) })),
+    location: source.location_of(node),
+    name: name.text(source.bytes),
+    pattern: Some(IdentifierPattern(Identifier { location: source.location_of(new_name), name: new_name.text(source.bytes) })),
   })
 }
 
 /// `y: 0` — a named field with a pattern under it.
 let collect_struct_pattern_field = (
   node: Node,
-  source: []u8
+  source: Source
 ) -> Maybe<StructPatternField> => {
-  let name = field(node, "name")?
-  let inner = collect_pattern(field(node, "pattern")?, source)?
-  Some(StructPatternField { name: text(name, source), pattern: Some(inner) })
+  let name = node.field("name")?
+  let inner = collect_pattern(node.field("pattern")?, source)?
+  Some(StructPatternField {
+    location: source.location_of(node),
+    name: name.text(source.bytes),
+    pattern: Some(inner)
+  })
 }
 
 /// One expression, or `None` for a kind this slice does not collect.
-let collect_expr = (node: Node, source: []u8) -> Maybe<shared Expr> => match kind(node) {
-  "integer_literal" => Some(collect_integer(node, source)),
-  "char_literal" => Some(collect_character(node, source)),
-  "float_literal" => Some(collect_float(node, source)),
-  "string_literal" => Some(collect_string(node, source)),
-  "raw_string_literal" => Some(collect_raw_string(node, source)),
-  // A lambda met as an expression carries whatever modifiers it was written with; only
-  // a declaration can hand it more.
-  "lambda_expr" => Some(collect_lambda(node, source, false, false)),
-  "identifier" => Some(IdentifierExpr(Identifier { name: text(node, source) })),
-  // A const name is a **kind of its own**, so nothing here reads the spelling to decide
-  // — `MAX` is const because the grammar said so, not because it is upper case.
-  "const_identifier" =>
-    Some(IdentifierExpr(Identifier { is_const: true, name: text(node, source) })),
-  "binary_expr" => collect_binary(node, source),
-  "call_expr" => collect_call(node, source),
-  "block" => Some(collect_block(node, source)),
-  "if_block_expr" => collect_if(node, source),
-  "for_in_loop" => collect_for_in_loop(node, source),
-  "for_loop" => collect_for_loop(node, source),
-  "compound_assignment" => collect_compound_assignment(node, source),
-  "match_expr" => collect_match(node, source),
-  // A loop's body is a block under another name, which is how the Go collector reads it
-  // too — so the three kinds share one collector rather than each growing a case.
-  "for_body" | "for_in_body" => Some(collect_block(node, source)),
-  // `a?.b` and `a?[i]` are **separate node kinds**, not a flag on the ordinary ones, so
-  // the optional-ness is decided here and carried into one collector rather than
-  // re-derived from the text.
-  "member_expr" => collect_member(node, source, false),
-  "optional_member_expr" => collect_member(node, source, true),
-  "index_expr" => collect_index(node, source, false),
-  "optional_index_expr" => collect_index(node, source, true),
-  "tuple_index_expr" => collect_tuple_index(node, source),
-  "boolean_expr" => collect_boolean(node, source),
-  "string_concat_expr" => collect_string_concat(node, source),
-  // Named and anonymous are separate CST kinds and separate AST nodes, and one walk:
-  // what differs is a name the anonymous form does not have.
-  "named_struct_literal" => Some(collect_struct_instance(node, source, true)),
-  "anonymous_struct_literal" => Some(collect_struct_instance(node, source, false)),
-  "spread_expr" => collect_spread(node, source),
-  "tuple_literal" => Some(collect_tuple_literal(node, source)),
-  "array_literal" => Some(collect_array_literal(node, source)),
-  "array_repeat_init" => collect_array_repeat(node, source),
-  "negation" => collect_unary(node, source, false),
-  "try_expr" => collect_unary(node, source, true),
-  "range_expr" => collect_range(node, source),
-  _ => None
-}
+let collect_expr = (node: Node, source: Source) -> Maybe<shared Expr> =>
+  match node.kind() {
+    "integer_literal" => Some(collect_integer(node, source)),
+    "char_literal" => Some(collect_character(node, source)),
+    "float_literal" => Some(collect_float(node, source)),
+    "string_literal" => Some(collect_string(node, source)),
+    "raw_string_literal" => Some(collect_raw_string(node, source)),
+    // A lambda met as an expression carries whatever modifiers it was written with; only
+    // a declaration can hand it more.
+    "lambda_expr" => Some(collect_lambda(node, source, false, false)),
+    "identifier" => Some(IdentifierExpr(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
+    // A const name is a **kind of its own**, so nothing here reads the spelling to decide
+    // — `MAX` is const because the grammar said so, not because it is upper case.
+    "const_identifier" =>
+      Some(IdentifierExpr(Identifier { location: source.location_of(node), is_const: true, name: node.text(source.bytes) })),
+    "binary_expr" => collect_binary(node, source),
+    "call_expr" => collect_call(node, source),
+    "block" => Some(collect_block(node, source)),
+    "if_block_expr" => collect_if(node, source),
+    "for_in_loop" => collect_for_in_loop(node, source),
+    "for_loop" => collect_for_loop(node, source),
+    "compound_assignment" => collect_compound_assignment(node, source),
+    "match_expr" => collect_match(node, source),
+    // A loop's body is a block under another name, which is how the Go collector reads it
+    // too — so the three kinds share one collector rather than each growing a case.
+    "for_body" | "for_in_body" => Some(collect_block(node, source)),
+    // `a?.b` and `a?[i]` are **separate node kinds**, not a flag on the ordinary ones, so
+    // the optional-ness is decided here and carried into one collector rather than
+    // re-derived from the text.
+    "member_expr" => collect_member(node, source, false),
+    "optional_member_expr" => collect_member(node, source, true),
+    "index_expr" => collect_index(node, source, false),
+    "optional_index_expr" => collect_index(node, source, true),
+    "tuple_index_expr" => collect_tuple_index(node, source),
+    "boolean_expr" => collect_boolean(node, source),
+    "string_concat_expr" => collect_string_concat(node, source),
+    // Named and anonymous are separate CST kinds and separate AST nodes, and one walk:
+    // what differs is a name the anonymous form does not have.
+    "named_struct_literal" => Some(collect_struct_instance(node, source, true)),
+    "anonymous_struct_literal" => Some(collect_struct_instance(node, source, false)),
+    "spread_expr" => collect_spread(node, source),
+    "tuple_literal" => Some(collect_tuple_literal(node, source)),
+    "array_literal" => Some(collect_array_literal(node, source)),
+    "array_repeat_init" => collect_array_repeat(node, source),
+    "negation" => collect_unary(node, source, false),
+    "try_expr" => collect_unary(node, source, true),
+    "range_expr" => collect_range(node, source),
+    _ => None
+  }
 
 /// `person.name`.
-let collect_member = (node: Node, source: []u8, optional: bool) -> Maybe<shared Expr> => {
-  let object_node = field(node, "object")?
-  let property_node = field(node, "property")?
+let collect_member = (
+  node: Node,
+  source: Source,
+  optional: bool
+) -> Maybe<shared Expr> => {
+  let object_node = node.field("object")?
+  let property_node = node.field("property")?
   let object = collect_expr(object_node, source)?
   let property = collect_expr(property_node, source)?
   Some(MemberExpr(MemberAccess {
+    location: source.location_of(node),
     object: object,
     optional: optional,
     property: property,
@@ -767,12 +856,17 @@ let collect_member = (node: Node, source: []u8, optional: bool) -> Maybe<shared 
 }
 
 /// `array[0]`.
-let collect_index = (node: Node, source: []u8, optional: bool) -> Maybe<shared Expr> => {
-  let object_node = field(node, "object")?
-  let index_node = field(node, "index")?
+let collect_index = (
+  node: Node,
+  source: Source,
+  optional: bool
+) -> Maybe<shared Expr> => {
+  let object_node = node.field("object")?
+  let index_node = node.field("index")?
   let object = collect_expr(object_node, source)?
   let subscript = collect_expr(index_node, source)?
   Some(IndexExpr(IndexAccess {
+    location: source.location_of(node),
     index: subscript,
     object: object,
     optional: optional,
@@ -781,12 +875,13 @@ let collect_index = (node: Node, source: []u8, optional: bool) -> Maybe<shared E
 
 /// `pair.0` — the position is read from the text, the grammar having already decided it
 /// is a decimal integer.
-let collect_tuple_index = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let object_node = field(node, "object")?
-  let index_node = field(node, "index")?
+let collect_tuple_index = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let object_node = node.field("object")?
+  let index_node = node.field("index")?
   let object = collect_expr(object_node, source)?
   Some(TupleIndexExpr(TupleIndexAccess {
-    index: digits_value(text(index_node, source).to_runes(), 10),
+    location: source.location_of(node),
+    index: digits_value(index_node.text(source.bytes).to_runes(), 10),
     object: object,
   }))
 }
@@ -796,19 +891,19 @@ let collect_tuple_index = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 /// `None` when the callee is a shape this slice does not collect: a call whose function is
 /// missing is not a call, and printing it with the callee left out would be a node that
 /// never occurs.
-let collect_call = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let callee_node = field(node, "function")?
+let collect_call = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let callee_node = node.field("function")?
   let callee = collect_expr(callee_node, source)?
   var arguments: []shared Expr = []
-  match field(node, "arguments") {
+  match node.field("arguments") {
     Some(list) => {
-      for i in 0..<named_child_count(list) {
+      for i in 0..<list.named_child_count() {
         // **Each argument is wrapped in a `value` node** by the grammar, so the
         // expression is one level down; a walk that took the wrapper would ask for the
         // kind of a node that is never an expression and collect nothing.
-        let wrapper = named_child(list, i)
-        let inner = if kind(wrapper) == "value" && named_child_count(wrapper) > 0 {
-          named_child(wrapper, 0)
+        let wrapper = list.named_child(i)
+        let inner = if wrapper.kind() == "value" && wrapper.named_child_count() > 0 {
+          wrapper.named_child(0)
         } else {
           wrapper
         }
@@ -821,6 +916,7 @@ let collect_call = (node: Node, source: []u8) -> Maybe<shared Expr> => {
     None => {},
   }
   Some(FunctionCallExpr(FunctionCall {
+    location: source.location_of(node),
     arguments: arguments,
     function: callee,
     generic_arguments: collect_generic_arguments(node, source),
@@ -831,11 +927,11 @@ let collect_call = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 ///
 /// The types sit directly under the `generic_arguments` node rather than in a wrapper
 /// each, which is why this is a walk over its children and not over a field.
-let collect_generic_arguments = (node: Node, source: []u8) -> []shared TypeNode => {
+let collect_generic_arguments = (node: Node, source: Source) -> []shared TypeNode => {
   var arguments: []shared TypeNode = []
-  let Some(list) = field(node, "generic_arguments") else { return arguments }
-  for i in 0..<named_child_count(list) {
-    match collect_type(named_child(list, i), source) {
+  let Some(list) = node.field("generic_arguments") else { return arguments }
+  for child in list.named_children() {
+    match collect_type(child, source) {
       Some(argument) => arguments.push(argument),
       None => {},
     }
@@ -848,15 +944,16 @@ let collect_generic_arguments = (node: Node, source: []u8) -> []shared TypeNode 
 /// The `else` branch is whatever the grammar put there — a block, or another
 /// `if_block_expr` for an `else if` — so this collects an expression and does not ask
 /// which, and the ladder keeps its shape.
-let collect_if = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let condition = collect_expr(field(node, "condition")?, source)?
+let collect_if = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let condition = collect_expr(node.field("condition")?, source)?
   Some(IfExpr(Conditional {
+    location: source.location_of(node),
     condition: condition,
-    else_branch: match field(node, "else_branch") {
+    else_branch: match node.field("else_branch") {
       Some(branch) => collect_expr(branch, source),
       None => None,
     },
-    then_branch: match field(node, "then_block") {
+    then_branch: match node.field("then_block") {
       Some(branch) => collect_expr(branch, source),
       None => None,
     },
@@ -869,23 +966,21 @@ let collect_if = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 /// child's *kind* — `for_variable_or_key` then `for_index_or_value` — and the iterable is
 /// the one child of the condition that is neither. A comment can sit there, so it is
 /// skipped explicitly: taking "the last child that is not a binding" would collect one.
-let collect_for_in_loop = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+let collect_for_in_loop = (node: Node, source: Source) -> Maybe<shared Expr> => {
   var key = ""
   var value = ""
   var iterable: Maybe<shared Expr> = None
   var body: Maybe<shared Expr> = None
   var label = ""
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    let k = kind(child)
-    if k == "label" { label = text(child, source) }
+  for child in node.named_children() {
+    let k = child.kind()
+    if k == "label" { label = child.text(source.bytes) }
     if k == "for_in_body" { body = collect_expr(child, source) }
     if k != "for_in_condition" { continue }
-    for j in 0..<named_child_count(child) {
-      let part = named_child(child, j)
-      let part_kind = kind(part)
-      if part_kind == "for_variable_or_key" { key = text(part, source) }
-      else if part_kind == "for_index_or_value" { value = text(part, source) }
+    for part in child.named_children() {
+      let part_kind = part.kind()
+      if part_kind == "for_variable_or_key" { key = part.text(source.bytes) }
+      else if part_kind == "for_index_or_value" { value = part.text(source.bytes) }
       else if part_kind != "comment" { iterable = collect_expr(part, source) }
     }
   }
@@ -894,6 +989,7 @@ let collect_for_in_loop = (node: Node, source: []u8) -> Maybe<shared Expr> => {
   let Some(over) = iterable else { return None }
   let Some(block) = body else { return None }
   Some(ForInLoopExpr(ForInLoop {
+    location: source.location_of(node),
     body: block,
     iterable: over,
     key: key,
@@ -906,33 +1002,33 @@ let collect_for_in_loop = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 ///
 /// The three header parts live inside a `for_condition` and each is optional; the infinite
 /// loop has no `for_condition` at all.
-let collect_for_loop = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+let collect_for_loop = (node: Node, source: Source) -> Maybe<shared Expr> => {
   var label = ""
   var body: Maybe<shared Expr> = None
   var condition: Maybe<shared Expr> = None
   var init: Maybe<VarDecl> = None
   var post: Maybe<shared Expr> = None
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    let k = kind(child)
-    if k == "label" { label = text(child, source) }
+  for child in node.named_children() {
+    let k = child.kind()
+    if k == "label" { label = child.text(source.bytes) }
     if k == "for_body" { body = collect_expr(child, source) }
     if k != "for_condition" { continue }
-    match field(child, "condition_expr") {
+    match child.field("condition_expr") {
       Some(expr) => { condition = collect_expr(expr, source) },
       None => {},
     }
-    match field(child, "initial_expr") {
+    match child.field("initial_expr") {
       Some(expr) => { init = collect_for_init(expr, source) },
       None => {},
     }
-    match field(child, "post_expr") {
+    match child.field("post_expr") {
       Some(expr) => { post = collect_wrapped_at(expr, source) },
       None => {},
     }
   }
   let Some(block) = body else { return None }
   Some(ForLoopExpr(ForLoop {
+    location: source.location_of(node),
     body: block,
     condition: condition,
     init: init,
@@ -943,7 +1039,7 @@ let collect_for_loop = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 
 /// `var i = 0` in a loop header — the same declaration node under another kind, which is
 /// why this reuses the declaration collector and then asks for the binding it produced.
-let collect_for_init = (node: Node, source: []u8) -> Maybe<VarDecl> =>
+let collect_for_init = (node: Node, source: Source) -> Maybe<VarDecl> =>
   match collect_declaration(node, source) {
     Some(VarDeclStmt(decl)) => Some(decl),
     _ => None,
@@ -953,13 +1049,14 @@ let collect_for_init = (node: Node, source: []u8) -> Maybe<VarDecl> =>
 ///
 /// The same three fields the arithmetic operators have, under a node kind of its own — so
 /// `+=` is never mistaken for `+` by an operator table.
-let collect_compound_assignment = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let operator = field(node, "operator")?
-  let left = collect_expr(field(node, "left")?, source)?
-  let right = collect_expr(field(node, "right")?, source)?
+let collect_compound_assignment = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let operator = node.field("operator")?
+  let left = collect_expr(node.field("left")?, source)?
+  let right = collect_expr(node.field("right")?, source)?
   Some(MathAssignOpExpr(BinaryOp {
+    location: source.location_of(node),
     left: left,
-    operator: text(operator, source),
+    operator: operator.text(source.bytes),
     right: right,
   }))
 }
@@ -968,15 +1065,15 @@ let collect_compound_assignment = (node: Node, source: []u8) -> Maybe<shared Exp
 ///
 /// It reuses `collect_statement`, so a block's contents are collected by exactly the rule
 /// the file's top level is, comment-skipping included.
-let collect_block = (node: Node, source: []u8) -> shared Expr => {
+let collect_block = (node: Node, source: Source) -> shared Expr => {
   var statements: []Stmt = []
-  for i in 0..<named_child_count(node) {
-    match collect_statement(named_child(node, i), source) {
+  for child in node.named_children() {
+    match collect_statement(child, source) {
       Some(statement) => statements.push(statement),
       None => {},
     }
   }
-  BlockExpr(Block { statements: statements })
+  BlockExpr(Block { location: source.location_of(node), statements: statements })
 }
 
 /// `(x: i64) -> i64 => x * 2`.
@@ -985,23 +1082,22 @@ let collect_block = (node: Node, source: []u8) -> shared Expr => {
 ///
 /// Its own function because a `match` is not an operand of `||`, and the alternative was
 /// a `var` and two statements ahead of a struct literal that reads well as one expression.
-let has_field = (node: Node, name: string) -> bool => match field(node, name) {
+let has_field = (self: Node, name: string) -> bool => match self.field(name) {
   Some(_) => true,
   None => false,
 }
 
 let collect_lambda = (
   node: Node,
-  source: []u8,
+  source: Source,
   declared_pure: bool,
   declared_async: bool
 ) -> shared Expr => {
   var parameters: []Parameter = []
-  match field(node, "parameters") {
+  match node.field("parameters") {
     Some(list) => {
-      for i in 0..<named_child_count(list) {
-        let child = named_child(list, i)
-        if kind(child) == "parameter" {
+      for child in list.named_children() {
+        if child.kind() == "parameter" {
           match collect_parameter(child, source) {
             Some(parameter) => parameters.push(parameter),
             None => {},
@@ -1012,14 +1108,15 @@ let collect_lambda = (
     None => {},
   }
   LambdaExpr(Lambda {
-    body: match field(node, "body") {
+    location: source.location_of(node),
+    body: match node.field("body") {
       Some(body) => collect_expr(body, source),
       None => None,
     },
-    is_async: declared_async || has_field(node, "is_async"),
-    is_pure: declared_pure || has_field(node, "is_pure"),
+    is_async: declared_async || node.has_field("is_async"),
+    is_pure: declared_pure || node.has_field("is_pure"),
     parameters: parameters,
-    return_type: match field(node, "return_type") {
+    return_type: match node.field("return_type") {
       Some(declared) => collect_return_type(declared, source),
       None => None,
     },
@@ -1030,20 +1127,21 @@ let collect_lambda = (
 ///
 /// `None` when the pattern is a form this slice does not collect, since a parameter with
 /// no pattern is not a parameter.
-let collect_parameter = (node: Node, source: []u8) -> Maybe<Parameter> => {
-  let pattern_node = field(node, "pattern")?
+let collect_parameter = (node: Node, source: Source) -> Maybe<Parameter> => {
+  let pattern_node = node.field("pattern")?
   if kind(pattern_node) != "identifier" { return None }
   Some(Parameter {
+    location: source.location_of(node),
     // The default sits in a `default_value` wrapper holding an `expression` field.
-    default_value: match field(node, "default_value") {
-      Some(wrapper) => match field(wrapper, "expression") {
+    default_value: match node.field("default_value") {
+      Some(wrapper) => match wrapper.field("expression") {
         Some(expr) => collect_expr(expr, source),
         None => None,
       },
       None => None,
     },
-    pattern: IdentifierPattern(Identifier { name: text(pattern_node, source) }),
-    type_annotation: match field(node, "type") {
+    pattern: IdentifierPattern(Identifier { location: source.location_of(pattern_node), name: text(pattern_node, source.bytes) }),
+    type_annotation: match node.field("type") {
       Some(declared) => collect_type(declared, source),
       None => None,
     },
@@ -1051,8 +1149,8 @@ let collect_parameter = (node: Node, source: []u8) -> Maybe<Parameter> => {
 }
 
 /// `-> i64`.
-let collect_return_type = (node: Node, source: []u8) -> Maybe<ReturnType> => {
-  let declared = field(node, "type")?
+let collect_return_type = (node: Node, source: Source) -> Maybe<ReturnType> => {
+  let declared = node.field("type")?
   match collect_type(declared, source) {
     Some(collected) => Some(ReturnType { type_annotation: collected }),
     None => None,
@@ -1063,22 +1161,22 @@ let collect_return_type = (node: Node, source: []u8) -> Maybe<ReturnType> => {
 ///
 /// The primitives are exactly the kinds the grammar names for them, so the *kind* decides
 /// and the text is only the name — no list of spellings to fall out of date.
-let collect_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
-  return match kind(node) {
+let collect_type = (node: Node, source: Source) -> Maybe<shared TypeNode> => {
+  return match node.kind() {
     // **`bool` is the one primitive whose AST name is not what was written**: the Go
     // collector maps `boolean_type` to `types.Boolean`, which is spelled `boolean`, where
     // every other primitive takes its name from the source text. Reading the text here
     // gave `bool`, which no golden could see — none of the ones matching uses a boolean
     // annotation — and the differential test did (09/24).
-    "boolean_type" => Some(PrimitiveType(Identifier { name: "boolean" })),
+    "boolean_type" => Some(PrimitiveType(Identifier { location: source.location_of(node), name: "boolean" })),
     "signed_integer_type" | "unsigned_integer_type" | "float_type" | "string_type"
-      | "rune_type" => Some(PrimitiveType(Identifier { name: text(node, source) })),
+      | "rune_type" => Some(PrimitiveType(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
     // A name the program declared. The collector records what was written and does not
     // look it up — resolution is the typechecker's, which is what "unresolved" says.
     "user_defined_type_name" =>
-      Some(UnresolvedType(Identifier { name: text(node, source) })),
+      Some(UnresolvedType(Identifier { location: source.location_of(node), name: text(node, source.bytes) })),
     // A variable the enclosing declaration bound.
-    "generic_type" => Some(GenericType(Identifier { name: text(node, source) })),
+    "generic_type" => Some(GenericType(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
     // `(i64, i64)` written inside another type — the same node a packed data payload
     // carries, and named `?` for the same reason: an unnamed tuple answers that when
     // asked for its name.
@@ -1095,16 +1193,17 @@ let collect_type = (node: Node, source: []u8) -> Maybe<shared TypeNode> => {
 /// A comparison or a boolean operator is a **different node** in the Go AST
 /// (`BooleanBinaryOpExpr`), so one is not collected here rather than collected as this:
 /// printing the wrong node is worse than printing none, which a diff shows plainly.
-let collect_binary = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let operator = field(node, "operator")?
-  if !is_math_operator(kind(operator)) { return None }
-  let left_node = field(node, "left")?
-  let right_node = field(node, "right")?
+let collect_binary = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let operator = node.field("operator")?
+  if !is_math_operator(operator.kind()) { return None }
+  let left_node = node.field("left")?
+  let right_node = node.field("right")?
   let left = collect_expr(left_node, source)?
   let right = collect_expr(right_node, source)?
   Some(MathBinaryOpExpr(BinaryOp {
+    location: source.location_of(node),
     left: left,
-    operator: text(operator, source),
+    operator: operator.text(source.bytes),
     right: right,
   }))
 }
@@ -1113,13 +1212,14 @@ let collect_binary = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 ///
 /// A separate CST kind from `binary_expr`, so the grammar has already told the two apart
 /// and nothing here classifies an operator: the node's kind is the answer.
-let collect_boolean = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+let collect_boolean = (node: Node, source: Source) -> Maybe<shared Expr> => {
   let operator = field(node, "operator")?
-  let left = collect_expr(field(node, "left")?, source)?
-  let right = collect_expr(field(node, "right")?, source)?
+  let left = collect_expr(node.field("left")?, source)?
+  let right = collect_expr(node.field("right")?, source)?
   Some(BooleanBinaryOpExpr(BinaryOp {
+    location: source.location_of(node),
     left: left,
-    operator: text(operator, source),
+    operator: operator.text(source.bytes),
     right: right,
   }))
 }
@@ -1128,13 +1228,14 @@ let collect_boolean = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 ///
 /// A node kind of its own, as `boolean_expr` is — so `++` is never classified here, and a
 /// concatenation cannot be collected as arithmetic by an operator table that grew a case.
-let collect_string_concat = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let operator = field(node, "operator")?
-  let left = collect_expr(field(node, "left")?, source)?
-  let right = collect_expr(field(node, "right")?, source)?
+let collect_string_concat = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let operator = node.field("operator")?
+  let left = collect_expr(node.field("left")?, source)?
+  let right = collect_expr(node.field("right")?, source)?
   Some(StringConcatExpr(BinaryOp {
+    location: source.location_of(node),
     left: left,
-    operator: text(operator, source),
+    operator: operator.text(source.bytes),
     right: right,
   }))
 }
@@ -1144,30 +1245,33 @@ let collect_string_concat = (node: Node, source: []u8) -> Maybe<shared Expr> => 
 /// The body holds exactly one of three shapes and they are collected into the same list:
 /// `struct_fields` (named), `struct_shorthand` (positional, so each field has a value and
 /// no name) and `struct_update` (a base and the fields that change).
-let collect_struct_instance = (node: Node, source: []u8, named: bool) -> shared Expr => {
+let collect_struct_instance = (
+  node: Node,
+  source: Source,
+  named: bool
+) -> shared Expr => {
   var fields: []StructInstanceField = []
   var base: Maybe<shared Expr> = None
-  match field(node, "struct_body") {
+  match node.field("struct_body") {
     Some(body) => {
-      for i in 0..<named_child_count(body) {
-        let part = named_child(body, i)
-        let k = kind(part)
+      for part in body.named_children() {
+        let k = part.kind()
         match k {
           "struct_fields" | "struct_update" => {
             for f in collect_struct_instance_fields(part, source) {
               fields.push(f)
             }
             if k == "struct_update" {
-              base = match field(part, "base") {
+              base = match part.field("base") {
                 Some(b) => collect_expr(b, source),
                 None => None,
               }
             }
           },
           "struct_shorthand" => {
-            for j in 0..<named_child_count(part) {
-              let value_node = named_child(part, j)
-              if kind(value_node) != "field_value" { continue }
+            for j in 0..<part.named_child_count() {
+              let value_node = part.named_child(j)
+              if value_node.kind() != "field_value" { continue }
               match collect_wrapped_at(value_node, source) {
                 Some(value) =>
                   fields.push(StructInstanceField { name: "", value: value }),
@@ -1182,11 +1286,12 @@ let collect_struct_instance = (node: Node, source: []u8, named: bool) -> shared 
     None => {},
   }
   let instance = StructInstance {
+    location: source.location_of(node),
     base_struct: base,
     fields: fields,
     generic_args: collect_generic_arguments(node, source),
-    name: match field(node, "struct_name") {
-      Some(name) => text(name, source),
+    name: match node.field("struct_name") {
+      Some(name) => name.text(source.bytes),
       None => "",
     },
   }
@@ -1199,17 +1304,16 @@ let collect_struct_instance = (node: Node, source: []u8, named: bool) -> shared 
 /// `struct_update` names them `field_updates` and holds the same kind.
 let collect_struct_instance_fields = (
   node: Node,
-  source: []u8
+  source: Source
 ) -> []StructInstanceField => {
   var fields: []StructInstanceField = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    if kind(child) != "struct_field" { continue }
-    let Some(value_node) = field(child, "field_value") else { continue }
+  for child in node.named_children() {
+    if child.kind() != "struct_field" { continue }
+    let Some(value_node) = child.field("field_value") else { continue }
     match collect_wrapped_at(value_node, source) {
       Some(value) => fields.push(StructInstanceField {
-        name: match field(child, "field_name") {
-          Some(name) => text(name, source),
+        name: match child.field("field_name") {
+          Some(name) => name.text(source.bytes),
           None => "",
         },
         value: value,
@@ -1221,9 +1325,9 @@ let collect_struct_instance_fields = (
 }
 
 /// `...xs`.
-let collect_spread = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let value = collect_expr(field(node, "value")?, source)?
-  Some(SpreadExpr(Spread { value: value }))
+let collect_spread = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let value = collect_expr(node.field("value")?, source)?
+  Some(SpreadExpr(Spread { location: source.location_of(node), value: value }))
 }
 
 /// `(1, 2)` and `Point(1, 2)`.
@@ -1231,21 +1335,20 @@ let collect_spread = (node: Node, source: []u8) -> Maybe<shared Expr> => {
 /// Each element is wrapped in a `tuple_value`, as an argument is in a `value`. An unnamed
 /// tuple has no `tuple_name` field and takes `?`, the placeholder the Go collector uses
 /// and `TupleTypeDef` already carries.
-let collect_tuple_literal = (node: Node, source: []u8) -> shared Expr => {
+let collect_tuple_literal = (node: Node, source: Source) -> shared Expr => {
   var elements: []shared Expr = []
   var arguments: []shared TypeNode = []
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    match kind(child) {
-      "tuple_value" if named_child_count(child) > 0 => {
-        match collect_expr(named_child(child, 0), source) {
+  for child in node.named_children() {
+    match child.kind() {
+      "tuple_value" if child.named_child_count() > 0 => {
+        match collect_expr(child.named_child(0), source) {
           Some(element) => elements.push(element),
           None => {},
         }
       },
       "generic_arguments" => {
-        for j in 0..<named_child_count(child) {
-          match collect_type(named_child(child, j), source) {
+        for j in 0..<child.named_child_count() {
+          match collect_type(child.named_child(j), source) {
             Some(argument) => arguments.push(argument),
             None => {},
           }
@@ -1255,10 +1358,11 @@ let collect_tuple_literal = (node: Node, source: []u8) -> shared Expr => {
     }
   }
   TupleLiteralExpr(TupleLiteral {
+    location: source.location_of(node),
     elements: elements,
     generic_arguments: arguments,
-    name: match field(node, "tuple_name") {
-      Some(name) => text(name, source),
+    name: match node.field("tuple_name") {
+      Some(name) => name.text(source.bytes),
       None => "?",
     },
   })
@@ -1269,17 +1373,18 @@ let collect_tuple_literal = (node: Node, source: []u8) -> shared Expr => {
 /// The elements are children directly rather than through a wrapper — the one list in this
 /// walk that is not wrapped — and `#[` is exposed as a `fixed` field, so the flavor is read
 /// rather than derived from the text.
-let collect_array_literal = (node: Node, source: []u8) -> shared Expr => {
+let collect_array_literal = (node: Node, source: Source) -> shared Expr => {
   var elements: []shared Expr = []
-  for i in 0..<named_child_count(node) {
-    match collect_expr(named_child(node, i), source) {
+  for child in node.named_children() {
+    match collect_expr(child, source) {
       Some(element) => elements.push(element),
       None => {},
     }
   }
   ArrayLiteralExpr(ArrayLiteral {
+    location: source.location_of(node),
     elements: elements,
-    fixed: has_field(node, "fixed"),
+    fixed: node.has_field("fixed"),
   })
 }
 
@@ -1287,23 +1392,30 @@ let collect_array_literal = (node: Node, source: []u8) -> shared Expr => {
 ///
 /// The count sits in an `array_repeat_count` wrapper and the value does not, which is why
 /// only one of the two is unwrapped.
-let collect_array_repeat = (node: Node, source: []u8) -> Maybe<shared Expr> => {
-  let value = collect_expr(field(node, "value")?, source)?
-  let count_node = field(node, "count")?
-  if named_child_count(count_node) == 0 { return None }
-  let repeated = collect_expr(named_child(count_node, 0), source)?
+let collect_array_repeat = (node: Node, source: Source) -> Maybe<shared Expr> => {
+  let value = collect_expr(node.field("value")?, source)?
+  let count_node = node.field("count")?
+  if count_node.named_child_count() == 0 { return None }
+  let repeated = collect_expr(count_node.named_child(0), source)?
   Some(ArrayRepeatExpr(ArrayRepeat {
+    location: source.location_of(node),
     count: repeated,
-    fixed: has_field(node, "fixed"),
+    fixed: node.has_field("fixed"),
     value: value,
   }))
 }
 
 /// `-x` and `read()?` — one operand under two node names.
-let collect_unary = (node: Node, source: []u8, is_try: bool) -> Maybe<shared Expr> => {
-  let operand = collect_expr(field(node, "operand")?, source)?
-  if is_try { Some(TryExpr(Unary { operand: operand })) }
-  else { Some(NegationExpr(Unary { operand: operand })) }
+let collect_unary = (node: Node, source: Source, is_try: bool) -> Maybe<shared Expr> => {
+  let operand = collect_expr(node.field("operand")?, source)?
+  if is_try { Some(TryExpr(Unary {
+    location: source.location_of(node),
+    operand: operand
+  })) }
+  else { Some(NegationExpr(Unary {
+    location: source.location_of(node),
+    operand: operand
+  })) }
 }
 
 /// `0..<10`, `0..<=9:2`.
@@ -1312,11 +1424,12 @@ let collect_unary = (node: Node, source: []u8, is_try: bool) -> Maybe<shared Exp
 /// same shape an argument has, so the expression is one level down. A walk that took the
 /// wrapper would ask for the kind of a node that is never an expression and collect
 /// nothing — which is how a range would have printed as empty rather than wrong.
-let collect_range = (node: Node, source: []u8) -> Maybe<shared Expr> => {
+let collect_range = (node: Node, source: Source) -> Maybe<shared Expr> => {
   Some(RangeExpr(Range {
+    location: source.location_of(node),
     end: collect_wrapped(node, "end", source),
-    end_operator: match field(node, "end_operator") {
-      Some(operator) => range_end_operator(text(operator, source)),
+    end_operator: match node.field("end_operator") {
+      Some(operator) => range_end_operator(text(operator, source.bytes)),
       None => None,
     },
     start: collect_wrapped(node, "start", source),
@@ -1341,10 +1454,14 @@ let range_end_operator = pure (symbol: string) -> Maybe<RangeEndOperator> =>
 
 /// A field whose value the grammar wraps in a node of its own: the expression inside it, or
 /// `None` when the field is absent — an open bound, or a range with no step.
-let collect_wrapped = (node: Node, name: string, source: []u8) -> Maybe<shared Expr> => {
-  let wrapper = field(node, name)?
-  if named_child_count(wrapper) == 0 { return None }
-  collect_expr(named_child(wrapper, 0), source)
+let collect_wrapped = (
+  node: Node,
+  name: string,
+  source: Source
+) -> Maybe<shared Expr> => {
+  let wrapper = node.field(name)?
+  if wrapper.named_child_count() == 0 { return None }
+  collect_expr(wrapper.named_child(0), source)
 }
 
 /// Whether an operator node's kind is one of the arithmetic ones.
@@ -1356,12 +1473,13 @@ let is_math_operator = pure (k: string) -> bool =>
 ///
 /// The base is the **child's kind**, not something re-derived from the text: the grammar
 /// already decided, and two answers to one question is how they come to disagree.
-let collect_integer = (node: Node, source: []u8) -> shared Expr => {
+let collect_integer = (node: Node, source: Source) -> shared Expr => {
   let base = integer_base(node)
-  let digits = text(node, source).to_runes()
+  let digits = node.text(source.bytes).to_runes()
   // A prefix is two runes (`0x`, `0b`, `0o`); base 10 has none.
   let start = if base == 10 { 0 } else { 2 }
   IntegerLiteralExpr(IntegerLiteral {
+    location: source.location_of(node),
     base: base,
     value: digits_value(digits.slice(start, digits.len()), base),
   })
@@ -1370,8 +1488,8 @@ let collect_integer = (node: Node, source: []u8) -> shared Expr => {
 /// The base the grammar recognised: `decimal_int`, `binary_int`, `octal_int` or
 /// `hexadecimal_int`, one named child of the literal.
 let integer_base = (node: Node) -> i64 => {
-  if named_child_count(node) == 0 { return 10 }
-  return match kind(named_child(node, 0)) {
+  if node.named_child_count() == 0 { return 10 }
+  return match kind(node.named_child(0)) {
     "binary_int" => 2,
     "octal_int" => 8,
     "hexadecimal_int" => 16,
@@ -1380,11 +1498,12 @@ let integer_base = (node: Node) -> i64 => {
 }
 
 /// `'a'`, `'\n'` — the code point, quotes stripped and the escape decoded.
-let collect_character = (node: Node, source: []u8) -> shared Expr => {
-  let raw = text(node, source).to_runes()
+let collect_character = (node: Node, source: Source) -> shared Expr => {
+  let raw = node.text(source.bytes).to_runes()
   let inner = raw.slice(1, raw.len() - 1)
   let decoded = decode_escapes(inner).to_runes()
   CharacterLiteralExpr(CharacterLiteral {
+    location: source.location_of(node),
     // An empty literal does not parse, so the guard is for a malformed tree rather than a
     // program: answering 0 keeps one bad node from taking the file down with it.
     value: if decoded.len() == 0 { 0 } else { i64(decoded[0]) },
@@ -1392,7 +1511,7 @@ let collect_character = (node: Node, source: []u8) -> shared Expr => {
 }
 
 /// `"hi"` — the text, quotes stripped and escapes decoded.
-let collect_string = (node: Node, source: []u8) -> shared Expr => {
+let collect_string = (node: Node, source: Source) -> shared Expr => {
   // **An interpolation makes it a different node**, not a string with extra parts: the Go
   // AST has `InterpolatedStringExpr` with segments, where a text run is itself a
   // `StringLiteralExpr` segment. The list is homogeneous, so a reader needs no second
@@ -1400,34 +1519,41 @@ let collect_string = (node: Node, source: []u8) -> shared Expr => {
   if has_interpolation(node) {
     var segments: []shared Expr = []
     var i = 0
-    for i < named_child_count(node) {
-      let child = named_child(node, i)
-      let k = kind(child)
+    for child in node.named_children() {
+      let k = child.kind()
       if k == "string_content" {
+        // **The whole literal's span, not the run's.** The Go collector builds a text
+        // chunk with the string's own location, so a segment reports where the string is
+        // rather than where the text inside it sits.
         segments.push(StringLiteralExpr(StringLiteral {
-          value: decode_escapes(text(child, source).to_runes()),
+          location: source.location_of(node),
+          value: decode_escapes(child.text(source.bytes).to_runes()),
         }))
       }
       if k == "string_interpolation" && named_child_count(child) > 0 {
-        match collect_expr(named_child(child, 0), source) {
+        match collect_expr(child.named_child(0), source) {
           Some(expr) => segments.push(expr),
           None => {},
         }
       }
       i += 1
     }
-    return InterpolatedStringExpr(Interpolated { segments: segments })
+    return InterpolatedStringExpr(Interpolated {
+      location: source.location_of(node),
+      segments: segments
+    })
   }
-  let raw = text(node, source).to_runes()
-  StringLiteralExpr(StringLiteral { value: decode_escapes(raw.slice(1, raw.len() - 1)) })
+  let raw = text(node, source.bytes).to_runes()
+  StringLiteralExpr(StringLiteral {
+    location: source.location_of(node),
+    value: decode_escapes(raw.slice(1, raw.len() - 1))
+  })
 }
 
 /// Whether a string literal holds at least one `${…}`.
 let has_interpolation = (node: Node) -> bool => {
-  var i = 0
-  for i < named_child_count(node) {
-    if kind(named_child(node, i)) == "string_interpolation" { return true }
-    i += 1
+  for child in node.named_children() {
+    if child.kind() == "string_interpolation" { return true }
   }
   false
 }
@@ -1507,19 +1633,26 @@ let simple_escape = pure (c: rune) -> rune => match c {
 /// directly instead of slicing the literal's own text: `##` ` ##` has two of them at each
 /// end and slicing a fixed width would take the wrong bytes. An empty raw string has no
 /// content child at all.
-let collect_raw_string = (node: Node, source: []u8) -> shared Expr => {
-  for i in 0..<named_child_count(node) {
-    let child = named_child(node, i)
-    if kind(child) == "raw_string_content" {
-      return StringLiteralExpr(StringLiteral { value: text(child, source) })
+let collect_raw_string = (node: Node, source: Source) -> shared Expr => {
+  for child in node.named_children() {
+    if child.kind() == "raw_string_content" {
+      // The **literal's** span, not the content node's: the delimiters are part of the
+      // string as written, and `##` is three characters at each end.
+      return StringLiteralExpr(StringLiteral {
+        location: source.location_of(node),
+        value: child.text(source.bytes),
+      })
     }
   }
-  StringLiteralExpr(StringLiteral { value: "" })
+  StringLiteralExpr(StringLiteral { location: source.location_of(node), value: "" })
 }
 
 /// `3.14159`, `0.03141592e2`, `3.141_59`.
-let collect_float = (node: Node, source: []u8) -> shared Expr =>
-  FloatLiteralExpr(FloatLiteral { value: float_value(text(node, source).to_runes()) })
+let collect_float = (node: Node, source: Source) -> shared Expr =>
+  FloatLiteralExpr(FloatLiteral {
+    location: source.location_of(node),
+    value: float_value(node.text(source.bytes).to_runes())
+  })
 
 /// The number a float literal denotes.
 ///

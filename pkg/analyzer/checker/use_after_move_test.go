@@ -427,3 +427,88 @@ let main = () -> u8 => {
   u8(0)
 }`, 1)
 }
+
+// --- a released resource is consumed too ---
+
+// The declarations these are written against: a `@must_release` type, the function that
+// releases it, and one that merely borrows it. Deliberately a **plain stack struct** — the
+// shape the analysis used to skip, since "a non-managed value is copied, so the original
+// stays valid" is true of every struct except one holding a handle to something Lyra does
+// not own.
+const releasePreamble = `@must_release(close_it) struct Handle { raw: i64 }
+let open_it = (n: i64) -> Handle => Handle { raw: n }
+let close_it = (h: own Handle) -> void => {}
+let read_it = (h: Handle) -> i64 => h.raw
+`
+
+// TestRelease_UseAfterReleaseIsAnError is the gap this closed. `close_it(h)` frees the
+// foreign handle and the caller is left holding a copy of a dead pointer — and nothing
+// said so: the program checked clean, and reading a node out of a deleted tree did too.
+func TestRelease_UseAfterReleaseIsAnError(t *testing.T) {
+	got := assertMoveErrors(t, releasePreamble+`let main = () -> u8 => {
+  let h = open_it(1)
+  close_it(h)
+  u8(read_it(h))
+}`, 1)
+	if !strings.Contains(got[0].Message, "used after it was released") {
+		t.Errorf("a resource's message should say released, not moved; got: %s", got[0].Message)
+	}
+	if !strings.Contains(got[0].Message, "resource Lyra does not own") {
+		t.Errorf("the message should say why the handle is dead; got: %s", got[0].Message)
+	}
+}
+
+// Releasing and not touching it again is the ordinary shape, and must stay silent.
+func TestRelease_ReleaseAtTheEndIsClean(t *testing.T) {
+	assertMoveErrors(t, releasePreamble+`let main = () -> u8 => {
+  let h = open_it(1)
+  let n = read_it(h)
+  close_it(h)
+  u8(n)
+}`, 0)
+}
+
+// **A release down a branch that returns is not a release on the path past it.** This is
+// how `lyrafmt` is written twice over — release, report, return — and the union join
+// reported the *second* release as a use of the first. The union was "conservative,
+// matching Rust"; this is the half of Rust's rule it was missing, and it stayed invisible
+// while only managed values could be moved, since nothing releases a string down one arm
+// and uses it after.
+func TestRelease_ABranchThatReturnsDoesNotJoin(t *testing.T) {
+	assertMoveErrors(t, releasePreamble+`let main = () -> u8 => {
+  let h = open_it(1)
+  if h.raw == 0 {
+    close_it(h)
+    return 1
+  }
+  close_it(h)
+  0
+}`, 0)
+}
+
+// The same rule for the loop seed: a release on a path that returns cannot reach the next
+// iteration, so it is not a loop-carried move either.
+func TestRelease_ABranchThatReturnsIsNotLoopCarried(t *testing.T) {
+	assertMoveErrors(t, releasePreamble+`let main = () -> u8 => {
+  for i in 0..<3 {
+    let h = open_it(i)
+    if h.raw == 0 {
+      close_it(h)
+      return 1
+    }
+    close_it(h)
+  }
+  0
+}`, 0)
+}
+
+// A borrow is still a borrow: reading through a plain parameter consumes nothing.
+func TestRelease_ABorrowIsNotARelease(t *testing.T) {
+	assertMoveErrors(t, releasePreamble+`let main = () -> u8 => {
+  let h = open_it(1)
+  let a = read_it(h)
+  let b = read_it(h)
+  close_it(h)
+  u8(a + b)
+}`, 0)
+}

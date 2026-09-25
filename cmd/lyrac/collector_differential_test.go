@@ -239,8 +239,91 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 	}
 }
 
+// **Locations, which no golden can check.** `pkg/printer` skips the embedded `AstBase` a
+// span lives in, so the 245 stored dumps say nothing about positions — and a collector that
+// records the wrong span is a compiler that points at the wrong line. This is the oracle for
+// that: both collectors print with `--locations` / `PrintASTWithLocations` and the spans
+// have to agree node for node.
+//
+// Two things it found immediately, which is the argument for having it:
+//
+//   - **The C-style `for` loop carried no location at all** in the *Go* collector, the same
+//     gap its `for/in` sibling had until 08/18 and with the same cost — a diagnostic with a
+//     zero Location prints no `line:col` and escapes the driver's per-file filtering, so a
+//     warning on a prelude loop lands on every file compiled. A missing location is
+//     invisible to everything except a second implementation that sets one.
+//   - **Three spans that are not the node's own**: an interpolation's text run and a raw
+//     string both take the *whole literal's* span, and a written type carries no span at
+//     all (a type is compared structurally, so the Go collector keeps written types'
+//     positions in a side table instead).
+func TestCollector_AgreesWithTheGoCollectorOnLocations(t *testing.T) {
+	bin := buildCollector(t)
+
+	// As elsewhere: a Lyra raw string's backticks cannot sit inside a Go one.
+	const bt2 = "\x60"
+
+	for _, c := range []struct{ name, source string }{
+		{"a declaration over a binary expression", "let x = a + 1"},
+		{"a multi-line declaration", "\nlet y =\n  foo(1)\n"},
+		{"a lambda with parameters and a body", "let f = (a: i64, b: i64) -> i64 => a + b"},
+		{"a block with several statements", "let f = () => {\n  let a = 1\n  let b = 2\n}"},
+		{"an if with both branches", "if c {\n  a()\n} else {\n  b()\n}"},
+		{"a c-style for loop", "for var i = 0; i < 10; i += 1 {\n  f(i)\n}"},
+		{"a for-in loop", "for x in xs {\n  f(x)\n}"},
+		{"a match with a guard", "let a = match x {\n  y if y > 0 => 1,\n  _ => 2,\n}"},
+		{"a struct declaration", "struct Point {\n  x: i64,\n  y: f64,\n}"},
+		{"a struct instance", "let p = Point { x: 1, y: 2 }"},
+		{"a destructuring with patterns", "let {a, b: [c, ...rest]} = s"},
+		// The text run takes the whole literal's span, not the run's.
+		{"an interpolation", `let s = "a ${b} c"`},
+		// And a raw string takes the literal's, delimiters included — `##` is three
+		// characters at each end, which slicing a fixed width would get wrong.
+		{"a raw string", "let s = " + bt2 + `C:\new` + bt2},
+		{"a raw string with hashes", "let s = ##" + bt2 + "a " + bt2 + "##"},
+		// A written type carries no span; its *holder* does.
+		{"an annotated declaration", "let n: i64 = 1"},
+		{"a generic type in a declaration", "tuple Pair<t>(t, t)"},
+		// A span that is not on line 1, so a wrong line table shows up as a wrong line
+		// rather than as a wrong column.
+		{"a node deep in a file", "\n\n\n\nlet deep = 1\n"},
+		// A multi-byte character ahead of a node: tree-sitter counts **bytes** in a
+		// column, so `é` moves the next node by two.
+		{"a node after a multi-byte character", `let s = "é"` + "\nlet after = 1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "in.lyra")
+			if err := os.WriteFile(source, []byte(c.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := exec.Command(bin, "--locations", source).Output()
+			if err != nil {
+				t.Fatalf("the Lyra collector exited non-zero on %q: %v", c.source, err)
+			}
+			if want := goCollectorASTWithLocations(t, c.source); string(got) != want {
+				t.Errorf("the two collectors disagree on %q\n Lyra:\n%s\n Go:\n%s",
+					c.source, got, want)
+			}
+		})
+	}
+}
+
+// goCollectorASTWithLocations is goCollectorAST with each node's span.
+func goCollectorASTWithLocations(t *testing.T, source string) string {
+	t.Helper()
+	return goCollectorPrinted(t, source, printer.PrintASTWithLocations)
+}
+
 // goCollectorAST is the Go collector's answer for source, printed the way the goldens are.
 func goCollectorAST(t *testing.T, source string) string {
+	t.Helper()
+	return goCollectorPrinted(t, source, printer.PrintAST)
+}
+
+// goCollectorPrinted runs the Go collector and renders it with print — the two modes share
+// everything but that one function, which is the point: a second copy of "parse, collect,
+// refuse on errors, ensure a trailing newline" is how the two comparisons come to disagree
+// about something that is not a location.
+func goCollectorPrinted(t *testing.T, source string, print func(any) string) string {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -250,7 +333,7 @@ func goCollectorAST(t *testing.T, source string) string {
 	if len(errs) > 0 {
 		t.Fatalf("the Go collector rejected %q: %v", source, errs)
 	}
-	out := printer.PrintAST(program)
+	out := print(program)
 	if !strings.HasSuffix(out, "\n") {
 		out += "\n"
 	}

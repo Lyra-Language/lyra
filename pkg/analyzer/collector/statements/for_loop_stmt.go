@@ -61,6 +61,14 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 	}
 
 	loop := &ast.ForLoopExpr{
+		// **The loop's own span.** It carried none until 09/25, which is the same gap its
+		// `for/in` sibling had until 08/18 and the same cost: a diagnostic reported against
+		// a zero Location prints with no `line:col` *and* escapes the driver's per-file
+		// filtering, which keeps a location-less diagnostic on the grounds that it is
+		// program-level — so a warning on a prelude loop appeared on every file compiled.
+		// Found by the bootstrap: the Lyra collector set a span here and the two printed
+		// ASTs disagreed, which is the only way a *missing* location shows up at all.
+		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
 		Label:     label,
 		Init:      initExpr,
 		Condition: conditionExpr,

@@ -18,6 +18,31 @@ func PrintAST(root any) string {
 	return w.sb.String()
 }
 
+// PrintASTWithLocations is PrintAST with each node's source span, as a `Loc:` line
+// directly under its header.
+//
+// **A second mode rather than a second printer**, and off by default: the 245 golden files
+// are dumps of the default one, and a span moves whenever a *test's source* is reindented,
+// which would make every golden a diff about whitespace. The embedded `AstBase` is skipped
+// for exactly that reason (exportedFields), so a location is unreachable in the default
+// mode and unreachable to anything checking against it.
+//
+// It exists for the bootstrap: the Lyra collector has to set a location on every node, and
+// no golden can say whether it set the right one. This is that oracle — both collectors
+// printed this way agree or they do not.
+//
+// `File` is deliberately left out. The two collectors are handed the same source through
+// different paths, so the path is the one part of a Location that legitimately differs.
+func PrintASTWithLocations(root any) string {
+	w := &astWalker{
+		sb:            &strings.Builder{},
+		visited:       map[visitKey]struct{}{},
+		showLocations: true,
+	}
+	w.writeValue(reflect.ValueOf(root), "")
+	return w.sb.String()
+}
+
 type visitKey struct {
 	ptr uintptr
 	typ reflect.Type
@@ -26,6 +51,8 @@ type visitKey struct {
 type astWalker struct {
 	sb      *strings.Builder
 	visited map[visitKey]struct{}
+	// showLocations prints each node's span; see PrintASTWithLocations.
+	showLocations bool
 }
 
 func (w *astWalker) line(indent, s string) {
@@ -108,6 +135,12 @@ func (w *astWalker) writeStruct(v reflect.Value, indent string) {
 		w.line(indent, fmt.Sprintf("%s {", name))
 	}
 
+	if w.showLocations {
+		if loc, ok := locationOf(v); ok {
+			w.line(indent+"\t", "Loc: "+loc)
+		}
+	}
+
 	fields := exportedFields(v)
 	for _, f := range fields {
 		fieldValue := v.FieldByIndex(f.Index)
@@ -174,6 +207,27 @@ func (w *astWalker) nameLabel(v reflect.Value) string {
 		}
 	}
 	return ""
+}
+
+// locationOf reads a node's span through the embedded base exportedFields skips, rendered
+// as `line:col-line:col`. False for a type that embeds no base — `MatchArm`, `GenericParam`
+// and the instance's `StructField` are payloads rather than nodes and carry no position,
+// which is a distinction the bootstrap has to mirror rather than guess at.
+func locationOf(v reflect.Value) (string, bool) {
+	if v.Kind() != reflect.Struct {
+		return "", false
+	}
+	f := v.FieldByName("Location")
+	if !f.IsValid() || f.Type().Name() != "Location" {
+		return "", false
+	}
+	start := f.FieldByName("StartLine")
+	if !start.IsValid() {
+		return "", false
+	}
+	return fmt.Sprintf("%d:%d-%d:%d",
+		f.FieldByName("StartLine").Int(), f.FieldByName("StartCol").Int(),
+		f.FieldByName("EndLine").Int(), f.FieldByName("EndCol").Int()), true
 }
 
 func exportedFields(v reflect.Value) []reflect.StructField {

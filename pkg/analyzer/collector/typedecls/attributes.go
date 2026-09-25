@@ -75,8 +75,11 @@ func CollectBuiltin(attrList *sitter.Node, ctx *collector_ctx.Ctx) string {
 // location, so an unexported release function in a binding module is found and a
 // same-named function in another module is not.
 //
-// Only the first argument counts. A release is one call — a type needing two is a
-// type wanting a wrapper.
+// Only the first argument counts, **and a second is reported rather than ignored**. A
+// release is one call — a type needing two is a type wanting a wrapper — but writing
+// `@must_release(free_it, delete)` and having the second name silently dropped reads as
+// "both of these discharge it", which is the reading that costs an afternoon: the
+// obligation stays live and the extra name explains why it should not have.
 //
 // An attribute with no argument names no function and is reported **here**, returning
 // "" — so a caller can read "" as "this type carries no obligation" with no second
@@ -98,11 +101,26 @@ func CollectMustRelease(attrList *sitter.Node, ctx *collector_ctx.Ctx) (string, 
 				"name of the function that releases this type, as in `@must_release(unload_sound)`")
 			return "", ast.Location{}
 		}
+		var first *sitter.Node
 		for j := uint(0); j < argsNode.ChildCount(); j++ {
-			if argsNode.FieldNameForChild(uint32(j)) == "value" {
-				arg := argsNode.Child(j)
-				return ctx.NodeText(arg), ctx.NodeLocation(arg)
+			if argsNode.FieldNameForChild(uint32(j)) != "value" {
+				continue
 			}
+			arg := argsNode.Child(j)
+			if first == nil {
+				first = arg
+				continue
+			}
+			ctx.AddError(arg, diag.SeverityError,
+				"`@must_release` takes one release function and %q is a second — a release "+
+					"is one call, so give the type a single function and have the others "+
+					"forward to it. A value also discharges its obligation by being passed to "+
+					"any `own` parameter, which is how a wrapper like %q releases it without "+
+					"being named here",
+				ctx.NodeText(arg), ctx.NodeText(arg))
+		}
+		if first != nil {
+			return ctx.NodeText(first), ctx.NodeLocation(first)
 		}
 	}
 	return "", ast.Location{}

@@ -9,6 +9,109 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — a wrapper that borrowed, and the three holes behind it
+
+It started as a warning that would not go away. A `delete` wrapper had been added to
+`bindings/treesitter` so a parser could be released as `parser.delete()`, the attribute was
+written `@must_release(parser_delete, delete)`, and `lyra-W022` still said the parser was
+never released. Three separate faults, each hiding the next.
+
+**The attribute reads one argument and dropped the rest in silence.** That is a deliberate
+decision — "a release is one call — a type needing two is a type wanting a wrapper" — but
+an ignored argument reads as an accepted one, and the attribute then said, on its face,
+exactly why the warning should not have fired. It is reported now, and the message names
+the thing that actually transfers an obligation: any `own` parameter.
+
+**The wrapper borrowed its receiver.** `pub let delete = (self: Parser)` reads the handle
+and hands it to `parser_delete`, so it discharged nothing — and, worse than the warning, it
+freed the resource while leaving the caller a usable binding. `own` fixes it, and the
+language then refuses `parser.delete()` on purpose: an `own` receiver cannot be called
+method-style, *so the move is visible*. The call sites read `delete(parser)`.
+
+**And then the real one: using a released resource was never checked.**
+`parser_delete(parser)` followed by `parse(parser, …)` compiled clean. `CheckUseAfterMove`
+counts a move only for a **managed** value, on the reading that "a non-managed value is
+copied, so passing it leaves the original intact" — which is true of every struct except
+one holding a handle to something Lyra does not own. That is precisely what
+`@must_release` marks. The predicate now admits those types, and the message is a different
+sentence: *released*, not *moved*, because reading it again is a use-after-free and no
+refcount is going to make it safe.
+
+**Which immediately reported `lyrafmt` twice, correctly finding a fourth fault.** The join
+at an `if` took the union of both branches — moved in either means moved after — without
+asking whether control can *leave* a branch. `lyrafmt` releases and returns:
+
+```lyra
+if has_error(top) {
+  tree_delete(tree)
+  return Err(…)
+}
+…
+tree_delete(tree)       // not a second release: the first one returned
+```
+
+A branch that returns, breaks or continues contributes nothing to the join now, and the
+loop seed skips one too. The union was documented as "conservative, matching Rust"; this is
+the half of Rust's rule it was missing. It stayed invisible for as long as only managed
+values could be moved, because nothing here releases a string down one arm and uses it
+after — a resource handle is released down one arm all the time, since that is what an
+early return is for.
+
+**Separately, from the same conversation: a method-style call had no signature in hover.**
+`twice(a)` showed `twice: (i64) -> i64`; `a.twice()` showed an empty tooltip.
+`desugarUFCSCall` synthesizes the callee and nothing recorded a type for it, so the
+TypeTable had a hole. The LSP had a fallback rendering the doc comment alone, which is why
+the symptom was "no signature" rather than "no tooltip" — and why it had survived: the
+workaround made it look handled. Fixed at the hole. **The spelling the standard library is
+documented in was the one without a signature in the editor.**
+
+One test had to change its mind, and it is the second time this week: a hover test asserted
+there was *no* signature block on a UFCS call, describing the limitation as though it were
+a rule. A test that encodes a limitation keeps the limitation.
+
+### 09/25/26 — locations, and the oracle that had to exist first
+
+Every node in the Lyra AST carries a span now, and **163 of 163** goldens agree with the Go
+collector node for node. Most of the work was not setting the spans.
+
+**The goldens cannot check a location.** `pkg/printer` skips the embedded `AstBase` a span
+lives in — deliberately, since a span moves whenever a test's source is reindented and every
+golden would become a diff about whitespace. So the stored dumps say nothing about
+positions, and neither did the differential test. A collector that records the wrong span is
+a compiler that points at the wrong line, and nothing in the repo could have told us.
+
+So the slice began with the oracle, the same ordering slice 2 used for the format itself:
+`printer.PrintASTWithLocations` on the Go side (a mode, not a second printer — the default
+stays byte-for-byte what the goldens hold) and a `--locations` flag here. Only then the
+spans.
+
+**Three spans are not the node's own**, and each was learned from the oracle rather than
+reasoned out:
+
+- An interpolation's **text run** takes the whole string literal's span, not the run's.
+- A **raw string** takes the literal's too, delimiters included — `##` is three characters
+  at each end, so slicing a fixed width would have been wrong twice over.
+- A written **type** carries no span at all. A type is compared structurally, so it cannot
+  hold a position; the Go collector keeps written types' positions in a side table
+  (`SymbolTable.TypeRefs`). That one shows up as `Identifier` being shared by an identifier
+  *pattern*, which has a span, and the three written type kinds, which do not — so the
+  location became a parameter of `print_named` rather than a field it reads.
+
+**And it found a missing location in the Go compiler.** `ForLoopExpr` carried none: the
+C-style loop was never given an `ExprBase`. That is the same gap its `for/in` sibling had
+until 08/18, with the same cost written in that sibling's comment — a diagnostic with a zero
+Location prints no `line:col` *and* escapes the driver's per-file filtering, so a warning on
+a prelude loop appears on every file compiled. Fixed there rather than mirrored here. **A
+missing location is invisible to every test in a single implementation**; it took a second
+one that sets it.
+
+Two smaller things worth keeping. The source now travels as a `Source` — bytes plus a line
+table — because a span needs both and threading two parameters through forty collectors is
+worse than one struct; the table also makes a lookup a binary search rather than a scan,
+which matters for a file `lyrafmt`'s size. And the wildcard pattern gained a payload: it
+carries no *content*, but it does carry a span, and a node with a location is a node with a
+field.
+
 ### 09/24/26 — one drop glue for two element flavors
 
 ```lyra

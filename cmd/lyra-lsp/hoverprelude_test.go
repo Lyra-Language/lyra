@@ -49,10 +49,13 @@ func TestHover_PreludeDocReachesTheEditor(t *testing.T) {
 	if !strings.Contains(got, "fallback") {
 		t.Errorf("the prelude's `unwrap_or` doc did not reach hover; got: %q", got)
 	}
-	// The method name of a UFCS call has no recorded type — the callee is synthesized by
-	// the desugaring — so this position renders the documentation alone, with no
-	// signature block above it. Hovering the receiver still shows the type.
-	if strings.Contains(got, "```") {
-		t.Errorf("expected documentation without a signature block; got: %q", got)
+	// **And the signature above it**, which this asserted the *absence* of until 09/25:
+	// the callee of a UFCS call is synthesized by the desugaring and had no recorded type,
+	// so the position rendered documentation alone. That was a limitation written down as
+	// though it were a rule — `unwrap_or(m, 0)` showed a signature and `m.unwrap_or(0)`
+	// did not, for the same call, and the spelling the standard library is documented in
+	// was the one missing it. `desugarUFCSCall` records the signature now.
+	if !strings.Contains(got, "unwrap_or: (Maybe<t>, t) -> t") {
+		t.Errorf("expected the signature above the doc; got: %q", got)
 	}
 }

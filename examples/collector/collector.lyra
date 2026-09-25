@@ -18,10 +18,10 @@
 import std.collections.{ parse_args }
 import std.io.{ read_file, read_stdin }
 import bindings.treesitter.{
-  lyra_language, new_parser, parser_delete, parse, tree_delete, root, has_error,
+  lyra_language, new_parser, parser_delete, parse, tree_delete, root, has_error, delete,
 }
 import std.ffi.{ cstring }
-import collect.{ collect }
+import collect.{ collect, source_of }
 import printer.{ print_ast }
 
 let main = () -> u8 => {
@@ -39,18 +39,27 @@ let main = () -> u8 => {
     println("collector: the tree-sitter runtime refused the Lyra grammar")
     return 1
   }
-  let Some(tree) = parse(parser, source) else {
+  let Some(tree) = parser.parse(source) else {
     println("collector: ${path} did not parse")
-    parser_delete(parser)
+    delete(parser)
     return 1
   }
   // A tree with an error still has a shape, and printing what was understood is more use
   // than printing nothing — but the exit code says so, since a caller comparing output
   // against a golden should not read a partial answer as agreement.
-  let broken = has_error(root(tree))
-  print(print_ast(collect(root(tree), source.cstring())))
-  tree_delete(tree)
-  parser_delete(parser)
+  let broken = tree.root().has_error()
+  // `--locations` prints each node's span under its header. Off by default because the
+  // 245 goldens are dumps of the format without it; on, it is the only way to check that
+  // the spans this collector records are the ones the Go collector records, which no
+  // golden can say (`pkg/printer` skips the embedded base a location lives in).
+  var show_loc = false
+  for switch in args.switches {
+    if switch == "--locations" { show_loc = true }
+  }
+  let file = source_of(source.cstring())
+  print(print_ast(tree.root().collect(file), show_loc))
+  delete(tree)
+  delete(parser)
   if broken { 1 } else { 0 }
 }
 
