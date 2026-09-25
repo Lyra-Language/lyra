@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/owenrumney/go-lsp/lsp"
@@ -11,18 +16,26 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/modules"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // CodeAction implements textDocument/codeAction. It offers quick fixes derived
 // from the diagnostics in the requested range — "Add missing match arms"
 // (lyra-E009), "Add missing struct fields" (lyra-E013), "Remove unused
-// variable/import" (lyra-W003/W004) — plus a range-driven "Insert inferred type
-// annotation" refactor for unannotated `let`/`var` bindings.
+// variable/import" (lyra-W003/W004), "Import x from lib" for a name a known module
+// exports — plus a range-driven "Insert inferred type annotation" refactor for
+// unannotated `let`/`var` bindings.
 func (h *Handler) CodeAction(_ context.Context, params *lsp.CodeActionParams) (result []lsp.CodeAction, retErr error) {
 	defer recoverHandler("codeAction", &result, &retErr)
 
 	uri := params.TextDocument.URI
+	// **Logged because its absence is a question we could not answer.** When a code
+	// action does not appear, the two explanations — the client never asked, or the
+	// server offered nothing — look identical from the editor, and only some handlers
+	// here log their requests. A round trip was spent on exactly that ambiguity (09/25).
+	log.Printf("codeAction: request at %s lines %d-%d with %d diagnostic(s)",
+		uri, params.Range.Start.Line, params.Range.End.Line, len(params.Context.Diagnostics))
 	analysis, source, ok := h.docFor(string(uri))
 	if !ok {
 		return nil, nil
@@ -52,6 +65,11 @@ func (h *Handler) CodeAction(_ context.Context, params *lsp.CodeActionParams) (r
 			if a := removeUnusedImportAction(analysis, source, uri, d); a != nil {
 				actions = append(actions, *a)
 			}
+		default:
+			// lyra-E001 is a general code, so the filter is what a module exports
+			// rather than the code itself: an action appears only for a name some
+			// module exports and this file has not imported.
+			actions = append(actions, h.addImportActions(analysis, source, uri, d)...)
 		}
 	}
 
@@ -406,4 +424,242 @@ func walkProgramExprs(program *ast.Program, onExpr func(ast.Expression) bool) {
 // Diagnostics are emitted at their node's start, so this pinpoints the node.
 func startsAt(loc ast.Location, line, col int) bool {
 	return loc.StartLine == line && loc.StartCol == col
+}
+
+// addImportActions offers "Import x from lib" for a name the file uses and has not
+// imported — one action per module that exports it.
+//
+// **Derived from the symbol table, not from the message.** The diagnostic already names
+// the fix in prose ("module %q exports it, but this file does not import it; add `import
+// …`"), and parsing that back out would tie a quick fix to a sentence someone will
+// reword. `lyra-E001` is a general code, so the table is also what makes this specific:
+// an action appears only when the name really is exported by a module this file does not
+// list, which is the same question the diagnostic asked.
+//
+// Two shapes, because there are two right answers. A module the file **already imports**
+// takes the name into its existing list, which is the common case and the one that keeps a
+// file's imports from growing a second line per name. A module it mentions but does not
+// take members from (`import lib`) gets a new line, placed after the last import — or
+// after the `module` declaration, or at the top — so the file's shape stays what a reader
+// expects, and the plain import keeps working beside it.
+//
+// **The boundary is what the program knows about.** `modules.Resolve` loads what a file
+// imports and no more, so a module this file has never mentioned is not in the symbol
+// table and cannot be offered — the compiler cannot name it either, and says only
+// `undefined function "thrice"` where an imported module gets the whole "add `import …`"
+// sentence. Offering those would mean the workspace search `importers.go` does for rename:
+// a heavier thing, and a separate one.
+func (h *Handler) addImportActions(
+	analysis *docAnalysis, source string, uri lsp.DocumentURI, d lsp.Diagnostic,
+) []lsp.CodeAction {
+	if analysis.symTable == nil {
+		return nil
+	}
+	line, col := diagStart(source, d)
+	name, ok := unimportedNameAt(analysis, line, col)
+	if !ok {
+		return nil
+	}
+	var out []lsp.CodeAction
+	for _, module := range h.modulesExporting(analysis, name) {
+		edit, ok := importEdit(analysis.program, source, module, name)
+		if !ok {
+			continue
+		}
+		out = append(out, *quickFix(
+			fmt.Sprintf("Import %s from %s", name, module), uri, edit, d))
+	}
+	return out
+}
+
+// modulesExporting answers every module that exports name: the ones already in the
+// program, then — when none is — the workspace.
+//
+// **The second rung is the common case, which is why it exists.** The symbol table holds
+// what this file's imports pulled in, so it can answer for a module already imported (a
+// name missing from an otherwise-present list) and cannot answer at all for the mistake
+// people actually make: using a name and forgetting the import entirely. There the module
+// was never loaded, the compiler itself says only `undefined function "parse_args"` rather
+// than naming a module, and a quick fix that stopped here would miss the case it exists
+// for. Scoped to the imported half on 09/25 and widened the same day, after the first
+// thing tried against it was `parse_args`.
+//
+// The walk is `importers.go`'s, for its reasons: resolution runs downward only, so an
+// upward question has to be searched rather than resolved. Run on an explicit user action
+// — a code-action request, never a keystroke — and reading each file once through the
+// shared parse cache.
+func (h *Handler) modulesExporting(analysis *docAnalysis, name string) []string {
+	if loaded := analysis.symTable.ExportingModules(name); len(loaded) > 0 {
+		return loaded
+	}
+	var out []string
+	seen := map[string]bool{}
+	// **The roots the resolver itself would use**: what the user opened, and the standard
+	// library. `DefaultRoots` is [the document's directory, StdRoot], so offering an
+	// import from anywhere else would name a module the compiler could not then find —
+	// and offering from *fewer* places misses the one that sent me here, since
+	// `parse_args` lives in `std.collections` and the open document was several
+	// directories away from it.
+	root, _ := h.searchRoot(analysis.file)
+	for _, at := range []string{root, modules.StdRoot()} {
+		if at == "" || seen["root:"+at] {
+			continue
+		}
+		seen["root:"+at] = true
+		h.walkForExports(at, analysis.file, name, seen, &out)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// walkForExports adds every module under root that exports name, skipping the open
+// document itself — a name the file declares is not a name it needs to import.
+func (h *Handler) walkForExports(root, skip, name string, seen map[string]bool, out *[]string) {
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // an unreadable directory is skipped, not fatal
+		}
+		if entry.IsDir() {
+			if skipDir(path, entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// **A symlinked directory is walked through, which `WalkDir` does not do.**
+		// `build/std` is a symlink to `../std` (build.sh makes it one deliberately, so a
+		// copy cannot drift from the edited prelude), and the std root the *editor*
+		// resolves against is `build` — so without this the standard library is
+		// invisible to the search from that root, and `parse_args` is exactly the name
+		// that lives there.
+		if entry.Type()&fs.ModeSymlink != 0 {
+			target, err := filepath.EvalSymlinks(path)
+			if err != nil || seen["root:"+target] {
+				return nil
+			}
+			if info, err := os.Stat(target); err == nil && info.IsDir() {
+				seen["root:"+target] = true
+				h.walkForExports(target, skip, name, seen, out)
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".lyra" || path == skip {
+			return nil
+		}
+		source, ok := h.sourceFor(path)
+		if !ok {
+			return nil
+		}
+		header, exports := modules.FileExports(path, source, h.parseCache, name)
+		if !exports || header.Module == "" || seen[header.Module] {
+			return nil
+		}
+		seen[header.Module] = true
+		*out = append(*out, header.Module)
+		return nil
+	})
+	if err != nil {
+		log.Printf("addImport: walk of %s failed: %v", root, err)
+	}
+}
+
+// unimportedNameAt answers the identifier at a position when the file does not already
+// import that name.
+//
+// The already-imported check is a **guard without a known trigger**, and it is here
+// because this runs from the `default` arm: it sees every diagnostic code there is, not a
+// code that means "missing import". An identifier the file does import is some other
+// error, and offering to import it again would be noise. I could not construct a case
+// that reaches it — a type mismatch on an imported function reports against the argument
+// or the whole assignment, not against the name — so it is stated as insurance rather
+// than dressed up as a fix, and it has no test, because a test that passes with the guard
+// removed would be claiming something it does not check.
+func unimportedNameAt(analysis *docAnalysis, line, col int) (string, bool) {
+	expr := findExprAtPos(analysis.program, line, col)
+	id, ok := expr.(*ast.IdentifierExpr)
+	if !ok || id.Name == "" {
+		return "", false
+	}
+	if fileImportsName(analysis.program, id.Name) {
+		return "", false
+	}
+	return id.Name, true
+}
+
+// fileImportsName reports whether any import in this file already binds the bare name —
+// as a member, or as an alias for one.
+func fileImportsName(program *ast.Program, name string) bool {
+	for _, node := range program.Statements {
+		imp, ok := node.(*ast.ImportStmt)
+		if !ok {
+			continue
+		}
+		for _, m := range imp.Members {
+			if m.Alias == name || (m.Alias == "" && m.Name == name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// importEdit is the single edit that imports name from module: into an existing member
+// list where the file already imports that module, and as a new line where it does not.
+func importEdit(
+	program *ast.Program, source, module, name string,
+) (lsp.TextEdit, bool) {
+	if imp := importOf(program, module); imp != nil && len(imp.Members) > 0 {
+		last := imp.Members[len(imp.Members)-1].Location
+		pos := lsp.Position{
+			Line:      lspPos(last.EndLine),
+			Character: utf16Column(source, lspPos(last.EndLine), last.EndCol),
+		}
+		return lsp.TextEdit{
+			Range:   lsp.Range{Start: pos, End: pos},
+			NewText: ", " + name,
+		}, true
+	}
+	// A plain `import lib` binds a namespace and no bare names, so a member list has to
+	// be introduced rather than extended — which is a rewrite of the reader's chosen
+	// spelling. A new line beside it is the smaller edit and leaves both spellings
+	// working.
+	at := lspPos(importInsertLine(program))
+	pos := lsp.Position{Line: at, Character: 0}
+	return lsp.TextEdit{
+		Range:   lsp.Range{Start: pos, End: pos},
+		NewText: fmt.Sprintf("import %s.{ %s }\n", module, name),
+	}, true
+}
+
+// importOf finds the file's member import of a module, by the dotted path it was written
+// with. Nil for a module imported plainly or under an alias, which bind no bare names.
+func importOf(program *ast.Program, module string) *ast.ImportStmt {
+	for _, node := range program.Statements {
+		imp, ok := node.(*ast.ImportStmt)
+		if !ok || imp.Alias != "" || len(imp.Members) == 0 {
+			continue
+		}
+		if importPath(imp) == module {
+			return imp
+		}
+	}
+	return nil
+}
+
+// importInsertLine is the 1-based line a new import belongs on: after the last existing
+// import, else after the `module` declaration, else the top of the file.
+func importInsertLine(program *ast.Program) int {
+	after := 0
+	for _, node := range program.Statements {
+		switch s := node.(type) {
+		case *ast.ImportStmt:
+			if end := s.GetLocation().EndLine; end > after {
+				after = end
+			}
+		case *ast.ModuleDeclStmt:
+			if end := s.GetLocation().EndLine; end > after {
+				after = end
+			}
+		}
+	}
+	return after + 1
 }

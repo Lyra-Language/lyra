@@ -253,8 +253,10 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 	}
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
-		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
-		named, ok := scope.Lookup(e.Name)
+		// The scope, then a function reached without importing its name — the same two
+		// rungs hover's doc uses, and shared with it so the two features cannot answer
+		// differently about the same identifier (resolveNameAtPos).
+		named, ok := resolveNameAtPos(e, line, col, analysis)
 		if !ok {
 			return nil
 		}

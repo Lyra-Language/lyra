@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — "add import" as a quick fix, and the walk it needed
+
+The editor now offers `Import parse_args from std.collections` on the diagnostic that
+already names the fix in prose. Getting there took two passes, and the second one is the
+lesson.
+
+**The first version scoped itself to what the program had loaded.** `ExportingModules`
+answers from the symbol table, which holds what this file's imports pulled in — so the
+action worked for a name missing from an *otherwise present* import list (the
+`named_children` case that started this) and could not fire at all for the mistake people
+actually make: using a name and forgetting the import entirely. I wrote that boundary down
+as a passing test, said the other half was "heavier, separate", and the first thing tried
+against the feature was `parse_args` — the other half.
+
+**A boundary that excludes the common case is not a boundary, it is an unfinished
+feature.** The second version walks: `modules.FileExports` is a header scan beside
+`ScanFile`, and the search covers the roots the resolver itself would use — what the user
+opened, and the standard library — because offering an import from anywhere else names a
+module the compiler could not then find.
+
+Three things fell out of making it work against the real file rather than a fixture:
+
+- **`WalkDir` does not follow symlinks, and `build/std` is one.** The std root the *editor*
+  resolves against is `build`, whose `std` and `bindings` are symlinks — deliberately, so a
+  copy cannot drift from the edited prelude. So the standard library was invisible to a
+  search from the root the editor actually uses, which is where `parse_args` lives. The
+  walk descends through a symlinked directory now.
+- **`module a.b` carried no location** (todo.md). A zero span sorts before every real one,
+  so "insert after the module declaration" inserted above it. Third node in two days.
+- **`CodeAction` did not log its request.** When an action does not appear, "the client
+  never asked" and "the server offered nothing" look identical from the editor, and only
+  some handlers here log. A round trip was spent on exactly that ambiguity — including my
+  telling the user that Zed never sends `codeAction`, which I had inferred from a log that
+  never records one. It logs now.
+
+The last is the one worth keeping. **An inference from an absence is only as good as the
+instrument**, and I read a silence in a log as evidence when the log had nothing to say.
+
 ### 09/25/26 — a wrapper that borrowed, and the three holes behind it
 
 It started as a warning that would not go away. A `delete` wrapper had been added to

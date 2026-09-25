@@ -295,6 +295,16 @@ same exemption unless it goes through `checkStoredFlavor`.
   `lambdaSignature(fn)`. **The spelling the standard library is documented in was the one
   without a signature in the editor.**
 
+### `module a.b` carried no location (09/25)
+
+- **[FIXED 09/25]** `CollectModuleDeclaration` built its node without an `AstBase`, so the
+  declaration's span was zero — the third node found this way in two days, after
+  `ForLoopExpr` and the AST-locations slice. Hazard 14's cost applies (a location-less
+  diagnostic escapes per-file filtering), and so does a second one this time: the editor's
+  new "add an import after the module declaration" put the line *above* it, because a zero
+  span sorts before every real one. **A missing location is invisible until something asks
+  where the node is.**
+
 ### The C-style `for` loop carried no location (09/25)
 
 - **[FIXED 09/25]** `CollectForLoopExpr` built its `ast.ForLoopExpr` with no `ExprBase`, so

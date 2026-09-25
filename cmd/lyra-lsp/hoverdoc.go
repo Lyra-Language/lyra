@@ -22,8 +22,7 @@ func resolveDoc(expr ast.Expression, line, col int, analysis *docAnalysis) *ast.
 	}
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
-		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
-		named, ok := scope.Lookup(e.Name)
+		named, ok := resolveNameAtPos(e, line, col, analysis)
 		if !ok {
 			return nil
 		}
@@ -54,6 +53,44 @@ func resolveDoc(expr ast.Expression, line, col int, analysis *docAnalysis) *ast.
 		return memberDoc(e, analysis)
 	}
 	return nil
+}
+
+// resolveNameAtPos answers the declaration a bare name refers to: the lexical scope
+// first, and **a function the file reached without importing its name** second.
+//
+// The second rung exists because the language deliberately allows one. A method call does
+// not require the method's name in the import list — the decision of 09/22, measured
+// against this repo and taken so that a type's accessors need not be dragged into the bare
+// scope — so `node.named_children()` compiles with only `Node` and a few others listed,
+// and `named_children` is *not* a name in scope at that position. Both editor features
+// that answer from a declaration looked it up in the scope alone, so the spelling the
+// decision was made to allow was the one with no doc comment and no go-to-definition.
+//
+// Reached only after the scope has already failed, so a name that is in scope keeps
+// resolving exactly as before. `LookupFunctionFrom` is rule 4's accessor: own module,
+// imports, prelude, then any program-wide export — the last rung being how a UFCS callee
+// is found at all. Its answer is the lambda, and the doc and the name's span live on the
+// declaration holding it, which the declaring module has by name.
+func resolveNameAtPos(
+	e *ast.IdentifierExpr, line, col int, analysis *docAnalysis,
+) (ast.Named, bool) {
+	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
+	if named, ok := scope.Lookup(e.Name); ok {
+		return named, true
+	}
+	if analysis.symTable == nil {
+		return nil, false
+	}
+	fn, ok := analysis.symTable.LookupFunctionFrom(e.Name, e.GetLocation())
+	if !ok || fn == nil {
+		return nil, false
+	}
+	module := analysis.symTable.ModuleOfFile[fn.GetLocation().File]
+	decl, found := analysis.symTable.BindingIn(module, e.Name)
+	if !found {
+		return nil, false
+	}
+	return decl, true
 }
 
 // memberDoc resolves a field access (`pt.x`) to the field's doc on the struct

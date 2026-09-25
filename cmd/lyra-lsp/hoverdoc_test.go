@@ -81,3 +81,45 @@ func TestHover_StructFieldShowsItsDoc(t *testing.T) {
 		t.Errorf("field hover is missing its doc: %q", hover.Contents.Value)
 	}
 }
+
+// TestDoc_MethodCallWithoutTheNameImported is the gap between a language decision and the
+// editor. A method call does not require the method's name in the import list (09/22) — the
+// decision was measured against this repo and taken so that a type's accessors need not be
+// dragged into the bare scope — so `n.thrice()` compiles with only `twice` listed, and
+// `thrice` is then **not a name in scope** at that position. Hover's doc and
+// go-to-definition both looked it up in the scope alone, so the spelling the decision was
+// made to allow was the one with no documentation and no jump.
+//
+// It must be a *separate module* to bite: a same-module name is in scope whether it was
+// imported or not, which is why the first version of this test passed without the fix.
+//
+// Reported from the editor on a `gen` function, which made it look like a lazy-sequence
+// problem; the generator has nothing to do with it. The import list is the discriminator.
+func TestDoc_MethodCallWithoutTheNameImported(t *testing.T) {
+	t.Setenv("LYRA_STD", stdRootDir(t))
+	h := servertest.New(t, newHandler())
+	dir := t.TempDir()
+	writeFile(t, dir, "nums/nums.lyra", "module nums\n"+
+		"/// Doubles it.\n"+
+		"pub let twice = pure (self: i64) -> i64 => self * 2\n"+
+		"/// Triples it.\n"+
+		"pub let thrice = pure (self: i64) -> i64 => self * 3\n")
+	src := "module app\nimport nums.{ twice }\nlet a = 3\nlet b = a.thrice()\n"
+	uri := openFileAndWait(t, h, dir, "app.lyra", src)
+
+	col := colOf(t, src, "thrice()", 3)
+	hv, err := h.Hover(uri, 3, col)
+	if err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if hv == nil || !strings.Contains(hv.Contents.Value, "Triples it.") {
+		t.Errorf("expected the doc on a method call whose name is not imported; got: %v", hv)
+	}
+	def, err := h.Definition(uri, 3, col)
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	if len(def) == 0 {
+		t.Error("expected go-to-definition on a method call whose name is not imported")
+	}
+}

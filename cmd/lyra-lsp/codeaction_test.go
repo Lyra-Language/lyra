@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -220,5 +222,172 @@ func TestCodeAction_PartlyCoveredConstructor(t *testing.T) {
 	}
 	if !strings.Contains(a.Title, "Other, Some") {
 		t.Errorf("title should list missing then partial, got %q", a.Title)
+	}
+}
+
+// A method call does not require the method's name in the import list (09/22), so a file
+// can reach a function it never named — and the first thing a reader wants is to put the
+// name in the list. This is that quick fix, on the diagnostic that already names it in
+// prose.
+func TestCodeAction_AddImportIntoAnExistingList(t *testing.T) {
+	t.Setenv("LYRA_STD", stdRootDir(t))
+	h := servertest.New(t, newHandler())
+	dir := t.TempDir()
+	writeFile(t, dir, "nums/nums.lyra", "module nums\n"+
+		"pub let twice = pure (self: i64) -> i64 => self * 2\n"+
+		"pub let thrice = pure (self: i64) -> i64 => self * 3\n")
+	src := "module app\nimport nums.{ twice }\nlet a = 1.twice()\nlet b = thrice(3)\n"
+	uri := openFileAndWait(t, h, dir, "app.lyra", src)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	diags, err := h.WaitForDiagnostics(ctx, uri)
+	if err != nil {
+		t.Fatalf("WaitForDiagnostics: %v", err)
+	}
+	actions, err := h.CodeAction(&lsp.CodeActionParams{
+		TextDocument: lsp.TextDocumentIdentifier{URI: uri},
+		Range:        fullRange(),
+		Context:      lsp.CodeActionContext{Diagnostics: diags},
+	})
+	if err != nil {
+		t.Fatalf("CodeAction: %v", err)
+	}
+	a := findAction(actions, "Import thrice from nums")
+	if a == nil {
+		t.Fatalf("no add-import action; got %v", titles(actions))
+	}
+	edits := a.Edit.Changes[uri]
+	if len(edits) != 1 {
+		t.Fatalf("want one edit, got %d", len(edits))
+	}
+	// Appended to the existing member list rather than added as a second import line.
+	if edits[0].NewText != ", thrice" {
+		t.Errorf("want %q, got %q", ", thrice", edits[0].NewText)
+	}
+	if edits[0].Range.Start.Line != 1 {
+		t.Errorf("the edit belongs on the import line; got line %d", edits[0].Range.Start.Line)
+	}
+}
+
+// A module imported plainly binds no bare names, so the name cannot join a list that is
+// not there — a new import line goes in beside it, leaving both spellings working.
+func TestCodeAction_AddImportAsANewLine(t *testing.T) {
+	t.Setenv("LYRA_STD", stdRootDir(t))
+	h := servertest.New(t, newHandler())
+	dir := t.TempDir()
+	writeFile(t, dir, "nums/nums.lyra", "module nums\n"+
+		"pub let thrice = pure (n: i64) -> i64 => n * 3\n")
+	src := "module app\nimport nums\nlet b = thrice(3)\n"
+	uri := openFileAndWait(t, h, dir, "app.lyra", src)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	diags, err := h.WaitForDiagnostics(ctx, uri)
+	if err != nil {
+		t.Fatalf("WaitForDiagnostics: %v", err)
+	}
+	actions, err := h.CodeAction(&lsp.CodeActionParams{
+		TextDocument: lsp.TextDocumentIdentifier{URI: uri},
+		Range:        fullRange(),
+		Context:      lsp.CodeActionContext{Diagnostics: diags},
+	})
+	if err != nil {
+		t.Fatalf("CodeAction: %v", err)
+	}
+	a := findAction(actions, "Import thrice from nums")
+	if a == nil {
+		t.Fatalf("no add-import action; got %v", titles(actions))
+	}
+	edits := a.Edit.Changes[uri]
+	if len(edits) != 1 || edits[0].NewText != "import nums.{ thrice }\n" {
+		t.Fatalf("want a new import line, got %v", edits)
+	}
+	if edits[0].Range.Start.Line != 2 {
+		t.Errorf("the new line belongs after the last import; got line %d", edits[0].Range.Start.Line)
+	}
+}
+
+// **The case the feature exists for**, and the one it could not do when it was first
+// written: a module the file never mentions. It is not in the symbol table —
+// `modules.Resolve` loads what a file imports and no more — so the offer comes from a
+// workspace search instead, the same walk rename uses for the other upward question.
+func TestCodeAction_AddImportFromAnUnmentionedModule(t *testing.T) {
+	t.Setenv("LYRA_STD", stdRootDir(t))
+	h := servertest.New(t, newHandler())
+	dir := t.TempDir()
+	writeFile(t, dir, "nums/nums.lyra", "module nums\n"+
+		"pub let thrice = pure (n: i64) -> i64 => n * 3\n")
+	src := "module app\nlet b = thrice(3)\n"
+	uri := openFileAndWait(t, h, dir, "app.lyra", src)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	diags, err := h.WaitForDiagnostics(ctx, uri)
+	if err != nil {
+		t.Fatalf("WaitForDiagnostics: %v", err)
+	}
+	actions, err := h.CodeAction(&lsp.CodeActionParams{
+		TextDocument: lsp.TextDocumentIdentifier{URI: uri},
+		Range:        fullRange(),
+		Context:      lsp.CodeActionContext{Diagnostics: diags},
+	})
+	if err != nil {
+		t.Fatalf("CodeAction: %v", err)
+	}
+	a := findAction(actions, "Import thrice from nums")
+	if a == nil {
+		t.Fatalf("no add-import action; got %v", titles(actions))
+	}
+	edits := a.Edit.Changes[uri]
+	if len(edits) != 1 || edits[0].NewText != "import nums.{ thrice }\n" {
+		t.Fatalf("want a new import line, got %v", edits)
+	}
+	// After the `module` declaration, there being no import to follow.
+	if edits[0].Range.Start.Line != 1 {
+		t.Errorf("want the line after the module declaration; got line %d", edits[0].Range.Start.Line)
+	}
+}
+
+// **A symlinked module directory is searched through**, which `filepath.WalkDir` does not
+// do on its own. `build/std` is a symlink to the real `std/` — deliberately, so a copy
+// cannot drift from the edited prelude — and `build` is the std root the *editor* resolves
+// against, so without following it the standard library is invisible to this search from
+// the root the editor actually uses. The name that sent us here, `parse_args`, lives there.
+func TestCodeAction_AddImportThroughASymlinkedRoot(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	writeFile(t, real, "nums/nums.lyra", "module nums\n"+
+		"pub let thrice = pure (n: i64) -> i64 => n * 3\n")
+	link := filepath.Join(dir, "linked")
+	if err := os.MkdirAll(link, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "nums"), filepath.Join(link, "nums")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("LYRA_STD", link)
+	h := servertest.New(t, newHandler())
+	// The document lives somewhere else entirely, so the only way to the module is the
+	// std root — through the symlink.
+	src := "module app\nlet b = thrice(3)\n"
+	elsewhere := filepath.Join(dir, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uri := openFileAndWait(t, h, elsewhere, "app.lyra", src)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	diags, err := h.WaitForDiagnostics(ctx, uri)
+	if err != nil {
+		t.Fatalf("WaitForDiagnostics: %v", err)
+	}
+	actions, err := h.CodeAction(&lsp.CodeActionParams{
+		TextDocument: lsp.TextDocumentIdentifier{URI: uri},
+		Range:        fullRange(),
+		Context:      lsp.CodeActionContext{Diagnostics: diags},
+	})
+	if err != nil {
+		t.Fatalf("CodeAction: %v", err)
+	}
+	if a := findAction(actions, "Import thrice from nums"); a == nil {
+		t.Errorf("a module behind a symlinked root should be offered; got %v", titles(actions))
 	}
 }

@@ -187,3 +187,70 @@ func ScanFile(file string, source []byte, cache *ParseCache) (FileHeader, bool) 
 	sort.Strings(imports)
 	return FileHeader{Module: declaredModulePath(u), Imports: imports}, true
 }
+
+// FileExports reports whether this file declares name publicly, and answers its module
+// header when it does.
+//
+// **The other half of the inverse direction.** ScanFile above answers "who imports me";
+// this answers "who exports *this name*", which is the question an editor asks when a
+// program uses a name it never imported: resolution cannot find the module, because
+// `modules.Resolve` loads what a file imports and nothing else, so the module holding the
+// name was never read. Neither question can be answered by resolving harder.
+//
+// It is a header scan like its sibling — the CST, no collection, no types — and takes the
+// name to look for rather than returning every export, because the caller has one name and
+// a workspace of files: answering the narrow question means a `pub` list per file is never
+// built or allocated.
+//
+// The four type forms are enumerated rather than matched by shape. A name field that ends
+// in `_name` would catch them all and would also catch a `data` constructor's, which is not
+// a name an `import` can take; a list that is wrong is visible here, where a pattern that
+// is wrong is visible as a quick fix that inserts an import the compiler then refuses.
+func FileExports(file string, source []byte, cache *ParseCache, name string) (FileHeader, bool) {
+	if name == "" {
+		return FileHeader{}, false
+	}
+	header, ok := ScanFile(file, source, cache)
+	if !ok {
+		return FileHeader{}, false
+	}
+	var tree *sitter.Tree
+	if cache != nil {
+		tree = cache.get(file, source)
+	}
+	if tree == nil {
+		t, err := parser.Parse(string(source))
+		if err != nil || t == nil {
+			return FileHeader{}, false
+		}
+		tree = t
+	}
+	u := Unit{File: file, Source: source, Tree: tree, Root: tree.RootNode()}
+	found := false
+	forEachTopLevel(u.Root, "declaration", func(node *sitter.Node) {
+		if found || cst.Field(node, "visibility") == nil {
+			return
+		}
+		if n := cst.Field(node, "name"); n != nil && string(u.Source[n.StartByte():n.EndByte()]) == name {
+			found = true
+		}
+	})
+	forEachTopLevel(u.Root, "type_declaration", func(node *sitter.Node) {
+		if found || node.NamedChildCount() == 0 {
+			return
+		}
+		body := node.NamedChild(0)
+		if body == nil || cst.Field(body, "visibility") == nil {
+			return
+		}
+		for _, field := range []string{
+			"struct_name", "data_type_name", "tuple_type_name", "constrained_type_name",
+		} {
+			if n := cst.Field(body, field); n != nil && string(u.Source[n.StartByte():n.EndByte()]) == name {
+				found = true
+				return
+			}
+		}
+	})
+	return header, found
+}
