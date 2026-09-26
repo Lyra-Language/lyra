@@ -284,6 +284,16 @@ struct Game {
   steps: i64,
 }
 
+/// Sound state: the sequencer and the chip it drives, passed together — `music_tick(sound.music,
+/// sound.chip)` borrows two disjoint fields `mut`, which the exclusivity check admits.
+struct Sound {
+  music: Music,
+  chip: Apu,
+}
+
+let new_sound = pure (playing: bool) -> Sound =>
+  Sound { music: new_music(playing), chip: SILENT }
+
 /// The level fresh, with `lives` left, in `mode`.
 let new_game = pure (mode: Mode, lives: i64) -> Game => {
   let level = parse_level(LEVEL)
@@ -301,16 +311,16 @@ let new_game = pure (mode: Mode, lives: i64) -> Game => {
 }
 
 /// One 1/60 s step of whichever screen the game is on.
-let update = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void => {
+let update = (game: mut Game, sound: mut Sound, pad: Pad) -> void => {
   game.steps += 1
   match game.mode {
     Title => {
       if pad.pressed.start {
         game = new_game(Playing, LIVES)
-        music = new_music(true)
+        sound.music = new_music(true)
       }
     },
-    Playing => play(game, music, chip, pad),
+    Playing => play(game, sound, pad),
     Dying(t) => {
       // The classic: a hop, then a fall straight through the floor.
       var p = game.player
@@ -322,10 +332,10 @@ let update = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void
       if t >= 150 {
         if game.lives <= 1 {
           game.mode = Over(0)
-          play_effect(music, chip, GAME_OVER)
+          play_effect(sound.music, sound.chip, GAME_OVER)
         } else {
           game = new_game(Playing, game.lives - 1)
-          music = new_music(true)
+          sound.music = new_music(true)
         }
       } else {
         game.mode = Dying(t + 1)
@@ -345,18 +355,18 @@ let update = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void
 }
 
 /// A step of play: the explorer, the slimes, and what they do to each other.
-let play = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void => {
+let play = (game: mut Game, sound: mut Sound, pad: Pad) -> void => {
   let was_grounded = game.player.on_ground
   var p = steer(game.player, pad)
   // `steer` jumps exactly when A is pressed on the ground.
-  if was_grounded && pad.pressed.a { play_effect(music, chip, JUMP_SOUND) }
+  if was_grounded && pad.pressed.a { play_effect(sound.music, sound.chip, JUMP_SOUND) }
   p = move_x(game.level, p)
   p = move_y(game.level, p)
   game.player = p
   let taken = collect_coins(game.level, p)
   if taken > 0 {
     game.coins += taken
-    play_effect(music, chip, COIN)
+    play_effect(sound.music, sound.chip, COIN)
   }
   game.camera = camera_x(game.level, p)
 
@@ -365,7 +375,7 @@ let play = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void =
   }
 
   if fell_out(game.level, game.player) {
-    die(game, music, chip)
+    die(game, sound)
     return
   }
   for i in 0..<game.slimes.len() {
@@ -375,9 +385,9 @@ let play = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void =
         game.slimes[i] = Slime { s | alive: false, squashed: SQUASH_TICKS }
         game.stomps += 1
         game.player = Body { game.player | vy: if pad.held.a { JUMP } else { STOMP_BOUNCE } }
-        stomp(music, chip)
+        stomp(sound.music, sound.chip)
       } else {
-        die(game, music, chip)
+        die(game, sound)
         return
       }
     }
@@ -386,16 +396,16 @@ let play = (game: mut Game, music: mut Music, chip: mut Apu, pad: Pad) -> void =
   if at_goal(game.level, game.player) {
     game.mode = Clear(0)
     game.player = Body { game.player | vx: 0.0 }
-    music.playing = false
-    play_effect(music, chip, FANFARE)
+    sound.music.playing = false
+    play_effect(sound.music, sound.chip, FANFARE)
   }
 }
 
-let die = (game: mut Game, music: mut Music, chip: mut Apu) -> void => {
+let die = (game: mut Game, sound: mut Sound) -> void => {
   game.mode = Dying(0)
   game.player = Body { game.player | vx: 0.0, vy: -5.0 }
-  music.playing = false
-  play_effect(music, chip, HURT)
+  sound.music.playing = false
+  play_effect(sound.music, sound.chip, HURT)
 }
 
 let overlaps = pure (a: Body, b: Body) -> bool =>
@@ -448,8 +458,7 @@ const AHEAD_TICKS: i64 = 3
 let run = (screen: Screen, sheet: Texture, audio: Maybe<AudioStream>) -> u8 => {
   let autoplay = has_flag("--autoplay")
   var game = new_game(Title, LIVES)
-  var music = new_music(false)
-  var chip = SILENT
+  var sound = new_sound(false)
   var gamepad: Maybe<Gamepad> = None
   var clock = start_clock()
   var previous = RELEASED
@@ -472,7 +481,7 @@ let run = (screen: Screen, sheet: Texture, audio: Maybe<AudioStream>) -> u8 => {
     let due = updates_due(screen, clock)
     for _ in 0..<due {
       let now = if autoplay { autopilot(game) } else { read_buttons(gamepad) }
-      update(game, music, chip, advance(previous, now))
+      update(game, sound, advance(previous, now))
       previous = now
     }
 
@@ -480,14 +489,14 @@ let run = (screen: Screen, sheet: Texture, audio: Maybe<AudioStream>) -> u8 => {
       Some(stream) => {
         for queued_frames(stream) < AHEAD_TICKS * TICK_SAMPLES {
           var chunk: []f32 = []
-          music_tick(music, chip)
-          render(chip, chunk, TICK_SAMPLES)
+          music_tick(sound.music, sound.chip)
+          render(sound.chip, chunk, TICK_SAMPLES)
           put_audio(stream, chunk)
         }
       },
       // Silent: keep the sequencer in step with the game anyway, one tick an update.
       None => {
-        for _ in 0..<due { music_tick(music, chip) }
+        for _ in 0..<due { music_tick(sound.music, sound.chip) }
       },
     }
 
@@ -614,9 +623,8 @@ let run_checks = () -> u8 => {
 
   // Start leaves the title for the level.
   var titled = new_game(Title, LIVES)
-  var music = new_music(false)
-  var chip = SILENT
-  update(titled, music, chip, advance(RELEASED, Buttons { RELEASED | start: true }))
+  var sound = new_sound(false)
+  update(titled, sound, advance(RELEASED, Buttons { RELEASED | start: true }))
   failures += check_that("start begins play", titled.mode == Playing)
 
   // A slime on a floating platform keeps to it: ten seconds of patrol, never off the bricks.
@@ -648,7 +656,7 @@ let run_checks = () -> u8 => {
     vy: 2.0,
     on_ground: false
   }
-  run_steps(stomping, music, chip, RELEASED, 3)
+  run_steps(stomping, sound, RELEASED, 3)
   failures += check_that(
     "a landing stomps",
     !stomping.slimes[0].alive && stomping.stomps == 1 && stomping.mode == Playing
@@ -662,13 +670,13 @@ let run_checks = () -> u8 => {
     y: slime.y + slime.h - 15.0,
     on_ground: true
   }
-  run_steps(bumped, music, chip, Buttons { RELEASED | right: true }, 10)
+  run_steps(bumped, sound, Buttons { RELEASED | right: true }, 10)
   failures += check_that("walking into a slime is fatal", is_dying(bumped.mode))
 
   // A pit is fatal too, and the third loss ends the game.
   var falling = new_game(Playing, 1)
   falling.player = Body { falling.player | x: 23.0 * TILE, y: 190.0 }
-  run_steps(falling, music, chip, RELEASED, 400)
+  run_steps(falling, sound, RELEASED, 400)
   failures += check_that(
     "the last life lost is game over",
     is_over(falling.mode) || is_title(falling.mode)
@@ -676,7 +684,7 @@ let run_checks = () -> u8 => {
 
   var retry = new_game(Playing, 3)
   retry.player = Body { retry.player | x: 23.0 * TILE, y: 190.0 }
-  run_steps(retry, music, chip, RELEASED, 250)
+  run_steps(retry, sound, RELEASED, 250)
   failures += check_that(
     "a life lost restarts the level",
     retry.mode == Playing && retry.lives == 2
@@ -684,14 +692,13 @@ let run_checks = () -> u8 => {
 
   // The whole level, played by the autopilot: it must reach the flag with no life lost.
   var auto = new_game(Title, LIVES)
-  var auto_music = new_music(false)
-  var auto_chip = SILENT
+  var auto_sound = new_sound(false)
   var previous = RELEASED
   var died = false
   var steps = 0
   for steps < 60 * 120 && !is_clear(auto.mode) {
     let now = autopilot(auto)
-    update(auto, auto_music, auto_chip, advance(previous, now))
+    update(auto, auto_sound, advance(previous, now))
     previous = now
     if is_dying(auto.mode) { died = true }
     steps += 1
@@ -704,7 +711,7 @@ let run_checks = () -> u8 => {
     "and stomps or passes slimes, collecting coins on the way",
     auto.coins > 0
   )
-  run_steps(auto, auto_music, auto_chip, RELEASED, 120)
+  run_steps(auto, auto_sound, RELEASED, 120)
   failures += check_that("then slides down the pole to its base", auto.player.on_ground)
 
   if failures == 0 {
@@ -716,16 +723,10 @@ let run_checks = () -> u8 => {
   }
 }
 
-let run_steps = (
-  game: mut Game,
-  music: mut Music,
-  chip: mut Apu,
-  held: Buttons,
-  count: i64
-) -> void => {
+let run_steps = (game: mut Game, sound: mut Sound, held: Buttons, count: i64) -> void => {
   var previous = RELEASED
   for _ in 0..<count {
-    update(game, music, chip, advance(previous, held))
+    update(game, sound, advance(previous, held))
     previous = held
   }
 }

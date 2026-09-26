@@ -650,9 +650,6 @@ annotations.
 
 - **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
   returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
-- **[OPEN] Disjoint fields count as one `mut` borrow.** `f(s.music, s.chip)` with both
-  parameters `mut` is refused — the exclusivity check keys on the variable, not the path —
-  where Rust accepts disjoint field borrows. `game.lyra` passes two variables instead (09/25).
 - **[DEFERRED] (c) Exclusivity (`mut` XOR alias)** until the job system or resizable
   interior borrows force it. Leaning toward statement-scoped projections over a static
   container freeze.

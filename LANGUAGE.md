@@ -189,6 +189,8 @@ operation the operator would have refused, as a value", and `%` traps there.
 
 A place is what `=` writes and `&` addresses: a binding, a field `p.x`, an element `xs[i]`, a tuple position `p.0`, or a deref `p^`, and any path of those (`b.t.1`, `xs[i].0`). A tuple position obeys a field's rules — the root must allow interior mutation, and the value must fit the element's type.
 
+**A `mut` argument is exclusive by place.** `mut` and `ref` parameters point into the caller's storage, so within one call, no other `mut` or `ref` argument may reach the place a `mut` argument names (`lyra-E001`). Places overlap when one path is a prefix of the other (`s` and `s.a`, or `s.a` twice) and not when they part at a field or tuple position: `f(s.music, s.chip)` is two slots, as disjoint as two variables. Two elements `xs[i]`/`xs[j]` always overlap (an index is a runtime value), as do a union's members (one slot). Two `ref`s may share; scalars are exempt (passed by value). This is about the slots arguments point into, not heap aliasing: two fields holding one reference-counted array still share its buffer, as two variables can.
+
 ### Compound assignment
 
 `+= -= *= /= %= &= |= ~= <<= >>=` target any place `=` accepts (`counts[i].n += 1`) under the same writability rules. **Not a desugaring**: the address is computed once, so `xs[idx()] += 5` calls `idx` once. An overloaded operator is reached through it.

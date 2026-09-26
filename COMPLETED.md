@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — `mut` exclusivity compares places, not roots
+
+`game.lyra` found it: `play_effect(sound.music, sound.chip, …)` — two disjoint fields of one
+struct, each passed `mut` — was refused as if both arguments named `sound`, because the
+exclusivity check reduced every argument to its root binding. The game split the struct
+into two variables to get past it.
+
+The check now compares **places**: a root and its field, tuple and element steps
+(`ast.PlaceObject`'s, so the path is the one every other place-walking pass uses). Two
+arguments conflict when one path prefixes the other. Parting at a field or tuple position
+is disjoint — two slots, as independent as two variables, and what Rust's disjoint-field
+borrows admit.
+
+- **Two steps stay conservative, as wildcards.** An element: `xs[0]` and `xs[1]` are
+  refused, since an index is in general a runtime value and this check does not reason
+  about values. A union member: every member sits at offset 0, so `u.a` and `u.b` are one
+  slot. Mutation-tested — treating wildcards as names lets both through, and both tests fail.
+  An overlap resting on a wildcard has its own message ("may be the same storage"),
+  because "`ps[…]` is passed twice" misdescribes `ps[0]` and `ps[1]`.
+- **Not a new heap-aliasing hole.** The check was always about the *slots* by-reference
+  parameters point into; two fields holding one reference-counted array share its buffer,
+  exactly as two variables holding it already could — borrow model (e) in todo.md.
+- **The other half is lowering**, pinned by `TestExec_DisjointFieldsPassedMut`: each
+  parameter gets its own field's address, nested and tuple cases included.
+- `game.lyra` is back to one `Sound` struct and behaves identically (checks, and three
+  screenshots byte-for-byte). LANGUAGE.md had no statement of the exclusivity rule at all;
+  it has one now, under Places.
+
 ### 09/25/26 — the i128 multiply helper, folded back into the intrinsic it replaced
 
 `./asan.sh ./...` failed nine `cmd/lyrac` examples — every one that pulls in

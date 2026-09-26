@@ -5,6 +5,8 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -1558,11 +1560,11 @@ func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramNa
 	}
 }
 
-// checkExclusiveMutableBorrow rejects passing the same binding to a `mut`
-// parameter and to any other parameter of the same call.
+// checkExclusiveMutableBorrow rejects passing overlapping storage to a `mut`
+// parameter and to any other by-reference parameter of the same call.
 //
 // `mut` and `ref` are both lowered as pointers to the caller's storage, so two
-// arguments naming one binding are two views of the same memory. If either is
+// arguments reaching the same storage are two views of the same memory. If either is
 // `mut`, the callee's writes are visible through the other view mid-call, and
 // which value it observes depends on statement order inside a function the caller
 // can't see. `both(p, p)` with `(a: ref Pt, b: mut Pt)` reads 1 or 99 purely by
@@ -1573,19 +1575,33 @@ func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramNa
 // keeps by-reference lowering from being observable — a `ref` may see the caller's
 // live value rather than a snapshot only when nothing can mutate it during the
 // call. Lyra has no general borrow checker, so this is deliberately narrow: it
-// compares argument *roots* within one call, which is exactly the aliasing that
-// by-reference parameter passing introduces. Two `ref` arguments naming one
-// binding are fine — neither can write.
+// compares the arguments' *places* within one call, which is exactly the aliasing that
+// by-reference parameter passing introduces. Two `ref` arguments reaching one place
+// are fine — neither can write.
+//
+// **Places, not roots** (09/25). Two arguments conflict when one's path is a prefix of
+// the other's — `s` and `s.a`, or `s.a` twice — and not when they part at a field:
+// `s.music` and `s.chip` are two slots, as disjoint as two variables, which is what
+// Rust's disjoint-field borrows admit too. It compared roots until then, so
+// `play(s.music, s.chip)` was refused and a program had to split one struct into two
+// variables to make the call. Two steps cannot be told apart statically and stay
+// conservative (see placeOverlaps): an element `xs[i]` against `xs[j]`, since `i` may
+// equal `j`, and a union's members, which all live at offset 0.
+//
+// This is about the *slots* a by-reference argument points into. Two fields holding
+// the same reference-counted array still share its buffer — as two variables holding
+// it already could — which is the separate observable-aliasing question (todo.md,
+// borrow model (e)), not something this check ever covered.
 //
 // Scalars are exempt for the same reason they are passed by value
 // (types.IsCopiedScalar): there is no shared storage to alias.
 func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) {
-	type argRoot struct {
-		name     string
+	type argPlace struct {
+		place    place
 		position int
 		isMut    bool
 	}
-	var roots []argRoot
+	var places []argPlace
 	for i, arg := range call.Arguments {
 		if i >= len(lambda.Parameters) {
 			break
@@ -1598,27 +1614,121 @@ func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *as
 		if mode != types.Mut && mode != types.Ref {
 			continue // `own` transfers a copy; a bare parameter is a value
 		}
-		root := rootIdentifier(arg)
-		if root == nil {
+		p, ok := tc.placeOf(arg)
+		if !ok {
 			continue // a temporary has no storage to alias
 		}
-		roots = append(roots, argRoot{name: root.Name, position: i + 1, isMut: mode == types.Mut})
+		places = append(places, argPlace{place: p, position: i + 1, isMut: mode == types.Mut})
 	}
-	for i, a := range roots {
-		for _, b := range roots[i+1:] {
-			if a.name != b.name || (!a.isMut && !b.isMut) {
+	for i, a := range places {
+		for _, b := range places[i+1:] {
+			if !a.isMut && !b.isMut {
 				continue
 			}
-			mutPos, otherPos := a.position, b.position
-			if !a.isMut {
-				mutPos, otherPos = b.position, a.position
+			overlap, uncertain := placeOverlaps(a.place, b.place)
+			if !overlap {
+				continue
 			}
-			tc.addError(call.GetLocation(), SeverityError,
-				"%s: %q is passed to argument %d as `mut` and also to argument %d — a `mut` borrow is exclusive, so no other argument of the same call may name it",
-				calleeName, a.name, mutPos, otherPos)
+			mut, other := a, b
+			if !a.isMut {
+				mut, other = b, a
+			}
+			if uncertain {
+				tc.addError(call.GetLocation(), SeverityError,
+					"%s: argument %d (%q) is `mut`, and argument %d (%q) may be the same storage — an element's index is only known when the program runs, and a union's members share one slot; a `mut` borrow is exclusive, so pass one of them, or copy the other into a variable first",
+					calleeName, mut.position, mut.place.String(), other.position, other.place.String())
+			} else if mut.place.String() == other.place.String() {
+				tc.addError(call.GetLocation(), SeverityError,
+					"%s: %q is passed to argument %d as `mut` and also to argument %d — a `mut` borrow is exclusive, so no other argument of the same call may name it",
+					calleeName, mut.place.String(), mut.position, other.position)
+			} else {
+				tc.addError(call.GetLocation(), SeverityError,
+					"%s: argument %d (%q) is `mut`, and argument %d (%q) overlaps it — a `mut` borrow is exclusive, so no other argument of the same call may reach the same storage",
+					calleeName, mut.position, mut.place.String(), other.position, other.place.String())
+			}
 			return
 		}
 	}
+}
+
+// place is an argument's storage path: the binding it is rooted at, then one step per
+// field, tuple position or element on the way in (ast.PlaceObject's steps).
+type place struct {
+	root  string
+	steps []placeStep
+}
+
+// placeStep is one step of a place. A `wildcard` step may be any slot — an element, whose
+// index is a runtime value, or a union member, which shares storage with its siblings.
+type placeStep struct {
+	name     string
+	wildcard bool
+}
+
+func (p place) String() string {
+	var b strings.Builder
+	b.WriteString(p.root)
+	for _, s := range p.steps {
+		if s.name == "[]" {
+			b.WriteString("[…]")
+		} else {
+			b.WriteString(".")
+			b.WriteString(s.name)
+		}
+	}
+	return b.String()
+}
+
+// placeOf is the place an argument names, and false for anything that is not a path
+// from a binding — a temporary, or a deref, which ends a path at storage a pointer names.
+func (tc *TypeChecker) placeOf(expr ast.Expression) (place, bool) {
+	var reversed []placeStep
+	for {
+		switch e := expr.(type) {
+		case *ast.IdentifierExpr:
+			steps := make([]placeStep, len(reversed))
+			for i, s := range reversed {
+				steps[len(reversed)-1-i] = s
+			}
+			return place{root: e.Name, steps: steps}, true
+		case *ast.MemberExpr:
+			objType := tc.stripNewtypeResolving(
+				tc.resolveType(tc.inferExprType(e.Object), e.Object.GetLocation()), e.Object.GetLocation())
+			_, isUnion := objType.(types.UnionType)
+			reversed = append(reversed, placeStep{name: e.Property.Name, wildcard: isUnion})
+		case *ast.TupleIndexExpr:
+			reversed = append(reversed, placeStep{name: strconv.Itoa(e.Index)})
+		case *ast.IndexExpr:
+			reversed = append(reversed, placeStep{name: "[]", wildcard: true})
+		}
+		object, ok := ast.PlaceObject(expr)
+		if !ok {
+			return place{}, false
+		}
+		expr = object
+	}
+}
+
+// placeOverlaps reports whether two places may share storage: the same root, and one
+// path a prefix of the other where a wildcard step matches any step. Parting at two
+// different named steps is what makes them disjoint. `uncertain` says the overlap rests
+// on a wildcard — two elements, or two union members — rather than on one place
+// containing the other, which the diagnostic words differently.
+func placeOverlaps(a, b place) (overlap, uncertain bool) {
+	if a.root != b.root {
+		return false, false
+	}
+	for i := 0; i < len(a.steps) && i < len(b.steps); i++ {
+		sa, sb := a.steps[i], b.steps[i]
+		if sa.wildcard || sb.wildcard {
+			uncertain = true
+			continue
+		}
+		if sa.name != sb.name {
+			return false, false
+		}
+	}
+	return true, uncertain
 }
 
 // checkReturnStmt checks a `return` that is **not** one of the body block's own

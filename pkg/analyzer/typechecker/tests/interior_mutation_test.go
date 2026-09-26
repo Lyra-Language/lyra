@@ -508,6 +508,98 @@ func TestTypeCheck_ExclusiveMut_DistinctBindings_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+// ── places, not roots (09/25) ─────────────────────────────────────────────────
+//
+// Two fields of one struct are two slots, as disjoint as two variables — Rust's
+// disjoint-field borrows. Until 09/25 the check compared roots, so `game.lyra` could not
+// pass `s.music` and `s.chip` to one call. What still conflicts: one path a prefix of the
+// other, the same path twice, any two elements of one array, and a union's members.
+
+const twoPoints = pointStruct + `
+	struct Pair { left: Point, right: Point }
+	struct Nest { inner: Pair, other: Point }
+	let two = (a: mut Point, b: mut Point) -> i64 => { a.x = 10; b.x = 20; a.x }
+	let whole = (a: mut Pair, b: ref Point) -> i64 => { a.left.x = 10; b.x }
+	let read = (a: ref Point, b: mut Point) -> i64 => { b.x = 9; a.x }
+`
+
+func TestTypeCheck_ExclusiveMut_DisjointFields_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, twoPoints+`
+		let run = () -> i64 => {
+			var s = Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }
+			var n = Nest { inner: s, other: Point { x: 5, y: 6 } }
+			two(s.left, s.right) + read(s.left, s.right) + two(n.inner.left, n.other) + two(n.inner.left, n.inner.right)
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_ExclusiveMut_TuplePositionsAreDisjoint_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, twoPoints+`
+		let run = () -> i64 => {
+			var t = (Point { x: 1, y: 2 }, Point { x: 3, y: 4 })
+			two(t.0, t.1)
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_ExclusiveMut_SameFieldTwice_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, twoPoints+`
+		let run = () -> i64 => {
+			var s = Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }
+			two(s.left, s.left)
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		"two: \"s.left\" is passed to argument 1 as `mut` and also to argument 2 — a `mut` borrow is exclusive, so no other argument of the same call may name it")
+}
+
+// A path and a path inside it overlap, in either order and at any depth.
+func TestTypeCheck_ExclusiveMut_FieldInsideTheWhole_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, twoPoints+`
+		let run = () -> i64 => {
+			var s = Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }
+			whole(s, s.right)
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		"whole: argument 1 (\"s\") is `mut`, and argument 2 (\"s.right\") overlaps it — a `mut` borrow is exclusive, so no other argument of the same call may reach the same storage")
+
+	nested := parseCollectAndCheck(t, twoPoints+`
+		let run = () -> i64 => {
+			var n = Nest { inner: Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }, other: Point { x: 5, y: 6 } }
+			whole(n.inner, n.inner.left)
+		}
+	`, false)
+	assertErrorContainsGeneric(t, nested, "argument 2 (\"n.inner.left\") overlaps it")
+}
+
+// An index is a runtime value, so two elements of one array may be the same element.
+func TestTypeCheck_ExclusiveMut_TwoElements_StillError(t *testing.T) {
+	res := parseCollectAndCheck(t, twoPoints+`
+		let run = () -> i64 => {
+			var ps: []Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+			two(ps[0], ps[1])
+		}
+	`, false)
+	assertErrorContainsGeneric(t, res, "argument 2 (\"ps[…]\") may be the same storage")
+}
+
+// A union's members all live at offset 0, so two of them are one slot.
+func TestTypeCheck_ExclusiveMut_UnionMembers_StillError(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		struct Other { x: i64, y: i64 }
+		union Either { p: Point, o: Other }
+		let both = (a: mut Point, b: mut Other) -> i64 => { a.x = 1; b.x }
+		let run = () -> i64 => {
+			var u = Either { p: Point { x: 1, y: 2 } }
+			unsafe { both(u.p, u.o) }
+		}
+	`, false)
+	assertErrorContainsGeneric(t, res, "argument 2 (\"u.o\") may be the same storage")
+}
+
 // Scalars are exempt: they are passed by value, so there is no shared storage.
 func TestTypeCheck_ExclusiveMut_ScalarSameBinding_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `

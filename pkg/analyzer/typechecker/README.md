@@ -411,6 +411,15 @@ A destructure (`let (w, h) = viewport()`) is the one position that can't defer a
 - **`own` receiver refused** with its own error (not "has no method").
 - `UFCSCallable` is exported for LSP completion.
 
+## `mut` exclusivity by place (`checkExclusiveMutableBorrow`)
+
+Within one call, a `mut` argument may not overlap any other by-reference argument. Each
+argument becomes a `place` (root binding plus field/tuple/element steps — `ast.PlaceObject`'s
+steps; a deref or temporary has none), and two overlap when one path prefixes the other.
+Element steps and union-member steps are **wildcards** (an index is a runtime value; union
+members share offset 0), and an overlap resting on one gets its own "may be the same
+storage" message. Compared roots until 09/25, which refused `f(s.a, s.b)`.
+
 ## Receiver-keyed overloading (`typechecker_overload.go`)
 
 One name may be declared several times in a module when every declaration takes `self` and the
