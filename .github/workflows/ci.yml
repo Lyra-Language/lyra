@@ -106,7 +106,8 @@ jobs:
       # package is far older, so the distro version installs, satisfies pkg-config, ends
       # the skip, and then fails at run time on a version mismatch — the one outcome worse
       # than skipping. The pin matches the `tree-sitter-cli` that generates the parser
-      # (tree-sitter-lyra/package.json); bump the two together.
+      # (tree-sitter-lyra/package.json) and the workspace's asan.Dockerfile
+      # (TREE_SITTER_VERSION); bump the three together.
       - name: Install the tree-sitter runtime
         env:
           TREE_SITTER_VERSION: 0.25.10
