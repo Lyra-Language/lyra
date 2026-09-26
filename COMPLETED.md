@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — a black bar down a walking slime: atlas bleed at half pixels
+
+Reported from play: moving slimes flickered a one-pixel black bar down one edge. Slimes walk
+0.5 px a step, so every other step they were drawn at a half pixel; at the cell's edge a
+nearest-neighbour sample then rounds into the *neighbouring* cell of the sheet — the brick,
+whose right-hand column is black mortar (its highlight row, green under the slime's colour
+mod, is what identified the source). Screenshots at 3× over frames 20–70 showed it in five
+frames, and not at all at 2×, 4×, 5× or 6× — which is why a one-frame spot check missed it.
+
+Sprites are now drawn at whole logical pixels (`level.pixel`, applied in `draw_cell` and
+the squashed-slime draw); bodies still move in fractions. That is the console's own model —
+sprite positions were integers — and under integer scaling it keeps every sample inside the
+cell. Rescanned: 255 frames across five scales, none with a bar, with the same scan finding
+all five on the unfixed build. Tilemap and game frames with a fractionally placed explorer
+shift by at most a pixel, by design; `sprites.lyra` draws at whole pixels already and is
+unchanged.
+
 ### 09/25/26 — `mut` exclusivity compares places, not roots
 
 `game.lyra` found it: `play_effect(sound.music, sound.chip, …)` — two disjoint fields of one

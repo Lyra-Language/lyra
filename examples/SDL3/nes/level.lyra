@@ -316,7 +316,19 @@ pub let draw_explorer = (
   draw_cell(r, sheet, cell, p.x - BOX_INSET_X - camera, p.y - (TILE - BOX_H), flip)
 }
 
-/// Sheet cell `cell` with its top-left at (`x`, `y`), flipped by a `FLIP_*`.
+/// A position snapped to a whole logical pixel, which is where every sprite is drawn.
+///
+/// **Bodies move in fractions of a pixel; sprites are drawn on whole ones**, as on the
+/// console, whose sprite positions were integers. It is not only style. A cell drawn at a
+/// half pixel puts a sampling point on the boundary between it and its neighbour in the
+/// sheet, and nearest-neighbour sampling rounds some of those into the neighbour: a slime
+/// walking at 0.5 px a step showed a flickering one-pixel column of the brick tile's black
+/// mortar down its left edge every other frame (09/25). On a whole pixel, integer scaling
+/// puts every sample well inside the cell.
+pub let pixel = pure (v: f32) -> f32 => f32(v.floor())
+
+/// Sheet cell `cell` with its top-left at (`x`, `y`) — snapped to whole pixels ([pixel]) —
+/// flipped by a `FLIP_*`.
 pub let draw_cell = (
   r: Renderer,
   sheet: Texture,
@@ -326,7 +338,7 @@ pub let draw_cell = (
   flip: i32
 ) -> void => {
   let source = Rect { x: f32(cell) * TILE, y: 0.0, w: TILE, h: TILE }
-  let target = Rect { x: x, y: y, w: TILE, h: TILE }
+  let target = Rect { x: pixel(x), y: pixel(y), w: TILE, h: TILE }
   if flip == FLIP_NONE {
     draw_texture(r, sheet, source, target)
   } else {

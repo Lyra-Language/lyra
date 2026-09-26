@@ -76,6 +76,7 @@ import level.{
   draw_level,
   draw_explorer,
   draw_cell,
+  pixel,
   TILE,
   GRAVITY,
   MAX_FALL,
@@ -564,7 +565,8 @@ let draw_slimes = (r: Renderer, sheet: Texture, game: Game) -> void => {
       if !s.alive {
         // Squashed: the squat frame drawn at half height.
         let source = Rect { x: f32(SLIME_SQUAT) * TILE, y: 0.0, w: TILE, h: TILE }
-        draw_texture(r, sheet, source, Rect { x: x, y: bottom - 8.0, w: TILE, h: 8.0 })
+        let target = Rect { x: pixel(x), y: pixel(bottom) - 8.0, w: TILE, h: 8.0 }
+        draw_texture(r, sheet, source, target)
       } else {
         let squat = s.awake && (game.steps / 12) % 2 == 1
         draw_cell(

@@ -85,7 +85,9 @@ that must clear the level without losing a life**; `--autoplay` lets it play in 
   opened, closed when it is the one removed. Mapping table in its module doc.
 - `level.lyra` — ASCII levels (`s`/`r` slime spawns, `|`/`F` goal), `Body` with its own box,
   `steer` (the explorer's controls), `move_x`/`move_y` (collision one axis at a time),
-  coins, `at_goal`, camera, and drawing the level and explorer.
+  coins, `at_goal`, camera, and drawing the level and explorer. **Sprites are drawn at whole
+  pixels** (`pixel`, inside `draw_cell`): a cell at a half pixel samples its neighbour in the
+  sheet — a slime at 0.5 px/step showed the brick's black mortar down one edge.
 - `music.lyra` — the song, `music_tick`, and effects as note lists (`Effect`) that borrow the
   second pulse channel (or, via `play_noise`, the noise) for their length; melody and bass
   are never interrupted.
