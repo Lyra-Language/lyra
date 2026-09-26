@@ -539,10 +539,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
   (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
   would be the natural companion.
-- **[OPEN] A helper that releases is not a release.** `W022` counts only a direct call to
-  the named function, so `release_gamepad(maybe)` (a wrapper matching and calling
-  `close_gamepad`) left its caller warned; `game.lyra` inlines the match instead. An
-  attribute on the helper (`@releases`) or inference through a one-call body would do it.
 - **[PARTIAL] SDL3 bindings, driven by examples, towards an NES-style game.** One example
   per rung, binding only what it uses (`bindings/README.md`). Art is PNG via **SDL3_image**
   (`bindings/sdl3_image.lyra`). The rungs live in `examples/SDL3/nes/`.

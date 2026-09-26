@@ -40,7 +40,6 @@ import bindings.sdl3.{
   FLIP_NONE,
   poll_event,
   Gamepad,
-  close_gamepad,
   AudioStream,
   open_audio,
   close_audio,
@@ -58,7 +57,15 @@ import console.{
   updates_due,
   WIDTH
 }
-import pad.{ Buttons, Pad, RELEASED, advance, read_buttons, track_gamepad }
+import pad.{
+  Buttons,
+  Pad,
+  RELEASED,
+  advance,
+  read_buttons,
+  track_gamepad,
+  release_gamepad
+}
 import level.{
   Level,
   Body,
@@ -511,10 +518,7 @@ let run = (screen: Screen, sheet: Texture, audio: Maybe<AudioStream>) -> u8 => {
     }
     frame += 1
   }
-  match gamepad {
-    Some(pad) => close_gamepad(pad),
-    None => {},
-  }
+  release_gamepad(gamepad)
   status
 }
 

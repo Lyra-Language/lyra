@@ -80,6 +80,20 @@ import (
 //     attribute at all until the grammar's constrained_type rule takes an attribute_list.
 //   - **Only a local binding.** A resource stored in a field, an array or a global has a
 //     lifetime this pass cannot see the end of, so storing one is an escape.
+//
+// # A helper that releases is a release
+//
+// Passing a binding to a function that releases that parameter — calls the release
+// function on it, directly, through a `match` payload, or through another such helper —
+// discharges it, exactly as the release function itself would. Which helpers do is
+// **inferred** (`inferReleasers`) rather than declared: an attribute would restate what
+// the body already says, and could drift from it. `release_gamepad(maybe)` in
+// `examples/SDL3/nes/game.lyra` is the shape that found it (09/25).
+//
+// A parameter counts only when it is **released**, never when it merely stops being held:
+// a helper that returns or stores its parameter hands the obligation somewhere this pass
+// cannot follow, and treating that as a release would silence the caller's real leak.
+// "Released on some path" is the pass's usual join — the under-reporting direction.
 func CheckMustRelease(
 	program *ast.Program,
 	symTable *symbols.SymbolTable,
@@ -90,6 +104,7 @@ func CheckMustRelease(
 		return nil
 	}
 	c := &mustRelease{symTable: symTable, tt: tt, mt: mt}
+	c.releasers = inferReleasers(program, symTable, tt, mt)
 	for _, stmt := range program.Statements {
 		if vds, ok := stmt.(*ast.VarDeclStmt); ok {
 			if lam, ok := vds.Value.(*ast.LambdaExpr); ok {
@@ -119,6 +134,68 @@ type mustRelease struct {
 	tt          *typetable.TypeTable
 	mt          *typetable.MethodTable
 	diagnostics []diag.Diagnostic
+	// releasers maps a function to the parameter positions it releases, each with the
+	// type whose obligation it discharges (inferReleasers).
+	releasers map[*ast.LambdaExpr]map[int]string
+	// probe is set while inferring whether one parameter is released; nil otherwise.
+	probe *releaseProbe
+}
+
+// releaseProbe is one question inferReleasers asks: is the parameter `param` released
+// somewhere in this body? `released` records a release specifically — being escaped or
+// overwritten also ends a hold, and must not count.
+type releaseProbe struct {
+	param    string
+	released bool
+}
+
+// inferReleasers finds, for every top-level function, the parameters it releases: each
+// parameter carrying an obligation is seeded as held and the body walked, and a release
+// of it (or of a payload unwrapped from it) is recorded. Iterated to a fixpoint, so a
+// helper that calls a releasing helper releases too; the table only grows, so it ends.
+func inferReleasers(
+	program *ast.Program,
+	symTable *symbols.SymbolTable,
+	tt *typetable.TypeTable,
+	mt *typetable.MethodTable,
+) map[*ast.LambdaExpr]map[int]string {
+	var funcs []*ast.LambdaExpr
+	for _, stmt := range program.Statements {
+		if vds, ok := stmt.(*ast.VarDeclStmt); ok {
+			if lam, ok := vds.Value.(*ast.LambdaExpr); ok && lam.Body != nil {
+				funcs = append(funcs, lam)
+			}
+		}
+	}
+	releasers := map[*ast.LambdaExpr]map[int]string{}
+	for changed := true; changed; {
+		changed = false
+		for _, lam := range funcs {
+			for i, p := range lam.Parameters {
+				if _, known := releasers[lam][i]; known || p.TypeModifier == types.Own ||
+					p.Pattern == nil || p.Type == nil {
+					continue
+				}
+				name := p.Pattern.GetName()
+				probe := &mustRelease{symTable: symTable, tt: tt, mt: mt, releasers: releasers}
+				r, carries := probe.obligationOf(p.Type, lam.GetLocation())
+				if !carries || name == "" {
+					continue
+				}
+				r.loc = p.GetLocation()
+				probe.probe = &releaseProbe{param: name}
+				probe.expr(heldState{name: r}, lam.Body)
+				if probe.probe.released {
+					if releasers[lam] == nil {
+						releasers[lam] = map[int]string{}
+					}
+					releasers[lam][i] = r.typName
+					changed = true
+				}
+			}
+		}
+	}
+	return releasers
 }
 
 // resource is one still-held binding: where it was acquired, the type that carries the
@@ -523,7 +600,10 @@ func (c *mustRelease) discharge(
 	if !held {
 		return
 	}
-	if releases(r, calleeFn, calleeName) {
+	if releases(r, calleeFn, calleeName) || c.releasedByHelper(r, calleeFn, pos) {
+		if c.probe != nil && (name == c.probe.param || r.aliasOf == c.probe.param) {
+			c.probe.released = true
+		}
 		if r.borrowedFrom != "" {
 			c.reportBorrowedRelease(at, r, calleeName, name)
 		}
@@ -533,6 +613,16 @@ func (c *mustRelease) discharge(
 	if pos < len(params) && params[pos].TypeModifier == types.Own {
 		delete(st, name)
 	}
+}
+
+// releasedByHelper reports whether calleeFn releases its parameter at pos, and releases
+// r's type there — a helper inferReleasers found, standing in for r's release function.
+func (c *mustRelease) releasedByHelper(r resource, calleeFn *ast.LambdaExpr, pos int) bool {
+	if calleeFn == nil {
+		return false
+	}
+	typ, ok := c.releasers[calleeFn][pos]
+	return ok && typ == r.typName
 }
 
 // releases reports whether a call to calleeFn (written calleeName) is r's release function.

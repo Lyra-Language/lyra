@@ -157,3 +157,10 @@ pub let track_gamepad = (current: Maybe<Gamepad>, event: Event) -> Maybe<Gamepad
     },
     _ => current,
   }
+
+/// Close the gamepad, if there is one — the last thing a program does with it. The
+/// must-release check sees through this: a helper that releases its parameter is a release.
+pub let release_gamepad = (current: Maybe<Gamepad>) -> void => match current {
+  Some(pad) => close_gamepad(pad),
+  None => {},
+}

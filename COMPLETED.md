@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/25/26 — a helper that releases is a release (`lyra-W022`)
+
+`game.lyra` wrote `release_gamepad(gamepad)` — a helper matching the `Maybe` and calling
+`close_gamepad` — and was warned that `gamepad` was never released. W022 counted only a
+call to the type's named release function, so any helper looked like a borrow, and the
+game inlined the `match` instead.
+
+**Which parameters a function releases is now inferred**: each parameter carrying an
+obligation is seeded as held and the body walked; a release of it — direct, through a
+`match` payload, or through a helper already known to release — marks that position. It
+runs to a fixpoint before the pass proper, which then treats passing to such a parameter
+as a release (and still reports W025 for releasing a borrowed resource through one).
+Inferred rather than declared: an `@releases` attribute would restate the body, and could
+disagree with it.
+
+**Release, not "no longer held."** Escaping — returning or storing the parameter — also
+ends a hold, and must not count, or a helper that hands the resource back would silence
+its caller's real leak. Mutation-tested precisely that way: counting "not held at the end"
+as a release fails exactly the test for a helper returning its parameter, and nothing else.
+The join stays the pass's own "released on some path", the under-reporting direction.
+
+`release_gamepad` is back in `pad.lyra` and the game uses it with no warning.
+
 ### 09/25/26 — a black bar down a walking slime: atlas bleed at half pixels
 
 Reported from play: moving slimes flickered a one-pixel black bar down one edge. Slimes walk

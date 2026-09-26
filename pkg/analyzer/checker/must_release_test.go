@@ -605,3 +605,71 @@ let peek = (h: ^Holder) -> void =>
 let main = () -> void => { }
 `)
 }
+
+// ── a helper that releases is a release (09/25) ─────────────────────────────────
+//
+// A function that passes its parameter to the release function — directly, through a
+// `match` payload, or through another such helper — releases what its caller hands it, so
+// the call discharges the caller's binding. Before, only the named release function did,
+// and `release_gamepad(maybe)` in `examples/SDL3/nes/game.lyra` left its caller warned.
+
+const releasingHelpers = `
+let dispose = (s: Sound) -> void => unload_sound(s)
+let dispose_maybe = (m: Maybe<Sound>) -> void => match m {
+  Some(s) => unload_sound(s),
+  None => {},
+}
+let dispose_via = (s: Sound) -> void => dispose(s)
+let second = (a: Sound, b: Sound) -> void => unload_sound(b)
+let keep = (s: Sound) -> Sound => s
+`
+
+func TestMustRelease_AReleasingHelperReleases(t *testing.T) {
+	assertClean(t, releasingHelpers+`
+let main = () -> void => {
+  let s = load_sound(1)
+  dispose(s)
+}
+`)
+}
+
+func TestMustRelease_AnUnwrappingHelperReleasesAMaybe(t *testing.T) {
+	assertClean(t, releasingHelpers+`
+let main = () -> void => {
+  let m = try_load(1)
+  dispose_maybe(m)
+}
+`)
+}
+
+func TestMustRelease_AHelperOfAHelperReleases(t *testing.T) {
+	assertClean(t, releasingHelpers+`
+let main = () -> void => {
+  let s = load_sound(1)
+  dispose_via(s)
+}
+`)
+}
+
+// Only the parameter the helper releases is discharged.
+func TestMustRelease_OnlyTheReleasedParameterIsDischarged(t *testing.T) {
+	assertLeaks(t, releasingHelpers+`
+let main = () -> void => {
+  let x = load_sound(1)
+  let y = load_sound(2)
+  second(x, y)
+}
+`, "x")
+}
+
+// **Escaping is not releasing.** `keep` hands its parameter back rather than releasing it,
+// so the caller's binding — which it then drops — must still be reported. A check that
+// counted "no longer held" as released would lose exactly this.
+func TestMustRelease_AHelperThatReturnsItsParameterDoesNotRelease(t *testing.T) {
+	assertLeaks(t, releasingHelpers+`
+let main = () -> void => {
+  let s = load_sound(1)
+  keep(s)
+}
+`, "s")
+}

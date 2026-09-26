@@ -703,6 +703,7 @@ A struct, union, tuple or fixed array crosses **by value**; a `data` type never 
 
 On a `struct`: the value names a foreign resource released by `fn`. A binding leaving scope without that call is **`lyra-W022`**. Lyra has no destructors (would break `pure`/`det` and cross FFI ownership).
 - **A borrow is not a discharge**; only passing to the named function discharges. Passing to an `own` parameter, returning, or storing untrackably is an escape.
+- **A helper that releases is a release.** Passing to a parameter the callee releases — calls the release function on, directly, through a `match` payload (`Some(p) => close(p)`), or via another such helper — discharges, as the named function does. Inferred from the body, not declared. A helper that returns or stores its parameter does *not* release it, so its caller is still warned.
 - `Maybe<Sound>` carries the obligation; the unwrapping alternative that sees the value must discharge. Tracked: `match` arm, `if let`, `let … else`, destructuring `let` (incl. `let Some(v) = load_sound(p) else { return }`). Patterns binding more than one name are not tracked.
 - Field reads are borrows.
 - Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
