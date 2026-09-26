@@ -4,10 +4,10 @@
 The PNG is committed, so this only needs running when the art changes — it is here so the
 image is reproducible and reviewable rather than an opaque binary that arrived somehow.
 
-    python3 examples/SDL3/assets/generate.py
+    python3 examples/SDL3/nes/assets/generate.py
 
 **NES rules**: every sprite is 16×16, uses at most three colours plus transparency, and
-takes those colours from the 2C02 palette — read from `../nes/palette.lyra`, so there is one
+takes those colours from the 2C02 palette — read from `../palette.lyra`, so there is one
 copy of it. Hard edges only: the program samples with nearest-neighbour, so anti-aliasing
 would only show up as smudges.
 
@@ -33,7 +33,7 @@ CELL = 16
 
 def nes_palette():
     """The 64 packed RGB values from palette.lyra's PALETTE table."""
-    with open(os.path.join(HERE, "..", "nes", "palette.lyra")) as f:
+    with open(os.path.join(HERE, "..", "palette.lyra")) as f:
         source = f.read()
     table = source[source.index("const PALETTE"):]
     table = table[table.index("[", table.index("=")) + 1:table.index("]", table.index("="))]

@@ -33,7 +33,7 @@ pub const FLAG: i64 = 8
 pub const GREEN_SLIME: i64 = 1
 pub const RED_SLIME: i64 = 2
 
-/// The sheet cell each tile kind draws with, in `../assets/generate.py`'s order.
+/// The sheet cell each tile kind draws with, in `assets/generate.py`'s order.
 const CELL_OF: []i64 = [0, 9, 10, 6, 2, 11, 12, 13, 14]
 
 /// Sheet cells for the bodies drawn here.

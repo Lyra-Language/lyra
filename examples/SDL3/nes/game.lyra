@@ -9,7 +9,7 @@
 // **Everything here is a rung's piece put together**: the screen and clock from
 // `console.lyra`, the level, physics and camera from `level.lyra`, the pad (keyboard and
 // gamepad) from `pad.lyra`, the song and effects from `music.lyra` on the APU in
-// `apu.lyra`, the art from `../assets/sprites.png`.
+// `apu.lyra`, the art from `assets/sprites.png`.
 //
 // Arrows/WASD or D-pad to move, X/A to jump, Z/B to run, Return/Start to start.
 //
@@ -118,13 +118,13 @@ let main = () -> u8 => {
 }
 
 let with_sheet = (screen: Screen) -> u8 =>
-  match load_texture(screen.renderer, "examples/SDL3/assets/sprites.png") {
+  match load_texture(screen.renderer, "examples/SDL3/nes/assets/sprites.png") {
     Some(sheet) => {
       let code = with_audio(screen, sheet)
       destroy_texture(sheet)
       code
     },
-    None => match load_texture(screen.renderer, "../assets/sprites.png") {
+    None => match load_texture(screen.renderer, "./assets/sprites.png") {
       Some(sheet) => {
         let code = with_audio(screen, sheet)
         destroy_texture(sheet)

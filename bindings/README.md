@@ -96,11 +96,11 @@ that must clear the level without losing a life**; `--autoplay` lets it play in 
   (15-bit LFSR, long/short mode, NTSC period table), nesdev's linear mixer and a ~28 Hz
   high-pass. Two clocks: `render` at 44.1 kHz, `tick` per 735 samples (1/60 s) for
   envelopes and music — so tempo follows the audio clock, not the display's refresh.
-`examples/SDL3/assets/sprites.png` is committed and made by `assets/generate.py` (standard
-library only; reads the palette from `nes/palette.lyra`; 16×16 cells, ≤3 colours each). Cells 9–12 are
+`examples/SDL3/nes/assets/sprites.png` is committed and made by `assets/generate.py` beside
+it (standard library only; reads the palette from `../palette.lyra`; 16×16 cells, ≤3 colours each). Cells 9–12 are
 background tiles (ground, dirt, cloud, bush), 13–14 the goal pole, **appended** so earlier
 indices never move. Examples find
-`assets/` from the repo root or, as `../assets/`, from beside themselves in `nes/`. Every graphical example takes **`--shot <file.bmp>`** (and optionally `--at <frame>`):
+`nes/assets/` from the repo root or, as `assets/`, from beside themselves in `nes/`. Every graphical example takes **`--shot <file.bmp>`** (and optionally `--at <frame>`):
 draw to frame 20 (or `--at`), save it, exit — how an example is checked without anyone
 watching (run in the foreground; `sips -s format png` to view).
 

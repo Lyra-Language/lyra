@@ -51,13 +51,13 @@ let main = () -> u8 => {
 }
 
 let with_sheet = (screen: Screen) -> u8 =>
-  match load_texture(screen.renderer, "examples/SDL3/assets/sprites.png") {
+  match load_texture(screen.renderer, "examples/SDL3/nes/assets/sprites.png") {
     Some(sheet) => {
       let code = run(screen, sheet)
       destroy_texture(sheet)
       code
     },
-    None => match load_texture(screen.renderer, "../assets/sprites.png") {
+    None => match load_texture(screen.renderer, "assets/sprites.png") {
       Some(sheet) => {
         let code = run(screen, sheet)
         destroy_texture(sheet)

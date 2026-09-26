@@ -32,6 +32,9 @@ The join stays the pass's own "released on some path", the under-reporting direc
 
 `release_gamepad` is back in `pad.lyra` and the game uses it with no warning.
 
+The sprite sheet and its generator then moved beside the examples that draw them, to
+`examples/SDL3/nes/assets/`; the load paths, the generator's palette path and the docs follow.
+
 ### 09/25/26 — a black bar down a walking slime: atlas bleed at half pixels
 
 Reported from play: moving slimes flickered a one-pixel black bar down one edge. Slimes walk
