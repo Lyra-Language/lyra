@@ -72,3 +72,23 @@ func TestBuild_RefusesProgramArguments(t *testing.T) {
 		t.Errorf("stderr should say build runs nothing; got: %s", stderr)
 	}
 }
+
+// **A program's flag without the `--` gets the fix spelled out** (09/26): `lyrac run
+// game.lyra --level x` read as lyrac's own unknown flag, and the usage alone did not say
+// that the program's arguments go after `--`.
+func TestRun_UnknownFlagSuggestsTheSeparator(t *testing.T) {
+	src := fixture("hello.lyra")
+	_, stderr, code := captureRun(t, "run", src, "--level", "x.txt")
+	if code == 0 {
+		t.Fatal("an unknown flag should still be refused")
+	}
+	want := "put it after `--`: lyrac run " + src + " -- --level"
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr should suggest %q; got: %s", want, stderr)
+	}
+	// `build` passes nothing to a program, so it gets no such suggestion.
+	_, stderr, _ = captureRun(t, "build", src, "--level")
+	if strings.Contains(stderr, "put it after") {
+		t.Errorf("build should not suggest passing arguments; got: %s", stderr)
+	}
+}

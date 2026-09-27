@@ -16,10 +16,10 @@
 // `console.lyra`. Arrows/WASD move, X (A) jumps, Z (B) runs.
 
 import bindings.sdl3.{
-  last_error, Renderer, set_draw_color, clear, debug_text, Texture, destroy_texture,
+  Renderer, set_draw_color, clear, debug_text, Texture, destroy_texture,
   poll_event,
 }
-import bindings.sdl3_image.{ load_texture }
+import sheet.{ load_sheet }
 import console.{
   Screen,
   open_screen,
@@ -50,26 +50,14 @@ let main = () -> u8 => {
   }
 }
 
-let with_sheet = (screen: Screen) -> u8 =>
-  match load_texture(screen.renderer, "examples/SDL3/nes/assets/sprites.png") {
-    Some(sheet) => {
-      let code = run(screen, sheet)
-      destroy_texture(sheet)
-      code
-    },
-    None => match load_texture(screen.renderer, "assets/sprites.png") {
-      Some(sheet) => {
-        let code = run(screen, sheet)
-        destroy_texture(sheet)
-        code
-      },
-      None => {
-        println("could not load assets/sprites.png: ${last_error()}")
-        println("run from the repository root or from examples/SDL3/nes/")
-        1
-      },
-    },
-  }
+let with_sheet = (screen: Screen) -> u8 => match load_sheet(screen.renderer) {
+  None => 1,
+  Some(sheet) => {
+    let code = run(screen, sheet)
+    destroy_texture(sheet)
+    code
+  },
+}
 
 // ---------------------------------------------------------------------------------------
 // The level

@@ -1,0 +1,43 @@
+module sheet
+//! Finding the sprite sheet, from wherever the program was started.
+//!
+//! **A relative path is relative to the shell's directory, not to this file** — and
+//! `lyrac run` builds into a temporary directory, so the executable's own location says
+//! nothing either. So the sheet is looked for along its path from each directory a person
+//! plausibly runs from: the workspace, the `lyra` repository, and each directory down to
+//! `nes/`. Every example that draws sprites asks here, so the list is written once — four
+//! copies of two paths each is how the workspace root was missed (09/26).
+
+import bindings.sdl3.{ Renderer, Texture, last_error }
+import bindings.sdl3_image.{ load_texture }
+import std.env.{ lookup }
+
+/// The sheet's path from each starting directory, most likely first.
+const PLACES: []string = [
+  "examples/SDL3/nes/assets/sprites.png",
+  "lyra/examples/SDL3/nes/assets/sprites.png",
+  "assets/sprites.png",
+  "nes/assets/sprites.png",
+  "SDL3/nes/assets/sprites.png",
+]
+
+/// The sprite sheet as a texture for `renderer`, or `None` — having printed every path it
+/// tried, and from where, so the fix is visible.
+pub let load_sheet = (renderer: Renderer) -> Maybe<Texture> => load_from(renderer, 0)
+
+let load_from = (renderer: Renderer, i: i64) -> Maybe<Texture> => {
+  if i >= PLACES.len() {
+    let here = match lookup("PWD") {
+      Some(dir) => dir,
+      None => "the current directory",
+    }
+    println("could not find the sprite sheet from ${here}; looked for:")
+    for place in PLACES { println("  ${place}") }
+    println("(${last_error()}) — run from the workspace, the lyra repository, or examples/SDL3/nes/")
+    return None
+  }
+  match load_texture(renderer, PLACES[i]) {
+    Some(sheet) => Some(sheet),
+    None => load_from(renderer, i + 1),
+  }
+}

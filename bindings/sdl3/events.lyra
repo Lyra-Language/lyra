@@ -65,6 +65,24 @@ struct MouseButtonEvent {
   y: f32,
 }
 
+/// `SDL_MouseWheelEvent`. The integer tick counts (3.2.12+) are transcribed for the layout
+/// and not read: a trackpad scrolls in fractions, and the fractions are what a program
+/// wants to accumulate.
+struct MouseWheelEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  which: u32,
+  x: f32,
+  y: f32,
+  direction: u32,
+  mouse_x: f32,
+  mouse_y: f32,
+  integer_x: i32,
+  integer_y: i32,
+}
+
 /// `SDL_GamepadDeviceEvent` — a pad arriving or leaving.
 struct GamepadDeviceEvent {
   kind: u32,
@@ -86,6 +104,7 @@ union RawEvent {
   key: KeyboardEvent,
   motion: MouseMotionEvent,
   button: MouseButtonEvent,
+  wheel: MouseWheelEvent,
   device: GamepadDeviceEvent,
   padding: [128]u8,
 }
@@ -96,15 +115,13 @@ const EVENT_KEY_UP: u32 = 0x301
 const EVENT_MOUSE_MOTION: u32 = 0x400
 const EVENT_MOUSE_BUTTON_DOWN: u32 = 0x401
 const EVENT_MOUSE_BUTTON_UP: u32 = 0x402
+const EVENT_MOUSE_WHEEL: u32 = 0x403
+/// `SDL_MOUSEWHEEL_FLIPPED`: the platform's "natural scrolling" is on, and the amounts
+/// arrive negated. [poll_event] undoes it, so a wheel event always means the same thing.
+const WHEEL_FLIPPED: u32 = 1
 const EVENT_GAMEPAD_ADDED: u32 = 0x653
 const EVENT_GAMEPAD_REMOVED: u32 = 0x654
 
-/// `SDLK_ESCAPE` — the virtual key code, not the physical scancode.
-pub const KEY_ESCAPE: u32 = 0x0000001b
-
-/// `SDLK_F11`. Function keys sit above bit 30 (`SDLK_SCANCODE_MASK`), since they have no
-/// character to be named by.
-pub const KEY_F11: u32 = 0x40000044
 
 /// One thing that happened, as a type that records which thing it is.
 ///
@@ -118,6 +135,9 @@ pub data Event =
   | MouseMotion(f32, f32)
   | MouseDown(u8, f32, f32)
   | MouseUp(u8, f32, f32)
+  /// Scrolled by (x, y): x positive to the right, y positive away from the user — the
+  /// same direction whatever the platform's natural-scrolling setting.
+  | MouseWheel(f32, f32)
   | GamepadAdded(u32)
   | GamepadRemoved(u32)
   | Other(u32)
@@ -165,6 +185,12 @@ let classify = pure (raw: RawEvent) -> Event => {
       unsafe { raw.button.x },
       unsafe { raw.button.y }
     )
+  } else if kind == EVENT_MOUSE_WHEEL {
+    // Bound before the arithmetic: an `unsafe` block is a comparison operand, not yet an
+    // arithmetic one.
+    let wheel = unsafe { raw.wheel }
+    let sign: f32 = if wheel.direction == WHEEL_FLIPPED { -1.0 } else { 1.0 }
+    MouseWheel(wheel.x * sign, wheel.y * sign)
   } else if kind == EVENT_GAMEPAD_ADDED {
     GamepadAdded(unsafe { raw.device.which })
   } else if kind == EVENT_GAMEPAD_REMOVED {

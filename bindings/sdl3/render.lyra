@@ -90,6 +90,15 @@ unsafe extern sdl_render_fill_rect: (renderer: Renderer, rect: ^Rect) -> u8
 @symbol("SDL_RenderDebugText")
 unsafe extern sdl_render_debug_text: (renderer: Renderer, x: f32, y: f32, text: ^u8) -> u8
 
+@symbol("SDL_RenderCoordinatesFromWindow")
+unsafe extern sdl_render_coordinates_from_window: (
+  renderer: Renderer,
+  window_x: f32,
+  window_y: f32,
+  x: ^mut f32,
+  y: ^mut f32,
+) -> u8
+
 @symbol("SDL_RenderPresent")
 unsafe extern sdl_render_present: (renderer: Renderer) -> u8
 
@@ -182,4 +191,15 @@ pub let save_screenshot = (renderer: Renderer, path: string) -> bool => {
     unsafe { sdl_destroy_surface(surface) }
     saved
   }
+}
+
+/// A window position — a mouse event's, or [mouse_state]'s — in the renderer's own
+/// coordinates: the logical screen when one is set, with its scale and letterboxing
+/// undone. A point in the letterbox answers a position off the logical screen (negative,
+/// or past its size), which is how a program tells the mouse is outside it.
+pub let window_to_render = (renderer: Renderer, x: f32, y: f32) -> (f32, f32) => {
+  var rx: f32 = 0.0
+  var ry: f32 = 0.0
+  unsafe { sdl_render_coordinates_from_window(renderer, x, y, &mut rx, &mut ry) }
+  (rx, ry)
 }

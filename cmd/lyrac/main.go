@@ -193,6 +193,17 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 			o.opt = arg
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(os.Stderr, "lyrac: unknown flag %q\n", arg)
+			// Under `run` an unknown flag is nearly always the program's, written without
+			// the `--` that hands it over — `lyrac run game.lyra --level x`. Say so, with
+			// the line to type, rather than leaving only the usage to decode.
+			if cmd == "run" {
+				file := o.path
+				if file == "" {
+					file = "<file.lyra>"
+				}
+				fmt.Fprintf(os.Stderr, "lyrac: to pass %s to the program, put it after `--`: lyrac run %s -- %s …\n",
+					arg, file, arg)
+			}
 			return o, false
 		case o.path != "":
 			fmt.Fprintf(os.Stderr, "lyrac: %s takes one source file (got %q and %q)\n", cmd, o.path, arg)

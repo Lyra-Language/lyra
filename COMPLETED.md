@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 09/26/26 — every key, the mouse, and a level editor to drive them
+
+`examples/SDL3/nes/editor.lyra` edits SLIME TRAIL's level: paint and erase with the mouse,
+pick brushes with the wheel or keys, scroll with the keyboard or a middle-drag, undo, save.
+`game.lyra --level <file>` plays what it saves; the built-in course moved to `course.lyra`.
+
+- **Every key constant is generated**, by `bindings/sdl3/gen_keys.py` from the installed
+  headers: 247 scancodes, 256 key codes, 18 modifiers, replacing sixteen hand-written ones.
+  The table is checked by properties (letters are ASCII, digits and function keys run in
+  order, either-side modifiers are unions) and — the independent check — **by asking SDL
+  to name every code**: an unnamed or misnamed one fails. Mutation-tested: `KEY_PAGEUP`
+  moved one slot came back named "PageDown"; a scancode moved off the table came back
+  unnamed.
+- **Mouse positions are window pixels; the level is a 256×240 screen.**
+  `window_to_render` (`SDL_RenderCoordinatesFromWindow`) is what makes a click land on the
+  tile under the pointer at any window size. The editor hides the system cursor over the
+  level and draws a tile cursor with the brush ghosted in it; a move cursor while dragging.
+- **Undo needed a real copy.** `[]rune` values share storage, so pushing the live array
+  made every snapshot track later edits; `slice(0, n)` is the copy. The check for it
+  failed four ways when the copy was removed.
+- Saving round-trips through the file and the game's own `read_level`, in `--check`.
+- The mouse's live behaviour is not scriptable in `--shot`; screenshots used a scratch copy
+  with a fixed pointer, and the pure input handlers (`on_key`, `on_press`, `track_mouse`,
+  `on_wheel`) carry the checked logic.
+
+Two findings, both in todo.md: an `unsafe` block is a comparison operand but not an
+arithmetic one, and W022 reads a `match` on a computed scrutinee (an `if` choosing between
+two bindings) as a fresh resource.
+
+**"I can't load a level into the game"**, reported right after: the level was valid, and
+the game could not find its *sprite sheet* — the shell was at the workspace root, and each
+example tried the sheet's path from only two directories. Confirmed by running the
+reporter's own build from three places. Now `sheet.lyra`'s one `load_sheet` tries the path
+from every plausible directory and lists them on failure. Two near misses fixed with it:
+`lyrac run game.lyra --level x` without `--` stopped at "unknown flag" without saying where
+program arguments go (it now prints the `--` line; `TestRun_UnknownFlagSuggestsTheSeparator`),
+and `read_level` now names the directory a relative path was looked for in.
+
 ### 09/25/26 — a helper that releases is a release (`lyra-W022`)
 
 `game.lyra` wrote `release_gamepad(gamepad)` — a helper matching the `Maybe` and calling

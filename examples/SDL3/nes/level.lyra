@@ -16,6 +16,8 @@ import bindings.sdl3.{
 }
 import console.{ WIDTH }
 import pad.{ Pad }
+import std.io.{ read_file }
+import std.env.{ lookup }
 
 pub const TILE: f32 = 16.0
 
@@ -109,7 +111,9 @@ pub let parse_level = pure (rows: []string) -> Level => {
   Level { tiles: tiles, columns: columns, rows: rows.len(), spawns: spawns, goal: goal }
 }
 
-let tile_of = pure (ch: rune) -> i64 => {
+/// The tile a level character stands for; a spawn (`s`, `r`) is sky, since what stands
+/// there is a body, not a tile.
+pub let tile_of = pure (ch: rune) -> i64 => {
   if ch == '=' {
     GRASS
   } else if ch == '%' {
@@ -130,6 +134,69 @@ let tile_of = pure (ch: rune) -> i64 => {
     SKY
   }
 }
+
+/// Where the explorer starts: the box's top-left, standing on row 13's ground two tiles in.
+/// A level keeps that spot clear — the editor refuses to build over it.
+pub const START_X: f32 = 34.0
+pub const START_Y: f32 = 193.0
+
+/// How many rows a level has: 240 lines of screen, 16 to a tile.
+pub const LEVEL_ROWS: i64 = 15
+
+/// What is wrong with a level's rows, or `None` when it is playable: fifteen rows, all one
+/// width, at least a screen wide, with a goal. What the editor warns about before saving
+/// and what `game.lyra --level` refuses.
+pub let level_problem = pure (rows: []string) -> Maybe<string> => {
+  if rows.len() != LEVEL_ROWS { return Some("a level is ${LEVEL_ROWS} rows; this has ${rows.len()}") }
+  let width = rows[0].len()
+  if width < 16 { return Some("a level is at least 16 columns (one screen); this has ${width}") }
+  for i, row in rows {
+    if row.len() != width { return Some("row ${i + 1} is ${row.len()} wide, row 1 is ${width}") }
+  }
+  if parse_level(rows).goal < 0 { return Some("there is no goal: place an F (flag) or | (pole)") }
+  None
+}
+
+/// A level from a text file — fifteen lines of `level.lyra`'s characters — or why not.
+pub let read_level = (path: string) -> Result<[]string, string> => match read_file(path) {
+  None => Err("could not read ${path}${from_where(path)}"),
+  Some(text) => {
+    var rows: []string = []
+    for line in text.lines() {
+      if line.len() > 0 { rows.push(line) }
+    }
+    match level_problem(rows) {
+      Some(problem) => Err("${path}: ${problem}"),
+      None => Ok(rows),
+    }
+  },
+}
+
+/// For a relative path, the directory it was resolved from — a level saved by the editor
+/// in one directory is not found by the game started in another, and the message should
+/// say where it looked.
+let from_where = (path: string) -> string => {
+  if path.starts_with("/") { return "" }
+  match lookup("PWD") {
+    Some(dir) => " (looked in ${dir})",
+    None => "",
+  }
+}
+
+/// A level's rows as the text `read_level` reads back: one line each.
+pub let level_text = pure (rows: []string) -> string => {
+  var text = ""
+  for row in rows { text = text ++ row ++ "\n" }
+  text
+}
+
+/// The sheet cell a level character is drawn with — a spawn by its slime, anything else
+/// by its tile. What an editor shows for a character it cannot parse into a level yet.
+pub let sheet_cell = pure (ch: rune) -> i64 =>
+  if ch == 's' || ch == 'r' { SLIME_CELL } else { CELL_OF[tile_of(ch)] }
+
+/// The slime's standing frame in the sheet.
+const SLIME_CELL: i64 = 7
 
 /// The tile at a grid position. **Past either side is solid** — the level's edges are
 /// walls — and past the top or bottom is sky, so a pit is a way out of the map.

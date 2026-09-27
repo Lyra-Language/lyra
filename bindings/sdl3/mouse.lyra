@@ -1,0 +1,97 @@
+module bindings.sdl3
+//! The mouse: where it is, which buttons are held, and what the cursor looks like.
+//!
+//! **Positions here are in window coordinates** — the events' too. A program drawing a
+//! logical screen (`set_logical_presentation`) converts with [window_to_render], or a
+//! 256×240 game reads 768×720 pixel positions and places everything three times too far.
+//!
+//! Clicks and the wheel arrive as events (`MouseDown`, `MouseUp`, `MouseWheel`); what is
+//! held *now* — a drag, a painted stroke — is [mouse_state].
+
+/// Mouse buttons, as `MouseDown`/`MouseUp` carry them and [button_held] takes them.
+pub const BUTTON_LEFT: u8 = 1
+pub const BUTTON_MIDDLE: u8 = 2
+pub const BUTTON_RIGHT: u8 = 3
+pub const BUTTON_X1: u8 = 4
+pub const BUTTON_X2: u8 = 5
+
+/// `SDL_SystemCursor` shapes for [system_cursor]; the platform draws them.
+pub const CURSOR_DEFAULT: i32 = 0
+pub const CURSOR_TEXT: i32 = 1
+pub const CURSOR_WAIT: i32 = 2
+pub const CURSOR_CROSSHAIR: i32 = 3
+pub const CURSOR_MOVE: i32 = 9
+pub const CURSOR_NOT_ALLOWED: i32 = 10
+pub const CURSOR_POINTER: i32 = 11
+
+/// Where the mouse is (window coordinates) and which buttons are down, as a
+/// `SDL_MouseButtonFlags` mask — ask [button_held].
+pub struct MouseState {
+  x: f32,
+  y: f32,
+  buttons: u32,
+}
+
+/// A cursor shape made by [system_cursor], released by [destroy_cursor].
+@must_release(destroy_cursor)
+pub struct Cursor {
+  handle: ^u8,
+}
+
+@symbol("SDL_GetMouseState")
+unsafe extern sdl_get_mouse_state: (x: ^mut f32, y: ^mut f32) -> u32
+
+@symbol("SDL_ShowCursor")
+unsafe extern sdl_show_cursor: () -> u8
+
+@symbol("SDL_HideCursor")
+unsafe extern sdl_hide_cursor: () -> u8
+
+@symbol("SDL_CursorVisible")
+unsafe extern sdl_cursor_visible: () -> u8
+
+@symbol("SDL_CreateSystemCursor")
+unsafe extern sdl_create_system_cursor: (id: i32) -> ^u8
+
+@symbol("SDL_SetCursor")
+unsafe extern sdl_set_cursor: (cursor: ^u8) -> u8
+
+@symbol("SDL_DestroyCursor")
+unsafe extern sdl_destroy_cursor: (cursor: ^u8) -> void
+
+/// The mouse now, relative to the focused window. Current as of the last event-queue
+/// drain, like the keyboard state.
+pub let mouse_state = () -> MouseState => {
+  var x: f32 = 0.0
+  var y: f32 = 0.0
+  let buttons = unsafe { sdl_get_mouse_state(&mut x, &mut y) }
+  MouseState { x: x, y: y, buttons: buttons }
+}
+
+/// Whether `button` (a `BUTTON_*`) is held in `state` — `SDL_BUTTON_MASK`'s arithmetic.
+pub let button_held = pure (state: MouseState, button: u8) -> bool =>
+  button >= 1 && button <= 5 && state.buttons & (u32(1) << u32(button - 1)) != 0
+
+/// Show or hide the system cursor over the window — hidden while a program draws its own.
+pub let show_cursor = (visible: bool) -> bool => {
+  let done = if visible { unsafe { sdl_show_cursor() } } else { unsafe { sdl_hide_cursor() } }
+  done != 0
+}
+
+/// Whether the system cursor is showing.
+pub let cursor_visible = () -> bool => unsafe { sdl_cursor_visible() } != 0
+
+/// One of the platform's own cursor shapes (a `CURSOR_*`), or `None` if it has none.
+pub let system_cursor = (shape: i32) -> Maybe<Cursor> => {
+  let handle = unsafe { sdl_create_system_cursor(shape) }
+  if handle == nullptr { None } else { Some(Cursor { handle: handle }) }
+}
+
+/// Make `cursor` the one shown. It must outlive its use: destroy it only after another
+/// cursor is set.
+pub let set_cursor = (cursor: Cursor) -> bool =>
+  unsafe { sdl_set_cursor(cursor.handle) } != 0
+
+/// Free a cursor.
+pub let destroy_cursor = (cursor: Cursor) -> void =>
+  unsafe { sdl_destroy_cursor(cursor.handle) }

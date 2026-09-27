@@ -49,11 +49,13 @@ SDL3 (3.4); `@link("SDL3")` on the header. Grown **by example**, towards an NES-
 
 | file | what, and gotchas |
 |---|---|
-| `events.lyra` | `SDL_Event` is a Lyra `union` exposed as the `data` type `Event`; `poll_event` reads the tag, then the one member it licenses. `KEY_*` are `SDLK_` codes (function keys carry bit 30). `GamepadAdded`/`GamepadRemoved(id)` — SDL sends `Added` for pads already plugged in at startup, so no enumeration is bound. |
-| `keyboard.lyra` | `key_held(SCANCODE_*)`: held state by **position**, not label. Updated as events are pumped — read it after draining the queue. Bounds-checked against SDL's reported length. |
+| `events.lyra` | `SDL_Event` is a Lyra `union` exposed as the `data` type `Event`; `poll_event` reads the tag, then the one member it licenses. `MouseWheel(x, y)` has SDL's "flipped" (natural-scrolling) direction undone. `GamepadAdded`/`GamepadRemoved(id)` — SDL sends `Added` for pads already plugged in at startup, so no enumeration is bound. |
+| `keys.lyra` | **Generated** by `gen_keys.py` from the installed SDL headers — every `SCANCODE_*` (position, 247), `KEY_*` (key code, 256) and `MOD_*` (modifier mask, 18), plus `SCANCODES`/`KEY_CODES` arrays. Do not edit; rerun on an SDL upgrade and review the diff. Checked by properties and by asking SDL to name every code (`editor.lyra --check`). |
+| `keyboard.lyra` | `key_held(SCANCODE_*)`: held state by **position**, not label. Updated as events are pumped — read it after draining the queue. Bounds-checked against SDL's reported length. `modifiers()` (a `MOD_*` mask; `MOD_GUI` is Command), `key_name`/`scancode_name` (SDL's human names). |
+| `mouse.lyra` | `mouse_state()` (window position + button mask) and `button_held(state, BUTTON_*)`; `show_cursor`, `system_cursor(CURSOR_*)` → `Cursor` (`@must_release(destroy_cursor)`), `set_cursor`. **Positions are window pixels** — convert with `render.window_to_render` on a logical screen. |
 | `gamepad.lyra` | `Gamepad` is `@must_release(close_gamepad)`. `BUTTON_*` are positions (`SOUTH` = Xbox A / ✕ / Nintendo B); `AXIS_LEFT_*` runs -32768..32767, negative up. Needs `INIT_GAMEPAD`. |
 | `video.lyra` | `create_window(title, w, h, flags)` with `WINDOW_*` flags; `set_fullscreen` (borderless desktop). |
-| `render.lyra` | `Color` (`SDL_Color`) and `rgb`; points, lines, outlined/filled `Rect`s; `debug_text`, SDL's 8×8 ASCII font (`DEBUG_TEXT_SIZE`). `set_logical_presentation(…, PRESENT_INTEGER_SCALE)` is the pixel-art screen: everything, text included, scales by a whole number. `set_vsync` paces the loop. `save_screenshot` (ReadPixels → BMP) must run **before** `present` and saves at window resolution. |
+| `render.lyra` | `Color` (`SDL_Color`) and `rgb`; points, lines, outlined/filled `Rect`s; `debug_text`, SDL's 8×8 ASCII font (`DEBUG_TEXT_SIZE`). `set_logical_presentation(…, PRESENT_INTEGER_SCALE)` is the pixel-art screen: everything, text included, scales by a whole number. `set_vsync` paces the loop. `save_screenshot` (ReadPixels → BMP) must run **before** `present` and saves at window resolution. `window_to_render(renderer, x, y)` maps a window (mouse) position onto the logical screen, undoing scale and letterbox. |
 | `texture.lyra` | `Texture` (handle + size) is `@must_release(destroy_texture)`. **Set `set_default_scale_mode(…, SCALE_NEAREST)` before loading** — a texture takes the mode in force when made, and the default blurs pixel art. `draw_texture(src, dst)`, `draw_texture_flipped` (`FLIP_*`). `set_texture_color`/`set_texture_alpha` are the **texture's state**, not the draw's: reset them after a tinted draw. `adopt_texture` is `unsafe` (it keeps a pointer) and is how other bindings hand a texture over. |
 | `audio.lyra` | **Push model only**: `open_audio(rate, channels)` → a stream on the default device (`None` with no device — run silently), `put_audio([]f32)`, `queued_frames` to top the queue up to a target each frame. No callback: that would be Lyra running on SDL's audio thread. `AudioStream` is `@must_release(close_audio)`. Needs `init(INIT_AUDIO)`, which may be called after the first `init` — so a failure means "no sound", not "no SDL". `SDL_AUDIO_DRIVER=dummy` exercises it with no speakers. |
 | `timer.lyra` | `delay`, `ticks`, and `ticks_ns` — a fixed timestep needs nanoseconds: whole milliseconds drift a 16.67 ms step by a whole step every few seconds. |
@@ -71,7 +73,11 @@ SLIME TRAIL** — the ladder's goal: title, one seven-screen level, patrolling s
 slow, red fast; they turn at walls and ledges and wake as they come on screen), stomps,
 three lives, a flagpole, music and effects. `--check` plays it, including an **autopilot
 that must clear the level without losing a life**; `--autoplay` lets it play in the window.
-`tilemap` and `sound` are built on the same modules as the game. Sibling modules:
+`tilemap` and `sound` are built on the same modules as the game; `--level <file>` plays a
+saved level. **`editor.lyra`** edits one — mouse painting and erasing, wheel and key
+brushes, keyboard and middle-drag scrolling, Ctrl/Cmd+Z and +S, its own tile cursor over
+the level — and drove the keyboard and mouse bindings; `--check` tests the editing and the
+generated key table. Sibling modules:
 - `console.lyra` — `open_screen`/`close_screen` (init video+gamepad, window, 256×240
   integer-scaled renderer, vsync, nearest sampling), `end_frame` (the `--shot` logic, then
   present; answers `Continue`/`Stop(code)`), `wants_quit`, and the **fixed 60 Hz timestep**:
@@ -92,6 +98,8 @@ that must clear the level without losing a life**; `--autoplay` lets it play in 
   second pulse channel (or, via `play_noise`, the noise) for their length; melody and bass
   are never interrupted.
 - `palette.lyra` — the NES 2C02 palette as `nes(index)`.
+- `course.lyra` — SLIME TRAIL's built-in course. A level file is its fifteen rows as text
+  (`level.read_level`/`level_text`, validated by `level_problem`).
 - `apu.lyra` — the 2A03's pulse ×2, triangle (32 steps, freezes when silenced) and noise
   (15-bit LFSR, long/short mode, NTSC period table), nesdev's linear mixer and a ~28 Hz
   high-pass. Two clocks: `render` at 44.1 kHz, `tick` per 735 samples (1/60 s) for
@@ -99,8 +107,10 @@ that must clear the level without losing a life**; `--autoplay` lets it play in 
 `examples/SDL3/nes/assets/sprites.png` is committed and made by `assets/generate.py` beside
 it (standard library only; reads the palette from `../palette.lyra`; 16×16 cells, ≤3 colours each). Cells 9–12 are
 background tiles (ground, dirt, cloud, bush), 13–14 the goal pole, **appended** so earlier
-indices never move. Examples find
-`nes/assets/` from the repo root or, as `assets/`, from beside themselves in `nes/`. Every graphical example takes **`--shot <file.bmp>`** (and optionally `--at <frame>`):
+indices never move. Examples find the sheet through `sheet.lyra`'s `load_sheet`, which
+tries its path from the workspace, the repository, `examples/`, `examples/SDL3/` and `nes/`
+(`lyrac run` builds into a temp dir, so only the shell's directory is known) and prints
+every path it tried when none works. Every graphical example takes **`--shot <file.bmp>`** (and optionally `--at <frame>`):
 draw to frame 20 (or `--at`), save it, exit — how an example is checked without anyone
 watching (run in the foreground; `sips -s format png` to view).
 

@@ -1,0 +1,887 @@
+// A level editor for SLIME TRAIL — the program that drove the keyboard and mouse bindings.
+//
+// Paint tiles with the mouse, scroll with the keys, save the level as the text file
+// `game.lyra --level` plays. Everything a level is made of can be placed: ground, bricks,
+// coins, scenery, both kinds of slime, and the goal.
+//
+// | mouse / key                 | does                                      |
+// |-----------------------------|-------------------------------------------|
+// | left drag / right drag      | paint the brush / erase                   |
+// | wheel, [ ], Tab             | change brush (Shift+Tab back)             |
+// | 1–9, 0                      | pick a brush directly                     |
+// | middle drag, sideways wheel | scroll                                    |
+// | arrows / A D (Shift: fast)  | scroll                                    |
+// | Home / End, PgUp / PgDn     | jump to an end, or a screen at a time     |
+// | Ctrl/Cmd+Z, Ctrl/Cmd+S      | undo a stroke, save                       |
+// | G, F1                       | grid, help                                |
+//
+// **The mouse reports window pixels; the level is drawn on a 256×240 screen** scaled to
+// fit. `window_to_render` undoes the scale and letterboxing, so a click lands on the tile
+// under the pointer at any window size. Over the level the system cursor is hidden and the
+// editor draws its own tile cursor; over the bar it is the ordinary arrow, and a move
+// cursor while dragging the view.
+//
+// `--level <file>` names the file to edit and save (default `level.txt`; a file that does
+// not exist yet starts from the built-in course). `--check` tests the editing logic and
+// the generated key constants headlessly — asking SDL to name every key code.
+
+import bindings.sdl3.{
+  Renderer,
+  Rect,
+  rgb,
+  set_draw_color,
+  clear,
+  fill_rect,
+  draw_rect,
+  draw_line,
+  debug_text,
+  Texture,
+  destroy_texture,
+  set_texture_color,
+  set_texture_alpha,
+  poll_event,
+  key_held,
+  modifiers,
+  key_name,
+  scancode_name,
+  mouse_state,
+  button_held,
+  window_to_render,
+  show_cursor,
+  system_cursor,
+  set_cursor,
+  destroy_cursor,
+  Cursor,
+  CURSOR_DEFAULT,
+  CURSOR_MOVE,
+  BUTTON_LEFT,
+  BUTTON_MIDDLE,
+  BUTTON_RIGHT,
+  FLIP_NONE,
+  SCANCODE_LEFT,
+  SCANCODE_RIGHT,
+  SCANCODE_A,
+  SCANCODE_D,
+  SCANCODE_LSHIFT,
+  SCANCODE_RSHIFT,
+  SCANCODE_RETURN,
+  SCANCODE_KP_5,
+  SCANCODE_UNKNOWN,
+  SCANCODE_Z,
+  SCANCODE_0,
+  SCANCODE_1,
+  SCANCODE_9,
+  SCANCODE_F1,
+  SCANCODE_F12,
+  KEY_A,
+  KEY_Z,
+  KEY_0,
+  KEY_1,
+  KEY_3,
+  KEY_9,
+  KEY_F1,
+  KEY_F11,
+  KEY_F12,
+  KEY_G,
+  KEY_S,
+  KEY_TAB,
+  KEY_HOME,
+  KEY_END,
+  KEY_PAGEUP,
+  KEY_PAGEDOWN,
+  KEY_LEFTBRACKET,
+  KEY_RIGHTBRACKET,
+  KEY_UNKNOWN,
+  MOD_CTRL,
+  MOD_LCTRL,
+  MOD_RCTRL,
+  MOD_GUI,
+  MOD_LGUI,
+  MOD_RGUI,
+  MOD_SHIFT,
+  MOD_LSHIFT,
+  MOD_RSHIFT,
+  SCANCODES,
+  KEY_CODES,
+}
+import sheet.{ load_sheet }
+import std.io.{ write_file }
+import std.env.{ lookup }
+import console.{
+  Screen,
+  open_screen,
+  close_screen,
+  end_frame,
+  wants_quit,
+  start_clock,
+  updates_due,
+  WIDTH,
+  HEIGHT
+}
+import level.{
+  parse_level,
+  level_problem,
+  read_level,
+  level_text,
+  draw_level,
+  draw_cell,
+  sheet_cell,
+  tile_of,
+  is_solid,
+  TILE,
+  START_X,
+  START_Y,
+  LEVEL_ROWS,
+  EXPLORER_TOGETHER,
+}
+import course.{ COURSE }
+import palette.{ nes }
+
+let main = () -> u8 => {
+  if has_flag("--check") { return run_checks() }
+  let path = match flag_value("--level") {
+    Some(p) => p,
+    None => "level.txt",
+  }
+  // A file that exists must be a level; one that does not is a new level, begun from the
+  // built-in course.
+  var rows = COURSE
+  var opened = "new level, from the course"
+  match read_level(path) {
+    Ok(loaded) => {
+      rows = loaded
+      opened = "opened ${path}"
+    },
+    Err(problem) => {
+      if !problem.starts_with("could not read") {
+        println(problem)
+        return 1
+      }
+    },
+  }
+  match open_screen("SLIME TRAIL editor") {
+    None => 1,
+    Some(screen) => {
+      let code = with_sheet(screen, new_editor(rows, path, opened))
+      close_screen(screen)
+      code
+    },
+  }
+}
+
+let with_sheet = (screen: Screen, editor: Editor) -> u8 =>
+  match load_sheet(screen.renderer) {
+    None => 1,
+    Some(sheet) => {
+      let code = run(screen, sheet, editor)
+      destroy_texture(sheet)
+      code
+    },
+  }
+
+// ---------------------------------------------------------------------------------------
+// The editor's state, and everything it does to a level — none of it touches SDL
+// ---------------------------------------------------------------------------------------
+
+/// What can be painted, as level characters, and what the bar calls each.
+const BRUSHES: []rune = ['=', '%', '#', 'o', 'c', 'b', 's', 'r', '|', 'F']
+const BRUSH_NAMES: []string = [
+  "GRASS", "DIRT", "BRICK", "COIN", "CLOUD", "BUSH", "SLIME", "RED SLIME", "POLE", "FLAG",
+]
+const EMPTY: rune = '.'
+
+/// The bar across the top: two lines of text beside the brush. The level shows beneath it,
+/// and the rows it covers are sky in any level worth playing.
+const BAR: f32 = 20.0
+
+/// How many strokes can be undone.
+const HISTORY: i64 = 100
+
+/// Scroll speeds, pixels per 1/60 s step.
+const SCROLL: f32 = 4.0
+const SCROLL_FAST: f32 = 12.0
+
+/// A stroke in progress: painting, erasing, or dragging the view.
+const IDLE: i64 = 0
+const PAINTING: i64 = 1
+const ERASING: i64 = 2
+const PANNING: i64 = 3
+
+struct Editor {
+  cells: []rune,
+  columns: i64,
+  camera: f32,
+  brush: i64,
+  /// Snapshots from before each stroke, newest last.
+  history: [][]rune,
+  stroke: i64,
+  pan_from: f32,
+  pan_camera: f32,
+  /// Vertical scroll not yet spent on a brush change — a trackpad scrolls in fractions.
+  wheel: f32,
+  grid: bool,
+  help: bool,
+  path: string,
+  status: string,
+  status_left: i64,
+  last_key: string,
+  steps: i64,
+}
+
+let new_editor = pure (rows: []string, path: string, opened: string) -> Editor => {
+  var cells: []rune = []
+  for row in rows {
+    for ch in row { cells.push(ch) }
+  }
+  Editor {
+    cells: cells,
+    columns: rows[0].len(),
+    camera: 0.0,
+    brush: 0,
+    history: [],
+    stroke: IDLE,
+    pan_from: 0.0,
+    pan_camera: 0.0,
+    wheel: 0.0,
+    grid: false,
+    help: false,
+    path: path,
+    status: opened,
+    status_left: STATUS_STEPS,
+    last_key: "",
+    steps: 0,
+  }
+}
+
+/// How long a status message stays, in steps.
+const STATUS_STEPS: i64 = 180
+
+/// The level as rows of text — what is drawn, checked and saved.
+let rows_of = pure (ed: Editor) -> []string => {
+  var rows: []string = []
+  for row in 0..<LEVEL_ROWS {
+    var text = ""
+    for column in 0..<ed.columns { text = text ++ "${ed.cells[row * ed.columns + column]}" }
+    rows.push(text)
+  }
+  rows
+}
+
+/// The character at a grid position, sky outside the level.
+let cell_at = pure (ed: Editor, column: i64, row: i64) -> rune =>
+  if column < 0 || column >= ed.columns || row < 0 || row >= LEVEL_ROWS {
+    EMPTY
+  } else {
+    ed.cells[row * ed.columns + column]
+  }
+
+/// The grid position under a point on the screen, given where the camera is.
+let tile_at_point = pure (ed: Editor, x: f32, y: f32) -> (i64, i64) =>
+  (((x + ed.camera) / TILE).floor(), (y / TILE).floor())
+
+/// Whether a screen point is over the level, not the bar or the letterbox.
+let over_level = pure (x: f32, y: f32) -> bool =>
+  x >= 0.0 && x < f32(WIDTH) && y >= BAR && y < f32(HEIGHT)
+
+/// The explorer's start tile, which must stay clear of solid ground.
+let is_start = pure (column: i64, row: i64) -> bool =>
+  column == (START_X / TILE).floor() && row == (START_Y / TILE).floor()
+
+/// Put `ch` at a grid position. Refused outside the level, and for anything solid on the
+/// start tile — the explorer would begin inside it.
+let place = (ed: mut Editor, column: i64, row: i64, ch: rune) -> void => {
+  if column < 0 || column >= ed.columns || row < 0 || row >= LEVEL_ROWS { return }
+  if is_start(column, row) && is_solid(tile_of(ch)) {
+    say(ed, "keep the start clear")
+    return
+  }
+  ed.cells[row * ed.columns + column] = ch
+}
+
+/// Remember the level as it is, before a stroke changes it.
+///
+/// **A copy, not the array**: `[]rune` values share storage, so pushing `ed.cells` itself
+/// would put the live level in the history and every later edit would change the
+/// "before" too — an undo that restores nothing. `slice` is the explicit copy.
+let begin_stroke = (ed: mut Editor, stroke: i64) -> void => {
+  ed.history.push(ed.cells.slice(0, ed.cells.len()))
+  if ed.history.len() > HISTORY { ed.history = ed.history.slice(1, ed.history.len()) }
+  ed.stroke = stroke
+}
+
+/// Restore the level from before the last stroke.
+let undo = (ed: mut Editor) -> void => {
+  let n = ed.history.len()
+  if n == 0 {
+    say(ed, "nothing to undo")
+    return
+  }
+  ed.cells = ed.history[n - 1]
+  ed.history = ed.history.slice(0, n - 1)
+  say(ed, "undone")
+}
+
+/// Move the brush by `delta`, wrapping at both ends.
+let cycle_brush = (ed: mut Editor, delta: i64) -> void => {
+  ed.brush = (ed.brush + delta) %% BRUSHES.len()
+}
+
+/// Move the camera by `dx`, kept within the level.
+let scroll = (ed: mut Editor, dx: f32) -> void => {
+  ed.camera = (ed.camera + dx).clamp(0.0, max_camera(ed))
+}
+
+let max_camera = pure (ed: Editor) -> f32 =>
+  (f32(ed.columns) * TILE - f32(WIDTH)).max(0.0)
+
+let say = (ed: mut Editor, message: string) -> void => {
+  ed.status = message
+  ed.status_left = STATUS_STEPS
+}
+
+/// Write the level to its file. It is saved even with something to fix — work in progress
+/// is still work — and the status says what `game.lyra` would refuse.
+let save = (ed: mut Editor) -> void => {
+  let rows = rows_of(ed)
+  if !write_file(ed.path, level_text(rows)) {
+    say(ed, "could not write ${ed.path}")
+    return
+  }
+  match level_problem(rows) {
+    Some(problem) => say(ed, "saved; to play it: ${problem}"),
+    None => say(ed, "saved ${ed.path}"),
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------------------
+
+/// A key press: shortcuts first (a modifier held), then the plain keys.
+let on_key = (ed: mut Editor, key: u32, mods: u16) -> void => {
+  let command = mods & (MOD_CTRL | MOD_GUI) != 0
+  let shift = mods & MOD_SHIFT != 0
+  ed.last_key = (if command { "CMD/CTRL+" } else { "" }) ++ key_name(key)
+  if command && key == KEY_S {
+    save(ed)
+  } else if command && key == KEY_Z {
+    undo(ed)
+  } else if key >= KEY_1 && key <= KEY_9 {
+    ed.brush = i64(key - KEY_1)
+  } else if key == KEY_0 {
+    ed.brush = 9
+  } else if key == KEY_TAB {
+    cycle_brush(ed, if shift { -1 } else { 1 })
+  } else if key == KEY_LEFTBRACKET {
+    cycle_brush(ed, -1)
+  } else if key == KEY_RIGHTBRACKET {
+    cycle_brush(ed, 1)
+  } else if key == KEY_HOME {
+    ed.camera = 0.0
+  } else if key == KEY_END {
+    ed.camera = max_camera(ed)
+  } else if key == KEY_PAGEUP {
+    scroll(ed, -f32(WIDTH))
+  } else if key == KEY_PAGEDOWN {
+    scroll(ed, f32(WIDTH))
+  } else if key == KEY_G {
+    ed.grid = !ed.grid
+  } else if key == KEY_F1 {
+    ed.help = !ed.help
+  }
+}
+
+/// A button going down starts a stroke; the button coming up (or being let go of anywhere)
+/// ends it. Painting happens in [track_mouse], which follows the held button.
+let on_press = (ed: mut Editor, button: u8, x: f32, y: f32) -> void => {
+  if button == BUTTON_MIDDLE {
+    ed.stroke = PANNING
+    ed.pan_from = x
+    ed.pan_camera = ed.camera
+  } else if over_level(x, y) {
+    if button == BUTTON_LEFT { begin_stroke(ed, PAINTING) }
+    if button == BUTTON_RIGHT { begin_stroke(ed, ERASING) }
+  }
+}
+
+/// The wheel: vertical changes brush a notch at a time, sideways scrolls the view.
+let on_wheel = (ed: mut Editor, dx: f32, dy: f32) -> void => {
+  ed.wheel += dy
+  for ed.wheel >= 1.0 {
+    cycle_brush(ed, -1)
+    ed.wheel -= 1.0
+  }
+  for ed.wheel <= -1.0 {
+    cycle_brush(ed, 1)
+    ed.wheel += 1.0
+  }
+  scroll(ed, dx * TILE)
+}
+
+/// Follow the mouse for a stroke in progress, at a point on the screen with `left`,
+/// `right` and `middle` held or not.
+let track_mouse = (
+  ed: mut Editor,
+  x: f32,
+  y: f32,
+  left: bool,
+  right: bool,
+  middle: bool
+) -> void => {
+  if ed.stroke == PANNING {
+    if middle {
+      ed.camera = (ed.pan_camera - (x - ed.pan_from)).clamp(0.0, max_camera(ed))
+    } else {
+      ed.stroke = IDLE
+    }
+    return
+  }
+  if ed.stroke == PAINTING && !left { ed.stroke = IDLE }
+  if ed.stroke == ERASING && !right { ed.stroke = IDLE }
+  if ed.stroke == IDLE || !over_level(x, y) { return }
+  let (column, row) = tile_at_point(ed, x, y)
+  place(ed, column, row, if ed.stroke == PAINTING { BRUSHES[ed.brush] } else { EMPTY })
+}
+
+// ---------------------------------------------------------------------------------------
+// The window
+// ---------------------------------------------------------------------------------------
+
+let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
+  var ed = start
+  var clock = start_clock()
+  let arrow = system_cursor(CURSOR_DEFAULT)
+  let mover = system_cursor(CURSOR_MOVE)
+  var shown = CURSOR_SHOWN
+  var frame: i64 = 0
+  var status: u8 = 0
+  var running = true
+
+  for running {
+    var draining = true
+    for draining {
+      match poll_event() {
+        None => { draining = false },
+        Some(event) => {
+          if wants_quit(event) { running = false }
+          match event {
+            KeyDown(key) => on_key(ed, key, modifiers()),
+            MouseDown(button, wx, wy) => {
+              let (x, y) = window_to_render(screen.renderer, wx, wy)
+              on_press(ed, button, x, y)
+            },
+            MouseWheel(dx, dy) => on_wheel(ed, dx, dy),
+            _ => {},
+          }
+        },
+      }
+    }
+
+    let mouse = mouse_state()
+    let (mx, my) = window_to_render(screen.renderer, mouse.x, mouse.y)
+    track_mouse(
+      ed,
+      mx,
+      my,
+      button_held(mouse, BUTTON_LEFT),
+      button_held(mouse, BUTTON_RIGHT),
+      button_held(mouse, BUTTON_MIDDLE)
+    )
+
+    let fast = key_held(SCANCODE_LSHIFT) || key_held(SCANCODE_RSHIFT)
+    let speed = if fast { SCROLL_FAST } else { SCROLL }
+    for _ in 0..<updates_due(screen, clock) {
+      if key_held(SCANCODE_LEFT) || key_held(SCANCODE_A) { scroll(ed, -speed) }
+      if key_held(SCANCODE_RIGHT) || key_held(SCANCODE_D) { scroll(ed, speed) }
+      if ed.status_left > 0 { ed.status_left -= 1 }
+      ed.steps += 1
+    }
+
+    // Over the level the editor draws its own cursor; the system's shows over the bar,
+    // and becomes a move cursor while the view is dragged.
+    let wanted = if ed.stroke == PANNING {
+      CURSOR_MOVING
+    } else if over_level(mx, my) {
+      CURSOR_HIDDEN
+    } else {
+      CURSOR_SHOWN
+    }
+    if wanted != shown {
+      show_cursor(wanted != CURSOR_HIDDEN)
+      // Matched on each binding directly: a `match` on a computed scrutinee reads to the
+      // must-release check as a fresh resource, though both arms are views of these two.
+      if wanted == CURSOR_MOVING {
+        match mover {
+          Some(c) => { set_cursor(c) },
+          None => {},
+        }
+      } else {
+        match arrow {
+          Some(c) => { set_cursor(c) },
+          None => {},
+        }
+      }
+      shown = wanted
+    }
+
+    draw(screen.renderer, sheet, ed, mx, my)
+    match end_frame(screen, frame) {
+      Stop(code) => {
+        status = code
+        running = false
+      },
+      Continue => {},
+    }
+    frame += 1
+  }
+  show_cursor(true)
+  release(arrow)
+  release(mover)
+  status
+}
+
+/// The three states of the system cursor.
+const CURSOR_SHOWN: i64 = 0
+const CURSOR_HIDDEN: i64 = 1
+const CURSOR_MOVING: i64 = 2
+
+/// Free a cursor, if one was made — a releasing helper, which the must-release check sees
+/// through.
+let release = (cursor: Maybe<Cursor>) -> void => match cursor {
+  Some(c) => destroy_cursor(c),
+  None => {},
+}
+
+let draw = (r: Renderer, sheet: Texture, ed: Editor, mx: f32, my: f32) -> void => {
+  set_draw_color(r, nes(0x21))
+  clear(r)
+  let rows = rows_of(ed)
+  let level = parse_level(rows)
+  draw_level(r, sheet, level, ed.camera, ed.steps)
+  if ed.grid { draw_grid(r, ed) }
+
+  // Spawns are bodies, not tiles, so the level does not draw them: the editor does.
+  for s in level.spawns {
+    set_texture_color(
+      sheet,
+      nes(if tile_ch(ed, s.column, s.row) == 'r' { 0x16 } else { 0x2A })
+    )
+    draw_cell(
+      r,
+      sheet,
+      sheet_cell('s'),
+      f32(s.column) * TILE - ed.camera,
+      f32(s.row) * TILE,
+      FLIP_NONE
+    )
+  }
+  set_texture_color(sheet, rgb(255, 255, 255))
+
+  // Where the explorer starts, faded: not editable, but worth seeing.
+  set_texture_alpha(sheet, 140)
+  draw_cell(
+    r,
+    sheet,
+    EXPLORER_TOGETHER,
+    START_X - 2.0 - ed.camera,
+    START_Y - 1.0,
+    FLIP_NONE
+  )
+  set_texture_alpha(sheet, 255)
+
+  if over_level(mx, my) && !ed.help { draw_tile_cursor(r, sheet, ed, mx, my) }
+  draw_bar(r, sheet, ed)
+  if ed.help { draw_help(r) }
+}
+
+let tile_ch = pure (ed: Editor, column: i64, row: i64) -> rune => cell_at(ed, column, row)
+
+/// The tile under the pointer, outlined, with the brush ghosted in it.
+let draw_tile_cursor = (
+  r: Renderer,
+  sheet: Texture,
+  ed: Editor,
+  mx: f32,
+  my: f32
+) -> void => {
+  let (column, row) = tile_at_point(ed, mx, my)
+  let x = f32(column) * TILE - ed.camera
+  let y = f32(row) * TILE
+  let brush = BRUSHES[ed.brush]
+  set_texture_alpha(sheet, 120)
+  if brush == 'r' { set_texture_color(sheet, nes(0x16)) }
+  if brush == 's' { set_texture_color(sheet, nes(0x2A)) }
+  draw_cell(r, sheet, sheet_cell(brush), x, y, FLIP_NONE)
+  set_texture_color(sheet, rgb(255, 255, 255))
+  set_texture_alpha(sheet, 255)
+  set_draw_color(r, nes(0x30))
+  draw_rect(r, Rect { x: x, y: y, w: TILE, h: TILE })
+}
+
+/// Tile boundaries, in a blue a shade off the sky.
+let draw_grid = (r: Renderer, ed: Editor) -> void => {
+  set_draw_color(r, nes(0x31))
+  let offset = ed.camera - f32((ed.camera / TILE).floor()) * TILE
+  for i in 0..<17 {
+    let x = f32(i) * TILE - offset
+    draw_line(r, x, BAR, x, f32(HEIGHT))
+  }
+  for row in 2..<LEVEL_ROWS {
+    let y = f32(row) * TILE
+    draw_line(r, 0.0, y, f32(WIDTH), y)
+  }
+}
+
+/// The bar: the brush and its number, the column under the camera, and a status line.
+let draw_bar = (r: Renderer, sheet: Texture, ed: Editor) -> void => {
+  set_draw_color(r, nes(0x0F))
+  fill_rect(r, Rect { x: 0.0, y: 0.0, w: f32(WIDTH), h: BAR })
+  let brush = BRUSHES[ed.brush]
+  if brush == 'r' { set_texture_color(sheet, nes(0x16)) }
+  if brush == 's' { set_texture_color(sheet, nes(0x2A)) }
+  draw_cell(r, sheet, sheet_cell(brush), 2.0, 2.0, FLIP_NONE)
+  set_texture_color(sheet, rgb(255, 255, 255))
+  set_draw_color(r, nes(0x30))
+  let number = if ed.brush == 9 { 0 } else { ed.brush + 1 }
+  debug_text(r, 22.0, 2.0, "${number} ${BRUSH_NAMES[ed.brush]}")
+  debug_text(r, 184.0, 2.0, "X ${(ed.camera / TILE).floor()}")
+  set_draw_color(r, nes(0x10))
+  let line = if ed.status_left > 0 {
+    ed.status
+  } else if ed.last_key != "" {
+    "KEY ${ed.last_key}   F1 HELP"
+  } else {
+    "F1 HELP"
+  }
+  debug_text(r, 22.0, 11.0, line.slice(0, min(line.len(), 29)))
+}
+
+let draw_help = (r: Renderer) -> void => {
+  set_draw_color(r, nes(0x0F))
+  fill_rect(r, Rect { x: 8.0, y: 28.0, w: 240.0, h: 200.0 })
+  set_draw_color(r, nes(0x30))
+  draw_rect(r, Rect { x: 10.0, y: 30.0, w: 236.0, h: 196.0 })
+  let help_lines: []string = [
+    "LEFT DRAG      PAINT",
+    "RIGHT DRAG     ERASE",
+    "WHEEL  [ ]  TAB  BRUSH",
+    "1-9  0         BRUSH",
+    "MIDDLE DRAG    SCROLL",
+    "ARROWS  A D    SCROLL",
+    "  +SHIFT       FAST",
+    "HOME  END      ENDS",
+    "PGUP  PGDN     A SCREEN",
+    "CMD/CTRL+Z     UNDO",
+    "CMD/CTRL+S     SAVE",
+    "G              GRID",
+    "F1             HELP",
+    "ESC            QUIT",
+  ]
+  for i, text in help_lines {
+    set_draw_color(r, nes(if i % 2 == 0 { 0x30 } else { 0x3D }))
+    debug_text(r, 20.0, 40.0 + f32(i) * 12.0, text)
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// --check
+// ---------------------------------------------------------------------------------------
+
+let run_checks = () -> u8 => {
+  var failures = 0
+
+  // The generated constants, checked by properties rather than by a second transcription.
+  var letters = true
+  for i in 0..<26 {
+    if KEY_A + u32(i) != u32(i64('a') + i) { letters = false }
+    if SCANCODE_A + u32(i) != u32(4 + i) { letters = false }
+  }
+  failures += check_that(
+    "KEY_A..KEY_Z are 'a'..'z', SCANCODE_A..Z are 4..29",
+    letters && KEY_Z == u32(i64('z')) && SCANCODE_Z == 29
+  )
+  failures += check_that(
+    "digits: KEY_0..9 are ASCII, SCANCODE_1..9 then 0 are 30..39",
+    KEY_0 == u32(i64('0')) &&
+      KEY_9 == u32(i64('9')) &&
+      SCANCODE_1 == 30 &&
+      SCANCODE_9 == 38 &&
+      SCANCODE_0 == 39
+  )
+  failures += check_that(
+    "a function key's code is its scancode with bit 30 set",
+    KEY_F1 == (SCANCODE_F1 | 0x40000000) && KEY_F12 == (SCANCODE_F12 | 0x40000000)
+  )
+  failures += check_that(
+    "either-side modifiers are the union of both sides",
+    MOD_CTRL == (MOD_LCTRL | MOD_RCTRL) &&
+      MOD_SHIFT == (MOD_LSHIFT | MOD_RSHIFT) &&
+      MOD_GUI == (MOD_LGUI | MOD_RGUI)
+  )
+
+  // SDL names them: an independent answer to "is this table right?". Every code but
+  // UNKNOWN has a name, and a few are checked word for word.
+  var unnamed: []string = []
+  for code in SCANCODES {
+    if code != SCANCODE_UNKNOWN && scancode_name(code) == "" { unnamed.push("scancode ${code}") }
+  }
+  failures += check_that(
+    "SDL names every generated scancode (${unnamed.len()} unnamed)",
+    unnamed.len() == 0
+  )
+  var unnamed_keys = 0
+  for code in KEY_CODES {
+    if code != KEY_UNKNOWN && key_name(code) == "" { unnamed_keys += 1 }
+  }
+  failures += check_that(
+    "SDL names every generated key code (${unnamed_keys} unnamed)",
+    unnamed_keys == 0
+  )
+  failures += check_that(
+    "names match: PageUp, F11, Return, Keypad 5",
+    key_name(KEY_PAGEUP) == "PageUp" && key_name(KEY_F11) == "F11" &&
+      scancode_name(SCANCODE_RETURN) == "Return" && scancode_name(SCANCODE_KP_5) == "Keypad 5"
+  )
+
+  // Editing.
+  var ed = new_editor(COURSE, "unused.txt", "")
+  let before = rows_of(ed)
+  failures += check_that(
+    "a course round-trips through the editor unchanged",
+    before == COURSE
+  )
+
+  begin_stroke(ed, PAINTING)
+  place(ed, 20, 5, '#')
+  place(ed, 21, 5, 'o')
+  failures += check_that(
+    "painting places characters",
+    cell_at(ed, 20, 5) == '#' && cell_at(ed, 21, 5) == 'o'
+  )
+  failures += check_that(
+    "the snapshot is a copy, untouched by the edit",
+    ed.history[0][5 * ed.columns + 20] == '.'
+  )
+  undo(ed)
+  failures += check_that(
+    "undo restores the level exactly",
+    rows_of(ed) == COURSE && ed.history.len() == 0
+  )
+
+  place(ed, -1, 5, '#')
+  place(ed, ed.columns, 5, '#')
+  place(ed, 5, LEVEL_ROWS, '#')
+  failures += check_that(
+    "painting outside the level changes nothing",
+    rows_of(ed) == COURSE
+  )
+
+  place(ed, 2, 12, '#')
+  failures += check_that(
+    "solid ground is refused on the start tile",
+    cell_at(ed, 2, 12) == '.'
+  )
+  place(ed, 2, 12, 'o')
+  failures += check_that("a coin there is fine", cell_at(ed, 2, 12) == 'o')
+
+  var cycling = new_editor(COURSE, "unused.txt", "")
+  cycle_brush(cycling, -1)
+  let wrapped_back = cycling.brush == BRUSHES.len() - 1
+  cycle_brush(cycling, 1)
+  failures += check_that("the brush wraps both ways", wrapped_back && cycling.brush == 0)
+  on_wheel(cycling, 0.0, -0.6)
+  let fraction_waits = cycling.brush == 0
+  on_wheel(cycling, 0.0, -0.6)
+  failures += check_that(
+    "a trackpad's fractional scrolls add up to a notch",
+    fraction_waits && cycling.brush == 1
+  )
+
+  var viewing = new_editor(COURSE, "unused.txt", "")
+  scroll(viewing, -50.0)
+  let held_at_start = near(viewing.camera, 0.0)
+  scroll(viewing, 100000.0)
+  failures += check_that(
+    "the camera stops at both ends",
+    held_at_start && near(viewing.camera, f32(COURSE[0].len()) * TILE - f32(WIDTH))
+  )
+  viewing.camera = 40.0
+  let (column, row) = tile_at_point(viewing, 10.0, 100.0)
+  failures += check_that(
+    "a point maps to the tile under it, camera included",
+    column == 3 && row == 6
+  )
+
+  // Keys and strokes drive the same operations.
+  var keyed = new_editor(COURSE, "unused.txt", "")
+  on_key(keyed, KEY_3, 0)
+  failures += check_that("3 picks the third brush", keyed.brush == 2)
+  on_key(keyed, KEY_0, 0)
+  failures += check_that("0 picks the tenth", keyed.brush == 9)
+  on_press(keyed, BUTTON_LEFT, 100.0, 100.0)
+  track_mouse(keyed, 100.0, 100.0, true, false, false)
+  let (pc, pr) = tile_at_point(keyed, 100.0, 100.0)
+  let painted = cell_at(keyed, pc, pr) == 'F'
+  track_mouse(keyed, 100.0, 100.0, false, false, false)
+  on_key(keyed, KEY_Z, MOD_LCTRL)
+  failures += check_that(
+    "a stroke paints, and Ctrl+Z undoes it",
+    painted && rows_of(keyed) == COURSE && keyed.stroke == IDLE
+  )
+  on_key(keyed, KEY_END, 0)
+  failures += check_that(
+    "End jumps to the far end",
+    near(keyed.camera, max_camera(keyed))
+  )
+
+  // Saving writes what the game reads: through the file, back with `read_level`, equal.
+  let dir = match lookup("TMPDIR") {
+    Some(d) => d,
+    None => "/tmp",
+  }
+  let path = if dir.ends_with("/") { dir ++ "lyra-editor-check.txt" } else { dir ++ "/lyra-editor-check.txt" }
+  var saving = new_editor(COURSE, path, "")
+  place(saving, 30, 6, '#')
+  save(saving)
+  let round_trip = match read_level(path) {
+    Ok(rows) => rows == rows_of(saving) && rows != COURSE,
+    Err(_) => false,
+  }
+  failures += check_that("a saved level reads back as the game reads it", round_trip)
+
+  if failures == 0 {
+    println("all checks passed")
+    0
+  } else {
+    println("${failures} check(s) failed")
+    1
+  }
+}
+
+let near = pure (a: f32, b: f32) -> bool => (a - b).abs() < 0.001
+
+let check_that = (what: string, ok: bool) -> i64 => {
+  if ok {
+    0
+  } else {
+    println("FAIL: ${what}")
+    1
+  }
+}
+
+let has_flag = (name: string) -> bool => {
+  var found = false
+  for arg in program_args() {
+    if arg == name { found = true }
+  }
+  found
+}
+
+let flag_value = (name: string) -> Maybe<string> => {
+  let args = program_args()
+  var found: Maybe<string> = None
+  for i in 1..<args.len() - 1 {
+    if args[i] == name { found = Some(args[i + 1]) }
+  }
+  found
+}

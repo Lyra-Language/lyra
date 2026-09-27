@@ -18,6 +18,7 @@
 //   without losing a life**, which is what says the level is fair, not only that the
 //   physics works.
 // - `--autoplay` lets the autopilot play in the window.
+// - `--level <file>` plays a level saved by `editor.lyra` instead of the built-in course.
 // - `--shot <file.bmp>` as in `console.lyra` (silent).
 
 import bindings.sdl3.{
@@ -46,7 +47,7 @@ import bindings.sdl3.{
   put_audio,
   queued_frames,
 }
-import bindings.sdl3_image.{ load_texture }
+import sheet.{ load_sheet }
 import console.{
   Screen,
   open_screen,
@@ -78,6 +79,9 @@ import level.{
   move_y,
   fell_out,
   collect_coins,
+  read_level,
+  START_X,
+  START_Y,
   at_goal,
   camera_x,
   draw_level,
@@ -104,50 +108,52 @@ import music.{
 }
 import apu.{ Apu, SILENT, SAMPLE_RATE, TICK_SAMPLES, render }
 import palette.{ nes }
+import course.{ COURSE }
 
 let main = () -> u8 => {
   if has_flag("--check") { return run_checks() }
+  // `--level <file>` plays a level the editor saved; the built-in course otherwise.
+  var rows = COURSE
+  match flag_value("--level") {
+    Some(path) => match read_level(path) {
+      Ok(loaded) => { rows = loaded },
+      Err(problem) => {
+        println(problem)
+        return 1
+      },
+    },
+    None => {},
+  }
   match open_screen("SLIME TRAIL") {
     None => 1,
     Some(screen) => {
-      let code = with_sheet(screen)
+      let code = with_sheet(screen, rows)
       close_screen(screen)
       code
     },
   }
 }
 
-let with_sheet = (screen: Screen) -> u8 =>
-  match load_texture(screen.renderer, "examples/SDL3/nes/assets/sprites.png") {
+let with_sheet = (screen: Screen, rows: []string) -> u8 =>
+  match load_sheet(screen.renderer) {
+    None => 1,
     Some(sheet) => {
-      let code = with_audio(screen, sheet)
+      let code = with_audio(screen, sheet, rows)
       destroy_texture(sheet)
       code
-    },
-    None => match load_texture(screen.renderer, "./assets/sprites.png") {
-      Some(sheet) => {
-        let code = with_audio(screen, sheet)
-        destroy_texture(sheet)
-        code
-      },
-      None => {
-        println("could not load assets/sprites.png: ${last_error()}")
-        println("run from the repository root or from examples/SDL3/nes/")
-        1
-      },
     },
   }
 
 /// Run with sound, or silently when there is no device or `--shot` wants a reproducible frame.
-let with_audio = (screen: Screen, sheet: Texture) -> u8 => {
-  if has_flag("--shot") || !init(INIT_AUDIO) { return run(screen, sheet, None) }
+let with_audio = (screen: Screen, sheet: Texture, rows: []string) -> u8 => {
+  if has_flag("--shot") || !init(INIT_AUDIO) { return run(screen, sheet, None, rows) }
   match open_audio(SAMPLE_RATE, 1) {
     None => {
       println("no audio device (${last_error()}); playing silently")
-      run(screen, sheet, None)
+      run(screen, sheet, None, rows)
     },
     Some(stream) => {
-      let code = run(screen, sheet, Some(stream))
+      let code = run(screen, sheet, Some(stream), rows)
       close_audio(stream)
       code
     },
@@ -158,27 +164,6 @@ let with_audio = (screen: Screen, sheet: Texture) -> u8 => {
 // The level
 // ---------------------------------------------------------------------------------------
 
-/// Seven screens. `s`/`r` are green and red slimes; `F` and `|` the goal.
-const LEVEL: []string = [
-  "................................................................................................................",
-  "................................................................................................................",
-  ".....cc...............................cc..............................cc............................c...........",
-  "....................ccc...............................................................cc................F.......",
-  ".......................................................c................................................|.......",
-  "........................................................................................................|.......",
-  "........................................................................................................|.......",
-  "........................................................................................................|.......",
-  "............................ooo..............s..........................................................|.......",
-  "......oooo.................#####...........######...oooo.........................................#......|.......",
-  "..................................................................#.............................##......|.......",
-  "......................................r.....................#.....#............................###......|.......",
-  "...b........b..s..............b...=======.....b.............#..b..#...s...b.r.............b...####......#...b...",
-  "======================...=========%%%%%%%===========....========================...=============================",
-  "%%%%%%%%%%%%%%%%%%%%%%...%%%%%%%%%%%%%%%%%%%%%%%%%%%....%%%%%%%%%%%%%%%%%%%%%%%%...%%%%%%%%%%%%%%%%%%%%%%%%%%%%%",
-]
-
-const SPAWN_X: f32 = 34.0
-const SPAWN_Y: f32 = 193.0
 const LIVES: i64 = 3
 
 // ---------------------------------------------------------------------------------------
@@ -281,6 +266,8 @@ data Mode =
   | Over(i64)
 
 struct Game {
+  /// The level's source, kept so a lost life or a new game can rebuild it.
+  rows: []string,
   mode: Mode,
   level: Level,
   player: Body,
@@ -302,13 +289,14 @@ struct Sound {
 let new_sound = pure (playing: bool) -> Sound =>
   Sound { music: new_music(playing), chip: SILENT }
 
-/// The level fresh, with `lives` left, in `mode`.
-let new_game = pure (mode: Mode, lives: i64) -> Game => {
-  let level = parse_level(LEVEL)
+/// The level `rows` describe, fresh, with `lives` left, in `mode`.
+let new_game = pure (rows: []string, mode: Mode, lives: i64) -> Game => {
+  let level = parse_level(rows)
   Game {
+    rows: rows,
     mode: mode,
     level: level,
-    player: explorer_at(SPAWN_X, SPAWN_Y),
+    player: explorer_at(START_X, START_Y),
     slimes: spawn_slimes(level),
     camera: 0.0,
     coins: 0,
@@ -324,7 +312,7 @@ let update = (game: mut Game, sound: mut Sound, pad: Pad) -> void => {
   match game.mode {
     Title => {
       if pad.pressed.start {
-        game = new_game(Playing, LIVES)
+        game = new_game(game.rows, Playing, LIVES)
         sound.music = new_music(true)
       }
     },
@@ -342,7 +330,7 @@ let update = (game: mut Game, sound: mut Sound, pad: Pad) -> void => {
           game.mode = Over(0)
           play_effect(sound.music, sound.chip, GAME_OVER)
         } else {
-          game = new_game(Playing, game.lives - 1)
+          game = new_game(game.rows, Playing, game.lives - 1)
           sound.music = new_music(true)
         }
       } else {
@@ -353,11 +341,11 @@ let update = (game: mut Game, sound: mut Sound, pad: Pad) -> void => {
       // Down the pole to its base, as the flag is taken.
       game.player = move_y(game.level, Body { game.player | vx: 0.0, vy: 2.0 })
       game.mode = Clear(t + 1)
-      if t > 60 && pad.pressed.start { game = new_game(Title, LIVES) }
+      if t > 60 && pad.pressed.start { game = new_game(game.rows, Title, LIVES) }
     },
     Over(t) => {
       game.mode = Over(t + 1)
-      if t > 200 { game = new_game(Title, LIVES) }
+      if t > 200 { game = new_game(game.rows, Title, LIVES) }
     },
   }
 }
@@ -463,9 +451,14 @@ let autopilot = pure (game: Game) -> Buttons => {
 /// Three ticks of audio queued ahead: 50 ms.
 const AHEAD_TICKS: i64 = 3
 
-let run = (screen: Screen, sheet: Texture, audio: Maybe<AudioStream>) -> u8 => {
+let run = (
+  screen: Screen,
+  sheet: Texture,
+  audio: Maybe<AudioStream>,
+  rows: []string
+) -> u8 => {
   let autoplay = has_flag("--autoplay")
-  var game = new_game(Title, LIVES)
+  var game = new_game(rows, Title, LIVES)
   var sound = new_sound(false)
   var gamepad: Maybe<Gamepad> = None
   var clock = start_clock()
@@ -619,22 +612,22 @@ let run_checks = () -> u8 => {
   var failures = 0
 
   var rectangular = true
-  for row in LEVEL {
-    if row.len() != LEVEL[0].len() { rectangular = false }
+  for row in COURSE {
+    if row.len() != COURSE[0].len() { rectangular = false }
   }
-  let level = parse_level(LEVEL)
+  let level = parse_level(COURSE)
   failures += check_that("the level is rectangular", rectangular && level.rows == 15)
   failures += check_that("the level has a goal", level.goal == 104)
   failures += check_that("the level has five slimes", spawn_slimes(level).len() == 5)
 
   // Start leaves the title for the level.
-  var titled = new_game(Title, LIVES)
+  var titled = new_game(COURSE, Title, LIVES)
   var sound = new_sound(false)
   update(titled, sound, advance(RELEASED, Buttons { RELEASED | start: true }))
   failures += check_that("start begins play", titled.mode == Playing)
 
   // A slime on a floating platform keeps to it: ten seconds of patrol, never off the bricks.
-  var patrol = new_game(Playing, LIVES)
+  var patrol = new_game(COURSE, Playing, LIVES)
   var high = 0
   for i in 0..<patrol.slimes.len() {
     if patrol.slimes[i].body.y < patrol.slimes[high].body.y { high = i }
@@ -653,7 +646,7 @@ let run_checks = () -> u8 => {
   )
 
   // Landing on a slime stomps it and bounces; walking into one costs a life.
-  var stomping = new_game(Playing, LIVES)
+  var stomping = new_game(COURSE, Playing, LIVES)
   let target = stomping.slimes[0].body
   stomping.slimes[0] = Slime { stomping.slimes[0] | awake: true }
   stomping.player = Body {
@@ -668,7 +661,7 @@ let run_checks = () -> u8 => {
     !stomping.slimes[0].alive && stomping.stomps == 1 && stomping.mode == Playing
   )
 
-  var bumped = new_game(Playing, LIVES)
+  var bumped = new_game(COURSE, Playing, LIVES)
   let slime = bumped.slimes[0].body
   bumped.slimes[0] = Slime { bumped.slimes[0] | awake: true }
   bumped.player = Body {
@@ -680,7 +673,7 @@ let run_checks = () -> u8 => {
   failures += check_that("walking into a slime is fatal", is_dying(bumped.mode))
 
   // A pit is fatal too, and the third loss ends the game.
-  var falling = new_game(Playing, 1)
+  var falling = new_game(COURSE, Playing, 1)
   falling.player = Body { falling.player | x: 23.0 * TILE, y: 190.0 }
   run_steps(falling, sound, RELEASED, 400)
   failures += check_that(
@@ -688,7 +681,7 @@ let run_checks = () -> u8 => {
     is_over(falling.mode) || is_title(falling.mode)
   )
 
-  var retry = new_game(Playing, 3)
+  var retry = new_game(COURSE, Playing, 3)
   retry.player = Body { retry.player | x: 23.0 * TILE, y: 190.0 }
   run_steps(retry, sound, RELEASED, 250)
   failures += check_that(
@@ -697,7 +690,7 @@ let run_checks = () -> u8 => {
   )
 
   // The whole level, played by the autopilot: it must reach the flag with no life lost.
-  var auto = new_game(Title, LIVES)
+  var auto = new_game(COURSE, Title, LIVES)
   var auto_sound = new_sound(false)
   var previous = RELEASED
   var died = false
@@ -764,6 +757,16 @@ let check_that = (what: string, ok: bool) -> i64 => {
     println("FAIL: ${what}")
     1
   }
+}
+
+/// The argument after `name`, when there is one.
+let flag_value = (name: string) -> Maybe<string> => {
+  let args = program_args()
+  var found: Maybe<string> = None
+  for i in 1..<args.len() - 1 {
+    if args[i] == name { found = Some(args[i + 1]) }
+  }
+  found
 }
 
 let has_flag = (name: string) -> bool => {

@@ -539,6 +539,12 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
   (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
   would be the natural companion.
+- **[OPEN] An `unsafe` block is not an arithmetic operand.** `unsafe { raw.wheel.x } * sign`
+  is a syntax error; it was made a comparison operand (COMPLETED 09/09) and nothing more.
+  `events.lyra` binds the member first. The same grammar change would admit `+ - * /`.
+- **[OPEN] `W022` reads a computed `match` scrutinee as an acquisition.** `match if c { a }
+  else { b } { Some(x) => set_cursor(x) }` warns that `x` is unreleased, though both arms
+  are views of bindings released later. `editor.lyra` matches each binding directly.
 - **[PARTIAL] SDL3 bindings, driven by examples, towards an NES-style game.** One example
   per rung, binding only what it uses (`bindings/README.md`). Art is PNG via **SDL3_image**
   (`bindings/sdl3_image.lyra`). The rungs live in `examples/SDL3/nes/`.
@@ -552,6 +558,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   5. `tilemap.lyra` — scrolling tile background, camera, fixed 60 Hz timestep.
      **Done 09/25.** Keyboard only: gamepad tracking belongs in `pad.lyra` before the game.
   6. `game.lyra` — SLIME TRAIL: one level, patrolling slimes, reach the flag. **Done 09/25.**
+  7. `editor.lyra` — a level editor, driving every key constant (generated) and the mouse.
+     **Done 09/26.** Still unbound: the GPU API, surfaces, joysticks, text input, the
+     clipboard, window management beyond fullscreen, file dialogs.
 - **[OPEN] raylib gaps:** `SetShaderValue*` uniforms (a `const void *` no Lyra pointer
   reaches); `LoadMaterials` (needs pointer reinterpretation to reach `MemFree`);
   `LoadTextureCubemap`; `ExportImageToMemory` (returns size 0).
