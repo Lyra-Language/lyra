@@ -1,7 +1,6 @@
 module main
 //! Files, directories and the data helpers, as a small tool rather than a gallery.
 //!
-//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
 //!   lyrac run examples/raylib/files.lyra -- --check       # 30 checks, exits 0 or 1
 //!   lyrac run examples/raylib/files.lyra -- <path> ...    # inspect paths, hash files
 //!   lyrac run examples/raylib/files.lyra                  # the current directory

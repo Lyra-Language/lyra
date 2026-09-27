@@ -1,4 +1,4 @@
-@link("tree-sitter")
+@link("tree-sitter", pkg: "tree-sitter")
 module bindings.treesitter
 //! The tree-sitter runtime: a parser, the tree it builds, and the nodes of that tree.
 //!
@@ -11,8 +11,8 @@ module bindings.treesitter
 //! words as fields rather than a `[4]u32`, the same layout either way, and nothing reads
 //! them: a node is opaque to Lyra and only ever handed back to the runtime.
 //!
-//! Link with `-ltree-sitter`: `brew install tree-sitter` or `libtree-sitter-dev`, with its
-//! directory on `LIBRARY_PATH` (`pkg-config --variable=libdir tree-sitter`).
+//! Link with `-ltree-sitter`: `brew install tree-sitter` or `libtree-sitter-dev`; lyrac finds
+//! its directory through the header's `pkg: "tree-sitter"`.
 
 import std.ffi.{ CBuffer, cstring_len }
 

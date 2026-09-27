@@ -10,8 +10,9 @@ notes are in [`pkg/backend/FFI.md`](../pkg/backend/FFI.md); language rules are i
 - **Externs are private; the module exports Lyra.** There is no `pub extern`, so the
   wrapper is where `unsafe` stops, NULL becomes a `Maybe`, and untagged C unions become
   `data` types. An example using a binding should contain no `unsafe` and no `extern`.
-- **`@link("lib")` goes on the `module` header**, once. `@link` cannot say *where* — a
-  Homebrew install needs e.g. `LIBRARY_PATH=$(pkg-config --variable=libdir sdl3)`.
+- **`@link("lib", pkg: "package")` goes on the `module` header**, once. `pkg:` names the
+  pkg-config package, which `lyrac` asks where the library lives — so a Homebrew install
+  links with no `LIBRARY_PATH`. Give every binding for a packaged library one.
 - **Not `vendor/`**: that name at a Go module root is Go's own and breaks every `go` command.
 - **Resolution**: `bindings.sdl3` → `<root>/bindings/sdl3/`. `build.sh` links `bindings`
   beside `std` in `build/`; `go run ./cmd/lyrac` still needs `LYRA_STD`.
@@ -136,14 +137,14 @@ Needs struct-by-value (`pkg/abi`); nothing in the binding mentions registers.
 SDL3_image, `@link("SDL3_image")` — its own module so a program that loads no image does
 not link it. `load_texture(renderer, path) -> Maybe<Texture>` answers `bindings.sdl3`'s
 `Texture` via `adopt_texture`. `brew install sdl3_image` (Debian `libsdl3-image-dev`);
-Homebrew puts it on SDL3's `LIBRARY_PATH`.
+found through `pkg: "sdl3-image"`.
 
 ## `bindings/jpeg.lyra`
 
 libjpeg-turbo, because Homebrew's raylib is built without JPEG support. `decode_jpeg(bytes)
 -> Maybe<Jpeg>` answers RGBA pixels in a Lyra-owned array (baseline and progressive). An
 `Image` pointed at that buffer must **never** be `unload_image`d. Link `-lturbojpeg` (`brew
-install jpeg-turbo`, Debian `libturbojpeg0-dev`), on `LIBRARY_PATH` beside raylib.
+install jpeg-turbo`, Debian `libturbojpeg0-dev`), found through `pkg: "libturbojpeg"`.
 
 ## `bindings/treesitter/`
 

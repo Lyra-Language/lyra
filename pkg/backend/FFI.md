@@ -58,6 +58,8 @@ are in [`bindings/README.md`](../../bindings/README.md).
   including a local that shadows a top-level function, is `lyra-E066`.
 - **`@link`** on the module header or the declaration, unioned across the compile, sorted,
   deduplicated, emitted as `-l` (`lyrac`'s `linkFlags`, also in every "compile with" hint).
+  Its `pkg: "…"` packages (`driver.Result.Packages`) become `-L` directories from
+  `pkg-config --libs-only-L`, first on the line; `pkgConfigLibDirs` is stubbable for tests.
   `@symbol` has no module form and is refused on a header by name.
 
 ## Backend

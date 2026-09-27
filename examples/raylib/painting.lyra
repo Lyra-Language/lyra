@@ -3,7 +3,6 @@ module main
 //!
 //! Two programs in one file, on `shapes.lyra`'s plan:
 //!
-//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
 //!   lyrac run examples/raylib/painting.lyra -- --check   # the pixels, exits 0 or 1
 //!   lyrac run examples/raylib/painting.lyra              # the gallery, in a window
 //!

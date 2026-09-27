@@ -10,7 +10,7 @@
 // The sheet is `assets/sprites.png`, made by `assets/generate.py`, and found from the
 // workspace, the repository, or here (`sheet.lyra`). Needs SDL3_image:
 //
-//     LIBRARY_PATH=$(pkg-config --variable=libdir sdl3) lyrac run examples/SDL3/nes/sprites.lyra
+//     lyrac run examples/SDL3/nes/sprites.lyra
 //
 // Escape quits. `--shot <file.bmp>` saves one frame and exits (`console.lyra`).
 

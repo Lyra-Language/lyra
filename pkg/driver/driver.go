@@ -70,7 +70,11 @@ type Result struct {
 	// between runs. Collected here rather than by the CLI because the requirement is a
 	// property of the *program* — a module that wraps libm carries its own need, and no
 	// consumer should have to know about it.
-	Links       []string
+	Links []string
+	// Packages are the pkg-config packages `@link(…, pkg: "sdl3")` names, sorted and
+	// deduplicated like Links: where the libraries are, which `lyrac` asks pkg-config for
+	// so a library outside the linker's default search path needs no `LIBRARY_PATH`.
+	Packages    []string
 	Diagnostics []diag.Diagnostic
 }
 
@@ -307,6 +311,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	res.Diagnostics = append(res.Diagnostics, rangeDiags...)
 	res.RangeSafety = rangeSafety
 	res.Links = collectLinks(program)
+	res.Packages = collectPackages(program)
 
 	// Ownership analysis (retain/release-temp decisions for managed values) runs
 	// after typechecking — it reads the TypeTable to identify managed types. It
@@ -636,6 +641,38 @@ func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
 		}
 		out = append(out, d)
 	}
+	return out
+}
+
+// collectPackages is the union of every `@link`'s `pkg:`, sorted and deduplicated —
+// collectLinks' twin for where the libraries are rather than which.
+func collectPackages(program *ast.Program) []string {
+	if program == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, stmt := range program.Statements {
+		var pkgs []string
+		switch decl := stmt.(type) {
+		case *ast.ExternDeclStmt:
+			pkgs = decl.Packages
+		case *ast.ModuleDeclStmt:
+			pkgs = decl.Packages
+		}
+		for _, p := range pkgs {
+			if p != "" {
+				seen[p] = true
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
 	return out
 }
 

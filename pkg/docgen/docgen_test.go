@@ -223,6 +223,8 @@ pub data Shape = Circle(f64) | Empty
 /// Foreign.
 @link("m")
 unsafe extern pure sqrt: (x: f64) -> f64
+@link("SDL3", pkg: "sdl3")
+unsafe extern sdl_quit: () -> void
 unsafe extern det noalloc fill: (out: ^mut u8, len: u64) -> void
 unsafe extern printf: (fmt: ^u8, ...) -> i32
 `

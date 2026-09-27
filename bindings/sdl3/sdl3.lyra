@@ -1,4 +1,4 @@
-@link("SDL3")
+@link("SDL3", pkg: "sdl3")
 module bindings.sdl3
 //! Bindings to SDL3 — the shape `todo.md` calls for: a per-library module owning its
 //! `extern`s and exporting Lyra over them, Rust's `*-sys` pattern.
@@ -13,9 +13,9 @@ module bindings.sdl3
 //!
 //! **`@link("SDL3")` rides the declarations**, so a program that imports this module links
 //! against SDL3 by saying nothing — the flags are collected across every module in the
-//! compile. What `@link` cannot say is *where* the library is: it names a system library,
-//! and a search path is the build system's problem, so a Homebrew install still needs
-//! `LIBRARY_PATH=$(pkg-config --variable=libdir sdl3)` on the command line.
+//! compile. **`pkg: "sdl3"` says where the library is**: it names the pkg-config package,
+//! which lyrac asks for the directory, so a Homebrew install needs no `LIBRARY_PATH`.
+//! (That variable still applies on top, for a library pkg-config does not know.)
 //!
 //! ```
 //! import bindings.sdl3.{ init, quit, create_window, INIT_VIDEO }

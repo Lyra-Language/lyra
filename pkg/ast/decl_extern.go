@@ -27,6 +27,9 @@ type ExternDeclStmt struct {
 	// Links are the libraries `@link("m")` names, in source order. Collected here and
 	// unioned across the program by the driver; see todo.md, Foreign functions.
 	Links []string
+	// Packages are the pkg-config packages `@link(…, pkg: "sdl3")` names — where the
+	// libraries are, which `lyrac` asks pkg-config for.
+	Packages []string
 	// Symbol is the C symbol this extern binds, from `@symbol("SDL_PollEvent")`, or ""
 	// when the Lyra name is the symbol.
 	//

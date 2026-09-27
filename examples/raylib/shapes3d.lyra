@@ -1,7 +1,6 @@
 module main
 //! Every shape `bindings.raylib` draws in three dimensions, and every ray cast it can do.
 //!
-//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
 //!   lyrac run examples/raylib/shapes3d.lyra -- --check   # the geometry, exits 0 or 1
 //!   lyrac run examples/raylib/shapes3d.lyra              # the scene, in a window
 //!

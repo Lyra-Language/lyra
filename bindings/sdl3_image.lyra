@@ -1,4 +1,4 @@
-@link("SDL3_image")
+@link("SDL3_image", pkg: "sdl3-image")
 module bindings.sdl3_image
 //! SDL3_image: PNG (and JPEG, WebP, …) files straight to a texture.
 //!
@@ -7,8 +7,8 @@ module bindings.sdl3_image
 //! `bindings.sdl3` — the [Texture] it answers is that module's, released by its
 //! `destroy_texture`.
 //!
-//! `brew install sdl3_image` (Debian: `libsdl3-image-dev`); Homebrew puts it beside SDL3,
-//! so the same `LIBRARY_PATH` finds both.
+//! `brew install sdl3_image` (Debian: `libsdl3-image-dev`); `pkg: "sdl3-image"` has lyrac
+//! find it — Homebrew keeps it in its own Cellar directory, not beside SDL3.
 
 import bindings.sdl3.{ Renderer, Texture, adopt_texture }
 import std.ffi

@@ -672,8 +672,10 @@ annotations.
 
 - **[OPEN] Returning a C function pointer, or passing a closure to C.** Both need a way to
   call a bare code address; the `void *` context parameter covers captures meanwhile.
-- **[OPEN] `@link` search paths, static archives and macOS frameworks** are the build
-  system's problem for now; that is where a manifest would start to earn its keep.
+- **[PARTIAL] `@link` search paths, static archives and macOS frameworks.** Search paths
+  landed 09/26 as `@link(…, pkg: "…")`, asked of pkg-config. Still the build system's
+  problem: a library with no pkg-config package, static archives, and macOS frameworks —
+  where a manifest would start to earn its keep.
 - Non-LP64 targets are unsupported by stated assumption; `CLong`/`CULong` is the grep
   target for a port.
 

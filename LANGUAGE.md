@@ -714,3 +714,7 @@ On a `struct`: the value names a foreign resource released by `fn`. A binding le
 ### `@symbol("Name")`
 
 On an `extern`, names the C symbol verbatim (one per declaration); needed because Lyra identifiers are lowercase-leading (`SDL_PollEvent`). Without it the extern's name is the symbol. The backend dedupes `declare`s by symbol.
+
+### `@link("lib", pkg: "package")`
+
+Names a C library to link, as the linker spells it (`"SDL3"` → `-lSDL3`), on a `module` header (covering every `extern` below) or on one `extern`; unioned across the compile. The optional **`pkg:`** names the pkg-config package that says *where* the library is: `lyrac` asks `pkg-config --libs-only-L` and passes those directories first, so a library outside the linker's default search path (every Homebrew install on macOS) needs no `LIBRARY_PATH`. A package pkg-config does not know — or no pkg-config — costs only the directory, with a one-line note; `LIBRARY_PATH` still applies on top. `pkg:` is the language's one **named attribute argument**; any other name, a non-string package, or `pkg:` without a library is an error, and a named argument on any other attribute is refused rather than ignored.

@@ -1,11 +1,11 @@
-@link("raylib")
+@link("raylib", pkg: "raylib")
 module bindings.raylib
 //! The window, the frame, the clock, and the odds and ends that belong to neither.
 //!
 //! **`@link("raylib")` sits here, once, and covers every extern in the module** — a
-//! program that imports `bindings.raylib` links the library by saying nothing. What
-//! `@link` cannot say is *where*, since a search path is the build system's problem, so a
-//! Homebrew raylib needs `LIBRARY_PATH=$(pkg-config --variable=libdir raylib)`.
+//! program that imports `bindings.raylib` links the library by saying nothing — and its
+//! `pkg: "raylib"` says *where*, by naming the pkg-config package lyrac asks, so a Homebrew
+//! raylib needs no `LIBRARY_PATH`.
 //!
 //! Sizes here are `i64` rather than raylib's `int`, because a screen dimension is a number
 //! a Lyra program does arithmetic on and `i64` is what arithmetic defaults to. The

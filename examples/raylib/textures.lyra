@@ -2,7 +2,6 @@ module main
 //! Images and textures: every drawing call `bindings.raylib` has, and the image pipeline
 //! behind them.
 //!
-//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
 //!   lyrac run examples/raylib/textures.lyra -- --check   # the image half, exits 0 or 1
 //!   lyrac run examples/raylib/textures.lyra              # the gallery, in a window
 //!

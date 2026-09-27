@@ -8,7 +8,7 @@
 //
 // Run it with:
 //
-//     LIBRARY_PATH=$(pkg-config --variable=libdir sdl3) lyrac run examples/SDL3/basic.lyra
+//     lyrac run examples/SDL3/basic.lyra
 //
 // That is `build/lyrac` from `./build.sh`, which puts `std/` and `bindings/` beside the
 // binary — a module path resolves under that root, so both are found with no environment

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,5 +60,32 @@ let main = () -> u8 => {
 	}
 	if !strings.Contains(stdout, "-lm -lz -o") {
 		t.Errorf("the compile hint should name every linked library:\n%s", stdout)
+	}
+}
+
+// **A package's directories come first, once each** (09/26): `@link(…, pkg: "sdl3")` has
+// lyrac ask pkg-config where the library is, and pass `-L` ahead of the `-l`s. A package
+// pkg-config cannot answer for costs only the directory — the build still links against
+// the defaults and `LIBRARY_PATH`. pkg-config is stubbed so the test does not depend on
+// what this machine has installed.
+func TestLinkFlags_AddsThePackagesLibraryDirectories(t *testing.T) {
+	saved := pkgConfigLibDirs
+	defer func() { pkgConfigLibDirs = saved }()
+	pkgConfigLibDirs = func(pkg string) ([]string, error) {
+		switch pkg {
+		case "sdl3":
+			return []string{"/opt/brew/lib"}, nil
+		case "sdl3-image":
+			return []string{"/opt/brew/Cellar/sdl3_image/lib", "/opt/brew/lib"}, nil
+		}
+		return nil, errors.New("unknown package")
+	}
+	res := &driver.Result{
+		Links:    []string{"SDL3", "SDL3_image"},
+		Packages: []string{"missing", "sdl3", "sdl3-image"},
+	}
+	want := "-L/opt/brew/lib -L/opt/brew/Cellar/sdl3_image/lib -lm -lSDL3 -lSDL3_image"
+	if got := strings.Join(linkFlags(res), " "); got != want {
+		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
 }

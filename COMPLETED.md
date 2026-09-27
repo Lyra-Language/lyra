@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 09/26/26 — `@link(…, pkg: "…")`: libraries that link without `LIBRARY_PATH`
+
+Every SDL3 and raylib run needed `LIBRARY_PATH=$(pkg-config --variable=libdir …)`:
+`@link("SDL3")` said *which* library and never *where*, and clang on macOS does not search
+Homebrew's prefix. A binding now names its pkg-config package — `@link("SDL3", pkg:
+"sdl3")` — and `lyrac` asks `pkg-config --libs-only-L` for each, passing the directories
+ahead of the `-l`s and into every "compile with" hint.
+
+Chosen over asking pkg-config with guessed package names (which a package's own `--libs`
+could have verified) and over hard-coding Homebrew's prefix: the binding states its
+package, so nothing is inferred and it holds on Linux too. The names differ enough to
+need stating — `SDL3_image` is `sdl3-image`, `turbojpeg` is `libturbojpeg`.
+
+- **A grammar change**: attribute arguments gained a named form (`attribute_named_arg`,
+  its own `named` field), the language's first. `@link` reads `pkg:`; every other
+  attribute refuses a named argument — `@derive`, `@builtin` and `@must_release` read only
+  positional values and would have dropped one silently, which the mutation test showed:
+  without the refusal, `@must_release(close, pkg: "x")` compiled with no error at all.
+- **Missing pkg-config, or an unknown package, costs only the directory**, with a one-line
+  note — the build still links against the defaults and `LIBRARY_PATH`.
+- `docgen` renders `pkg:` on the last `@link` line (both are sets), pinned by the
+  signature round-trip test. The formatter needed nothing.
+- Verified with `LIBRARY_PATH` unset: all eight SDL3 examples and raylib's basic build and
+  run; the same extern without `pkg:` fails with `library 'SDL3' not found`.
+
 ### 09/26/26 — every key, the mouse, and a level editor to drive them
 
 `examples/SDL3/nes/editor.lyra` edits SLIME TRAIL's level: paint and erase with the mouse,

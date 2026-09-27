@@ -44,7 +44,7 @@ func CollectExternDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Ex
 		expressions.CheckModifierOrder(mods, ctx)
 		applyExternModifiers(mods, decl, ctx)
 	}
-	decl.Links, decl.Symbol = collectExternAttributes(node, ctx)
+	decl.Links, decl.Packages, decl.Symbol = collectExternAttributes(node, ctx)
 	return decl
 }
 
@@ -85,12 +85,12 @@ func applyExternModifiers(mods *sitter.Node, decl *ast.ExternDeclStmt, ctx *coll
 // Only `link` is recognized; any other attribute on an extern is reported rather than
 // ignored, on the standing rule that a surface which parses and is read by nobody costs
 // more than an absent one.
-func collectExternAttributes(node *sitter.Node, ctx *collector_ctx.Ctx) ([]string, string) {
+func collectExternAttributes(node *sitter.Node, ctx *collector_ctx.Ctx) ([]string, []string, string) {
 	attrs := cst.Field(node, "attributes")
 	if attrs == nil {
-		return nil, ""
+		return nil, nil, ""
 	}
-	var links []string
+	var links, packages []string
 	var symbol string
 	for i := uint(0); i < attrs.NamedChildCount(); i++ {
 		attr := attrs.NamedChild(i)
@@ -106,30 +106,21 @@ func collectExternAttributes(node *sitter.Node, ctx *collector_ctx.Ctx) ([]strin
 				attrName)
 			continue
 		}
+		if attrName == "link" {
+			libs, pkgs := readLinkArgs(attr, ctx)
+			links = append(links, libs...)
+			packages = append(packages, pkgs...)
+			continue
+		}
 		args := cst.Field(attr, "args")
 		if args == nil {
 			ctx.AddError(attr, diag.SeverityError,
 				"`@%s` needs a string argument: `@%s(\"…\")`", attrName, attrName)
 			continue
 		}
-		if attrName == "symbol" {
-			symbol = collectSymbolAttribute(args, attr, symbol, ctx)
-			continue
-		}
-		for j := uint(0); j < args.NamedChildCount(); j++ {
-			arg := args.NamedChild(j)
-			if arg.Kind() != "string_literal" {
-				ctx.AddError(arg, diag.SeverityError,
-					"`@link` takes a library name as a string: `@link(\"m\")`")
-				continue
-			}
-			// The name as the linker takes it, not a flag: `@link("m")` becomes `-lm`.
-			// Reading the literal's text rather than evaluating it is what keeps an
-			// attribute argument data — see the grammar note on why it is a plain string.
-			links = append(links, stringLiteralText(arg, ctx))
-		}
+		symbol = collectSymbolAttribute(args, attr, symbol, ctx)
 	}
-	return links, symbol
+	return links, packages, symbol
 }
 
 // collectSymbolAttribute reads `@symbol("SDL_PollEvent")`.

@@ -18,6 +18,8 @@ type ModuleDeclStmt struct {
 	// per-extern form stays legal and is what a lone `extern` in a module-less program
 	// uses; the driver takes the union of both.
 	Links []string
+	// Packages are the pkg-config packages the header's `@link(…, pkg: "…")` names.
+	Packages []string
 }
 
 func (m *ModuleDeclStmt) statementNode() {}

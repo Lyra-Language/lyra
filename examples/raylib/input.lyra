@@ -1,7 +1,6 @@
 module main
 //! Every input `bindings.raylib` can read: keyboard, mouse, touch and gamepad.
 //!
-//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
 //!   lyrac run examples/raylib/input.lyra -- --check   # the constants, exits 0 or 1
 //!   lyrac run examples/raylib/input.lyra              # the tester, in a window
 //!

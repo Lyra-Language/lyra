@@ -1,7 +1,6 @@
 module main
 //! Every mesh raylib can generate, drawn as models, with a picked one boxed.
 //!
-//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
 //!   lyrac run examples/raylib/models.lyra -- --check   # checks under a hidden window
 //!   lyrac run examples/raylib/models.lyra              # the scene
 //!

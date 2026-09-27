@@ -454,8 +454,29 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 // **Every "compile with" hint prints these too.** A hint naming different flags than the
 // build it stands in for is worse than no hint — it is a command that fails at link time
 // on a program that compiles.
+//
+// **Library directories come first**: one `-L` per directory pkg-config reports for a
+// package an `@link(…, pkg: "sdl3")` names, so a library outside the linker's default
+// search path — every Homebrew install on macOS — links with no `LIBRARY_PATH`. A package
+// pkg-config does not know, or no pkg-config at all, costs only the search path: the build
+// goes on with the defaults (and `LIBRARY_PATH`, which still applies) and says why once.
 func linkFlags(res *driver.Result) []string {
-	flags := []string{"-lm"}
+	flags := []string{}
+	seenDir := map[string]bool{}
+	for _, pkg := range res.Packages {
+		dirs, err := pkgConfigLibDirs(pkg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lyrac: note: %v; linking with the default library search path\n", err)
+			continue
+		}
+		for _, dir := range dirs {
+			if !seenDir[dir] {
+				seenDir[dir] = true
+				flags = append(flags, "-L"+dir)
+			}
+		}
+	}
+	flags = append(flags, "-lm")
 	for _, lib := range res.Links {
 		if lib == "m" {
 			continue // already passed, unconditionally
@@ -463,6 +484,26 @@ func linkFlags(res *driver.Result) []string {
 		flags = append(flags, "-l"+lib)
 	}
 	return flags
+}
+
+// pkgConfigLibDirs is the library directories pkg-config reports for a package — the
+// `-L` entries of `pkg-config --libs-only-L` — or why it could not say. A variable so the
+// link tests can answer for it without depending on what the machine has installed.
+var pkgConfigLibDirs = func(pkg string) ([]string, error) {
+	out, err := exec.Command("pkg-config", "--libs-only-L", pkg).Output()
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("pkg-config is not installed, so @link's pkg: %q cannot say where the library is", pkg)
+		}
+		return nil, fmt.Errorf("pkg-config does not know the package %q named by @link's pkg:", pkg)
+	}
+	var dirs []string
+	for _, field := range strings.Fields(string(out)) {
+		if dir, ok := strings.CutPrefix(field, "-L"); ok && dir != "" {
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs, nil
 }
 
 // exePath is where the executable goes: -o if given, else the source path with

@@ -483,10 +483,21 @@ func typeNames(ts []types.Type) string {
 // language puts them: the keyword marks the *claim*, and the claim follows it.
 func externSignature(s *ast.ExternDeclStmt) string {
 	var b strings.Builder
-	for _, lib := range s.Links {
+	// Packages ride the last `@link` line: libraries and packages are both sets, so which
+	// line names a package does not change what it means, and `@link(pkg: …)` alone is
+	// refused — a package needs a library beside it.
+	for i, lib := range s.Links {
 		b.WriteString("@link(\"")
 		b.WriteString(lib)
-		b.WriteString("\")\n")
+		b.WriteString("\"")
+		if i == len(s.Links)-1 {
+			for _, pkg := range s.Packages {
+				b.WriteString(", pkg: \"")
+				b.WriteString(pkg)
+				b.WriteString("\"")
+			}
+		}
+		b.WriteString(")\n")
 	}
 	if s.IsUnsafe {
 		b.WriteString("unsafe ")

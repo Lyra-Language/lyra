@@ -24,6 +24,7 @@ func collectDerives(attrList *sitter.Node, ctx *collector_ctx.Ctx) []string {
 		if argsNode == nil {
 			continue
 		}
+		refuseNamedArgs(argsNode, "derive", ctx)
 		for j := uint(0); j < argsNode.ChildCount(); j++ {
 			if argsNode.FieldNameForChild(uint32(j)) == "value" {
 				derives = append(derives, ctx.NodeText(argsNode.Child(j)))
@@ -55,6 +56,7 @@ func CollectBuiltin(attrList *sitter.Node, ctx *collector_ctx.Ctx) string {
 		if argsNode == nil {
 			continue
 		}
+		refuseNamedArgs(argsNode, "builtin", ctx)
 		for j := uint(0); j < argsNode.ChildCount(); j++ {
 			if argsNode.FieldNameForChild(uint32(j)) == "value" {
 				return ctx.NodeText(argsNode.Child(j))
@@ -101,6 +103,7 @@ func CollectMustRelease(attrList *sitter.Node, ctx *collector_ctx.Ctx) (string, 
 				"name of the function that releases this type, as in `@must_release(unload_sound)`")
 			return "", ast.Location{}
 		}
+		refuseNamedArgs(argsNode, "must_release", ctx)
 		var first *sitter.Node
 		for j := uint(0); j < argsNode.ChildCount(); j++ {
 			if argsNode.FieldNameForChild(uint32(j)) != "value" {
@@ -124,4 +127,16 @@ func CollectMustRelease(attrList *sitter.Node, ctx *collector_ctx.Ctx) (string, 
 		}
 	}
 	return "", ast.Location{}
+}
+
+// refuseNamedArgs reports each `name: value` argument on an attribute that reads only
+// positional ones — which would otherwise drop it unread. `@link`'s `pkg:` is the one named
+// argument the language has; on any other attribute a named argument is a mistake to say.
+func refuseNamedArgs(argsNode *sitter.Node, attr string, ctx *collector_ctx.Ctx) {
+	for j := uint(0); j < argsNode.ChildCount(); j++ {
+		if argsNode.FieldNameForChild(uint32(j)) == "named" {
+			ctx.AddError(argsNode.Child(j), diag.SeverityError,
+				"`@%s` takes no named arguments — the only one in the language is `@link`'s `pkg:`", attr)
+		}
+	}
 }

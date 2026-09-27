@@ -1,4 +1,4 @@
-@link("turbojpeg")
+@link("turbojpeg", pkg: "libturbojpeg")
 module bindings.jpeg
 //! JPEG decoding, over libjpeg-turbo's TurboJPEG API.
 //!
@@ -15,8 +15,8 @@ module bindings.jpeg
 //! release and no C allocation to track.
 //!
 //! Link with `-lturbojpeg`; on macOS that is `brew install jpeg-turbo`, on Debian
-//! `libturbojpeg0-dev`. The build needs its directory on `LIBRARY_PATH`:
-//! `pkg-config --variable=libdir libturbojpeg`.
+//! `libturbojpeg0-dev`. `pkg: "libturbojpeg"` on the header has lyrac ask pkg-config where
+//! it is, so no `LIBRARY_PATH` is needed.
 
 import std.ffi
 

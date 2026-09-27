@@ -5,7 +5,7 @@
 //
 // Run it with:
 //
-//     LIBRARY_PATH=$(pkg-config --variable=libdir raylib) lyrac run examples/raylib/breakout.lyra
+//     lyrac run examples/raylib/breakout.lyra
 //
 // **No `unsafe` and no `extern`** — those are in `bindings/raylib/`. What the game is made
 // of is ordinary Lyra: a `[]Brick` it walks and mutates, a `data GameState` a `match`

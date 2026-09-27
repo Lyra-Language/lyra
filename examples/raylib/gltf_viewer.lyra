@@ -1,7 +1,6 @@
 module main
 //! A model viewer: open any glTF, OBJ, IQM, VOX or M3D file, turn it, and play its animations.
 //!
-//!   export LIBRARY_PATH=$(pkg-config --variable=libdir raylib)
 //!   lyrac run examples/raylib/gltf_viewer.lyra -- path/to/model.glb
 //!   lyrac run examples/raylib/gltf_viewer.lyra                  # then drop a file on it
 //!   lyrac run examples/raylib/gltf_viewer.lyra -- --check path/to/model.glb
