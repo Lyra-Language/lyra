@@ -460,9 +460,18 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 // search path — every Homebrew install on macOS — links with no `LIBRARY_PATH`. A package
 // pkg-config does not know, or no pkg-config at all, costs only the search path: the build
 // goes on with the defaults (and `LIBRARY_PATH`, which still applies) and says why once.
+//
+// **The install's own `lib/` comes first of all** (`installLibDir`): the root holding
+// `std/` and `bindings/` also holds the archives a binding's C half builds into — `build.sh`
+// puts `liblyra-menubar.a` there — so a binding with a shim links with no `LIBRARY_PATH`,
+// as one over a packaged library does through `pkg:`.
 func linkFlags(res *driver.Result) []string {
 	flags := []string{}
 	seenDir := map[string]bool{}
+	if dir := installLibDir(); dir != "" {
+		seenDir[dir] = true
+		flags = append(flags, "-L"+dir)
+	}
 	for _, pkg := range res.Packages {
 		dirs, err := pkgConfigLibDirs(pkg)
 		if err != nil {
@@ -484,6 +493,20 @@ func linkFlags(res *driver.Result) []string {
 		flags = append(flags, "-l"+lib)
 	}
 	return flags
+}
+
+// installLibDir is `<root>/lib` when the standard library's root has one, else "". A
+// variable so the link tests do not depend on where the test binary runs from.
+var installLibDir = func() string {
+	root := modules.StdRoot()
+	if root == "" {
+		return ""
+	}
+	dir := filepath.Join(root, "lib")
+	if info, err := os.Stat(dir); err == nil && info.IsDir() {
+		return dir
+	}
+	return ""
 }
 
 // pkgConfigLibDirs is the library directories pkg-config reports for a package — the

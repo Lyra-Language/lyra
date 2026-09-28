@@ -15,6 +15,12 @@
 // | Ctrl/Cmd+Z, Ctrl/Cmd+S      | undo a stroke, save                       |
 // | G, F1                       | grid, help                                |
 //
+// **On macOS it has a menu bar** (`bindings.menubar`): File, Edit, Brush, View, Window and
+// Help, with ⌘ shortcuts, the brush and grid ticked, and Undo greyed with nothing to undo.
+// With the menu installed, ⌘ keys belong to it — SDL reports ⌘S as a key press *and*
+// AppKit gives it to the menu, so answering both would save twice — and Ctrl still works
+// as before. Elsewhere there is no menu and ⌘ is Ctrl's twin.
+//
 // **The mouse reports window pixels; the level is drawn on a 256×240 screen** scaled to
 // fit. `window_to_render` undoes the scale and letterboxing, so a click lands on the tile
 // under the pointer at any window size. Over the level the system cursor is hidden and the
@@ -104,6 +110,17 @@ import bindings.sdl3.{
   SCANCODES,
   KEY_CODES,
 }
+import bindings.menubar.{
+  menu,
+  item,
+  separator,
+  window_menu,
+  install,
+  poll_menu,
+  set_checked,
+  set_enabled,
+  COMMAND,
+}
 import sheet.{ load_sheet }
 import std.io.{ write_file }
 import std.env.{ lookup }
@@ -188,6 +205,11 @@ const BRUSHES: []rune = ['=', '%', '#', 'o', 'c', 'b', 's', 'r', '|', 'F']
 const BRUSH_NAMES: []string = [
   "GRASS", "DIRT", "BRICK", "COIN", "CLOUD", "BUSH", "SLIME", "RED SLIME", "POLE", "FLAG",
 ]
+/// The same, as the Brush menu shows them — the bar's are in the 8×8 font, which has no
+/// lower case.
+const BRUSH_TITLES: []string = [
+  "Grass", "Dirt", "Brick", "Coin", "Cloud", "Bush", "Slime", "Red Slime", "Pole", "Flag",
+]
 const EMPTY: rune = '.'
 
 /// The bar across the top: two lines of text beside the brush. The level shows beneath it,
@@ -226,6 +248,8 @@ struct Editor {
   status_left: i64,
   last_key: string,
   steps: i64,
+  /// Whether a native menu bar is installed, which then owns the ⌘ keys.
+  native_menu: bool,
 }
 
 let new_editor = pure (rows: []string, path: string, opened: string) -> Editor => {
@@ -250,6 +274,7 @@ let new_editor = pure (rows: []string, path: string, opened: string) -> Editor =
     status_left: STATUS_STEPS,
     last_key: "",
     steps: 0,
+    native_menu: false,
   }
 }
 
@@ -357,11 +382,13 @@ let save = (ed: mut Editor) -> void => {
 // Input
 // ---------------------------------------------------------------------------------------
 
-/// A key press: shortcuts first (a modifier held), then the plain keys.
+/// A key press: shortcuts first (a modifier held), then the plain keys. A ⌘ key is the
+/// menu's when there is one, which answers it through [on_menu].
 let on_key = (ed: mut Editor, key: u32, mods: u16) -> void => {
   let command = mods & (MOD_CTRL | MOD_GUI) != 0
   let shift = mods & MOD_SHIFT != 0
   ed.last_key = (if command { "CMD/CTRL+" } else { "" }) ++ key_name(key)
+  if ed.native_menu && mods & MOD_GUI != 0 { return }
   if command && key == KEY_S {
     save(ed)
   } else if command && key == KEY_Z {
@@ -390,6 +417,46 @@ let on_key = (ed: mut Editor, key: u32, mods: u16) -> void => {
     ed.help = !ed.help
   }
 }
+
+/// Menu item tags, answered by [on_menu]. A brush is `MENU_BRUSH` plus its index.
+const MENU_SAVE: i32 = 1
+const MENU_UNDO: i32 = 2
+const MENU_GRID: i32 = 3
+const MENU_HELP: i32 = 4
+const MENU_START: i32 = 5
+const MENU_END: i32 = 6
+const MENU_NEXT_BRUSH: i32 = 7
+const MENU_PREVIOUS_BRUSH: i32 = 8
+const MENU_BRUSH: i32 = 100
+
+/// A menu item chosen: the same operations the keys reach.
+let on_menu = (ed: mut Editor, tag: i32) -> void => {
+  let brush = i64(tag) - i64(MENU_BRUSH)
+  if tag == MENU_SAVE {
+    save(ed)
+  } else if tag == MENU_UNDO {
+    undo(ed)
+  } else if tag == MENU_GRID {
+    ed.grid = !ed.grid
+  } else if tag == MENU_HELP {
+    ed.help = !ed.help
+  } else if tag == MENU_START {
+    ed.camera = 0.0
+  } else if tag == MENU_END {
+    ed.camera = max_camera(ed)
+  } else if tag == MENU_NEXT_BRUSH {
+    cycle_brush(ed, 1)
+  } else if tag == MENU_PREVIOUS_BRUSH {
+    cycle_brush(ed, -1)
+  } else if brush >= 0 && brush < BRUSHES.len() {
+    ed.brush = brush
+  }
+}
+
+/// What the menu shows beside its items: which brush, whether the grid and help are on,
+/// and whether there is anything to undo.
+let menu_marks = pure (ed: Editor) -> (i64, bool, bool, bool) =>
+  (ed.brush, ed.grid, ed.help, ed.history.len() > 0)
 
 /// A button going down starts a stroke; the button coming up (or being let go of anywhere)
 /// ends it. Painting happens in [track_mouse], which follows the held button.
@@ -456,6 +523,9 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
   var frame: i64 = 0
   var status: u8 = 0
   var running = true
+  ed.native_menu = build_menu()
+  // Nothing shown yet, so the first frame sets every mark.
+  var marked = (-1, false, false, false)
 
   for running {
     var draining = true
@@ -474,6 +544,14 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
             _ => {},
           }
         },
+      }
+    }
+    // The menu's choices were queued while the events above were pumped.
+    var choosing = true
+    for choosing {
+      match poll_menu() {
+        None => { choosing = false },
+        Some(tag) => on_menu(ed, tag),
       }
     }
 
@@ -524,6 +602,12 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
       shown = wanted
     }
 
+    let marks = menu_marks(ed)
+    if ed.native_menu && marks != marked {
+      show_marks(marks)
+      marked = marks
+    }
+
     draw(screen.renderer, sheet, ed, mx, my)
     match end_frame(screen, frame) {
       Stop(code) => {
@@ -538,6 +622,40 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
   release(arrow)
   release(mover)
   status
+}
+
+/// The menu bar, where there is one: answers whether it was installed.
+let build_menu = () -> bool => {
+  menu("File")
+  item("Save", "s", COMMAND, MENU_SAVE)
+  menu("Edit")
+  item("Undo", "z", COMMAND, MENU_UNDO)
+  menu("Brush")
+  for i, title in BRUSH_TITLES {
+    // ⌘1 to ⌘9, then ⌘0: the brush keys, as the bar numbers them.
+    item(title, "${(i + 1) % 10}", COMMAND, MENU_BRUSH + i32(i))
+  }
+  separator()
+  item("Next Brush", "]", COMMAND, MENU_NEXT_BRUSH)
+  item("Previous Brush", "[", COMMAND, MENU_PREVIOUS_BRUSH)
+  menu("View")
+  item("Show Grid", "'", COMMAND, MENU_GRID)
+  separator()
+  item("Go to Start", "", 0, MENU_START)
+  item("Go to End", "", 0, MENU_END)
+  window_menu()
+  menu("Help")
+  item("Editor Help", "?", COMMAND, MENU_HELP)
+  install("SLIME TRAIL Editor")
+}
+
+/// Tick the brush, grid and help items, and grey Undo with nothing to undo.
+let show_marks = (marks: (i64, bool, bool, bool)) -> void => {
+  let (brush, grid, help, can_undo) = marks
+  for i in 0..<BRUSHES.len() { set_checked(MENU_BRUSH + i32(i), i == brush) }
+  set_checked(MENU_GRID, grid)
+  set_checked(MENU_HELP, help)
+  set_enabled(MENU_UNDO, can_undo)
 }
 
 /// The three states of the system cursor.
@@ -832,6 +950,52 @@ let run_checks = () -> u8 => {
   failures += check_that(
     "End jumps to the far end",
     near(keyed.camera, max_camera(keyed))
+  )
+
+  // The menu reaches the same operations, and owns ⌘ when it is there.
+  var menued = new_editor(COURSE, "unused.txt", "")
+  on_menu(menued, MENU_BRUSH + 7)
+  let picked = menued.brush == 7
+  on_menu(menued, MENU_NEXT_BRUSH)
+  on_menu(menued, MENU_NEXT_BRUSH)
+  on_menu(menued, MENU_NEXT_BRUSH)
+  failures += check_that(
+    "a Brush item picks it, and Next wraps",
+    picked && menued.brush == 0
+  )
+  on_menu(menued, MENU_BRUSH + 10)
+  on_menu(menued, MENU_BRUSH - 1)
+  on_menu(menued, 0)
+  failures += check_that("a tag no item has changes nothing", menued.brush == 0)
+  on_menu(menued, MENU_GRID)
+  on_menu(menued, MENU_END)
+  failures += check_that(
+    "Show Grid and Go to End",
+    menued.grid && near(menued.camera, max_camera(menued))
+  )
+  failures += check_that(
+    "the marks: brush, grid on, help off, nothing to undo",
+    menu_marks(menued) == (0, true, false, false)
+  )
+  begin_stroke(menued, PAINTING)
+  place(menued, 20, 5, '#')
+  let undoable = menu_marks(menued) == (0, true, false, true)
+  on_menu(menued, MENU_UNDO)
+  failures += check_that(
+    "Undo is marked available after a stroke, and undoes it",
+    undoable && rows_of(menued) == COURSE
+  )
+  menued.native_menu = true
+  on_key(menued, KEY_3, MOD_LGUI)
+  let command_left_alone = menued.brush == 0
+  on_key(menued, KEY_3, 0)
+  let plain_still_works = menued.brush == 2
+  begin_stroke(menued, PAINTING)
+  place(menued, 20, 5, '#')
+  on_key(menued, KEY_Z, MOD_LCTRL)
+  failures += check_that(
+    "with a menu, ⌘ keys are left to it and plain and Ctrl keys still work",
+    command_left_alone && plain_still_works && rows_of(menued) == COURSE
   )
 
   // Saving writes what the game reads: through the file, back with `read_level`, equal.

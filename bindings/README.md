@@ -77,7 +77,8 @@ that must clear the level without losing a life**; `--autoplay` lets it play in 
 `tilemap` and `sound` are built on the same modules as the game; `--level <file>` plays a
 saved level. **`editor.lyra`** edits one — mouse painting and erasing, wheel and key
 brushes, keyboard and middle-drag scrolling, Ctrl/Cmd+Z and +S, its own tile cursor over
-the level — and drove the keyboard and mouse bindings; `--check` tests the editing and the
+the level, and on macOS a native menu bar (`bindings/menubar/`) — and drove the keyboard
+and mouse bindings; `--check` tests the editing and the
 generated key table. Sibling modules:
 - `console.lyra` — `open_screen`/`close_screen` (init video+gamepad, window, 256×240
   integer-scaled renderer, vsync, nearest sampling), `end_frame` (the `--shot` logic, then
@@ -131,6 +132,26 @@ Needs struct-by-value (`pkg/abi`); nothing in the binding mentions registers.
 | `models.lyra` | **Everything touching the GPU is gated on `window_ready()`** — `GenMeshCube` with no window segfaults. A hidden window (`FLAG_WINDOW_HIDDEN`) gives a GL context for headless checks. A model owns its meshes; meshes/materials are reached by bounds-checked index, never handed out as values. `Animations` is one handle for the whole array. `draw_mesh_instanced` falls back to per-transform `draw_mesh` when the shader lacks an instance-transform attribute (raylib otherwise draws one mesh at the origin); `material_supports_instancing` says which. **`model_valid` answers false for CPU-skinned models** (bone data has no GPU buffer), so `load_model` tests "has meshes" instead. `unload_model` also frees the model's distinct textures (raylib's does not), never the shared 1x1 default; a texture set on a model is taken `own`. A glTF may carry no normals — a null `normals` pointer is the only reliable signal. `LoadMaterials` unbound: its array goes back to `MemFree(^u8)` and Lyra has no pointer reinterpretation. |
 | `raymath.lyra` | Rotations, scale, `matrix_multiply` (angles as `Degrees`); `matrix_identity`/`matrix_translation` are Lyra. `matrix_multiply(first, second)` applies `first` then `second`; translation is in `m12`/`m13`/`m14`. |
 | `shaders.lyra` | raylib's default shader is unlit. A failed compile is `None` (raylib substitutes its default). `bind_shader_map` gives a sampler a slot (`texture0..2` by name, the rest via `locs[SHADER_LOC_MAP_ALBEDO + map]`, hence `Shader.locs: ^mut i32`). Uniform values are unbound (`const void *`); pass per-material values as a texture. `set_backface_culling`/`set_depth_write`. `Shader` is `@must_release(unload_shader)`; `unload_model` does not free it. |
+
+## `bindings/menubar/`
+
+A native menu bar — macOS's, for a window SDL owns. **The first binding with a C half**:
+choosing an item calls a method on a target object, and Lyra cannot hand C a function, so
+`menubar.m` holds the target, which queues the item's tag. Build with `menu(title)`,
+`item(title, key, mods, tag)` (`COMMAND`/`SHIFT`/`OPTION`/`CONTROL`), `separator()`,
+`window_menu()`, then `install(app_name)`, which adds the application menu (Hide, Quit —
+Quit arrives as SDL's quit event) and answers whether there is a native bar. Each frame,
+drain `poll_menu() -> Maybe<i32>` after `poll_event`; `set_checked`/`set_enabled` by tag.
+- **Built by `build.sh`** into `build/lib/liblyra-menubar.a`: `menubar.m` on macOS,
+  `menubar_stub.c` elsewhere (every call a no-op, `install` false), so a program using it
+  links everywhere. `lyrac` searches `<root>/lib`; `go run ./cmd/lyrac` needs
+  `LIBRARY_PATH=build/lib`.
+- **No framework flag**: `-fmodules` makes `@import AppKit` record `-framework AppKit` and
+  `-lobjc` in the object file. Keep it — `@link` cannot name a framework.
+- **A key equivalent arrives twice**: SDL reports ⌘S as a key press, then AppKit hands it
+  to the menu. A program with a native menu leaves ⌘ keys to it.
+- Tags are ≥ 0 (`poll_menu`'s C side answers -1 for none) and unique (items are found by
+  tag). `install` replaces SDL's default bar, so call it after `init`.
 
 ## `bindings/sdl3_image.lyra`
 

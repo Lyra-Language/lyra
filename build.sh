@@ -38,6 +38,21 @@ for dir in std bindings; do
   ln -s "../$dir" "$OUT/$dir"
 done
 
+# **The C half of `bindings.menubar`**, into `build/lib/`, which lyrac searches: the real
+# menu bar (`menubar.m`, AppKit autolinked through `-fmodules`) on macOS and a do-nothing
+# stub elsewhere, so a program using the binding links on every platform. It needs only
+# the C compiler lyrac already does.
+readonly MENUBAR="$ROOT/bindings/menubar"
+mkdir -p "$OUT/lib"
+if [ "$(uname -s)" = Darwin ]; then
+  "${LYRA_CC:-clang}" -O2 -fobjc-arc -fmodules -c "$MENUBAR/menubar.m" -o "$OUT/lib/menubar.o"
+else
+  "${LYRA_CC:-clang}" -O2 -std=c11 -c "$MENUBAR/menubar_stub.c" -o "$OUT/lib/menubar.o"
+fi
+rm -f "$OUT/lib/liblyra-menubar.a"
+ar rcs "$OUT/lib/liblyra-menubar.a" "$OUT/lib/menubar.o"
+rm -f "$OUT/lib/menubar.o"
+
 # **lyrafmt is built when it can be**, and skipped with a note when it cannot. The
 # formatter is a Lyra program that links the tree-sitter runtime and the grammar
 # (examples/lyrafmt/libs.sh), so it needs a C compiler, `libtree-sitter` and the sibling
@@ -58,4 +73,4 @@ if [ -f "$ROOT/../tree-sitter-lyra/src/parser.c" ] && pkg-config --exists tree-s
   fi
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note"
+printf 'built %s/{lyrac,lyra-lsp} %s and lib/liblyra-menubar.a, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note"

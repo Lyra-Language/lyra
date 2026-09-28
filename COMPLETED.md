@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 09/27/26 — `bindings.menubar`: a native macOS menu bar, and the level editor's
+
+The first binding with a C half of its own. Building an `NSMenu` is message sending an
+`extern` over `objc_msgSend` could do, but **choosing an item calls a method on a target
+object, and Lyra cannot hand C a function** — so the target lives in a small
+Objective-C shim (`bindings/menubar/menubar.m`) whose method only queues the item's tag,
+and the program drains `poll_menu()` after `poll_event()`, as it does events. SDL's pump
+runs AppKit's, so choices arrive on the main thread during the program's own poll, and
+nothing ever calls back into Lyra.
+
+- **`@link` cannot name a framework, and does not need to**: the shim is compiled with
+  `-fmodules`, so `@import AppKit` records `-framework AppKit` and `-lobjc` in the object
+  file, and ld64 honours that from an archive member. `@link("lyra-menubar")` is the whole
+  link line.
+- **`build.sh` builds `build/lib/liblyra-menubar.a`** — the shim on macOS, a do-nothing
+  stub (`install` answers false) elsewhere — so the editor links on every platform rather
+  than needing a per-platform import Lyra has no way to write. **`lyrac` now searches
+  `<root>/lib`** (`installLibDir`), the install's own library directory beside `std/` and
+  `bindings/`, so the editor still runs with a bare `build/lyrac run`.
+- **A key equivalent reaches the program twice**: SDL's `sendEvent:` override reports ⌘S as
+  a key press and then passes the event on to the menu. The editor leaves ⌘ keys to the
+  menu when it has one (`native_menu`); Ctrl keeps working, and off macOS ⌘ is still Ctrl's
+  twin.
+- Checked by a scratch harness against the real shim (SDL's default bar replaced; titles,
+  key equivalents, ticks and greying; a click and a synthesised ⌘S each queue their tag)
+  and by `editor.lyra --check`, which drives `on_menu` and the ⌘ hand-off.
+
 ### 09/26/26 — `@link(…, pkg: "…")`: libraries that link without `LIBRARY_PATH`
 
 Every SDL3 and raylib run needed `LIBRARY_PATH=$(pkg-config --variable=libdir …)`:

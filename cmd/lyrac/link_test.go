@@ -89,3 +89,20 @@ func TestLinkFlags_AddsThePackagesLibraryDirectories(t *testing.T) {
 		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
 }
+
+// **The install's `lib/` is searched first**, so an archive `build.sh` made for a binding's
+// C half (`liblyra-menubar.a`) links with no `LIBRARY_PATH`, and a package pkg-config
+// reports at the same directory does not repeat it.
+func TestLinkFlags_SearchesTheInstallsLibFirst(t *testing.T) {
+	savedLib, savedPkg := installLibDir, pkgConfigLibDirs
+	defer func() { installLibDir, pkgConfigLibDirs = savedLib, savedPkg }()
+	installLibDir = func() string { return "/opt/lyra/lib" }
+	pkgConfigLibDirs = func(pkg string) ([]string, error) {
+		return []string{"/opt/brew/lib", "/opt/lyra/lib"}, nil
+	}
+	res := &driver.Result{Links: []string{"lyra-menubar", "SDL3"}, Packages: []string{"sdl3"}}
+	want := "-L/opt/lyra/lib -L/opt/brew/lib -lm -llyra-menubar -lSDL3"
+	if got := strings.Join(linkFlags(res), " "); got != want {
+		t.Errorf("linkFlags = %q; want %q", got, want)
+	}
+}

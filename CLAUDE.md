@@ -439,7 +439,7 @@ such changes on a user module.
 | `pkg/printer` | Reflection AST printer for golden tests | below |
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
-| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter) | [README](bindings/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter, and `menubar` with its own Objective-C shim) | [README](bindings/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
 semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
@@ -518,6 +518,9 @@ of Markdown.
   differs between Linux and macOS).
 - `build/` is gitignored as a directory. Point VS Code's `lyra.languageServerPath` at
   `build/lyra-lsp`.
+- **`build.sh` builds `build/lib/liblyra-menubar.a`**, `bindings.menubar`'s C half (the
+  AppKit shim on macOS, a do-nothing stub elsewhere). `lyrac` passes `-L<root>/lib`
+  (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH`.
 - **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling
   `tree-sitter-lyra` checkout are present, and skips it with a note otherwise. It lands
   beside `lyra-lsp`, which is where the server looks for it (`cmd/lyra-lsp/formatting.go`)

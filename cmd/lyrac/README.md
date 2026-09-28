@@ -26,7 +26,9 @@ lyrac build --cc /path/to/clang …            # else $LYRA_CC, else clang on PA
 ```
 
 - Links with `clang <ir> -lm -o <exe>` plus `-l` flags from `@link` (`linkFlags`); `-lm` is
-  unconditional, matching the backend tests.
+  unconditional, matching the backend tests. Library directories come first: the install's
+  `<root>/lib` when it exists (`installLibDir` — where `build.sh` puts a binding's shim
+  archive), then pkg-config's for each `pkg:`.
 - **`-o` and the `.ll`** (`llPath`): the `.ll` goes beside the executable `-o` names; under
   `--emit-llvm`, `-o` names the `.ll` itself.
 - **Default `-O2`**: no debug info is emitted at any level, so `-O0` buys nothing. The level
