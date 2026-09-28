@@ -187,23 +187,101 @@ let main = () -> u8 => {
 	}
 }
 
-// A `mut` on a copied scalar stays by value: the modifier is inert there
-// (lyra-W010 says so via the shared types.IsCopiedScalar predicate), there is no
-// interior to write through, and passing by reference would change the ABI and
-// reject a literal argument for no observable gain.
-func TestEmit_MutScalarParameter_StaysByValue(t *testing.T) {
+// A `mut` scalar is by reference too (09/27, types.IsByRefParam): a pointer
+// parameter, while a `ref` scalar — inert, lyra-W010 — stays by value.
+func TestEmit_MutScalarParameter_IsPointer(t *testing.T) {
 	t.Parallel()
-	out, err := emitSource(t, `let twice = (n: mut i64) -> i64 => n + n
-let main = () -> u8 => u8(twice(21))`)
+	out, err := emitSource(t, `let bump = (n: mut i64) -> void => { n += 1 }
+let peek = (n: ref i64) -> i64 => n
+let main = () -> u8 => {
+  var n = 41
+  bump(n)
+  u8(peek(n))
+}`)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	if !strings.Contains(out, "define i64 @lyra.twice(i64 ") {
-		t.Errorf("expected @twice to take a by-value i64, got:\n%s", out)
+	if !strings.Contains(out, "define void @lyra.bump(i64* ") {
+		t.Errorf("expected @bump to take an i64* parameter, got:\n%s", out)
 	}
-	if got := buildAndRun(t, `let twice = (n: mut i64) -> i64 => n + n
-let main = () -> u8 => u8(twice(21))`); got != 42 {
-		t.Errorf("exited %d; want 42", got)
+	if !strings.Contains(out, "define i64 @lyra.peek(i64 ") {
+		t.Errorf("expected @peek to take a by-value i64, got:\n%s", out)
+	}
+}
+
+// Every way a callee writes a `mut` scalar reaches the caller — reassigning it whole
+// (which a by-value `mut` silently dropped), compound assignment, forwarding it to
+// another `mut`, and `&mut` of the parameter handed to a pointer-taking function,
+// which is how an in-out C pointer (ImGui's `bool *`) is wrapped.
+func TestExec_MutScalarParameter_WritesReachCaller(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"whole reassignment", `let set = (n: mut i64) -> void => { n = 42 }
+let main = () -> u8 => {
+  var n = 1
+  set(n)
+  u8(n)
+}`, 42},
+		{"compound on u8", `let bump = (k: mut u8) -> void => { k += 7 }
+let main = () -> u8 => {
+  var k: u8 = 3
+  bump(k)
+  k
+}`, 10},
+		{"bool", `let flip = (b: mut bool) -> void => { b = !b }
+let main = () -> u8 => {
+  var open = true
+  flip(open)
+  if open { 1 } else { 2 }
+}`, 2},
+		{"f32", `let half = (x: mut f32) -> void => { x = x / 2.0 }
+let main = () -> u8 => {
+  var x: f32 = 84.0
+  half(x)
+  u8(x.round())
+}`, 42},
+		{"forwarded", `let bump = (n: mut i64) -> void => { n += 1 }
+let twice = (n: mut i64) -> void => {
+  bump(n)
+  bump(n)
+}
+let main = () -> u8 => {
+  var n = 40
+  twice(n)
+  u8(n)
+}`, 42},
+		{"field and element", `struct Pt { x: i64 }
+let bump = (n: mut i64) -> void => { n += 1 }
+let main = () -> u8 => {
+  var p = Pt { x: 20 }
+  var xs = [0, 20, 0]
+  bump(p.x)
+  bump(xs[1])
+  u8(p.x + xs[1])
+}`, 42},
+		{"address of the parameter", `let raw_set = unsafe (p: ^mut i64) -> void => { p^ = 42 }
+let set = (n: mut i64) -> void => {
+  let p = unsafe { &mut n }
+  unsafe { raw_set(p) }
+}
+let main = () -> u8 => {
+  var n = 1
+  set(n)
+  u8(n)
+}`, 42},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, tc.src); got != tc.want {
+				t.Errorf("exited %d; want %d", got, tc.want)
+			}
+		})
 	}
 }
 

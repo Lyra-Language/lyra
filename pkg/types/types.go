@@ -39,17 +39,37 @@ func IsString(t Type) bool {
 // PrimitiveType in the grammar but a managed fat pointer — as is everything
 // non-primitive (aggregates, arrays, generic parameters).
 //
-// This is the "a borrow/ownership modifier does nothing here" predicate. Two
-// places must agree on it or they drift into a silent bug, so both read it here:
-// the `lyra-W010` inert-modifier warning (checker/inert_borrow_modifier.go) and
-// the backend's by-reference `mut` parameter lowering (backend/llvm, paramIsByRef)
-// — a `mut` that W010 calls inert must not be lowered as a reference, and one it
-// stays silent about must be.
+// On a parameter it is where `own`/`ref` stop meaning anything (`lyra-W010`); `mut`
+// still does, because it writes through to the caller (IsByRefParam).
 func IsCopiedScalar(t Type) bool {
 	if _, ok := t.(PrimitiveType); !ok {
 		return false
 	}
 	return !IsString(t)
+}
+
+// IsByRefParam reports whether a parameter with modifier mod and type t is passed as
+// a **pointer to the caller's storage**: every `mut`, and a `ref` on anything but a
+// copied scalar. `own` and a bare parameter are by value.
+//
+// `mut` is a mutable borrow on every type, scalars included — `checkbox(label, open)`
+// flips the caller's `open`, which is what an in-out C pointer (`bool *`) wraps as.
+// `ref` on a scalar is a read-only borrow of a value with no interior, so passing the
+// value is indistinguishable and cheaper; that is the one place a modifier is inert.
+//
+// **Every reader of the convention asks here** — the backend's parameter and argument
+// lowering (paramIsByRef), the inert-modifier warning (checker, `lyra-W010`), the
+// `mut`-argument lvalue check and the exclusivity check (typechecker) — because a
+// callee compiled to expect a pointer and a caller that passes a value link cleanly
+// and read garbage.
+func IsByRefParam(mod TypeModifier, t Type) bool {
+	switch mod {
+	case Mut:
+		return true
+	case Ref:
+		return !IsCopiedScalar(t)
+	}
+	return false
 }
 
 func IsStaticArray(t Type) bool {

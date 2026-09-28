@@ -392,8 +392,8 @@ bindings are borrows and immutable. Optional member assignment (`p?.x = v`) is a
 `lowerParameter` emits a pointer; `defineFunction` binds the incoming pointer directly as
 the slot (no copy); the call site passes `argumentAddress`. A `ref` argument may be a
 temporary, which `argumentAddress` spills to an entry-block alloca. `own` stays by value. A
-`mut`/`ref` on a **copied scalar** stays by value (`types.IsCopiedScalar`, shared with
-`lyra-W010`). The ownership pass treats both as borrows — the callee releases nothing. The
+`ref` on a **copied scalar** stays by value; `mut` on one is by reference like any other
+(`types.IsByRefParam`, shared with `lyra-W010` and the typechecker). The ownership pass treats both as borrows — the callee releases nothing. The
 typechecker requires a `mut` argument to be a mutable lvalue (`checkMutArgument`) and
 exclusive within the call (`checkExclusiveMutableBorrow`).
 

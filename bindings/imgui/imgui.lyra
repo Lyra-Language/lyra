@@ -1,0 +1,83 @@
+@link("lyra-imgui")
+@link("SDL3", pkg: "sdl3")
+module bindings.imgui
+//! Bindings to Dear ImGui (docking branch) — an immediate-mode UI: each frame the
+//! program describes its whole interface again, and a widget call answers what the user
+//! did to it. No widget objects, no callbacks; the state is the program's own.
+//!
+//! ```
+//! import bindings.imgui.{ create_host, begin_frame, end_frame, destroy_host,
+//!   HOST_DOCKING, HOST_VIEWPORTS, begin, end, button, checkbox }
+//!
+//! let main = () -> void => {
+//!   let Some(host) = create_host("Tool", 1280, 800, HOST_DOCKING | HOST_VIEWPORTS) else {
+//!     return
+//!   }
+//!   var loud = false
+//!   for begin_frame(host) {
+//!     if begin("Settings") {
+//!       checkbox("Loud", loud)
+//!       if button("Save") { save(loud) }
+//!     }
+//!     end()
+//!     end_frame(host, 0.1, 0.1, 0.12)
+//!   }
+//!   destroy_host(host)
+//! }
+//! ```
+//!
+//! **Two halves.** The *host* (this file, over `host.cpp`) owns the window, the SDL_GPU
+//! device and the frame loop — four calls. The widgets are generated from dear_bindings'
+//! `dcimgui.json` (`gen/`), so the whole API is here without being written by hand.
+//!
+//! **The C half is `lib/liblyra-imgui.a`**, which `./build.sh` builds from a pinned,
+//! downloaded ImGui (`build.sh` in this directory). It needs no C++ runtime, so the two
+//! `@link`s above are the whole link line.
+//!
+//! **Multi-viewports**: with [HOST_VIEWPORTS], a window dragged outside the main one
+//! becomes an OS window of its own — onto another monitor, say. That is why the renderer
+//! is SDL_GPU: SDL_Renderer's ImGui backend has no multi-viewport support.
+
+import std.ffi
+
+/// A running ImGui host: the main window, its GPU device and the ImGui context.
+pub newtype Host = ^u8
+
+/// [create_host] flags, combined with `|`. Docking lets windows dock into each other and
+/// into the main window.
+pub const HOST_DOCKING: u32 = 1
+/// Let a window leave the main one as an OS window of its own (multi-monitor).
+pub const HOST_VIEWPORTS: u32 = 2
+
+/// Open the main window with ImGui in it, or `None` if SDL could not — the SDL3
+/// binding's `last_error` says why. The size is in points; the window is scaled for the
+/// primary display's density. Initialises SDL's video and gamepad subsystems, which
+/// [destroy_host] quits.
+pub let create_host = (title: string, width: i32, height: i32, flags: u32) -> Maybe<Host> => {
+  let h = title.with_cstring((t) => unsafe { lyra_imgui_host_create(t, width, height, flags) })
+  if h == nullptr { None } else { Some(h) }
+}
+
+/// Pump events and start a frame; `false` once the user has asked to quit, and then no
+/// frame was started. While the main window is minimised it waits instead of answering.
+pub let begin_frame = (host: Host) -> bool => unsafe { lyra_imgui_host_begin_frame(host) }
+
+/// Draw the frame — the main window cleared to `(r, g, b)` behind ImGui, then every
+/// torn-off window — and present it.
+pub let end_frame = (host: Host, r: f32, g: f32, b: f32) -> void =>
+  unsafe { lyra_imgui_host_end_frame(host, r, g, b) }
+
+/// Close the window and shut ImGui and SDL down. The host must not be used afterwards.
+pub let destroy_host = (host: Host) -> void => unsafe { lyra_imgui_host_destroy(host) }
+
+@symbol("lyra_imgui_host_create")
+unsafe extern lyra_imgui_host_create: (title: ^u8, width: i32, height: i32, flags: u32) -> Host
+
+@symbol("lyra_imgui_host_begin_frame")
+unsafe extern lyra_imgui_host_begin_frame: (host: Host) -> bool
+
+@symbol("lyra_imgui_host_end_frame")
+unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) -> void
+
+@symbol("lyra_imgui_host_destroy")
+unsafe extern lyra_imgui_host_destroy: (host: Host) -> void

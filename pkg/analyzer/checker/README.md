@@ -202,9 +202,10 @@ capture pass recorded. Runs after captures.
 
 ## `inert_borrow_modifier.go` (`lyra-W010`)
 
-`CheckInertBorrowModifiers(program)`: `own`/`ref`/`mut` on a copied scalar (numeric, `bool`,
-`rune`). Predicate is **`types.IsCopiedScalar`, shared with the backend's `paramIsByRef`** — must
-stay one predicate or `mut` miscompiles. Warning, not error (generic `own t`, scalar newtypes).
+`CheckInertBorrowModifiers(program)`: `own`/`ref` on a copied scalar (numeric, `bool`,
+`rune`). **Not `mut`** — a `mut` scalar is by reference. The convention is
+**`types.IsByRefParam`, shared with the backend's `paramIsByRef`** — must stay one predicate
+or `mut` miscompiles. Warning, not error (generic `own t`, scalar newtypes).
 Excludes `string` (`types.IsString`), `GenericType`, aggregates. Scoped to
 `LambdaExpr.Parameters`.
 

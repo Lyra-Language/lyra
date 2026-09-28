@@ -276,6 +276,18 @@ let reset = pure (p: mut Point) -> void => {
 	assertPurityCount(t, checkPurity(t, src), 1)
 }
 
+// A `mut` scalar is by reference, so reassigning it whole or compound-assigning it
+// writes the caller's value — and so does compound-assigning a `mut` struct's field,
+// which was uncharged until the scalar case exposed it (09/27).
+func TestPurity_MutBorrowParamReassignment_Error(t *testing.T) {
+	src := `
+let set = pure (n: mut i64) -> void => { n = 5 }
+let bump = pure (n: mut i64) -> void => { n += 1 }
+let flip = pure (b: mut bool) -> void => { b = !b }
+let shift = pure (p: mut Point) -> void => { p.x += 1 }`
+	assertPurityCount(t, checkPurity(t, src), 4)
+}
+
 // An `own` parameter is an owned local copy: mutating it is invisible to the
 // caller, so it is allowed inside a pure function.
 func TestPurity_OwnParamMutation_Ok(t *testing.T) {

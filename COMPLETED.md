@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 09/27/26 — `mut` scalars are by reference, and ImGui's C half
+
+**A `mut` parameter now writes through to the caller on every type, scalars included.**
+Until today a `mut i64` was passed by value — `lyra-W010` called the modifier inert — so
+`n = n + 1` in the callee changed a private copy. That was a considered choice
+(`paramIsByRef` said nothing could observe a by-reference scalar) and it stopped being
+true the moment a binding needed one: ImGui's core idiom is an in-out pointer
+(`Checkbox("Demo", &show)`), and with scalars by value a wrapper could only return the new
+value and lose the widget's own answer. By reference, `if checkbox("Demo", show) { … }`
+reads as the C++ does, and the wrapper passes `&mut v` of its parameter — the caller's
+address — straight to C.
+
+- **One predicate, `types.IsByRefParam`**: every `mut`, and `ref` on a non-scalar. The
+  backend's parameter and argument lowering, W010, the `mut`-argument lvalue check and the
+  exclusivity check all read it; they drift into a silent ABI mismatch otherwise. `ref` on
+  a scalar stays by value and stays W010 — a read-only borrow of a value is the value.
+- **Nothing in the backend changed but the predicate**: a by-reference parameter's slot is
+  already the incoming pointer, so reads, whole reassignment, `+=`, forwarding and `&mut`
+  all worked once the pointer arrived. The "whole-parameter reassignment does not lower
+  for integers" gap the old comment cited no longer exists.
+- **The purity pass had a hole this exposed**: reassigning a parameter or compound-assigning
+  through one was charged only for *undeclared* roots, and a parameter is declared — so
+  `p.x += 1` through a `mut` struct was never charged, and W018 would suggest `pure` for it.
+  Both arms now consult `mutBorrows` first.
+- A local lambda with a `mut` scalar parameter used to compile and drop its writes; it now
+  meets the backend's existing refusal for borrow modes on lambda values (todo.md).
+
+**`bindings.imgui`'s C half**: `bindings/imgui/build.sh` downloads Dear ImGui (docking)
+and dear_bindings' generated C API, **pinned by tag and SHA-256** rather than vendored
+(~2 MB of C++), and builds `build/lib/liblyra-imgui.a` with a host (`host.cpp`) owning the
+window, SDL_GPU device and frame loop. SDL_GPU because SDL_Renderer's ImGui backend has no
+multi-viewport support, and Vega wants editors torn off onto other monitors. Built with
+`-fno-exceptions -fno-rtti -fno-threadsafe-statics`, the archive needs no C++ runtime —
+only `__cxa_atexit`, which libc has — so `@link` needs no per-platform `-lc++`/`-lstdc++`.
+
 ### 09/27/26 — `bindings.menubar`: a native macOS menu bar, and the level editor's
 
 The first binding with a C half of its own. Building an `NSMenu` is message sending an

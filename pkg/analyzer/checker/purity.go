@@ -2227,7 +2227,14 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
 		case *ast.VarReassignmentStmt:
-			if !c.declares(st.Name) {
+			// A `mut` parameter is declared here but its storage is the caller's, so
+			// reassigning it whole (`open = !open`, a `mut` scalar's only write) escapes.
+			switch {
+			case c.mutBorrows[st.Name]:
+				found |= EffectMut
+				c.pure(st.GetLocation(),
+					"pure function reassigns `mut`-borrowed parameter %q; the write escapes to the caller's value", st.Name)
+			case !c.declares(st.Name):
 				found |= EffectMut
 				c.pure(st.GetLocation(),
 					"pure function reassigns captured binding %q; mutation must not escape the function", st.Name)
@@ -2316,10 +2323,16 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 		case *ast.MathAssignOpExpr:
 			// The LHS is a write target (reported here); don't also flag it as a read.
 			c.markAssignRoot(rootIdentExpr(ex.Left))
-			if !c.declares(rootIdentName(ex.Left)) {
+			switch root := rootIdentName(ex.Left); {
+			case c.mutBorrows[root]:
+				// `n += 1` / `p.x += 1` on a `mut` parameter: the caller's storage.
 				found |= EffectMut
 				c.pure(ex.GetLocation(),
-					"pure function mutates captured binding %q; mutation must not escape the function", rootIdentName(ex.Left))
+					"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
+			case !c.declares(root):
+				found |= EffectMut
+				c.pure(ex.GetLocation(),
+					"pure function mutates captured binding %q; mutation must not escape the function", root)
 			}
 		case *ast.TryExpr:
 			// A `?` converting its error through `impl From<…>` runs that impl's `from`

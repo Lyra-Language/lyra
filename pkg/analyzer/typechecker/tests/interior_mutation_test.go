@@ -351,14 +351,41 @@ func TestTypeCheck_MutArgument_ForwardedRefParam_Error(t *testing.T) {
 		`inner: argument 1 (p): cannot pass immutable binding "p" to a `+"`mut`"+` parameter (declare it `+"`var`"+`, or take the parameter by value)`)
 }
 
-// A copied scalar is exempt: `mut` is inert there (lyra-W010), nothing is written
-// through, so an ordinary value argument — even a literal — is accepted.
-func TestTypeCheck_MutArgument_ScalarLiteral_Ok(t *testing.T) {
+// A `mut` scalar is by reference like any other `mut` (types.IsByRefParam), so it
+// needs a mutable place: a literal has nowhere to write, and a `let` is immutable.
+func TestTypeCheck_MutArgument_Scalar(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let twice = (n: mut i64) -> i64 => n + n
-		let run = () -> i64 => twice(21)
+		let bump = (n: mut i64) -> void => { n += 1 }
+		let run = () -> void => {
+			let fixed = 3
+			var n = 1
+			bump(21)
+			bump(fixed)
+			bump(n)
+		}
 	`, false)
-	assertNoErrors(t, res)
+	assertErrorsAre(t, res,
+		`bump: argument 1 (n): a `+"`mut`"+` parameter mutates the caller's value, so the argument must be a variable or a field/element of one, not a temporary`,
+		`bump: argument 1 (n): cannot pass immutable binding "fixed" to a `+"`mut`"+` parameter (declare it `+"`var`"+`, or take the parameter by value)`)
+}
+
+// Two `mut` scalars naming one slot alias, exactly as two `mut` structs do.
+func TestTypeCheck_MutArgument_ScalarExclusive(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let swap = (a: mut i64, b: mut i64) -> void => {
+			let t = a
+			a = b
+			b = t
+		}
+		let run = () -> void => {
+			var n = 1
+			var m = 2
+			swap(n, m)
+			swap(n, n)
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		`swap: "n" is passed to argument 1 as `+"`mut`"+` and also to argument 2 — a `+"`mut`"+` borrow is exclusive, so no other argument of the same call may name it`)
 }
 
 // ── reassigning a parameter binding ───────────────────────────────────────────

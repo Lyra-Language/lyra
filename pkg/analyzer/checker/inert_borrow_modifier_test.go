@@ -55,13 +55,17 @@ func TestInert_RefScalar(t *testing.T) {
 	assertInertModifiers(t, `let f = (b: ref bool) -> bool => b`, 1)
 }
 
-func TestInert_MutScalar(t *testing.T) {
-	assertInertModifiers(t, `let f = (n: mut i16) -> i16 => n`, 1)
+// `rune` is a copied scalar, flagged like any other.
+func TestInert_RefRune(t *testing.T) {
+	assertInertModifiers(t, `let f = (c: ref rune) -> rune => c`, 1)
 }
 
-// `rune` is a copied scalar, flagged like any other.
-func TestInert_MutRune(t *testing.T) {
-	assertInertModifiers(t, `let f = (c: mut rune) -> rune => c`, 1)
+// `mut` on a scalar is not inert: it is passed by reference and the callee's writes
+// reach the caller (types.IsByRefParam), so there is nothing to warn about.
+func TestInert_MutScalar_NotFlagged(t *testing.T) {
+	assertInertModifiers(t, `let f = (n: mut i16) -> void => { n = 1 }`, 0)
+	assertInertModifiers(t, `let f = (c: mut rune) -> void => { c = 'a' }`, 0)
+	assertInertModifiers(t, `let f = (b: mut bool) -> void => { b = !b }`, 0)
 }
 
 func TestInert_FloatAndUnsigned(t *testing.T) {
@@ -70,7 +74,7 @@ func TestInert_FloatAndUnsigned(t *testing.T) {
 
 // Each inert parameter is flagged independently.
 func TestInert_MultipleParams(t *testing.T) {
-	assertInertModifiers(t, `let f = (a: own i64, b: i64, c: mut i32) -> i64 => a`, 2)
+	assertInertModifiers(t, `let f = (a: own i64, b: i64, c: ref i32, d: mut i32) -> i64 => a`, 2)
 }
 
 // A nested lambda's parameters are checked too.

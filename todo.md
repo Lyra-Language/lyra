@@ -482,6 +482,14 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
+- **[IN PROGRESS] `bindings.imgui`: generate the widgets from dear_bindings' `dcimgui.json`.**
+  The host and the C half landed 09/27; `bindings/imgui/proof.lyra` holds hand-written
+  stand-ins until the generator (written in Lyra, over `std.json`) replaces them. In-out
+  pointers wrap as `mut` parameters.
+- **[OPEN] `bindings.imgui` on Linux is unverified.** `@link` flags are sorted, so `-lSDL3`
+  precedes the static `-llyra-imgui`; check the link under `--as-needed`, and that the
+  archive needs nothing from libstdc++ there either.
+
 - **[PARTIAL] `lyra-md`, a Markdown renderer, and `site`, a directory builder, as the
   standard library's forcing functions.**
   The block level (headings, fenced code, paragraphs, escaping) renders and is pinned by
@@ -652,6 +660,10 @@ annotations.
 
 - **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
   returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
+- **[OPEN] A lambda value with a `mut`/`ref` parameter is refused only by the backend.**
+  A function type carries no borrow mode, so `lyrac check` accepts `let f = (k: mut i64) …`
+  used as a value and `build` refuses it. Since `mut` scalars went by reference (09/27) this
+  covers scalars too; carry the mode in `LambdaType` or refuse it in the typechecker.
 - **[DEFERRED] (c) Exclusivity (`mut` XOR alias)** until the job system or resizable
   interior borrows force it. Leaning toward statement-scoped projections over a static
   container freeze.

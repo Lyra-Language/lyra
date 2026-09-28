@@ -73,4 +73,14 @@ if [ -f "$ROOT/../tree-sitter-lyra/src/parser.c" ] && pkg-config --exists tree-s
   fi
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s and lib/liblyra-menubar.a, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note"
+# **The C half of `bindings.imgui`**, into `build/lib/liblyra-imgui.a`, when it can be —
+# the lyrafmt rule again. It downloads a pinned Dear ImGui and dear_bindings on first
+# use (`bindings/imgui/build.sh` has the pins and why), and needs SDL3; a machine
+# offline or without SDL3 builds everything else and says why this was skipped.
+if imgui_err=$("$ROOT/bindings/imgui/build.sh" "$OUT" 2>&1); then
+  imgui_note='lib/liblyra-imgui.a'
+else
+  imgui_note="no liblyra-imgui.a (${imgui_err##*: })"
+fi
+
+printf 'built %s/{lyrac,lyra-lsp} %s, lib/liblyra-menubar.a and %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note" "$imgui_note"

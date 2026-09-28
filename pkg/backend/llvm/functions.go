@@ -41,7 +41,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSig
 }
 
 // paramIsByRef reports whether a parameter is passed as a **pointer to the caller's
-// storage** rather than by value: exactly the `mut` ones.
+// storage** rather than by value: every `mut`, and a `ref` on a non-scalar.
 //
 // `mut` is a *mutable borrow* — the typechecker's own diagnostic tells users it
 // mutates "the caller's value" — so the callee must be able to write through to the
@@ -63,20 +63,13 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSig
 // copy is the point. The ownership pass is untouched — `mut` and `ref` are both still
 // borrows, retained and released by nobody in the callee.
 //
-// A `mut` on a **copied scalar** is excluded, and that is not a silent split: it is
-// exactly the case `lyra-W010` already warns is inert, reading the same shared
-// predicate (types.IsCopiedScalar) so the two cannot drift. A scalar has no interior
-// to write through, and the one construct that could observe a by-reference scalar —
-// reassigning the whole parameter (`n = n + 1`) — does not lower for integers at all
-// (a pre-existing backend gap, unrelated to this convention). Passing those by
-// reference would change their ABI and reject `f(5)` at call sites for no observable
-// gain. If whole-parameter reassignment ever lowers, `mut` on a scalar becomes
-// meaningful and both this predicate and W010 should be revisited together.
+// **A `mut` scalar is by reference too** (09/27): `n = n + 1` in the callee is the
+// caller's `n`, which is how an in-out C pointer wraps — `checkbox(label, open)` over
+// ImGui's `bool *`. A `ref` scalar stays by value: a read-only borrow of a value with
+// no interior is observably the value, and that is the one case `lyra-W010` calls
+// inert. The rule is types.IsByRefParam, which the typechecker and W010 read too.
 func paramIsByRef(param ast.Parameter) bool {
-	if param.TypeModifier != types.Mut && param.TypeModifier != types.Ref {
-		return false
-	}
-	return !types.IsCopiedScalar(param.Type)
+	return types.IsByRefParam(param.TypeModifier, param.Type)
 }
 
 // emitReturn lowers a `ret` for the current function, coercing val to the

@@ -1539,13 +1539,9 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 //     parameter was accepted and then mutated it, which is the mutability system
 //     being bypassed by a function call.
 //
-// A copied scalar is exempt: `mut` there is inert (lyra-W010 says so, and the
-// backend keeps it by value via types.IsCopiedScalar), so nothing is written
-// through and an ordinary value argument is fine.
+// A copied scalar is no exception (09/27): a `mut` scalar is by reference like any
+// other (types.IsByRefParam), so `checkbox("x", true)` has nowhere to write.
 func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramName string, arg ast.Expression, paramType types.Type) {
-	if types.IsCopiedScalar(paramType) {
-		return
-	}
 	root := rootIdentifier(arg)
 	if root == nil {
 		tc.addError(arg.GetLocation(), SeverityError,
@@ -1593,8 +1589,9 @@ func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramNa
 // it already could — which is the separate observable-aliasing question (todo.md,
 // borrow model (e)), not something this check ever covered.
 //
-// Scalars are exempt for the same reason they are passed by value
-// (types.IsCopiedScalar): there is no shared storage to alias.
+// A `ref` scalar is exempt for the same reason it is passed by value
+// (types.IsByRefParam): there is no shared storage to alias. A `mut` scalar is not —
+// `swap(a, a)` hands the callee one slot twice.
 func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) {
 	type argPlace struct {
 		place    place
@@ -1607,12 +1604,12 @@ func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *as
 			break
 		}
 		param := lambda.Parameters[i]
-		if param.Type == nil || types.IsCopiedScalar(tc.resolveType(param.Type, param.GetLocation())) {
+		if param.Type == nil {
 			continue
 		}
 		mode := param.TypeModifier
-		if mode != types.Mut && mode != types.Ref {
-			continue // `own` transfers a copy; a bare parameter is a value
+		if !types.IsByRefParam(mode, tc.resolveType(param.Type, param.GetLocation())) {
+			continue // `own` transfers a copy; a bare parameter or a `ref` scalar is a value
 		}
 		p, ok := tc.placeOf(arg)
 		if !ok {

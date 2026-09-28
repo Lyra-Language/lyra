@@ -153,6 +153,26 @@ drain `poll_menu() -> Maybe<i32>` after `poll_event`; `set_checked`/`set_enabled
 - Tags are ≥ 0 (`poll_menu`'s C side answers -1 for none) and unique (items are found by
   tag). `install` replaces SDL's default bar, so call it after `init`.
 
+## `bindings/imgui/`
+
+Dear ImGui (docking branch) with multi-viewports: a window dragged out of the main one
+becomes an OS window. Two halves:
+- **The host** (`imgui.lyra` over `host.cpp`): `create_host(title, w, h, flags)`
+  (`HOST_DOCKING | HOST_VIEWPORTS`), then `for begin_frame(host) { …; end_frame(host, r, g, b) }`,
+  then `destroy_host`. It owns the window, the SDL_GPU device and the frame loop, so Lyra
+  binds no SDL_GPU. SDL_GPU because SDL_Renderer's ImGui backend has no multi-viewport support.
+- **The widgets** are to be generated from dear_bindings' `dcimgui.json`; `proof.lyra`
+  holds hand-written stand-ins until then.
+- **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into
+  `build/lib/liblyra-imgui.a` from a **downloaded** ImGui and dear_bindings, pinned by tag
+  and SHA-256 and cached in `build/deps/`. Bump both tags together.
+- **No C++ runtime**: `-fno-exceptions -fno-rtti -fno-threadsafe-statics` leaves only
+  `__cxa_atexit` (libc's), so `@link("lyra-imgui")` + `@link("SDL3")` is the whole link line.
+- **In-out pointers are `mut` parameters**: `checkbox(label, open) -> bool` flips the
+  caller's `open` and answers whether it was clicked, as ImGui's `bool *` does. The wrapper
+  passes `&mut` of its parameter, which is the caller's address (a `mut` scalar is by
+  reference, LANGUAGE.md "Parameter modes").
+
 ## `bindings/sdl3_image.lyra`
 
 SDL3_image, `@link("SDL3_image")` — its own module so a program that loads no image does

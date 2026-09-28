@@ -73,11 +73,11 @@ func (tc *TypeChecker) checkExternSignatureIsFFISafe(decl *ast.ExternDeclStmt) {
 // requireNoBorrow refuses `mut`/`ref` on an extern's parameter.
 //
 // A borrow modifier is **Lyra's** by-reference passing, and the compiler decides what it
-// means: `paramIsByRef` passes a `mut` aggregate as a pointer to its storage and a `mut`
-// scalar by value. Neither is a rule a C function was compiled by, so at the boundary the
-// modifier is one of two bad things — inert on a scalar, where it says something the call
-// does not do, or an outright ABI mismatch on a pointer, where `(mut ^i64)` reads as "a
-// pointer" and would pass an `i64**`.
+// means: `types.IsByRefParam` passes a `mut` value as a pointer to its storage and a
+// `ref` scalar by value. Neither is a rule a C function was compiled by, so at the
+// boundary the modifier is one of two bad things — inert on a `ref` scalar, where it says
+// something the call does not do, or an outright ABI mismatch, where `(mut ^i64)` reads
+// as "a pointer" and would pass an `i64**`.
 //
 // What C has is the pointer itself, which the signature can already say. Refused where the
 // types are, because it is the same question: what may cross.
