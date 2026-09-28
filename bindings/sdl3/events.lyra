@@ -186,11 +186,8 @@ let classify = pure (raw: RawEvent) -> Event => {
       unsafe { raw.button.y }
     )
   } else if kind == EVENT_MOUSE_WHEEL {
-    // Bound before the arithmetic: an `unsafe` block is a comparison operand, not yet an
-    // arithmetic one.
-    let wheel = unsafe { raw.wheel }
-    let sign: f32 = if wheel.direction == WHEEL_FLIPPED { -1.0 } else { 1.0 }
-    MouseWheel(wheel.x * sign, wheel.y * sign)
+    let sign: f32 = if unsafe { raw.wheel.direction } == WHEEL_FLIPPED { -1.0 } else { 1.0 }
+    MouseWheel(unsafe { raw.wheel.x } * sign, unsafe { raw.wheel.y } * sign)
   } else if kind == EVENT_GAMEPAD_ADDED {
     GamepadAdded(unsafe { raw.device.which })
   } else if kind == EVENT_GAMEPAD_REMOVED {

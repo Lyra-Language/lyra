@@ -36,6 +36,18 @@ nothing ever calls back into Lyra.
   key equivalents, ticks and greying; a click and a synthesised ⌘S each queue their tag)
   and by `editor.lyra --check`, which drives `on_menu` and the ⌘ hand-off.
 
+### 09/27/26 — an `unsafe` block is an arithmetic operand
+
+`unsafe { raw.wheel.x } * sign` was a syntax error, found binding the mouse wheel: the
+block had been admitted as a comparison operand (09/09) and a `!` operand (09/15), one
+position at a time, and never into `_math_operand` — so every scaled or negated read in a
+binding module was bound to a name first. It is there now, which covers every arithmetic,
+negation and bitwise operator at once rather than adding the next position when it is
+tripped over. No new grammar conflicts, and the compiler needed nothing: the block was
+already an expression with a value, only unreachable from those operators.
+`TestExec_UnsafeBlockIsAnArithmeticOperand` runs one of each; `events.lyra` reads the
+wheel in the natural form again.
+
 ### 09/26/26 — `@link(…, pkg: "…")`: libraries that link without `LIBRARY_PATH`
 
 Every SDL3 and raylib run needed `LIBRARY_PATH=$(pkg-config --variable=libdir …)`:

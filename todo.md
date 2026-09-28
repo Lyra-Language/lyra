@@ -539,9 +539,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
   (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
   would be the natural companion.
-- **[OPEN] An `unsafe` block is not an arithmetic operand.** `unsafe { raw.wheel.x } * sign`
-  is a syntax error; it was made a comparison operand (COMPLETED 09/09) and nothing more.
-  `events.lyra` binds the member first. The same grammar change would admit `+ - * /`.
 - **[OPEN] `W022` reads a computed `match` scrutinee as an acquisition.** `match if c { a }
   else { b } { Some(x) => set_cursor(x) }` warns that `x` is unreleased, though both arms
   are views of bindings released later. `editor.lyra` matches each binding directly.

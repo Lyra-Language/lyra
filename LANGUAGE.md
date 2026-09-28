@@ -665,7 +665,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `p^` | read | `unsafe` |
 | `p^ = v`, `p^.x = v`, `p.offset(i)^.y = v`, `p^.n += 1` | write | `unsafe`; nearest deref through `^mut T` (`lyra-E061`) |
 
-- `unsafe { … }` block or `unsafe` function (`lyra-E011`); does not cross lambda boundaries. The block is its body (has a value; scopes its bindings). Calling an `unsafe` function also needs it.
+- `unsafe { … }` block or `unsafe` function (`lyra-E011`); does not cross lambda boundaries. The block is its body (has a value; scopes its bindings), and an operand wherever a value is: `unsafe { p^ } * 2`, `-unsafe { p^ }`, `unsafe { f() } != 0`, `!unsafe { p^ }`. Calling an `unsafe` function also needs it.
 - `^mut T` may be copied into a `let`; `^T` may point at a `var`.
 - `p^ = v` **releases** the old value (as `xs[i] = v` does). Match-arm / `if let` bindings borrow, so `&mut s` and `h.s = v` on them are refused, as reassigning them already is (`lyra-E025`) — copy into a binding first.
 - `&mut` on a closure-captured binding is **`lyra-E024`** (captures are by value). Watch for `s.with_cstring((p) => f(p, &mut size))` — take the pointer outside. `&n` is fine.

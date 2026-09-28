@@ -182,3 +182,28 @@ let main = () -> void => {
 		t.Errorf("unsafe block as a value = %q; want \"hello\\n6\"", got)
 	}
 }
+
+// **An `unsafe` block is an arithmetic operand** (09/27), as it was already a comparison
+// and a `!` operand: `unsafe { p^ } * 2` needed its value bound first, which is how every
+// scaled or negated read in a binding module was written. Each operator family — binary,
+// negation, bitwise complement — and a block on both sides.
+func TestExec_UnsafeBlockIsAnArithmeticOperand(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+union U { f: f32, n: u32 }
+let main = () -> void => {
+  var x: i64 = 21
+  let p = unsafe { &x }
+  let doubled = unsafe { p^ } * 2
+  let u = U { f: 1.5 }
+  let scaled = unsafe { u.f } * 2.0 + unsafe { u.f }
+  let negated = -unsafe { p^ }
+  let masked = ~unsafe { u.n } & 0xFF
+  println("${doubled} ${scaled} ${negated} ${masked}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "42 4.5 -21 255" {
+		t.Errorf("unsafe blocks in arithmetic = %q; want \"42 4.5 -21 255\"", got)
+	}
+}
