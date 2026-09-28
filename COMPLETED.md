@@ -9,6 +9,17 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — a compound assignment's right side takes `&`, `|` and `~`
+
+`result += ((0x9F - result) >> 4) & 0x60`, Sheliak's BCD correction, was refused as
+"operator &: operands must be numeric, got void": the grammar gave `compound_assignment`
+the additive precedence, so `+` and `*` joined its right side but the looser bitwise
+operators closed the assignment first — `(result += …) & 0x60`. It has a level of its own
+now, `COMPOUND_ASSIGN`, below `BITWISE_OR`, so the right side takes every arithmetic and
+bitwise operator. It was never silent — the parse it produced cannot type-check — which is
+also why nothing had met it. tree-sitter-lyra's corpus pins the parse; an exec test here
+pins the values. The three "unnecessary conflicts" `generate` prints predate the change.
+
 ### 09/28/26 — W001 names what it saw
 
 "`x` shadows a variable declared in an outer scope" was the message whatever `x` was, and

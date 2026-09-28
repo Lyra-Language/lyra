@@ -195,7 +195,7 @@ A place is what `=` writes and `&` addresses: a binding, a field `p.x`, an eleme
 
 ### Compound assignment
 
-`+= -= *= /= %= &= |= ~= <<= >>=` target any place `=` accepts (`counts[i].n += 1`) under the same writability rules. **Not a desugaring**: the address is computed once, so `xs[idx()] += 5` calls `idx` once. An overloaded operator is reached through it.
+`+= -= *= /= %= &= |= ~= <<= >>=` target any place `=` accepts (`counts[i].n += 1`) under the same writability rules. **The right side binds every arithmetic and bitwise operator**: `r += x & 0x60` is `r += (x & 0x60)` (before 09/28 the bitwise ones closed the assignment first). **Not a desugaring**: the address is computed once, so `xs[idx()] += 5` calls `idx` once. An overloaded operator is reached through it.
 
 ### Tuple assignment
 

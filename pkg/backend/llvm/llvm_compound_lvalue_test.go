@@ -117,3 +117,27 @@ let main = () -> void => {
 		t.Errorf("got %q; want %q", got, "value=15 calls=1")
 	}
 }
+
+// A compound assignment's right side takes every arithmetic and bitwise operator: `r += x &
+// 0x60` is `r += (x & 0x60)`. Until 09/28 the grammar gave it additive precedence, so `&`,
+// `|` and `~` closed the assignment first and the `(r += x) & 0x60` that resulted was
+// refused as `void & int` (found in Sheliak's BCD correction; tree-sitter-lyra's corpus
+// pins the parse).
+func TestExec_CompoundAssignmentTakesABitwiseRightSide(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> u8 => {
+  var r: i64 = 1
+  r += 6 & 3
+  var s: i64 = 1
+  s += 2 | 4
+  var t: i64 = 0xF0
+  t -= 0x0F ~ 0x0A
+  var u: i64 = 1
+  u += 4 << 1 & 0xF
+  u8(r + s + t + u)
+}`
+	// r = 1 + 2 = 3; s = 1 + 6 = 7; t = 0xF0 - 0x05 = 235; u = 1 + (8 & 15) = 9 → 254
+	if got := buildAndRun(t, src); got != 254 {
+		t.Errorf("exited %d; want 254", got)
+	}
+}
