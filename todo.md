@@ -670,6 +670,11 @@ annotations.
 
 - **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
   returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
+- **[OPEN] A write through a trait method's `mut Self` receiver is not an effect.** In
+  `impl Bus for TestBus { idle = (self, n) => { self.cycles += n } }` the receiver's `mut`
+  comes from the trait's signature, but the purity pass takes `mut` parameters from the
+  written lambda (`mutBorrows`, nil for methods), so W018 suggests `pure` and a `pure`
+  bound would be accepted (found 09/28, Sheliak's test bus).
 - **[OPEN] A lambda value with a `mut`/`ref` parameter is refused only by the backend.**
   A function type carries no borrow mode, so `lyrac check` accepts `let f = (k: mut i64) …`
   used as a value and `build` refuses it. Since `mut` scalars went by reference (09/27) this
