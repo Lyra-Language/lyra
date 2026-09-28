@@ -9,6 +9,15 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — `to_hex` on the unsigned integers
+
+`pc.to_hex(6)` is how an emulator prints an address, and Sheliak's test runner had written
+twenty lines to do it. The prelude's `to_hex` was for a byte array only; it now has
+`u8`/`u16`/`u32`/`u64` forms beside it under the same name (receiver-keyed overloading):
+lowercase, no prefix, `width` zero-pads and never truncates, and zero is `"0"`. Signed
+integers are left out on purpose — `-1` or its two's complement is a choice the conversion
+to an unsigned type already makes.
+
 ### 09/28/26 — the rest of the open bugs: a float bound, a string map, SDL3's `bool`, E082
 
 - **`3.4028235e38` is FLT_MAX, not infinity.** The range check compared a literal's magnitude

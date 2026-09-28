@@ -125,6 +125,38 @@ pub let to_hex = pure (self: []u8) -> string => {
   out.join("")
 }
 
+/// The number in lowercase hexadecimal, at least `width` digits (zero-padded), no prefix:
+/// `255.to_hex()` is `"ff"`, `u32(0x2700).to_hex(8)` is `"00002700"`.
+///
+/// For the unsigned widths only, beside the byte-array `to_hex` under the same name
+/// (receiver-keyed overloading). A signed value would have to choose between `-1` and its
+/// two's complement, and the conversion to an unsigned type already says which. Added 09/28
+/// for Sheliak, whose test runner prints registers and addresses and wrote its own.
+pub let to_hex = pure (self: u64, width: i64 = 0) -> string => {
+  var digits: []rune = []
+  var rest = self
+  for rest != 0 || digits.len() < width || digits.len() == 0 {
+    digits.push(HEX_DIGITS[i64(rest % 16)])
+    rest = rest / 16
+  }
+  var out: []rune = []
+  var i = digits.len() - 1
+  for i >= 0 {
+    out.push(digits[i])
+    i -= 1
+  }
+  out.join("")
+}
+
+/// A `u32` in hexadecimal, as the `u64` form writes it.
+pub let to_hex = pure (self: u32, width: i64 = 0) -> string => u64(self).to_hex(width)
+
+/// A `u16` in hexadecimal, as the `u64` form writes it.
+pub let to_hex = pure (self: u16, width: i64 = 0) -> string => u64(self).to_hex(width)
+
+/// A `u8` in hexadecimal, as the `u64` form writes it.
+pub let to_hex = pure (self: u8, width: i64 = 0) -> string => u64(self).to_hex(width)
+
 /// Hex digits, low to high.
 const HEX_DIGITS: []rune = ['0', '1', '2', '3', '4', '5', '6', '7',
   '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']

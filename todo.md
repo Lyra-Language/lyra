@@ -66,6 +66,8 @@ Package management, versioning and separate compilation are out of scope by deci
   (Dates and reasoning: COMPLETED.md, 09/15–09/19.) **Worse than left as written**: in
   `if flag(a, "x") { return Skipped("…long…") }` over budget, the comma-list rule claims
   the *call's* arguments and explodes `flag(` one argument per line (seen 09/27, gen.lyra).
+  The same happens to `return if c { f(a, b, c) } else { g }` over budget: the call inside
+  the `if` is exploded rather than the `if` being broken (seen 09/28, Sheliak's arith.lyra).
 
 - **[PARTIAL] The collector in Lyra — the bootstrap proper.** The Go collector is ~7.8k
   lines over a ~5.6k-line AST, so this is sliced rather than attempted.
@@ -661,6 +663,10 @@ annotations.
 
 - **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
   returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
+- **[IDEA] A type parameter shared by a module's functions.** Sheliak's 68000 core has ~40
+  functions that each begin `<b> where b: Bus = (cpu: mut Cpu, bus: mut b, …)`: the bus is
+  generic for monomorphised speed, and nothing lets a module say it once. A module- or
+  block-level `where` (or trait objects, at a dispatch cost) would remove the repetition.
 - **[IDEA] Borrow modes through function types.** `(mut i64) -> void` is spellable but a
   call through a function value passes by value, so a by-reference function cannot be a
   value (`lyra-E082`). Honouring the type's modes at an indirect call would lift it.
