@@ -63,7 +63,7 @@ import (
 func CheckPurity(program *ast.Program, symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) ([]diag.Diagnostic, []diag.Diagnostic) {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
-	boundGroups := collectTraitMethodGroups(program)
+	boundGroups := collectTraitMethodGroups(program, symTable)
 	signatures := collectMethodSignatures(program, symTable)
 	// Bound rather than built inline: the inference fills in the allocation *sites* as it
 	// goes, and `lyra-E016` reads them back to point at the offending expression.
@@ -221,7 +221,7 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 		// entry point's limits exist to avoid faking a way around.
 		collectMethodSignatures(program, nil),
 		nil, // no MethodTable: nil-safe, and this entry point runs without a typechecker
-		collectTraitMethodGroups(program),
+		collectTraitMethodGroups(program, nil),
 		nil, // and so no declared trait bounds either, for the same reason
 		frames,
 		buildAllocContext(program, nil, nil),
@@ -542,7 +542,7 @@ type inference struct {
 	methodTable *typetable.MethodTable
 	// boundGroups maps a (trait, method) to every impl providing it, so a call resolved by
 	// abstract bound dispatch can be scored as the join over those impls' effects.
-	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl
+	boundGroups map[boundGroupKey][]*ast.TraitMethodImpl
 	// guaranteed holds, per impl method, the effects its trait's declaration *promises*
 	// it does not have (`trait Speak { pure say: … }`). Keyed by impl pointer and
 	// resolved through LookupTraitFrom, so it adds no name index (rule 4). Empty when
@@ -561,7 +561,7 @@ type inference struct {
 func newInference(
 	signatures map[*ast.TraitMethodImpl]*types.LambdaType,
 	methodTable *typetable.MethodTable,
-	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl,
+	boundGroups map[boundGroupKey][]*ast.TraitMethodImpl,
 	guaranteed map[*ast.TraitMethodImpl]Effect,
 	frames *scopeFrames,
 	alloc *allocContext,
@@ -1843,28 +1843,45 @@ func traitMethodDecl(symTable *symbols.SymbolTable, impl *ast.TraitImplStmt, nam
 // dispatches, at instantiation, to one of the impls in the matching group; its effect is
 // the join over the group (below).
 //
-// **Operator-named methods are included**, keyed by `MethodName.Key` so prefix `-` and
-// binary `-` land in different groups. They were filtered out until 08/08, back when
-// nothing dispatched to them; once an *operator* could resolve through a bound
-// (`a + b` under `where t: Add`) the filter meant the join ran over an empty group and
-// answered EffectNone — so a `pure` function using a bound operator whose impl printed
-// type-checked clean. The same shape as the identifier filter removed from
-// resolveTraitMethod a day earlier, and the same lesson: a filter written when a kind
-// could not occur becomes a silent hole the day it can.
-func collectTraitMethodGroups(program *ast.Program) map[typetable.BoundMethodRef][]*ast.TraitMethodImpl {
-	groups := map[typetable.BoundMethodRef][]*ast.TraitMethodImpl{}
+// **The trait is its resolved declaration, not its name** (rule 4): each impl's trait is
+// resolved where the impl is written and grouped under its identity, and a bound call is
+// looked up by the identity the typechecker recorded (BoundMethodRef.Key). Grouped by name
+// until 09/28, two modules each declaring a `Speak` joined into one group, so a `pure`
+// generic calling `say` through its own module's bound was charged the other module's
+// printing impl — and an aliased import (`Speak as S`) found no group at all. With no
+// symbol table (InferredEffects) the name is the only key there is, and is used.
+func collectTraitMethodGroups(program *ast.Program, symTable *symbols.SymbolTable) map[boundGroupKey][]*ast.TraitMethodImpl {
+	groups := map[boundGroupKey][]*ast.TraitMethodImpl{}
 	for _, node := range program.Statements {
 		impl, ok := node.(*ast.TraitImplStmt)
 		if !ok {
 			continue
 		}
+		identity := ""
+		if td, found := symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation()); found {
+			identity = symTable.DeclKey(td)
+		}
 		for i := range impl.Methods {
 			m := &impl.Methods[i]
-			key := typetable.BoundMethodRef{Trait: impl.TraitName, Method: m.Name.Key()}
+			key := boundKeyOf(typetable.BoundMethodRef{Trait: impl.TraitName, Method: m.Name.Key(), Key: identity})
 			groups[key] = append(groups[key], m)
 		}
 	}
 	return groups
+}
+
+// boundGroupKey is a trait method by the trait's identity, or by its name where no
+// identity was resolved.
+type boundGroupKey struct {
+	trait  string
+	method string
+}
+
+func boundKeyOf(ref typetable.BoundMethodRef) boundGroupKey {
+	if ref.Key != "" {
+		return boundGroupKey{trait: ref.Key, method: ref.Method}
+	}
+	return boundGroupKey{trait: "name:" + ref.Trait, method: ref.Method}
 }
 
 // boundCallEffect is the effect of a call resolved through a bound: the join over
@@ -1907,7 +1924,7 @@ func describeEffects(e Effect) string {
 
 func boundCallEffect(ref typetable.BoundMethodRef, inf *inference) Effect {
 	var found Effect
-	for _, m := range inf.boundGroups[ref] {
+	for _, m := range inf.boundGroups[boundKeyOf(ref)] {
 		// **What the trait declares is what the caller gets.** An impl is held to its
 		// trait's bound at the impl (effectiveMethodBounds), so an impl that breaks it
 		// is already an error there, and charging the bound call for the same break

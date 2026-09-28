@@ -62,9 +62,15 @@ type MethodTable struct {
 // `self.value.show()` with `t: Show`). There is no single concrete impl, so this
 // records only the trait and method name; a consumer (the purity checker) joins
 // over every impl of that trait method.
+//
+// **Key is the trait's identity** (SymbolTable.DeclKey of the declaration the dispatch
+// resolved), and is what a consumer groups impls by: Trait is only the name written at
+// the call, which two modules may each declare and an import may alias. Grouping by it
+// joined another module's same-named trait's impls into a bound call's effect (09/28).
 type BoundMethodRef struct {
 	Trait  string
 	Method string
+	Key    string
 }
 
 func NewMethodTable() *MethodTable {

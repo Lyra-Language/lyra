@@ -268,7 +268,7 @@ func (tc *TypeChecker) dispatchOperatorViaBound(
 				return nil, true
 			}
 		}
-		tc.methodTable.SetOperatorBound(expr, typetable.BoundMethodRef{Trait: traitName, Method: name.Key()})
+		tc.methodTable.SetOperatorBound(expr, typetable.BoundMethodRef{Trait: traitName, Method: name.Key(), Key: tc.symTable.DeclKey(trait)})
 		tc.methodTable.SetOperatorCandidates(expr, tc.boundCandidatesByType(traitName, name))
 		result := sig.ReturnType.Type
 		if result == nil {

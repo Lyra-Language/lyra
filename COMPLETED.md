@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — a bound call's effect joins impls of *its* trait, not of a name
+
+The purity pass charges a call through a `where` bound the join of its trait method's
+impls, and `collectTraitMethodGroups` grouped those impls by the trait's **name** — the
+rule-4 hazard its own neighbour, `traitMethodDecl`, documents. Two consequences:
+
+- **A false error**: module `a`'s `pure` generic calling `say` through `where t: Speak` was
+  refused because module `b`, with a `Speak` of its own, had a printing impl.
+- **A missed one**, found while testing the fix: an impl written through an alias
+  (`import a.{ Speak as S }`, `impl S for Loud`) was grouped under `S`, so the bound call on
+  `Speak` never saw it — `loudness(Loud { … })` printed from a function declared `pure`, and
+  nothing said so.
+
+`BoundMethodRef` now carries `Key`, the identity of the trait declaration the dispatch
+resolved (all three recording sites — bound method, `Trait::method`, operator — had it in
+hand), and impls are grouped by the identity of the trait resolved *at the impl*. The name
+remains only as the key where nothing resolved (the symbol-table-free `InferredEffects`).
+The other readers of the ref resolve its name at their own location and are unchanged.
+Tests: `pkg/driver/bound_trait_identity_test.go` — the two bug cases fail under name keys;
+the third, an impure impl of the same trait still joining, guards the other direction.
+
 ### 09/28/26 — the partial join, one level down and deeper
 
 `if c { Some(Ok(1)) } else { Some(Err("x")) }` stayed lyra-E073 after the flat join

@@ -575,7 +575,7 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		// Record the abstract resolution so the purity checker can account for it
 		// (joining over the bound trait method's concrete impls) instead of
 		// treating the call as an unverifiable external one.
-		tc.methodTable.SetBound(call, typetable.BoundMethodRef{Trait: traitName, Method: methodName})
+		tc.methodTable.SetBound(call, typetable.BoundMethodRef{Trait: traitName, Method: methodName, Key: tc.symTable.DeclKey(trait)})
 		// Publish one concrete resolution per implementing type, so the backend can pick
 		// the one its specialization names. Done here rather than in the backend because
 		// the matching (implTargetMatches, Self substitution, the trait's own parameter

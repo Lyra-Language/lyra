@@ -831,9 +831,8 @@ emittable constants.
 - **[OPEN] An unannotated function ending in `if let … else …` infers `void`.** Only a
   declared return makes the tail a value, so a callback's statement-shaped `if let` keeps
   its meaning; decide whether inference should read it as a value, as it reads `if`.
-- **[OPEN] `collectTraitMethodGroups` keys a trait by name** (`checker/purity.go`), so two
-  modules' same-named traits join their impls' effects for a bound call: a false purity
-  error, never an unsound pass. Key by the resolved declaration, as W018's grouping does.
+- **[DONE 09/28] Bound-call effects group impls by trait identity**, not name: no false
+  E007 from another module's same-named trait, and an impl written through an alias counts.
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
   `Ordering`; deferred until something needs it. A bit-pattern `total_cmp` for sorting
   floats is also unbuilt (`sort_by` with a comparator works meanwhile).

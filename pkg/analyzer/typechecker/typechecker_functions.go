@@ -790,7 +790,7 @@ func (tc *TypeChecker) inferReturnDirectedTraitCall(trait *ast.TraitDeclStmt, tm
 				"%s: the result is a %s, which has no `where %s: %s` bound", qualified, g.Name, g.Name, path.TraitName)
 			return nil
 		}
-		tc.methodTable.SetBound(call, typetable.BoundMethodRef{Trait: path.TraitName, Method: path.Method.Name})
+		tc.methodTable.SetBound(call, typetable.BoundMethodRef{Trait: path.TraitName, Method: path.Method.Name, Key: tc.symTable.DeclKey(trait)})
 		tc.publishBoundCandidates(call, path.TraitName, path.Method.Name)
 		tc.methodTable.SetBoundSelf(call, g)
 		return tc.inferLambdaCallFromType(qualified, substituteSelf(tm.Signature, g), call)

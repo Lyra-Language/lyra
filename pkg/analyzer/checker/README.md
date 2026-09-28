@@ -68,8 +68,10 @@ function scopes). Trait-method clauses still re-walk (`directScopeBindingsForCla
 inferred across the merged program, and a **trait method's declared bound is now believed**
 at a bound-dispatched call (`boundCallEffect` subtracts `inference.guaranteed`) rather than
 re-derived by joining over every impl, which reported an impl's broken promise a second time
-inside whatever generic called it. What is left is the advice, not the analysis — W018 points
-at the impl, never at the trait (`todo.md`).
+inside whatever generic called it. The impls joined are grouped by the trait's **resolved
+declaration** (`collectTraitMethodGroups`, keyed on `BoundMethodRef.Key`), never its name: by
+name, two modules' same-named traits pooled their impls and an impl written through an alias
+was missed (09/28).
 
 ### Resolving callees
 
