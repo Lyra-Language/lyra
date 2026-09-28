@@ -818,9 +818,11 @@ emittable constants.
   nothing builds a void payload; constructor arity is checked at last. (COMPLETED.md.)
 - **[DONE 09/28] `lyra-W018` no longer advises `pure` on a trait against its signature.**
   Silent for a `mut`-parameter method; impl-only advice when a sibling impl has effects.
-- **[OPEN] A constructor wrapping a partially-solved one loses its arguments.**
-  `Some(Ok(5))` against `Maybe<Result<i64, string>>` is refused as `Maybe<Result>`, even
-  annotated; binding the inner value first works. Refused, never miscompiled (09/28).
+- **[DONE 09/28] A constructor wrapping a partially-solved one takes its context.**
+  `Some(Ok(5))` under `Maybe<Result<i64, string>>` is matched argument-wise and narrowed.
+- **[OPEN] A construction with no context reaches the backend unsettled.** `let r = Ok(5)`
+  fails there ("type variable t has no concrete type"), as does `Some(Ok(5))`; the
+  typechecker should refuse it, naming the annotation to add. Loud, never miscompiled.
 - **[OPEN] `collectTraitMethodGroups` keys a trait by name** (`checker/purity.go`), so two
   modules' same-named traits join their impls' effects for a bound call: a false purity
   error, never an unsound pass. Key by the resolved declaration, as W018's grouping does.

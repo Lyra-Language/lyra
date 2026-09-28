@@ -556,6 +556,14 @@ func isAssignable(from, to types.Type) bool {
 	if nominalDataMatch(from, to) {
 		return true
 	}
+	// **The same rule one level down**: `Some(Ok(5))` infers to `Maybe<Result>` — the
+	// inner construction left `e` open, so it is the bare `Result` — and a written
+	// `Maybe<Result<i64, string>>` must accept it exactly as a written `Result<i64,
+	// string>` accepts a bare `Result`; the context then narrows the inner construction
+	// (propagateInstantiation). Refused until 09/28, with or without an annotation.
+	if instantiationsMatch(from, to) {
+		return true
+	}
 	// Inside a default body `Self<…>` is the abstract head at arguments, so it is
 	// assignable argument-wise — a `Self<integer literal>` fills a `Self<i64>` exactly as
 	// `Box<integer literal>` fills a `Box<i64>` once the head is known.
@@ -869,6 +877,34 @@ func nominalDataMatch(from, to types.Type) bool {
 		}
 	}
 	return false
+}
+
+// instantiationsMatch reports whether two instantiations of one generic type agree
+// argument by argument, where an argument agrees when it is equal, when one side is the
+// bare data type a partial construction infers to (nominalDataMatch), or when both are
+// instantiations that agree the same way — so `Maybe<Maybe<Result>>` nests.
+//
+// **Deliberately narrower than isAssignable on the arguments.** That would admit every
+// type-level widening inside the brackets — base to newtype among them, which only the
+// expression-level check (lyra-E046) gates — so `Maybe<i64>` would fill `Maybe<Meters>`.
+// A bare data type is the one thing a construction leaves open for its context to settle.
+func instantiationsMatch(from, to types.Type) bool {
+	fp, ok := from.(types.ParameterizedType)
+	if !ok {
+		return false
+	}
+	tp, ok := to.(types.ParameterizedType)
+	if !ok || fp.Name != tp.Name || fp.Allocation != tp.Allocation ||
+		len(fp.TypeArguments) != len(tp.TypeArguments) {
+		return false
+	}
+	for i := range fp.TypeArguments {
+		f, t := fp.TypeArguments[i], tp.TypeArguments[i]
+		if !types.TypesEqual(f, t) && !nominalDataMatch(f, t) && !instantiationsMatch(f, t) {
+			return false
+		}
+	}
+	return true
 }
 
 // dataTypeName returns the name of t when it is a concrete DataType.

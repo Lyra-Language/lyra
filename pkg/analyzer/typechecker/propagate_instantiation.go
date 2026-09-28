@@ -476,7 +476,11 @@ func (tc *TypeChecker) stampableDataType(node ast.Expression, inst types.Paramet
 	case types.DataType:
 		return r, r.Name == inst.Name
 	case types.ParameterizedType:
-		if r.Name != inst.Name || !tc.defaultedCtors[node] {
+		// Re-stampable when this expression's own defaults decided it, or when an argument
+		// is still open: `Some(Ok(5))` records `Maybe<Result>`, the inner construction
+		// having left `e` for a context, and only this push can bring one (09/28).
+		if r.Name != inst.Name ||
+			(!tc.defaultedCtors[node] && !tc.leavesArgumentOpen(r, node.GetLocation())) {
 			return types.DataType{}, false
 		}
 		// The constructors come from the declaration: an instantiation carries its
@@ -662,5 +666,26 @@ func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expressi
 		tc.typeTable.Set(v, expected)
 	}
 	tc.typeTable.Set(node, inst)
+	return false
+}
+
+// leavesArgumentOpen reports whether an instantiation carries, at any depth, a bare
+// **generic** data type — what a construction infers to when its payload left a parameter
+// for the context (`Ok(5)` is the bare `Result`, so `Some(Ok(5))` records
+// `Maybe<Result>`). A bare *non-generic* data type is a settled type, not an open one.
+func (tc *TypeChecker) leavesArgumentOpen(inst types.ParameterizedType, loc ast.Location) bool {
+	for _, arg := range inst.TypeArguments {
+		switch a := arg.(type) {
+		case types.DataType:
+			if decl, ok := tc.symTable.LookupTypeRef(a.Name, a.Key, loc); ok && decl != nil &&
+				len(decl.GenericParams) > 0 {
+				return true
+			}
+		case types.ParameterizedType:
+			if tc.leavesArgumentOpen(a, loc) {
+				return true
+			}
+		}
+	}
 	return false
 }

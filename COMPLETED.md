@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — a construction over an open construction takes its context
+
+`Some(Ok(5))` was refused under `Maybe<Result<i64, string>>`, annotation or return type
+alike, as "got Maybe<Result>". The inner `Ok(5)` leaves `e` for its context, so it infers
+to the bare `Result`; `Some` then solves `t` to that and records `Maybe<Result>`. At the
+top level a bare data type meets a written instantiation through `nominalDataMatch`, but
+one level down two instantiations only ever met `TypesEqual`. Two halves:
+
+- **Assignability**, `instantiationsMatch`: two instantiations of one head agree argument
+  by argument — equal, a bare generic data type (the top-level rule, one level down), or
+  instantiations agreeing the same way. Not `isAssignable` on the arguments, which would
+  admit the base-to-newtype widening only the expression-level check gates (`Box<i64>`
+  into `Box<Meters>` stays refused; a test pins it).
+- **The context's push**, `stampableDataType`: it re-stamped a construction only when the
+  construction's own literal defaults had decided it, so `Maybe<Result>` read as settled
+  and the backend met it as such. An instantiation that `leavesArgumentOpen` — a bare
+  *generic* data type at any depth; a non-generic one is settled — is now re-stamped, and
+  the existing payload loop carries the context into the inner construction, checking and
+  narrowing it (`Some(Ok("x"))` and `Some(Ok(300))` into a `u8` are reported there).
+
+Found beside it and logged: with **no** context, `let r = Ok(5)` — nested or not — reaches
+the backend unsettled and is refused there, not by the typechecker. Tests:
+`nested_construction_test.go`, `TestExec_NestedConstruction` (ASan, and Linux LSan).
+
 ### 09/28/26 — `Ok()`: a void payload, and constructor arity checked at last
 
 `Result<void, string>` could be written and never built: `Ok(())` was an empty tuple,
