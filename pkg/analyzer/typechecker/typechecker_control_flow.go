@@ -229,6 +229,9 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 				thenType, elseType)
 			return nil
 		}
+		// Two branches that each solve part — `Ok(5)` beside `Err("x")` — together solve
+		// the whole (join_partial.go).
+		common = tc.joinPartialSolves(expr, common, []ast.Expression{expr.Then, expr.Else})
 		// **Push the join back down onto both branches**, which is the other half of the
 		// same push the match arms get and was missing here until 09/10.
 		// `branchCommonType` answers what the two branches *agree* on; it does not
@@ -605,6 +608,13 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	if commonType == nil {
 		return nil
 	}
+	// Arms that each solve part of a generic type together solve the whole
+	// (join_partial.go), as an `if`'s two branches do.
+	armBodies := make([]ast.Expression, 0, len(expr.MatchArms))
+	for _, arm := range expr.MatchArms {
+		armBodies = append(armBodies, arm.Body)
+	}
+	commonType = tc.joinPartialSolves(expr, commonType, armBodies)
 	// Push the resolved common width down onto any untyped-literal arm body (the
 	// match-arm context propagation site), so every arm lowers at the match's
 	// result type. When the common type is itself still untyped (all arms were

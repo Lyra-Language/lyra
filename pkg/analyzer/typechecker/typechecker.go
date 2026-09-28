@@ -88,12 +88,13 @@ type TypeChecker struct {
 	// front by checkNewtypeCycles. Resolution refuses to hand one back, which is what
 	// makes every newtype-stripping walk in the compiler terminate — see that function.
 	circularNewtypes map[string]bool
-	ufcsModules      map[string]map[string]bool       // file -> modules it reached through a UFCS call; see UFCSModules
-	ufcsCallees      map[string]map[ast.Location]bool // file -> spans of UFCS callees; see UFCSCallees
-	defaultedCtors   map[ast.Expression]bool          // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
-	badTurbofish     map[ast.Expression]bool          // constructions whose turbofish had the wrong count — already reported, so lyra-E073 stays quiet
-	provisionalStamp bool                             // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
-	enclosingGen     *generatorContext                // the `gen` body being checked, nil outside one; see checkYieldExpr
+	ufcsModules      map[string]map[string]bool               // file -> modules it reached through a UFCS call; see UFCSModules
+	ufcsCallees      map[string]map[ast.Location]bool         // file -> spans of UFCS callees; see UFCSCallees
+	defaultedCtors   map[ast.Expression]bool                  // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
+	badTurbofish     map[ast.Expression]bool                  // constructions whose turbofish had the wrong count — already reported, so lyra-E073 stays quiet
+	partialSolves    map[ast.Expression]map[string]types.Type // what an incomplete construction (or join) did solve — `Ok(5)`'s t — for a branch join to merge; join_partial.go
+	provisionalStamp bool                                     // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
+	enclosingGen     *generatorContext                        // the `gen` body being checked, nil outside one; see checkYieldExpr
 	// overflowReported guards checkLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
@@ -4731,6 +4732,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			if inst, ok := parameterizedResult(dt, decl, subst); ok {
 				return inst
 			}
+			tc.recordPartialSolve(expr, subst)
 			return dt
 		}
 	}

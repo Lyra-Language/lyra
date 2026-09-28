@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — branches that each solve half of a generic type join to the whole
+
+`let r = if c { Ok(5) } else { Err("x") }` was lyra-E073 (a backend failure before this
+morning), though the arms together say `Result<i64, string>`. Each incomplete construction
+recorded only the bare `Result`, discarding what it *had* solved, so the join had nothing
+to merge.
+
+- **An incomplete construction keeps its partial solution** (`recordPartialSolve`), and a
+  join whose common type is still a bare generic declaration merges its branches'
+  (`joinPartialSolves`, at the `if` and `match` join sites) — a full instantiation's
+  arguments, nothing for `None` or a branch that never falls through, a conflict merging
+  nothing. Complete, it is the join's type and the existing push stamps every branch;
+  incomplete, it is recorded on the join, so a nested `if` contributes in turn.
+- **The push had to learn one thing**: a provisional stamp (a join's, not a context's) now
+  leaves a guessed payload open, as the construction's own solve does. The join's `i64`
+  exists only because `5` defaults to it, and narrowing the `5` then made `-> Result<u8,
+  string> => if c { Ok(5) } else { Err("x") }` — which compiled before — fail ("cannot
+  assign i64 to u8"). A test pins that; it fails with the join and without the guard.
+
+Not joined yet, logged: the same shape one level down (`Some(Ok(1))` / `Some(Err("x"))`).
+Tests: `join_partial_test.go`, `TestExec_BranchesJoinPartialInstantiations` (ASan, Linux
+LSan).
+
 ### 09/28/26 — `if let` as a value, and a block tail that is no value
 
 `if let Some(v) = m { v } else { 0 }` ending a `-> u8` body type-checked and the backend

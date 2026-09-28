@@ -381,6 +381,15 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 		if tc.reportArrayLiteralFlavor(elem, expected) {
 			return true
 		}
+		// **A provisional stamp leaves a guessed payload open**, as the construction's own
+		// solve does (inferTupleLiteralExpr): a branch join's instantiation may itself rest
+		// on a literal's default — `if c { Ok(5) } else { Err("x") }` joins to
+		// `Result<i64, string>` only because `5` defaults to i64 — and narrowing the `5`
+		// here would pre-empt the `-> Result<u8, string>` arriving afterwards. With no such
+		// context the literal settles to the same default anyway.
+		if tc.provisionalStamp && tc.fieldTakesWidthFromSolve(decl, declaredFields[i]) && tc.payloadIsAGuess(elem) {
+			continue
+		}
 		// Narrow an untyped literal to the context's width first, so `Ok(1)` against
 		// `Result<u8, string>` records a u8 payload rather than the i64 default —
 		// exactly what the local solve does, but with the arguments it lacked.

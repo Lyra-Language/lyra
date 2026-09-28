@@ -822,9 +822,11 @@ emittable constants.
   `Some(Ok(5))` under `Maybe<Result<i64, string>>` is matched argument-wise and narrowed.
 - **[DONE 09/28] A construction with no context is lyra-E073**, naming the open parameter;
   a constructor turbofish (`Ok::<i64, string>(5)`) is read at last.
-- **[OPEN] Branches that each solve half are not joined.** `let r = if c { Ok(5) } else {
-  Err("x") }` is E073 though the two arms together say `Result<i64, string>`; a join of
-  partial instantiations would settle it. Annotating works.
+- **[DONE 09/28] Branches that each solve half are joined** (`if`/`match`,
+  `typechecker/join_partial.go`).
+- **[OPEN] …but not one level down.** `if c { Some(Ok(1)) } else { Some(Err("x")) }` is
+  still E073: the join's common type is `Maybe<Result>`, and merging means recursing into
+  the payloads' partial solutions. Annotating works.
 - **[DONE 09/28] `if let … else …` is a value where a block's value is used**, as the
   `match` it means; any other statement tail there is refused by the typechecker.
 - **[OPEN] An unannotated function ending in `if let … else …` infers `void`.** Only a
