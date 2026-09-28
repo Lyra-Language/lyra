@@ -24,9 +24,10 @@ func TestExample_ImGuiPixelsChecksClean(t *testing.T) {
 	}
 }
 
-// The committed binding is exactly what the generator makes from the pinned dcimgui.json:
-// an edit to generated.lyra by hand, or a generator change not rerun, fails here. The JSON
-// is downloaded by bindings/imgui/build.sh, so this skips on a checkout that never ran it.
+// The committed binding is exactly what the generator makes from the pinned dcimgui.json —
+// generated.lyra and the field accessors in generated.cpp: an edit to either by hand, or a
+// generator change not rerun, fails here. The JSON is downloaded by bindings/imgui/build.sh,
+// so this skips on a checkout that never ran it.
 func TestImGuiGenerator_ReproducesCommittedBinding(t *testing.T) {
 	root := repoRoot(t)
 	matches, _ := filepath.Glob(filepath.Join(root, "build", "deps", "DearBindings_*", "dcimgui.json"))
@@ -43,19 +44,21 @@ func TestImGuiGenerator_ReproducesCommittedBinding(t *testing.T) {
 		filepath.Join(root, "bindings", "imgui", "gen", "gen.lyra")); code != 0 {
 		t.Fatalf("building the generator exited %d\nstderr: %s", code, stderr)
 	}
-	out := filepath.Join(dir, "generated.lyra")
-	if b, err := exec.Command(gen, matches[0], out).CombinedOutput(); err != nil {
+	outLyra, outCpp := filepath.Join(dir, "generated.lyra"), filepath.Join(dir, "generated.cpp")
+	if b, err := exec.Command(gen, matches[0], outLyra, outCpp).CombinedOutput(); err != nil {
 		t.Fatalf("the generator failed: %v\n%s", err, b)
 	}
-	got, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := os.ReadFile(filepath.Join(root, "bindings", "imgui", "generated.lyra"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("bindings/imgui/generated.lyra is not what gen/gen.lyra makes from %s — rerun the generator (its header has the command)", matches[0])
+	for _, name := range []string{"generated.lyra", "generated.cpp"} {
+		got, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := os.ReadFile(filepath.Join(root, "bindings", "imgui", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("bindings/imgui/%s is not what gen/gen.lyra makes from %s — rerun the generator (its header has the command)", name, matches[0])
+		}
 	}
 }

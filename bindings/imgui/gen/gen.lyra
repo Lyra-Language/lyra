@@ -2,7 +2,7 @@
 //
 //   build/lyrac run bindings/imgui/gen/gen.lyra -- \
 //     build/deps/DearBindings_v0.24_ImGui_v1.92.9b-docking/dcimgui.json \
-//     bindings/imgui/generated.lyra
+//     bindings/imgui/generated.lyra bindings/imgui/generated.cpp
 //
 // `bindings/imgui/build.sh` downloads the JSON beside the C API it describes, so the two
 // always match the pinned ImGui. Rerun this after bumping the pin and commit the result.
@@ -28,6 +28,12 @@
 // wrapper, `…_closable`, taking `open: mut bool`; the plain one passes NULL. A nullable
 // handle is always NULL, and a `text_end` is always NULL (the string's NUL ends it).
 //
+// **Fields are functions.** Lyra cannot reach a C struct's field without its layout, so for
+// the structs a program configures or reads each frame ([FIELD_STRUCTS]) this also writes
+// `generated.cpp`: a C accessor per field, which the wrappers call like any ImGui function.
+// `io.delta_time()`, `style.set_alpha(0.9)`, `style.colors(COL_TEXT)`; strings and handles
+// are read-only, and an array's index is checked on the C side.
+//
 // Anything else — `void *`, callbacks, `va_list`, C-owned buffers, by-value structs other
 // than the vectors — is not bound, and is listed at the end of the generated file with
 // the reason, so hand-written wrappers (`imgui.lyra`) know what is theirs to cover.
@@ -38,8 +44,8 @@ import std.collections.{ HashMap, hashmap_new, Set, set_new }
 
 let main = () -> u8 => {
   let args = program_args()
-  if args.len() != 3 {
-    println("usage: gen <dcimgui.json> <out.lyra>")
+  if args.len() != 4 {
+    println("usage: gen <dcimgui.json> <out.lyra> <out.cpp>")
     return 2
   }
   let Some(text) = read_file(args[1]) else {
@@ -64,12 +70,22 @@ let main = () -> u8 => {
       Ignored => {},
     }
   }
-  let source = render(doc, disambiguate(bound), skipped)
-  if !write_file(args[2], source) {
-    println("gen: cannot write ${args[2]}")
+  var accessors: []string = []
+  for st in doc.field("structs").unwrap_or(JsonNull).elements() {
+    if includes(FIELD_STRUCTS, text_of(st, "name")) {
+      let fields = read_fields(st, api)
+      for f in fields.fns { bound.push(f) }
+      for line in fields.cpp { accessors.push(line) }
+      for why in fields.skipped { skipped.push(why) }
+    }
+  }
+  let wrappers = disambiguate(bound, skipped)
+  let source = render(doc, wrappers, skipped)
+  if !write_file(args[2], source) || !write_file(args[3], render_cpp(accessors)) {
+    println("gen: cannot write ${args[2]} or ${args[3]}")
     return 1
   }
-  println("gen: ${args[2]}: ${bound.len()} wrappers, ${skipped.len()} functions not bound")
+  println("gen: ${args[2]}: ${wrappers.len()} wrappers, ${skipped.len()} functions and fields not bound")
   0
 }
 
@@ -190,6 +206,114 @@ let load_api = (doc: JsonValue) -> Api => {
   Api { typedefs: typedefs, structs: structs, enums: enums, helpers: helpers }
 }
 
+// ── Reading a struct's fields ────────────────────────────────────────────────
+
+/// The structs whose fields get accessors: the ones a program configures (`ImGuiStyle`, the
+/// `Config…` half of `ImGuiIO`) or reads each frame (the rest of `ImGuiIO`, a viewport).
+const FIELD_STRUCTS: []string = ["ImGuiIO", "ImGuiStyle", "ImGuiViewport"]
+
+/// One struct's accessors: the wrappers, as functions calling C accessors, and the C++
+/// defining those accessors.
+struct Fields {
+  fns: []Function,
+  cpp: []string,
+  skipped: []string,
+}
+
+let read_fields = pure (st: JsonValue, api: Api) -> Fields => {
+  let c_struct = text_of(st, "name")
+  let handle = handle_name(c_struct)
+  let receiver = Param {
+    name: "self",
+    kind: Handle(handle),
+    role: Receiver,
+    default: None
+  }
+  let index_param = Param {
+    name: "index",
+    kind: Scalar("i32"),
+    role: Given,
+    default: None
+  }
+  var fns: []Function = []
+  var cpp: []string = []
+  var skipped: []string = []
+  for field in st.field("fields").unwrap_or(JsonNull).elements() {
+    let name = text_of(field, "name")
+    if flag(field, "is_internal") || field.field("conditionals") != None {
+      continue
+    }
+    let desc = description(field.field("type").unwrap_or(JsonNull))
+    let array = text_of(desc, "kind") == "Array"
+    let element = if array { desc.field("inner_type").unwrap_or(JsonNull) } else { desc }
+    let kind = classify(element, api)
+    let settable = match kind {
+      Scalar(_) => true,
+      Vector(_) => true,
+      _ => false,
+    }
+    let readable = match kind {
+      Text => !array,
+      Handle(_) => !array,
+      _ => settable,
+    }
+    if !readable {
+      let why = match kind {
+        Unsupported(w) => w,
+        _ => "an array of it",
+      }
+      skipped.push("${c_struct}::${name}: ${why}")
+      continue
+    }
+    let declared = text_of(field.field("type").unwrap_or(JsonNull), "declaration")
+    let c_type = if array { c_element(element) } else { declared }
+    let lyra_name = snake(name)
+    let get = "lyra_imgui_${c_struct}_get_${name}"
+    let set = "lyra_imgui_${c_struct}_set_${name}"
+    let bounds = "index >= 0 && index < IM_ARRAYSIZE(self->${name})"
+    let getter = Function {
+      symbol: get,
+      name: escape(lyra_name),
+      extern_name: "c_${snake(handle)}_get_${lyra_name}",
+      params: if array { [receiver, index_param] } else { [receiver] },
+      result: kind,
+      cpp_name: "${c_struct}::${name}",
+      comment: attached_comment(field),
+    }
+    fns.push(getter)
+    if array {
+      cpp.push("${c_type} ${get}(${c_struct}* self, int index) { return ${bounds} ? self->${name}[index] : ${c_type}(); }")
+    } else {
+      cpp.push("${c_type} ${get}(${c_struct}* self) { return self->${name}; }")
+    }
+    if settable {
+      let value = Param { name: "value", kind: kind, role: Given, default: None }
+      fns.push(Function {
+        getter |
+        symbol: set,
+        name: "set_${lyra_name}",
+        extern_name: "c_${snake(handle)}_set_${lyra_name}",
+        params: if array { [receiver, index_param, value] } else { [receiver, value] },
+        result: Nothing,
+      })
+      if array {
+        cpp.push("void ${set}(${c_struct}* self, int index, ${c_type} value) { if (${bounds}) self->${name}[index] = value; }")
+      } else {
+        cpp.push("void ${set}(${c_struct}* self, ${c_type} value) { self->${name} = value; }")
+      }
+    }
+  }
+  Fields { fns: fns, cpp: cpp, skipped: skipped }
+}
+
+/// An array field's element type as C++ spells it: `ImVec4`, `bool`, `unsigned int`.
+let c_element = pure (desc: JsonValue) -> string => {
+  if text_of(desc, "kind") == "Builtin" {
+    return text_of(desc, "builtin_type").split("_").join(" ")
+  }
+  text_of(desc, "name")
+}
+
 // ── Reading a function ───────────────────────────────────────────────────────
 
 let read_function = pure (f: JsonValue, api: Api) -> Outcome => {
@@ -278,19 +402,26 @@ let read_function = pure (f: JsonValue, api: Api) -> Outcome => {
 /// receiver — so a method named like a free function takes its receiver as a suffix:
 /// `ImDrawList::PushClipRect` is `draw_list.push_clip_rect_draw_list(…)` beside
 /// `ImGui::PushClipRect`'s `push_clip_rect(…)`.
-let disambiguate = (fns: []Function) -> []Function => {
+///
+/// Two methods of one receiver may not share a name either, and the only way that happens
+/// is a field accessor meeting a real method — `ImGuiIO::SetAppAcceptingEvents` and the
+/// setter of the field it sets. The method comes first (functions are read before fields)
+/// and is what ImGui means to be called, so the accessor is dropped and listed in `dropped`.
+let disambiguate = (fns: []Function, dropped: mut []string) -> []Function => {
   var free = set_new::<string>()
   for f in fns {
     if receiver_of(f) == "" { free.insert(f.name) }
   }
+  var seen = set_new::<string>()
   var out: []Function = []
   for f in fns {
     let r = receiver_of(f)
-    if r != "" && free.contains(f.name) {
-      out.push(Function { f | name: "${f.name}_${snake(r)}" })
-    } else {
-      out.push(f)
+    let name = if r != "" && free.contains(f.name) { "${f.name}_${snake(r)}" } else { f.name }
+    if !seen.insert("${r}.${name}") {
+      dropped.push("${f.cpp_name} (`${name}`): a method of that name already exists")
+      continue
     }
+    out.push(Function { f | name: name })
   }
   out
 }
@@ -539,6 +670,24 @@ let render = (doc: JsonValue, fns: []Function, skipped: []string) -> string => {
   out.push("// ── Not bound ───────────────────────────────────────────────────────────────")
   out.push("//")
   for s in skipped { out.push("// ${s}") }
+  out.push("")
+  out.join("\n")
+}
+
+/// `generated.cpp`: the field accessors, `extern "C"` so the externs find them by name.
+let render_cpp = pure (accessors: []string) -> string => {
+  var out: []string = []
+  out.push("// Generated by `gen/gen.lyra` from dear_bindings' `dcimgui.json` — do not edit; rerun")
+  out.push("// the generator instead. One C accessor per field of the structs in FIELD_STRUCTS, since")
+  out.push("// Lyra cannot reach a C struct's field without its layout.")
+  out.push("")
+  out.push("#include \"imgui.h\"")
+  out.push("")
+  out.push("extern \"C\" {")
+  out.push("")
+  for line in accessors { out.push(line) }
+  out.push("")
+  out.push("}")
   out.push("")
   out.join("\n")
 }

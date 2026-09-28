@@ -5,7 +5,9 @@
 //   build/lyrac run examples/imgui/pixels.lyra -- --frames 120   # quit after 120 frames
 //
 // Paint with the left mouse button, pick a colour with its button, edit colours with the
-// pickers. **Drag the "Pixels" or "Palette" window outside the main one** and it becomes an
+// pickers, name the sprite. The Preview window draws it as a texture, re-uploaded each
+// frame: nearest-neighbour at 4× and linear at 8×, which is the difference pixel art cares
+// about. **Drag the "Pixels" or "Palette" window outside the main one** and it becomes an
 // OS window of its own — onto another monitor, say (`HOST_VIEWPORTS`). View → ImGui demo
 // opens ImGui's own demo of everything else it can do.
 //
@@ -13,12 +15,13 @@
 // `color_edit3("Colour", palette[i])` edits the palette entry itself.
 
 import bindings.imgui.{
-  create_host, begin_frame, end_frame, destroy_host, HOST_DOCKING, HOST_VIEWPORTS,
-  Vec2, Vec4, col32, begin, end, button, color_edit3, same_line, text, separator,
+  create_host, begin_frame, end_frame, destroy_host, HOST_DOCKING, HOST_VIEWPORTS, Vec2,
+  Vec4, col32, begin, end, button, color_edit3, same_line, text, separator, input_text,
   dock_space_over_viewport, begin_main_menu_bar, end_main_menu_bar, begin_menu, end_menu,
   menu_item, show_demo_window_closable, get_cursor_screen_pos, invisible_button,
-  is_item_hovered, is_mouse_down, get_mouse_pos, get_window_draw_list,
-  color_convert_float4_to_u32, MOUSE_BUTTON_LEFT,
+  is_item_hovered, is_mouse_down, get_mouse_pos, get_window_draw_list, get_io,
+  color_convert_float4_to_u32, MOUSE_BUTTON_LEFT, Texture, create_texture, update_texture,
+  destroy_texture, image,
 }
 
 const SIDE: i64 = 16
@@ -40,17 +43,25 @@ let main = () -> u8 => {
     #[0.10, 0.10, 0.15], #[0.90, 0.30, 0.20], #[0.30, 0.80, 0.40], #[0.95, 0.90, 0.60],
   ]
   var brush: i64 = 1
+  var name = "sprite"
   var show_demo = false
+  let Some(preview) = create_texture(host, 16, 16) else {
+    println("could not make a texture")
+    destroy_host(host)
+    return 1
+  }
   var frames = 0
   for frames != limit && begin_frame(host) {
     dock_space_over_viewport()
     menu_bar(show_demo)
     if show_demo { show_demo_window_closable(show_demo) }
-    palette_window(palette, brush)
+    palette_window(palette, brush, name)
     pixel_window(pixels, palette, brush)
+    preview_window(preview, pixels, palette, name)
     end_frame(host, 0.08, 0.08, 0.10)
     frames += 1
   }
+  destroy_texture(preview)
   destroy_host(host)
   println("frames: ${frames}")
   0
@@ -76,9 +87,16 @@ let menu_bar = (show_demo: mut bool) -> void => {
   }
 }
 
-/// A button per colour to pick the brush, and a picker to change the colour.
-let palette_window = (palette: mut [][3]f32, brush: mut i64) -> void => {
+/// The sprite's name, a button per colour to pick the brush, and a picker to change the
+/// colour.
+let palette_window = (
+  palette: mut [][3]f32,
+  brush: mut i64,
+  name: mut string
+) -> void => {
   if begin("Palette") {
+    input_text("Name", name)
+    separator()
     for i in 0..<palette.len() {
       let label = if i == brush { "[${i}]" } else { " ${i} " }
       if button(label) { brush = i }
@@ -129,3 +147,43 @@ let pixel_window = (pixels: mut []u8, palette: [][3]f32, brush: i64) -> void => 
 
 let packed = (c: [3]f32) -> u32 =>
   color_convert_float4_to_u32(Vec4 { x: c[0], y: c[1], z: c[2], w: 1.0 })
+
+/// The sprite as a texture, uploaded again each frame and drawn twice: nearest-neighbour
+/// at 4× (crisp) and linear at 8× (smoothed).
+let preview_window = (
+  preview: Texture,
+  pixels: []u8,
+  palette: [][3]f32,
+  name: string
+) -> void => {
+  if begin("Preview") {
+    update_texture(preview, rgba(pixels, palette))
+    text("${name} — 16×16")
+    image(preview, Vec2 { x: 64.0, y: 64.0 })
+    same_line()
+    image(
+      preview,
+      Vec2 { x: 128.0, y: 128.0 },
+      Vec2 { x: 0.0, y: 0.0 },
+      Vec2 { x: 1.0, y: 1.0 },
+      Linear
+    )
+    text("${get_io().framerate().round()} fps")
+  }
+  end()
+}
+
+/// The sprite's pixels as RGBA bytes, row by row.
+let rgba = pure (pixels: []u8, palette: [][3]f32) -> []u8 => {
+  var out: []u8 = [0; 1024]
+  for i, p in pixels {
+    let c = palette[i64(p)]
+    out[i * 4] = channel(c[0])
+    out[i * 4 + 1] = channel(c[1])
+    out[i * 4 + 2] = channel(c[2])
+    out[i * 4 + 3] = 255
+  }
+  out
+}
+
+let channel = pure (v: f32) -> u8 => u8((v.clamp(0.0, 1.0) * 255.0).round())

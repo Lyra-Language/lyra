@@ -2,7 +2,8 @@
 #
 # Build the C half of `bindings.imgui` into <out>/lib/liblyra-imgui.a:
 # Dear ImGui (docking branch), dear_bindings' C API over it, ImGui's SDL3 and SDL_GPU
-# backends, and host.cpp (with host_macos.m on macOS).
+# backends, host.cpp (with host_macos.m on macOS), and generated.cpp — the field accessors
+# gen/gen.lyra writes beside generated.lyra.
 #
 #   bindings/imgui/build.sh <out>        # ./build.sh passes build/
 #
@@ -69,7 +70,7 @@ fetch() {
 }
 
 # The pin covers the downloads and the host's sources: a change to any rebuilds.
-readonly PIN="$IMGUI_TAG $DEAR_BINDINGS_TAG $(sha256 "$HERE/host.cpp") $(sha256 "$HERE/host_macos.m")"
+readonly PIN="$IMGUI_TAG $DEAR_BINDINGS_TAG $(sha256 "$HERE/host.cpp") $(sha256 "$HERE/host_macos.m") $(sha256 "$HERE/generated.cpp")"
 if [ -f "$ARCHIVE" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$PIN" ]; then
   exit 0
 fi
@@ -92,7 +93,7 @@ for src in \
   "$IMGUI_DIR/imgui.cpp" "$IMGUI_DIR/imgui_draw.cpp" "$IMGUI_DIR/imgui_tables.cpp" \
   "$IMGUI_DIR/imgui_widgets.cpp" "$IMGUI_DIR/imgui_demo.cpp" \
   "$IMGUI_DIR/backends/imgui_impl_sdl3.cpp" "$IMGUI_DIR/backends/imgui_impl_sdlgpu3.cpp" \
-  "$DB_DIR/dcimgui.cpp" "$HERE/host.cpp"; do
+  "$DB_DIR/dcimgui.cpp" "$HERE/host.cpp" "$HERE/generated.cpp"; do
   "$CC" -x c++ -std=c++11 -O2 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
     -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" $(pkg-config --cflags sdl3) \
     -c "$src" -o "$OBJ/$(basename "${src%.*}").o" &

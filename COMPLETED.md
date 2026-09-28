@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 09/27/26 — `bindings.imgui`: text input, textures, and fields as methods
+
+The three things Vega needed that the generated wrappers could not reach.
+
+- **Fields are generated, not written.** Lyra cannot reach a C struct's field without its
+  layout, so `gen.lyra` also writes `generated.cpp`: one `extern "C"` accessor per field of
+  `ImGuiIO`, `ImGuiStyle` and `ImGuiViewport` (393 of them). Each accessor is modelled as one
+  more `Function` whose symbol is the accessor, so the wrapper rendering, defaults and naming
+  needed nothing new — `get_io().delta_time()`, `style.set_colors(COL_TEXT, v)`. An array
+  index is checked in C. The one clash, `ImGuiIO::SetAppAcceptingEvents` against the setter
+  of the field it sets, keeps the method: the generator now drops any second method of one
+  receiver and lists it as not bound.
+- **`input_text` over a Lyra string** is ImGui's `std::string` recipe without the STL: the
+  host copies the string into a buffer ImGui grows through its resize callback, and the
+  wrapper copies back only on change. Checked by feeding 600 characters through
+  `io.add_input_characters_utf8` into a focused field — past the 256-byte first buffer —
+  and comparing the `mut string` after. (A keyboard-focused field selects all first, so the
+  text *replaces* the old value: ImGui's behaviour, not the binding's.)
+- **Textures** are an `SDL_GPUTexture *` held in a `@must_release` `Texture`, uploaded through
+  a transfer buffer and a copy pass submitted at once, so the frame being built draws the new
+  pixels. Pixel art must not be smoothed, so `image`, `image_button` and `add_image` take
+  `filter: Filter = Nearest` and bracket the draw with ImGui 1.92.9's standard sampler
+  callbacks (`DrawCallback_SetSamplerNearest`/`…Linear`) — no backend change needed.
+
 ### 09/27/26 — `bindings.imgui` is generated, and what generating it found
 
 **The first binding written by a program**: `bindings/imgui/gen/gen.lyra` reads
@@ -50,8 +74,11 @@ for y = -32 and landing at y = 34: AppKit's `constrainFrameRect:toScreen:` keeps
 window's top below the menu bar of the screen it is mostly on, and each step *straddled*
 the two displays. (A window placed wholly on the upper display is not constrained, which
 is why the first probe, and a small panel dragged fast, looked fine.) `host_macos.m` adds
-the method to `SDL3Window` — a borderless window stays where it was asked to go, a titled
-one gets NSWindow's rule. Found moving Vega's panels; a fullscreen app on the upper display
+the method to `SDL3Window`. Leaving every borderless frame alone was one step too far: a
+panel could then park its title bar under the menu bar, with nothing left to grab. The
+method now keeps a borderless frame only while the middle of its title bar lies in some
+screen's `visibleFrame`, and gives it NSWindow's rule otherwise — so a panel crossing up
+holds below the menu bar until the cursor is ~10 pt onto the monitor above, then jumps. Found moving Vega's panels; a fullscreen app on the upper display
 blocks every window regardless, since it owns that display's Space.
 
 **lyrafmt indented the second of two attributes** as a continuation of the first:

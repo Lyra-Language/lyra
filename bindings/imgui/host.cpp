@@ -19,6 +19,7 @@
 #include <SDL3/SDL.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct LyraImGuiHost {
     SDL_Window* window;
@@ -160,6 +161,166 @@ void lyra_imgui_host_end_frame(LyraImGuiHost* host, float r, float g, float b) {
         ImGui::RenderPlatformWindowsDefault();
     }
     SDL_SubmitGPUCommandBuffer(commands);
+}
+
+// ── Text input over a growable buffer ───────────────────────────────────────
+//
+// ImGui edits a `char *` in place and a Lyra string is immutable, so the text is copied
+// into a buffer the host owns and grows through ImGui's resize callback (imgui_stdlib's
+// pattern, without the STL). One buffer serves every call: its contents are the widget's
+// value only until the next call, and the Lyra wrapper copies it out at once when it
+// changed. Never freed; it is the size of the longest text edited.
+
+static char* text_buf = nullptr;
+static int text_cap = 0;
+
+static bool text_reserve(int size) {
+    if (size <= text_cap)
+        return true;
+    int cap = text_cap > 0 ? text_cap : 256;
+    while (cap < size)
+        cap *= 2;
+    char* grown = (char*)realloc(text_buf, (size_t)cap);
+    if (grown == nullptr)
+        return false;
+    text_buf = grown;
+    text_cap = cap;
+    return true;
+}
+
+static int text_resize(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        if (!text_reserve(data->BufSize))
+            data->BufSize = text_cap; // refused: ImGui truncates to what fits
+        data->Buf = text_buf;
+    }
+    return 0;
+}
+
+// Edit `text` in an InputText (multiline when `multiline`, with a grey `hint` when not
+// NULL). Answers the buffer holding the value after this frame's edit — the host's, valid
+// until the next call — and sets `*changed` when the user changed it.
+const char* lyra_imgui_input_text(const char* label, const char* hint, const char* text, int32_t flags,
+                                  bool multiline, ImVec2 size, bool* changed) {
+    size_t len = strlen(text);
+    if (!text_reserve((int)len + 1)) {
+        *changed = false;
+        return text;
+    }
+    memcpy(text_buf, text, len + 1);
+    ImGuiInputTextFlags f = (ImGuiInputTextFlags)flags | ImGuiInputTextFlags_CallbackResize;
+    if (multiline)
+        *changed = ImGui::InputTextMultiline(label, text_buf, (size_t)text_cap, size, f, text_resize);
+    else if (hint != nullptr)
+        *changed = ImGui::InputTextWithHint(label, hint, text_buf, (size_t)text_cap, f, text_resize);
+    else
+        *changed = ImGui::InputText(label, text_buf, (size_t)text_cap, f, text_resize);
+    return text_buf;
+}
+
+// ── Textures ───────────────────────────────────────────────────────────────────
+//
+// An RGBA texture the program fills from Lyra and ImGui draws: tiles, sprites, a canvas.
+// ImGui's SDL_GPU backend takes an `SDL_GPUTexture *` as the texture ID, so that is what
+// Lyra holds. Pixel art wants nearest-neighbour sampling, which the image functions below
+// switch to around one draw with ImGui's standard sampler callbacks.
+
+// A width × height RGBA texture, contents undefined until updated; NULL on failure.
+SDL_GPUTexture* lyra_imgui_texture_create(LyraImGuiHost* host, int32_t width, int32_t height) {
+    SDL_GPUTextureCreateInfo info = {};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    info.width = (Uint32)width;
+    info.height = (Uint32)height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+    return SDL_CreateGPUTexture(host->device, &info);
+}
+
+// Replace the whole texture with `rgba` (width × height × 4 bytes, rows top to bottom).
+// Submitted at once, ahead of the frame being built, so this frame draws the new pixels.
+bool lyra_imgui_texture_update(LyraImGuiHost* host, SDL_GPUTexture* texture, const uint8_t* rgba,
+                               int32_t width, int32_t height) {
+    const Uint32 size = (Uint32)width * (Uint32)height * 4;
+    SDL_GPUTransferBufferCreateInfo transfer_info = {};
+    transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    transfer_info.size = size;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(host->device, &transfer_info);
+    if (transfer == nullptr)
+        return false;
+    void* mapped = SDL_MapGPUTransferBuffer(host->device, transfer, false);
+    if (mapped == nullptr) {
+        SDL_ReleaseGPUTransferBuffer(host->device, transfer);
+        return false;
+    }
+    memcpy(mapped, rgba, size);
+    SDL_UnmapGPUTransferBuffer(host->device, transfer);
+
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(host->device);
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+    SDL_GPUTextureTransferInfo source = {};
+    source.transfer_buffer = transfer;
+    source.pixels_per_row = (Uint32)width;
+    source.rows_per_layer = (Uint32)height;
+    SDL_GPUTextureRegion destination = {};
+    destination.texture = texture;
+    destination.w = (Uint32)width;
+    destination.h = (Uint32)height;
+    destination.d = 1;
+    SDL_UploadToGPUTexture(copy, &source, &destination, false);
+    SDL_EndGPUCopyPass(copy);
+    const bool submitted = SDL_SubmitGPUCommandBuffer(commands);
+    SDL_ReleaseGPUTransferBuffer(host->device, transfer); // freed once the upload is done
+    return submitted;
+}
+
+// Release a texture. Not while the frame being built still draws it: the draw runs at
+// end_frame, after this.
+void lyra_imgui_texture_destroy(LyraImGuiHost* host, SDL_GPUTexture* texture) {
+    SDL_ReleaseGPUTexture(host->device, texture);
+}
+
+// Switch `list`'s sampling for the draws after this point: nearest-neighbour or linear.
+static void set_sampler(ImDrawList* list, bool nearest) {
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    ImDrawCallback callback = nearest ? platform_io.DrawCallback_SetSamplerNearest : platform_io.DrawCallback_SetSamplerLinear;
+    if (callback != nullptr)
+        list->AddCallback(callback, nullptr);
+}
+
+static ImTextureRef texture_ref(SDL_GPUTexture* texture) {
+    return ImTextureRef((ImTextureID)(intptr_t)texture);
+}
+
+void lyra_imgui_image(SDL_GPUTexture* texture, ImVec2 size, ImVec2 uv0, ImVec2 uv1, bool nearest) {
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    if (nearest)
+        set_sampler(list, true);
+    ImGui::Image(texture_ref(texture), size, uv0, uv1);
+    if (nearest)
+        set_sampler(list, false);
+}
+
+bool lyra_imgui_image_button(const char* id, SDL_GPUTexture* texture, ImVec2 size, ImVec2 uv0, ImVec2 uv1,
+                             bool nearest) {
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    if (nearest)
+        set_sampler(list, true);
+    bool pressed = ImGui::ImageButton(id, texture_ref(texture), size, uv0, uv1);
+    if (nearest)
+        set_sampler(list, false);
+    return pressed;
+}
+
+void lyra_imgui_draw_list_add_image(ImDrawList* list, SDL_GPUTexture* texture, ImVec2 p_min, ImVec2 p_max,
+                                    ImVec2 uv0, ImVec2 uv1, ImU32 col, bool nearest) {
+    if (nearest)
+        set_sampler(list, true);
+    list->AddImage(texture_ref(texture), p_min, p_max, uv0, uv1, col);
+    if (nearest)
+        set_sampler(list, false);
 }
 
 // Tear everything down, SDL included. The host must not be used afterwards.

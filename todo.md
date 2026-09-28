@@ -488,10 +488,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
-- **[PARTIAL] `bindings.imgui`: the rest by hand.** 530 wrappers are generated (09/27);
-  what the generator refuses is listed at the end of `generated.lyra`. Vega needs, by hand:
-  `input_text` over a `string` (C wants a writable buffer), textures (`Image` takes an
-  `ImTextureRef`; the host must upload), and `ImGuiIO`/`ImGuiStyle` fields (handles are opaque).
+- **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
+  Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
+  data (`void *`), and a layout location for `imgui.ini` chosen by the program.
 - **[OPEN] `to_ascii_upper` on a `string` does not exist**, though LANGUAGE.md § Strings
   says both case maps work on `rune` and `string`; only `to_ascii_lower` has the string form.
 - **[OPEN] `bindings/sdl3/sdl3.lyra` says Lyra's `bool` is refused at the C boundary**

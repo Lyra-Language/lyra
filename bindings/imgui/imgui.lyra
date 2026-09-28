@@ -26,9 +26,11 @@ module bindings.imgui
 //! }
 //! ```
 //!
-//! **Two halves.** The *host* (this file, over `host.cpp`) owns the window, the SDL_GPU
-//! device and the frame loop — four calls. The widgets are generated from dear_bindings'
-//! `dcimgui.json` (`gen/`), so the whole API is here without being written by hand.
+//! **Two halves.** This file, over `host.cpp`, is what C++ has to do for Lyra: the *host*
+//! (the window, the SDL_GPU device and the frame loop — four calls), text input over a
+//! Lyra `string`, and textures. Everything else — the widgets, the draw list, the enums,
+//! and the fields of `ImGuiIO`, `ImGuiStyle` and `ImGuiViewport` as methods
+//! (`get_io().delta_time()`) — is generated from dear_bindings' `dcimgui.json` (`gen/`).
 //!
 //! **The C half is `lib/liblyra-imgui.a`**, which `./build.sh` builds from a pinned,
 //! downloaded ImGui (`build.sh` in this directory). It needs no C++ runtime, so the two
@@ -40,6 +42,8 @@ module bindings.imgui
 
 import std.ffi
 import std.ffi.{ cstring_len }
+
+// ── The host ─────────────────────────────────────────────────────────────────
 
 /// A running ImGui host: the main window, its GPU device and the ImGui context.
 pub newtype Host = ^u8
@@ -78,6 +82,179 @@ pub let end_frame = (host: Host, r: f32, g: f32, b: f32) -> void =>
 /// Close the window and shut ImGui and SDL down. The host must not be used afterwards.
 pub let destroy_host = (host: Host) -> void => unsafe { lyra_imgui_host_destroy(host) }
 
+// ── Text ─────────────────────────────────────────────────────────────────────
+
+/// `ImGui::Text` — a line of text. ImGui's own `Text` is printf-style and is not bound;
+/// build the string with interpolation (`text("fps: ${fps}")`) instead.
+pub let text = (s: string) -> void => text_unformatted(s)
+
+/// `ImGui::InputText` over a Lyra string: edits `value` in place and answers whether this
+/// frame changed it. Any length — the buffer grows as the user types.
+pub let input_text = (label: string, value: mut string, flags: i32 = 0) -> bool =>
+  edit_text(label, None, value, flags, false, Vec2 { x: 0.0, y: 0.0 })
+
+/// [input_text] showing `hint` in grey while `value` is empty.
+pub let input_text_with_hint = (
+  label: string,
+  hint: string,
+  value: mut string,
+  flags: i32 = 0
+) -> bool => edit_text(label, Some(hint), value, flags, false, Vec2 { x: 0.0, y: 0.0 })
+
+/// [input_text] over several lines, in a box `size` large (`0` in either axis takes the
+/// default).
+pub let input_text_multiline = (
+  label: string,
+  value: mut string,
+  size: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+  flags: i32 = 0
+) -> bool => edit_text(label, None, value, flags, true, size)
+
+// ── Textures ─────────────────────────────────────────────────────────────────
+
+/// An RGBA texture ImGui can draw — tiles, sprites, a canvas. Made by [create_texture],
+/// filled by [update_texture], drawn by [image], [image_button] and a draw list's
+/// [add_image], and released by [destroy_texture], which must not run while the frame
+/// being built still draws it (the drawing happens at `end_frame`).
+@must_release(destroy_texture)
+pub struct Texture {
+  host: Host,
+  handle: ^u8,
+  width: i32,
+  height: i32,
+}
+
+/// How a texture is sampled when drawn at another size than its own.
+pub data Filter =
+  /// Every texel a crisp square: pixel art, tiles, sprites. The default here.
+  Nearest
+  /// Smoothed between texels: photographs, art drawn at fractional scales.
+  | Linear
+
+/// A `width` × `height` texture, its pixels undefined until [update_texture]; `None` for
+/// a size of zero or when the GPU refuses.
+pub let create_texture = (host: Host, width: i32, height: i32) -> Maybe<Texture> => {
+  if width <= 0 || height <= 0 { return None }
+  let handle = unsafe { lyra_imgui_texture_create(host, width, height) }
+  if handle == nullptr {
+    None
+  } else {
+    Some(Texture { host: host, handle: handle, width: width, height: height })
+  }
+}
+
+/// Replace every pixel: `rgba` is width × height × 4 bytes, rows top to bottom. Uploaded at
+/// once, so the frame being built draws the new pixels. `false` if `rgba` is the wrong
+/// length or the upload failed.
+pub let update_texture = (texture: Texture, rgba: []u8) -> bool => {
+  if rgba.len() != i64(texture.width) * i64(texture.height) * 4 { return false }
+  unsafe {
+    lyra_imgui_texture_update(
+      texture.host,
+      texture.handle,
+      rgba.data(),
+      texture.width,
+      texture.height
+    )
+  }
+}
+
+/// Release the texture's GPU memory.
+pub let destroy_texture = (texture: Texture) -> void =>
+  unsafe { lyra_imgui_texture_destroy(texture.host, texture.handle) }
+
+/// `ImGui::Image`: the texture's `uv0`..`uv1` region (0..1 across the texture) as an item
+/// `size` pixels large.
+pub let image = (
+  texture: Texture,
+  size: Vec2,
+  uv0: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+  uv1: Vec2 = Vec2 { x: 1.0, y: 1.0 },
+  filter: Filter = Nearest
+) -> void =>
+  unsafe { lyra_imgui_image(texture.handle, size, uv0, uv1, filter == Nearest) }
+
+/// `ImGui::ImageButton`: [image] as a button, identified by `id`; answers whether it was
+/// pressed.
+pub let image_button = (
+  id: string,
+  texture: Texture,
+  size: Vec2,
+  uv0: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+  uv1: Vec2 = Vec2 { x: 1.0, y: 1.0 },
+  filter: Filter = Nearest
+) -> bool => id.with_cstring((c_id) => unsafe {
+  lyra_imgui_image_button(c_id, texture.handle, size, uv0, uv1, filter == Nearest)
+})
+
+/// `ImDrawList::AddImage`: the texture's `uv0`..`uv1` region stretched over the rectangle
+/// `p_min`..`p_max`, tinted by `col` (white leaves it as it is).
+pub let add_image = (
+  self: DrawList,
+  texture: Texture,
+  p_min: Vec2,
+  p_max: Vec2,
+  uv0: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+  uv1: Vec2 = Vec2 { x: 1.0, y: 1.0 },
+  col: u32 = 0xFFFFFFFF,
+  filter: Filter = Nearest
+) -> void => unsafe {
+  lyra_imgui_draw_list_add_image(
+    self,
+    texture.handle,
+    p_min,
+    p_max,
+    uv0,
+    uv1,
+    col,
+    filter == Nearest
+  )
+}
+
+// ── Colours ──────────────────────────────────────────────────────────────────
+
+/// `IM_COL32(r, g, b, a)`: a packed colour for the draw-list functions
+/// (`draw_list.add_rect_filled(p0, p1, col32(255, 0, 0))`).
+pub let col32 = pure (r: u8, g: u8, b: u8, a: u8 = 255) -> u32 =>
+  (u32(a) << 24) | (u32(b) << 16) | (u32(g) << 8) | u32(r)
+
+// ── Private helpers ──────────────────────────────────────────────────────────
+
+/// The three `input_text`s' one body. The host copies `value` into a buffer ImGui can
+/// grow and answers that buffer; it is copied back only when the user changed it.
+let edit_text = (
+  label: string,
+  hint: Maybe<string>,
+  value: mut string,
+  flags: i32,
+  multiline: bool,
+  size: Vec2
+) -> bool => {
+  var changed = false
+  let c_changed = unsafe { &mut changed }
+  let current = value
+  let edited = label.with_cstring((l) => with_maybe_cstring(
+    hint,
+    (h) => current.with_cstring((v) => unsafe {
+      lyra_imgui_input_text(l, h, v, flags, multiline, size, c_changed)
+    })
+  ))
+  if changed { value = from_cstring(edited) }
+  changed
+}
+
+/// Lend `s` to C as a NUL-terminated string, or NULL for `None`.
+let with_maybe_cstring = pure (s: Maybe<string>, f: (^u8) -> t) -> t => match s {
+  Some(text) => text.with_cstring(f),
+  None => f(nullptr),
+}
+
+/// Copy a C string ImGui answers into a Lyra string; NULL is `""`.
+let from_cstring = pure (p: ^u8) -> string =>
+  if p == nullptr { "" } else { unsafe { p.decode_utf8(cstring_len(p)) } }
+
+// ── Externs (host.cpp) ───────────────────────────────────────────────────────
+
 @symbol("lyra_imgui_host_create")
 unsafe extern lyra_imgui_host_create: (
   title: ^u8,
@@ -95,23 +272,59 @@ unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) ->
 @symbol("lyra_imgui_host_destroy")
 unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
 
-/// `ImGui::Text` — a line of text. ImGui's own `Text` is printf-style and is not bound;
-/// build the string with interpolation (`text("fps: ${fps}")`) instead.
-pub let text = (s: string) -> void => text_unformatted(s)
+@symbol("lyra_imgui_input_text")
+unsafe extern lyra_imgui_input_text: (
+  label: ^u8,
+  hint: ^u8,
+  text: ^u8,
+  flags: i32,
+  multiline: bool,
+  size: Vec2,
+  changed: ^mut bool
+) -> ^u8
 
-/// `IM_COL32(r, g, b, a)`: a packed colour for the draw-list functions
-/// (`draw_list.add_rect_filled(p0, p1, col32(255, 0, 0))`).
-pub let col32 = pure (r: u8, g: u8, b: u8, a: u8 = 255) -> u32 =>
-  (u32(a) << 24) | (u32(b) << 16) | (u32(g) << 8) | u32(r)
+@symbol("lyra_imgui_texture_create")
+unsafe extern lyra_imgui_texture_create: (host: Host, width: i32, height: i32) -> ^u8
 
-// ── Helpers the generated wrappers call ─────────────────────────────────────
+@symbol("lyra_imgui_texture_update")
+unsafe extern lyra_imgui_texture_update: (
+  host: Host,
+  texture: ^u8,
+  rgba: ^u8,
+  width: i32,
+  height: i32
+) -> bool
 
-/// Lend `s` to C as a NUL-terminated string, or NULL for `None`.
-let with_maybe_cstring = pure (s: Maybe<string>, f: (^u8) -> t) -> t => match s {
-  Some(text) => text.with_cstring(f),
-  None => f(nullptr),
-}
+@symbol("lyra_imgui_texture_destroy")
+unsafe extern lyra_imgui_texture_destroy: (host: Host, texture: ^u8) -> void
 
-/// Copy a C string ImGui answers into a Lyra string; NULL is `""`.
-let from_cstring = pure (p: ^u8) -> string =>
-  if p == nullptr { "" } else { unsafe { p.decode_utf8(cstring_len(p)) } }
+@symbol("lyra_imgui_image")
+unsafe extern lyra_imgui_image: (
+  texture: ^u8,
+  size: Vec2,
+  uv0: Vec2,
+  uv1: Vec2,
+  nearest: bool
+) -> void
+
+@symbol("lyra_imgui_image_button")
+unsafe extern lyra_imgui_image_button: (
+  id: ^u8,
+  texture: ^u8,
+  size: Vec2,
+  uv0: Vec2,
+  uv1: Vec2,
+  nearest: bool
+) -> bool
+
+@symbol("lyra_imgui_draw_list_add_image")
+unsafe extern lyra_imgui_draw_list_add_image: (
+  list: DrawList,
+  texture: ^u8,
+  p_min: Vec2,
+  p_max: Vec2,
+  uv0: Vec2,
+  uv1: Vec2,
+  col: u32,
+  nearest: bool
+) -> void

@@ -15,6 +15,9 @@ pub struct Vec4 { x: f32, y: f32, z: f32, w: f32 }
 /// A pointer to ImGui's `ImGuiColor`, owned by ImGui.
 pub newtype Color = ^u8
 
+/// A pointer to ImGui's `ImGuiContext`, owned by ImGui.
+pub newtype Context = ^u8
+
 /// A pointer to ImGui's `ImDrawCmd`, owned by ImGui.
 pub newtype DrawCmd = ^u8
 
@@ -3843,6 +3846,1190 @@ pub let clear_platform_handlers = (self: PlatformIO) -> void => unsafe { c_platf
 /// `ClearRendererHandlers` — Clear all Renderer_XXX fields. Typically called on Renderer Backend shutdown.
 pub let clear_renderer_handlers = (self: PlatformIO) -> void => unsafe { c_platform_io_clear_renderer_handlers(self) }
 
+/// `ImGuiStyle::FontSizeBase` — Current base font size before external global factors are applied. Use PushFont(NULL, size) to modify. Use ImGui::GetFontSize() to obtain scaled value.
+pub let font_size_base = (self: Style) -> f32 => unsafe { c_style_get_font_size_base(self) }
+
+/// `ImGuiStyle::FontSizeBase` — Current base font size before external global factors are applied. Use PushFont(NULL, size) to modify. Use ImGui::GetFontSize() to obtain scaled value.
+pub let set_font_size_base = (self: Style, value: f32) -> void => unsafe { c_style_set_font_size_base(self, value) }
+
+/// `ImGuiStyle::FontScaleMain` — Main global scale factor. May be set by application once, or exposed to end-user.
+pub let font_scale_main = (self: Style) -> f32 => unsafe { c_style_get_font_scale_main(self) }
+
+/// `ImGuiStyle::FontScaleMain` — Main global scale factor. May be set by application once, or exposed to end-user.
+pub let set_font_scale_main = (self: Style, value: f32) -> void => unsafe { c_style_set_font_scale_main(self, value) }
+
+/// `ImGuiStyle::FontScaleDpi` — Additional global scale factor from viewport/monitor contents scale. In docking branch: when io.ConfigDpiScaleFonts is enabled, this is automatically overwritten when changing monitor DPI.
+pub let font_scale_dpi = (self: Style) -> f32 => unsafe { c_style_get_font_scale_dpi(self) }
+
+/// `ImGuiStyle::FontScaleDpi` — Additional global scale factor from viewport/monitor contents scale. In docking branch: when io.ConfigDpiScaleFonts is enabled, this is automatically overwritten when changing monitor DPI.
+pub let set_font_scale_dpi = (self: Style, value: f32) -> void => unsafe { c_style_set_font_scale_dpi(self, value) }
+
+/// `ImGuiStyle::Alpha` — Global alpha applies to everything in Dear ImGui.
+pub let alpha = (self: Style) -> f32 => unsafe { c_style_get_alpha(self) }
+
+/// `ImGuiStyle::Alpha` — Global alpha applies to everything in Dear ImGui.
+pub let set_alpha = (self: Style, value: f32) -> void => unsafe { c_style_set_alpha(self, value) }
+
+/// `ImGuiStyle::DisabledAlpha` — Additional alpha multiplier applied by BeginDisabled(). Multiply over current value of Alpha.
+pub let disabled_alpha = (self: Style) -> f32 => unsafe { c_style_get_disabled_alpha(self) }
+
+/// `ImGuiStyle::DisabledAlpha` — Additional alpha multiplier applied by BeginDisabled(). Multiply over current value of Alpha.
+pub let set_disabled_alpha = (self: Style, value: f32) -> void => unsafe { c_style_set_disabled_alpha(self, value) }
+
+/// `ImGuiStyle::WindowPadding` — Padding within a window.
+pub let window_padding = (self: Style) -> Vec2 => unsafe { c_style_get_window_padding(self) }
+
+/// `ImGuiStyle::WindowPadding` — Padding within a window.
+pub let set_window_padding = (self: Style, value: Vec2) -> void => unsafe { c_style_set_window_padding(self, value) }
+
+/// `ImGuiStyle::WindowRounding` — Radius of window corners rounding. Set to 0.0f to have rectangular windows. Large values tend to lead to variety of artifacts and are not recommended.
+pub let window_rounding = (self: Style) -> f32 => unsafe { c_style_get_window_rounding(self) }
+
+/// `ImGuiStyle::WindowRounding` — Radius of window corners rounding. Set to 0.0f to have rectangular windows. Large values tend to lead to variety of artifacts and are not recommended.
+pub let set_window_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_window_rounding(self, value) }
+
+/// `ImGuiStyle::WindowBorderSize` — Thickness of border around windows. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let window_border_size = (self: Style) -> f32 => unsafe { c_style_get_window_border_size(self) }
+
+/// `ImGuiStyle::WindowBorderSize` — Thickness of border around windows. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let set_window_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_window_border_size(self, value) }
+
+/// `ImGuiStyle::WindowBorderHoverPadding` — Hit-testing extent outside/inside resizing border. Also extend determination of hovered window. Generally meaningfully larger than WindowBorderSize to make it easy to reach borders.
+pub let window_border_hover_padding = (self: Style) -> f32 => unsafe { c_style_get_window_border_hover_padding(self) }
+
+/// `ImGuiStyle::WindowBorderHoverPadding` — Hit-testing extent outside/inside resizing border. Also extend determination of hovered window. Generally meaningfully larger than WindowBorderSize to make it easy to reach borders.
+pub let set_window_border_hover_padding = (self: Style, value: f32) -> void => unsafe { c_style_set_window_border_hover_padding(self, value) }
+
+/// `ImGuiStyle::WindowMinSize` — Minimum window size. This is a global setting. If you want to constrain individual windows, use SetNextWindowSizeConstraints().
+pub let window_min_size = (self: Style) -> Vec2 => unsafe { c_style_get_window_min_size(self) }
+
+/// `ImGuiStyle::WindowMinSize` — Minimum window size. This is a global setting. If you want to constrain individual windows, use SetNextWindowSizeConstraints().
+pub let set_window_min_size = (self: Style, value: Vec2) -> void => unsafe { c_style_set_window_min_size(self, value) }
+
+/// `ImGuiStyle::WindowTitleAlign` — Alignment for title bar text. Defaults to (0.0f,0.5f) for left-aligned,vertically centered.
+pub let window_title_align = (self: Style) -> Vec2 => unsafe { c_style_get_window_title_align(self) }
+
+/// `ImGuiStyle::WindowTitleAlign` — Alignment for title bar text. Defaults to (0.0f,0.5f) for left-aligned,vertically centered.
+pub let set_window_title_align = (self: Style, value: Vec2) -> void => unsafe { c_style_set_window_title_align(self, value) }
+
+/// `ImGuiStyle::WindowMenuButtonPosition` — Side of the collapsing/docking button in the title bar (None/Left/Right). Defaults to ImGuiDir_Left.
+pub let window_menu_button_position = (self: Style) -> i32 => unsafe { c_style_get_window_menu_button_position(self) }
+
+/// `ImGuiStyle::WindowMenuButtonPosition` — Side of the collapsing/docking button in the title bar (None/Left/Right). Defaults to ImGuiDir_Left.
+pub let set_window_menu_button_position = (self: Style, value: i32) -> void => unsafe { c_style_set_window_menu_button_position(self, value) }
+
+/// `ImGuiStyle::ChildRounding` — Radius of child window corners rounding. Set to 0.0f to have rectangular windows.
+pub let child_rounding = (self: Style) -> f32 => unsafe { c_style_get_child_rounding(self) }
+
+/// `ImGuiStyle::ChildRounding` — Radius of child window corners rounding. Set to 0.0f to have rectangular windows.
+pub let set_child_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_child_rounding(self, value) }
+
+/// `ImGuiStyle::ChildBorderSize` — Thickness of border around child windows. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let child_border_size = (self: Style) -> f32 => unsafe { c_style_get_child_border_size(self) }
+
+/// `ImGuiStyle::ChildBorderSize` — Thickness of border around child windows. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let set_child_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_child_border_size(self, value) }
+
+/// `ImGuiStyle::PopupRounding` — Radius of popup window corners rounding. (Note that tooltip windows use WindowRounding)
+pub let popup_rounding = (self: Style) -> f32 => unsafe { c_style_get_popup_rounding(self) }
+
+/// `ImGuiStyle::PopupRounding` — Radius of popup window corners rounding. (Note that tooltip windows use WindowRounding)
+pub let set_popup_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_popup_rounding(self, value) }
+
+/// `ImGuiStyle::PopupBorderSize` — Thickness of border around popup/tooltip windows. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let popup_border_size = (self: Style) -> f32 => unsafe { c_style_get_popup_border_size(self) }
+
+/// `ImGuiStyle::PopupBorderSize` — Thickness of border around popup/tooltip windows. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let set_popup_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_popup_border_size(self, value) }
+
+/// `ImGuiStyle::FramePadding` — Padding within a framed rectangle (used by most widgets).
+pub let frame_padding = (self: Style) -> Vec2 => unsafe { c_style_get_frame_padding(self) }
+
+/// `ImGuiStyle::FramePadding` — Padding within a framed rectangle (used by most widgets).
+pub let set_frame_padding = (self: Style, value: Vec2) -> void => unsafe { c_style_set_frame_padding(self, value) }
+
+/// `ImGuiStyle::FrameRounding` — Radius of frame corners rounding. Set to 0.0f to have rectangular frame (used by most widgets).
+pub let frame_rounding = (self: Style) -> f32 => unsafe { c_style_get_frame_rounding(self) }
+
+/// `ImGuiStyle::FrameRounding` — Radius of frame corners rounding. Set to 0.0f to have rectangular frame (used by most widgets).
+pub let set_frame_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_frame_rounding(self, value) }
+
+/// `ImGuiStyle::FrameBorderSize` — Thickness of border around frames. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let frame_border_size = (self: Style) -> f32 => unsafe { c_style_get_frame_border_size(self) }
+
+/// `ImGuiStyle::FrameBorderSize` — Thickness of border around frames. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
+pub let set_frame_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_frame_border_size(self, value) }
+
+/// `ImGuiStyle::ItemSpacing` — Horizontal and vertical spacing between widgets/lines.
+pub let item_spacing = (self: Style) -> Vec2 => unsafe { c_style_get_item_spacing(self) }
+
+/// `ImGuiStyle::ItemSpacing` — Horizontal and vertical spacing between widgets/lines.
+pub let set_item_spacing = (self: Style, value: Vec2) -> void => unsafe { c_style_set_item_spacing(self, value) }
+
+/// `ImGuiStyle::ItemInnerSpacing` — Horizontal and vertical spacing between within elements of a composed widget (e.g. a slider and its label).
+pub let item_inner_spacing = (self: Style) -> Vec2 => unsafe { c_style_get_item_inner_spacing(self) }
+
+/// `ImGuiStyle::ItemInnerSpacing` — Horizontal and vertical spacing between within elements of a composed widget (e.g. a slider and its label).
+pub let set_item_inner_spacing = (self: Style, value: Vec2) -> void => unsafe { c_style_set_item_inner_spacing(self, value) }
+
+/// `ImGuiStyle::CellPadding` — Padding within a table cell. Cellpadding.x is locked for entire table. CellPadding.y may be altered between different rows.
+pub let cell_padding = (self: Style) -> Vec2 => unsafe { c_style_get_cell_padding(self) }
+
+/// `ImGuiStyle::CellPadding` — Padding within a table cell. Cellpadding.x is locked for entire table. CellPadding.y may be altered between different rows.
+pub let set_cell_padding = (self: Style, value: Vec2) -> void => unsafe { c_style_set_cell_padding(self, value) }
+
+/// `ImGuiStyle::TouchExtraPadding` — Expand reactive bounding box for touch-based system where touch position is not accurate enough. Unfortunately we don't sort widgets so priority on overlap will always be given to the first widget. So don't grow this too much!
+pub let touch_extra_padding = (self: Style) -> Vec2 => unsafe { c_style_get_touch_extra_padding(self) }
+
+/// `ImGuiStyle::TouchExtraPadding` — Expand reactive bounding box for touch-based system where touch position is not accurate enough. Unfortunately we don't sort widgets so priority on overlap will always be given to the first widget. So don't grow this too much!
+pub let set_touch_extra_padding = (self: Style, value: Vec2) -> void => unsafe { c_style_set_touch_extra_padding(self, value) }
+
+/// `ImGuiStyle::IndentSpacing` — Horizontal indentation when e.g. entering a tree node. Generally == (FontSize + FramePadding.x*2).
+pub let indent_spacing = (self: Style) -> f32 => unsafe { c_style_get_indent_spacing(self) }
+
+/// `ImGuiStyle::IndentSpacing` — Horizontal indentation when e.g. entering a tree node. Generally == (FontSize + FramePadding.x*2).
+pub let set_indent_spacing = (self: Style, value: f32) -> void => unsafe { c_style_set_indent_spacing(self, value) }
+
+/// `ImGuiStyle::ColumnsMinSpacing` — Minimum horizontal spacing between two columns. Preferably > (FramePadding.x + 1).
+pub let columns_min_spacing = (self: Style) -> f32 => unsafe { c_style_get_columns_min_spacing(self) }
+
+/// `ImGuiStyle::ColumnsMinSpacing` — Minimum horizontal spacing between two columns. Preferably > (FramePadding.x + 1).
+pub let set_columns_min_spacing = (self: Style, value: f32) -> void => unsafe { c_style_set_columns_min_spacing(self, value) }
+
+/// `ImGuiStyle::ScrollbarSize` — Width of the vertical scrollbar, Height of the horizontal scrollbar.
+pub let scrollbar_size = (self: Style) -> f32 => unsafe { c_style_get_scrollbar_size(self) }
+
+/// `ImGuiStyle::ScrollbarSize` — Width of the vertical scrollbar, Height of the horizontal scrollbar.
+pub let set_scrollbar_size = (self: Style, value: f32) -> void => unsafe { c_style_set_scrollbar_size(self, value) }
+
+/// `ImGuiStyle::ScrollbarRounding` — Radius of grab corners for scrollbar.
+pub let scrollbar_rounding = (self: Style) -> f32 => unsafe { c_style_get_scrollbar_rounding(self) }
+
+/// `ImGuiStyle::ScrollbarRounding` — Radius of grab corners for scrollbar.
+pub let set_scrollbar_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_scrollbar_rounding(self, value) }
+
+/// `ImGuiStyle::ScrollbarPadding` — Padding of scrollbar grab within its frame (same for both axes).
+pub let scrollbar_padding = (self: Style) -> f32 => unsafe { c_style_get_scrollbar_padding(self) }
+
+/// `ImGuiStyle::ScrollbarPadding` — Padding of scrollbar grab within its frame (same for both axes).
+pub let set_scrollbar_padding = (self: Style, value: f32) -> void => unsafe { c_style_set_scrollbar_padding(self, value) }
+
+/// `ImGuiStyle::GrabMinSize` — Minimum width/height of a grab box for slider/scrollbar.
+pub let grab_min_size = (self: Style) -> f32 => unsafe { c_style_get_grab_min_size(self) }
+
+/// `ImGuiStyle::GrabMinSize` — Minimum width/height of a grab box for slider/scrollbar.
+pub let set_grab_min_size = (self: Style, value: f32) -> void => unsafe { c_style_set_grab_min_size(self, value) }
+
+/// `ImGuiStyle::GrabRounding` — Radius of grabs corners rounding. Set to 0.0f to have rectangular slider grabs.
+pub let grab_rounding = (self: Style) -> f32 => unsafe { c_style_get_grab_rounding(self) }
+
+/// `ImGuiStyle::GrabRounding` — Radius of grabs corners rounding. Set to 0.0f to have rectangular slider grabs.
+pub let set_grab_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_grab_rounding(self, value) }
+
+/// `ImGuiStyle::LogSliderDeadzone` — The size in pixels of the dead-zone around zero on logarithmic sliders that cross zero.
+pub let log_slider_deadzone = (self: Style) -> f32 => unsafe { c_style_get_log_slider_deadzone(self) }
+
+/// `ImGuiStyle::LogSliderDeadzone` — The size in pixels of the dead-zone around zero on logarithmic sliders that cross zero.
+pub let set_log_slider_deadzone = (self: Style, value: f32) -> void => unsafe { c_style_set_log_slider_deadzone(self, value) }
+
+/// `ImGuiStyle::ImageRounding` — Rounding of Image() calls.
+pub let image_rounding = (self: Style) -> f32 => unsafe { c_style_get_image_rounding(self) }
+
+/// `ImGuiStyle::ImageRounding` — Rounding of Image() calls.
+pub let set_image_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_image_rounding(self, value) }
+
+/// `ImGuiStyle::ImageBorderSize` — Thickness of border around Image() calls.
+pub let image_border_size = (self: Style) -> f32 => unsafe { c_style_get_image_border_size(self) }
+
+/// `ImGuiStyle::ImageBorderSize` — Thickness of border around Image() calls.
+pub let set_image_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_image_border_size(self, value) }
+
+/// `ImGuiStyle::TabRounding` — Radius of upper corners of a tab. Set to 0.0f to have rectangular tabs.
+pub let tab_rounding = (self: Style) -> f32 => unsafe { c_style_get_tab_rounding(self) }
+
+/// `ImGuiStyle::TabRounding` — Radius of upper corners of a tab. Set to 0.0f to have rectangular tabs.
+pub let set_tab_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_rounding(self, value) }
+
+/// `ImGuiStyle::TabBorderSize` — Thickness of border around tabs.
+pub let tab_border_size = (self: Style) -> f32 => unsafe { c_style_get_tab_border_size(self) }
+
+/// `ImGuiStyle::TabBorderSize` — Thickness of border around tabs.
+pub let set_tab_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_border_size(self, value) }
+
+/// `ImGuiStyle::TabMinWidthBase` — Minimum tab width, to make tabs larger than their contents. TabBar buttons are not affected.
+pub let tab_min_width_base = (self: Style) -> f32 => unsafe { c_style_get_tab_min_width_base(self) }
+
+/// `ImGuiStyle::TabMinWidthBase` — Minimum tab width, to make tabs larger than their contents. TabBar buttons are not affected.
+pub let set_tab_min_width_base = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_min_width_base(self, value) }
+
+/// `ImGuiStyle::TabMinWidthShrink` — Minimum tab width after shrinking, when using ImGuiTabBarFlags_FittingPolicyMixed policy.
+pub let tab_min_width_shrink = (self: Style) -> f32 => unsafe { c_style_get_tab_min_width_shrink(self) }
+
+/// `ImGuiStyle::TabMinWidthShrink` — Minimum tab width after shrinking, when using ImGuiTabBarFlags_FittingPolicyMixed policy.
+pub let set_tab_min_width_shrink = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_min_width_shrink(self, value) }
+
+/// `ImGuiStyle::TabCloseButtonMinWidthSelected` — -1: always visible. 0.0f: visible when hovered. >0.0f: visible when hovered if minimum width. FLT_MAX: never shrink, will behave like ImGuiTabBarFlags_FittingPolicyScroll.
+pub let tab_close_button_min_width_selected = (self: Style) -> f32 => unsafe { c_style_get_tab_close_button_min_width_selected(self) }
+
+/// `ImGuiStyle::TabCloseButtonMinWidthSelected` — -1: always visible. 0.0f: visible when hovered. >0.0f: visible when hovered if minimum width. FLT_MAX: never shrink, will behave like ImGuiTabBarFlags_FittingPolicyScroll.
+pub let set_tab_close_button_min_width_selected = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_close_button_min_width_selected(self, value) }
+
+/// `ImGuiStyle::TabCloseButtonMinWidthUnselected` — -1: always visible. 0.0f: visible when hovered. >0.0f: visible when hovered if minimum width. FLT_MAX: never show close button when unselected.
+pub let tab_close_button_min_width_unselected = (self: Style) -> f32 => unsafe { c_style_get_tab_close_button_min_width_unselected(self) }
+
+/// `ImGuiStyle::TabCloseButtonMinWidthUnselected` — -1: always visible. 0.0f: visible when hovered. >0.0f: visible when hovered if minimum width. FLT_MAX: never show close button when unselected.
+pub let set_tab_close_button_min_width_unselected = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_close_button_min_width_unselected(self, value) }
+
+/// `ImGuiStyle::TabBarBorderSize` — Thickness of tab-bar separator, which takes on the tab active color to denote focus.
+pub let tab_bar_border_size = (self: Style) -> f32 => unsafe { c_style_get_tab_bar_border_size(self) }
+
+/// `ImGuiStyle::TabBarBorderSize` — Thickness of tab-bar separator, which takes on the tab active color to denote focus.
+pub let set_tab_bar_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_bar_border_size(self, value) }
+
+/// `ImGuiStyle::TabBarOverlineSize` — Thickness of tab-bar overline, which highlights the selected tab-bar.
+pub let tab_bar_overline_size = (self: Style) -> f32 => unsafe { c_style_get_tab_bar_overline_size(self) }
+
+/// `ImGuiStyle::TabBarOverlineSize` — Thickness of tab-bar overline, which highlights the selected tab-bar.
+pub let set_tab_bar_overline_size = (self: Style, value: f32) -> void => unsafe { c_style_set_tab_bar_overline_size(self, value) }
+
+/// `ImGuiStyle::TableAngledHeadersAngle` — Angle of angled headers (supported values range from -50.0f degrees to +50.0f degrees).
+pub let table_angled_headers_angle = (self: Style) -> f32 => unsafe { c_style_get_table_angled_headers_angle(self) }
+
+/// `ImGuiStyle::TableAngledHeadersAngle` — Angle of angled headers (supported values range from -50.0f degrees to +50.0f degrees).
+pub let set_table_angled_headers_angle = (self: Style, value: f32) -> void => unsafe { c_style_set_table_angled_headers_angle(self, value) }
+
+/// `ImGuiStyle::TableAngledHeadersTextAlign` — Alignment of angled headers within the cell
+pub let table_angled_headers_text_align = (self: Style) -> Vec2 => unsafe { c_style_get_table_angled_headers_text_align(self) }
+
+/// `ImGuiStyle::TableAngledHeadersTextAlign` — Alignment of angled headers within the cell
+pub let set_table_angled_headers_text_align = (self: Style, value: Vec2) -> void => unsafe { c_style_set_table_angled_headers_text_align(self, value) }
+
+/// `ImGuiStyle::TreeLinesFlags` — Default way to draw lines connecting TreeNode hierarchy. ImGuiTreeNodeFlags_DrawLinesNone or ImGuiTreeNodeFlags_DrawLinesFull or ImGuiTreeNodeFlags_DrawLinesToNodes.
+pub let tree_lines_flags = (self: Style) -> i32 => unsafe { c_style_get_tree_lines_flags(self) }
+
+/// `ImGuiStyle::TreeLinesFlags` — Default way to draw lines connecting TreeNode hierarchy. ImGuiTreeNodeFlags_DrawLinesNone or ImGuiTreeNodeFlags_DrawLinesFull or ImGuiTreeNodeFlags_DrawLinesToNodes.
+pub let set_tree_lines_flags = (self: Style, value: i32) -> void => unsafe { c_style_set_tree_lines_flags(self, value) }
+
+/// `ImGuiStyle::TreeLinesSize` — Thickness of outlines when using ImGuiTreeNodeFlags_DrawLines.
+pub let tree_lines_size = (self: Style) -> f32 => unsafe { c_style_get_tree_lines_size(self) }
+
+/// `ImGuiStyle::TreeLinesSize` — Thickness of outlines when using ImGuiTreeNodeFlags_DrawLines.
+pub let set_tree_lines_size = (self: Style, value: f32) -> void => unsafe { c_style_set_tree_lines_size(self, value) }
+
+/// `ImGuiStyle::TreeLinesRounding` — Radius of lines connecting child nodes to the vertical line.
+pub let tree_lines_rounding = (self: Style) -> f32 => unsafe { c_style_get_tree_lines_rounding(self) }
+
+/// `ImGuiStyle::TreeLinesRounding` — Radius of lines connecting child nodes to the vertical line.
+pub let set_tree_lines_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_tree_lines_rounding(self, value) }
+
+/// `ImGuiStyle::MenuItemRounding` — Radius of MenuItem, BeginMenu rounding.
+pub let menu_item_rounding = (self: Style) -> f32 => unsafe { c_style_get_menu_item_rounding(self) }
+
+/// `ImGuiStyle::MenuItemRounding` — Radius of MenuItem, BeginMenu rounding.
+pub let set_menu_item_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_menu_item_rounding(self, value) }
+
+/// `ImGuiStyle::SelectableRounding` — Radius of Selectable rounding. MODIFYING THIS IS DISCOURAGED. CONTIGUOUS SELECTIONS WILL NOT LOOK RIGHT. (#7589)
+pub let selectable_rounding = (self: Style) -> f32 => unsafe { c_style_get_selectable_rounding(self) }
+
+/// `ImGuiStyle::SelectableRounding` — Radius of Selectable rounding. MODIFYING THIS IS DISCOURAGED. CONTIGUOUS SELECTIONS WILL NOT LOOK RIGHT. (#7589)
+pub let set_selectable_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_selectable_rounding(self, value) }
+
+/// `ImGuiStyle::DragDropTargetRounding` — Radius of the drag and drop target frame. When <0.0f: use FrameRounding.
+pub let drag_drop_target_rounding = (self: Style) -> f32 => unsafe { c_style_get_drag_drop_target_rounding(self) }
+
+/// `ImGuiStyle::DragDropTargetRounding` — Radius of the drag and drop target frame. When <0.0f: use FrameRounding.
+pub let set_drag_drop_target_rounding = (self: Style, value: f32) -> void => unsafe { c_style_set_drag_drop_target_rounding(self, value) }
+
+/// `ImGuiStyle::DragDropTargetBorderSize` — Thickness of the drag and drop target border.
+pub let drag_drop_target_border_size = (self: Style) -> f32 => unsafe { c_style_get_drag_drop_target_border_size(self) }
+
+/// `ImGuiStyle::DragDropTargetBorderSize` — Thickness of the drag and drop target border.
+pub let set_drag_drop_target_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_drag_drop_target_border_size(self, value) }
+
+/// `ImGuiStyle::DragDropTargetPadding` — Size to expand the drag and drop target from actual target item size.
+pub let drag_drop_target_padding = (self: Style) -> f32 => unsafe { c_style_get_drag_drop_target_padding(self) }
+
+/// `ImGuiStyle::DragDropTargetPadding` — Size to expand the drag and drop target from actual target item size.
+pub let set_drag_drop_target_padding = (self: Style, value: f32) -> void => unsafe { c_style_set_drag_drop_target_padding(self, value) }
+
+/// `ImGuiStyle::ColorMarkerSize` — Size of R/G/B/A color markers for ColorEdit4() and for Drags/Sliders when using ImGuiSliderFlags_ColorMarkers.
+pub let color_marker_size = (self: Style) -> f32 => unsafe { c_style_get_color_marker_size(self) }
+
+/// `ImGuiStyle::ColorMarkerSize` — Size of R/G/B/A color markers for ColorEdit4() and for Drags/Sliders when using ImGuiSliderFlags_ColorMarkers.
+pub let set_color_marker_size = (self: Style, value: f32) -> void => unsafe { c_style_set_color_marker_size(self, value) }
+
+/// `ImGuiStyle::ColorButtonPosition` — Side of the color button in the ColorEdit4 widget (left/right). Defaults to ImGuiDir_Right.
+pub let color_button_position = (self: Style) -> i32 => unsafe { c_style_get_color_button_position(self) }
+
+/// `ImGuiStyle::ColorButtonPosition` — Side of the color button in the ColorEdit4 widget (left/right). Defaults to ImGuiDir_Right.
+pub let set_color_button_position = (self: Style, value: i32) -> void => unsafe { c_style_set_color_button_position(self, value) }
+
+/// `ImGuiStyle::ButtonTextAlign` — Alignment of button text when button is larger than text. Defaults to (0.5f, 0.5f) (centered).
+pub let button_text_align = (self: Style) -> Vec2 => unsafe { c_style_get_button_text_align(self) }
+
+/// `ImGuiStyle::ButtonTextAlign` — Alignment of button text when button is larger than text. Defaults to (0.5f, 0.5f) (centered).
+pub let set_button_text_align = (self: Style, value: Vec2) -> void => unsafe { c_style_set_button_text_align(self, value) }
+
+/// `ImGuiStyle::SelectableTextAlign` — Alignment of selectable text. Defaults to (0.0f, 0.0f) (top-left aligned). It's generally important to keep this left-aligned if you want to lay multiple items on a same line.
+pub let selectable_text_align = (self: Style) -> Vec2 => unsafe { c_style_get_selectable_text_align(self) }
+
+/// `ImGuiStyle::SelectableTextAlign` — Alignment of selectable text. Defaults to (0.0f, 0.0f) (top-left aligned). It's generally important to keep this left-aligned if you want to lay multiple items on a same line.
+pub let set_selectable_text_align = (self: Style, value: Vec2) -> void => unsafe { c_style_set_selectable_text_align(self, value) }
+
+/// `ImGuiStyle::InputTextCursorSize` — Thickness of cursor/caret in InputText().
+pub let input_text_cursor_size = (self: Style) -> f32 => unsafe { c_style_get_input_text_cursor_size(self) }
+
+/// `ImGuiStyle::InputTextCursorSize` — Thickness of cursor/caret in InputText().
+pub let set_input_text_cursor_size = (self: Style, value: f32) -> void => unsafe { c_style_set_input_text_cursor_size(self, value) }
+
+/// `ImGuiStyle::SeparatorSize` — Thickness of border in Separator(). Must be >= 1.0f.
+pub let separator_size = (self: Style) -> f32 => unsafe { c_style_get_separator_size(self) }
+
+/// `ImGuiStyle::SeparatorSize` — Thickness of border in Separator(). Must be >= 1.0f.
+pub let set_separator_size = (self: Style, value: f32) -> void => unsafe { c_style_set_separator_size(self, value) }
+
+/// `ImGuiStyle::SeparatorTextBorderSize` — Thickness of border in SeparatorText()
+pub let separator_text_border_size = (self: Style) -> f32 => unsafe { c_style_get_separator_text_border_size(self) }
+
+/// `ImGuiStyle::SeparatorTextBorderSize` — Thickness of border in SeparatorText()
+pub let set_separator_text_border_size = (self: Style, value: f32) -> void => unsafe { c_style_set_separator_text_border_size(self, value) }
+
+/// `ImGuiStyle::SeparatorTextAlign` — Alignment of text within the separator. Defaults to (0.0f, 0.5f) (left aligned, center).
+pub let separator_text_align = (self: Style) -> Vec2 => unsafe { c_style_get_separator_text_align(self) }
+
+/// `ImGuiStyle::SeparatorTextAlign` — Alignment of text within the separator. Defaults to (0.0f, 0.5f) (left aligned, center).
+pub let set_separator_text_align = (self: Style, value: Vec2) -> void => unsafe { c_style_set_separator_text_align(self, value) }
+
+/// `ImGuiStyle::SeparatorTextPadding` — Horizontal offset of text from each edge of the separator + spacing on other axis. Generally small values. .y is recommended to be == FramePadding.y.
+pub let separator_text_padding = (self: Style) -> Vec2 => unsafe { c_style_get_separator_text_padding(self) }
+
+/// `ImGuiStyle::SeparatorTextPadding` — Horizontal offset of text from each edge of the separator + spacing on other axis. Generally small values. .y is recommended to be == FramePadding.y.
+pub let set_separator_text_padding = (self: Style, value: Vec2) -> void => unsafe { c_style_set_separator_text_padding(self, value) }
+
+/// `ImGuiStyle::DisplayWindowPadding` — Apply to regular windows: amount which we enforce to keep visible when moving near edges of your screen.
+pub let display_window_padding = (self: Style) -> Vec2 => unsafe { c_style_get_display_window_padding(self) }
+
+/// `ImGuiStyle::DisplayWindowPadding` — Apply to regular windows: amount which we enforce to keep visible when moving near edges of your screen.
+pub let set_display_window_padding = (self: Style, value: Vec2) -> void => unsafe { c_style_set_display_window_padding(self, value) }
+
+/// `ImGuiStyle::DisplaySafeAreaPadding` — Apply to every windows, menus, popups, tooltips: amount where we avoid displaying contents. Adjust if you cannot see the edges of your screen (e.g. on a TV where scaling has not been configured).
+pub let display_safe_area_padding = (self: Style) -> Vec2 => unsafe { c_style_get_display_safe_area_padding(self) }
+
+/// `ImGuiStyle::DisplaySafeAreaPadding` — Apply to every windows, menus, popups, tooltips: amount where we avoid displaying contents. Adjust if you cannot see the edges of your screen (e.g. on a TV where scaling has not been configured).
+pub let set_display_safe_area_padding = (self: Style, value: Vec2) -> void => unsafe { c_style_set_display_safe_area_padding(self, value) }
+
+/// `ImGuiStyle::DockingNodeHasCloseButton` — Docking node has their own CloseButton() to close all docked windows.
+pub let docking_node_has_close_button = (self: Style) -> bool => unsafe { c_style_get_docking_node_has_close_button(self) }
+
+/// `ImGuiStyle::DockingNodeHasCloseButton` — Docking node has their own CloseButton() to close all docked windows.
+pub let set_docking_node_has_close_button = (self: Style, value: bool) -> void => unsafe { c_style_set_docking_node_has_close_button(self, value) }
+
+/// `ImGuiStyle::DockingSeparatorSize` — Thickness of resizing border between docked windows
+pub let docking_separator_size = (self: Style) -> f32 => unsafe { c_style_get_docking_separator_size(self) }
+
+/// `ImGuiStyle::DockingSeparatorSize` — Thickness of resizing border between docked windows
+pub let set_docking_separator_size = (self: Style, value: f32) -> void => unsafe { c_style_set_docking_separator_size(self, value) }
+
+/// `ImGuiStyle::MouseCursorScale` — Scale software rendered mouse cursor (when io.MouseDrawCursor is enabled). We apply per-monitor DPI scaling over this scale. May be removed later.
+pub let mouse_cursor_scale = (self: Style) -> f32 => unsafe { c_style_get_mouse_cursor_scale(self) }
+
+/// `ImGuiStyle::MouseCursorScale` — Scale software rendered mouse cursor (when io.MouseDrawCursor is enabled). We apply per-monitor DPI scaling over this scale. May be removed later.
+pub let set_mouse_cursor_scale = (self: Style, value: f32) -> void => unsafe { c_style_set_mouse_cursor_scale(self, value) }
+
+/// `ImGuiStyle::AntiAliasedLines` — Enable anti-aliased lines/borders. Disable if you are really tight on CPU/GPU. Latched at the beginning of the frame (copied to ImDrawList).
+pub let anti_aliased_lines = (self: Style) -> bool => unsafe { c_style_get_anti_aliased_lines(self) }
+
+/// `ImGuiStyle::AntiAliasedLines` — Enable anti-aliased lines/borders. Disable if you are really tight on CPU/GPU. Latched at the beginning of the frame (copied to ImDrawList).
+pub let set_anti_aliased_lines = (self: Style, value: bool) -> void => unsafe { c_style_set_anti_aliased_lines(self, value) }
+
+/// `ImGuiStyle::AntiAliasedLinesUseTex` — Enable anti-aliased lines/borders using textures where possible. Require backend to render with bilinear filtering (NOT point/nearest filtering). Latched at the beginning of the frame (copied to ImDrawList).
+pub let anti_aliased_lines_use_tex = (self: Style) -> bool => unsafe { c_style_get_anti_aliased_lines_use_tex(self) }
+
+/// `ImGuiStyle::AntiAliasedLinesUseTex` — Enable anti-aliased lines/borders using textures where possible. Require backend to render with bilinear filtering (NOT point/nearest filtering). Latched at the beginning of the frame (copied to ImDrawList).
+pub let set_anti_aliased_lines_use_tex = (self: Style, value: bool) -> void => unsafe { c_style_set_anti_aliased_lines_use_tex(self, value) }
+
+/// `ImGuiStyle::AntiAliasedFill` — Enable anti-aliased edges around filled shapes (rounded rectangles, circles, etc.). Disable if you are really tight on CPU/GPU. Latched at the beginning of the frame (copied to ImDrawList).
+pub let anti_aliased_fill = (self: Style) -> bool => unsafe { c_style_get_anti_aliased_fill(self) }
+
+/// `ImGuiStyle::AntiAliasedFill` — Enable anti-aliased edges around filled shapes (rounded rectangles, circles, etc.). Disable if you are really tight on CPU/GPU. Latched at the beginning of the frame (copied to ImDrawList).
+pub let set_anti_aliased_fill = (self: Style, value: bool) -> void => unsafe { c_style_set_anti_aliased_fill(self, value) }
+
+/// `ImGuiStyle::CurveTessellationTol` — Tessellation tolerance when using PathBezierCurveTo() without a specific number of segments. Decrease for highly tessellated curves (higher quality, more polygons), increase to reduce quality.
+pub let curve_tessellation_tol = (self: Style) -> f32 => unsafe { c_style_get_curve_tessellation_tol(self) }
+
+/// `ImGuiStyle::CurveTessellationTol` — Tessellation tolerance when using PathBezierCurveTo() without a specific number of segments. Decrease for highly tessellated curves (higher quality, more polygons), increase to reduce quality.
+pub let set_curve_tessellation_tol = (self: Style, value: f32) -> void => unsafe { c_style_set_curve_tessellation_tol(self, value) }
+
+/// `ImGuiStyle::CircleTessellationMaxError` — Maximum error (in pixels) allowed when using AddCircle()/AddCircleFilled() or drawing rounded corner rectangles with no explicit segment count specified. Decrease for higher quality but more geometry.
+pub let circle_tessellation_max_error = (self: Style) -> f32 => unsafe { c_style_get_circle_tessellation_max_error(self) }
+
+/// `ImGuiStyle::CircleTessellationMaxError` — Maximum error (in pixels) allowed when using AddCircle()/AddCircleFilled() or drawing rounded corner rectangles with no explicit segment count specified. Decrease for higher quality but more geometry.
+pub let set_circle_tessellation_max_error = (self: Style, value: f32) -> void => unsafe { c_style_set_circle_tessellation_max_error(self, value) }
+
+/// `ImGuiStyle::Colors`.
+pub let colors = (self: Style, index: i32) -> Vec4 => unsafe { c_style_get_colors(self, index) }
+
+/// `ImGuiStyle::Colors`.
+pub let set_colors = (self: Style, index: i32, value: Vec4) -> void => unsafe { c_style_set_colors(self, index, value) }
+
+/// `ImGuiStyle::HoverStationaryDelay` — Delay for IsItemHovered(ImGuiHoveredFlags_Stationary). Time required to consider mouse stationary.
+pub let hover_stationary_delay = (self: Style) -> f32 => unsafe { c_style_get_hover_stationary_delay(self) }
+
+/// `ImGuiStyle::HoverStationaryDelay` — Delay for IsItemHovered(ImGuiHoveredFlags_Stationary). Time required to consider mouse stationary.
+pub let set_hover_stationary_delay = (self: Style, value: f32) -> void => unsafe { c_style_set_hover_stationary_delay(self, value) }
+
+/// `ImGuiStyle::HoverDelayShort` — Delay for IsItemHovered(ImGuiHoveredFlags_DelayShort). Usually used along with HoverStationaryDelay.
+pub let hover_delay_short = (self: Style) -> f32 => unsafe { c_style_get_hover_delay_short(self) }
+
+/// `ImGuiStyle::HoverDelayShort` — Delay for IsItemHovered(ImGuiHoveredFlags_DelayShort). Usually used along with HoverStationaryDelay.
+pub let set_hover_delay_short = (self: Style, value: f32) -> void => unsafe { c_style_set_hover_delay_short(self, value) }
+
+/// `ImGuiStyle::HoverDelayNormal` — Delay for IsItemHovered(ImGuiHoveredFlags_DelayNormal). "
+pub let hover_delay_normal = (self: Style) -> f32 => unsafe { c_style_get_hover_delay_normal(self) }
+
+/// `ImGuiStyle::HoverDelayNormal` — Delay for IsItemHovered(ImGuiHoveredFlags_DelayNormal). "
+pub let set_hover_delay_normal = (self: Style, value: f32) -> void => unsafe { c_style_set_hover_delay_normal(self, value) }
+
+/// `ImGuiStyle::HoverFlagsForTooltipMouse` — Default flags when using IsItemHovered(ImGuiHoveredFlags_ForTooltip) or BeginItemTooltip()/SetItemTooltip() while using mouse.
+pub let hover_flags_for_tooltip_mouse = (self: Style) -> i32 => unsafe { c_style_get_hover_flags_for_tooltip_mouse(self) }
+
+/// `ImGuiStyle::HoverFlagsForTooltipMouse` — Default flags when using IsItemHovered(ImGuiHoveredFlags_ForTooltip) or BeginItemTooltip()/SetItemTooltip() while using mouse.
+pub let set_hover_flags_for_tooltip_mouse = (self: Style, value: i32) -> void => unsafe { c_style_set_hover_flags_for_tooltip_mouse(self, value) }
+
+/// `ImGuiStyle::HoverFlagsForTooltipNav` — Default flags when using IsItemHovered(ImGuiHoveredFlags_ForTooltip) or BeginItemTooltip()/SetItemTooltip() while using keyboard/gamepad.
+pub let hover_flags_for_tooltip_nav = (self: Style) -> i32 => unsafe { c_style_get_hover_flags_for_tooltip_nav(self) }
+
+/// `ImGuiStyle::HoverFlagsForTooltipNav` — Default flags when using IsItemHovered(ImGuiHoveredFlags_ForTooltip) or BeginItemTooltip()/SetItemTooltip() while using keyboard/gamepad.
+pub let set_hover_flags_for_tooltip_nav = (self: Style, value: i32) -> void => unsafe { c_style_set_hover_flags_for_tooltip_nav(self, value) }
+
+/// `ImGuiIO::ConfigFlags` — = 0              // See ImGuiConfigFlags_ enum. Set by user/application. Keyboard/Gamepad navigation options, etc.
+pub let config_flags = (self: IO) -> i32 => unsafe { c_io_get_config_flags(self) }
+
+/// `ImGuiIO::ConfigFlags` — = 0              // See ImGuiConfigFlags_ enum. Set by user/application. Keyboard/Gamepad navigation options, etc.
+pub let set_config_flags = (self: IO, value: i32) -> void => unsafe { c_io_set_config_flags(self, value) }
+
+/// `ImGuiIO::BackendFlags` — = 0              // See ImGuiBackendFlags_ enum. Set by backend (imgui_impl_xxx files or custom backend) to communicate features supported by the backend.
+pub let backend_flags = (self: IO) -> i32 => unsafe { c_io_get_backend_flags(self) }
+
+/// `ImGuiIO::BackendFlags` — = 0              // See ImGuiBackendFlags_ enum. Set by backend (imgui_impl_xxx files or custom backend) to communicate features supported by the backend.
+pub let set_backend_flags = (self: IO, value: i32) -> void => unsafe { c_io_set_backend_flags(self, value) }
+
+/// `ImGuiIO::DisplaySize` — <unset>          // Main display size, in pixels (== GetMainViewport()->Size). May change every frame.
+pub let display_size = (self: IO) -> Vec2 => unsafe { c_io_get_display_size(self) }
+
+/// `ImGuiIO::DisplaySize` — <unset>          // Main display size, in pixels (== GetMainViewport()->Size). May change every frame.
+pub let set_display_size = (self: IO, value: Vec2) -> void => unsafe { c_io_set_display_size(self, value) }
+
+/// `ImGuiIO::DisplayFramebufferScale` — = (1, 1)         // Main display density. For retina display where window coordinates are different from framebuffer coordinates. This will affect font density + will end up in ImDrawData::FramebufferScale.
+pub let display_framebuffer_scale = (self: IO) -> Vec2 => unsafe { c_io_get_display_framebuffer_scale(self) }
+
+/// `ImGuiIO::DisplayFramebufferScale` — = (1, 1)         // Main display density. For retina display where window coordinates are different from framebuffer coordinates. This will affect font density + will end up in ImDrawData::FramebufferScale.
+pub let set_display_framebuffer_scale = (self: IO, value: Vec2) -> void => unsafe { c_io_set_display_framebuffer_scale(self, value) }
+
+/// `ImGuiIO::DeltaTime` — = 1.0f/60.0f     // Time elapsed since last frame, in seconds. May change every frame.
+pub let delta_time = (self: IO) -> f32 => unsafe { c_io_get_delta_time(self) }
+
+/// `ImGuiIO::DeltaTime` — = 1.0f/60.0f     // Time elapsed since last frame, in seconds. May change every frame.
+pub let set_delta_time = (self: IO, value: f32) -> void => unsafe { c_io_set_delta_time(self, value) }
+
+/// `ImGuiIO::IniSavingRate` — = 5.0f           // Minimum time between saving positions/sizes to .ini file, in seconds.
+pub let ini_saving_rate = (self: IO) -> f32 => unsafe { c_io_get_ini_saving_rate(self) }
+
+/// `ImGuiIO::IniSavingRate` — = 5.0f           // Minimum time between saving positions/sizes to .ini file, in seconds.
+pub let set_ini_saving_rate = (self: IO, value: f32) -> void => unsafe { c_io_set_ini_saving_rate(self, value) }
+
+/// `ImGuiIO::IniFilename` — = "imgui.ini"    // Path to .ini file (important: default "imgui.ini" is relative to current working dir!). Set NULL to disable automatic .ini loading/saving or if you want to manually call LoadIniSettingsXXX() / SaveIniSettingsXXX() functions.
+pub let ini_filename = (self: IO) -> string => {
+  from_cstring(unsafe { c_io_get_ini_filename(self) })
+}
+
+/// `ImGuiIO::LogFilename` — = "imgui_log.txt"// Path to .log file (default parameter to ImGui::LogToFile when no file is specified).
+pub let log_filename = (self: IO) -> string => {
+  from_cstring(unsafe { c_io_get_log_filename(self) })
+}
+
+/// `ImGuiIO::Fonts` — <auto>           // Font atlas: load, rasterize and pack one or more fonts into a single texture.
+pub let fonts = (self: IO) -> FontAtlas => unsafe { c_io_get_fonts(self) }
+
+/// `ImGuiIO::FontDefault` — = NULL           // Font to use on NewFrame(). Use NULL to uses Fonts->Fonts[0].
+pub let font_default = (self: IO) -> Font => unsafe { c_io_get_font_default(self) }
+
+/// `ImGuiIO::FontAllowUserScaling` — = false          // Allow user scaling text of individual window with Ctrl+Wheel.
+pub let font_allow_user_scaling = (self: IO) -> bool => unsafe { c_io_get_font_allow_user_scaling(self) }
+
+/// `ImGuiIO::FontAllowUserScaling` — = false          // Allow user scaling text of individual window with Ctrl+Wheel.
+pub let set_font_allow_user_scaling = (self: IO, value: bool) -> void => unsafe { c_io_set_font_allow_user_scaling(self, value) }
+
+/// `ImGuiIO::ConfigNavSwapGamepadButtons` — = false          // Swap Activate<>Cancel (A<>B) buttons, matching typical "Nintendo/Japanese style" gamepad layout.
+pub let config_nav_swap_gamepad_buttons = (self: IO) -> bool => unsafe { c_io_get_config_nav_swap_gamepad_buttons(self) }
+
+/// `ImGuiIO::ConfigNavSwapGamepadButtons` — = false          // Swap Activate<>Cancel (A<>B) buttons, matching typical "Nintendo/Japanese style" gamepad layout.
+pub let set_config_nav_swap_gamepad_buttons = (self: IO, value: bool) -> void => unsafe { c_io_set_config_nav_swap_gamepad_buttons(self, value) }
+
+/// `ImGuiIO::ConfigNavMoveSetMousePos` — = false          // Directional/tabbing navigation teleports the mouse cursor. May be useful on TV/console systems where moving a virtual mouse is difficult. Will update io.MousePos and set io.WantSetMousePos=true.
+pub let config_nav_move_set_mouse_pos = (self: IO) -> bool => unsafe { c_io_get_config_nav_move_set_mouse_pos(self) }
+
+/// `ImGuiIO::ConfigNavMoveSetMousePos` — = false          // Directional/tabbing navigation teleports the mouse cursor. May be useful on TV/console systems where moving a virtual mouse is difficult. Will update io.MousePos and set io.WantSetMousePos=true.
+pub let set_config_nav_move_set_mouse_pos = (self: IO, value: bool) -> void => unsafe { c_io_set_config_nav_move_set_mouse_pos(self, value) }
+
+/// `ImGuiIO::ConfigNavCaptureKeyboard` — = true           // Sets io.WantCaptureKeyboard when io.NavActive is set.
+pub let config_nav_capture_keyboard = (self: IO) -> bool => unsafe { c_io_get_config_nav_capture_keyboard(self) }
+
+/// `ImGuiIO::ConfigNavCaptureKeyboard` — = true           // Sets io.WantCaptureKeyboard when io.NavActive is set.
+pub let set_config_nav_capture_keyboard = (self: IO, value: bool) -> void => unsafe { c_io_set_config_nav_capture_keyboard(self, value) }
+
+/// `ImGuiIO::ConfigNavEscapeClearFocusItem` — = true           // Pressing Escape can clear focused item + navigation id/highlight. Set to false if you want to always keep highlight on.
+pub let config_nav_escape_clear_focus_item = (self: IO) -> bool => unsafe { c_io_get_config_nav_escape_clear_focus_item(self) }
+
+/// `ImGuiIO::ConfigNavEscapeClearFocusItem` — = true           // Pressing Escape can clear focused item + navigation id/highlight. Set to false if you want to always keep highlight on.
+pub let set_config_nav_escape_clear_focus_item = (self: IO, value: bool) -> void => unsafe { c_io_set_config_nav_escape_clear_focus_item(self, value) }
+
+/// `ImGuiIO::ConfigNavEscapeClearFocusWindow` — = false          // Pressing Escape can clear focused window as well (super set of io.ConfigNavEscapeClearFocusItem).
+pub let config_nav_escape_clear_focus_window = (self: IO) -> bool => unsafe { c_io_get_config_nav_escape_clear_focus_window(self) }
+
+/// `ImGuiIO::ConfigNavEscapeClearFocusWindow` — = false          // Pressing Escape can clear focused window as well (super set of io.ConfigNavEscapeClearFocusItem).
+pub let set_config_nav_escape_clear_focus_window = (self: IO, value: bool) -> void => unsafe { c_io_set_config_nav_escape_clear_focus_window(self, value) }
+
+/// `ImGuiIO::ConfigNavCursorVisibleAuto` — = true           // Using directional navigation key makes the cursor visible. Mouse click hides the cursor.
+pub let config_nav_cursor_visible_auto = (self: IO) -> bool => unsafe { c_io_get_config_nav_cursor_visible_auto(self) }
+
+/// `ImGuiIO::ConfigNavCursorVisibleAuto` — = true           // Using directional navigation key makes the cursor visible. Mouse click hides the cursor.
+pub let set_config_nav_cursor_visible_auto = (self: IO, value: bool) -> void => unsafe { c_io_set_config_nav_cursor_visible_auto(self, value) }
+
+/// `ImGuiIO::ConfigNavCursorVisibleAlways` — = false          // Navigation cursor is always visible.
+pub let config_nav_cursor_visible_always = (self: IO) -> bool => unsafe { c_io_get_config_nav_cursor_visible_always(self) }
+
+/// `ImGuiIO::ConfigNavCursorVisibleAlways` — = false          // Navigation cursor is always visible.
+pub let set_config_nav_cursor_visible_always = (self: IO, value: bool) -> void => unsafe { c_io_set_config_nav_cursor_visible_always(self, value) }
+
+/// `ImGuiIO::ConfigDockingNoSplit` — = false          // Simplified docking mode: disable window splitting, so docking is limited to merging multiple windows together into tab-bars.
+pub let config_docking_no_split = (self: IO) -> bool => unsafe { c_io_get_config_docking_no_split(self) }
+
+/// `ImGuiIO::ConfigDockingNoSplit` — = false          // Simplified docking mode: disable window splitting, so docking is limited to merging multiple windows together into tab-bars.
+pub let set_config_docking_no_split = (self: IO, value: bool) -> void => unsafe { c_io_set_config_docking_no_split(self, value) }
+
+/// `ImGuiIO::ConfigDockingNoDockingOver` — = false          // Simplified docking mode: disable window merging into a same tab-bar, so docking is limited to splitting windows.
+pub let config_docking_no_docking_over = (self: IO) -> bool => unsafe { c_io_get_config_docking_no_docking_over(self) }
+
+/// `ImGuiIO::ConfigDockingNoDockingOver` — = false          // Simplified docking mode: disable window merging into a same tab-bar, so docking is limited to splitting windows.
+pub let set_config_docking_no_docking_over = (self: IO, value: bool) -> void => unsafe { c_io_set_config_docking_no_docking_over(self, value) }
+
+/// `ImGuiIO::ConfigDockingWithShift` — = false          // Enable docking with holding Shift key (reduce visual noise, allows dropping in wider space)
+pub let config_docking_with_shift = (self: IO) -> bool => unsafe { c_io_get_config_docking_with_shift(self) }
+
+/// `ImGuiIO::ConfigDockingWithShift` — = false          // Enable docking with holding Shift key (reduce visual noise, allows dropping in wider space)
+pub let set_config_docking_with_shift = (self: IO, value: bool) -> void => unsafe { c_io_set_config_docking_with_shift(self, value) }
+
+/// `ImGuiIO::ConfigDockingAlwaysTabBar` — = false          // [BETA] [FIXME: This currently creates regression with auto-sizing and general overhead] Make every single floating window display within a docking node.
+pub let config_docking_always_tab_bar = (self: IO) -> bool => unsafe { c_io_get_config_docking_always_tab_bar(self) }
+
+/// `ImGuiIO::ConfigDockingAlwaysTabBar` — = false          // [BETA] [FIXME: This currently creates regression with auto-sizing and general overhead] Make every single floating window display within a docking node.
+pub let set_config_docking_always_tab_bar = (self: IO, value: bool) -> void => unsafe { c_io_set_config_docking_always_tab_bar(self, value) }
+
+/// `ImGuiIO::ConfigDockingTransparentPayload` — = false          // [BETA] Make window or viewport transparent when docking and only display docking boxes on the target viewport. Useful if rendering of multiple viewport cannot be synced. Best used with ConfigViewportsNoAutoMerge.
+pub let config_docking_transparent_payload = (self: IO) -> bool => unsafe { c_io_get_config_docking_transparent_payload(self) }
+
+/// `ImGuiIO::ConfigDockingTransparentPayload` — = false          // [BETA] Make window or viewport transparent when docking and only display docking boxes on the target viewport. Useful if rendering of multiple viewport cannot be synced. Best used with ConfigViewportsNoAutoMerge.
+pub let set_config_docking_transparent_payload = (self: IO, value: bool) -> void => unsafe { c_io_set_config_docking_transparent_payload(self, value) }
+
+/// `ImGuiIO::ConfigViewportsNoAutoMerge` — = false;         // Set to make all floating imgui windows always create their own viewport. Otherwise, they are merged into the main host viewports when overlapping it. May also set ImGuiViewportFlags_NoAutoMerge on individual viewport.
+pub let config_viewports_no_auto_merge = (self: IO) -> bool => unsafe { c_io_get_config_viewports_no_auto_merge(self) }
+
+/// `ImGuiIO::ConfigViewportsNoAutoMerge` — = false;         // Set to make all floating imgui windows always create their own viewport. Otherwise, they are merged into the main host viewports when overlapping it. May also set ImGuiViewportFlags_NoAutoMerge on individual viewport.
+pub let set_config_viewports_no_auto_merge = (self: IO, value: bool) -> void => unsafe { c_io_set_config_viewports_no_auto_merge(self, value) }
+
+/// `ImGuiIO::ConfigViewportsNoTaskBarIcon` — = false          // Disable default OS task bar icon flag for secondary viewports. When a viewport doesn't want a task bar icon, ImGuiViewportFlags_NoTaskBarIcon will be set on it.
+pub let config_viewports_no_task_bar_icon = (self: IO) -> bool => unsafe { c_io_get_config_viewports_no_task_bar_icon(self) }
+
+/// `ImGuiIO::ConfigViewportsNoTaskBarIcon` — = false          // Disable default OS task bar icon flag for secondary viewports. When a viewport doesn't want a task bar icon, ImGuiViewportFlags_NoTaskBarIcon will be set on it.
+pub let set_config_viewports_no_task_bar_icon = (self: IO, value: bool) -> void => unsafe { c_io_set_config_viewports_no_task_bar_icon(self, value) }
+
+/// `ImGuiIO::ConfigViewportsNoDecoration` — = true           // Disable default OS window decoration flag for secondary viewports. When a viewport doesn't want window decorations, ImGuiViewportFlags_NoDecoration will be set on it. Enabling decoration can create subsequent issues at OS levels (e.g. minimum window size).
+pub let config_viewports_no_decoration = (self: IO) -> bool => unsafe { c_io_get_config_viewports_no_decoration(self) }
+
+/// `ImGuiIO::ConfigViewportsNoDecoration` — = true           // Disable default OS window decoration flag for secondary viewports. When a viewport doesn't want window decorations, ImGuiViewportFlags_NoDecoration will be set on it. Enabling decoration can create subsequent issues at OS levels (e.g. minimum window size).
+pub let set_config_viewports_no_decoration = (self: IO, value: bool) -> void => unsafe { c_io_set_config_viewports_no_decoration(self, value) }
+
+/// `ImGuiIO::ConfigViewportsNoDefaultParent` — = true           // Disable setting OS window parent to main viewport by default. The platform backend is expected to honor `viewport->ParentViewportID` to setup a parent/child relationship between the OS windows (supported if ImGuiBackendFlags_HasParentViewport is set). When parented: child windows always appear in front of their parent. Set to false if you want viewports to automatically be parent of main viewport, otherwise all viewports will be top-level OS windows. Parent/child relationship may be set on a per-window basis using ImGuiWindowClass.
+pub let config_viewports_no_default_parent = (self: IO) -> bool => unsafe { c_io_get_config_viewports_no_default_parent(self) }
+
+/// `ImGuiIO::ConfigViewportsNoDefaultParent` — = true           // Disable setting OS window parent to main viewport by default. The platform backend is expected to honor `viewport->ParentViewportID` to setup a parent/child relationship between the OS windows (supported if ImGuiBackendFlags_HasParentViewport is set). When parented: child windows always appear in front of their parent. Set to false if you want viewports to automatically be parent of main viewport, otherwise all viewports will be top-level OS windows. Parent/child relationship may be set on a per-window basis using ImGuiWindowClass.
+pub let set_config_viewports_no_default_parent = (self: IO, value: bool) -> void => unsafe { c_io_set_config_viewports_no_default_parent(self, value) }
+
+/// `ImGuiIO::ConfigViewportsPlatformFocusSetsImGuiFocus` — = true // When a platform window is focused (e.g. using Alt+Tab, clicking Platform Title Bar), apply corresponding focus on imgui windows (may clear focus/active id from imgui windows location in other platform windows). In principle this is better enabled but we provide an opt-out, because some Linux window managers tend to eagerly focus windows (e.g. on mouse hover, or even a simple window pos/size change).
+pub let config_viewports_platform_focus_sets_focus = (self: IO) -> bool => unsafe { c_io_get_config_viewports_platform_focus_sets_focus(self) }
+
+/// `ImGuiIO::ConfigViewportsPlatformFocusSetsImGuiFocus` — = true // When a platform window is focused (e.g. using Alt+Tab, clicking Platform Title Bar), apply corresponding focus on imgui windows (may clear focus/active id from imgui windows location in other platform windows). In principle this is better enabled but we provide an opt-out, because some Linux window managers tend to eagerly focus windows (e.g. on mouse hover, or even a simple window pos/size change).
+pub let set_config_viewports_platform_focus_sets_focus = (self: IO, value: bool) -> void => unsafe { c_io_set_config_viewports_platform_focus_sets_focus(self, value) }
+
+/// `ImGuiIO::ConfigDpiScaleFonts` — = false          // [EXPERIMENTAL] Automatically overwrite style.FontScaleDpi when Monitor DPI changes. This will scale fonts but _NOT_ scale sizes/padding for now.
+pub let config_dpi_scale_fonts = (self: IO) -> bool => unsafe { c_io_get_config_dpi_scale_fonts(self) }
+
+/// `ImGuiIO::ConfigDpiScaleFonts` — = false          // [EXPERIMENTAL] Automatically overwrite style.FontScaleDpi when Monitor DPI changes. This will scale fonts but _NOT_ scale sizes/padding for now.
+pub let set_config_dpi_scale_fonts = (self: IO, value: bool) -> void => unsafe { c_io_set_config_dpi_scale_fonts(self, value) }
+
+/// `ImGuiIO::ConfigDpiScaleViewports` — = false          // [EXPERIMENTAL] Scale Dear ImGui and Platform Windows when Monitor DPI changes.
+pub let config_dpi_scale_viewports = (self: IO) -> bool => unsafe { c_io_get_config_dpi_scale_viewports(self) }
+
+/// `ImGuiIO::ConfigDpiScaleViewports` — = false          // [EXPERIMENTAL] Scale Dear ImGui and Platform Windows when Monitor DPI changes.
+pub let set_config_dpi_scale_viewports = (self: IO, value: bool) -> void => unsafe { c_io_set_config_dpi_scale_viewports(self, value) }
+
+/// `ImGuiIO::ConfigMacOSXBehaviors` — = defined(__APPLE__) // Swap Cmd<>Ctrl keys + OS X style text editing cursor movement using Alt instead of Ctrl, Shortcuts using Cmd/Super instead of Ctrl, Line/Text Start and End using Cmd+Arrows instead of Home/End, Double click selects by word instead of selecting whole text, Multi-selection in lists uses Cmd/Super instead of Ctrl.
+pub let config_mac_osx_behaviors = (self: IO) -> bool => unsafe { c_io_get_config_mac_osx_behaviors(self) }
+
+/// `ImGuiIO::ConfigMacOSXBehaviors` — = defined(__APPLE__) // Swap Cmd<>Ctrl keys + OS X style text editing cursor movement using Alt instead of Ctrl, Shortcuts using Cmd/Super instead of Ctrl, Line/Text Start and End using Cmd+Arrows instead of Home/End, Double click selects by word instead of selecting whole text, Multi-selection in lists uses Cmd/Super instead of Ctrl.
+pub let set_config_mac_osx_behaviors = (self: IO, value: bool) -> void => unsafe { c_io_set_config_mac_osx_behaviors(self, value) }
+
+/// `ImGuiIO::ConfigInputTrickleEventQueue` — = true           // Enable input queue trickling: some types of events submitted during the same frame (e.g. button down + up) will be spread over multiple frames, improving interactions with low framerates.
+pub let config_input_trickle_event_queue = (self: IO) -> bool => unsafe { c_io_get_config_input_trickle_event_queue(self) }
+
+/// `ImGuiIO::ConfigInputTrickleEventQueue` — = true           // Enable input queue trickling: some types of events submitted during the same frame (e.g. button down + up) will be spread over multiple frames, improving interactions with low framerates.
+pub let set_config_input_trickle_event_queue = (self: IO, value: bool) -> void => unsafe { c_io_set_config_input_trickle_event_queue(self, value) }
+
+/// `ImGuiIO::ConfigInputTextCursorBlink` — = true           // Enable blinking cursor (optional as some users consider it to be distracting).
+pub let config_input_text_cursor_blink = (self: IO) -> bool => unsafe { c_io_get_config_input_text_cursor_blink(self) }
+
+/// `ImGuiIO::ConfigInputTextCursorBlink` — = true           // Enable blinking cursor (optional as some users consider it to be distracting).
+pub let set_config_input_text_cursor_blink = (self: IO, value: bool) -> void => unsafe { c_io_set_config_input_text_cursor_blink(self, value) }
+
+/// `ImGuiIO::ConfigInputTextEnterKeepActive` — = false          // [BETA] Pressing Enter will reactivate item and select all text (single-line only). Ctrl+Enter or Shift+Enter will deactivate normally.
+pub let config_input_text_enter_keep_active = (self: IO) -> bool => unsafe { c_io_get_config_input_text_enter_keep_active(self) }
+
+/// `ImGuiIO::ConfigInputTextEnterKeepActive` — = false          // [BETA] Pressing Enter will reactivate item and select all text (single-line only). Ctrl+Enter or Shift+Enter will deactivate normally.
+pub let set_config_input_text_enter_keep_active = (self: IO, value: bool) -> void => unsafe { c_io_set_config_input_text_enter_keep_active(self, value) }
+
+/// `ImGuiIO::ConfigColorEditFlags` — = <defaults>     // Current settings for ColorEdit/ColorPicker widgets. Must have one bit of ImGuiColorEditFlags_DisplayMask_, one bit of ImGuiColorEditFlags_DataTypeMask_, one bit of ImGuiColorEditFlags_PickerMask_, one bit of ImGuiColorEditFlags_InputMask_. Defaults to ImGuiColorEditFlags_DefaultOptions_. May be further edited by users, unless you also set ImGuiColorEditFlags_NoOptions.
+pub let config_color_edit_flags = (self: IO) -> i32 => unsafe { c_io_get_config_color_edit_flags(self) }
+
+/// `ImGuiIO::ConfigColorEditFlags` — = <defaults>     // Current settings for ColorEdit/ColorPicker widgets. Must have one bit of ImGuiColorEditFlags_DisplayMask_, one bit of ImGuiColorEditFlags_DataTypeMask_, one bit of ImGuiColorEditFlags_PickerMask_, one bit of ImGuiColorEditFlags_InputMask_. Defaults to ImGuiColorEditFlags_DefaultOptions_. May be further edited by users, unless you also set ImGuiColorEditFlags_NoOptions.
+pub let set_config_color_edit_flags = (self: IO, value: i32) -> void => unsafe { c_io_set_config_color_edit_flags(self, value) }
+
+/// `ImGuiIO::ConfigDragClickToInputText` — = false          // [BETA] Enable turning DragXXX widgets into text input with a simple mouse click-release (without moving). Not desirable on devices without a keyboard.
+pub let config_drag_click_to_input_text = (self: IO) -> bool => unsafe { c_io_get_config_drag_click_to_input_text(self) }
+
+/// `ImGuiIO::ConfigDragClickToInputText` — = false          // [BETA] Enable turning DragXXX widgets into text input with a simple mouse click-release (without moving). Not desirable on devices without a keyboard.
+pub let set_config_drag_click_to_input_text = (self: IO, value: bool) -> void => unsafe { c_io_set_config_drag_click_to_input_text(self, value) }
+
+/// `ImGuiIO::ConfigWindowsResizeFromEdges` — = true           // Enable resizing of windows from their edges and from the lower-left corner. This requires ImGuiBackendFlags_HasMouseCursors for better mouse cursor feedback. (This used to be a per-window ImGuiWindowFlags_ResizeFromAnySide flag)
+pub let config_windows_resize_from_edges = (self: IO) -> bool => unsafe { c_io_get_config_windows_resize_from_edges(self) }
+
+/// `ImGuiIO::ConfigWindowsResizeFromEdges` — = true           // Enable resizing of windows from their edges and from the lower-left corner. This requires ImGuiBackendFlags_HasMouseCursors for better mouse cursor feedback. (This used to be a per-window ImGuiWindowFlags_ResizeFromAnySide flag)
+pub let set_config_windows_resize_from_edges = (self: IO, value: bool) -> void => unsafe { c_io_set_config_windows_resize_from_edges(self, value) }
+
+/// `ImGuiIO::ConfigWindowsMoveFromTitleBarOnly` — = false      // Enable allowing to move windows only when clicking on their title bar. Does not apply to windows without a title bar.
+pub let config_windows_move_from_title_bar_only = (self: IO) -> bool => unsafe { c_io_get_config_windows_move_from_title_bar_only(self) }
+
+/// `ImGuiIO::ConfigWindowsMoveFromTitleBarOnly` — = false      // Enable allowing to move windows only when clicking on their title bar. Does not apply to windows without a title bar.
+pub let set_config_windows_move_from_title_bar_only = (self: IO, value: bool) -> void => unsafe { c_io_set_config_windows_move_from_title_bar_only(self, value) }
+
+/// `ImGuiIO::ConfigWindowsCopyContentsWithCtrlC` — = false      // [EXPERIMENTAL] Ctrl+C copy the contents of focused window into the clipboard. Experimental because: (1) has known issues with nested Begin/End pairs (2) text output quality varies (3) text output is in submission order rather than spatial order.
+pub let config_windows_copy_contents_with_ctrl_c = (self: IO) -> bool => unsafe { c_io_get_config_windows_copy_contents_with_ctrl_c(self) }
+
+/// `ImGuiIO::ConfigWindowsCopyContentsWithCtrlC` — = false      // [EXPERIMENTAL] Ctrl+C copy the contents of focused window into the clipboard. Experimental because: (1) has known issues with nested Begin/End pairs (2) text output quality varies (3) text output is in submission order rather than spatial order.
+pub let set_config_windows_copy_contents_with_ctrl_c = (self: IO, value: bool) -> void => unsafe { c_io_set_config_windows_copy_contents_with_ctrl_c(self, value) }
+
+/// `ImGuiIO::ConfigScrollbarScrollByPage` — = true           // Enable scrolling page by page when clicking outside the scrollbar grab. When disabled, always scroll to clicked location. When enabled, Shift+Click scrolls to clicked location.
+pub let config_scrollbar_scroll_by_page = (self: IO) -> bool => unsafe { c_io_get_config_scrollbar_scroll_by_page(self) }
+
+/// `ImGuiIO::ConfigScrollbarScrollByPage` — = true           // Enable scrolling page by page when clicking outside the scrollbar grab. When disabled, always scroll to clicked location. When enabled, Shift+Click scrolls to clicked location.
+pub let set_config_scrollbar_scroll_by_page = (self: IO, value: bool) -> void => unsafe { c_io_set_config_scrollbar_scroll_by_page(self, value) }
+
+/// `ImGuiIO::ConfigIniSettingsSaveLastUsedDate` — = true         // Enable loading/saving last used day (YYYYMMDD) in some .ini struct, making things easier to audit and allowing custom tools to cleanup old data.
+pub let config_ini_settings_save_last_used_date = (self: IO) -> bool => unsafe { c_io_get_config_ini_settings_save_last_used_date(self) }
+
+/// `ImGuiIO::ConfigIniSettingsSaveLastUsedDate` — = true         // Enable loading/saving last used day (YYYYMMDD) in some .ini struct, making things easier to audit and allowing custom tools to cleanup old data.
+pub let set_config_ini_settings_save_last_used_date = (self: IO, value: bool) -> void => unsafe { c_io_set_config_ini_settings_save_last_used_date(self, value) }
+
+/// `ImGuiIO::ConfigIniSettingsAutoDiscardMonths` — = 0          // [BETA] Set number of months after which unused .ini entries are discarded on load. Require platform_io.Platform_SessionDate to be set. For systems supporting the feature, .ini entries without a LastUsed field will always be discarded! Please report if you are using this.
+pub let config_ini_settings_auto_discard_months = (self: IO) -> i32 => unsafe { c_io_get_config_ini_settings_auto_discard_months(self) }
+
+/// `ImGuiIO::ConfigIniSettingsAutoDiscardMonths` — = 0          // [BETA] Set number of months after which unused .ini entries are discarded on load. Require platform_io.Platform_SessionDate to be set. For systems supporting the feature, .ini entries without a LastUsed field will always be discarded! Please report if you are using this.
+pub let set_config_ini_settings_auto_discard_months = (self: IO, value: i32) -> void => unsafe { c_io_set_config_ini_settings_auto_discard_months(self, value) }
+
+/// `ImGuiIO::ConfigDebugIniSettings` — = false          // Save .ini data with extra comments (particularly helpful for Docking, but makes saving slower)
+pub let config_debug_ini_settings = (self: IO) -> bool => unsafe { c_io_get_config_debug_ini_settings(self) }
+
+/// `ImGuiIO::ConfigDebugIniSettings` — = false          // Save .ini data with extra comments (particularly helpful for Docking, but makes saving slower)
+pub let set_config_debug_ini_settings = (self: IO, value: bool) -> void => unsafe { c_io_set_config_debug_ini_settings(self, value) }
+
+/// `ImGuiIO::MouseDrawCursor` — = false          // Request ImGui to draw a mouse cursor for you (if you are on a platform without a mouse cursor). Cannot be easily renamed to 'io.ConfigXXX' because this is frequently used by backend implementations.
+pub let mouse_draw_cursor = (self: IO) -> bool => unsafe { c_io_get_mouse_draw_cursor(self) }
+
+/// `ImGuiIO::MouseDrawCursor` — = false          // Request ImGui to draw a mouse cursor for you (if you are on a platform without a mouse cursor). Cannot be easily renamed to 'io.ConfigXXX' because this is frequently used by backend implementations.
+pub let set_mouse_draw_cursor = (self: IO, value: bool) -> void => unsafe { c_io_set_mouse_draw_cursor(self, value) }
+
+/// `ImGuiIO::ConfigMemoryCompactTimer` — = 60.0f          // Timer (in seconds) to free transient windows/tables memory buffers when unused. Set to -1.0f to disable.
+pub let config_memory_compact_timer = (self: IO) -> f32 => unsafe { c_io_get_config_memory_compact_timer(self) }
+
+/// `ImGuiIO::ConfigMemoryCompactTimer` — = 60.0f          // Timer (in seconds) to free transient windows/tables memory buffers when unused. Set to -1.0f to disable.
+pub let set_config_memory_compact_timer = (self: IO, value: f32) -> void => unsafe { c_io_set_config_memory_compact_timer(self, value) }
+
+/// `ImGuiIO::MouseDoubleClickTime` — = 0.30f          // Time for consecutive clicks to account as a double-click, in seconds.
+pub let mouse_double_click_time = (self: IO) -> f32 => unsafe { c_io_get_mouse_double_click_time(self) }
+
+/// `ImGuiIO::MouseDoubleClickTime` — = 0.30f          // Time for consecutive clicks to account as a double-click, in seconds.
+pub let set_mouse_double_click_time = (self: IO, value: f32) -> void => unsafe { c_io_set_mouse_double_click_time(self, value) }
+
+/// `ImGuiIO::MouseDoubleClickMaxDist` — = 6.0f           // Distance threshold to stay in to validate a double-click or multiple clicks, in pixels.
+pub let mouse_double_click_max_dist = (self: IO) -> f32 => unsafe { c_io_get_mouse_double_click_max_dist(self) }
+
+/// `ImGuiIO::MouseDoubleClickMaxDist` — = 6.0f           // Distance threshold to stay in to validate a double-click or multiple clicks, in pixels.
+pub let set_mouse_double_click_max_dist = (self: IO, value: f32) -> void => unsafe { c_io_set_mouse_double_click_max_dist(self, value) }
+
+/// `ImGuiIO::MouseSingleClickDelay` — = 0.60f          // Time for a delayed click when using GetItemClickedCountWithSingleClickDelay() or IsMouseReleasedWithDelay(), in seconds. Must be > io.MouseDoubleClickTime.
+pub let mouse_single_click_delay = (self: IO) -> f32 => unsafe { c_io_get_mouse_single_click_delay(self) }
+
+/// `ImGuiIO::MouseSingleClickDelay` — = 0.60f          // Time for a delayed click when using GetItemClickedCountWithSingleClickDelay() or IsMouseReleasedWithDelay(), in seconds. Must be > io.MouseDoubleClickTime.
+pub let set_mouse_single_click_delay = (self: IO, value: f32) -> void => unsafe { c_io_set_mouse_single_click_delay(self, value) }
+
+/// `ImGuiIO::MouseDragThreshold` — = 6.0f           // Distance threshold before considering we are dragging.
+pub let mouse_drag_threshold = (self: IO) -> f32 => unsafe { c_io_get_mouse_drag_threshold(self) }
+
+/// `ImGuiIO::MouseDragThreshold` — = 6.0f           // Distance threshold before considering we are dragging.
+pub let set_mouse_drag_threshold = (self: IO, value: f32) -> void => unsafe { c_io_set_mouse_drag_threshold(self, value) }
+
+/// `ImGuiIO::KeyRepeatDelay` — = 0.275f         // When holding a key/button, time before it starts repeating, in seconds (for buttons in Repeat mode, etc.).
+pub let key_repeat_delay = (self: IO) -> f32 => unsafe { c_io_get_key_repeat_delay(self) }
+
+/// `ImGuiIO::KeyRepeatDelay` — = 0.275f         // When holding a key/button, time before it starts repeating, in seconds (for buttons in Repeat mode, etc.).
+pub let set_key_repeat_delay = (self: IO, value: f32) -> void => unsafe { c_io_set_key_repeat_delay(self, value) }
+
+/// `ImGuiIO::KeyRepeatRate` — = 0.050f         // When holding a key/button, rate at which it repeats, in seconds.
+pub let key_repeat_rate = (self: IO) -> f32 => unsafe { c_io_get_key_repeat_rate(self) }
+
+/// `ImGuiIO::KeyRepeatRate` — = 0.050f         // When holding a key/button, rate at which it repeats, in seconds.
+pub let set_key_repeat_rate = (self: IO, value: f32) -> void => unsafe { c_io_set_key_repeat_rate(self, value) }
+
+/// `ImGuiIO::ConfigErrorRecovery` — = true       // Enable error recovery support. Some errors won't be detected and lead to direct crashes if recovery is disabled.
+pub let config_error_recovery = (self: IO) -> bool => unsafe { c_io_get_config_error_recovery(self) }
+
+/// `ImGuiIO::ConfigErrorRecovery` — = true       // Enable error recovery support. Some errors won't be detected and lead to direct crashes if recovery is disabled.
+pub let set_config_error_recovery = (self: IO, value: bool) -> void => unsafe { c_io_set_config_error_recovery(self, value) }
+
+/// `ImGuiIO::ConfigErrorRecoveryEnableAssert` — = true       // Enable asserts on recoverable error. By default call IM_ASSERT() when returning from a failing IM_ASSERT_USER_ERROR()
+pub let config_error_recovery_enable_assert = (self: IO) -> bool => unsafe { c_io_get_config_error_recovery_enable_assert(self) }
+
+/// `ImGuiIO::ConfigErrorRecoveryEnableAssert` — = true       // Enable asserts on recoverable error. By default call IM_ASSERT() when returning from a failing IM_ASSERT_USER_ERROR()
+pub let set_config_error_recovery_enable_assert = (self: IO, value: bool) -> void => unsafe { c_io_set_config_error_recovery_enable_assert(self, value) }
+
+/// `ImGuiIO::ConfigErrorRecoveryEnableDebugLog` — = true       // Enable debug log output on recoverable errors.
+pub let config_error_recovery_enable_debug_log = (self: IO) -> bool => unsafe { c_io_get_config_error_recovery_enable_debug_log(self) }
+
+/// `ImGuiIO::ConfigErrorRecoveryEnableDebugLog` — = true       // Enable debug log output on recoverable errors.
+pub let set_config_error_recovery_enable_debug_log = (self: IO, value: bool) -> void => unsafe { c_io_set_config_error_recovery_enable_debug_log(self, value) }
+
+/// `ImGuiIO::ConfigErrorRecoveryEnableTooltip` — = true       // Enable tooltip on recoverable errors. The tooltip include a way to enable asserts if they were disabled.
+pub let config_error_recovery_enable_tooltip = (self: IO) -> bool => unsafe { c_io_get_config_error_recovery_enable_tooltip(self) }
+
+/// `ImGuiIO::ConfigErrorRecoveryEnableTooltip` — = true       // Enable tooltip on recoverable errors. The tooltip include a way to enable asserts if they were disabled.
+pub let set_config_error_recovery_enable_tooltip = (self: IO, value: bool) -> void => unsafe { c_io_set_config_error_recovery_enable_tooltip(self, value) }
+
+/// `ImGuiIO::ConfigDebugIsDebuggerPresent` — = false          // Enable various tools calling IM_DEBUG_BREAK().
+pub let config_debug_is_debugger_present = (self: IO) -> bool => unsafe { c_io_get_config_debug_is_debugger_present(self) }
+
+/// `ImGuiIO::ConfigDebugIsDebuggerPresent` — = false          // Enable various tools calling IM_DEBUG_BREAK().
+pub let set_config_debug_is_debugger_present = (self: IO, value: bool) -> void => unsafe { c_io_set_config_debug_is_debugger_present(self, value) }
+
+/// `ImGuiIO::ConfigDebugHighlightIdConflicts` — = true           // Highlight and show an error message popup when multiple items have conflicting identifiers.
+pub let config_debug_highlight_id_conflicts = (self: IO) -> bool => unsafe { c_io_get_config_debug_highlight_id_conflicts(self) }
+
+/// `ImGuiIO::ConfigDebugHighlightIdConflicts` — = true           // Highlight and show an error message popup when multiple items have conflicting identifiers.
+pub let set_config_debug_highlight_id_conflicts = (self: IO, value: bool) -> void => unsafe { c_io_set_config_debug_highlight_id_conflicts(self, value) }
+
+/// `ImGuiIO::ConfigDebugHighlightIdConflictsShowItemPicker` — =true // Show "Item Picker" button in aforementioned popup.
+pub let config_debug_highlight_id_conflicts_show_item_picker = (self: IO) -> bool => unsafe { c_io_get_config_debug_highlight_id_conflicts_show_item_picker(self) }
+
+/// `ImGuiIO::ConfigDebugHighlightIdConflictsShowItemPicker` — =true // Show "Item Picker" button in aforementioned popup.
+pub let set_config_debug_highlight_id_conflicts_show_item_picker = (self: IO, value: bool) -> void => unsafe { c_io_set_config_debug_highlight_id_conflicts_show_item_picker(self, value) }
+
+/// `ImGuiIO::ConfigDebugBeginReturnValueOnce` — = false          // First-time calls to Begin()/BeginChild() will return false. NEEDS TO BE SET AT APPLICATION BOOT TIME if you don't want to miss windows.
+pub let config_debug_begin_return_value_once = (self: IO) -> bool => unsafe { c_io_get_config_debug_begin_return_value_once(self) }
+
+/// `ImGuiIO::ConfigDebugBeginReturnValueOnce` — = false          // First-time calls to Begin()/BeginChild() will return false. NEEDS TO BE SET AT APPLICATION BOOT TIME if you don't want to miss windows.
+pub let set_config_debug_begin_return_value_once = (self: IO, value: bool) -> void => unsafe { c_io_set_config_debug_begin_return_value_once(self, value) }
+
+/// `ImGuiIO::ConfigDebugBeginReturnValueLoop` — = false          // Some calls to Begin()/BeginChild() will return false. Will cycle through window depths then repeat. Suggested use: add "io.ConfigDebugBeginReturnValue = io.KeyShift" in your main loop then occasionally press SHIFT. Windows should be flickering while running.
+pub let config_debug_begin_return_value_loop = (self: IO) -> bool => unsafe { c_io_get_config_debug_begin_return_value_loop(self) }
+
+/// `ImGuiIO::ConfigDebugBeginReturnValueLoop` — = false          // Some calls to Begin()/BeginChild() will return false. Will cycle through window depths then repeat. Suggested use: add "io.ConfigDebugBeginReturnValue = io.KeyShift" in your main loop then occasionally press SHIFT. Windows should be flickering while running.
+pub let set_config_debug_begin_return_value_loop = (self: IO, value: bool) -> void => unsafe { c_io_set_config_debug_begin_return_value_loop(self, value) }
+
+/// `ImGuiIO::ConfigDebugIgnoreFocusLoss` — = false          // Ignore io.AddFocusEvent(false), consequently not calling io.ClearInputKeys()/io.ClearInputMouse() in input processing.
+pub let config_debug_ignore_focus_loss = (self: IO) -> bool => unsafe { c_io_get_config_debug_ignore_focus_loss(self) }
+
+/// `ImGuiIO::ConfigDebugIgnoreFocusLoss` — = false          // Ignore io.AddFocusEvent(false), consequently not calling io.ClearInputKeys()/io.ClearInputMouse() in input processing.
+pub let set_config_debug_ignore_focus_loss = (self: IO, value: bool) -> void => unsafe { c_io_set_config_debug_ignore_focus_loss(self, value) }
+
+/// `ImGuiIO::BackendPlatformName` — = NULL
+pub let backend_platform_name = (self: IO) -> string => {
+  from_cstring(unsafe { c_io_get_backend_platform_name(self) })
+}
+
+/// `ImGuiIO::BackendRendererName` — = NULL
+pub let backend_renderer_name = (self: IO) -> string => {
+  from_cstring(unsafe { c_io_get_backend_renderer_name(self) })
+}
+
+/// `ImGuiIO::WantCaptureMouse` — Set when Dear ImGui will use mouse inputs, in this case do not dispatch them to your main game/application (either way, always pass on mouse inputs to imgui). (e.g. unclicked mouse is hovering over an imgui window, widget is active, mouse was clicked over an imgui window, etc.).
+pub let want_capture_mouse = (self: IO) -> bool => unsafe { c_io_get_want_capture_mouse(self) }
+
+/// `ImGuiIO::WantCaptureMouse` — Set when Dear ImGui will use mouse inputs, in this case do not dispatch them to your main game/application (either way, always pass on mouse inputs to imgui). (e.g. unclicked mouse is hovering over an imgui window, widget is active, mouse was clicked over an imgui window, etc.).
+pub let set_want_capture_mouse = (self: IO, value: bool) -> void => unsafe { c_io_set_want_capture_mouse(self, value) }
+
+/// `ImGuiIO::WantCaptureKeyboard` — Set when Dear ImGui will use keyboard inputs, in this case do not dispatch them to your main game/application (either way, always pass keyboard inputs to imgui). (e.g. InputText active, or an imgui window is focused and navigation is enabled, etc.).
+pub let want_capture_keyboard = (self: IO) -> bool => unsafe { c_io_get_want_capture_keyboard(self) }
+
+/// `ImGuiIO::WantCaptureKeyboard` — Set when Dear ImGui will use keyboard inputs, in this case do not dispatch them to your main game/application (either way, always pass keyboard inputs to imgui). (e.g. InputText active, or an imgui window is focused and navigation is enabled, etc.).
+pub let set_want_capture_keyboard = (self: IO, value: bool) -> void => unsafe { c_io_set_want_capture_keyboard(self, value) }
+
+/// `ImGuiIO::WantTextInput` — Mobile/console: when set, you may display an on-screen keyboard. This is set by Dear ImGui when it wants textual keyboard input to happen (e.g. when a InputText widget is active).
+pub let want_text_input = (self: IO) -> bool => unsafe { c_io_get_want_text_input(self) }
+
+/// `ImGuiIO::WantTextInput` — Mobile/console: when set, you may display an on-screen keyboard. This is set by Dear ImGui when it wants textual keyboard input to happen (e.g. when a InputText widget is active).
+pub let set_want_text_input = (self: IO, value: bool) -> void => unsafe { c_io_set_want_text_input(self, value) }
+
+/// `ImGuiIO::WantSetMousePos` — MousePos has been altered, backend should reposition mouse on next frame. Rarely used! Set only when io.ConfigNavMoveSetMousePos is enabled.
+pub let want_set_mouse_pos = (self: IO) -> bool => unsafe { c_io_get_want_set_mouse_pos(self) }
+
+/// `ImGuiIO::WantSetMousePos` — MousePos has been altered, backend should reposition mouse on next frame. Rarely used! Set only when io.ConfigNavMoveSetMousePos is enabled.
+pub let set_want_set_mouse_pos = (self: IO, value: bool) -> void => unsafe { c_io_set_want_set_mouse_pos(self, value) }
+
+/// `ImGuiIO::WantSaveIniSettings` — When manual .ini load/save is active (io.IniFilename == NULL), this will be set to notify your application that you can call SaveIniSettingsToMemory() and save yourself. Important: clear io.WantSaveIniSettings yourself after saving!
+pub let want_save_ini_settings = (self: IO) -> bool => unsafe { c_io_get_want_save_ini_settings(self) }
+
+/// `ImGuiIO::WantSaveIniSettings` — When manual .ini load/save is active (io.IniFilename == NULL), this will be set to notify your application that you can call SaveIniSettingsToMemory() and save yourself. Important: clear io.WantSaveIniSettings yourself after saving!
+pub let set_want_save_ini_settings = (self: IO, value: bool) -> void => unsafe { c_io_set_want_save_ini_settings(self, value) }
+
+/// `ImGuiIO::NavActive` — Keyboard/Gamepad navigation is currently allowed (will handle ImGuiKey_NavXXX events) = a window is focused and it doesn't use the ImGuiWindowFlags_NoNavInputs flag.
+pub let nav_active = (self: IO) -> bool => unsafe { c_io_get_nav_active(self) }
+
+/// `ImGuiIO::NavActive` — Keyboard/Gamepad navigation is currently allowed (will handle ImGuiKey_NavXXX events) = a window is focused and it doesn't use the ImGuiWindowFlags_NoNavInputs flag.
+pub let set_nav_active = (self: IO, value: bool) -> void => unsafe { c_io_set_nav_active(self, value) }
+
+/// `ImGuiIO::NavVisible` — Keyboard/Gamepad navigation highlight is visible and allowed (will handle ImGuiKey_NavXXX events).
+pub let nav_visible = (self: IO) -> bool => unsafe { c_io_get_nav_visible(self) }
+
+/// `ImGuiIO::NavVisible` — Keyboard/Gamepad navigation highlight is visible and allowed (will handle ImGuiKey_NavXXX events).
+pub let set_nav_visible = (self: IO, value: bool) -> void => unsafe { c_io_set_nav_visible(self, value) }
+
+/// `ImGuiIO::Framerate` — Estimate of application framerate (rolling average over 60 frames, based on io.DeltaTime), in frame per second. Solely for convenience. Slow applications may not want to use a moving average or may want to reset underlying buffers occasionally.
+pub let framerate = (self: IO) -> f32 => unsafe { c_io_get_framerate(self) }
+
+/// `ImGuiIO::Framerate` — Estimate of application framerate (rolling average over 60 frames, based on io.DeltaTime), in frame per second. Solely for convenience. Slow applications may not want to use a moving average or may want to reset underlying buffers occasionally.
+pub let set_framerate = (self: IO, value: f32) -> void => unsafe { c_io_set_framerate(self, value) }
+
+/// `ImGuiIO::MetricsRenderVertices` — Vertices output during last call to Render()
+pub let metrics_render_vertices = (self: IO) -> i32 => unsafe { c_io_get_metrics_render_vertices(self) }
+
+/// `ImGuiIO::MetricsRenderVertices` — Vertices output during last call to Render()
+pub let set_metrics_render_vertices = (self: IO, value: i32) -> void => unsafe { c_io_set_metrics_render_vertices(self, value) }
+
+/// `ImGuiIO::MetricsRenderIndices` — Indices output during last call to Render() = number of triangles * 3
+pub let metrics_render_indices = (self: IO) -> i32 => unsafe { c_io_get_metrics_render_indices(self) }
+
+/// `ImGuiIO::MetricsRenderIndices` — Indices output during last call to Render() = number of triangles * 3
+pub let set_metrics_render_indices = (self: IO, value: i32) -> void => unsafe { c_io_set_metrics_render_indices(self, value) }
+
+/// `ImGuiIO::MetricsRenderWindows` — Number of visible windows
+pub let metrics_render_windows = (self: IO) -> i32 => unsafe { c_io_get_metrics_render_windows(self) }
+
+/// `ImGuiIO::MetricsRenderWindows` — Number of visible windows
+pub let set_metrics_render_windows = (self: IO, value: i32) -> void => unsafe { c_io_set_metrics_render_windows(self, value) }
+
+/// `ImGuiIO::MetricsActiveWindows` — Number of active windows
+pub let metrics_active_windows = (self: IO) -> i32 => unsafe { c_io_get_metrics_active_windows(self) }
+
+/// `ImGuiIO::MetricsActiveWindows` — Number of active windows
+pub let set_metrics_active_windows = (self: IO, value: i32) -> void => unsafe { c_io_set_metrics_active_windows(self, value) }
+
+/// `ImGuiIO::MouseDelta` — Mouse delta. Note that this is zero if either current or previous position are invalid (-FLT_MAX,-FLT_MAX), so a disappearing/reappearing mouse won't have a huge delta.
+pub let mouse_delta = (self: IO) -> Vec2 => unsafe { c_io_get_mouse_delta(self) }
+
+/// `ImGuiIO::MouseDelta` — Mouse delta. Note that this is zero if either current or previous position are invalid (-FLT_MAX,-FLT_MAX), so a disappearing/reappearing mouse won't have a huge delta.
+pub let set_mouse_delta = (self: IO, value: Vec2) -> void => unsafe { c_io_set_mouse_delta(self, value) }
+
+/// `ImGuiIO::Ctx` — Parent UI context (needs to be set explicitly by parent).
+pub let ctx = (self: IO) -> Context => unsafe { c_io_get_ctx(self) }
+
+/// `ImGuiIO::MousePos` — Mouse position, in pixels. Set to ImVec2(-FLT_MAX, -FLT_MAX) if mouse is unavailable (on another screen, etc.)
+pub let mouse_pos = (self: IO) -> Vec2 => unsafe { c_io_get_mouse_pos(self) }
+
+/// `ImGuiIO::MousePos` — Mouse position, in pixels. Set to ImVec2(-FLT_MAX, -FLT_MAX) if mouse is unavailable (on another screen, etc.)
+pub let set_mouse_pos = (self: IO, value: Vec2) -> void => unsafe { c_io_set_mouse_pos(self, value) }
+
+/// `ImGuiIO::MouseDown` — Mouse buttons: 0=left, 1=right, 2=middle + extras (ImGuiMouseButton_COUNT == 5). Dear ImGui mostly uses left and right buttons. Other buttons allow us to track if the mouse is being used by your application + available to user as a convenience via IsMouse** API.
+pub let mouse_down = (self: IO, index: i32) -> bool => unsafe { c_io_get_mouse_down(self, index) }
+
+/// `ImGuiIO::MouseDown` — Mouse buttons: 0=left, 1=right, 2=middle + extras (ImGuiMouseButton_COUNT == 5). Dear ImGui mostly uses left and right buttons. Other buttons allow us to track if the mouse is being used by your application + available to user as a convenience via IsMouse** API.
+pub let set_mouse_down = (self: IO, index: i32, value: bool) -> void => unsafe { c_io_set_mouse_down(self, index, value) }
+
+/// `ImGuiIO::MouseWheel` — Mouse wheel Vertical: 1 unit scrolls about 5 lines text. >0 scrolls Up, <0 scrolls Down. Hold Shift to turn vertical scroll into horizontal scroll.
+pub let mouse_wheel = (self: IO) -> f32 => unsafe { c_io_get_mouse_wheel(self) }
+
+/// `ImGuiIO::MouseWheel` — Mouse wheel Vertical: 1 unit scrolls about 5 lines text. >0 scrolls Up, <0 scrolls Down. Hold Shift to turn vertical scroll into horizontal scroll.
+pub let set_mouse_wheel = (self: IO, value: f32) -> void => unsafe { c_io_set_mouse_wheel(self, value) }
+
+/// `ImGuiIO::MouseWheelH` — Mouse wheel Horizontal. >0 scrolls Left, <0 scrolls Right. Most users don't have a mouse with a horizontal wheel, may not be filled by all backends.
+pub let mouse_wheel_h = (self: IO) -> f32 => unsafe { c_io_get_mouse_wheel_h(self) }
+
+/// `ImGuiIO::MouseWheelH` — Mouse wheel Horizontal. >0 scrolls Left, <0 scrolls Right. Most users don't have a mouse with a horizontal wheel, may not be filled by all backends.
+pub let set_mouse_wheel_h = (self: IO, value: f32) -> void => unsafe { c_io_set_mouse_wheel_h(self, value) }
+
+/// `ImGuiIO::MouseSource` — Mouse actual input peripheral (Mouse/TouchScreen/Pen).
+pub let mouse_source = (self: IO) -> i32 => unsafe { c_io_get_mouse_source(self) }
+
+/// `ImGuiIO::MouseSource` — Mouse actual input peripheral (Mouse/TouchScreen/Pen).
+pub let set_mouse_source = (self: IO, value: i32) -> void => unsafe { c_io_set_mouse_source(self, value) }
+
+/// `ImGuiIO::MouseHoveredViewport` — (Optional) Modify using io.AddMouseViewportEvent(). With multi-viewports: viewport the OS mouse is hovering. If possible _IGNORING_ viewports with the ImGuiViewportFlags_NoInputs flag is much better (few backends can handle that). Set io.BackendFlags |= ImGuiBackendFlags_HasMouseHoveredViewport if you can provide this info. If you don't imgui will infer the value using the rectangles and last focused time of the viewports it knows about (ignoring other OS windows).
+pub let mouse_hovered_viewport = (self: IO) -> u32 => unsafe { c_io_get_mouse_hovered_viewport(self) }
+
+/// `ImGuiIO::MouseHoveredViewport` — (Optional) Modify using io.AddMouseViewportEvent(). With multi-viewports: viewport the OS mouse is hovering. If possible _IGNORING_ viewports with the ImGuiViewportFlags_NoInputs flag is much better (few backends can handle that). Set io.BackendFlags |= ImGuiBackendFlags_HasMouseHoveredViewport if you can provide this info. If you don't imgui will infer the value using the rectangles and last focused time of the viewports it knows about (ignoring other OS windows).
+pub let set_mouse_hovered_viewport = (self: IO, value: u32) -> void => unsafe { c_io_set_mouse_hovered_viewport(self, value) }
+
+/// `ImGuiIO::KeyCtrl` — Keyboard modifier down: Ctrl (non-macOS), Cmd (macOS)
+pub let key_ctrl = (self: IO) -> bool => unsafe { c_io_get_key_ctrl(self) }
+
+/// `ImGuiIO::KeyCtrl` — Keyboard modifier down: Ctrl (non-macOS), Cmd (macOS)
+pub let set_key_ctrl = (self: IO, value: bool) -> void => unsafe { c_io_set_key_ctrl(self, value) }
+
+/// `ImGuiIO::KeyShift` — Keyboard modifier down: Shift
+pub let key_shift = (self: IO) -> bool => unsafe { c_io_get_key_shift(self) }
+
+/// `ImGuiIO::KeyShift` — Keyboard modifier down: Shift
+pub let set_key_shift = (self: IO, value: bool) -> void => unsafe { c_io_set_key_shift(self, value) }
+
+/// `ImGuiIO::KeyAlt` — Keyboard modifier down: Alt
+pub let key_alt = (self: IO) -> bool => unsafe { c_io_get_key_alt(self) }
+
+/// `ImGuiIO::KeyAlt` — Keyboard modifier down: Alt
+pub let set_key_alt = (self: IO, value: bool) -> void => unsafe { c_io_set_key_alt(self, value) }
+
+/// `ImGuiIO::KeySuper` — Keyboard modifier down: Windows/Super (non-macOS), Ctrl (macOS)
+pub let key_super = (self: IO) -> bool => unsafe { c_io_get_key_super(self) }
+
+/// `ImGuiIO::KeySuper` — Keyboard modifier down: Windows/Super (non-macOS), Ctrl (macOS)
+pub let set_key_super = (self: IO, value: bool) -> void => unsafe { c_io_set_key_super(self, value) }
+
+/// `ImGuiIO::KeyMods` — Key mods flags (any of ImGuiMod_Ctrl/ImGuiMod_Shift/ImGuiMod_Alt/ImGuiMod_Super flags, same as io.KeyCtrl/KeyShift/KeyAlt/KeySuper but merged into flags). Read-only, updated by NewFrame()
+pub let key_mods = (self: IO) -> i32 => unsafe { c_io_get_key_mods(self) }
+
+/// `ImGuiIO::KeyMods` — Key mods flags (any of ImGuiMod_Ctrl/ImGuiMod_Shift/ImGuiMod_Alt/ImGuiMod_Super flags, same as io.KeyCtrl/KeyShift/KeyAlt/KeySuper but merged into flags). Read-only, updated by NewFrame()
+pub let set_key_mods = (self: IO, value: i32) -> void => unsafe { c_io_set_key_mods(self, value) }
+
+/// `ImGuiIO::WantCaptureMouseUnlessPopupClose` — Alternative to WantCaptureMouse: (WantCaptureMouse == true && WantCaptureMouseUnlessPopupClose == false) when a click over void is expected to close a popup.
+pub let want_capture_mouse_unless_popup_close = (self: IO) -> bool => unsafe { c_io_get_want_capture_mouse_unless_popup_close(self) }
+
+/// `ImGuiIO::WantCaptureMouseUnlessPopupClose` — Alternative to WantCaptureMouse: (WantCaptureMouse == true && WantCaptureMouseUnlessPopupClose == false) when a click over void is expected to close a popup.
+pub let set_want_capture_mouse_unless_popup_close = (self: IO, value: bool) -> void => unsafe { c_io_set_want_capture_mouse_unless_popup_close(self, value) }
+
+/// `ImGuiIO::MousePosPrev` — Previous mouse position (note that MouseDelta is not necessary == MousePos-MousePosPrev, in case either position is invalid)
+pub let mouse_pos_prev = (self: IO) -> Vec2 => unsafe { c_io_get_mouse_pos_prev(self) }
+
+/// `ImGuiIO::MousePosPrev` — Previous mouse position (note that MouseDelta is not necessary == MousePos-MousePosPrev, in case either position is invalid)
+pub let set_mouse_pos_prev = (self: IO, value: Vec2) -> void => unsafe { c_io_set_mouse_pos_prev(self, value) }
+
+/// `ImGuiIO::MouseClickedPos` — Position at time of clicking
+pub let mouse_clicked_pos = (self: IO, index: i32) -> Vec2 => unsafe { c_io_get_mouse_clicked_pos(self, index) }
+
+/// `ImGuiIO::MouseClickedPos` — Position at time of clicking
+pub let set_mouse_clicked_pos = (self: IO, index: i32, value: Vec2) -> void => unsafe { c_io_set_mouse_clicked_pos(self, index, value) }
+
+/// `ImGuiIO::MouseClickedTime` — Time of last click (used to figure out double-click)
+pub let mouse_clicked_time = (self: IO, index: i32) -> f64 => unsafe { c_io_get_mouse_clicked_time(self, index) }
+
+/// `ImGuiIO::MouseClickedTime` — Time of last click (used to figure out double-click)
+pub let set_mouse_clicked_time = (self: IO, index: i32, value: f64) -> void => unsafe { c_io_set_mouse_clicked_time(self, index, value) }
+
+/// `ImGuiIO::MouseClicked` — Mouse button went from !Down to Down (same as MouseClickedCount[x] != 0)
+pub let mouse_clicked = (self: IO, index: i32) -> bool => unsafe { c_io_get_mouse_clicked(self, index) }
+
+/// `ImGuiIO::MouseClicked` — Mouse button went from !Down to Down (same as MouseClickedCount[x] != 0)
+pub let set_mouse_clicked = (self: IO, index: i32, value: bool) -> void => unsafe { c_io_set_mouse_clicked(self, index, value) }
+
+/// `ImGuiIO::MouseDoubleClicked` — Has mouse button been double-clicked? (same as MouseClickedCount[x] == 2)
+pub let mouse_double_clicked = (self: IO, index: i32) -> bool => unsafe { c_io_get_mouse_double_clicked(self, index) }
+
+/// `ImGuiIO::MouseDoubleClicked` — Has mouse button been double-clicked? (same as MouseClickedCount[x] == 2)
+pub let set_mouse_double_clicked = (self: IO, index: i32, value: bool) -> void => unsafe { c_io_set_mouse_double_clicked(self, index, value) }
+
+/// `ImGuiIO::MouseClickedCount` — == 0 (not clicked), == 1 (same as MouseClicked[]), == 2 (double-clicked), == 3 (triple-clicked) etc. when going from !Down to Down
+pub let mouse_clicked_count = (self: IO, index: i32) -> u16 => unsafe { c_io_get_mouse_clicked_count(self, index) }
+
+/// `ImGuiIO::MouseClickedCount` — == 0 (not clicked), == 1 (same as MouseClicked[]), == 2 (double-clicked), == 3 (triple-clicked) etc. when going from !Down to Down
+pub let set_mouse_clicked_count = (self: IO, index: i32, value: u16) -> void => unsafe { c_io_set_mouse_clicked_count(self, index, value) }
+
+/// `ImGuiIO::MouseClickedLastCount` — Count successive number of clicks. Stays valid after mouse release. Reset after another click is done.
+pub let mouse_clicked_last_count = (self: IO, index: i32) -> u16 => unsafe { c_io_get_mouse_clicked_last_count(self, index) }
+
+/// `ImGuiIO::MouseClickedLastCount` — Count successive number of clicks. Stays valid after mouse release. Reset after another click is done.
+pub let set_mouse_clicked_last_count = (self: IO, index: i32, value: u16) -> void => unsafe { c_io_set_mouse_clicked_last_count(self, index, value) }
+
+/// `ImGuiIO::MouseReleased` — Mouse button went from Down to !Down
+pub let mouse_released = (self: IO, index: i32) -> bool => unsafe { c_io_get_mouse_released(self, index) }
+
+/// `ImGuiIO::MouseReleased` — Mouse button went from Down to !Down
+pub let set_mouse_released = (self: IO, index: i32, value: bool) -> void => unsafe { c_io_set_mouse_released(self, index, value) }
+
+/// `ImGuiIO::MouseReleasedTime` — Time of last released (rarely used! but useful to handle delayed single-click when trying to disambiguate them from double-click).
+pub let mouse_released_time = (self: IO, index: i32) -> f64 => unsafe { c_io_get_mouse_released_time(self, index) }
+
+/// `ImGuiIO::MouseReleasedTime` — Time of last released (rarely used! but useful to handle delayed single-click when trying to disambiguate them from double-click).
+pub let set_mouse_released_time = (self: IO, index: i32, value: f64) -> void => unsafe { c_io_set_mouse_released_time(self, index, value) }
+
+/// `ImGuiIO::MouseDownOwned` — Track if button was clicked inside a dear imgui window or over void blocked by a popup. We don't request mouse capture from the application if click started outside ImGui bounds.
+pub let mouse_down_owned = (self: IO, index: i32) -> bool => unsafe { c_io_get_mouse_down_owned(self, index) }
+
+/// `ImGuiIO::MouseDownOwned` — Track if button was clicked inside a dear imgui window or over void blocked by a popup. We don't request mouse capture from the application if click started outside ImGui bounds.
+pub let set_mouse_down_owned = (self: IO, index: i32, value: bool) -> void => unsafe { c_io_set_mouse_down_owned(self, index, value) }
+
+/// `ImGuiIO::MouseDownOwnedUnlessPopupClose` — Track if button was clicked inside a dear imgui window.
+pub let mouse_down_owned_unless_popup_close = (self: IO, index: i32) -> bool => unsafe { c_io_get_mouse_down_owned_unless_popup_close(self, index) }
+
+/// `ImGuiIO::MouseDownOwnedUnlessPopupClose` — Track if button was clicked inside a dear imgui window.
+pub let set_mouse_down_owned_unless_popup_close = (self: IO, index: i32, value: bool) -> void => unsafe { c_io_set_mouse_down_owned_unless_popup_close(self, index, value) }
+
+/// `ImGuiIO::MouseWheelRequestAxisSwap` — On a non-Mac system, holding Shift requests WheelY to perform the equivalent of a WheelX event. On a Mac system this is already enforced by the system.
+pub let mouse_wheel_request_axis_swap = (self: IO) -> bool => unsafe { c_io_get_mouse_wheel_request_axis_swap(self) }
+
+/// `ImGuiIO::MouseWheelRequestAxisSwap` — On a non-Mac system, holding Shift requests WheelY to perform the equivalent of a WheelX event. On a Mac system this is already enforced by the system.
+pub let set_mouse_wheel_request_axis_swap = (self: IO, value: bool) -> void => unsafe { c_io_set_mouse_wheel_request_axis_swap(self, value) }
+
+/// `ImGuiIO::MouseCtrlLeftAsRightClick` — (OSX) Set to true when the current click was a Ctrl+Click that spawned a simulated right click
+pub let mouse_ctrl_left_as_right_click = (self: IO) -> bool => unsafe { c_io_get_mouse_ctrl_left_as_right_click(self) }
+
+/// `ImGuiIO::MouseCtrlLeftAsRightClick` — (OSX) Set to true when the current click was a Ctrl+Click that spawned a simulated right click
+pub let set_mouse_ctrl_left_as_right_click = (self: IO, value: bool) -> void => unsafe { c_io_set_mouse_ctrl_left_as_right_click(self, value) }
+
+/// `ImGuiIO::MouseDownDuration` — Duration the mouse button has been down (0.0f == just clicked)
+pub let mouse_down_duration = (self: IO, index: i32) -> f32 => unsafe { c_io_get_mouse_down_duration(self, index) }
+
+/// `ImGuiIO::MouseDownDuration` — Duration the mouse button has been down (0.0f == just clicked)
+pub let set_mouse_down_duration = (self: IO, index: i32, value: f32) -> void => unsafe { c_io_set_mouse_down_duration(self, index, value) }
+
+/// `ImGuiIO::MouseDownDurationPrev` — Previous time the mouse button has been down
+pub let mouse_down_duration_prev = (self: IO, index: i32) -> f32 => unsafe { c_io_get_mouse_down_duration_prev(self, index) }
+
+/// `ImGuiIO::MouseDownDurationPrev` — Previous time the mouse button has been down
+pub let set_mouse_down_duration_prev = (self: IO, index: i32, value: f32) -> void => unsafe { c_io_set_mouse_down_duration_prev(self, index, value) }
+
+/// `ImGuiIO::MouseDragMaxDistanceAbs` — Maximum distance, absolute, on each axis, of how much mouse has traveled from the clicking point
+pub let mouse_drag_max_distance_abs = (self: IO, index: i32) -> Vec2 => unsafe { c_io_get_mouse_drag_max_distance_abs(self, index) }
+
+/// `ImGuiIO::MouseDragMaxDistanceAbs` — Maximum distance, absolute, on each axis, of how much mouse has traveled from the clicking point
+pub let set_mouse_drag_max_distance_abs = (self: IO, index: i32, value: Vec2) -> void => unsafe { c_io_set_mouse_drag_max_distance_abs(self, index, value) }
+
+/// `ImGuiIO::MouseDragMaxDistanceSqr` — Squared maximum distance of how much mouse has traveled from the clicking point (used for moving thresholds)
+pub let mouse_drag_max_distance_sqr = (self: IO, index: i32) -> f32 => unsafe { c_io_get_mouse_drag_max_distance_sqr(self, index) }
+
+/// `ImGuiIO::MouseDragMaxDistanceSqr` — Squared maximum distance of how much mouse has traveled from the clicking point (used for moving thresholds)
+pub let set_mouse_drag_max_distance_sqr = (self: IO, index: i32, value: f32) -> void => unsafe { c_io_set_mouse_drag_max_distance_sqr(self, index, value) }
+
+/// `ImGuiIO::PenPressure` — Touch/Pen pressure (0.0f to 1.0f, should be >0.0f only when MouseDown[0] == true). Helper storage currently unused by Dear ImGui.
+pub let pen_pressure = (self: IO) -> f32 => unsafe { c_io_get_pen_pressure(self) }
+
+/// `ImGuiIO::PenPressure` — Touch/Pen pressure (0.0f to 1.0f, should be >0.0f only when MouseDown[0] == true). Helper storage currently unused by Dear ImGui.
+pub let set_pen_pressure = (self: IO, value: f32) -> void => unsafe { c_io_set_pen_pressure(self, value) }
+
+/// `ImGuiIO::AppFocusLost` — Only modify via AddFocusEvent()
+pub let app_focus_lost = (self: IO) -> bool => unsafe { c_io_get_app_focus_lost(self) }
+
+/// `ImGuiIO::AppFocusLost` — Only modify via AddFocusEvent()
+pub let set_app_focus_lost = (self: IO, value: bool) -> void => unsafe { c_io_set_app_focus_lost(self, value) }
+
+/// `ImGuiIO::AppAcceptingEvents` — Only modify via SetAppAcceptingEvents()
+pub let app_accepting_events = (self: IO) -> bool => unsafe { c_io_get_app_accepting_events(self) }
+
+/// `ImGuiIO::InputQueueSurrogate` — For AddInputCharacterUTF16()
+pub let input_queue_surrogate = (self: IO) -> u16 => unsafe { c_io_get_input_queue_surrogate(self) }
+
+/// `ImGuiIO::InputQueueSurrogate` — For AddInputCharacterUTF16()
+pub let set_input_queue_surrogate = (self: IO, value: u16) -> void => unsafe { c_io_set_input_queue_surrogate(self, value) }
+
+/// `ImGuiViewport::ID` — Unique identifier for the viewport
+pub let id = (self: Viewport) -> u32 => unsafe { c_viewport_get_id(self) }
+
+/// `ImGuiViewport::ID` — Unique identifier for the viewport
+pub let set_id = (self: Viewport, value: u32) -> void => unsafe { c_viewport_set_id(self, value) }
+
+/// `ImGuiViewport::Flags` — See ImGuiViewportFlags_
+pub let flags = (self: Viewport) -> i32 => unsafe { c_viewport_get_flags(self) }
+
+/// `ImGuiViewport::Flags` — See ImGuiViewportFlags_
+pub let set_flags = (self: Viewport, value: i32) -> void => unsafe { c_viewport_set_flags(self, value) }
+
+/// `ImGuiViewport::Pos` — Main Area: Position of the viewport (Dear ImGui coordinates are the same as OS desktop/native coordinates)
+pub let pos = (self: Viewport) -> Vec2 => unsafe { c_viewport_get_pos(self) }
+
+/// `ImGuiViewport::Pos` — Main Area: Position of the viewport (Dear ImGui coordinates are the same as OS desktop/native coordinates)
+pub let set_pos = (self: Viewport, value: Vec2) -> void => unsafe { c_viewport_set_pos(self, value) }
+
+/// `ImGuiViewport::Size` — Main Area: Size of the viewport.
+pub let size = (self: Viewport) -> Vec2 => unsafe { c_viewport_get_size(self) }
+
+/// `ImGuiViewport::Size` — Main Area: Size of the viewport.
+pub let set_size = (self: Viewport, value: Vec2) -> void => unsafe { c_viewport_set_size(self, value) }
+
+/// `ImGuiViewport::FramebufferScale` — Density of the viewport for Retina display (always 1,1 on Windows, may be 2,2 etc on macOS/iOS). This will affect font rasterizer density.
+pub let framebuffer_scale = (self: Viewport) -> Vec2 => unsafe { c_viewport_get_framebuffer_scale(self) }
+
+/// `ImGuiViewport::FramebufferScale` — Density of the viewport for Retina display (always 1,1 on Windows, may be 2,2 etc on macOS/iOS). This will affect font rasterizer density.
+pub let set_framebuffer_scale = (self: Viewport, value: Vec2) -> void => unsafe { c_viewport_set_framebuffer_scale(self, value) }
+
+/// `ImGuiViewport::WorkPos` — Work Area: Position of the viewport minus task bars, menus bars, status bars (>= Pos)
+pub let work_pos = (self: Viewport) -> Vec2 => unsafe { c_viewport_get_work_pos(self) }
+
+/// `ImGuiViewport::WorkPos` — Work Area: Position of the viewport minus task bars, menus bars, status bars (>= Pos)
+pub let set_work_pos = (self: Viewport, value: Vec2) -> void => unsafe { c_viewport_set_work_pos(self, value) }
+
+/// `ImGuiViewport::WorkSize` — Work Area: Size of the viewport minus task bars, menu bars, status bars (<= Size)
+pub let work_size = (self: Viewport) -> Vec2 => unsafe { c_viewport_get_work_size(self) }
+
+/// `ImGuiViewport::WorkSize` — Work Area: Size of the viewport minus task bars, menu bars, status bars (<= Size)
+pub let set_work_size = (self: Viewport, value: Vec2) -> void => unsafe { c_viewport_set_work_size(self, value) }
+
+/// `ImGuiViewport::DpiScale` — 1.0f = 96 DPI = No extra scale.
+pub let dpi_scale = (self: Viewport) -> f32 => unsafe { c_viewport_get_dpi_scale(self) }
+
+/// `ImGuiViewport::DpiScale` — 1.0f = 96 DPI = No extra scale.
+pub let set_dpi_scale = (self: Viewport, value: f32) -> void => unsafe { c_viewport_set_dpi_scale(self, value) }
+
+/// `ImGuiViewport::ParentViewportId` — (Advanced) 0: no parent. Instruct the platform backend to setup a parent/child relationship between platform windows.
+pub let parent_viewport_id = (self: Viewport) -> u32 => unsafe { c_viewport_get_parent_viewport_id(self) }
+
+/// `ImGuiViewport::ParentViewportId` — (Advanced) 0: no parent. Instruct the platform backend to setup a parent/child relationship between platform windows.
+pub let set_parent_viewport_id = (self: Viewport, value: u32) -> void => unsafe { c_viewport_set_parent_viewport_id(self, value) }
+
+/// `ImGuiViewport::ParentViewport` — (Advanced) Direct shortcut to ImGui::FindViewportByID(ParentViewportId). NULL: no parent.
+pub let parent_viewport = (self: Viewport) -> Viewport => unsafe { c_viewport_get_parent_viewport(self) }
+
+/// `ImGuiViewport::DrawData` — The ImDrawData corresponding to this viewport. Valid after Render() and until the next call to NewFrame().
+pub let draw_data = (self: Viewport) -> DrawData => unsafe { c_viewport_get_draw_data(self) }
+
+/// `ImGuiViewport::PlatformWindowCreated` — Platform window has been created (Platform_CreateWindow() has been called). This is false during the first frame where a viewport is being created.
+pub let platform_window_created = (self: Viewport) -> bool => unsafe { c_viewport_get_platform_window_created(self) }
+
+/// `ImGuiViewport::PlatformWindowCreated` — Platform window has been created (Platform_CreateWindow() has been called). This is false during the first frame where a viewport is being created.
+pub let set_platform_window_created = (self: Viewport, value: bool) -> void => unsafe { c_viewport_set_platform_window_created(self, value) }
+
+/// `ImGuiViewport::PlatformRequestMove` — Platform window requested move (e.g. window was moved by the OS / host window manager, authoritative position will be OS window position)
+pub let platform_request_move = (self: Viewport) -> bool => unsafe { c_viewport_get_platform_request_move(self) }
+
+/// `ImGuiViewport::PlatformRequestMove` — Platform window requested move (e.g. window was moved by the OS / host window manager, authoritative position will be OS window position)
+pub let set_platform_request_move = (self: Viewport, value: bool) -> void => unsafe { c_viewport_set_platform_request_move(self, value) }
+
+/// `ImGuiViewport::PlatformRequestResize` — Platform window requested resize (e.g. window was resized by the OS / host window manager, authoritative size will be OS window size)
+pub let platform_request_resize = (self: Viewport) -> bool => unsafe { c_viewport_get_platform_request_resize(self) }
+
+/// `ImGuiViewport::PlatformRequestResize` — Platform window requested resize (e.g. window was resized by the OS / host window manager, authoritative size will be OS window size)
+pub let set_platform_request_resize = (self: Viewport, value: bool) -> void => unsafe { c_viewport_set_platform_request_resize(self, value) }
+
+/// `ImGuiViewport::PlatformRequestClose` — Platform window requested closure (e.g. window was moved by the OS / host window manager, e.g. pressing ALT-F4)
+pub let platform_request_close = (self: Viewport) -> bool => unsafe { c_viewport_get_platform_request_close(self) }
+
+/// `ImGuiViewport::PlatformRequestClose` — Platform window requested closure (e.g. window was moved by the OS / host window manager, e.g. pressing ALT-F4)
+pub let set_platform_request_close = (self: Viewport, value: bool) -> void => unsafe { c_viewport_set_platform_request_close(self, value) }
+
 // ── Externs ─────────────────────────────────────────────────────────────────
 
 @symbol("ImTextureRef_GetTexID")
@@ -5411,6 +6598,1182 @@ unsafe extern c_platform_io_clear_platform_handlers: (self: PlatformIO) -> void
 @symbol("ImGuiPlatformIO_ClearRendererHandlers")
 unsafe extern c_platform_io_clear_renderer_handlers: (self: PlatformIO) -> void
 
+@symbol("lyra_imgui_ImGuiStyle_get_FontSizeBase")
+unsafe extern c_style_get_font_size_base: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_FontSizeBase")
+unsafe extern c_style_set_font_size_base: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_FontScaleMain")
+unsafe extern c_style_get_font_scale_main: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_FontScaleMain")
+unsafe extern c_style_set_font_scale_main: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_FontScaleDpi")
+unsafe extern c_style_get_font_scale_dpi: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_FontScaleDpi")
+unsafe extern c_style_set_font_scale_dpi: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_Alpha")
+unsafe extern c_style_get_alpha: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_Alpha")
+unsafe extern c_style_set_alpha: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DisabledAlpha")
+unsafe extern c_style_get_disabled_alpha: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_DisabledAlpha")
+unsafe extern c_style_set_disabled_alpha: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_WindowPadding")
+unsafe extern c_style_get_window_padding: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_WindowPadding")
+unsafe extern c_style_set_window_padding: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_WindowRounding")
+unsafe extern c_style_get_window_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_WindowRounding")
+unsafe extern c_style_set_window_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_WindowBorderSize")
+unsafe extern c_style_get_window_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_WindowBorderSize")
+unsafe extern c_style_set_window_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_WindowBorderHoverPadding")
+unsafe extern c_style_get_window_border_hover_padding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_WindowBorderHoverPadding")
+unsafe extern c_style_set_window_border_hover_padding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_WindowMinSize")
+unsafe extern c_style_get_window_min_size: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_WindowMinSize")
+unsafe extern c_style_set_window_min_size: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_WindowTitleAlign")
+unsafe extern c_style_get_window_title_align: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_WindowTitleAlign")
+unsafe extern c_style_set_window_title_align: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_WindowMenuButtonPosition")
+unsafe extern c_style_get_window_menu_button_position: (self: Style) -> i32
+
+@symbol("lyra_imgui_ImGuiStyle_set_WindowMenuButtonPosition")
+unsafe extern c_style_set_window_menu_button_position: (self: Style, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ChildRounding")
+unsafe extern c_style_get_child_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ChildRounding")
+unsafe extern c_style_set_child_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ChildBorderSize")
+unsafe extern c_style_get_child_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ChildBorderSize")
+unsafe extern c_style_set_child_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_PopupRounding")
+unsafe extern c_style_get_popup_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_PopupRounding")
+unsafe extern c_style_set_popup_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_PopupBorderSize")
+unsafe extern c_style_get_popup_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_PopupBorderSize")
+unsafe extern c_style_set_popup_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_FramePadding")
+unsafe extern c_style_get_frame_padding: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_FramePadding")
+unsafe extern c_style_set_frame_padding: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_FrameRounding")
+unsafe extern c_style_get_frame_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_FrameRounding")
+unsafe extern c_style_set_frame_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_FrameBorderSize")
+unsafe extern c_style_get_frame_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_FrameBorderSize")
+unsafe extern c_style_set_frame_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ItemSpacing")
+unsafe extern c_style_get_item_spacing: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_ItemSpacing")
+unsafe extern c_style_set_item_spacing: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ItemInnerSpacing")
+unsafe extern c_style_get_item_inner_spacing: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_ItemInnerSpacing")
+unsafe extern c_style_set_item_inner_spacing: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_CellPadding")
+unsafe extern c_style_get_cell_padding: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_CellPadding")
+unsafe extern c_style_set_cell_padding: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TouchExtraPadding")
+unsafe extern c_style_get_touch_extra_padding: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_TouchExtraPadding")
+unsafe extern c_style_set_touch_extra_padding: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_IndentSpacing")
+unsafe extern c_style_get_indent_spacing: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_IndentSpacing")
+unsafe extern c_style_set_indent_spacing: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ColumnsMinSpacing")
+unsafe extern c_style_get_columns_min_spacing: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ColumnsMinSpacing")
+unsafe extern c_style_set_columns_min_spacing: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ScrollbarSize")
+unsafe extern c_style_get_scrollbar_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ScrollbarSize")
+unsafe extern c_style_set_scrollbar_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ScrollbarRounding")
+unsafe extern c_style_get_scrollbar_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ScrollbarRounding")
+unsafe extern c_style_set_scrollbar_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ScrollbarPadding")
+unsafe extern c_style_get_scrollbar_padding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ScrollbarPadding")
+unsafe extern c_style_set_scrollbar_padding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_GrabMinSize")
+unsafe extern c_style_get_grab_min_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_GrabMinSize")
+unsafe extern c_style_set_grab_min_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_GrabRounding")
+unsafe extern c_style_get_grab_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_GrabRounding")
+unsafe extern c_style_set_grab_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_LogSliderDeadzone")
+unsafe extern c_style_get_log_slider_deadzone: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_LogSliderDeadzone")
+unsafe extern c_style_set_log_slider_deadzone: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ImageRounding")
+unsafe extern c_style_get_image_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ImageRounding")
+unsafe extern c_style_set_image_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ImageBorderSize")
+unsafe extern c_style_get_image_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ImageBorderSize")
+unsafe extern c_style_set_image_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabRounding")
+unsafe extern c_style_get_tab_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabRounding")
+unsafe extern c_style_set_tab_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabBorderSize")
+unsafe extern c_style_get_tab_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabBorderSize")
+unsafe extern c_style_set_tab_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabMinWidthBase")
+unsafe extern c_style_get_tab_min_width_base: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabMinWidthBase")
+unsafe extern c_style_set_tab_min_width_base: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabMinWidthShrink")
+unsafe extern c_style_get_tab_min_width_shrink: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabMinWidthShrink")
+unsafe extern c_style_set_tab_min_width_shrink: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabCloseButtonMinWidthSelected")
+unsafe extern c_style_get_tab_close_button_min_width_selected: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabCloseButtonMinWidthSelected")
+unsafe extern c_style_set_tab_close_button_min_width_selected: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabCloseButtonMinWidthUnselected")
+unsafe extern c_style_get_tab_close_button_min_width_unselected: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabCloseButtonMinWidthUnselected")
+unsafe extern c_style_set_tab_close_button_min_width_unselected: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabBarBorderSize")
+unsafe extern c_style_get_tab_bar_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabBarBorderSize")
+unsafe extern c_style_set_tab_bar_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TabBarOverlineSize")
+unsafe extern c_style_get_tab_bar_overline_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TabBarOverlineSize")
+unsafe extern c_style_set_tab_bar_overline_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TableAngledHeadersAngle")
+unsafe extern c_style_get_table_angled_headers_angle: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TableAngledHeadersAngle")
+unsafe extern c_style_set_table_angled_headers_angle: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TableAngledHeadersTextAlign")
+unsafe extern c_style_get_table_angled_headers_text_align: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_TableAngledHeadersTextAlign")
+unsafe extern c_style_set_table_angled_headers_text_align: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TreeLinesFlags")
+unsafe extern c_style_get_tree_lines_flags: (self: Style) -> i32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TreeLinesFlags")
+unsafe extern c_style_set_tree_lines_flags: (self: Style, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TreeLinesSize")
+unsafe extern c_style_get_tree_lines_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TreeLinesSize")
+unsafe extern c_style_set_tree_lines_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_TreeLinesRounding")
+unsafe extern c_style_get_tree_lines_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_TreeLinesRounding")
+unsafe extern c_style_set_tree_lines_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_MenuItemRounding")
+unsafe extern c_style_get_menu_item_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_MenuItemRounding")
+unsafe extern c_style_set_menu_item_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_SelectableRounding")
+unsafe extern c_style_get_selectable_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_SelectableRounding")
+unsafe extern c_style_set_selectable_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DragDropTargetRounding")
+unsafe extern c_style_get_drag_drop_target_rounding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_DragDropTargetRounding")
+unsafe extern c_style_set_drag_drop_target_rounding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DragDropTargetBorderSize")
+unsafe extern c_style_get_drag_drop_target_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_DragDropTargetBorderSize")
+unsafe extern c_style_set_drag_drop_target_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DragDropTargetPadding")
+unsafe extern c_style_get_drag_drop_target_padding: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_DragDropTargetPadding")
+unsafe extern c_style_set_drag_drop_target_padding: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ColorMarkerSize")
+unsafe extern c_style_get_color_marker_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ColorMarkerSize")
+unsafe extern c_style_set_color_marker_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ColorButtonPosition")
+unsafe extern c_style_get_color_button_position: (self: Style) -> i32
+
+@symbol("lyra_imgui_ImGuiStyle_set_ColorButtonPosition")
+unsafe extern c_style_set_color_button_position: (self: Style, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_ButtonTextAlign")
+unsafe extern c_style_get_button_text_align: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_ButtonTextAlign")
+unsafe extern c_style_set_button_text_align: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_SelectableTextAlign")
+unsafe extern c_style_get_selectable_text_align: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_SelectableTextAlign")
+unsafe extern c_style_set_selectable_text_align: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_InputTextCursorSize")
+unsafe extern c_style_get_input_text_cursor_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_InputTextCursorSize")
+unsafe extern c_style_set_input_text_cursor_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_SeparatorSize")
+unsafe extern c_style_get_separator_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_SeparatorSize")
+unsafe extern c_style_set_separator_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_SeparatorTextBorderSize")
+unsafe extern c_style_get_separator_text_border_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_SeparatorTextBorderSize")
+unsafe extern c_style_set_separator_text_border_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_SeparatorTextAlign")
+unsafe extern c_style_get_separator_text_align: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_SeparatorTextAlign")
+unsafe extern c_style_set_separator_text_align: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_SeparatorTextPadding")
+unsafe extern c_style_get_separator_text_padding: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_SeparatorTextPadding")
+unsafe extern c_style_set_separator_text_padding: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DisplayWindowPadding")
+unsafe extern c_style_get_display_window_padding: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_DisplayWindowPadding")
+unsafe extern c_style_set_display_window_padding: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DisplaySafeAreaPadding")
+unsafe extern c_style_get_display_safe_area_padding: (self: Style) -> Vec2
+
+@symbol("lyra_imgui_ImGuiStyle_set_DisplaySafeAreaPadding")
+unsafe extern c_style_set_display_safe_area_padding: (self: Style, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DockingNodeHasCloseButton")
+unsafe extern c_style_get_docking_node_has_close_button: (self: Style) -> bool
+
+@symbol("lyra_imgui_ImGuiStyle_set_DockingNodeHasCloseButton")
+unsafe extern c_style_set_docking_node_has_close_button: (self: Style, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_DockingSeparatorSize")
+unsafe extern c_style_get_docking_separator_size: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_DockingSeparatorSize")
+unsafe extern c_style_set_docking_separator_size: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_MouseCursorScale")
+unsafe extern c_style_get_mouse_cursor_scale: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_MouseCursorScale")
+unsafe extern c_style_set_mouse_cursor_scale: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_AntiAliasedLines")
+unsafe extern c_style_get_anti_aliased_lines: (self: Style) -> bool
+
+@symbol("lyra_imgui_ImGuiStyle_set_AntiAliasedLines")
+unsafe extern c_style_set_anti_aliased_lines: (self: Style, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_AntiAliasedLinesUseTex")
+unsafe extern c_style_get_anti_aliased_lines_use_tex: (self: Style) -> bool
+
+@symbol("lyra_imgui_ImGuiStyle_set_AntiAliasedLinesUseTex")
+unsafe extern c_style_set_anti_aliased_lines_use_tex: (self: Style, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_AntiAliasedFill")
+unsafe extern c_style_get_anti_aliased_fill: (self: Style) -> bool
+
+@symbol("lyra_imgui_ImGuiStyle_set_AntiAliasedFill")
+unsafe extern c_style_set_anti_aliased_fill: (self: Style, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_CurveTessellationTol")
+unsafe extern c_style_get_curve_tessellation_tol: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_CurveTessellationTol")
+unsafe extern c_style_set_curve_tessellation_tol: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_CircleTessellationMaxError")
+unsafe extern c_style_get_circle_tessellation_max_error: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_CircleTessellationMaxError")
+unsafe extern c_style_set_circle_tessellation_max_error: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_Colors")
+unsafe extern c_style_get_colors: (self: Style, index: i32) -> Vec4
+
+@symbol("lyra_imgui_ImGuiStyle_set_Colors")
+unsafe extern c_style_set_colors: (self: Style, index: i32, value: Vec4) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_HoverStationaryDelay")
+unsafe extern c_style_get_hover_stationary_delay: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_HoverStationaryDelay")
+unsafe extern c_style_set_hover_stationary_delay: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_HoverDelayShort")
+unsafe extern c_style_get_hover_delay_short: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_HoverDelayShort")
+unsafe extern c_style_set_hover_delay_short: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_HoverDelayNormal")
+unsafe extern c_style_get_hover_delay_normal: (self: Style) -> f32
+
+@symbol("lyra_imgui_ImGuiStyle_set_HoverDelayNormal")
+unsafe extern c_style_set_hover_delay_normal: (self: Style, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_HoverFlagsForTooltipMouse")
+unsafe extern c_style_get_hover_flags_for_tooltip_mouse: (self: Style) -> i32
+
+@symbol("lyra_imgui_ImGuiStyle_set_HoverFlagsForTooltipMouse")
+unsafe extern c_style_set_hover_flags_for_tooltip_mouse: (self: Style, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiStyle_get_HoverFlagsForTooltipNav")
+unsafe extern c_style_get_hover_flags_for_tooltip_nav: (self: Style) -> i32
+
+@symbol("lyra_imgui_ImGuiStyle_set_HoverFlagsForTooltipNav")
+unsafe extern c_style_set_hover_flags_for_tooltip_nav: (self: Style, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigFlags")
+unsafe extern c_io_get_config_flags: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigFlags")
+unsafe extern c_io_set_config_flags: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_BackendFlags")
+unsafe extern c_io_get_backend_flags: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_BackendFlags")
+unsafe extern c_io_set_backend_flags: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_DisplaySize")
+unsafe extern c_io_get_display_size: (self: IO) -> Vec2
+
+@symbol("lyra_imgui_ImGuiIO_set_DisplaySize")
+unsafe extern c_io_set_display_size: (self: IO, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_DisplayFramebufferScale")
+unsafe extern c_io_get_display_framebuffer_scale: (self: IO) -> Vec2
+
+@symbol("lyra_imgui_ImGuiIO_set_DisplayFramebufferScale")
+unsafe extern c_io_set_display_framebuffer_scale: (self: IO, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_DeltaTime")
+unsafe extern c_io_get_delta_time: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_DeltaTime")
+unsafe extern c_io_set_delta_time: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_IniSavingRate")
+unsafe extern c_io_get_ini_saving_rate: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_IniSavingRate")
+unsafe extern c_io_set_ini_saving_rate: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_IniFilename")
+unsafe extern c_io_get_ini_filename: (self: IO) -> ^u8
+
+@symbol("lyra_imgui_ImGuiIO_get_LogFilename")
+unsafe extern c_io_get_log_filename: (self: IO) -> ^u8
+
+@symbol("lyra_imgui_ImGuiIO_get_Fonts")
+unsafe extern c_io_get_fonts: (self: IO) -> FontAtlas
+
+@symbol("lyra_imgui_ImGuiIO_get_FontDefault")
+unsafe extern c_io_get_font_default: (self: IO) -> Font
+
+@symbol("lyra_imgui_ImGuiIO_get_FontAllowUserScaling")
+unsafe extern c_io_get_font_allow_user_scaling: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_FontAllowUserScaling")
+unsafe extern c_io_set_font_allow_user_scaling: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigNavSwapGamepadButtons")
+unsafe extern c_io_get_config_nav_swap_gamepad_buttons: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigNavSwapGamepadButtons")
+unsafe extern c_io_set_config_nav_swap_gamepad_buttons: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigNavMoveSetMousePos")
+unsafe extern c_io_get_config_nav_move_set_mouse_pos: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigNavMoveSetMousePos")
+unsafe extern c_io_set_config_nav_move_set_mouse_pos: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigNavCaptureKeyboard")
+unsafe extern c_io_get_config_nav_capture_keyboard: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigNavCaptureKeyboard")
+unsafe extern c_io_set_config_nav_capture_keyboard: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigNavEscapeClearFocusItem")
+unsafe extern c_io_get_config_nav_escape_clear_focus_item: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigNavEscapeClearFocusItem")
+unsafe extern c_io_set_config_nav_escape_clear_focus_item: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigNavEscapeClearFocusWindow")
+unsafe extern c_io_get_config_nav_escape_clear_focus_window: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigNavEscapeClearFocusWindow")
+unsafe extern c_io_set_config_nav_escape_clear_focus_window: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigNavCursorVisibleAuto")
+unsafe extern c_io_get_config_nav_cursor_visible_auto: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigNavCursorVisibleAuto")
+unsafe extern c_io_set_config_nav_cursor_visible_auto: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigNavCursorVisibleAlways")
+unsafe extern c_io_get_config_nav_cursor_visible_always: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigNavCursorVisibleAlways")
+unsafe extern c_io_set_config_nav_cursor_visible_always: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDockingNoSplit")
+unsafe extern c_io_get_config_docking_no_split: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDockingNoSplit")
+unsafe extern c_io_set_config_docking_no_split: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDockingNoDockingOver")
+unsafe extern c_io_get_config_docking_no_docking_over: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDockingNoDockingOver")
+unsafe extern c_io_set_config_docking_no_docking_over: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDockingWithShift")
+unsafe extern c_io_get_config_docking_with_shift: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDockingWithShift")
+unsafe extern c_io_set_config_docking_with_shift: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDockingAlwaysTabBar")
+unsafe extern c_io_get_config_docking_always_tab_bar: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDockingAlwaysTabBar")
+unsafe extern c_io_set_config_docking_always_tab_bar: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDockingTransparentPayload")
+unsafe extern c_io_get_config_docking_transparent_payload: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDockingTransparentPayload")
+unsafe extern c_io_set_config_docking_transparent_payload: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigViewportsNoAutoMerge")
+unsafe extern c_io_get_config_viewports_no_auto_merge: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigViewportsNoAutoMerge")
+unsafe extern c_io_set_config_viewports_no_auto_merge: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigViewportsNoTaskBarIcon")
+unsafe extern c_io_get_config_viewports_no_task_bar_icon: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigViewportsNoTaskBarIcon")
+unsafe extern c_io_set_config_viewports_no_task_bar_icon: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigViewportsNoDecoration")
+unsafe extern c_io_get_config_viewports_no_decoration: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigViewportsNoDecoration")
+unsafe extern c_io_set_config_viewports_no_decoration: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigViewportsNoDefaultParent")
+unsafe extern c_io_get_config_viewports_no_default_parent: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigViewportsNoDefaultParent")
+unsafe extern c_io_set_config_viewports_no_default_parent: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigViewportsPlatformFocusSetsImGuiFocus")
+unsafe extern c_io_get_config_viewports_platform_focus_sets_focus: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigViewportsPlatformFocusSetsImGuiFocus")
+unsafe extern c_io_set_config_viewports_platform_focus_sets_focus: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDpiScaleFonts")
+unsafe extern c_io_get_config_dpi_scale_fonts: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDpiScaleFonts")
+unsafe extern c_io_set_config_dpi_scale_fonts: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDpiScaleViewports")
+unsafe extern c_io_get_config_dpi_scale_viewports: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDpiScaleViewports")
+unsafe extern c_io_set_config_dpi_scale_viewports: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigMacOSXBehaviors")
+unsafe extern c_io_get_config_mac_osx_behaviors: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigMacOSXBehaviors")
+unsafe extern c_io_set_config_mac_osx_behaviors: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigInputTrickleEventQueue")
+unsafe extern c_io_get_config_input_trickle_event_queue: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigInputTrickleEventQueue")
+unsafe extern c_io_set_config_input_trickle_event_queue: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigInputTextCursorBlink")
+unsafe extern c_io_get_config_input_text_cursor_blink: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigInputTextCursorBlink")
+unsafe extern c_io_set_config_input_text_cursor_blink: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigInputTextEnterKeepActive")
+unsafe extern c_io_get_config_input_text_enter_keep_active: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigInputTextEnterKeepActive")
+unsafe extern c_io_set_config_input_text_enter_keep_active: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigColorEditFlags")
+unsafe extern c_io_get_config_color_edit_flags: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigColorEditFlags")
+unsafe extern c_io_set_config_color_edit_flags: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDragClickToInputText")
+unsafe extern c_io_get_config_drag_click_to_input_text: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDragClickToInputText")
+unsafe extern c_io_set_config_drag_click_to_input_text: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigWindowsResizeFromEdges")
+unsafe extern c_io_get_config_windows_resize_from_edges: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigWindowsResizeFromEdges")
+unsafe extern c_io_set_config_windows_resize_from_edges: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigWindowsMoveFromTitleBarOnly")
+unsafe extern c_io_get_config_windows_move_from_title_bar_only: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigWindowsMoveFromTitleBarOnly")
+unsafe extern c_io_set_config_windows_move_from_title_bar_only: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigWindowsCopyContentsWithCtrlC")
+unsafe extern c_io_get_config_windows_copy_contents_with_ctrl_c: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigWindowsCopyContentsWithCtrlC")
+unsafe extern c_io_set_config_windows_copy_contents_with_ctrl_c: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigScrollbarScrollByPage")
+unsafe extern c_io_get_config_scrollbar_scroll_by_page: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigScrollbarScrollByPage")
+unsafe extern c_io_set_config_scrollbar_scroll_by_page: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigIniSettingsSaveLastUsedDate")
+unsafe extern c_io_get_config_ini_settings_save_last_used_date: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigIniSettingsSaveLastUsedDate")
+unsafe extern c_io_set_config_ini_settings_save_last_used_date: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigIniSettingsAutoDiscardMonths")
+unsafe extern c_io_get_config_ini_settings_auto_discard_months: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigIniSettingsAutoDiscardMonths")
+unsafe extern c_io_set_config_ini_settings_auto_discard_months: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDebugIniSettings")
+unsafe extern c_io_get_config_debug_ini_settings: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDebugIniSettings")
+unsafe extern c_io_set_config_debug_ini_settings: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDrawCursor")
+unsafe extern c_io_get_mouse_draw_cursor: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDrawCursor")
+unsafe extern c_io_set_mouse_draw_cursor: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigMemoryCompactTimer")
+unsafe extern c_io_get_config_memory_compact_timer: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigMemoryCompactTimer")
+unsafe extern c_io_set_config_memory_compact_timer: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDoubleClickTime")
+unsafe extern c_io_get_mouse_double_click_time: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDoubleClickTime")
+unsafe extern c_io_set_mouse_double_click_time: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDoubleClickMaxDist")
+unsafe extern c_io_get_mouse_double_click_max_dist: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDoubleClickMaxDist")
+unsafe extern c_io_set_mouse_double_click_max_dist: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseSingleClickDelay")
+unsafe extern c_io_get_mouse_single_click_delay: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseSingleClickDelay")
+unsafe extern c_io_set_mouse_single_click_delay: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDragThreshold")
+unsafe extern c_io_get_mouse_drag_threshold: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDragThreshold")
+unsafe extern c_io_set_mouse_drag_threshold: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_KeyRepeatDelay")
+unsafe extern c_io_get_key_repeat_delay: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_KeyRepeatDelay")
+unsafe extern c_io_set_key_repeat_delay: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_KeyRepeatRate")
+unsafe extern c_io_get_key_repeat_rate: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_KeyRepeatRate")
+unsafe extern c_io_set_key_repeat_rate: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigErrorRecovery")
+unsafe extern c_io_get_config_error_recovery: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigErrorRecovery")
+unsafe extern c_io_set_config_error_recovery: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigErrorRecoveryEnableAssert")
+unsafe extern c_io_get_config_error_recovery_enable_assert: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigErrorRecoveryEnableAssert")
+unsafe extern c_io_set_config_error_recovery_enable_assert: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigErrorRecoveryEnableDebugLog")
+unsafe extern c_io_get_config_error_recovery_enable_debug_log: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigErrorRecoveryEnableDebugLog")
+unsafe extern c_io_set_config_error_recovery_enable_debug_log: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigErrorRecoveryEnableTooltip")
+unsafe extern c_io_get_config_error_recovery_enable_tooltip: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigErrorRecoveryEnableTooltip")
+unsafe extern c_io_set_config_error_recovery_enable_tooltip: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDebugIsDebuggerPresent")
+unsafe extern c_io_get_config_debug_is_debugger_present: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDebugIsDebuggerPresent")
+unsafe extern c_io_set_config_debug_is_debugger_present: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDebugHighlightIdConflicts")
+unsafe extern c_io_get_config_debug_highlight_id_conflicts: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDebugHighlightIdConflicts")
+unsafe extern c_io_set_config_debug_highlight_id_conflicts: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDebugHighlightIdConflictsShowItemPicker")
+unsafe extern c_io_get_config_debug_highlight_id_conflicts_show_item_picker: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDebugHighlightIdConflictsShowItemPicker")
+unsafe extern c_io_set_config_debug_highlight_id_conflicts_show_item_picker: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDebugBeginReturnValueOnce")
+unsafe extern c_io_get_config_debug_begin_return_value_once: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDebugBeginReturnValueOnce")
+unsafe extern c_io_set_config_debug_begin_return_value_once: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDebugBeginReturnValueLoop")
+unsafe extern c_io_get_config_debug_begin_return_value_loop: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDebugBeginReturnValueLoop")
+unsafe extern c_io_set_config_debug_begin_return_value_loop: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_ConfigDebugIgnoreFocusLoss")
+unsafe extern c_io_get_config_debug_ignore_focus_loss: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_ConfigDebugIgnoreFocusLoss")
+unsafe extern c_io_set_config_debug_ignore_focus_loss: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_BackendPlatformName")
+unsafe extern c_io_get_backend_platform_name: (self: IO) -> ^u8
+
+@symbol("lyra_imgui_ImGuiIO_get_BackendRendererName")
+unsafe extern c_io_get_backend_renderer_name: (self: IO) -> ^u8
+
+@symbol("lyra_imgui_ImGuiIO_get_WantCaptureMouse")
+unsafe extern c_io_get_want_capture_mouse: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_WantCaptureMouse")
+unsafe extern c_io_set_want_capture_mouse: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_WantCaptureKeyboard")
+unsafe extern c_io_get_want_capture_keyboard: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_WantCaptureKeyboard")
+unsafe extern c_io_set_want_capture_keyboard: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_WantTextInput")
+unsafe extern c_io_get_want_text_input: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_WantTextInput")
+unsafe extern c_io_set_want_text_input: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_WantSetMousePos")
+unsafe extern c_io_get_want_set_mouse_pos: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_WantSetMousePos")
+unsafe extern c_io_set_want_set_mouse_pos: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_WantSaveIniSettings")
+unsafe extern c_io_get_want_save_ini_settings: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_WantSaveIniSettings")
+unsafe extern c_io_set_want_save_ini_settings: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_NavActive")
+unsafe extern c_io_get_nav_active: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_NavActive")
+unsafe extern c_io_set_nav_active: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_NavVisible")
+unsafe extern c_io_get_nav_visible: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_NavVisible")
+unsafe extern c_io_set_nav_visible: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_Framerate")
+unsafe extern c_io_get_framerate: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_Framerate")
+unsafe extern c_io_set_framerate: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MetricsRenderVertices")
+unsafe extern c_io_get_metrics_render_vertices: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_MetricsRenderVertices")
+unsafe extern c_io_set_metrics_render_vertices: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MetricsRenderIndices")
+unsafe extern c_io_get_metrics_render_indices: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_MetricsRenderIndices")
+unsafe extern c_io_set_metrics_render_indices: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MetricsRenderWindows")
+unsafe extern c_io_get_metrics_render_windows: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_MetricsRenderWindows")
+unsafe extern c_io_set_metrics_render_windows: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MetricsActiveWindows")
+unsafe extern c_io_get_metrics_active_windows: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_MetricsActiveWindows")
+unsafe extern c_io_set_metrics_active_windows: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDelta")
+unsafe extern c_io_get_mouse_delta: (self: IO) -> Vec2
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDelta")
+unsafe extern c_io_set_mouse_delta: (self: IO, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_Ctx")
+unsafe extern c_io_get_ctx: (self: IO) -> Context
+
+@symbol("lyra_imgui_ImGuiIO_get_MousePos")
+unsafe extern c_io_get_mouse_pos: (self: IO) -> Vec2
+
+@symbol("lyra_imgui_ImGuiIO_set_MousePos")
+unsafe extern c_io_set_mouse_pos: (self: IO, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDown")
+unsafe extern c_io_get_mouse_down: (self: IO, index: i32) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDown")
+unsafe extern c_io_set_mouse_down: (self: IO, index: i32, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseWheel")
+unsafe extern c_io_get_mouse_wheel: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseWheel")
+unsafe extern c_io_set_mouse_wheel: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseWheelH")
+unsafe extern c_io_get_mouse_wheel_h: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseWheelH")
+unsafe extern c_io_set_mouse_wheel_h: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseSource")
+unsafe extern c_io_get_mouse_source: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseSource")
+unsafe extern c_io_set_mouse_source: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseHoveredViewport")
+unsafe extern c_io_get_mouse_hovered_viewport: (self: IO) -> u32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseHoveredViewport")
+unsafe extern c_io_set_mouse_hovered_viewport: (self: IO, value: u32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_KeyCtrl")
+unsafe extern c_io_get_key_ctrl: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_KeyCtrl")
+unsafe extern c_io_set_key_ctrl: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_KeyShift")
+unsafe extern c_io_get_key_shift: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_KeyShift")
+unsafe extern c_io_set_key_shift: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_KeyAlt")
+unsafe extern c_io_get_key_alt: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_KeyAlt")
+unsafe extern c_io_set_key_alt: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_KeySuper")
+unsafe extern c_io_get_key_super: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_KeySuper")
+unsafe extern c_io_set_key_super: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_KeyMods")
+unsafe extern c_io_get_key_mods: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_set_KeyMods")
+unsafe extern c_io_set_key_mods: (self: IO, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_WantCaptureMouseUnlessPopupClose")
+unsafe extern c_io_get_want_capture_mouse_unless_popup_close: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_WantCaptureMouseUnlessPopupClose")
+unsafe extern c_io_set_want_capture_mouse_unless_popup_close: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MousePosPrev")
+unsafe extern c_io_get_mouse_pos_prev: (self: IO) -> Vec2
+
+@symbol("lyra_imgui_ImGuiIO_set_MousePosPrev")
+unsafe extern c_io_set_mouse_pos_prev: (self: IO, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseClickedPos")
+unsafe extern c_io_get_mouse_clicked_pos: (self: IO, index: i32) -> Vec2
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseClickedPos")
+unsafe extern c_io_set_mouse_clicked_pos: (self: IO, index: i32, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseClickedTime")
+unsafe extern c_io_get_mouse_clicked_time: (self: IO, index: i32) -> f64
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseClickedTime")
+unsafe extern c_io_set_mouse_clicked_time: (self: IO, index: i32, value: f64) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseClicked")
+unsafe extern c_io_get_mouse_clicked: (self: IO, index: i32) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseClicked")
+unsafe extern c_io_set_mouse_clicked: (self: IO, index: i32, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDoubleClicked")
+unsafe extern c_io_get_mouse_double_clicked: (self: IO, index: i32) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDoubleClicked")
+unsafe extern c_io_set_mouse_double_clicked: (self: IO, index: i32, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseClickedCount")
+unsafe extern c_io_get_mouse_clicked_count: (self: IO, index: i32) -> u16
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseClickedCount")
+unsafe extern c_io_set_mouse_clicked_count: (self: IO, index: i32, value: u16) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseClickedLastCount")
+unsafe extern c_io_get_mouse_clicked_last_count: (self: IO, index: i32) -> u16
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseClickedLastCount")
+unsafe extern c_io_set_mouse_clicked_last_count: (self: IO, index: i32, value: u16) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseReleased")
+unsafe extern c_io_get_mouse_released: (self: IO, index: i32) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseReleased")
+unsafe extern c_io_set_mouse_released: (self: IO, index: i32, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseReleasedTime")
+unsafe extern c_io_get_mouse_released_time: (self: IO, index: i32) -> f64
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseReleasedTime")
+unsafe extern c_io_set_mouse_released_time: (self: IO, index: i32, value: f64) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDownOwned")
+unsafe extern c_io_get_mouse_down_owned: (self: IO, index: i32) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDownOwned")
+unsafe extern c_io_set_mouse_down_owned: (self: IO, index: i32, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDownOwnedUnlessPopupClose")
+unsafe extern c_io_get_mouse_down_owned_unless_popup_close: (self: IO, index: i32) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDownOwnedUnlessPopupClose")
+unsafe extern c_io_set_mouse_down_owned_unless_popup_close: (self: IO, index: i32, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseWheelRequestAxisSwap")
+unsafe extern c_io_get_mouse_wheel_request_axis_swap: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseWheelRequestAxisSwap")
+unsafe extern c_io_set_mouse_wheel_request_axis_swap: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseCtrlLeftAsRightClick")
+unsafe extern c_io_get_mouse_ctrl_left_as_right_click: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseCtrlLeftAsRightClick")
+unsafe extern c_io_set_mouse_ctrl_left_as_right_click: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDownDuration")
+unsafe extern c_io_get_mouse_down_duration: (self: IO, index: i32) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDownDuration")
+unsafe extern c_io_set_mouse_down_duration: (self: IO, index: i32, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDownDurationPrev")
+unsafe extern c_io_get_mouse_down_duration_prev: (self: IO, index: i32) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDownDurationPrev")
+unsafe extern c_io_set_mouse_down_duration_prev: (self: IO, index: i32, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDragMaxDistanceAbs")
+unsafe extern c_io_get_mouse_drag_max_distance_abs: (self: IO, index: i32) -> Vec2
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDragMaxDistanceAbs")
+unsafe extern c_io_set_mouse_drag_max_distance_abs: (self: IO, index: i32, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_MouseDragMaxDistanceSqr")
+unsafe extern c_io_get_mouse_drag_max_distance_sqr: (self: IO, index: i32) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_MouseDragMaxDistanceSqr")
+unsafe extern c_io_set_mouse_drag_max_distance_sqr: (self: IO, index: i32, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_PenPressure")
+unsafe extern c_io_get_pen_pressure: (self: IO) -> f32
+
+@symbol("lyra_imgui_ImGuiIO_set_PenPressure")
+unsafe extern c_io_set_pen_pressure: (self: IO, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_AppFocusLost")
+unsafe extern c_io_get_app_focus_lost: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_set_AppFocusLost")
+unsafe extern c_io_set_app_focus_lost: (self: IO, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiIO_get_AppAcceptingEvents")
+unsafe extern c_io_get_app_accepting_events: (self: IO) -> bool
+
+@symbol("lyra_imgui_ImGuiIO_get_InputQueueSurrogate")
+unsafe extern c_io_get_input_queue_surrogate: (self: IO) -> u16
+
+@symbol("lyra_imgui_ImGuiIO_set_InputQueueSurrogate")
+unsafe extern c_io_set_input_queue_surrogate: (self: IO, value: u16) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_ID")
+unsafe extern c_viewport_get_id: (self: Viewport) -> u32
+
+@symbol("lyra_imgui_ImGuiViewport_set_ID")
+unsafe extern c_viewport_set_id: (self: Viewport, value: u32) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_Flags")
+unsafe extern c_viewport_get_flags: (self: Viewport) -> i32
+
+@symbol("lyra_imgui_ImGuiViewport_set_Flags")
+unsafe extern c_viewport_set_flags: (self: Viewport, value: i32) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_Pos")
+unsafe extern c_viewport_get_pos: (self: Viewport) -> Vec2
+
+@symbol("lyra_imgui_ImGuiViewport_set_Pos")
+unsafe extern c_viewport_set_pos: (self: Viewport, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_Size")
+unsafe extern c_viewport_get_size: (self: Viewport) -> Vec2
+
+@symbol("lyra_imgui_ImGuiViewport_set_Size")
+unsafe extern c_viewport_set_size: (self: Viewport, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_FramebufferScale")
+unsafe extern c_viewport_get_framebuffer_scale: (self: Viewport) -> Vec2
+
+@symbol("lyra_imgui_ImGuiViewport_set_FramebufferScale")
+unsafe extern c_viewport_set_framebuffer_scale: (self: Viewport, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_WorkPos")
+unsafe extern c_viewport_get_work_pos: (self: Viewport) -> Vec2
+
+@symbol("lyra_imgui_ImGuiViewport_set_WorkPos")
+unsafe extern c_viewport_set_work_pos: (self: Viewport, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_WorkSize")
+unsafe extern c_viewport_get_work_size: (self: Viewport) -> Vec2
+
+@symbol("lyra_imgui_ImGuiViewport_set_WorkSize")
+unsafe extern c_viewport_set_work_size: (self: Viewport, value: Vec2) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_DpiScale")
+unsafe extern c_viewport_get_dpi_scale: (self: Viewport) -> f32
+
+@symbol("lyra_imgui_ImGuiViewport_set_DpiScale")
+unsafe extern c_viewport_set_dpi_scale: (self: Viewport, value: f32) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_ParentViewportId")
+unsafe extern c_viewport_get_parent_viewport_id: (self: Viewport) -> u32
+
+@symbol("lyra_imgui_ImGuiViewport_set_ParentViewportId")
+unsafe extern c_viewport_set_parent_viewport_id: (self: Viewport, value: u32) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_ParentViewport")
+unsafe extern c_viewport_get_parent_viewport: (self: Viewport) -> Viewport
+
+@symbol("lyra_imgui_ImGuiViewport_get_DrawData")
+unsafe extern c_viewport_get_draw_data: (self: Viewport) -> DrawData
+
+@symbol("lyra_imgui_ImGuiViewport_get_PlatformWindowCreated")
+unsafe extern c_viewport_get_platform_window_created: (self: Viewport) -> bool
+
+@symbol("lyra_imgui_ImGuiViewport_set_PlatformWindowCreated")
+unsafe extern c_viewport_set_platform_window_created: (self: Viewport, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_PlatformRequestMove")
+unsafe extern c_viewport_get_platform_request_move: (self: Viewport) -> bool
+
+@symbol("lyra_imgui_ImGuiViewport_set_PlatformRequestMove")
+unsafe extern c_viewport_set_platform_request_move: (self: Viewport, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_PlatformRequestResize")
+unsafe extern c_viewport_get_platform_request_resize: (self: Viewport) -> bool
+
+@symbol("lyra_imgui_ImGuiViewport_set_PlatformRequestResize")
+unsafe extern c_viewport_set_platform_request_resize: (self: Viewport, value: bool) -> void
+
+@symbol("lyra_imgui_ImGuiViewport_get_PlatformRequestClose")
+unsafe extern c_viewport_get_platform_request_close: (self: Viewport) -> bool
+
+@symbol("lyra_imgui_ImGuiViewport_set_PlatformRequestClose")
+unsafe extern c_viewport_set_platform_request_close: (self: Viewport, value: bool) -> void
+
 // ── Not bound ───────────────────────────────────────────────────────────────
 //
 // ImGui_SetNextWindowSizeConstraints: parameter `custom_callback`: a pointer to a function pointer (a callback)
@@ -5547,3 +7910,15 @@ unsafe extern c_platform_io_clear_renderer_handlers: (self: PlatformIO) -> void
 // ImGui_GetContentRegionMax: under a preprocessor conditional
 // ImGui_GetWindowContentRegionMin: under a preprocessor conditional
 // ImGui_GetWindowContentRegionMax: under a preprocessor conditional
+// ImGuiIO::UserData: `void *`
+// ImGuiIO::BackendPlatformUserData: `void *`
+// ImGuiIO::BackendRendererUserData: `void *`
+// ImGuiIO::BackendLanguageUserData: `void *`
+// ImGuiIO::KeysData: `ImGuiKeyData` by value
+// ImGuiIO::InputQueueCharacters: `ImVector_ImWchar` by value
+// ImGuiViewport::RendererUserData: `void *`
+// ImGuiViewport::PlatformUserData: `void *`
+// ImGuiViewport::PlatformIconData: `void *`
+// ImGuiViewport::PlatformHandle: `void *`
+// ImGuiViewport::PlatformHandleRaw: `void *`
+// ImGuiIO::AppAcceptingEvents (`set_app_accepting_events`): a method of that name already exists

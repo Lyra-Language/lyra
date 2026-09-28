@@ -164,11 +164,18 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
 - **`host_macos.m` lets a torn-off window reach a monitor above.** AppKit's
   `constrainFrameRect:toScreen:` pulled every borderless window straddling two displays back
   below the menu bar, and ImGui moves a dragged panel a few pixels a frame, so it never got
-  past; the host adds the method to SDL's window class, leaving titled windows constrained.
-- **The API is generated** into `generated.lyra` (committed, never edited) by
-  `gen/gen.lyra` from dear_bindings' `dcimgui.json`; the generator's header has the command
-  and the type mapping. Rerun it after bumping the pin; `cmd/lyrac/imgui_example_test.go`
-  fails when the committed file is not what it makes.
+  past. The host adds the method to SDL's window class: a borderless frame stands while
+  its title bar's middle is in some screen's visible area, and otherwise gets AppKit's rule,
+  so a panel may straddle onto a monitor above but never park its title under the menu bar.
+- **The API is generated** into `generated.lyra` and `generated.cpp` (committed, never
+  edited) by `gen/gen.lyra` from dear_bindings' `dcimgui.json`; the generator's header has
+  the command and the type mapping. Rerun it after bumping the pin;
+  `cmd/lyrac/imgui_example_test.go` fails when the committed files are not what it makes.
+- **Fields are methods**: `generated.cpp` is a C accessor per field of `ImGuiIO`,
+  `ImGuiStyle` and `ImGuiViewport` (`FIELD_STRUCTS`), so `get_io().delta_time()`,
+  `get_style().set_alpha(0.9)`, `get_style().set_colors(COL_TEXT, v)`. An array's index is
+  checked in C (out of range reads zero, writes nothing); strings and handles are read-only.
+  A field whose setter is also a real method (`ImGuiIO::SetAppAcceptingEvents`) keeps the method.
 - **Naming**: ImGui's names in snake case, one wrapper per function family — the full `…Ex`
   form under the short name, C++'s defaults as Lyra's (`button(label, size = Vec2 { … })`).
   A struct's functions are methods on its handle (`draw_list.add_line(p1, p2, col)`); one
@@ -178,12 +185,19 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   caller's `open` and answers whether it was clicked, as ImGui's `bool *` does; `float[3]` is
   `mut [3]f32`. A nullable `bool *p_open` makes two wrappers: `begin(name)` and
   `begin_closable(name, open)`. A `const char *` defaulting to NULL is `Maybe<string> = None`.
-- **Hand-written in `imgui.lyra`**: `text(s)` (ImGui's `Text` is printf-style, so the
-  variadics are bound through their `…Unformatted` forms and interpolation does the
-  formatting), `col32(r, g, b, a)`, and the two helpers the wrappers call.
-- **Not bound** — `void *`, callbacks, `va_list`, writable `char *` buffers (`InputText`),
-  `ImTextureRef` by value (`Image`) — listed with the reason at the end of `generated.lyra`.
-  Struct fields (`ImGuiIO`, `ImGuiStyle`) are not reachable: a handle is opaque.
+- **Hand-written in `imgui.lyra`** (over `host.cpp`) — what needs C++ on Lyra's behalf:
+  - `input_text(label, value: mut string)`, `…_with_hint`, `…_multiline`: the host copies
+    the string into a buffer ImGui grows through its resize callback, and the wrapper copies
+    it back only when it changed. Any length.
+  - **Textures**: `create_texture(host, w, h)` → `Texture` (`@must_release(destroy_texture)`),
+    `update_texture(t, rgba)` (w × h × 4 bytes, uploaded at once), and `image`,
+    `image_button`, `draw_list.add_image`, each with `filter: Filter = Nearest` — the
+    host brackets the draw with ImGui's sampler callbacks, since pixel art must not be
+    smoothed. Do not destroy a texture the frame being built still draws.
+  - `text(s)` (ImGui's `Text` is printf-style, so the variadics are bound through their
+    `…Unformatted` forms and interpolation does the formatting) and `col32(r, g, b, a)`.
+- **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
+  reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into
   `build/lib/liblyra-imgui.a` from a **downloaded** ImGui and dear_bindings, pinned by tag
   and SHA-256 and cached in `build/deps/`. Bump both tags together.
