@@ -316,3 +316,31 @@ let main = () -> u8 => {
 		t.Errorf("got %d, want 10", bare)
 	}
 }
+
+// A `void` function whose whole body is a `match` or a one-armed `if` — checked as a
+// statement since 09/28 — lowers as one: each arm runs for its effect, and the untaken
+// `if` does nothing.
+func TestExec_VoidExpressionBodyIsAStatement(t *testing.T) {
+	t.Parallel()
+	src := `data Loc = Reg(i64) | Mem(i64)
+let store = (at: Loc, ok: bool) -> void => match at {
+  Reg(r) => { println("reg ${r}") },
+  Mem(a) => {
+    println("mem ${a}")
+    if ok { println("committed") }
+  },
+}
+let say = (ok: bool) -> void => if ok { println("said") }
+let main = () -> u8 => {
+  store(Reg(1), true)
+  store(Mem(2), false)
+  store(Mem(3), true)
+  say(false)
+  say(true)
+  0
+}`
+	want := "reg 1\nmem 2\nmem 3\ncommitted\nsaid\n"
+	if got := buildAndRunWithPrelude(t, src, ""); got != want {
+		t.Errorf("printed %q; want %q", got, want)
+	}
+}

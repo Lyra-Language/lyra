@@ -35,7 +35,8 @@ Returns two results: `pure` violations (`lyra-E007`) and missing-bound warnings 
   jointly (`collectMethodImpls`), recomputing every callable each round (no "already impure"
   early-out).
 - **`bodyEffects` over a `callable`** is the *only* body walk. `callable` describes what differs:
-  frame, capture stack, `mut` params (nil for methods), parameter positions, allocation-site
+  frame, capture stack, `mut` params (a method's read by position from its trait's signature,
+  `methodMutBorrows`), parameter positions, allocation-site
   recording, declared-bound reading, body walker. Enforcement re-runs the same walk with
   `callable.reportPure` set, so the arm that charges a bit words the diagnostic. Do not
   reintroduce a separate reporting mirror (the old split inferred a pure-through-trait-method

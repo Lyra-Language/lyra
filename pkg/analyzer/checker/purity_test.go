@@ -288,6 +288,23 @@ let shift = pure (p: mut Point) -> void => { p.x += 1 }`
 	assertPurityCount(t, checkPurity(t, src), 4)
 }
 
+// A trait method's `mut Self` receiver is written in the *trait's* signature, and the impl
+// binds a bare pattern, so the purity pass read no `mut` for it and a write through `self`
+// was charged nothing (09/28, Sheliak's test bus). A `pure` bound on the trait now refuses
+// the impl that mutates its receiver — once for the reassignment, once for the push.
+func TestPurity_TraitMethodMutReceiverWrite_Error(t *testing.T) {
+	src := `
+struct Counter { n: i64, log: []i64 }
+trait Tick { pure tick: (mut Self, i64) -> void }
+impl Tick for Counter {
+    tick = (self, k) => {
+        self.n += k
+        self.log.push(k)
+    }
+}`
+	assertPurityCount(t, checkPurity(t, src), 2)
+}
+
 // An `own` parameter is an owned local copy: mutating it is invisible to the
 // caller, so it is allowed inside a pure function.
 func TestPurity_OwnParamMutation_Ok(t *testing.T) {

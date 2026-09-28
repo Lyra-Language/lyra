@@ -234,3 +234,31 @@ let main = () -> void => {
 `, false)
 	assertErrorContainsGeneric(t, res, "literal value 300 overflows u8")
 }
+
+// A literal passed to a parameter that mentions no type variable has nothing to say about
+// the solve. The last pass unified its *default* width with the parameter, so `u32` against
+// i64 failed and the call reported "cannot infer type variable b" — a variable the other
+// argument had already solved (09/28, Sheliak's `jump_to_vector(cpu, bus, 3)`).
+func TestGeneric_ALiteralBesideASolvedVariable(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Tick { tick: (mut Self, i64) -> void }
+struct Clock { n: i64 }
+impl Tick for Clock { tick = (self, k) => { self.n += k } }
+let run<b> where b: Tick = (bus: mut b, vector: u32) -> void => { bus.tick(i64(vector)) }
+let main = () -> void => {
+  var c = Clock { n: 0 }
+  run(c, 3)
+}
+`, false)
+	assertNoErrors(t, res)
+}
+
+// Skipped by the solve, the literal still meets the parameter in the argument check, so an
+// out-of-range one is reported as that rather than as an inference failure.
+func TestGeneric_ALiteralBesideASolvedVariableStillFitsItsParameter(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let pick = (x: t, bits: u8) -> t => x
+let main = () -> void => println(pick("s", 300))
+`, false)
+	assertErrorContainsGeneric(t, res, "literal value 300 overflows u8")
+}

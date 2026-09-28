@@ -338,6 +338,16 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 	// whatever the wrongly-typed *result* then broke.
 	for _, u := range untyped {
 		declared := declaredParam(u.index)
+		// A literal whose parameter mentions none of the variables being solved —
+		// `vector: u32` beside `bus: b` — has nothing to say about any of them, and the
+		// argument check narrows it to the parameter as it would for a non-generic call.
+		// Unifying its *default* width against the parameter instead failed the whole
+		// call: `inner(bus, 3)` against `(bus: mut b, vector: u32)` compared i64 with u32
+		// and reported "cannot infer type variable b", a variable `bus` had already
+		// solved (09/28, Sheliak's `jump_to_vector`).
+		if !mentionsGenericParam(declared, vars) {
+			continue
+		}
 		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] {
 			if bound, isBound := subst[g.Name]; isBound {
 				// assignableValue rather than isAssignable, so an array literal's untyped

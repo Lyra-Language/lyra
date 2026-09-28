@@ -160,10 +160,14 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 				// Single-expression body: the expression value is the return value.
 				tc.checkReturnValue(funcName, lambda.Body, lambda.Body.GetLocation(), declaredReturn, ownedReturn)
 			} else {
-				// Single-expression body of a void function: the value is discarded,
-				// but still infer it so an effectful call (`() -> void => print("x")`)
-				// is validated and its argument types are recorded for the backend.
-				tc.inferExprType(lambda.Body)
+				// Single-expression body of a void function: the value is discarded, so it
+				// is checked as a statement — an effectful call (`() -> void =>
+				// print("x")`) is still validated and its argument types recorded. As a
+				// value, a `match` body put every arm in value position, and an arm ending
+				// in a one-armed `if` was refused as "`if` used as a value" in a function
+				// whose value nobody wanted (09/28, Sheliak's `store`); the same `match`
+				// inside a block was fine.
+				tc.checkExprForEffect(lambda.Body)
 			}
 		}
 

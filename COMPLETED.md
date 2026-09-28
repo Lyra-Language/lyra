@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — three front-end bugs Sheliak's 68000 found
+
+The emulator's first thousand lines, written against a trait-bounded `Bus`, walked into
+three holes in the front end; each is fixed where the rule lives, with a test that fails
+without it.
+
+- **An untyped literal beside a solved variable failed the call.** The solve holds untyped
+  literals back to its last pass and then unifies each with its parameter at the literal's
+  *default* width — so `inner(bus, 3)` against `(bus: mut b, vector: u32)` compared i64 with
+  u32 and reported "cannot infer type variable b", a variable `bus` had already solved. A
+  literal whose parameter mentions none of the solve's variables now skips the solve; the
+  argument check narrows it (and still reports `300` for a `u8` as an overflow).
+- **A `void` function whose whole body is a `match` or a one-armed `if`** inferred that body
+  as a value, while the same `match` inside a block was a statement — so an arm ending in an
+  `if` without `else` was refused as "`if` used as a value". The single-expression body of a
+  `void` function is now checked for effect (`checkExprForEffect`), the sixth member of the
+  block-value-versus-statement family.
+- **A write through a trait method's `mut Self` receiver was not an effect.** The impl binds
+  a bare pattern, so the `mut` lives only in the trait's signature, and the purity pass read
+  `mut` parameters off the written lambda (nil for a method). `self.cycles += n` was charged
+  nothing: W018 suggested `pure` for the test bus's `idle`, and a `pure` bound would have
+  been accepted. `methodMutBorrows` reads the borrow modes from the signature by position.
+
 ### 09/27/26 — `bindings.imgui`: text input, textures, and fields as methods
 
 The three things Vega needed that the generated wrappers could not reach.

@@ -2191,16 +2191,37 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference)
 func methodCallable(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) *callable {
 	scope := inf.frames.forMethod(m)
 	signature := inf.signatures[m]
+	params := inf.frames.methodParamsFor(m)
 	return &callable{
-		scope:   scope,
-		capture: pushScope(base, scope),
-		params:  inf.frames.methodParamsFor(m),
-		note:    func(ex ast.Expression) { inf.allocSites.noteMethod(m, ex) },
-		boundAt: func(idx int) *types.LambdaType { return signatureBound(signature, idx) },
+		scope:      scope,
+		capture:    pushScope(base, scope),
+		mutBorrows: methodMutBorrows(params, signature),
+		params:     params,
+		note:       func(ex ast.Expression) { inf.allocSites.noteMethod(m, ex) },
+		boundAt:    func(idx int) *types.LambdaType { return signatureBound(signature, idx) },
 		walk: func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool) {
 			ast.WalkExpr(m.Clause.Body, onStmt, onExpr)
 		},
 	}
+}
+
+// methodMutBorrows is mutBorrowParams for a trait-impl method. An impl binds patterns, not
+// typed parameters, so a parameter's `mut` is written in its trait's signature (`idle: (mut
+// Self, i64) -> void`) and read from there by position. Left nil, a write through `self` —
+// `self.cycles += n` — was charged nothing: the receiver is declared by the method, and
+// only an undeclared root counted, so W018 suggested `pure` for a method that mutates its
+// caller's value and a `pure` bound would have been accepted (09/28, Sheliak's test bus).
+func methodMutBorrows(params map[string]int, sig *types.LambdaType) map[string]bool {
+	mut := map[string]bool{}
+	if sig == nil {
+		return mut
+	}
+	for name, idx := range params {
+		if idx < len(sig.Parameters) && sig.Parameters[idx].Borrow == types.Mut {
+			mut[name] = true
+		}
+	}
+	return mut
 }
 
 // bodyEffects walks one callable's body and returns its base effect together with the

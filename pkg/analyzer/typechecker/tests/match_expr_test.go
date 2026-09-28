@@ -96,6 +96,27 @@ func TestMatch_StatementArmAllowsANestedStatementMatch(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+// The sixth member of the family: a `void` function whose *whole body* is the `match`
+// (`=> match …`, no braces). Its single-expression body was inferred as a value while the
+// same `match` inside a block was a statement, so the one-armed `if` ending an arm was
+// refused (09/28, found writing Sheliak's operand store). A one-armed `if` as the whole body
+// is the same shape one level up.
+func TestMatch_VoidExpressionBodyIsAStatement(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		data Loc = Reg(i64) | Mem(i64)
+		let f = () -> void => println("f")
+		let store = (at: Loc, ok: bool) -> void => match at {
+		  Reg(r) => { f() },
+		  Mem(a) => {
+		    f()
+		    if ok { f() }
+		  },
+		}
+		let say = (ok: bool) -> void => if ok { f() }
+	`, false)
+	assertNoErrors(t, res)
+}
+
 // Value position must stay strict: the arms' types still have to agree.
 func TestMatch_ValueArmsMustStillAgree(t *testing.T) {
 	res := parseCollectAndCheck(t, `
