@@ -811,6 +811,11 @@ emittable constants.
 - **[DONE 09/23] Overlapping impls are ranked.** A more specific target wins by
   subsumption; incomparable targets stay ambiguous and ranking never reaches across traits.
   Identical targets are still `lyra-E037`. (COMPLETED.md, 09/23.)
+- **[OPEN] An `impl` reaches a public trait its file never imported.** `impl Bus for
+  TestBus` compiles with `Bus` unimported (Sheliak's cputest.lyra, 09/28), so importing it
+  earns `lyra-W004` — against the rule that an import is what makes a module reachable.
+  Resolve the impl head as a written type name is; a private trait's refusal also says
+  "unknown trait" rather than naming the privacy.
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
   `Ordering`; deferred until something needs it. A bit-pattern `total_cmp` for sorting
   floats is also unbuilt (`sort_by` with a comparator works meanwhile).
