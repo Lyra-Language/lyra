@@ -164,6 +164,11 @@ observable effect that doesn't say `pure`.
 - Higher-order functions *are* reported (callback effects are charged at call sites).
 - Standard library impl methods are marked `pure` at the **impl**, not the trait (a trait bound
   would bind user impls).
+- **Not for an impl of a trait method with a `mut` parameter** (`takesMut`): the `mut` says
+  impls may change what they are given, which `pure` forbids, and a stub that does not is no
+  evidence the method is pure.
+- **Advises the trait only when no impl of that method has effects**
+  (`traitMethodsWithEffects`, keyed by resolved trait declaration); otherwise the impl alone.
 
 ## `effect_bounds.go` (`lyra-E015`)
 

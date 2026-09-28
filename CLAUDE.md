@@ -175,6 +175,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | does storing this value here cross the flavor boundary? | `checkAllocationCompat` (both sides written) **and** `checkStoredFlavor` (one side unwritten) — a new storing position needs both, and the second walks the expression |
    | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
    | is this CST node a comment? | `cst.IsComment` |
+   | a constructor's payload fields (a lone `void` is none — `Ok()`) | `DataTypeConstructor.FieldTypes` |
    | declare a libc function the runtime calls | `declareLibc` / `declareLibcVariadic` — **never `module.NewFunc`**, which a program's `extern` of the same name collides with |
 
 9. **A name does not identify a declaration, or even one function.** Keys are

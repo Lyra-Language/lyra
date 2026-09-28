@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — `Ok()`: a void payload, and constructor arity checked at last
+
+`Result<void, string>` could be written and never built: `Ok(())` was an empty tuple,
+`()` is not a type, and `Ok()` misparsed (tree-sitter invented a `true`). Sheliak's
+interrupt scenarios declared `data Checked = Checked` to have something to return. A
+constructor applied to nothing is now the spelling of a void payload, chosen over making
+`()` a unit value because it is local: `()` stays the empty tuple everywhere else.
+
+- **Grammar**: a named tuple literal may have no values (`Ok()`); the pattern `Ok()`
+  already parsed, as a data pattern over the unit pattern.
+- **One answer for every pass**: `FieldTypes()` reports a lone `void` field as none, so a
+  void-payload variant *is* a nullary one to construction, matching, equality, drop and
+  layout, instead of six payload readers each learning a special case. `void` sizes as
+  zero bytes; `?` over a void payload yields nothing (an open block and a nil value, which
+  `isVoidResult` reads as void). `Ok(_)` is rewritten to `Ok()` in the typechecker, as
+  `Rect pair` is rewritten to a rest pattern.
+- **`checkConstructorArity`**: the empty application binds a type-variable payload to
+  `void` and is refused for anything else; a nullary constructor is written bare. Writing
+  it found that **constructor arity was never checked in an expression**: `Two(1)` for
+  `Two(i64, i64)` and `Some(1, 2)` for a `Maybe<i64>` type-checked, the extra value dropped
+  and the missing one never built. Nothing in the workspace relied on it.
+- Also found and logged, not fixed: a constructor wrapping a partially-solved one
+  (`Some(Ok(5))`) loses its arguments and is refused, even annotated — pre-existing.
+
+Tests: the corpus, `constructor_arity_test.go`, and `TestExec_VoidPayload` under ASan
+(clean under Linux LeakSanitizer too, via `./asan.sh`).
+
+### 09/28/26 — W018 stops advising `pure` against a trait's signature
+
+W018 on a trait-impl method always advised bounding the trait. Sheliak's test buses drew
+it on `Bus::interrupt_level`, a stub answering 0 — but the trait declares `(mut Self)`, the
+trait saying impls may change the bus, and `pure` forbids that. Now silent for any method
+whose trait takes a `mut` parameter, and, when another impl of the method has effects,
+advising the impl alone (the trait's bound would be refused there). The sibling check keys
+on the resolved trait declaration, not its name (rule 4); `collectTraitMethodGroups`, which
+still keys by name, is logged in todo.md.
+
 ### 09/28/26 — a written trait name needs its import
 
 Sheliak's `impl Bus for TestBus` compiled with `Bus` never imported, and listing it drew

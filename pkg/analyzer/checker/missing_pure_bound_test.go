@@ -235,3 +235,36 @@ impl Speak for Soft {
 		t.Errorf("bounding the trait should satisfy the impl too; got %v", warnings)
 	}
 }
+
+// **A method whose trait takes a `mut` parameter is not reported** (09/28). The `mut` says
+// impls may change what they are given, which `pure` forbids — so the trait bound W018
+// would advise contradicts the signature, and one stub impl that does not mutate (a test
+// bus) is no evidence the method is pure. Sheliak's `Bus` drew it on every stub.
+func TestMissingPureBound_MutParameterTraitMethod_Silent(t *testing.T) {
+	got := missingPureBounds(t, `
+struct Stub { level: i64 }
+trait Pins { level_now: (mut Self) -> i64 }
+impl Pins for Stub { level_now = (self) => 0 }
+`)
+	assertWarned(t, got)
+}
+
+// **When another impl has effects, the trait cannot be bounded**, so the advice is the impl
+// alone — declaring the trait `pure` would be refused at the impl that prints.
+func TestMissingPureBound_ImpureSiblingAdvisesTheImplOnly(t *testing.T) {
+	warnings := missingPureBoundDiags(t, `
+struct Quiet { n: i64 }
+struct Loud { n: i64 }
+trait Speak { say: (Self) -> i64 }
+impl Speak for Quiet { say = (self) => self.n }
+impl Speak for Loud { say = (self) => { println("hi"); self.n } }
+`)
+	if len(warnings) != 1 {
+		t.Fatalf("want one warning, for Quiet's impl; got %v", warnings)
+	}
+	msg := warnings[0].Message
+	if strings.Contains(msg, "declare the bound on the trait") || !strings.Contains(msg, "mark this impl `pure`") ||
+		!strings.Contains(msg, "another impl of \"Speak::say\" has effects") {
+		t.Errorf("want impl-only advice naming the impure sibling; got %q", msg)
+	}
+}

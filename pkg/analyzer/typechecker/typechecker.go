@@ -1271,6 +1271,16 @@ func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, ctor *types.Da
 		return
 	}
 	if tp, ok := p.Pattern.(*ast.TuplePattern); ok {
+		// A void payload (`Ok` of a `Result<void, e>`) has no fields (FieldTypes), so
+		// `Ok()` fits below as it stands. `Ok(_)` says the same thing — a wildcard over
+		// nothing — and is **rewritten to `Ok()`**, so exhaustiveness, ownership and both
+		// lowerings meet the one shape, as `Rect pair` becomes `Rect(...pair)` below.
+		if len(flat) == 0 && len(ctor.Params) == 1 && len(tp.Elements) == 1 {
+			if _, isWildcard := tp.Elements[0].(*ast.WildcardPattern); isWildcard {
+				tp.Elements = nil
+				return
+			}
+		}
 		// Flat positional: `Rect(w, h)` against the flat field types `[i64, i64]`
 		// (and `Circle(r)` against `[i64]`), with a `...rest` lining up as it does in a
 		// tuple — `Tri(a, ...more)` binds `more: (i64, i64)`.
@@ -4487,6 +4497,56 @@ func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
 	return operandType
 }
 
+// checkConstructorArity reports a constructor applied to the wrong number of values, and
+// answers the name of the type variable an empty application makes void ("" if none).
+//
+// **Applied to nothing is how a `void` payload is written**: `Ok()` builds a
+// `Result<void, e>`, which has no value to put in the parentheses (Lyra has no unit
+// value). It is allowed exactly when the constructor has one field and that field is
+// `void` — which FieldTypes already reports as no field at all — or a type variable, which
+// the empty application then binds to `void`. A nullary constructor is written bare
+// (`None`), not `None()`.
+//
+// Otherwise the count must match the flat fields (`Rect(3, 4)`). **Unchecked until
+// 09/28**: `Some(1, 2)` against a `Maybe<i64>` and `Two(1)` against `Two(i64, i64)`
+// type-checked, the extra value ignored and the missing one never built.
+func (tc *TypeChecker) checkConstructorArity(expr *ast.TupleLiteralExpr, name string, ctor types.DataTypeConstructor) string {
+	fields := ctor.FieldTypes()
+	given := len(expr.Elements)
+	if len(ctor.Params) == 0 {
+		if given == 0 {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"%s takes no payload; write it bare, as `%s`", name, name)
+		} else {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"%s takes no payload but was given %d value(s)", name, given)
+		}
+		return ""
+	}
+	if len(fields) == 0 {
+		// A declared `void` payload (`Done(void)`): only the empty application builds it.
+		if given != 0 {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"%s's payload is void, so it is written `%s()`", name, name)
+		}
+		return ""
+	}
+	if given == 0 {
+		if v, isVar := fields[0].(types.GenericType); isVar && len(fields) == 1 {
+			return v.Name
+		}
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s takes %d argument(s); `%s()` is only for a void payload", name, len(fields), name)
+		return ""
+	}
+	if given == len(fields) {
+		return ""
+	}
+	tc.addError(expr.GetLocation(), SeverityError,
+		"%s takes %d argument(s) but was given %d", name, len(fields), given)
+	return ""
+}
+
 func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.Type {
 	name := expr.Name
 	if name == "" {
@@ -4507,12 +4567,15 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			// tuples get, and what the backend's tagged-union construction needs to
 			// emit a correctly-typed payload.
 			var declaredFields []types.Type
+			var ctor types.DataTypeConstructor
 			for _, c := range dt.Constructors {
 				if c.Name == name {
 					declaredFields = c.FieldTypes()
+					ctor = c
 					break
 				}
 			}
+			voidPayload := tc.checkConstructorArity(expr, name, ctor)
 			// A *generic* data type's parameters are solved from the payload
 			// arguments, the constructor-call analogue of solving a generic
 			// function's variables from its call arguments — and the same unifier,
@@ -4520,6 +4583,11 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			// `Some(5)` binds t = i64 and the value is a `Maybe<i64>`.
 			decl, _ := tc.symTable.LookupTypeFrom(dt.Name, expr.GetLocation())
 			subst := tc.solveDataTypeVars(decl, declaredFields, expr.Elements)
+			// `Ok()` has no argument to solve its variable from: applied to nothing, the
+			// payload is void, so the variable is void by the spelling itself.
+			if voidPayload != "" {
+				subst[voidPayload] = types.VoidType{}
+			}
 			// Whether the payload alone pinned down every parameter. When it did
 			// not, the context will (propagateInstantiation), and recording a width
 			// derived from this partial solve would pre-empt it: solving promotes an

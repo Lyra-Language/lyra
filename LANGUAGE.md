@@ -80,6 +80,11 @@ A literal that cannot hold its value is a compile error **in every position, flo
 - **Transparent to the base's methods** (builtins and prelude `self:` functions), tried after every other rung, so a newtype's own method wins. A function-type newtype is callable (`h(5)`) in every position.
 - **Except** `wrapping_*`/`saturating_*`/`checked_*` (`lyra-E043`): use an operator impl or convert to the base. Float `floor`/`ceil`/`round` stay transparent. `println(c)` is refused — write `impl Show for Cents`.
 
+### Data constructors
+
+- **Applied with call syntax, to exactly its payload**: `Rect(3, 4)`, `Some(5)`. A wrong count is refused (`Two(1)` for `Two(i64, i64)`; unchecked until 09/28, when the extra value was dropped and the missing one never built). A nullary constructor is written bare: `None`, not `None()`.
+- **A `void` payload is applied to nothing**: `Ok()` builds a `Result<void, e>` — Lyra has no unit value, and `()` is the empty tuple, not void. The same for a type variable in any constructor (`Some()` is a `Maybe<void>`, `Wrap()` a `Box<void>`) and for a declared `void` field (`data Step = Done(void) | …`, written `Done()`). It matches as `Ok()` or `Ok(_)`, binds nothing, and `check(x)?` over one is a statement. A void payload takes no space: the variant is its tag alone.
+
 ### Regex literals
 
 `r"…"` is one engine everywhere: a DFA compiled **at compile time** (RE2 discipline, O(n), no backtracking/allocation; flattened tables + one shared driver).

@@ -284,6 +284,10 @@ func SizeAndAlign(t types.Type) (size, align int, ok bool) {
 	switch v := t.(type) {
 	case types.PrimitiveType:
 		return primitiveSizeAndAlign(v.Name)
+	case types.VoidType:
+		// A `void` payload — `Ok()` of a `Result<void, e>` — holds nothing, so it takes no
+		// room; the variant is its tag alone, as a nullary constructor's is.
+		return 0, 1, true
 	case types.RawPointerType:
 		// A raw pointer is a machine pointer and nothing else — no header, no length,
 		// no ownership. Missing until 08/22, and the symptom was remote from the cause

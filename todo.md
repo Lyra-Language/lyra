@@ -814,14 +814,16 @@ emittable constants.
 - **[DONE 09/28] A written trait name needs its import.** Impl heads, bounds, supertraits
   and `Trait::method` resolved an unimported public trait, and W004 counted none of them as
   a use; a private trait now says E028. (COMPLETED.md, 09/28.)
-- **[OPEN] `Result<void, E>` is writable but has no `Ok`.** `Ok(())` is a tuple, `()` is
-  not a type, and `Ok()` misparses ("missing true"); std returns `bool` instead
-  (`write_file`), and Sheliak's interrupttest declares `data Checked = Checked`. Decide a
-  unit value or let `Ok()` build `Result<void, _>`.
-- **[OPEN] `lyra-W018` advises `pure` on a trait from one stub impl.** A test bus's
-  `interrupt_level = (self) => 0` draws "declare the bound on the trait" for Sheliak's
-  `Bus`, whose real implementations have effects (the acknowledge clears a pending
-  interrupt). A `mut Self` method's trait is the wrong place to suggest a bound.
+- **[DONE 09/28] `Result<void, E>` has an `Ok`: `Ok()`.** A constructor applied to
+  nothing builds a void payload; constructor arity is checked at last. (COMPLETED.md.)
+- **[DONE 09/28] `lyra-W018` no longer advises `pure` on a trait against its signature.**
+  Silent for a `mut`-parameter method; impl-only advice when a sibling impl has effects.
+- **[OPEN] A constructor wrapping a partially-solved one loses its arguments.**
+  `Some(Ok(5))` against `Maybe<Result<i64, string>>` is refused as `Maybe<Result>`, even
+  annotated; binding the inner value first works. Refused, never miscompiled (09/28).
+- **[OPEN] `collectTraitMethodGroups` keys a trait by name** (`checker/purity.go`), so two
+  modules' same-named traits join their impls' effects for a bound call: a false purity
+  error, never an unsound pass. Key by the resolved declaration, as W018's grouping does.
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
   `Ordering`; deferred until something needs it. A bit-pattern `total_cmp` for sorting
   floats is also unbuilt (`sort_by` with a comparator works meanwhile).

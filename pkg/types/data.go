@@ -47,11 +47,22 @@ type DataTypeConstructor struct {
 // **Only a *packed* param is unwrapped** (see Packed): a payload that is a tuple
 // because a type argument was substituted to one is a single field, not a positional
 // list, and unwrapping it is what made `Maybe<(i64, i64)>` unconstructible.
+//
+// **A lone `void` field is no field**: `Ok` of a `Result<void, e>` carries nothing, so
+// once `t` is substituted it has no fields, and every pass — construction, matching,
+// equality, drop, layout — treats it as the nullary variant it is. It is written `Ok()`
+// (checkConstructorArity in the typechecker).
 func (c DataTypeConstructor) FieldTypes() []Type {
+	fields := c.Params
 	if c.Packed && len(c.Params) == 1 {
 		if tt, ok := c.Params[0].(TupleType); ok && IsAnonymousTupleName(tt.Name) {
-			return tt.Elements
+			fields = tt.Elements
 		}
 	}
-	return c.Params
+	if len(fields) == 1 {
+		if _, isVoid := fields[0].(VoidType); isVoid {
+			return nil
+		}
+	}
+	return fields
 }

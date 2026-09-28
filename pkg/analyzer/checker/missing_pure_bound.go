@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // missingPureBounds reports (lyra-W018) every top-level function and trait-impl
@@ -54,6 +56,7 @@ import (
 // how the prelude's `map`/`filter`/`flat_map` are `pure noalloc` today.
 func (c *purityChecker) missingPureBounds(program *ast.Program) []diag.Diagnostic {
 	var diags []diag.Diagnostic
+	impureSiblings := c.traitMethodsWithEffects(program)
 	for _, node := range program.Statements {
 		switch decl := node.(type) {
 		case *ast.VarDeclStmt:
@@ -74,10 +77,22 @@ func (c *purityChecker) missingPureBounds(program *ast.Program) []diag.Diagnosti
 				if c.impureMethods[m]&PurityEffects != 0 {
 					continue
 				}
+				// **A method whose trait takes a `mut` parameter is not reported.** The
+				// `mut` is the trait saying its impls may change what they are given — a
+				// bus's `read_word` advancing a device, an `acknowledge_interrupt` clearing
+				// one pending — and `pure` forbids exactly that, so the trait bound would
+				// contradict the signature and bind every impl against it. One impl that
+				// happens not to mutate (a test's stub) is no evidence the method is pure.
+				// Sheliak's `Bus` drew this on every stub until 09/28.
+				tm := traitMethodDecl(c.symTable, decl, m.Name)
+				if takesMut(tm) {
+					continue
+				}
 				// `Trait::method` is the spelling the language has for naming one, and
 				// the impl's own location is where the reader is looking.
+				key := traitMethodKey{trait: traitDeclOf(c.symTable, decl), method: m.Name.Key()}
 				diags = append(diags, missingTraitMethodBound(m.Clause.GetLocation(),
-					decl.TraitName, m.Name.Value, c.impureMethods[m]))
+					decl.TraitName, m.Name.Value, c.impureMethods[m], !impureSiblings[key]))
 			}
 		}
 	}
@@ -98,11 +113,23 @@ func (c *purityChecker) missingPureBounds(program *ast.Program) []diag.Diagnosti
 // warning as well, at every impl at once. The impl is still offered, since for a method
 // reached only by direct dispatch it is the smaller commitment — and bounding a trait binds
 // every future impl, including ones in code that does not exist yet.
-func missingTraitMethodBound(loc ast.Location, traitName, methodName string, effects Effect) diag.Diagnostic {
+//
+// **Unless another impl of the method has effects**: the trait's bound would then be
+// refused at that impl, so the advice is the impl alone (`traitBoundable` false). That is
+// a smaller promise — it helps a call dispatched to this impl directly, not one through a
+// bound — but it is the only one the program can keep.
+func missingTraitMethodBound(loc ast.Location, traitName, methodName string, effects Effect, traitBoundable bool) diag.Diagnostic {
 	qualified := fmt.Sprintf("%s::%s", traitName, methodName)
-	msg := fmt.Sprintf(
-		"%q has no observable effect; declare the bound on the trait (`trait %s { pure %s: … }`), which every impl inherits. Marking this impl `pure` binds only this one, and a call through `where t: %s` is scored against every impl — so the trait's bound is the one a generic caller can rely on. Nothing is refused today — purity is inferred — but until the bound is written, an effect added here later is reported at whatever calls %q rather than at the edit",
-		qualified, traitName, methodName, traitName, qualified)
+	var msg string
+	if traitBoundable {
+		msg = fmt.Sprintf(
+			"%q has no observable effect; declare the bound on the trait (`trait %s { pure %s: … }`), which every impl inherits. Marking this impl `pure` binds only this one, and a call through `where t: %s` is scored against every impl — so the trait's bound is the one a generic caller can rely on. Nothing is refused today — purity is inferred — but until the bound is written, an effect added here later is reported at whatever calls %q rather than at the edit",
+			qualified, traitName, methodName, traitName, qualified)
+	} else {
+		msg = fmt.Sprintf(
+			"%q has no observable effect here; mark this impl `pure`. The trait cannot carry the bound — another impl of %q has effects — so it holds for calls that reach this impl directly. Nothing is refused today — purity is inferred — but until the bound is written, an effect added here later is reported at whatever calls it rather than at the edit",
+			qualified, qualified)
+	}
 	if effects.Has(EffectAlloc) {
 		msg += ". It allocates, which `pure` permits: allocation is a `noalloc` concern, not a purity one"
 	}
@@ -137,4 +164,55 @@ func missingPureBound(loc ast.Location, name string, effects Effect) diag.Diagno
 		Code:     diag.CodeMissingPureBound,
 		Message:  msg,
 	}
+}
+
+// traitMethodKey names one method of one trait **by its resolved declaration**, not its
+// name — two modules may each declare a `Speak` (rule 4, and traitMethodDecl's history).
+type traitMethodKey struct {
+	trait  *ast.TraitDeclStmt
+	method string
+}
+
+// traitMethodsWithEffects reports, per trait method, whether any impl of it in the program
+// has an observable effect — which is what decides whether the trait could take a `pure`
+// bound at all.
+func (c *purityChecker) traitMethodsWithEffects(program *ast.Program) map[traitMethodKey]bool {
+	out := map[traitMethodKey]bool{}
+	for _, node := range program.Statements {
+		impl, ok := node.(*ast.TraitImplStmt)
+		if !ok {
+			continue
+		}
+		trait := traitDeclOf(c.symTable, impl)
+		for i := range impl.Methods {
+			m := &impl.Methods[i]
+			if c.impureMethods[m]&PurityEffects != 0 {
+				out[traitMethodKey{trait: trait, method: m.Name.Key()}] = true
+			}
+		}
+	}
+	return out
+}
+
+// traitDeclOf is the trait an impl implements, resolved at the impl (nil if unknown).
+func traitDeclOf(symTable *symbols.SymbolTable, impl *ast.TraitImplStmt) *ast.TraitDeclStmt {
+	td, ok := symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation())
+	if !ok {
+		return nil
+	}
+	return td
+}
+
+// takesMut reports whether a trait method's declared signature has a `mut` parameter,
+// `mut Self` included.
+func takesMut(tm *ast.TraitMethod) bool {
+	if tm == nil || tm.Signature == nil {
+		return false
+	}
+	for _, p := range tm.Signature.Parameters {
+		if p.Borrow == types.Mut {
+			return true
+		}
+	}
+	return false
 }
