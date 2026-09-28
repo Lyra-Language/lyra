@@ -467,6 +467,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 09/23] A match arm names alternatives with `|`** (`1 | 2`, `"get" | "post"`),
   over literals and ranges. A binding alternative stays refused, deliberately — see
   LANGUAGE.md § patterns. (COMPLETED.md, 09/23.)
+- **[OPEN] An `if` expression is not a binary operand.** `"x" ++ if n > 2 { "a" } else { "b" }`
+  and `1 + if c { 10 } else { 20 }` are syntax errors, though `unsafe { … }` already is an
+  operand; the recovery then misreads the rest as a `let … else` and reports E074 and
+  undefined names. Parentheses work. Found 09/28 in Sheliak's test runner.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
