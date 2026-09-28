@@ -48,3 +48,47 @@ func TestJoinPartial_UnsolvedStaysRefused(t *testing.T) {
 		t.Errorf("want one E073 naming b; got %v", res.errors)
 	}
 }
+
+// **One level down and deeper**: `Wrap(Pick(1))` beside `Wrap(Other("x"))` joins to
+// `Box<Either<i64, string>>` through the payloads, in an `if`, a `match` with a nullary
+// arm, a branch that is itself an `if`, and two levels deep.
+func TestJoinPartial_Nested(t *testing.T) {
+	res := parseCollectAndCheck(t, joinTypes+`
+  data Box<t> = Wrap(t) | Empty
+  let f = (c: bool, n: i64) -> i64 => {
+    let a = if c { Wrap(Pick(1)) } else { Wrap(Other("x")) }
+    let b = match n { 0 => Wrap(Pick(1)), 1 => Empty, _ => Wrap(Other("y")) }
+    let d = if c { Wrap(Pick(6)) } else { if n > 0 { Empty } else { Wrap(Other(true)) } }
+    let e = if c { Wrap(Wrap(Pick(4))) } else { Wrap(Wrap(Other("z"))) }
+    0
+  }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// Nested, a context still narrows and checks the inner payload, and what no branch solves
+// stays refused.
+func TestJoinPartial_NestedContextAndUnsolved(t *testing.T) {
+	res := parseCollectAndCheck(t, joinTypes+`
+  data Box<t> = Wrap(t) | Empty
+  let ok = (c: bool) -> Box<Either<u8, string>> => if c { Wrap(Pick(200)) } else { Wrap(Other("x")) }
+  let bad = (c: bool) -> Box<Either<u8, string>> => if c { Wrap(Pick(300)) } else { Wrap(Other("x")) }
+	`, false)
+	assertErrorsAre(t, res, "Pick: literal value 300 overflows u8")
+
+	res = parseCollectAndCheck(t, joinTypes+`
+  data Box<t> = Wrap(t) | Empty
+  let f = (c: bool) -> i64 => {
+    let m = if c { Wrap(Pick(1)) } else { Wrap(Pick(2)) }
+    0
+  }
+	`, false)
+	for _, e := range res.errors {
+		if !strings.Contains(e.Message, "nothing here solves Either's `b`") {
+			t.Errorf("unexpected error: %s", e.Message)
+		}
+	}
+	if len(res.errors) == 0 {
+		t.Error("want E073 for the unsolved b")
+	}
+}

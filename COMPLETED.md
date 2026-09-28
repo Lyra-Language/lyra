@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — the partial join, one level down and deeper
+
+`if c { Some(Ok(1)) } else { Some(Err("x")) }` stayed lyra-E073 after the flat join
+landed: each arm records `Maybe<Result>` — `Maybe` solved, its argument the open, bare
+`Result` — so the common type was an instantiation, not a bare declaration, and the merge
+did not apply. `mergeBranches` now takes both kinds of open type. For an instantiation, each
+open argument is settled by merging, recursively, the payloads the branches supply at the
+fields that parameter types (`payloadsFor`: a construction's elements, nothing for `None`
+or a diverging branch, an `if`/`match` branch's own branches; unknown for a field that
+mentions the parameter inside another type, like `[]t`). The existing push then stamps the
+outer constructions, and the stamp already descends into payloads — provisionally, so a
+guessed `i64` inside still yields to `-> Maybe<Result<u8, string>>`, and `Ok(300)` there
+is still reported. The merge was split from its recording (`joinPartialSolves` records an
+incomplete top-level merge on the join; the recursion records nothing).
+
 ### 09/28/26 — branches that each solve half of a generic type join to the whole
 
 `let r = if c { Ok(5) } else { Err("x") }` was lyra-E073 (a backend failure before this

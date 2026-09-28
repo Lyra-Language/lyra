@@ -824,9 +824,8 @@ emittable constants.
   a constructor turbofish (`Ok::<i64, string>(5)`) is read at last.
 - **[DONE 09/28] Branches that each solve half are joined** (`if`/`match`,
   `typechecker/join_partial.go`).
-- **[OPEN] …but not one level down.** `if c { Some(Ok(1)) } else { Some(Err("x")) }` is
-  still E073: the join's common type is `Maybe<Result>`, and merging means recursing into
-  the payloads' partial solutions. Annotating works.
+- **[DONE 09/28] …at any depth**: `Some(Ok(1))` beside `Some(Err("x"))` merges through
+  the payloads (`settleOpenArguments`).
 - **[DONE 09/28] `if let … else …` is a value where a block's value is used**, as the
   `match` it means; any other statement tail there is refused by the typechecker.
 - **[OPEN] An unannotated function ending in `if let … else …` infers `void`.** Only a

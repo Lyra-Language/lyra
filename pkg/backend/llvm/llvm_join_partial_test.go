@@ -26,3 +26,25 @@ let main = () -> u8 => {
 		t.Errorf("exited %d; want 22 (ASan aborts with another code)", got)
 	}
 }
+
+// The same one level down and two: `Some(Ok(1))` beside `Some(Err("xy"))`, a `match` with
+// a `None` arm, and `Some(Some(…))`. Under ASan, with the `string` inside two constructions.
+func TestExec_NestedBranchesJoin(t *testing.T) {
+	src := `module main
+
+let main = () -> u8 => {
+  let c = false
+  let m = if c { Some(Ok(1)) } else { Some(Err("xy")) }
+  var n: u8 = match m { Some(Ok(v)) => u8(v), Some(Err(s)) => u8(s.len()), None => 90 }
+  let k = match n { 0 => Some(Ok(1)), 1 => None, _ => Some(Err("abc")) }
+  n += match k { Some(Ok(v)) => u8(v), Some(Err(s)) => u8(s.len()), None => 90 }
+  let d = if !c { Some(Some(Ok(4))) } else { Some(Some(Err("x"))) }
+  n += match d { Some(Some(Ok(v))) => u8(v), _ => 90 }
+  n
+}
+`
+	// 2 + 3 + 4 = 9
+	if got := buildAndRunASanWithPrelude(t, src); got != 9 {
+		t.Errorf("exited %d; want 9 (ASan aborts with another code)", got)
+	}
+}
