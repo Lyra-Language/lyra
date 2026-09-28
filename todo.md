@@ -670,6 +670,14 @@ annotations.
 
 - **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
   returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
+- **[OPEN] An untyped integer literal argument breaks inference of a generic's other type
+  variable.** Inside `let outer<b> where b: Bus = (bus: mut b) …`, `inner(bus, 3)` (with
+  `inner<b> where b: Bus = (bus: mut b, vector: u32)`) is "cannot infer type variable b";
+  `let v: u32 = 3; inner(bus, v)` compiles. Found 09/28 in Sheliak's `jump_to_vector`.
+- **[OPEN] A `match` arm block ending in an `if` without `else` is refused in a `void`
+  match** ("`if` used as a value must have an `else` branch"), though no arm's value is
+  used: `Stepping(a, r, n) => { write(a); if ok { cpu.a[r] = n } }`. A function body ending
+  that way is fine.
 - **[OPEN] A write through a trait method's `mut Self` receiver is not an effect.** In
   `impl Bus for TestBus { idle = (self, n) => { self.cycles += n } }` the receiver's `mut`
   comes from the trait's signature, but the purity pass takes `mut` parameters from the
