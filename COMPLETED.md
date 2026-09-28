@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — an unsettled construction is lyra-E073, and a constructor turbofish is read
+
+`let r = Ok(5)` type-checked and failed in the backend — "type variable t has no concrete
+type here" — as did the same construction used later, returned later, discarded as a
+statement, or nested with no context. `Ok(5)` solves `t` and says nothing of `e`, so it
+records the bare `Result`; lyra-E073's sweep already refused the bare declaration for a
+*nullary* constructor (`let m = None`), and now does for an applied one, naming the
+parameters its payload never mentions ("nothing here solves Result's `e`"). A later use
+does not settle a binding — `None` was already refused at the binding — so the
+construction is where the type goes. Nested, the inner `Ok` is the bare node, so
+`Some(Ok(5))` is covered by the same sweep; generic bodies are untouched (their `t` is the
+enclosing variable, a parameterized record).
+
+The message suggests a turbofish, and **a constructor's turbofish was collected and read
+by nothing**: `Ok::<i64, string>(5)` was the bare `Result` too. It now binds every
+parameter outright, checks the payload against them and narrows a literal to them (the
+defaulted-guess path is skipped when the arguments are written); a wrong count is its
+own error and silences E073 for that node, one mistake one diagnostic.
+
+Found beside it, both loud and pre-existing, logged: two `if` arms that each solve half
+(`Ok(5)` / `Err("x")`) are not joined, and `if let` in value position fails in the backend.
+Tests: `unsettled_construction_test.go`; three of its five fail without the sweep.
+
 ### 09/28/26 — a construction over an open construction takes its context
 
 `Some(Ok(5))` was refused under `Maybe<Result<i64, string>>`, annotation or return type

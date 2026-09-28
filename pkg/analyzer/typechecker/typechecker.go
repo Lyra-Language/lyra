@@ -91,6 +91,7 @@ type TypeChecker struct {
 	ufcsModules      map[string]map[string]bool       // file -> modules it reached through a UFCS call; see UFCSModules
 	ufcsCallees      map[string]map[ast.Location]bool // file -> spans of UFCS callees; see UFCSCallees
 	defaultedCtors   map[ast.Expression]bool          // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
+	badTurbofish     map[ast.Expression]bool          // constructions whose turbofish had the wrong count — already reported, so lyra-E073 stays quiet
 	provisionalStamp bool                             // set while a branch join pushes its instantiation onto the arms; see pushSettledInstantiation
 	enclosingGen     *generatorContext                // the `gen` body being checked, nil outside one; see checkYieldExpr
 	// overflowReported guards checkLiteralRange: a leaf can be narrowed by more
@@ -4497,6 +4498,30 @@ func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
 	return operandType
 }
 
+// applyConstructorTurbofish binds a construction's explicit type arguments into subst,
+// reporting a wrong count, and answers whether there were any.
+func (tc *TypeChecker) applyConstructorTurbofish(expr *ast.TupleLiteralExpr, decl *ast.TypeDeclStmt, subst map[string]types.Type) bool {
+	if len(expr.GenericArguments) == 0 || decl == nil {
+		return false
+	}
+	if len(expr.GenericArguments) != len(decl.GenericParams) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s::<…> takes %d type argument(s), one per parameter of %s, but was given %d",
+			expr.Name, len(decl.GenericParams), decl.Name, len(expr.GenericArguments))
+		if tc.badTurbofish == nil {
+			tc.badTurbofish = map[ast.Expression]bool{}
+		}
+		tc.badTurbofish[expr] = true
+		return false
+	}
+	for i, p := range decl.GenericParams {
+		if t := tc.resolveType(expr.GenericArguments[i], expr.GetLocation()); t != nil {
+			subst[p.Name] = t
+		}
+	}
+	return true
+}
+
 // checkConstructorArity reports a constructor applied to the wrong number of values, and
 // answers the name of the type variable an empty application makes void ("" if none).
 //
@@ -4588,6 +4613,11 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			if voidPayload != "" {
 				subst[voidPayload] = types.VoidType{}
 			}
+			// **A turbofish binds the parameters outright** (`Ok::<i64, string>(5)`), as
+			// it does on a generic function: the written arguments win over the payload's
+			// solve, and a payload that disagrees is refused against them below. Collected
+			// all along and read by nothing until 09/28 — the E073 message suggests it.
+			explicit := tc.applyConstructorTurbofish(expr, decl, subst)
 			// Whether the payload alone pinned down every parameter. When it did
 			// not, the context will (propagateInstantiation), and recording a width
 			// derived from this partial solve would pre-empt it: solving promotes an
@@ -4637,7 +4667,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					// node is marked so the context is allowed to (a complete solve
 					// otherwise reads as settled). With no context the guess stands and
 					// the leaf settles to the same default anyway.
-					if tc.fieldTakesWidthFromSolve(decl, declaredFields[i]) && tc.payloadIsAGuess(elem) {
+					if !explicit && tc.fieldTakesWidthFromSolve(decl, declaredFields[i]) && tc.payloadIsAGuess(elem) {
 						if complete {
 							tc.markDefaultedConstruction(expr)
 						}

@@ -820,9 +820,14 @@ emittable constants.
   Silent for a `mut`-parameter method; impl-only advice when a sibling impl has effects.
 - **[DONE 09/28] A constructor wrapping a partially-solved one takes its context.**
   `Some(Ok(5))` under `Maybe<Result<i64, string>>` is matched argument-wise and narrowed.
-- **[OPEN] A construction with no context reaches the backend unsettled.** `let r = Ok(5)`
-  fails there ("type variable t has no concrete type"), as does `Some(Ok(5))`; the
-  typechecker should refuse it, naming the annotation to add. Loud, never miscompiled.
+- **[DONE 09/28] A construction with no context is lyra-E073**, naming the open parameter;
+  a constructor turbofish (`Ok::<i64, string>(5)`) is read at last.
+- **[OPEN] Branches that each solve half are not joined.** `let r = if c { Ok(5) } else {
+  Err("x") }` is E073 though the two arms together say `Result<i64, string>`; a join of
+  partial instantiations would settle it. Annotating works.
+- **[OPEN] `if let` as a value fails in the backend.** `if let Some(v) = m { 7 } else { 0 }`
+  in tail position: "block has no value"; as a statement it works, and `match` is the
+  value-position spelling meanwhile. Loud, never miscompiled (predates 09/28).
 - **[OPEN] `collectTraitMethodGroups` keys a trait by name** (`checker/purity.go`), so two
   modules' same-named traits join their impls' effects for a bound call: a false purity
   error, never an unsound pass. Key by the resolved declaration, as W018's grouping does.

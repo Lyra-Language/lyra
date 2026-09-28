@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"strings"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -21,9 +23,20 @@ import (
 // "nothing solved this" mean what it says.
 
 // checkUninferableConstructions reports every construction in node left at its bare
-// generic declaration (lyra-E073).
+// generic declaration (lyra-E073) — a nullary one (`None`), or an applied one whose payload
+// solves only some of the parameters (`Ok(5)` says nothing of `e`).
+//
+// **The applied form was missed until 09/28**: `let r = Ok(5)` type-checked and failed in
+// the backend ("type variable t has no concrete type here"), as did the same construction
+// used later, returned later, discarded, or nested (`Some(Ok(5))`, whose inner `Ok` is the
+// bare node reported here). A later use does not settle a binding — `let m = None` was
+// already refused at the binding — so the construction is where the type must be written.
 func (tc *TypeChecker) checkUninferableConstructions(node ast.AstNode) {
 	onExpr := func(e ast.Expression) bool {
+		if app, isApp := e.(*ast.TupleLiteralExpr); isApp {
+			tc.reportUnsolvedApplication(app)
+			return true
+		}
 		ctor, ok := e.(*ast.DataConstructorExpr)
 		if !ok {
 			return true
@@ -74,4 +87,48 @@ func (tc *TypeChecker) unsolvedConstruction(ctor *ast.DataConstructorExpr) (stri
 		return "", false
 	}
 	return dt.Name, true
+}
+
+// reportUnsolvedApplication is lyra-E073 for an applied constructor (`Ok(5)`) recorded as
+// its bare generic declaration, naming the parameters its payload cannot solve — the ones
+// the constructor's own fields never mention, which is why no argument could.
+func (tc *TypeChecker) reportUnsolvedApplication(app *ast.TupleLiteralExpr) {
+	if tc.badTurbofish[app] {
+		return // its wrong count is the one mistake, and already reported
+	}
+	recorded, ok := tc.typeTable.Get(app)
+	if !ok {
+		return
+	}
+	dt, isBare := recorded.(types.DataType)
+	if !isBare {
+		return
+	}
+	decl, found := tc.symTable.LookupTypeFrom(dt.Name, app.GetLocation())
+	if !found || decl == nil || len(decl.GenericParams) == 0 {
+		return
+	}
+	mentioned := map[string]bool{}
+	for _, c := range dt.Constructors {
+		if c.Name == app.Name {
+			for _, f := range c.FieldTypes() {
+				types.CollectTypeVars(f, mentioned)
+			}
+		}
+	}
+	var open []string
+	for _, p := range decl.GenericParams {
+		if !mentioned[p.Name] {
+			open = append(open, "`"+p.Name+"`")
+		}
+	}
+	what := dt.Name + "'s type parameters"
+	if len(open) > 0 {
+		what = dt.Name + "'s " + strings.Join(open, " and ")
+	}
+	tc.addErrorCode(app.GetLocation(), SeverityError, diag.CodeUninferableType,
+		"cannot tell what `%s(…)` builds: its payload does not say, and nothing here solves %s. "+
+			"Write the type — an annotation on the binding (`let x: %s<…> = …`), a parameter "+
+			"or return type, or a turbofish (`%s::<…>(…)`)",
+		app.Name, what, dt.Name, app.Name)
 }

@@ -888,7 +888,9 @@ const (
 	CodeMalformedUnion = "lyra-E072"
 
 	// CodeUninferableType: a construction whose generic type parameters nothing solved —
-	// `let t = (None, 1)` with no annotation anywhere.
+	// `let t = (None, 1)` with no annotation anywhere, or an applied constructor whose payload
+	// solves only some of them (`let r = Ok(5)` says nothing of `e`; added 09/28, when it
+	// failed in the backend instead).
 	//
 	// It is deliberately **not** the same failure as a context that exists and was not
 	// propagated: those are bugs in the compiler (see COMPLETED.md 09/09, one omission in
