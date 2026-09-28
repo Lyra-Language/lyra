@@ -471,6 +471,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   and `1 + if c { 10 } else { 20 }` are syntax errors, though `unsafe { … }` already is an
   operand; the recovery then misreads the rest as a `let … else` and reports E074 and
   undefined names. Parentheses work. Found 09/28 in Sheliak's test runner.
+- **[OPEN] Should W001 exempt a local named like a prelude *receiver method*?** `let index
+  = …` shadows the prelude's `index`, but `s.index("b")` still resolves — only the rarer
+  free call `index(s, "b")` breaks. Sheliak's core met it three times (`count`, `first`,
+  `index`), each a natural local name. A policy call, not a bug.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as

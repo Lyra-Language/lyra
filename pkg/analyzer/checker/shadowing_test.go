@@ -74,7 +74,7 @@ let result = {
 }`
 	warns := parseCollectAndCheckShadowing(t, source)
 	assertShadowingWarningCount(t, warns, 1)
-	assertShadowingWarningContains(t, warns, "x shadows a variable declared in an outer scope")
+	assertShadowingWarningContains(t, warns, "x shadows a name declared in an outer scope")
 }
 
 // TestShadow_NoDiag_SiblingBlocks verifies that two sibling blocks that each
@@ -110,8 +110,8 @@ let result = {
 }`
 	warns := parseCollectAndCheckShadowing(t, source)
 	assertShadowingWarningCount(t, warns, 2)
-	assertShadowingWarningContains(t, warns, "x shadows a variable declared in an outer scope")
-	assertShadowingWarningContains(t, warns, "y shadows a variable declared in an outer scope")
+	assertShadowingWarningContains(t, warns, "x shadows a name declared in an outer scope")
+	assertShadowingWarningContains(t, warns, "y shadows a name declared in an outer scope")
 }
 
 // TestShadow_NoDiag_LambdaParam verifies that a lambda parameter whose name
@@ -137,7 +137,7 @@ let f = (y: i32) -> i32 => {
 }`
 	warns := parseCollectAndCheckShadowing(t, source)
 	assertShadowingWarningCount(t, warns, 1)
-	assertShadowingWarningContains(t, warns, "x shadows a variable declared in an outer scope")
+	assertShadowingWarningContains(t, warns, "x shadows a name declared in an outer scope")
 }
 
 // TestShadow_NoDiag_ForInIterationVar verifies that a for-in loop's iteration
@@ -162,7 +162,7 @@ for var i = 0; i < 10; i + 1 {
 }`
 	warns := parseCollectAndCheckShadowing(t, source)
 	assertShadowingWarningCount(t, warns, 1)
-	assertShadowingWarningContains(t, warns, "i shadows a variable declared in an outer scope")
+	assertShadowingWarningContains(t, warns, "i shadows a name declared in an outer scope")
 }
 
 // TestShadow_NoDiag_MatchArmPatternBinding verifies that a match arm's pattern-
@@ -216,7 +216,7 @@ let r = {
 }`
 	warns := parseCollectAndCheckShadowing(t, source)
 	assertShadowingWarningCount(t, warns, 1)
-	want := "x shadows a variable declared in an outer scope"
+	want := "x shadows a name declared in an outer scope"
 	if !strings.Contains(warns[0].Error(), want) {
 		t.Errorf("warning message %q does not contain %q", warns[0].Error(), want)
 	}

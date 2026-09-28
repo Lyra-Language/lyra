@@ -9,6 +9,13 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — W001 names what it saw
+
+"`x` shadows a variable declared in an outer scope" was the message whatever `x` was, and
+the case Sheliak's 68000 core met three times — a local `count`, `first` or `index` — shadows
+a *prelude function*. It now says "a name". Whether a local named like a prelude receiver
+method should warn at all (method calls still resolve) is left open in todo.md.
+
 ### 09/28/26 — `to_hex` on the unsigned integers
 
 `pc.to_hex(6)` is how an emulator prints an address, and Sheliak's test runner had written

@@ -173,10 +173,14 @@ type shadowChecker struct {
 	warnings []ShadowingWarning
 }
 
+// warn words the warning for any outer name — a local, a parameter, a top-level function, a
+// prelude export. It said "a variable" until 09/28, which was wrong for the case met most:
+// a local `count`, `first` or `index` in Sheliak's 68000 core shadowing a *prelude
+// function* (the free call `first(xs)` then fails; `xs.first()` does not).
 func (c *shadowChecker) warn(loc ast.Location, originalLoc ast.Location, name string) {
 	c.warnings = append(c.warnings, ShadowingWarning{
 		Code:             diag.CodeShadowing,
-		Message:          fmt.Sprintf("%s shadows a variable declared in an outer scope", name),
+		Message:          fmt.Sprintf("%s shadows a name declared in an outer scope", name),
 		Location:         loc,
 		OriginalLocation: originalLoc,
 	})

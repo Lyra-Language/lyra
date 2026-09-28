@@ -42,7 +42,7 @@ func TestDiagnostics_RelatedInformationPointsAtTheShadowedFile(t *testing.T) {
 	}
 	var related []lsp.DiagnosticRelatedInformation
 	for _, d := range diags {
-		if strings.Contains(d.Message, "shadows a variable declared in an outer scope") {
+		if strings.Contains(d.Message, "shadows a name declared in an outer scope") {
 			related = d.RelatedInformation
 		}
 	}
