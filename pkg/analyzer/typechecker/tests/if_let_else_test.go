@@ -116,6 +116,10 @@ let f = (p: Point) -> i64 => {
 // scrutinee's static shape (a tuple's arity, checked exactly, unlike arrays) is a
 // compile-time error, mirroring plain destructuring — reported once, with the names
 // bound positionally so the branch does not cascade into "undefined identifier".
+//
+// This `if let` ends a `-> i64` body, so since 09/28 it is that body's value and is checked
+// as the `match` it means (block_tail.go) — hence the match's wording. Before, the tail
+// type-checked as no value at all and the backend refused the function.
 func TestIfLet_ArityMismatchReportsOnce(t *testing.T) {
 	source := `
 let f = (pair: (i64, i64)) -> i64 => {
@@ -126,7 +130,7 @@ let f = (pair: (i64, i64)) -> i64 => {
     }
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res, "tuple pattern has 3 element(s) but tuple has 2")
+	assertErrorsAre(t, res, "tuple pattern has 3 element(s) but scrutinee has 2")
 }
 
 // An if-let is a *statement*, so neither branch is in value position: an ordinary

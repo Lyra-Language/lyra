@@ -158,6 +158,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | type variables a type mentions | `types.CollectTypeVars` |
    | resolve a type (reporting or quiet) | `resolveTypeWith`, behind `resolveType`/`resolveTypeIfKnown` |
    | is this tail a value or a statement? | `checkExprForEffect` |
+   | a block's last statement where its value is used (`if let` as a value, no-value tails) | `valueTail` / `tailWithoutValue` (`typechecker/block_tail.go`) — both `checkBlock` and `checkBlockReturn` ask |
    | did this expression produce a value? | `isVoidResult` (nil **and** void-typed `ir.Call`) |
    | does this value transitively own a reference? | `ownership.OwnsManaged` |
    | is that sharing observable? | `ownership.SharesMutableState` |

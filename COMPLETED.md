@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — `if let` as a value, and a block tail that is no value
+
+`if let Some(v) = m { v } else { 0 }` ending a `-> u8` body type-checked and the backend
+refused it: "block has no value". `if let` is a statement — its branches are checked for
+effect — so the block had no final expression, and the typechecker called such a tail
+"unknown", which every consumer skips. That was the wider hole: **any** statement ending a
+value-position block passed the front end, `-> u8 => { let x = 1 }` included.
+
+- **One place decides a tail**, `typechecker/block_tail.go`, asked by both walks that treat
+  a tail as a value — `checkBlock` (value blocks) and its twin `checkBlockReturn` (function
+  bodies), which rule 8 says drift apart.
+- **`if let … else …` there is rewritten to the `match` it means**, `match v { p => A, _ =>
+  B }`, at the last statement (when the statements before it are checked and the
+  scrutinee's type is known). A rewrite rather than a value form of `if let`, because the
+  match is already a value in every pass — typechecker join, ownership, purity,
+  use-after-move, must-release, both lowerings — and teaching each a second construct is
+  the drift. Left a statement: no `else`, a `weak` scrutinee (an upgrade, which no match
+  performs), an annotated or `mut` pattern. Only where a value is wanted: a `void` body and
+  statement-position blocks keep the statement, so a callback's disagreeing branches stay
+  legal.
+- **Any other statement tail is no value**: in a body with a return type, an error naming
+  the statement ("the body ends in a declaration…"), with a hint for an `if let` lacking
+  an `else` or over a `weak`; in a value block, `void`, which the consumer refuses. A tail
+  that cannot fall through — a `return`, branches that all leave, a `never` expression —
+  is `never` and needs no value (the let-else checker's divergence rule, rewritten here
+  against the TypeTable).
+
+One existing test changed wording: its `if let` ended a `-> i64` body, so it is now checked
+as a match ("but scrutinee has 2" for "but tuple has 2", still one error). Tests:
+`block_tail_test.go`, `TestExec_IfLetAsAValue` (ASan, Linux LSan).
+
 ### 09/28/26 — an unsettled construction is lyra-E073, and a constructor turbofish is read
 
 `let r = Ok(5)` type-checked and failed in the backend — "type variable t has no concrete

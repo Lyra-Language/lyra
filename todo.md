@@ -825,9 +825,11 @@ emittable constants.
 - **[OPEN] Branches that each solve half are not joined.** `let r = if c { Ok(5) } else {
   Err("x") }` is E073 though the two arms together say `Result<i64, string>`; a join of
   partial instantiations would settle it. Annotating works.
-- **[OPEN] `if let` as a value fails in the backend.** `if let Some(v) = m { 7 } else { 0 }`
-  in tail position: "block has no value"; as a statement it works, and `match` is the
-  value-position spelling meanwhile. Loud, never miscompiled (predates 09/28).
+- **[DONE 09/28] `if let … else …` is a value where a block's value is used**, as the
+  `match` it means; any other statement tail there is refused by the typechecker.
+- **[OPEN] An unannotated function ending in `if let … else …` infers `void`.** Only a
+  declared return makes the tail a value, so a callback's statement-shaped `if let` keeps
+  its meaning; decide whether inference should read it as a value, as it reads `if`.
 - **[OPEN] `collectTraitMethodGroups` keys a trait by name** (`checker/purity.go`), so two
   modules' same-named traits join their impls' effects for a bound call: a false purity
   error, never an unsound pass. Key by the resolved declaration, as W018's grouping does.

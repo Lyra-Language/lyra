@@ -99,9 +99,16 @@ func aggregateMatchIsExhaustive(arms []ast.MatchArm) bool {
 // statement is not an ExpressionStmt (e.g. a declaration or return).
 func (tc *TypeChecker) inferBlockType(block *ast.BlockExpr) types.Type {
 	var result types.Type
+	hasValue := false
 	tc.checkBlock(block, func(last *ast.ExpressionStmt) {
 		result = tc.inferExprType(last.Expression)
+		hasValue = true
 	})
+	// A tail that is a statement is no value: `void`, or `never` when the block cannot
+	// fall off its end (block_tail.go). It was "unknown" — skipped by every consumer.
+	if !hasValue && block != nil && len(block.Statements) > 0 {
+		result = tc.tailWithoutValue(block)
+	}
 	return result
 }
 
@@ -147,7 +154,9 @@ func (tc *TypeChecker) checkBlock(block *ast.BlockExpr, onValue func(*ast.Expres
 			// two in step: they answer one question — "walk a block; the last statement
 			// is its value" — and this is what it cost to have two answers.
 			if onValue != nil && i == last {
-				if exprStmt, ok := stmt.(*ast.ExpressionStmt); ok {
+				// valueTail turns a trailing `if let … else …` into the `match` it means
+				// here, so it is the value too (block_tail.go).
+				if exprStmt := tc.valueTail(block); exprStmt != nil {
 					onValue(exprStmt)
 					continue
 				}

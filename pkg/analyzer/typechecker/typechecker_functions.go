@@ -419,6 +419,13 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 	tc.enterScope(block, func() {
 		stmts := block.Statements
 		for i, stmt := range stmts {
+			// The tail may be an `if let … else …` standing for its value (block_tail.go);
+			// rewritten here, where the statements before it have been checked.
+			if i == len(stmts)-1 && declaredReturn != nil && !isVoidType(declaredReturn) {
+				if tail := tc.valueTail(block); tail != nil {
+					stmt = tail
+				}
+			}
 			switch s := stmt.(type) {
 			case *ast.ReturnStmt:
 				if s.Value == nil {
@@ -454,6 +461,15 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 				// context: a statement is not the body's value (withoutExpectedType) —
 				// this walk is checkBlock's twin, so the two keep the rule together.
 				tc.withoutExpectedType(func() { tc.checkNode(stmt) })
+				// **A statement as the body's last is no value**: the function reaches its
+				// end without one, unless the statement cannot fall through. Accepted in
+				// silence until 09/28 and refused by the backend ("block has no value").
+				if i == len(stmts)-1 && declaredReturn != nil && !isVoidType(declaredReturn) &&
+					!tc.stmtCannotFallThrough(stmt) {
+					tc.addError(stmt.GetLocation(), SeverityError,
+						"%s: the body ends in %s, so the function reaches its end without a value; end with an expression or a `return`%s",
+						funcName, describeTailStatement(stmt), tc.tailStatementHint(stmt))
+				}
 			}
 		}
 	})
