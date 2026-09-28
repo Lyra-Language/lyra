@@ -1,0 +1,826 @@
+// gen — writes `bindings/imgui/generated.lyra` from dear_bindings' `dcimgui.json`.
+//
+//   build/lyrac run bindings/imgui/gen/gen.lyra -- \
+//     build/deps/DearBindings_v0.24_ImGui_v1.92.9b-docking/dcimgui.json \
+//     bindings/imgui/generated.lyra
+//
+// `bindings/imgui/build.sh` downloads the JSON beside the C API it describes, so the two
+// always match the pinned ImGui. Rerun this after bumping the pin and commit the result.
+//
+// **What a C type becomes** ([classify]):
+//
+// | C | Lyra parameter | passed as |
+// |---|---|---|
+// | `int`, `float`, `ImU32`, an enum or flags type | `i32`, `f32`, `u32`, `i32` | itself |
+// | `ImVec2` / `ImVec4` | `Vec2` / `Vec4` | by value |
+// | `ImDrawList *` and every other ImGui struct pointer | a handle newtype, `DrawList` | itself |
+// | `const char *` | `string` (`Maybe<string>` when C's default is `NULL`) | `with_cstring` |
+// | `bool *`, `float *` … | `mut bool`, `mut f32` — the caller's own variable | `&mut` |
+// | `float[3]` | `mut [3]f32` | `&mut` |
+//
+// **One wrapper per function family.** dear_bindings splits each C++ function with
+// default arguments into a short helper (`ImGui_Button`) and a full `…Ex` form; the
+// wrapper is the full form under the short name, with C++'s defaults as Lyra's
+// (`button(label, size = Vec2 { … })`). A C++ method becomes a method on its handle
+// (`draw_list.add_line(p1, p2, col)`).
+//
+// **A nullable pointer is left out.** `p_open` (`bool *` defaulting to NULL) makes a second
+// wrapper, `…_closable`, taking `open: mut bool`; the plain one passes NULL. A nullable
+// handle is always NULL, and a `text_end` is always NULL (the string's NUL ends it).
+//
+// Anything else — `void *`, callbacks, `va_list`, C-owned buffers, by-value structs other
+// than the vectors — is not bound, and is listed at the end of the generated file with
+// the reason, so hand-written wrappers (`imgui.lyra`) know what is theirs to cover.
+
+import std.io.{ read_file, write_file }
+import std.json.{ parse_json, JsonValue }
+import std.collections.{ HashMap, hashmap_new, Set, set_new }
+
+let main = () -> u8 => {
+  let args = program_args()
+  if args.len() != 3 {
+    println("usage: gen <dcimgui.json> <out.lyra>")
+    return 2
+  }
+  let Some(text) = read_file(args[1]) else {
+    println("gen: cannot read ${args[1]}")
+    return 1
+  }
+  let parsed = parse_json(text)
+  if let Err(e) = parsed {
+    println("gen: ${args[1]}: ${e.message} at byte ${e.offset}")
+    return 1
+  }
+  let doc = parsed.unwrap_or(JsonNull)
+  let api = load_api(doc)
+  var bound: []Function = []
+  var skipped: []string = []
+  for f in doc.field("functions").unwrap_or(JsonNull).elements() {
+    match read_function(f, api) {
+      Bound(fns) => {
+        for g in fns { bound.push(g) }
+      },
+      Skipped(why) => skipped.push("${text_of(f, "name")}: ${why}"),
+      Ignored => {},
+    }
+  }
+  let source = render(doc, disambiguate(bound), skipped)
+  if !write_file(args[2], source) {
+    println("gen: cannot write ${args[2]}")
+    return 1
+  }
+  println("gen: ${args[2]}: ${bound.len()} wrappers, ${skipped.len()} functions not bound")
+  0
+}
+
+// ── The model ────────────────────────────────────────────────────────────────
+
+/// How one C type crosses into Lyra.
+data Kind =
+  /// A number or `bool`, as Lyra spells it (`f32`).
+  Scalar(string)
+  /// `ImVec2` or `ImVec4`, by value, as `Vec2` or `Vec4`.
+  | Vector(string)
+  /// A pointer to an ImGui struct, as the handle newtype named here.
+  | Handle(string)
+  /// `const char *`.
+  | Text
+  /// `T *` to a scalar: the caller's variable, a `mut` parameter.
+  | InOut(string)
+  /// `T[n]` of a scalar, a `mut [n]T` parameter.
+  | Fixed(string, i64)
+  /// `void`, as a return type.
+  | Nothing
+  /// Anything else, and why.
+  | Unsupported(string)
+
+/// What the wrapper does with one C parameter.
+data Role =
+  /// A parameter of the wrapper.
+  Given
+  /// A `const char *` that may be NULL: a `Maybe<string>` parameter.
+  | MaybeText
+  /// Left out of the wrapper; the call passes NULL.
+  | Null
+  /// The receiver of a method.
+  | Receiver
+
+/// One C parameter.
+struct Param {
+  /// The Lyra spelling of its name, a keyword escaped.
+  name: string,
+  kind: Kind,
+  role: Role,
+  /// The Lyra spelling of C++'s default, when it has one Lyra can say.
+  default: Maybe<string>,
+}
+
+/// One wrapper to emit.
+struct Function {
+  /// The C symbol.
+  symbol: string,
+  /// The wrapper's name.
+  name: string,
+  /// The private extern's name.
+  extern_name: string,
+  /// C's parameters, in order, receiver included.
+  params: []Param,
+  result: Kind,
+  /// `ImGui::Button`, for the doc comment.
+  cpp_name: string,
+  /// The comment ImGui's header attaches to the declaration.
+  comment: string,
+}
+
+/// What became of one function in the JSON.
+data Outcome =
+  /// Wrapped — once, or twice when a `p_open` makes a `_closable` form.
+  Bound([]Function)
+  /// Not bound, and why.
+  | Skipped(string)
+  /// A default-argument helper, whose full form is the wrapper; or not ours to bind.
+  | Ignored
+
+/// The names the JSON declares, for resolving a type.
+struct Api {
+  /// Typedef name → its type description.
+  typedefs: HashMap<string, JsonValue>,
+  structs: Set<string>,
+  enums: Set<string>,
+  /// Default-argument helpers (`ImGui_Button`), whose `…Ex` form takes their name.
+  helpers: Set<string>,
+}
+
+/// Functions the host (`host.cpp`) calls itself; a program calling them would break the
+/// frame loop or the context it runs in.
+const HOST_OWNED: []string = [
+  "ImGui_CreateContext",
+  "ImGui_DestroyContext",
+  "ImGui_GetCurrentContext",
+  "ImGui_SetCurrentContext",
+  "ImGui_NewFrame",
+  "ImGui_EndFrame",
+  "ImGui_Render",
+  "ImGui_GetDrawData",
+  "ImGui_UpdatePlatformWindows",
+  "ImGui_RenderPlatformWindowsDefault",
+  "ImGui_RenderPlatformWindowsDefaultEx",
+  "ImGui_DestroyPlatformWindows",
+  "ImGui_GetPlatformIO",
+  "ImGui_DebugCheckVersionAndDataLayout",
+]
+
+let load_api = (doc: JsonValue) -> Api => {
+  var typedefs = hashmap_new::<string, JsonValue>()
+  for t in doc.field("typedefs").unwrap_or(JsonNull).elements() {
+    typedefs.insert(text_of(t, "name"), description(t.field("type").unwrap_or(JsonNull)))
+  }
+  var structs = set_new::<string>()
+  for s in doc.field("structs").unwrap_or(JsonNull).elements() {
+    structs.insert(text_of(s, "name"))
+  }
+  var enums = set_new::<string>()
+  for e in doc.field("enums").unwrap_or(JsonNull).elements() {
+    enums.insert(text_of(e, "name"))
+  }
+  var helpers = set_new::<string>()
+  for f in doc.field("functions").unwrap_or(JsonNull).elements() {
+    if flag(f, "is_default_argument_helper") { helpers.insert(text_of(f, "name")) }
+  }
+  Api { typedefs: typedefs, structs: structs, enums: enums, helpers: helpers }
+}
+
+// ── Reading a function ───────────────────────────────────────────────────────
+
+let read_function = pure (f: JsonValue, api: Api) -> Outcome => {
+  let symbol = text_of(f, "name")
+  if flag(f, "is_default_argument_helper") || flag(f, "is_internal") { return Ignored }
+  if includes(HOST_OWNED, symbol) || symbol.starts_with("DearBindings_") {
+    return Ignored
+  }
+  if f.field("conditionals") != None { return Skipped("under a preprocessor conditional") }
+
+  var params: []Param = []
+  for a in f.field("arguments").unwrap_or(JsonNull).elements() {
+    if flag(a, "is_varargs") {
+      return Skipped("variadic (the `…Unformatted` form is bound)")
+    }
+    let c_type = a.field("type").unwrap_or(JsonNull)
+    if text_of(c_type, "declaration") == "va_list" { return Skipped("takes a va_list") }
+    let kind = classify(description(c_type), api)
+    let c_default = a.field("default_value").unwrap_or(JsonNull).as_text()
+    let is_null = c_default == Some("NULL")
+    let name = escape(text_of(a, "name"))
+    if flag(a, "is_instance_pointer") {
+      if let Handle(_) = kind {} else { return Skipped("receiver is not a struct pointer") }
+      params.push(Param { name: "self", kind: kind, role: Receiver, default: None })
+      continue
+    }
+    let role = match kind {
+      Unsupported(why) => return Skipped("parameter `${name}`: ${why}"),
+      Text => if is_null && name.ends_with("_end") { Null } else if is_null { MaybeText } else { Given },
+      Handle(_) => if is_null { Null } else { Given },
+      _ => Given,
+    }
+    params.push(Param {
+      name: name,
+      kind: kind,
+      role: role,
+      default: lyra_default(c_default, kind, role)
+    })
+  }
+  let result = classify(description(f.field("return_type").unwrap_or(JsonNull)), api)
+  if let Unsupported(why) = result { return Skipped("returns ${why}") }
+
+  // An `…Unformatted` helper stands in for a variadic function that is not bound, so it
+  // takes that function's name: `ImGui_TextColoredUnformatted` is `text_colored`.
+  let full = wrapper_name(symbol, api)
+  let short = full.strip_suffix("_unformatted").unwrap_or(full)
+  let base = if flag(f, "is_unformatted_helper") { short } else { full }
+  let wrapper = Function {
+    symbol: symbol,
+    name: base,
+    extern_name: "c_${snake(symbol).strip_prefix("_").unwrap_or(snake(symbol))}",
+    params: trailing_defaults(params),
+    result: result,
+    cpp_name: text_of(f, "original_fully_qualified_name"),
+    comment: comment_of(f),
+  }
+  // A `bool *p_open` defaulting to NULL: the plain form passes NULL, and `_closable` takes
+  // the caller's flag.
+  var open_at: Maybe<i64> = None
+  for i, p in params {
+    if p.name == "p_open" { open_at = Some(i) }
+  }
+  match open_at {
+    None => Bound([wrapper]),
+    Some(i) => {
+      // Copies, not `var plain = params`: an array binding shares its buffer, so writing
+      // one would write both (todo.md, borrow model (e)).
+      var plain = [p in params | p]
+      plain[i] = Param { name: "p_open", kind: params[i].kind, role: Null, default: None }
+      var closable = [p in params | p]
+      closable[i] = Param {
+        name: "open",
+        kind: params[i].kind,
+        role: Given,
+        default: None
+      }
+      Bound([
+        Function { wrapper | params: trailing_defaults(plain) },
+        Function { wrapper | name: "${base}_closable", params: trailing_defaults(closable) },
+      ])
+    },
+  }
+}
+
+/// A free function and a method may not share a name — Lyra overloads only on the
+/// receiver — so a method named like a free function takes its receiver as a suffix:
+/// `ImDrawList::PushClipRect` is `draw_list.push_clip_rect_draw_list(…)` beside
+/// `ImGui::PushClipRect`'s `push_clip_rect(…)`.
+let disambiguate = (fns: []Function) -> []Function => {
+  var free = set_new::<string>()
+  for f in fns {
+    if receiver_of(f) == "" { free.insert(f.name) }
+  }
+  var out: []Function = []
+  for f in fns {
+    let r = receiver_of(f)
+    if r != "" && free.contains(f.name) {
+      out.push(Function { f | name: "${f.name}_${snake(r)}" })
+    } else {
+      out.push(f)
+    }
+  }
+  out
+}
+
+/// The handle a method is called on, or `""` for a free function.
+let receiver_of = pure (f: Function) -> string => {
+  for p in f.params {
+    if p.role == Receiver {
+      if let Handle(h) = p.kind { return h }
+    }
+  }
+  ""
+}
+
+/// A default only counts at the end: once a parameter the wrapper shows has none, every
+/// earlier one is required too.
+let trailing_defaults = pure (params: []Param) -> []Param => {
+  var out = [p in params | p]
+  var open = true
+  var i = out.len() - 1
+  for i >= 0 {
+    let p = out[i]
+    if p.role == Given || p.role == MaybeText {
+      if p.default == None { open = false }
+      if !open && p.default != None {
+        out[i] = Param { p | default: None }
+      }
+    }
+    i -= 1
+  }
+  out
+}
+
+/// The wrapper's name: a `…Ex` whose short form is a default-argument helper takes the
+/// short name; a method drops its struct's prefix; the rest is snake case.
+let wrapper_name = pure (symbol: string, api: Api) -> string => {
+  let short = match symbol.strip_suffix("Ex") {
+    Some(s) => if api.helpers.contains(s) { s } else { symbol },
+    None => symbol,
+  }
+  let underscore = short.index("_").unwrap_or(-1)
+  let local = short.slice(underscore + 1, short.len())
+  escape(snake(local))
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+/// A type's `description` node, which is where its shape lives.
+let description = pure (t: JsonValue) -> JsonValue =>
+  t.field("description").unwrap_or(JsonNull)
+
+let classify = pure (desc: JsonValue, api: Api) -> Kind => {
+  match text_of(desc, "kind") {
+    "Builtin" => builtin(text_of(desc, "builtin_type")),
+    "User" => user_type(text_of(desc, "name"), api),
+    "Pointer" => pointer_type(desc.field("inner_type").unwrap_or(JsonNull), api),
+    "Array" => {
+      let inner = classify(desc.field("inner_type").unwrap_or(JsonNull), api)
+      let bound = text_of(desc, "bounds").parse_i64()
+      match (inner, bound) {
+        (Scalar(s), Some(n)) => Fixed(s, n),
+        _ => Unsupported("an array of `${text_of(desc, "bounds")}` non-scalars"),
+      }
+    },
+    "Type" => classify(desc.field("inner_type").unwrap_or(JsonNull), api),
+    "Function" => Unsupported("a function pointer (a callback)"),
+    other => Unsupported("a `${other}` type"),
+  }
+}
+
+let builtin = pure (name: string) -> Kind => match name {
+  "void" => Nothing,
+  "bool" => Scalar("bool"),
+  "char" => Scalar("i8"),
+  "unsigned_char" => Scalar("u8"),
+  "short" => Scalar("i16"),
+  "unsigned_short" => Scalar("u16"),
+  "int" => Scalar("i32"),
+  "unsigned_int" => Scalar("u32"),
+  "long_long" => Scalar("i64"),
+  "unsigned_long_long" => Scalar("u64"),
+  "float" => Scalar("f32"),
+  "double" => Scalar("f64"),
+  other => Unsupported("the builtin `${other}`"),
+}
+
+let user_type = pure (name: string, api: Api) -> Kind => {
+  if name == "ImVec2" { return Vector("Vec2") }
+  if name == "ImVec4" { return Vector("Vec4") }
+  if name == "size_t" { return Scalar("u64") }
+  if api.enums.contains(name) || api.enums.contains("${name}_") { return Scalar("i32") }
+  match api.typedefs.get(name) {
+    Some(desc) => classify(desc, api),
+    None => if api.structs.contains(name) {
+      Unsupported("`${name}` by value")
+    } else {
+      Unsupported("the unknown type `${name}`")
+    },
+  }
+}
+
+let pointer_type = pure (inner: JsonValue, api: Api) -> Kind => {
+  var is_const = false
+  for c in inner.field("storage_classes").unwrap_or(JsonNull).elements() {
+    if c.as_text() == Some("const") { is_const = true }
+  }
+  let kind = text_of(inner, "kind")
+  if kind == "Builtin" && text_of(inner, "builtin_type") == "char" {
+    return if is_const { Text } else { Unsupported("a writable `char *` buffer") }
+  }
+  if kind == "Builtin" && text_of(inner, "builtin_type") == "void" {
+    return Unsupported("`void *`")
+  }
+  if kind == "User" && api.structs.contains(text_of(inner, "name")) {
+    let name = text_of(inner, "name")
+    if name == "ImVec2" || name == "ImVec4" { return Unsupported("a pointer to `${name}`") }
+    return Handle(handle_name(name))
+  }
+  match classify(inner, api) {
+    Scalar(s) => if is_const { Unsupported("a `const ${s} *` array") } else { InOut(s) },
+    Vector(v) => Unsupported("a pointer to `${v}`"),
+    Handle(_) => Unsupported("a pointer to a pointer"),
+    Unsupported(why) => Unsupported("a pointer to ${why}"),
+    _ => Unsupported("a pointer to `${text_of(inner, "kind")}`"),
+  }
+}
+
+/// `ImDrawList` → `DrawList`, `ImGuiViewport` → `Viewport`,
+/// `ImGuiTextFilter_ImGuiTextRange` → `TextFilterTextRange`.
+let handle_name = pure (c_name: string) -> string =>
+  c_name.split("_").map((part) => drop_im(part)).join("")
+
+/// `ImGuiIO` → `IO`, `ImDrawList` → `DrawList`; a name without the prefix is kept.
+let drop_im = pure (name: string) -> string => match name.strip_prefix("ImGui") {
+  Some(rest) => rest,
+  None => match name.strip_prefix("Im") {
+    Some(rest) => rest,
+    None => name,
+  },
+}
+
+// ── Defaults ─────────────────────────────────────────────────────────────────
+
+/// C++'s default argument as Lyra, or `None` when it has no Lyra spelling.
+let lyra_default = pure (
+  c_default: Maybe<string>,
+  kind: Kind,
+  role: Role
+) -> Maybe<string> => {
+  if role == MaybeText { return Some("None") }
+  let Some(c) = c_default else { return None }
+  match kind {
+    Scalar("bool") => if c == "true" || c == "false" { Some(c) } else { None },
+    Scalar("f32") => float_literal(c),
+    Scalar("f64") => float_literal(c),
+    Scalar(_) => int_literal(c),
+    Vector(v) => vector_literal(c, v),
+    Text => if c.starts_with("\"") { Some(c) } else { None },
+    _ => None,
+  }
+}
+
+let int_literal = pure (c: string) -> Maybe<string> => match c {
+  "sizeof(float)" => Some("4"),
+  "IM_COL32_WHITE" => Some("0xFFFFFFFF"),
+  _ => match c.parse_i64() {
+    Some(n) => Some("${n}"),
+    None => None,
+  },
+}
+
+/// `1.0f`, `-1.f`, `+360.0f`, `0` and `FLT_MAX` as Lyra floats.
+let float_literal = pure (c: string) -> Maybe<string> => {
+  if c == "FLT_MAX" { return Some("3.4028234e38") }
+  if c == "-FLT_MIN" { return Some("-1.1754944e-38") }
+  let bare = c.strip_suffix("f").unwrap_or(c)
+  let unsigned = bare.strip_prefix("+").unwrap_or(bare)
+  let digits = unsigned.strip_prefix("-").unwrap_or(unsigned)
+  if digits.len() == 0 { return None }
+  for r in digits.to_runes() {
+    if !r.is_ascii_digit() && r != '.' { return None }
+  }
+  if unsigned.ends_with(".") { return Some("${unsigned}0") }
+  if !unsigned.contains(".") { return Some("${unsigned}.0") }
+  Some(unsigned)
+}
+
+/// `ImVec2(0, 0)` → `Vec2 { x: 0.0, y: 0.0 }`.
+let vector_literal = pure (c: string, vector: string) -> Maybe<string> => {
+  let Some(open) = c.strip_prefix("Im${vector}(") else { return None }
+  let Some(inside) = open.strip_suffix(")") else { return None }
+  let parts = inside.split(",").map((p) => p.trim())
+  let fields = ["x", "y", "z", "w"]
+  if parts.len() != (if vector == "Vec2" { 2 } else { 4 }) { return None }
+  var out: []string = []
+  for i, p in parts {
+    let Some(value) = float_literal(p) else { return None }
+    out.push("${fields[i]}: ${value}")
+  }
+  Some("${vector} { ${out.join(", ")} }")
+}
+
+// ── Emitting ─────────────────────────────────────────────────────────────────
+
+let render = (doc: JsonValue, fns: []Function, skipped: []string) -> string => {
+  var out: []string = []
+  out.push("module bindings.imgui")
+  out.push("//! Generated by `gen/gen.lyra` from dear_bindings' `dcimgui.json` — do not edit; rerun")
+  out.push("//! the generator instead (its header has the command and the mapping rules).")
+  out.push("")
+  out.push("import std.ffi")
+  out.push("")
+  out.push("/// `ImVec2`: a point or a size, in pixels.")
+  out.push("pub struct Vec2 { x: f32, y: f32 }")
+  out.push("")
+  out.push("/// `ImVec4`: a colour (`x..w` = r, g, b, a in 0..1) or a rectangle.")
+  out.push("pub struct Vec4 { x: f32, y: f32, z: f32, w: f32 }")
+  out.push("")
+  out.push("// ── Handles ─────────────────────────────────────────────────────────────────")
+  for h in handles_used(fns) {
+    out.push("")
+    out.push("/// A pointer to ImGui's `${h.0}`, owned by ImGui.")
+    out.push("pub newtype ${h.1} = ^u8")
+  }
+  out.push("")
+  out.push("// ── Enums and flags ─────────────────────────────────────────────────────────")
+  for e in doc.field("enums").unwrap_or(JsonNull).elements() {
+    render_enum(out, e)
+  }
+  out.push("")
+  out.push("// ── Functions ───────────────────────────────────────────────────────────────")
+  for f in fns {
+    out.push("")
+    render_wrapper(out, f)
+  }
+  out.push("")
+  out.push("// ── Externs ─────────────────────────────────────────────────────────────────")
+  var declared = set_new::<string>()
+  for f in fns {
+    if declared.insert(f.symbol) {
+      out.push("")
+      render_extern(out, f)
+    }
+  }
+  out.push("")
+  out.push("// ── Not bound ───────────────────────────────────────────────────────────────")
+  out.push("//")
+  for s in skipped { out.push("// ${s}") }
+  out.push("")
+  out.join("\n")
+}
+
+/// Every handle a wrapper mentions, as `(C name, Lyra name)`, sorted by Lyra name.
+let handles_used = (fns: []Function) -> [](string, string) => {
+  var seen = set_new::<string>()
+  var out: [](string, string) = []
+  for f in fns {
+    for p in f.params {
+      if let Handle(h) = p.kind {
+        if seen.insert(h) { out.push((c_handle(h), h)) }
+      }
+    }
+    if let Handle(h) = f.result {
+      if seen.insert(h) { out.push((c_handle(h), h)) }
+    }
+  }
+  out.sorted_by((a, b) => a.1.compare(b.1))
+}
+
+/// The C name a handle came from, for its doc comment — the prefix is ImGui's own
+/// convention, so it is a good guess rather than a lookup.
+let c_handle = pure (h: string) -> string =>
+  if h == "DrawList" || h.starts_with("Font") || h.starts_with("Texture") || h.starts_with("Draw") {
+    "Im${h}"
+  } else {
+    "ImGui${h}"
+  }
+
+let render_enum = (out: mut []string, e: JsonValue) -> void => {
+  for el in e.field("elements").unwrap_or(JsonNull).elements() {
+    if flag(el, "is_internal") || el.field("conditionals") != None { continue }
+    let value = el.field("value").unwrap_or(JsonNull).as_int().unwrap_or(0)
+    let comment = attached_comment(el)
+    out.push("")
+    if comment != "" { out.push("/// ${comment}") }
+    out.push("pub const ${constant_name(text_of(el, "name"))}: i32 = ${value}")
+  }
+}
+
+/// `ImGuiWindowFlags_NoTitleBar` → `WINDOW_FLAGS_NO_TITLE_BAR`, `ImGuiKey_A` → `KEY_A`.
+let constant_name = pure (c_name: string) -> string =>
+  upper(drop_im(c_name).split("_").map((part) => snake(part)).join("_"))
+
+/// ASCII upper case (the prelude has it for a `rune` only).
+let upper = pure (s: string) -> string =>
+  s.to_runes().map((r) => "${r.to_ascii_upper()}").join("")
+
+let render_wrapper = (out: mut []string, f: Function) -> void => {
+  let doc = if f.comment == "" { "`${f.cpp_name}`." } else { "`${f.cpp_name}` — ${f.comment}" }
+  out.push("/// ${doc}")
+
+  var shown: []string = []
+  for p in f.params {
+    match p.role {
+      Receiver => shown.push("self: ${lyra_type(p.kind)}"),
+      Null => {},
+      MaybeText => shown.push("${p.name}: Maybe<string> = None"),
+      Given => {
+        let t = match p.kind {
+          InOut(s) => "mut ${s}",
+          Fixed(s, n) => "mut [${n}]${s}",
+          Text => "string",
+          k => lyra_type(k),
+        }
+        let d = match p.default {
+          Some(v) => " = ${v}",
+          None => "",
+        }
+        shown.push("${p.name}: ${t}${d}")
+      },
+    }
+  }
+  let result = match f.result {
+    Nothing => "void",
+    Text => "string",
+    k => lyra_type(k),
+  }
+
+  // The addresses of `mut` parameters are taken first: a closure captures by value, so
+  // `&mut v` inside the `with_cstring` lambda would be the lambda's own copy.
+  var setup: []string = []
+  var args: []string = []
+  var texts: [](string, bool) = []
+  for p in f.params {
+    match (p.role, p.kind) {
+      (Receiver, _) => args.push("self"),
+      (Null, Handle(h)) => args.push("${h}(nullptr)"),
+      (Null, _) => args.push("nullptr"),
+      (MaybeText, _) => {
+        args.push("c_${p.name}")
+        texts.push((p.name, true))
+      },
+      (Given, Text) => {
+        args.push("c_${p.name}")
+        texts.push((p.name, false))
+      },
+      (Given, InOut(_)) => {
+        setup.push("let c_${p.name} = unsafe { &mut ${p.name} }")
+        args.push("c_${p.name}")
+      },
+      (Given, Fixed(_, _)) => {
+        setup.push("let c_${p.name} = unsafe { &mut ${p.name} }")
+        args.push("c_${p.name}")
+      },
+      (Given, _) => args.push(p.name),
+    }
+  }
+  var call = "unsafe { ${f.extern_name}(${args.join(", ")}) }"
+  var i = texts.len() - 1
+  for i >= 0 {
+    let (name, maybe) = texts[i]
+    call = if maybe {
+      "with_maybe_cstring(${name}, (c_${name}) => ${call})"
+    } else {
+      "${name}.with_cstring((c_${name}) => ${call})"
+    }
+    i -= 1
+  }
+  let head = "pub let ${f.name} = (${shown.join(", ")}) -> ${result} =>"
+  let returns_text = f.result == Text
+  if setup.len() == 0 && !returns_text {
+    out.push("${head} ${call}")
+    return
+  }
+  out.push("${head} {")
+  for s in setup { out.push("  ${s}") }
+  if returns_text {
+    out.push("  from_cstring(${call})")
+  } else {
+    out.push("  ${call}")
+  }
+  out.push("}")
+}
+
+let render_extern = (out: mut []string, f: Function) -> void => {
+  var params: []string = []
+  for p in f.params {
+    let t = match p.kind {
+      Text => "^u8",
+      InOut(s) => "^mut ${s}",
+      Fixed(s, n) => "^mut [${n}]${s}",
+      k => lyra_type(k),
+    }
+    params.push("${p.name}: ${t}")
+  }
+  let result = match f.result {
+    Nothing => "void",
+    Text => "^u8",
+    k => lyra_type(k),
+  }
+  out.push("@symbol(\"${f.symbol}\")")
+  out.push("unsafe extern ${f.extern_name}: (${params.join(", ")}) -> ${result}")
+}
+
+/// A kind's Lyra type where it is not a special parameter form.
+let lyra_type = pure (k: Kind) -> string => match k {
+  Scalar(s) => s,
+  Vector(v) => v,
+  Handle(h) => h,
+  Text => "string",
+  InOut(s) => "^mut ${s}",
+  Fixed(s, n) => "[${n}]${s}",
+  Nothing => "void",
+  Unsupported(why) => "<${why}>",
+}
+
+// ── Names ────────────────────────────────────────────────────────────────────
+
+/// Lyra's reserved words, and names the language gives meaning to, that ImGui uses as
+/// parameter names (`ref`, `type`) or could.
+const RESERVED: []string = [
+  "for",
+  "if",
+  "else",
+  "match",
+  "let",
+  "var",
+  "const",
+  "readonly",
+  "true",
+  "false",
+  "import",
+  "module",
+  "as",
+  "pub",
+  "async",
+  "await",
+  "stack",
+  "shared",
+  "weak",
+  "with",
+  "pure",
+  "det",
+  "noalloc",
+  "gen",
+  "rec",
+  "yield",
+  "fixed",
+  "unsafe",
+  "mut",
+  "ref",
+  "own",
+  "void",
+  "struct",
+  "data",
+  "trait",
+  "impl",
+  "extern",
+  "where",
+  "return",
+  "break",
+  "continue",
+  "newtype",
+  "union",
+  "in",
+  "nullptr",
+  "type",
+]
+
+let escape = pure (name: string) -> string =>
+  if includes(RESERVED, name) { "${name}_" } else { name }
+
+let includes = pure (xs: []string, x: string) -> bool => {
+  for y in xs {
+    if y == x { return true }
+  }
+  false
+}
+
+/// `GetWindowDrawList` → `get_window_draw_list`, `SliderFloat3` → `slider_float3`,
+/// `IsItemIDAlive` → `is_item_id_alive`, `GetColorU32ImVec4` → `get_color_u32_vec4`.
+///
+/// A boundary is a capital after a lower-case letter or digit, or the last capital of a
+/// run followed by a lower-case letter (`IDAlive` → `id_alive`). ImGui's two
+/// `XtoY` colour conversions break that rule and are spelled out first; an `Im` type name
+/// inside a function name loses its prefix, as the handles do.
+let snake = pure (name: string) -> string => {
+  let spelled = name.split("RGBtoHSV").join("RgbToHsv").split("HSVtoRGB").join("HsvToRgb")
+  let bare = spelled
+    .split("ImGui")
+    .join("")
+    .split("ImVec")
+    .join("Vec")
+    .split("ImFont")
+    .join("Font")
+    .split("ImDraw")
+    .join("Draw")
+    .split("ImTexture")
+    .join("Texture")
+    .split("ImU32")
+    .join("U32")
+  let runes = bare.to_runes()
+  var out: []string = []
+  for i, r in runes {
+    if r.is_ascii_upper() && i > 0 {
+      let before = runes[i - 1]
+      let after_lower = i + 1 < runes.len() && runes[i + 1].is_ascii_lower()
+      if before.is_ascii_lower() || before.is_ascii_digit() || (before.is_ascii_upper() && after_lower) {
+        out.push("_")
+      }
+    }
+    out.push("${r.to_ascii_lower()}")
+  }
+  out.join("")
+}
+
+// ── JSON reading ─────────────────────────────────────────────────────────────
+
+/// A string member, or `""`.
+let text_of = pure (v: JsonValue, key: string) -> string =>
+  v.field(key).unwrap_or(JsonNull).as_text().unwrap_or("")
+
+/// A boolean member, or `false`.
+let flag = pure (v: JsonValue, key: string) -> bool =>
+  v.field(key).unwrap_or(JsonNull).as_bool().unwrap_or(false)
+
+/// The comment ImGui's header attaches after a declaration, `//` removed.
+let attached_comment = pure (v: JsonValue) -> string => {
+  let c = text_of(v.field("comments").unwrap_or(JsonNull), "attached")
+  c.strip_prefix("//").unwrap_or(c).trim()
+}
+
+let comment_of = pure (f: JsonValue) -> string => attached_comment(f)

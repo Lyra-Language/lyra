@@ -596,6 +596,12 @@ next `}` — each found by the first Lyra program large enough to hit them.
 towards an NES-style game (ladder in `todo.md`). Its first rung found that a computed `u8`
 crossed to C without `zeroext` (COMPLETED.md 09/25).
 
+**`bindings.imgui` and its generator do the same for Vega** (the retro-console studio in
+the private `vega` repo): the first binding generated rather than written, by a Lyra
+program (`bindings/imgui/gen/gen.lyra`) reading dear_bindings' JSON. Its first run found
+that equality on a recursive type (`Maybe<JsonValue>`) overflowed lyrac's stack, and the
+binding's in-out pointers are why a `mut` scalar is by reference (COMPLETED.md 09/27).
+
 **`examples/calendar` does the same for dates**, and **`examples/schedule/when.lyra` for
 zones**: `std.temporal`, after the web's Temporal API, grows only as they need it (the month
 grid 09/18; `TimeZone`, `Instant`, `ZonedDateTime` and the disambiguation rules 09/22).

@@ -396,10 +396,12 @@ let parameter_list_start = (lambda: Node, fallback: i64) -> i64 => {
 }
 
 /// Whether a node's children are each their own line's business: the program, a block, a
-/// loop's body, and the member lists a newline separates.
+/// loop's body, and the member lists a newline separates — attributes included, since each
+/// of `@link("a")` and `@link("b")` above a `module` is a line of its own, and the second
+/// was indented as a continuation of the first (09/27, found formatting `bindings.imgui`).
 let is_block_like = pure (k: string) -> bool =>
   k == "program" || k == "block" || k == "for_body" || k == "for_in_body" ||
-  k == "impl_methods" || k == "trait_methods"
+  k == "impl_methods" || k == "trait_methods" || k == "attribute_list"
 
 /// Whether the token before a node makes the node an owner: an opening delimiter or a
 /// comma, so an argument, a parameter, a field, a match arm or an import name starts

@@ -38,10 +38,13 @@ import (
 //
 // Keyed on the base type, so a newtype and its base share one function rather than
 // generating two identical copies — the same keying dropFuncFor uses, for the same
-// reason.
+// reason. **And on the declaration and the allocation flavor** (elementDropKey), not on
+// `t.String()`: `shared Pt` and the `Pt` its glue unboxes both render `Pt`, so once a
+// nested named type compared through its glue (emitEqValue), the shared glue found
+// *itself* under the payload's key and recursed on the wrong shape.
 func (l *lowerer) eqFuncFor(t types.Type) (*ir.Func, error) {
 	t = l.stripNewtype(t)
-	key := t.String()
+	key := l.elementDropKey(t)
 	if fn, ok := l.eqFns[key]; ok {
 		return fn, nil
 	}
@@ -56,7 +59,7 @@ func (l *lowerer) eqFuncFor(t types.Type) (*ir.Func, error) {
 	l.eqFns[key] = fn
 
 	entry := fn.NewBlock("entry")
-	result, end, err := l.emitEqValue(entry, a, b, t)
+	result, end, err := l.emitEqRoot(entry, a, b, t)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +73,46 @@ func (l *lowerer) eqFuncFor(t types.Type) (*ir.Func, error) {
 // The scalar cases are the leaves and everything else recurses into them. A managed
 // value (a string, a `shared` box) compares through the path that already exists rather
 // than by pointer identity: two equal strings in different boxes are equal.
+//
+// **A named type nested inside another is compared by calling its glue**, never expanded
+// in place. That is what makes a recursive type terminate: `JsonValue` holds a
+// `[]JsonValue`, and expanding the element's comparison inline expanded the array's, which
+// expanded the element's again, until lyrac's own stack overflowed (09/27, the ImGui
+// binding generator comparing a `Maybe<JsonValue>` with `None`). The cache entry
+// eqFuncFor makes before building a body is only reached through a call.
 func (l *lowerer) emitEqValue(block *ir.Block, a, b value.Value, t types.Type) (value.Value, *ir.Block, error) {
+	if l.isNamedEqType(t) {
+		fn, err := l.eqFuncFor(t)
+		if err != nil {
+			return nil, nil, err
+		}
+		return block.NewCall(fn, a, b), block, nil
+	}
+	return l.emitEqRoot(block, a, b, t)
+}
+
+// isNamedEqType reports whether t's equality lives in a glue function of its own: a
+// `data` type or a named struct, directly or as a generic instantiation. A `shared` one
+// is unboxed first, so it is not.
+func (l *lowerer) isNamedEqType(t types.Type) bool {
+	if types.AllocationOf(t) == types.Shared {
+		return false
+	}
+	switch rt := l.resolveNamedType(l.stripNewtype(t)).(type) {
+	case types.DataType, types.NamedStructType:
+		return true
+	case types.ParameterizedType:
+		switch l.resolveShape(rt).(type) {
+		case types.DataType, types.NamedStructType:
+			return true
+		}
+	}
+	return false
+}
+
+// emitEqRoot is emitEqValue without the glue call: it expands t's own comparison here.
+// eqFuncFor builds a glue body with it; everything nested goes back through emitEqValue.
+func (l *lowerer) emitEqRoot(block *ir.Block, a, b value.Value, t types.Type) (value.Value, *ir.Block, error) {
 	// A `shared` aggregate is a box pointer, so unbox before comparing — which is what
 	// this function's own header already promised ("compares through the path that
 	// already exists rather than by pointer identity") and did not do. Without it the
@@ -123,7 +165,7 @@ func (l *lowerer) emitEqValue(block *ir.Block, a, b value.Value, t types.Type) (
 			return nil, nil, fmt.Errorf("llvm: cannot compare a value of generic type %s: "+
 				"its instantiation did not resolve", rt)
 		}
-		return l.emitEqValue(block, a, b, inst)
+		return l.emitEqRoot(block, a, b, inst)
 	}
 	// A scalar leaf: string, float, or an integer-shaped value (bool and rune
 	// included). These are exactly the cases lowerBooleanBinaryOpExpr already handles

@@ -39,6 +39,7 @@ module bindings.imgui
 //! is SDL_GPU: SDL_Renderer's ImGui backend has no multi-viewport support.
 
 import std.ffi
+import std.ffi.{ cstring_len }
 
 /// A running ImGui host: the main window, its GPU device and the ImGui context.
 pub newtype Host = ^u8
@@ -53,8 +54,15 @@ pub const HOST_VIEWPORTS: u32 = 2
 /// binding's `last_error` says why. The size is in points; the window is scaled for the
 /// primary display's density. Initialises SDL's video and gamepad subsystems, which
 /// [destroy_host] quits.
-pub let create_host = (title: string, width: i32, height: i32, flags: u32) -> Maybe<Host> => {
-  let h = title.with_cstring((t) => unsafe { lyra_imgui_host_create(t, width, height, flags) })
+pub let create_host = (
+  title: string,
+  width: i32,
+  height: i32,
+  flags: u32
+) -> Maybe<Host> => {
+  let h = title.with_cstring((t) => unsafe {
+    lyra_imgui_host_create(t, width, height, flags)
+  })
   if h == nullptr { None } else { Some(h) }
 }
 
@@ -71,7 +79,12 @@ pub let end_frame = (host: Host, r: f32, g: f32, b: f32) -> void =>
 pub let destroy_host = (host: Host) -> void => unsafe { lyra_imgui_host_destroy(host) }
 
 @symbol("lyra_imgui_host_create")
-unsafe extern lyra_imgui_host_create: (title: ^u8, width: i32, height: i32, flags: u32) -> Host
+unsafe extern lyra_imgui_host_create: (
+  title: ^u8,
+  width: i32,
+  height: i32,
+  flags: u32
+) -> Host
 
 @symbol("lyra_imgui_host_begin_frame")
 unsafe extern lyra_imgui_host_begin_frame: (host: Host) -> bool
@@ -81,3 +94,24 @@ unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) ->
 
 @symbol("lyra_imgui_host_destroy")
 unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
+
+/// `ImGui::Text` — a line of text. ImGui's own `Text` is printf-style and is not bound;
+/// build the string with interpolation (`text("fps: ${fps}")`) instead.
+pub let text = (s: string) -> void => text_unformatted(s)
+
+/// `IM_COL32(r, g, b, a)`: a packed colour for the draw-list functions
+/// (`draw_list.add_rect_filled(p0, p1, col32(255, 0, 0))`).
+pub let col32 = pure (r: u8, g: u8, b: u8, a: u8 = 255) -> u32 =>
+  (u32(a) << 24) | (u32(b) << 16) | (u32(g) << 8) | u32(r)
+
+// ── Helpers the generated wrappers call ─────────────────────────────────────
+
+/// Lend `s` to C as a NUL-terminated string, or NULL for `None`.
+let with_maybe_cstring = pure (s: Maybe<string>, f: (^u8) -> t) -> t => match s {
+  Some(text) => text.with_cstring(f),
+  None => f(nullptr),
+}
+
+/// Copy a C string ImGui answers into a Lyra string; NULL is `""`.
+let from_cstring = pure (p: ^u8) -> string =>
+  if p == nullptr { "" } else { unsafe { p.decode_utf8(cstring_len(p)) } }

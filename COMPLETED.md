@@ -9,6 +9,57 @@ Newest first.
 
 ## Dated log
 
+### 09/27/26 — `bindings.imgui` is generated, and what generating it found
+
+**The first binding written by a program**: `bindings/imgui/gen/gen.lyra` reads
+dear_bindings' `dcimgui.json` (3 MB, parsed by `std.json` in 0.04 s) and writes
+`generated.lyra` — 530 wrappers, the handles, every enum value — with the 134 functions it
+refuses listed at the end with the reason. ImGui's API is ~800 functions; written by hand it
+would be a year of drift. `examples/imgui/pixels.lyra`, a docked pixel editor with tear-off
+panels, uses it with no `unsafe`.
+
+- **One wrapper per function family.** Lyra overloads only on the receiver, so
+  dear_bindings' pair (`ImGui_Button` + `ImGui_ButtonEx`) becomes the full form under the
+  short name, with C++'s defaults as Lyra's — which needs defaults on struct literals and on
+  `Maybe<string> = None` across a module boundary, both of which already worked. A free
+  function and a method may not share a name either, so the two that do
+  (`PushClipRect`/`PopClipRect`) suffix the method with its receiver.
+- **A nullable `bool *p_open` makes two wrappers** (`begin`, `begin_closable`): an optional
+  in-out parameter has no Lyra spelling, and the two forms are what C++ callers write anyway.
+- **The generated file is committed and `.lyrafmtignore`d**; its test is that the generator
+  reproduces it byte for byte, which also catches a hand edit.
+
+**Equality on a recursive type overflowed lyrac's own stack.** `emitEqValue` expanded a
+nested `data` value's comparison inline, so `JsonValue` → `[]JsonValue` → `JsonValue` never
+reached the cache entry `eqFuncFor` makes before building a body — the header said recursion
+went "through a cache entry", and nothing nested ever looked there. A named type nested in
+another now compares by *calling* its glue. That exposed the cache key: `t.String()`, under
+which `shared Pt` and the `Pt` its glue unboxes collide, so the shared glue called itself on
+the payload. The key is now the drop glue's (`elementDropKey`: declaration identity plus
+allocation flavor), which had already been through that lesson three times.
+
+**`var b = a` on an array shares the buffer, and the generator walked into it**: writing
+the `p_open` slot of `plain` and then of `closable` — both `var`s of one parameter list —
+made `begin` the closable form. todo.md's borrow model (e) predicted exactly this; the
+generator copies with a comprehension.
+
+**A torn-off panel could not be dragged onto a monitor above the laptop's** — the main
+window could, by its title bar, which the window server moves. ImGui moves a panel itself,
+a few pixels a frame through `SDL_SetWindowPosition`, and a trace showed every step asking
+for y = -32 and landing at y = 34: AppKit's `constrainFrameRect:toScreen:` keeps a
+window's top below the menu bar of the screen it is mostly on, and each step *straddled*
+the two displays. (A window placed wholly on the upper display is not constrained, which
+is why the first probe, and a small panel dragged fast, looked fine.) `host_macos.m` adds
+the method to `SDL3Window` — a borderless window stays where it was asked to go, a titled
+one gets NSWindow's rule. Found moving Vega's panels; a fullscreen app on the upper display
+blocks every window regardless, since it owns that display's Space.
+
+**lyrafmt indented the second of two attributes** as a continuation of the first:
+`attribute_list` is `repeat1(attribute)` and its children were owned by the list.
+`bindings.imgui` is the first module to link two libraries. **And CI had been red since the
+previous commit** — `imgui.lyra` was committed unformatted; the formatter runs in CI, and
+running it locally before a commit is the step that was skipped.
+
 ### 09/27/26 — `mut` scalars are by reference, and ImGui's C half
 
 **A `mut` parameter now writes through to the caller on every type, scalars included.**

@@ -142,3 +142,34 @@ let main = () -> u8 => {
 		t.Errorf("under ASan: exited %d; want %d", got, want)
 	}
 }
+
+// A recursive type compares through its glue function rather than expanding forever.
+// `Tree` holds a `[]Tree`, as std.json's `JsonValue` holds a `[]JsonValue`: before 09/27
+// the element's comparison was expanded inline, which expanded the array's again, until
+// lyrac's own stack overflowed — found comparing a `Maybe<JsonValue>` with `None`. The
+// recursive struct and the `Maybe` of each are the same shape one step removed.
+func TestExec_StructuralEqualityOnRecursiveTypes(t *testing.T) {
+	t.Parallel()
+	src := `data Tree = Leaf | Node([]Tree)
+struct Dir { name: string, kids: []Dir }
+let bit = pure (b: bool, place: i64) -> i64 => if b { place } else { 0 }
+let main = () -> u8 => {
+  let a = Node([Leaf, Node([Leaf])])
+  let b = Node([Leaf, Node([Leaf])])
+  let c = Node([Leaf, Node([])])
+  let d = Dir { name: "a", kids: [Dir { name: "b", kids: [] }] }
+  let e = Dir { name: "a", kids: [Dir { name: "c", kids: [] }] }
+  let m: Maybe<Tree> = Some(a)
+  let r = bit(a == b, 1) + bit(a == c, 2) + bit(d == d, 4) + bit(d == e, 8) +
+    bit(m != None, 16) + bit(m == Some(c), 32)
+  println("${r}")
+  u8(r)
+}`
+	// set: 1 + 4 + 16 = 21
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "21" {
+		t.Errorf("printed %q; want 21", got)
+	}
+	if got := buildAndRunASanWithPrelude(t, src); got != 21 {
+		t.Errorf("under ASan: exited %d; want 21", got)
+	}
+}

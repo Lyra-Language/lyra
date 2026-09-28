@@ -156,22 +156,39 @@ drain `poll_menu() -> Maybe<i32>` after `poll_event`; `set_checked`/`set_enabled
 ## `bindings/imgui/`
 
 Dear ImGui (docking branch) with multi-viewports: a window dragged out of the main one
-becomes an OS window. Two halves:
+becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it.
 - **The host** (`imgui.lyra` over `host.cpp`): `create_host(title, w, h, flags)`
   (`HOST_DOCKING | HOST_VIEWPORTS`), then `for begin_frame(host) { …; end_frame(host, r, g, b) }`,
   then `destroy_host`. It owns the window, the SDL_GPU device and the frame loop, so Lyra
   binds no SDL_GPU. SDL_GPU because SDL_Renderer's ImGui backend has no multi-viewport support.
-- **The widgets** are to be generated from dear_bindings' `dcimgui.json`; `proof.lyra`
-  holds hand-written stand-ins until then.
+- **`host_macos.m` lets a torn-off window reach a monitor above.** AppKit's
+  `constrainFrameRect:toScreen:` pulled every borderless window straddling two displays back
+  below the menu bar, and ImGui moves a dragged panel a few pixels a frame, so it never got
+  past; the host adds the method to SDL's window class, leaving titled windows constrained.
+- **The API is generated** into `generated.lyra` (committed, never edited) by
+  `gen/gen.lyra` from dear_bindings' `dcimgui.json`; the generator's header has the command
+  and the type mapping. Rerun it after bumping the pin; `cmd/lyrac/imgui_example_test.go`
+  fails when the committed file is not what it makes.
+- **Naming**: ImGui's names in snake case, one wrapper per function family — the full `…Ex`
+  form under the short name, C++'s defaults as Lyra's (`button(label, size = Vec2 { … })`).
+  A struct's functions are methods on its handle (`draw_list.add_line(p1, p2, col)`); one
+  named like a free function takes its receiver as a suffix (`push_clip_rect_draw_list`).
+  Enum values are `pub const`s (`WINDOW_FLAGS_NO_TITLE_BAR`, `MOUSE_BUTTON_LEFT`).
+- **In-out pointers are `mut` parameters**: `checkbox(label, open) -> bool` flips the
+  caller's `open` and answers whether it was clicked, as ImGui's `bool *` does; `float[3]` is
+  `mut [3]f32`. A nullable `bool *p_open` makes two wrappers: `begin(name)` and
+  `begin_closable(name, open)`. A `const char *` defaulting to NULL is `Maybe<string> = None`.
+- **Hand-written in `imgui.lyra`**: `text(s)` (ImGui's `Text` is printf-style, so the
+  variadics are bound through their `…Unformatted` forms and interpolation does the
+  formatting), `col32(r, g, b, a)`, and the two helpers the wrappers call.
+- **Not bound** — `void *`, callbacks, `va_list`, writable `char *` buffers (`InputText`),
+  `ImTextureRef` by value (`Image`) — listed with the reason at the end of `generated.lyra`.
+  Struct fields (`ImGuiIO`, `ImGuiStyle`) are not reachable: a handle is opaque.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into
   `build/lib/liblyra-imgui.a` from a **downloaded** ImGui and dear_bindings, pinned by tag
   and SHA-256 and cached in `build/deps/`. Bump both tags together.
 - **No C++ runtime**: `-fno-exceptions -fno-rtti -fno-threadsafe-statics` leaves only
   `__cxa_atexit` (libc's), so `@link("lyra-imgui")` + `@link("SDL3")` is the whole link line.
-- **In-out pointers are `mut` parameters**: `checkbox(label, open) -> bool` flips the
-  caller's `open` and answers whether it was clicked, as ImGui's `bool *` does. The wrapper
-  passes `&mut` of its parameter, which is the caller's address (a `mut` scalar is by
-  reference, LANGUAGE.md "Parameter modes").
 
 ## `bindings/sdl3_image.lyra`
 

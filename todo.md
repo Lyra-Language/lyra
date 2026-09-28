@@ -63,7 +63,9 @@ Package management, versioning and separate compilation are out of scope by deci
   **the body after `=>`** (09/21). Left as written: a condition a body follows on the same
   line (`if a || b { … }` — moving the body is a rule about `if`, not about conditions),
   and a `=>` inside a `(`, which belongs to a lambda passed as an argument.
-  (Dates and reasoning: COMPLETED.md, 09/15–09/19.)
+  (Dates and reasoning: COMPLETED.md, 09/15–09/19.) **Worse than left as written**: in
+  `if flag(a, "x") { return Skipped("…long…") }` over budget, the comma-list rule claims
+  the *call's* arguments and explodes `flag(` one argument per line (seen 09/27, gen.lyra).
 
 - **[PARTIAL] The collector in Lyra — the bootstrap proper.** The Go collector is ~7.8k
   lines over a ~5.6k-line AST, so this is sliced rather than attempted.
@@ -463,6 +465,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 09/23] A match arm names alternatives with `|`** (`1 | 2`, `"get" | "post"`),
   over literals and ranges. A binding alternative stays refused, deliberately — see
   LANGUAGE.md § patterns. (COMPLETED.md, 09/23.)
+- **[OPEN] `3.4028235e38` is refused as "overflows f32 — it would become infinity".** It
+  is the usual spelling of `FLT_MAX` and rounds *to* it (it is under half an ulp above);
+  the check compares the exact value to FLT_MAX instead of asking what rounding gives.
+  `3.4028234e38` is accepted and is the same `f32`.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
@@ -482,10 +488,15 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
-- **[IN PROGRESS] `bindings.imgui`: generate the widgets from dear_bindings' `dcimgui.json`.**
-  The host and the C half landed 09/27; `bindings/imgui/proof.lyra` holds hand-written
-  stand-ins until the generator (written in Lyra, over `std.json`) replaces them. In-out
-  pointers wrap as `mut` parameters.
+- **[PARTIAL] `bindings.imgui`: the rest by hand.** 530 wrappers are generated (09/27);
+  what the generator refuses is listed at the end of `generated.lyra`. Vega needs, by hand:
+  `input_text` over a `string` (C wants a writable buffer), textures (`Image` takes an
+  `ImTextureRef`; the host must upload), and `ImGuiIO`/`ImGuiStyle` fields (handles are opaque).
+- **[OPEN] `to_ascii_upper` on a `string` does not exist**, though LANGUAGE.md § Strings
+  says both case maps work on `rune` and `string`; only `to_ascii_lower` has the string form.
+- **[OPEN] `bindings/sdl3/sdl3.lyra` says Lyra's `bool` is refused at the C boundary**
+  (`lyra-E063`) and converts every predicate from `u8`; FFI.md says `_Bool` is `bool`, and
+  `bindings.imgui` passes `bool`/`^mut bool` directly. The comment, or the rule, is stale.
 - **[OPEN] `bindings.imgui` on Linux is unverified.** `@link` flags are sorted, so `-lSDL3`
   precedes the static `-llyra-imgui`; check the link under `--as-needed`, and that the
   archive needs nothing from libstdc++ there either.

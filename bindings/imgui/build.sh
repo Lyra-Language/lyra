@@ -2,7 +2,7 @@
 #
 # Build the C half of `bindings.imgui` into <out>/lib/liblyra-imgui.a:
 # Dear ImGui (docking branch), dear_bindings' C API over it, ImGui's SDL3 and SDL_GPU
-# backends, and host.cpp.
+# backends, and host.cpp (with host_macos.m on macOS).
 #
 #   bindings/imgui/build.sh <out>        # ./build.sh passes build/
 #
@@ -68,8 +68,8 @@ fetch() {
   mv "$2.part" "$2"
 }
 
-# The pin covers the downloads and host.cpp: a change to either rebuilds.
-readonly PIN="$IMGUI_TAG $DEAR_BINDINGS_TAG $(sha256 "$HERE/host.cpp")"
+# The pin covers the downloads and the host's sources: a change to any rebuilds.
+readonly PIN="$IMGUI_TAG $DEAR_BINDINGS_TAG $(sha256 "$HERE/host.cpp") $(sha256 "$HERE/host_macos.m")"
 if [ -f "$ARCHIVE" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$PIN" ]; then
   exit 0
 fi
@@ -97,6 +97,10 @@ for src in \
     -I"$IMGUI_DIR" -I"$IMGUI_DIR/backends" $(pkg-config --cflags sdl3) \
     -c "$src" -o "$OBJ/$(basename "${src%.*}").o" &
 done
+# The macOS half (host_macos.m has why); -fmodules records AppKit and libobjc in the object.
+if [ "$(uname -s)" = Darwin ]; then
+  "$CC" -O2 -fobjc-arc -fmodules -c "$HERE/host_macos.m" -o "$OBJ/host_macos.o" &
+fi
 wait_all() {
   local failed=0
   for job in $(jobs -p); do wait "$job" || failed=1; done

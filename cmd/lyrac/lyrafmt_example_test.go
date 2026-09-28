@@ -513,3 +513,24 @@ func TestExample_LyrafmtBreaksAfterArrow(t *testing.T) {
 		})
 	}
 }
+
+// **Each attribute in a list is a line of its own** (09/27). An `attribute_list` holds every
+// attribute above a declaration, and its children were owned by the list, so the second
+// `@link` above a `module` — and the second of any two on an `extern` — was indented as a
+// continuation of the first. Found formatting `bindings.imgui`, the first module to link
+// two libraries.
+func TestExample_LyrafmtAttributesStayFlush(t *testing.T) {
+	bin := buildLyrafmt(t)
+	src := "@link(\"a\")\n@link(\"b\", pkg: \"b\")\nmodule m\n\n@symbol(\"x\")\n@link(\"c\")\nunsafe extern f: () -> void\n"
+	path := filepath.Join(t.TempDir(), "in.lyra")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := exec.Command(bin, path).Output()
+	if err != nil {
+		t.Fatalf("formatting: %v", err)
+	}
+	if string(got) != src {
+		t.Errorf("formatted:\n%s\nwant it unchanged:\n%s", got, src)
+	}
+}

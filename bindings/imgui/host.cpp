@@ -32,6 +32,11 @@ enum {
     LYRA_IMGUI_VIEWPORTS = 1 << 1,
 };
 
+#if defined(__APPLE__)
+// host_macos.m: lets a borderless (torn-off) window straddle two displays.
+extern "C" void lyra_imgui_macos_allow_straddling(void);
+#endif
+
 extern "C" {
 
 // Open the main window and set ImGui up in it. NULL on failure; SDL_GetError says why.
@@ -39,6 +44,9 @@ extern "C" {
 LyraImGuiHost* lyra_imgui_host_create(const char* title, int32_t width, int32_t height, uint32_t flags) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
         return nullptr;
+#if defined(__APPLE__)
+    lyra_imgui_macos_allow_straddling();
+#endif
 
     float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     if (scale <= 0.0f)

@@ -13,3 +13,7 @@ cover.out
 # They are build artifacts of a measurement, not of the project.
 *.test
 *.out
+
+# Dear ImGui saves its window layout beside whatever ran it (examples/imgui). Where the
+# layout lives is the host's to choose eventually; until then, never a source file.
+imgui.ini
