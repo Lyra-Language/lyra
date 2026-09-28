@@ -811,11 +811,17 @@ emittable constants.
 - **[DONE 09/23] Overlapping impls are ranked.** A more specific target wins by
   subsumption; incomparable targets stay ambiguous and ranking never reaches across traits.
   Identical targets are still `lyra-E037`. (COMPLETED.md, 09/23.)
-- **[OPEN] An `impl` reaches a public trait its file never imported.** `impl Bus for
-  TestBus` compiles with `Bus` unimported (Sheliak's cputest.lyra, 09/28), so importing it
-  earns `lyra-W004` — against the rule that an import is what makes a module reachable.
-  Resolve the impl head as a written type name is; a private trait's refusal also says
-  "unknown trait" rather than naming the privacy.
+- **[DONE 09/28] A written trait name needs its import.** Impl heads, bounds, supertraits
+  and `Trait::method` resolved an unimported public trait, and W004 counted none of them as
+  a use; a private trait now says E028. (COMPLETED.md, 09/28.)
+- **[OPEN] `Result<void, E>` is writable but has no `Ok`.** `Ok(())` is a tuple, `()` is
+  not a type, and `Ok()` misparses ("missing true"); std returns `bool` instead
+  (`write_file`), and Sheliak's interrupttest declares `data Checked = Checked`. Decide a
+  unit value or let `Ok()` build `Result<void, _>`.
+- **[OPEN] `lyra-W018` advises `pure` on a trait from one stub impl.** A test bus's
+  `interrupt_level = (self) => 0` draws "declare the bound on the trait" for Sheliak's
+  `Bus`, whose real implementations have effects (the acknowledge clears a pending
+  interrupt). A `mut Self` method's trait is the wrong place to suggest a bound.
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened
   `Ordering`; deferred until something needs it. A bit-pattern `total_cmp` for sorting
   floats is also unbuilt (`sort_by` with a comparator works meanwhile).

@@ -241,6 +241,18 @@ func collectRefsByFile(
 				types.CollectTypeNames(t, refs)
 			}
 		}
+		// A trait is written where a bound, a supertrait or an impl head names it — none
+		// of them a type or an identifier, so neither test above saw them, and an import
+		// the program needs for `impl Bus for TestBus` was reported unused. Invisible until
+		// 09/28, when that impl stopped compiling without the import (the gate had let a
+		// written trait name resolve unimported).
+		noteBounds := func(params []ast.GenericParam) {
+			for _, p := range params {
+				for _, bound := range p.Constraints {
+					refs[bound] = true
+				}
+			}
+		}
 		noteSignature := func(sig *types.LambdaType) {
 			if sig == nil {
 				return
@@ -257,6 +269,15 @@ func collectRefsByFile(
 			switch st := s.(type) {
 			case *ast.VarDeclStmt:
 				noteType(st.Type)
+				noteBounds(st.GenericParams)
+			case *ast.TraitImplStmt:
+				refs[st.TraitName] = true
+				noteBounds(st.GenericParams)
+				for _, c := range st.Constraints {
+					for _, bound := range c.TraitBounds {
+						refs[bound] = true
+					}
+				}
 			case *ast.ExternDeclStmt:
 				// An extern's signature is a `*types.LambdaType` on the declaration,
 				// not a LambdaExpr in the tree, so the expression walk below never
@@ -274,7 +295,12 @@ func collectRefsByFile(
 				for _, m := range st.Methods {
 					noteSignature(m.Signature)
 				}
+				for _, bound := range st.Bounds {
+					refs[bound] = true
+				}
+				noteBounds(st.GenericParams)
 			case *ast.TypeDeclStmt:
+				noteBounds(st.GenericParams)
 				// A declaration's *members* are what mention other types;
 				// CollectTypeNames stops at a nominal head, which is right for a use
 				// (`Pair` mentions `Pair`) and wrong here, where the head is the thing
@@ -310,11 +336,19 @@ func collectRefsByFile(
 				}
 			case *ast.StructInstanceExpr:
 				refs[ex.Name] = true
+			case *ast.TraitMethodPathExpr:
+				refs[ex.TraitName] = true
 			case *ast.LambdaExpr:
 				for _, p := range ex.Parameters {
 					noteType(p.Type)
 				}
 				noteType(ex.ReturnType.Type)
+				noteBounds(ex.GenericParams)
+				for _, bounds := range ex.GenericBounds {
+					for _, bound := range bounds {
+						refs[bound] = true
+					}
+				}
 			}
 			return true
 		})

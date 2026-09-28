@@ -185,11 +185,23 @@ func (tc *TypeChecker) checkWrittenTypeNames() {
 		// Exported by somebody: this is the import case. A name nobody exports is either
 		// private to another module (reportPrivateType's message) or a typo, and both of
 		// those are reported where the reference is resolved.
-		if _, exported := tc.symTable.LookupTypeFrom(ref.Name, ref.Loc); !exported {
+		//
+		// **A trait is asked about too.** Its written names — an impl head, a bound, a
+		// supertrait, `Trait::method` — are recorded alongside types', but only the type
+		// lookup was asked here, so every one of them resolved through the program-wide
+		// rung unimported (09/28: Sheliak's `impl Bus for TestBus` compiled with `Bus`
+		// never imported, and importing it drew lyra-W004).
+		_, isType := tc.symTable.LookupTypeFrom(ref.Name, ref.Loc)
+		_, isTrait := tc.symTable.LookupTraitFrom(ref.Name, ref.Loc)
+		if !isType && !isTrait {
 			continue
 		}
-		tc.addError(ref.Loc, SeverityError, "unknown type %q%s",
-			ref.Name, tc.unimportedHint(ref.Name, ref.Loc))
+		kind := "type"
+		if isTrait && !isType {
+			kind = "trait"
+		}
+		tc.addError(ref.Loc, SeverityError, "unknown %s %q%s",
+			kind, ref.Name, tc.unimportedHint(ref.Name, ref.Loc))
 	}
 }
 

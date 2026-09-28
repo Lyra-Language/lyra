@@ -10,6 +10,9 @@ import (
 func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 	trait, ok := tc.symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation())
 	if !ok {
+		if tc.reportPrivateType(impl.TraitName, impl.GetLocation()) {
+			return
+		}
 		tc.addError(impl.GetLocation(), SeverityError,
 			"impl: unknown trait %q", impl.TraitName)
 		return

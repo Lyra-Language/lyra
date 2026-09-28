@@ -673,6 +673,9 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 func (tc *TypeChecker) inferTraitMethodPathCall(path *ast.TraitMethodPathExpr, call *ast.FunctionCallExpr) types.Type {
 	trait, ok := tc.symTable.LookupTraitFrom(path.TraitName, path.GetLocation())
 	if !ok {
+		if tc.reportPrivateType(path.TraitName, call.GetLocation()) {
+			return nil
+		}
 		tc.addError(call.GetLocation(), SeverityError, "unknown trait %q", path.TraitName)
 		return nil
 	}

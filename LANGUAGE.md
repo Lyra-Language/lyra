@@ -566,10 +566,11 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 
 ### Imports
 
-- `import lib.{ listed }` admits `listed` only — no other exports, no types.
+- `import lib.{ listed }` admits `listed` only — no other exports, no types, no traits.
 - `import lib` binds `lib.x` and no bare names. An alias binds only its local name.
 - Resolution: **own scope → imports → prelude**. Using an export you didn't import names the fix (`add import lib.{ … }`), distinct from a missing `pub`.
 - **Every position that writes a type's name takes the rule**: parameter, return type, local annotation, struct field, `type` alias. It is one pass over the written occurrences (`TypeRefs`), not a check inside a resolver — until 09/22 it was the latter, and the first two were refused while the last three were not. A type a value merely *carries* across the boundary is untouched: `m.col` on a value from a constructor payload writes no name, so there is nothing to refuse.
+- **So does every position that writes a trait's name**: an impl head (`impl Bus for TestBus`), a `where` bound, a supertrait list, a `Trait::method` path. Each needs the trait imported, and each counts as a use of the import (no `lyra-W004`); implementing another module's private trait is `lyra-E028`. A trait reached only by dispatch (`x.area()`, an operator) writes no name and needs only its module loaded. Until 09/28 all four positions resolved an unimported public trait.
 
 ### Shadowing
 

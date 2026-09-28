@@ -64,9 +64,10 @@ Each of these produces something that looks like it works. Other docs cite them 
    one predicate so passes cannot drift.
    - All three maps are keyed `<module>::<name>` (`DeclKey`; entry module is `::name`).
      `declKey(name, loc)` resolves: the asking module's own, an import (aliases followed), the
-     prelude's export, then any program-wide export. A *written* unimported type name is
-     refused via `ResolvedReachably` + TypeRefs. Unresolvable names pass through unchanged
-     (the backend's `Maybe$i64` relies on it).
+     prelude's export, then any program-wide export. A *written* unimported type **or trait**
+     name is refused via `ResolvedReachably` + TypeRefs (`checkWrittenTypeNames` asks both
+     lookups; every written trait position records into TypeRefs). Unresolvable names pass
+     through unchanged (the backend's `Maybe$i64` relies on it).
    - Prefer `LookupTypeFrom`/`LookupTraitFrom`/`LookupFunctionFrom(name, loc)`. Bare
      `LookupType(name)` answers the program-wide meaning and is wrong inside a module that
      declares its own.

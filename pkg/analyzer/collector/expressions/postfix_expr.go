@@ -126,6 +126,9 @@ func collectTraitMethodPathExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc a
 			Method:   ast.IdentifierExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}}},
 		}
 	}
+	// Recorded as the impl head and a bound are: a written trait name, which the import
+	// gate (checkWrittenTypeNames) and the editor's position lookups both read.
+	ctx.RecordTypeRef(ctx.NodeText(traitNameNode), ctx.NodeLocation(traitNameNode))
 	return &ast.TraitMethodPathExpr{
 		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		TraitName: ctx.NodeText(traitNameNode),

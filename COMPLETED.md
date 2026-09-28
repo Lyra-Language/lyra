@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — a written trait name needs its import
+
+Sheliak's `impl Bus for TestBus` compiled with `Bus` never imported, and listing it drew
+`lyra-W004`. All four positions that write a trait's name leaked the same way — an impl
+head, a `where` bound, a supertrait, a `Trait::method` path — because `declKey`'s last rung
+resolves any program-wide export (deliberately, for types a *value* carries), and the gate
+meant to stop a *written* name, `checkWrittenTypeNames`, asked only `LookupTypeFrom`. The
+names were already recorded in `TypeRefs` (bar the `Trait::method` path, recorded now), so
+the fix is the gate asking `LookupTraitFrom` too and saying "unknown trait", with the
+import to add. W004's reference walk learned the same four positions, so the now-required
+import is not reported unused; implementing another module's private trait says
+`lyra-E028` rather than "unknown trait". Only Sheliak's three test runners relied on the
+leak across every program in the workspace. `pkg/driver/written_trait_import_test.go`
+covers each position both ways; seven of its eight cases fail without the fix.
+
 ### 09/28/26 — a compound assignment's right side takes `&`, `|` and `~`
 
 `result += ((0x9F - result) >> 4) & 0x60`, Sheliak's BCD correction, was refused as
