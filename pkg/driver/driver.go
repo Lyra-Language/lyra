@@ -290,6 +290,11 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// before them, rather than left to the backend check that still backs it up.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckLetElseDiverges(program, tt)...)
 
+	// A function with a by-reference parameter used as a value (lyra-E082). After
+	// typechecking because a referenced function's parameter modes come from its recorded
+	// type; before the backend, which could not honour them through an indirect call.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckByRefFunctionValues(program, tt)...)
+
 	// A `@must_release` resource dropped without its release call (lyra-W022). After
 	// typechecking for the same reason use-after-move is: the binding's *settled* type
 	// is what says whether it carries an obligation, and the callee resolution it uses

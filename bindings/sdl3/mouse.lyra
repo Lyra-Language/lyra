@@ -42,19 +42,19 @@ pub struct Cursor {
 unsafe extern sdl_get_mouse_state: (x: ^mut f32, y: ^mut f32) -> u32
 
 @symbol("SDL_ShowCursor")
-unsafe extern sdl_show_cursor: () -> u8
+unsafe extern sdl_show_cursor: () -> bool
 
 @symbol("SDL_HideCursor")
-unsafe extern sdl_hide_cursor: () -> u8
+unsafe extern sdl_hide_cursor: () -> bool
 
 @symbol("SDL_CursorVisible")
-unsafe extern sdl_cursor_visible: () -> u8
+unsafe extern sdl_cursor_visible: () -> bool
 
 @symbol("SDL_CreateSystemCursor")
 unsafe extern sdl_create_system_cursor: (id: i32) -> ^u8
 
 @symbol("SDL_SetCursor")
-unsafe extern sdl_set_cursor: (cursor: ^u8) -> u8
+unsafe extern sdl_set_cursor: (cursor: ^u8) -> bool
 
 @symbol("SDL_DestroyCursor")
 unsafe extern sdl_destroy_cursor: (cursor: ^u8) -> void
@@ -75,11 +75,11 @@ pub let button_held = pure (state: MouseState, button: u8) -> bool =>
 /// Show or hide the system cursor over the window — hidden while a program draws its own.
 pub let show_cursor = (visible: bool) -> bool => {
   let done = if visible { unsafe { sdl_show_cursor() } } else { unsafe { sdl_hide_cursor() } }
-  done != 0
+  done
 }
 
 /// Whether the system cursor is showing.
-pub let cursor_visible = () -> bool => unsafe { sdl_cursor_visible() } != 0
+pub let cursor_visible = () -> bool => unsafe { sdl_cursor_visible() }
 
 /// One of the platform's own cursor shapes (a `CURSOR_*`), or `None` if it has none.
 pub let system_cursor = (shape: i32) -> Maybe<Cursor> => {
@@ -90,7 +90,7 @@ pub let system_cursor = (shape: i32) -> Maybe<Cursor> => {
 /// Make `cursor` the one shown. It must outlive its use: destroy it only after another
 /// cursor is set.
 pub let set_cursor = (cursor: Cursor) -> bool =>
-  unsafe { sdl_set_cursor(cursor.handle) } != 0
+  unsafe { sdl_set_cursor(cursor.handle) }
 
 /// Free a cursor.
 pub let destroy_cursor = (cursor: Cursor) -> void =>

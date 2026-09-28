@@ -731,11 +731,7 @@ let render_enum = (out: mut []string, e: JsonValue) -> void => {
 
 /// `ImGuiWindowFlags_NoTitleBar` → `WINDOW_FLAGS_NO_TITLE_BAR`, `ImGuiKey_A` → `KEY_A`.
 let constant_name = pure (c_name: string) -> string =>
-  upper(drop_im(c_name).split("_").map((part) => snake(part)).join("_"))
-
-/// ASCII upper case (the prelude has it for a `rune` only).
-let upper = pure (s: string) -> string =>
-  s.to_runes().map((r) => "${r.to_ascii_upper()}").join("")
+  drop_im(c_name).split("_").map((part) => snake(part)).join("_").to_ascii_upper()
 
 let render_wrapper = (out: mut []string, f: Function) -> void => {
   let doc = if f.comment == "" { "`${f.cpp_name}`." } else { "`${f.cpp_name}` — ${f.comment}" }

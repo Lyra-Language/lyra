@@ -155,6 +155,33 @@ func TestTypeCheck_TypeConversion_LargeButRepresentableFloatIsFine(t *testing.T)
 	assertNoErrors(t, res)
 }
 
+// The bound is what *rounding* gives, not the largest finite value: `3.4028235e38`, the
+// usual spelling of FLT_MAX, is a hair above the exact maximum and rounds down to it, so it
+// is accepted — in a conversion and in an annotated binding alike — while the next digit up
+// really does round to infinity (09/28).
+func TestTypeCheck_TypeConversion_FloatMaxSpellingRoundsDownToIt(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let a: f32 = f32(3.4028235e38)
+let b: f32 = -3.4028235e38
+`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_TypeConversion_JustPastFloatMaxIsInfinity(t *testing.T) {
+	res := parseCollectAndCheck(t, `let y: f32 = f32(3.4028236e38)`, false)
+	assertErrorsAre(t, res,
+		"cannot convert 3.4028236e+38 to f32: literal value is out of range and would become infinity")
+}
+
+// A half rounds below the midpoint 65520 down to 65504, and the midpoint itself ties to
+// infinity (65504's significand is odd).
+func TestTypeCheck_TypeConversion_F16BoundaryIsTheRoundingMidpoint(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `let y: f16 = f16(65519.0)`, false))
+	res := parseCollectAndCheck(t, `let y: f16 = f16(65520.0)`, false)
+	assertErrorsAre(t, res,
+		"cannot convert 65520 to f16: literal value is out of range and would become infinity")
+}
+
 // --- float widening (lossless, allowed) ---
 
 func TestTypeCheck_TypeConversion_F32ToF64(t *testing.T) {

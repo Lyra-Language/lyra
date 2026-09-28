@@ -43,10 +43,10 @@ unsafe extern sdl_open_audio_device_stream: (
 ) -> ^u8
 
 @symbol("SDL_ResumeAudioStreamDevice")
-unsafe extern sdl_resume_audio_stream_device: (stream: ^u8) -> u8
+unsafe extern sdl_resume_audio_stream_device: (stream: ^u8) -> bool
 
 @symbol("SDL_PutAudioStreamData")
-unsafe extern sdl_put_audio_stream_data: (stream: ^u8, buf: ^f32, len: i32) -> u8
+unsafe extern sdl_put_audio_stream_data: (stream: ^u8, buf: ^f32, len: i32) -> bool
 
 @symbol("SDL_GetAudioStreamQueued")
 unsafe extern sdl_get_audio_stream_queued: (stream: ^u8) -> i32
@@ -87,7 +87,7 @@ pub let put_audio = (stream: AudioStream, samples: []f32) -> bool => {
     true
   } else {
     let bytes = i32(samples.len() * 4)
-    unsafe { sdl_put_audio_stream_data(stream.handle, samples.data(), bytes) } != 0
+    unsafe { sdl_put_audio_stream_data(stream.handle, samples.data(), bytes) }
   }
 }
 

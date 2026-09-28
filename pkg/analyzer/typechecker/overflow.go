@@ -266,18 +266,25 @@ func floatLiteralValue(expr ast.Expression) (float64, bool) {
 	return 0, false
 }
 
-// floatFitsInType reports whether a value is within the finite range of a float type —
-// its *magnitude*, since what makes a narrowing surprising is overflowing to infinity
-// rather than losing digits. Answers true for anything that is not a narrower float, so
-// callers may ask unconditionally.
+// floatFitsInType reports whether a value narrows to a *finite* value of a float type,
+// since what makes a narrowing surprising is overflowing to infinity rather than losing
+// digits. Answers true for anything that is not a narrower float, so callers may ask
+// unconditionally.
+//
+// **What rounding gives, not a comparison with the largest finite value.** A value a little
+// above it rounds *down* to it: `3.4028235e38`, the usual spelling of FLT_MAX, is under
+// half an ulp above the exact maximum and narrows to it, and was refused as "it would
+// become infinity" while C accepts it (09/28). For f32 Go's own conversion is the IEEE
+// round-to-nearest-even narrowing; Go has no half, so its boundary is written out.
 func floatFitsInType(v float64, name types.PrimitiveTypeName) bool {
-	magnitude := math.Abs(v)
 	switch name {
 	case types.Float16:
-		// The largest finite half is 65504; the next value up rounds to infinity.
-		return magnitude <= 65504
+		// The largest finite half is 65504 and the next step would be 65536, so everything
+		// below the midpoint 65520 rounds down to 65504; 65520 itself ties to even, and
+		// 65504's significand is odd, so it rounds up to infinity.
+		return math.Abs(v) < 65520
 	case types.Float32:
-		return magnitude <= math.MaxFloat32
+		return !math.IsInf(float64(float32(v)), 0)
 	}
 	return true
 }

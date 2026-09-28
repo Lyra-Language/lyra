@@ -465,10 +465,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 09/23] A match arm names alternatives with `|`** (`1 | 2`, `"get" | "post"`),
   over literals and ranges. A binding alternative stays refused, deliberately — see
   LANGUAGE.md § patterns. (COMPLETED.md, 09/23.)
-- **[OPEN] `3.4028235e38` is refused as "overflows f32 — it would become infinity".** It
-  is the usual spelling of `FLT_MAX` and rounds *to* it (it is under half an ulp above);
-  the check compares the exact value to FLT_MAX instead of asking what rounding gives.
-  `3.4028234e38` is accepted and is the same `f32`.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
@@ -491,11 +487,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
   Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.
-- **[OPEN] `to_ascii_upper` on a `string` does not exist**, though LANGUAGE.md § Strings
-  says both case maps work on `rune` and `string`; only `to_ascii_lower` has the string form.
-- **[OPEN] `bindings/sdl3/sdl3.lyra` says Lyra's `bool` is refused at the C boundary**
-  (`lyra-E063`) and converts every predicate from `u8`; FFI.md says `_Bool` is `bool`, and
-  `bindings.imgui` passes `bool`/`^mut bool` directly. The comment, or the rule, is stale.
 - **[OPEN] `bindings.imgui` on Linux is unverified.** `@link` flags are sorted, so `-lSDL3`
   precedes the static `-llyra-imgui`; check the link under `--as-needed`, and that the
   archive needs nothing from libstdc++ there either.
@@ -670,10 +661,9 @@ annotations.
 
 - **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
   returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
-- **[OPEN] A lambda value with a `mut`/`ref` parameter is refused only by the backend.**
-  A function type carries no borrow mode, so `lyrac check` accepts `let f = (k: mut i64) …`
-  used as a value and `build` refuses it. Since `mut` scalars went by reference (09/27) this
-  covers scalars too; carry the mode in `LambdaType` or refuse it in the typechecker.
+- **[IDEA] Borrow modes through function types.** `(mut i64) -> void` is spellable but a
+  call through a function value passes by value, so a by-reference function cannot be a
+  value (`lyra-E082`). Honouring the type's modes at an indirect call would lift it.
 - **[DEFERRED] (c) Exclusivity (`mut` XOR alias)** until the job system or resizable
   interior borrows force it. Leaning toward statement-scoped projections over a static
   container freeze.

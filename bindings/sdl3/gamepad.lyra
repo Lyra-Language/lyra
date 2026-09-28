@@ -42,7 +42,7 @@ unsafe extern sdl_get_gamepad_id: (gamepad: ^u8) -> u32
 unsafe extern sdl_get_gamepad_name: (gamepad: ^u8) -> ^u8
 
 @symbol("SDL_GetGamepadButton")
-unsafe extern sdl_get_gamepad_button: (gamepad: ^u8, button: i32) -> u8
+unsafe extern sdl_get_gamepad_button: (gamepad: ^u8, button: i32) -> bool
 
 @symbol("SDL_GetGamepadAxis")
 unsafe extern sdl_get_gamepad_axis: (gamepad: ^u8, axis: i32) -> i16
@@ -69,7 +69,7 @@ pub let gamepad_name = (gamepad: Gamepad) -> string => {
 
 /// Whether a `BUTTON_*` is held. Current as of the last event-queue drain.
 pub let gamepad_button = (gamepad: Gamepad, button: i32) -> bool =>
-  unsafe { sdl_get_gamepad_button(gamepad.handle, button) } != 0
+  unsafe { sdl_get_gamepad_button(gamepad.handle, button) }
 
 /// An `AXIS_*`'s position, -32768..32767. Sticks rest near, not at, zero — give it a
 /// dead zone.

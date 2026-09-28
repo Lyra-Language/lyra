@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — the rest of the open bugs: a float bound, a string map, SDL3's `bool`, E082
+
+- **`3.4028235e38` is FLT_MAX, not infinity.** The range check compared a literal's magnitude
+  with the largest finite `f32`, so the usual spelling of FLT_MAX — under half an ulp above
+  the exact value, and rounding *down* to it — was refused. The rule is now what rounding
+  gives: `float32(v)` is not infinite (Go's conversion is IEEE round-to-nearest-even), and
+  for `f16`, which Go lacks, the midpoint 65520 written out (it ties to infinity).
+- **`to_ascii_upper` on a `string`** joins the rune version, as LANGUAGE.md had promised.
+- **SDL3's predicates are Lyra `bool`s.** The binding declared every C `bool` return as `u8`
+  and compared with `!= 0`, citing `lyra-E063` — whose scope is a *callback's* signature,
+  where the thunk carries no `zeroext`. `_Bool` crosses as `i1 zeroext` everywhere else, as
+  `bindings.imgui` had shown. Forty-odd externs and wrappers simplified; the NES game and
+  Vega run on it.
+- **A function with a by-reference parameter used as a value is `lyra-E082`.** todo.md had it
+  as a nested lambda refused only at `build`. Fixing that found the worse half: a *named*
+  function with a `mut` parameter passed as an argument type-checked and **segfaulted**, the
+  adapter a named function gets as a value passing the number where the function expected
+  its address — reachable for scalars since `mut` went by reference, for structs before.
+  Both are refused at `check` now; carrying the mode through a function type is the feature
+  that would lift it.
+
 ### 09/28/26 — three front-end bugs Sheliak's 68000 found
 
 The emulator's first thousand lines, written against a trait-bounded `Bus`, walked into

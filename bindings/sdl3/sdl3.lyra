@@ -62,7 +62,7 @@ pub const INIT_GAMEPAD: u32 = 0x00002000
 pub const INIT_EVENTS: u32 = 0x00004000
 
 @symbol("SDL_Init")
-unsafe extern sdl_init: (flags: u32) -> u8
+unsafe extern sdl_init: (flags: u32) -> bool
 
 @symbol("SDL_Quit")
 unsafe extern sdl_quit: () -> void
@@ -72,10 +72,12 @@ unsafe extern sdl_get_error: () -> ^u8
 
 /// Bring up the named subsystems. `false` means SDL refused; [last_error] says why.
 ///
-/// The `u8` an SDL predicate answers is C's `bool`, which is a **byte** — Lyra's is one
-/// bit and is refused at the boundary (lyra-E063) — so every wrapper here converts, and
-/// no caller has to remember that C's truth is a `1`.
-pub let init = (flags: u32) -> bool => unsafe { sdl_init(flags) } != 0
+/// SDL3's predicates answer C's `bool`, and every extern here declares it as Lyra's `bool`:
+/// `_Bool` crosses as `i1 zeroext`, clang's own spelling (pkg/backend/FFI.md), so no wrapper
+/// converts a `1`. Only a `bool` inside a *callback's* signature is refused (lyra-E063). The
+/// binding declared them `u8` and compared with `!= 0` until 09/28, on a reading of that
+/// rule that was never its scope.
+pub let init = (flags: u32) -> bool => unsafe { sdl_init(flags) }
 
 /// Shut SDL down. Safe to call whether or not [init] succeeded.
 pub let quit = () -> void => unsafe { sdl_quit() }

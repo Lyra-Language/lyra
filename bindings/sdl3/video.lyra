@@ -31,7 +31,7 @@ unsafe extern sdl_create_window: (title: ^u8, w: i32, h: i32, flags: u64) -> Win
 unsafe extern sdl_destroy_window: (window: Window) -> void
 
 @symbol("SDL_SetWindowFullscreen")
-unsafe extern sdl_set_window_fullscreen: (window: Window, fullscreen: u8) -> u8
+unsafe extern sdl_set_window_fullscreen: (window: Window, fullscreen: bool) -> bool
 
 /// Open a window, or `None` if SDL could not — [last_error] says why.
 ///
@@ -60,4 +60,4 @@ pub let destroy_window = (window: Window) -> void => unsafe { sdl_destroy_window
 /// Enter or leave fullscreen — SDL's borderless desktop mode, which changes no display
 /// mode and so is cheap to toggle.
 pub let set_fullscreen = (window: Window, on: bool) -> bool =>
-  unsafe { sdl_set_window_fullscreen(window, if on { 1 } else { 0 }) } != 0
+  unsafe { sdl_set_window_fullscreen(window, on) }

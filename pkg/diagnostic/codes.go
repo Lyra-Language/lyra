@@ -989,6 +989,16 @@ const (
 	// `pub var`, `pub const`), since the modifier means the same thing on each.
 	CodePubOnLocalBinding = "lyra-E081"
 
+	// CodeByRefFunctionValue: a function with a by-reference parameter (a `mut`, or a `ref`
+	// on a non-scalar) used as a value — a nested lambda, or a named function referenced
+	// other than as a callee.
+	//
+	// A call through a function value passes every argument by value, so a function compiled
+	// to receive a pointer would read the value as an address. A nested lambda was refused
+	// only by the backend at `build`; a named function passed as an argument compiled and
+	// segfaulted. See checker/byref_function_value.go.
+	CodeByRefFunctionValue = "lyra-E082"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

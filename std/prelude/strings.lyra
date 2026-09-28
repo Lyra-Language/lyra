@@ -229,6 +229,24 @@ pub let to_ascii_upper = pure noalloc (self: rune) -> rune => {
   if self.is_ascii_lower() { rune(i64(self) - 32) } else { self }
 }
 
+/// `self` with every ASCII lowercase letter folded to uppercase, and everything else left
+/// alone — `to_ascii_lower`'s mirror for a string, under the rune version's name for the
+/// same reason that one shares its rune twin's. LANGUAGE.md promised both case maps on both
+/// receivers; only the lower one had its string form until 09/28, when Sheliak's generator
+/// wrote the loop by hand.
+///
+/// ASCII only, allocating, linear — see the string `to_ascii_lower` for all three.
+///
+/// # Examples
+///
+/// ```
+/// let a = "window_flags".to_ascii_upper()   // "WINDOW_FLAGS"
+/// let b = "Ünïcode".to_ascii_upper()        // "ÜNïCODE" — only ASCII letters fold
+/// ```
+pub let to_ascii_upper = pure (self: string) -> string => {
+  self.to_runes().map((r) => r.to_ascii_upper()).join()
+}
+
 /// `self` with leading whitespace removed.
 ///
 /// Whitespace is what `is_ascii_space` accepts. Allocates: a substring is a copy, since a

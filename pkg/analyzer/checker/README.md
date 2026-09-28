@@ -210,6 +210,14 @@ or `mut` miscompiles. Warning, not error (generic `own t`, scalar newtypes).
 Excludes `string` (`types.IsString`), `GenericType`, aggregates. Scoped to
 `LambdaExpr.Parameters`.
 
+## `byref_function_value.go` (`lyra-E082`)
+
+A function with a by-reference parameter (`types.IsByRefParam`) used as a value: a nested
+lambda (anything not a top-level `let`'s value — every one is a closure), or an identifier
+whose recorded type is such a function outside a call's function position. An indirect call
+passes by value, so the backend cannot honour the mode; the named-function case segfaulted.
+Runs after typechecking (it reads recorded `LambdaType`s).
+
 ## `array_repeat_alias.go` (`lyra-W019`)
 
 `CheckArrayRepeatAliasing(program, symTable, tt)`: `[v; n]` whose slots share mutable state.

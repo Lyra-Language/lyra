@@ -137,6 +137,12 @@ func TestExec_RuneCaseConversion(t *testing.T) {
 		// property worth pinning: folding is idempotent, not invertible.
 		{"lower is idempotent", `'A'.to_ascii_lower().to_ascii_lower()`, "a"},
 		{"upper then lower folds", `'a'.to_ascii_upper().to_ascii_lower()`, "a"},
+
+		// The string forms, under the rune versions' names (receiver-keyed overloading).
+		// `to_ascii_upper` on a string was missing until 09/28 though LANGUAGE.md promised
+		// it; only ASCII letters fold, so the Ü survives both ways.
+		{"string lower folds ASCII only", `"HeLLo, ÜX".to_ascii_lower()`, "hello, Üx"},
+		{"string upper folds ASCII only", `"window_flags ü".to_ascii_upper()`, "WINDOW_FLAGS ü"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

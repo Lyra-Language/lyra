@@ -58,19 +58,19 @@ unsafe extern sdl_set_render_logical_presentation: (
   w: i32,
   h: i32,
   mode: i32,
-) -> u8
+) -> bool
 
 @symbol("SDL_SetRenderVSync")
-unsafe extern sdl_set_render_vsync: (renderer: Renderer, vsync: i32) -> u8
+unsafe extern sdl_set_render_vsync: (renderer: Renderer, vsync: i32) -> bool
 
 @symbol("SDL_SetRenderDrawColor")
-unsafe extern sdl_set_draw_color: (renderer: Renderer, r: u8, g: u8, b: u8, a: u8) -> u8
+unsafe extern sdl_set_draw_color: (renderer: Renderer, r: u8, g: u8, b: u8, a: u8) -> bool
 
 @symbol("SDL_RenderClear")
-unsafe extern sdl_render_clear: (renderer: Renderer) -> u8
+unsafe extern sdl_render_clear: (renderer: Renderer) -> bool
 
 @symbol("SDL_RenderPoint")
-unsafe extern sdl_render_point: (renderer: Renderer, x: f32, y: f32) -> u8
+unsafe extern sdl_render_point: (renderer: Renderer, x: f32, y: f32) -> bool
 
 @symbol("SDL_RenderLine")
 unsafe extern sdl_render_line: (
@@ -79,16 +79,21 @@ unsafe extern sdl_render_line: (
   y1: f32,
   x2: f32,
   y2: f32
-) -> u8
+) -> bool
 
 @symbol("SDL_RenderRect")
-unsafe extern sdl_render_rect: (renderer: Renderer, rect: ^Rect) -> u8
+unsafe extern sdl_render_rect: (renderer: Renderer, rect: ^Rect) -> bool
 
 @symbol("SDL_RenderFillRect")
-unsafe extern sdl_render_fill_rect: (renderer: Renderer, rect: ^Rect) -> u8
+unsafe extern sdl_render_fill_rect: (renderer: Renderer, rect: ^Rect) -> bool
 
 @symbol("SDL_RenderDebugText")
-unsafe extern sdl_render_debug_text: (renderer: Renderer, x: f32, y: f32, text: ^u8) -> u8
+unsafe extern sdl_render_debug_text: (
+  renderer: Renderer,
+  x: f32,
+  y: f32,
+  text: ^u8
+) -> bool
 
 @symbol("SDL_RenderCoordinatesFromWindow")
 unsafe extern sdl_render_coordinates_from_window: (
@@ -97,16 +102,16 @@ unsafe extern sdl_render_coordinates_from_window: (
   window_y: f32,
   x: ^mut f32,
   y: ^mut f32,
-) -> u8
+) -> bool
 
 @symbol("SDL_RenderPresent")
-unsafe extern sdl_render_present: (renderer: Renderer) -> u8
+unsafe extern sdl_render_present: (renderer: Renderer) -> bool
 
 @symbol("SDL_RenderReadPixels")
 unsafe extern sdl_render_read_pixels: (renderer: Renderer, rect: ^Rect) -> Surface
 
 @symbol("SDL_SaveBMP")
-unsafe extern sdl_save_bmp: (surface: Surface, file: ^u8) -> u8
+unsafe extern sdl_save_bmp: (surface: Surface, file: ^u8) -> bool
 
 @symbol("SDL_DestroySurface")
 unsafe extern sdl_destroy_surface: (surface: Surface) -> void
@@ -135,47 +140,47 @@ pub let set_logical_presentation = (
   height: i32,
   mode: i32,
 ) -> bool =>
-  unsafe { sdl_set_render_logical_presentation(renderer, width, height, mode) } != 0
+  unsafe { sdl_set_render_logical_presentation(renderer, width, height, mode) }
 
 /// Wait for the display's refresh on [present], which paces a loop at the display's rate
 /// with no timing code at all. `false` turns it off.
 pub let set_vsync = (renderer: Renderer, on: bool) -> bool =>
-  unsafe { sdl_set_render_vsync(renderer, if on { 1 } else { 0 }) } != 0
+  unsafe { sdl_set_render_vsync(renderer, if on { 1 } else { 0 }) }
 
 /// Set the colour subsequent drawing uses.
 pub let set_draw_color = (renderer: Renderer, color: Color) -> bool =>
-  unsafe { sdl_set_draw_color(renderer, color.r, color.g, color.b, color.a) } != 0
+  unsafe { sdl_set_draw_color(renderer, color.r, color.g, color.b, color.a) }
 
 /// Fill the whole target with the current draw colour.
-pub let clear = (renderer: Renderer) -> bool => unsafe { sdl_render_clear(renderer) } != 0
+pub let clear = (renderer: Renderer) -> bool => unsafe { sdl_render_clear(renderer) }
 
 /// Plot one point in the current draw colour.
 pub let draw_point = (renderer: Renderer, x: f32, y: f32) -> bool =>
-  unsafe { sdl_render_point(renderer, x, y) } != 0
+  unsafe { sdl_render_point(renderer, x, y) }
 
 /// Draw a line between two points, both ends included.
 pub let draw_line = (renderer: Renderer, x1: f32, y1: f32, x2: f32, y2: f32) -> bool =>
-  unsafe { sdl_render_line(renderer, x1, y1, x2, y2) } != 0
+  unsafe { sdl_render_line(renderer, x1, y1, x2, y2) }
 
 /// Outline one rectangle, one pixel wide, inside its bounds.
 pub let draw_rect = (renderer: Renderer, rect: Rect) -> bool =>
-  unsafe { sdl_render_rect(renderer, &rect) } != 0
+  unsafe { sdl_render_rect(renderer, &rect) }
 
 /// Fill one rectangle with the current draw colour.
 ///
 /// The rectangle is taken **by reference** here as it is in C — `&rect` at the call is the
 /// address of the caller's own storage, and SDL only reads through it.
 pub let fill_rect = (renderer: Renderer, rect: Rect) -> bool =>
-  unsafe { sdl_render_fill_rect(renderer, &rect) } != 0
+  unsafe { sdl_render_fill_rect(renderer, &rect) }
 
 /// Write `text` with SDL's built-in 8×8 font, top-left corner at (`x`, `y`), in the
 /// current draw colour. It covers ASCII only — anything else draws as a placeholder.
 pub let debug_text = (renderer: Renderer, x: f32, y: f32, text: string) -> bool =>
-  text.with_cstring((t) => unsafe { sdl_render_debug_text(renderer, x, y, t) }) != 0
+  text.with_cstring((t) => unsafe { sdl_render_debug_text(renderer, x, y, t) })
 
 /// Show everything drawn since the last present.
 pub let present = (renderer: Renderer) -> bool =>
-  unsafe { sdl_render_present(renderer) } != 0
+  unsafe { sdl_render_present(renderer) }
 
 /// Write what has been drawn this frame to `path` as a BMP. Call it **before** [present],
 /// which is what hands the frame away.
@@ -187,7 +192,7 @@ pub let save_screenshot = (renderer: Renderer, path: string) -> bool => {
   if surface == nullptr {
     false
   } else {
-    let saved = path.with_cstring((p) => unsafe { sdl_save_bmp(surface, p) }) != 0
+    let saved = path.with_cstring((p) => unsafe { sdl_save_bmp(surface, p) })
     unsafe { sdl_destroy_surface(surface) }
     saved
   }
