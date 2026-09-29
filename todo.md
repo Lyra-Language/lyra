@@ -70,6 +70,9 @@ Package management, versioning and separate compilation are out of scope by deci
   the `if` is exploded rather than the `if` being broken (seen 09/28, Sheliak's arith.lyra).
   A long **array of short literals** explodes one element per line (17 numbers became 19
   lines, 09/28, Sheliak's beam.lyra); filling rows, as a hand-wrapped array keeps, reads better.
+  A **record-update literal** over budget explodes after the base's `|` but keeps the first
+  field on the base's line — `Z80Cpu {⏎ new_z80() | pc: 0x1000,⏎ sp: …` (09/28, Sheliak's
+  z80scenarios.lyra); the base belongs on a line of its own, or the fields together.
 
 - **[PARTIAL] The collector in Lyra — the bootstrap proper.** The Go collector is ~7.8k
   lines over a ~5.6k-line AST, so this is sliced rather than attempted.

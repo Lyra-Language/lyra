@@ -72,7 +72,7 @@ func CheckPurity(program *ast.Program, symTable *symbols.SymbolTable, scopeTable
 	// is the shared pinned static (closures.go's emptyEnv) and stays free.
 	alloc := buildAllocContext(program, typeTable, caps)
 	inf := newInference(signatures, methodTable, boundGroups,
-		collectDeclaredMethodBounds(program, symTable), frames, alloc)
+		collectDeclaredMethodBounds(program, symTable), frames, alloc, symTable)
 	inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, inf)
 	c := &purityChecker{
 		inference: inf,
@@ -225,6 +225,7 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 		nil, // and so no declared trait bounds either, for the same reason
 		frames,
 		buildAllocContext(program, nil, nil),
+		nil, // and no module-aware lookup: the top-level frame answers, by bare name
 	)
 	inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, inf)
 	result := make(map[string]Effect, len(base[0].functions))
@@ -309,6 +310,39 @@ func resolveCallee(capture []scopeBindings, name string) (*ast.LambdaExpr, bool)
 		}
 	}
 	return resolveFunction(capture, member)
+}
+
+// resolveFunctionAt is resolveFunction for a name used at loc: the enclosing functions'
+// frames first, as before, and then the top level **as loc's module sees it** — its own
+// private function before another module's, which the bare-name top-level frame could not
+// tell apart (rule 4; see inference.lookup). Without a symbol table, the top-level frame.
+func (inf *inference) resolveFunctionAt(capture []scopeBindings, name string, loc ast.Location) (*ast.LambdaExpr, bool) {
+	for i := len(capture) - 1; i >= 1; i-- {
+		if lam, ok := capture[i].functions[name]; ok {
+			return lam, true
+		}
+		if _, declared := capture[i].mutable[name]; declared {
+			return nil, false
+		}
+	}
+	if inf != nil && inf.lookup != nil {
+		if fn, ok := inf.lookup.LookupFunctionFrom(name, loc); ok {
+			return fn, true
+		}
+	}
+	if len(capture) == 0 {
+		return nil, false
+	}
+	return resolveFunction(capture[:1], name)
+}
+
+// resolveCalleeAt is resolveCallee with the direct case resolved at loc
+// (resolveFunctionAt); the namespace form keeps its own rule.
+func (inf *inference) resolveCalleeAt(capture []scopeBindings, name string, loc ast.Location) (*ast.LambdaExpr, bool) {
+	if !strings.Contains(name, ".") {
+		return inf.resolveFunctionAt(capture, name, loc)
+	}
+	return resolveCallee(capture, name)
 }
 
 // resolveFunction resolves name to the function literal it is bound to,
@@ -553,6 +587,12 @@ type inference struct {
 	// allocSites is where the inference records *which* expression allocated, so lyra-E016
 	// can point at it instead of listing every allocating form in the language.
 	allocSites *allocContext
+	// lookup resolves a top-level function name **as the calling module sees it**
+	// (resolveFunctionAt) — rule 4: the capture stack's top-level frame is keyed by bare
+	// name over the merged program, so two modules' private functions of one name were one
+	// entry, the last written, and a `pure` function calling its own module's `alu` was
+	// charged another module's impure one. Nil (InferredEffects) falls back to that frame.
+	lookup *symbols.SymbolTable
 }
 
 // newInference builds the fixpoint's state with its four tables empty. They are filled in
@@ -565,6 +605,7 @@ func newInference(
 	guaranteed map[*ast.TraitMethodImpl]Effect,
 	frames *scopeFrames,
 	alloc *allocContext,
+	lookup *symbols.SymbolTable,
 ) *inference {
 	return &inference{
 		impureLambdas:   map[*ast.LambdaExpr]Effect{},
@@ -577,6 +618,7 @@ func newInference(
 		guaranteed:      guaranteed,
 		frames:          frames,
 		allocSites:      alloc,
+		lookup:          lookup,
 	}
 }
 
@@ -638,11 +680,11 @@ func describeAllocation(ex ast.Expression) string {
 // alone would be scored against whichever member the capture frame happened to hold, so
 // a `pure` function could call an impure overload with nothing reported, and a declared
 // callback bound would be checked against the wrong member's parameter list.
-func calleeFor(tt *typetable.TypeTable, call *ast.FunctionCallExpr, capture []scopeBindings, name string) (*ast.LambdaExpr, bool) {
+func (inf *inference) calleeFor(tt *typetable.TypeTable, call *ast.FunctionCallExpr, capture []scopeBindings, name string) (*ast.LambdaExpr, bool) {
 	if fn, ok := tt.Callee(call); ok {
 		return fn, true
 	}
-	return resolveCallee(capture, name)
+	return inf.resolveCalleeAt(capture, name, call.GetLocation())
 }
 
 // exprVisitor is the orchestration walk: it finds every callable in the program and
@@ -736,7 +778,7 @@ func (c *purityChecker) reportPureMethod(m *ast.TraitMethodImpl, base []scopeBin
 // which is also why assignability deliberately lets the two types through (see
 // isAssignable) instead of reporting a shape mismatch that explains nothing.
 func (c *purityChecker) checkDeclaredCallbackBounds(capture []scopeBindings, enclosing *ast.LambdaExpr, call *ast.FunctionCallExpr, name string) {
-	callee, ok := calleeFor(c.typeTable, call, capture, name)
+	callee, ok := c.calleeFor(c.typeTable, call, capture, name)
 	if !ok {
 		return
 	}
@@ -812,7 +854,7 @@ func (c *purityChecker) suppliedEffect(arg ast.Expression, capture []scopeBindin
 		}
 		return c.impureLambdas[a], true
 	case *ast.IdentifierExpr:
-		if lam, ok := resolveCallee(capture, a.Name); ok {
+		if lam, ok := c.resolveCalleeAt(capture, a.Name, a.GetLocation()); ok {
 			if len(c.callbacks[lam]) > 0 {
 				return 0, false
 			}
@@ -2057,7 +2099,7 @@ func argumentEffect(
 			}
 			return EffectNone
 		}
-		if lam, ok := resolveFunction(capture, a.Name); ok {
+		if lam, ok := inf.resolveFunctionAt(capture, a.Name, a.GetLocation()); ok {
 			return inf.impureLambdas[lam] | unknownCallbackEffect(inf.callbacks[lam])
 		}
 	}
@@ -2475,7 +2517,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				// body-declared `let f = …` shadowing a parameter named `f` resolve to
 				// the declaration (both live in this frame, and resolveFunction consults
 				// .functions before .mutable).
-				if target, ok := calleeFor(inf.allocSites.table(), ex, c.capture, name); ok {
+				if target, ok := inf.calleeFor(inf.allocSites.table(), ex, c.capture, name); ok {
 					// The callee's *base* effect plus whatever this site supplies for its
 					// callback parameters.
 					eff := callEffect(target, ex, c.capture, inf, c.params, foundCallbacks)

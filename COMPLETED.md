@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — the purity pass resolves a callee in the calling module
+
+The purity pass took a call's callee from the typechecker when it had recorded one (only an
+overloaded call) and otherwise looked the name up through its capture stack, whose
+top-level frame is `topLevelFunctions(program)` — a bare-name map over the merged program,
+last writer wins (rule 4). Two modules' private functions of one name were one entry.
+Sheliak found it: its 68000 core's `pure` helpers call their own module's `pure alu`, and
+the day its Z80 core — with a private, impure `alu` — joined the build they were refused
+with lyra-E007. The same collision the other way round was a soundness hole: a `pure`
+function calling its own impure `alu` passed whenever the other module's pure one was kept.
+
+The inference now carries the SymbolTable and resolves a name that reaches the top level
+with `LookupFunctionFrom` at the use's location — the use-after-move pass's order: the
+enclosing functions' frames first, then the module-aware table, then (with no table, as in
+`InferredEffects`) the old frame. Both call sites and both callback-argument sites use it.
+Test: `pkg/driver/purity_callee_module_test.go`; its first case fails without the change.
+
 ### 09/28/26 — a resource pushed into an array is handed on (`lyra-W022`)
 
 Sheliak's front end keeps its open gamepads in a `[]Gamepad` and closes each when it is
