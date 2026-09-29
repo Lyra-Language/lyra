@@ -565,6 +565,19 @@ func (c *mustRelease) call(st heldState, e *ast.FunctionCallExpr) heldState {
 			st = c.expr(st, recv)
 		}
 	}
+	// **Pushed into an array, a resource is stored somewhere this pass cannot follow** —
+	// an escape, as the ownership pass counts `push` a transfer (calleeIsTransferringBuiltin)
+	// without writing `own` on it. The array's holder answers for it from here, unseen.
+	if isPushCall(e) {
+		for _, arg := range e.Arguments {
+			if name, ok := bareName(arg); ok {
+				delete(st, name)
+				continue
+			}
+			st = c.expr(st, arg)
+		}
+		return st
+	}
 	for i, arg := range e.Arguments {
 		// A bare name goes to `discharge` and **not** through c.expr: this is the
 		// one position that can leave an obligation in place, so routing it through
@@ -583,6 +596,13 @@ func (c *mustRelease) call(st heldState, e *ast.FunctionCallExpr) heldState {
 		st = c.expr(st, arg)
 	}
 	return st
+}
+
+// isPushCall reports whether e is the builtin `xs.push(v)`: a `.push` call that resolves
+// to no declared function.
+func isPushCall(e *ast.FunctionCallExpr) bool {
+	member, ok := e.Function.(*ast.MemberExpr)
+	return ok && member.Property.Name == "push"
 }
 
 // discharge removes a binding from the held set when this argument position either

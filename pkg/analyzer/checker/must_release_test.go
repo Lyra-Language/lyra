@@ -113,6 +113,18 @@ let main = () -> void => {
 `)
 }
 
+func TestMustRelease_PushingIntoAnArrayHandsTheObligationOn(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  var held: []Sound = []
+  let s = load_sound(1)
+  held.push(s)
+  if let Some(t) = try_load(2) { held.push(t) }
+  for x in held { unload_sound(x) }
+}
+`)
+}
+
 func TestMustRelease_ReturningItHandsTheObligationToTheCaller(t *testing.T) {
 	assertClean(t, `
 let make = () -> Sound => {

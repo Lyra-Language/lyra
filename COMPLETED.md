@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 09/28/26 — a resource pushed into an array is handed on (`lyra-W022`)
+
+Sheliak's front end keeps its open gamepads in a `[]Gamepad` and closes each when it is
+unplugged or the window closes; `pads.push(pad)` drew `lyra-W022` for `pad` all the same.
+The must-release pass walks a bare call argument as a borrow unless the parameter is `own`,
+and the builtin `push` declares no parameters — while the ownership pass has always counted
+`push` a transfer (`calleeIsTransferringBuiltin`, which deliberately does not write `own` on
+it, so as not to engage use-after-move). `push` is now an escape here too, which is what
+LANGUAGE.md already said of storing a resource where the pass cannot follow it: the array's
+holder answers for it, unseen. Test: `TestMustRelease_PushingIntoAnArrayHandsTheObligationOn`,
+which fails without the change.
+
 ### 09/28/26 — a bound call's effect joins impls of *its* trait, not of a name
 
 The purity pass charges a call through a `where` bound the join of its trait method's
