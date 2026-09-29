@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — `std.rar`: RAR 5, without unRAR
+
+Sheliak wanted `.rar` ROMs; the user chose RAR 5 only (RAR 3's PPMd and filter VM were
+several times the work, for archives most old ROM packs are in). RAR is proprietary: the
+archive layout is RARLAB's technote, but the compression is documented only by code, and
+unRAR's is licensed against use toward a RAR-compatible archiver. So `std/rar.lyra` follows
+libarchive's BSD-licensed RAR 5 reader for *behaviour* — as Sheliak reads BlastEm — and is
+tested on libarchive's archives, including its deliberately malformed ones.
+
+**Finding an oracle took three tries.** Homebrew's 7-Zip lists RAR but is built without its
+RAR decompressor (unRAR's licence again), so it "matched" only stored files; Homebrew's
+`rar` has been disabled since 09/01 (it fails Gatekeeper). macOS's own `tar` is bsdtar —
+libarchive 3.7.4 — and it reads RAR 5: every archive it extracts, `std.rar` extracts
+identically, and where 3.7.4 predates a fix, libarchive 3.8.9's own test says who is right.
+No archive exercised the x86 filter, so `testdata/rar5/make_filters.py` builds one block of
+literals behind each filter kind, and bsdtar decodes them the same.
+
+The one bug the archives found was an alias: `var next = positions` shares the array, so
+filling the symbol list advanced the table it was indexing — right by luck on some archives.
+Lyra's arrays are references by design (LANGUAGE.md); the line now copies with `slice`.
+
 ### 09/29/26 — `std.sevenzip` and LZMA, and the four compiler bugs they found
 
 Sheliak wanted `.7z` ROMs. `std.compress` gained `lzma_decode` and `lzma2_decode` (LZMA

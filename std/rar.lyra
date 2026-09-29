@@ -1,0 +1,747 @@
+module std.rar
+//! RAR 5 archives, read: [open_rar] reads an archive's headers, and [extract_rar] gives one
+//! entry's bytes, decompressed and checked against the CRC-32 the archive records.
+//!
+//! ```
+//! import std.rar.{ open_rar, extract_rar }
+//!
+//! let archive = open_rar(bytes)?
+//! for entry in archive.entries {
+//!   if entry.directory || entry.link { continue }
+//!   let contents = extract_rar(archive, entry)?
+//!   println("${entry.name}: ${contents.len()} bytes")
+//! }
+//! ```
+//!
+//! **RAR 5 only** — the format RAR has written since 5.0 (2013). An archive in the older
+//! format (RAR 1.5 to 4.x) is recognised by its signature and refused by name: its
+//! compression is another algorithm entirely.
+//!
+//! **Written from the format, not from unRAR.** The archive layout is RARLAB's published
+//! RAR 5 technote; the compression, which RARLAB does not document, follows libarchive's
+//! BSD-licensed reader (by Grzegorz Antoniak) for behaviour, and the test archives are
+//! libarchive's. unRAR's own source is licensed on the condition that it not be used toward
+//! a RAR-compatible archiver, a condition this standard library does not carry.
+//!
+//! **The compression** is LZ77 with Huffman-coded blocks: each block may bring new code
+//! tables (literals and lengths, distance slots, distances' low bits, repeat lengths) or
+//! keep the last ones; distances repeat through a cache of the last four; and **filters**
+//! undo transforms the compressor made to code (x86 call and jump targets, ARM branches)
+//! and interleaved data (delta) on the *output*, while matches keep reading the unfiltered
+//! bytes. In a **solid** archive, a file's decoder carries on from the one before it, so
+//! extracting a file decompresses every file before it back to the run's start.
+//!
+//! **What is read**: stored files and every compression level, solid or not, with the
+//! three filters, from an archive of one volume (an SFX's stub is skipped). **Refused by
+//! name**: encryption, multi-volume archives, RAR 7's larger-dictionary algorithm, and a
+//! link's target (links and directories are listed, with no bytes). A file recording only a
+//! BLAKE2 hash, not a CRC-32, is extracted unverified.
+//!
+//! **Not `pure`**: the bit reader and decoder are advanced by helpers through `mut`
+//! parameters, as LZMA's are (see `std.compress`).
+
+import std.compress.{ crc32 }
+
+/// An archive, its headers read.
+pub struct Rar {
+  data: []u8,
+  entries: []RarEntry,
+}
+
+/// One entry in an archive.
+pub struct RarEntry {
+  /// Its path within the archive, `/`-separated.
+  name: string,
+  /// Its size, uncompressed.
+  size: i64,
+  directory: bool,
+  /// A symbolic or hard link, a junction or a copy of another entry: listed, not extracted.
+  link: bool,
+  encrypted: bool,
+  /// The CRC-32 of its bytes, where the archive records one.
+  crc: Maybe<u32>,
+  /// 0 stored, 1–5 compressed; the algorithm's version (0 for RAR 5's); whether it carries
+  /// on from the file before it.
+  method: i64,
+  version: i64,
+  solid: bool,
+  /// Where its packed bytes are.
+  data_offset: i64,
+  packed_size: i64,
+}
+
+/// Whether some bytes begin as a RAR archive does — of either format; [open_rar] reads RAR 5
+/// and says so of the older one.
+pub let is_rar = pure (data: []u8) -> bool =>
+  starts_with_bytes(data, 0, RAR5_SIGNATURE) ||
+  starts_with_bytes(data, 0, RAR4_SIGNATURE)
+
+/// An archive's entries, its headers read and checked.
+pub let open_rar = (data: []u8) -> Result<Rar, string> => {
+  if starts_with_bytes(data, 0, RAR4_SIGNATURE) {
+    return Err("an archive in RAR's older format (RAR 1.5 to 4.x), which is not read; only RAR 5 is")
+  }
+  let Some(start) = find_signature(data) else { return Err("not a RAR archive") }
+  var entries: []RarEntry = []
+  var at = start + RAR5_SIGNATURE.len()
+  for at < data.len() {
+    let header = read_header(data, at)?
+    if header.kind == HEAD_CRYPT { return Err("encrypted (it needs a password), which is not read") }
+    if header.kind == HEAD_END { break }
+    if header.kind == HEAD_MAIN {
+      var c = Cursor { data: data, at: header.fields }
+      let flags = vint(c)?
+      if (flags & 1) != 0 {
+        return Err("one volume of a multi-volume archive, which is not read; join the volumes into one archive")
+      }
+    } else if header.kind == HEAD_FILE {
+      if (header.flags & (SPLIT_BEFORE | SPLIT_AFTER)) != 0 {
+        return Err("a file split across volumes, which is not read")
+      }
+      entries.push(read_file_header(data, header)?)
+    } else if header.kind != HEAD_SERVICE && (header.flags & SKIP_IF_UNKNOWN) == 0 {
+      return Err("a RAR header of an unknown kind (${header.kind})")
+    }
+    at = header.data_end
+  }
+  Ok(Rar { data: data, entries: entries })
+}
+
+/// An entry's bytes: stored, or decompressed — in a solid archive, with every file before it
+/// back to the start of its run — and checked against its CRC-32.
+pub let extract_rar = (archive: ref Rar, entry: ref RarEntry) -> Result<[]u8, string> => {
+  if entry.directory { return Ok([]) }
+  if entry.link { return Err("${entry.name} is a link, which is not extracted") }
+  if entry.encrypted { return Err("${entry.name} is encrypted (it needs a password), which is not read") }
+  if entry.version != 0 {
+    return Err("${entry.name} is compressed with RAR 7's algorithm (version ${entry.version}), which is not read")
+  }
+  let bytes = match unpack_entry(archive, entry) {
+    Ok(unpacked) => unpacked,
+    Err(why) => return Err("${entry.name}: ${why}"),
+  }
+  if bytes.len() != entry.size {
+    return Err("${entry.name} is ${bytes.len()} bytes, not the ${entry.size} its header says")
+  }
+  if let Some(crc) = entry.crc {
+    if crc32(bytes) != crc { return Err("${entry.name} is damaged: its CRC-32 does not match") }
+  }
+  Ok(bytes)
+}
+
+// ── Headers ──────────────────────────────────────────────────────────────────
+
+const RAR5_SIGNATURE: []u8 = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]
+const RAR4_SIGNATURE: []u8 = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]
+
+const HEAD_MAIN: i64 = 1
+const HEAD_FILE: i64 = 2
+const HEAD_SERVICE: i64 = 3
+const HEAD_CRYPT: i64 = 4
+const HEAD_END: i64 = 5
+
+/// A header's flags (the technote's "header flags").
+const HAS_EXTRA: i64 = 0x0001
+const HAS_DATA: i64 = 0x0002
+const SKIP_IF_UNKNOWN: i64 = 0x0004
+const SPLIT_BEFORE: i64 = 0x0008
+const SPLIT_AFTER: i64 = 0x0010
+
+/// A file header's own flags.
+const FILE_DIRECTORY: i64 = 0x0001
+const FILE_TIME: i64 = 0x0002
+const FILE_CRC: i64 = 0x0004
+const FILE_SIZE_UNKNOWN: i64 = 0x0008
+
+/// A file header's extra records that matter here.
+const EXTRA_CRYPT: i64 = 0x01
+const EXTRA_VERSION: i64 = 0x04
+const EXTRA_REDIRECT: i64 = 0x05
+
+/// One header: its kind and flags, where its own fields begin, where its extra area begins
+/// and ends, and where its data area ends (the next header begins).
+struct Header {
+  kind: i64,
+  flags: i64,
+  fields: i64,
+  extra: i64,
+  end: i64,
+  data_end: i64,
+}
+
+/// Where the reading is.
+struct Cursor {
+  data: []u8,
+  at: i64,
+}
+
+/// The RAR 5 signature's offset: at the start, or after an SFX's executable stub.
+let find_signature = pure (data: []u8) -> Maybe<i64> => {
+  let limit = min(data.len(), 0x400000)
+  for at in 0..<limit {
+    if data[at] == 0x52 && starts_with_bytes(data, at, RAR5_SIGNATURE) { return Some(at) }
+  }
+  None
+}
+
+/// The header at `at`, its CRC-32 checked: a CRC, the header's size, then its kind, flags
+/// and — as the flags say — the sizes of its extra and data areas.
+let read_header = (data: []u8, at: i64) -> Result<Header, string> => {
+  if at + 5 > data.len() { return Err("a RAR archive cut off inside a header (a partial download?)") }
+  var c = Cursor { data: data, at: at + 4 }
+  let size = vint(c)?
+  let end = c.at + size
+  if size < 2 || end > data.len() { return Err("a RAR archive cut off inside a header (a partial download?)") }
+  if crc32(data.slice(at + 4, end)) != u32_le(data, at) {
+    return Err("a RAR archive whose headers are damaged")
+  }
+  let kind = vint(c)?
+  let flags = vint(c)?
+  let extra_size = if (flags & HAS_EXTRA) != 0 { vint(c)? } else { 0 }
+  let data_size = if (flags & HAS_DATA) != 0 { vint(c)? } else { 0 }
+  if extra_size > end - c.at || end + data_size > data.len() {
+    return Err("a RAR archive cut off inside a file's data (a partial download?)")
+  }
+  Ok(Header {
+    kind: kind,
+    flags: flags,
+    fields: c.at,
+    extra: end - extra_size,
+    end: end,
+    data_end: end + data_size,
+  })
+}
+
+/// A file header's entry: its flags, sizes, CRC-32, compression and name; and from its extra
+/// area, whether it is encrypted or a link, and a kept older version's number, which names
+/// it `name;N` beside the current `name`, as RAR's own listing and libarchive do.
+let read_file_header = (data: []u8, header: Header) -> Result<RarEntry, string> => {
+  var c = Cursor { data: data, at: header.fields }
+  let file_flags = vint(c)?
+  let size = vint(c)?
+  let _ = vint(c)?
+  if (file_flags & FILE_TIME) != 0 { c.at += 4 }
+  var crc: Maybe<u32> = None
+  if (file_flags & FILE_CRC) != 0 {
+    if c.at + 4 > header.end { return Err("a RAR file header cut off") }
+    crc = Some(u32_le(data, c.at))
+    c.at += 4
+  }
+  let compression = vint(c)?
+  let _ = vint(c)?
+  let name_length = vint(c)?
+  if c.at + name_length > header.extra { return Err("a RAR file header cut off") }
+  var name = data.slice(c.at, c.at + name_length).decode_utf8()
+  if (file_flags & FILE_SIZE_UNKNOWN) != 0 { return Err("${name} has no recorded size, which is not read") }
+  var encrypted = false
+  var link = false
+  var e = Cursor { data: data, at: header.extra }
+  for e.at < header.end {
+    let record_size = vint(e)?
+    let record_end = e.at + record_size
+    let kind = vint(e)?
+    if kind == EXTRA_CRYPT { encrypted = true }
+    if kind == EXTRA_REDIRECT { link = true }
+    if kind == EXTRA_VERSION {
+      let _ = vint(e)?
+      name = "${name};${vint(e)?}"
+    }
+    e.at = record_end
+  }
+  Ok(RarEntry {
+    name: name,
+    size: size,
+    directory: (file_flags & FILE_DIRECTORY) != 0,
+    link: link,
+    encrypted: encrypted,
+    crc: crc,
+    method: (compression >> 7) & 7,
+    version: compression & 0x3F,
+    solid: (compression & 0x40) != 0,
+    data_offset: header.end,
+    packed_size: header.data_end - header.end,
+  })
+}
+
+/// An entry's bytes before its checks: stored bytes as they are; compressed ones decoded
+/// from the start of the entry's solid run, the files before it decoded and dropped.
+let unpack_entry = (archive: ref Rar, entry: ref RarEntry) -> Result<[]u8, string> => {
+  let packed = archive.data.slice(
+    entry.data_offset,
+    entry.data_offset + entry.packed_size
+  )
+  if entry.method == 0 { return Ok(packed) }
+  var own_index: i64 = -1
+  for i, e in archive.entries {
+    if e.data_offset == entry.data_offset { own_index = i }
+  }
+  // The run: back from this entry over compressed files that carry on from the one before.
+  var run_start = own_index
+  if entry.solid {
+    for run_start > 0 {
+      let e = archive.entries[run_start]
+      if e.method != 0 && !e.directory && !e.solid { break }
+      run_start -= 1
+    }
+  }
+  var decoder = new_decoder()
+  var result: []u8 = []
+  for i in run_start..<=own_index {
+    let e = archive.entries[i]
+    if e.directory || e.link || e.method == 0 { continue }
+    if e.encrypted { return Err("it carries on from ${e.name}, which is encrypted") }
+    let own = archive.data.slice(e.data_offset, e.data_offset + e.packed_size)
+    result = unpack_file(decoder, own, e.size)?
+  }
+  Ok(result)
+}
+
+// ── The decoder ──────────────────────────────────────────────────────────────
+
+/// A canonical Huffman code, as the decoder looks codes up: for each length, the first
+/// left-justified 16-bit code longer than it (`limits`) and where its symbols begin in
+/// `symbols`, which lists them shortest code first.
+struct HuffTable {
+  limits: []i64,
+  positions: []i64,
+  symbols: []i64,
+}
+
+/// The decoder's state between blocks and, in a solid run, between files: everything
+/// decoded so far (the matches' window, never wrapped), the code tables, the last four
+/// distances and the last length.
+struct Decoder {
+  window: []u8,
+  have_tables: bool,
+  literals: HuffTable,
+  distances: HuffTable,
+  low_distances: HuffTable,
+  repeats: HuffTable,
+  dist: []i64,
+  last_length: i64,
+}
+
+/// A filter the output needs: its kind (0 delta, 1 x86 E8, 2 x86 E8 and E9, 3 ARM), where it
+/// begins in the file and how long it is, and a delta filter's channels.
+struct Filter {
+  kind: i64,
+  start: i64,
+  length: i64,
+  channels: i64,
+}
+
+/// Bits of one block: the file's packed bytes, where the block's data begins, its size, and
+/// the reading position within it — a byte and a bit, the first bit the byte's highest.
+struct Bits {
+  data: []u8,
+  base: i64,
+  size: i64,
+  byte: i64,
+  bit: i64,
+}
+
+/// Code table sizes: the bit-length code, literals and lengths, distance slots, distances'
+/// low four bits, repeat lengths.
+const TABLE_BITS: i64 = 20
+const TABLE_LITERALS: i64 = 306
+const TABLE_DISTANCES: i64 = 64
+const TABLE_LOW: i64 = 16
+const TABLE_REPEATS: i64 = 44
+
+let new_decoder = pure () -> Decoder => Decoder {
+  window: [],
+  have_tables: false,
+  literals: empty_table(),
+  distances: empty_table(),
+  low_distances: empty_table(),
+  repeats: empty_table(),
+  dist: [0, 0, 0, 0],
+  last_length: 0,
+}
+
+let empty_table = pure () -> HuffTable =>
+  HuffTable { limits: [0; 16], positions: [0; 16], symbols: [] }
+
+/// One file's bytes from its packed data, the decoder carrying on from where it was: blocks
+/// until the last, each perhaps with new tables; then the filters run over what came out.
+let unpack_file = (d: mut Decoder, packed: []u8, size: i64) -> Result<[]u8, string> => {
+  let start = d.window.len()
+  var filters: []Filter = []
+  var at: i64 = 0
+  for {
+    if at + 3 > packed.len() { return Err("its data is cut off inside a block header") }
+    let flags = i64(packed[at])
+    let size_bytes = ((flags >> 3) & 7) + 1
+    if size_bytes > 3 { return Err("a block header of an unknown size") }
+    if at + 2 + size_bytes > packed.len() { return Err("its data is cut off inside a block header") }
+    var block_size: i64 = 0
+    for i in 0..<size_bytes { block_size = block_size | (i64(packed[at + 2 + i]) << (8 * i)) }
+    let check = 0x5A ~ flags ~ (block_size & 0xFF) ~ ((block_size >> 8) & 0xFF) ~ ((block_size >> 16) & 0xFF)
+    if check != i64(packed[at + 1]) { return Err("a block header is damaged") }
+    let base = at + 2 + size_bytes
+    if base + block_size > packed.len() { return Err("its data is cut off inside a block") }
+    var bits = Bits { data: packed, base: base, size: block_size, byte: 0, bit: 0 }
+    if (flags & 0x80) != 0 {
+      read_tables(d, bits)?
+    } else if !d.have_tables {
+      return Err("a block without code tables, and none before it")
+    }
+    decode_block(d, bits, start, size, filters, (flags & 7) + 1)?
+    at = base + block_size
+    if (flags & 0x40) != 0 { break }
+  }
+  if d.window.len() - start != size {
+    return Err("${d.window.len() - start} bytes decoded, not the ${size} its header says")
+  }
+  var out = d.window.slice(start, start + size)
+  for f in filters { run_filter(d.window, start, f, out)? }
+  Ok(out)
+}
+
+/// A block's code tables: the bit-length code's twenty lengths in nibbles (15 then a count
+/// of zeros, or then 0 for a length of 15), then the four tables' 430 lengths through it.
+let read_tables = (d: mut Decoder, b: mut Bits) -> Result<void, string> => {
+  var lengths: []i64 = []
+  var nibble: i64 = 0
+  for lengths.len() < TABLE_BITS {
+    if nibble / 2 >= b.size { return Err("a block's code tables are cut off") }
+    let value = block_nibble(b, nibble)
+    nibble += 1
+    if value == 15 {
+      if nibble / 2 >= b.size { return Err("a block's code tables are cut off") }
+      let zeros = block_nibble(b, nibble)
+      nibble += 1
+      if zeros == 0 {
+        lengths.push(15)
+      } else {
+        for _ in 0..<zeros + 2 {
+          if lengths.len() < TABLE_BITS { lengths.push(0) }
+        }
+      }
+    } else {
+      lengths.push(value)
+    }
+  }
+  b.byte = nibble / 2
+  b.bit = (nibble % 2) * 4
+  let bit_code = huff_table(lengths)?
+  let total = TABLE_LITERALS + TABLE_DISTANCES + TABLE_LOW + TABLE_REPEATS
+  var all: []i64 = []
+  for all.len() < total {
+    let n = decode_symbol(b, bit_code)
+    if n < 16 {
+      all.push(n)
+    } else if n < 18 {
+      if all.len() == 0 { return Err("a code table repeating a length before any") }
+      let repeat = if n == 16 { 3 + next_bits(b, 3) } else { 11 + next_bits(b, 7) }
+      let previous = all[all.len() - 1]
+      for _ in 0..<repeat {
+        if all.len() < total { all.push(previous) }
+      }
+    } else {
+      let zeros = if n == 18 { 3 + next_bits(b, 3) } else { 11 + next_bits(b, 7) }
+      for _ in 0..<zeros {
+        if all.len() < total { all.push(0) }
+      }
+    }
+  }
+  let a = TABLE_LITERALS
+  let c = a + TABLE_DISTANCES
+  let e = c + TABLE_LOW
+  d.literals = huff_table(all.slice(0, a))?
+  d.distances = huff_table(all.slice(a, c))?
+  d.low_distances = huff_table(all.slice(c, e))?
+  d.repeats = huff_table(all.slice(e, total))?
+  d.have_tables = true
+  Ok()
+}
+
+/// The `n`th four-bit group of a block, high nibble first.
+let block_nibble = pure (b: ref Bits, n: i64) -> i64 => {
+  let byte = i64(b.data[b.base + n / 2])
+  if n % 2 == 0 { byte >> 4 } else { byte & 0x0F }
+}
+
+/// The code with these lengths, symbol by symbol, or an error if they over-fill its space.
+let huff_table = pure (lengths: []i64) -> Result<HuffTable, string> => {
+  var counts: []i64 = [0; 16]
+  for l in lengths { counts[l & 15] += 1 }
+  counts[0] = 0
+  var limits: []i64 = [0; 16]
+  var positions: []i64 = [0; 16]
+  var upper: i64 = 0
+  for i in 1..<16 {
+    upper += counts[i]
+    limits[i] = upper << (16 - i)
+    positions[i] = positions[i - 1] + counts[i - 1]
+    upper = upper << 1
+  }
+  if upper > 65536 { return Err("a code table with more codes than its lengths allow") }
+  // A copy — arrays are shared, and `positions` must survive the filling.
+  var next = positions.slice(0, 16)
+  var symbols: []i64 = [0; lengths.len()]
+  for symbol, l in lengths {
+    let length = l & 15
+    if length > 0 {
+      symbols[next[length]] = symbol
+      next[length] += 1
+    }
+  }
+  Ok(HuffTable { limits: limits, positions: positions, symbols: symbols })
+}
+
+/// The symbol whose code begins at the reading position, which moves past it — symbol 0 for
+/// a code the table does not have, as the reference decoder answers.
+let decode_symbol = (b: mut Bits, t: ref HuffTable) -> i64 => {
+  let field = peek16(b) & 0xFFFE
+  var length: i64 = 15
+  for i in 1..<15 {
+    if field < t.limits[i] {
+      length = i
+      break
+    }
+  }
+  skip(b, length)
+  let at = t.positions[length] + ((field - t.limits[length - 1]) >> (16 - length))
+  if at < 0 || at >= t.symbols.len() { 0 } else { t.symbols[at] }
+}
+
+/// A block's symbols until its last bit: literals, matches, repeats of the last four
+/// distances, and filters, which are kept for when the file is done.
+let decode_block = (
+  d: mut Decoder,
+  b: mut Bits,
+  start: i64,
+  size: i64,
+  filters: mut []Filter,
+  last_bits: i64
+) -> Result<void, string> => {
+  for {
+    if b.byte > b.size - 1 || (b.byte == b.size - 1 && b.bit >= last_bits) { break }
+    let written = d.window.len() - start
+    let n = decode_symbol(b, d.literals)
+    if n < 256 {
+      if written >= size { return Err("more bytes than its header says") }
+      d.window.push(u8(n))
+    } else if n >= 262 {
+      var length = slot_length(b, n - 262)
+      let slot = decode_symbol(b, d.distances)
+      var dist: i64 = 1
+      var extra: i64 = 0
+      if slot < 4 {
+        dist += slot
+      } else {
+        extra = slot / 2 - 1
+        dist += (2 | (slot & 1)) << extra
+      }
+      if extra >= 4 {
+        if extra > 4 {
+          dist += (peek32(b) >> (36 - extra)) << 4
+          skip(b, extra - 4)
+        }
+        dist += decode_symbol(b, d.low_distances)
+      } else if extra > 0 {
+        dist += next_bits(b, extra)
+      }
+      if dist > 0x100 { length += 1 }
+      if dist > 0x2000 { length += 1 }
+      if dist > 0x40000 { length += 1 }
+      d.dist = [dist, d.dist[0], d.dist[1], d.dist[2]]
+      d.last_length = length
+      copy_match(d, start, size, length, dist)?
+    } else if n == 256 {
+      filters.push(read_filter(b, written, filters)?)
+    } else if n == 257 {
+      if d.last_length != 0 { copy_match(d, start, size, d.last_length, d.dist[0])? }
+    } else {
+      let i = n - 258
+      let dist = d.dist[i]
+      var moved = d.dist
+      var j = i
+      for j > 0 {
+        moved[j] = moved[j - 1]
+        j -= 1
+      }
+      moved[0] = dist
+      d.dist = moved
+      let length = slot_length(b, decode_symbol(b, d.repeats))
+      d.last_length = length
+      copy_match(d, start, size, length, dist)?
+    }
+  }
+  Ok()
+}
+
+/// A match length from its slot: 2 to 9 directly, then a base and that many extra bits.
+let slot_length = (b: mut Bits, slot: i64) -> i64 => {
+  if slot < 8 { return 2 + slot }
+  let extra = slot / 4 - 1
+  2 + ((4 | (slot & 3)) << extra) + next_bits(b, extra)
+}
+
+/// `length` bytes copied from `dist` back — byte by byte, since a copy may overlap itself.
+let copy_match = (
+  d: mut Decoder,
+  start: i64,
+  size: i64,
+  length: i64,
+  dist: i64
+) -> Result<void, string> => {
+  if d.window.len() - start + length > size { return Err("more bytes than its header says") }
+  if dist > d.window.len() || dist <= 0 { return Err("a distance reaching back before the start") }
+  let from = d.window.len() - dist
+  for i in 0..<length { d.window.push(d.window[from + i]) }
+  Ok()
+}
+
+/// A filter's description: where it begins (after the bytes so far) and its length, each as
+/// one to four bytes; its kind; and a delta filter's channels.
+let read_filter = (
+  b: mut Bits,
+  written: i64,
+  filters: []Filter
+) -> Result<Filter, string> => {
+  let start = written + filter_number(b)
+  let length = filter_number(b)
+  let kind = next_bits(b, 3)
+  let channels = if kind == 0 { next_bits(b, 5) + 1 } else { 0 }
+  if length < 4 || length > 0x400000 { return Err("a filter of a length out of range") }
+  if kind > 3 { return Err("a filter of an unknown kind (${kind})") }
+  if filters.len() > 0 {
+    let last = filters[filters.len() - 1]
+    if start < last.start + last.length { return Err("filters overlapping") }
+  }
+  Ok(Filter { kind: kind, start: start, length: length, channels: channels })
+}
+
+let filter_number = (b: mut Bits) -> i64 => {
+  let byte_count = next_bits(b, 2) + 1
+  var value: i64 = 0
+  for i in 0..<byte_count { value = value | (next_bits(b, 8) << (8 * i)) }
+  value
+}
+
+/// A filter run over its span of `out`, reading the unfiltered bytes from `window`.
+let run_filter = (
+  window: []u8,
+  start: i64,
+  f: Filter,
+  out: mut []u8
+) -> Result<void, string> => {
+  if f.start + f.length > out.len() { return Err("a filter running past the file's end") }
+  let from = start + f.start
+  if f.kind == 0 {
+    var source = from
+    for channel in 0..<f.channels {
+      var previous: i64 = 0
+      var at = channel
+      for at < f.length {
+        previous = (previous - i64(window[source])) & 0xFF
+        out[f.start + at] = u8(previous)
+        source += 1
+        at += f.channels
+      }
+    }
+  } else if f.kind == 1 || f.kind == 2 {
+    // x86 CALL (E8) and JMP (E9) targets, made relative again.
+    let file_size: i64 = 0x1000000
+    var i: i64 = 0
+    for i < f.length - 4 {
+      let op = window[from + i]
+      i += 1
+      if op == 0xE8 || (f.kind == 2 && op == 0xE9) {
+        let offset = (i + f.start) % file_size
+        let addr = le32(window, from + i)
+        if (addr & 0x80000000) != 0 {
+          if ((addr + offset) & 0x80000000) == 0 {
+            put_le32(out, f.start + i, addr + file_size)
+          }
+        } else if ((addr - file_size) & 0x80000000) != 0 {
+          put_le32(out, f.start + i, addr - offset)
+        }
+        i += 4
+      }
+    }
+  } else {
+    // ARM BL targets, made relative again.
+    var i: i64 = 0
+    for i < f.length - 3 {
+      if window[from + i + 3] == 0xEB {
+        let target = (le32(window, from + i) & 0xFFFFFF) - (i + f.start) / 4
+        put_le32(out, f.start + i, (target & 0xFFFFFF) | 0xEB000000)
+      }
+      i += 4
+    }
+  }
+  Ok()
+}
+
+// ── Bits ─────────────────────────────────────────────────────────────────────
+
+/// Sixteen bits from the reading position, the first highest (bytes past the data read 0).
+let peek16 = pure (b: ref Bits) -> i64 => {
+  let at = b.base + b.byte
+  let word = (byte_at(b.data, at) << 16) | (byte_at(b.data, at + 1) << 8) | byte_at(
+    b.data,
+    at + 2
+  )
+  (word >> (8 - b.bit)) & 0xFFFF
+}
+
+/// Thirty-two bits from the reading position, the first highest.
+let peek32 = pure (b: ref Bits) -> i64 => {
+  let at = b.base + b.byte
+  var word: i64 = 0
+  for i in 0..<5 { word = (word << 8) | byte_at(b.data, at + i) }
+  (word >> (8 - b.bit)) & 0xFFFFFFFF
+}
+
+let skip = (b: mut Bits, n: i64) -> void => {
+  let bits = b.bit + n
+  b.byte += bits >> 3
+  b.bit = bits & 7
+}
+
+/// `n` bits (1–16) from the reading position, which moves past them.
+let next_bits = (b: mut Bits, n: i64) -> i64 => {
+  let value = peek16(b) >> (16 - n)
+  skip(b, n)
+  value
+}
+
+let byte_at = pure (data: []u8, at: i64) -> i64 =>
+  if at < data.len() { i64(data[at]) } else { 0 }
+
+// ── Bytes ────────────────────────────────────────────────────────────────────
+
+/// RAR's variable-length number: seven bits a byte, lowest first, the top bit set on every
+/// byte but the last.
+let vint = (c: mut Cursor) -> Result<i64, string> => {
+  var value: i64 = 0
+  for i in 0..<9 {
+    if c.at >= c.data.len() { return Err("a RAR archive cut off inside a header (a partial download?)") }
+    let byte = i64(c.data[c.at])
+    c.at += 1
+    value = value | ((byte & 0x7F) << (7 * i))
+    if (byte & 0x80) == 0 { return Ok(value) }
+  }
+  Err("a RAR number too large")
+}
+
+let starts_with_bytes = pure (data: []u8, at: i64, prefix: []u8) -> bool => {
+  if at + prefix.len() > data.len() { return false }
+  for i, b in prefix {
+    if data[at + i] != b { return false }
+  }
+  true
+}
+
+let u32_le = pure (data: []u8, at: i64) -> u32 =>
+  u32(data[at]) | (u32(data[at + 1]) << 8) | (u32(data[at + 2]) << 16) | (u32(data[at + 3]) << 24)
+
+let le32 = pure (data: []u8, at: i64) -> i64 =>
+  i64(data[at]) | (i64(data[at + 1]) << 8) | (i64(data[at + 2]) << 16) | (i64(data[at + 3]) << 24)
+
+let put_le32 = (out: mut []u8, at: i64, value: i64) -> void => {
+  for i in 0..<4 { out[at + i] = u8((value >> (8 * i)) & 0xFF) }
+}

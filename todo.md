@@ -82,9 +82,14 @@ Package management, versioning and separate compilation are out of scope by deci
   bit, so a callee that writes only through its `mut` parameters looks like one that writes a
   capture. Wants a separate "through my parameters" effect a caller discharges when every
   `mut` argument is rooted in a local. Hit three more times on 09/29: it shaped `inflate`
-  (helpers answer by value), made romtest's zip writer impure, and leaves LZMA and
-  `std.sevenzip` unmarked — a range decoder cannot answer by value. Mark them `pure` when
-  it lands.
+  (helpers answer by value), made romtest's zip writer impure, and leaves LZMA,
+  `std.sevenzip` and `std.rar` unmarked — a decoder whose state changes each bit cannot
+  answer by value. Mark them `pure` when it lands.
+
+- **A block beginning with a name `data` does not parse.** `if c { data.len() } else { 0 }`
+  is a syntax error, `data` being taken for a `data` declaration; the same name works
+  anywhere else, including later in a block. Found writing `std.rar` (09/29), whose
+  parameters are named `data` throughout.
 
 - **A tuple literal's context does not reach a `Some(…)` inside it.** `let b: (u8,
   Maybe<i16>) = (9, Some(-3))` is refused ("cannot assign AnonymousTuple(integer literal,
