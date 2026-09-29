@@ -76,6 +76,13 @@ Package management, versioning and separate compilation are out of scope by deci
   **It also collapses deliberate spacing** in a table (`7, 7,  7, 7`, grouping rows), which
   is fine, but then a table written as rows of 8 in one line of 24 reads as noise.
 
+- **`pure` refuses a `mut`-parameter call on its own local.** A write to a local is fine in
+  `pure` code, directly or by `push` (LANGUAGE.md), but `pure` `new_cartridge` calling
+  `declare_save(cart)` on its own `var cart` was lyra-E007 (09/28, Sheliak): `EffectMut` is one
+  bit, so a callee that writes only through its `mut` parameters looks like one that writes a
+  capture. Wants a separate "through my parameters" effect a caller discharges when every
+  `mut` argument is rooted in a local.
+
 - **A large struct passed bare is a silent copy.** Sheliak's `pure (bus: GenesisBus, …)`
   helpers copied a multi-kilobyte bus on every memory read — two thirds of its frame time,
   found only by profiling (09/28); `ref` fixed it. A warning for a struct over some size
