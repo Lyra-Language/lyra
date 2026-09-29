@@ -9,6 +9,56 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — what Vega's sprite editor found: `?.`, constructor alternatives, sources, loop widths
+
+Vega's first editor (the private studio beside this repo) wrote five workarounds into its
+first 2,800 lines; each was a gap here, and one of the fixes found a miscompile.
+
+**`?.` and `?[` were never implemented.** They parsed, collected with an `Optional` flag
+nothing read, and failed: the typechecker read `?.` as `.` ("member access on non-struct type
+Maybe") and the backend refused both by name. `f()?.x` looked like "`?` then `.x`" — and
+`std/zip.lyra`'s doc example was written that way — but `?.` is one token. The user chose
+**safe navigation** (Kotlin's rule: each `?.` reads through one Maybe) over Rust's
+propagate-then-read. It is a **collector desugaring**, `match m { Some(v) =>
+__optional_chain(v.x), None => None }`, so no walk learns a node kind (rule 8); the prelude's
+`__optional_chain` is the identity on a Maybe and `Some` otherwise — the generic-fallback
+overload ranking *is* the flattening rule, so `a?.b` on an optional `b` is one Maybe. A
+method's arguments sit in the Some arm and run only with a value. On a non-Maybe the arms
+would report `Some`/`None`/`__opt_L_C`, none of which the program wrote, so `MatchExpr`
+carries `OptionalChain` and the scrutinee is checked first: `lyra-E083`, naming `.ok()` for
+a `Result`. A `.` on a Maybe now hints at `?.`. Both collectors desugar node for node.
+
+**Nullary constructors as or-pattern alternatives** (`Pencil | Eraser`). The 09/23 refusal
+was about alternatives that *bind*; these bind nothing. The grammar aliases a hidden
+`_nullary_constructor` to `data_pattern` *at its use* — aliasing inline content inside the
+hidden rule produced no node at all, just `name:` fields on `or_pattern`. The tag switch gets
+a case per alternative, skipping a tag an earlier arm claimed (a `switch` naming one twice is
+IR clang refuses); the ladder ors the alternatives' tests; `patternHasTest` and
+`unreachableDataArms` learned alternations. `lyra-W021` now reasons through them (and through
+literal alternatives: `1 | 2` then `2` was silent).
+
+**A field, an element or anything parenthesized is a comprehension source**: `[s in
+g.sprites | …]` was a syntax error beside a name and a call. No new parser states.
+
+**`string.replace` and `std.json`'s writer** (`to_json`, `to_json_pretty`): Vega split and
+joined, and hand-escaped its project files. NaN and infinity write as `null`, as
+`JSON.stringify` does; Lyra's float formatting was already JSON's grammar (`1e+21`, `-0`).
+
+**The loop-variable miscompile.** The writer's ASan test wrote `JsonNumber(1.0 * i)` inside
+`for i in 0..<40`, and clang refused an `fmul double` over an `i64`. A loop variable over
+literal bounds was left *untyped* — deliberately, so `t = i` would take `t`'s width — but the
+backend always counted at i64, so the convenience was unsound three ways: `1.0 * i` passed as
+float arithmetic, `let x: f32 = i` then `x * 1.5` emitted an integer multiply intrinsic on a
+float, and `let b: u8 = i` over `0..<300` held **299**. It is now an `i64`, as `let n = 5` is;
+at the user's suggestion the width can be written, `for i: u16 in 0..<100`, which narrows and
+fit-checks the literal bounds and re-records the range so the backend counts at that width
+(`for b: u8 in 250..<=255` stops at 255). One-variable form only, integers only.
+
+**The ImGui host** gained `cancel_quit` (the quit flag was sticky, so Vega could not ask about
+unsaved work) and SDL's open/save dialogs, whose callback may run on another thread: it queues
+a copied answer under an SDL mutex and Lyra polls it by tag — `bindings/menubar`'s pattern.
+The C half still links without the C++ runtime (no `std::mutex`).
+
 ### 09/29/26 — `std.rar`: RAR 5, without unRAR
 
 Sheliak wanted `.rar` ROMs; the user chose RAR 5 only (RAR 3's PPMd and filter VM were

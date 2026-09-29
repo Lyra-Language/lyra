@@ -5704,7 +5704,7 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 		// errors for call sites where the object resolves but the field isn't callable.
 		if objType != nil {
 			tc.addError(m.GetLocation(), SeverityError,
-				"member access on non-struct type %s", objType)
+				"member access on non-struct type %s%s", objType, tc.maybeReceiverHint(objType, m.GetLocation()))
 		}
 	}
 	return nil

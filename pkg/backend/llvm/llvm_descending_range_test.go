@@ -127,3 +127,28 @@ let main = () -> u8 => {
 		t.Errorf("expected the message to explain the step is a magnitude, got %q", joined.String())
 	}
 }
+
+// **A written loop-variable type is the width the loop counts in** (09/29). `u8` over
+// `250..<=255` visits 255 and stops at the type's edge rather than wrapping or trapping —
+// the terminate-at-the-edge rule, now reachable at a narrow width — and a `u16` sum past
+// 255 shows the arithmetic is at u16, not at the i64 default.
+func TestExec_TypedLoopVariableCountsAtItsWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+let main = () -> void => {
+  var last: u8 = 0
+  var seen = 0
+  for b: u8 in 250..<=255 {
+    last = b
+    seen += 1
+  }
+  var total: u16 = 0
+  for i: u16 in 250..<=260 { total += i }
+  var down: i8 = 0
+  for d: i8 in 3..>=-2 { down += d }
+  println("${last} ${seen} ${total} ${down}")
+}`, "")
+	if want := "255 6 2805 3\n"; out != want {
+		t.Errorf("printed %q; want %q", out, want)
+	}
+}

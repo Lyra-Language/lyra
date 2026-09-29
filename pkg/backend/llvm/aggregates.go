@@ -262,9 +262,6 @@ func (l *lowerer) lowerRecordBaseField(block *ir.Block, base value.Value, idx in
 // no field names. A method call (`obj.method()`) never reaches here — it's a
 // FunctionCallExpr whose callee is the MemberExpr — so this is field access only.
 func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Value, *ir.Block, error) {
-	if e.Optional {
-		return nil, nil, fmt.Errorf("llvm: optional member access (?.) not implemented yet")
-	}
 	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for member-access object")

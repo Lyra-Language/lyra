@@ -100,9 +100,6 @@ func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr
 // String indexing (`s[i]` → rune) and dynamic arrays are deferred with a loud
 // error.
 func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value, *ir.Block, error) {
-	if e.Optional {
-		return nil, nil, fmt.Errorf("llvm: optional index (?[]) not implemented yet")
-	}
 	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for index object")

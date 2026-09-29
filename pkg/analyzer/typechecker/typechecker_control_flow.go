@@ -351,6 +351,39 @@ func (tc *TypeChecker) checkNestedArmPattern(pattern ast.Pattern, scrutineeType 
 // (`Some(x) if x > 0`). Inferring it also records its sub-expressions in the TypeTable,
 // which the backend reads to lower the guard — so this must run in both the value and
 // statement paths below, not only the one that computes a type.
+// optionalChainReadable reports whether the match `m?.x` desugared into (collector,
+// optionalChain) reads through a Maybe, and says what was wrong when it does not
+// (lyra-E083). The arms are the collector's, not the program's, so on anything but a
+// Maybe they are not checked at all: their errors would name `Some`, `None` and a
+// binding nobody wrote. An unknown scrutinee has been reported already.
+func (tc *TypeChecker) optionalChainReadable(expr *ast.MatchExpr, scrutineeType types.Type) bool {
+	if scrutineeType == nil {
+		return false
+	}
+	kind, _, _, ok := tc.resultOrMaybeKind(scrutineeType, expr.Scrutinee.GetLocation())
+	switch {
+	case ok && kind == "Maybe":
+		return true
+	case ok && kind == "Result":
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNonOptionalChain,
+			"`?.` and `?[` read through a Maybe, and this is a %s: convert it with `.ok()`, or propagate the error with `?` first — `(x?).field`", scrutineeType)
+	default:
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNonOptionalChain,
+			"`?.` and `?[` read through a Maybe, and this is a %s, which is always there: write `.` or `[`", scrutineeType)
+	}
+	return false
+}
+
+// maybeReceiverHint is the advice for a `.` on a Maybe: most often a safe-navigation
+// chain that dropped a `?` (`m?.name.len()` for `m?.name?.len()`), since each `?.` reads
+// through one Maybe and gives back a Maybe.
+func (tc *TypeChecker) maybeReceiverHint(objType types.Type, loc ast.Location) string {
+	if kind, _, _, ok := tc.resultOrMaybeKind(objType, loc); ok && kind == "Maybe" {
+		return " — `?.` reads through a Maybe (each link of a chain needs its own)"
+	}
+	return ""
+}
+
 func (tc *TypeChecker) checkMatchArmGuard(arm ast.MatchArm) {
 	if arm.Guard == nil {
 		return
@@ -515,6 +548,9 @@ func (tc *TypeChecker) matchKindOf(scrutineeType, kindType types.Type, expr *ast
 // between them is not an error.
 func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) types.Type {
 	scrutineeType := tc.inferExprType(expr.Scrutinee)
+	if expr.OptionalChain && !tc.optionalChainReadable(expr, scrutineeType) {
+		return nil
+	}
 	// Every integer literal a pattern carries is value-checked against the type it
 	// will be compared to — bare, range bounds, and payload sub-patterns alike
 	// (lyra-E048, pattern_literals.go). Before this, a pattern literal was checked
@@ -891,6 +927,12 @@ func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType)
 			"%s is not a constructor of %s", p.Name, dt.Name)
 	case *ast.BindingPattern:
 		tc.checkDataMatchArm(p.Pattern, dt)
+	case *ast.OrPattern:
+		// `Pencil | Eraser` — the grammar admits nullary constructors as alternatives
+		// (09/29), which bind nothing; each is checked as the arm it stands for.
+		for _, alt := range p.Alternatives {
+			tc.checkDataMatchArm(alt, dt)
+		}
 	case *ast.LiteralPattern:
 		tc.addError(p.GetLocation(), SeverityError,
 			"literal patterns are not allowed on a data type scrutinee")
@@ -1539,9 +1581,25 @@ func (tc *TypeChecker) checkUnreachableMatchArms(arms []ast.MatchArm) {
 //     so any later `Wrap(…)` is dead. The sub-pattern must itself be irrefutable: `Wrap(0)`
 //     tests the payload and leaves `Wrap(b)` genuinely reachable, which is the distinction
 //     that keeps this from condemning correct code.
+//
+//   - **An alternation** (`Pencil | Eraser`, `1 | 2`) covers what any one of its
+//     alternatives covers, and is covered only when every one of its alternatives is.
+//     Between alternatives a literal covers an equal literal; a top-level repeated
+//     literal is checkDuplicateMatchArms's to report, so the comparison lives only here.
 func patternCovers(earlier, later ast.Pattern) (string, bool) {
 	if patternIsIrrefutable(earlier) {
 		return "the arm at %s matches every value", true
+	}
+	if lo, ok := later.(*ast.OrPattern); ok {
+		for _, alt := range lo.Alternatives {
+			if _, covers := alternativeCovers(earlier, alt); !covers {
+				return "", false
+			}
+		}
+		return "every alternative is already matched by the arm at %s", true
+	}
+	if _, ok := earlier.(*ast.OrPattern); ok {
+		return alternativeCovers(earlier, later)
 	}
 	e, ok := earlier.(*ast.DataPattern)
 	if !ok {
@@ -1557,6 +1615,29 @@ func patternCovers(earlier, later ast.Pattern) (string, bool) {
 		return "", false
 	}
 	return "constructor " + e.Name + " is already matched unconditionally by the arm at %s", true
+}
+
+// alternativeCovers is patternCovers for one alternative `later`, against an `earlier`
+// that may itself be an alternation — adding literal equality, which only an
+// alternation's reasoning needs (see patternCovers).
+func alternativeCovers(earlier, later ast.Pattern) (string, bool) {
+	if eo, ok := earlier.(*ast.OrPattern); ok {
+		for _, alt := range eo.Alternatives {
+			if reason, covers := alternativeCovers(alt, later); covers {
+				return reason, true
+			}
+		}
+		return "", false
+	}
+	el, eIsLit := earlier.(*ast.LiteralPattern)
+	ll, lIsLit := later.(*ast.LiteralPattern)
+	if eIsLit && lIsLit {
+		if fmt.Sprintf("%v", el.Value) == fmt.Sprintf("%v", ll.Value) {
+			return fmt.Sprintf("%v", el.Value) + " is already matched by the arm at %s", true
+		}
+		return "", false
+	}
+	return patternCovers(earlier, later)
 }
 
 func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
@@ -1751,12 +1832,67 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 		// otherwise a use of the loop variable has no recorded type (the backend then
 		// can't lower it). The collector registered each as an untyped VarDeclStmt
 		// placeholder in this scope; fill in its Type.
-		if iterType != nil {
+		if iterType != nil && expr.KeyType != nil {
+			if declared := tc.resolveType(expr.KeyType, expr.GetLocation()); declared != nil {
+				tc.checkTypedLoopVar(expr, iterType, declared)
+				tc.setLoopVarType(expr.Key, declared)
+			}
+		} else if iterType != nil {
 			tc.bindForInLoopVars(expr, iterType)
 		}
 		tc.checkBlockForEffect(expr.Body)
 	})
 	return types.VoidType{} // a walk over something finite always finishes
+}
+
+// checkTypedLoopVar holds a written loop-variable type (`for i: u16 in 0..<100`) against
+// what the loop walks.
+//
+//   - **Over a range, the type is the range's width.** Each untyped bound narrows to it —
+//     and must fit, so `for b: u8 in 0..<300` is refused as `let b: u8 = 300` is — and the
+//     range is re-recorded at that width, which is the one the backend counts in. A bound
+//     already typed must be that type; a range counts in integers, so the type must be one.
+//   - **Over anything else, the element must be assignable to it**: the annotation states
+//     the element's type, it does not convert it.
+func (tc *TypeChecker) checkTypedLoopVar(expr *ast.ForInLoopExpr, iterType, declared types.Type) {
+	if r, isRange := expr.Iterable.(*ast.RangeExpr); isRange {
+		rt, ok := iterType.(types.RangeType)
+		if !ok {
+			return
+		}
+		if !types.StepDomainIsInteger(declared) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"a range counts in integers, so `%s: %s` cannot walk it — count in an integer and convert inside the loop", expr.Key, declared)
+			return
+		}
+		for _, bound := range []struct {
+			e ast.Expression
+			t types.Type
+		}{{r.Start, rt.Start}, {r.End, rt.End}, {r.Step, rt.Step}} {
+			if bound.e == nil || bound.t == nil {
+				continue
+			}
+			if isUntypedNumeric(bound.t) {
+				tc.checkLiteralRange("loop variable "+expr.Key, bound.e, declared)
+				tc.propagateExpectedType(bound.e, declared)
+				continue
+			}
+			if !isAssignable(bound.t, declared) {
+				tc.addError(bound.e.GetLocation(), SeverityError,
+					"the loop variable is `%s: %s`, but this bound is %s — convert it, `%s(…)`", expr.Key, declared, bound.t, declared)
+			}
+		}
+		rt.Start, rt.End = declared, declared
+		if rt.Step != nil {
+			rt.Step = declared
+		}
+		tc.typeTable.Set(expr.Iterable, rt)
+		return
+	}
+	if elem := iterableElementType(iterType); elem != nil && !isAssignable(elem, declared) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"the loop variable is `%s: %s`, but the elements are %s", expr.Key, declared, elem)
+	}
 }
 
 // bindForInLoopVars records the loop variable types for a for-in loop. The grammar
@@ -1800,10 +1936,13 @@ func iterableElementType(t types.Type) types.Type {
 	case types.DynamicArrayType:
 		return it.ElementType
 	case types.RangeType:
-		// Prefer a concrete bound. If both bounds are untyped literals, keep the loop
-		// variable *untyped* (assignable to any integer width, like an untyped literal)
-		// rather than eagerly defaulting to i64 — so `for i in 0..<3 { t = i }` binds i
-		// to whatever width t needs.
+		// Prefer a concrete bound. If both bounds are untyped literals the variable takes
+		// their **default** (i64, or f64), as `let n = 5` does: it is a runtime value, and
+		// the backend lowers it at that width. It stayed *untyped* until 09/29, so that
+		// `for i in 0..<3 { t = i }` would bind to whatever width `t` needed — which the
+		// backend never honoured: a `u8` assigned from `0..<300` held 299, and `1.0 * i`
+		// was accepted as float arithmetic and emitted an `fmul` over an `i64`. Narrowing
+		// is written, `u8(i)`, as it is for any other i64.
 		if it.Start != nil && !isUntypedNumeric(it.Start) {
 			return it.Start
 		}
@@ -1811,10 +1950,10 @@ func iterableElementType(t types.Type) types.Type {
 			return it.End
 		}
 		if it.Start != nil {
-			return it.Start
+			return promoteToDefault(it.Start)
 		}
 		if it.End != nil {
-			return it.End
+			return promoteToDefault(it.End)
 		}
 		return types.PrimitiveType{Name: types.Int64}
 	}

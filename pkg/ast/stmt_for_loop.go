@@ -1,5 +1,7 @@
 package ast
 
+import "github.com/Lyra-Language/lyra/pkg/types"
+
 // Both loop forms hold their body as a **pointer**, not a value, so the
 // *BlockExpr identity the collector recorded in the ScopeTable survives into the
 // AST — the same reason IfDestructuringStmt.Then/Else are pointers.
@@ -26,7 +28,11 @@ type ForInLoopExpr struct {
 	ExprBase
 	Label string
 	Key   string
-	Value string
+	// KeyType is the type written on a single loop variable (`for i: u16 in 0..<100`), nil
+	// when there is none: the element's type is then the iterable's, and a range of
+	// literals gives an i64.
+	KeyType types.Type
+	Value   string
 	// KeyLocation/ValueLocation span just the binding names, for a diagnostic that is
 	// about one of them rather than about the loop (lyra-W020). Tagged out of the printer
 	// like every other auxiliary position, so goldens stay stable.

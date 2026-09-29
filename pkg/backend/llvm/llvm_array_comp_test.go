@@ -504,3 +504,29 @@ let main = () -> u8 => {
 		t.Errorf(`expected 22 (len 2 → 20, plus "n6".len() 2), got %d`, got)
 	}
 }
+
+// A field or an element is a source (09/29): `[s in game.sprites | …]` and
+// `[c in grid[0] | …]` were syntax errors beside a bare name and a call, found by Vega,
+// whose editors read collections off their document constantly. A field source also
+// takes a guard, and one clause's field may pair with another's element; anything else
+// is a source in parentheses.
+func TestExec_ArrayCompFieldAndElementSources(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+struct Sprite { name: string, width: i64 }
+struct Game { sprites: []Sprite, grid: [][]i64 }
+
+let main = () -> void => {
+  let g = Game { sprites: [Sprite { name: "a", width: 8 }, Sprite { name: "b", width: 16 }], grid: [[1, 2], [3, 4]] }
+  let wide = [s in g.sprites | s.width > 8 | s.name]
+  let row = [c in g.grid[1] | c * 10]
+  let pairs = [s in g.sprites, c in g.grid[0] | "${s.name}${c}"]
+  let n = 4
+  let squares = [i in (1..<n) | i * i]
+  let spread = [x in ([...row, 5]) | x + 1]
+  print("${[s in g.sprites | s.name].join(",")} ${wide.join(",")} ${row[0] + row[1]} ${pairs.join(" ")} ${squares[2]} ${spread[2]}")
+}`, "")
+	if want := "a,b b 70 a1 a2 b1 b2 9 6"; out != want {
+		t.Errorf("printed %q; want %q", out, want)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/Lyra-Language/lyra/pkg/cst"
@@ -14,6 +15,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 	defer ctx.PopScope()
 
 	var label, key, value string
+	var keyType types.Type
 	var keyLoc, valueLoc ast.Location
 	var iterable ast.Expression
 	var body *ast.BlockExpr
@@ -27,7 +29,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 		case "label":
 			label = ctx.NodeText(child)
 		case "for_in_condition":
-			key, value, keyLoc, valueLoc, iterable, destructure = collectForInCondition(child, ctx)
+			key, value, keyType, keyLoc, valueLoc, iterable, destructure = collectForInCondition(child, ctx)
 		case "for_in_body":
 			expr := ctx.CollectExpr(child)
 			if b, ok := expr.(*ast.BlockExpr); ok {
@@ -72,6 +74,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 		ExprBase:      ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
 		Label:         label,
 		Key:           key,
+		KeyType:       keyType,
 		Value:         value,
 		KeyLocation:   keyLoc,
 		ValueLocation: valueLoc,
@@ -82,7 +85,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 	return loop
 }
 
-func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, value string, keyLoc, valueLoc ast.Location, iterable ast.Expression, destructure *ast.DestructuringDeclStmt) {
+func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, value string, keyType types.Type, keyLoc, valueLoc ast.Location, iterable ast.Expression, destructure *ast.DestructuringDeclStmt) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -144,6 +147,13 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 			value = ctx.NodeText(child)
 			valueLoc = ctx.NodeLocation(child)
 			registerLoopVar(child, value, ctx)
+		case "type_annotation":
+			// `for i: u16 in …` — the one-binding form's type (the grammar admits it
+			// nowhere else). Its own case, or the `default` below would take it for the
+			// iterable.
+			if t := cst.Field(child, "type"); t != nil {
+				keyType = ctx.ParseType(t)
+			}
 		default:
 			// Not `else`: a comment after `in` would overwrite the iterable with a nil,
 			// which is rule 3's typed nil in the one slot the loop cannot do without.

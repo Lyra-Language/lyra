@@ -89,3 +89,73 @@ let main = () -> u8 => {
 		t.Errorf("under ASan: exited %d; want 3", got)
 	}
 }
+
+// The writer (09/29, found missing by Vega): compact and pretty forms, every escape the
+// reader decodes, numbers in their shortest round-trip form with NaN as `null`, empty
+// containers kept on one line — and a written document parses back to the same text.
+func TestExec_JsonWrite(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+import std.json.{ JsonMember, JsonNull, JsonBool, JsonNumber, JsonString, JsonArray, JsonObject, parse_json }
+let main = () -> void => {
+  var zero = 0.0
+  let doc = JsonObject([
+    JsonMember { key: "s", value: JsonString("q\" b\\ t\t n\n c\x07 é") },
+    JsonMember { key: "n", value: JsonArray([JsonNumber(3.0), JsonNumber(-0.5), JsonNumber(1.0e21), JsonNumber(zero / zero)]) },
+    JsonMember { key: "f", value: JsonArray([JsonBool(true), JsonNull]) },
+    JsonMember { key: "e", value: JsonObject([]) },
+  ])
+  let compact = doc.to_json()
+  println(compact)
+  print(doc.to_json_pretty(1))
+  println("")
+  match parse_json(compact) {
+    Ok(back) => println("${back.to_json() == compact}"),
+    Err(e) => println("err ${e.message}"),
+  }
+}`, "")
+	want := `{"s":"q\" b\\ t\t n\n c\u0007 é","n":[3,-0.5,1e+21,null],"f":[true,null],"e":{}}
+{
+ "s": "q\" b\\ t\t n\n c\u0007 é",
+ "n": [
+  3,
+  -0.5,
+  1e+21,
+  null
+ ],
+ "f": [
+  true,
+  null
+ ],
+ "e": {}
+}
+true
+`
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// Writing a nested document under ASan: every level's parts are joined and released.
+func TestExec_JsonWriteNestedASan(t *testing.T) {
+	t.Parallel()
+	src := `module main
+import std.json.{ JsonMember, JsonString, JsonArray, JsonObject, JsonNumber, parse_json }
+let main = () -> u8 => {
+  var nodes: []JsonValue = []
+  for i in 0..<40 {
+    nodes.push(JsonObject([
+      JsonMember { key: "name", value: JsonString("node-${i}-é") },
+      JsonMember { key: "kids", value: JsonArray([JsonNumber(f64(i)), JsonString("k${i}")]) },
+    ]))
+  }
+  let text = JsonArray(nodes).to_json_pretty()
+  match parse_json(text) {
+    Ok(back) => if back.to_json_pretty() == text { 3 } else { 1 },
+    Err(_) => 2,
+  }
+}`
+	if got := buildAndRunASanWithPrelude(t, strings.Replace(src, "import std.json.{ ", "import std.json.{ JsonValue, ", 1)); got != 3 {
+		t.Errorf("under ASan: exited %d; want 3", got)
+	}
+}

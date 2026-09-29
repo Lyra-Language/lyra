@@ -1001,6 +1001,14 @@ const (
 	// segfaulted. See checker/byref_function_value.go.
 	CodeByRefFunctionValue = "lyra-E082"
 
+	// CodeNonOptionalChain: `x?.f`, `x?.m()` or `x?[i]` on a value that is not a Maybe.
+	// Safe navigation reads through a Maybe; on anything else there is nothing to read
+	// through, and the desugared match (collector, postfix_expr.go) would otherwise
+	// report its own `Some`/`None` arms and the name it binds — none of which the program
+	// wrote. A `Result` is named in the message: `?` propagates one, `?.` does not, and
+	// `.ok()` is the conversion (09/29, when `?.` was first implemented).
+	CodeNonOptionalChain = "lyra-E083"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

@@ -21,7 +21,6 @@ type MemberExpr struct {
 	ExprBase
 	Object   Expression
 	Property IdentifierExpr
-	Optional bool
 }
 
 func (m *MemberExpr) GetName() string {
@@ -30,9 +29,8 @@ func (m *MemberExpr) GetName() string {
 
 type IndexExpr struct {
 	ExprBase
-	Object   Expression
-	Index    Expression
-	Optional bool
+	Object Expression
+	Index  Expression
 }
 
 func (i *IndexExpr) GetName() string {

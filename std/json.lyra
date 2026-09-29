@@ -147,6 +147,118 @@ pub let kind = pure (self: JsonValue) -> string => match self {
   JsonObject(_) => "object",
 }
 
+/// The value as JSON text, compact: no whitespace at all, members in the order they are
+/// held. [parse_json] reads it back to an equal value, numbers included — each is written
+/// in the shortest form that reads back as the same `f64`.
+///
+/// **A number JSON cannot hold is written `null`**: JSON has no NaN or infinity, and
+/// `null` is what JavaScript's `JSON.stringify` writes for them, so a reader in any
+/// language gets a document it can parse rather than one it must refuse.
+///
+/// # Examples
+///
+/// ```
+/// let doc = JsonObject([JsonMember { key: "size", value: JsonArray([JsonNumber(2.0)]) }])
+/// println(doc.to_json())   // {"size":[2]}
+/// ```
+pub let to_json = pure (self: JsonValue) -> string => render(self, 0, 0)
+
+/// The value as JSON text for a person to read: each array element and object member on a
+/// line of its own, indented `indent` spaces a level, `"key": value` with a space. Empty
+/// arrays and objects stay `[]` and `{}`. Everything [to_json] says about numbers holds.
+///
+/// # Examples
+///
+/// ```
+/// let doc = JsonObject([JsonMember { key: "tags", value: JsonArray([JsonString("a")]) }])
+/// println(doc.to_json_pretty())
+/// // {
+/// //   "tags": [
+/// //     "a"
+/// //   ]
+/// // }
+/// ```
+pub let to_json_pretty = pure (self: JsonValue, indent: i64 = 2) -> string =>
+  render(self, indent.max(1), 0)
+
+// ---------------------------------------------------------------------------------------
+// The writer
+// ---------------------------------------------------------------------------------------
+//
+// Recursive, each value answering its own text: a document is as deep as its author wrote
+// it, and the copies a join makes at each level are the price of staying `pure` without a
+// `mut` buffer threaded through (which `pure` would refuse).
+
+/// `v` as text, `indent` spaces a level (0: compact), its closing bracket at `depth` levels.
+let render = pure (v: JsonValue, indent: i64, depth: i64) -> string => match v {
+  JsonNull => "null",
+  JsonBool(b) => if b { "true" } else { "false" },
+  JsonNumber(n) => number_text(n),
+  JsonString(text) => quote(text),
+  JsonArray(items) => {
+    if items.len() == 0 { return "[]" }
+    let parts = [x in items | render(x, indent, depth + 1)]
+    enclose("[", parts, "]", indent, depth)
+  },
+  JsonObject(members) => {
+    if members.len() == 0 { return "{}" }
+    let colon = if indent == 0 { ":" } else { ": " }
+    let parts = [m in members | quote(m.key) ++ colon ++ render(
+      m.value,
+      indent,
+      depth + 1
+    )]
+    enclose("{", parts, "}", indent, depth)
+  },
+}
+
+/// `parts` between `open` and `close`: comma-separated on one line when compact, else a
+/// line each at `depth + 1` levels with the close back at `depth`.
+let enclose = pure (
+  open: string,
+  parts: []string,
+  close: string,
+  indent: i64,
+  depth: i64
+) -> string => {
+  if indent == 0 { return open ++ parts.join(",") ++ close }
+  let inner = [" "; indent * (depth + 1)].join("")
+  let outer = [" "; indent * depth].join("")
+  open ++ "\n" ++ inner ++ parts.join(",\n" ++ inner) ++ "\n" ++ outer ++ close
+}
+
+/// A number's shortest round-trip form, which is already JSON's grammar (`1e+21`, `-0`,
+/// `1.5e-07`) — or `null` for the values JSON has no spelling for.
+let number_text = pure (n: f64) -> string => {
+  if n != n || n > 1.7976931348623157e308 || n < -1.7976931348623157e308 { return "null" }
+  "${n}"
+}
+
+/// `s` as a JSON string literal: `"` and `\` escaped, the control characters as their short
+/// escapes or `\u00XX`, and everything else — non-ASCII included — as itself, since a
+/// JSON text is UTF-8.
+let quote = pure (s: string) -> string => {
+  var parts: []string = ["\""]
+  for c in s {
+    let code = i64(c)
+    let piece = match c {
+      '"' => "\\\"",
+      '\\' => "\\\\",
+      '\n' => "\\n",
+      '\r' => "\\r",
+      '\t' => "\\t",
+      _ => if code < 32 { "\\u00${hex_nibble(code / 16)}${hex_nibble(code % 16)}" } else { "${c}" },
+    }
+    parts.push(piece)
+  }
+  parts.push("\"")
+  parts.join("")
+}
+
+const HEX_DIGITS: string = "0123456789abcdef"
+
+let hex_nibble = pure (v: i64) -> string => "${HEX_DIGITS[v]}"
+
 // ---------------------------------------------------------------------------------------
 // The parser
 // ---------------------------------------------------------------------------------------

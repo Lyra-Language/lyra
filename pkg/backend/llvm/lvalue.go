@@ -263,9 +263,6 @@ func (l *lowerer) lvalueAddressRaw(block *ir.Block, e ast.Expression) (lvalueLoc
 // memberFieldAddress computes the address of `obj.field` by taking the object's
 // address and gep-ing to the named field of its (stack) struct type.
 func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalueLoc, *ir.Block, error) {
-	if e.Optional {
-		return lvalueLoc{}, nil, fmt.Errorf("llvm: optional member assignment (?.) not implemented")
-	}
 	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return lvalueLoc{}, nil, fmt.Errorf("llvm: no type recorded for member-assignment object")

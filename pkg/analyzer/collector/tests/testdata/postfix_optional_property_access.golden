@@ -4,16 +4,64 @@ Program(1 statements) {
 			BindingKind: let
 			Name: name
 			Value: {
-				MemberExpr {
-					Object: {
-						IdentifierExpr(person) {
-							Name: person
+				MatchExpr {
+					MatchArms: {
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										MemberExpr {
+											Object: {
+												IdentifierExpr(__opt_1_20) {
+													Name: __opt_1_20
+												}
+											}
+											Property: {
+												IdentifierExpr(name) {
+													Name: name
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(__optional_chain) {
+											Name: __optional_chain
+										}
+									}
+								}
+							}
+							Pattern: {
+								DataPattern(Some) {
+									Name: Some
+									Pattern: {
+										TuplePattern {
+											Elements: {
+												IdentifierPattern(__opt_1_20) {
+													Name: __opt_1_20
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						MatchArm {
+							Body: {
+								DataConstructorExpr {
+									Constructor: None
+								}
+							}
+							Pattern: {
+								DataPattern(None) {
+									Name: None
+								}
+							}
 						}
 					}
-					Optional: true
-					Property: {
-						IdentifierExpr(name) {
-							Name: name
+					OptionalChain: true
+					Scrutinee: {
+						IdentifierExpr(person) {
+							Name: person
 						}
 					}
 				}

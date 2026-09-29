@@ -508,6 +508,18 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   = …` shadows the prelude's `index`, but `s.index("b")` still resolves — only the rarer
   free call `index(s, "b")` breaks. Sheliak's core met it three times (`count`, `first`,
   `index`), each a natural local name. A policy call, not a bug.
+- **[DONE 09/29] `?.`/`?[` are safe navigation**, desugared by the collector (`lyra-E083` on
+  a non-Maybe); and **nullary constructors are or-pattern alternatives**. (COMPLETED.md, 09/29.)
+- **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
+  and alternations below the top of a pattern (`Some(1 | 2)`, `(1 | 2, _)`, both refused
+  today). Neither needed yet.
+- **[OPEN] A data constructor resolves without its import**: `JsonString("a")` compiles with
+  only `import std.json.{ parse_json }`, and listing `JsonString` draws `lyra-W004` ("never
+  used") — yet std.json's own docs list `JsonNull`. Decide the rule; either the visibility or
+  the warning is wrong. Found 09/29 in Vega.
+- **[OPEN] A written loop-variable type in the other positions**: a comprehension clause
+  (`[i: u8 in 0..<10 | …]`) and the two-variable form's element. `for i: u16 in …` covers
+  the one-variable loop (09/29).
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
@@ -530,6 +542,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
   Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.
+- **[DONE 09/29] `bindings.imgui`: `cancel_quit` and SDL's open/save dialogs**; `std`:
+  `string.replace` and `std.json`'s writer. (COMPLETED.md, 09/29.)
 - **[OPEN] `bindings.imgui` on Linux is unverified.** `@link` flags are sorted, so `-lSDL3`
   precedes the static `-llyra-imgui`; check the link under `--as-needed`, and that the
   archive needs nothing from libstdc++ there either.
@@ -625,6 +639,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   comprehension-over-a-comprehension workaround in the message (confirmed 09/22). Called a
   *clause* here because a bare "generator" names a `gen` function — the 09/17 convention
   CLAUDE.md states and the backend's own message already follows.
+- **[DONE 09/29] A field, an element or a parenthesized expression is a comprehension
+  source.** (COMPLETED.md, 09/29.)
 
 ## Lazy sequences — `gen` and `Seq<t>`
 

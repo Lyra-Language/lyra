@@ -304,6 +304,26 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 	case *ast.BindingPattern:
 		// The name binds unconditionally, so the test is entirely the inner pattern's.
 		return l.aggPatternTest(block, val, p.Pattern, valType)
+	case *ast.OrPattern:
+		// `Pencil | Eraser` in a guarded arm (the ladder): the or of its alternatives'
+		// tests. An alternative that tests nothing matches everything, and so does the
+		// whole alternation.
+		var cond value.Value
+		for _, alt := range p.Alternatives {
+			c, err := l.aggPatternTest(block, val, alt, valType)
+			if err != nil {
+				return nil, err
+			}
+			if c == nil {
+				return nil, nil
+			}
+			if cond == nil {
+				cond = c
+			} else {
+				cond = block.NewOr(cond, c)
+			}
+		}
+		return cond, nil
 	default:
 		return nil, fmt.Errorf("llvm: match sub-pattern %T not implemented yet", pat)
 	}
@@ -328,8 +348,8 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 			l.bindValue(block, p.Name, val)
 		}
 		return l.aggPatternBind(block, val, p.Pattern, valType)
-	case nil, *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern:
-		return nil // no binding
+	case nil, *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern, *ast.OrPattern:
+		return nil // no binding: an alternation's alternatives bind nothing (grammar)
 	case *ast.StructPattern:
 		st, ok := l.resolveStructType(valType)
 		if !ok {
@@ -606,6 +626,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, whole value.
 	// at generated IR, on a program `lyrac check` passed clean — the front end does not yet
 	// report an unreachable match arm (see todo.md), so nothing upstream refuses it either.
 	unreachableArms := unreachableDataArms(e.MatchArms)
+	switched := map[int]bool{} // tags already given a case
 	for armIdx, arm := range e.MatchArms {
 		if unreachableArms[armIdx] {
 			continue
@@ -643,6 +664,27 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, whole value.
 				return nil, nil, err
 			}
 			cases = append(cases, ir.NewCase(constant.NewInt(tagTy, int64(idx)), armBlock))
+			switched[idx] = true
+		case *ast.OrPattern:
+			// `Pencil | Eraser`: one case per alternative, all to this arm. Alternatives
+			// are nullary constructors (grammar), so there is no payload to bind; one an
+			// earlier arm already claimed is skipped, as a repeated constructor arm is,
+			// since a `switch` may not name a tag twice.
+			for _, alt := range p.Alternatives {
+				dp, ok := alt.(*ast.DataPattern)
+				if !ok {
+					return nil, nil, fmt.Errorf("llvm: alternative %T in a data match", alt)
+				}
+				_, idx, ok := findConstructor(dt, dp.Name)
+				if !ok {
+					return nil, nil, fmt.Errorf("llvm: %q is not a constructor of %s", dp.Name, dt.Name)
+				}
+				if switched[idx] {
+					continue
+				}
+				cases = append(cases, ir.NewCase(constant.NewInt(tagTy, int64(idx)), armBlock))
+				switched[idx] = true
+			}
 		case *ast.WildcardPattern:
 			defaultBlock = armBlock
 		case *ast.IdentifierPattern:
@@ -806,6 +848,9 @@ func patternHasTest(pat ast.Pattern) bool {
 		// and the test is never *emitted* — the arm would be taken whatever the value is,
 		// which is a wrong program rather than a failed build.
 		return patternHasTest(p.Pattern)
+	case *ast.OrPattern:
+		// For the reason just given: an alternation tests whenever an alternative does.
+		return slices.ContainsFunc(p.Alternatives, patternHasTest)
 	}
 	return false
 }
@@ -874,15 +919,28 @@ func unreachableDataArms(arms []ast.MatchArm) map[int]bool {
 	for i, arm := range arms {
 		// Unwrapped: `w @ Box(n)` claims Box's tag exactly as `Box(n)` does, and missing
 		// that emits two cases for one tag — IR llir builds happily and clang refuses.
-		p, ok := ast.UnwrapBinding(arm.Pattern).(*ast.DataPattern)
-		if !ok {
+		// An alternation claims each of its constructors, and is dead only when an earlier
+		// arm has claimed every one of them.
+		var names []string
+		switch p := ast.UnwrapBinding(arm.Pattern).(type) {
+		case *ast.DataPattern:
+			names = []string{p.Name}
+		case *ast.OrPattern:
+			for _, alt := range p.Alternatives {
+				if dp, ok := alt.(*ast.DataPattern); ok {
+					names = append(names, dp.Name)
+				}
+			}
+		default:
 			continue
 		}
-		if claimed[p.Name] {
+		if len(names) > 0 && !slices.ContainsFunc(names, func(n string) bool { return !claimed[n] }) {
 			dead[i] = true
 			continue
 		}
-		claimed[p.Name] = true
+		for _, n := range names {
+			claimed[n] = true
+		}
 	}
 	return dead
 }

@@ -146,6 +146,11 @@ pub data Expr =
   | MathAssignOpExpr(BinaryOp)
   /// `match x { … }`.
   | MatchExpr(Match)
+  /// `None`, `Some(x)` — a constructor applied as a value. Built only by the safe-navigation
+  /// desugaring so far (its `None` arm); the constructors a program writes are reclassified
+  /// from calls and names by the Go collector after it knows every `data` declaration, a
+  /// pass this collector does not have yet.
+  | DataConstructorExpr(ConstructorValue)
   /// `Point { x: 1 }` — a struct built inline.
   | StructInstanceExpr(StructInstance)
   /// `{ x: 1 }` — the same thing without a name. A constructor rather than a struct of
@@ -285,8 +290,6 @@ pub struct FunctionCall {
 pub struct MemberAccess {
   location: Location = Location {},
   object: shared Expr,
-  /// True for `a?.b` — a different CST node, not a flag the grammar hangs off `.`.
-  optional: bool = false,
   property: shared Expr,
 }
 
@@ -295,8 +298,6 @@ pub struct IndexAccess {
   location: Location = Location {},
   index: shared Expr,
   object: shared Expr,
-  /// True for `a?[i]`, as `MemberAccess.optional` is for `a?.b`.
-  optional: bool = false,
 }
 
 /// `pair.0`.
@@ -425,6 +426,8 @@ pub struct ForInLoop {
   body: shared Expr,
   iterable: shared Expr,
   key: string,
+  /// `for i: u16 in …` — the type written on a single loop variable (09/29).
+  key_type: Maybe<shared TypeNode> = None,
   label: string,
   value: string,
 }
@@ -620,7 +623,18 @@ pub struct DestructuringDecl {
 pub struct Match {
   location: Location = Location {},
   match_arms: []MatchArm,
+  /// True for the match `m?.x`, `m?.f(a)` or `m?[i]` is desugared into
+  /// (`collect.optional_chain`), which is how the typechecker tells a misused `?.` from a
+  /// pattern that cannot match.
+  optional_chain: bool = false,
   scrutinee: shared Expr,
+}
+
+/// `None`, `Some(x)`: the constructor's name and the value it wraps, if any.
+pub struct ConstructorValue {
+  location: Location = Location {},
+  constructor: string,
+  value: Maybe<shared Expr> = None,
 }
 
 /// One arm: what it matches, the condition it may add, and what it answers.

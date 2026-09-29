@@ -4,30 +4,126 @@ Program(1 statements) {
 			BindingKind: let
 			Name: value
 			Value: {
-				IndexExpr {
-					Index: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 1
-						}
-					}
-					Object: {
-						IndexExpr {
-							Index: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 0
+				MatchExpr {
+					MatchArms: {
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										IndexExpr {
+											Index: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+											Object: {
+												IdentifierExpr(__opt_1_25) {
+													Name: __opt_1_25
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(__optional_chain) {
+											Name: __optional_chain
+										}
+									}
 								}
 							}
-							Object: {
+							Pattern: {
+								DataPattern(Some) {
+									Name: Some
+									Pattern: {
+										TuplePattern {
+											Elements: {
+												IdentifierPattern(__opt_1_25) {
+													Name: __opt_1_25
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						MatchArm {
+							Body: {
+								DataConstructorExpr {
+									Constructor: None
+								}
+							}
+							Pattern: {
+								DataPattern(None) {
+									Name: None
+								}
+							}
+						}
+					}
+					OptionalChain: true
+					Scrutinee: {
+						MatchExpr {
+							MatchArms: {
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												IndexExpr {
+													Index: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 0
+														}
+													}
+													Object: {
+														IdentifierExpr(__opt_1_21) {
+															Name: __opt_1_21
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(__optional_chain) {
+													Name: __optional_chain
+												}
+											}
+										}
+									}
+									Pattern: {
+										DataPattern(Some) {
+											Name: Some
+											Pattern: {
+												TuplePattern {
+													Elements: {
+														IdentifierPattern(__opt_1_21) {
+															Name: __opt_1_21
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										DataConstructorExpr {
+											Constructor: None
+										}
+									}
+									Pattern: {
+										DataPattern(None) {
+											Name: None
+										}
+									}
+								}
+							}
+							OptionalChain: true
+							Scrutinee: {
 								IdentifierExpr(matrix) {
 									Name: matrix
 								}
 							}
-							Optional: true
 						}
 					}
-					Optional: true
 				}
 			}
 		}

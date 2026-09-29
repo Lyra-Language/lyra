@@ -1,6 +1,7 @@
 package expressions
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,31 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectFunctionCallExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.FunctionCallExpr {
+func collectFunctionCallExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
+	// `m?.f(a)` is a call whose callee is an optional member: the whole call is what
+	// reads through the Maybe, so it is desugared here rather than at the callee — the
+	// callee alone would become `(match …)(a)`.
+	if callee := cst.Field(node, "function"); callee != nil && callee.Kind() == "optional_member_expr" {
+		if property := cst.Field(callee, "property"); property != nil {
+			object := CollectExpression(cst.Field(callee, "object"), ctx)
+			method := CollectIdentifierExpr(property, property.Kind() == "const_identifier", ctx.NodeLocation(property), ctx)
+			if method != nil {
+				calleeLoc := ctx.NodeLocation(callee)
+				return optionalChain(object, ctx.NodeLocation(property), loc, func(payload ast.Expression) ast.Expression {
+					return &ast.FunctionCallExpr{
+						ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+						Function: &ast.MemberExpr{
+							ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: calleeLoc}},
+							Object:   payload,
+							Property: *method,
+						},
+						GenericArguments: collectCallGenericArguments(node, ctx),
+						Arguments:        collectArgumentList(cst.Field(node, "arguments"), ctx),
+					}
+				})
+			}
+		}
+	}
 	return &ast.FunctionCallExpr{
 		ExprBase:         ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Function:         CollectExpression(cst.Field(node, "function"), ctx),
@@ -60,7 +85,6 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Object:   object,
 			Property: ast.IdentifierExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}}},
-			Optional: optional,
 		}
 	}
 	propertyNode := cst.Field(node, "property")
@@ -74,11 +98,19 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		ctx.AddError(node, diag.SeverityError, "could not parse member expression property")
 		return placeholder()
 	}
+	if optional {
+		return optionalChain(object, ctx.NodeLocation(propertyNode), loc, func(payload ast.Expression) ast.Expression {
+			return &ast.MemberExpr{
+				ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+				Object:   payload,
+				Property: *property,
+			}
+		})
+	}
 	return &ast.MemberExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Object:   object,
 		Property: *property,
-		Optional: optional,
 	}
 }
 
@@ -136,12 +168,76 @@ func collectTraitMethodPathExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc a
 	}
 }
 
-func collectIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) *ast.IndexExpr {
+func collectIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) ast.Expression {
+	object := CollectExpression(cst.Field(node, "object"), ctx)
+	indexNode := cst.Field(node, "index")
+	index := CollectExpression(indexNode, ctx)
+	if optional && indexNode != nil {
+		return optionalChain(object, ctx.NodeLocation(indexNode), loc, func(payload ast.Expression) ast.Expression {
+			return &ast.IndexExpr{
+				ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+				Object:   payload,
+				Index:    index,
+			}
+		})
+	}
 	return &ast.IndexExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Object:   CollectExpression(cst.Field(node, "object"), ctx),
-		Index:    CollectExpression(cst.Field(node, "index"), ctx),
-		Optional: optional,
+		Object:   object,
+		Index:    index,
+	}
+}
+
+// OptionalChainLift is the prelude function a safe-navigation arm wraps its result in:
+// `Some` on a plain value, the identity on a Maybe (std/prelude/maybe.lyra).
+const OptionalChainLift = "__optional_chain"
+
+// optionalChain is what `m?.x`, `m?.f(a)` and `m?[i]` mean — safe navigation, reading
+// through a Maybe: `None` stays `None`, and a `Some` has the access applied to its
+// payload. Desugared here rather than given a node of its own, so every later pass sees
+// an ordinary match (CLAUDE.md rule 8: a new expression kind is a case in every walk):
+//
+//	match m { Some(__opt_L_C) => __optional_chain(__opt_L_C.x), None => None }
+//
+// `__optional_chain` is what keeps `a?.b` a `Maybe<B>` rather than a `Maybe<Maybe<B>>`
+// when the field is itself a Maybe, so `a?.b?.c` chains — each `?.` reads through one
+// Maybe (Kotlin's rule; there is no Swift-style short-circuit of a whole chain, so
+// `a?.b.c` is a `.c` on a Maybe and refused). A method call's arguments sit inside the
+// Some arm, evaluated only when there is a value.
+//
+// The payload's name is stamped with the position of what follows the `?.` or `?[`,
+// which no other chain shares — two chains nested in one another (`m?.f(n?.g)`) then
+// bind different names, and neither shadows the other.
+func optionalChain(object ast.Expression, at, loc ast.Location, access func(payload ast.Expression) ast.Expression) ast.Expression {
+	name := fmt.Sprintf("__opt_%d_%d", at.StartLine, at.StartCol)
+	base := func() ast.ExprBase { return ast.ExprBase{AstBase: ast.AstBase{Location: loc}} }
+	patBase := ast.PatternBase{AstBase: ast.AstBase{Location: loc}}
+	payload := &ast.IdentifierExpr{ExprBase: base(), Name: name}
+	return &ast.MatchExpr{
+		ExprBase:      base(),
+		Scrutinee:     object,
+		OptionalChain: true,
+		MatchArms: []ast.MatchArm{
+			{
+				Pattern: &ast.DataPattern{
+					PatternBase: patBase,
+					Name:        "Some",
+					Pattern: &ast.TuplePattern{
+						PatternBase: patBase,
+						Elements:    []ast.Pattern{&ast.IdentifierPattern{PatternBase: patBase, Name: name}},
+					},
+				},
+				Body: &ast.FunctionCallExpr{
+					ExprBase:  base(),
+					Function:  &ast.IdentifierExpr{ExprBase: base(), Name: OptionalChainLift},
+					Arguments: []ast.Expression{access(payload)},
+				},
+			},
+			{
+				Pattern: &ast.DataPattern{PatternBase: patBase, Name: "None"},
+				Body:    &ast.DataConstructorExpr{ExprBase: base(), Constructor: "None"},
+			},
+		},
 	}
 }
 

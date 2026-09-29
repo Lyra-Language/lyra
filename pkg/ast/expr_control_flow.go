@@ -17,6 +17,10 @@ type MatchExpr struct {
 	ExprBase
 	Scrutinee Expression
 	MatchArms []MatchArm
+	// OptionalChain marks the match `m?.x`, `m?.f(a)` or `m?[i]` was desugared into
+	// (collector, postfix_expr.go), so a scrutinee that is not a Maybe is reported as a
+	// misused `?.` (lyra-E083) rather than as a pattern that cannot match.
+	OptionalChain bool
 }
 
 type MatchArm struct {

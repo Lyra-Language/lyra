@@ -12,6 +12,19 @@ func TestCollectMatchExpression(t *testing.T) {
 	runGoldenTest(t, source, "match_expression")
 }
 
+// Alternatives: literals, ranges and — since 09/29 — nullary constructors, one arm each.
+func TestCollectMatchExpressionWithOrPatterns(t *testing.T) {
+	source := `
+	match foo {
+		1 | 2 => "small",
+		'a'..<='f' | 'A'..<='F' => "hex",
+		Pencil | Eraser => "draws",
+		LOUD | QUIET => "sound",
+		_ => "other",
+	}`
+	runGoldenTest(t, source, "match_expression_with_or_patterns")
+}
+
 func TestCollectMatchExpressionWithBlocks(t *testing.T) {
 	source := `
 	match foo {

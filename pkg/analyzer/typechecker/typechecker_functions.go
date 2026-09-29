@@ -1551,6 +1551,9 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		tc.addError(member.GetLocation(), SeverityError, "%s has no method %q%s", t, methodName, hint)
 	default:
 		if objType != nil {
+			if hint == "" {
+				hint = tc.maybeReceiverHint(objType, member.GetLocation())
+			}
 			tc.addError(member.GetLocation(), SeverityError, "member access on non-struct type %s%s", objType, hint)
 		}
 	}

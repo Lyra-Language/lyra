@@ -166,3 +166,51 @@ match n {
 	assertErrorsAre(t, res,
 		"duplicate match arm: pattern 1 is already covered by an earlier arm")
 }
+
+// **An alternation covers what any alternative covers** (09/29): a constructor or a literal
+// an earlier alternation took unconditionally is dead in a later arm.
+func TestTypeCheck_UnreachableArm_AfterAlternation_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Tool = Pencil | Eraser | Fill
+let t: Tool = Pencil
+match t {
+  Pencil | Eraser => 1,
+  Eraser => 2,
+  Fill => 3,
+}
+let n = 2
+match n {
+  1 | 2 => 1,
+  2 => 2,
+  _ => 3,
+}
+`, false)
+	assertErrorsAre(t, res,
+		"unreachable match arm: constructor Eraser is already matched unconditionally by the arm at 5:3, so this arm can never run",
+		"unreachable match arm: 2 is already matched by the arm at 11:3, so this arm can never run")
+}
+
+// **An alternation is covered only when every alternative is**: `Pencil | Eraser` after a
+// `Pencil` arm still reaches `Eraser`, and a guarded alternation covers nothing.
+func TestTypeCheck_UnreachableArm_PartlyCoveredAlternation_NoWarning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Tool = Pencil | Eraser | Fill
+let t: Tool = Pencil
+let heavy = true
+match t {
+  Pencil => 1,
+  Pencil | Eraser => 2,
+  Fill => 3,
+}
+match t {
+  Pencil | Eraser if heavy => 1,
+  Pencil | Fill => 2,
+  _ => 3,
+}
+match t {
+  Pencil | Eraser => 1,
+  Fill | Eraser => 2,
+}
+`, false)
+	assertErrorsAre(t, res)
+}

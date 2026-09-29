@@ -306,6 +306,20 @@ let print_expr = pure (expr: shared Expr, depth: i64, show_loc: bool) -> string 
     ForLoopExpr(loop) => print_for_loop(loop, depth, show_loc),
     MathAssignOpExpr(op) => print_binary("MathAssignOpExpr", op, depth, show_loc),
     MatchExpr(match_expr) => print_match(match_expr, depth, show_loc),
+    DataConstructorExpr(value) => {
+      var out = header_unnamed(
+        "DataConstructorExpr",
+        Some(value.location),
+        depth,
+        show_loc
+      ) ++
+        scalar("Constructor", value.constructor, depth + 1)
+      match value.value {
+        Some(v) => { out = out ++ node_field("Value", print_expr(v, depth + 2, show_loc), depth + 1) },
+        None => {},
+      }
+      out ++ close(depth)
+    },
     GuardExpr(guard) =>
       header_unnamed("GuardExpr", Some(guard.location), depth, show_loc) ++
       node_field(
@@ -317,7 +331,6 @@ let print_expr = pure (expr: shared Expr, depth: i64, show_loc: bool) -> string 
     MemberExpr(member) =>
       header_unnamed("MemberExpr", Some(member.location), depth, show_loc) ++
       node_field("Object", print_expr(member.object, depth + 2, show_loc), depth + 1) ++
-      (if member.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
       node_field(
         "Property",
         print_expr(member.property, depth + 2, show_loc),
@@ -328,7 +341,6 @@ let print_expr = pure (expr: shared Expr, depth: i64, show_loc: bool) -> string 
       header_unnamed("IndexExpr", Some(access.location), depth, show_loc) ++
       node_field("Index", print_expr(access.index, depth + 2, show_loc), depth + 1) ++
       node_field("Object", print_expr(access.object, depth + 2, show_loc), depth + 1) ++
-      (if access.optional { scalar("Optional", "true", depth + 1) } else { "" }) ++
       close(depth),
     // `Index` here is the position the access names, so it prints as a scalar on one line
     // rather than as a nested literal — the one `Index` in this AST that is not a node.
@@ -517,7 +529,7 @@ let print_if = pure (conditional: Conditional, depth: i64, show_loc: bool) -> st
   out ++ close(depth)
 }
 
-/// `MatchExpr { MatchArms, Scrutinee }`, and each arm `{ Body, Guard, Pattern }`.
+/// `MatchExpr { MatchArms, OptionalChain, Scrutinee }`, and each arm `{ Body, Guard, Pattern }`.
 let print_match = pure (match_expr: Match, depth: i64, show_loc: bool) -> string => {
   var out = header_unnamed("MatchExpr", Some(match_expr.location), depth, show_loc)
   if match_expr.match_arms.len() > 0 {
@@ -527,6 +539,7 @@ let print_match = pure (match_expr: Match, depth: i64, show_loc: bool) -> string
     }
     out = out ++ node_field("MatchArms", items, depth + 1)
   }
+  if match_expr.optional_chain { out = out ++ scalar("OptionalChain", "true", depth + 1) }
   out ++ node_field(
     "Scrutinee",
     print_expr(match_expr.scrutinee, depth + 2, show_loc),
@@ -563,6 +576,10 @@ let print_for_in_loop = pure (loop: ForInLoop, depth: i64, show_loc: bool) -> st
     depth + 1
   )
   if loop.key != "" { out = out ++ scalar("Key", loop.key, depth + 1) }
+  match loop.key_type {
+    Some(t) => { out = out ++ node_field("KeyType", print_type(t, depth + 2, show_loc), depth + 1) },
+    None => {},
+  }
   if loop.label != "" { out = out ++ scalar("Label", loop.label, depth + 1) }
   if loop.value != "" { out = out ++ scalar("Value", loop.value, depth + 1) }
   out ++ close(depth)
@@ -1121,6 +1138,7 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   MathAssignOpExpr(op) => false,
   // A match always has a scrutinee, and a guard always has a condition.
   MatchExpr(match_expr) => false,
+  DataConstructorExpr(value) => false,
   GuardExpr(guard) => false,
   // Empty only with nothing at all in it — no name, no fields, no base, no type
   // arguments — which an anonymous literal with no fields would be.

@@ -815,6 +815,32 @@ pub let split<t> where t: Needle = pure (self: string, sep: t = " ") -> []string
   parts
 }
 
+/// `self` with every occurrence of `from` replaced by `to`, scanning left to right without
+/// overlap: `"aaa".replace("aa", "b")` is `"ba"`. A string without `from` comes back equal
+/// to itself.
+///
+/// # Panics
+///
+/// Traps when `from` is an empty string, as `split` does on an empty separator: it occurs
+/// between every two runes and consumes nothing, so there is no one answer. Build the
+/// result from `to_runes` for an insertion between characters.
+///
+/// # Complexity
+///
+/// `split` then `join`, and their rows: linear on ordinary text, O(n·m) against a needle
+/// built to almost-match; O(n) memory.
+///
+/// # Examples
+///
+/// ```
+/// let path = "a/b/c".replace("/", "::")    // "a::b::c"
+/// let tidy = "x  y".replace("  ", " ")     // "x y"
+/// ```
+pub let replace = pure (self: string, from: string, to: string) -> string => {
+  if from == "" { panic("replace: empty pattern; to insert between runes, build from to_runes()") }
+  self.split(from).join(to)
+}
+
 /// The parts of `self` separated by every rune `pred` accepts.
 ///
 /// `split`'s predicate form, for a boundary that is a *set* of runes rather than one

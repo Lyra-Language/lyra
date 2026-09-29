@@ -63,6 +63,7 @@ import ast.{
   VarReassignment,
   Match,
   MatchArm,
+  ConstructorValue,
   Guard,
   LiteralPatternDef,
   PatternRange,
@@ -862,11 +863,23 @@ let collect_member = (
   let property_node = node.field("property")?
   let object = collect_expr(object_node, source)?
   let property = collect_expr(property_node, source)?
+  let location = source.location_of(node)
+  if optional {
+    return Some(optional_chain(
+      object,
+      source.location_of(property_node),
+      location,
+      (payload) => MemberExpr(MemberAccess {
+        location: location,
+        object: payload,
+        property: property
+      })
+    ))
+  }
   Some(MemberExpr(MemberAccess {
-    location: source.location_of(node),
+    location: location,
     object: object,
-    optional: optional,
-    property: property,
+    property: property
   }))
 }
 
@@ -880,12 +893,20 @@ let collect_index = (
   let index_node = node.field("index")?
   let object = collect_expr(object_node, source)?
   let subscript = collect_expr(index_node, source)?
-  Some(IndexExpr(IndexAccess {
-    location: source.location_of(node),
-    index: subscript,
-    object: object,
-    optional: optional,
-  }))
+  let location = source.location_of(node)
+  if optional {
+    return Some(optional_chain(
+      object,
+      source.location_of(index_node),
+      location,
+      (payload) => IndexExpr(IndexAccess {
+        location: location,
+        index: subscript,
+        object: payload
+      })
+    ))
+  }
+  Some(IndexExpr(IndexAccess { location: location, index: subscript, object: object }))
 }
 
 /// `pair.0` — the position is read from the text, the grammar having already decided it
@@ -908,34 +929,107 @@ let collect_tuple_index = (node: Node, source: Source) -> Maybe<shared Expr> => 
 /// never occurs.
 let collect_call = (node: Node, source: Source) -> Maybe<shared Expr> => {
   let callee_node = node.field("function")?
-  let callee = collect_expr(callee_node, source)?
-  var arguments: []shared Expr = []
-  match node.field("arguments") {
-    Some(list) => {
-      for i in 0..<list.named_child_count() {
-        // **Each argument is wrapped in a `value` node** by the grammar, so the
-        // expression is one level down; a walk that took the wrapper would ask for the
-        // kind of a node that is never an expression and collect nothing.
-        let wrapper = list.named_child(i)
-        let inner = if wrapper.kind() == "value" && wrapper.named_child_count() > 0 {
-          wrapper.named_child(0)
-        } else {
-          wrapper
-        }
-        match collect_expr(inner, source) {
-          Some(argument) => arguments.push(argument),
-          None => {},
-        }
-      }
-    },
-    None => {},
+  // `m?.f(a)`: the whole call reads through the Maybe, so the callee's object is the
+  // scrutinee and the call is rebuilt on the payload — collecting the callee alone would
+  // give `(match …)(a)`.
+  if callee_node.kind() == "optional_member_expr" {
+    let object = collect_expr(callee_node.field("object")?, source)?
+    let property_node = callee_node.field("property")?
+    let method = collect_expr(property_node, source)?
+    let location = source.location_of(node)
+    let callee_location = source.location_of(callee_node)
+    let arguments = collect_arguments(node, source)
+    let generic_arguments = collect_generic_arguments(node, source)
+    return Some(optional_chain(
+      object,
+      source.location_of(property_node),
+      location,
+      (payload) => FunctionCallExpr(FunctionCall {
+        location: location,
+        arguments: arguments,
+        function: MemberExpr(MemberAccess { location: callee_location, object: payload, property: method }),
+        generic_arguments: generic_arguments,
+      })
+    ))
   }
+  let callee = collect_expr(callee_node, source)?
   Some(FunctionCallExpr(FunctionCall {
     location: source.location_of(node),
-    arguments: arguments,
+    arguments: collect_arguments(node, source),
     function: callee,
     generic_arguments: collect_generic_arguments(node, source),
   }))
+}
+
+/// A call's arguments, in order.
+let collect_arguments = (node: Node, source: Source) -> []shared Expr => {
+  var arguments: []shared Expr = []
+  let Some(list) = node.field("arguments") else { return arguments }
+  for i in 0..<list.named_child_count() {
+    // **Each argument is wrapped in a `value` node** by the grammar, so the expression
+    // is one level down; a walk that took the wrapper would ask for the kind of a node
+    // that is never an expression and collect nothing.
+    let wrapper = list.named_child(i)
+    let inner = if wrapper.kind() == "value" && wrapper.named_child_count() > 0 {
+      wrapper.named_child(0)
+    } else {
+      wrapper
+    }
+    match collect_expr(inner, source) {
+      Some(argument) => arguments.push(argument),
+      None => {},
+    }
+  }
+  arguments
+}
+
+/// What `m?.x`, `m?.f(a)` and `m?[i]` mean — the match the Go collector builds
+/// (`postfix_expr.go`, `optionalChain`), node for node, so the two print alike:
+///
+/// ```
+/// match m { Some(__opt_L_C) => __optional_chain(__opt_L_C.x), None => None }
+/// ```
+///
+/// `at` is where the name or index after `?.`/`?[` starts, which stamps the payload's
+/// binding: no other chain shares it, so nested chains never shadow one another.
+let optional_chain = pure (
+  object: shared Expr,
+  at: Location,
+  location: Location,
+  access: (shared Expr) -> shared Expr
+) -> shared Expr => {
+  let name = "__opt_${at.start_line}_${at.start_col}"
+  let payload: shared Expr = IdentifierExpr(Identifier { location: location, name: name })
+  let lifted: shared Expr = FunctionCallExpr(FunctionCall {
+    location: location,
+    arguments: [access(payload)],
+    function: IdentifierExpr(Identifier { location: location, name: "__optional_chain" }),
+  })
+  let binding: shared Pattern = IdentifierPattern(Identifier {
+    location: location,
+    name: name
+  })
+  MatchExpr(Match {
+    location: location,
+    match_arms: [
+      MatchArm {
+        body: lifted,
+        guard: None,
+        pattern: DataPattern(DataPatternDef {
+          location: location,
+          name: "Some",
+          pattern: Some(TuplePattern(PatternList { location: location, elements: [binding] })),
+        }),
+      },
+      MatchArm {
+        body: DataConstructorExpr(ConstructorValue { location: location, constructor: "None" }),
+        guard: None,
+        pattern: DataPattern(DataPatternDef { location: location, name: "None", pattern: None }),
+      },
+    ],
+    optional_chain: true,
+    scrutinee: object,
+  })
 }
 
 /// `::<i64, i64>` — the type arguments written at a callee or a tuple name, or none.
@@ -983,6 +1077,7 @@ let collect_if = (node: Node, source: Source) -> Maybe<shared Expr> => {
 /// skipped explicitly: taking "the last child that is not a binding" would collect one.
 let collect_for_in_loop = (node: Node, source: Source) -> Maybe<shared Expr> => {
   var key = ""
+  var key_type: Maybe<shared TypeNode> = None
   var value = ""
   var iterable: Maybe<shared Expr> = None
   var body: Maybe<shared Expr> = None
@@ -996,6 +1091,13 @@ let collect_for_in_loop = (node: Node, source: Source) -> Maybe<shared Expr> => 
       let part_kind = part.kind()
       if part_kind == "for_variable_or_key" { key = part.text(source.bytes) }
       else if part_kind == "for_index_or_value" { value = part.text(source.bytes) }
+      else if part_kind == "type_annotation" {
+        // `for i: u16 in …` — a type, which the iterable branch below would otherwise take.
+        match part.field("type") {
+          Some(t) => { key_type = collect_type(t, source) },
+          None => {},
+        }
+      }
       else if part_kind != "comment" { iterable = collect_expr(part, source) }
     }
   }
@@ -1008,6 +1110,7 @@ let collect_for_in_loop = (node: Node, source: Source) -> Maybe<shared Expr> => 
     body: block,
     iterable: over,
     key: key,
+    key_type: key_type,
     label: label,
     value: value,
   }))

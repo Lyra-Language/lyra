@@ -211,6 +211,79 @@ pub let add_image = (
   )
 }
 
+// ── Quitting ─────────────────────────────────────────────────────────────────
+
+/// Take back the quit the user just asked for — closing the main window, or Cmd+Q — so
+/// the next [begin_frame] starts a frame instead of answering false. How a program with
+/// unsaved work asks before it goes:
+///
+/// ```
+/// for true {
+///   if !begin_frame(host) {
+///     if !has_unsaved_work { break }
+///     cancel_quit(host)
+///     asking = true      // and show the question in the frames that follow
+///     continue
+///   }
+///   …
+/// }
+/// ```
+pub let cancel_quit = (host: Host) -> void => unsafe { lyra_imgui_host_cancel_quit(host) }
+
+// ── File dialogs ─────────────────────────────────────────────────────────────
+
+/// A choice of file types in a dialog: its label and the extensions it admits, without
+/// dots, joined by `;` (`"vega;json"`), or `"*"` for every file.
+pub struct FileFilter {
+  name: string,
+  extensions: string,
+}
+
+/// What a file dialog answered, under the tag its request was shown with.
+pub data DialogAnswer =
+  /// The path the user chose.
+  Chosen(i32, string)
+  /// The user closed the dialog without choosing.
+  | Cancelled(i32)
+  /// The dialog could not be shown; SDL's reason.
+  | DialogFailed(i32, string)
+
+/// Show the system's open-file dialog, modal to the main window. It returns at once;
+/// the answer arrives later from [poll_dialog], under `tag`. `default_location` is a
+/// folder or file to start at. `false` when the request could not be made (out of
+/// memory), and then no answer will come.
+pub let show_open_dialog = (
+  host: Host,
+  tag: i32,
+  filters: []FileFilter,
+  default_location: Maybe<string> = None
+) -> bool => show_dialog(host, tag, false, filters, default_location)
+
+/// [show_open_dialog]'s twin for choosing where to save; the path may not exist yet.
+pub let show_save_dialog = (
+  host: Host,
+  tag: i32,
+  filters: []FileFilter,
+  default_location: Maybe<string> = None
+) -> bool => show_dialog(host, tag, true, filters, default_location)
+
+/// The oldest dialog answer not yet taken, or `None`. Call it each frame while a dialog
+/// is open: SDL answers asynchronously, possibly from another thread, and the host keeps
+/// the answers until they are polled.
+pub let poll_dialog = (host: Host) -> Maybe<DialogAnswer> => {
+  var tag: i32 = 0
+  var kind: i32 = -1
+  let c_tag = unsafe { &mut tag }
+  let c_kind = unsafe { &mut kind }
+  let answered = unsafe { lyra_imgui_poll_file_dialog(host, c_tag, c_kind) }
+  match kind {
+    0 => Some(Chosen(tag, from_cstring(answered))),
+    1 => Some(Cancelled(tag)),
+    2 => Some(DialogFailed(tag, from_cstring(answered))),
+    _ => None,
+  }
+}
+
 // ── Colours ──────────────────────────────────────────────────────────────────
 
 /// `IM_COL32(r, g, b, a)`: a packed colour for the draw-list functions
@@ -243,6 +316,22 @@ let edit_text = (
   changed
 }
 
+/// Both dialogs' one body: the filters cross as `name\tpattern` lines, which the host
+/// parses into SDL's array and keeps until the answer.
+let show_dialog = (
+  host: Host,
+  tag: i32,
+  save: bool,
+  filters: []FileFilter,
+  default_location: Maybe<string>
+) -> bool => {
+  let filter_lines = filters.map((f) => "${f.name}\t${f.extensions}\n").join("")
+  filter_lines.with_cstring((t) => with_maybe_cstring(
+    default_location,
+    (d) => unsafe { lyra_imgui_show_file_dialog(host, tag, save, t, d) }
+  ))
+}
+
 /// Lend `s` to C as a NUL-terminated string, or NULL for `None`.
 let with_maybe_cstring = pure (s: Maybe<string>, f: (^u8) -> t) -> t => match s {
   Some(text) => text.with_cstring(f),
@@ -271,6 +360,25 @@ unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) ->
 
 @symbol("lyra_imgui_host_destroy")
 unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
+
+@symbol("lyra_imgui_host_cancel_quit")
+unsafe extern lyra_imgui_host_cancel_quit: (host: Host) -> void
+
+@symbol("lyra_imgui_show_file_dialog")
+unsafe extern lyra_imgui_show_file_dialog: (
+  host: Host,
+  tag: i32,
+  save: bool,
+  filters: ^u8,
+  default_location: ^u8
+) -> bool
+
+@symbol("lyra_imgui_poll_file_dialog")
+unsafe extern lyra_imgui_poll_file_dialog: (
+  host: Host,
+  tag: ^mut i32,
+  kind: ^mut i32
+) -> ^u8
 
 @symbol("lyra_imgui_input_text")
 unsafe extern lyra_imgui_input_text: (

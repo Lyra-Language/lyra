@@ -1040,3 +1040,44 @@ let main = () -> void => {
 		t.Errorf("expected the diagnostic to name immutability, got %v", got)
 	}
 }
+
+// `replace` (09/29, found missing by Vega) is `split` then `join`: left to right, without
+// overlap, and a string without the pattern comes back equal to itself. Multibyte text on
+// either side, and an empty replacement that deletes.
+func TestExec_StringReplace(t *testing.T) {
+	t.Parallel()
+	const src = `
+let main = () -> void => {
+  println("a/b/c".replace("/", "::"))
+  println("aaa".replace("aa", "b"))
+  println("héllo wörld".replace("ö", "o"))
+  println("none".replace("x", "y"))
+  println("[${"".replace("a", "b")}]")
+  println("[${"abab".replace("ab", "")}]")
+  println("日本語".replace("本", "--"))
+}
+`
+	want := "a::b::c\nba\nhéllo world\nnone\n[]\n[]\n日--語\n"
+	if got := buildAndRunWithPrelude(t, src, ""); got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
+// An empty pattern occurs everywhere and consumes nothing — `split`'s trap, with a message
+// that names `replace`, which is what the caller wrote.
+func TestExec_StringReplaceEmptyPatternTraps(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  println("abc".replace("", "-"))
+}
+`
+	stderr, code := buildAndRunPanicWithPrelude(t, src)
+	if code != trapExitCode {
+		t.Errorf("empty-pattern replace exited %d; want %d (the trap)", code, trapExitCode)
+	}
+	if !strings.Contains(stderr, "replace: empty pattern") {
+		t.Errorf("stderr %q; want it to name replace's empty pattern", stderr)
+	}
+}

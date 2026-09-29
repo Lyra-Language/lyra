@@ -129,3 +129,20 @@ pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> May
   (Some v, pred) => if pred(v) { Some v } else { None },
   (None, _) => None,
 }
+
+// ── Safe navigation ──────────────────────────────────────────────────────────
+//
+// `m?.x`, `m?.f(a)` and `m?[i]` are desugared by the collector into a match whose Some
+// arm wraps the access in `__optional_chain` (postfix_expr.go, `optionalChain`). The two
+// overloads below are the whole of the flattening rule: a field that is already a Maybe
+// comes out as itself, anything else as `Some`, so `a?.b` is a `Maybe<B>` whether or not
+// `b` was optional and `a?.b?.c` chains. The generic overload is the set's fallback,
+// ranked below the `Maybe` one (LANGUAGE.md § receiver-keyed overloading). Not for
+// calling by name.
+
+/// Safe navigation's result when the value read is already a Maybe: itself, so `a?.b`
+/// on an optional `b` is one Maybe, not two.
+pub let __optional_chain<t> = pure noalloc (self: Maybe<t>) -> Maybe<t> => self
+
+/// Safe navigation's result when the value read is a plain value: `Some` of it.
+pub let __optional_chain<t> = pure noalloc (self: t) -> Maybe<t> => Some(self)

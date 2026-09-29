@@ -21,10 +21,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+// A file dialog's answer, waiting for Lyra to poll it: `kind` is one of the
+// LYRA_DIALOG_* values, `text` the chosen path or the error (NULL when cancelled).
+struct LyraDialogAnswer {
+    int32_t tag;
+    int32_t kind;
+    char* text;
+    LyraDialogAnswer* next;
+};
+
+enum {
+    LYRA_DIALOG_CHOSEN = 0,
+    LYRA_DIALOG_CANCELLED = 1,
+    LYRA_DIALOG_FAILED = 2,
+};
+
 struct LyraImGuiHost {
     SDL_Window* window;
     SDL_GPUDevice* device;
     bool quit;
+    // Answers from file dialogs, oldest first. SDL may call a dialog's callback on
+    // another thread, so the queue is the lock's; `polled` is the last answer handed to
+    // Lyra, freed on the next poll.
+    SDL_Mutex* dialog_lock;
+    LyraDialogAnswer* answers;
+    LyraDialogAnswer* polled;
 };
 
 // Flags for lyra_imgui_host_create; Lyra spells them HOST_DOCKING and HOST_VIEWPORTS.
@@ -107,6 +128,7 @@ LyraImGuiHost* lyra_imgui_host_create(const char* title, int32_t width, int32_t 
     LyraImGuiHost* host = (LyraImGuiHost*)calloc(1, sizeof(LyraImGuiHost));
     host->window = window;
     host->device = device;
+    host->dialog_lock = SDL_CreateMutex();
     return host;
 }
 
@@ -323,6 +345,151 @@ void lyra_imgui_draw_list_add_image(ImDrawList* list, SDL_GPUTexture* texture, I
         set_sampler(list, false);
 }
 
+// ── Quitting ───────────────────────────────────────────────────────────────────
+
+// Take back a quit the user asked for, so the next begin_frame starts a frame: how a
+// program with unsaved work asks first. begin_frame answering false is what reports the
+// request, and it stays requested until this.
+void lyra_imgui_host_cancel_quit(LyraImGuiHost* host) {
+    host->quit = false;
+}
+
+// ── File dialogs ───────────────────────────────────────────────────────────────
+//
+// SDL's open and save dialogs are asynchronous: they return at once and answer through a
+// callback, possibly on another thread, with a file list freed when the callback returns.
+// Lyra cannot hand C a function, so — as `bindings/menubar` does for menu items — the
+// callback copies the answer onto the host's queue and Lyra polls for it each frame,
+// matching it to its request by the tag it chose.
+
+// One dialog in flight: the filters SDL reads until the callback, and where to answer.
+struct LyraDialogRequest {
+    LyraImGuiHost* host;
+    int32_t tag;
+    SDL_DialogFileFilter* filters;
+    int nfilters;
+    char* filter_text; // the names and patterns `filters` points into
+};
+
+static char* copy_string(const char* s) {
+    size_t n = strlen(s) + 1;
+    char* out = (char*)malloc(n);
+    if (out != nullptr)
+        memcpy(out, s, n);
+    return out;
+}
+
+static void dialog_answered(void* userdata, const char* const* filelist, int filter) {
+    (void)filter;
+    LyraDialogRequest* request = (LyraDialogRequest*)userdata;
+    LyraDialogAnswer* answer = (LyraDialogAnswer*)calloc(1, sizeof(LyraDialogAnswer));
+    if (answer != nullptr) {
+        answer->tag = request->tag;
+        if (filelist == nullptr) {
+            answer->kind = LYRA_DIALOG_FAILED;
+            answer->text = copy_string(SDL_GetError());
+        } else if (filelist[0] == nullptr) {
+            answer->kind = LYRA_DIALOG_CANCELLED;
+        } else {
+            answer->kind = LYRA_DIALOG_CHOSEN;
+            answer->text = copy_string(filelist[0]);
+        }
+        LyraImGuiHost* host = request->host;
+        SDL_LockMutex(host->dialog_lock);
+        LyraDialogAnswer** tail = &host->answers;
+        while (*tail != nullptr)
+            tail = &(*tail)->next;
+        *tail = answer;
+        SDL_UnlockMutex(host->dialog_lock);
+    }
+    free(request->filters);
+    free(request->filter_text);
+    free(request);
+}
+
+// Parse `filters` — "name\tpattern" lines, a pattern being extensions joined by `;`
+// (`vega;json`) or `*` — into SDL's array, owned by the request.
+static bool dialog_filters(LyraDialogRequest* request, const char* filters) {
+    request->filter_text = copy_string(filters);
+    if (request->filter_text == nullptr)
+        return false;
+    int lines = 0;
+    for (const char* c = filters; *c != '\0'; c++)
+        if (*c == '\n')
+            lines++;
+    if (filters[0] != '\0' && filters[strlen(filters) - 1] != '\n')
+        lines++;
+    if (lines == 0)
+        return true;
+    request->filters = (SDL_DialogFileFilter*)calloc((size_t)lines, sizeof(SDL_DialogFileFilter));
+    if (request->filters == nullptr)
+        return false;
+    char* line = request->filter_text;
+    while (line != nullptr && *line != '\0') {
+        char* end = strchr(line, '\n');
+        if (end != nullptr)
+            *end = '\0';
+        char* tab = strchr(line, '\t');
+        if (tab != nullptr) {
+            *tab = '\0';
+            request->filters[request->nfilters].name = line;
+            request->filters[request->nfilters].pattern = tab + 1;
+            request->nfilters++;
+        }
+        line = end != nullptr ? end + 1 : nullptr;
+    }
+    return true;
+}
+
+// Show an open (`save` false) or save dialog, modal to the main window; its answer is
+// queued under `tag`. `default_location` may be NULL. False only when out of memory,
+// and then no answer will come.
+bool lyra_imgui_show_file_dialog(LyraImGuiHost* host, int32_t tag, bool save, const char* filters,
+                                 const char* default_location) {
+    LyraDialogRequest* request = (LyraDialogRequest*)calloc(1, sizeof(LyraDialogRequest));
+    if (request == nullptr)
+        return false;
+    request->host = host;
+    request->tag = tag;
+    if (!dialog_filters(request, filters)) {
+        free(request->filters);
+        free(request->filter_text);
+        free(request);
+        return false;
+    }
+    SDL_DialogFileFilter* list = request->nfilters > 0 ? request->filters : nullptr;
+    if (save)
+        SDL_ShowSaveFileDialog(dialog_answered, request, host->window, list, request->nfilters, default_location);
+    else
+        SDL_ShowOpenFileDialog(dialog_answered, request, host->window, list, request->nfilters, default_location,
+                               false);
+    return true;
+}
+
+// The oldest queued answer: its tag and kind through the pointers, its text (path or
+// error) as the result — owned by the host until the next poll. `*kind` is -1 when no
+// answer is waiting.
+const char* lyra_imgui_poll_file_dialog(LyraImGuiHost* host, int32_t* tag, int32_t* kind) {
+    if (host->polled != nullptr) {
+        free(host->polled->text);
+        free(host->polled);
+        host->polled = nullptr;
+    }
+    SDL_LockMutex(host->dialog_lock);
+    LyraDialogAnswer* answer = host->answers;
+    if (answer != nullptr)
+        host->answers = answer->next;
+    SDL_UnlockMutex(host->dialog_lock);
+    if (answer == nullptr) {
+        *kind = -1;
+        return nullptr;
+    }
+    host->polled = answer;
+    *tag = answer->tag;
+    *kind = answer->kind;
+    return answer->text;
+}
+
 // Tear everything down, SDL included. The host must not be used afterwards.
 void lyra_imgui_host_destroy(LyraImGuiHost* host) {
     SDL_WaitForGPUIdle(host->device);
@@ -332,6 +499,19 @@ void lyra_imgui_host_destroy(LyraImGuiHost* host) {
     SDL_ReleaseWindowFromGPUDevice(host->device, host->window);
     SDL_DestroyGPUDevice(host->device);
     SDL_DestroyWindow(host->window);
+    // Answers nobody polled. A dialog still open now answers into a freed host, so a
+    // program closes its dialogs (or waits for them) before it destroys the host.
+    for (LyraDialogAnswer* a = host->answers; a != nullptr;) {
+        LyraDialogAnswer* next = a->next;
+        free(a->text);
+        free(a);
+        a = next;
+    }
+    if (host->polled != nullptr) {
+        free(host->polled->text);
+        free(host->polled);
+    }
+    SDL_DestroyMutex(host->dialog_lock);
     free(host);
     SDL_Quit();
 }

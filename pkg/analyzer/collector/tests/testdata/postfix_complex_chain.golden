@@ -6,14 +6,63 @@ Program(1 statements) {
 			Value: {
 				MemberExpr {
 					Object: {
-						IndexExpr {
-							Index: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 0
+						MatchExpr {
+							MatchArms: {
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												IndexExpr {
+													Index: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 0
+														}
+													}
+													Object: {
+														IdentifierExpr(__opt_1_35) {
+															Name: __opt_1_35
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(__optional_chain) {
+													Name: __optional_chain
+												}
+											}
+										}
+									}
+									Pattern: {
+										DataPattern(Some) {
+											Name: Some
+											Pattern: {
+												TuplePattern {
+													Elements: {
+														IdentifierPattern(__opt_1_35) {
+															Name: __opt_1_35
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										DataConstructorExpr {
+											Constructor: None
+										}
+									}
+									Pattern: {
+										DataPattern(None) {
+											Name: None
+										}
+									}
 								}
 							}
-							Object: {
+							OptionalChain: true
+							Scrutinee: {
 								FunctionCallExpr {
 									Arguments: {
 										StringLiteralExpr {
@@ -36,7 +85,6 @@ Program(1 statements) {
 									}
 								}
 							}
-							Optional: true
 						}
 					}
 					Property: {

@@ -201,6 +201,16 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     smoothed. Do not destroy a texture the frame being built still draws.
   - `text(s)` (ImGui's `Text` is printf-style, so the variadics are bound through their
     `…Unformatted` forms and interpolation does the formatting) and `col32(r, g, b, a)`.
+  - **`cancel_quit(host)`**: `begin_frame` answering false reports a quit (the window
+    closed, Cmd+Q) and it *stays* requested; this takes it back, so a program with unsaved
+    work asks first and keeps looping. SIGTERM arrives as the same quit.
+  - **File dialogs**: `show_open_dialog`/`show_save_dialog(host, tag, filters,
+    default_location)` return at once; the answer (`Chosen(tag, path)`, `Cancelled(tag)`,
+    `DialogFailed(tag, why)`) comes from `poll_dialog(host)`, called each frame. SDL may run
+    the callback on another thread and frees the file list when it returns, so `host.cpp`
+    copies the answer onto a queue under an `SDL_Mutex` — `bindings/menubar`'s pattern, and
+    no C++ runtime. `FileFilter { name, extensions }` takes `"vega;json"` or `"*"`. A dialog
+    still open when the host is destroyed would answer into freed memory.
 - **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
   reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into

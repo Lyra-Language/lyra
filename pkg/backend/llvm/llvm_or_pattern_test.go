@@ -91,6 +91,58 @@ let main = () -> u8 => u8(f(1, 2) + f(8, 8))`,
 let main = () -> u8 => u8(g(true) + g(false))`,
 			8,
 		},
+		// **Nullary constructors as alternatives** (09/29): the tag `switch` gets one case
+		// per alternative, all to the arm's block.
+		{
+			"constructor alternatives share an arm",
+			`data Tool = Pencil | Eraser | Fill | Line | Picker
+let rank = pure (t: Tool) -> i64 => match t {
+  Pencil | Eraser => 1,
+  Fill | Line => 2,
+  Picker => 3,
+}
+let main = () -> u8 => u8(rank(Pencil) + rank(Eraser) * 10 + rank(Line) * 20 + rank(Picker) * 50)`,
+			1 + 10 + 40 + 150,
+		},
+		{
+			// All-caps constructors, which lex as constants.
+			"all-caps constructor alternatives",
+			`data Level = LOUD | QUIET | MUTE
+let on = pure (l: Level) -> i64 => match l {
+  LOUD | QUIET => 1,
+  MUTE => 0,
+}
+let main = () -> u8 => u8(on(LOUD) + on(QUIET) + on(MUTE))`,
+			2,
+		},
+		{
+			// An alternative an earlier arm already took gets no second case — a `switch`
+			// naming a tag twice is IR clang refuses — while its other alternative still
+			// reaches this arm.
+			"an alternative an earlier arm claimed",
+			`data Tool = Pencil | Eraser | Fill
+let pick = pure (t: Tool) -> i64 => match t {
+  Pencil => 1,
+  Pencil | Eraser => 2,
+  Fill => 3,
+}
+let main = () -> u8 => u8(pick(Pencil) + pick(Eraser) * 10 + pick(Fill) * 50)`,
+			1 + 20 + 150,
+		},
+		{
+			// A guard sends the match down the ladder, where an alternation is the or of
+			// its alternatives' tag tests — and a failed guard falls through to the next
+			// arm that names the same constructor.
+			"a guarded alternation",
+			`data Tool = Pencil | Eraser | Fill
+let weigh = pure (t: Tool, heavy: bool) -> i64 => match t {
+  Pencil | Eraser if heavy => 1,
+  Pencil | Fill => 2,
+  _ => 4,
+}
+let main = () -> u8 => u8(weigh(Pencil, true) + weigh(Eraser, true) * 8 + weigh(Pencil, false) * 16 + weigh(Eraser, false) * 32)`,
+			1 + 8 + 32 + 128,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

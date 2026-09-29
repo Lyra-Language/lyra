@@ -1,0 +1,71 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(foo) {
+			BindingKind: let
+			Name: foo
+			Value: {
+				ArrayCompExpr {
+					Generators: {
+						Generator {
+							Identifier: s
+							Value: {
+								MemberExpr {
+									Object: {
+										IdentifierExpr(game) {
+											Name: game
+										}
+									}
+									Property: {
+										IdentifierExpr(sprites) {
+											Name: sprites
+										}
+									}
+								}
+							}
+						}
+						Generator {
+							Identifier: c
+							Value: {
+								IndexExpr {
+									Index: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 0
+										}
+									}
+									Object: {
+										IdentifierExpr(grid) {
+											Name: grid
+										}
+									}
+								}
+							}
+						}
+					}
+					Result: {
+						TupleLiteralExpr(?) {
+							Elements: {
+								MemberExpr {
+									Object: {
+										IdentifierExpr(s) {
+											Name: s
+										}
+									}
+									Property: {
+										IdentifierExpr(name) {
+											Name: name
+										}
+									}
+								}
+								IdentifierExpr(c) {
+									Name: c
+								}
+							}
+							Name: ?
+						}
+					}
+				}
+			}
+		}
+	}
+}

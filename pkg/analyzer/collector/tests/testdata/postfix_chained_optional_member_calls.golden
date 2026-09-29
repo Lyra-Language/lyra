@@ -6,41 +6,137 @@ Program(1 statements) {
 			Value: {
 				TryExpr {
 					Operand: {
-						FunctionCallExpr {
-							Function: {
-								MemberExpr {
-									Object: {
+						MatchExpr {
+							MatchArms: {
+								MatchArm {
+									Body: {
 										FunctionCallExpr {
-											Function: {
-												MemberExpr {
-													Object: {
-														FunctionCallExpr {
-															Arguments: {
-																IdentifierExpr(path) {
-																	Name: path
+											Arguments: {
+												FunctionCallExpr {
+													Function: {
+														MemberExpr {
+															Object: {
+																IdentifierExpr(__opt_1_37) {
+																	Name: __opt_1_37
 																}
 															}
-															Function: {
-																IdentifierExpr(open_file) {
-																	Name: open_file
+															Property: {
+																IdentifierExpr(parse) {
+																	Name: parse
 																}
 															}
 														}
 													}
-													Optional: true
-													Property: {
-														IdentifierExpr(read) {
-															Name: read
+												}
+											}
+											Function: {
+												IdentifierExpr(__optional_chain) {
+													Name: __optional_chain
+												}
+											}
+										}
+									}
+									Pattern: {
+										DataPattern(Some) {
+											Name: Some
+											Pattern: {
+												TuplePattern {
+													Elements: {
+														IdentifierPattern(__opt_1_37) {
+															Name: __opt_1_37
 														}
 													}
 												}
 											}
 										}
 									}
-									Optional: true
-									Property: {
-										IdentifierExpr(parse) {
-											Name: parse
+								}
+								MatchArm {
+									Body: {
+										DataConstructorExpr {
+											Constructor: None
+										}
+									}
+									Pattern: {
+										DataPattern(None) {
+											Name: None
+										}
+									}
+								}
+							}
+							OptionalChain: true
+							Scrutinee: {
+								MatchExpr {
+									MatchArms: {
+										MatchArm {
+											Body: {
+												FunctionCallExpr {
+													Arguments: {
+														FunctionCallExpr {
+															Function: {
+																MemberExpr {
+																	Object: {
+																		IdentifierExpr(__opt_1_29) {
+																			Name: __opt_1_29
+																		}
+																	}
+																	Property: {
+																		IdentifierExpr(read) {
+																			Name: read
+																		}
+																	}
+																}
+															}
+														}
+													}
+													Function: {
+														IdentifierExpr(__optional_chain) {
+															Name: __optional_chain
+														}
+													}
+												}
+											}
+											Pattern: {
+												DataPattern(Some) {
+													Name: Some
+													Pattern: {
+														TuplePattern {
+															Elements: {
+																IdentifierPattern(__opt_1_29) {
+																	Name: __opt_1_29
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+										MatchArm {
+											Body: {
+												DataConstructorExpr {
+													Constructor: None
+												}
+											}
+											Pattern: {
+												DataPattern(None) {
+													Name: None
+												}
+											}
+										}
+									}
+									OptionalChain: true
+									Scrutinee: {
+										FunctionCallExpr {
+											Arguments: {
+												IdentifierExpr(path) {
+													Name: path
+												}
+											}
+											Function: {
+												IdentifierExpr(open_file) {
+													Name: open_file
+												}
+											}
 										}
 									}
 								}

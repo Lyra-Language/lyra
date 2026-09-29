@@ -263,16 +263,47 @@ func TestAnalyze_ForInRange_OutOfBounds(t *testing.T) {
 
 // TestAnalyze_ForInLoopVariableResolves: the for-in loop variable now resolves in
 // the body (it used to be an "undefined identifier" — no non-empty body was tested).
+//
+// **The width is written** (09/29): `for i: u8 in 0..<3`. Until then the variable of a
+// literal range was left untyped so that `t = i` would pick up `t`'s width — which the
+// backend, running the loop at i64, did not honour: `0..<300` stored 299 in a `u8`.
 func TestAnalyze_ForInLoopVariableResolves(t *testing.T) {
-	src := "let f = () -> u8 => {\n" +
+	src := "let f = pure () -> u8 => {\n" +
 		"  var t: u8 = 0\n" +
-		"  for i in 0..<3 { t = i }\n" +
+		"  for i: u8 in 0..<3 { t = i }\n" +
 		"  t\n" +
 		"}\n" +
 		"let main = () -> u8 => 0\n"
 	res := Analyze([]byte(src))
 	if res.HasErrors() {
 		t.Fatalf("the for-in loop variable should resolve in the body, got: %v", res.Diagnostics)
+	}
+}
+
+// Without a written type, the variable of a literal range is an i64, as `let n = 5` is —
+// so it neither narrows into a u8 nor passes for a float.
+func TestAnalyze_ForInLoopVariableOfLiteralsIsI64(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{"var t: u8 = 0\n  for i in 0..<3 { t = i }", "t: cannot assign i64 to u8"},
+		{"for i in 0..<3 { let x = 1.0 * i }", "operator *: incompatible types: float literal and i64"},
+		{"for i in 0..<3 { let x: f32 = i }", "x: cannot assign i64 to f32"},
+		{"for b: u8 in 0..<300 { }", "loop variable b: literal value 300 overflows u8"},
+		{"let n = 10\n  for i: u8 in 0..<n { }", "the loop variable is `i: u8`, but this bound is i64"},
+		{"for f: f32 in 0..<3 { }", "a range counts in integers, so `f: f32` cannot walk it"},
+		{"let xs: []i64 = [1]\n  for x: u8 in xs { }", "the loop variable is `x: u8`, but the elements are i64"},
+	}
+	for _, c := range cases {
+		src := "let main = () -> void => {\n  " + c.body + "\n}\n"
+		res := Analyze([]byte(src))
+		found := false
+		for _, d := range res.Errors() {
+			if strings.Contains(d.Message, c.want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: want an error containing %q, got %v", c.body, c.want, res.Errors())
+		}
 	}
 }
 

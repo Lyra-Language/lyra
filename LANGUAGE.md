@@ -55,6 +55,7 @@ A literal that cannot hold its value is a compile error **in every position, flo
 - **Direction is the operator's, never the bounds'**: `5..<1` is an empty ascending range.
 - Step: `0..<10:2`, a **magnitude**. Negative literal step is an error; a non-positive step known only at run time traps (`lyra: range step must be positive`). A comprehension with a degenerate step yields an empty array.
 - `for-in` **terminates at the type's edge**: `0..<=hi` with `hi` at the type max visits max and exits; a large step cannot leap an exclusive end.
+- **A loop variable over literal bounds is an `i64`**, as `let n = 5` is (09/29; it was left untyped, so `t = i` took `t`'s width — which the backend, counting at i64, did not honour: a `u8` could hold 299). **Its type may be written**, one-variable form only: `for i: u16 in 0..<100`. Literal bounds narrow to it and must fit (`for b: u8 in 0..<300` is refused), the loop counts at that width (`for b: u8 in 250..<=255` stops at 255), a typed bound must already be that type, and the type must be an integer. Over an array the written type must be the element's.
 - As a match pattern or newtype constraint a range is a set: `..>`/`..>=` there are `lyra-E034`.
 - **A range pattern on a `rune` is written in runes** (`'0'..<='9'`), and numeric bounds
   there are refused: `48..<=57` is the same set with its meaning removed, so the scrutinee's
@@ -62,12 +63,16 @@ A literal that cannot hold its value is a compile error **in every position, flo
   has no units to be wrong in.
 - **A pattern may name alternatives with `|`** — `1 | 2 | 3`, `"get" | "post"`,
   `'a'..<='f' | 'A'..<='F'` — matching when any of them does, and counting as all of them
-  for exhaustiveness (`true | false` covers `bool`). **Literals and ranges only**: an
-  alternative that binds raises a rule every language with or-patterns states explicitly
-  (Rust requires every alternative to bind the same names at the same types) and nothing has
-  needed it, so `Some(x) | None` is a syntax error rather than an undecided meaning. `|` is
-  also the bitwise operator; position tells them apart, so `match a | b { 3 | 7 => … }` is a
-  bitor scrutinee matched against an alternation.
+  for exhaustiveness (`true | false` covers `bool`). **Literals, ranges and nullary
+  constructors** (`Pencil | Eraser`, `LOUD | QUIET`, since 09/29): an alternative that binds
+  raises a rule every language with or-patterns states explicitly (Rust requires every
+  alternative to bind the same names at the same types) and nothing has needed it, so
+  `Some(x) | None` is a syntax error rather than an undecided meaning — and so, for now, is
+  `Some(_) | None`, whose payload binds nothing. An alternation covers what any alternative
+  covers for `lyra-W021`, so `Pencil | Eraser => …, Eraser => …` warns. Top level only:
+  `Some(1 | 2)` and `(1 | 2, _)` are refused. `|` is also the bitwise operator; position
+  tells them apart, so `match a | b { 3 | 7 => … }` is a bitor scrutinee matched against an
+  alternation.
 
 ### Newtypes
 
@@ -285,7 +290,9 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 - **Several clauses nest left to right**: in `[y in ys, x in xs | …]` the `y` clause is the
   outer loop, so `ys = [10, 20]`, `xs = [1, 2, 3]` yields the pairs in the order `10:1
   10:2 10:3 20:1 …`.
-- A source is an array, a range, a string (by rune), or one `Seq`. Capacity is the product
+- A source is an array, a range, a string (by rune), or one `Seq`, **written** as a name, a
+  call, a field or an element (`g.sprites`, `grid[0]`, since 09/29), or a literal; anything
+  else is parenthesized. Capacity is the product
   of the sources' lengths, computed up front, which is why a clause whose source depends on
   an **earlier clause's binding** (`[row in grid, cell in row | cell]`) is refused today.
 - The result is any expression, and the brackets make a `[]T` — there is no `collect`.
@@ -318,6 +325,7 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 - `index(needle, offset = 0) -> Maybe<i64>`: naive scan, offset and result in **rune** indices.
 - `index`/`contains`/`split` are generic over `pub trait Needle`, implemented for `rune` and `string`. Two methods: `found_at(haystack, offset)` returns an `(Index, Length)` span and **walks from rune 0** (a rune offset is only reachable by counting), and `matches_at(haystack, rune_at, byte_at, here)` tests one position, which is what lets a stepping caller stay linear. `matches_at` is defaulted in terms of `found_at`, so an existing needle keeps working and only pays the old cost. `split` walks once and cuts parts out of the bytes, so it is **linear** (it was quadratic in both respects until 09/17: 600 K runes took 4.7 s, now ~10 ms). `split` on an empty separator traps, naming `to_runes() -> []rune`.
 - `split` keeps empty parts (`"a,,b"` → 3); `split_when(pred)` **collapses** runs of boundaries and drops leading/trailing empties.
+- `replace(from, to)` is `split(from).join(to)`: left to right, non-overlapping (`"aaa".replace("aa", "b")` is `"ba"`), and it traps on an empty `from` with its own message. `from` is a `string`, not any `Needle`, so that check can be made — write `"${r}"` for a rune.
 - `lines()` splits on terminators, not on `\n`: `\r\n` is one, a trailing newline does not make a last empty line (`"a\nb\n"` → 2), and an interior blank line is a line. An empty string has none.
 - `pad_start(width, fill = " ")` / `pad_end(width, fill = " ")` pad to `width` runes; a longer fill repeats and is cut to fit (JavaScript's `padStart`), and a string already at least `width` long is returned whole, never truncated.
 - `strip_prefix`/`strip_suffix` answer `Maybe<string>` — the affix removed, or `None` when it was not there, so the affix's length is never written twice.
@@ -537,6 +545,16 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 - `?` propagates a `Result` from a `Result`-returning function and a `Maybe` from a `Maybe`-returning one, never across kinds (`ok_or`/`ok` convert). Across **error types** it applies a declared conversion: `parse_json(text)?` inside `-> Result<_, ConfigError>` runs `impl From<JsonError> for ConfigError`'s `from` on the error before propagating it. `?` knows both types, so the impl is found by a direct lookup — matched on the trait argument as well as the target, so a type may be built from several sources, one impl each. No impl is refused naming the one to write; `map_err` is the one-off spelling. The `from` runs on the failure path, so its effects are the `?`'s (a `pure` function refuses an impure conversion), and it takes the error by plain value (`own`/`ref`/`mut` are refused).
 - **The context reaches through `?`**: what is wanted of `make(1)?` is the payload, so `make(1)` is inferred wanting `Result<payload, E>` (or `Maybe<payload>`), which is what solves a callee's return-only variable — `let port: i64 = required(json, "port")?` needs no turbofish.
 - **The context settles what the arguments leave open.** A type variable only a lambda literal's return or an untyped literal reaches is bound from the call's context before they are: `b.map((x) => 200)` under `-> Box<u8>` gives the lambda a `u8` return and narrows the literal. A typed argument still wins, and a mismatch is then that argument's. A constructor's payload takes its slot's type from the construction's context: `Err(Zero::zero())` under `Result<i64, string>` infers the payload wanting a `string`. **At any depth**: `Some(Ok(5))` under `Maybe<Result<i64, string>>` settles the inner `e` too, and checks and narrows the inner payload (until 09/28 the nesting was refused, annotation or not). With no context at all the open parameter stays open — see todo.md.
+
+### Safe navigation (`?.`, `?[`) and `??`
+
+`m?.x`, `m?.f(a)` and `m?[i]` read through a `Maybe`: `None` stays `None`, and a `Some` has the access applied to its payload. `m ?? d` is the payload or the default `d`, evaluated only on `None`. Together: `person?.pet?.name ?? "no pet"`.
+
+- **Each `?.` reads through one Maybe** (Kotlin's rule, not Swift's chain-wide short-circuit), so every link says it: `m?.name?.len()`, where `m?.name.len()` is a `.len()` on a `Maybe<string>` and refused with that advice.
+- **A result that is already a Maybe is not wrapped again**: `m?.age` on an `age: Maybe<i64>` is a `Maybe<i64>`. Inside generic code a `t` field is wrapped even when `t` is later a Maybe, as Swift's generics do.
+- **A method call's arguments are evaluated only on `Some`**.
+- **Only on a Maybe** (`lyra-E083`): on a value that is always there, write `.`; on a `Result`, `?.` does not propagate — convert with `.ok()`, or propagate first with `(r?).x`. `?` (propagate) and `?.` (navigate) are different operators; `?.` is one token, so `f()?.x` is never "`?` then `.x`".
+- **A desugaring**, done by the collector: `match m { Some(v) => __optional_chain(v.x), None => None }`, the prelude's `__optional_chain` being identity on a Maybe and `Some` on anything else. Unimplemented until 09/29 (it parsed, and failed in the typechecker and backend).
 
 ---
 

@@ -49,3 +49,8 @@ func TestCollect_LabeledForInLoop(t *testing.T) {
 	}`
 	runGoldenTest(t, source, "labeled_for_in_loop")
 }
+
+// A written loop-variable type (09/29) is the loop's `KeyType`, not an iterable.
+func TestCollectForInLoopWithTypedVariable(t *testing.T) {
+	runGoldenTest(t, "\n\tfor i: u16 in 0..<100 {\n\t\tprintln(i)\n\t}", "for_in_loop_with_typed_variable")
+}

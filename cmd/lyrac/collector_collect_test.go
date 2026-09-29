@@ -149,9 +149,10 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"raw_string_literal_expr", "let s = " + bt + `C:\new ${name}` + bt},
 		{"raw_string_literal_expr_with_hashes",
 			"let s = ##" + bt + "a " + bt + " and " + bt + "# inside" + bt + "##"},
-		// Optional chaining is a **node kind of its own** (`optional_member_expr`), not a
-		// flag on `.`, and a const name likewise (`const_identifier`) — so neither is read
-		// off the text. The chains are the ones that compose them with calls and `?`.
+		// Safe navigation (`?.`, `?[`) is a CST node kind of its own that both collectors
+		// **desugar** into a match (`optionalChain`), and a const name is a node kind too
+		// (`const_identifier`) — so neither is read off the text. The chains compose the
+		// desugaring with calls, with itself, and with `?`.
 		{"postfix_optional_property_access", "let name = person?.name"},
 		{"postfix_optional_array_indexing", "let first = array?[0]"},
 		{"postfix_chained_optional_index_access", "let value = matrix?[0]?[1]"},
@@ -261,6 +262,7 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"for_in_loop_with_identifier", "\n\tfor item in my_collection {\n\t\tprintln(item)\n\t}"},
 		{"for_in_loop_with_key_and_value", "\n\tfor item, idx in [1, 2, 3] {\n\t\tprintln(item)\n\t}"},
 		{"for_in_loop_with_range", "\n\tfor i in 1..<=3 {\n\t\tprintln(\"i == ${i}\")\n\t}"},
+		{"for_in_loop_with_typed_variable", "\n\tfor i: u16 in 0..<100 {\n\t\tprintln(i)\n\t}"},
 		{"for_in_loop_with_tuple", "\n\tfor i in (1, \"2\", 3) {\n\t\tprintln(\"i == ${i}\")\n\t}"},
 		{"for_in_loop_with_postfix_expr", "\n\tfor item in get_array() {\n\t\tprintln(item)\n\t}"},
 		{"for_in_loop_as_expression", "\n\tlet found = for item in items {\n\t\tif item > 10 {\n\t\t\tbreak item\n\t\t}\n\t}"},
@@ -293,6 +295,8 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		// text — `"foo"` prints with its quotes.
 		{"match_expression", "\n\tlet bar = match foo {\n\t\tSome 42 => \"The Answer!\",\n\t\tSome _ => \"Just some number\",\n\t\tNone => \"huh?\",\n\t}"},
 		{"match_expression_with_blocks", "\n\tmatch foo {\n\t\t[a] => {\n\t\t\tprintln(\"An array with one element\")\n\t\t},\n\t\t[a, b] => {\n\t\t\tprintln(\"An array with two elements\")\n\t\t},\n\t\t_ => {\n\t\t\tprintln(\"A wildcard match\")\n\t\t},\n\t}"},
+		// Alternatives of every kind the grammar admits, constructors included (09/29).
+		{"match_expression_with_or_patterns", "\n\tmatch foo {\n\t\t1 | 2 => \"small\",\n\t\t'a'..<='f' | 'A'..<='F' => \"hex\",\n\t\tPencil | Eraser => \"draws\",\n\t\tLOUD | QUIET => \"sound\",\n\t\t_ => \"other\",\n\t}"},
 		{"match_expression_with_guards", "\n\tmatch foo {\n\t\tSome x if x > 0 && x < 10 => print(\"1-9\"),\n\t\tSome x if x >= 10 && x < 100 => print(\"10-99\"),\n\t\tNone => print(\"No number!\"),\n\t}"},
 		{"match_expression_with_range_patterns", "\n\tmatch foo {\n\t\t0..<=9 => print(\"one digit\"),\n\t\t42 => print(\"The Answer!\"),\n\t\t10..<=99 => print(\"two digits\"),\n\t\t_ => print(\"lots of digits!\"),\n\t}"},
 		{"match_expression_with_structs_returned", "\n\tlet foo = match bar {\n\t\t\"foo\" => { a: \"b\" },\n\t\t\"bar\" => { b: \"a\" },\n\t\t_ => { c: \"d\" },\n\t}"},
