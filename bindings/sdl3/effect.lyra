@@ -1,0 +1,157 @@
+module bindings.sdl3
+//! Custom fragment shaders on SDL's GPU renderer: an [Effect] is a shader, and the render
+//! state that makes SDL draw textures through it, set with [use_effect].
+//!
+//! **Only on the GPU renderer**, the one [create_named_renderer] makes with `"gpu"`, and
+//! **only Metal Shading Language here**, since that is what a Mac's GPU device takes; on a
+//! renderer or device without it, [create_msl_effect] answers `None` and the program draws
+//! as it did.
+//!
+//! **What the shader receives** is fixed by SDL's own vertex shader (SDL's
+//! `tri_texture.vert`): the vertex colour at `[[user(locn0)]]` and the texture coordinate
+//! at `[[user(locn1)]]`, the texture being drawn and its sampler at index 0, and the
+//! effect's uniforms, if any, in `[[buffer(0)]]`. The entry point is `main0`.
+//!
+//! ```
+//! struct In { float4 color [[user(locn0)]]; float2 uv [[user(locn1)]]; };
+//! fragment float4 main0(In in [[stage_in]], texture2d<float> t [[texture(0)]],
+//!                       sampler s [[sampler(0)]]) { return t.sample(s, in.uv) * in.color; }
+//! ```
+
+import std.ffi
+
+/// A shader drawing textures on one GPU renderer, with what it takes to release it.
+pub struct Effect {
+  state: ^u8,
+  shader: ^u8,
+  device: ^u8,
+}
+
+/// `SDL_GPUShaderCreateInfo`, as C lays it out.
+struct ShaderInfo {
+  code_size: u64,
+  code: ^u8,
+  entrypoint: ^u8,
+  format: u32,
+  stage: i32,
+  num_samplers: u32,
+  num_storage_textures: u32,
+  num_storage_buffers: u32,
+  num_uniform_buffers: u32,
+  props: u32,
+}
+
+/// `SDL_GPURenderStateCreateInfo`: the fragment shader and nothing more bound.
+struct RenderStateInfo {
+  fragment_shader: ^u8,
+  num_sampler_bindings: i32,
+  sampler_bindings: ^u8,
+  num_storage_textures: i32,
+  storage_textures: ^u8,
+  num_storage_buffers: i32,
+  storage_buffers: ^u8,
+  props: u32,
+}
+
+const SHADERFORMAT_MSL: u32 = 16
+const SHADERSTAGE_FRAGMENT: i32 = 1
+
+/// An effect from Metal source whose entry point is `main0`, taking `uniform_buffers`
+/// uniform buffers — or `None` where the renderer is not SDL's GPU one or its device takes
+/// no Metal (and [last_error] says why, if SDL refused the shader).
+pub let create_msl_effect = (
+  renderer: Renderer,
+  source: string,
+  uniform_buffers: u32
+) -> Maybe<Effect> => {
+  let device = unsafe { sdl_get_gpu_renderer_device(renderer) }
+  if device == nullptr { return None }
+  if (unsafe { sdl_get_gpu_shader_formats(device) } & SHADERFORMAT_MSL) == 0 { return None }
+  let shader = source.with_cstring((code) => "main0".with_cstring((entry) => {
+    let info = ShaderInfo {
+      code_size: u64(source.byte_len()),
+      code: code,
+      entrypoint: entry,
+      format: SHADERFORMAT_MSL,
+      stage: SHADERSTAGE_FRAGMENT,
+      num_samplers: 1,
+      num_storage_textures: 0,
+      num_storage_buffers: 0,
+      num_uniform_buffers: uniform_buffers,
+      props: 0,
+    }
+    unsafe { sdl_create_gpu_shader(device, &info) }
+  }))
+  if shader == nullptr { return None }
+  let state_info = RenderStateInfo {
+    fragment_shader: shader,
+    num_sampler_bindings: 0,
+    sampler_bindings: nullptr,
+    num_storage_textures: 0,
+    storage_textures: nullptr,
+    num_storage_buffers: 0,
+    storage_buffers: nullptr,
+    props: 0,
+  }
+  let state = unsafe { sdl_create_gpu_render_state(renderer, &state_info) }
+  if state == nullptr {
+    unsafe { sdl_release_gpu_shader(device, shader) }
+    return None
+  }
+  Some(Effect { state: state, shader: shader, device: device })
+}
+
+/// The values of the effect's uniform buffer `slot`, as the shader's struct lays them out.
+pub let set_effect_uniforms = (effect: Effect, slot: u32, values: []f32) -> bool => {
+  let bytes = u32(values.len() * 4)
+  unsafe { sdl_set_gpu_render_state_fragment_uniforms(
+    effect.state,
+    slot,
+    values.data(),
+    bytes
+  ) }
+}
+
+/// Draw what follows through `effect`, or plainly with `None`.
+pub let use_effect = (renderer: Renderer, effect: Maybe<Effect>) -> bool => match effect {
+  Some(e) => unsafe { sdl_set_gpu_render_state(renderer, e.state) },
+  None => unsafe { sdl_set_gpu_render_state(renderer, nullptr) },
+}
+
+/// Release an effect. It must not be in use, or used again.
+pub let destroy_effect = (effect: Effect) -> void => unsafe {
+  sdl_destroy_gpu_render_state(effect.state)
+  sdl_release_gpu_shader(effect.device, effect.shader)
+}
+
+@symbol("SDL_GetGPURendererDevice")
+unsafe extern sdl_get_gpu_renderer_device: (renderer: Renderer) -> ^u8
+
+@symbol("SDL_GetGPUShaderFormats")
+unsafe extern sdl_get_gpu_shader_formats: (device: ^u8) -> u32
+
+@symbol("SDL_CreateGPUShader")
+unsafe extern sdl_create_gpu_shader: (device: ^u8, info: ^ShaderInfo) -> ^u8
+
+@symbol("SDL_ReleaseGPUShader")
+unsafe extern sdl_release_gpu_shader: (device: ^u8, shader: ^u8) -> void
+
+@symbol("SDL_CreateGPURenderState")
+unsafe extern sdl_create_gpu_render_state: (
+  renderer: Renderer,
+  info: ^RenderStateInfo
+) -> ^u8
+
+@symbol("SDL_SetGPURenderStateFragmentUniforms")
+unsafe extern sdl_set_gpu_render_state_fragment_uniforms: (
+  state: ^u8,
+  slot: u32,
+  data: ^f32,
+  length: u32
+) -> bool
+
+@symbol("SDL_SetGPURenderState")
+unsafe extern sdl_set_gpu_render_state: (renderer: Renderer, state: ^u8) -> bool
+
+@symbol("SDL_DestroyGPURenderState")
+unsafe extern sdl_destroy_gpu_render_state: (state: ^u8) -> void

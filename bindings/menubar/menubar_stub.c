@@ -35,3 +35,14 @@ void lyra_menubar_set_enabled(int32_t tag, bool enabled) {
   (void)tag;
   (void)enabled;
 }
+
+const char *lyra_menubar_choose_file(const char *title, const char *types) {
+  (void)title;
+  (void)types;
+  return 0;
+}
+
+void lyra_menubar_alert(const char *message, const char *detail) {
+  (void)message;
+  (void)detail;
+}

@@ -125,6 +125,13 @@ pub let create_renderer = (window: Window) -> Maybe<Renderer> => {
   if r == nullptr { None } else { Some(r) }
 }
 
+/// A renderer of the kind named — `"gpu"` for SDL's GPU renderer, the one custom shaders
+/// run on ([create_msl_effect]) — or `None` if SDL has no such renderer here.
+pub let create_named_renderer = (window: Window, name: string) -> Maybe<Renderer> => {
+  let r = name.with_cstring((n) => unsafe { sdl_create_renderer(window, n) })
+  if r == nullptr { None } else { Some(r) }
+}
+
 /// Release a renderer.
 pub let destroy_renderer = (renderer: Renderer) -> void =>
   unsafe { sdl_destroy_renderer(renderer) }

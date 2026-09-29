@@ -33,6 +33,12 @@ unsafe extern sdl_destroy_window: (window: Window) -> void
 @symbol("SDL_SetWindowFullscreen")
 unsafe extern sdl_set_window_fullscreen: (window: Window, fullscreen: bool) -> bool
 
+@symbol("SDL_SetWindowSize")
+unsafe extern sdl_set_window_size: (window: Window, w: i32, h: i32) -> bool
+
+@symbol("SDL_SetWindowTitle")
+unsafe extern sdl_set_window_title: (window: Window, title: ^u8) -> bool
+
 /// Open a window, or `None` if SDL could not — [last_error] says why.
 ///
 /// **This is where a C convention becomes the language's own.** SDL answers NULL on
@@ -61,3 +67,12 @@ pub let destroy_window = (window: Window) -> void => unsafe { sdl_destroy_window
 /// mode and so is cheap to toggle.
 pub let set_fullscreen = (window: Window, on: bool) -> bool =>
   unsafe { sdl_set_window_fullscreen(window, on) }
+
+/// Resize the window's client area to `width` × `height` (in screen coordinates). Not in
+/// fullscreen, where the size is the display's; SDL applies it on leaving.
+pub let set_window_size = (window: Window, width: i32, height: i32) -> bool =>
+  unsafe { sdl_set_window_size(window, width, height) }
+
+/// The window's title bar.
+pub let set_window_title = (window: Window, title: string) -> bool =>
+  title.with_cstring((t) => unsafe { sdl_set_window_title(window, t) })

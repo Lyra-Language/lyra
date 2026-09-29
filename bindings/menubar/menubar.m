@@ -19,6 +19,7 @@
 // archive holds on any other platform.
 
 @import AppKit;
+@import UniformTypeIdentifiers;
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -167,4 +168,48 @@ void lyra_menubar_set_checked(int32_t tag, bool checked) {
 // Let an item be chosen, or grey it out. An unknown tag is ignored.
 void lyra_menubar_set_enabled(int32_t tag, bool enabled) {
   items_by_tag[@(tag)].enabled = enabled;
+}
+
+// The last path `lyra_menubar_choose_file` answered, kept until the next call so the
+// caller can copy it out.
+static char *chosen_path = NULL;
+
+// A modal Open panel titled `title`, offering files with one of the comma-separated
+// extensions in `types` ("" for any). Answers the chosen path — valid until the next call
+// — or NULL if the panel was cancelled. Modal, so it runs on the main thread and answers
+// before returning: no callback, unlike SDL's own file dialogs.
+const char *lyra_menubar_choose_file(const char *title, const char *types) {
+  free(chosen_path);
+  chosen_path = NULL;
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.title = string_of(title);
+  panel.canChooseFiles = YES;
+  panel.canChooseDirectories = NO;
+  panel.allowsMultipleSelection = NO;
+  NSString *list = string_of(types);
+  if (list.length > 0) {
+    NSMutableArray<UTType *> *allowed = [NSMutableArray array];
+    for (NSString *ext in [list componentsSeparatedByString:@","]) {
+      UTType *type = [UTType typeWithFilenameExtension:ext];
+      if (type != nil) [allowed addObject:type];
+    }
+    panel.allowedContentTypes = allowed;
+  }
+  NSWindow *key = NSApp.keyWindow;
+  NSModalResponse response = [panel runModal];
+  [key makeKeyAndOrderFront:nil];
+  if (response != NSModalResponseOK || panel.URL == nil) return NULL;
+  chosen_path = strdup(panel.URL.fileSystemRepresentation);
+  return chosen_path;
+}
+
+// A modal alert: `message` in bold, `detail` beneath it, and an OK button.
+void lyra_menubar_alert(const char *message, const char *detail) {
+  NSAlert *alert = [[NSAlert alloc] init];
+  alert.messageText = string_of(message);
+  alert.informativeText = string_of(detail);
+  [alert addButtonWithTitle:@"OK"];
+  NSWindow *key = NSApp.keyWindow;
+  [alert runModal];
+  [key makeKeyAndOrderFront:nil];
 }

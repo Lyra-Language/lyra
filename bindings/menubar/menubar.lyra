@@ -41,7 +41,7 @@ module bindings.menubar
 //! with `build/lyrac` needs no `LIBRARY_PATH`. The archive names AppKit itself (autolinked
 //! through `-fmodules`), which `@link` has no way to spell.
 
-import std.ffi.{ with_cstrings }
+import std.ffi.{ with_cstrings, CBuffer, cstring_len }
 
 /// Modifier bits for an [item]'s key equivalent, combined with `|`. ⌘ is `COMMAND`.
 pub const COMMAND: u32 = 1
@@ -91,6 +91,22 @@ pub let set_enabled = (tag: i32, enabled: bool) -> void => unsafe {
   lyra_menubar_set_enabled(tag, enabled)
 }
 
+/// A modal Open panel titled `title`, offering files with one of `extensions` (without the
+/// dot; none for any file), and the path chosen — `None` if it was cancelled, or off macOS.
+/// Modal: the program waits for the answer, and nothing calls back.
+pub let choose_file = (title: string, extensions: []string) -> Maybe<string> => {
+  let p = with_cstrings(title, extensions.join(","), (t, e) => unsafe {
+    lyra_menubar_choose_file(t, e)
+  })
+  if p.is_null() { return None }
+  // The shim keeps the path until the next call; this copies it out.
+  Some(CBuffer { ptr: p, len: unsafe { cstring_len(p) } }.decode_utf8())
+}
+
+/// A modal alert: `message`, with `detail` beneath it, and an OK button. Nothing off macOS.
+pub let alert = (message: string, detail: string) -> void =>
+  with_cstrings(message, detail, (m, d) => unsafe { lyra_menubar_alert(m, d) })
+
 @symbol("lyra_menubar_menu")
 unsafe extern lyra_menubar_menu: (title: ^u8) -> void
 
@@ -114,3 +130,9 @@ unsafe extern lyra_menubar_set_checked: (tag: i32, checked: bool) -> void
 
 @symbol("lyra_menubar_set_enabled")
 unsafe extern lyra_menubar_set_enabled: (tag: i32, enabled: bool) -> void
+
+@symbol("lyra_menubar_choose_file")
+unsafe extern lyra_menubar_choose_file: (title: ^u8, types: ^u8) -> ^u8
+
+@symbol("lyra_menubar_alert")
+unsafe extern lyra_menubar_alert: (message: ^u8, detail: ^u8) -> void
