@@ -73,6 +73,14 @@ Package management, versioning and separate compilation are out of scope by deci
   A **record-update literal** over budget explodes after the base's `|` but keeps the first
   field on the base's line — `Z80Cpu {⏎ new_z80() | pc: 0x1000,⏎ sp: …` (09/28, Sheliak's
   z80scenarios.lyra); the base belongs on a line of its own, or the fields together.
+  **It also collapses deliberate spacing** in a table (`7, 7,  7, 7`, grouping rows), which
+  is fine, but then a table written as rows of 8 in one line of 24 reads as noise.
+
+- **A large struct passed bare is a silent copy.** Sheliak's `pure (bus: GenesisBus, …)`
+  helpers copied a multi-kilobyte bus on every memory read — two thirds of its frame time,
+  found only by profiling (09/28); `ref` fixed it. A warning for a struct over some size
+  passed to a bare parameter the callee never moves or mutates — "take it by `ref`" — would
+  have said so at the declaration.
 
 - **[PARTIAL] The collector in Lyra — the bootstrap proper.** The Go collector is ~7.8k
   lines over a ~5.6k-line AST, so this is sliced rather than attempted.
