@@ -2381,6 +2381,20 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 		tc.propagateInstantiation(expr.Right, inst)
 		return
 	}
+	// **An aggregate of literals takes the typed side's type**, as a lone literal takes a
+	// typed number's width below. `bytes == [1, 2]` with `bytes: []u8` left the literal's
+	// elements at their i64 default, and the backend called the `[]u8` equality function
+	// on an `[]i64` — invalid IR clang-15's typed pointers refuse and Apple's clang lets
+	// through (09/29, found by `std.sevenzip` comparing method ids). Only the side still
+	// holding untyped leaves is given a context, as with `nullptr`.
+	if hasUntypedLeaf(rightType) && !hasUntypedLeaf(leftType) && isAggregateType(rightType) {
+		tc.propagateExpectedType(expr.Right, leftType)
+		return
+	}
+	if hasUntypedLeaf(leftType) && !hasUntypedLeaf(rightType) && isAggregateType(leftType) {
+		tc.propagateExpectedType(expr.Left, rightType)
+		return
+	}
 	common := numericResultType(leftType, rightType)
 	if common == nil {
 		return
@@ -2388,6 +2402,34 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 	tc.floatifyUntypedIntOperands(common, expr.Left, expr.Right)
 	tc.propagateExpectedType(expr.Left, common)
 	tc.propagateExpectedType(expr.Right, common)
+}
+
+// hasUntypedLeaf reports whether a type still holds a literal's provisional type
+// anywhere an array or tuple reaches: `[]integer literal`, `(u8, float literal)`.
+func hasUntypedLeaf(t types.Type) bool {
+	switch v := t.(type) {
+	case types.DynamicArrayType:
+		return hasUntypedLeaf(v.ElementType)
+	case types.StaticArrayType:
+		return hasUntypedLeaf(v.ElementType)
+	case types.TupleType:
+		for _, element := range v.Elements {
+			if hasUntypedLeaf(element) {
+				return true
+			}
+		}
+		return false
+	}
+	return isUntypedLiteralType(t)
+}
+
+// isAggregateType reports whether a type is an array or a tuple.
+func isAggregateType(t types.Type) bool {
+	switch t.(type) {
+	case types.DynamicArrayType, types.StaticArrayType, types.TupleType:
+		return true
+	}
+	return false
 }
 
 // floatifyUntypedIntOperands makes an untyped integer operand an untyped *float* when the

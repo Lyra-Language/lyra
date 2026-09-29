@@ -534,7 +534,8 @@ of Markdown.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
   `std/tui/`, `std/temporal/`, `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
-  (inflate, CRC-32), `std/zip.lyra`.
+  (inflate, LZMA, LZMA2, CRC-32), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
+  are `pkg/backend/llvm/testdata/sevenzip/`, made by the `make.sh` beside them).
 
 ## Testing
 

@@ -7,7 +7,9 @@ module std.zip
 //!
 //! let entries = zip_entries(archive)?
 //! for entry in entries {
-//!   if !entry.is_directory() { println("${entry.name}: ${unzip(archive, entry)?.len()} bytes") }
+//!   if entry.is_directory() { continue }
+//!   let bytes = unzip(archive, entry)?
+//!   println("${entry.name}: ${bytes.len()} bytes")
 //! }
 //! ```
 //!

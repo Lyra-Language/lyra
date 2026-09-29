@@ -1,0 +1,622 @@
+module std.sevenzip
+//! 7z archives, read: [open_7z] reads an archive's table of contents, and [extract_7z]
+//! gives one entry's bytes, decompressed and checked against the CRC-32 the archive
+//! records.
+//!
+//! ```
+//! import std.sevenzip.{ open_7z, extract_7z }
+//!
+//! let archive = open_7z(bytes)?
+//! for entry in archive.entries {
+//!   if entry.directory { continue }
+//!   let contents = extract_7z(archive, entry)?
+//!   println("${entry.name}: ${contents.len()} bytes")
+//! }
+//! ```
+//!
+//! **A 7z archive is packed streams and a header describing them**, at its end, found
+//! through a 32-byte start header. The header is usually itself compressed (an "encoded
+//! header"), so reading the table of contents already decompresses. Files are grouped into
+//! **blocks** ("folders"), each one compressed stream: in a solid archive — 7-Zip's default
+//! — several files share one, and extracting a file decompresses its block up to and
+//! including it. Each call to [extract_7z] decompresses again; read what is needed once.
+//!
+//! **What is read**: blocks stored or compressed with LZMA, LZMA2 or DEFLATE, one coder
+//! each — every 7-Zip default. **Refused, with a message naming it**: another method
+//! (PPMd, BZip2, …), a chain of coders (a filter such as BCJ in front of the compressor,
+//! and encryption, which is one), and "additional streams", which no 7-Zip writes.
+//!
+//! **Not `pure`**, because LZMA is not yet (see `std.compress`).
+
+import std.compress.{ inflate, lzma_decode, lzma2_decode, crc32 }
+
+/// An archive, its table of contents read.
+pub struct SevenZip {
+  data: []u8,
+  entries: []SevenZipEntry,
+  blocks: []SevenZipBlock,
+}
+
+/// One entry in an archive.
+pub struct SevenZipEntry {
+  /// Its path within the archive, `/`-separated.
+  name: string,
+  /// Its size, uncompressed.
+  size: i64,
+  /// Whether it is a directory rather than a file.
+  directory: bool,
+  /// The CRC-32 of its bytes, where the archive records one.
+  crc: Maybe<u32>,
+  /// The block its bytes are in, and where among the block's bytes they begin; -1 for an
+  /// entry with none (a directory or an empty file).
+  block: i64,
+  offset: i64,
+}
+
+/// One compressed block: how it is compressed, where its packed bytes are, and its size and
+/// CRC-32 unpacked.
+pub struct SevenZipBlock {
+  /// The coders' method ids, and the first coder's properties. Only a block of one coder
+  /// is read.
+  methods: [][]u8,
+  properties: []u8,
+  pack_offset: i64,
+  pack_size: i64,
+  size: i64,
+  crc: Maybe<u32>,
+}
+
+/// Whether some bytes begin as a 7z archive does.
+pub let is_7z = pure (data: []u8) -> bool => {
+  if data.len() < 6 { return false }
+  for i, b in SIGNATURE {
+    if data[i] != b { return false }
+  }
+  true
+}
+
+/// An archive's table of contents: its start header checked, its header found (and
+/// decompressed, if it is encoded) and read.
+pub let open_7z = (data: []u8) -> Result<SevenZip, string> => {
+  if !is_7z(data) { return Err("not a 7z archive") }
+  if data.len() < 32 { return Err("a 7z archive cut off inside its start header") }
+  if crc32(data.slice(12, 32)) != u32_le(data, 8) {
+    return Err("a 7z archive whose start header is damaged")
+  }
+  let next_offset = u64_le(data, 12)
+  let next_size = u64_le(data, 20)
+  if next_offset < 0 || next_size < 0 || 32 + next_offset + next_size > data.len() {
+    return Err("a 7z archive cut off before its header (a partial download?)")
+  }
+  if next_size == 0 { return Ok(SevenZip { data: data, entries: [], blocks: [] }) }
+  var header = data.slice(32 + next_offset, 32 + next_offset + next_size)
+  if crc32(header) != u32_le(data, 28) {
+    return Err("a 7z archive whose header is damaged")
+  }
+  // An encoded header is a block of its own, holding the real header — in principle
+  // encoded again.
+  for _ in 0..<4 {
+    if header.len() == 0 || header[0] != ENCODED_HEADER { break }
+    var c = Cursor { data: header, at: 1 }
+    let streams = read_streams(c, data)?
+    if streams.blocks.len() == 0 { return Err("a 7z archive whose encoded header has no block") }
+    header = unpack_block(data, streams.blocks[0])?
+  }
+  if header.len() == 0 || header[0] != HEADER { return Err("a 7z archive whose header is not one") }
+  var c = Cursor { data: header, at: 1 }
+  read_header(c, data)
+}
+
+/// An entry's bytes: its block decompressed, the entry's own cut out and checked.
+pub let extract_7z = (
+  archive: ref SevenZip,
+  entry: ref SevenZipEntry
+) -> Result<[]u8, string> => {
+  if entry.block < 0 { return Ok([]) }
+  let unpacked = match unpack_block(archive.data, archive.blocks[entry.block]) {
+    Ok(bytes) => bytes,
+    Err(why) => return Err("${entry.name}: ${why}"),
+  }
+  if entry.offset + entry.size > unpacked.len() {
+    return Err("${entry.name} runs past the end of its block")
+  }
+  let own = unpacked.slice(entry.offset, entry.offset + entry.size)
+  if let Some(crc) = entry.crc {
+    if crc32(own) != crc { return Err("${entry.name} is damaged: its CRC-32 does not match") }
+  }
+  Ok(own)
+}
+
+// ── The header ───────────────────────────────────────────────────────────────
+
+const SIGNATURE: [6]u8 = #[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]
+
+/// The header's property ids (7-Zip's 7zFormat.txt).
+const END: u8 = 0x00
+const HEADER: u8 = 0x01
+const ARCHIVE_PROPERTIES: u8 = 0x02
+const ADDITIONAL_STREAMS: u8 = 0x03
+const MAIN_STREAMS: u8 = 0x04
+const FILES: u8 = 0x05
+const PACK_INFO: u8 = 0x06
+const UNPACK_INFO: u8 = 0x07
+const SUBSTREAMS_INFO: u8 = 0x08
+const SIZE: u8 = 0x09
+const CRC: u8 = 0x0A
+const FOLDER: u8 = 0x0B
+const UNPACK_SIZE: u8 = 0x0C
+const UNPACK_STREAMS: u8 = 0x0D
+const EMPTY_STREAM: u8 = 0x0E
+const EMPTY_FILE: u8 = 0x0F
+const NAME: u8 = 0x11
+const ENCODED_HEADER: u8 = 0x17
+
+/// Where the header is being read.
+struct Cursor {
+  data: []u8,
+  at: i64,
+}
+
+/// What a streams-info section says: the blocks, and how their bytes divide into files —
+/// each block's number of files, and each file's size and CRC-32, in order.
+struct Streams {
+  blocks: []SevenZipBlock,
+  counts: []i64,
+  sizes: []i64,
+  crcs: []Maybe<u32>,
+}
+
+/// The header after its id: archive properties skipped, the streams read, then the files,
+/// which take the streams' files in turn.
+let read_header = (c: mut Cursor, data: []u8) -> Result<SevenZip, string> => {
+  var id = byte(c)?
+  if id == ARCHIVE_PROPERTIES {
+    for {
+      if byte(c)? == END { break }
+      skip(c, number(c)?)?
+    }
+    id = byte(c)?
+  }
+  if id == ADDITIONAL_STREAMS { return Err("a 7z archive with additional streams, which are not read") }
+  var streams = Streams { blocks: [], counts: [], sizes: [], crcs: [] }
+  if id == MAIN_STREAMS {
+    streams = read_streams(c, data)?
+    id = byte(c)?
+  }
+  var entries: []SevenZipEntry = []
+  if id == FILES {
+    entries = read_files(c, streams)?
+    id = byte(c)?
+  }
+  if id != END { return Err("a 7z header with a section out of place (${id})") }
+  Ok(SevenZip { data: data, entries: entries, blocks: streams.blocks })
+}
+
+/// A streams-info section: where the packed streams are, the blocks that unpack them, and
+/// the files in each block.
+let read_streams = (c: mut Cursor, data: []u8) -> Result<Streams, string> => {
+  var pack_start: i64 = 0
+  var pack_sizes: []i64 = []
+  var blocks: []SevenZipBlock = []
+  var packed_per_block: []i64 = []
+  var counts: []i64 = []
+  var sizes: []i64 = []
+  var crcs: []Maybe<u32> = []
+  var have_substreams = false
+  for {
+    let id = byte(c)?
+    if id == END { break }
+    if id == PACK_INFO {
+      pack_start = 32 + number(c)?
+      let n = number(c)?
+      for {
+        let sub = byte(c)?
+        if sub == END { break }
+        if sub == SIZE {
+          for _ in 0..<n { pack_sizes.push(number(c)?) }
+        } else if sub == CRC {
+          let _ = digests(c, n)?
+        } else {
+          return Err("a 7z pack-info section with an unknown part (${sub})")
+        }
+      }
+    } else if id == UNPACK_INFO {
+      if byte(c)? != FOLDER { return Err("a 7z unpack-info section without its blocks") }
+      let n = number(c)?
+      if byte(c)? != 0 { return Err("a 7z archive keeping its block list elsewhere, which is not read") }
+      var outs: []i64 = []
+      for _ in 0..<n {
+        let (block, out_count, packed_count) = read_block(c)?
+        blocks.push(block)
+        outs.push(out_count)
+        packed_per_block.push(packed_count)
+      }
+      if byte(c)? != UNPACK_SIZE { return Err("a 7z unpack-info section without its sizes") }
+      for i in 0..<n {
+        // A block's size is its last coder's output — the one no other coder reads.
+        for j in 0..<outs[i] {
+          let size = number(c)?
+          if j == outs[i] - 1 { blocks[i].size = size }
+        }
+      }
+      for {
+        let sub = byte(c)?
+        if sub == END { break }
+        if sub != CRC { return Err("a 7z unpack-info section with an unknown part (${sub})") }
+        let block_crcs = digests(c, n)?
+        for i in 0..<n { blocks[i].crc = block_crcs[i] }
+      }
+    } else if id == SUBSTREAMS_INFO {
+      have_substreams = true
+      counts = [1; blocks.len()]
+      var have_sizes = false
+      for {
+        let sub = byte(c)?
+        if sub == END { break }
+        if sub == UNPACK_STREAMS {
+          for i in 0..<blocks.len() { counts[i] = number(c)? }
+        } else if sub == SIZE {
+          sizes = read_sizes(c, blocks, counts)?
+          have_sizes = true
+        } else if sub == CRC {
+          if !have_sizes { sizes = read_sizes(c, blocks, counts)? }
+          have_sizes = true
+          crcs = read_crcs(c, blocks, counts)?
+        } else {
+          return Err("a 7z substreams section with an unknown part (${sub})")
+        }
+      }
+      if !have_sizes { sizes = read_sizes(c, blocks, counts)? }
+    } else {
+      return Err("a 7z streams section with an unknown part (${id})")
+    }
+  }
+  if !have_substreams {
+    counts = [1; blocks.len()]
+    for block in blocks { sizes.push(block.size) }
+  }
+  if crcs.len() == 0 {
+    for i, block in blocks {
+      for _ in 0..<counts[i] { crcs.push(if counts[i] == 1 { block.crc } else { None }) }
+    }
+  }
+  // The blocks' packed streams, in order, from the pack position.
+  var at = pack_start
+  var stream: i64 = 0
+  for i in 0..<blocks.len() {
+    if stream >= pack_sizes.len() { return Err("a 7z archive with more blocks than packed streams") }
+    blocks[i].pack_offset = at
+    blocks[i].pack_size = pack_sizes[stream]
+    for _ in 0..<packed_per_block[i] {
+      if stream < pack_sizes.len() { at += pack_sizes[stream] }
+      stream += 1
+    }
+    if at > data.len() { return Err("a 7z archive cut off inside its packed streams") }
+  }
+  Ok(Streams { blocks: blocks, counts: counts, sizes: sizes, crcs: crcs })
+}
+
+/// One block's coders: its description, how many outputs they make, and how many packed
+/// streams they read.
+let read_block = (c: mut Cursor) -> Result<(SevenZipBlock, i64, i64), string> => {
+  let coders = number(c)?
+  var methods: [][]u8 = []
+  var properties: []u8 = []
+  var ins: i64 = 0
+  var outs: i64 = 0
+  for i in 0..<coders {
+    let flags = byte(c)?
+    if (flags & 0x80) != 0 { return Err("a 7z coder with alternative methods, which is not read") }
+    methods.push(next_bytes(c, i64(flags & 0x0F))?)
+    if (flags & 0x10) != 0 {
+      ins += number(c)?
+      outs += number(c)?
+    } else {
+      ins += 1
+      outs += 1
+    }
+    if (flags & 0x20) != 0 {
+      let own = next_bytes(c, number(c)?)?
+      if i == 0 { properties = own }
+    }
+  }
+  for _ in 0..<outs - 1 {
+    let _ = number(c)?
+    let _ = number(c)?
+  }
+  let packed = ins - (outs - 1)
+  if packed > 1 {
+    for _ in 0..<packed { let _ = number(c)? }
+  }
+  let block = SevenZipBlock {
+    methods: methods,
+    properties: properties,
+    pack_offset: 0,
+    pack_size: 0,
+    size: 0,
+    crc: None,
+  }
+  Ok((block, outs, packed))
+}
+
+/// The sizes of each block's files: all but the last written, the last what remains.
+let read_sizes = (
+  c: mut Cursor,
+  blocks: []SevenZipBlock,
+  counts: []i64
+) -> Result<[]i64, string> => {
+  var sizes: []i64 = []
+  for i, block in blocks {
+    if counts[i] == 0 { continue }
+    var total: i64 = 0
+    for _ in 0..<counts[i] - 1 {
+      let size = number(c)?
+      sizes.push(size)
+      total += size
+    }
+    if total > block.size { return Err("a 7z block whose files are larger than it") }
+    sizes.push(block.size - total)
+  }
+  Ok(sizes)
+}
+
+/// The CRC-32s of each block's files: the block's own for a block of one file with one,
+/// the rest from the section, in order.
+let read_crcs = (
+  c: mut Cursor,
+  blocks: []SevenZipBlock,
+  counts: []i64
+) -> Result<[]Maybe<u32>, string> => {
+  var unknown: i64 = 0
+  for i, block in blocks {
+    if !(counts[i] == 1 && block.crc.is_some()) { unknown += counts[i] }
+  }
+  let listed = digests(c, unknown)?
+  var crcs: []Maybe<u32> = []
+  var next: i64 = 0
+  for i, block in blocks {
+    if counts[i] == 1 && block.crc.is_some() {
+      crcs.push(block.crc)
+    } else {
+      for _ in 0..<counts[i] {
+        crcs.push(listed[next])
+        next += 1
+      }
+    }
+  }
+  Ok(crcs)
+}
+
+/// The files section: names, and which entries have no bytes (directories, and empty
+/// files, told apart); the rest take the streams' files in turn.
+let read_files = (c: mut Cursor, streams: Streams) -> Result<[]SevenZipEntry, string> => {
+  let n = number(c)?
+  var empty_stream: []bool = [false; n]
+  var empty_file: []bool = []
+  var names: []string = []
+  for {
+    let kind = number(c)?
+    if kind == 0 { break }
+    let size = number(c)?
+    let end = c.at + size
+    if end > c.data.len() { return Err("a 7z files section cut off") }
+    if kind == i64(EMPTY_STREAM) {
+      empty_stream = bit_vector(c, n)?
+    } else if kind == i64(EMPTY_FILE) {
+      var empties: i64 = 0
+      for e in empty_stream {
+        if e { empties += 1 }
+      }
+      empty_file = bit_vector(c, empties)?
+    } else if kind == i64(NAME) {
+      if byte(c)? != 0 { return Err("a 7z archive keeping its names elsewhere, which is not read") }
+      names = utf16_names(c.data, c.at, end)
+    }
+    c.at = end
+  }
+  if names.len() != n { return Err("a 7z archive whose files are not all named") }
+  var entries: []SevenZipEntry = []
+  var block: i64 = 0
+  var in_block: i64 = 0
+  var offset: i64 = 0
+  var stream: i64 = 0
+  var empty: i64 = 0
+  for i in 0..<n {
+    if empty_stream[i] {
+      let is_file = empty < empty_file.len() && empty_file[empty]
+      empty += 1
+      entries.push(SevenZipEntry {
+        name: names[i],
+        size: 0,
+        directory: !is_file,
+        crc: None,
+        block: -1,
+        offset: 0,
+      })
+      continue
+    }
+    for block < streams.counts.len() && in_block >= streams.counts[block] {
+      block += 1
+      in_block = 0
+      offset = 0
+    }
+    if block >= streams.counts.len() || stream >= streams.sizes.len() {
+      return Err("a 7z archive with more files than its blocks hold")
+    }
+    let size = streams.sizes[stream]
+    entries.push(SevenZipEntry {
+      name: names[i],
+      size: size,
+      directory: false,
+      crc: if stream < streams.crcs.len() { streams.crcs[stream] } else { None },
+      block: block,
+      offset: offset,
+    })
+    offset += size
+    in_block += 1
+    stream += 1
+  }
+  Ok(entries)
+}
+
+// ── Blocks ───────────────────────────────────────────────────────────────────
+
+/// A block's bytes, unpacked by its one coder and checked against its size and CRC-32.
+let unpack_block = (data: []u8, block: SevenZipBlock) -> Result<[]u8, string> => {
+  for method in block.methods {
+    if method == AES { return Err("encrypted (it needs a password), which is not read") }
+  }
+  if block.methods.len() != 1 {
+    return Err("a 7z block through a chain of coders (${method_names(block.methods)}), which is not read")
+  }
+  if block.pack_offset + block.pack_size > data.len() { return Err("a 7z block cut off") }
+  let packed = data.slice(block.pack_offset, block.pack_offset + block.pack_size)
+  let method = block.methods[0]
+  let bytes = if method == COPY {
+    packed
+  } else if method == LZMA {
+    lzma_decode(packed, block.properties, block.size)?
+  } else if method == LZMA2 {
+    lzma2_decode(packed)?
+  } else if method == DEFLATE {
+    inflate(packed)?
+  } else {
+    return Err("a 7z block compressed with ${method_name(method)}, which is not read")
+  }
+  if bytes.len() != block.size {
+    return Err("a 7z block unpacking to ${bytes.len()} bytes, not the ${block.size} its header says")
+  }
+  if let Some(crc) = block.crc {
+    if crc32(bytes) != crc { return Err("a 7z block that is damaged: its CRC-32 does not match") }
+  }
+  Ok(bytes)
+}
+
+const COPY: []u8 = [0x00]
+const LZMA: []u8 = [0x03, 0x01, 0x01]
+const LZMA2: []u8 = [0x21]
+const DEFLATE: []u8 = [0x04, 0x01, 0x08]
+const AES: []u8 = [0x06, 0xF1, 0x07, 0x01]
+
+/// A method's name, for a refusal.
+let method_name = pure (method: []u8) -> string => {
+  let known: [](string, []u8) = [
+    ("Copy", [0x00]),
+    ("LZMA", [0x03, 0x01, 0x01]),
+    ("LZMA2", [0x21]),
+    ("DEFLATE", [0x04, 0x01, 0x08]),
+    ("Deflate64", [0x04, 0x01, 0x09]),
+    ("BZip2", [0x04, 0x02, 0x02]),
+    ("PPMd", [0x03, 0x04, 0x01]),
+    ("BCJ", [0x03, 0x03, 0x01, 0x03]),
+    ("BCJ2", [0x03, 0x03, 0x01, 0x1B]),
+    ("ARM64", [0x0A]),
+    ("Delta", [0x03]),
+    ("AES-256 encryption", [0x06, 0xF1, 0x07, 0x01]),
+  ]
+  for entry in known {
+    let (name, id) = entry
+    if id == method { return name }
+  }
+  "method ${method.map((b) => b.to_hex()).join("")}"
+}
+
+let method_names = pure (methods: [][]u8) -> string =>
+  methods.map((m) => method_name(m)).join(", ")
+
+// ── Reading ──────────────────────────────────────────────────────────────────
+
+let byte = (c: mut Cursor) -> Result<u8, string> => {
+  if c.at >= c.data.len() { return Err("a 7z header cut off") }
+  c.at += 1
+  Ok(c.data[c.at - 1])
+}
+
+let next_bytes = (c: mut Cursor, n: i64) -> Result<[]u8, string> => {
+  if n < 0 || c.at + n > c.data.len() { return Err("a 7z header cut off") }
+  c.at += n
+  Ok(c.data.slice(c.at - n, c.at))
+}
+
+let skip = (c: mut Cursor, n: i64) -> Result<void, string> => {
+  if n < 0 || c.at + n > c.data.len() { return Err("a 7z header cut off") }
+  c.at += n
+  Ok()
+}
+
+/// 7z's variable-length number: the first byte's leading ones say how many bytes follow,
+/// little-endian above the first byte's remaining bits.
+let number = (c: mut Cursor) -> Result<i64, string> => {
+  let lead = i64(byte(c)?)
+  var mask: i64 = 0x80
+  var value: i64 = 0
+  for i in 0..<8 {
+    if (lead & mask) == 0 { return Ok(value | ((lead & (mask - 1)) << (8 * i))) }
+    let next = i64(byte(c)?)
+    if i == 7 && next >= 0x80 { return Err("a 7z number too large") }
+    value = value | (next << (8 * i))
+    mask = mask >> 1
+  }
+  Ok(value)
+}
+
+/// `n` flags, eight to a byte, the first in the top bit.
+let bit_vector = (c: mut Cursor, n: i64) -> Result<[]bool, string> => {
+  let packed = next_bytes(c, (n + 7) / 8)?
+  var flags: []bool = []
+  for i in 0..<n { flags.push(((packed[i / 8] >> u8(7 - i % 8)) & 1) == 1) }
+  Ok(flags)
+}
+
+/// `n` CRC-32s, some perhaps absent: a byte saying whether all are there, else a bit vector
+/// of which are, then each one there.
+let digests = (c: mut Cursor, n: i64) -> Result<[]Maybe<u32>, string> => {
+  let all = byte(c)? != 0
+  let defined = if all { [true; n] } else { bit_vector(c, n)? }
+  var crcs: []Maybe<u32> = []
+  for d in defined {
+    if d {
+      let raw = next_bytes(c, 4)?
+      crcs.push(Some(u32_le(raw, 0)))
+    } else {
+      crcs.push(None)
+    }
+  }
+  Ok(crcs)
+}
+
+/// Names in UTF-16, little-endian, each ending in a zero.
+let utf16_names = pure (data: []u8, from: i64, to: i64) -> []string => {
+  var names: []string = []
+  var name = ""
+  var at = from
+  for at + 1 < to {
+    var unit = i64(data[at]) | (i64(data[at + 1]) << 8)
+    at += 2
+    if unit == 0 {
+      names.push(name)
+      name = ""
+      continue
+    }
+    if unit >= 0xD800 && unit < 0xDC00 && at + 1 < to {
+      let low = i64(data[at]) | (i64(data[at + 1]) << 8)
+      if low >= 0xDC00 && low < 0xE000 {
+        unit = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00)
+        at += 2
+      }
+    }
+    name = name ++ "${rune(unit)}"
+  }
+  names
+}
+
+let u32_le = pure (data: []u8, at: i64) -> u32 =>
+  u32(data[at]) | (u32(data[at + 1]) << 8) | (u32(data[at + 2]) << 16) | (u32(data[at + 3]) << 24)
+
+/// A little-endian 64-bit number, or -1 if it does not fit an `i64`.
+let u64_le = pure (data: []u8, at: i64) -> i64 => {
+  if data[at + 7] >= 0x80 { return -1 }
+  var value: i64 = 0
+  for i in 0..<8 { value = value | (i64(data[at + i]) << (8 * i)) }
+  value
+}

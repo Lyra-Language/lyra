@@ -31,8 +31,10 @@ Built on `github.com/llir/llvm` v0.3.6 (pure Go, emits **typed** pointers such a
   `_interior_nul`, `_negative_length`, `_negative_byte_len`, and `lyra_panic` (user
   `panic`).
 - **Top-level `const`** has no storage: `Emit` records them in `l.consts` and an
-  identifier read that misses `l.locals` inlines the value expression. A local `const` is
-  an ordinary alloca.
+  identifier read that misses `l.locals` inlines the value expression — **unless its type
+  owns a managed value** (`ownership.OwnsManaged`): inlined, an array was allocated at every
+  use and, a use being a borrow, never released. Those are stored like a top-level `let`,
+  initialized first. A local `const` is an ordinary alloca.
 - **Locals** are entry-block `alloca` + store/load (mem2reg builds SSA). `l.locals` maps
   name → slot pointer; a by-ref parameter's slot is an `ir.Param`, so read a slot's pointee
   type with `slotElemType`, never `slot.(*ir.InstAlloca)`.

@@ -96,6 +96,12 @@ func (l *lowerer) lowerDestructuringDecl(block *ir.Block, d *ast.DestructuringDe
 	if err != nil {
 		return nil, err
 	}
+	// `let _ = v` tests nothing and binds nothing, whatever v's type — the value is
+	// evaluated and released like any discarded temporary. Asking the pattern machinery
+	// anyway refused every array, which has no single test/bind pair (patternMatcher).
+	if _, discard := d.Pattern.(*ast.WildcardPattern); discard {
+		return block, nil
+	}
 	test, bind, err := l.patternMatcher(block, val, valType)
 	if err != nil {
 		return nil, err

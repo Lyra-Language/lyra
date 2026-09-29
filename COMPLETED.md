@@ -9,6 +9,44 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — `std.sevenzip` and LZMA, and the four compiler bugs they found
+
+Sheliak wanted `.7z` ROMs. `std.compress` gained `lzma_decode` and `lzma2_decode` (LZMA
+SDK's layout and LzmaSpec's algorithm), and `std.sevenzip` reads 7-Zip's archive format:
+the start header, an encoded (compressed) header, blocks of one coder, solid blocks divided
+into files, empty files and directories told apart, UTF-16 names. 7-Zip itself (`7zz`,
+installed with Homebrew for the purpose) wrote the test archives in
+`pkg/backend/llvm/testdata/sevenzip/`, one per setting a user meets and one per refusal;
+their files come from formulas the test repeats, so it checks contents, not another
+reader. LZMA and LZMA2 were also held to liblzma through Python: 189 raw streams across
+lc/lp/pb, presets and extreme mode, first time.
+
+**LZMA is not `pure`.** The purity limitation (todo.md) bit a fourth time and here it
+could not be designed around: a range decoder changes on every bit, and answering by value
+would return the decoder from each one.
+
+What the code found in the compiler, each fixed with a test that fails without the fix:
+
+- **Every read of a managed `const` leaked** (`TestExec_ConstArraysDoNotLeak`). A `const`
+  was inlined — its literal lowered at each use — and a use is a name, which the ownership
+  pass treats as a borrow, so the fresh array was never released. The prelude's
+  `HEX_DIGITS` made every `to_hex()` leak. A const whose type owns a managed value is now
+  stored like a top-level `let`, built once before the other globals. Found only by
+  LeakSanitizer in `./asan.sh`, via symbols read off `objdump -t` (the image has no
+  symbolizer).
+- **`let _ = array` was refused by the backend** with an error naming no location
+  (`TestExec_LetWildcardDiscardsAnArray`): the wildcard went through the pattern machinery,
+  which has no array case. A wildcard binds and tests nothing, so it no longer asks.
+- **A builtin method's argument got its context after inference**
+  (`TestExec_PushArgumentTakesTheElementType`): `xs.push(None)` into `[]Maybe<u32>` could
+  not be inferred and `xs.push(Some(3))` settled on `Maybe<i64>`. `inferLambdaCallFromType`
+  now pushes the parameter type before inferring, as `checkNamedArgument` does — the two
+  were copies that had drifted (rule 8).
+- **`bytes == [1, 2]` emitted invalid IR** (`TestExec_AggregateLiteralComparedWithATypedValue`):
+  `==` pushed the typed side's width onto a lone literal but not onto an array or tuple of
+  them, so a `[]u8` equality was called on an `[]i64`. Apple's clang accepted it; clang-15
+  refused it, which is what `./asan.sh` is for.
+
 ### 09/29/26 — `std.compress` and `std.zip`, for Sheliak's zipped ROMs
 
 Sheliak wanted `.zip` ROMs; Lyra had no DEFLATE. It is written in Lyra rather than bound

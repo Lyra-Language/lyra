@@ -174,3 +174,29 @@ let main = () -> u8 => {
 		})
 	}
 }
+
+// A `const` holding an array is built once, not at each use. It was inlined — its literal
+// lowered wherever the name was read — and a read of a name is a borrow to the ownership
+// pass, so every use leaked a fresh box: an index, a comparison, a call's argument, and
+// the prelude's `to_hex`, whose `HEX_DIGITS` is one (09/29, found by `std.sevenzip`).
+func TestExec_ConstArraysDoNotLeak(t *testing.T) {
+	t.Parallel()
+	src := `module main
+const K: []u8 = [1, 2, 3, 4]
+const NAMES: []string = ["a", "b"]
+let same = (x: []u8) -> bool => x == K
+let count = (xs: []string) -> i64 => xs.len()
+let main = () -> u8 => {
+  var n: i64 = 0
+  for i in 0..<20 {
+    n += i64(K[1])
+    if same([1, 2, 3, 4]) { n += 1 }
+    n += count(NAMES)
+    n += u8(i).to_hex().len()
+  }
+  if n == 124 { 3 } else { 2 }
+}`
+	if got := buildAndRunLSanWithPrelude(t, src); got != 3 {
+		t.Errorf("exited %d; want 3 (1 is a leak)", got)
+	}
+}

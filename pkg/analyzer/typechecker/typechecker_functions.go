@@ -594,8 +594,19 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 		if param.Type == nil {
 			continue
 		}
+		// The parameter type is the argument's context *while it is inferred*, as it is
+		// at a direct call (checkNamedArgument) — not only afterwards, below. Without it
+		// `xs.push(None)` into a `[]Maybe<u32>` could not tell what the `None` holds, and
+		// `xs.push(Some(3))` settled on `Maybe<i64>` and was refused (found by
+		// `std.sevenzip`'s CRC lists, 09/29).
+		restoreExpected := tc.pushExpectedType(param.Type, arg.GetLocation())
 		argType := tc.inferExprType(arg)
+		restoreExpected()
 		if argType == nil {
+			continue
+		}
+		argType, reported := tc.contextualType(arg, param.Type, argType)
+		if reported {
 			continue
 		}
 		if !tc.assignableValue(arg, argType, param.Type) {

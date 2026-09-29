@@ -81,9 +81,15 @@ Package management, versioning and separate compilation are out of scope by deci
   `declare_save(cart)` on its own `var cart` was lyra-E007 (09/28, Sheliak): `EffectMut` is one
   bit, so a callee that writes only through its `mut` parameters looks like one that writes a
   capture. Wants a separate "through my parameters" effect a caller discharges when every
-  `mut` argument is rooted in a local. Hit twice more on 09/29: it shaped `std.compress`
-  (helpers answer by value instead of advancing a reader) and made romtest's zip writer
-  impure.
+  `mut` argument is rooted in a local. Hit three more times on 09/29: it shaped `inflate`
+  (helpers answer by value), made romtest's zip writer impure, and leaves LZMA and
+  `std.sevenzip` unmarked — a range decoder cannot answer by value. Mark them `pure` when
+  it lands.
+
+- **A tuple literal's context does not reach a `Some(…)` inside it.** `let b: (u8,
+  Maybe<i16>) = (9, Some(-3))` is refused ("cannot assign AnonymousTuple(integer literal,
+  Maybe<i64>) …") at a binding, an argument and a `push` alike, though `(9, None)` works;
+  and the message spells the type `AnonymousTuple(…)` rather than `(u8, Maybe<i16>)`.
 
 - **A large struct passed bare is a silent copy.** Sheliak's `pure (bus: GenesisBus, …)`
   helpers copied a multi-kilobyte bus on every memory read — two thirds of its frame time,

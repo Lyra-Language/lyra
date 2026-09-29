@@ -94,3 +94,26 @@ let main = () -> void => { println("${same(1, 1)} ${same("a", "b")}") }
 		t.Errorf("got %q; want \"true false\"", got)
 	}
 }
+
+// An array or tuple literal compared with a typed value takes its type, as a lone literal
+// takes a typed number's width. The literal kept i64 elements, and `==` on a `[]u8` called
+// the `[]u8` equality function with an `[]i64` — invalid IR that clang-15 refuses and
+// Apple's clang does not notice (09/29), so this matters on Linux (./asan.sh) and CI.
+func TestExec_AggregateLiteralComparedWithATypedValue(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> u8 => {
+  let x: []u8 = [1, 2, 200]
+  let pair: (u8, i16) = (3, -4)
+  let fixed: [2]u16 = #[500, 7]
+  var n = 0
+  if x == [1, 2, 200] { n += 1 }
+  if [1, 2, 200] == x { n += 1 }
+  if x != [1, 2] { n += 1 }
+  if pair == (3, -4) { n += 1 }
+  if fixed == #[500, 7] { n += 1 }
+  u8(n)
+}`
+	if got := buildAndRun(t, src); got != 5 {
+		t.Errorf("exited %d; want 5", got)
+	}
+}

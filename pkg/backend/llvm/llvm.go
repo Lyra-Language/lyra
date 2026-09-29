@@ -201,10 +201,26 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	// declaration type-checked, forEachUserFunction skipped it for not being a function,
 	// and every reference died as `llvm: unbound identifier` — hazard 5 inverted, and
 	// the reason `const` was the only way to give a module a string.
+	//
+	// **A `const` holding a managed value is stored, not inlined.** Inlined, `const K: []u8 =
+	// [1, 2]` built a fresh array at every use — and a use is a read of a name, which the
+	// ownership pass treats as a borrow, so nothing released it: every read leaked a box
+	// (09/29, found by `std.sevenzip` comparing method ids against const arrays; the
+	// prelude's `HEX_DIGITS` leaked one per `to_hex`). Stored, it is built once, like a
+	// top-level `let`, and every use is the borrow the ownership pass already assumes. These
+	// go first, since a const's value is a literal that needs no global before it, and a
+	// global's initializer may call a function that reads a const.
+	var managedConsts []*ast.VarDeclStmt
 	for _, stmt := range res.Program.Statements {
 		vd, ok := stmt.(*ast.VarDeclStmt)
 		if !ok {
 			continue
+		}
+		if vd.BindingKind == ast.BindingConst && vd.Value != nil {
+			if t, ok := l.recordedType(vd.Value); ok && ownership.OwnsManaged(t, res.SymbolTable, vd.GetLocation()) {
+				managedConsts = append(managedConsts, vd)
+				continue
+			}
 		}
 		if vd.BindingKind == ast.BindingConst {
 			// **Keyed per module, as globals and functions are.** Two modules may each
@@ -221,6 +237,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 			l.globalDecls = append(l.globalDecls, vd)
 		}
 	}
+	l.globalDecls = append(managedConsts, l.globalDecls...)
 	// Lower type declarations
 	if err := l.lowerTypeDeclarations(res.Program); err != nil {
 		return nil, err

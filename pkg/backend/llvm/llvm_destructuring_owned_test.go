@@ -94,3 +94,28 @@ func TestExec_DestructuringLetOwnsItsNames(t *testing.T) {
 		})
 	}
 }
+
+// `let _ = v` discards an array as it discards anything else. It reached the pattern
+// machinery, which has no single test/bind pair for an array pattern and refused the
+// program with an error naming no location — though `_` tests and binds nothing (found by
+// `std.sevenzip` discarding a list of CRCs it had to read past, 09/29). Under ASan, with
+// leak detection where it exists: the discarded arrays — a call's result and a literal —
+// must still be released.
+func TestExec_LetWildcardDiscardsAnArray(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	src := `let digits = (n: i64) -> []i64 => [n % 10, n / 10 % 10, n / 100]
+let main = () -> u8 => {
+  var total: i64 = 0
+  for i in 0..<50 {
+    let _ = digits(i * 37)
+    let _ = [i; 20]
+    let _ = ["a" ++ "b", "c"]
+    total += i
+  }
+  if total == 1225 { 0 } else { 1 }
+}`
+	if got := buildAndRunASan(t, clang, src); got != 0 {
+		t.Errorf("exited %d; want 0", got)
+	}
+}

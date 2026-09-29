@@ -402,6 +402,29 @@ func TestExec_DynArrayPushNestedArrays(t *testing.T) {
 	}
 }
 
+// A push's argument takes the element type as its context while it is inferred, as a
+// direct call's argument does: `None` learns what it holds, and `Some(3)` and a bare
+// literal take the element's width rather than settling on i64 and being refused. The
+// builtin path inferred first and propagated after, too late for either (09/29).
+func TestExec_PushArgumentTakesTheElementType(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+let main = () -> void => {
+  var xs: []Maybe<u32> = []
+  xs.push(None)
+  xs.push(Some(3000000000))
+  var bytes: []u8 = []
+  bytes.push(200)
+  var pairs: [](u8, Maybe<i16>) = []
+  pairs.push((7, None))
+  println("${xs.len()} ${xs[0].is_none()} ${xs[1].unwrap_or(0)} ${bytes[0]} ${pairs[0].0} ${pairs[0].1.is_none()}")
+}
+`, "")
+	if got, want := strings.TrimSpace(out), "2 true 3000000000 200 7 true"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // push is interior mutation with a different spelling, so it takes the same mutability
 // rule — and, deliberately, the same diagnostic. A plain `let` is deeply immutable.
 func TestCheck_PushNeedsAMutableReceiver(t *testing.T) {
