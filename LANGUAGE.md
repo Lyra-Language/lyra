@@ -347,6 +347,14 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 - Numbers are `f64`: exact up to 18 significant digits with exponent within 22; longer may be an ulp or two off.
 - Parser is `pure` (threads a byte offset).
 
+### Compression (`std.compress`) and zip (`std.zip`)
+
+`inflate(data) -> Result<[]u8, string>` undoes a **raw** DEFLATE stream (RFC 1951) — no zlib or gzip framing, which is the container's to read — and `crc32(data) -> u32` is the IEEE CRC those formats check with. `std.zip`: `zip_entries(archive) -> Result<[]ZipEntry, string>` from the central directory, `unzip(archive, entry) -> Result<[]u8, string>`, `is_zip(data)`, `entry.is_directory()`.
+
+- Every function is `pure`: `inflate` keeps its bit position and output as locals, and its helpers answer by value (what they read, and how many bits it took).
+- `unzip` reads methods 0 (stored) and 8 (DEFLATE) and checks the size and CRC-32 the archive records. Refused, each with its own message: other methods, encryption, multi-disk and Zip64 archives.
+- Names decode as UTF-8. The sizes come from the central directory, so entries written with data descriptors (streaming writers) read.
+
 ### Dates (`std.temporal`)
 
 After the web's **Temporal** API: a wall-clock value and an exact instant are different

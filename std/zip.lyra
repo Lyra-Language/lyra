@@ -1,0 +1,148 @@
+module std.zip
+//! Zip archives, read: [zip_entries] lists what an archive holds, and [unzip] gives one
+//! entry's bytes, decompressed and checked against the CRC-32 the archive records.
+//!
+//! ```
+//! import std.zip.{ zip_entries, unzip }
+//!
+//! let entries = zip_entries(archive)?
+//! for entry in entries {
+//!   if !entry.is_directory() { println("${entry.name}: ${unzip(archive, entry)?.len()} bytes") }
+//! }
+//! ```
+//!
+//! **The central directory is the archive's table of contents**, at its end, and it is
+//! what is read — not the headers in front of each entry, which a streaming writer leaves
+//! the sizes out of. An entry's data is found through its own header, whose name and extra
+//! field may differ in length from the directory's.
+//!
+//! **What is read**: entries stored or compressed with DEFLATE (methods 0 and 8), which is
+//! every zip tool's default. **Refused, with a message naming it**: another method (bzip2,
+//! LZMA, …), an encrypted entry, an archive split across disks, and Zip64 — an archive or
+//! entry past 4 GB, or of more than 65,535 entries.
+//!
+//! **Names are decoded as UTF-8**, as the format's flag for them says they are; a name
+//! written in the older IBM code page reads the same wherever it is ASCII, which file names
+//! from zip tools of the last twenty years are.
+
+import std.compress.{ inflate, crc32 }
+
+/// One entry in an archive, as its central directory records it.
+pub struct ZipEntry {
+  /// Its path within the archive, `/`-separated; a directory's ends in `/`.
+  name: string,
+  /// 0 stored, 8 DEFLATE; anything else [unzip] refuses.
+  method: u16,
+  /// The general-purpose flags: bit 0 encrypted, bit 11 a UTF-8 name.
+  flags: u16,
+  /// The CRC-32 of its uncompressed bytes.
+  crc: u32,
+  compressed_size: i64,
+  size: i64,
+  /// Where its local header begins.
+  header_offset: i64,
+}
+
+/// Whether some bytes begin as a zip archive does: with an entry's header, or with the end
+/// record of an archive holding nothing.
+pub let is_zip = pure (data: []u8) -> bool =>
+  data.len() >= 4 && (u32_at(data, 0) == LOCAL_HEADER || u32_at(data, 0) == END_RECORD)
+
+/// The entries an archive holds, in the order its directory lists them.
+pub let zip_entries = pure (archive: []u8) -> Result<[]ZipEntry, string> => {
+  let Some(end) = find_end_record(archive) else {
+    return Err("not a zip archive: no end-of-central-directory record")
+  }
+  if u16_at(archive, end + 4) != 0 || u16_at(archive, end + 6) != 0 {
+    return Err("an archive split across disks, which is not read")
+  }
+  let entry_count = u16_at(archive, end + 10)
+  let directory_size = u32_at(archive, end + 12)
+  let directory = u32_at(archive, end + 16)
+  if entry_count == 0xFFFF || directory_size == 0xFFFFFFFF || directory == 0xFFFFFFFF {
+    return Err("a Zip64 archive, which is not read")
+  }
+  var entries: []ZipEntry = []
+  var at = i64(directory)
+  for _ in 0..<entry_count {
+    if at + 46 > archive.len() || u32_at(archive, at) != DIRECTORY_HEADER {
+      return Err("a central directory entry is missing or damaged")
+    }
+    let name_length = i64(u16_at(archive, at + 28))
+    let extra_length = i64(u16_at(archive, at + 30))
+    let comment_length = i64(u16_at(archive, at + 32))
+    if at + 46 + name_length > archive.len() { return Err("an entry's name runs past the archive") }
+    let compressed_size = u32_at(archive, at + 20)
+    let size = u32_at(archive, at + 24)
+    let header_offset = u32_at(archive, at + 42)
+    if compressed_size == 0xFFFFFFFF || size == 0xFFFFFFFF || header_offset == 0xFFFFFFFF {
+      return Err("a Zip64 entry, which is not read")
+    }
+    entries.push(ZipEntry {
+      name: archive.slice(at + 46, at + 46 + name_length).decode_utf8(),
+      method: u16_at(archive, at + 10),
+      flags: u16_at(archive, at + 8),
+      crc: u32_at(archive, at + 16),
+      compressed_size: i64(compressed_size),
+      size: i64(size),
+      header_offset: i64(header_offset),
+    })
+    at += 46 + name_length + extra_length + comment_length
+  }
+  Ok(entries)
+}
+
+/// An entry's bytes, decompressed, and refused if they are not what the archive says: of
+/// another length, or another CRC-32.
+pub let unzip = pure (archive: []u8, entry: ref ZipEntry) -> Result<[]u8, string> => {
+  if (entry.flags & 1) != 0 { return Err("${entry.name} is encrypted, which is not read") }
+  let at = entry.header_offset
+  if at + 30 > archive.len() || u32_at(archive, at) != LOCAL_HEADER {
+    return Err("${entry.name}'s header is missing or damaged")
+  }
+  let from = at + 30 + i64(u16_at(archive, at + 26)) + i64(u16_at(archive, at + 28))
+  if from + entry.compressed_size > archive.len() {
+    return Err("${entry.name} runs past the end of the archive")
+  }
+  let stored = archive.slice(from, from + entry.compressed_size)
+  let bytes = match entry.method {
+    0 => stored,
+    8 => match inflate(stored) {
+      Ok(out) => out,
+      Err(why) => return Err("${entry.name} is damaged: ${why}"),
+    },
+    _ => return Err("${entry.name} is compressed by method ${entry.method}; only stored and DEFLATE are read"),
+  }
+  if bytes.len() != entry.size {
+    return Err("${entry.name} is ${bytes.len()} bytes, not the ${entry.size} its archive says")
+  }
+  if crc32(bytes) != entry.crc { return Err("${entry.name} is damaged: its CRC-32 does not match") }
+  Ok(bytes)
+}
+
+/// Whether an entry is a directory rather than a file.
+pub let is_directory = pure (self: ref ZipEntry) -> bool => self.name.ends_with("/")
+
+const LOCAL_HEADER: u32 = 0x04034B50
+const DIRECTORY_HEADER: u32 = 0x02014B50
+const END_RECORD: u32 = 0x06054B50
+
+/// Where the end-of-central-directory record begins: searched for from the end, since an
+/// archive comment of up to 65,535 bytes may follow it.
+let find_end_record = pure (archive: []u8) -> Maybe<i64> => {
+  var at = archive.len() - 22
+  let stop = archive.len() - 22 - 0xFFFF
+  for at >= 0 && at >= stop {
+    let comment_length = i64(u16_at(archive, at + 20))
+    if u32_at(archive, at) == END_RECORD && at + 22 + comment_length == archive.len() {
+      return Some(at)
+    }
+    at -= 1
+  }
+  None
+}
+
+let u16_at = pure (data: []u8, at: i64) -> u16 => u16(data[at]) | (u16(data[at + 1]) << 8)
+
+let u32_at = pure (data: []u8, at: i64) -> u32 =>
+  u32(data[at]) | (u32(data[at + 1]) << 8) | (u32(data[at + 2]) << 16) | (u32(data[at + 3]) << 24)

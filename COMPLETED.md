@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — `std.compress` and `std.zip`, for Sheliak's zipped ROMs
+
+Sheliak wanted `.zip` ROMs; Lyra had no DEFLATE. It is written in Lyra rather than bound
+from zlib, so there is no C dependency and Vega can use it too. It is also a new program
+for the compiler to meet. `inflate` decodes Huffman codes canonically (Mark Adler's `puff`
+method: counts per length and symbols in code order, walked a length at a time), which
+needs no lookup table rebuilt per block and still inflates a 1.5 MB ROM in ~20 ms.
+
+**Its shape is the purity limitation's** (todo.md, "`pure` refuses a `mut`-parameter
+call"): a bit reader advanced by `mut` helpers could not be called from `pure` code, so
+every helper answers by value — `bits(data, pos, n)`, `decode(table, window)` returning the
+symbol *and* the bits it took — and `inflate` alone holds the position and the output. It
+reads well, and a malformed stream cannot leave a half-advanced reader behind.
+
+Held to Go's `compress/flate` and `archive/zip`, an independent implementation of both:
+`pkg/backend/llvm/llvm_compress_test.go` inflates 35 streams (every level including stored
+and Huffman-only, the corpus checked to reach all three block types), refuses eight
+hand-packed malformed ones by reason, reads an archive of every entry kind Go writes (data
+descriptors included) and a damaged copy, and runs a zip under ASan. One finding from the
+tests: input that ran out mid-block read as zeros and was reported as "a code not in its
+table"; a failed decode within fifteen bits of the end now says the input ended.
+
 ### 09/28/26 — the purity pass resolves a callee in the calling module
 
 The purity pass took a call's callee from the typechecker when it had recorded one (only an

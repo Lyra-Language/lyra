@@ -1,0 +1,272 @@
+module std.compress
+//! Decompression: [inflate] undoes DEFLATE (RFC 1951) — the compression inside zip, gzip
+//! and PNG — and [crc32] is the checksum those formats check it with.
+//!
+//! ```
+//! import std.compress.{ inflate, crc32 }
+//!
+//! match inflate(deflated) {
+//!   Ok(bytes) => if crc32(bytes) == expected { use(bytes) },
+//!   Err(why) => println("corrupt: ${why}"),
+//! }
+//! ```
+//!
+//! **A raw DEFLATE stream, not a container.** `inflate` reads the blocks and stops after the
+//! final one; a zlib or gzip header, and the checksum after the data, are the container's
+//! to read (`std.zip` reads zip's).
+//!
+//! **Every helper is a question about the input, answered by value.** The only state is
+//! `inflate`'s own — how far into the input it has read, in bits, and the output so far —
+//! and each helper is handed what it needs and answers what it found and how many bits
+//! that took. So a malformed stream cannot leave a half-updated reader behind, and the
+//! whole decoder is `pure`.
+//!
+//! **Huffman codes are decoded canonically** (Mark Adler's `puff` method): a table is the
+//! number of codes of each length and the symbols in code order, and a code is found by
+//! walking the lengths — no lookup table to build for each block, at up to fifteen steps a
+//! symbol.
+
+/// The bytes a raw DEFLATE stream decompresses to, or what is wrong with it: a block type
+/// that does not exist, a code table that cannot be one, a code or distance out of range,
+/// or input that ends before the final block does.
+pub let inflate = pure (data: []u8) -> Result<[]u8, string> => {
+  var out: []u8 = []
+  var pos: i64 = 0
+  let end = data.len() * 8
+  for {
+    if pos + 3 > end { return Err("the input ends before its final block") }
+    let last = bits(data, pos, 1) == 1
+    let kind = bits(data, pos + 1, 2)
+    pos += 3
+    if kind == 0 {
+      // Stored: from the next byte, a length, its complement, and that many bytes.
+      pos = (pos + 7) / 8 * 8
+      if pos + 32 > end { return Err("a stored block's length is cut off") }
+      let length = bits(data, pos, 16)
+      if length != 0xFFFF - bits(data, pos + 16, 16) {
+        return Err("a stored block's length does not match its complement")
+      }
+      pos += 32
+      let from = pos / 8
+      if from + length > data.len() { return Err("a stored block runs past the input") }
+      for i in 0..<length { out.push(data[from + i]) }
+      pos += length * 8
+    } else if kind == 3 {
+      return Err("a block of type 3, which does not exist")
+    } else {
+      let tables = if kind == 1 { Ok(fixed_tables()) } else { dynamic_tables(data, pos) }
+      let (literals, distances, header) = tables?
+      pos += header
+      for {
+        let (symbol, used) = decode(literals, bits(data, pos, 15))
+        if used == 0 || pos + used > end {
+          return Err(missing_code(pos, end, "a literal/length code is not in its table"))
+        }
+        pos += used
+        if symbol < 256 {
+          out.push(u8(symbol))
+        } else if symbol == 256 {
+          break
+        } else {
+          let n = symbol - 257
+          if n >= 29 { return Err("a length code out of range") }
+          let length = LENGTH_BASE[n] + bits(data, pos, LENGTH_EXTRA[n])
+          pos += LENGTH_EXTRA[n]
+          let (d, d_used) = decode(distances, bits(data, pos, 15))
+          if d_used == 0 || pos + d_used > end {
+            return Err(missing_code(pos, end, "a distance code is not in its table"))
+          }
+          if d >= 30 { return Err("a distance code out of range") }
+          pos += d_used
+          let distance = DISTANCE_BASE[d] + bits(data, pos, DISTANCE_EXTRA[d])
+          pos += DISTANCE_EXTRA[d]
+          if pos > end { return Err("the input ends inside a block") }
+          if distance > out.len() { return Err("a distance reaching back before the start") }
+          // Byte by byte: a copy may overlap what it is writing (distance < length).
+          let from = out.len() - distance
+          for i in 0..<length { out.push(out[from + i]) }
+        }
+      }
+    }
+    if last { break }
+  }
+  Ok(out)
+}
+
+/// The CRC-32 of some bytes: the IEEE polynomial, reflected, as zip, gzip and PNG use it.
+pub let crc32 = pure (data: []u8) -> u32 => {
+  let table = crc_table()
+  var crc: u32 = 0xFFFFFFFF
+  for b in data { crc = table[i64((crc ~ u32(b)) & 0xFF)] ~ (crc >> 8) }
+  crc ~ 0xFFFFFFFF
+}
+
+/// Why no code was found at bit `pos`: the input ran out — the fifteen bits looked at went
+/// past its end, the rest read as zero — or else `otherwise`.
+let missing_code = pure (pos: i64, end: i64, otherwise: string) -> string =>
+  if pos + 15 > end { "the input ends inside a block" } else { otherwise }
+
+/// A Huffman code: how many codes there are of each length (1–15), and the symbols in code
+/// order — shorter codes first, and within a length by symbol.
+struct Huffman {
+  counts: []i64,
+  symbols: []i64,
+}
+
+/// `n` bits (up to 24) of the input from bit `pos`, the first in the lowest bit. Bits past
+/// the end read as zero; the caller checks it has not gone past.
+let bits = pure (data: []u8, pos: i64, n: i64) -> i64 => {
+  if n == 0 { return 0 }
+  let at = pos >> 3
+  var word: i64 = 0
+  for i in 0..<4 {
+    if at + i < data.len() { word = word | (i64(data[at + i]) << (8 * i)) }
+  }
+  (word >> (pos & 7)) & ((1 << n) - 1)
+}
+
+/// The symbol whose code begins `window` (fifteen bits of input, the first lowest), and
+/// the code's length — `(-1, 0)` if no code in the table begins so.
+let decode = pure (table: ref Huffman, window: i64) -> (i64, i64) => {
+  var code: i64 = 0
+  var first_code: i64 = 0
+  var at: i64 = 0
+  for length in 1..<=15 {
+    code = code | ((window >> (length - 1)) & 1)
+    let n = table.counts[length]
+    if code - first_code < n { return (table.symbols[at + code - first_code], length) }
+    at += n
+    first_code = (first_code + n) << 1
+    code = code << 1
+  }
+  (-1, 0)
+}
+
+/// The Huffman code with these code lengths, symbol by symbol (0 for a symbol with no
+/// code), or an error if they over-fill a code's space. A code that leaves space unused is
+/// allowed — a stream that reaches for the unused space is refused when it does.
+let huffman = pure (lengths: []i64) -> Result<Huffman, string> => {
+  var counts: []i64 = [0; 16]
+  for length in lengths { counts[length] += 1 }
+  var left: i64 = 1
+  for length in 1..<=15 {
+    left = left * 2 - counts[length]
+    if left < 0 { return Err("a code table with more codes than its lengths allow") }
+  }
+  var offsets: []i64 = [0; 16]
+  for length in 1..<15 { offsets[length + 1] = offsets[length] + counts[length] }
+  var symbols: []i64 = [0; lengths.len()]
+  for symbol, length in lengths {
+    if length != 0 {
+      symbols[offsets[length]] = symbol
+      offsets[length] += 1
+    }
+  }
+  counts[0] = 0
+  Ok(Huffman { counts: counts, symbols: symbols })
+}
+
+/// The fixed codes of a type 1 block (RFC 1951, 3.2.6), and the no bits they take to read.
+let fixed_tables = pure () -> (Huffman, Huffman, i64) => {
+  var lengths: []i64 = []
+  for symbol in 0..<288 {
+    lengths.push(if symbol < 144 { 8 } else if symbol < 256 { 9 } else if symbol < 280 { 7 } else { 8 })
+  }
+  let literals = huffman(lengths).expect("the fixed literal code is complete")
+  let distances = huffman([5; 30]).expect("the fixed distance code fits")
+  (literals, distances, 0)
+}
+
+/// The codes a type 2 block's header at bit `pos` describes (RFC 1951, 3.2.7), and how
+/// many bits the header takes.
+let dynamic_tables = pure (
+  data: []u8,
+  pos: i64
+) -> Result<(Huffman, Huffman, i64), string> => {
+  let end = data.len() * 8
+  var at = pos
+  let literal_count = bits(data, at, 5) + 257
+  let distance_count = bits(data, at + 5, 5) + 1
+  let length_count = bits(data, at + 10, 4) + 4
+  at += 14
+  if literal_count > 286 || distance_count > 30 {
+    return Err("a block header with more codes than DEFLATE has")
+  }
+  var code_lengths: []i64 = [0; 19]
+  for i in 0..<length_count {
+    code_lengths[LENGTH_ORDER[i]] = bits(data, at, 3)
+    at += 3
+  }
+  let length_code = huffman(code_lengths)?
+  var lengths: []i64 = []
+  let total = literal_count + distance_count
+  for lengths.len() < total {
+    let (symbol, used) = decode(length_code, bits(data, at, 15))
+    if used == 0 || at + used > end {
+      return Err(missing_code(at, end, "a code-length code is not in its table"))
+    }
+    at += used
+    if symbol < 16 {
+      lengths.push(symbol)
+    } else {
+      var repeat: i64 = 0
+      var value: i64 = 0
+      if symbol == 16 {
+        if lengths.len() == 0 { return Err("a repeat of the previous length with none before it") }
+        value = lengths[lengths.len() - 1]
+        repeat = 3 + bits(data, at, 2)
+        at += 2
+      } else if symbol == 17 {
+        repeat = 3 + bits(data, at, 3)
+        at += 3
+      } else {
+        repeat = 11 + bits(data, at, 7)
+        at += 7
+      }
+      if lengths.len() + repeat > total { return Err("code lengths repeated past the end of the table") }
+      for _ in 0..<repeat { lengths.push(value) }
+    }
+  }
+  if at > end { return Err("the input ends inside a block header") }
+  if lengths[256] == 0 { return Err("a block with no end-of-block code") }
+  let literals = huffman(lengths.slice(0, literal_count))?
+  let distances = huffman(lengths.slice(literal_count, total))?
+  Ok((literals, distances, at - pos))
+}
+
+/// The CRC-32 of each byte value.
+let crc_table = pure () -> []u32 => {
+  var table: []u32 = [0; 256]
+  for n in 0..<256 {
+    var c = u32(n)
+    for _ in 0..<8 { c = if (c & 1) != 0 { 0xEDB88320 ~ (c >> 1) } else { c >> 1 } }
+    table[n] = c
+  }
+  table
+}
+
+/// The order a dynamic block lists its code-length code's lengths in.
+const LENGTH_ORDER: [19]i64 = #[
+  16, 17, 18, 0, 8, 7, 9, 6, 10, 5,
+  11, 4, 12, 3, 13, 2, 14, 1, 15,
+]
+
+/// Lengths 257–285 stand for: a base, plus that many extra bits.
+const LENGTH_BASE: [29]i64 = #[
+  3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
+  35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
+]
+const LENGTH_EXTRA: [29]i64 = #[
+  0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
+  3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+]
+
+/// Distance codes 0–29 stand for: a base, plus that many extra bits.
+const DISTANCE_BASE: [30]i64 = #[
+  1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
+  257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+]
+const DISTANCE_EXTRA: [30]i64 = #[
+  0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+  7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
+]

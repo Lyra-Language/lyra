@@ -533,7 +533,8 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/ffi.lyra`, `std/io.lyra`.
+  `std/tui/`, `std/temporal/`, `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
+  (inflate, CRC-32), `std/zip.lyra`.
 
 ## Testing
 
