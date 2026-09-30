@@ -367,6 +367,15 @@ pub let copy_file = (from: string, to: string) -> bool => {
   moved
 }
 
+/// Delete the file at `path`, answering whether it is gone: `false` when there was no
+/// such file, it is a directory, or the directory holding it may not be written. A
+/// symbolic link is removed itself, never what it points to (`unlink`).
+///
+/// ```
+/// if !remove_file("scratch.txt") { println("scratch.txt is still there") }
+/// ```
+pub let remove_file = (path: string) -> bool => unsafe { unlink(path.cstring_ptr()) } == 0
+
 /// Creates the directory at `path` and every missing directory above it, answering
 /// whether it exists afterwards.
 ///
@@ -400,6 +409,7 @@ pub let create_dir_all = (path: string) -> bool => {
 unsafe extern open: (path: ^u8, flags: i32, ...) -> i32
 unsafe extern creat: (path: ^u8, mode: u32) -> i32
 unsafe extern mkdir: (path: ^u8, mode: u32) -> i32
+unsafe extern unlink: (path: ^u8) -> i32
 unsafe extern read: (fd: i32, buf: ^mut u8, count: u64) -> i64
 unsafe extern write: (fd: i32, buf: ^u8, count: u64) -> i64
 unsafe extern close: (fd: i32) -> i32

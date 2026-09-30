@@ -284,6 +284,56 @@ pub let poll_dialog = (host: Host) -> Maybe<DialogAnswer> => {
   }
 }
 
+// ── Testing ──────────────────────────────────────────────────────────────────
+
+/// A host with no window and no GPU, for testing an interface: every [begin_frame] is a
+/// real ImGui frame of `width` × `height` points, one 1/60 s step later, and its only input
+/// is what the program injects through `get_io()` — `add_mouse_pos_event`,
+/// `add_mouse_button_event`, `add_key_event` (`MOD_CTRL` is a key too),
+/// `add_input_characters_utf8`. Events are applied at the next [begin_frame].
+///
+/// Runs where there is no display. It never reads or writes `imgui.ini`, and macOS's
+/// Cmd/Ctrl swap is off, so an injected `MOD_CTRL | KEY_Z` is the same chord everywhere.
+/// `HOST_VIEWPORTS` is ignored (a torn-off window needs a platform), textures are `None`,
+/// and file dialogs are recorded rather than shown: [take_dialog_request], [answer_dialog].
+pub let create_headless_host = (width: i32, height: i32, flags: u32) -> Maybe<Host> => {
+  let h = unsafe { lyra_imgui_host_create_headless(width, height, flags) }
+  if h == nullptr { None } else { Some(h) }
+}
+
+/// Ask the host to quit, as closing its window does: the next [begin_frame] answers false,
+/// and [cancel_quit] takes it back. How a test reaches "unsaved changes?".
+pub let request_quit = (host: Host) -> void =>
+  unsafe { lyra_imgui_host_request_quit(host) }
+
+/// A file dialog a headless host was asked to show: its tag, and whether it saves.
+pub struct DialogRequest {
+  tag: i32,
+  save: bool,
+}
+
+/// The dialog a headless host was last asked to show, once; `None` when none was. A real
+/// host shows its dialogs and answers `None`.
+pub let take_dialog_request = (host: Host) -> Maybe<DialogRequest> => {
+  var tag: i32 = 0
+  var save = false
+  let c_tag = unsafe { &mut tag }
+  let c_save = unsafe { &mut save }
+  if unsafe { lyra_imgui_host_take_dialog_request(host, c_tag, c_save) } {
+    Some(DialogRequest { tag: tag, save: save })
+  } else {
+    None
+  }
+}
+
+/// Queue `answer` as the system's dialog would, for [poll_dialog] to hand back — how a
+/// test chooses a file.
+pub let answer_dialog = (host: Host, answer: DialogAnswer) -> void => match answer {
+  Chosen(tag, path) => queue_answer(host, tag, 0, Some(path)),
+  Cancelled(tag) => queue_answer(host, tag, 1, None),
+  DialogFailed(tag, why) => queue_answer(host, tag, 2, Some(why)),
+}
+
 // ── Colours ──────────────────────────────────────────────────────────────────
 
 /// `IM_COL32(r, g, b, a)`: a packed colour for the draw-list functions
@@ -332,6 +382,12 @@ let show_dialog = (
   ))
 }
 
+let queue_answer = (host: Host, tag: i32, kind: i32, text: Maybe<string>) -> void =>
+  with_maybe_cstring(
+    text,
+    (t) => unsafe { lyra_imgui_host_queue_dialog_answer(host, tag, kind, t) }
+  )
+
 /// Lend `s` to C as a NUL-terminated string, or NULL for `None`.
 let with_maybe_cstring = pure (s: Maybe<string>, f: (^u8) -> t) -> t => match s {
   Some(text) => text.with_cstring(f),
@@ -360,6 +416,31 @@ unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) ->
 
 @symbol("lyra_imgui_host_destroy")
 unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
+
+@symbol("lyra_imgui_host_create_headless")
+unsafe extern lyra_imgui_host_create_headless: (
+  width: i32,
+  height: i32,
+  flags: u32
+) -> Host
+
+@symbol("lyra_imgui_host_request_quit")
+unsafe extern lyra_imgui_host_request_quit: (host: Host) -> void
+
+@symbol("lyra_imgui_host_take_dialog_request")
+unsafe extern lyra_imgui_host_take_dialog_request: (
+  host: Host,
+  tag: ^mut i32,
+  save: ^mut bool
+) -> bool
+
+@symbol("lyra_imgui_host_queue_dialog_answer")
+unsafe extern lyra_imgui_host_queue_dialog_answer: (
+  host: Host,
+  tag: i32,
+  kind: i32,
+  text: ^u8
+) -> void
 
 @symbol("lyra_imgui_host_cancel_quit")
 unsafe extern lyra_imgui_host_cancel_quit: (host: Host) -> void

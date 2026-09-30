@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — a headless ImGui host, so an interface can be tested
+
+Vega's interface bugs (a colour click lost to a drag, a frame delete that trapped) were
+found by hand because nothing could click. `bindings.imgui` gains `create_headless_host`:
+real frames with no window or GPU and input only from `io.Add*Event`. Scripting a *real*
+window was rejected first: `imgui_impl_sdl3` adds the OS pointer's position every frame,
+after anything injected, so the person's mouse would win. The texture handling is
+`imgui_impl_null.cpp`'s (declare `RendererHasTextures`, mark every request done), inlined
+into `host.cpp` rather than compiling a second backend. `imgui.ini` is off — a test must
+neither read a person's layout nor write over it — and so is macOS's Cmd/Ctrl swap, so an
+injected chord means one thing on every platform. File dialogs are recorded for the test
+to answer. Vega's `--check` now drives its real frame loop through ten scenarios, and
+putting either bug back fails them. `std.io.remove_file` came with it: the tests save a
+project to a temporary file and had no way to delete it.
+
 ### 09/29/26 — what Vega's sprite editor found: `?.`, constructor alternatives, sources, loop widths
 
 Vega's first editor (the private studio beside this repo) wrote five workarounds into its

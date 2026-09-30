@@ -40,6 +40,15 @@ struct LyraImGuiHost {
     SDL_Window* window;
     SDL_GPUDevice* device;
     bool quit;
+    // A headless host has no window and no GPU (both NULL): ImGui runs a frame at a time
+    // at a fixed size and step, and its input is only what the program injects — how a
+    // program tests its interface. See lyra_imgui_host_create_headless.
+    bool headless;
+    float width, height;
+    // Headless only: the last file dialog asked for, which is recorded, not shown.
+    bool dialog_requested;
+    int32_t dialog_tag;
+    bool dialog_save;
     // Answers from file dialogs, oldest first. SDL may call a dialog's callback on
     // another thread, so the queue is the lock's; `polled` is the last answer handed to
     // Lyra, freed on the next poll.
@@ -132,10 +141,72 @@ LyraImGuiHost* lyra_imgui_host_create(const char* title, int32_t width, int32_t 
     return host;
 }
 
+// A host with no window and no GPU, for tests: ImGui frames of `width` × `height` points at
+// a fixed 1/60 s, with input only from io.Add*Event. No SDL video or GPU — it runs where
+// there is no display (its one SDL object, the dialog queue's mutex, needs no SDL_Init). The layout is not read from or written to imgui.ini, so a test never sees
+// (or changes) a person's; and Cmd/Ctrl are not swapped on macOS, so an injected Ctrl+Z
+// means one thing everywhere. Multi-viewports need a platform window and are left off.
+LyraImGuiHost* lyra_imgui_host_create_headless(int32_t width, int32_t height, uint32_t flags) {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.ConfigMacOSXBehaviors = false;
+    if (flags & LYRA_IMGUI_DOCKING)
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    // What imgui_impl_null.cpp's renderer declares: it takes textures (and marks each one
+    // done at end_frame), so the font atlas is built as it would be with a GPU.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
+    io.BackendPlatformName = "lyra_headless";
+    io.BackendRendererName = "lyra_headless";
+    ImGui::StyleColorsDark();
+
+    LyraImGuiHost* host = (LyraImGuiHost*)calloc(1, sizeof(LyraImGuiHost));
+    host->headless = true;
+    host->dialog_lock = SDL_CreateMutex();
+    host->width = (float)width;
+    host->height = (float)height;
+    return host;
+}
+
+// Ask the host to quit, as closing the window would: the next begin_frame answers false.
+// How a test reaches a program's "unsaved changes?" path.
+void lyra_imgui_host_request_quit(LyraImGuiHost* host) {
+    host->quit = true;
+}
+
+static bool begin_headless_frame(LyraImGuiHost* host) {
+    if (host->quit)
+        return false;
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(host->width, host->height);
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    ImGui::NewFrame();
+    return true;
+}
+
+static void end_headless_frame() {
+    ImGui::Render();
+    // imgui_impl_null.cpp's texture handling: every request done, nothing uploaded.
+    ImDrawData* draw_data = ImGui::GetDrawData();
+    if (draw_data->Textures != nullptr)
+        for (ImTextureData* tex : *draw_data->Textures) {
+            if (tex->Status == ImTextureStatus_WantDestroy) {
+                tex->SetTexID(ImTextureID_Invalid);
+                tex->SetStatus(ImTextureStatus_Destroyed);
+            } else if (tex->Status != ImTextureStatus_OK) {
+                tex->SetStatus(ImTextureStatus_OK);
+            }
+        }
+}
+
 // Pump events and start an ImGui frame. False once the user has asked to quit, and
 // then no frame was started. While the main window is minimised this waits rather
 // than returning, so every true answer is a frame worth drawing.
 bool lyra_imgui_host_begin_frame(LyraImGuiHost* host) {
+    if (host->headless)
+        return begin_headless_frame(host);
     for (;;) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -160,6 +231,10 @@ bool lyra_imgui_host_begin_frame(LyraImGuiHost* host) {
 // Render the frame into the main window — cleared to the given colour behind ImGui —
 // and into every torn-off window, then present.
 void lyra_imgui_host_end_frame(LyraImGuiHost* host, float r, float g, float b) {
+    if (host->headless) {
+        end_headless_frame();
+        return;
+    }
     ImGui::Render();
     ImDrawData* draw_data = ImGui::GetDrawData();
     const bool minimized = draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f;
@@ -249,6 +324,8 @@ const char* lyra_imgui_input_text(const char* label, const char* hint, const cha
 
 // A width × height RGBA texture, contents undefined until updated; NULL on failure.
 SDL_GPUTexture* lyra_imgui_texture_create(LyraImGuiHost* host, int32_t width, int32_t height) {
+    if (host->device == nullptr)
+        return nullptr; // headless: no GPU, so no texture (Lyra answers None)
     SDL_GPUTextureCreateInfo info = {};
     info.type = SDL_GPU_TEXTURETYPE_2D;
     info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -265,6 +342,8 @@ SDL_GPUTexture* lyra_imgui_texture_create(LyraImGuiHost* host, int32_t width, in
 // Submitted at once, ahead of the frame being built, so this frame draws the new pixels.
 bool lyra_imgui_texture_update(LyraImGuiHost* host, SDL_GPUTexture* texture, const uint8_t* rgba,
                                int32_t width, int32_t height) {
+    if (host->device == nullptr)
+        return false;
     const Uint32 size = (Uint32)width * (Uint32)height * 4;
     SDL_GPUTransferBufferCreateInfo transfer_info = {};
     transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
@@ -301,6 +380,8 @@ bool lyra_imgui_texture_update(LyraImGuiHost* host, SDL_GPUTexture* texture, con
 // Release a texture. Not while the frame being built still draws it: the draw runs at
 // end_frame, after this.
 void lyra_imgui_texture_destroy(LyraImGuiHost* host, SDL_GPUTexture* texture) {
+    if (host->device == nullptr)
+        return;
     SDL_ReleaseGPUTexture(host->device, texture);
 }
 
@@ -446,6 +527,13 @@ static bool dialog_filters(LyraDialogRequest* request, const char* filters) {
 // and then no answer will come.
 bool lyra_imgui_show_file_dialog(LyraImGuiHost* host, int32_t tag, bool save, const char* filters,
                                  const char* default_location) {
+    if (host->headless) {
+        // Recorded, not shown: a test reads the request and queues the answer.
+        host->dialog_requested = true;
+        host->dialog_tag = tag;
+        host->dialog_save = save;
+        return true;
+    }
     LyraDialogRequest* request = (LyraDialogRequest*)calloc(1, sizeof(LyraDialogRequest));
     if (request == nullptr)
         return false;
@@ -464,6 +552,33 @@ bool lyra_imgui_show_file_dialog(LyraImGuiHost* host, int32_t tag, bool save, co
         SDL_ShowOpenFileDialog(dialog_answered, request, host->window, list, request->nfilters, default_location,
                                false);
     return true;
+}
+
+// Headless: the dialog last asked for (and forget it), false when none was.
+bool lyra_imgui_host_take_dialog_request(LyraImGuiHost* host, int32_t* tag, bool* save) {
+    if (!host->dialog_requested)
+        return false;
+    host->dialog_requested = false;
+    *tag = host->dialog_tag;
+    *save = host->dialog_save;
+    return true;
+}
+
+// Queue an answer as a dialog's callback would — how a test answers a recorded request.
+// `text` is the path or error, NULL when cancelled.
+void lyra_imgui_host_queue_dialog_answer(LyraImGuiHost* host, int32_t tag, int32_t kind, const char* text) {
+    LyraDialogAnswer* answer = (LyraDialogAnswer*)calloc(1, sizeof(LyraDialogAnswer));
+    if (answer == nullptr)
+        return;
+    answer->tag = tag;
+    answer->kind = kind;
+    answer->text = text != nullptr ? copy_string(text) : nullptr;
+    SDL_LockMutex(host->dialog_lock);
+    LyraDialogAnswer** tail = &host->answers;
+    while (*tail != nullptr)
+        tail = &(*tail)->next;
+    *tail = answer;
+    SDL_UnlockMutex(host->dialog_lock);
 }
 
 // The oldest queued answer: its tag and kind through the pointers, its text (path or
@@ -492,6 +607,22 @@ const char* lyra_imgui_poll_file_dialog(LyraImGuiHost* host, int32_t* tag, int32
 
 // Tear everything down, SDL included. The host must not be used afterwards.
 void lyra_imgui_host_destroy(LyraImGuiHost* host) {
+    if (host->headless) {
+        ImGui::DestroyContext();
+        for (LyraDialogAnswer* a = host->answers; a != nullptr;) {
+            LyraDialogAnswer* next = a->next;
+            free(a->text);
+            free(a);
+            a = next;
+        }
+        if (host->polled != nullptr) {
+            free(host->polled->text);
+            free(host->polled);
+        }
+        SDL_DestroyMutex(host->dialog_lock);
+        free(host);
+        return;
+    }
     SDL_WaitForGPUIdle(host->device);
     ImGui_ImplSDL3_Shutdown();
     ImGui_ImplSDLGPU3_Shutdown();

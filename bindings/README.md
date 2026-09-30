@@ -201,6 +201,18 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     smoothed. Do not destroy a texture the frame being built still draws.
   - `text(s)` (ImGui's `Text` is printf-style, so the variadics are bound through their
     `…Unformatted` forms and interpolation does the formatting) and `col32(r, g, b, a)`.
+  - **A headless host for interface tests**: `create_headless_host(w, h, flags)` runs real
+    ImGui frames with no window, no GPU and no SDL video, a fixed 1/60 s each, and input
+    only from `get_io().add_mouse_pos_event`/`add_mouse_button_event`/`add_key_event`/
+    `add_input_characters_utf8`. It never reads or writes `imgui.ini`, turns off macOS's
+    Cmd/Ctrl swap (an injected `MOD_CTRL` chord is the same everywhere), ignores
+    `HOST_VIEWPORTS`, answers `None` for textures, and **records file dialogs instead of
+    showing them** — `take_dialog_request`, then `answer_dialog` — and `request_quit` stands
+    in for the close button. Why headless rather than scripting a real window: the SDL
+    backend adds the OS pointer's position after anything injected, so a real mouse wins.
+    The texture handling is `imgui_impl_null.cpp`'s: every request marked done. A test
+    finds widgets by rectangles it records itself (`get_item_rect_min/max`); Vega's
+    `probe.lyra` is the pattern.
   - **`cancel_quit(host)`**: `begin_frame` answering false reports a quit (the window
     closed, Cmd+Q) and it *stays* requested; this takes it back, so a program with unsaved
     work asks first and keeps looping. SIGTERM arrives as the same quit.
