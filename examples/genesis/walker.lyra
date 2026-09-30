@@ -4,9 +4,10 @@
 //   lyrac run walker.lyra            # in Sheliak: the arrow keys move him
 //
 // Each frame: read the pad, move (two pixels a frame, stopped at the screen's edges),
-// step the walk while moving and stand still otherwise, then — in the vertical blank —
-// show the sprite. The art is two 16×16 frames (`HERO`), four tiles each, as Vega's
-// sprite editor exports them.
+// step the walk while moving and stand still otherwise, and put the sprite in the list.
+// The vertical blank interrupt (`each_frame`) shows the list; the main loop waits for it,
+// and once set up never touches the VDP itself. The art is two 16×16 frames (`HERO`),
+// four tiles each, as Vega's sprite editor exports them.
 
 import std.genesis.vdp
 import std.genesis.pad
@@ -29,6 +30,7 @@ let main = () -> void => {
   vdp.load_tiles(1, HERO)
   vdp.set_backdrop(0, 7)
   vdp.display_on()
+  vdp.enable_vblank_interrupt()
 
   var x: i16 = (vdp.SCREEN_WIDTH - SIZE) / 2
   var y: i16 = (vdp.SCREEN_HEIGHT - SIZE) / 2
@@ -61,9 +63,22 @@ let main = () -> void => {
 
     sprites.clear()
     sprites.add(Sprite { x: x, y: y, width: 2, height: 2, tile: 1 + step * 4 })
-    vdp.wait_vblank()
-    sprites.show()
+    // The next vertical blank shows it: wait for that before the next frame.
+    let shown = vblanks
+    for vblanks == shown {}
   }
+}
+
+/// Vertical blanks so far — how the main loop knows its frame has been shown.
+var vblanks: u16 = 0
+
+/// Each vertical blank: the sprite list to the VDP, then the count. The list is complete
+/// by now, since a frame's work is done long before the next blank; and nothing else
+/// writes to the VDP after setup, so this cannot interrupt a command half given.
+@interrupt(vblank)
+let each_frame = () -> void => {
+  sprites.show()
+  vblanks += 1
 }
 
 /// Palette 0: transparent, outline, skin, shirt, trousers, hair and shoes, eyes, and the

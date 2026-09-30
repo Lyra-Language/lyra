@@ -682,7 +682,8 @@ target = "genesis"
     store in and out of the handler — so `frames += 1` in the handler and
     `for frames < 30 {}` in `main` is correct as written. The set is what the handler's own
     body writes (`=`, `+=`, `&mut`); a variable written only in a function it calls must be
-    read with `read_volatile`. `examples/genesis/vblank.lyra`.
+    read with `read_volatile`. `examples/genesis/vblank.lyra` counts frames in one;
+    `walker.lyra` shows its sprites from one, and its main loop waits on the count.
 - **A `const` fixed array of literals is data** (`#[…]`, `#[v; n]`, nested): one constant in
   `.rodata` — ROM on a console — read in place, with an address (`&TABLE[i]`). Any other
   `const` is inlined at each use, as before. Indexing or looping over any module-level array

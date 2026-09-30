@@ -104,9 +104,9 @@ let main = () -> void => unsafe { port().write_volatile(table[1]) }
 }
 
 // TestGenesis_TheWalkerWalks builds examples/genesis/walker.lyra — std.genesis's vdp, pad
-// and sprites together — and plays it: the hero stands in the middle with the pad let go,
-// and ends pressed into the bottom-right corner with right and down held (the edge stop
-// makes the place exact).
+// and sprites together, the sprites shown by its vertical blank interrupt — and plays it:
+// the hero stands in the middle with the pad let go, and ends pressed into the
+// bottom-right corner with right and down held (the edge stop makes the place exact).
 func TestGenesis_TheWalkerWalks(t *testing.T) {
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
