@@ -21,7 +21,7 @@ const SPEED: i16 = 2
 const STEP_FRAMES: u16 = 8
 
 /// The hero is 16×16: 2×2 tiles.
-const SIZE: i16 = 16
+const HERO_SIZE: i16 = 16
 
 let main = () -> void => {
   vdp.init()
@@ -32,8 +32,8 @@ let main = () -> void => {
   vdp.display_on()
   vdp.enable_vblank_interrupt()
 
-  var x: i16 = (vdp.SCREEN_WIDTH - SIZE) / 2
-  var y: i16 = (vdp.SCREEN_HEIGHT - SIZE) / 2
+  var x: i16 = (vdp.SCREEN_WIDTH - HERO_SIZE) / 2
+  var y: i16 = (vdp.SCREEN_HEIGHT - HERO_SIZE) / 2
   var step: u16 = 0
   var frames: u16 = 0
   for {
@@ -44,8 +44,8 @@ let main = () -> void => {
     if pad.held(buttons, pad.RIGHT) { dx = SPEED }
     if pad.held(buttons, pad.UP) { dy = -SPEED }
     if pad.held(buttons, pad.DOWN) { dy = SPEED }
-    let nx = (x + dx).clamp(0, vdp.SCREEN_WIDTH - SIZE)
-    let ny = (y + dy).clamp(0, vdp.SCREEN_HEIGHT - SIZE)
+    let nx = (x + dx).clamp(0, vdp.SCREEN_WIDTH - HERO_SIZE)
+    let ny = (y + dy).clamp(0, vdp.SCREEN_HEIGHT - HERO_SIZE)
     if nx != x || ny != y {
       // Walking: the next step every STEP_FRAMES frames.
       frames += 1
