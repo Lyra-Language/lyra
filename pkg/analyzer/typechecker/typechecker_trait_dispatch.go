@@ -306,7 +306,27 @@ func unifyGenericTarget(implType, receiverType types.Type, generics map[string]b
 		return ok && unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
 	case types.StaticArrayType:
 		rt, ok := receiverType.(types.StaticArrayType)
-		return ok && it.Size == rt.Size && unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
+		if !ok {
+			return false
+		}
+		// `[N]t` against `[64]u32` binds the `const` parameter N to 64, as `t` binds to
+		// u32 — the same bindings map, so a second argument of another size is a
+		// mismatch exactly as a second argument of another type is.
+		if it.SizeVar != "" && generics[it.SizeVar] {
+			// A generic calling a generic passes an array sized by its own parameter:
+			// N binds to that parameter, settled when the caller is specialized.
+			size := types.ArraySize{Size: rt.Size, Var: rt.SizeVar}
+			if prior, bound := bindings[it.SizeVar]; bound {
+				if !types.TypesEqual(prior, size) {
+					return false
+				}
+			} else {
+				bindings[it.SizeVar] = size
+			}
+		} else if it.Size != rt.Size || it.SizeVar != rt.SizeVar {
+			return false
+		}
+		return unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
 	case types.RawPointerType:
 		// A raw pointer binds through its pointee, so `(p: ^t)` is solvable at all.
 		// Missing until 08/19, which made every generic function over a pointer

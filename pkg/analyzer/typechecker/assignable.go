@@ -454,7 +454,7 @@ func unsettledElementAssignable(from, to types.Type) bool {
 			return unsettledElementAssignable(f.ElementType, t.ElementType)
 		}
 	case types.StaticArrayType:
-		if t, ok := to.(types.StaticArrayType); ok && f.Size == t.Size {
+		if t, ok := to.(types.StaticArrayType); ok && types.SameArraySize(f, t) {
 			return unsettledElementAssignable(f.ElementType, t.ElementType)
 		}
 	case types.TupleType:
@@ -637,7 +637,7 @@ func isAssignable(from, to types.Type) bool {
 		}
 		// StaticArrayType → StaticArrayType: sizes must match, elements must be assignable.
 		if toSA, ok := to.(types.StaticArrayType); ok {
-			return fromSA.Size == toSA.Size && isAssignable(fromSA.ElementType, toSA.ElementType)
+			return types.SameArraySize(fromSA, toSA) && isAssignable(fromSA.ElementType, toSA.ElementType)
 		}
 	}
 	// DynamicArrayType → DynamicArrayType: only a literal's **unsettled** elements may differ —

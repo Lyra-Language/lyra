@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — const generics: `load_tiles(first, HERO)` takes a table of any length
+
+`std.genesis`'s loaders took a pointer and a count, `unsafe` at every call, because no
+function could take a `[N]u32` for any N. `<const N: i64>` is now a generic parameter, and
+the design kept it small by reusing the type-variable machinery rather than adding a second
+one: a size in a type is `StaticArrayType.SizeVar`, a solved size is `types.ArraySize` in
+the same bindings map, so unification (`unifyGenericTarget`), substitution, instantiation
+keys and the backend's specializations carry sizes with no new tables. `ArraySize.Var`
+lets a generic hand its own `[M]t` to another, settled when the caller specializes.
+
+The places that read a size had to learn that a symbolic one is unknown, not zero: the
+literal-index check refused `xs[0]` in a generic body as "out of range for size 0", and the
+range analysis would have reasoned about a size of 0. `ref [N]u32` is what makes it usable
+on the Genesis — a borrow, so a tile table is not copied onto a 4 KB stack.
+
+**Switching the walker to it found an LLVM bug.** The generic loaders loop with Lyra's
+64-bit index, and LLVM 22.1.8's M68k backend put the counter's register copies between the
+compare and the branch: on a 68000 a `move` sets the condition codes, so the branch tested
+the copy and the loop never ended — a black screen. That is LLVM #152816, fixed on `main` by
+e7dd336e0f78 and in no 22.x release, so `tools/llvm-m68k.sh` now pins that commit. **Not
+later `main`**: the first rebuild took the newest M68k fixes too and every ROM went black
+again, because 16c337766166 (08/25) stores a zero as `clr.w`, and a 68000's CLR reads its
+destination first — a volatile zero written to the VDP's control port became a read of
+it, which resets the VDP's half-written command. The pin stays before that until upstream
+stops selecting CLR for a volatile store on a 68000 (todo.md).
+
 ### 09/30/26 — `std.genesis`: a game in Lyra that walks where the pad says
 
 `examples/genesis/walker.lyra` is the walk-and-move demo Vega's hand-assembled ROM does,

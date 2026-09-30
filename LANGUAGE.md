@@ -531,6 +531,17 @@ A lowercase type name is a type variable wherever it appears. What a written `<�
 - **A type** (struct, `data`, named tuple, newtype, union): every variable its body mentions must be in its list (`lyra-E031`). A parameter may carry a bound, `struct Bx<t: Tag>`, **enforced at instantiation** (`lyra-E036`) as a function's is; a type-variable argument is left to the enclosing declaration's own bound — the list is how `Box<i64>` gives one a type, so there is no list-less generic type. An **unused** parameter is fine: `struct Id<t> { n: i64 }` is a phantom type. A type alias takes no list, so its body can mention no variable.
 - **A trait**: a parameter no method mentions is `lyra-W013`. A parameter may carry a bound, `trait Holder<t: Tag>`, **enforced at the impl that binds it** (`lyra-E036`) — a trait's parameter has no value until an impl gives it one. A method may be generic in variables of its own (`mapv: (Self, (i64) -> b) -> b`), since there is no method-level list to declare them in. A call solves them from its arguments like a generic function's call — at a concrete receiver, or through a `where` bound, where the solution may name the enclosing function's variables and is specialized with it. One named like the impl's (or the bound receiver's) variable is a different variable. `Self<x…>` is the impl target's head at those arguments: `map: (Self<a>, (a) -> b) -> Self<b>` on `impl Functor for Box<t>` answers `Box<b>`, the receiver solving `a`. The target is either a generic type applied to exactly that many distinct type variables (`Box<t>`, `Pair<k, v>`) or one with exactly that many **holes**, `_`, marking the positions the arguments fill: `impl Functor for Result<_, e>` makes `Self<b>` `Result<b, e>`, `Table<k, _>` varies the last parameter, and `Table<string, _>` fixes the other. No positional convention decides for you — `Result<t, e>` without a hole is refused, as are `i64`, `Box<i64>` and `Pair<t, t>`. A hole is refused anywhere but an impl target, and a holed target refuses a trait whose method writes a bare `Self` (nothing says what fills `_`). A default method may write `Self<…>`: its body is checked with `Self` the abstract head, so `Self<a>` and `Self<b>` are distinct types there and `self.map(f)` resolves through the trait itself. A call through a `where` bound cannot reach a `Self<…>` method: a bare `t` has no head to apply (that would need a higher-kinded variable).
 - **An impl** has no written list; its variables are lexical.
+- **A `const` parameter** (`let total<const N: i64> = (xs: ref [N]i64) -> i64`) is a
+  compile-time integer an array's size is written as. A call solves it from the argument's
+  size, as it solves a type variable from the argument's type, and each size gets its own
+  specialization; inside the body the size is `xs.len()`. Two arrays sized by one `N` must
+  agree (`the arrays sized by N must be the same size, and these are 3 and 2`); a generic
+  may pass its own `[M]t` on to another, which settles when the caller is specialized; a
+  `[N]t` may be a local's type and a return type. The type must be an integer, and a size
+  written as a name that no `const` declares is `lyra-E031` — a size never makes a function
+  generic by being written, as a lowercase type does. Pass a large array as `ref [N]t`, which
+  borrows rather than copies. Not yet: `N` as a value in the body, arithmetic on it in a type
+  (`[N + 1]t`), a `const` in a type's or trait's list, and a turbofish value (`f::<64>`).
 
 ### Local generics
 
@@ -657,9 +668,9 @@ target = "genesis"
   - `std.genesis.sprites` — a list of `Sprite { x, y, width, height, tile, palette, … }` in RAM:
     `clear`, `add`, and `show` in the vertical blank, which writes the VDP's table with the
     links filled in.
-  - Data comes from `const` tables (below), passed as a pointer to the first element and a
-    count (`vdp.load_tiles(1, unsafe { &HERO[0] }, 8)`) until a function can take a fixed
-    array of any length. `examples/genesis/walker.lyra` is a whole game on it.
+  - Data comes from `const` tables (below), passed whole and by reference —
+    `vdp.load_tiles(1, HERO)` takes a `ref [N]u32` of any length (a `const` generic).
+    `examples/genesis/walker.lyra` is a whole game on it.
 - **A `const` fixed array of literals is data** (`#[…]`, `#[v; n]`, nested): one constant in
   `.rodata` — ROM on a console — read in place, with an address (`&TABLE[i]`). Any other
   `const` is inlined at each use, as before. Indexing or looping over any module-level array

@@ -5177,8 +5177,10 @@ func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 	switch t := objectType.(type) {
 	case types.StaticArrayType:
 		// A constant index outside [0, size) is a compile-time error; a runtime
-		// index is bounds-checked in the backend.
-		if idx, ok := tc.resolveConstantInt(expr.Index); ok {
+		// index is bounds-checked in the backend. A `const` parameter's size (`[N]t`)
+		// is not known until a call binds it, so nothing is refused inside the generic
+		// body; each specialization's backend bounds check still applies.
+		if idx, ok := tc.resolveConstantInt(expr.Index); ok && t.SizeVar == "" {
 			if idx >= int64(t.Size) {
 				tc.addError(expr.GetLocation(), SeverityError,
 					"index %d out of range for array of size %d (valid indices are 0 to %d)",

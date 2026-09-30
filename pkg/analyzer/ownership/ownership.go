@@ -534,7 +534,8 @@ func hasWritableField(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 	case types.TupleType:
 		return len(v.Elements) > 0
 	case types.StaticArrayType:
-		return v.Size > 0
+		// `[N]t` may hold anything for some N.
+		return v.Size > 0 || v.SizeVar != ""
 	case types.DataType:
 		return slices.ContainsFunc(v.Constructors, func(c types.DataTypeConstructor) bool {
 			return len(c.FieldTypes()) > 0

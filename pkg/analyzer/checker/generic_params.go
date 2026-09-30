@@ -211,6 +211,7 @@ func checkGenericParamsIn(stmt ast.Statement, inScope map[string]bool) []diag.Di
 		if !ok {
 			return true
 		}
+		diags = append(diags, checkSizeVars(decl, inScope)...)
 		if len(decl.GenericParams) > 0 {
 			// No list written means nothing to reconcile: a binding with type variables
 			// and no list is generic and legal, unchanged.
@@ -278,9 +279,12 @@ func checkBindingGenericParams(decl *ast.VarDeclStmt, inScope map[string]bool) [
 		types.CollectTypeVars(lambda.ReturnType.Type, used)
 	}
 
+	sizes := map[string]bool{}
+	signatureSizeVars(decl, sizes)
 	var diags []diag.Diagnostic
 	for _, name := range sortedNames(used) {
-		if declared[name] || inScope[name] {
+		// A size is checkSizeVars' to report, with a message about sizes.
+		if declared[name] || inScope[name] || sizes[name] {
 			continue
 		}
 		diags = append(diags, diag.Diagnostic{
@@ -315,6 +319,49 @@ func checkBindingGenericParams(decl *ast.VarDeclStmt, inScope map[string]bool) [
 		})
 	}
 	return diags
+}
+
+// checkSizeVars reports an array size written as a name no `const` parameter declares —
+// `[M]t` in a function without `<const M: i64>`. Unlike a lowercase type variable, which
+// makes a function generic by being written, a size is only ever a declared parameter:
+// an undeclared one is a misspelling or a missing declaration, and left alone it would be
+// an array whose size nothing ever settles.
+func checkSizeVars(decl *ast.VarDeclStmt, inScope map[string]bool) []diag.Diagnostic {
+	sizes := map[string]bool{}
+	signatureSizeVars(decl, sizes)
+	consts := map[string]bool{}
+	for _, p := range decl.GenericParams {
+		if p.IsConst {
+			consts[p.Name] = true
+		}
+	}
+	var diags []diag.Diagnostic
+	for _, name := range sortedNames(sizes) {
+		if consts[name] || inScope[name] {
+			continue
+		}
+		diags = append(diags, diag.Diagnostic{
+			Location: declNameLocation(decl),
+			Severity: diag.SeverityError,
+			Code:     diag.CodeUndeclaredTypeVariable,
+			Message: fmt.Sprintf(
+				"array size %q is not a `const` parameter of %s — declare it (`<const %s: i64>`), or write the size as a number",
+				name, quoteName(decl.Name), name),
+		})
+	}
+	return diags
+}
+
+// signatureSizeVars adds the array sizes decl's annotation and, for a function, its
+// parameters and return type write as names.
+func signatureSizeVars(decl *ast.VarDeclStmt, sizes map[string]bool) {
+	types.CollectSizeVars(decl.Type, sizes)
+	if lambda, ok := decl.Value.(*ast.LambdaExpr); ok {
+		for _, p := range lambda.Parameters {
+			types.CollectSizeVars(p.Type, sizes)
+		}
+		types.CollectSizeVars(lambda.ReturnType.Type, sizes)
+	}
 }
 
 // undeclaredVarLocation points at the parameter whose type introduced the

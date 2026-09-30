@@ -686,6 +686,16 @@ func (c *Collector) CollectGenericParams(node *sitter.Node) []ast.GenericParam {
 		if boundsNode := cst.Field(child, "bounds"); boundsNode != nil {
 			p.Constraints = c.CollectBounds(boundsNode)
 		}
+		if valueTypeNode := cst.Field(child, "value_type"); valueTypeNode != nil {
+			// `const N: i64` — a value parameter, an array size. Integers only: a size
+			// is a count, and nothing else could be solved from an argument's type.
+			p.IsConst = true
+			p.ValueType = c.parseType(valueTypeNode)
+			if !types.StepDomainIsInteger(p.ValueType) {
+				c.addError(child, CollectorErrorSeverityError,
+					"`const %s` must be an integer type (it is an array size), not %s", p.Name, c.ctx.NodeText(valueTypeNode))
+			}
+		}
 		params = append(params, p)
 	}
 	return params
@@ -1103,6 +1113,11 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 	sizeNode := cst.Field(node, "size")
 	if sizeNode != nil {
 		sizeString := c.ctx.NodeText(sizeNode)
+		// `[N]t`: a `const` generic parameter as the size. Whether N is one is the
+		// generic-params check's question (lyra-E031's), asked with the declaration in hand.
+		if sizeNode.NamedChildCount() == 1 && sizeNode.NamedChild(0).Kind() == "const_identifier" {
+			return types.StaticArrayType{ElementType: elementType, SizeVar: sizeString, Allocation: allocation}
+		}
 		sizeInt, err := strconv.ParseInt(sizeString, 10, 64)
 		if err != nil {
 			c.addError(node, CollectorErrorSeverityError, "parseArrayType: invalid size: %s", sizeString)

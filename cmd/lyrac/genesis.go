@@ -233,6 +233,11 @@ func cachedObject(tc m68kToolchain, source string, extra []string) (rom.Object, 
 	sum := sha256.New()
 	sum.Write(text)
 	sum.Write([]byte(tc.root))
+	// The toolchain itself, by its compiler's size and time: rebuilding LLVM at another
+	// revision (tools/llvm-m68k.sh's pin moves) must not reuse objects the old one made.
+	if info, err := os.Stat(tc.tool("llc")); err == nil {
+		fmt.Fprintf(sum, "%d %d", info.Size(), info.ModTime().UnixNano())
+	}
 	sum.Write([]byte(strings.Join(append(append([]string{}, genesisFlags...), extra...), " ")))
 	key := hex.EncodeToString(sum.Sum(nil))[:16]
 	base, err := os.UserCacheDir()

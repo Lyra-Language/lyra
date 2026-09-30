@@ -9,8 +9,22 @@
 #
 # LYRA_M68K_LLVM defaults to ~/Dev/llvm-m68k (outside the repository: the build is several
 # GB), which is also where lyrac looks.
-# The release matches Homebrew's LLVM; move both together. Needs cmake and ninja
-# (`brew install cmake ninja`). About 20 minutes on 12 cores.
+# **Pinned to a `main` commit, not a release** (09/30), and to that commit exactly:
+#
+#   - 22.1.8 compiled a loop whose counter copy sat between the compare and the branch,
+#     and on the 68000 a `move` sets the condition codes — the branch tested the copy and
+#     the loop never ended (LLVM #152816). e7dd336e0f78, pinned here, is the fix ("Prevent
+#     COPY instruction from killing live condition flags"); no 22.x release has it.
+#   - Later `main` (16c337766166, "Implement CLR instruction", 08/25) stores a zero as
+#     `clr.w (a0)`, and a 68000's CLR *reads* its destination before writing it — so a
+#     volatile zero to the VDP's control port also reads the port, which resets the VDP's
+#     half-written command, and the Genesis shows nothing. A volatile store must not
+#     become a read-modify-write; until upstream stops selecting CLR for one on a 68000,
+#     the pin stays before it (so the later MOVEM/PHI and MOVX fixes wait too).
+#
+# Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
+# Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a
+# changed pin re-clones the source.
 #
 # Compile for the Genesis with the MEDIUM (or large) code model and static relocation:
 #
@@ -21,7 +35,7 @@
 # and the Genesis's RAM at FF0000 is out of PC-relative reach from ROM anyway.
 set -euo pipefail
 
-readonly RELEASE="llvmorg-22.1.8"
+readonly REVISION="e7dd336e0f7884c34108a1e722205a16c3f5307b"
 readonly DIR="${LYRA_M68K_LLVM:-$HOME/Dev/llvm-m68k}"
 
 for tool in cmake ninja git; do
@@ -29,8 +43,15 @@ for tool in cmake ninja git; do
 done
 
 mkdir -p "$DIR"
+# One commit, shallow: the source is 2.6 GB even so. A checkout at another revision
+# (an older pin) is replaced.
+if [ -d "$DIR/src" ] && [ "$(git -C "$DIR/src" rev-parse HEAD 2>/dev/null)" != "$REVISION" ]; then
+  rm -rf "$DIR/src"
+fi
 if [ ! -d "$DIR/src" ]; then
-  git clone --depth 1 --branch "$RELEASE" https://github.com/llvm/llvm-project "$DIR/src"
+  git init -q "$DIR/src"
+  git -C "$DIR/src" fetch -q --depth 1 https://github.com/llvm/llvm-project "$REVISION"
+  git -C "$DIR/src" checkout -q FETCH_HEAD
 fi
 
 # Assertions on: the backend is experimental, and an assertion is a far better report of

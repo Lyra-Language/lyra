@@ -2147,7 +2147,7 @@ func structuralJoin(a, b types.Type) (types.Type, bool) {
 		return at, true
 	case types.StaticArrayType:
 		bt, ok := b.(types.StaticArrayType)
-		if !ok || at.Size != bt.Size {
+		if !ok || !types.SameArraySize(at, bt) {
 			return nil, false
 		}
 		j, ok := branchCommonType(at.ElementType, bt.ElementType)

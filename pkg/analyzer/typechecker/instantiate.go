@@ -555,6 +555,9 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 			settle = tc.contextBindings(lambda.ReturnType.Type, vars, call.GetLocation())
 		}
 		subst, ok = tc.solveTypeVars(lambda, call, vars, argumentSolve{seed: tc.seedFromExpectedReturn(lambda, vars), settle: settle})
+		if !ok && tc.reportSizeMismatch(calleeName, lambda, call) {
+			return nil
+		}
 		if !ok {
 			tc.addError(call.GetLocation(), SeverityError,
 				"%s: cannot infer %s from these arguments%s", calleeName, typeVarList(vars),
@@ -992,4 +995,34 @@ func (tc *TypeChecker) seedFromExpectedReturn(lambda *ast.LambdaExpr, vars map[s
 		return nil
 	}
 	return seed
+}
+
+// reportSizeMismatch explains a failed solve that is two arrays sized by one `const`
+// parameter disagreeing — `dot(#[1, 2, 3], #[1, 2])` for `(a: ref [N]i64, b: ref [N]i64)` —
+// in terms of the sizes, rather than as a variable that "cannot be inferred". It reports
+// and answers true only when it found such a pair.
+func (tc *TypeChecker) reportSizeMismatch(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) bool {
+	first := map[string]int{}
+	for i, arg := range call.Arguments {
+		declared, ok := tc.resolveDeclaredParam(lambda, i).(types.StaticArrayType)
+		if !ok || declared.SizeVar == "" {
+			continue
+		}
+		argType, ok := tc.typeTable.Get(arg)
+		if !ok {
+			continue
+		}
+		actual, ok := types.StripNewtype(argType).(types.StaticArrayType)
+		if !ok || actual.SizeVar != "" {
+			continue
+		}
+		if size, seen := first[declared.SizeVar]; seen && size != actual.Size {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: the arrays sized by %s must be the same size, and these are %d and %d",
+				calleeName, declared.SizeVar, size, actual.Size)
+			return true
+		}
+		first[declared.SizeVar] = actual.Size
+	}
+	return false
 }

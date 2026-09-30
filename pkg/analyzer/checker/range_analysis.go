@@ -1578,7 +1578,9 @@ func (c *rangeChecker) arraySize(obj ast.Expression) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	if at, ok := t.(types.StaticArrayType); ok {
+	// A `const` parameter's size (`[N]t`) is not known here — the body is analyzed once,
+	// for every N — so nothing is proved about an index into it.
+	if at, ok := t.(types.StaticArrayType); ok && at.SizeVar == "" {
 		return int64(at.Size), true
 	}
 	return 0, false

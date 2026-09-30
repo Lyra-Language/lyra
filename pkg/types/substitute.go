@@ -66,6 +66,20 @@ func Substitute(t Type, subst map[string]Type) Type {
 		return applied
 	case StaticArrayType:
 		tt.ElementType = Substitute(tt.ElementType, subst)
+		if tt.SizeVar != "" {
+			if size, ok := subst[tt.SizeVar].(ArraySize); ok {
+				tt.Size, tt.SizeVar = size.Size, size.Var
+			}
+		}
+		return tt
+	case ArraySize:
+		// A size that is another parameter (`N` bound to the caller's `M`) takes M's
+		// binding when the caller is specialized.
+		if tt.Var != "" {
+			if size, ok := subst[tt.Var].(ArraySize); ok {
+				return size
+			}
+		}
 		return tt
 	case DynamicArrayType:
 		tt.ElementType = Substitute(tt.ElementType, subst)

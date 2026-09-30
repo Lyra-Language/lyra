@@ -42,6 +42,20 @@ func CollectTypeVars(t Type, vars map[string]bool) {
 		if tt, ok := t.(GenericType); ok {
 			vars[tt.Name] = true
 		}
+		// A `const` parameter is mentioned where it sizes an array (`[N]t`).
+		if tt, ok := t.(StaticArrayType); ok && tt.SizeVar != "" {
+			vars[tt.SizeVar] = true
+		}
+	})
+}
+
+// CollectSizeVars adds to vars every `const` parameter t writes an array size as — the N
+// of `[N]t` — a subset of what CollectTypeVars finds, for the check that each is declared.
+func CollectSizeVars(t Type, vars map[string]bool) {
+	walkSignature(t, func(t Type) {
+		if tt, ok := t.(StaticArrayType); ok && tt.SizeVar != "" {
+			vars[tt.SizeVar] = true
+		}
 	})
 }
 

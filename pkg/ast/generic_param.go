@@ -5,6 +5,11 @@ import "github.com/Lyra-Language/lyra/pkg/types"
 type GenericParam struct {
 	Name        string
 	Constraints []string
+	// IsConst marks a value parameter, `const N: i64`: a compile-time integer an array
+	// type's size is written as (`[N]t`), bound per call from the argument's size rather
+	// than to a type. ValueType is its declared type.
+	IsConst   bool
+	ValueType types.Type
 	// Location is the span of the parameter within its declaration's `<…>` list,
 	// so a diagnostic about the *list* can point at the offending entry rather
 	// than at the whole declaration. `print:"-"`: auxiliary source position, kept

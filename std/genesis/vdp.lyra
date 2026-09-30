@@ -27,9 +27,9 @@ module std.genesis.vdp
 //! planes, and the tables at the top of VRAM — tiles fill everything below `WINDOW` (1408
 //! of them). Tile 0 is blank and is what an empty plane shows.
 //!
-//! Data comes from `const` tables, which live in ROM; a function that loads one takes a
-//! pointer to its first element and a count (`&TILES[0]`). That is `unsafe` at the call,
-//! and goes once a function can take a fixed array of any length (const generics).
+//! Data comes from `const` tables, which live in ROM and are passed by reference — `ref`
+//! — so loading one copies nothing onto the stack: `vdp.load_tiles(1, HERO)`. A table of
+//! any length is accepted (`<const N: i64>`), each length compiled on its own.
 
 /// The screen in 40-cell mode, which [init] sets, in pixels.
 pub const SCREEN_WIDTH: i16 = 320
@@ -88,28 +88,27 @@ pub let set_color = (palette: u16, index: u16, color: u16) -> void => {
   write_word(color)
 }
 
-/// All sixteen colours of palette `palette` from a table: `&PALETTE[0]`.
-pub let load_palette = (palette: u16, colors: ^u16) -> void => {
+/// All sixteen colours of palette `palette` from a table.
+pub let load_palette = (palette: u16, colors: ref [16]u16) -> void => {
   set_address(CRAM_WRITE, (palette & 3) * 32)
-  for i: u16 in 0..<16 { write_word(unsafe { colors.offset(i64(i))^ }) }
+  for c in colors { write_word(c) }
 }
 
 /// The colour behind everything: colour `index` of palette `palette`.
 pub let set_backdrop = (palette: u16, index: u16) -> void =>
   set_register(7, u8(((palette & 3) << 4) | (index & 15)))
 
-/// `count` tiles into VRAM from tile `first` on, from a table of their rows — eight
-/// `u32` words a tile, two pixels a byte, the left one in the high nibble (what Vega
-/// exports): `&TILES[0]`.
-pub let load_tiles = (first: u16, tiles: ^u32, count: u16) -> void => {
+/// Tiles into VRAM from tile `first` on, from a table of their rows — eight `u32` words a
+/// tile, two pixels a byte, the left one in the high nibble (what Vega exports).
+pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u32) -> void => {
   set_address(VRAM_WRITE, first * 32)
-  for i: u16 in 0..<count * 8 { write_long(unsafe { tiles.offset(i64(i))^ }) }
+  for row in tiles { write_long(row) }
 }
 
-/// `count` words into VRAM at byte `address`.
-pub let write_vram = (address: u16, words: ^u16, count: u16) -> void => {
+/// A table of words into VRAM at byte `address`.
+pub let write_vram<const N: i64> = (address: u16, words: ref [N]u16) -> void => {
   set_address(VRAM_WRITE, address)
-  for i: u16 in 0..<count { write_word(unsafe { words.offset(i64(i))^ }) }
+  for w in words { write_word(w) }
 }
 
 /// Point the data port at byte `address` of VRAM, for [write_word]s to follow — how the

@@ -755,17 +755,17 @@ annotations.
 
 ## Const generics — a value as a type parameter
 
-**[OPEN]** `fixed<I, F>`, `simd<T, N>` and any function generic over `[N]T`'s size all need
-a compile-time value parameter: `let sum<t, const N: i64> = (xs: [N]t) -> t`. The use-site
-`[N]t` already parses; the declaration list, `ast.GenericParam`,
-`types.StaticArrayType.Size` (an `int` today) and the instantiation key must change.
+**[DONE 09/30, layer 0]** `let f<const N: i64> = (xs: ref [N]t) -> …`: integer value
+parameters over `[N]T` in function signatures, N solved from the argument by the same
+unifier as type variables (an `types.ArraySize` in the bindings map), one specialization
+per size, a generic passing its own size on. LANGUAGE.md § Generic parameter lists.
 
-- Layer 0: integers only, value parameters over `[N]T` in function signatures, no
-  arithmetic on parameters in type position (that is a solver), `N` inferred by
-  unification and positional in the turbofish.
-- A value parameter takes a constraint, not a trait bound, and can only be checked at
-  compile time (waits on CTFE).
-- Before building, sweep whether the array helpers that need `noalloc` actually exist.
+- **[OPEN] `N` as a value** in the body (`for i in 0..<N`) — `xs.len()` covers it today.
+- **[OPEN] A `const` parameter on a type or trait** (`struct Ring<t, const N: i64>`), and
+  `fixed<I, F>` / `simd<T, N>` over it.
+- **[OPEN] Arithmetic in a type position** (`[N + 1]t`) — a solver; and constraints on a
+  value parameter, which wait on CTFE.
+- **[OPEN] A turbofish value** (`f::<64>(…)`): the turbofish takes types today.
 - **[IDEA]** a named turbofish form `sum::<i64, N = 3>`, purely additive.
 
 ## Bounded stack buffers
@@ -851,9 +851,9 @@ sets V on every add. What stands between that and a ROM:
   run `examples/genesis/walker.lyra`. Next: DMA (needs a pointer's address as an integer),
   planes and scrolling (name tables, a tilemap loader), the window, 6-button pads, and the
   sound chips; then the engine layer over them (actors, animation from Vega's frames).
-- **[OPEN] Data needs const generics to be safe to pass**: `load_tiles(first, &HERO[0], 8)`
-  is `unsafe` at every call because a function cannot take `[N]u32` for any N. A function
-  generic over N (the Const generics section) makes it `load_tiles(first, HERO)`.
+- **[OPEN] A `#[…]` literal argument does not narrow to the parameter's element type**:
+  `sum(#[1, 2, 3])` against `ref [3]u16` is "cannot assign StaticArray<i64, 3>", where a
+  `let` annotation narrows the same literal. Found 09/30 beside const generics.
 - **[OPEN] Interrupt handlers in Lyra**: the vectors are the runtime's, and every exception
   but reset is the panic screen. V-blank wants a Lyra function the runtime's vector calls
   (saving registers, ending in `rte`) — an attribute, or a runtime table a program fills.
@@ -882,6 +882,10 @@ sets V on every add. What stands between that and a ROM:
 - **[OPEN] `data` is a keyword where a call is**: `let data = …` declares, but `data()` and
   `data.f()` do not parse, so a hardware helper named for the VDP's data port has to be
   called something else. Either reserve it everywhere or accept it as a name in expressions.
+- **[OPEN] LLVM `main` turns a volatile zero store into `clr`** (16c337766166, 08/25), which on
+  a 68000 reads the destination first — wrong for a volatile store, and fatal on the VDP's
+  control port. `tools/llvm-m68k.sh` pins e7dd336e0f78, before it (and before the later
+  MOVEM/PHI and MOVX fixes). Report upstream, then move the pin.
 - **[OPEN] Report the small-code-model store upstream**: `counter = v` in C becomes
   `move.l (4,%sp), (counter,%pc)`, a PC-relative destination, under LLVM 22.1.8.
 

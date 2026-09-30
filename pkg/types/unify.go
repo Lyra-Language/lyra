@@ -16,9 +16,13 @@ func TypesEqual(a, b Type) bool {
 		if bt, ok := b.(GenericType); ok {
 			return at.Name == bt.Name
 		}
+	case ArraySize:
+		// A `const` parameter's binding: two calls agree on N when the sizes do.
+		bt, ok := b.(ArraySize)
+		return ok && at.Size == bt.Size && at.Var == bt.Var
 	case StaticArrayType:
 		if bt, ok := b.(StaticArrayType); ok {
-			if at.Size != bt.Size {
+			if at.Size != bt.Size || at.SizeVar != bt.SizeVar {
 				return false
 			}
 			return TypesEqual(at.ElementType, bt.ElementType)
