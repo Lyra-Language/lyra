@@ -1009,6 +1009,22 @@ const (
 	// `.ok()` is the conversion (09/29, when `?.` was first implemented).
 	CodeNonOptionalChain = "lyra-E083"
 
+	// CodeTargetHost: code reaches outside Lyra — an `extern`, or a builtin the backend
+	// lowers to libc (`println`, `read_line`, the clock) — in a program whose `lyra.toml`
+	// names a target with no operating system (the Genesis). Reported at the call in the
+	// program's own code, however deep the host call is (checker/target.go, 09/29).
+	CodeTargetHost = "lyra-E084"
+
+	// CodeTargetAlloc: a heap allocation — a dynamic array, a built string, a `shared`
+	// value, a capturing closure, or a call to a function that makes one — where the
+	// target has no heap.
+	CodeTargetAlloc = "lyra-E085"
+
+	// CodeProjectConfig: a `lyra.toml` that cannot be read as Lyra reads it — an unknown
+	// target or setting, or a line that is not `key = "value"`. Refused rather than
+	// ignored: an ignored setting is a program checked for the wrong machine.
+	CodeProjectConfig = "lyra-E086"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"
@@ -1272,4 +1288,9 @@ const (
 	// as exactly that mistake. A warning for W022's reasons: the analysis follows the value
 	// only through a binding, an unwrap and a direct argument, and says nothing it cannot see.
 	CodeReleasedBorrowedResource = "lyra-W025"
+
+	// CodeTargetEmulated: arithmetic on a type the target's CPU can only emulate — `i64`
+	// or floating point on a 68000 — reported once per function and type. A warning: it
+	// works, slowly, and a game's frame loop is where that matters.
+	CodeTargetEmulated = "lyra-W026"
 )

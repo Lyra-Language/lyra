@@ -61,19 +61,7 @@ import (
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
 func CheckPurity(program *ast.Program, symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) ([]diag.Diagnostic, []diag.Diagnostic) {
-	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
-	frames := newScopeFrames(program, scopeTable)
-	boundGroups := collectTraitMethodGroups(program, symTable)
-	signatures := collectMethodSignatures(program, symTable)
-	// Bound rather than built inline: the inference fills in the allocation *sites* as it
-	// goes, and `lyra-E016` reads them back to point at the offending expression.
-	// The captures table is here so a *closure construction* can be charged exactly:
-	// a nested lambda that captures allocates its environment box, one that does not
-	// is the shared pinned static (closures.go's emptyEnv) and stays free.
-	alloc := buildAllocContext(program, typeTable, caps)
-	inf := newInference(signatures, methodTable, boundGroups,
-		collectDeclaredMethodBounds(program, symTable), frames, alloc, symTable)
-	inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, inf)
+	inf, base, _ := runInference(program, symTable, scopeTable, typeTable, methodTable, caps)
 	c := &purityChecker{
 		inference: inf,
 		symTable:  symTable,
@@ -91,6 +79,27 @@ func CheckPurity(program *ast.Program, symTable *symbols.SymbolTable, scopeTable
 		}
 	}
 	return c.errors, c.missingPureBounds(program)
+}
+
+// runInference is the effect fixpoint over the whole program, as CheckPurity and
+// CheckTarget both need it: the inference state, the top-level capture frame, and every
+// lambda with the capture stack at its definition.
+func runInference(program *ast.Program, symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) (*inference, []scopeBindings, map[*ast.LambdaExpr][]scopeBindings) {
+	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
+	frames := newScopeFrames(program, scopeTable)
+	boundGroups := collectTraitMethodGroups(program, symTable)
+	signatures := collectMethodSignatures(program, symTable)
+	// Bound rather than built inline: the inference fills in the allocation *sites* as it
+	// goes, and `lyra-E016` reads them back to point at the offending expression.
+	// The captures table is here so a *closure construction* can be charged exactly:
+	// a nested lambda that captures allocates its environment box, one that does not
+	// is the shared pinned static (closures.go's emptyEnv) and stays free.
+	alloc := buildAllocContext(program, typeTable, caps)
+	inf := newInference(signatures, methodTable, boundGroups,
+		collectDeclaredMethodBounds(program, symTable), frames, alloc, symTable)
+	defs := collectFuncBindings(program, base, frames)
+	inferImpurity(defs, collectMethodImpls(program), base, inf)
+	return inf, base, defs
 }
 
 // checkTraitMethodBounds checks each method in impl against its declared effect
@@ -1572,6 +1581,13 @@ func topLevelFunctions(program *ast.Program) map[string]*ast.LambdaExpr {
 // ref-counted boxes the ownership pass reasons about. A foreign `malloc` is not in that
 // ledger and this bound does not claim it is.
 func externEffects(lam *ast.LambdaExpr) Effect {
+	// Whatever else it claims, an extern is code outside Lyra: EffectHost, which no
+	// bound clears.
+	return externBoundEffects(lam) | EffectHost
+}
+
+// externBoundEffects is the part of externEffects a declared bound decides.
+func externBoundEffects(lam *ast.LambdaExpr) Effect {
 	switch {
 	case lam.IsPure:
 		return EffectNone
@@ -2166,10 +2182,23 @@ type callable struct {
 	// callee resolves, what an argument supplies — is the same arm that charges the bit,
 	// so the diagnostic and the inferred effect cannot disagree about what counts.
 	reportPure func(loc ast.Location, format string, args ...any)
+	// onCharge, when non-nil, is told each site's *own* charge as the walk makes it: the
+	// expression, the effect it adds, and the callee it names ("" for an allocation
+	// form). "Own" excludes what a callback argument supplies — that callback's body is
+	// walked in its turn and reports its own sites. CheckTarget reads it; it is the
+	// target check's view of the one walk, as reportPure is `pure`'s.
+	onCharge func(site ast.Expression, effect Effect, callee string)
 	// assignRoots collects assignment-target identifier nodes during a reporting walk, so
 	// the captured-mutable *read* report can skip a node the mutation reports already own.
 	// The inference half never needs it: charging EffectMut twice is idempotent.
 	assignRoots map[*ast.IdentifierExpr]bool
+}
+
+// charge tells onCharge what a site costs, when a target check is listening.
+func (c *callable) charge(site ast.Expression, effect Effect, callee string) {
+	if c.onCharge != nil && effect != EffectNone {
+		c.onCharge(site, effect, callee)
+	}
 }
 
 // pure reports a `pure` violation when this walk is the enforcement pass, and is a no-op
@@ -2303,6 +2332,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 	noteAlloc := func(ex ast.Expression) {
 		found |= EffectAlloc
 		c.note(ex)
+		c.charge(ex, EffectAlloc, "")
 	}
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
@@ -2359,6 +2389,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 		// method name `(_+_)` would send them looking for a call that is not there.
 		if eff, method := operatorImplEffect(e, inf); eff != EffectNone {
 			found |= eff
+			c.charge(e, eff, method)
 			if eff&PurityEffects != 0 {
 				c.pure(e.GetLocation(),
 					"pure function uses an operator that dispatches to non-pure trait method %q", method)
@@ -2421,6 +2452,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			if res, ok := inf.methodTable.TryConversion(ex); ok && res.Method != nil {
 				eff := inf.impureMethods[res.Method]
 				found |= eff
+				c.charge(ex, eff, "from")
 				if eff&PurityEffects != 0 {
 					c.pure(ex.GetLocation(),
 						"pure function propagates an error with `?` through a non-pure From conversion")
@@ -2460,6 +2492,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				// typechecker records which, since only it saw the receiver's type.
 				if inf.methodTable.BuiltinMethodAllocates(ex) {
 					found |= EffectAlloc
+					c.charge(ex, EffectAlloc, calleeName(ex.Function))
 				}
 				// **A builtin that writes to its receiver is a mutation like any other.**
 				// `xs.push(v)` on a `mut` parameter is a write the caller sees, and the
@@ -2490,6 +2523,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				// used to omit; see callable.
 				eff := methodCallEffect(method, ex, c.capture, inf, c.params, foundCallbacks)
 				found |= eff
+				c.charge(ex, inf.impureMethods[method]&^inf.guaranteed[method], method.Name.GetName())
 				if eff&PurityEffects != 0 {
 					// The split names the guilty half — the same two values the charge
 					// was computed from, so the verdict and the message cannot drift.
@@ -2507,6 +2541,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				// bound trait method (pure only if all of them are).
 				eff := boundCallEffect(ref, inf)
 				found |= eff
+				c.charge(ex, eff, ref.Method)
 				if eff&PurityEffects != 0 {
 					c.pure(ex.GetLocation(),
 						"pure function calls non-pure trait method %q via a bound", ref.Method)
@@ -2522,6 +2557,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					// callback parameters.
 					eff := callEffect(target, ex, c.capture, inf, c.params, foundCallbacks)
 					found |= eff
+					c.charge(ex, inf.impureLambdas[target], name)
 					if eff&PurityEffects != 0 {
 						c.reportImpureCall(target, ex, name, inf)
 					}
@@ -2547,6 +2583,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					}
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
+					c.charge(ex, e, name)
 					if e&PurityEffects != 0 {
 						c.pure(ex.GetLocation(), "pure function calls impure function %q", name)
 					}

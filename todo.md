@@ -842,8 +842,14 @@ writes compiles with `llc -mtriple=m68k-unknown-elf -mcpu=M68000 -code-model=med
 `pure noalloc` function comes out tight: each overflow check is one `bvs`, as the 68000
 sets V on every add. What stands between that and a ROM:
 
-- **[OPEN] A target in `lyrac`** (`--target genesis`): the triple, the flags above, and no
-  host `clang` link — Vega links (it already lays out the cartridge; three relocation types).
+- **[PARTIAL] A target in `lyrac`**: `lyra.toml`'s `target = "genesis"` is read by
+  `lyrac` and the LSP (09/29), and the front end refuses what the 68000 cannot run
+  (E084–E086, W026; LANGUAGE.md § Targets). Still to do: `lyrac build` using the triple and
+  flags above, with no host `clang` link — Vega links (three relocation types).
+- **[OPEN] The LSP does not watch `lyra.toml`**: editing it takes effect on the next edit of
+  a source file. Register a `workspace/didChangeWatchedFiles` watcher and re-publish.
+- **[OPEN] A top-level initializer is not target-checked** (`let table = [1, 2]` at module
+  level allocates at start-up): CheckTarget walks lambdas and methods only.
 - **[OPEN] Sizes are `i64`**: array lengths, capacities and RC counts, and `malloc(i64)` is
   called with two longs. On a 16/32-bit CPU with 64 KB of RAM a length wants the target's
   word — a `usize`-like width chosen per target, which `SizeAndAlign` and the runtime's

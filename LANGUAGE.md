@@ -603,6 +603,42 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 - Compiling one file of a multi-file module brings its siblings.
 - **`pub` is a top-level modifier.** On a binding inside a function body it is `lyra-E081`: `pub` exports a name from its module and a local binding has none to export. It was accepted and ignored before 09/16.
 
+### Targets (`lyra.toml`)
+
+A program is compiled **for** something: the host (the default — an operating system, a heap,
+64-bit arithmetic) or a console. A project names it in a `lyra.toml` in the entry file's
+directory or any directory above it; the nearest one wins:
+
+```toml
+# a Genesis game
+target = "genesis"
+```
+
+- **Targets**: `host`, and `genesis` (a 68000 with 64 KB of RAM: no operating system, no heap,
+  no floating point). `lyrac` and `lyra-lsp` read the same file, so the editor and the build
+  agree; the target is the code's, never an editor setting.
+- **The file is small and strict**: top-level `key = "string"` lines, `#` comments. An unknown
+  target or setting, or any other line, is **`lyra-E086`** at the top of the entry file —
+  refused, not ignored, since an ignored setting is a program checked for the wrong machine.
+- On a target that is not the host, **the program's own code** (not `std.*` or `bindings.*`) is
+  checked for what cannot work there, each at the line that does it:
+  - **`lyra-E084`** — a call that reaches outside Lyra, however deep: an `extern`, or a builtin
+    the backend lowers to libc (`println`, `read_line`, the clock, the terminal, the program's
+    arguments). A call into `std.io.read_file` is reported at the call.
+  - **`lyra-E085`** — a heap allocation where there is none: a `[]T` literal or comprehension, a
+    built string (`++`, `${…}`), a `shared` value, a capturing closure, or a call to a function
+    that allocates (`xs.map(f)`). A fixed array (`#[…]`), a plain struct and a string literal
+    are free.
+  - **`lyra-W026`** — arithmetic on a type the CPU emulates (`i64`, `u64`, `f32`, `f64` on the
+    68000), once per function and type. Untyped loop variables over literals are `i64`, so a
+    game types them: `for i: i16 in 0..<8`.
+- **A callback's effect is reported inside the callback**, at the line that does it, not again
+  at the higher-order call it is passed to.
+- The check reads the effect inference `pure`/`det`/`noalloc` use: reaching outside Lyra is one
+  more effect (`EffectHost`), charged by every `extern` whatever its declared bound — a `pure`
+  extern is still host code — and by the host builtins. No bound names it.
+- `lyrac build` still builds for the host; the Genesis backend is `lyra/todo.md`'s "The 68000".
+
 ### Imports
 
 - `import lib.{ listed }` admits `listed` only — no other exports, no types, no traits.

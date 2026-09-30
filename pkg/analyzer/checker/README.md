@@ -49,6 +49,17 @@ Returns two results: `pure` violations (`lyra-E007`) and missing-bound warnings 
 - Method-to-method chains work because `checkTraitImplMethodBody` populates `MethodTable` inside
   impl bodies.
 
+### The target check (`target.go`)
+
+`CheckTarget` (driver, after purity) reruns the **same** `bodyEffects` walk over the program's
+own lambdas and methods with `callable.onCharge` set: each charging arm reports the site's *own*
+effect and the callee it names (a callback argument's effect is its body's, reported there).
+E084 is `EffectHost` (externs always, host builtins in `builtinEffects`), E085 `EffectAlloc` on a
+target without a heap; W026 is a separate arithmetic walk over `MathBinaryOpExpr` types.
+**`EffectHost` is in no mask** — not `PurityEffects`, not `AllEffects` (an unknown callee or an
+unbounded callback is not assumed to reach the host). A new charging arm calls `c.charge` beside
+`found |=`, or the target check goes quiet for that construct.
+
 ### Memoized per-callable inputs
 
 | fact | cached as |

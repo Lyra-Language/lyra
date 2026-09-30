@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — `lyra.toml` names a target, and the front end says what the Genesis cannot run
+
+Vega's engine will be Lyra compiled for the 68000, used by students, so what cannot work
+there must be a diagnostic in the editor, not a mystery at build time. The user first asked
+for a setting in the VS Code and Zed extensions; the target went into the **project**
+instead (`lyra.toml`, found above the entry file by `pkg/target`), because an editor
+setting lets the editor and the build disagree about the same file, and both extensions
+already show whatever `lyra-lsp` reports.
+
+What is checked is the program's own code (not `std.*`/`bindings.*`), each at its line:
+reaching outside Lyra (E084), heap allocation (E085), emulated arithmetic (W026), and a bad
+`lyra.toml` (E086). The first two are **effects, not lists**: `EffectHost` joined the purity
+row, charged by every `extern` whatever its bound and by the builtins the backend lowers to
+libc, so a call into `std.io.read_file` is caught through inference with no table of host
+modules. It is in no mask — not `AllEffects` either, or every call through an unbounded
+callback would be refused on a console. The sites come from the **one** body walk
+(`bodyEffects`) through a new `callable.onCharge` sink, beside `reportPure`, rather than a
+second walk: the target check and `pure` cannot disagree about what a call resolves to.
+A site reports its own charge only, so a callback's `println` is reported in the callback.
+
 ### 09/29/26 — an imported constructor is used where it is written (`lyra-W004`); SDL processes
 
 Vega carried nine `imported name … is never used` warnings, each on a constructor the file

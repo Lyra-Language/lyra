@@ -54,6 +54,15 @@ const (
 	// Non-deterministic, so it breaks `pure` and `det`. A *threaded* tick passed
 	// in as a parameter is ordinary data, not this effect.
 	EffectTime
+	// EffectHost: reaches outside Lyra — an `extern` (libc, SDL, any C), or a builtin
+	// the backend lowers to one (`println` to `write`, `read_line`, the clock, the
+	// terminal, the program's arguments). Not about purity at all: `labs` declared
+	// `pure` is still host code. It is what a target without an operating system cannot
+	// run (checker.CheckTarget, 09/29), and nothing else reads it — no bound names it,
+	// so it is in none of the masks below. Deliberately **not** in AllEffects either:
+	// an unresolved callee or an unbounded callback is not assumed to reach the host,
+	// or every higher-order call in a console game would be refused.
+	EffectHost
 )
 
 // EffectNone is the empty effect set — purity, in row-of-effects terms.
@@ -123,8 +132,8 @@ func (e Effect) IsPure() bool { return e == EffectNone }
 var builtinEffects = map[string]Effect{
 	// Output — program → world, void result. Determinism-safe (allowed in `det`),
 	// but still forbidden in `pure` (observable).
-	"print":   EffectOutput,
-	"println": EffectOutput,
+	"print":   EffectOutput | EffectHost,
+	"println": EffectOutput | EffectHost,
 	// `panic` is EffectNone — allowed in `pure`, `det` and `noalloc` alike.
 	//
 	// It writes to stderr and exits, so tagging it EffectOutput looks right at first.
@@ -158,7 +167,7 @@ var builtinEffects = map[string]Effect{
 	// EffectAlloc bit is not set: setting it here would be the only entry doing so
 	// and would not reach the pass that decides `noalloc`. Left for whenever a
 	// builtin's allocation is charged at all; today no builtin's is.
-	"read_line": EffectInput,
+	"read_line": EffectInput | EffectHost,
 	// `dir_names(path)` reads a directory. Input for the plain reason — the answer comes
 	// from the file system, and two calls a moment apart need not agree — but *not*
 	// destructive the way `read_line` and `read_key` are: reading a directory consumes
@@ -167,7 +176,7 @@ var builtinEffects = map[string]Effect{
 	//
 	// It allocates (a `[]string` and a string per entry), which is not expressible here
 	// for the reason the entry above gives.
-	"dir_names": EffectInput,
+	"dir_names": EffectInput | EffectHost,
 	// The terminal builtins, and their split is the interesting part: two of the three
 	// are Input and the other is Output, although all three are "terminal stuff".
 	//
@@ -182,19 +191,19 @@ var builtinEffects = map[string]Effect{
 	// than the world, because a window can be resized between two calls — the result
 	// depends on state nobody passed in, which is what the bit means. A viewer that
 	// redraws on resize is built on precisely that.
-	"set_raw_mode":  EffectOutput,
-	"read_key":      EffectInput,
-	"terminal_size": EffectInput,
+	"set_raw_mode":  EffectOutput | EffectHost,
+	"read_key":      EffectInput | EffectHost,
+	"terminal_size": EffectInput | EffectHost,
 	// `wait_for_key_ms` consumes no input, but its answer depends on whether the user has
 	// typed something — state the caller never passed in — so it is Input like the read it
 	// precedes. A `det` function that could observe whether a key is waiting would not be
 	// reproducible.
-	"wait_for_key_ms": EffectInput,
+	"wait_for_key_ms": EffectInput | EffectHost,
 	// The program's arguments never change during a run, but they are input in the sense
 	// the bit means — the answer depends on state nobody passed in — so a `det` function
 	// reading them would be exactly as unreproducible as one reading stdin.
-	"program_arg_count": EffectInput,
-	"program_arg":       EffectInput,
+	"program_arg_count": EffectInput | EffectHost,
+	"program_arg":       EffectInput | EffectHost,
 	// Arena helpers: pure (EffectNone). An arena is the *solution* to heap
 	// allocation tracking — its creation is a one-time bounded setup, not a
 	// per-frame GC-visible alloc; constructions built *inside* a `with`-arena
@@ -225,7 +234,7 @@ var builtinEffects = map[string]Effect{
 	// builtin in the typechecker or the backend, so it classified the effects of a
 	// call that could not be compiled, and a program writing it got a clean `lyrac
 	// check` followed by a backend crash.
-	"random_seed": EffectRand,
+	"random_seed": EffectRand | EffectHost,
 	// `wall_clock_nanos()` is the Time half of exactly the same arrangement, and it
 	// only became one on 08/06. It sat here as `wallClock` — this table's entry,
 	// tagged EffectTime, with no typechecker signature and no lowering anywhere: the
@@ -237,5 +246,5 @@ var builtinEffects = map[string]Effect{
 	// The name changed with the implementation: snake_case like every other name in
 	// the language, and the unit spelled out, because a clock returning a bare number
 	// invites a wrong guess that nothing catches. See `backend/llvm/clock.go`.
-	"wall_clock_nanos": EffectTime,
+	"wall_clock_nanos": EffectTime | EffectHost,
 }

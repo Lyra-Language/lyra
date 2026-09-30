@@ -434,6 +434,7 @@ such changes on a user module.
 | `pkg/analyzer/captures` | Lambda free variables | [README](pkg/analyzer/captures/README.md) |
 | `pkg/analyzer/ownership` | Retain/release placement; Perceus | [README](pkg/analyzer/ownership/README.md) |
 | `pkg/modules` | Import resolution, namespacing, implicit prelude | [README](pkg/modules/README.md) |
+| `pkg/target` | What a program is compiled for: `lyra.toml` lookup, the target table (`host`, `genesis`) | below |
 | `pkg/driver` | The reusable front-end pipeline | below |
 | `pkg/abi` | C calling conventions per target | below |
 | `pkg/backend` | `Backend` interface; FFI notes | [FFI.md](pkg/backend/FFI.md) |
@@ -467,9 +468,13 @@ tuple or payload pattern matches which position, `...rest` included).
 
 **`pkg/driver`** — `driver.Analyze(source)` / `AnalyzeUnits(units)`: parse → collect →
 `checker.Check*` → `typechecker.Check` → `captures.Analyze` → `checker.CheckPurity` →
-`ownership.Analyze`, returning `Result{Program, SymbolTable, ScopeTable, TypeTable,
-MethodTable, Ownership, Captures, RangeSafety, Diagnostics}` with all errors as
-`[]diagnostic.Diagnostic` (CST positions converted to 1-based). `HasErrors()`/`Errors()`.
+`checker.CheckTarget` → `ownership.Analyze`, returning `Result{Program, SymbolTable,
+ScopeTable, TypeTable, MethodTable, Ownership, Captures, RangeSafety, Target, Diagnostics}`
+with all errors as `[]diagnostic.Diagnostic` (CST positions converted to 1-based).
+`HasErrors()`/`Errors()`.
+- **The target comes from the entry unit's file** (`target.ForFile`, the nearest `lyra.toml`
+  above it), so `lyrac` and the LSP need no flag and cannot disagree. Units whose module path
+  starts `std.`/`bindings.` are not checked against it (LANGUAGE.md § Targets).
 - A check whose answer depends on the *settled* type (after propagation) reads the TypeTable
   post-typecheck and lives here (e.g. `CheckArrayRepeatAliasing`, `lyra-W019`).
 - **The generic instantiation set is closed before per-specialization ownership runs**

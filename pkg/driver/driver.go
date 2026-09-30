@@ -13,6 +13,7 @@ package driver
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
@@ -24,6 +25,7 @@ import (
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/modules"
 	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/target"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -74,7 +76,10 @@ type Result struct {
 	// Packages are the pkg-config packages `@link(…, pkg: "sdl3")` names, sorted and
 	// deduplicated like Links: where the libraries are, which `lyrac` asks pkg-config for
 	// so a library outside the linker's default search path needs no `LIBRARY_PATH`.
-	Packages    []string
+	Packages []string
+	// Target is what the program is compiled for, from the `lyra.toml` governing the
+	// entry file (package target): the host when there is none.
+	Target      target.Target
 	Diagnostics []diag.Diagnostic
 }
 
@@ -277,6 +282,10 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// Appended rather than routed through res.err: these are the missing-`pure`-bound
 	// advisories (lyra-W018), which carry their own severity already.
 	res.Diagnostics = append(res.Diagnostics, purityWarnings...)
+
+	// What cannot work on the target the project names (lyra-E084, E085, W026): after
+	// purity, whose walk it reruns, and only when there is a target to check against.
+	res.Diagnostics = append(res.Diagnostics, checkTarget(res, units, tt)...)
 
 	// Use-after-move also runs after typechecking: it needs the TypeTable to tell
 	// which values are managed (only those are actually consumed by an `own`
@@ -722,4 +731,34 @@ func collectLinks(program *ast.Program) []string {
 	}
 	sort.Strings(libs)
 	return libs
+}
+
+// checkTarget reads the entry file's `lyra.toml` into res.Target and reports what the
+// program's own code — every file but the standard library's and the bindings' — does
+// that the target cannot run. A `lyra.toml` it cannot read is lyra-E086, at the top of
+// the entry file: the project file is not a source file the editor shows diagnostics for.
+func checkTarget(res *Result, units []modules.Unit, tt *typetable.TypeTable) []diag.Diagnostic {
+	entry := units[len(units)-1]
+	tgt, problem := target.ForFile(entry.File)
+	res.Target = tgt
+	if problem != nil {
+		where := problem.Path
+		if problem.Line > 0 {
+			where = fmt.Sprintf("%s:%d", problem.Path, problem.Line)
+		}
+		return []diag.Diagnostic{{
+			Location: ast.Location{File: entry.File, StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1},
+			Severity: diag.SeverityError,
+			Code:     diag.CodeProjectConfig,
+			Message:  fmt.Sprintf("%s: %s", where, problem.Message),
+		}}
+	}
+	library := map[string]bool{}
+	for _, u := range units {
+		if strings.HasPrefix(u.Path, "std.") || strings.HasPrefix(u.Path, "bindings.") || u.Path == "std" {
+			library[u.File] = true
+		}
+	}
+	inScope := func(file string) bool { return !library[file] }
+	return checker.CheckTarget(res.Program, res.SymbolTable, res.ScopeTable, tt, res.MethodTable, res.Captures, tgt, inScope)
 }
