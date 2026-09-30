@@ -31,6 +31,10 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 - **`never`** is the bottom type, the result of `panic(msg)`: assignable to every type, so `match m { Some(v) => v, None => panic("…") }` works. `panic` is EffectNone (legal in `pure`/`det`/`noalloc`).
 - **`i128`/`u128`** lower natively (LLVM `i128`): checked arithmetic, `match`, comparisons, conversions; division and `%%` via compiler-rt; `print` via `lyra_i128_to_str`. A literal's magnitude lives in a `big.Int` on the node (nil if it fits 64 bits) and stays untyped where both could hold it. Folding is arbitrary-precision (`ast.FoldBigExpr`; `FoldIntExpr` returns ok=false rather than wrapping). Value-range analysis leaves 128-bit (and `u64`) values untracked.
+- **Literals of both signs share a type** wherever values must agree — an array's elements,
+  `if`/`match` branches — at the signed kind: `[-1, 2]`, `if c { -1 } else { 2 }`. **Inside
+  what holds them too** (09/29): `[(-1, 0), (1, 0)]`, `[[-1], [1]]`, tuple branches join
+  element by element (anonymous tuples of one length, arrays; fixed arrays of one size).
 - **`==`/`!=` on floats warns** (`lyra-W008`), except a bare name compared with itself: `x != x` is exact and true for NaN alone, so it is the NaN test and draws nothing.
 - **An integer literal beside a float is a float**, whether the float is typed (`x < 1`, `x + 1`) or a literal (`5 < 5.0`, `5 == 5.0`, `5 * 2.5`), in every operator; a context still narrows the pair (`let f: f32 = 5 * 2.5`). A *typed* integer against a float is refused (`n < 2.0`; convert with `f64(n)`).
 - **Float narrowing is allowed and rounds to nearest** (`f32(x)`), as integer narrowing truncates (`u8(x)`). Refused: a compile-time constant that would become infinity (`f32(1.0e40)`). Precision loss is never an error.

@@ -191,6 +191,28 @@ func TestUntypedIntegerJoin_MatchArms(t *testing.T) {
 let f = (n: i64) -> i8 => match n { 0 => -1, _ => 2 }`, false))
 }
 
+// The same join inside what holds literals (09/29): a table of direction pairs, nested
+// arrays, tuple branches. The scalar rule never looked inside a tuple or an array, so these
+// failed with the same type-compared-to-itself message.
+func TestUntypedIntegerJoin_InsideTuplesAndArrays(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `let a = [(-1, 0), (1, 0), (0, -1)]`, false))
+	assertNoErrors(t, parseCollectAndCheck(t, `let a = [[-1], [1, 2]]`, false))
+	assertNoErrors(t, parseCollectAndCheck(t, `let a = #[#[-1], #[1]]`, false))
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let f = (c: bool) -> (i8, i8) => if c { (-1, 0) } else { (1, 0) }`, false))
+}
+
+// The structural join is element by element and no wider: a tuple beside a tuple of
+// another length, a string where a number was, or fixed arrays of two sizes still differ.
+func TestUntypedIntegerJoin_InsideTuplesStillRefusesMismatches(t *testing.T) {
+	assertErrorsAre(t, parseCollectAndCheck(t, `let a = [(-1, 0), ("x", 0)]`, false),
+		"array literal: element type AnonymousTuple(string, integer literal) is not compatible with preceding element type AnonymousTuple(integer literal, integer literal)")
+	assertErrorsAre(t, parseCollectAndCheck(t, `let a = [(-1, 0), (1, 0, 0)]`, false),
+		"array literal: element type AnonymousTuple(integer literal, integer literal, integer literal) is not compatible with preceding element type AnonymousTuple(integer literal, integer literal)")
+	assertErrorsAre(t, parseCollectAndCheck(t, `let a = [#[-1], #[1, 2]]`, false),
+		"array literal: element type StaticArray<integer literal, 2> is not compatible with preceding element type StaticArray<integer literal, 1>")
+}
+
 // The join produces an *untyped* result, so an annotation still narrows it — and the
 // range check still applies to what it narrowed to.
 func TestUntypedIntegerJoin_StillNarrowsAndRangeChecks(t *testing.T) {

@@ -2106,6 +2106,57 @@ func branchCommonType(a, b types.Type) (types.Type, bool) {
 	if signed, ok := untypedIntegerJoin(a, b); ok {
 		return signed, true
 	}
+	// The same join one level down, for what holds literals: `[(-1, 0), (1, 0)]`,
+	// `[[-1], [1]]`, `if c { (-1, 0) } else { (1, 0) }`. The rule above joined only bare
+	// literals, so a table of direction pairs was refused with a message comparing a type
+	// to itself (09/29, found by Vega's arrow-key table). Element by element, each through
+	// this whole function; an anonymous tuple only (a named one is nominal, and two of one
+	// name were equal above), and a fixed array only at one size.
+	return structuralJoin(a, b)
+}
+
+// structuralJoin is branchCommonType for anonymous tuples and arrays: the join of their
+// elements, when every element joins.
+func structuralJoin(a, b types.Type) (types.Type, bool) {
+	switch at := a.(type) {
+	case types.TupleType:
+		bt, ok := b.(types.TupleType)
+		if !ok || !types.IsAnonymousTupleName(at.Name) || !types.IsAnonymousTupleName(bt.Name) || len(at.Elements) != len(bt.Elements) {
+			return nil, false
+		}
+		joined := make([]types.Type, len(at.Elements))
+		for i := range at.Elements {
+			j, ok := branchCommonType(at.Elements[i], bt.Elements[i])
+			if !ok {
+				return nil, false
+			}
+			joined[i] = j
+		}
+		at.Elements = joined
+		return at, true
+	case types.DynamicArrayType:
+		bt, ok := b.(types.DynamicArrayType)
+		if !ok {
+			return nil, false
+		}
+		j, ok := branchCommonType(at.ElementType, bt.ElementType)
+		if !ok {
+			return nil, false
+		}
+		at.ElementType = j
+		return at, true
+	case types.StaticArrayType:
+		bt, ok := b.(types.StaticArrayType)
+		if !ok || at.Size != bt.Size {
+			return nil, false
+		}
+		j, ok := branchCommonType(at.ElementType, bt.ElementType)
+		if !ok {
+			return nil, false
+		}
+		at.ElementType = j
+		return at, true
+	}
 	return nil, false
 }
 

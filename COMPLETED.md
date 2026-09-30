@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — literals of both signs join inside tuples and arrays
+
+`[(-1, 0), (1, 0)]` — Vega's table of arrow-key directions — was refused with "element type
+AnonymousTuple(integer literal, integer literal) is not compatible with preceding element
+type AnonymousTuple(integer literal, integer literal)": a negated literal is
+`untyped_signed_int`, a plain one `untyped_int`, and both print alike. `branchCommonType`
+joined the two for bare literals (the 09 fix that took `[-1, 2]`) but never looked inside a
+tuple or an array, so `[[-1], [1]]` and `if c { (-1, 0) } else { (1, 0) }` failed too.
+`structuralJoin` joins element by element, each through `branchCommonType` whole; anonymous
+tuples only (`IsAnonymousTupleName` — an anonymous tuple's name is `?`, not `""`, which the
+first attempt tested and silently never matched), fixed arrays only at one size.
+
 ### 09/29/26 — a headless ImGui host, so an interface can be tested
 
 Vega's interface bugs (a colour click lost to a drag, a frame delete that trapped) were
