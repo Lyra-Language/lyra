@@ -25,6 +25,46 @@ unsafe extern sdl_kill_process: (process: Process, force: bool) -> bool
 @symbol("SDL_DestroyProcess")
 unsafe extern sdl_destroy_process: (process: Process) -> void
 
+@symbol("SDL_CreateProcessWithProperties")
+unsafe extern sdl_create_process_with_properties: (props: u32) -> Process
+
+/// Its output (`datasize` bytes, NUL-terminated, the caller's to `SDL_free`) once it has
+/// ended, and its exit code.
+@symbol("SDL_ReadProcess")
+unsafe extern sdl_read_process: (
+  process: Process,
+  datasize: ^mut u64,
+  exitcode: ^mut i32
+) -> ^u8
+
+@symbol("SDL_free")
+unsafe extern sdl_free: (mem: ^u8) -> void
+
+@symbol("SDL_CreateProperties")
+unsafe extern sdl_create_properties: () -> u32
+
+@symbol("SDL_DestroyProperties")
+unsafe extern sdl_destroy_properties: (props: u32) -> void
+
+@symbol("SDL_SetPointerProperty")
+unsafe extern sdl_set_pointer_property: (props: u32, name: ^u8, value: ^^u8) -> bool
+
+@symbol("SDL_SetNumberProperty")
+unsafe extern sdl_set_number_property: (props: u32, name: ^u8, value: i64) -> bool
+
+@symbol("SDL_SetBooleanProperty")
+unsafe extern sdl_set_boolean_property: (props: u32, name: ^u8, value: bool) -> bool
+
+/// `SDL_CreateProcessWithProperties`' properties (`SDL_PROP_PROCESS_CREATE_*`).
+const PROP_ARGS: string = "SDL.process.create.args"
+const PROP_STDIN: string = "SDL.process.create.stdin_option"
+const PROP_STDOUT: string = "SDL.process.create.stdout_option"
+const PROP_STDERR_TO_STDOUT: string = "SDL.process.create.stderr_to_stdout"
+
+/// `SDL_ProcessIO`: no stream, or one the program reads (`SDL_ReadProcess`).
+const STDIO_NULL: i64 = 1
+const STDIO_APP: i64 = 2
+
 /// Start the program `args[0]` (a path, or a name found on the `PATH`) with the rest of
 /// `args` as its arguments, its output going where this program's does; `None` when it
 /// cannot be started (or `args` is empty).
@@ -37,6 +77,38 @@ pub let create_process = (args: []string) -> Maybe<Process> => {
   pointers.push(nullptr)
   let process = unsafe { sdl_create_process(pointers.data(), false) }
   if process == nullptr { None } else { Some(process) }
+}
+
+/// Run the program `args[0]` with the rest of `args` as its arguments, to its end: its exit
+/// code and everything it wrote, standard error and standard output together, as one
+/// string. `None` when it cannot be started (or `args` is empty). The caller waits the
+/// whole run — for a short tool (a compiler), not a program that keeps going.
+pub let run_process = (args: []string) -> Maybe<(i64, string)> => {
+  if args.len() == 0 { return None }
+  var pointers: []^u8 = []
+  for a in args { pointers.push(unsafe { a.cstring_ptr() }) }
+  pointers.push(nullptr)
+  let props = unsafe { sdl_create_properties() }
+  unsafe {
+    sdl_set_pointer_property(props, PROP_ARGS.cstring_ptr(), pointers.data())
+    sdl_set_number_property(props, PROP_STDIN.cstring_ptr(), STDIO_NULL)
+    sdl_set_number_property(props, PROP_STDOUT.cstring_ptr(), STDIO_APP)
+    sdl_set_boolean_property(props, PROP_STDERR_TO_STDOUT.cstring_ptr(), true)
+  }
+  let process = unsafe { sdl_create_process_with_properties(props) }
+  // SDL reads `pointers` here, not when the property is set, and an array is freed after
+  // its last use: this one keeps it until now.
+  let _ = pointers.len()
+  unsafe { sdl_destroy_properties(props) }
+  if process == nullptr { return None }
+  var size: u64 = 0
+  var code: i32 = 0
+  let written = unsafe { sdl_read_process(process, &mut size, &mut code) }
+  unsafe { sdl_destroy_process(process) }
+  if written == nullptr { return None }
+  let output = unsafe { written.decode_utf8(i64(size)) }
+  unsafe { sdl_free(written) }
+  Some((i64(code), output))
 }
 
 /// The program's exit code once it has ended: waiting for that when `block`, and `None`

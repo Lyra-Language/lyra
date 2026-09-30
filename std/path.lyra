@@ -134,6 +134,30 @@ pub let normalize = pure (self: string) -> string => {
   if rooted { "/" ++ joined } else if joined.len() == 0 { "." } else { joined }
 }
 
+/// The path from the directory `base` to `self`, which `base.join(result)` names again:
+/// `"games/hero/main.lyra".relative_to("games")` is `"hero/main.lyra"`, and
+/// `"art/hero.vega".relative_to("code")` is `"../art/hero.vega"`. Both are [normalize]d
+/// first, and the same path is `"."`.
+///
+/// **Lexical**, as [normalize] is, so a symlink in `base` is not followed. And one
+/// absolute path and one relative have nothing to be relative to each other by — the
+/// relative one's directory is not known here — so `self` comes back as it is, normalized.
+pub let relative_to = pure (self: string, base: string) -> string => {
+  let to = self.normalize()
+  let from = base.normalize()
+  if to.is_absolute() != from.is_absolute() { return to }
+  let to_parts = to.components()
+  let from_parts = from.components()
+  var shared = 0
+  for shared < to_parts.len() && shared < from_parts.len() && to_parts[shared] == from_parts[shared] {
+    shared += 1
+  }
+  var parts: []string = []
+  for _ in shared..<from_parts.len() { parts.push("..") }
+  for i in shared..<to_parts.len() { parts.push(to_parts[i]) }
+  if parts.len() == 0 { "." } else { parts.join("/") }
+}
+
 /// Whether `self` begins at the root.
 pub let is_absolute = pure noalloc (self: string) -> bool => self.starts_with("/")
 
@@ -146,6 +170,10 @@ let without_trailing_slashes = pure (self: string) -> string => {
   for end > 1 && self.slice(end - 1, end) == "/" { end -= 1 }
   self.slice(0, end)
 }
+
+/// A normalized path's names, root and `.` left out: `"/a/b"` and `"a/b"` are both `a`, `b`.
+let components = pure (self: string) -> []string =>
+  self.split("/").filter((part) => part != "" && part != ".")
 
 /// Where a file name's extension begins — the offset of the `.` that starts it — or
 /// `None`. The one place the rules above are written down, so `stem`, `extension` and

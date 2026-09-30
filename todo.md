@@ -752,6 +752,10 @@ annotations.
   where a manifest would start to earn its keep.
 - Non-LP64 targets are unsupported by stated assumption; `CLong`/`CULong` is the grep
   target for a port.
+- **[OPEN] A buffer C keeps past the call is freed at its last Lyra use.** `data()` on an
+  array handed to `SDL_SetPointerProperty` was freed before `SDL_CreateProcessWithProperties`
+  read it (a segfault; `bindings/sdl3/process.lyra` reads the array again after). Wants a
+  spelled keep-alive, or a check that an `unsafe` pointer's array outlives the block.
 
 ## Const generics — a value as a type parameter
 
