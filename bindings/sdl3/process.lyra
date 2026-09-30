@@ -1,0 +1,57 @@
+module bindings.sdl3
+//! Other programs: started, waited for, stopped.
+//!
+//! SDL's process API rather than `posix_spawn` directly, for the same reason the rest of
+//! this module exists: it is one call on every platform SDL runs on, and it finds a bare
+//! program name on the `PATH`.
+
+/// An `SDL_Process *`: a program started with [create_process]. Hand it to
+/// [destroy_process] once finished with — whether or not the program has ended.
+pub newtype Process = ^u8
+
+@symbol("SDL_CreateProcess")
+unsafe extern sdl_create_process: (args: ^^u8, pipe_stdio: bool) -> Process
+
+@symbol("SDL_WaitProcess")
+unsafe extern sdl_wait_process: (
+  process: Process,
+  block: bool,
+  exitcode: ^mut i32
+) -> bool
+
+@symbol("SDL_KillProcess")
+unsafe extern sdl_kill_process: (process: Process, force: bool) -> bool
+
+@symbol("SDL_DestroyProcess")
+unsafe extern sdl_destroy_process: (process: Process) -> void
+
+/// Start the program `args[0]` (a path, or a name found on the `PATH`) with the rest of
+/// `args` as its arguments, its output going where this program's does; `None` when it
+/// cannot be started (or `args` is empty).
+pub let create_process = (args: []string) -> Maybe<Process> => {
+  if args.len() == 0 { return None }
+  // `const char * const *`, NULL-terminated. The pointers are into `args`, which the
+  // caller holds for the length of the call — SDL copies what it keeps.
+  var pointers: []^u8 = []
+  for a in args { pointers.push(unsafe { a.cstring_ptr() }) }
+  pointers.push(nullptr)
+  let process = unsafe { sdl_create_process(pointers.data(), false) }
+  if process == nullptr { None } else { Some(process) }
+}
+
+/// The program's exit code once it has ended: waiting for that when `block`, and `None`
+/// at once if it is still running when not.
+pub let wait_process = (process: Process, block: bool) -> Maybe<i64> => {
+  var code: i32 = 0
+  let ended = unsafe { sdl_wait_process(process, block, &mut code) }
+  if ended { Some(i64(code)) } else { None }
+}
+
+/// Ask the program to stop (`SIGTERM`), or make it (`SIGKILL`) when `force`. Whether it was
+/// still running to be asked.
+pub let kill_process = (process: Process, force: bool) -> bool =>
+  unsafe { sdl_kill_process(process, force) }
+
+/// Forget the program. One still running is left running.
+pub let destroy_process = (process: Process) -> void =>
+  unsafe { sdl_destroy_process(process) }

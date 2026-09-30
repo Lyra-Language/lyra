@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 09/29/26 — an imported constructor is used where it is written (`lyra-W004`); SDL processes
+
+Vega carried nine `imported name … is never used` warnings, each on a constructor the file
+matched on or built — advice that breaks the build if taken. The reference walk counted
+identifiers, struct literals and type positions, but a pattern is not an expression (the
+walk never enters one), and a constructor call collects to a `DataConstructorExpr` or a
+named `TupleLiteralExpr` (a newtype's `Label("x")`), neither an identifier. The checker now
+walks `ast.PatternsOf` at every node and counts both expression kinds. A binder's name is
+counted too: a nullary constructor and a binding are one shape before the typechecker, and
+over-collecting only withholds a warning (`pkg/modules/import_constructor_test.go`).
+
+`bindings.sdl3` gains `process.lyra` (`SDL_CreateProcess` and friends) so Vega can launch
+Sheliak on the ROM it builds: SDL's API over `posix_spawn` because it is one call
+everywhere SDL runs and searches the `PATH`.
+
 ### 09/29/26 — literals of both signs join inside tuples and arrays
 
 `[(-1, 0), (1, 0)]` — Vega's table of arrow-key directions — was refused with "element type

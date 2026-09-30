@@ -262,10 +262,32 @@ func collectRefsByFile(
 			}
 			noteType(sig.ReturnType.Type)
 		}
+		// A constructor written in a pattern (`Circle =>`, `Square(n) =>`, `Pt { x, y }`)
+		// is a use of its import like any other, but patterns are not expressions and the
+		// walks below do not enter them — so an imported constructor matched on and never
+		// built warned as unused until 09/29. A binder's name is collected too: a nullary
+		// constructor and a binding are one shape until the typechecker has looked, and
+		// over-collecting only ever withholds a warning.
+		notePatterns := func(node ast.AstNode) {
+			for _, p := range ast.PatternsOf(node) {
+				ast.WalkPattern(p, func(sub ast.Pattern) bool {
+					switch pt := sub.(type) {
+					case *ast.DataPattern:
+						refs[pt.Name] = true
+					case *ast.StructPattern:
+						refs[pt.Name] = true
+					case *ast.IdentifierPattern:
+						refs[pt.Name] = true
+					}
+					return true
+				})
+			}
+		}
 		ast.WalkStmt(stmt, func(s ast.Statement) bool {
 			for _, name := range ast.ConstRefNames(s) {
 				refs[name] = true
 			}
+			notePatterns(s)
 			switch st := s.(type) {
 			case *ast.VarDeclStmt:
 				noteType(st.Type)
@@ -325,7 +347,20 @@ func collectRefsByFile(
 			for _, name := range ast.ConstRefNames(e) {
 				refs[name] = true
 			}
+			notePatterns(e)
 			switch ex := e.(type) {
+			case *ast.DataConstructorExpr:
+				// `Square(2)`, and a nullary `Circle` once the collector knows it for one.
+				refs[ex.Constructor] = true
+			case *ast.TupleLiteralExpr:
+				// A named tuple or newtype built by its name — `Name("x")` — is the same
+				// shape; an anonymous tuple's name is empty.
+				if ex.Name != "" {
+					refs[ex.Name] = true
+				}
+				for _, arg := range ex.GenericArguments {
+					noteType(arg)
+				}
 			case *ast.IdentifierExpr:
 				// A callee a UFCS call synthesized is not a *written* reference to the
 				// name: `x.f()` wrote `f` after a dot, which finds the function whether
