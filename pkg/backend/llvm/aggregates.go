@@ -262,6 +262,23 @@ func (l *lowerer) lowerRecordBaseField(block *ir.Block, base value.Value, idx in
 // no field names. A method call (`obj.method()`) never reaches here — it's a
 // FunctionCallExpr whose callee is the MemberExpr — so this is field access only.
 func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if decl, ok := l.namespaceBinding(e); ok {
+		// `pad.LEFT`: the module's const or global — keyed from the declaration's own
+		// location, so it is that module's binding (rule 9), and never a local of this
+		// function that happens to share the name.
+		key := l.funcKey(decl.Name, decl.GetLocation())
+		if g, isGlobal := l.globals[key]; isGlobal {
+			elem, err := slotElemType(g)
+			if err != nil {
+				return nil, nil, err
+			}
+			return block.NewLoad(elem, g), block, nil
+		}
+		if cd, isConst := l.consts[key]; isConst && cd.Value != nil {
+			return l.lowerExpr(block, cd.Value)
+		}
+		return nil, nil, fmt.Errorf("llvm: %s.%s has no storage or value", e.Object.(*ast.IdentifierExpr).Name, decl.Name)
+	}
 	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for member-access object")
@@ -664,4 +681,29 @@ func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.Anony
 		return boxed, block, err
 	}
 	return agg, block, nil
+}
+
+// namespaceBinding is the declaration `m.X` names when m is an imported module's namespace
+// and X a `const` or top-level `let`/`var` in it (namespaceCallee is the call's twin).
+func (l *lowerer) namespaceBinding(e *ast.MemberExpr) (*ast.VarDeclStmt, bool) {
+	id, ok := e.Object.(*ast.IdentifierExpr)
+	if !ok {
+		return nil, false
+	}
+	if _, isLocal := l.locals[id.Name]; isLocal {
+		return nil, false // a value shadows the namespace
+	}
+	st := l.res.SymbolTable
+	imp, ok := st.NamespaceImport(e.GetLocation().File, id.Name)
+	if !ok || !st.ModuleDeclares(imp.Path, e.Property.Name) {
+		return nil, false
+	}
+	decl, ok := st.BindingIn(imp.Path, e.Property.Name)
+	if !ok || decl.Value == nil {
+		return nil, false
+	}
+	if _, isFunc := decl.Value.(*ast.LambdaExpr); isFunc {
+		return nil, false
+	}
+	return decl, true
 }

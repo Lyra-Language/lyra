@@ -76,6 +76,23 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, fn *
 		tc.typeTable.Set(m, decl.Type)
 		return decl.Type, nil, true
 	}
+	// A `const` or a top-level `let`/`var`: `pad.LEFT`, `vdp.SCREEN_WIDTH`. Reached only
+	// by importing the name itself until 09/30 — a namespace import offered functions and
+	// types, and `m.X` was "no member" though `import m.{ X }` found it. The imported
+	// module was checked first (units arrive in dependency order), so its value's type is
+	// recorded; an annotation, when there is one, is the type the declaration promised.
+	if decl, ok := tc.symTable.BindingIn(imp.Path, name); ok && decl.Value != nil {
+		var t types.Type
+		if decl.Type != nil {
+			t = tc.resolveTypeIfKnown(decl.Type, decl.GetLocation())
+		} else if recorded, found := tc.typeTable.Get(decl.Value); found {
+			t = recorded
+		}
+		if t != nil {
+			tc.typeTable.Set(m, t)
+			return t, nil, true
+		}
+	}
 	tc.addError(m.GetLocation(), SeverityError,
 		"module %q has no member %q", imp.Path, name)
 	return nil, nil, true

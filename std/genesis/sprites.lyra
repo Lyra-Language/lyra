@@ -1,0 +1,86 @@
+module std.genesis.sprites
+//! Hardware sprites: a list a game fills each frame, shown with one call during the
+//! vertical blank.
+//!
+//! ```
+//! import std.genesis.sprites.{ Sprite }
+//! import std.genesis.sprites
+//!
+//! sprites.clear()
+//! sprites.add(Sprite { x: 100, y: 80, width: 2, height: 2, tile: 1 })
+//! vdp.wait_vblank()
+//! sprites.show()
+//! ```
+//!
+//! **A sprite is a rectangle of 1–4 × 1–4 tiles** at a screen position, its tiles
+//! consecutive in VRAM and read down each column first, in one palette, mirrored either
+//! way or not. Eighty are shown at once, twenty on one line. A bigger picture is several
+//! sprites side by side — what Vega's sprite editor calls pieces.
+//!
+//! The list lives in RAM, so building it costs nothing on screen; [show] writes it to the
+//! VDP's sprite table, and belongs in the vertical blank.
+
+import std.genesis.vdp
+
+/// Sprites the VDP shows at once in 40-cell mode.
+pub const MAX: u16 = 80
+
+/// One hardware sprite.
+pub struct Sprite {
+  /// The top-left corner on the screen, in pixels; off the screen is allowed.
+  x: i16,
+  y: i16,
+  /// Size in tiles, 1–4 each way.
+  width: u16 = 1,
+  height: u16 = 1,
+  /// The first tile, in VRAM (tile n is at byte n × 32).
+  tile: u16,
+  /// Palette 0–3.
+  palette: u16 = 0,
+  flip_x: bool = false,
+  flip_y: bool = false,
+  /// In front of the planes' high-priority tiles too.
+  front: bool = false,
+}
+
+/// Start a new list: nothing is shown until [add]ed.
+pub let clear = () -> void => { count = 0 }
+
+/// `s` added to the list, drawn in front of those added after it. Past [MAX], ignored.
+pub let add = (s: Sprite) -> void => {
+  if count >= MAX { return }
+  let at = count * 4
+  table[at] = u16((s.y + 128) & 0x3FF)
+  table[at + 1] = (((s.width - 1) & 3) << 10) | (((s.height - 1) & 3) << 8)
+  table[at + 2] = flag(s.front, 15) | ((s.palette & 3) << 13) | flag(s.flip_y, 12) |
+    flag(s.flip_x, 11) | (s.tile & 0x7FF)
+  table[at + 3] = u16((s.x + 128) & 0x1FF)
+  count += 1
+}
+
+/// The list written to the VDP's sprite table, each entry linked to the next. Call in
+/// the vertical blank ([vdp.wait_vblank]), after the list is complete.
+pub let show = () -> void => {
+  vdp.set_vram_address(vdp.SPRITE_TABLE)
+  if count == 0 {
+    // One sprite, off the top of the screen and linking nowhere: the table's end.
+    for _: u16 in 0..<4 { vdp.write_word(0) }
+    return
+  }
+  for i: u16 in 0..<count {
+    let at = i * 4
+    let link = if i + 1 < count { i + 1 } else { 0 }
+    vdp.write_word(table[at])
+    vdp.write_word(table[at + 1] | link)
+    vdp.write_word(table[at + 2])
+    vdp.write_word(table[at + 3])
+  }
+}
+
+/// The list: four words a sprite, in the order the VDP's table holds them, links left 0.
+var table: [320]u16 = #[0; 320]
+
+/// Sprites in the list.
+var count: u16 = 0
+
+let flag = pure (on: bool, bit: u16) -> u16 => if on { 1 << bit } else { 0 }

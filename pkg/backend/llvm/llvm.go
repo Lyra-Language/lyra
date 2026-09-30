@@ -222,6 +222,12 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 				continue
 			}
 		}
+		if vd.BindingKind == ast.BindingConst && l.staticConstCandidate(vd) {
+			// A table of literals is static data (const_data.go), declared once types
+			// can be lowered.
+			l.staticConstDecls = append(l.staticConstDecls, vd)
+			continue
+		}
 		if vd.BindingKind == ast.BindingConst {
 			// **Keyed per module, as globals and functions are.** Two modules may each
 			// declare a private `const` of one name, and under the bare spelling the
@@ -370,8 +376,10 @@ type lowerer struct {
 	// computed at run time (a string box, an array, a call); unlike a local they outlive
 	// every function. The slice preserves declaration order, which is the order they are
 	// initialized in.
-	globals             map[string]*ir.Global
-	globalDecls         []*ast.VarDeclStmt
+	globals     map[string]*ir.Global
+	globalDecls []*ast.VarDeclStmt
+	// staticConstDecls are the `const` tables emitted as constant globals (const_data.go).
+	staticConstDecls    []*ast.VarDeclStmt
 	traitMethods        map[string]*ir.Func            // emitted trait-impl methods, keyed by mangled symbol
 	pendingTraitMethods []pendingTraitMethod           // declared, body not yet lowered (see traits.go)
 	structTypes         map[string]*lltypes.StructType // type key → its struct type (for named tuple and struct lowering)
@@ -1066,6 +1074,9 @@ func slotElemType(slot value.Value) (lltypes.Type, error) {
 // own initializer may call a top-level function, and a function may read a global, and
 // neither ordering can be resolved by emitting them lazily.
 func (l *lowerer) declareGlobals() error {
+	if err := l.declareStaticConsts(); err != nil {
+		return err
+	}
 	for _, vd := range l.globalDecls {
 		t, ok := l.recordedType(vd.Value)
 		if !ok {

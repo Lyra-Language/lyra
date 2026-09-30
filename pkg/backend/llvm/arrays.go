@@ -192,8 +192,13 @@ func (l *lowerer) arrayLValue(block *ir.Block, obj ast.Expression) (value.Value,
 	// parameter's, whose slot is the caller's own array storage. Falling through to
 	// the materializing path below would copy that array into a fresh alloca and
 	// mutate the copy, which is precisely how a `mut [N]T` used to lose its writes.
+	// A module-level array (a `const` table in `.rodata`, a top-level `let`/`var`) is
+	// addressed in place too, through slotFor — the one answer to "whose storage does this
+	// name mean". Asked of `l.locals` alone, a global was loaded whole and copied to the
+	// stack at every loop and runtime index: 2 KB of stack for a 512-word tile table on a
+	// Genesis that leaves a program 4 KB (09/30).
 	if id, ok := obj.(*ast.IdentifierExpr); ok {
-		if slot, found := l.locals[id.Name]; found {
+		if slot, found := l.slotFor(id.Name, id.GetLocation()); found {
 			if elem, err := slotElemType(slot); err == nil {
 				if at, ok := elem.(*lltypes.ArrayType); ok {
 					return slot, at, block, nil

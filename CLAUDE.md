@@ -558,7 +558,9 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
+  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad and sprites modules —
+  Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
+  `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
   are `pkg/backend/llvm/testdata/sevenzip/`, made by the `make.sh` beside them),
   `std/rar.lyra` (RAR 5; `testdata/rar5/`, libarchive's archives and hand-built filter ones —

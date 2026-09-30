@@ -1,0 +1,166 @@
+module std.genesis.vdp
+//! The Genesis's video chip, the VDP: its registers, its memories — VRAM for tiles and
+//! tables, CRAM for the 64 colours, VSRAM for vertical scroll — and the vertical blank a
+//! game draws in.
+//!
+//! ```
+//! import std.genesis.vdp
+//!
+//! let main = () -> void => {
+//!   vdp.init()
+//!   vdp.set_color(0, 0, vdp.rgb(0, 0, 7))   // palette 0, colour 0: blue
+//!   vdp.display_on()
+//!   for {
+//!     vdp.wait_vblank()
+//!     // … move things, then show them
+//!   }
+//! }
+//! ```
+//!
+//! **Everything goes through the VDP's two ports.** A register is set with one word to
+//! the control port (`8rvv`); a memory is written by giving the control port an address
+//! (two words that also say which memory), then writing words to the data port, which
+//! moves along by two bytes after each. The writes are volatile (`write_volatile`): two
+//! writes in a row to one port are two commands, and the optimizer must not merge them.
+//!
+//! **The layout** is the one SGDK uses, set by [init]: 40-cell mode (320×224), 64×32-cell
+//! planes, and the tables at the top of VRAM — tiles fill everything below `WINDOW` (1408
+//! of them). Tile 0 is blank and is what an empty plane shows.
+//!
+//! Data comes from `const` tables, which live in ROM; a function that loads one takes a
+//! pointer to its first element and a count (`&TILES[0]`). That is `unsafe` at the call,
+//! and goes once a function can take a fixed array of any length (const generics).
+
+/// The screen in 40-cell mode, which [init] sets, in pixels.
+pub const SCREEN_WIDTH: i16 = 320
+pub const SCREEN_HEIGHT: i16 = 224
+
+/// Where [init] puts the VDP's tables in VRAM. Tiles go below `WINDOW`.
+pub const WINDOW: u16 = 0xB000
+pub const PLANE_A: u16 = 0xC000
+pub const PLANE_B: u16 = 0xE000
+pub const SPRITE_TABLE: u16 = 0xF000
+pub const HSCROLL: u16 = 0xFC00
+
+/// The VDP set up for a game: mode 5, 40 cells, the tables above, the display off, and
+/// every memory cleared — VRAM (so every tile and table starts empty), CRAM (every colour
+/// black) and VSRAM (no vertical scroll). Call once, first.
+pub let init = () -> void => {
+  for r: u8 in 0..<19 { set_register(r, INIT_REGISTERS[r]) }
+  set_address(VRAM_WRITE, 0)
+  for _: u16 in 0..<32768 { write_word(0) }
+  set_address(CRAM_WRITE, 0)
+  for _: u16 in 0..<64 { write_word(0) }
+  set_address(VSRAM_WRITE, 0)
+  for _: u16 in 0..<40 { write_word(0) }
+  mode = INIT_REGISTERS[1]
+}
+
+/// Show the planes and sprites (off after [init], so a game can load before anything is
+/// seen).
+pub let display_on = () -> void => {
+  mode = mode | 0x40
+  set_register(1, mode)
+}
+
+/// Blank the screen to the backdrop colour.
+pub let display_off = () -> void => {
+  mode = mode & 0xBF
+  set_register(1, mode)
+}
+
+/// Wait for the next vertical blank to begin — the time between frames when a game
+/// changes what is shown, once a frame (60 times a second on an NTSC console).
+pub let wait_vblank = () -> void => {
+  // Out of any blank still under way, then into the next: status bit 3 is set during it.
+  for (status() & 8) != 0 {}
+  for (status() & 8) == 0 {}
+}
+
+/// A colour as CRAM holds it, from three levels of 0–7.
+pub let rgb = pure (r: u16, g: u16, b: u16) -> u16 =>
+  ((b & 7) << 9) | ((g & 7) << 5) | ((r & 7) << 1)
+
+/// Colour `index` (0–15) of palette `palette` (0–3). Colour 0 of each palette is
+/// transparent in a sprite or a plane's tile.
+pub let set_color = (palette: u16, index: u16, color: u16) -> void => {
+  set_address(CRAM_WRITE, ((palette & 3) * 16 + (index & 15)) * 2)
+  write_word(color)
+}
+
+/// All sixteen colours of palette `palette` from a table: `&PALETTE[0]`.
+pub let load_palette = (palette: u16, colors: ^u16) -> void => {
+  set_address(CRAM_WRITE, (palette & 3) * 32)
+  for i: u16 in 0..<16 { write_word(unsafe { colors.offset(i64(i))^ }) }
+}
+
+/// The colour behind everything: colour `index` of palette `palette`.
+pub let set_backdrop = (palette: u16, index: u16) -> void =>
+  set_register(7, u8(((palette & 3) << 4) | (index & 15)))
+
+/// `count` tiles into VRAM from tile `first` on, from a table of their rows — eight
+/// `u32` words a tile, two pixels a byte, the left one in the high nibble (what Vega
+/// exports): `&TILES[0]`.
+pub let load_tiles = (first: u16, tiles: ^u32, count: u16) -> void => {
+  set_address(VRAM_WRITE, first * 32)
+  for i: u16 in 0..<count * 8 { write_long(unsafe { tiles.offset(i64(i))^ }) }
+}
+
+/// `count` words into VRAM at byte `address`.
+pub let write_vram = (address: u16, words: ^u16, count: u16) -> void => {
+  set_address(VRAM_WRITE, address)
+  for i: u16 in 0..<count { write_word(unsafe { words.offset(i64(i))^ }) }
+}
+
+/// Point the data port at byte `address` of VRAM, for [write_word]s to follow — how the
+/// sprite table and the planes are written.
+pub let set_vram_address = (address: u16) -> void => set_address(VRAM_WRITE, address)
+
+/// A word to the data port: to where the last address was set, which then moves on two
+/// bytes.
+pub let write_word = (word: u16) -> void => unsafe { data_port().write_volatile(word) }
+
+/// Register `r` (0–23) set to `value` — for what the functions above do not cover.
+pub let set_register = (r: u8, value: u8) -> void =>
+  unsafe { control_port().write_volatile(0x8000 | (u16(r & 31) << 8) | u16(value)) }
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Registers 0–18 as `init` sets them: mode 5 with no interrupts; register 1 display
+/// off; the tables' addresses; the backdrop palette 0 colour 0; 40 cells; auto-increment
+/// 2; 64×32 planes; no window.
+const INIT_REGISTERS: [19]u8 = #[
+  0x04, 0x04, 0x30, 0x2C, 0x07, 0x78, 0x00, 0x00, 0x00, 0x00,
+  0xFF, 0x00, 0x81, 0x3F, 0x00, 0x02, 0x01, 0x00, 0x00,
+]
+
+/// Register 1 as last set, so turning the display on or off keeps the rest.
+var mode: u8 = 0x04
+
+/// The first word of an address command for each memory; the second carries the
+/// address's top two bits and the rest of the code.
+const VRAM_WRITE: u16 = 0x4000
+const CRAM_WRITE: u16 = 0xC000
+const VSRAM_WRITE: u16 = 0x4010
+
+/// Point the data port at `address` in the memory `code` names (VSRAM's code has a bit
+/// in the second word, which is why it is 4010).
+let set_address = (code: u16, address: u16) -> void => {
+  let port = control_port()
+  unsafe {
+    port.write_volatile((code & 0xC000) | (address & 0x3FFF))
+    port.write_volatile((code & 0x00F0) | (address >> 14))
+  }
+}
+
+/// A long to the data port: two words, high first, as the 68000 writes it.
+let write_long = (long: u32) -> void => unsafe { data_long_port().write_volatile(long) }
+
+/// The status word: bit 3 is set during a vertical blank.
+let status = () -> u16 => unsafe { control_port().read_volatile() }
+
+let control_port = pure () -> ^mut u16 => unsafe { pointer_at(0xC00004) }
+
+let data_port = pure () -> ^mut u16 => unsafe { pointer_at(0xC00000) }
+
+let data_long_port = pure () -> ^mut u32 => unsafe { pointer_at(0xC00000) }

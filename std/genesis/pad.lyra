@@ -1,0 +1,56 @@
+module std.genesis.pad
+//! The Genesis's control pads, read as the buttons held.
+//!
+//! ```
+//! import std.genesis.pad
+//!
+//! pad.init()
+//! let buttons = pad.read(1)
+//! if pad.held(buttons, pad.LEFT) { x -= 1 }
+//! ```
+//!
+//! **The 3-button read**: a pad shows six lines at a time, chosen by the TH line the game
+//! drives — with TH high, up, down, left, right, B and C; with TH low, A and Start (and up
+//! and down again). A line reads 0 while its button is held. A 6-button pad answers the
+//! same way when TH changes once a read, which is what this does.
+
+/// The buttons, as bits of what [read] answers.
+pub const UP: u16 = 0x0001
+pub const DOWN: u16 = 0x0002
+pub const LEFT: u16 = 0x0004
+pub const RIGHT: u16 = 0x0008
+pub const B: u16 = 0x0010
+pub const C: u16 = 0x0020
+pub const A: u16 = 0x0040
+pub const START: u16 = 0x0080
+
+/// Both ports set up for reading: TH an output the game drives. Call once, first.
+pub let init = () -> void => unsafe {
+  control(1).write_volatile(0x40)
+  control(2).write_volatile(0x40)
+  data_lines(1).write_volatile(0x40)
+  data_lines(2).write_volatile(0x40)
+}
+
+/// The buttons held on pad `port` (1 or 2), as a set of the bits above.
+pub let read = (port: u8) -> u16 => {
+  let p = data_lines(port)
+  unsafe {
+    p.write_volatile(0x40)
+    let high = p.read_volatile() // --CBRLDU
+    p.write_volatile(0x00)
+    let low = p.read_volatile() // --SA00DU
+    p.write_volatile(0x40)
+    u16((~high) & 0x3F) | (u16((~low) & 0x30) << 2)
+  }
+}
+
+/// Whether `button` is among `buttons`.
+pub let held = pure (buttons: u16, button: u16) -> bool => (buttons & button) != 0
+
+/// Pad `port`'s data lines (A10003, A10005) and its control register (A10009, A1000B).
+let data_lines = pure (port: u8) -> ^mut u8 =>
+  if port == 2 { unsafe { pointer_at(0xA10005) } } else { unsafe { pointer_at(0xA10003) } }
+
+let control = pure (port: u8) -> ^mut u8 =>
+  if port == 2 { unsafe { pointer_at(0xA1000B) } } else { unsafe { pointer_at(0xA10009) } }

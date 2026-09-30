@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — `std.genesis`: a game in Lyra that walks where the pad says
+
+`examples/genesis/walker.lyra` is the walk-and-move demo Vega's hand-assembled ROM does,
+written as a Lyra game on three library modules — `std.genesis.vdp`, `.pad`, `.sprites` —
+which are ordinary Lyra over `pointer_at` and the volatile methods. The test plays it in
+Sheliak and finds the hero centred, then pressed into the corner. Writing the library
+found two gaps that would have shaped every game:
+
+- **A `const` table was code, not data.** Inlined at each use, a 512-word tile table was
+  512 stores into a stack copy — 4.8 KB of code and 2 KB of the 4 KB stack. A `const` fixed
+  array of literals is now a constant global (const_data.go), and `arrayLValue` asks
+  `slotFor` rather than `l.locals`, so any module-level array is indexed and looped over in
+  place: the same table is 2 KB of ROM and no stack.
+- **`pad.LEFT` did not resolve**: a namespace import reached a module's functions and types
+  but not its constants, though `import pad.{ LEFT }` did. Both halves — the typechecker's
+  `moduleMemberType` and the backend's `namespaceBinding` — resolve a binding now, the
+  backend keyed from the declaration so a local of the same name cannot capture it.
+
 ### 09/30/26 — `lyrac build` makes a Genesis cartridge, and Lyra can reach its hardware
 
 `examples/genesis/backdrop.lyra` turns the screen blue: Lyra's IR compiled for the 68000 by

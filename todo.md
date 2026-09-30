@@ -847,9 +847,13 @@ sets V on every add. What stands between that and a ROM:
   `runtime/genesis` starts it, `pointer_at` and volatile access reach the hardware).
 - **[OPEN] Sizes are still `i64`** (next item) — the reason a game's `[]T` could not work
   even with an allocator. Fixed arrays and scalars are what a Genesis program has today.
-- **[OPEN] A Genesis layer in Lyra**: the VDP's registers, DMA, the sprite table, the pads,
-  V-blank — written over `pointer_at` and `write_volatile`, so a game says `vdp.set_backdrop(c)`
-  rather than `0x8700`. The engine's layers 1 and 2 (Vega's design) start here.
+- **[PARTIAL] A Genesis layer in Lyra**: `std.genesis.vdp`, `.pad` and `.sprites` (09/30)
+  run `examples/genesis/walker.lyra`. Next: DMA (needs a pointer's address as an integer),
+  planes and scrolling (name tables, a tilemap loader), the window, 6-button pads, and the
+  sound chips; then the engine layer over them (actors, animation from Vega's frames).
+- **[OPEN] Data needs const generics to be safe to pass**: `load_tiles(first, &HERO[0], 8)`
+  is `unsafe` at every call because a function cannot take `[N]u32` for any N. A function
+  generic over N (the Const generics section) makes it `load_tiles(first, HERO)`.
 - **[OPEN] Interrupt handlers in Lyra**: the vectors are the runtime's, and every exception
   but reset is the panic screen. V-blank wants a Lyra function the runtime's vector calls
   (saving registers, ending in `rte`) — an attribute, or a runtime table a program fills.

@@ -647,11 +647,30 @@ target = "genesis"
   needing the heap or the host at link time is refused by name (a module-level `[]T`
   initializer is the case E085 does not see yet). `examples/genesis/backdrop.lyra` is the
   smallest one.
+- **`std.genesis`** is the console's library, written over `pointer_at` and the volatile
+  methods (so it needs nothing the compiler does not already have):
+  - `std.genesis.vdp` — `init` (mode 5, 40 cells, SGDK's table layout, every memory cleared,
+    display off), `display_on`/`off`, `wait_vblank`, `rgb`, `set_color`, `load_palette`,
+    `set_backdrop`, `load_tiles`, `write_vram`, and `set_register` for the rest.
+  - `std.genesis.pad` — `init`, `read(port)` (the 3-button protocol; a 6-button pad answers
+    it), `held(buttons, pad.LEFT)` and the button bits.
+  - `std.genesis.sprites` — a list of `Sprite { x, y, width, height, tile, palette, … }` in RAM:
+    `clear`, `add`, and `show` in the vertical blank, which writes the VDP's table with the
+    links filled in.
+  - Data comes from `const` tables (below), passed as a pointer to the first element and a
+    count (`vdp.load_tiles(1, unsafe { &HERO[0] }, 8)`) until a function can take a fixed
+    array of any length. `examples/genesis/walker.lyra` is a whole game on it.
+- **A `const` fixed array of literals is data** (`#[…]`, `#[v; n]`, nested): one constant in
+  `.rodata` — ROM on a console — read in place, with an address (`&TABLE[i]`). Any other
+  `const` is inlined at each use, as before. Indexing or looping over any module-level array
+  addresses it in place rather than copying it to the stack.
 
 ### Imports
 
 - `import lib.{ listed }` admits `listed` only — no other exports, no types, no traits.
-- `import lib` binds `lib.x` and no bare names. An alias binds only its local name.
+- `import lib` binds `lib.x` and no bare names. An alias binds only its local name. `lib.x`
+  reaches a function, a type, **and a `const` or top-level `let`/`var`** (`pad.LEFT`,
+  `vdp.SCREEN_WIDTH`) — the last was "no member" until 09/30.
 - Resolution: **own scope → imports → prelude**. Using an export you didn't import names the fix (`add import lib.{ … }`), distinct from a missing `pub`.
 - **Every position that writes a type's name takes the rule**: parameter, return type, local annotation, struct field, `type` alias. It is one pass over the written occurrences (`TypeRefs`), not a check inside a resolver — until 09/22 it was the latter, and the first two were refused while the last three were not. A type a value merely *carries* across the boundary is untouched: `m.col` on a value from a constructor payload writes no name, so there is nothing to refuse.
 - **So does every position that writes a trait's name**: an impl head (`impl Bus for TestBus`), a `where` bound, a supertrait list, a `Trait::method` path. Each needs the trait imported, and each counts as a use of the import (no `lyra-W004`); implementing another module's private trait is `lyra-E028`. A trait reached only by dispatch (`x.area()`, an operator) writes no name and needs only its module loaded. Until 09/28 all four positions resolved an unimported public trait.
