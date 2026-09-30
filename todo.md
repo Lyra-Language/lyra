@@ -503,7 +503,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] An `if` expression is not a binary operand.** `"x" ++ if n > 2 { "a" } else { "b" }`
   and `1 + if c { 10 } else { 20 }` are syntax errors, though `unsafe { … }` already is an
   operand; the recovery then misreads the rest as a `let … else` and reports E074 and
-  undefined names. Parentheses work. Found 09/28 in Sheliak's test runner.
+  undefined names. Parentheses work. Found 09/28 in Sheliak's test runner. **`match` too**
+  (09/29, Sheliak's `--hold`): `held | match name { … }` reports "undefined identifier
+  match" and each arm's binding undefined.
 - **[OPEN] Should W001 exempt a local named like a prelude *receiver method*?** `let index
   = …` shadows the prelude's `index`, but `s.index("b")` still resolves — only the rarer
   free call `index(s, "b")` breaks. Sheliak's core met it three times (`count`, `first`,
