@@ -176,7 +176,8 @@ func runGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) in
 }
 
 // compileProgram optimizes the program's IR for the 68000 and compiles it to an object.
-// Everything but `main` is internalized first, so what the program does not reach — most
+// Everything but `main` and the interrupt entries (`@interrupt` handlers, which only the
+// runtime's vectors reach) is internalized first, so what the program does not reach — most
 // of the prelude, with its host calls — is dropped rather than linked.
 func compileProgram(tc m68kToolchain, ir []byte, work, opt string) ([]byte, error) {
 	ll := filepath.Join(work, "program.ll")
@@ -190,7 +191,7 @@ func compileProgram(tc m68kToolchain, ir []byte, work, opt string) ([]byte, erro
 		level = "O2"
 	}
 	if err := runTool(tc.tool("opt"), "-mtriple=m68k-unknown-elf",
-		"-passes=internalize,default<"+level+">", "-internalize-public-api-list=main",
+		"-passes=internalize,default<"+level+">", "-internalize-public-api-list=main,__lyra_interrupt_vblank,__lyra_interrupt_hblank",
 		ll, "-o", bc); err != nil {
 		return nil, err
 	}

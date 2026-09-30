@@ -60,6 +60,12 @@ target without a heap; W026 is a separate arithmetic walk over `MathBinaryOpExpr
 unbounded callback is not assumed to reach the host). A new charging arm calls `c.charge` beside
 `found |=`, or the target check goes quiet for that construct.
 
+`CheckInterruptHandlers` (`interrupts.go`, driver, beside it) is `lyra-E087`: an
+`@interrupt` function is top-level, `() -> void`, not generic, one per kind, and never on the
+host. The collector records the kind on `LambdaExpr.Interrupt`; the backend exports the
+function under the runtime's name for it and makes the globals its body writes volatile
+(`backend/llvm/interrupts.go`).
+
 ### Memoized per-callable inputs
 
 | fact | cached as |

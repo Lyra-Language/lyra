@@ -651,7 +651,7 @@ target = "genesis"
 - **`lyrac build` for `genesis` makes a cartridge** (`game.bin`): the program's IR compiled for
   the 68000 by an M68k LLVM (`tools/llvm-m68k.sh` builds one into `~/Dev/llvm-m68k`, or
   `$LYRA_M68K_LLVM`), linked with `runtime/genesis` — the vectors, start-up (TMSS, `.data`
-  copied to RAM, `.bss` zeroed, `main(0, NULL)`), `memcpy` and friends, `__mulsi3` — and
+  copied to RAM, `.bss` zeroed, interrupts unmasked, `main(0, NULL)`), `memcpy` and friends, `__mulsi3` — and
   compiler-rt's helpers where the program needs them. **A panic, or any CPU fault, turns the
   screen red and halts.** `lyrac run` builds the ROM and plays it in Sheliak (`$SHELIAK`, else
   `sheliak` on the `PATH`), the arguments after `--` going to the emulator. Anything still
@@ -662,7 +662,8 @@ target = "genesis"
   methods (so it needs nothing the compiler does not already have):
   - `std.genesis.vdp` — `init` (mode 5, 40 cells, SGDK's table layout, every memory cleared,
     display off), `display_on`/`off`, `wait_vblank`, `rgb`, `set_color`, `load_palette`,
-    `set_backdrop`, `load_tiles`, `write_vram`, and `set_register` for the rest.
+    `set_backdrop`, `load_tiles`, `write_vram`, `enable_vblank_interrupt`/`disable_…`,
+    `enable_hblank_interrupt(lines)`/`disable_…`, and `set_register` for the rest.
   - `std.genesis.pad` — `init`, `read(port)` (the 3-button protocol; a 6-button pad answers
     it), `held(buttons, pad.LEFT)` and the button bits.
   - `std.genesis.sprites` — a list of `Sprite { x, y, width, height, tile, palette, … }` in RAM:
@@ -671,6 +672,17 @@ target = "genesis"
   - Data comes from `const` tables (below), passed whole and by reference —
     `vdp.load_tiles(1, HERO)` takes a `ref [N]u32` of any length (a `const` generic).
     `examples/genesis/walker.lyra` is a whole game on it.
+- **`@interrupt(vblank)` / `@interrupt(hblank)`** on a top-level `() -> void` function makes it
+  what the console runs on that interrupt, once the program enables it
+  (`vdp.enable_vblank_interrupt()`, `vdp.enable_hblank_interrupt(lines)`). One per kind, not
+  generic, and never on the host (`lyra-E087`). The runtime's vector enters through a stub
+  that saves the scratch registers, calls the handler — an ordinary function — and returns
+  with `rte`; with no handler, the interrupt does nothing.
+  - **A module-level `var` the handler writes is volatile everywhere** — its every load and
+    store in and out of the handler — so `frames += 1` in the handler and
+    `for frames < 30 {}` in `main` is correct as written. The set is what the handler's own
+    body writes (`=`, `+=`, `&mut`); a variable written only in a function it calls must be
+    read with `read_volatile`. `examples/genesis/vblank.lyra`.
 - **A `const` fixed array of literals is data** (`#[…]`, `#[v; n]`, nested): one constant in
   `.rodata` — ROM on a console — read in place, with an address (`&TABLE[i]`). Any other
   `const` is inlined at each use, as before. Indexing or looping over any module-level array
@@ -839,7 +851,7 @@ On a `struct`: the value names a foreign resource released by `fn`. A binding le
 - Field reads are borrows.
 - Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
 - `struct` only (`newtype Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
-- **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It is the only attribute a `let` takes; any other is an error.
+- **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It and `@interrupt` are the attributes a `let` takes; any other is an error.
 - **Releasing a borrowed resource is `lyra-W025`** — `unload_font(default_font())`, directly or through a binding or an unwrap: it frees what the lender still uses.
 
 ### `@symbol("Name")`

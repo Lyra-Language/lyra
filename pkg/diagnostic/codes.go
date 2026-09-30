@@ -1025,6 +1025,11 @@ const (
 	// ignored: an ignored setting is a program checked for the wrong machine.
 	CodeProjectConfig = "lyra-E086"
 
+	// CodeInterruptHandler: an `@interrupt(vblank)` / `@interrupt(hblank)` function that
+	// cannot be one — not top level, not `() -> void`, generic, a second of its kind, or in
+	// a program built for the host (checker/interrupts.go, 09/30).
+	CodeInterruptHandler = "lyra-E087"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

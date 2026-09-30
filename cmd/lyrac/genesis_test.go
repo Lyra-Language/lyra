@@ -214,3 +214,23 @@ func screenOf(t *testing.T, romPath string) string {
 	t.Helper()
 	return runROM(t, romPath, "10", "").dominant()
 }
+
+// TestGenesis_AVBlankHandlerRuns plays examples/genesis/vblank.lyra: its `@interrupt(vblank)`
+// handler counts frames, and `main` waits on the count in a plain loop — so the screen
+// turns from red to blue only if the runtime's vector reaches the handler, the handler
+// preserves what it interrupts, and the shared variable is read afresh each time round.
+func TestGenesis_AVBlankHandlerRuns(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	out := filepath.Join(t.TempDir(), "vblank.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", out, filepath.Join(root, "examples", "genesis", "vblank.lyra")); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	if got := runROM(t, out, "30", "").dominant(); got != "ff0000" {
+		t.Errorf("after 30 frames the screen is %s, want still red (ff0000)", got)
+	}
+	if got := runROM(t, out, "100", "").dominant(); got != "0000ff" {
+		t.Errorf("after 100 frames the screen is %s, want blue (0000ff) — the handler has run 30 times", got)
+	}
+}

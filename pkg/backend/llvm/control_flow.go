@@ -890,7 +890,7 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	// loads from it. For a by-reference `mut` parameter the slot is the caller's
 	// storage, so this store is exactly how a whole-binding reassignment reaches
 	// the caller.
-	block.NewStore(rhsVal, slot)
+	block.NewStore(rhsVal, slot).Volatile = l.sharedWithInterrupt(vrs.Name, vrs.GetLocation(), slot)
 	return block, nil
 }
 

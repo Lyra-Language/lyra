@@ -1,0 +1,28 @@
+// A V-blank interrupt handler: the screen is red until the handler has run thirty times —
+// half a second — and then blue.
+//
+//   lyrac run vblank.lyra
+//
+// `@interrupt(vblank)` makes `each_frame` what the console runs at the start of every
+// vertical blank, once `vdp.enable_vblank_interrupt()` has asked the VDP for it. It and the
+// main loop share `frames`, and nothing more is needed: a module-level `var` an interrupt
+// handler writes is read and written volatile everywhere, so the waiting loop sees each new
+// count rather than a copy taken before the loop began.
+
+import std.genesis.vdp
+
+/// Vertical blanks since the interrupt was enabled; the handler's to advance.
+var frames: u16 = 0
+
+@interrupt(vblank)
+let each_frame = () -> void => { frames += 1 }
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 0, vdp.rgb(7, 0, 0))
+  vdp.display_on()
+  vdp.enable_vblank_interrupt()
+  for frames < 30 {}
+  vdp.set_color(0, 0, vdp.rgb(0, 0, 7))
+  for {}
+}

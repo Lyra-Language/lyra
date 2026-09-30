@@ -69,6 +69,41 @@ pub let display_off = () -> void => {
   set_register(1, mode)
 }
 
+/// Have the VDP interrupt at the start of every vertical blank, running the program's
+/// `@interrupt(vblank)` function — the place for work that must happen once a frame
+/// whatever the main loop is doing (a music driver's tick, a frame counter):
+///
+/// ```
+/// @interrupt(vblank)
+/// let each_frame = () -> void => { frames += 1 }
+/// ```
+///
+/// A module-level `var` the handler writes is shared safely with the main loop: the
+/// compiler makes every access to it volatile, so a loop waiting on it sees each change.
+/// One written only in a function the handler calls is not seen that way — read it with
+/// `read_volatile`, or write it in the handler itself.
+pub let enable_vblank_interrupt = () -> void => {
+  mode = mode | 0x20
+  set_register(1, mode)
+}
+
+/// Stop the vertical blank interrupt.
+pub let disable_vblank_interrupt = () -> void => {
+  mode = mode & 0xDF
+  set_register(1, mode)
+}
+
+/// Have the VDP interrupt every `lines` lines of the picture (and again at its top),
+/// running the program's `@interrupt(hblank)` function — for effects that change the
+/// picture partway down it (a colour, a scroll).
+pub let enable_hblank_interrupt = (lines: u8) -> void => {
+  set_register(10, lines)
+  set_register(0, 0x14)
+}
+
+/// Stop the horizontal interrupt.
+pub let disable_hblank_interrupt = () -> void => set_register(0, 0x04)
+
 /// Wait for the next vertical blank to begin — the time between frames when a game
 /// changes what is shown, once a frame (60 times a second on an NTSC console).
 pub let wait_vblank = () -> void => {

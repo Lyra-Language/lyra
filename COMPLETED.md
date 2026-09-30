@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — V-blank and H-blank interrupt handlers in Lyra
+
+`@interrupt(vblank)` on a top-level `() -> void` function makes it what the Genesis runs at
+each vertical blank; `examples/genesis/vblank.lyra` counts frames in one and turns the
+screen blue after thirty, and the Sheliak test checks the colour before and after.
+
+- **The handler is an ordinary function, entered through a stub.** LLVM's M68k interrupt
+  convention (`cc 101`) returns with `rte` but saves neither the register it clobbered nor
+  the ones its callees may, so the runtime's vector points at a naked C stub — `movem` the
+  scratch registers, `jsr` the handler, restore, `rte` — and the backend exports the handler
+  under a fixed name (`__lyra_interrupt_vblank`) that replaces the runtime's weak
+  do-nothing one; `pkg/rom` learned weak symbols for it.
+- **A handler's shared state had to be volatile or the obvious program hangs**: `main`
+  waiting on `for frames < 30 {}` was compiled to read `frames` once. Rather than teach
+  students `read_volatile`, a module-level `var` the handler's body writes is volatile at
+  every access, in the handler and out.
+- **LLVM's M68k assembler** read `move.w #0x2000, %sr` (interrupts on, before `main`) as a
+  move to d0; the runtime writes it as words.
+
 ### 09/30/26 — const generics: `load_tiles(first, HERO)` takes a table of any length
 
 `std.genesis`'s loaders took a pointer and a count, `unsafe` at every call, because no

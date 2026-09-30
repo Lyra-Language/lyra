@@ -546,6 +546,12 @@ of Markdown.
   (`lyra-genesis/`), and linked by `pkg/rom` with the program and compiler-rt's helpers.
   Every Genesis object goes through `llc -code-model=medium -relocation-model=static`: the
   default small model stores through a PC-relative destination, which no 68000 accepts.
+  The runtime's interrupt entries are naked C with inline `movem`/`rte`, and its weak
+  `__lyra_interrupt_vblank`/`_hblank` yield to a program's `@interrupt` functions (the
+  backend exports them under those names; `pkg/rom` lets a strong definition replace a weak
+  one). Not LLVM's M68k interrupt convention (`cc 101`): it returns with `rte` but does not
+  save the scratch registers it or its callees clobber. And LLVM's M68k assembler reads
+  `move.w #…, %sr` as a move to d0, so the runtime writes that instruction as `.short`s.
 - **`build.sh` builds `build/lib/liblyra-menubar.a`**, `bindings.menubar`'s C half (the
   AppKit shim on macOS, a do-nothing stub elsewhere). `lyrac` passes `-L<root>/lib`
   (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH`.

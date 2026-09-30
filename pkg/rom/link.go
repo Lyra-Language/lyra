@@ -177,6 +177,16 @@ func (o *object) defines() []string {
 	return out
 }
 
+// isWeak reports whether obj's definition of name is weak.
+func (o *object) isWeak(name string) bool {
+	for _, s := range o.symbols {
+		if s.Name == name && s.Section != elf.SHN_UNDEF {
+			return elf.ST_BIND(s.Info) == elf.STB_WEAK
+		}
+	}
+	return false
+}
+
 // needs reports the global symbols obj uses and does not define.
 func (o *object) needs() []string {
 	var out []string
@@ -195,7 +205,14 @@ func pullLibrary(objs, lib []*object) ([]*object, error) {
 	for _, o := range objs {
 		for _, name := range o.defines() {
 			if prev, dup := defined[name]; dup {
-				return nil, fmt.Errorf("%s is defined twice: in %s and %s", name, prev.name, o.name)
+				// A weak definition yields to a strong one — the runtime's do-nothing
+				// interrupt handler to the program's `@interrupt` function.
+				if o.isWeak(name) {
+					continue
+				}
+				if !prev.isWeak(name) {
+					return nil, fmt.Errorf("%s is defined twice: in %s and %s", name, prev.name, o.name)
+				}
 			}
 			defined[name] = o
 		}
@@ -305,20 +322,32 @@ func place(objs []*object, layout Layout) (*Image, error) {
 		"__bss_start":  bssStart,
 		"__bss_end":    ram,
 	}
-	for _, o := range objs {
-		for _, sym := range o.symbols {
-			if elf.ST_BIND(sym.Info) == elf.STB_LOCAL || sym.Section == elf.SHN_UNDEF || sym.Name == "" {
-				continue
+	// Strong definitions first, then weak ones only where nothing strong defined the name:
+	// a weak symbol is a default the program may replace.
+	weakPass := false
+	for pass := 0; pass < 2; pass++ {
+		for _, o := range objs {
+			for _, sym := range o.symbols {
+				if elf.ST_BIND(sym.Info) == elf.STB_LOCAL || sym.Section == elf.SHN_UNDEF || sym.Name == "" {
+					continue
+				}
+				if (elf.ST_BIND(sym.Info) == elf.STB_WEAK) != weakPass {
+					continue
+				}
+				addr, err := o.symbolAddress(sym)
+				if err != nil {
+					return nil, err
+				}
+				if _, dup := globals[sym.Name]; dup {
+					if weakPass {
+						continue
+					}
+					return nil, fmt.Errorf("%s is defined twice (again in %s)", sym.Name, o.name)
+				}
+				globals[sym.Name] = addr
 			}
-			addr, err := o.symbolAddress(sym)
-			if err != nil {
-				return nil, err
-			}
-			if _, dup := globals[sym.Name]; dup {
-				return nil, fmt.Errorf("%s is defined twice (again in %s)", sym.Name, o.name)
-			}
-			globals[sym.Name] = addr
 		}
+		weakPass = true
 	}
 	if _, ok := globals[layout.Entry]; !ok {
 		return nil, fmt.Errorf("nothing defines %s, the program's entry", layout.Entry)

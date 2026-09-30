@@ -854,9 +854,11 @@ sets V on every add. What stands between that and a ROM:
 - **[OPEN] A `#[…]` literal argument does not narrow to the parameter's element type**:
   `sum(#[1, 2, 3])` against `ref [3]u16` is "cannot assign StaticArray<i64, 3>", where a
   `let` annotation narrows the same literal. Found 09/30 beside const generics.
-- **[OPEN] Interrupt handlers in Lyra**: the vectors are the runtime's, and every exception
-  but reset is the panic screen. V-blank wants a Lyra function the runtime's vector calls
-  (saving registers, ending in `rte`) — an attribute, or a runtime table a program fills.
+- **[DONE 09/30] Interrupt handlers in Lyra**: `@interrupt(vblank)` / `@interrupt(hblank)`;
+  a `var` the handler writes is volatile everywhere. Still open: variables written by a
+  function the handler *calls* (not seen — read them with `read_volatile`), masking
+  interrupts around a critical section (`move #$2700, sr` from Lyra), and the level-2
+  external interrupt (the pads' TH line).
 - **[OPEN] The LSP does not watch `lyra.toml`**: editing it takes effect on the next edit of
   a source file. Register a `workspace/didChangeWatchedFiles` watcher and re-publish.
 - **[OPEN] A top-level initializer is not target-checked** (`let table = [1, 2]` at module

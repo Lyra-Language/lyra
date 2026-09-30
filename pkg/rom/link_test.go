@@ -128,3 +128,25 @@ func TestGenesisCartridge_Header(t *testing.T) {
 		t.Errorf("ROM end %#x, want %#x", word32(rom, 0x1A4), len(rom)-1)
 	}
 }
+
+// A weak definition is a default: linked when nothing else defines the name, replaced —
+// not a duplicate — when something does (the runtime's `__lyra_interrupt_vblank` and a
+// program's `@interrupt(vblank)` function).
+func TestLink_AStrongDefinitionReplacesAWeakOne(t *testing.T) {
+	required := []Object{fixture(t, "start"), fixture(t, "program"), fixture(t, "weak")}
+	library := []Object{fixture(t, "helper")}
+	alone, err := Link(required, library, GenesisLayout)
+	if err != nil {
+		t.Fatalf("the weak default alone: %v", err)
+	}
+	both, err := Link(append(required, fixture(t, "strong")), library, GenesisLayout)
+	if err != nil {
+		t.Fatalf("a strong definition beside the weak one must not be a duplicate: %v", err)
+	}
+	if alone.Symbols["hook"] == both.Symbols["hook"] {
+		t.Errorf("hook is at %#x either way; the strong definition should replace the weak one", both.Symbols["hook"])
+	}
+	if _, err := Link(append(required, fixture(t, "strong"), fixture(t, "strong")), library, GenesisLayout); err == nil {
+		t.Errorf("two strong definitions are still a duplicate")
+	}
+}

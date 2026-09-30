@@ -673,6 +673,11 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		slot, elem = loc.ptr, et
 	}
 	cur := block.NewLoad(elem, slot)
+	shared := false
+	if ident, isIdent := e.Left.(*ast.IdentifierExpr); isIdent {
+		shared = l.sharedWithInterrupt(ident.Name, e.GetLocation(), slot)
+	}
+	cur.Volatile = shared
 	rhs, block, err := l.lowerExpr(block, e.Right)
 	if err != nil {
 		return nil, nil, err
@@ -689,7 +694,7 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		if err != nil {
 			return nil, nil, err
 		}
-		block.NewStore(result, slot)
+		block.NewStore(result, slot).Volatile = shared
 		return result, block, nil
 	}
 	var result value.Value
@@ -711,7 +716,7 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	if err != nil {
 		return nil, nil, err
 	}
-	block.NewStore(result, slot)
+	block.NewStore(result, slot).Volatile = shared
 	// A compound assignment yields no value (see the typechecker's void result).
 	return nil, block, nil
 }

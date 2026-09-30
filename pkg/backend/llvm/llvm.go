@@ -264,6 +264,9 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	if err := l.forEachUserFunction(res.Program, entry.Lambda, l.declareFunction); err != nil {
 		return nil, err
 	}
+	if err := l.emitInterruptEntries(res.Program); err != nil {
+		return nil, err
+	}
 	// Every *nested* lambda is lifted to a function of its own (closures.go), and
 	// like the named ones they are all declared before any body so a creation site
 	// can reference one. Their bodies are lowered last, after every enclosing
@@ -378,6 +381,9 @@ type lowerer struct {
 	// initialized in.
 	globals     map[string]*ir.Global
 	globalDecls []*ast.VarDeclStmt
+	// interruptShared are the module-level `var`s an `@interrupt` handler writes, keyed
+	// as l.globals is: every load and store of one is volatile (interrupts.go).
+	interruptShared map[string]bool
 	// staticConstDecls are the `const` tables emitted as constant globals (const_data.go).
 	staticConstDecls    []*ast.VarDeclStmt
 	traitMethods        map[string]*ir.Func            // emitted trait-impl methods, keyed by mangled symbol
@@ -945,7 +951,9 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 			if err != nil {
 				return nil, nil, err
 			}
-			return block.NewLoad(elem, slot), block, nil
+			load := block.NewLoad(elem, slot)
+			load.Volatile = l.sharedWithInterrupt(e.Name, e.GetLocation(), slot)
+			return load, block, nil
 		}
 		// A reference to a top-level `const`: inline its value expression (a const is
 		// a compile-time constant, immutable, with no storage of its own). The value

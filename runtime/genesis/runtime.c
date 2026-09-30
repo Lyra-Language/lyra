@@ -23,17 +23,40 @@ extern int main(int argc, char **argv);
 
 void _start(void) __attribute__((noreturn));
 void __lyra_fault(void) __attribute__((noreturn));
+void __lyra_hblank_entry(void);
+void __lyra_vblank_entry(void);
+void __lyra_ignore_interrupt(void);
+
+/*
+ * The interrupt handlers a program may define — a Lyra function marked `@interrupt(vblank)`
+ * or `@interrupt(hblank)` is exported under these names. These weak ones do nothing, so a
+ * program without a handler needs none, and one with a handler replaces them at the link.
+ */
+__attribute__((weak)) void __lyra_interrupt_hblank(void) {}
+__attribute__((weak)) void __lyra_interrupt_vblank(void) {}
 
 /*
  * The vectors: the stack at the top of RAM (FFFFFF; 01000000 wraps onto it), reset at
- * _start, every other exception at __lyra_fault. `used` because nothing refers to it —
+ * _start, the interrupts at their entries, every other exception at __lyra_fault. `used` because nothing refers to it —
  * the linker places the .vectors section at address 0.
  */
 __attribute__((section(".vectors"), used))
 void (*const __vectors[64])(void) = {
     (void (*)(void))0x01000000,
     _start,
-    [2 ... 63] = __lyra_fault,
+    [2 ... 23] = __lyra_fault,
+    /* The spurious interrupt and the unused autovectors are ignored, not faults: a
+       level-2 external interrupt (the pad port's TH line) can arrive without a game
+       asking for it. */
+    [24] = __lyra_ignore_interrupt,
+    [25] = __lyra_ignore_interrupt,
+    [26] = __lyra_ignore_interrupt,
+    [27] = __lyra_ignore_interrupt,
+    [28] = __lyra_hblank_entry, /* level 4: the VDP's horizontal interrupt */
+    [29] = __lyra_ignore_interrupt,
+    [30] = __lyra_vblank_entry, /* level 6: the VDP's vertical interrupt */
+    [31] = __lyra_ignore_interrupt,
+    [32 ... 63] = __lyra_fault,
 };
 
 /*
@@ -53,9 +76,39 @@ void _start(void) {
     for (u16 *p = __bss_start; p < __bss_end;) {
         *p++ = 0;
     }
+    /* Interrupts on for the program: the CPU takes any the VDP raises, and the VDP raises
+       none until the program enables one (std.genesis.vdp). `move #$2000, sr` as words —
+       LLVM's M68k assembler reads `move.w #…, %sr` as a move to d0. */
+    __asm__ volatile(".short 0x46fc, 0x2000");
     main(0, 0);
     for (;;) {
     }
+}
+
+/*
+ * An interrupt's entry: the scratch registers a Lyra function may clobber (d0, d1, a0, a1)
+ * saved, the handler called, and `rte`. The handler is an ordinary function — its own
+ * convention preserves d2–d7 and a2–a6 — rather than one compiled with LLVM's M68k
+ * interrupt convention, which returns with rte but does not save the scratch registers it
+ * or its callees clobber. Naked: the whole body is this, with no frame of its own.
+ */
+__attribute__((naked)) void __lyra_vblank_entry(void) {
+    __asm__ volatile("movem.l %d0-%d1/%a0-%a1, -(%sp)\n\t"
+                     "jsr __lyra_interrupt_vblank\n\t"
+                     "movem.l (%sp)+, %d0-%d1/%a0-%a1\n\t"
+                     "rte");
+}
+
+__attribute__((naked)) void __lyra_hblank_entry(void) {
+    __asm__ volatile("movem.l %d0-%d1/%a0-%a1, -(%sp)\n\t"
+                     "jsr __lyra_interrupt_hblank\n\t"
+                     "movem.l (%sp)+, %d0-%d1/%a0-%a1\n\t"
+                     "rte");
+}
+
+/* An interrupt nothing handles: return to what it interrupted. */
+__attribute__((naked)) void __lyra_ignore_interrupt(void) {
+    __asm__ volatile("rte");
 }
 
 /*

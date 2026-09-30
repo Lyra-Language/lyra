@@ -36,12 +36,16 @@ type LambdaExpr struct {
 	// from the binding for the reason the modifiers are: the pass that reads it has the
 	// callee's lambda, not its declaration.
 	ReturnsBorrowed bool
-	IsUnsafe        bool
-	IsPure          bool
-	IsDet           bool
-	IsNoAlloc       bool
-	IsAsync         bool
-	IsGenerator     bool
+	// Interrupt is `@interrupt(vblank)` or `@interrupt(hblank)` on the declaration: the
+	// function a console runs on that interrupt (checker.CheckInterruptHandlers; exported
+	// by the backend as `__lyra_interrupt_<kind>`, which the runtime's entry calls).
+	Interrupt   string
+	IsUnsafe    bool
+	IsPure      bool
+	IsDet       bool
+	IsNoAlloc   bool
+	IsAsync     bool
+	IsGenerator bool
 	// GenericBounds are the `where` bounds of the declaration this lambda is the
 	// value of, keyed by type-parameter name — lifted here by the collector exactly
 	// as the leading modifiers are, because the bounds are written on the *binding*

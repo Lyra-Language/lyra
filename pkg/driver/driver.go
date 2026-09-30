@@ -741,6 +741,7 @@ func checkTarget(res *Result, units []modules.Unit, tt *typetable.TypeTable) []d
 	entry := units[len(units)-1]
 	tgt, problem := target.ForFile(entry.File)
 	res.Target = tgt
+	interrupts := checker.CheckInterruptHandlers(res.Program, tgt)
 	if problem != nil {
 		where := problem.Path
 		if problem.Line > 0 {
@@ -760,5 +761,5 @@ func checkTarget(res *Result, units []modules.Unit, tt *typetable.TypeTable) []d
 		}
 	}
 	inScope := func(file string) bool { return !library[file] }
-	return checker.CheckTarget(res.Program, res.SymbolTable, res.ScopeTable, tt, res.MethodTable, res.Captures, tgt, inScope)
+	return append(interrupts, checker.CheckTarget(res.Program, res.SymbolTable, res.ScopeTable, tt, res.MethodTable, res.Captures, tgt, inScope)...)
 }

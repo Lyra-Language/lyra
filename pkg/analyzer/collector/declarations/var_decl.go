@@ -2,6 +2,7 @@ package declarations
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -329,9 +330,13 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 				continue
 			}
 			name := ctx.NodeText(nameNode)
+			if name == "interrupt" {
+				collectInterruptAttribute(attr, value, ctx)
+				continue
+			}
 			if name != "borrowed" {
 				ctx.AddError(attr, diag.SeverityError,
-					"unknown attribute `@%s` on a declaration; the only one is `@borrowed`, on a function", name)
+					"unknown attribute `@%s` on a declaration; a function takes `@borrowed` or `@interrupt(vblank)`", name)
 				continue
 			}
 			if cst.Field(attr, "args") != nil {
@@ -346,4 +351,26 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 			lambda.ReturnsBorrowed = true
 		}
 	}
+}
+
+// collectInterruptAttribute reads `@interrupt(vblank)` / `@interrupt(hblank)`: the function a
+// console runs on its video chip's vertical or horizontal interrupt. Whether it may be one
+// — top level, `() -> void`, a console target — is checker.CheckInterruptHandlers'.
+func collectInterruptAttribute(attr *sitter.Node, value ast.Expression, ctx *collector_ctx.Ctx) {
+	lambda, ok := value.(*ast.LambdaExpr)
+	if !ok {
+		ctx.AddError(attr, diag.SeverityError, "`@interrupt` marks the function an interrupt runs, so it goes on a function declaration")
+		return
+	}
+	args := cst.Field(attr, "args")
+	kind := ""
+	if args != nil {
+		kind = strings.Trim(ctx.NodeText(args), "() \t")
+	}
+	if kind != "vblank" && kind != "hblank" {
+		ctx.AddError(attr, diag.SeverityError,
+			"`@interrupt` takes the interrupt: `@interrupt(vblank)` (each frame's vertical blank) or `@interrupt(hblank)` (every few lines, as register 10 sets)")
+		return
+	}
+	lambda.Interrupt = kind
 }
