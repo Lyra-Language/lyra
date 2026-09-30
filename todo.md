@@ -833,6 +833,34 @@ emittable constants.
   computed generic parameters.
 - Driver: user constraint predicates, or a library needing to ship a precomputed table.
 
+## The 68000 — Lyra for the Genesis
+
+The route to Vega's engine (a Lyra game compiled for the console): LLVM's experimental M68k
+backend, built by `vega/tools/llvm-m68k.sh`. **Probed 09/29**: the IR `lyrac --emit-llvm`
+writes compiles with `llc -mtriple=m68k-unknown-elf -mcpu=M68000 -code-model=medium
+-relocation-model=static` — the whole prelude, 64-bit and float included — and an `i16`
+`pure noalloc` function comes out tight: each overflow check is one `bvs`, as the 68000
+sets V on every add. What stands between that and a ROM:
+
+- **[OPEN] A target in `lyrac`** (`--target genesis`): the triple, the flags above, and no
+  host `clang` link — Vega links (it already lays out the cartridge; three relocation types).
+- **[OPEN] Sizes are `i64`**: array lengths, capacities and RC counts, and `malloc(i64)` is
+  called with two longs. On a 16/32-bit CPU with 64 KB of RAM a length wants the target's
+  word — a `usize`-like width chosen per target, which `SizeAndAlign` and the runtime's
+  layouts must follow.
+- **[OPEN] The runtime's host dependencies**: `main`'s `program_args` wrapper allocates, and
+  panic writes with `write`/`exit`. A console needs its own entry and a panic that shows
+  something and halts; `malloc`/`memcpy`/`memcmp` either come from a tiny runtime or are
+  refused by a console profile (`noalloc` on the frame loop).
+- **[OPEN] Compiler helpers**: 64-bit multiply/divide and soft float (`__muldi3`,
+  `__muldf3`, …) — compiler-rt's generic C builds with the M68k clang and is permissive.
+- **[OPEN] Untyped loop variables default to `i64`** (09/29) — emulated, and slow, on the
+  68000. A console profile should steer to `i16`/`i32`, or make the default per target.
+- **[OPEN] Memory-mapped I/O needs volatile reads and writes** (the VDP ports, the pads):
+  LLVM may otherwise merge or drop them.
+- **[OPEN] Report the small-code-model store upstream**: `counter = v` in C becomes
+  `move.l (4,%sp), (counter,%pc)`, a PC-relative destination, under LLVM 22.1.8.
+
 ## Target introspection
 
 - **[IDEA] `size_of::<t>()` / `align_of::<t>()`** (plus stride) — answerable from
