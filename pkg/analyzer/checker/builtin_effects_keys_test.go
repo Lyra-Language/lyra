@@ -26,6 +26,7 @@ func TestBuiltinEffects_KeySetIsPinned(t *testing.T) {
 	want := []string{
 		"dir_names",
 		"panic",
+		"pointer_at",
 		"print",
 		"println",
 		"program_arg",

@@ -1,0 +1,2 @@
+# Everything in this directory is built for the Genesis: lyrac build backdrop.lyra
+target = "genesis"

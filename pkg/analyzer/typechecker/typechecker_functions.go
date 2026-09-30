@@ -899,6 +899,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinBaseReadoutFn(ident.Name) {
 			return tc.inferBaseReadoutCall(call)
 		}
+		if isBuiltinPointerAtFn(ident.Name) {
+			return tc.inferPointerAtCall(call)
+		}
 		if isBuiltinRandomSeedFn(ident.Name) {
 			if len(call.Arguments) != 0 {
 				tc.addError(call.GetLocation(), SeverityError,
@@ -1871,6 +1874,23 @@ func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string,
 // `xs.offset(n)` are the same three tokens, and a name-keyed check would either refuse
 // both or neither.
 func (tc *TypeChecker) requireUnsafeBuiltin(recv types.Type, name string, member *ast.MemberExpr) {
+	// A volatile write needs `^mut`, as `p^ = v` does — checked here, beside the other
+	// pointer-builtin rule, because both call sites of a builtin method run this.
+	if ptr, isPtr := recv.(types.RawPointerType); isPtr && name == "write_volatile" && !ptr.IsMut {
+		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeImmutablePointerWrite,
+			"`write_volatile` writes through %s, which is read-only; it needs a `^mut` pointer", ptr)
+	}
+	// A volatile access is to a scalar — a register is one — so nothing read or written
+	// that way owns a reference the access would have to retain or release.
+	if ptr, isPtr := recv.(types.RawPointerType); isPtr && (name == "read_volatile" || name == "write_volatile") {
+		pointee := types.StripNewtype(tc.resolveTypeIfKnown(ptr.Pointee, member.GetLocation()))
+		_, isPrim := pointee.(types.PrimitiveType)
+		_, isPtrPointee := pointee.(types.RawPointerType)
+		if !isPrim && !isPtrPointee || types.IsString(pointee) {
+			tc.addError(member.GetLocation(), SeverityError,
+				"`%s` reads or writes a number, a bool or a pointer; %s points at %s", name, ptr, ptr.Pointee)
+		}
+	}
 	if tc.inUnsafe {
 		return
 	}
@@ -1881,6 +1901,12 @@ func (tc *TypeChecker) requireUnsafeBuiltin(recv types.Type, name string, member
 		}
 		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
 			"pointer arithmetic with `offset` requires an `unsafe` block or function")
+	case "read_volatile", "write_volatile":
+		if _, isPtr := recv.(types.RawPointerType); !isPtr {
+			return
+		}
+		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+			"`%s` reads or writes through a raw pointer, so it requires an `unsafe` block or function", name)
 	case "decode_utf8":
 		if _, isPtr := recv.(types.RawPointerType); !isPtr {
 			return

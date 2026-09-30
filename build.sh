@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Build the compiler and language server into build/, laid out the way an install is:
-# the binaries with `std/` and `bindings/` beside them.
+# the binaries with `std/`, `bindings/` and `runtime/` beside them (`runtime/genesis` is the
+# start-up and support code `lyrac build` links into every Genesis ROM).
 #
 #   ./build.sh
 #
@@ -33,7 +34,7 @@ go build -o "$OUT/lyrac" ./cmd/lyrac
 go build -o "$OUT/lyra-lsp" ./cmd/lyra-lsp
 
 # Recreated each time so neither can survive as a stale copy if its source ever moves.
-for dir in std bindings; do
+for dir in std bindings runtime; do
   rm -f "$OUT/$dir"
   ln -s "../$dir" "$OUT/$dir"
 done

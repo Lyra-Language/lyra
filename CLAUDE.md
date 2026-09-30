@@ -435,6 +435,7 @@ such changes on a user module.
 | `pkg/analyzer/ownership` | Retain/release placement; Perceus | [README](pkg/analyzer/ownership/README.md) |
 | `pkg/modules` | Import resolution, namespacing, implicit prelude | [README](pkg/modules/README.md) |
 | `pkg/target` | What a program is compiled for: `lyra.toml` lookup, the target table (`host`, `genesis`) | below |
+| `pkg/rom` | A small ELF linker for 68000 objects, and the Genesis cartridge layout and header | below |
 | `pkg/driver` | The reusable front-end pipeline | below |
 | `pkg/abi` | C calling conventions per target | below |
 | `pkg/backend` | `Backend` interface; FFI notes | [FFI.md](pkg/backend/FFI.md) |
@@ -491,6 +492,19 @@ analysis. `backend/llvm/tui.go` and `backend/llvm/dirent.go` are the **only** `r
 consumers (`TIOCGWINSZ`; `struct dirent`'s name offset and `readdir`'s symbol), sound
 because `lyrac` compiles for its host. An unmeasured host is refused, not guessed.
 
+**`pkg/target`** — `target.ForFile(entry)`: the nearest `lyra.toml` above the entry file,
+strictly parsed (`target = "…"` and comments; anything else is `lyra-E086`), and the target
+table (`host`, `genesis`: host, heap, CPU, emulated types). The driver records it on
+`Result.Target`; `checker.CheckTarget` and `lyrac build` read it.
+
+**`pkg/rom`** — `rom.Link(required, library, layout)`: relocatable ELF32 68000 objects to a
+flat image — vectors at 0, code and constants from `CodeStart`, `.data` running in RAM with
+its copy in ROM at the same offset from `__data_load` as from `__data_start` (they drifted by
+two bytes when aligned separately), `.bss` after it; relocation types 1–6; a library object
+linked only when it defines something needed. `GenesisCartridge` pads to 128 KB banks and
+writes the header and checksum; `ExplainUndefined` turns a missing `malloc` into a sentence.
+Tested against checked-in objects (`testdata/*.o`, rebuilt by `testdata/make.sh`).
+
 **`pkg/abi`** — `Classify(target, aggregate, isReturn)` for AAPCS64 and SysV AMD64.
 `abi_diff_test.go` checks against clang (19 shapes × 3 targets). AAPCS64 register-passes an
 HFA of any size and has asymmetric param/return widths; SysV can change arity, so
@@ -526,6 +540,12 @@ of Markdown.
   differs between Linux and macOS).
 - `build/` is gitignored as a directory. Point VS Code's `lyra.languageServerPath` at
   `build/lyra-lsp`.
+- **`build/runtime` is a symlink too**: `runtime/genesis/runtime.c` (vectors, start-up, the
+  memory functions, the panic screen) is compiled by `lyrac build` for a Genesis program with
+  the M68k LLVM from `tools/llvm-m68k.sh`, cached in the user cache directory
+  (`lyra-genesis/`), and linked by `pkg/rom` with the program and compiler-rt's helpers.
+  Every Genesis object goes through `llc -code-model=medium -relocation-model=static`: the
+  default small model stores through a PC-relative destination, which no 68000 accepts.
 - **`build.sh` builds `build/lib/liblyra-menubar.a`**, `bindings.menubar`'s C half (the
   AppKit shim on macOS, a do-nothing stub elsewhere). `lyrac` passes `-L<root>/lib`
   (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH`.

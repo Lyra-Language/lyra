@@ -17,3 +17,6 @@ cover.out
 # Dear ImGui saves its window layout beside whatever ran it (examples/imgui). Where the
 # layout lives is the host's to choose eventually; until then, never a source file.
 imgui.ini
+
+# A Genesis example built in place (`lyrac build examples/genesis/backdrop.lyra`).
+/examples/genesis/*.bin

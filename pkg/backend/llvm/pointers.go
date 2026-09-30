@@ -179,6 +179,75 @@ func (l *lowerer) lowerPointerOffset(block *ir.Block, call *ast.FunctionCallExpr
 	return block.NewGetElementPtr(elem, ptr, idx), block, nil
 }
 
+// lowerVolatile lowers `p.read_volatile()` and `p.write_volatile(v)`: a load or store
+// marked volatile, which LLVM performs exactly as written — not merged, not dropped, not
+// reordered against another volatile access. The typechecker allows only a scalar pointee
+// (a register is one), so there is nothing to retain or release here.
+func (l *lowerer) lowerVolatile(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, ptrT types.RawPointerType, write bool) (value.Value, *ir.Block, error) {
+	ptr, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(ptr, block) {
+		return nil, block, nil
+	}
+	elem, err := l.lowerType(ptrT.Pointee)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !write {
+		if len(call.Arguments) != 0 {
+			return nil, nil, fmt.Errorf("llvm: read_volatile() expects no arguments, got %d", len(call.Arguments))
+		}
+		load := block.NewLoad(elem, ptr)
+		load.Volatile = true
+		return load, block, nil
+	}
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: write_volatile() expects 1 argument, got %d", len(call.Arguments))
+	}
+	v, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(v, block) {
+		return nil, block, nil
+	}
+	// An untyped literal reaches here at its default width, as in `p^ = v`.
+	if v, err = l.coerceAggregateElem(block, v, elem, call.Arguments[0]); err != nil {
+		return nil, nil, err
+	}
+	store := block.NewStore(v, ptr)
+	store.Volatile = true
+	return nil, block, nil
+}
+
+// lowerPointerAt lowers `pointer_at(address)` to `inttoptr` at the pointer type context
+// recorded on the call (pointer_at.go in the typechecker), as lowerNullPtr does for
+// `nullptr`.
+func (l *lowerer) lowerPointerAt(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	if len(e.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: pointer_at expects 1 argument, got %d", len(e.Arguments))
+	}
+	t, ok := l.recordedType(e)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: pointer_at with no recorded pointer type (lyra-E069 should have caught this)")
+	}
+	ptrT, ok := t.(types.RawPointerType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: pointer_at recorded as %s, which is not a pointer type", t)
+	}
+	llT, err := l.lowerType(ptrT)
+	if err != nil {
+		return nil, nil, err
+	}
+	address, block, err := l.lowerExpr(block, e.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	return block.NewIntToPtr(address, llT), block, nil
+}
+
 // lowerNullPtr lowers `nullptr` to a typed null constant.
 //
 // **The type has to come from the TypeTable, not from this node.** clang 15 — the

@@ -157,6 +157,8 @@ pub let to_hex = pure (self: u16, width: i64 = 0) -> string => u64(self).to_hex(
 /// A `u8` in hexadecimal, as the `u64` form writes it.
 pub let to_hex = pure (self: u8, width: i64 = 0) -> string => u64(self).to_hex(width)
 
-/// Hex digits, low to high.
-const HEX_DIGITS: []rune = ['0', '1', '2', '3', '4', '5', '6', '7',
+/// Hex digits, low to high. A fixed array: a table of constants needs no heap, and a
+/// dynamic one was built by every program's start-up, whether or not it formatted a
+/// number — a `malloc` the Genesis, which has none, could not link (09/30).
+const HEX_DIGITS: [16]rune = #['0', '1', '2', '3', '4', '5', '6', '7',
   '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']

@@ -20,6 +20,12 @@ import (
 // without a pointer type (lyra-E069).
 func (tc *TypeChecker) checkUnpinnedNullPtrs(node ast.AstNode) {
 	onExpr := func(e ast.Expression) bool {
+		if tc.isUntypedPointerCall(e) {
+			tc.addErrorCode(e.GetLocation(), SeverityError, diag.CodeUnpinnedNullPtr,
+				"pointer_at: cannot tell what this points at. Write the pointer type "+
+					"(`let port: ^mut u16 = unsafe { pointer_at(0xC00004) }`)")
+			return true
+		}
 		np, ok := e.(*ast.NullPtrExpr)
 		if !ok {
 			return true

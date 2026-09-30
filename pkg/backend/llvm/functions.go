@@ -587,6 +587,8 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerDirNamesCall(block, e)
 		case "random_seed":
 			return l.lowerRandomSeedCall(block, e)
+		case "pointer_at":
+			return l.lowerPointerAt(block, e)
 		case "wall_clock_nanos":
 			return l.lowerWallClockNanosCall(block, e)
 		case "set_raw_mode":

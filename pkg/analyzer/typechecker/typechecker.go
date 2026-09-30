@@ -3915,6 +3915,16 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		}
 		tc.recordUntypedValueNode(e, expected)
 		return
+	case *ast.UnsafeBlockExpr:
+		// An `unsafe { … }` block's value is its body's, so the context reaches it as it
+		// reaches a plain block's. Missing until 09/30: `let p: ^u8 = unsafe { nullptr }`
+		// was lyra-E069, though the annotation is right there — found by `pointer_at`,
+		// whose every use is inside one.
+		if e.Body != nil {
+			tc.propagateExpected(e.Body, expected, viaNewtype)
+		}
+		tc.recordUntypedValueNode(e, expected)
+		return
 	}
 
 	// `nullptr` is a leaf whose context is a *pointer*, so it cannot wait for the
@@ -3927,7 +3937,8 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 	// is no widening ladder here to protect a narrower earlier decision, and every
 	// context that reaches a given literal is the same pointer type — a second one
 	// that disagreed is a type error the assignability check has already reported.
-	if _, isNull := expr.(*ast.NullPtrExpr); isNull {
+	// `pointer_at(address)` is the same leaf with an address (pointer_at.go).
+	if _, isNull := expr.(*ast.NullPtrExpr); isNull || tc.isUntypedPointerCall(expr) {
 		if pt, ok := expected.(types.RawPointerType); ok {
 			tc.typeTable.Set(expr, pt)
 		}

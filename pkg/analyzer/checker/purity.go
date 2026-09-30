@@ -2494,6 +2494,23 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 					found |= EffectAlloc
 					c.charge(ex, EffectAlloc, calleeName(ex.Function))
 				}
+				// A volatile access is to memory outside the program's reasoning — a
+				// hardware register — so a write is EffectMut wherever the pointer came
+				// from, as `p^ = v` is, and a read is EffectInput: the value can change
+				// between two reads with nothing in the program writing it. Only raw
+				// pointers have these builtins, so the name decides.
+				if member, isMember := ex.Function.(*ast.MemberExpr); isMember {
+					switch member.Property.Name {
+					case "write_volatile":
+						found |= EffectMut
+						c.pure(ex.GetLocation(),
+							"pure function writes through a pointer with `write_volatile`; the write reaches outside the function")
+					case "read_volatile":
+						found |= EffectInput
+						c.pure(ex.GetLocation(),
+							"pure function reads a volatile location with `read_volatile`, whose value can change with nothing in the program writing it")
+					}
+				}
 				// **A builtin that writes to its receiver is a mutation like any other.**
 				// `xs.push(v)` on a `mut` parameter is a write the caller sees, and the
 				// same three cases apply as for `xs[0] = v` above: through a borrow or a

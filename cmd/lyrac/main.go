@@ -242,6 +242,10 @@ func build(o buildOptions) int {
 	if entry == nil {
 		return code
 	}
+	if !res.Target.Host {
+		_, code := buildGenesis(o, res, entry)
+		return code
+	}
 	exe, code := lowerAndEmit(o, res, entry)
 	if code != 0 {
 		return code
@@ -279,6 +283,9 @@ func runProgram(o buildOptions) int {
 
 	o.ephemeral = true
 	o.out = filepath.Join(dir, filepath.Base(replaceExt(o.path, "")))
+	if !res.Target.Host {
+		return runGenesis(o, res, entry)
+	}
 	exe, code := lowerAndEmit(o, res, entry)
 	if code != 0 {
 		return code

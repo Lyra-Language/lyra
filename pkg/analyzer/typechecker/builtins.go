@@ -369,6 +369,21 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 	// what `std.ffi`'s `CBuffer` is for — a pointer *and* a length can be checked, so
 	// the trapping accessor is ordinary Lyra written over this one primitive, and
 	// `unsafe` appears once in the standard library instead of at every use.
+	// `p.read_volatile()` / `p.write_volatile(v)` — a read or write LLVM must perform
+	// exactly as written: never merged with another, never dropped, never moved across
+	// another volatile access. A hardware register is the reason (pointer_at.go): writing
+	// the VDP's control port twice in a row is two commands, and an optimizer that sees
+	// two plain stores to one address keeps only the last. Plain `p^` stays the ordinary
+	// access. Both need `unsafe`, as `p^` does; a write needs `^mut`, as `p^ = v` does.
+	if ptr, ok := recv.(types.RawPointerType); ok && name == "read_volatile" {
+		return &types.LambdaType{ReturnType: types.ReturnType{Type: ptr.Pointee}}, true
+	}
+	if ptr, ok := recv.(types.RawPointerType); ok && name == "write_volatile" {
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{{Type: ptr.Pointee}},
+			ReturnType: types.ReturnType{Type: types.VoidType{}},
+		}, true
+	}
 	if ptr, ok := recv.(types.RawPointerType); ok && name == "offset" {
 		return &types.LambdaType{
 			Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.Int64}}},

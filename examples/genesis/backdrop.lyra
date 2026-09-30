@@ -1,0 +1,32 @@
+// The smallest Genesis program: the screen turns blue.
+//
+//   lyrac build backdrop.lyra        # -> backdrop.bin, for any Genesis emulator
+//   lyrac run backdrop.lyra          # in Sheliak ($SHELIAK, or `sheliak` on the PATH)
+//
+// `lyra.toml` beside this file names the target, so the compiler checks the program for
+// what the Genesis can run (no heap, no operating system) and `lyrac build` links a ROM.
+//
+// The VDP is programmed through its two ports: a register write is a word `8rvv` to the
+// control port; a CRAM write sets an address (`C000 0000` is colour 0) with two words to
+// the control port, then writes the colour to the data port. `write_volatile` keeps every
+// write — two writes in a row to one port are two commands, which a plain write would let
+// the optimizer merge.
+
+let main = () -> void => {
+  unsafe {
+    let control = vdp_control()
+    control.write_volatile(0x8004) // register 0: no H interrupt
+    control.write_volatile(0x8144) // register 1: display on, mode 5
+    control.write_volatile(0x8700) // register 7: the backdrop is palette 0, colour 0
+    control.write_volatile(0xC000) // CRAM write at 0 …
+    control.write_volatile(0x0000)
+    vdp_data().write_volatile(blue) // … colour 0 is blue
+  }
+}
+
+/// A colour as the Genesis stores it: `0000 BBB0 GGG0 RRR0`.
+const blue: u16 = 0x0E00
+
+let vdp_control = pure () -> ^mut u16 => unsafe { pointer_at(0xC00004) }
+
+let vdp_data = pure () -> ^mut u16 => unsafe { pointer_at(0xC00000) }

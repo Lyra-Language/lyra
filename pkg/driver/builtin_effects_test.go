@@ -45,6 +45,7 @@ func TestBuiltinEffects_EveryKeyNamesACallableBuiltin(t *testing.T) {
 		{"program_arg_count", `program_arg_count()`},
 		{"program_arg", `program_arg(0)`},
 		{"random_seed", `random_seed()`},
+		{"pointer_at", `let p: ^mut u16 = unsafe { pointer_at(0xC00004) }`},
 		{"wall_clock_nanos", `wall_clock_nanos()`},
 	} {
 		t.Run(c.key, func(t *testing.T) {

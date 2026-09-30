@@ -40,6 +40,17 @@ lyrac build --cc /path/to/clang …            # else $LYRA_CC, else clang on PA
   keeps the `.ll`.
 - The entry point (`driver.ResolveEntryPoint`) is checked only by `build`/`run`.
 
+### For the Genesis (`genesis.go`)
+
+A program whose `lyra.toml` names `target = "genesis"` builds a cartridge instead
+(`prog.bin`, or `-o`): the IR through `opt` (everything but `main` internalized, so the
+prelude's host code drops out) and `llc` from the M68k LLVM (`tools/llvm-m68k.sh`, found at
+`$LYRA_M68K_LLVM` or `~/Dev/llvm-m68k`), `<root>/runtime/genesis/runtime.c` and compiler-rt's
+helpers compiled once and cached (`<user cache>/lyra-genesis`), linked by `pkg/rom`.
+`--emit-llvm` stops at the IR. `run` plays the ROM in Sheliak (`$SHELIAK`, else the PATH),
+arguments after `--` going to the emulator. `genesis_test.go` builds `examples/genesis` and a
+panicking program when the toolchain is there, and runs them when `$SHELIAK` is set.
+
 ## `run`
 
 - **`--` ends lyrac's arguments**; the rest reach `program_args()` (name at index 0).

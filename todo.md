@@ -842,10 +842,17 @@ writes compiles with `llc -mtriple=m68k-unknown-elf -mcpu=M68000 -code-model=med
 `pure noalloc` function comes out tight: each overflow check is one `bvs`, as the 68000
 sets V on every add. What stands between that and a ROM:
 
-- **[PARTIAL] A target in `lyrac`**: `lyra.toml`'s `target = "genesis"` is read by
-  `lyrac` and the LSP (09/29), and the front end refuses what the 68000 cannot run
-  (E084–E086, W026; LANGUAGE.md § Targets). Still to do: `lyrac build` using the triple and
-  flags above, with no host `clang` link — Vega links (three relocation types).
+- **[DONE 09/30] A target in `lyrac`**: `lyra.toml`'s `target = "genesis"` is read by
+  `lyrac` and the LSP (09/29); `lyrac build` makes a cartridge (09/30: `pkg/rom` links,
+  `runtime/genesis` starts it, `pointer_at` and volatile access reach the hardware).
+- **[OPEN] Sizes are still `i64`** (next item) — the reason a game's `[]T` could not work
+  even with an allocator. Fixed arrays and scalars are what a Genesis program has today.
+- **[OPEN] A Genesis layer in Lyra**: the VDP's registers, DMA, the sprite table, the pads,
+  V-blank — written over `pointer_at` and `write_volatile`, so a game says `vdp.set_backdrop(c)`
+  rather than `0x8700`. The engine's layers 1 and 2 (Vega's design) start here.
+- **[OPEN] Interrupt handlers in Lyra**: the vectors are the runtime's, and every exception
+  but reset is the panic screen. V-blank wants a Lyra function the runtime's vector calls
+  (saving registers, ending in `rte`) — an attribute, or a runtime table a program fills.
 - **[OPEN] The LSP does not watch `lyra.toml`**: editing it takes effect on the next edit of
   a source file. Register a `workspace/didChangeWatchedFiles` watcher and re-publish.
 - **[OPEN] A top-level initializer is not target-checked** (`let table = [1, 2]` at module
@@ -864,6 +871,13 @@ sets V on every add. What stands between that and a ROM:
   68000. A console profile should steer to `i16`/`i32`, or make the default per target.
 - **[OPEN] Memory-mapped I/O needs volatile reads and writes** (the VDP ports, the pads):
   LLVM may otherwise merge or drop them.
+- **[OPEN] A literal does not have to fit through a block**: `let big: u8 = { 300 }` (or
+  `unsafe { 300 }`) compiles and holds 44, where `let big: u8 = 300` is refused. The context
+  reaches the leaf (propagateExpected) without the fit check the direct form gets. Found
+  09/30 beside the `unsafe`-block propagation fix.
+- **[OPEN] `data` is a keyword where a call is**: `let data = …` declares, but `data()` and
+  `data.f()` do not parse, so a hardware helper named for the VDP's data port has to be
+  called something else. Either reserve it everywhere or accept it as a name in expressions.
 - **[OPEN] Report the small-code-model store upstream**: `counter = v` in C becomes
   `move.l (4,%sp), (counter,%pc)`, a PC-relative destination, under LLVM 22.1.8.
 

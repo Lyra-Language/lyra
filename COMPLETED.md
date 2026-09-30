@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — `lyrac build` makes a Genesis cartridge, and Lyra can reach its hardware
+
+`examples/genesis/backdrop.lyra` turns the screen blue: Lyra's IR compiled for the 68000 by
+the M68k LLVM, linked with a runtime, running in Sheliak. Four pieces, each the smallest
+that works:
+
+- **`pointer_at(address)`, `read_volatile`, `write_volatile`.** A register has no storage to
+  take `&` of, so a pointer needed a third source; it is typed as `nullptr` is (untyped,
+  pinned by context — the call's recorded type starts as the placeholder, which is also how
+  the backend finds the pointee), rather than as a generic builtin, which would have meant
+  duplicating the generic-call machinery for one name. Volatile is not optional: the ROM
+  test with it removed shows a black screen, the optimizer having kept one of six writes to
+  the control port. The work found that context never reached into `unsafe { … }` —
+  `let p: ^u8 = unsafe { nullptr }` was E069 — and that `let big: u8 = { 300 }` holds 44
+  (todo.md).
+- **`runtime/genesis/runtime.c`** — vectors, start-up, `mem*`, `write`/`exit` for a panic (a
+  red screen), `__mulsi3`. C, not assembly: LLVM's M68k assembler reads little beyond what
+  its compiler writes (no bare addresses, no `andi`, no numbered labels). `__mulsi3`'s
+  16-bit products are inline `mulu`, because LLVM recognised the C spelling and compiled it
+  back into a call to itself.
+- **`pkg/rom`**, a linker in Go: lld has no M68k port and GNU ld is GPL and absent. Its
+  fixture tests found `.data`'s ROM copy two bytes off its RAM image when the two were
+  aligned separately — every global would have started shifted.
+- **The prelude's `HEX_DIGITS` became a fixed array**: every program's start-up built it on
+  the heap, which is the `malloc` the first Genesis link refused.
+
 ### 09/29/26 — `lyra.toml` names a target, and the front end says what the Genesis cannot run
 
 Vega's engine will be Lyra compiled for the 68000, used by students, so what cannot work

@@ -637,7 +637,16 @@ target = "genesis"
 - The check reads the effect inference `pure`/`det`/`noalloc` use: reaching outside Lyra is one
   more effect (`EffectHost`), charged by every `extern` whatever its declared bound — a `pure`
   extern is still host code — and by the host builtins. No bound names it.
-- `lyrac build` still builds for the host; the Genesis backend is `lyra/todo.md`'s "The 68000".
+- **`lyrac build` for `genesis` makes a cartridge** (`game.bin`): the program's IR compiled for
+  the 68000 by an M68k LLVM (`tools/llvm-m68k.sh` builds one into `~/Dev/llvm-m68k`, or
+  `$LYRA_M68K_LLVM`), linked with `runtime/genesis` — the vectors, start-up (TMSS, `.data`
+  copied to RAM, `.bss` zeroed, `main(0, NULL)`), `memcpy` and friends, `__mulsi3` — and
+  compiler-rt's helpers where the program needs them. **A panic, or any CPU fault, turns the
+  screen red and halts.** `lyrac run` builds the ROM and plays it in Sheliak (`$SHELIAK`, else
+  `sheliak` on the `PATH`), the arguments after `--` going to the emulator. Anything still
+  needing the heap or the host at link time is refused by name (a module-level `[]T`
+  initializer is the case E085 does not see yet). `examples/genesis/backdrop.lyra` is the
+  smallest one.
 
 ### Imports
 
@@ -751,7 +760,20 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 - Only storage has an address: `&f()` is `lyra-E059`; `^` on a non-pointer is `lyra-E060`.
 - Arithmetic is `p.offset(n) -> ^T` only (elements, signed, preserves mutability). No `p[i]`.
 - **`nullptr`**: safe (no `unsafe`) along with `==`/`!=` on pointers. Untyped with **no default** — context must pin the pointee (annotation, parameter, return, other side of `==`), else **`lyra-E069`**. Fills `^T` and `^mut T`; a mismatched pair pins to immutable. No `<` on pointers. `let nullptr = 5` is **`lyra-E070`** (collector).
-- The only ways to make a pointer are `&` and `nullptr`.
+- The ways to make a pointer are `&`, `nullptr` and **`pointer_at(address)`** — a pointer to a
+  fixed address, for a console's hardware registers (`0xC00004` is the Genesis VDP's control
+  port). It is typed as `nullptr` is: untyped, pinned by its context (`let control: ^mut u16 =
+  unsafe { pointer_at(0xC00004) }`, a return type, a parameter), `lyra-E069` when nothing pins
+  it; it needs `unsafe` (`lyra-E011`); the address is any integer (a literal is `u64`).
+- **`p.read_volatile()` / `p.write_volatile(v)`** read and write exactly as written: never
+  merged, dropped or reordered against another volatile access. A hardware port needs it —
+  two writes in a row to the VDP's control port are two commands, and plain `p^ = v` twice
+  would let the optimizer keep only the last. `unsafe`; a write needs `^mut` (`lyra-E061`);
+  the pointee is a scalar (a number, `bool` or pointer — a register is one). For `pure`, a
+  volatile write is a mutation and a volatile read is input (the value can change with
+  nothing in the program writing it).
+- **A context reaches into `unsafe { … }`** as into any block: `let p: ^u8 = unsafe { nullptr }`
+  pins (it did not until 09/30).
 
 **`std.ffi` helpers** (`unsafe` appears once in the library, not at call sites; *`unsafe` marks handing a pointer out to keep, not lending one for a call*):
 - `CBuffer { ptr, len }` with bounds-checked `buf.get(i)`.
