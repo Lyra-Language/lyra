@@ -95,10 +95,6 @@ Package management, versioning and separate compilation are out of scope by deci
   Maybe<i16>) = (9, Some(-3))` is refused ("cannot assign AnonymousTuple(integer literal,
   Maybe<i64>) …") at a binding, an argument and a `push` alike, though `(9, None)` works;
   and the message spells the type `AnonymousTuple(…)` rather than `(u8, Maybe<i16>)`.
-  **Nor does a solved type variable reach a tuple literal**: with `t: Maybe<(f32,
-  string)>`, `t.unwrap_or((0.0, "x"))` cannot infer `t`, and `t == Some((0.4, "y"))`
-  compares against `(f64, string)` — though `m.unwrap_or(0.0)` on a `Maybe<f32>` and an
-  annotated `let d: (f32, string) = (0.0, "z")` both narrow. Vega writes `f32(0.0)` (09/30).
 
 - **A large struct passed bare is a silent copy.** Sheliak's `pure (bus: GenesisBus, …)`
   helpers copied a multi-kilobyte bus on every memory read — two thirds of its frame time,

@@ -278,6 +278,12 @@ signature, return the substituted return type.
   reported at the call unless a context or turbofish binds it.
 - **Array literal against `[]t`** (`arrayLiteralAsDeclared`): shape read from the declaration.
   Against a bare `t`, a fixed-array literal speaks last and adopts a binding it can be built as.
+  So does a tuple literal with an untyped leaf (`isUnsettledTupleLiteral`): `t.unwrap_or((0.5,
+  "x"))` on a `Maybe<(f32, string)>`.
+- **`==`/`!=` against a construction** (`inferComparisonOperands`): the other operand is
+  inferred first and the construction completed at its type through `contextualType` — a
+  construction does not read a pushed expected type. `Some(x)` is a named tuple literal, so
+  `isConstruction` asks for both forms.
 - **Elements take element context before joining** (`elementTakesContext`): array/repeat/tuple
   literals and constructions, never scalar leaves. Refused payloads go in `contextRefused` so
   they aren't reported twice.

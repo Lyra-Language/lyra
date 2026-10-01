@@ -261,7 +261,12 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		// twice — `[]i64` from the receiver and `[]?` from the literal — and reported
 		// "cannot infer type variable t" (09/13). Its *flavor* is not a guess: the spelling
 		// fixed it (09/14).
-		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] && isUnsettledArrayLiteral(arg, argType) {
+		//
+		// A **tuple literal holding one** — `(0.0, "x")` — is the same guess one level in:
+		// `t.unwrap_or((0.0, "x"))` on a `Maybe<(f32, string)>` bound `t` to `(f32, string)`
+		// from the receiver and `(f64, string)` from the literal, and failed (09/30, Vega).
+		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] &&
+			(isUnsettledArrayLiteral(arg, argType) || isUnsettledTupleLiteral(arg, argType)) {
 			untyped = append(untyped, untypedArg{index: i, typ: argType})
 			continue
 		}
@@ -406,6 +411,27 @@ func isUnsettledArrayLiteral(arg ast.Expression, argType types.Type) bool {
 		return false
 	}
 	return elem == nil || isUntypedLiteralType(elem)
+}
+
+// isUnsettledTupleLiteral reports whether arg is a tuple literal with an element still
+// only its literal's guess — an untyped number, or an unsettled tuple or array literal
+// within it — which a context may yet narrow.
+func isUnsettledTupleLiteral(arg ast.Expression, argType types.Type) bool {
+	lit, ok := arg.(*ast.TupleLiteralExpr)
+	if !ok {
+		return false
+	}
+	tt, ok := argType.(types.TupleType)
+	if !ok || !types.IsAnonymousTupleName(tt.Name) || len(tt.Elements) != len(lit.Elements) {
+		return false
+	}
+	for i, el := range tt.Elements {
+		if el == nil || isUntypedLiteralType(el) ||
+			isUnsettledTupleLiteral(lit.Elements[i], el) || isUnsettledArrayLiteral(lit.Elements[i], el) {
+			return true
+		}
+	}
+	return false
 }
 
 // isBareGenericConstruction reports whether t is the bare form of a *generic* data

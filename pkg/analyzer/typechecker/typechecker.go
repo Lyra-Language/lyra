@@ -2210,8 +2210,7 @@ func (tc *TypeChecker) checkNotBooleanExpr(expr *ast.NotBooleanExpr) {
 }
 
 func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
-	leftType := tc.inferExprType(expr.Left)
-	rightType := tc.inferExprType(expr.Right)
+	leftType, rightType := tc.inferComparisonOperands(expr)
 
 	if leftType == nil || rightType == nil {
 		return
@@ -2331,6 +2330,56 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 			tc.propagateComparisonWidth(expr, leftType, rightType)
 		}
 	}
+}
+
+// inferComparisonOperands infers a binary operator's two operands — for `==` and `!=`,
+// a **construction against a typed value takes that value's type as its context**, the
+// other operand inferred first: `m == Some(0.4)` on a `Maybe<f32>` builds a
+// `Maybe<f32>`, as `let n: Maybe<f32> = Some(0.4)` does. Inferred alone, the construction
+// settled its literal to the default — `Maybe<f64>` — and the comparison was refused as
+// incompatible (09/30, Vega). A literal operand needs none of this
+// (propagateComparisonWidth narrows it after), and two constructions have no typed side
+// to learn from.
+func (tc *TypeChecker) inferComparisonOperands(expr *ast.BooleanBinaryOpExpr) (types.Type, types.Type) {
+	if expr.Operator == ast.BooleanBinaryOpEq || expr.Operator == ast.BooleanBinaryOpNEq {
+		leftBuilds, rightBuilds := isConstruction(expr.Left), isConstruction(expr.Right)
+		if rightBuilds && !leftBuilds {
+			left := tc.inferExprType(expr.Left)
+			return left, tc.inferAgainst(expr.Right, left)
+		}
+		if leftBuilds && !rightBuilds {
+			right := tc.inferExprType(expr.Right)
+			return tc.inferAgainst(expr.Left, right), right
+		}
+	}
+	return tc.inferExprType(expr.Left), tc.inferExprType(expr.Right)
+}
+
+// isConstruction reports whether e builds a data value in place: a bare constructor
+// (`None`) or one applied to a payload (`Some(0.4)`, a named tuple literal in the AST).
+func isConstruction(e ast.Expression) bool {
+	switch v := e.(type) {
+	case *ast.DataConstructorExpr:
+		return true
+	case *ast.TupleLiteralExpr:
+		return v.Name != ""
+	}
+	return false
+}
+
+// inferAgainst infers a construction and completes it at `context`'s instantiation, as
+// an annotated binding completes its value (checkAssignedValue → contextualType) — nothing
+// when the context is itself unknown or still a literal's guess. A payload that cannot fill
+// the context is left as it was, and the comparison reports the two types.
+func (tc *TypeChecker) inferAgainst(e ast.Expression, context types.Type) types.Type {
+	t := tc.inferExprType(e)
+	if t == nil || context == nil || !mentionsNoTypeVar(context) || hasUntypedLeaf(context) {
+		return t
+	}
+	if completed, reported := tc.contextualType(e, context, t); !reported && completed != nil {
+		return completed
+	}
+	return t
 }
 
 // propagateComparisonWidth pushes the common concrete width of a comparison down

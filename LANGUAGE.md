@@ -560,6 +560,15 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 - `?` propagates a `Result` from a `Result`-returning function and a `Maybe` from a `Maybe`-returning one, never across kinds (`ok_or`/`ok` convert). Across **error types** it applies a declared conversion: `parse_json(text)?` inside `-> Result<_, ConfigError>` runs `impl From<JsonError> for ConfigError`'s `from` on the error before propagating it. `?` knows both types, so the impl is found by a direct lookup — matched on the trait argument as well as the target, so a type may be built from several sources, one impl each. No impl is refused naming the one to write; `map_err` is the one-off spelling. The `from` runs on the failure path, so its effects are the `?`'s (a `pure` function refuses an impure conversion), and it takes the error by plain value (`own`/`ref`/`mut` are refused).
 - **The context reaches through `?`**: what is wanted of `make(1)?` is the payload, so `make(1)` is inferred wanting `Result<payload, E>` (or `Maybe<payload>`), which is what solves a callee's return-only variable — `let port: i64 = required(json, "port")?` needs no turbofish.
 - **The context settles what the arguments leave open.** A type variable only a lambda literal's return or an untyped literal reaches is bound from the call's context before they are: `b.map((x) => 200)` under `-> Box<u8>` gives the lambda a `u8` return and narrows the literal. A typed argument still wins, and a mismatch is then that argument's. A constructor's payload takes its slot's type from the construction's context: `Err(Zero::zero())` under `Result<i64, string>` infers the payload wanting a `string`. **At any depth**: `Some(Ok(5))` under `Maybe<Result<i64, string>>` settles the inner `e` too, and checks and narrows the inner payload (until 09/28 the nesting was refused, annotation or not). With no context at all the open parameter stays open — see todo.md.
+- **A literal waits for what its argument's siblings solved**, inside a tuple or array as
+  well as bare: `count.min(80)` on a `u8`, `m.unwrap_or([])` on a `Maybe<[]i64>`, and
+  `t.unwrap_or((0.5, "x"))` on a `Maybe<(f32, string)>` — the receiver binds the variable,
+  the literal adopts it, narrowed and range-checked there (`(300, "y")` against `(u8,
+  string)` overflows). Only a variable nothing else bound takes the literal's default.
+- **A construction compared with `==`/`!=` takes the other operand's type**, as an
+  annotated binding gives it one: `m == Some(0.4)` on a `Maybe<f32>` builds a
+  `Maybe<f32>`, and `r == Ok(7)` on a `Result<u8, string>` narrows the `7`. One that cannot
+  fill it is still the mismatch (`m == Some("x")`: `Maybe<f32> and Maybe<string>`).
 
 ### Safe navigation (`?.`, `?[`) and `??`
 

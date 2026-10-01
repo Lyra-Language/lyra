@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — a literal in a tuple, or a construction in `==`, takes the width it meets
+
+Found writing Vega's build progress, an `(f32, string)` read with `unwrap_or((0.0, "…"))`.
+
+- **A tuple literal holding an untyped number is held back like an unsettled array
+  literal** (`isUnsettledTupleLiteral`, `solveArgumentTypeVars`): it speaks after the
+  arguments with a width of their own, adopting the variable the receiver bound. Unified
+  first, it bound the variable a second time at its default — `(f64, string)` against the
+  receiver's `(f32, string)` — and the call reported "cannot infer type variable t".
+  Integers too (`(3, "x")` against `(u8, string)`). Nested tuples and arrays inside count.
+- **`==`/`!=` infers the typed operand first and completes a construction against it**
+  (`inferComparisonOperands`), through `contextualType` — the binding's own path, not a
+  pushed expected type, which a construction does not consult. `Some(0.4)` beside a
+  `Maybe<f32>` had settled alone at `Maybe<f64>`, even for a scalar payload. A
+  construction is a `DataConstructorExpr` *or a named tuple literal* — `Some(x)` is the
+  latter in the AST, which the first attempt missed.
+
 ### 09/30/26 — V-blank and H-blank interrupt handlers in Lyra
 
 `@interrupt(vblank)` on a top-level `() -> void` function makes it what the Genesis runs at
