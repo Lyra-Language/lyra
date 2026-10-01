@@ -9,6 +9,17 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — a `const` table of structs is data, as a table of numbers is
+
+`const STEPS: [6]Step = #[Step { … }, …]` was rebuilt at every read — an `insertvalue`
+chain stored to a stack slot, each time `STEPS[k]` was evaluated — where a table of numbers
+is one constant in `.rodata`, read in place. A struct (or tuple) literal of literals lowers
+to exactly such a chain over constants, so `staticConstant`'s leaf case now folds one
+(`foldInsertValues`) rather than refusing any instruction; a leaf that emits anything else
+(a string's allocation) still keeps the table inlined. Vega's animation steps are the
+case, and their stack copy is what met the M68k backend's dropped index; the Genesis guard
+for that bug now copies a table into a `var` on purpose.
+
 ### 09/30/26 — LLVM's M68k backend dropped the index of a stack array
 
 Vega's hero walked right with the front view: every animation played its table's first

@@ -309,8 +309,9 @@ func TestGenesis_AVariableIndexIntoALocalArray(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, "index.lyra")
-	// A const table of structs, as Vega's animation steps are: read at a run-time index,
-	// it is copied to the stack first, which is where the index was lost.
+	// A table of structs copied to the stack — a `var`, since a `const` one is read in
+	// place in ROM — and walked from a run-time start, as Vega's animation steps were
+	// before const struct tables became data.
 	if err := os.WriteFile(src, []byte(`import std.genesis.vdp
 import std.genesis.pad
 
@@ -337,8 +338,9 @@ let main = () -> void => {
 /// The colour of the first swatch from `+"`first`"+` on named at least `+"`name`"+`, as Vega's
 /// frame_of walks an animation's steps from its first.
 let find = (first: u16, name: u16) -> u16 => {
+  var table = SWATCHES
   for k: u16 in first..<4 {
-    let s = SWATCHES[k]
+    let s = table[k]
     if s.name >= name { return s.color }
   }
   0

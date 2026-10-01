@@ -7,6 +7,7 @@ import (
 	"github.com/llir/llvm/ir/constant"
 	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
+	"github.com/llir/llvm/ir/value"
 )
 
 // **A `const` fixed array of literals is data, not code** (09/30). A `const` is otherwise
@@ -18,8 +19,11 @@ import (
 // address — `&TILES[i]` hands a pointer into it to code that uploads it.
 //
 // What qualifies is exactly what can be a constant initializer: `#[…]` and `#[v; n]` whose
-// leaves lower to constants with no instructions (numbers, runes, booleans), nested
-// arrays of them included. Anything else keeps the inlining it had.
+// leaves lower to constants (numbers, runes, booleans), nested arrays of them included —
+// and **structs and tuples of them**, whose lowering is a chain of `insertvalue`s on
+// constants that `foldInsertValues` folds into one (09/30: a struct table was rebuilt on
+// the stack at every read, which is also how Vega's animation steps met the M68k backend's
+// dropped stack index). Anything else keeps the inlining it had.
 
 // staticConstCandidate reports whether a const declaration could be static data: its
 // recorded type is a fixed array and its value a fixed-array literal. Whether every leaf
@@ -75,13 +79,14 @@ func (l *lowerer) staticConstant(expr ast.Expression, ty lltypes.Type) (constant
 		return constant.NewArray(at, elems...), true
 	}
 	// A leaf: lowered into a detached block, and a constant only if lowering emitted
-	// nothing — a literal does not, and anything that does is not static data.
+	// nothing — a literal does not — or only `insertvalue`s that fold to one (a struct of
+	// literals). Anything else is not static data.
 	scratch := ir.NewBlock("")
-	value, _, err := l.lowerExpr(scratch, expr)
-	if err != nil || len(scratch.Insts) != 0 {
+	lowered, _, err := l.lowerExpr(scratch, expr)
+	if err != nil {
 		return nil, false
 	}
-	c, ok := value.(constant.Constant)
+	c, ok := foldInsertValues(scratch, lowered)
 	if !ok {
 		return nil, false
 	}
@@ -96,6 +101,97 @@ func (l *lowerer) staticConstant(expr ast.Expression, ty lltypes.Type) (constant
 		return nil, false
 	}
 	return c, true
+}
+
+// foldInsertValues is result as a constant when block holds nothing but `insertvalue`s
+// whose aggregates and elements are constants (or earlier ones of these) — the chain a
+// struct, tuple or data literal of literals lowers to. False for any other instruction.
+func foldInsertValues(block *ir.Block, result value.Value) (constant.Constant, bool) {
+	folded := map[value.Value]constant.Constant{}
+	constOf := func(v value.Value) (constant.Constant, bool) {
+		if c, ok := folded[v]; ok {
+			return c, true
+		}
+		c, ok := v.(constant.Constant)
+		return c, ok
+	}
+	for _, inst := range block.Insts {
+		iv, ok := inst.(*ir.InstInsertValue)
+		if !ok {
+			return nil, false
+		}
+		base, ok := constOf(iv.X)
+		if !ok {
+			return nil, false
+		}
+		elem, ok := constOf(iv.Elem)
+		if !ok {
+			return nil, false
+		}
+		c, ok := insertConstant(base, elem, iv.Indices)
+		if !ok {
+			return nil, false
+		}
+		folded[iv] = c
+	}
+	return constOf(result)
+}
+
+// insertConstant is aggregate with the element at path replaced by elem.
+func insertConstant(aggregate, elem constant.Constant, path []uint64) (constant.Constant, bool) {
+	if len(path) == 0 {
+		return elem, true
+	}
+	fields, ok := constantElements(aggregate)
+	if !ok || path[0] >= uint64(len(fields)) {
+		return nil, false
+	}
+	inner, ok := insertConstant(fields[path[0]], elem, path[1:])
+	if !ok {
+		return nil, false
+	}
+	fields[path[0]] = inner
+	switch t := aggregate.Type().(type) {
+	case *lltypes.StructType:
+		return constant.NewStruct(t, fields...), true
+	case *lltypes.ArrayType:
+		return constant.NewArray(t, fields...), true
+	}
+	return nil, false
+}
+
+// constantElements is a fresh slice of a constant aggregate's elements — an undefined or
+// zero one's are undefined or zero in turn.
+func constantElements(c constant.Constant) ([]constant.Constant, bool) {
+	var elemTypes []lltypes.Type
+	switch t := c.Type().(type) {
+	case *lltypes.StructType:
+		elemTypes = t.Fields
+	case *lltypes.ArrayType:
+		for i := uint64(0); i < t.Len; i++ {
+			elemTypes = append(elemTypes, t.ElemType)
+		}
+	default:
+		return nil, false
+	}
+	out := make([]constant.Constant, len(elemTypes))
+	switch v := c.(type) {
+	case *constant.Struct:
+		copy(out, v.Fields)
+	case *constant.Array:
+		copy(out, v.Elems)
+	case *constant.Undef:
+		for i, et := range elemTypes {
+			out[i] = constant.NewUndef(et)
+		}
+	case *constant.ZeroInitializer:
+		for i, et := range elemTypes {
+			out[i] = constant.NewZeroInitializer(et)
+		}
+	default:
+		return nil, false
+	}
+	return out, true
 }
 
 // declareStaticConsts gives each candidate const a private constant global, or returns it

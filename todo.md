@@ -898,10 +898,6 @@ sets V on every add. What stands between that and a ROM:
   addressed as the object alone (`matchAddressBase` set an index beside a frame-index
   base, which `hasIndexReg` does not see). Patched locally by
   `tools/llvm-m68k-patches/0001`; check `main` for the same code before reporting.
-- **[OPEN] A `const` table of structs is rebuilt on the stack at every use.** `STEPS[k]`
-  on a `const [N]Step` lowers to an `insertvalue` chain stored to an alloca, each time it
-  is read; a table of scalars is one constant in `.rodata`, read in place. Give struct
-  tables the same global (it is also what exposed the stack-index bug).
 
 ## Target introspection
 
