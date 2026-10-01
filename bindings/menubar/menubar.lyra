@@ -61,6 +61,21 @@ pub let menu = (title: string) -> void => title.with_cstring((t) => unsafe {
 pub let item = (title: string, key: string, mods: u32, tag: i32) -> void =>
   with_cstrings(title, key, (t, k) => unsafe { lyra_menubar_item(t, k, mods, tag) })
 
+/// A greyed title over the items after it, as macOS heads a section of a menu.
+pub let header = (title: string) -> void => title.with_cstring((t) => unsafe {
+  lyra_menubar_header(t)
+})
+
+/// A slider from `min` to `max`, set to `value`, as an item of the current menu. Moving it
+/// makes [poll_menu] answer `tag`, as choosing an item does — once for a drag, however
+/// long — and [slider_value] says where it was left. Like an item's, a tag is used once.
+pub let slider = (min: f64, max: f64, value: f64, tag: i32) -> void => unsafe {
+  lyra_menubar_slider(min, max, value, tag)
+}
+
+/// Where the slider tagged `tag` stands (0 for no such slider, or off macOS).
+pub let slider_value = (tag: i32) -> f64 => unsafe { lyra_menubar_slider_value(tag) }
+
 /// A line between items in the current menu.
 pub let separator = () -> void => unsafe { lyra_menubar_separator() }
 
@@ -112,6 +127,15 @@ unsafe extern lyra_menubar_menu: (title: ^u8) -> void
 
 @symbol("lyra_menubar_item")
 unsafe extern lyra_menubar_item: (title: ^u8, key: ^u8, mods: u32, tag: i32) -> void
+
+@symbol("lyra_menubar_header")
+unsafe extern lyra_menubar_header: (title: ^u8) -> void
+
+@symbol("lyra_menubar_slider")
+unsafe extern lyra_menubar_slider: (min: f64, max: f64, value: f64, tag: i32) -> void
+
+@symbol("lyra_menubar_slider_value")
+unsafe extern lyra_menubar_slider_value: (tag: i32) -> f64
 
 @symbol("lyra_menubar_separator")
 unsafe extern lyra_menubar_separator: () -> void

@@ -144,6 +144,8 @@ choosing an item calls a method on a target object, and Lyra cannot hand C a fun
 `window_menu()`, then `install(app_name)`, which adds the application menu (Hide, Quit —
 Quit arrives as SDL's quit event) and answers whether there is a native bar. Each frame,
 drain `poll_menu() -> Maybe<i32>` after `poll_event`; `set_checked`/`set_enabled` by tag.
+`header(title)` heads a section; `slider(min, max, value, tag)` is an `NSSlider` in the menu,
+queueing `tag` (once per drag) and read with `slider_value(tag)`.
 `choose_file(title, extensions)` is a **modal Open panel** answering `Maybe<string>` (`None`
 off macOS) — modal, so it answers on the main thread, with none of the queueing SDL's own
 asynchronous dialogs need (`bindings/imgui`'s host has those) — and `alert(message,

@@ -17,6 +17,20 @@ void lyra_menubar_item(const char *title, const char *key, uint32_t mods, int32_
 
 void lyra_menubar_separator(void) {}
 
+void lyra_menubar_header(const char *title) { (void)title; }
+
+void lyra_menubar_slider(double min, double max, double value, int32_t tag) {
+  (void)min;
+  (void)max;
+  (void)value;
+  (void)tag;
+}
+
+double lyra_menubar_slider_value(int32_t tag) {
+  (void)tag;
+  return 0;
+}
+
 void lyra_menubar_window_menu(void) {}
 
 bool lyra_menubar_install(const char *app_name) {

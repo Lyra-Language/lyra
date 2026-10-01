@@ -34,15 +34,27 @@ static int32_t queue[QUEUE_SIZE];
 static int queue_head = 0;
 static int queue_count = 0;
 
+// Queue a tag — once, if it is already the newest waiting: a slider dragged while its menu
+// is open sends a stream of changes the program can only read once the menu closes, and
+// what it wants then is the value, which `lyra_menubar_slider_value` reads.
+static void enqueue(int32_t tag) {
+  if (queue_count > 0 && queue[(queue_head + queue_count - 1) % QUEUE_SIZE] == tag) return;
+  if (queue_count == QUEUE_SIZE) return;
+  queue[(queue_head + queue_count) % QUEUE_SIZE] = tag;
+  queue_count++;
+}
+
 @interface LyraMenubarTarget : NSObject
 - (void)chosen:(NSMenuItem *)item;
+- (void)slid:(NSSlider *)slider;
 @end
 
 @implementation LyraMenubarTarget
 - (void)chosen:(NSMenuItem *)item {
-  if (queue_count == QUEUE_SIZE) return;
-  queue[(queue_head + queue_count) % QUEUE_SIZE] = (int32_t)item.tag;
-  queue_count++;
+  enqueue((int32_t)item.tag);
+}
+- (void)slid:(NSSlider *)slider {
+  enqueue((int32_t)slider.tag);
 }
 @end
 
@@ -52,6 +64,8 @@ static NSMenu *current_menu;
 static NSMenu *windows_menu;
 // Every program item by tag, for `set_checked`/`set_enabled` after installation.
 static NSMutableDictionary<NSNumber *, NSMenuItem *> *items_by_tag;
+// Every slider by tag, for `lyra_menubar_slider_value`.
+static NSMutableDictionary<NSNumber *, NSSlider *> *sliders_by_tag;
 static LyraMenubarTarget *target;
 
 static NSString *string_of(const char *text) {
@@ -101,6 +115,46 @@ void lyra_menubar_item(const char *title, const char *key, uint32_t mods, int32_
   item.target = target;
   item.tag = tag;
   items_by_tag[@(tag)] = item;
+}
+
+// A title over the items after it, greyed as macOS draws a section's.
+void lyra_menubar_header(const char *title) {
+  if (current_menu == nil) lyra_menubar_menu("");
+  NSMenuItem *item;
+  if (@available(macOS 14.0, *)) {
+    item = [NSMenuItem sectionHeaderWithTitle:string_of(title)];
+  } else {
+    item = [[NSMenuItem alloc] initWithTitle:string_of(title) action:nil keyEquivalent:@""];
+    item.enabled = NO;
+  }
+  [current_menu addItem:item];
+}
+
+// A slider from `min` to `max` at `value`, as an item of the current menu. Moving it
+// queues `tag`, as choosing an item does; the value is read with `lyra_menubar_slider_value`.
+void lyra_menubar_slider(double min, double max, double value, int32_t tag) {
+  if (current_menu == nil) lyra_menubar_menu("");
+  if (target == nil) target = [[LyraMenubarTarget alloc] init];
+  if (sliders_by_tag == nil) sliders_by_tag = [NSMutableDictionary dictionary];
+  NSSlider *slider = [NSSlider sliderWithValue:value
+                                      minValue:min
+                                      maxValue:max
+                                        target:target
+                                        action:@selector(slid:)];
+  slider.tag = tag;
+  slider.continuous = YES;
+  slider.frame = NSMakeRect(20, 4, 180, 22);
+  NSView *holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 220, 30)];
+  [holder addSubview:slider];
+  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  item.view = holder;
+  [current_menu addItem:item];
+  sliders_by_tag[@(tag)] = slider;
+}
+
+// The slider tagged `tag`'s value, or 0 for an unknown tag.
+double lyra_menubar_slider_value(int32_t tag) {
+  return sliders_by_tag[@(tag)].doubleValue;
 }
 
 void lyra_menubar_separator(void) {
