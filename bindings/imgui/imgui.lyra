@@ -53,8 +53,8 @@ pub newtype Host = ^u8
 pub const HOST_DOCKING: u32 = 1
 /// Let a window leave the main one as an OS window of its own (multi-monitor).
 pub const HOST_VIEWPORTS: u32 = 2
-/// The main window has no title bar of the system's: the program draws one with
-/// [title_bar] in its main menu bar. The window's edges still resize it, and the bar's
+/// The main window has no title bar of the system's: the program draws one, its main
+/// menu bar begun with [begin_title_bar] and ended with [end_title_bar]. The window's edges still resize it, and the bar's
 /// empty stretch moves it, as a title bar's would.
 pub const HOST_CUSTOM_TITLE_BAR: u32 = 4
 
@@ -327,7 +327,7 @@ pub let ui_scale = (host: Host) -> f32 => unsafe { lyra_imgui_host_ui_scale(host
 // ── The window's own title bar ───────────────────────────────────────────────
 
 /// Whether the host was made with [HOST_CUSTOM_TITLE_BAR], so the program draws the
-/// window's title bar ([title_bar]).
+/// window's title bar ([begin_title_bar]).
 pub let has_custom_title_bar = (host: Host) -> bool =>
   unsafe { lyra_imgui_host_custom_title_bar(host) }
 
@@ -336,29 +336,71 @@ pub let has_custom_title_bar = (host: Host) -> bool =>
 pub let set_window_title = (host: Host, title: string) -> void =>
   title.with_cstring((t) => unsafe { lyra_imgui_host_set_title(host, t) })
 
-/// The rest of a title bar, in the main menu bar after the program's menus: `title`
-/// centred on the bar (or left out where the menus leave no room for it), the stretch
-/// between the menus and the buttons the window is moved by — double-clicked, it does what
-/// a title bar's double-click does — and at the right end the window's buttons: minimize,
-/// maximize (restore, when it is maximised) and close. **Close asks to quit as the system's
-/// close button does**: the next [begin_frame] answers false, and [cancel_quit] takes it
-/// back. `after_button` is called after each is drawn with its name — `"Minimize"`,
-/// `"Maximize"`, `"Close"` — for a test to find it by.
-pub let title_bar = (
+/// The main menu bar as the window's title bar: `begin_main_menu_bar`, and where the host
+/// has [HOST_CUSTOM_TITLE_BAR] on macOS, the window's buttons at its left end, in macOS's
+/// order — close, minimize, maximize — before the menus that follow. `true` when the bar is
+/// drawn: the program's menus go after it, then [end_title_bar]; `false`, and neither.
+/// `after_button` is called after each button is drawn with its name — `"Close"`,
+/// `"Minimize"`, `"Maximize"` — for a test to find it by.
+pub let begin_title_bar = (host: Host, after_button: (string) -> void) -> bool => {
+  if !begin_main_menu_bar() { return false }
+  if has_custom_title_bar(host) && buttons_on_the_left(host) {
+    unsafe { lyra_imgui_title_bar_start(host) }
+    window_button(host, WINDOW_CLOSE, after_button)
+    window_button(host, WINDOW_MINIMIZE, after_button)
+    window_button(host, WINDOW_MAXIMIZE, after_button)
+    same_line()
+  }
+  true
+}
+
+/// The rest of the title bar [begin_title_bar] began, after the program's menus, and the
+/// bar ended. With [HOST_CUSTOM_TITLE_BAR]: `title` centred on the bar (or left out where
+/// the menus leave no room for it), the stretch after the menus the window is moved by —
+/// double-clicked, it does what a title bar's double-click does — and off macOS the
+/// window's buttons at the right end: minimize, maximize (restore, when it is maximised),
+/// close. **Close asks to quit as the system's close button does**: the next [begin_frame]
+/// answers false, and [cancel_quit] takes it back.
+pub let end_title_bar = (
   host: Host,
   title: string,
   after_button: (string) -> void
 ) -> void => {
-  title.with_cstring((t) => unsafe { lyra_imgui_title_bar(host, t, 3) })
-  let minimize = unsafe { lyra_imgui_window_button(host, 0) }
-  after_button("Minimize")
-  if minimize { unsafe { lyra_imgui_host_minimize(host) } }
-  let maximize = unsafe { lyra_imgui_window_button(host, 1) }
-  after_button("Maximize")
-  if maximize { unsafe { lyra_imgui_host_toggle_maximized(host) } }
-  let close = unsafe { lyra_imgui_window_button(host, 2) }
-  after_button("Close")
-  if close { request_quit(host) }
+  if has_custom_title_bar(host) {
+    let right = !buttons_on_the_left(host)
+    let buttons: i32 = if right { 3 } else { 0 }
+    title.with_cstring((t) => unsafe { lyra_imgui_title_bar(host, t, buttons) })
+    if right {
+      window_button(host, WINDOW_MINIMIZE, after_button)
+      window_button(host, WINDOW_MAXIMIZE, after_button)
+      window_button(host, WINDOW_CLOSE, after_button)
+    }
+  }
+  end_main_menu_bar()
+}
+
+/// Which of the window's buttons `lyra_imgui_window_button` draws.
+const WINDOW_MINIMIZE: i32 = 0
+const WINDOW_MAXIMIZE: i32 = 1
+const WINDOW_CLOSE: i32 = 2
+
+/// Whether the window's buttons go at the bar's left end: on macOS, where they always have.
+let buttons_on_the_left = (host: Host) -> bool =>
+  unsafe { lyra_imgui_host_window_buttons_left(host) }
+
+/// One of the window's buttons, named to `after_button`, and what it does when clicked.
+let window_button = (host: Host, kind: i32, after_button: (string) -> void) -> void => {
+  let pressed = unsafe { lyra_imgui_window_button(host, kind) }
+  if kind == WINDOW_MINIMIZE {
+    after_button("Minimize")
+    if pressed { unsafe { lyra_imgui_host_minimize(host) } }
+  } else if kind == WINDOW_MAXIMIZE {
+    after_button("Maximize")
+    if pressed { unsafe { lyra_imgui_host_toggle_maximized(host) } }
+  } else {
+    after_button("Close")
+    if pressed { request_quit(host) }
+  }
 }
 
 /// Whether the main window is maximised (never, headless).
@@ -503,6 +545,12 @@ unsafe extern lyra_imgui_host_minimize: (host: Host) -> void
 
 @symbol("lyra_imgui_host_toggle_maximized")
 unsafe extern lyra_imgui_host_toggle_maximized: (host: Host) -> void
+
+@symbol("lyra_imgui_host_window_buttons_left")
+unsafe extern lyra_imgui_host_window_buttons_left: (host: Host) -> bool
+
+@symbol("lyra_imgui_title_bar_start")
+unsafe extern lyra_imgui_title_bar_start: (host: Host) -> void
 
 @symbol("lyra_imgui_title_bar")
 unsafe extern lyra_imgui_title_bar: (host: Host, title: ^u8, buttons: i32) -> void

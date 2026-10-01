@@ -331,15 +331,35 @@ void lyra_imgui_host_toggle_maximized(LyraImGuiHost* host) {
         SDL_MaximizeWindow(host->window);
 }
 
+// Whether the window's buttons go at the title bar's left end — on macOS, where they
+// always have (headless too, so a test there sees the bar as the window shows it).
+bool lyra_imgui_host_window_buttons_left(LyraImGuiHost* host) {
+    (void)host;
+#if defined(__APPLE__)
+    return true;
+#else
+    return false;
+#endif
+}
+
+// First in the main menu bar, where the buttons go at its left end: the cursor at the
+// bar's very edge, so the first button sits in the corner.
+void lyra_imgui_title_bar_start(LyraImGuiHost* host) {
+    (void)host;
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    window->DC.CursorPos.x = window->MenuBarRect().Min.x;
+}
+
 // A button's width: half as wide again as the bar is tall.
 static float window_button_width(void) {
     return IM_ROUND(ImGui::GetFrameHeight() * 1.5f);
 }
 
-// In the menu bar being drawn, after the program's menus: the title centred on the bar
-// (moved right of the menus when they reach past where it would start, left out when it
-// does not fit before the buttons), the stretch between the menus and `buttons` window
-// buttons kept as the drag area, and the cursor where the first button goes.
+// In the menu bar being drawn, after the program's menus (and the window's buttons, where
+// they lead): the title centred on the bar (moved right of the menus when they reach past
+// where it would start, left out when it does not fit before the buttons), the stretch
+// between the menus and `buttons` window buttons at the right end (0 where they lead)
+// kept as the drag area, and the cursor where the first of those goes.
 void lyra_imgui_title_bar(LyraImGuiHost* host, const char* title, int32_t buttons) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     const ImGuiStyle& style = ImGui::GetStyle();

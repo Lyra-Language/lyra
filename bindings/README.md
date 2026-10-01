@@ -243,9 +243,12 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     no C++ runtime. `FileFilter { name, extensions }` takes `"vega;json"` or `"*"`. A dialog
     still open when the host is destroyed would answer into freed memory.
   - **A title bar the program draws**: with `HOST_CUSTOM_TITLE_BAR` the main window is
-    borderless, and `title_bar(host, title, after_button)`, called in the main menu bar
-    after its menus, draws the title centred and minimize, maximize/restore and close at
-    the right end (glyphs drawn with lines: the default font has none). Close is
+    borderless, and the main menu bar is begun with `begin_title_bar(host, after_button)`
+    and ended, after the menus, with `end_title_bar(host, title, after_button)`: the title
+    centred, and the window's buttons (glyphs drawn with lines: the default font has none)
+    where the platform puts them — at the left end on macOS, close, minimize, maximize,
+    before the menus; at the right end elsewhere, minimize, maximize/restore, close.
+    Without the flag the pair is `begin_main_menu_bar`/`end_main_menu_bar`. Close is
     `request_quit`, so a program's "unsaved changes?" path is the same. **The window still
     moves and resizes as one with a frame**: SDL's hit test answers *draggable* for the
     bar's empty stretch, as the last frame drew it (`drag_area`, between the menus and the
