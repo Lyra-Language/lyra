@@ -37,6 +37,14 @@ unsafe extern sdl_read_process: (
   exitcode: ^mut i32
 ) -> ^u8
 
+/// An `SDL_IOStream *` is opaque; it is typed `^^u8` because that is what the pointer
+/// property's setter is declared to take (Lyra has no pointer casts, and C's is `void *`).
+@symbol("SDL_IOFromFile")
+unsafe extern sdl_io_from_file: (file: ^u8, mode: ^u8) -> ^^u8
+
+@symbol("SDL_CloseIO")
+unsafe extern sdl_close_io: (stream: ^^u8) -> bool
+
 @symbol("SDL_free")
 unsafe extern sdl_free: (mem: ^u8) -> void
 
@@ -59,11 +67,14 @@ unsafe extern sdl_set_boolean_property: (props: u32, name: ^u8, value: bool) -> 
 const PROP_ARGS: string = "SDL.process.create.args"
 const PROP_STDIN: string = "SDL.process.create.stdin_option"
 const PROP_STDOUT: string = "SDL.process.create.stdout_option"
+const PROP_STDOUT_STREAM: string = "SDL.process.create.stdout_source"
 const PROP_STDERR_TO_STDOUT: string = "SDL.process.create.stderr_to_stdout"
 
-/// `SDL_ProcessIO`: no stream, or one the program reads (`SDL_ReadProcess`).
+/// `SDL_ProcessIO`: no stream, one this program reads (`SDL_ReadProcess`), or one it
+/// supplies (a file).
 const STDIO_NULL: i64 = 1
 const STDIO_APP: i64 = 2
+const STDIO_REDIRECT: i64 = 3
 
 /// Start the program `args[0]` (a path, or a name found on the `PATH`) with the rest of
 /// `args` as its arguments, its output going where this program's does; `None` when it
@@ -109,6 +120,35 @@ pub let run_process = (args: []string) -> Maybe<(i64, string)> => {
   let output = unsafe { written.decode_utf8(i64(size)) }
   unsafe { sdl_free(written) }
   Some((i64(code), output))
+}
+
+/// Start the program `args[0]` with the rest of `args` as its arguments, its standard error
+/// and output written together to the file at `output` (made, or emptied first): for a
+/// caller that polls it with [wait_process] and reads the file once it has ended, rather
+/// than waiting on it — a file, not a pipe, so a long output never stalls a program nobody
+/// is reading from. `None` when it cannot be started, or the file cannot be opened.
+pub let create_process_to_file = (args: []string, output: string) -> Maybe<Process> => {
+  if args.len() == 0 { return None }
+  let stream = unsafe { sdl_io_from_file(output.cstring_ptr(), "w".cstring_ptr()) }
+  if stream == nullptr { return None }
+  var pointers: []^u8 = []
+  for a in args { pointers.push(unsafe { a.cstring_ptr() }) }
+  pointers.push(nullptr)
+  let props = unsafe { sdl_create_properties() }
+  unsafe {
+    sdl_set_pointer_property(props, PROP_ARGS.cstring_ptr(), pointers.data())
+    sdl_set_number_property(props, PROP_STDIN.cstring_ptr(), STDIO_NULL)
+    sdl_set_number_property(props, PROP_STDOUT.cstring_ptr(), STDIO_REDIRECT)
+    sdl_set_pointer_property(props, PROP_STDOUT_STREAM.cstring_ptr(), stream)
+    sdl_set_boolean_property(props, PROP_STDERR_TO_STDOUT.cstring_ptr(), true)
+  }
+  let process = unsafe { sdl_create_process_with_properties(props) }
+  // As in `run_process`: the array is read at the create, and must live until then.
+  let _ = pointers.len()
+  unsafe { sdl_destroy_properties(props) }
+  // The program holds the file now; this side's handle is not needed.
+  let _ = unsafe { sdl_close_io(stream) }
+  if process == nullptr { None } else { Some(process) }
 }
 
 /// The program's exit code once it has ended: waiting for that when `block`, and `None`
