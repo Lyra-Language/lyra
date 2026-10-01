@@ -143,7 +143,11 @@ choosing an item calls a method on a target object, and Lyra cannot hand C a fun
 `menubar.m` holds the target, which queues the item's tag. Build with `menu(title)`,
 `item(title, key, mods, tag)` (`COMMAND`/`SHIFT`/`OPTION`/`CONTROL`), `separator()`,
 `window_menu()`, then `install(app_name)`, which adds the application menu (Hide, Quit —
-Quit arrives as SDL's quit event) and answers whether there is a native bar. Each frame,
+Quit arrives as SDL's quit event) and answers whether there is a native bar. Items built
+after `app_menu()` go into that application menu instead, above Hide (About, Settings…);
+`install` starts the next build without them. `describe()` is the installed bar as text, a
+line an item with its key — what a check or a person debugging reads, since System Events
+needs Accessibility permission to list another process's menus. Each frame,
 drain `poll_menu() -> Maybe<i32>` after `poll_event`; `set_checked`/`set_enabled` by tag.
 `header(title)` heads a section; `slider(min, max, value, tag)` is an `NSSlider` in the menu,
 queueing `tag` (once per drag) and read with `slider_value(tag)`.
@@ -159,6 +163,10 @@ detail)` a modal alert.
   `-lobjc` in the object file. Keep it — `@link` cannot name a framework.
 - **A key equivalent arrives twice**: SDL reports ⌘S as a key press, then AppKit hands it
   to the menu. A program with a native menu leaves ⌘ keys to it.
+- **A menu titled "Edit" gets AppKit's additions** — Writing Tools, AutoFill, Start
+  Dictation, Emoji & Symbols — found by its title. The shim appends U+2060 (word joiner,
+  invisible) to that title so the menu holds only what the program put there; the user
+  defaults meant to turn the items off removed Dictation alone.
 - Tags are ≥ 0 (`poll_menu`'s C side answers -1 for none) and unique (items are found by
   tag). `install` replaces SDL's default bar, so call it after `init`.
 
@@ -234,6 +242,24 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     copies the answer onto a queue under an `SDL_Mutex` — `bindings/menubar`'s pattern, and
     no C++ runtime. `FileFilter { name, extensions }` takes `"vega;json"` or `"*"`. A dialog
     still open when the host is destroyed would answer into freed memory.
+  - **A title bar the program draws**: with `HOST_CUSTOM_TITLE_BAR` the main window is
+    borderless, and `title_bar(host, title, after_button)`, called in the main menu bar
+    after its menus, draws the title centred and minimize, maximize/restore and close at
+    the right end (glyphs drawn with lines: the default font has none). Close is
+    `request_quit`, so a program's "unsaved changes?" path is the same. **The window still
+    moves and resizes as one with a frame**: SDL's hit test answers *draggable* for the
+    bar's empty stretch, as the last frame drew it (`drag_area`, between the menus and the
+    buttons, so a press never has to be told from a click by hover state), and *resize*
+    within 5 points of an edge — except on macOS, where SDL's Cocoa hit test knows only
+    dragging and AppKit resizes a borderless resizable window at its edges itself. A
+    double-click on the bar does what the person's setting says (`host_macos.m` reads
+    `AppleActionOnDoubleClick`; Windows' caption does it natively; X11 and Wayland do
+    nothing yet). `set_window_title` keeps the system's title (Dock, taskbar) in step. A
+    headless host draws the buttons, so a test can click them.
+  - **A status bar**: `begin_status_bar(name)` … `end_status_bar()` (only when it answered
+    true) is a one-line menu bar along the viewport's bottom, over ImGui's internal
+    `BeginViewportSideBar`. Call it before `dock_space_over_viewport`, which then docks in
+    what is left.
 - **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
   reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into

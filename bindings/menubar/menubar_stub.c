@@ -8,6 +8,10 @@
 
 void lyra_menubar_menu(const char *title) { (void)title; }
 
+void lyra_menubar_app_menu(void) {}
+
+const char *lyra_menubar_describe(void) { return ""; }
+
 void lyra_menubar_item(const char *title, const char *key, uint32_t mods, int32_t tag) {
   (void)title;
   (void)key;

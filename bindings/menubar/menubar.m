@@ -62,6 +62,8 @@ static void enqueue(int32_t tag) {
 static NSMutableArray<NSMenuItem *> *pending_menus;
 static NSMenu *current_menu;
 static NSMenu *windows_menu;
+// The program's own items for the application menu (`lyra_menubar_app_menu`), above Hide.
+static NSMenu *app_items;
 // Every program item by tag, for `set_checked`/`set_enabled` after installation.
 static NSMutableDictionary<NSNumber *, NSMenuItem *> *items_by_tag;
 // Every slider by tag, for `lyra_menubar_slider_value`.
@@ -92,9 +94,22 @@ static void add_standard(NSMenu *menu, NSString *title, SEL action, NSString *ke
 
 // Start a new top-level menu; items added after it go in it.
 void lyra_menubar_menu(const char *title) {
-  NSMenu *menu = begin_menu(string_of(title));
+  NSString *name = string_of(title);
+  // The menus are what the program described. AppKit finds "the Edit menu" by its title and
+  // adds Writing Tools, AutoFill, Start Dictation and Emoji & Symbols to it — items for
+  // AppKit's own text fields, which a program drawing its own has none of, and which its
+  // in-window menus (ImGui's, elsewhere) would not have. An invisible word joiner after the
+  // title (U+2060) is a title AppKit does not recognise, still shown and read as "Edit".
+  if ([name isEqualToString:@"Edit"]) name = [name stringByAppendingString:@"\u2060"];
+  NSMenu *menu = begin_menu(name);
   // Enabled means what the program last said, not what AppKit infers from the target.
   menu.autoenablesItems = NO;
+}
+
+// Items added after this go in the application menu, above Hide and Quit: About, Settings.
+void lyra_menubar_app_menu(void) {
+  app_items = [[NSMenu alloc] initWithTitle:@""];
+  current_menu = app_items;
 }
 
 // Add an item to the current menu. `key` is its key equivalent ("" for none), `mods` the
@@ -183,6 +198,15 @@ bool lyra_menubar_install(const char *app_name) {
   NSMenu *bar = [[NSMenu alloc] initWithTitle:@""];
 
   NSMenu *app = [[NSMenu alloc] initWithTitle:name];
+  if (app_items != nil && app_items.numberOfItems > 0) {
+    // Moved, not copied: an item belongs to one menu.
+    while (app_items.numberOfItems > 0) {
+      NSMenuItem *item = [app_items itemAtIndex:0];
+      [app_items removeItemAtIndex:0];
+      [app addItem:item];
+    }
+    [app addItem:[NSMenuItem separatorItem]];
+  }
   add_standard(app, [@"Hide " stringByAppendingString:name], @selector(hide:), @"h",
                NSEventModifierFlagCommand);
   add_standard(app, @"Hide Others", @selector(hideOtherApplications:), @"h",
@@ -202,7 +226,40 @@ bool lyra_menubar_install(const char *app_name) {
   pending_menus = nil;
   current_menu = nil;
   windows_menu = nil;
+  app_items = nil;
   return true;
+}
+
+// The installed menu bar as text, a line per item, indented under its menu: a title, its key
+// equivalent after a tab (⌘⇧ spelled out), `[x]` when checked, `(off)` when greyed, `---` for
+// a separator. Valid until the next call. For a program's tests to read back what it installed.
+static char *described = NULL;
+
+const char *lyra_menubar_describe(void) {
+  free(described);
+  NSMutableString *out = [NSMutableString string];
+  for (NSMenuItem *top in NSApp.mainMenu.itemArray) {
+    [out appendFormat:@"%@\n", top.title];
+    for (NSMenuItem *item in top.submenu.itemArray) {
+      if (item.isSeparatorItem) {
+        [out appendString:@"  ---\n"];
+        continue;
+      }
+      NSMutableString *key = [NSMutableString string];
+      if (item.keyEquivalent.length > 0) {
+        NSEventModifierFlags m = item.keyEquivalentModifierMask;
+        if (m & NSEventModifierFlagControl) [key appendString:@"Ctrl+"];
+        if (m & NSEventModifierFlagOption) [key appendString:@"Option+"];
+        if (m & NSEventModifierFlagShift) [key appendString:@"Shift+"];
+        if (m & NSEventModifierFlagCommand) [key appendString:@"Cmd+"];
+        [key appendString:item.keyEquivalent.uppercaseString];
+      }
+      [out appendFormat:@"  %@%@%@%@\n", item.title, key.length > 0 ? [@"\t" stringByAppendingString:key] : @"",
+                        item.state == NSControlStateValueOn ? @" [x]" : @"", item.enabled ? @"" : @" (off)"];
+    }
+  }
+  described = strdup(out.UTF8String);
+  return described;
 }
 
 // The tag of the oldest item chosen and not yet read, or -1.

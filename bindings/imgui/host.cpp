@@ -14,6 +14,7 @@
 // platform, with no `-lc++`/`-lstdc++` to choose between.
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
 #include <SDL3/SDL.h>
@@ -60,18 +61,85 @@ struct LyraImGuiHost {
     // the base: ScaleAllSizes multiplies and rounds, so scaling the scaled style drifts.
     ImGuiStyle base_style;
     float ui_scale;
+    // HOST_CUSTOM_TITLE_BAR: the main window has no title bar of the system's, and the
+    // program draws one (lyra_imgui_title_bar). `drag_area` is the part of that bar a
+    // press moves the window by — between its menus and its buttons, in the window's
+    // coordinates — as the last frame drew it; the hit test reads it.
+    bool custom_title_bar;
+    bool drag_area_set;
+    SDL_FRect drag_area;
 };
 
 // Flags for lyra_imgui_host_create; Lyra spells them HOST_DOCKING and HOST_VIEWPORTS.
 enum {
     LYRA_IMGUI_DOCKING = 1 << 0,
     LYRA_IMGUI_VIEWPORTS = 1 << 1,
+    LYRA_IMGUI_CUSTOM_TITLE_BAR = 1 << 2,
+};
+
+// Which of the window's buttons lyra_imgui_window_button draws.
+enum {
+    LYRA_WINDOW_MINIMIZE = 0,
+    LYRA_WINDOW_MAXIMIZE = 1,
+    LYRA_WINDOW_CLOSE = 2,
 };
 
 #if defined(__APPLE__)
 // host_macos.m: lets a borderless (torn-off) window straddle two displays.
 extern "C" void lyra_imgui_macos_allow_straddling(void);
+// host_macos.m: a double-click on the title bar's drag area does what the person's
+// "double-click a window's title bar" setting says; and the monitor doing it removed.
+// `nswindow` is the main window's NSWindow.
+extern "C" void lyra_imgui_macos_watch_title_bar(void* nswindow, LyraImGuiHost* host);
+extern "C" void lyra_imgui_macos_unwatch_title_bar(void);
 #endif
+
+// How far in from the window's edge a press resizes it, in window coordinates, where the
+// system draws no frame (HOST_CUSTOM_TITLE_BAR). Not on macOS: AppKit resizes a borderless
+// window at its edges itself, and SDL's Cocoa hit test knows only dragging.
+static const int RESIZE_BORDER = 5;
+
+// Whether (x, y), in the main window's coordinates, is in the title bar's drag area.
+extern "C" bool lyra_imgui_host_in_drag_area(LyraImGuiHost* host, float x, float y) {
+    const SDL_FRect& a = host->drag_area;
+    return host->drag_area_set && x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h;
+}
+
+// SDL's hit test for a window drawing its own title bar: its edges resize it (but not
+// while it fills the screen), and the empty stretch of the bar moves it — the system's
+// own drag, so it snaps and crosses displays as a title bar's does.
+static SDL_HitTestResult title_bar_hit_test(SDL_Window* window, const SDL_Point* p, void* data) {
+    LyraImGuiHost* host = (LyraImGuiHost*)data;
+#if !defined(__APPLE__)
+    if (!(SDL_GetWindowFlags(window) & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
+        int w = 0, h = 0;
+        SDL_GetWindowSize(window, &w, &h);
+        const bool left = p->x < RESIZE_BORDER, right = p->x >= w - RESIZE_BORDER;
+        const bool top = p->y < RESIZE_BORDER, bottom = p->y >= h - RESIZE_BORDER;
+        if (top && left)
+            return SDL_HITTEST_RESIZE_TOPLEFT;
+        if (top && right)
+            return SDL_HITTEST_RESIZE_TOPRIGHT;
+        if (bottom && left)
+            return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+        if (bottom && right)
+            return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+        if (top)
+            return SDL_HITTEST_RESIZE_TOP;
+        if (bottom)
+            return SDL_HITTEST_RESIZE_BOTTOM;
+        if (left)
+            return SDL_HITTEST_RESIZE_LEFT;
+        if (right)
+            return SDL_HITTEST_RESIZE_RIGHT;
+    }
+#else
+    (void)window;
+#endif
+    if (lyra_imgui_host_in_drag_area(host, (float)p->x, (float)p->y))
+        return SDL_HITTEST_DRAGGABLE;
+    return SDL_HITTEST_NORMAL;
+}
 
 extern "C" {
 
@@ -88,6 +156,8 @@ LyraImGuiHost* lyra_imgui_host_create(const char* title, int32_t width, int32_t 
     if (scale <= 0.0f)
         scale = 1.0f;
     SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (flags & LYRA_IMGUI_CUSTOM_TITLE_BAR)
+        window_flags |= SDL_WINDOW_BORDERLESS;
     SDL_Window* window = SDL_CreateWindow(title, (int)(width * scale), (int)(height * scale), window_flags);
     if (window == nullptr) {
         SDL_Quit();
@@ -145,6 +215,14 @@ LyraImGuiHost* lyra_imgui_host_create(const char* title, int32_t width, int32_t 
     host->dialog_lock = SDL_CreateMutex();
     host->base_style = ImGui::GetStyle();
     host->ui_scale = 1.0f;
+    if (flags & LYRA_IMGUI_CUSTOM_TITLE_BAR) {
+        host->custom_title_bar = true;
+        SDL_SetWindowHitTest(window, title_bar_hit_test, host);
+#if defined(__APPLE__)
+        lyra_imgui_macos_watch_title_bar(
+            SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr), host);
+#endif
+    }
     return host;
 }
 
@@ -170,6 +248,7 @@ LyraImGuiHost* lyra_imgui_host_create_headless(int32_t width, int32_t height, ui
 
     LyraImGuiHost* host = (LyraImGuiHost*)calloc(1, sizeof(LyraImGuiHost));
     host->headless = true;
+    host->custom_title_bar = (flags & LYRA_IMGUI_CUSTOM_TITLE_BAR) != 0;
     host->dialog_lock = SDL_CreateMutex();
     host->width = (float)width;
     host->height = (float)height;
@@ -196,6 +275,148 @@ void lyra_imgui_host_set_ui_scale(LyraImGuiHost* host, float scale) {
 
 float lyra_imgui_host_ui_scale(LyraImGuiHost* host) {
     return host->ui_scale;
+}
+
+// A bar across the bottom of the main window, a line of text tall, which the dock space
+// and other windows leave room for — ImGui's own BeginViewportSideBar, an internal API the
+// generated bindings leave out. True when its contents may be drawn; end it either way.
+static bool status_bar_open = false;
+
+bool lyra_imgui_begin_status_bar(const char* name) {
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
+    status_bar_open = false;
+    if (ImGui::BeginViewportSideBar(name, ImGui::GetMainViewport(), ImGuiDir_Down, ImGui::GetFrameHeight(), flags))
+        status_bar_open = ImGui::BeginMenuBar();
+    return status_bar_open;
+}
+
+void lyra_imgui_end_status_bar(void) {
+    if (status_bar_open)
+        ImGui::EndMenuBar();
+    ImGui::End();
+    status_bar_open = false;
+}
+
+// ── The window's own title bar (HOST_CUSTOM_TITLE_BAR) ───────────────────────
+
+bool lyra_imgui_host_custom_title_bar(LyraImGuiHost* host) {
+    return host->custom_title_bar;
+}
+
+// The window's title as the system shows it (the Dock, the Window menu, the taskbar).
+void lyra_imgui_host_set_title(LyraImGuiHost* host, const char* title) {
+    if (host->headless)
+        return;
+    const char* now = SDL_GetWindowTitle(host->window);
+    if (now == nullptr || strcmp(now, title) != 0)
+        SDL_SetWindowTitle(host->window, title);
+}
+
+bool lyra_imgui_host_maximized(LyraImGuiHost* host) {
+    return !host->headless && (SDL_GetWindowFlags(host->window) & SDL_WINDOW_MAXIMIZED) != 0;
+}
+
+void lyra_imgui_host_minimize(LyraImGuiHost* host) {
+    if (!host->headless)
+        SDL_MinimizeWindow(host->window);
+}
+
+// Maximise the window, or restore it when it is maximised.
+void lyra_imgui_host_toggle_maximized(LyraImGuiHost* host) {
+    if (host->headless)
+        return;
+    if (SDL_GetWindowFlags(host->window) & SDL_WINDOW_MAXIMIZED)
+        SDL_RestoreWindow(host->window);
+    else
+        SDL_MaximizeWindow(host->window);
+}
+
+// A button's width: half as wide again as the bar is tall.
+static float window_button_width(void) {
+    return IM_ROUND(ImGui::GetFrameHeight() * 1.5f);
+}
+
+// In the menu bar being drawn, after the program's menus: the title centred on the bar
+// (moved right of the menus when they reach past where it would start, left out when it
+// does not fit before the buttons), the stretch between the menus and `buttons` window
+// buttons kept as the drag area, and the cursor where the first button goes.
+void lyra_imgui_title_bar(LyraImGuiHost* host, const char* title, int32_t buttons) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImRect bar = window->MenuBarRect();
+    const float left = window->DC.CursorPos.x;
+    const float right = bar.Max.x - (float)buttons * window_button_width();
+
+    const ImVec2 size = ImGui::CalcTextSize(title);
+    float x = IM_ROUND((bar.Min.x + bar.Max.x - size.x) * 0.5f);
+    if (x < left + style.ItemSpacing.x)
+        x = left + style.ItemSpacing.x;
+    if (x + size.x + style.ItemSpacing.x <= right) {
+        const ImVec2 at(x, IM_ROUND(bar.Min.y + (bar.GetHeight() - size.y) * 0.5f));
+        const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) || host->headless;
+        window->DrawList->AddText(at, ImGui::GetColorU32(focused ? ImGuiCol_Text : ImGuiCol_TextDisabled), title);
+    }
+
+    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+    host->drag_area = SDL_FRect{left - origin.x, bar.Min.y - origin.y, ImMax(right - left, 0.0f), bar.GetHeight()};
+    host->drag_area_set = true;
+    window->DC.CursorPos.x = right;
+}
+
+// One of the window's buttons (LYRA_WINDOW_*) at the cursor, the bar's height and
+// window_button_width() wide, its glyph drawn with lines (the default font has none);
+// whether it was clicked. Close turns red under the pointer, as Windows' and GNOME's do.
+bool lyra_imgui_window_button(LyraImGuiHost* host, int32_t kind) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImRect bar = window->MenuBarRect();
+    const float w = window_button_width();
+    const ImVec2 min(window->DC.CursorPos.x, bar.Min.y);
+    ImGui::SetCursorScreenPos(min);
+    ImGui::PushID(kind);
+    const bool pressed = ImGui::InvisibleButton("##window_button", ImVec2(w, bar.GetHeight()));
+    const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    ImGui::PopID();
+    window->DC.CursorPos.x = min.x + w;
+
+    ImDrawList* draw = window->DrawList;
+    const ImVec2 max(min.x + w, bar.Max.y);
+    ImU32 ink = ImGui::GetColorU32(ImGuiCol_Text);
+    if (kind == LYRA_WINDOW_CLOSE && (hovered || held)) {
+        draw->AddRectFilled(min, max, held ? IM_COL32(150, 30, 30, 255) : IM_COL32(196, 43, 28, 255));
+        ink = IM_COL32_WHITE;
+    } else if (hovered || held) {
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered));
+    }
+
+    const float font = ImGui::GetFontSize();
+    const float g = IM_ROUND(font * 0.38f);  // half the glyph's width
+    const float t = ImMax(1.0f, IM_ROUND(font / 13.0f));
+    const ImVec2 c(IM_ROUND((min.x + max.x) * 0.5f), IM_ROUND((min.y + max.y) * 0.5f));
+    switch (kind) {
+    case LYRA_WINDOW_MINIMIZE:
+        draw->AddLine(ImVec2(c.x - g, c.y), ImVec2(c.x + g, c.y), ink, t);
+        break;
+    case LYRA_WINDOW_MAXIMIZE:
+        if (lyra_imgui_host_maximized(host)) {
+            // Restore: a window behind a window.
+            const float s = IM_ROUND(g * 0.4f);
+            draw->AddRect(ImVec2(c.x - g, c.y - g + s), ImVec2(c.x + g - s, c.y + g), ink, 0.0f, 0, t);
+            draw->PathLineTo(ImVec2(c.x - g + s, c.y - g + s));
+            draw->PathLineTo(ImVec2(c.x - g + s, c.y - g));
+            draw->PathLineTo(ImVec2(c.x + g, c.y - g));
+            draw->PathLineTo(ImVec2(c.x + g, c.y + g - s));
+            draw->PathLineTo(ImVec2(c.x + g - s, c.y + g - s));
+            draw->PathStroke(ink, 0, t);
+        } else {
+            draw->AddRect(ImVec2(c.x - g, c.y - g), ImVec2(c.x + g, c.y + g), ink, 0.0f, 0, t);
+        }
+        break;
+    default:
+        draw->AddLine(ImVec2(c.x - g, c.y - g), ImVec2(c.x + g, c.y + g), ink, t);
+        draw->AddLine(ImVec2(c.x - g, c.y + g), ImVec2(c.x + g, c.y - g), ink, t);
+        break;
+    }
+    return pressed;
 }
 
 // Ask the host to quit, as closing the window would: the next begin_frame answers false.
@@ -247,6 +468,8 @@ bool lyra_imgui_host_begin_frame(LyraImGuiHost* host) {
         }
         if (host->quit)
             return false;
+        // Events are in: the drag area is redrawn by the frame about to start, if at all.
+        host->drag_area_set = false;
         if (!(SDL_GetWindowFlags(host->window) & SDL_WINDOW_MINIMIZED))
             break;
         SDL_WaitEventTimeout(nullptr, 100);
@@ -653,6 +876,10 @@ void lyra_imgui_host_destroy(LyraImGuiHost* host) {
         return;
     }
     SDL_WaitForGPUIdle(host->device);
+#if defined(__APPLE__)
+    if (host->custom_title_bar)
+        lyra_imgui_macos_unwatch_title_bar();
+#endif
     ImGui_ImplSDL3_Shutdown();
     ImGui_ImplSDLGPU3_Shutdown();
     ImGui::DestroyContext();

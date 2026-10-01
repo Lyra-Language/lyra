@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 10/01/26 — the ImGui host can leave the title bar to the program
+
+Vega asked for its own minimize, maximize and close buttons at the right of its bar, with
+no title bar of the system's. Two ways in on macOS: keep the titled window and make its
+title bar transparent over a full-size content view, or make the window borderless. The
+first keeps AppKit's resizing, corners and double-click, but its title bar still takes the
+presses in that strip — the bar's own menus and buttons would be under it — and SDL
+resets the style mask whenever it changes a window's style, so the flags would have to
+be put back after it. Borderless it is (`HOST_CUSTOM_TITLE_BAR`): SDL's hit test makes the
+bar's empty stretch a system drag, and AppKit still resizes a borderless window that has
+`NSWindowStyleMaskResizable` (which SDL keeps for any resizable window) at its edges, so
+the hit test answers resize only off macOS, where SDL's Cocoa side never asks for it. The
+drag area is a rectangle the last frame drew, not "nothing hovered": SDL asks on the
+press, before ImGui has seen it, and a hover state a frame old would turn a quick click on
+a button into a drag. SDL swallows the presses it starts drags with, so a double-click
+never reaches ImGui; `host_macos.m` watches for it and does what the person's
+`AppleActionOnDoubleClick` setting says. `-[NSWindow zoom:]`, which SDL maximises with,
+works without a zoom button (measured: 800×500 to the visible frame and back).
+
+### 10/01/26 — a constructor imported by name is in scope when its type's name is not
+
+Vega's `checks` imports `menus.{ Item, Rule, … }` — constructors of `menus`' `data Entry` —
+and the bare `Rule` was `lyra-E057`, undefined. `DeclaringDataType` found a constructor's
+type by asking what the type's name `Entry` resolves to from the asking file, and there it
+resolved to `std.collections`' exported `struct Entry`, the program-wide meaning, since the
+file imports no `Entry` of its own. Importing the constructor by name is the file's own
+answer to which type it means, so `DeclaringDataType` now also accepts a declaration whose
+module the file imports the constructor's name from (`importsConstructor`). A test that only
+imported the constructor passed without the fix; it takes another module exporting a type of
+the same name (`TestModules_AConstructorImportedByNameIsInScope`).
+
 ### 09/30/26 — an exported type beside a private one of its name is keyed
 
 Vega's `genesis_rom` declares a private `struct Animation`; `project` exports another. In

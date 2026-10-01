@@ -1,4 +1,5 @@
-// The macOS half of the host: let ImGui's torn-off windows cross onto a display above.
+// The macOS half of the host: let ImGui's torn-off windows cross onto a display above, and
+// give a title bar the program draws (HOST_CUSTOM_TITLE_BAR) the system's double-click.
 //
 // **AppKit constrains a window's frame to keep its top below the menu bar** of the screen
 // it is mostly on (`-[NSWindow constrainFrameRect:toScreen:]`). A title-bar drag is the
@@ -60,4 +61,50 @@ void lyra_imgui_macos_allow_straddling(void) {
     SEL sel = @selector(constrainFrameRect:toScreen:);
     Method base = class_getInstanceMethod([NSWindow class], sel);
     class_addMethod(sdl_window, sel, (IMP)lyra_constrain_frame, method_getTypeEncoding(base));
+}
+
+// ── A title bar the program draws ────────────────────────────────────────────
+
+// host.cpp: whether a point in the main window (top-left origin) is in the title bar's
+// drag area as the last frame drew it.
+extern bool lyra_imgui_host_in_drag_area(void *host, float x, float y);
+
+static id title_bar_monitor = nil;
+
+// **A double-click on a title bar is the person's to define** (System Settings > Desktop &
+// Dock, "Double-click a window's title bar to": `AppleActionOnDoubleClick`, Fill by
+// default, or Minimize, or nothing). A borderless window has no title bar for AppKit to
+// do it on, and SDL takes a press on the drag area for a drag and never reports it, so
+// this watches for the second click itself — before SDL sees the event — and does what the
+// setting says.
+void lyra_imgui_macos_watch_title_bar(void *nswindow, void *host) {
+    NSWindow *window = (__bridge NSWindow *)nswindow;
+    if (window == nil || title_bar_monitor != nil) {
+        return;
+    }
+    title_bar_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown
+                                                              handler:^NSEvent *(NSEvent *event) {
+        if (event.window != window || event.clickCount != 2) {
+            return event;
+        }
+        const NSPoint p = event.locationInWindow;
+        const CGFloat height = window.contentView.frame.size.height;
+        if (!lyra_imgui_host_in_drag_area(host, (float)p.x, (float)(height - p.y))) {
+            return event;
+        }
+        NSString *action = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
+        if ([action isEqualToString:@"Minimize"]) {
+            [window miniaturize:nil];
+        } else if (![action isEqualToString:@"None"]) {
+            [window zoom:nil];
+        }
+        return nil;
+    }];
+}
+
+void lyra_imgui_macos_unwatch_title_bar(void) {
+    if (title_bar_monitor != nil) {
+        [NSEvent removeMonitor:title_bar_monitor];
+        title_bar_monitor = nil;
+    }
 }

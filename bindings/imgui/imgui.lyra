@@ -53,6 +53,10 @@ pub newtype Host = ^u8
 pub const HOST_DOCKING: u32 = 1
 /// Let a window leave the main one as an OS window of its own (multi-monitor).
 pub const HOST_VIEWPORTS: u32 = 2
+/// The main window has no title bar of the system's: the program draws one with
+/// [title_bar] in its main menu bar. The window's edges still resize it, and the bar's
+/// empty stretch moves it, as a title bar's would.
+pub const HOST_CUSTOM_TITLE_BAR: u32 = 4
 
 /// Open the main window with ImGui in it, or `None` if SDL could not — the SDL3
 /// binding's `last_error` says why. The size is in points; the window is scaled for the
@@ -307,8 +311,58 @@ pub let create_headless_host = (width: i32, height: i32, flags: u32) -> Maybe<Ho
 pub let set_ui_scale = (host: Host, scale: f32) -> void =>
   unsafe { lyra_imgui_host_set_ui_scale(host, scale) }
 
+/// A status bar across the bottom of the main window, a line tall, which the dock space and
+/// other windows leave room for: `true` when its contents may be drawn — text and widgets,
+/// laid out as a menu bar's, left to right. Call [end_status_bar] after, whatever it
+/// answered. Call it before `dock_space_over_viewport`, which then fits above it.
+pub let begin_status_bar = (name: string) -> bool =>
+  name.with_cstring((n) => unsafe { lyra_imgui_begin_status_bar(n) })
+
+/// Finish the bar [begin_status_bar] began.
+pub let end_status_bar = () -> void => unsafe { lyra_imgui_end_status_bar() }
+
 /// The scale [set_ui_scale] last applied, clamped; 1 until it is called.
 pub let ui_scale = (host: Host) -> f32 => unsafe { lyra_imgui_host_ui_scale(host) }
+
+// ── The window's own title bar ───────────────────────────────────────────────
+
+/// Whether the host was made with [HOST_CUSTOM_TITLE_BAR], so the program draws the
+/// window's title bar ([title_bar]).
+pub let has_custom_title_bar = (host: Host) -> bool =>
+  unsafe { lyra_imgui_host_custom_title_bar(host) }
+
+/// The main window's title as the system shows it — the Dock, the Window menu, the
+/// taskbar — even where the window shows no title bar of the system's.
+pub let set_window_title = (host: Host, title: string) -> void =>
+  title.with_cstring((t) => unsafe { lyra_imgui_host_set_title(host, t) })
+
+/// The rest of a title bar, in the main menu bar after the program's menus: `title`
+/// centred on the bar (or left out where the menus leave no room for it), the stretch
+/// between the menus and the buttons the window is moved by — double-clicked, it does what
+/// a title bar's double-click does — and at the right end the window's buttons: minimize,
+/// maximize (restore, when it is maximised) and close. **Close asks to quit as the system's
+/// close button does**: the next [begin_frame] answers false, and [cancel_quit] takes it
+/// back. `after_button` is called after each is drawn with its name — `"Minimize"`,
+/// `"Maximize"`, `"Close"` — for a test to find it by.
+pub let title_bar = (
+  host: Host,
+  title: string,
+  after_button: (string) -> void
+) -> void => {
+  title.with_cstring((t) => unsafe { lyra_imgui_title_bar(host, t, 3) })
+  let minimize = unsafe { lyra_imgui_window_button(host, 0) }
+  after_button("Minimize")
+  if minimize { unsafe { lyra_imgui_host_minimize(host) } }
+  let maximize = unsafe { lyra_imgui_window_button(host, 1) }
+  after_button("Maximize")
+  if maximize { unsafe { lyra_imgui_host_toggle_maximized(host) } }
+  let close = unsafe { lyra_imgui_window_button(host, 2) }
+  after_button("Close")
+  if close { request_quit(host) }
+}
+
+/// Whether the main window is maximised (never, headless).
+pub let is_maximized = (host: Host) -> bool => unsafe { lyra_imgui_host_maximized(host) }
 
 /// Ask the host to quit, as closing its window does: the next [begin_frame] answers false,
 /// and [cancel_quit] takes it back. How a test reaches "unsaved changes?".
@@ -428,6 +482,33 @@ unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
 
 @symbol("lyra_imgui_host_set_ui_scale")
 unsafe extern lyra_imgui_host_set_ui_scale: (host: Host, scale: f32) -> void
+
+@symbol("lyra_imgui_begin_status_bar")
+unsafe extern lyra_imgui_begin_status_bar: (name: ^u8) -> bool
+
+@symbol("lyra_imgui_end_status_bar")
+unsafe extern lyra_imgui_end_status_bar: () -> void
+
+@symbol("lyra_imgui_host_custom_title_bar")
+unsafe extern lyra_imgui_host_custom_title_bar: (host: Host) -> bool
+
+@symbol("lyra_imgui_host_set_title")
+unsafe extern lyra_imgui_host_set_title: (host: Host, title: ^u8) -> void
+
+@symbol("lyra_imgui_host_maximized")
+unsafe extern lyra_imgui_host_maximized: (host: Host) -> bool
+
+@symbol("lyra_imgui_host_minimize")
+unsafe extern lyra_imgui_host_minimize: (host: Host) -> void
+
+@symbol("lyra_imgui_host_toggle_maximized")
+unsafe extern lyra_imgui_host_toggle_maximized: (host: Host) -> void
+
+@symbol("lyra_imgui_title_bar")
+unsafe extern lyra_imgui_title_bar: (host: Host, title: ^u8, buttons: i32) -> void
+
+@symbol("lyra_imgui_window_button")
+unsafe extern lyra_imgui_window_button: (host: Host, kind: i32) -> bool
 
 @symbol("lyra_imgui_host_ui_scale")
 unsafe extern lyra_imgui_host_ui_scale: (host: Host) -> f32

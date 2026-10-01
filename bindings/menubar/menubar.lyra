@@ -50,9 +50,16 @@ pub const OPTION: u32 = 4
 pub const CONTROL: u32 = 8
 
 /// Start a new top-level menu, after those already begun. Items added after this go in it.
+/// A menu titled `Edit` holds only what is put in it: AppKit's own additions to an Edit
+/// menu (Writing Tools, AutoFill, Dictation, Emoji & Symbols) are kept out.
 pub let menu = (title: string) -> void => title.with_cstring((t) => unsafe {
   lyra_menubar_menu(t)
 })
+
+/// Start the application menu's own items — About, Settings — which [install] puts above
+/// its Hide and Quit (it makes those itself). Items added after this go there, until the
+/// next [menu].
+pub let app_menu = () -> void => unsafe { lyra_menubar_app_menu() }
 
 /// Add an item to the current menu. `key` is its key equivalent (`""` for none), shown
 /// beside it and held with `mods`; a capital letter implies Shift, as AppKit has it.
@@ -90,6 +97,15 @@ pub let install = (app_name: string) -> bool => app_name.with_cstring((a) => uns
   lyra_menubar_install(a)
 })
 
+/// The installed menu bar as text — a line a menu, its items indented beneath with their key
+/// equivalents (`Cmd+Shift+S`), `[x]` when checked, `(off)` when greyed, `---` a separator —
+/// for a program's tests to read back what it installed. Empty off macOS.
+pub let describe = () -> string => {
+  let p = unsafe { lyra_menubar_describe() }
+  if p.is_null() { return "" }
+  CBuffer { ptr: p, len: unsafe { cstring_len(p) } }.decode_utf8()
+}
+
 /// The tag of the oldest item chosen and not yet read, or `None`.
 pub let poll_menu = () -> Maybe<i32> => {
   let tag = unsafe { lyra_menubar_next() }
@@ -125,6 +141,9 @@ pub let alert = (message: string, detail: string) -> void =>
 @symbol("lyra_menubar_menu")
 unsafe extern lyra_menubar_menu: (title: ^u8) -> void
 
+@symbol("lyra_menubar_app_menu")
+unsafe extern lyra_menubar_app_menu: () -> void
+
 @symbol("lyra_menubar_item")
 unsafe extern lyra_menubar_item: (title: ^u8, key: ^u8, mods: u32, tag: i32) -> void
 
@@ -145,6 +164,9 @@ unsafe extern lyra_menubar_window_menu: () -> void
 
 @symbol("lyra_menubar_install")
 unsafe extern lyra_menubar_install: (app_name: ^u8) -> bool
+
+@symbol("lyra_menubar_describe")
+unsafe extern lyra_menubar_describe: () -> ^u8
 
 @symbol("lyra_menubar_next")
 unsafe extern lyra_menubar_next: () -> i32
