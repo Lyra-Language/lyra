@@ -1,0 +1,18 @@
+diff --git a/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp b/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp
+index e32fa8a23..a0360b1c0 100644
+--- a/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp
++++ b/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp
+@@ -500,6 +500,13 @@ bool M68kDAGToDAGISel::foldOffsetIntoAddress(uint64_t Offset,
+ bool M68kDAGToDAGISel::matchAddressBase(SDValue N, M68kISelAddressMode &AM) {
+   // Is the base register already occupied?
+   if (AM.hasBase()) {
++    // A frame index becomes a displacement from the stack pointer when frame indices
++    // are eliminated, which leaves no room for an index register — and hasIndexReg()
++    // answers false for a frame-index base, so one set here was silently dropped and
++    // `(fi + idx)` addressed `fi` alone. Refuse, and the caller computes the address.
++    if (AM.hasFrameIndex())
++      return false;
++
+     // If so, check to see if the scale index register is set.
+     if (!AM.hasIndexReg()) {
+       AM.IndexReg = N;

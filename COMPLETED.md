@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — LLVM's M68k backend dropped the index of a stack array
+
+Vega's hero walked right with the front view: every animation played its table's first
+step. The IR was right through `opt`; `llc` addressed `STEPS[first + i]` — the table copied
+to the stack — as the table's start. `matchAddressBase` recorded the index beside a
+frame-index base, `hasIndexReg()` answers false for one, and `SelectARID` took the frame
+index as the whole address. The patch (`tools/llvm-m68k-patches/0001`) refuses an index
+there, so the commuted match puts the scaled index in a register and the stack object
+in another — `move.w (0,%a0,%a2), %d0`. A single read of a small table is folded away by
+the optimizer, so the test walks a struct table from a run-time start, as `frame_of`
+does; it fails (red) on the unpatched `llc`.
+
 ### 09/30/26 — a literal in a tuple, or a construction in `==`, takes the width it meets
 
 Found writing Vega's build progress, an `(f32, string)` read with `unwrap_or((0.0, "…"))`.

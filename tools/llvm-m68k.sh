@@ -22,6 +22,14 @@
 #     become a read-modify-write; until upstream stops selecting CLR for one on a 68000,
 #     the pin stays before it (so the later MOVEM/PHI and MOVX fixes wait too).
 #
+# **Patched, by `tools/llvm-m68k-patches/*.patch`**, applied in order on top of the pin:
+#
+#   - 0001: a load or store at a stack object plus a variable index (`xs[i]` on a local
+#     array) was selected as the object alone — the index dropped, every `xs[i]` read
+#     `xs[0]`. `matchAddressBase` set an index beside a frame-index base, which
+#     `hasIndexReg()` does not see; the patch refuses one there (09/30; found by Vega's
+#     animations, whose step table is copied to the stack). Not yet reported upstream.
+#
 # Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
 # Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a
 # changed pin re-clones the source.
@@ -53,6 +61,17 @@ if [ ! -d "$DIR/src" ]; then
   git -C "$DIR/src" fetch -q --depth 1 https://github.com/llvm/llvm-project "$REVISION"
   git -C "$DIR/src" checkout -q FETCH_HEAD
 fi
+
+# The patches, each once: one that already applies in reverse is in. Ninja rebuilds what
+# a patch touches, and lyrac's runtime cache is keyed on llc, so nothing else is needed.
+for patch in "$(cd "$(dirname "$0")" && pwd)"/llvm-m68k-patches/*.patch; do
+  [ -e "$patch" ] || continue
+  if git -C "$DIR/src" apply --reverse --check "$patch" 2>/dev/null; then
+    continue
+  fi
+  git -C "$DIR/src" apply "$patch" || { printf '%s does not apply to %s\n' "$patch" "$REVISION" >&2; exit 1; }
+  printf 'applied %s\n' "$(basename "$patch")"
+done
 
 # Assertions on: the backend is experimental, and an assertion is a far better report of
 # a miscompile than a ROM that does the wrong thing. Only the M68k target, and clang (for

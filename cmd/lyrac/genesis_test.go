@@ -293,3 +293,64 @@ func TestGenesis_ProgressReportsEachStage(t *testing.T) {
 		t.Errorf("a second build reads the runtime from the cache, but reported %d compiles", n)
 	}
 }
+
+// TestGenesis_AVariableIndexIntoALocalArray reads a table at an index known only at run
+// time — pad 1's right button, held, makes it 1 — and paints the backdrop with what it
+// finds. LLVM's M68k backend addressed `xs[i]` on a stack array as `xs[0]`
+// (the index register dropped beside a frame index), which `tools/llvm-m68k-patches`
+// 0001 fixes; without it the screen is red, the table's first colour (09/30, found by
+// Vega's animations).
+func TestGenesis_AVariableIndexIntoALocalArray(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "index.lyra")
+	// A const table of structs, as Vega's animation steps are: read at a run-time index,
+	// it is copied to the stack first, which is where the index was lost.
+	if err := os.WriteFile(src, []byte(`import std.genesis.vdp
+import std.genesis.pad
+
+struct Swatch {
+  name: u16,
+  color: u16,
+}
+
+const SWATCHES: [4]Swatch = #[
+  Swatch { name: 1, color: 0x000E },
+  Swatch { name: 2, color: 0x00E0 },
+  Swatch { name: 3, color: 0x0E00 },
+  Swatch { name: 4, color: 0x0EEE },
+]
+
+let main = () -> void => {
+  vdp.init()
+  pad.init()
+  vdp.set_color(0, 0, find((pad.read(1) >> 3) & 3, 0))
+  vdp.display_on()
+  for {}
+}
+
+/// The colour of the first swatch from `+"`first`"+` on named at least `+"`name`"+`, as Vega's
+/// frame_of walks an animation's steps from its first.
+let find = (first: u16, name: u16) -> u16 => {
+  for k: u16 in first..<4 {
+    let s = SWATCHES[k]
+    if s.name >= name { return s.color }
+  }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "index.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", out, src); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	if got := runROM(t, out, "30", "right").dominant(); got != "00ff00" {
+		t.Errorf("with right held the screen is %s, want green (00ff00): SWATCHES[1], not SWATCHES[0]", got)
+	}
+}

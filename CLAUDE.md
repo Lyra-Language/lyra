@@ -544,6 +544,9 @@ of Markdown.
   memory functions, the panic screen) is compiled by `lyrac build` for a Genesis program with
   the M68k LLVM from `tools/llvm-m68k.sh`, cached in the user cache directory
   (`lyra-genesis/`), and linked by `pkg/rom` with the program and compiler-rt's helpers.
+  **The M68k LLVM is patched** (`tools/llvm-m68k-patches/*.patch`, applied by
+  `tools/llvm-m68k.sh` on top of its pin): an index beside a stack object was dropped
+  from the address, so `xs[i]` on the stack read `xs[0]` (`TestGenesis_AVariableIndex…`).
   Every Genesis object goes through `llc -code-model=medium -relocation-model=static`: the
   default small model stores through a PC-relative destination, which no 68000 accepts.
   The runtime's interrupt entries are naked C with inline `movem`/`rte`, and its weak
