@@ -323,3 +323,36 @@ let main = () -> u8 => {
 		}
 	}
 }
+
+// **A constructor imported by name is in scope without its type** (10/01). Vega's checks
+// imported `menus.{ Item, Rule }`, and the program also has `std.collections`' exported
+// `Entry`: the bare name `Entry` resolved to that one, so `Rule`'s own type was not "in
+// scope" — `Rule` compared with `!=` or as a pattern was "not a constructor" — and the
+// workaround, importing the type too, was then reported as an unused import.
+func TestModules_AConstructorImportedByNameIsInScope(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra": `import menus.{ Item, Rule, last }
+import other
+let main = () -> u8 => {
+  let o = other.one()
+  let e = last()
+  let dash = match e {
+    Rule => 1,
+    Item(n) => n,
+  }
+  if e != Rule { return 9 }
+  u8(i64(dash) + o.x)
+}`,
+		"menus.lyra": "module menus\npub data Entry = Item(u8) | Rule\npub let last = () -> Entry => Rule",
+		"other.lyra": "module other\npub struct Entry { x: i64 }\npub let one = () -> Entry => Entry { x: 1 }",
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("expected a clean program; got %v", errs)
+	}
+	for _, d := range res.Diagnostics {
+		if strings.Contains(d.Message, "never used") {
+			t.Errorf("unexpected unused-import warning: %s", d.Message)
+		}
+	}
+}

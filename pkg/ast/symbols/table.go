@@ -1316,8 +1316,30 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 		if resolved, ok := st.LookupTypeFrom(decl.Name, loc); ok && resolved == decl {
 			return decl, true
 		}
+		if st.importsConstructor(loc, ctorName, decl) {
+			return decl, true
+		}
 	}
 	return nil, false
+}
+
+// importsConstructor reports whether the file at loc imports the constructor ctorName by
+// name from the module that declares decl — `import menus.{ Rule }`, the type itself not
+// imported. Such a constructor is in scope as much as its type would have made it: without
+// this a bare one (`Rule`) was "not a constructor" while an applied one beside it (`Item(x)`,
+// resolved through its scrutinee's type) worked, and importing the type to make it work
+// was then reported as an unused import (09/30–10/01, Vega's menus).
+func (st *SymbolTable) importsConstructor(loc ast.Location, ctorName string, decl *ast.TypeDeclStmt) bool {
+	declaring := st.ModuleOfFile[decl.GetLocation().File]
+	for _, imp := range st.ImportsFor(loc.File) {
+		if imp.IsNamespace() || imp.Path != declaring {
+			continue
+		}
+		if member, ok := imp.Members[ctorName]; ok && member == ctorName {
+			return true
+		}
+	}
+	return false
 }
 
 // KeyAmbiguousTypes puts the declaration key on the declared type of every type whose name
