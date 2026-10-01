@@ -42,6 +42,10 @@ pub const PLANE_B: u16 = 0xE000
 pub const SPRITE_TABLE: u16 = 0xF000
 pub const HSCROLL: u16 = 0xFC00
 
+/// A plane, as [init] sizes them, in cells.
+pub const PLANE_WIDTH: u16 = 64
+pub const PLANE_HEIGHT: u16 = 32
+
 /// The VDP set up for a game: mode 5, 40 cells, the tables above, the display off, and
 /// every memory cleared — VRAM (so every tile and table starts empty), CRAM (every colour
 /// black) and VSRAM (no vertical scroll). Call once, first.
@@ -144,6 +148,32 @@ pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u32) -> void => {
 pub let write_vram<const N: i64> = (address: u16, words: ref [N]u16) -> void => {
   set_address(VRAM_WRITE, address)
   for w in words { write_word(w) }
+}
+
+/// A tile map into a plane (`PLANE_A` or `PLANE_B`): every one of the plane's cells, from
+/// the map's cell (`left`, `top`) on. `cells` is the map row by row, `width` cells a row,
+/// as name-table words — `priority << 15 | palette << 13 | flip_y << 12 | flip_x << 11 |
+/// tile` — and a plane cell past the map's edge gets 0, the blank tile. A whole plane is
+/// 2,048 words: write it before `display_on`, or between levels, rather than every frame.
+pub let write_plane<const N: i64> = (
+  plane: u16,
+  cells: ref [N]u16,
+  width: u16,
+  left: u16 = 0,
+  top: u16 = 0
+) -> void => {
+  let cell_count = u32(cells.len())
+  // Where the map's row `top + row` starts, kept by adding a row's width each time.
+  var start = u32(top) * u32(width)
+  for row: u16 in 0..<PLANE_HEIGHT {
+    set_address(VRAM_WRITE, plane + row * PLANE_WIDTH * 2)
+    for column: u16 in 0..<PLANE_WIDTH {
+      let x = left + column
+      let at = start + u32(x)
+      if x < width && at < cell_count { write_word(cells[at]) } else { write_word(0) }
+    }
+    start += u32(width)
+  }
 }
 
 /// Point the data port at byte `address` of VRAM, for [write_word]s to follow — how the

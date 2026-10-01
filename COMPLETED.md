@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 10/01/26 — `std.genesis.vdp.write_plane`: a tile map into a plane
+
+Vega's tile maps reach the game as name-table words, and the game needs them in plane A
+or B. `write_plane<const N>(plane, cells, width, left = 0, top = 0)` fills the plane's
+64×32 cells from the map's cell (`left`, `top`), 0 (the blank tile) past the map's edge,
+so a larger map is shown a part at a time. Two things the first version ran into: `N`
+cannot be read as a value in the body yet (todo.md, Const generics), so the bound is
+`cells.len()`; and **the test saw a blank screen at 10 frames** — `vdp.init` clears all
+64 KB of VRAM a word at a time, which takes most of them, so nothing written after it had
+been displayed yet. `TestGenesis_WritePlaneShowsAMap` runs 60, places one tile through an
+offset into palette 1, and fails if `left` is ignored.
+
 ### 10/01/26 — the ImGui host can leave the title bar to the program
 
 Vega asked for its own minimize, maximize and close buttons at the right of its bar, with

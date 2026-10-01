@@ -356,3 +356,53 @@ let find = (first: u16, name: u16) -> u16 => {
 		t.Errorf("with right held the screen is %s, want green (00ff00): SWATCHES[1], not SWATCHES[0]", got)
 	}
 }
+
+// TestGenesis_WritePlaneShowsAMap writes a 4×3 map into plane B from its cell (1, 1):
+// its one tile, at map cell (2, 1) in palette 1, must land on the plane's cell (1, 0) —
+// the screen's pixels 8–16 across and 0–8 down — and the cells past the map's edge must
+// be blank, so nothing else is drawn.
+func TestGenesis_WritePlaneShowsAMap(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "plane.lyra")
+	if err := os.WriteFile(src, []byte(`import std.genesis.vdp
+
+/// One tile, every pixel colour 1.
+const SOLID: [8]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+]
+
+/// Tile 1 in palette 1 at (2, 1); every other cell blank.
+const MAP: [12]u16 = #[
+  0, 0, 0, 0,
+  0, 0, 0x2001, 0,
+  0, 0, 0, 0,
+]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(1, 1, vdp.rgb(0, 7, 0))
+  vdp.load_tiles(1, SOLID)
+  vdp.write_plane(vdp.PLANE_B, MAP, 4, 1, 1)
+  vdp.display_on()
+  for {}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "plane.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", out, src); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	// 60 frames: vdp.init clears all of VRAM first, which takes most of 10.
+	screen := runROM(t, out, "60", "")
+	if x0, y0, x1, y1 := screen.bounds(screen.dominant()); x0 != 8 || y0 != 0 || x1 != 16 || y1 != 8 {
+		t.Errorf("the tile is drawn in [%d,%d)–[%d,%d), want [8,0)–[16,8)", x0, y0, x1, y1)
+	}
+}

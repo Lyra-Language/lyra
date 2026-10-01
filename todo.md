@@ -546,6 +546,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.
 - **[DONE 09/29] `bindings.imgui`: `cancel_quit` and SDL's open/save dialogs**; `std`:
   `string.replace` and `std.json`'s writer. (COMPLETED.md, 09/29.)
+- **[OPEN] No `contains` (or `any`) on an array.** `string.contains` exists; for `[]t` a
+  program writes the loop — Vega's `project.is_taken` did (10/01). A `contains<t> where t:
+  Eq` on arrays, and `any`/`all` taking a predicate, would replace it.
 - **[OPEN] `bindings.imgui` on Linux is unverified.** `@link` flags are sorted, so `-lSDL3`
   precedes the static `-llyra-imgui`; check the link under `--as-needed`, and that the
   archive needs nothing from libstdc++ there either.
