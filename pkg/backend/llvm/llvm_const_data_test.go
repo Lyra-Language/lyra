@@ -119,3 +119,40 @@ let main = () -> u8 => {
 		t.Errorf("the table is rebuilt or copied where it is read")
 	}
 }
+
+// A `const` may hold data values (09/30): a bare constructor, an applied one, a table of
+// them, and a struct with one inside — read at a run-time index and matched as written.
+func TestExec_ConstDataValues(t *testing.T) {
+	t.Parallel()
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, `module main
+data Dir = Left | Right | Jump(u8)
+
+struct Move {
+  dir: Dir,
+  frames: u16,
+}
+
+const START: Dir = Left
+const NONE_YET: Maybe<u8> = None
+const THREE: Maybe<u8> = Some(3)
+const MOVES: [3]Dir = #[Left, Jump(12), Right]
+const PLAN: [2]Move = #[Move { dir: Jump(4), frames: 10 }, Move { dir: Right, frames: 20 }]
+
+let describe = (d: Dir) -> string => match d {
+  Left => "left",
+  Right => "right",
+  Jump(h) => "jump ${h}",
+}
+
+let main = () -> void => {
+  var n = 0
+  for m in PLAN { n += i64(m.frames) }
+  let i = n / 30
+  println("${describe(START)} ${NONE_YET.unwrap_or(0)} ${THREE.unwrap_or(0)}")
+  println("${describe(MOVES[i])} ${describe(MOVES[i + 1])} ${describe(PLAN[i - 1].dir)} ${PLAN[i].frames}")
+}
+`, ""))
+	if want := "left 0 3\njump 12 right jump 4 20"; got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}

@@ -693,11 +693,16 @@ target = "genesis"
     body writes (`=`, `+=`, `&mut`); a variable written only in a function it calls must be
     read with `read_volatile`. `examples/genesis/vblank.lyra` counts frames in one;
     `walker.lyra` shows its sprites from one, and its main loop waits on the count.
+- **A `const` holds what can be known before the program runs**: literals, other
+  `const`s, arithmetic and conversions of them, array/tuple/struct literals of them, and
+  **data constructors** — bare (`None`, `Left`) or of a constant payload (`Some(3)`,
+  `#[Left, Jump(12)]`). Anything computed at run time is `lyra-E012`.
 - **A `const` fixed array of literals is data** (`#[…]`, `#[v; n]`, nested, and of structs
   or tuples of literals — `#[Step { frame: 1, ticks: 8 }, …]`): one constant in `.rodata` —
   ROM on a console — read in place, with an address (`&TABLE[i]`). A table with any other
-  leaf (a string) and any other `const` is inlined at each use, as before. Indexing or looping over any module-level array
-  addresses it in place rather than copying it to the stack.
+  leaf (a string, a data value) and any other `const` is inlined at each use, as before.
+  Indexing or looping over any module-level array addresses it in place rather than
+  copying it to the stack.
 
 ### Imports
 

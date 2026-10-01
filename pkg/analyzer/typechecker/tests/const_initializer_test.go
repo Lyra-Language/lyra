@@ -50,7 +50,25 @@ const DERIVED = BASE * 2`, false)
 	assertNoErrors(t, res)
 }
 
+// A data constructor is a constant: bare, or applied to a constant payload, alone or in a
+// table (09/30; the bare form was refused, though the applied one beside it passed).
+func TestConst_DataConstructors(t *testing.T) {
+	res := parseCollectAndCheck(t, `data Dir = Left | Right | Jump(u8)
+const START: Dir = Left
+const HOP: Dir = Jump(12)
+const MOVES: [3]Dir = #[Left, Jump(12), Right]`, false)
+	assertNoErrors(t, res)
+}
+
 // --- non-constant initializers: errors ---
+
+func TestConst_DataConstructorOfARuntimePayload_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `data Dir = Left | Jump(u8)
+let height = () -> u8 => 3
+const HOP: Dir = Jump(height())`, false)
+	assertErrorsAre(t, res,
+		"`const` initializer must be a compile-time constant: a function call is not constant")
+}
 
 func TestConst_FunctionCall_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let compute = () => 42

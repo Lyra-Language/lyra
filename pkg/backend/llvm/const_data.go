@@ -81,7 +81,12 @@ func (l *lowerer) staticConstant(expr ast.Expression, ty lltypes.Type) (constant
 	// A leaf: lowered into a detached block, and a constant only if lowering emitted
 	// nothing — a literal does not — or only `insertvalue`s that fold to one (a struct of
 	// literals). Anything else is not static data.
-	scratch := ir.NewBlock("")
+	//
+	// The block belongs to a throwaway function, never added to the module: lowering some
+	// leaves takes a slot in its function's entry block — a data value is built through
+	// memory (DATA_LAYOUT.md) — and a parentless block was a nil dereference there. Such a
+	// leaf emits instructions that do not fold, so its table stays inlined.
+	scratch := ir.NewFunc("", lltypes.Void).NewBlock("")
 	lowered, _, err := l.lowerExpr(scratch, expr)
 	if err != nil {
 		return nil, false

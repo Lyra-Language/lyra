@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — a data constructor is a constant
+
+`const MOVES: [3]Dir = #[Left, Jump(12), Right]` was refused at `Left`: a bare
+constructor fell to `firstNonConstant`'s default, while `Jump(12)` beside it passed — an
+applied constructor is a named tuple literal, already walked element by element. The new
+arm accepts a bare one (walking `Value` should a payload ever land there).
+
+The backend then panicked deciding whether such a table could be static data: the leaf
+was lowered into a parentless scratch block, and a data value is built through memory —
+a slot in its function's entry block. The scratch block now has a throwaway function; a
+data value's instructions do not fold, so its table is inlined, as a table of strings is.
+
 ### 09/30/26 — a `const` table of structs is data, as a table of numbers is
 
 `const STEPS: [6]Step = #[Step { … }, …]` was rebuilt at every read — an `insertvalue`

@@ -14,8 +14,9 @@ import (
 //   - a purely-constant expression built from the above: unary (`-x`, `!x`),
 //     arithmetic / boolean binary ops, string concatenation, a **conversion**
 //     (`f64(N)`, `u8(200)`) of a constant operand, a **float builtin** over constant
-//     operands (`5.0.sqrt()`, `2.0.pow(10.0)`, `2.7.floor()`), or an array/tuple literal
-//     whose elements are themselves all constant.
+//     operands (`5.0.sqrt()`, `2.0.pow(10.0)`, `2.7.floor()`), an array/tuple literal
+//     whose elements are themselves all constant, or a **data constructor** — bare
+//     (`None`, `Left`) or applied to a constant payload (`Some(3)`, `Jump(12)`).
 //
 // Anything that depends on runtime state — a function call, a non-const variable,
 // an interpolated string, a member/index access, etc. — is rejected with
@@ -325,7 +326,20 @@ func (tc *TypeChecker) firstNonConstant(expr ast.Expression) (ast.Expression, bo
 		}
 		return nil, true
 
+	case *ast.DataConstructorExpr:
+		// A bare constructor — `None`, `Left` — is a value with nothing in it to compute,
+		// as constant as a literal (09/30: `#[Left, Jump(12)]` was refused at `Left`, though
+		// `Jump(12)` beside it passed — an applied constructor is a named tuple literal,
+		// walked by the arm below). The collector leaves Value nil; walked if a payload
+		// ever lands there.
+		if e.Value != nil {
+			return tc.firstNonConstant(e.Value)
+		}
+		return nil, true
+
 	case *ast.TupleLiteralExpr:
+		// A tuple, and also an applied constructor — `Some(3)`, `Jump(12)` — whose payload
+		// is constant when its elements are.
 		for _, el := range e.Elements {
 			if off, ok := tc.firstNonConstant(el); !ok {
 				return off, false
