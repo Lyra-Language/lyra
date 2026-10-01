@@ -1,0 +1,19 @@
+module bindings.sdl3
+//! Where a program keeps what it writes.
+
+import std.ffi.{ cstring_len }
+
+/// The folder for `app`'s own files — settings, saved state — made if it is not there yet:
+/// `~/Library/Application Support/<org>/<app>/` on macOS, `$XDG_DATA_HOME/<org>/<app>/`
+/// (else `~/.local/share/…`) on Linux, `%APPDATA%\<org>\<app>\` on Windows. Ends in the
+/// separator. `None` when there is no such place or it cannot be made. Needs no `init`.
+pub let pref_path = (org: string, app: string) -> Maybe<string> => {
+  let path = unsafe { sdl_get_pref_path(org.cstring_ptr(), app.cstring_ptr()) }
+  if path == nullptr { return None }
+  let text = unsafe { path.decode_utf8(cstring_len(path)) }
+  unsafe { sdl_free(path) }
+  Some(text)
+}
+
+@symbol("SDL_GetPrefPath")
+unsafe extern sdl_get_pref_path: (org: ^u8, app: ^u8) -> ^u8

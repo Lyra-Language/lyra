@@ -301,6 +301,15 @@ pub let create_headless_host = (width: i32, height: i32, flags: u32) -> Maybe<Ho
   if h == nullptr { None } else { Some(h) }
 }
 
+/// Scale the whole interface — text, padding, spacing — by `scale`, for readability: 1 is
+/// as the host set it up (the display's density already applied), 1.25 a quarter larger.
+/// From the host's own style each time, so scales never compound; clamped to 0.5–3.
+pub let set_ui_scale = (host: Host, scale: f32) -> void =>
+  unsafe { lyra_imgui_host_set_ui_scale(host, scale) }
+
+/// The scale [set_ui_scale] last applied, clamped; 1 until it is called.
+pub let ui_scale = (host: Host) -> f32 => unsafe { lyra_imgui_host_ui_scale(host) }
+
 /// Ask the host to quit, as closing its window does: the next [begin_frame] answers false,
 /// and [cancel_quit] takes it back. How a test reaches "unsaved changes?".
 pub let request_quit = (host: Host) -> void =>
@@ -416,6 +425,12 @@ unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) ->
 
 @symbol("lyra_imgui_host_destroy")
 unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
+
+@symbol("lyra_imgui_host_set_ui_scale")
+unsafe extern lyra_imgui_host_set_ui_scale: (host: Host, scale: f32) -> void
+
+@symbol("lyra_imgui_host_ui_scale")
+unsafe extern lyra_imgui_host_ui_scale: (host: Host) -> f32
 
 @symbol("lyra_imgui_host_create_headless")
 unsafe extern lyra_imgui_host_create_headless: (

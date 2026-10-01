@@ -61,6 +61,7 @@ SDL3 (3.4); `@link("SDL3")` on the header. Grown **by example**, towards an NES-
 | `texture.lyra` | `Texture` (handle + size) is `@must_release(destroy_texture)`. **Set `set_default_scale_mode(…, SCALE_NEAREST)` before loading** — a texture takes the mode in force when made, and the default blurs pixel art. `draw_texture(src, dst)`, `draw_texture_flipped` (`FLIP_*`). `set_texture_color`/`set_texture_alpha` are the **texture's state**, not the draw's: reset them after a tinted draw. `adopt_texture` is `unsafe` (it keeps a pointer) and is how other bindings hand a texture over. `create_streaming_texture(renderer, w, h)` + `update_texture(texture, []u32)` is a screen a program draws itself (texels `0x00RRGGBB`, exactly `w × h` of them or nothing changes) — Sheliak's emulator window. |
 | `audio.lyra` | **Push model only**: `open_audio(rate, channels)` → a stream on the default device (`None` with no device — run silently), `put_audio([]f32)`, `queued_frames` to top the queue up to a target each frame. No callback: that would be Lyra running on SDL's audio thread. `AudioStream` is `@must_release(close_audio)`. Needs `init(INIT_AUDIO)`, which may be called after the first `init` — so a failure means "no sound", not "no SDL". `SDL_AUDIO_DRIVER=dummy` exercises it with no speakers. |
 | `process.lyra` | `create_process([path, args…])` → `Maybe<Process>` (a bare name is looked up on the `PATH`; output inherited), `run_process([path, args…])` → `Maybe<(exit code, output)>`, run to its end with standard error and output captured together (it blocks for the whole run); `create_process_to_file(args, path)` starts one writing both to a file, for a caller that polls `wait_process` rather than waiting (Vega builds games with it; a file, not a pipe, so a long output never stalls), `wait_process(p, block)` → the exit code, or `None` while running when not blocking; `kill_process(p, force)`; `destroy_process` forgets it — **a program still running keeps running**, and one never waited for is a zombie until this one exits. Vega launches Sheliak with it. **SDL reads the argument array at `SDL_CreateProcessWithProperties`, not when the property is set**, and Lyra frees an array after its last use, so `run_process` uses it again after the create — without that, a segfault. |
+| `filesystem.lyra` | `pref_path(org, app)` → `Maybe<string>`: the folder for a program's own files (settings), made if missing, ending in the separator — `~/Library/Application Support/<org>/<app>/` on macOS, the XDG data folder on Linux, `%APPDATA%` on Windows. Vega keeps its settings there. |
 | `timer.lyra` | `delay`, `ticks`, and `ticks_ns` — a fixed timestep needs nanoseconds: whole milliseconds drift a 16.67 ms step by a whole step every few seconds. |
 
 **Examples**: `examples/SDL3/basic.lyra` (a bouncing square, bindings only), and in
@@ -202,6 +203,13 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     `image_button`, `draw_list.add_image`, each with `filter: Filter = Nearest` — the
     host brackets the draw with ImGui's sampler callbacks, since pixel art must not be
     smoothed. Do not destroy a texture the frame being built still draws.
+  - **Interface scale**: `set_ui_scale(host, s)` draws everything — text through
+    `FontScaleMain` (1.92's fonts are sharp at any size), padding and spacing through
+    `ScaleAllSizes` — at `s` times the host's own style, the display's density already in
+    it; `ui_scale(host)` answers it. **From the base style each time**: the host keeps a
+    copy, since `ScaleAllSizes` multiplies and rounds, and scaling the scaled style drifts.
+    Clamped to 0.5–3. Call it between frames; a window sized in pixels keeps its size
+    (fit it to its contents, or size it from `get_font_size()`).
   - `text(s)` (ImGui's `Text` is printf-style, so the variadics are bound through their
     `…Unformatted` forms and interpolation does the formatting) and `col32(r, g, b, a)`.
   - **A headless host for interface tests**: `create_headless_host(w, h, flags)` runs real

@@ -55,6 +55,11 @@ struct LyraImGuiHost {
     SDL_Mutex* dialog_lock;
     LyraDialogAnswer* answers;
     LyraDialogAnswer* polled;
+    // The style as the host set it up, the display's density applied, and the program's
+    // scale on top of it (lyra_imgui_host_set_ui_scale). Kept so a new scale starts from
+    // the base: ScaleAllSizes multiplies and rounds, so scaling the scaled style drifts.
+    ImGuiStyle base_style;
+    float ui_scale;
 };
 
 // Flags for lyra_imgui_host_create; Lyra spells them HOST_DOCKING and HOST_VIEWPORTS.
@@ -138,6 +143,8 @@ LyraImGuiHost* lyra_imgui_host_create(const char* title, int32_t width, int32_t 
     host->window = window;
     host->device = device;
     host->dialog_lock = SDL_CreateMutex();
+    host->base_style = ImGui::GetStyle();
+    host->ui_scale = 1.0f;
     return host;
 }
 
@@ -166,7 +173,29 @@ LyraImGuiHost* lyra_imgui_host_create_headless(int32_t width, int32_t height, ui
     host->dialog_lock = SDL_CreateMutex();
     host->width = (float)width;
     host->height = (float)height;
+    host->base_style = ImGui::GetStyle();
+    host->ui_scale = 1.0f;
     return host;
+}
+
+// Scale the whole interface by `scale` (1 is as the host set it up): text through
+// FontScaleMain, which 1.92's dynamic fonts render sharp at any size, and every padding,
+// spacing and rounding through ScaleAllSizes — both from the base style, so scales do not
+// compound. Clamped to 0.5–3; the display's density stays applied beneath it.
+void lyra_imgui_host_set_ui_scale(LyraImGuiHost* host, float scale) {
+    if (!(scale >= 0.5f))
+        scale = 0.5f;
+    if (scale > 3.0f)
+        scale = 3.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = host->base_style;
+    style.ScaleAllSizes(scale);
+    style.FontScaleMain = host->base_style.FontScaleMain * scale;
+    host->ui_scale = scale;
+}
+
+float lyra_imgui_host_ui_scale(LyraImGuiHost* host) {
+    return host->ui_scale;
 }
 
 // Ask the host to quit, as closing the window would: the next begin_frame answers false.
