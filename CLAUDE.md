@@ -87,6 +87,9 @@ Each of these produces something that looks like it works. Other docs cite them 
    - Backend `namespaceCallee` must not test membership with `DeclaringModule` and read
      `l.funcs[name]`.
    - A comment asserting "a top-level name is program-wide unique" is a bug waiting.
+   - **A type is program-wide — unkeyed — only if its name is declared once**
+     (`KeyAmbiguousTypes`). An exported type beside another module's private one of the same
+     name was left unkeyed, and inside that module laid out as the private one (09/30).
 
 5. **The backend errors loudly rather than emitting wrong code** — including repeating checks
    the front end made. "Loudly" also means no llir panic and no clang error: `ir.NewPhi`

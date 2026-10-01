@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 09/30/26 — an exported type beside a private one of its name is keyed
+
+Vega's `genesis_rom` declares a private `struct Animation`; `project` exports another. In
+`genesis_rom`, `s.animations[0].steps.len()` — the exported type's `[]Step` — was lowered as
+the private struct's `i64`, and the backend panicked (`invalid gep source type`).
+`KeyAmbiguousTypes` left a type unkeyed when the program-wide lookup found it, on the reading
+that such a name "means one declaration from anywhere"; but inside a module with a private
+declaration of the name, the bare name means that one, so the backend's ambient lookup
+(`lookupNamedTypeKeyed` with no key) found the wrong struct. A name declared more than once
+is now keyed in every declaration. The one visible change is in messages: a mismatch between
+two same-named types spells both with their modules, the unnamed entry module as `entry`.
+
 ### 09/30/26 — a data constructor is a constant
 
 `const MOVES: [3]Dir = #[Left, Jump(12), Right]` was refused at `Left`: a bare

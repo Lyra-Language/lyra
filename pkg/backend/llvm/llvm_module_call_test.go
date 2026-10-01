@@ -199,3 +199,53 @@ let main = () -> u8 => u8((print(3) + seq.count(2)) %% 256)`,
 		t.Errorf("exit code: got %d, want 230", got)
 	}
 }
+
+// TestExec_AnExportedStructBesideAPrivateOneOfItsName reads a value of `model`'s exported
+// `Animation` inside `rom`, which declares a private `Animation` of its own. The exported
+// type carried no declaration key — it was taken to be program-wide — so in `rom` it was laid
+// out as `rom`'s struct: `steps` read an i64 field where the exported one has a `[]i64`, and
+// the backend panicked building a `.len()` on it (09/30, Vega). A name declared twice is
+// keyed now, both declarations of it.
+func TestExec_AnExportedStructBesideAPrivateOneOfItsName(t *testing.T) {
+	t.Parallel()
+	code := buildAndRunModules(t, map[string]string{
+		"model.lyra": `module model
+
+pub struct Animation {
+  name: string,
+  steps: []i64,
+}
+
+pub struct Sprite {
+  animations: []Animation,
+}
+`,
+		"rom.lyra": `module rom
+
+import model.{ Sprite }
+
+/// Another struct of the same name, private to this module.
+struct Animation {
+  sprite: i64,
+  steps: i64,
+}
+
+pub let total = (s: Sprite) -> i64 => {
+  let local = Animation { sprite: 7, steps: 10 }
+  s.animations[0].steps.len() * 100 + s.animations[0].steps[2] + local.steps + local.sprite
+}
+`,
+		"app.lyra": `import model.{ Sprite, Animation }
+import rom
+
+let main = () -> u8 => {
+  let s = Sprite { animations: [Animation { name: "walk", steps: [3, 4, 5] }] }
+  u8(rom.total(s) - 200)
+}
+`,
+	})
+	// 3 steps × 100 + steps[2] 5 + 10 + 7 = 322; less 200 is 122.
+	if code != 122 {
+		t.Errorf("exit %d, want 122", code)
+	}
+}

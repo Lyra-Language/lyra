@@ -1334,12 +1334,23 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 // from anywhere, so the bare name already identifies it — and an instantiation named from
 // a still-unresolved reference to it (which cannot know a key) must agree with one named
 // from the resolved type. Keying those too split `Maybe<[]MaterialParams>` into two symbols.
+//
+// **Program-wide means declared once.** An exported name that another module also declares
+// privately does not mean one declaration from anywhere: inside that module the bare name is
+// its own. Left unkeyed, the exported type's values reaching that module were laid out as the
+// private one — `s.animations[0].steps` read a private `Animation`'s `i64` field where the
+// exported one has a `[]Step` (09/30, Vega's `genesis_rom` beside `project`). So every
+// declaration of a name declared more than once is keyed.
 func (st *SymbolTable) KeyAmbiguousTypes() {
 	if st == nil {
 		return
 	}
+	declared := map[string]int{}
+	for _, decl := range st.Types {
+		declared[decl.Name]++
+	}
 	for key, decl := range st.Types {
-		if wide, ok := st.LookupType(decl.Name); ok && wide == decl {
+		if wide, ok := st.LookupType(decl.Name); ok && wide == decl && declared[decl.Name] == 1 {
 			decl.Type = types.WithNominalKey(decl.Type, "")
 			continue
 		}
