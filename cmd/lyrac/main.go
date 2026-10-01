@@ -86,6 +86,8 @@ build flags:
                 -O0 for the fastest build; -Os for size. No debug info is emitted
                 at any level, so -O0 buys build time rather than debuggability.
   --cc <path>   C compiler used to assemble and link (default: $LYRA_CC, else clang)
+  --progress    report each stage on stderr as it starts, a line each:
+                "progress: 40% compiling for the 68000" — for a tool showing a bar
 
 run flags:
   --cc <path>   as above; run leaves no executable or IR behind
@@ -114,6 +116,7 @@ type buildOptions struct {
 	emitOnly bool   // --emit-llvm: write the .ll and stop
 	keepLL   bool   // --keep-ll: keep the .ll as well as the executable
 	cc       string // C compiler override
+	progress bool   // --progress: a "progress: N% stage" line on stderr as each starts
 
 	// opt is the optimization level handed to the C compiler, as clang spells it
 	// ("-O2"). It defaults to -O2 rather than to clang's own -O0 default: this
@@ -185,6 +188,8 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 			o.emitOnly = true
 		case arg == "--keep-ll":
 			o.keepLL = true
+		case arg == "--progress":
+			o.progress = true
 		case isOptFlag(arg):
 			// Spelled the way clang spells it, and passed through unexamined
 			// beyond that: the C compiler is the authority on which levels it
@@ -238,6 +243,7 @@ func check(path string) int {
 // build runs the same analysis, resolves the program's entry point, hands the
 // typed program to the backend, and links the emitted IR into an executable.
 func build(o buildOptions) int {
+	o.report(0, "checking "+filepath.Base(o.path))
 	res, entry, code := typedProgram(o.path)
 	if entry == nil {
 		return code
@@ -246,6 +252,7 @@ func build(o buildOptions) int {
 		_, code := buildGenesis(o, res, entry)
 		return code
 	}
+	o.report(30, "compiling")
 	exe, code := lowerAndEmit(o, res, entry)
 	if code != 0 {
 		return code
@@ -258,6 +265,15 @@ func build(o buildOptions) int {
 		fmt.Printf("  kept %s\n", llPath(o))
 	}
 	return 0
+}
+
+// report is `--progress`: a stage starting, `percent` of the way through the build. The
+// percentages are a stage's place, not measured time — a bar that moves in the right
+// order — and the build ends with the process, not a 100% line.
+func (o buildOptions) report(percent int, what string) {
+	if o.progress {
+		fmt.Fprintf(os.Stderr, "progress: %d%% %s\n", percent, what)
+	}
 }
 
 // runProgram builds into a temp directory and executes the result, leaving no

@@ -87,6 +87,7 @@ func buildGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return "", 1
 	}
+	o.report(20, "generating code")
 	ir, err := llvm.NewForTarget(abi.Unknown).Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: llvm backend: %v\n", err)
@@ -108,12 +109,12 @@ func buildGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	}
 	defer os.RemoveAll(work)
 
-	program, err := compileProgram(tc, ir, work, o.opt)
+	program, err := compileProgram(tc, ir, work, o)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return "", 1
 	}
-	runtime, helpers, err := genesisRuntime(tc)
+	runtime, helpers, err := genesisRuntime(tc, o)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return "", 1
@@ -123,6 +124,7 @@ func buildGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		fmt.Fprintf(os.Stderr, "lyrac: %s cannot run on the Genesis: %s\n", o.path, rom.ExplainUndefined(missing))
 		return "", 1
 	}
+	o.report(90, "linking")
 	img, err := rom.Link(required, helpers, rom.GenesisLayout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: linking %s: %v\n", o.path, err)
@@ -179,22 +181,24 @@ func runGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) in
 // Everything but `main` and the interrupt entries (`@interrupt` handlers, which only the
 // runtime's vectors reach) is internalized first, so what the program does not reach — most
 // of the prelude, with its host calls — is dropped rather than linked.
-func compileProgram(tc m68kToolchain, ir []byte, work, opt string) ([]byte, error) {
+func compileProgram(tc m68kToolchain, ir []byte, work string, o buildOptions) ([]byte, error) {
 	ll := filepath.Join(work, "program.ll")
 	bc := filepath.Join(work, "program.bc")
 	obj := filepath.Join(work, "program.o")
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		return nil, err
 	}
-	level := strings.TrimPrefix(opt, "-")
+	level := strings.TrimPrefix(o.opt, "-")
 	if level == "" {
 		level = "O2"
 	}
+	o.report(30, "optimizing")
 	if err := runTool(tc.tool("opt"), "-mtriple=m68k-unknown-elf",
 		"-passes=internalize,default<"+level+">", "-internalize-public-api-list=main,__lyra_interrupt_vblank,__lyra_interrupt_hblank",
 		ll, "-o", bc); err != nil {
 		return nil, err
 	}
+	o.report(40, "compiling for the 68000")
 	if err := runTool(tc.tool("llc"), append(append([]string{}, genesisFlags...), "-"+level, bc, "-o", obj)...); err != nil {
 		return nil, err
 	}
@@ -202,20 +206,27 @@ func compileProgram(tc m68kToolchain, ir []byte, work, opt string) ([]byte, erro
 }
 
 // genesisRuntime is the runtime object and the helper library, compiled on first use and
-// cached by toolchain and source.
-func genesisRuntime(tc m68kToolchain) (rom.Object, []rom.Object, error) {
+// cached by toolchain and source. A first build compiles about fifty objects, the slow
+// part of it (seconds), so each one compiled is reported between 50% and 90%.
+func genesisRuntime(tc m68kToolchain, o buildOptions) (rom.Object, []rom.Object, error) {
 	source := filepath.Join(modules.StdRoot(), "runtime", "genesis", "runtime.c")
 	if _, err := os.Stat(source); err != nil {
 		return rom.Object{}, nil, fmt.Errorf("the Genesis runtime is missing (%s): rebuild lyrac with ./build.sh", source)
 	}
-	runtime, err := cachedObject(tc, source, nil)
+	total := 1 + len(genesisHelpers)
+	compiling := func(i int) func() {
+		return func() {
+			o.report(50+40*i/total, fmt.Sprintf("compiling the runtime library (%d of %d)", i+1, total))
+		}
+	}
+	runtime, err := cachedObject(tc, source, nil, compiling(0))
 	if err != nil {
 		return rom.Object{}, nil, err
 	}
 	var helpers []rom.Object
-	for _, name := range genesisHelpers {
+	for i, name := range genesisHelpers {
 		src := filepath.Join(tc.builtins(), name+".c")
-		obj, err := cachedObject(tc, src, []string{"-I" + tc.builtins()})
+		obj, err := cachedObject(tc, src, []string{"-I" + tc.builtins()}, compiling(1+i))
 		if err != nil {
 			return rom.Object{}, nil, err
 		}
@@ -226,7 +237,8 @@ func genesisRuntime(tc m68kToolchain) (rom.Object, []rom.Object, error) {
 
 // cachedObject compiles a C source for the 68000 — through IR, so llc applies the same
 // code model the program gets — or reads the object a previous build made of it.
-func cachedObject(tc m68kToolchain, source string, extra []string) (rom.Object, error) {
+// `compiling` is called only when it compiles.
+func cachedObject(tc m68kToolchain, source string, extra []string, compiling func()) (rom.Object, error) {
 	text, err := os.ReadFile(source)
 	if err != nil {
 		return rom.Object{}, err
@@ -250,6 +262,7 @@ func cachedObject(tc m68kToolchain, source string, extra []string) (rom.Object, 
 	if data, err := os.ReadFile(obj); err == nil {
 		return rom.Object{Name: filepath.Base(source), Bytes: data}, nil
 	}
+	compiling()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return rom.Object{}, err
 	}

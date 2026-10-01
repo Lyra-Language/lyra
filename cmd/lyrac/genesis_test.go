@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/rom"
@@ -232,5 +233,63 @@ func TestGenesis_AVBlankHandlerRuns(t *testing.T) {
 	}
 	if got := runROM(t, out, "100", "").dominant(); got != "0000ff" {
 		t.Errorf("after 100 frames the screen is %s, want blue (0000ff) — the handler has run 30 times", got)
+	}
+}
+
+// TestGenesis_ProgressReportsEachStage builds with `--progress`, as Vega does to show a
+// game's build: a line on stderr as each stage starts, never going backwards — checking
+// first, linking last — and, on a first build into an empty cache, one for each runtime
+// object compiled, which a second build reads from the cache instead.
+func TestGenesis_ProgressReportsEachStage(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	// An empty cache, wherever os.UserCacheDir looks on this system — the toolchain,
+	// found under the real home by default, named first.
+	tc, _ := findM68kToolchain()
+	t.Setenv("LYRA_M68K_LLVM", tc.root)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	src := filepath.Join(root, "examples", "genesis", "backdrop.lyra")
+	out := filepath.Join(t.TempDir(), "backdrop.bin")
+	stages := func() []string {
+		_, stderr, code := captureRun(t, "build", "--progress", "-o", out, src)
+		if code != 0 {
+			t.Fatalf("build exited %d: %s", code, stderr)
+		}
+		var lines []string
+		last := -1
+		for _, line := range strings.Split(stderr, "\n") {
+			var percent int
+			if _, err := fmt.Sscanf(line, "progress: %d%%", &percent); err != nil {
+				continue
+			}
+			if percent < last {
+				t.Errorf("progress went back to %q after %d%%", line, last)
+			}
+			last = percent
+			lines = append(lines, line)
+		}
+		return lines
+	}
+	compiles := func(lines []string) int {
+		n := 0
+		for _, line := range lines {
+			if strings.Contains(line, "compiling the runtime library") {
+				n++
+			}
+		}
+		return n
+	}
+	cold := stages()
+	if len(cold) == 0 || cold[0] != "progress: 0% checking backdrop.lyra" || cold[len(cold)-1] != "progress: 90% linking" {
+		t.Fatalf("stages from checking to linking, got %q", cold)
+	}
+	if n := compiles(cold); n != 1+len(genesisHelpers) {
+		t.Errorf("a first build compiles the runtime and %d helpers, reported %d", len(genesisHelpers), n)
+	}
+	if n := compiles(stages()); n != 0 {
+		t.Errorf("a second build reads the runtime from the cache, but reported %d compiles", n)
 	}
 }

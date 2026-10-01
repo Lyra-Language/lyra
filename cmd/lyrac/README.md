@@ -23,6 +23,7 @@ lyrac build --emit-llvm prog.lyra            # prog.ll only; needs no C compiler
 lyrac build --emit-llvm -o out.ll prog.lyra  # -o names the .ll
 lyrac build -O0 prog.lyra                    # default -O2
 lyrac build --cc /path/to/clang …            # else $LYRA_CC, else clang on PATH
+lyrac build --progress prog.lyra             # "progress: 40% compiling for the 68000" lines on stderr
 ```
 
 - Links with `clang <ir> -lm -o <exe>` plus `-l` flags from `@link` (`linkFlags`); `-lm` is
@@ -36,6 +37,11 @@ lyrac build --cc /path/to/clang …            # else $LYRA_CC, else clang on PA
 - **The compiler must accept `.ll`**, so plain `cc` is not a fallback. With no compiler found
   the build fails (exit 1) but still writes `<name>.ll` beside the source and prints the
   clang line.
+- **`--progress`** prints a line on stderr as each stage starts (`o.report`): checking,
+  then for the Genesis generating code, optimizing, compiling for the 68000, each runtime
+  object a first build compiles (the slow part, 50–90%), linking. Percentages are a
+  stage's place, not measured time; the process ending is the end. Vega reads them to show
+  a game's build.
 - A sequence value needs clang ≥ 15 (`CheckCoroutineSupport`); lyrac refuses by name and
   keeps the `.ll`.
 - The entry point (`driver.ResolveEntryPoint`) is checked only by `build`/`run`.
