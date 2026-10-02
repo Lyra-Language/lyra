@@ -98,6 +98,15 @@ exporter, receiver ignored) in the safe direction. `TestUnusedImport_NameUsedOnl
 gained the case: the rival `twice` is imported by the entry, not by the file that lists
 `lib.{ twice }`, and the warning must still land in that file. It fails without the fix. On
 Vega's tree, `check src/vega.lyra` now reports all four.
+### 10/02/26 — `bindings.menubar`: submenus
+
+Vega's File > Open Recent needed a submenu in macOS's own bar. `submenu(title)` starts one
+in the current menu and `end_submenu()` returns to the menu it was begun in (they nest);
+its items are tagged like any other, so `set_checked`/`set_enabled` reach them, and
+`describe` prints a submenu's title ending ` >` with its items indented beneath.
+`TestRun_MenubarSubmenusAreInstalled` installs one and reads the bar AppKit was given
+(macOS only; skipped without a window server), and fails when `end_submenu` leaves the
+next item inside.
 
 ### 10/02/26 — `std.genesis.entity`, and an array field is indexed where it lies
 

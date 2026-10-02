@@ -61,6 +61,8 @@ static void enqueue(int32_t tag) {
 // The bar being built, in order, and the menu items are going into.
 static NSMutableArray<NSMenuItem *> *pending_menus;
 static NSMenu *current_menu;
+// The menus a submenu was begun in, innermost last: `lyra_menubar_end_submenu` returns to it.
+static NSMutableArray<NSMenu *> *parent_menus;
 static NSMenu *windows_menu;
 // The program's own items for the application menu (`lyra_menubar_app_menu`), above Hide.
 static NSMenu *app_items;
@@ -104,6 +106,27 @@ void lyra_menubar_menu(const char *title) {
   NSMenu *menu = begin_menu(name);
   // Enabled means what the program last said, not what AppKit infers from the target.
   menu.autoenablesItems = NO;
+  parent_menus = nil;
+}
+
+// Start a submenu titled `title` in the current menu; items added after it go in it, until
+// `lyra_menubar_end_submenu`.
+void lyra_menubar_submenu(const char *title) {
+  if (current_menu == nil) lyra_menubar_menu("");
+  NSMenu *sub = [[NSMenu alloc] initWithTitle:string_of(title)];
+  sub.autoenablesItems = NO;
+  NSMenuItem *holder = [current_menu addItemWithTitle:string_of(title) action:nil keyEquivalent:@""];
+  holder.submenu = sub;
+  if (parent_menus == nil) parent_menus = [NSMutableArray array];
+  [parent_menus addObject:current_menu];
+  current_menu = sub;
+}
+
+// Back to the menu the current submenu was begun in.
+void lyra_menubar_end_submenu(void) {
+  if (parent_menus.count == 0) return;
+  current_menu = parent_menus.lastObject;
+  [parent_menus removeLastObject];
 }
 
 // Items added after this go in the application menu, above Hide and Quit: About, Settings.
@@ -225,6 +248,7 @@ bool lyra_menubar_install(const char *app_name) {
 
   pending_menus = nil;
   current_menu = nil;
+  parent_menus = nil;
   windows_menu = nil;
   app_items = nil;
   return true;
@@ -235,28 +259,38 @@ bool lyra_menubar_install(const char *app_name) {
 // a separator. Valid until the next call. For a program's tests to read back what it installed.
 static char *described = NULL;
 
+// A menu's items, `indent` deep, a submenu's beneath its title two spaces further.
+static void describe_items(NSMutableString *out, NSMenu *menu, NSString *indent) {
+  for (NSMenuItem *item in menu.itemArray) {
+    if (item.isSeparatorItem) {
+      [out appendFormat:@"%@---\n", indent];
+      continue;
+    }
+    if (item.submenu != nil) {
+      [out appendFormat:@"%@%@ >%@\n", indent, item.title, item.enabled ? @"" : @" (off)"];
+      describe_items(out, item.submenu, [indent stringByAppendingString:@"  "]);
+      continue;
+    }
+    NSMutableString *key = [NSMutableString string];
+    if (item.keyEquivalent.length > 0) {
+      NSEventModifierFlags m = item.keyEquivalentModifierMask;
+      if (m & NSEventModifierFlagControl) [key appendString:@"Ctrl+"];
+      if (m & NSEventModifierFlagOption) [key appendString:@"Option+"];
+      if (m & NSEventModifierFlagShift) [key appendString:@"Shift+"];
+      if (m & NSEventModifierFlagCommand) [key appendString:@"Cmd+"];
+      [key appendString:item.keyEquivalent.uppercaseString];
+    }
+    [out appendFormat:@"%@%@%@%@%@\n", indent, item.title, key.length > 0 ? [@"\t" stringByAppendingString:key] : @"",
+                      item.state == NSControlStateValueOn ? @" [x]" : @"", item.enabled ? @"" : @" (off)"];
+  }
+}
+
 const char *lyra_menubar_describe(void) {
   free(described);
   NSMutableString *out = [NSMutableString string];
   for (NSMenuItem *top in NSApp.mainMenu.itemArray) {
     [out appendFormat:@"%@\n", top.title];
-    for (NSMenuItem *item in top.submenu.itemArray) {
-      if (item.isSeparatorItem) {
-        [out appendString:@"  ---\n"];
-        continue;
-      }
-      NSMutableString *key = [NSMutableString string];
-      if (item.keyEquivalent.length > 0) {
-        NSEventModifierFlags m = item.keyEquivalentModifierMask;
-        if (m & NSEventModifierFlagControl) [key appendString:@"Ctrl+"];
-        if (m & NSEventModifierFlagOption) [key appendString:@"Option+"];
-        if (m & NSEventModifierFlagShift) [key appendString:@"Shift+"];
-        if (m & NSEventModifierFlagCommand) [key appendString:@"Cmd+"];
-        [key appendString:item.keyEquivalent.uppercaseString];
-      }
-      [out appendFormat:@"  %@%@%@%@\n", item.title, key.length > 0 ? [@"\t" stringByAppendingString:key] : @"",
-                        item.state == NSControlStateValueOn ? @" [x]" : @"", item.enabled ? @"" : @" (off)"];
-    }
+    describe_items(out, top.submenu, @"  ");
   }
   described = strdup(out.UTF8String);
   return described;

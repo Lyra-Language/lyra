@@ -68,6 +68,15 @@ pub let app_menu = () -> void => unsafe { lyra_menubar_app_menu() }
 pub let item = (title: string, key: string, mods: u32, tag: i32) -> void =>
   with_cstrings(title, key, (t, k) => unsafe { lyra_menubar_item(t, k, mods, tag) })
 
+/// Start a submenu titled `title` in the current menu — File's Open Recent. Items added after
+/// it go in it until [end_submenu]; submenus nest.
+pub let submenu = (title: string) -> void => title.with_cstring((t) => unsafe {
+  lyra_menubar_submenu(t)
+})
+
+/// Back to the menu the current submenu was begun in.
+pub let end_submenu = () -> void => unsafe { lyra_menubar_end_submenu() }
+
 /// A greyed title over the items after it, as macOS heads a section of a menu.
 pub let header = (title: string) -> void => title.with_cstring((t) => unsafe {
   lyra_menubar_header(t)
@@ -98,7 +107,8 @@ pub let install = (app_name: string) -> bool => app_name.with_cstring((a) => uns
 })
 
 /// The installed menu bar as text — a line a menu, its items indented beneath with their key
-/// equivalents (`Cmd+Shift+S`), `[x]` when checked, `(off)` when greyed, `---` a separator —
+/// equivalents (`Cmd+Shift+S`), `[x]` when checked, `(off)` when greyed, `---` a separator,
+/// a submenu's title ending ` >` with its items indented beneath it —
 /// for a program's tests to read back what it installed. Empty off macOS.
 pub let describe = () -> string => {
   let p = unsafe { lyra_menubar_describe() }
@@ -146,6 +156,12 @@ unsafe extern lyra_menubar_app_menu: () -> void
 
 @symbol("lyra_menubar_item")
 unsafe extern lyra_menubar_item: (title: ^u8, key: ^u8, mods: u32, tag: i32) -> void
+
+@symbol("lyra_menubar_submenu")
+unsafe extern lyra_menubar_submenu: (title: ^u8) -> void
+
+@symbol("lyra_menubar_end_submenu")
+unsafe extern lyra_menubar_end_submenu: () -> void
 
 @symbol("lyra_menubar_header")
 unsafe extern lyra_menubar_header: (title: ^u8) -> void
