@@ -7,13 +7,13 @@ module std.genesis.camera
 //! import std.genesis.camera.{ Camera }
 //!
 //! var view = Camera { world_width: 640, world_height: 512 }
-//! camera.show_map(view, vdp.PLANE_B, LEVEL, LEVEL_WIDTH)   // once, before display_on
+//! view.show_map(vdp.PLANE_B, LEVEL, LEVEL_WIDTH)   // once, before display_on
 //! for {
 //!   // … move the player, in the world's pixels
-//!   camera.follow(view, x, y, PLAYER_WIDTH, PLAYER_HEIGHT)
-//!   // … draw sprites at camera.on_screen_x(view, x), camera.on_screen_y(view, y)
+//!   view.follow(x, y, PLAYER_WIDTH, PLAYER_HEIGHT)
+//!   let (sx, sy) = view.on_screen(x, y)   // … and draw its sprites there
 //!   vdp.wait_vblank()
-//!   camera.scroll_map(view, vdp.PLANE_B, LEVEL, LEVEL_WIDTH)
+//!   view.scroll_map(vdp.PLANE_B, LEVEL, LEVEL_WIDTH)
 //! }
 //! ```
 //!
@@ -79,31 +79,29 @@ pub struct Camera {
 /// pixels) inside the camera's zone on the screen: it moves only when the rectangle crosses
 /// the zone's edge, and then just enough — never past the world's edges. Call once a
 /// frame, after moving what it follows.
-pub let follow = (view: mut Camera, x: i16, y: i16, width: i16, height: i16) -> void => {
-  view.last_x = view.x
-  view.last_y = view.y
-  let z = view.zone
-  view.x = along(view.x, x, width, z.left, z.right, vdp.SCREEN_WIDTH, view.world_width)
-  view.y = along(view.y, y, height, z.top, z.bottom, vdp.SCREEN_HEIGHT, view.world_height)
+pub let follow = (self: mut Camera, x: i16, y: i16, width: i16, height: i16) -> void => {
+  self.last_x = self.x
+  self.last_y = self.y
+  let z = self.zone
+  self.x = along(self.x, x, width, z.left, z.right, vdp.SCREEN_WIDTH, self.world_width)
+  self.y = along(self.y, y, height, z.top, z.bottom, vdp.SCREEN_HEIGHT, self.world_height)
 }
 
-/// Where world position `x` is on the screen, for a sprite.
-pub let on_screen_x = pure (view: Camera, x: i16) -> i16 => x - view.x
-
-/// Where world position `y` is on the screen, for a sprite.
-pub let on_screen_y = pure (view: Camera, y: i16) -> i16 => y - view.y
+/// Where world position (`x`, `y`) is on the screen, for a sprite.
+pub let on_screen = pure (self: Camera, x: i16, y: i16) -> (i16, i16) =>
+  (x - self.x, y - self.y)
 
 /// A map into `plane` around the view, and the plane scrolled to it: every cell the plane
 /// holds. Once, before `vdp.display_on()` — and after a jump too far for [scroll_map].
 /// `cells` is the map row by row, `width` cells a row.
 pub let show_map<const N: i64> = (
-  view: Camera,
+  self: Camera,
   plane: u16,
   cells: ref [N]u16,
   width: u16
 ) -> void => {
-  let left = cell_of(view.x)
-  let top = cell_of(view.y)
+  let left = cell_of(self.x)
+  let top = cell_of(self.y)
   let shift = left % vdp.PLANE_WIDTH
   for row: u16 in 0..<vdp.PLANE_HEIGHT {
     let my = top + row
@@ -114,25 +112,25 @@ pub let show_map<const N: i64> = (
       vdp.write_word(cell(cells, width, mx, my))
     }
   }
-  vdp.set_scroll(plane, view.x, view.y)
+  vdp.set_scroll(plane, self.x, self.y)
 }
 
 /// Keep a map in `plane` as the view moves: the columns and rows that came into view since
 /// the last [follow] written, and the plane scrolled to the view. Once a frame, in the
 /// vertical blank, with the map [show_map] wrote.
 pub let scroll_map<const N: i64> = (
-  view: Camera,
+  self: Camera,
   plane: u16,
   cells: ref [N]u16,
   width: u16
 ) -> void => {
-  let old_left = cell_of(view.last_x)
-  let old_top = cell_of(view.last_y)
-  let left = cell_of(view.x)
-  let top = cell_of(view.y)
+  let old_left = cell_of(self.last_x)
+  let old_top = cell_of(self.last_y)
+  let left = cell_of(self.x)
+  let top = cell_of(self.y)
   // A jump a view wide or more: nothing in the plane is kept, so draw it all.
   if distance(old_left, left) >= VIEW_COLUMNS || distance(old_top, top) >= VIEW_ROWS {
-    show_map(view, plane, cells, width)
+    self.show_map(plane, cells, width)
     return
   }
   if left > old_left {
@@ -149,7 +147,7 @@ pub let scroll_map<const N: i64> = (
   } else if top < old_top {
     for my: u16 in top..<old_top { write_row(plane, cells, width, my, left) }
   }
-  vdp.set_scroll(plane, view.x, view.y)
+  vdp.set_scroll(plane, self.x, self.y)
 }
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────

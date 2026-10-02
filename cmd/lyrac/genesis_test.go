@@ -510,9 +510,10 @@ let main = () -> void => {
   var x: i16 = 152
   for {
     x += 2
-    camera.follow(view, x, 100, 8, 8)
+    view.follow(x, 100, 8, 8)
+    let (sx, sy) = view.on_screen(x, 100)
     sprites.clear()
-    sprites.add(Sprite { x: camera.on_screen_x(view, x), y: camera.on_screen_y(view, 100), tile: 1 })
+    sprites.add(Sprite { x: sx, y: sy, tile: 1 })
     vdp.wait_vblank()
     sprites.show()
   }
