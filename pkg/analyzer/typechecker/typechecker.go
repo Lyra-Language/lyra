@@ -3918,6 +3918,26 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		return
 	}
 
+	// A comprehension is a dynamic array of its result's values, so the context's element
+	// narrows the result as it narrows a literal's elements — the literal arm's sibling
+	// (rule 8). Without it `[i in 0..<3 | []]` against `[][]i64` left each `[]` with no
+	// element type, which reached the backend as "dynamic array has no element type"
+	// (10/01, Vega's tile_shapes).
+	if ac, ok := expr.(*ast.ArrayCompExpr); ok {
+		ctxElem := arrayContextElement(false, expected)
+		if ctxElem == nil {
+			tc.stampSharedConstruction(ac, expected)
+			return
+		}
+		resolved := tc.resolveType(ctxElem, expr.GetLocation())
+		tc.propagateExpectedType(ac.Result, resolved)
+		tc.propagateInstantiation(ac.Result, resolved)
+		tc.checkLiteralRange("each element", ac.Result, resolved)
+		tc.typeTable.Set(ac, types.DynamicArrayType{ElementType: resolved})
+		tc.stampSharedConstruction(ac, expected)
+		return
+	}
+
 	// A construction leaf the width recursion has nothing to push into — a named
 	// construction narrows its fields against its own declaration
 	// (inferStructInstanceExpr) — so only the context's flavor lands here. Falls

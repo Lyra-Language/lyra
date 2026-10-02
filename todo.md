@@ -550,6 +550,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (`TypeTable.IsDefault`) names its module's top level, but captures, `@must_release` and
   the value-range pass still match its names against the caller's bindings. Each needs a
   probe like `TestMove_ADefaultIsNotTheCallersBinding`, and the skip if it misreads.
+- **[OPEN] A comprehension's literal result is typed before its context reaches it.**
+  `let xs: []u8 = [i in 0..<3 | 7]` is refused as `[]i64` into `[]u8`, where `[7, 7]` is
+  accepted: the comprehension is inferred eagerly and assignability runs before
+  `propagateExpectedType` (which now narrows a comprehension's result, 10/01).
 - **[OPEN] No `contains` (or `any`) on an array.** `string.contains` exists; for `[]t` a
   program writes the loop — Vega's `project.is_taken` did (10/01). A `contains<t> where t:
   Eq` on arrays, and `any`/`all` taking a predicate, would replace it.

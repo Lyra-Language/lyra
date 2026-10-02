@@ -530,3 +530,23 @@ let main = () -> void => {
 		t.Errorf("printed %q; want %q", out, want)
 	}
 }
+
+// A comprehension's result takes its element type from the context, as a literal's
+// elements do (10/01): `[i in 0..<3 | []]` against `[][]i64` left each `[]` with no element
+// type, and the backend refused it as "dynamic array has no element type". Found by Vega
+// gathering a tile set's shapes tile by tile. The lists are each their own: a push into
+// one shows in no other.
+func TestExec_ArrayCompResultTakesTheContextsElement(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  var lists: [][]i64 = [i in 0..<3 | []]
+  lists[1].push(5)
+  lists[1].push(6)
+  if lists[0].len() != 0 || lists[2].len() != 0 { return 1 }
+  u8(lists[1][0] + lists[1][1] + lists.len())
+}`)
+	if got != 14 {
+		t.Errorf("exit %d; want 5 + 6 + 3 = 14", got)
+	}
+}
