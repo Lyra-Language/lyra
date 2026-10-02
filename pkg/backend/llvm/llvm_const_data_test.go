@@ -156,3 +156,83 @@ let main = () -> void => {
 		t.Errorf("got %q; want %q", got, want)
 	}
 }
+
+// **An array field is indexed where it lies** (10/02): `self.kind.colliders[i]` through a
+// `ref` parameter, a `mut` one and a local, nested a struct deep, reads and writes the
+// element in place. It was loaded whole and stored to a fresh alloca at every run-time
+// index — std.genesis.entity's `meets` copied two kinds' collider arrays per iteration, and
+// the hero's game ran at half speed on the 68000.
+func TestExec_ArrayFieldIndexedInPlace(t *testing.T) {
+	t.Parallel()
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, `module main
+struct Kind {
+  count: i64,
+  parts: [4]i64,
+}
+
+struct Thing {
+  kind: Kind,
+  scale: i64,
+}
+
+let total = pure (self: ref Thing) -> i64 => {
+  var sum = 0
+  for i in 0..<self.kind.count { sum += self.kind.parts[i] * self.scale }
+  sum
+}
+
+let bump = (self: mut Thing, by: i64) -> void => {
+  for i in 0..<self.kind.count { self.kind.parts[i] += by }
+}
+
+let main = () -> void => {
+  var t = Thing { kind: Kind { count: 3, parts: #[1, 2, 3, 99] }, scale: 10 }
+  println("${t.total()}")
+  t.bump(5)
+  println("${t.total()} ${t.kind.parts[3]}")
+  var local = t.kind
+  var k = 0
+  for i in 0..<4 { k += local.parts[i] }
+  local.parts[0] = 0
+  println("${k} ${local.parts[0]} ${t.kind.parts[0]}")
+}
+`, ""))
+	if want := "60\n210 99\n120 0 6"; got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
+// The `ref` reader indexes through its parameter: no array-sized alloca in it.
+func TestEmit_AnArrayFieldIsNotCopiedToIndex(t *testing.T) {
+	t.Parallel()
+	ir := emitWithPrelude(t, `module main
+struct Kind {
+  count: i64,
+  parts: [4]i64,
+}
+
+struct Thing {
+  kind: Kind,
+}
+
+let total = pure (self: ref Thing) -> i64 => {
+  var sum = 0
+  for i in 0..<self.kind.count { sum += self.kind.parts[i] }
+  sum
+}
+
+let main = () -> u8 => {
+  let t = Thing { kind: Kind { count: 2, parts: #[1, 2, 3, 4] } }
+  u8(t.total())
+}
+`)
+	start := strings.Index(ir, "define i64 @lyra.main.total(")
+	if start < 0 {
+		t.Fatalf("no total in the IR:\n%s", ir)
+	}
+	body := ir[start:]
+	body = body[:strings.Index(body, "\n}\n")]
+	if strings.Contains(body, "alloca [4 x i64]") {
+		t.Errorf("total copies the array to index it:\n%s", body)
+	}
+}

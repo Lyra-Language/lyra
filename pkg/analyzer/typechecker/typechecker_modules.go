@@ -98,6 +98,35 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, fn *
 	return nil, nil, true
 }
 
+// namespaceOverloads resolves `alias.name` to the module's overload set when alias names
+// an imported module and name is overloaded there on its receiver. handled is true when it
+// was one — with a nil set when the members are not visible here, the error reported.
+// Anything else (not a namespace, not overloaded) is left to moduleMemberType.
+func (tc *TypeChecker) namespaceOverloads(m *ast.MemberExpr) (set *ast.OverloadSet, handled bool) {
+	id, ok := m.Object.(*ast.IdentifierExpr)
+	if !ok {
+		return nil, false
+	}
+	if _, shadowed := tc.scope.Lookup(id.Name); shadowed {
+		return nil, false
+	}
+	if _, isParam := tc.paramTypes[id.Name]; isParam {
+		return nil, false
+	}
+	imp, ok := tc.symTable.NamespaceImport(m.GetLocation().File, id.Name)
+	if !ok {
+		return nil, false
+	}
+	set, ok = tc.symTable.OverloadSetIn(imp.Path, m.Property.Name)
+	if !ok {
+		return nil, false
+	}
+	if !tc.checkVisible(tc.visibilityIn(imp.Path, m.Property.Name), m.GetLocation()) {
+		return nil, true
+	}
+	return set, true
+}
+
 // visibility is what the `pub` check needs from a declaration, so one check can serve
 // types, traits and bindings without three near-identical copies.
 type visibility struct {

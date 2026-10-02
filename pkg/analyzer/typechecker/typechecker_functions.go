@@ -1309,6 +1309,16 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// the signature route rejected every generic namespace call ("cannot assign
 	// Maybe<i64> to Maybe<t>") and, when it did not, recorded no instantiation for the
 	// backend to emit. A member that is not a function (a type) keeps the type route.
+	// A member overloaded on its receiver has no one declaration to hand back: it is
+	// chosen by the first argument, as a bare call to the name is (10/02: overloading
+	// `collision.mirrored` for a second receiver made `collision.mirrored(s, 8)` "no
+	// member" while `s.mirrored(8)` and an imported `mirrored(s, 8)` resolved).
+	if set, handled := tc.namespaceOverloads(member); handled {
+		if set == nil {
+			return nil
+		}
+		return tc.inferOverloadedCall(set, call)
+	}
 	if t, fn, handled := tc.moduleMemberType(member); handled {
 		if fn != nil {
 			return tc.inferLambdaCall(member.Property.Name, fn, call)

@@ -32,6 +32,72 @@ gained the case: the rival `twice` is imported by the entry, not by the file tha
 `lib.{ twice }`, and the warning must still land in that file. It fails without the fix. On
 Vega's tree, `check src/vega.lyra` now reports all four.
 
+### 10/02/26 — `std.genesis.entity`, and an array field is indexed where it lies
+
+Vega's entities reach the game through **`std.genesis.entity`**: `EntityKind` (a sprite's
+size, its starting `Animation`, up to four `Collider`s inline, its motion in 8.8 fixed
+point) and `Entity`, an instance carrying its kind — so `push`, `move_in`, `play` and
+`meets` need no table of the game's, and the generated `assets.lyra` keeps only data and
+the glue that needs its own tables (a map's `move_in_<map>`, `draw` through its
+animations). It was generated per entity first (a `Hero` struct and its methods); a std
+module can be tested and reused, and the colliders inline are what made that possible
+without the game's `COLLIDERS` table. `TestRun_EntitiesMoveCollideAndMeet` runs it on the
+host, cases 10 (the map's edge stops a move) and 11 (turning beside a wall) failing with
+their rules removed.
+
+**Turning beside a wall stuck the hero**: his feet are off his sprite's middle, so facing
+the other way moved them two pixels — into the rock he stood against — and every move
+from there met it. An entity's colliders now turn with it only where they fit
+(`hit_mirrored`), turning as soon as there is room.
+
+**Moving into std halved the hero's frame rate**, measured with a scripted copy of his
+game that paints the backdrop at its own frame 100: Sheliak's frame ~112 before, ~215
+after. Two costs: an `Entity` (about a hundred bytes, its kind inside) passed **by value**
+into every `x()` and `meets` — std's readers now take `ref` — and, the larger, the backend
+lowering `self.kind.colliders[i]` by loading the whole array and storing it to a fresh
+alloca at every run-time index, both kinds' four colliders per iteration of `meets`.
+`arrayLValue` now addresses a `.field` path through stack structs rooted at a slot in
+place, as an assignment to it already did (`fieldPathInPlace`); frame 100 is back at ~112.
+`TestEmit_AnArrayFieldIsNotCopiedToIndex` fails without it; `TestExec_ArrayFieldIndexedInPlace`
+reads and writes through `ref`, `mut` and a local.
+
+### 10/02/26 — Colliders on collision layers, and a namespace call reaches a receiver overload
+
+Vega's entities collide by **colliders** — a shape on some collision layers, looking for
+others — the way Box2D's category/mask bits and Godot's layers work, since two fixed roles
+(solid, touch) could not say "enemies hit the player but not each other" or "a boat stops
+at a wall, not at water". `std.genesis.collision.Collider { shape, layers: u16, mask: u16 }`
+meets **one-sidedly** (`a.meets(…, b, …)`: `a`'s mask against `b`'s layers, tested before
+the shapes, so most pairs cost an `and`), and a map's tiles are colliders looking for
+nothing: the `Collider` form of `hits_map` skips a tile shape on no layer the mover looks
+for. `TestRun_CollisionShapesOverlap` cases 18–24 on the host, and two
+`TestGenesis_ASolidTileStopsASprite` subtests on the 68000 (a tile on the water layer stops
+a collider looking for water, and lets one looking only for walls through); each fails
+with the mask test removed.
+
+Giving `mirrored`, `flipped` and `hits_map` a `Collider` receiver beside their `Shape`
+one made `collision.mirrored(s, 8)` **"module has no member"** — while `s.mirrored(8)` and
+an imported `mirrored(s, 8)` resolved. An overload set is kept out of the function table
+(symbols/overload.go), and the namespace lookup asked only that table. A namespace member
+that is an overload set now goes through `inferOverloadedCall`, as a bare call does — the
+member chosen by the first argument and recorded as the call's callee — and the backend's
+`namespaceCallee` lowers that recorded callee. `TestExec_OverloadedCallThroughNamespace`
+(one member generic in another parameter, as `hits_map` is) fails in the typechecker
+without the first half and in the backend ("unsupported method call") without the second.
+
+### 10/02/26 — `std.genesis.collision`: a shape with no area meets nothing
+
+Vega's entities name which of their sprite's shapes they are solid by and touch by, and
+one with none (a star is solid by nothing) reaches the game as an empty shape,
+`Shape { x: 0, y: 0, width: 0, height: 0 }` — a `Maybe<Shape>` field would make every
+caller unwrap what is nearly always there. But the rectangle test treated a zero-width
+box strictly inside another as overlapping it (`a_left < b_right` and `b_left < a_left`
+both hold), so an empty shape inside a rock's tile hit it. `overlaps` now answers false
+for any shape of no width or height, before the rectangle test, so `hits_map` inherits
+it; `TestRun_CollisionShapesOverlap` cases 15–17 fail without the guard. The camera and
+collision modules also took `self` this day (method style: `view.follow(…)`,
+`feet.hits_field(x, y)`), and `on_screen` answers both coordinates as a tuple.
+
 ### 10/01/26 — LLVM's M68k backend: no extension into an address register (patch 0003)
 
 The hero's stars came out scattered, and he stood where he did not start, frozen —

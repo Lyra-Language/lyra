@@ -1,0 +1,289 @@
+module std.genesis.entity
+//! The things a game is made of — a hero, a star, an enemy — as kinds and the entities of
+//! them: where each is, how fast it is going, what it shows, and what it collides by.
+//!
+//! ```
+//! import std.genesis.entity.{ Entity }
+//!
+//! var hero = assets.HERO.spawn(160, 208)        // Vega's entity editor makes the kind
+//! for {
+//!   hero.push(dx, dy)                            // the pad: -1, 0 or 1 a direction
+//!   hero.move_in_field()                         // assets: through the map, stopped by walls
+//!   hero.play(assets.HERO_WALK, facing_left)
+//!   hero.draw(view)                              // assets: into the sprite list
+//!   if hero.meets(star) { … }
+//! }
+//! ```
+//!
+//! **A kind is data, an entity is its instance.** An [EntityKind] — usually a constant
+//! Vega writes (`assets.HERO`) — holds a sprite's size, the animation it starts with, its
+//! [Collider]s and its motion; an [Entity] is one of it in the game, the kind copied in, so
+//! every method needs nothing else. What needs the game's own tables — drawing a sprite, a
+//! map's cells — is the game's assets', which pass them here ([move_in]).
+//!
+//! **Entities are passed by reference** (`ref`, `mut`): an entity carries its kind, colliders
+//! and all, about a hundred bytes, and copying it into every `x()` and `meets` halved the
+//! hero's frame rate on the 68000 (10/02).
+//!
+//! **Fixed point, 8.8**: a place is an `i32` and a speed an `i16`, both in 256ths of a
+//! pixel, so an entity moves by fractions of a pixel without the 68000 dividing.
+//!
+//! **Meeting is one-sided**, as `std.genesis.collision` says: `a.meets(b)` asks whether a
+//! collider of `a` looks for a layer one of `b`'s is on, whatever `b` looks for.
+
+import std.genesis.collision.{ Shape, Collider }
+
+/// An animation of a sprite: where its steps are in the game's step table, how many, how
+/// long they take in all (frames, 1/60 s), and whether it goes round. The game's assets
+/// play one (Vega's `assets.lyra`: `animation.play(x, y, tick)`); here it is only carried.
+pub struct Animation {
+  /// Which sprite (its place in the project), and its steps.
+  sprite: u16,
+  first: u16,
+  count: u16,
+  total: u16,
+  /// Back to the start after the end; else the last step holds.
+  looping: bool,
+}
+
+/// The most colliders a kind has: a kind is copied into each of its entities, so its
+/// colliders are a fixed array, the unused ones empty.
+pub const MAX_COLLIDERS: i64 = 4
+
+/// A collider of no shape, on no layer and looking for none: what fills a kind's unused
+/// collider places. A shape with no area meets nothing.
+pub const NO_COLLIDER: Collider = Collider {
+  shape: Shape { x: 0, y: 0, width: 0, height: 0 },
+  layers: 0,
+  mask: 0
+}
+
+/// A kind of thing in the game: its sprite's size, what it shows when spawned, what it
+/// collides by, and how it moves — its top speed, the speed it gains a frame while pushed,
+/// loses a frame while not, and gains downwards a frame from gravity, all in 256ths of a
+/// pixel.
+pub struct EntityKind {
+  width: i16,
+  height: i16,
+  animation: Animation,
+  /// The first `collider_count` of `colliders` are its own.
+  colliders: [4]Collider,
+  collider_count: u16,
+  max_speed: i16,
+  acceleration: i16,
+  friction: i16,
+  gravity: i16,
+}
+
+/// An entity: one of a kind in the game, where it is and how fast it is going (256ths of a
+/// pixel), what it shows, and which way it faces.
+pub struct Entity {
+  kind: EntityKind,
+  /// Its top-left in the world: `x()` and `y()` are whole pixels.
+  fx: i32,
+  fy: i32,
+  /// Its speed a frame — the game may set it (a jump, a knock back).
+  vx: i16,
+  vy: i16,
+  /// What it shows and how many frames in.
+  animation: Animation,
+  tick: u16,
+  /// Whether it faces the other way, which mirrors its colliders too.
+  mirrored: bool,
+  /// Which way its colliders face against a map: `mirrored`'s once turning would not put
+  /// one into a tile it looks for. A collider off the sprite's middle moves when it turns,
+  /// and turning beside a wall pushed it in — every move from there met the wall, and the
+  /// entity was stuck (10/02, the hero beside a rock).
+  hit_mirrored: bool,
+}
+
+/// The fastest an entity falls, in 256ths of a pixel a frame: 8 pixels, a tile, so a fall
+/// never steps over a tile it should land on.
+pub const MAX_FALL: i16 = 2048
+
+/// An entity of this kind with its top-left at (`x`, `y`) in the world, still, showing
+/// what the kind starts with.
+pub let spawn = pure (self: EntityKind, x: i16, y: i16) -> Entity => Entity {
+  kind: self,
+  fx: i32(x) << 8,
+  fy: i32(y) << 8,
+  vx: 0,
+  vy: 0,
+  animation: self.animation,
+  tick: 0,
+  mirrored: false,
+  hit_mirrored: false,
+}
+
+/// Its top-left in the world, in whole pixels.
+pub let x = pure (self: ref Entity) -> i16 => i16(self.fx >> 8)
+pub let y = pure (self: ref Entity) -> i16 => i16(self.fy >> 8)
+
+/// Put it with its top-left at (`x`, `y`), its speed kept.
+pub let place = (self: mut Entity, x: i16, y: i16) -> void => {
+  self.fx = i32(x) << 8
+  self.fy = i32(y) << 8
+}
+
+/// A frame's push, `dx` and `dy` each -1, 0 or 1 (the pad's directions): a pushed axis gains
+/// the kind's acceleration towards its top speed, one not pushed loses its friction until
+/// it stands. With gravity the vertical axis is gravity's, falling at most [MAX_FALL], and
+/// `dy` is not used — a jump sets `vy`. Once a frame, before moving.
+pub let push = (self: mut Entity, dx: i16, dy: i16) -> void => {
+  self.vx = accelerate(
+    self.vx,
+    dx,
+    self.kind.acceleration,
+    self.kind.friction,
+    self.kind.max_speed
+  )
+  self.vy = if self.kind.gravity > 0 {
+    (self.vy + self.kind.gravity).min(MAX_FALL)
+  } else {
+    accelerate(
+      self.vy,
+      dy,
+      self.kind.acceleration,
+      self.kind.friction,
+      self.kind.max_speed
+    )
+  }
+}
+
+/// Moved by its speed, a frame's worth, through anything.
+pub let move = (self: mut Entity) -> void => {
+  self.fx += i32(self.vx)
+  self.fy += i32(self.vy)
+}
+
+/// Moved by its speed in a map, kept inside it: each axis on its own, and one whose move
+/// would meet a tile its colliders look for, or leave the map, stops — so it slides along
+/// a wall rather than sticking to it. Its colliders turn as it has once they fit. The map
+/// is `std.genesis.collision.hits_map`'s: `cells` row by row, `width` a row, its tile
+/// set's tiles from `first_tile`, their colliders `shapes[starts[t]]` up to `starts[t + 1]`.
+pub let move_in<const N: i64, const M: i64, const K: i64> = (
+  self: mut Entity,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Collider
+) -> void => {
+  // Turned: its colliders turn too, unless that would put one into a wall here.
+  if self.hit_mirrored != self.mirrored && !self.kind.hits_tiles(
+    self.x(),
+    self.y(),
+    self.mirrored,
+    cells,
+    width,
+    first_tile,
+    starts,
+    shapes
+  ) {
+    self.hit_mirrored = self.mirrored
+  }
+  let rows = i32(cells.len()) / i32(width)
+  let right = (i32(width) * 8 - i32(self.kind.width)) << 8
+  let bottom = (rows * 8 - i32(self.kind.height)) << 8
+  let wanted_x = self.fx + i32(self.vx)
+  let nx = wanted_x.clamp(0, right)
+  if self.kind.hits_tiles(
+    i16(nx >> 8),
+    self.y(),
+    self.hit_mirrored,
+    cells,
+    width,
+    first_tile,
+    starts,
+    shapes
+  ) {
+    self.vx = 0
+  } else {
+    // At the map's edge it stops, as at a wall.
+    if nx != wanted_x { self.vx = 0 }
+    self.fx = nx
+  }
+  let wanted_y = self.fy + i32(self.vy)
+  let ny = wanted_y.clamp(0, bottom)
+  if self.kind.hits_tiles(
+    self.x(),
+    i16(ny >> 8),
+    self.hit_mirrored,
+    cells,
+    width,
+    first_tile,
+    starts,
+    shapes
+  ) {
+    self.vy = 0
+  } else {
+    if ny != wanted_y { self.vy = 0 }
+    self.fy = ny
+  }
+}
+
+/// Show `animation`, facing the other way when `mirrored`: from its start when it is not
+/// what it shows now, else going on.
+pub let play = (
+  self: mut Entity,
+  animation: Animation,
+  mirrored: bool = false
+) -> void => {
+  if animation.first != self.animation.first || animation.sprite != self.animation.sprite {
+    self.animation = animation
+    self.tick = 0
+  }
+  self.mirrored = mirrored
+}
+
+/// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
+/// and their shapes overlap — each mirrored as its entity faces.
+pub let meets = pure (self: ref Entity, other: ref Entity) -> bool => {
+  for i: u16 in 0..<self.kind.collider_count {
+    let ac = self.kind.colliders[i]
+    let ap = if self.mirrored { ac.mirrored(self.kind.width) } else { ac }
+    for j: u16 in 0..<other.kind.collider_count {
+      let bc = other.kind.colliders[j]
+      let bp = if other.mirrored { bc.mirrored(other.kind.width) } else { bc }
+      if ap.meets(self.x(), self.y(), bp, other.x(), other.y()) { return true }
+    }
+  }
+  false
+}
+
+/// Whether a sprite `width` × `height` with its top-left at (`x`, `y`) on the screen shows
+/// there — one well off it would wrap round onto it. The screen is the Genesis's 320×224
+/// (`vdp.SCREEN_WIDTH`, `vdp.SCREEN_HEIGHT`), written out so this module runs on the host.
+pub let visible = pure (x: i16, y: i16, width: i16, height: i16) -> bool =>
+  x > -width && x < 320 && y > -height && y < 224
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Whether an entity of this kind with its top-left at (`x`, `y`), mirrored or not, meets
+/// a tile of the map on a layer one of its colliders looks for.
+let hits_tiles<const N: i64, const M: i64, const K: i64> = pure (
+  self: ref EntityKind,
+  x: i16,
+  y: i16,
+  mirrored: bool,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Collider
+) -> bool => {
+  for i: u16 in 0..<self.collider_count {
+    let c = self.colliders[i]
+    let placed = if mirrored { c.mirrored(self.width) } else { c }
+    if placed.hits_map(x, y, cells, width, first_tile, starts, shapes) { return true }
+  }
+  false
+}
+
+/// One axis's speed after a frame: pushed `d` (-1, 0 or 1) it gains `rate`, up to `top` either
+/// way; not pushed, it loses `friction` until it is 0.
+let accelerate = pure (v: i16, d: i16, rate: i16, friction: i16, top: i16) -> i16 => {
+  if d > 0 { return (v + rate).min(top) }
+  if d < 0 { return (v - rate).max(-top) }
+  if v > 0 { (v - friction).max(0) } else { (v + friction).min(0) }
+}
