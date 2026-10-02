@@ -432,6 +432,37 @@ func ufcsImportedIn(symTable *symbols.SymbolTable, name string, fn *ast.LambdaEx
 	return false
 }
 
+// UFCSReachableExporters lists the modules exporting name that a method-style call in
+// file may reach: the file's own module, the prelude, and the modules it imports — the
+// candidate set ufcsImportedIn admits, asked of a name rather than of a function.
+//
+// It is what the unused-import check's ambiguity guard asks (lyra-W004), and it has to be
+// this set and not every exporter loaded. **The program is the entry's import graph**, so
+// "does any module export it" answers differently for the same file under different
+// entries: Vega's `import project.{ is_empty }` warned under `lyrac check problems.lyra`
+// and went silent under `lyrac check vega.lyra`, whose graph happened to load
+// `std.collections` and its `HashMap.is_empty` (10/02). A module the file does not import
+// cannot tie with anything here, so it cannot make the list load-bearing.
+func UFCSReachableExporters(symTable *symbols.SymbolTable, file, name string) []string {
+	if symTable == nil {
+		return nil
+	}
+	reachable := map[string]bool{symTable.ModuleOfFile[file]: true}
+	if symTable.PreludeModule != "" {
+		reachable[symTable.PreludeModule] = true
+	}
+	for _, imp := range symTable.ImportsFor(file) {
+		reachable[imp.Path] = true
+	}
+	var out []string
+	for _, module := range symTable.ExportingModules(name) {
+		if reachable[module] {
+			out = append(out, module)
+		}
+	}
+	return out
+}
+
 // UFCSCallable reports whether fn may be called method-style on a receiver of objType
 // from the file at loc.
 //

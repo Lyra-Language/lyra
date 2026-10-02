@@ -24,7 +24,11 @@ import (
 func TestUnusedImport_NameUsedOnlyMethodStyle(t *testing.T) {
 	for _, c := range []struct {
 		name, lib, other, prog string
-		want                   string
+		// extra are further files of the program, by name; warnIn is the file the
+		// warning must be reported in (prog.lyra when empty).
+		extra  map[string]string
+		warnIn string
+		want   string
 	}{
 		{
 			name: "a name only ever called method-style",
@@ -58,6 +62,25 @@ func TestUnusedImport_NameUsedOnlyMethodStyle(t *testing.T) {
 				"let main = () -> void => println(\"${1.twice()} ${t2(1)}\")\n",
 			want: "",
 		},
+		{
+			// **A property of the importing file alone** (10/02). The rival `twice` is in
+			// a module this file never imports — only the entry does — so no method call
+			// here can reach it and the list breaks no tie. The guard used to count every
+			// exporter the program loaded, so the warning on `user.lyra` came and went
+			// with the entry: Vega's `import project.{ is_empty }` warned when its file was
+			// checked alone and not under `vega.lyra`, whose graph loads `std.collections`.
+			name:  "another module exports it, but this file does not import that module",
+			lib:   "module lib\npub let twice = pure (self: i64) -> i64 => self * 2\n",
+			other: "module other\npub let twice = pure (self: i64) -> i64 => self * 20\n",
+			extra: map[string]string{
+				"user.lyra": "module user\nimport lib.{ twice }\n" +
+					"pub let doubled = pure (n: i64) -> i64 => n.twice()\n",
+			},
+			prog: "module main\nimport user.{ doubled }\nimport other.{ twice }\n" +
+				"let main = () -> void => println(\"${doubled(1)} ${twice(1)}\")\n",
+			warnIn: "user.lyra",
+			want:   "only ever called method-style",
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root := repoRoot(t)
@@ -66,6 +89,9 @@ func TestUnusedImport_NameUsedOnlyMethodStyle(t *testing.T) {
 			files := map[string]string{"lib.lyra": c.lib, "prog.lyra": c.prog}
 			if c.other != "" {
 				files["other.lyra"] = c.other
+			}
+			for name, body := range c.extra {
+				files[name] = body
 			}
 			for name, body := range files {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
@@ -79,8 +105,18 @@ func TestUnusedImport_NameUsedOnlyMethodStyle(t *testing.T) {
 				}
 				return
 			}
-			if !strings.Contains(stderr, c.want) {
-				t.Errorf("want a warning containing %q, got:\n%s", c.want, stderr)
+			warnIn := c.warnIn
+			if warnIn == "" {
+				warnIn = "prog.lyra"
+			}
+			found := false
+			for _, line := range strings.Split(stderr, "\n") {
+				if strings.Contains(line, warnIn+":") && strings.Contains(line, c.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("want a warning in %s containing %q, got:\n%s", warnIn, c.want, stderr)
 			}
 		})
 	}

@@ -96,8 +96,8 @@ func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic 
 				// Silent when another imported module exports it, because there the list
 				// is load-bearing: it is what breaks the tie, and deleting the name turns
 				// a working call into "receiver.f is ambiguous". The guard is deliberately
-				// coarse — any other exporter at all, not just one whose receiver would
-				// clash — since a warning that advises a change the compiler then refuses
+				// coarse — any other exporter the file reaches, not just one whose
+				// receiver would clash — since a warning that advises a change the compiler then refuses
 				// is worse than one not shown.
 				if !usedAsModule || writtenByFile[loc.File][effective] ||
 					ambiguousElsewhere(used, stmt, m.Name) {
@@ -172,13 +172,21 @@ type ImportUse struct {
 	// Callees maps a file to the spans of the callees a UFCS call synthesized, so a
 	// reference made *only* that way can be told from a bare one. See UFCSCallees.
 	Callees map[string]map[ast.Location]bool
-	// Exports answers which modules export a name, for the ambiguity guard below. Nil is
-	// fine: the guard then stays silent, which is the safe direction.
-	Exports func(name string) []string
+	// Exports answers which modules export a name **that a method call in the given file
+	// could reach** (typechecker.UFCSReachableExporters), for the ambiguity guard below.
+	// Nil is fine: the guard then stays silent, which is the safe direction.
+	Exports func(file, name string) []string
 }
 
-// ambiguousElsewhere reports whether another module also exports name, in which case the
-// import list is what chooses between them and the name must stay.
+// ambiguousElsewhere reports whether another module this file can reach also exports
+// name, in which case the import list is what chooses between them and the name must stay.
+//
+// **Reach, not existence.** Until 10/02 this asked whether any loaded module exported the
+// name, and what is loaded is the entry's whole import graph — so the warning on one file
+// came and went with the entry: Vega's `import project.{ is_empty }` warned when a file
+// was checked alone and not under `vega.lyra`, whose graph loads `std.collections` (and
+// its `is_empty`) for a `parse_args` nowhere near that file. A module the file does not
+// import is never a UFCS candidate there, so it cannot be what the list breaks a tie with.
 //
 // Answers true when it cannot tell — a nil `Exports` is a caller with no symbol table, and
 // silence is the safe direction for advice to delete something.
@@ -187,7 +195,7 @@ func ambiguousElsewhere(used ImportUse, stmt *ast.ImportStmt, name string) bool 
 		return true
 	}
 	own := modulePath(stmt)
-	for _, module := range used.Exports(name) {
+	for _, module := range used.Exports(stmt.GetLocation().File, name) {
 		if module != own {
 			return true
 		}
