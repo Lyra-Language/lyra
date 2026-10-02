@@ -176,6 +176,18 @@ pub let write_plane<const N: i64> = (
   }
 }
 
+/// Scroll `plane` (`PLANE_A` or `PLANE_B`) so its pixel (`x`, `y`) is at the screen's
+/// top-left — the whole screen at once, as [init] sets the VDP up. A plane wraps at its
+/// edges, so any position will do.
+pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
+  let which: u16 = if plane == PLANE_A { 0 } else { 2 }
+  // Horizontal scroll moves the plane right, so the view at x is a scroll of -x.
+  set_address(VRAM_WRITE, HSCROLL + which)
+  write_word(u16((1024 - (i32(x) & 1023)) & 1023))
+  set_address(VSRAM_WRITE, which)
+  write_word(u16(i32(y) & 1023))
+}
+
 /// Point the data port at byte `address` of VRAM, for [write_word]s to follow — how the
 /// sprite table and the planes are written.
 pub let set_vram_address = (address: u16) -> void => set_address(VRAM_WRITE, address)

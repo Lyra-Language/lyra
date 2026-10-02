@@ -406,3 +406,161 @@ let main = () -> void => {
 		t.Errorf("the tile is drawn in [%d,%d)–[%d,%d), want [8,0)–[16,8)", x0, y0, x1, y1)
 	}
 }
+
+// genesisProgram builds `source` as a Genesis program and answers the ROM's path.
+func genesisProgram(t *testing.T, name, source string) string {
+	t.Helper()
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, name+".lyra")
+	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, name+".bin")
+	if _, stderr, code := captureRun(t, "build", "-o", out, src); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	return out
+}
+
+// TestGenesis_ACameraScrollsAMapBiggerThanAPlane scrolls an 80×40-cell map — bigger than
+// the 64×32 plane both ways — right to x 480, then down to y 96, a few pixels a frame,
+// with std.genesis.camera writing the columns and rows that come into view. Two tiles must
+// then be where the view shows them: (70, 20), outside the plane's first 64 columns, only
+// a column written as it came into view puts there; (62, 35), below its first 32 rows, only
+// a row written as it came into view — each across the plane's wrap.
+func TestGenesis_ACameraScrollsAMapBiggerThanAPlane(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "scroll", `import std.genesis.vdp
+import std.genesis.camera
+import std.genesis.camera.{ Camera }
+
+const SOLID: [8]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 1, vdp.rgb(0, 7, 0))
+  vdp.load_tiles(1, SOLID)
+  var map: [3200]u16 = #[0; 3200]
+  map[20 * 80 + 70] = 1
+  map[35 * 80 + 62] = 1
+  var view = Camera { world_width: 640, world_height: 320 }
+  camera.show_map(view, vdp.PLANE_B, map, 80)
+  vdp.display_on()
+  for {
+    view.last_x = view.x
+    view.last_y = view.y
+    if view.x < 480 { view.x += 4 } else { view.y = (view.y + 2).min(96) }
+    vdp.wait_vblank()
+    camera.scroll_map(view, vdp.PLANE_B, map, 80)
+  }
+}
+`)
+	// (70, 20) at (560 - 480, 160 - 96) and (62, 35) at (496 - 480, 280 - 96): together
+	// they span [16, 64)–[88, 192), and with either missing the span is another.
+	screen := runROM(t, out, "240", "")
+	if x0, y0, x1, y1 := screen.bounds(screen.dominant()); x0 != 16 || y0 != 64 || x1 != 88 || y1 != 192 {
+		t.Errorf("the tiles span [%d,%d)–[%d,%d), want [16,64)–[88,192)", x0, y0, x1, y1)
+	}
+}
+
+// TestGenesis_TheCameraFollowsInTheMiddleThird walks an 8-pixel sprite right through a
+// world 1024 wide: the view stays put while it is inside the camera's zone, then moves
+// with it, so it stops on the screen at the zone's right edge — x 214 - 8 = 206 for the
+// default, the middle third. A zone the game sets moves that edge, and one narrower than
+// the sprite keeps it centred.
+func TestGenesis_TheCameraFollowsInTheMiddleThird(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	for _, c := range []struct {
+		name string
+		zone string
+		x    int
+	}{
+		{"the middle third by default", "", 206},
+		{"a zone the game sets", "view.zone = Zone { left: 40, top: 74, right: 280, bottom: 150 }", 272},
+		{"a zone of nothing keeps it centred", "view.zone = camera.centred_zone(0, 0)", 156},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := genesisProgram(t, "follow", `import std.genesis.vdp
+import std.genesis.sprites
+import std.genesis.sprites.{ Sprite }
+import std.genesis.camera
+import std.genesis.camera.{ Camera, Zone }
+
+const SOLID: [8]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 1, vdp.rgb(0, 7, 0))
+  vdp.load_tiles(1, SOLID)
+  vdp.display_on()
+  var view = Camera { world_width: 1024, world_height: 224 }
+  `+c.zone+`
+  var x: i16 = 152
+  for {
+    x += 2
+    camera.follow(view, x, 100, 8, 8)
+    sprites.clear()
+    sprites.add(Sprite { x: camera.on_screen_x(view, x), y: camera.on_screen_y(view, 100), tile: 1 })
+    vdp.wait_vblank()
+    sprites.show()
+  }
+}
+`)
+			screen := runROM(t, out, "160", "")
+			if x0, y0, x1, y1 := screen.bounds(screen.dominant()); x0 != c.x || y0 != 100 || x1 != c.x+8 || y1 != 108 {
+				t.Errorf("the sprite is drawn in [%d,%d)–[%d,%d), want [%d,100)–[%d,108)", x0, y0, x1, y1, c.x, c.x+8)
+			}
+		})
+	}
+}
+
+// TestGenesis_ACameraScrollsBack is the scroll the other way: from (480, 96) left to x 0,
+// then up to y 0. (10, 20) comes into view only by a column written going left, (30, 5)
+// only by a row written going up — neither was in the plane the view started with.
+func TestGenesis_ACameraScrollsBack(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "back", `import std.genesis.vdp
+import std.genesis.camera
+import std.genesis.camera.{ Camera }
+
+const SOLID: [8]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 1, vdp.rgb(0, 7, 0))
+  vdp.load_tiles(1, SOLID)
+  var map: [3200]u16 = #[0; 3200]
+  map[20 * 80 + 10] = 1
+  map[5 * 80 + 30] = 1
+  var view = Camera { x: 480, y: 96, last_x: 480, last_y: 96, world_width: 640, world_height: 320 }
+  camera.show_map(view, vdp.PLANE_B, map, 80)
+  vdp.display_on()
+  for {
+    view.last_x = view.x
+    view.last_y = view.y
+    if view.x > 0 { view.x -= 4 } else { view.y = (view.y - 2).max(0) }
+    vdp.wait_vblank()
+    camera.scroll_map(view, vdp.PLANE_B, map, 80)
+  }
+}
+`)
+	// (10, 20) at (80, 160) and (30, 5) at (240, 40).
+	screen := runROM(t, out, "240", "")
+	if x0, y0, x1, y1 := screen.bounds(screen.dominant()); x0 != 80 || y0 != 40 || x1 != 248 || y1 != 168 {
+		t.Errorf("the tiles span [%d,%d)–[%d,%d), want [80,40)–[248,168)", x0, y0, x1, y1)
+	}
+}

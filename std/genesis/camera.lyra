@@ -1,0 +1,229 @@
+module std.genesis.camera
+//! A camera on a world bigger than the screen: where the view is, moved to follow the
+//! player, and a tile map kept in a plane as it scrolls.
+//!
+//! ```
+//! import std.genesis.camera
+//! import std.genesis.camera.{ Camera }
+//!
+//! var view = Camera { world_width: 640, world_height: 512 }
+//! camera.show_map(view, vdp.PLANE_B, LEVEL, LEVEL_WIDTH)   // once, before display_on
+//! for {
+//!   // … move the player, in the world's pixels
+//!   camera.follow(view, x, y, PLAYER_WIDTH, PLAYER_HEIGHT)
+//!   // … draw sprites at camera.on_screen_x(view, x), camera.on_screen_y(view, y)
+//!   vdp.wait_vblank()
+//!   camera.scroll_map(view, vdp.PLANE_B, LEVEL, LEVEL_WIDTH)
+//! }
+//! ```
+//!
+//! **The camera moves only when it must**: what it follows is free inside the camera's
+//! [Zone], a rectangle of the screen, and the view moves when it crosses the zone's edge —
+//! just enough to keep it there — and never past the world's edges, where the player may
+//! walk on to the world's end. The zone is the game's to choose, and to change as it
+//! goes: the middle third each way unless it says otherwise ([THIRDS]), a box of any size
+//! in the middle ([centred_zone]; `centred_zone(0, 0)` keeps the player centred), or any
+//! rectangle — a platformer's, say, low on the screen and wide:
+//!
+//! ```
+//! view.zone = Zone { left: 120, top: 120, right: 200, bottom: 190 }
+//! ```
+//!
+//! **A map larger than a plane scrolls without redrawing it.** The VDP's plane (64×32
+//! cells) wraps, and map cell (x, y) is kept at the plane's cell (x mod 64, y mod 32): the
+//! scroll registers then show the view wherever it is, and [scroll_map] writes only the
+//! columns and rows that came into view since the last [follow] — a column and a row a
+//! frame at most at walking speed, done in the vertical blank. A map's cells are its
+//! name-table words, row by row (`vdp.write_plane`'s, and Vega's `assets` tables).
+
+import std.genesis.vdp
+
+/// The part of the screen what a camera follows may move in without the view moving, in
+/// screen pixels: `left` ≤ x and x + its width ≤ `right`, and the same down.
+pub struct Zone {
+  left: i16,
+  top: i16,
+  right: i16,
+  bottom: i16,
+}
+
+/// The middle third of the screen each way — a camera's zone unless the game sets another.
+pub const THIRDS: Zone = Zone { left: 106, top: 74, right: 214, bottom: 150 }
+
+/// A zone `width` × `height` in the middle of the screen. One smaller than what the camera
+/// follows keeps that centred: `centred_zone(0, 0)` pans with every step.
+pub let centred_zone = pure (width: i16, height: i16) -> Zone => Zone {
+  left: (vdp.SCREEN_WIDTH - width) / 2,
+  top: (vdp.SCREEN_HEIGHT - height) / 2,
+  right: (vdp.SCREEN_WIDTH + width) / 2,
+  bottom: (vdp.SCREEN_HEIGHT + height) / 2,
+}
+
+/// Where the view is in a world, and where it was.
+pub struct Camera {
+  /// The view's top-left in the world, in pixels.
+  x: i16 = 0,
+  y: i16 = 0,
+  /// The world's size in pixels: the view never leaves it.
+  world_width: i16,
+  world_height: i16,
+  /// Where on the screen what it follows may move without the view moving.
+  zone: Zone = THIRDS,
+  /// Where the view was before the last [follow]: [scroll_map] writes what came into view
+  /// since.
+  last_x: i16 = 0,
+  last_y: i16 = 0,
+}
+
+/// Move the view to keep the rectangle `x`, `y`, `width` × `height` (in the world's
+/// pixels) inside the camera's zone on the screen: it moves only when the rectangle crosses
+/// the zone's edge, and then just enough — never past the world's edges. Call once a
+/// frame, after moving what it follows.
+pub let follow = (view: mut Camera, x: i16, y: i16, width: i16, height: i16) -> void => {
+  view.last_x = view.x
+  view.last_y = view.y
+  let z = view.zone
+  view.x = along(view.x, x, width, z.left, z.right, vdp.SCREEN_WIDTH, view.world_width)
+  view.y = along(view.y, y, height, z.top, z.bottom, vdp.SCREEN_HEIGHT, view.world_height)
+}
+
+/// Where world position `x` is on the screen, for a sprite.
+pub let on_screen_x = pure (view: Camera, x: i16) -> i16 => x - view.x
+
+/// Where world position `y` is on the screen, for a sprite.
+pub let on_screen_y = pure (view: Camera, y: i16) -> i16 => y - view.y
+
+/// A map into `plane` around the view, and the plane scrolled to it: every cell the plane
+/// holds. Once, before `vdp.display_on()` — and after a jump too far for [scroll_map].
+/// `cells` is the map row by row, `width` cells a row.
+pub let show_map<const N: i64> = (
+  view: Camera,
+  plane: u16,
+  cells: ref [N]u16,
+  width: u16
+) -> void => {
+  let left = cell_of(view.x)
+  let top = cell_of(view.y)
+  let shift = left % vdp.PLANE_WIDTH
+  for row: u16 in 0..<vdp.PLANE_HEIGHT {
+    let my = top + row
+    vdp.set_vram_address(plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2)
+    for column: u16 in 0..<vdp.PLANE_WIDTH {
+      // The map column this plane column holds while the view's left is at `left`.
+      let mx = left + (column + vdp.PLANE_WIDTH - shift) % vdp.PLANE_WIDTH
+      vdp.write_word(cell(cells, width, mx, my))
+    }
+  }
+  vdp.set_scroll(plane, view.x, view.y)
+}
+
+/// Keep a map in `plane` as the view moves: the columns and rows that came into view since
+/// the last [follow] written, and the plane scrolled to the view. Once a frame, in the
+/// vertical blank, with the map [show_map] wrote.
+pub let scroll_map<const N: i64> = (
+  view: Camera,
+  plane: u16,
+  cells: ref [N]u16,
+  width: u16
+) -> void => {
+  let old_left = cell_of(view.last_x)
+  let old_top = cell_of(view.last_y)
+  let left = cell_of(view.x)
+  let top = cell_of(view.y)
+  // A jump a view wide or more: nothing in the plane is kept, so draw it all.
+  if distance(old_left, left) >= VIEW_COLUMNS || distance(old_top, top) >= VIEW_ROWS {
+    show_map(view, plane, cells, width)
+    return
+  }
+  if left > old_left {
+    for mx: u16 in old_left + VIEW_COLUMNS..<left + VIEW_COLUMNS {
+      write_column(plane, cells, width, mx, top)
+    }
+  } else if left < old_left {
+    for mx: u16 in left..<old_left { write_column(plane, cells, width, mx, top) }
+  }
+  if top > old_top {
+    for my: u16 in old_top + VIEW_ROWS..<top + VIEW_ROWS {
+      write_row(plane, cells, width, my, left)
+    }
+  } else if top < old_top {
+    for my: u16 in top..<old_top { write_row(plane, cells, width, my, left) }
+  }
+  vdp.set_scroll(plane, view.x, view.y)
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// The cells the screen shows at once, a part-cell at each edge included.
+const VIEW_COLUMNS: u16 = 41
+const VIEW_ROWS: u16 = 29
+
+/// One axis of [follow]: the view's start `at` moved so `from`..`from + size` stays
+/// between `low` and `high` on the screen, then kept inside `world`. Something bigger than
+/// the zone is centred on it — pushed from one edge to the other, the view would shake.
+let along = pure (
+  at: i16,
+  from: i16,
+  size: i16,
+  low: i16,
+  high: i16,
+  screen: i16,
+  world: i16
+) -> i16 => {
+  var moved = at
+  if size > high - low {
+    moved = from + size / 2 - (low + high) / 2
+  } else if from < at + low {
+    moved = from - low
+  } else if from + size > at + high {
+    moved = from + size - high
+  }
+  moved.clamp(0, (world - screen).max(0))
+}
+
+/// The cell a (never negative) world position is in.
+let cell_of = pure (x: i16) -> u16 => u16(x) >> 3
+
+let distance = pure (a: u16, b: u16) -> u16 => if a > b { a - b } else { b - a }
+
+/// Map cell (`mx`, `my`); 0, the blank tile, past the map's edge.
+let cell<const N: i64> = (cells: ref [N]u16, width: u16, mx: u16, my: u16) -> u16 => {
+  if mx >= width { return 0 }
+  let at = u32(my) * u32(width) + u32(mx)
+  if at < u32(cells.len()) { cells[at] } else { 0 }
+}
+
+/// Map column `mx` into the plane, the view's rows from `top`.
+let write_column<const N: i64> = (
+  plane: u16,
+  cells: ref [N]u16,
+  width: u16,
+  mx: u16,
+  top: u16
+) -> void => {
+  let column = mx % vdp.PLANE_WIDTH
+  for row: u16 in 0..<VIEW_ROWS {
+    let my = top + row
+    vdp.set_vram_address(plane + ((my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH + column) * 2)
+    vdp.write_word(cell(cells, width, mx, my))
+  }
+}
+
+/// Map row `my` into the plane, the view's columns from `left` — an address set where the
+/// row wraps round the plane's edge.
+let write_row<const N: i64> = (
+  plane: u16,
+  cells: ref [N]u16,
+  width: u16,
+  my: u16,
+  left: u16
+) -> void => {
+  let row_start = plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2
+  for c: u16 in 0..<VIEW_COLUMNS {
+    let mx = left + c
+    if c == 0 || mx % vdp.PLANE_WIDTH == 0 {
+      vdp.set_vram_address(row_start + (mx % vdp.PLANE_WIDTH) * 2)
+    }
+    vdp.write_word(cell(cells, width, mx, my))
+  }
+}
