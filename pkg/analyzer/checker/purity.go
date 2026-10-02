@@ -2598,6 +2598,20 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 						// and is charged at that call site.
 						foundCallbacks[name] = idx
 					}
+				} else if lt, ok := calleeValueType(inf.allocSites.table(), ex); ok {
+					// A local **function value** — a `for` variable over functions, a
+					// destructured name, `let h = f` — has no body here to walk. Its type
+					// may say `pure`, but that bound is **not trusted**: it is enforced
+					// only where a function is passed straight to a bounded parameter, so
+					// `[noisy]` reaches a `[]pure () -> i64` unchecked, and trusting the
+					// element type would let a `pure` body print. The same reason the
+					// bound check refuses an argument from an annotated `let`. So: every
+					// effect, as for an unknown callee, with a message that does not call
+					// a value an "impure function".
+					found |= AllEffects
+					c.pure(ex.GetLocation(),
+						"pure function calls %q, a function value (`%s`) whose effects cannot be verified here — only a parameter's declared bound is checked where the function is supplied",
+						name, lt)
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
 					c.charge(ex, e, name)
@@ -2751,6 +2765,23 @@ func calleeName(fn ast.Expression) string {
 		return f.Property.Name
 	}
 	return ""
+}
+
+// calleeValueType is the function type the typechecker recorded on a call's bare callee
+// identifier — the signature an indirect call through a function value lowers through
+// (inferIdentifierCall records it, newtype already stripped). ok is false when nothing
+// was recorded, as for a builtin.
+func calleeValueType(tt *typetable.TypeTable, call *ast.FunctionCallExpr) (*types.LambdaType, bool) {
+	id, isIdent := call.Function.(*ast.IdentifierExpr)
+	if !isIdent || tt == nil {
+		return nil, false
+	}
+	t, ok := tt.Get(id)
+	if !ok {
+		return nil, false
+	}
+	lt, ok := types.StripNewtype(t).(*types.LambdaType)
+	return lt, ok && lt != nil
 }
 
 // operatorImplEffect is the effect of an **overloaded operator** — `a + b` on a type

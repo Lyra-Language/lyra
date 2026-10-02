@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 10/02/26 — a `for` variable holding a function can be called
+
+`for g in fs { g() }` reported "cannot infer the type of `g`: its definition depends on
+itself", and so did `let (f, g) = (one, two); f()`. `inferIdentifierCall` typed a callee
+binding by inferring its initializer, and a `for` variable or a destructured name has
+none — its type is on the declaration (`setLoopVarType`, `checkDestructuringDecl`) — so the
+nil came back as the cycle the message describes. A binding with no initializer now
+answers with `effectiveType`, and the call lowers as the indirect call it always was.
+
+Making it type-check exposed the purity question it had hidden. A `pure` body calling `g`
+fell to the unknown-callee arm, reported as "calls impure function" even with `fs:
+[]pure () -> i64`. Honouring the element type's bound was the obvious fix and is unsound:
+a function type's `pure` is checked only where a function is passed straight to a
+bounded parameter, so `run([noisy])` hands a printing function to a `[]pure () -> i64`
+unchecked (as does `let xs: []pure () -> i64 = [noisy]`), and the bound check already
+refuses an argument taken from an annotated `let` for the same reason. So a named local
+function value stays charged every effect, as a nameless callee is, and only the message
+changed — it is "a function value whose effects cannot be verified here", not an "impure
+function". Enforcing a function type's bound at every storing position would let these be
+trusted; it is not done here.
+
 ### 10/02/26 — a binding shadows a parameter from its declaration on
 
 `for c in items { c.x }` in a function taking `c: Box` reported "Box has no field x", and

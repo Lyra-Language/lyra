@@ -863,7 +863,8 @@ let f = pure (x: i64) -> i64 => {
 }`
 	errs := checkPurity(t, src)
 	assertPurityCount(t, errs, 1)
-	if errs[0].Message != `pure function calls impure function "opaque"` {
+	// Named as a function *value*: it is not known to be impure, only unverifiable.
+	if errs[0].Message != "pure function calls \"opaque\", a function value (`(i64) -> i64`) whose effects cannot be verified here — only a parameter's declared bound is checked where the function is supplied" {
 		t.Errorf("unexpected message: %q", errs[0].Message)
 	}
 }
@@ -1278,5 +1279,24 @@ let main = () -> u8 => u8(f(1))`
 	assertPurityCount(t, diags, 1)
 	if !strings.Contains(diags[0].Message, "function literal that writes output") {
 		t.Errorf("the message should name what the body does; got %q", diags[0].Message)
+	}
+}
+
+// A `pure` body calling a function-valued loop variable is refused even when the element
+// type says `pure`: that bound is checked only where a function is passed straight to a
+// bounded parameter, and `[noisy]` reaches a `[]pure () -> i64` unchecked. Trusting it
+// would let `run([noisy])` print from a pure function. (Before 10/02 the call did not
+// type-check at all, so this was never reachable.)
+func TestPurity_FunctionValuedLoopVariableIsNotTrusted(t *testing.T) {
+	src := `
+let run = pure (fs: []pure () -> i64) -> i64 => {
+    var t = 0
+    for g in fs { t += g() }
+    t
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, `"g", a function value`) {
+		t.Errorf("unexpected message: %q", errs[0].Message)
 	}
 }

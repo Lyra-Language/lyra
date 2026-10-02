@@ -610,7 +610,11 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   cannot be resolved to a declaration, so `pure` refuses them and asks for a name or a
   parameter, either of which can be checked; a lambda literal called in place is the
   exception, judged by its body. Until 09/22 these were charged nothing at all, and an
-  effect reached through one escaped a `pure` function.
+  effect reached through one escaped a `pure` function. **A named local function value
+  counts as nameless**: a `for` variable over functions, a destructured name or `let h = f`
+  is charged every effect even when its type says `pure`, because a function type's bound
+  is checked only where a function is passed straight to a bounded parameter — `[noisy]`
+  reaches a `[]pure () -> i64` unchecked.
 - **A parameter's storage flavor is concrete even when unwritten, and a call across the
   `shared`/stack boundary is refused** (`lyra-E018`). A *binding* is polymorphic — `let q: E = s`
   inherits the flavor and the value is unboxed for it — but a function is compiled once and
