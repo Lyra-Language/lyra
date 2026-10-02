@@ -188,6 +188,13 @@ Each of these produces something that looks like it works. Other docs cite them 
    `LookupFunctionFrom`. Backend: `l.funcs` keys overloads by declaration with the receiver
    head in the symbol; `l.globals` slots are keyed by funcKey, named per module, resolved by
    `slotFor`.
+   - **A filled-in default is its declaration's node inside the caller's AST**
+     (`TypeTable.IsDefault`): `applyDefaultArguments`/`applyDefaultFields` append it to
+     the call or literal, but its names are its declaring module's. A pass matching names
+     against the function it walks must skip it — the typechecker infers it in its module's
+     scope (`inDeclaringModule`), the backend lowers it with the locals hidden, ownership's
+     last-use walks and use-after-move skip it. Captures, `@must_release` and value ranges
+     are not yet audited (todo.md).
    - **A by-name set consulted where the enclosing scope is the question fails silently.**
      `l.locals` must not decide a desugared UFCS callee (`data.data()` on a parameter named
      `data`) — ask `Callee` first (`calleeIsDeclared`). `captures.globalNames` subtracts a
@@ -570,7 +577,7 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad and sprites modules —
+  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites and camera modules —
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives

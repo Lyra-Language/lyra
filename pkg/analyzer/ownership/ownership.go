@@ -732,6 +732,12 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 	// name is its last use.
 	lastRef := map[string]ast.Expression{}
 	ast.WalkExpr(lam.Body, nil, func(e ast.Expression) bool {
+		// A filled-in default reads its declaring module's top level, never this
+		// function's bindings: its `label` taken for a local `label`'s last use moved the
+		// local into the literal, which then held the module's value unretained.
+		if a.tt.IsDefault(e) {
+			return false
+		}
 		if id, ok := e.(*ast.IdentifierExpr); ok && eligible(id.Name) {
 			lastRef[id.Name] = id
 		}
@@ -807,6 +813,9 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 
 	lastRef := map[string]ast.Expression{}
 	ast.WalkExpr(lam.Body, nil, func(e ast.Expression) bool {
+		if a.tt.IsDefault(e) {
+			return false // a default's names are not this function's (computeLastUse)
+		}
 		if id, ok := e.(*ast.IdentifierExpr); ok && owned(id.Name) {
 			lastRef[id.Name] = id
 		}

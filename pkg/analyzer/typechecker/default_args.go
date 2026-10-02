@@ -44,8 +44,28 @@ func (tc *TypeChecker) applyDefaultArguments(lambda *ast.LambdaExpr, call *ast.F
 		if def == nil {
 			return
 		}
+		tc.typeTable.MarkDefault(def)
 		call.Arguments = append(call.Arguments, def)
 	}
+}
+
+// inDeclaringModule installs the scope a filled-in default is read in — its declaring
+// module's, with no caller's parameters — and answers the function restoring the caller's.
+//
+// **A default is the declaration's, wherever it is filled in.** `(by: i64 = SECRET)` or
+// `zone: Zone = THIRDS` names the declaring module's own constants, which a caller in
+// another module neither imports nor may see (a private one); and a name the caller has
+// in scope must not capture it. Inferred in the caller's scope, such a default was
+// "undefined identifier" at every use outside its module (10/01, std.genesis.camera's
+// `Camera.zone`).
+func (tc *TypeChecker) inDeclaringModule(def ast.Expression) func() {
+	scope := tc.moduleScopeOf(def)
+	if scope == nil {
+		return func() {}
+	}
+	oldScope, oldParams := tc.scope, tc.paramTypes
+	tc.scope, tc.paramTypes = scope, nil
+	return func() { tc.scope, tc.paramTypes = oldScope, oldParams }
 }
 
 // checkDefaultsAreTrailing reports a parameter with a default value followed by one without.
@@ -124,6 +144,7 @@ func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structTy
 		if !ok {
 			continue // not an expression: the declaration's own diagnostic to report
 		}
+		tc.typeTable.MarkDefault(value)
 		expr.Fields = append(expr.Fields, ast.StructField{
 			Name:  declared.Name,
 			Value: value,

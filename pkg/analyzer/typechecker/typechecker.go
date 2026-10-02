@@ -3123,6 +3123,9 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	}
 	tc.inferring[expr] = true
 	defer delete(tc.inferring, expr)
+	if tc.typeTable.IsDefault(expr) {
+		defer tc.inDeclaringModule(expr)()
+	}
 
 	t := tc.inferExprTypeUncached(expr)
 	if t != nil {

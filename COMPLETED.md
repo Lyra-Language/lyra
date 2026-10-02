@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 10/01/26 — a default is read in its declaring module
+
+`std.genesis.camera`'s `Camera` gave its zone a default, `zone: Zone = THIRDS`, and every
+`Camera { … }` outside the module was "undefined identifier THIRDS". A filled-in default
+is the declaration's own node appended to the call or literal (default_args.go), and the
+typechecker inferred it in the *caller's* scope: a name the caller does not import — any
+private constant — was undefined, and one the caller had locally captured it. Fixing that
+showed the same mistake three passes on, each matching names against the function it
+walks: the backend's `slotFor` tried the caller's locals first, so a caller's `factor`
+replaced the module's (`3 6 100` came out `100 200 100`); ownership's last-use walk took
+the default's `label` for the caller's local `label`, "moved" it into the literal and
+retained nothing, so dropping the struct released the module's string — an ASan abort —
+and use-after-move reported a caller's moved local at the default. The typechecker now
+marks each filled-in default (`TypeTable.MarkDefault`), infers it in its declaring module
+with no caller parameters, the backend lowers it with the locals hidden, and both
+ownership walks and use-after-move skip it. Each half is mutation-checked
+(`TestExec_ADefaultIsReadInItsDeclaringModule`, `…AManagedDefaultIsNotACallersLocal`
+under ASan, `TestMove_ADefaultIsNotTheCallersBinding`). Captures, `@must_release` and
+value ranges still match names inside defaults (todo.md).
+
+### 10/01/26 — `std.genesis.camera`: a view that follows the player over a scrolling map
+
+Vega's maps can be bigger than the screen, and a game wants the background to follow its
+player. `Camera` is the view's place in a world; `follow` moves it only when what it
+follows enters the screen's outer third on a side — then just enough to keep it at that
+third's edge — and never past the world's edges. `vdp.set_scroll` moves a plane with the
+VDP's whole-screen scroll. **A map bigger than the 64×32 plane scrolls without being
+redrawn**: map cell (x, y) is kept at plane cell (x mod 64, y mod 32), so the scroll
+registers show the view wherever it is, and `scroll_map` writes only the columns and rows
+that came into view since the last `follow` (`show_map` draws the whole plane once). The
+first Sheliak test passed while row writes were broken — its tile's column came into view
+after the scroll had already gone down, so the column write carried it — so the tests
+scroll one axis at a time, each direction, with a tile only a column write and a tile
+only a row write can bring, and each of the four writes is mutation-checked.
+
 ### 10/01/26 — `std.genesis.vdp.write_plane`: a tile map into a plane
 
 Vega's tile maps reach the game as name-table words, and the game needs them in plane A

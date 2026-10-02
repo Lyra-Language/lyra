@@ -512,3 +512,18 @@ func TestRelease_ABorrowIsNotARelease(t *testing.T) {
   u8(a + b)
 }`, 0)
 }
+
+// A filled-in default names its declaring module's top level, not the caller's bindings
+// (10/01): building a Holder after the caller's own `p` was moved reads the module's `p`
+// through the default, and is no use of the moved one.
+func TestMove_ADefaultIsNotTheCallersBinding(t *testing.T) {
+	assertMoveErrors(t, movePreamble+`
+let p: shared Person = Person { name: "module" }
+struct Holder { who: shared Person = p, }
+let main = () -> u8 => {
+  let p: shared Person = Person { name: "a" }
+  let a = consume(p)
+  let h = Holder {}
+  a
+}`, 0)
+}

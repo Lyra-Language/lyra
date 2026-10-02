@@ -33,6 +33,7 @@ func (t *TypeTable) Clone() *TypeTable {
 		baseReadouts:       cloneMap(t.baseReadouts),
 		unresolvedCallees:  cloneMap(t.unresolvedCallees),
 		bindings:           cloneMap(t.bindings),
+		defaults:           cloneMap(t.defaults),
 	}
 }
 

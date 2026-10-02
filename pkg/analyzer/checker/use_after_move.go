@@ -349,6 +349,12 @@ func (c *useAfterMove) letElse(st moveState, d *ast.DestructuringDeclStmt, els *
 }
 
 func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
+	// A filled-in default names its declaring module's top level, not this function's
+	// bindings: a caller's moved `label` reported at a default reading the module's own
+	// `label` (10/01). It moves nothing either — a default is a value, not a binding.
+	if c.tt.IsDefault(e) {
+		return st
+	}
 	switch v := e.(type) {
 	case nil:
 		return st

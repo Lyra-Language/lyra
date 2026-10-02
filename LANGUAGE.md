@@ -43,6 +43,12 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 `P { base | f: v }` is a copy of `base` with the listed fields replaced; `{ base | f: v }` is the anonymous form. **The base is any postfix expression** — a name, a call (`Duration { duration() | days: 1 }`), a field, an index, or a parenthesized expression for anything else; an operator needs those parentheses, since `|` is also bitwise or and only a postfix base keeps the two readings apart. The base must have the literal's type, each update must name one of its fields (no field is added), and a kept managed field is a copy with its own reference. A literal gives each field one value, and a struct pattern names each field once (`lyra-E075`). There is no `...base` spread in a struct literal: `...` is an array literal's element (`lyra-E068`).
 
+**A default — a field's (`zone: Zone = THIRDS`) or a parameter's (`by: i64 = SCALE`) — is read
+where it is declared**: it may name its module's constants and private values, which the
+code it is filled into need not import or see, and no name at that site shadows it. A
+literal or call that leaves the field or argument out is the same as one writing the value
+the declaration names.
+
 ### Literals must fit
 
 A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a newtype constraint, a return-position `() -> u8 => 300` (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.

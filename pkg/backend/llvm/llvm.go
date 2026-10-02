@@ -620,6 +620,14 @@ type managedSlot struct {
 // release at the end of the enclosing statement (flushTempReleases). Both operate
 // on the value in the block control *ends* in, and only on a real string value.
 func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
+	// A filled-in default names its declaring module's top level, never the function it
+	// was filled into: with the locals hidden, a name falls through to the module-keyed
+	// globals and consts (typetable.MarkDefault).
+	if l.res.TypeTable.IsDefault(expr) {
+		saved := l.locals
+		l.locals = map[string]value.Value{}
+		defer func() { l.locals = saved }()
+	}
 	v, end, err := l.lowerExprDispatch(block, expr)
 	if err != nil {
 		return nil, nil, err

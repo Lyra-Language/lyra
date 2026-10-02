@@ -35,10 +35,33 @@ type TypeTable struct {
 	// checked, and `rest`, `name @` and a struct shorthand have no node of their own to key
 	// by, so the span is the one key every binding form has.
 	bindings map[ast.Location]types.Type
+	// defaults marks the default arguments and field defaults the typechecker filled into
+	// calls and struct literals. Each is its declaration's own node and names what its
+	// declaring module sees, not what the call site does: read in the caller's scope, a
+	// default named the caller's local of the same name. The typechecker infers one in
+	// its module's scope, and the backend lowers it with the caller's locals hidden.
+	defaults map[ast.Expression]bool
 }
 
 func New() *TypeTable {
 	return &TypeTable{entries: make(map[ast.Expression]types.Type)}
+}
+
+// MarkDefault records that expr is a default argument or field default filled in where
+// it was omitted — read in its declaring module, not at the site it was filled into.
+func (t *TypeTable) MarkDefault(expr ast.Expression) {
+	if t == nil {
+		return
+	}
+	if t.defaults == nil {
+		t.defaults = make(map[ast.Expression]bool)
+	}
+	t.defaults[expr] = true
+}
+
+// IsDefault reports whether expr is a default filled into a call or a struct literal.
+func (t *TypeTable) IsDefault(expr ast.Expression) bool {
+	return t != nil && t.defaults[expr]
 }
 
 // SetVariadicPromotion records that arg is passed to a C variadic parameter at `promoted`
