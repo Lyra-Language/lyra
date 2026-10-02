@@ -25,6 +25,7 @@ type TypeChecker struct {
 	paramTypes   map[string]types.Type         // non-nil only while checking a function body
 	paramMods    map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
 	patternBound map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
+	paramHome    map[string]*symbols.Scope     // per paramTypes name, the scope it was introduced in; a local binding between a use and it shadows the entry (name_resolution.go)
 	// constBuiltinCalls holds the float-builtin method calls that a `const` initializer's
 	// constancy walk accepted, pending the verification sweep at the end of the pass
 	// (verifyConstBuiltinCalls, typechecker_const.go). The walk runs before the
@@ -1571,8 +1572,9 @@ type assignTarget struct {
 // stricter than the binary one.
 func (tc *TypeChecker) resolveAssignTarget(name string, loc ast.Location) (assignTarget, bool) {
 	// A parameter is not a VarDeclStmt in scope — it lives in paramTypes — and it
-	// shadows any outer binding of the same name, so it is resolved first (mirroring
-	// IdentifierExpr resolution and checkLValueAssignment's ordering). Without this
+	// shadows any outer binding of the same name, so it is resolved first, unless a
+	// local declared inside it is in effect here (paramAt, mirroring IdentifierExpr
+	// resolution and checkLValueAssignment's ordering). Without this
 	// the whole function bailed early on `n = …` for a parameter n, which meant the
 	// assignment was **never type-checked at all**: no assignability check, no
 	// literal-range check, and — because the RHS was never inferred — no diagnostic
@@ -1591,9 +1593,9 @@ func (tc *TypeChecker) resolveAssignTarget(name string, loc ast.Location) (assig
 	// It also restores consistency with the binding model: `let x = 5; x = 6` is an
 	// error, and without this a bare parameter was effectively a `var` — the most
 	// permissive rung — with no way to spell the immutable one. Shadowing is the
-	// replacement (`let s = s ++ "!"`), which is why parameter shadowing had to work
-	// first (see checkStatementsInScope).
-	if paramType, ok := tc.paramTypes[name]; ok {
+	// replacement (`let s = s ++ "!"`, at any type), which is why parameter shadowing
+	// had to work first (name_resolution.go).
+	if paramType, ok := tc.paramTypes[name]; ok && tc.paramAt(name, loc) {
 		switch tc.paramMods[name] {
 		case types.Own, types.Mut:
 			return assignTarget{paramType, true}, true
@@ -1613,7 +1615,7 @@ func (tc *TypeChecker) resolveAssignTarget(name string, loc ast.Location) (assig
 		// Rejected, but the type still goes back so the caller can check the value.
 		return assignTarget{paramType, false}, true
 	}
-	sym, ok := tc.scope.Lookup(name)
+	sym, ok := tc.lookupAt(name, loc)
 	if !ok {
 		return assignTarget{}, false
 	}
@@ -1636,11 +1638,11 @@ func (tc *TypeChecker) resolveAssignTarget(name string, loc ast.Location) (assig
 // nothing** — the quiet half of resolveAssignTarget, for a caller that needs the type
 // in order to decide *which* rules apply and would otherwise trigger that function's
 // diagnostics a second time.
-func (tc *TypeChecker) assignTargetType(name string) types.Type {
-	if paramType, ok := tc.paramTypes[name]; ok {
+func (tc *TypeChecker) assignTargetType(name string, loc ast.Location) types.Type {
+	if paramType, ok := tc.paramTypes[name]; ok && tc.paramAt(name, loc) {
 		return paramType
 	}
-	sym, ok := tc.scope.Lookup(name)
+	sym, ok := tc.lookupAt(name, loc)
 	if !ok {
 		return nil
 	}
@@ -1780,19 +1782,20 @@ func (tc *TypeChecker) checkLValueWritable(target ast.Expression) {
 	if root := rootIdentifier(target); root != nil {
 		if root.IsConst {
 			tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
-		} else if mod, ok := tc.paramMods[root.Name]; ok {
+		} else if mod, ok := tc.paramMods[root.Name]; ok && tc.paramAt(root.Name, root.GetLocation()) {
 			// The path is rooted at a function parameter. The `ref`/`mut`/`own`
 			// modifier governs whether its interior may be mutated: a bare or
 			// `ref` parameter is an immutable borrow, while `mut` (mutable borrow)
 			// and `own` (owned local) both permit interior mutation. Checked
 			// before the scope lookup because a parameter shadows any outer
-			// binding of the same name (mirroring IdentifierExpr resolution).
+			// binding of the same name — and only where no local shadows *it*
+			// (paramAt, mirroring IdentifierExpr resolution).
 			if !paramAllowsInteriorMutation(mod) {
 				tc.addParamImmutableError(root.GetLocation(), root.Name, mod)
 			}
-		} else if tc.patternBound[root.Name] {
+		} else if tc.patternBound[root.Name] && tc.paramAt(root.Name, root.GetLocation()) {
 			tc.addPatternBindingImmutableError(root.GetLocation(), root.Name)
-		} else if sym, ok := tc.scope.Lookup(root.Name); ok {
+		} else if sym, ok := tc.lookupAt(root.Name, root.GetLocation()); ok {
 			if decl, ok := sym.(*ast.VarDeclStmt); ok && !decl.CanMutateInterior() {
 				tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
 			}
@@ -2039,7 +2042,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	//
 	// assignTargetType rather than resolveAssignTarget: this is a recording step, and the
 	// reporting one runs below — asking twice prints an immutable-binding error twice.
-	if target := tc.assignTargetType(leftIdent.Name); target != nil {
+	if target := tc.assignTargetType(leftIdent.Name, leftIdent.GetLocation()); target != nil {
 		tc.typeTable.Set(leftIdent, target)
 	}
 
@@ -2078,7 +2081,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 		// The target's type only — not resolveAssignTarget, which *reports* (immutable
 		// binding, borrowed parameter). Asking it here and again through
 		// checkAssignToBinding below would print each of those twice.
-		if target := tc.assignTargetType(leftIdent.Name); target != nil {
+		if target := tc.assignTargetType(leftIdent.Name, leftIdent.GetLocation()); target != nil {
 			if result, handled := tc.dispatchCompoundOperator(expr, binOp, target); handled {
 				// The result is stored back into the target, so it must fit. Reported
 				// here rather than left to the store, which is the backend's problem by
@@ -3276,15 +3279,14 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		tc.resolveType(e.Type, e.GetLocation())
 		return types.PrimitiveType{Name: types.UInt64}
 	case *ast.IdentifierExpr:
-		// Consult the parameter scope installed by withParamScope while
-		// type-checking a function body.
-		if tc.paramTypes != nil {
-			if t, ok := tc.paramTypes[e.Name]; ok {
-				tc.typeTable.Set(e, t)
-				return t
-			}
+		// A parameter or pattern binding (installed by withParamScope and
+		// withPatternBindings) — unless a `let`/`var`/`for` binding declared inside
+		// it is in effect here, which shadows it (name_resolution.go).
+		if t, ok := tc.paramTypes[e.Name]; ok && tc.paramAt(e.Name, e.GetLocation()) {
+			tc.typeTable.Set(e, t)
+			return t
 		}
-		sym, ok := tc.scope.Lookup(e.Name)
+		sym, ok := tc.lookupAt(e.Name, e.GetLocation())
 		if !ok {
 			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q%s", e.Name, tc.unimportedHint(e.Name, e.GetLocation()))
 			return nil
@@ -5179,7 +5181,10 @@ func (tc *TypeChecker) resolveConstantInt(expr ast.Expression) (int64, bool) {
 		}
 		return 0, false
 	case *ast.IdentifierExpr:
-		sym, ok := tc.scope.Lookup(e.Name)
+		if _, isParam := tc.paramTypes[e.Name]; isParam && tc.paramAt(e.Name, e.GetLocation()) {
+			return 0, false // a parameter's value is the caller's
+		}
+		sym, ok := tc.lookupAt(e.Name, e.GetLocation())
 		if !ok {
 			return 0, false
 		}
@@ -5874,15 +5879,17 @@ func (tc *TypeChecker) rootBindingIsMutable(root *ast.IdentifierExpr) bool {
 	if root.IsConst {
 		return false
 	}
-	// A parameter shadows any outer binding of the same name, so it is consulted
-	// first (mirroring IdentifierExpr resolution).
-	if mod, ok := tc.paramMods[root.Name]; ok {
+	// A parameter shadows any outer binding of the same name, and is shadowed by a
+	// local declared inside it, so it is consulted the way IdentifierExpr resolution
+	// consults it (paramAt).
+	isParam := tc.paramAt(root.Name, root.GetLocation())
+	if mod, ok := tc.paramMods[root.Name]; ok && isParam {
 		return paramAllowsInteriorMutation(mod)
 	}
-	if tc.patternBound[root.Name] {
+	if tc.patternBound[root.Name] && isParam {
 		return false
 	}
-	if sym, ok := tc.scope.Lookup(root.Name); ok {
+	if sym, ok := tc.lookupAt(root.Name, root.GetLocation()); ok {
 		if decl, ok := sym.(*ast.VarDeclStmt); ok {
 			return decl.CanMutateInterior()
 		}

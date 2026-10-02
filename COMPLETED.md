@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 10/02/26 — a binding shadows a parameter from its declaration on
+
+`for c in items { c.x }` in a function taking `c: Box` reported "Box has no field x", and
+`let c = c.side + 1; c * 2` "operands must be numeric, got Box": the typechecker resolved
+every name through `paramTypes` (parameters and pattern bindings) before the scopes, so a
+parameter could not be shadowed at all. lyra-E025's "Shadow it instead" promised it
+(LANGUAGE.md now states the rule, § Shadowing a binding); the one test shadowed with the
+*same* type (`let n = n + 1`) and passed by accident. Vega's `name_art` had renamed a loop variable around it. The backend was
+always right — it binds each name as it reaches the declaration — so where the types
+agreed, the program type-checked against one binding and ran with another.
+
+**Scope-first is just as wrong**, which is why it was never a swap. The collector fills
+scopes ahead of time, so a block's scope already holds a `let` declared *after* the use
+being resolved, and sequential rebinding leaves only the last declaration in the map. The
+same flaw was live without any parameter: `let x = n + 1; let y = x * 2; let x = y + 100`
+typed the middle `x` as the third line's (untyped), and the backend died on "type not
+found". So resolution became positional (`typechecker/name_resolution.go`): a use walks
+out through the function-local scopes and takes the first `let`/`var`/`for` binding that
+has **ended** before the use begins — following `Shadows` for a same-block rebinding —
+and stops, handing the use to `paramTypes`, at the scope the parameter or pattern binding
+was introduced in (`paramHome`) or at its own binder. That one rule gives the
+self-reference (`let c = c.side + 1` reads the parameter), the use before a later `let`
+(the outer binding), the `for` variable (its header ends before the body; the iterable is
+checked outside the loop's scope) and the closure (it sees an enclosing shadow). The home
+is needed because an arm with a bare-expression body is checked in the *enclosing* scope —
+the arm's own scope is never entered — where a `let` of the same name before the `match`
+would otherwise capture the arm's binding; and a multi-clause function's patterns have no
+collector scope at all. When the walk leaves the function without meeting any binder, the
+module's binding answers, not the later local. Every site that asked `paramTypes`/
+`paramMods`/`patternBound` first now asks `paramAt`, so type, reassignment (E025) and
+interior-mutation rules follow the shadow together, as does `resolveConstantInt` (a `let n
+= 99` after `xs[n]` would have folded the index).
+
+Two passes shared the bug. **Use-before-declaration** entered every nested block,
+loop body and arm bare, so `{ let n = n * 10 }` under a parameter or outer `let n`, and
+`let v = v * 3` in an arm binding `v`, were lyra-E002; each scope is now seeded with the
+names visible from outside it, which can only remove reports. **Perceus reuse**
+(`computeOwnedLastRef`) treated every binding named like an `own` parameter as owned, so
+an arm's `xs` — a borrow out of another list — was reclaimed and overwritten in place
+(ASan: exit 1 on `TestExec_OwnParamRebindingIsNotReused`). An `own` parameter whose name
+the body rebinds (`captures.BodyBinders`, the capture pass's own binder walk) is no longer
+offered for reuse. `computeLastUse` already excluded every parameter's name, and purity
+resolves "a real binding, then our own parameters", so neither changed. Every example and
+std file checks with identical diagnostics, and every example that builds here emits the
+same IR, before and after.
+
 ### 10/02/26 — `lyra-W004`'s method-style warning is the importing file's own
 
 Vega's `import project.{ …, is_empty }`, called only as `cell.is_empty()`, warned in four

@@ -189,3 +189,83 @@ impl Hh for u8 { h = (self) => { let a = b + u64(self); let b = 1; a } }
 	assertErrorCount(t, errs, 1)
 	assertErrorContains(t, errs, `"b"`)
 }
+
+// A nested scope is entered with the names already visible from outside it, so a `let`
+// there that shadows one of them reads the outer binding in its own initializer — and a use
+// before it is a use of the outer one, not a use before declaration. Each block used to be
+// entered bare, which refused these shadows (lyra-E002) though LANGUAGE.md promises them
+// and the typechecker resolves them.
+func TestUBD_NoDiag_ShadowInANestedScope(t *testing.T) {
+	for name, source := range map[string]string{
+		"parameter, nested block": `
+let f = (n: i64) -> i64 => {
+    var total = 0
+    {
+        let n = n * 10
+        total += n
+    }
+    total + n
+}`,
+		"outer let, nested block": `
+let f = () -> i64 => {
+    let x = 1
+    {
+        let x = x + 1
+        x
+    }
+}`,
+		"pattern binding, arm block": `
+let f = (o: Opt) -> i64 => match o {
+    Has(v) => {
+        let v = v * 3
+        v
+    },
+    Nothing => 0,
+}`,
+		"parameter, loop body": `
+let f = (n: i64, xs: []i64) -> i64 => {
+    var total = 0
+    for x in xs {
+        let n = n + x
+        total += n
+    }
+    total
+}`,
+		"loop variable, loop body": `
+let f = (xs: []i64) -> i64 => {
+    var total = 0
+    for x in xs {
+        let x = x * 2
+        total += x
+    }
+    total
+}`,
+		"use before the shadow reads the outer binding": `
+let total = 7
+let f = () -> i64 => {
+    let a = total
+    let total = 5
+    a + total
+}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertNoErrors(t, parseCollectAndCheck(t, source))
+		})
+	}
+}
+
+// A name visible from nowhere outside is still a use before its declaration in a nested
+// scope: the outer names are what is seeded, not the block's own.
+func TestUBD_Diag_UseBeforeDecl_NestedWithNoOuterBinding(t *testing.T) {
+	source := `
+let f = (n: i64) -> i64 => {
+    {
+        let a = y
+        let y = n
+        a + y
+    }
+}`
+	errs := parseCollectAndCheck(t, source)
+	assertErrorCount(t, errs, 1)
+	assertErrorContains(t, errs, `"y"`)
+}

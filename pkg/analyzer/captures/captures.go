@@ -167,6 +167,17 @@ func directBinders(fn *ast.LambdaExpr, bound map[string]bool) {
 	collectInto(bodyOf(fn), bound, nil, false)
 }
 
+// BodyBinders is every name fn's body binds — `let`/`var`, loop variables, pattern
+// bindings, comprehension clauses, a nested lambda's parameters — but not fn's own
+// parameters. A pass keyed on names asks it whether a name can mean something other than
+// the parameter somewhere in the body; it is this file's binder walk, so the answer cannot
+// drift from what capture analysis treats as bound.
+func BodyBinders(fn *ast.LambdaExpr) map[string]bool {
+	bound := map[string]bool{}
+	collect(bodyOf(fn), bound, nil)
+	return bound
+}
+
 // directGenericBinders adds the generics fn declares in its own body — `let g<t> = lambda`
 // not inside a nested lambda — keyed by name.
 func directGenericBinders(fn *ast.LambdaExpr, into map[string]*ast.LambdaExpr) {

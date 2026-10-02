@@ -203,10 +203,11 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 // trait arguments — so both the parameter types bound into tc.paramTypes and the
 // return type checked against the body are expressed in the impl's variables.
 func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod ast.TraitMethodImpl, traitSig *types.LambdaType) {
-	oldTypes, oldMods := tc.paramTypes, tc.paramMods
+	oldTypes, oldMods, oldHome := tc.paramTypes, tc.paramMods, tc.paramHome
 	tc.paramTypes = make(map[string]types.Type)
 	tc.paramMods = make(map[string]types.TypeModifier)
-	defer func() { tc.paramTypes, tc.paramMods = oldTypes, oldMods }()
+	tc.paramHome = nil // no home: a shadowing walk runs to the module scope (localBindingAt)
+	defer func() { tc.paramTypes, tc.paramMods, tc.paramHome = oldTypes, oldMods, oldHome }()
 	for i, pat := range implMethod.Clause.Patterns {
 		if i >= len(traitSig.Parameters) {
 			break

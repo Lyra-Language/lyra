@@ -14,8 +14,10 @@ Semantic passes outside the typechecker. Language semantics are in
 ## `use_before_declaration.go`
 
 `CheckUseBeforeDeclaration(program)`: collect a block's names, then walk in order flagging early
-uses. Lambda bodies are checked with **parameters pre-seeded** (`checkStatementsInScope`), so
-`let s = s ++ "!"` shadows rather than uses early.
+uses. **Every nested scope is seeded with the names visible from outside it** — parameters,
+pattern bindings, loop variables and the enclosing blocks' earlier declarations
+(`checkStatementsInScope`) — so `let s = s ++ "!"` or `{ let n = n * 10 }` shadows rather than
+uses early, as the typechecker resolves it.
 
 ## `purity.go`
 

@@ -77,7 +77,20 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 			}
 		}
 	}
+	// The parameters' home is the lambda's own scope, where the collector registered them:
+	// a `let`/`for` binding of the same name anywhere in the body sits in a scope nested
+	// inside it, and shadows the parameter from its declaration on (localBindingAt).
+	home, ok := tc.scopeTable.Get(lambda)
+	if !ok {
+		home = tc.scope
+	}
+	var names []string
+	for _, p := range lambda.Parameters {
+		names = append(names, ast.PatternBoundNames(p.Pattern)...)
+	}
+	restoreHome := tc.installParamHome(home, names)
 	tc.enterScope(lambda, fn)
+	restoreHome()
 	tc.paramTypes, tc.paramMods, tc.patternBound = oldTypes, oldMods, oldBound
 }
 
@@ -857,30 +870,29 @@ func (tc *TypeChecker) matchesAcceptingArguments(matches []resolvedTraitMethod, 
 // inferIdentifierCall resolves the identifier in scope and validates the call
 // against a LambdaExpr found as a VarDeclStmt value.
 func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.FunctionCallExpr) types.Type {
-	// A parameter shadows any outer binding of the same name (mirroring the
-	// IdentifierExpr resolution in inferExprType, which consults paramTypes
-	// first). A function-typed parameter is callable — `f(x)` where
-	// `f: (u8) -> u8` — so validate the call against its lambda-type signature.
-	if tc.paramTypes != nil {
-		if pt, ok := tc.paramTypes[ident.Name]; ok {
-			if lt, ok := tc.callableSignature(pt, call.GetLocation()); ok {
-				// Record the callee's own type: a call through a function *value* is
-				// lowered as an indirect call, and the signature to call through comes
-				// from this node's recorded type — the **stripped** signature for a
-				// newtype-typed parameter, since that is what the backend calls
-				// through (a newtype shares its base's representation). Nothing else
-				// infers a callee identifier — the resolution above is structural,
-				// not by inference.
-				tc.typeTable.Set(ident, lt)
-				return tc.inferLambdaCallFromType(ident.Name, lt, call)
-			}
-			tc.addError(call.GetLocation(), SeverityError,
-				"identifier %q is not callable (type %s)", ident.Name, pt)
-			return nil
+	// A parameter shadows any outer binding of the same name, and a local declared
+	// inside it shadows the parameter (paramAt, mirroring the IdentifierExpr
+	// resolution in inferExprType). A function-typed parameter is callable —
+	// `f(x)` where `f: (u8) -> u8` — so validate the call against its lambda-type
+	// signature.
+	if pt, ok := tc.paramTypes[ident.Name]; ok && tc.paramAt(ident.Name, ident.GetLocation()) {
+		if lt, ok := tc.callableSignature(pt, call.GetLocation()); ok {
+			// Record the callee's own type: a call through a function *value* is
+			// lowered as an indirect call, and the signature to call through comes
+			// from this node's recorded type — the **stripped** signature for a
+			// newtype-typed parameter, since that is what the backend calls
+			// through (a newtype shares its base's representation). Nothing else
+			// infers a callee identifier — the resolution above is structural,
+			// not by inference.
+			tc.typeTable.Set(ident, lt)
+			return tc.inferLambdaCallFromType(ident.Name, lt, call)
 		}
+		tc.addError(call.GetLocation(), SeverityError,
+			"identifier %q is not callable (type %s)", ident.Name, pt)
+		return nil
 	}
 
-	sym, ok := tc.scope.Lookup(ident.Name)
+	sym, ok := tc.lookupAt(ident.Name, ident.GetLocation())
 	if !ok {
 		// A compiler-provided free function (print/println) — consulted only after
 		// scope resolution misses, so a user binding of the same name shadows it.
@@ -1855,11 +1867,11 @@ func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string,
 		tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
 		return
 	}
-	if mod, ok := tc.paramMods[root.Name]; ok {
+	if mod, ok := tc.paramMods[root.Name]; ok && tc.paramAt(root.Name, root.GetLocation()) {
 		tc.addParamImmutableError(root.GetLocation(), root.Name, mod)
 		return
 	}
-	if sym, ok := tc.scope.Lookup(root.Name); ok {
+	if sym, ok := tc.lookupAt(root.Name, root.GetLocation()); ok {
 		if decl, ok := sym.(*ast.VarDeclStmt); ok {
 			tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
 		}

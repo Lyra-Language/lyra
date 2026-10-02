@@ -121,14 +121,22 @@ what makes `unwrap_or(None, 42)` work).
 
 `checkNode` / `checkVarDecl` / `checkVarReassignment` / `checkExpressionStmt`.
 
-- **Assignment to a parameter**: `checkAssignToBinding` resolves `tc.paramTypes` *before* scope
-  lookup, then shares `checkAssignedValue` with the variable path. Only `own`/`mut` parameters
-  may be reassigned (`lyra-E025`); the same rule and code cover pattern bindings (own wording).
-  Shadowing (`let s = s ++ "!"`) is the replacement, which is why use-before-declaration seeds
-  parameters (`checkStatementsInScope`).
+- **What a name means at a use** (`name_resolution.go`): parameters and pattern bindings live
+  in `tc.paramTypes`, `let`/`var`/`for` bindings in the collector's scopes, which hold every
+  name a block declares *ahead of time* (and only the latest of a rebinding). A site never
+  indexes `paramTypes`/`paramMods`/`patternBound` or calls `tc.scope.Lookup` for a local name
+  alone: it asks `paramAt(name, at)` (no local binding in effect between the use and the
+  parameter's home, `paramHome`) and `lookupAt(name, at)` (the binding that has *ended* before
+  the use, following `Shadows`; else the module's; else the plain lookup). Any new install of
+  a `paramTypes` entry records its home via `installParamHome`.
+- **Assignment to a parameter**: `resolveAssignTarget` asks `paramAt` *before* scope lookup,
+  then shares `checkAssignedValue` with the variable path. Only `own`/`mut` parameters may be
+  reassigned (`lyra-E025`); the same rule and code cover pattern bindings (own wording).
+  Shadowing (`let s = s ++ "!"`, any type) is the replacement.
 - **Sequential rebind** `let x = x + 1`: the collector's `RedefineVariable` overwrites the
-  binding and records `VarDeclStmt.Shadows`; `checkVarDecl` sets `tc.currentVarDecl` so the
-  `IdentifierExpr` case redirects to `.Shadows`. Without it the RHS type is nil.
+  binding and records `VarDeclStmt.Shadows`; `lookupAt` follows it to the declaration in effect
+  at the use. At module scope (order-free, outside the positional walk) `checkVarDecl` sets
+  `tc.currentVarDecl` so the `IdentifierExpr` case redirects to `.Shadows`.
 - `checkIfDestructuringStmt` (names scoped to `Then`, scope keyed on the `*IfDestructuringStmt`)
   / `checkElseDestructuringStmt` (names persist in the enclosing scope); both reuse
   `checkDestructuringDecl`.

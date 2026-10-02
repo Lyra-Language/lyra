@@ -131,17 +131,18 @@ func (tc *TypeChecker) requireMutableRoot(target ast.Expression, what string) {
 		tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
 		return
 	}
-	if mod, ok := tc.paramMods[root.Name]; ok {
+	isParam := tc.paramAt(root.Name, root.GetLocation())
+	if mod, ok := tc.paramMods[root.Name]; ok && isParam {
 		if !paramAllowsInteriorMutation(mod) {
 			tc.addParamImmutableError(root.GetLocation(), root.Name, mod)
 		}
 		return
 	}
-	if tc.patternBound[root.Name] {
+	if tc.patternBound[root.Name] && isParam {
 		tc.addPatternBindingImmutableError(root.GetLocation(), root.Name)
 		return
 	}
-	if sym, ok := tc.scope.Lookup(root.Name); ok {
+	if sym, ok := tc.lookupAt(root.Name, root.GetLocation()); ok {
 		if decl, ok := sym.(*ast.VarDeclStmt); ok && !decl.CanMutateInterior() {
 			tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
 		}

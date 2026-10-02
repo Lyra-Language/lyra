@@ -40,7 +40,8 @@ A binding / `own` parameter holds one owning reference. The pass records:
   is a leak only LeakSanitizer reports.
 - **`LastUseTransfer` / `LastUseDrop`** — Perceus last use. `computeLastUse` finds an eligible
   binding's final textual reference (shadowed, parameter, reassigned and address-taken names are
-  ineligible). An owning last use *transfers* only if unconditional; a borrowing one *drops*
+  ineligible; for reuse, `computeOwnedLastRef` also refuses an `own` parameter whose name the body
+  rebinds, `captures.BodyBinders`, since the last reference may be a borrowed binding's). An owning last use *transfers* only if unconditional; a borrowing one *drops*
   there. The backend fuses both (`retireManagedSlot`, `dropLastUsesInStmt`); the managed frame
   is the leak-safe backstop.
   - **A last use inside a loop body is eligible.** The drop is emitted after the enclosing
