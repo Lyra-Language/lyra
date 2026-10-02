@@ -206,6 +206,24 @@ func (l *lowerer) arrayLValue(block *ir.Block, obj ast.Expression) (value.Value,
 			}
 		}
 	}
+	// A field of a stack struct reached from a slot — `self.kind.colliders[i]` — is addressed
+	// in place too, through the same path an assignment to it takes. Loading it whole and
+	// storing it to a fresh alloca copied the array at every loop index: std.genesis.entity's
+	// `meets` copied both kinds' four colliders (56 bytes each) per iteration, and the hero's
+	// game ran at half speed on the 68000 (10/02).
+	if l.fieldPathInPlace(obj) {
+		loc, end, err := l.lvalueAddress(block, obj)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		structTy, err := l.lowerType(loc.ty)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if at, ok := structTy.(*lltypes.ArrayType); ok {
+			return loc.ptr, at, end, nil
+		}
+	}
 	arr, block, err := l.lowerExpr(block, obj)
 	if err != nil {
 		return nil, nil, nil, err
@@ -218,6 +236,39 @@ func (l *lowerer) arrayLValue(block *ir.Block, obj ast.Expression) (value.Value,
 	slot := entry.NewAlloca(at)
 	block.NewStore(arr, slot)
 	return slot, at, block, nil
+}
+
+// fieldPathInPlace reports whether obj is a chain of `.field` reads through stack (not
+// `shared`) structs, rooted at a name with a slot — storage the read can address rather
+// than copy. Anything else (a call, a box, an element of another array) keeps the copying
+// path, whose behaviour every other shape relies on.
+func (l *lowerer) fieldPathInPlace(obj ast.Expression) bool {
+	m, ok := obj.(*ast.MemberExpr)
+	if !ok {
+		return false
+	}
+	for {
+		objType, ok := l.recordedType(m.Object)
+		if !ok || types.AllocationOf(objType) == types.Shared {
+			return false
+		}
+		if _, ok := l.namedStructFields(objType); !ok {
+			return false
+		}
+		switch next := m.Object.(type) {
+		case *ast.MemberExpr:
+			m = next
+		case *ast.IdentifierExpr:
+			slot, found := l.slotFor(next.Name, next.GetLocation())
+			if !found {
+				return false
+			}
+			_, err := slotElemType(slot)
+			return err == nil
+		default:
+			return false
+		}
+	}
 }
 
 // sharedArrayPayloadPtr lowers a `shared [N]T` object to its box pointer and geps

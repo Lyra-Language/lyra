@@ -273,6 +273,10 @@ func (l *lowerer) namespaceCallee(member *ast.MemberExpr, call *ast.FunctionCall
 	if fn, params, ok := l.specializedFuncFor(call); ok {
 		return fn, params, true
 	}
+	// An overloaded member: the one the typechecker chose by the receiver.
+	if got, ok := l.resolvedCallee(call); ok {
+		return got.fn, got.params, true
+	}
 	lam, ok := st.LookupFunctionIn(imp.Path, name)
 	if !ok {
 		return nil, nil, false

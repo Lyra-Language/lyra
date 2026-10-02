@@ -88,6 +88,24 @@ func (st *SymbolTable) OverloadSetFor(name string, loc ast.Location) (*ast.Overl
 	return overloads, ok
 }
 
+// OverloadSetIn returns module's overload set for name — the namespace form,
+// `collision.mirrored(…)`, whose module is named rather than taken from a location.
+func (st *SymbolTable) OverloadSetIn(module, name string) (*ast.OverloadSet, bool) {
+	if st == nil {
+		return nil, false
+	}
+	scope := st.moduleScope(module)
+	if scope == nil {
+		return nil, false
+	}
+	sym, ok := scope.LookupLocal(name)
+	if !ok {
+		return nil, false
+	}
+	set, ok := sym.(*ast.OverloadSet)
+	return set, ok
+}
+
 // LookupOverloadsFrom returns the overload set a name means to the file at loc — its own
 // module's when it has one, otherwise the one the global or prelude scope holds.
 //

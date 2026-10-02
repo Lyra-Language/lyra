@@ -129,6 +129,40 @@ let main = () -> u8 => u8(opt.double(3))`,
 	}
 }
 
+// A name overloaded on its receiver, called through the namespace: each call picks its
+// member by the first argument, as `x.scaled(…)` and an imported `scaled(x, …)` do. The
+// set is kept out of the function table, so until 10/02 the namespace lookup found no
+// such member ("module has no member") — `std.genesis.collision.mirrored` gained a
+// `Collider` overload and every `collision.mirrored(shape, w)` stopped compiling. One
+// member generic in another parameter (as `hits_map` is), so the specialization path is
+// crossed: 2*3 + 10 + 4 = 20.
+func TestExec_OverloadedCallThroughNamespace(t *testing.T) {
+	t.Parallel()
+	got := buildAndRunModules(t, map[string]string{
+		"util/shape.lyra": `module util.shape
+pub struct Box { side: i64 }
+pub struct Pair { a: i64, b: i64 }
+pub let scaled = pure (self: Box, k: i64) -> i64 => self.side * k
+pub let scaled = pure (self: Pair, k: i64) -> i64 => (self.a + self.b) * k
+pub let total<const N: i64> = pure (self: Pair, more: ref [N]i64) -> i64 => {
+  var sum = self.a + self.b
+  for c in more { sum += c }
+  sum
+}
+pub let total = pure (self: Box) -> i64 => self.side
+`,
+		"app.lyra": `import util.shape
+import util.shape.{ Box, Pair }
+let main = () -> u8 => {
+  let more: [2]i64 = #[1, 3]
+  u8(shape.scaled(Box { side: 2 }, 3) + shape.scaled(Pair { a: 2, b: 3 }, 2) + shape.total(Pair { a: 0, b: 0 }, more))
+}`,
+	})
+	if got != 20 {
+		t.Errorf("exit code: got %d, want 20", got)
+	}
+}
+
 // A **private** function taking a `mut` parameter, called from inside its own module.
 //
 // Its parameters were looked up under the bare source name while they had been recorded
