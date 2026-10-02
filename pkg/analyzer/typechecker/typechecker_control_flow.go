@@ -301,7 +301,13 @@ func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType ty
 		tc.recordBindingType(pattern, name, typ)
 	})
 	tc.errors = tc.errors[:errCount]
+	// The bindings' home is the scope the match sits in — not the arm's own scope, which
+	// is not entered for an arm whose body is a bare expression — so a `let` of the same
+	// name *before* the match does not shadow them, and one inside the arm's body does
+	// (localBindingAt).
+	restoreHome := tc.installParamHome(tc.scope, ast.PatternBoundNames(pattern))
 	fn()
+	restoreHome()
 	tc.paramTypes = old
 	tc.patternBound = oldBound
 }

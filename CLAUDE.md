@@ -172,6 +172,8 @@ Each of these produces something that looks like it works. Other docs cite them 
    | see through a newtype | `stripNewtypeResolving` (typechecker) |
    | expression at a position | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
    | a pattern binding's type (no use in hand) | `TypeTable.Binding(loc)`, via `recordBindingType` |
+   | what a name means at a use in a body (parameter or a local shadowing it) | `paramAt` / `lookupAt` (`typechecker/name_resolution.go`) — never `paramTypes[...]` or `scope.Lookup` alone |
+   | every name a function body binds (not its parameters) | `captures.BodyBinders` |
    | bind a generic type's arguments | `ast.BindGenericParams` |
    | what a value holds inline | `ownership.eachComponent` |
    | retain or release what a value owns | `emitOwnedValue` (`backend/llvm/owned_walk.go`) |

@@ -78,6 +78,7 @@ package ownership
 import (
 	"slices"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -798,6 +799,12 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 		return true
 	})
 
+	// Names the body binds again. This pass keys on names, so for an `own` parameter
+	// whose name a `let`, loop variable, pattern or nested parameter rebinds, the final
+	// textual reference may be the *other* binding's — a borrowed pattern binding or loop
+	// element, whose reference reuse would consume. Such a parameter is not offered for
+	// reuse (the conservative direction: it falls back to its scope-exit release).
+	rebound := captures.BodyBinders(lam)
 	owned := func(name string) bool {
 		// An address-taken binding is excluded here for the reason it is excluded from
 		// last-use: reuse would hand its cells to something else while a pointer still
@@ -806,7 +813,7 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 			return false
 		}
 		if ownParams[name] {
-			return true
+			return !rebound[name]
 		}
 		return declCount[name] == 1 && !params[name] && !reassigned[name]
 	}

@@ -84,7 +84,7 @@ func (tc *TypeChecker) forceCheckFunction(fn *ast.LambdaExpr) bool {
 // type-checked clean, where checking in declaration order reports it undefined. A false
 // *accept*, which is the direction that does not announce itself.
 func (tc *TypeChecker) atTopLevel(fn func()) {
-	oldTypes, oldMods, oldBound := tc.paramTypes, tc.paramMods, tc.patternBound
+	oldTypes, oldMods, oldBound, oldHome := tc.paramTypes, tc.paramMods, tc.patternBound, tc.paramHome
 	oldRet, oldName := tc.enclosingRet, tc.enclosingFuncName
 	oldBounds := tc.genericBounds
 	oldMethod, oldImplType := tc.currentImplMethod, tc.currentImplType
@@ -93,13 +93,14 @@ func (tc *TypeChecker) atTopLevel(fn func()) {
 	tc.paramTypes = map[string]types.Type{}
 	tc.paramMods = map[string]types.TypeModifier{}
 	tc.patternBound = map[string]bool{}
+	tc.paramHome = nil
 	tc.enclosingRet, tc.enclosingFuncName = nil, ""
 	tc.genericBounds = map[string][]string{}
 	tc.currentImplMethod, tc.currentImplType = ast.MethodName{}, nil
 	tc.currentDefaultTrait = ""
 
 	defer func() {
-		tc.paramTypes, tc.paramMods, tc.patternBound = oldTypes, oldMods, oldBound
+		tc.paramTypes, tc.paramMods, tc.patternBound, tc.paramHome = oldTypes, oldMods, oldBound, oldHome
 		tc.enclosingRet, tc.enclosingFuncName = oldRet, oldName
 		tc.genericBounds = oldBounds
 		tc.currentImplMethod, tc.currentImplType = oldMethod, oldImplType

@@ -2,6 +2,7 @@ package checker
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -97,18 +98,19 @@ func (c *ubeChecker) checkStmt(stmt ast.Statement, declared, seen map[string]boo
 
 	case *ast.WithStmt:
 		c.checkExpr(s.Arena, declared, seen)
-		c.checkStatements(s.Body.Statements)
+		c.checkStatementsInScope(s.Body.Statements, withNames(seen, s.Name))
 
 	case *ast.IfDestructuringStmt:
 		c.checkExpr(s.DestructuringStatement.Value, declared, seen)
-		c.checkStatements(s.Then.Statements)
+		c.checkStatementsInScope(s.Then.Statements,
+			withNames(seen, ast.PatternBoundNames(s.DestructuringStatement.Pattern)...))
 		if s.Else != nil {
-			c.checkStatements(s.Else.Statements)
+			c.checkStatementsInScope(s.Else.Statements, seen)
 		}
 
 	case *ast.ElseDestructuringStmt:
 		c.checkExpr(s.DestructuringStatement.Value, declared, seen)
-		c.checkStatements(s.Else.Statements)
+		c.checkStatementsInScope(s.Else.Statements, seen)
 
 	// A method body is a function body, and gets the scope a function body gets: a
 	// fresh one under its own parameters, in which a top-level name is *not* a name
@@ -159,41 +161,51 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 			return false
 
 		case *ast.BlockExpr:
-			c.checkStatements(ex.Statements)
+			c.checkStatementsInScope(ex.Statements, seen)
 			return false
 
 		case *ast.LambdaExpr:
 			// A parameter is in scope for the whole body, so it is seeded as already
 			// seen — a later `let` of the same name shadows it rather than using it
 			// early.
-			params := parameterNames(ex)
+			params := withNames(seen)
+			maps.Copy(params, parameterNames(ex))
 			c.checkExprInScope(ex.Body, params)
 			for _, clause := range ex.LambdaClauses {
-				c.checkExprInScope(clause.Body, params)
+				clauseScope := withNames(params)
+				for _, p := range clause.Patterns {
+					collectPatternNames(p, clauseScope)
+				}
+				c.checkExprInScope(clause.Body, clauseScope)
 			}
 			return false
 
 		case *ast.MatchExpr:
 			c.checkExpr(ex.Scrutinee, declared, seen)
 			for _, arm := range ex.MatchArms {
+				armScope := withNames(seen, ast.PatternBoundNames(arm.Pattern)...)
 				if arm.Guard != nil {
-					c.checkExprNewScope(arm.Guard.Condition)
+					c.checkExprInScope(arm.Guard.Condition, armScope)
 				}
-				c.checkExprNewScope(arm.Body)
+				c.checkExprInScope(arm.Body, armScope)
 			}
 			return false
 
 		case *ast.ForLoopExpr:
-			c.checkStatements(ex.Body.Statements)
+			loopScope := seen
+			if ex.Init != nil {
+				loopScope = withNames(seen, ex.Init.Name)
+			}
+			c.checkStatementsInScope(ex.Body.Statements, loopScope)
 			return false
 
 		case *ast.ForInLoopExpr:
 			c.checkExpr(ex.Iterable, declared, seen)
-			c.checkStatements(ex.Body.Statements)
+			c.checkStatementsInScope(ex.Body.Statements, withNames(seen, ex.Key, ex.Value))
 			return false
 
 		case *ast.UnsafeBlockExpr:
-			c.checkStatements(ex.Body.Statements)
+			c.checkStatementsInScope(ex.Body.Statements, seen)
 			return false
 		}
 
@@ -218,13 +230,15 @@ func (c *ubeChecker) checkClauseBody(clause *ast.LambdaClause) {
 	c.checkExprInScope(clause.Body, params)
 }
 
-// checkExprNewScope checks an expression in a completely fresh scope.
-func (c *ubeChecker) checkExprNewScope(expr ast.Expression) {
-	c.checkExprInScope(expr, nil)
-}
-
 // checkExprInScope checks an expression in a fresh scope that already has inScope's
 // names bound — a lambda body under its parameters.
+//
+// **Every nested scope is entered with the names already visible from outside it**: a
+// block's own `let x` read before its declaration is a use of the outer `x` when there is
+// one (the typechecker resolves it so, and the backend binds names as it reaches them), not
+// a use before declaration. Entering each block bare reported `{ let n = n * 10 }` under a
+// parameter or an outer `let n`, and `let v = v * 3` in an arm binding `v`, as lyra-E002 —
+// a shadow, which LANGUAGE.md promises, refused by this pass alone.
 func (c *ubeChecker) checkExprInScope(expr ast.Expression, inScope map[string]bool) {
 	if expr == nil {
 		return
@@ -257,4 +271,17 @@ func parameterNames(lambda *ast.LambdaExpr) map[string]bool {
 // scope are not always just the parameter's own identifier.
 func collectPatternNames(p ast.Pattern, names map[string]bool) {
 	ast.EachPatternBinding(p, func(b ast.PatternBinding) { names[b.Name] = true })
+}
+
+// withNames is inScope plus names, as a new set; an empty name is skipped (a one-variable
+// `for` leaves its second slot empty).
+func withNames(inScope map[string]bool, names ...string) map[string]bool {
+	out := make(map[string]bool, len(inScope)+len(names))
+	maps.Copy(out, inScope)
+	for _, n := range names {
+		if n != "" {
+			out[n] = true
+		}
+	}
+	return out
 }
