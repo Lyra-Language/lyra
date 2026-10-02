@@ -564,3 +564,127 @@ let main = () -> void => {
 		t.Errorf("the tiles span [%d,%d)–[%d,%d), want [80,40)–[248,168)", x0, y0, x1, y1)
 	}
 }
+
+// TestGenesis_ASolidTileStopsASprite walks an 8×8 sprite right, a pixel a frame, at a map
+// tile with a collision shape, and after 100 frames back left: std.genesis.collision on
+// the 68000 stops it touching the tile — the sprite at 88–96, the tile at 96–104 — and
+// lets it walk away again. A box tile, and an ellipse one, whose test is the multiplies
+// LLVM's M68k backend compiled to `muls.l`, a 68020 instruction: on the 68000 the first
+// touch faulted, the runtime's red panic screen came up, and the sprite stood frozen
+// (10/01, the hero at a rock). The backdrop must stay black — a panic is a test failure,
+// not a sprite that happens to have stopped.
+func TestGenesis_ASolidTileStopsASprite(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	for _, c := range []struct{ name, shape string }{
+		{"a box", "Shape { x: 0, y: 0, width: 8, height: 8 }"},
+		{"an ellipse", "Shape { ellipse: true, x: 0, y: 0, width: 8, height: 7 }"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := genesisProgram(t, "collide", `import std.genesis.vdp
+import std.genesis.sprites
+import std.genesis.sprites.{ Sprite }
+import std.genesis.collision
+import std.genesis.collision.{ Shape }
+
+const SOLID: [16]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x22222222, 0x22222222, 0x22222222, 0x22222222,
+  0x22222222, 0x22222222, 0x22222222, 0x22222222,
+]
+const STARTS: [3]u16 = #[0, 0, 1]
+const SHAPES: [1]Shape = #[`+c.shape+`]
+const BODY: Shape = Shape { x: 0, y: 0, width: 8, height: 8 }
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 1, vdp.rgb(0, 7, 0))
+  vdp.set_color(0, 2, vdp.rgb(7, 7, 7))
+  vdp.load_tiles(1, SOLID)
+  // A 20×8 map, its tile set from tile 1: the wall, the set's tile 1, at (12, 5).
+  var map: [160]u16 = #[0; 160]
+  map[5 * 20 + 12] = 2
+  vdp.write_plane(vdp.PLANE_B, map, 20)
+  vdp.display_on()
+  var x: i16 = 40
+  var ticks: u16 = 0
+  for {
+    ticks += 1
+    let dx: i16 = if ticks < 100 { 1 } else { -1 }
+    if !collision.hits_map(BODY, x + dx, 40, map, 20, 1, STARTS, SHAPES) { x += dx }
+    sprites.clear()
+    sprites.add(Sprite { x: x, y: 40, tile: 1 })
+    vdp.wait_vblank()
+    sprites.show()
+  }
+}
+`)
+			// At 90 frames it is held against the wall; by 170 it has walked well back —
+			// how far exactly depends on when start-up ends, so only "away" is asked.
+			for _, frames := range []string{"90", "170"} {
+				screen := runROM(t, out, frames, "")
+				if bg := screen.dominant(); bg != "000000" {
+					t.Fatalf("at %s frames the screen is %s, not the black backdrop: the program panicked", frames, bg)
+				}
+				x0, y0, x1, y1 := spriteBounds(screen, "00ff00")
+				against := x0 == 88 && x1 == 96
+				if y0 != 40 || y1 != 48 || (frames == "90") != against || (frames == "170" && x0 > 60) {
+					t.Errorf("at %s frames the sprite is in [%d,%d)–[%d,%d): want it against the wall [88,96) at 90, back past 60 at 170", frames, x0, y0, x1, y1)
+				}
+			}
+		})
+	}
+}
+
+// spriteBounds is the rectangle holding every pixel of colour `color`.
+func spriteBounds(s screen, color string) (x0, y0, x1, y1 int) {
+	x0, y0 = s.width, s.height
+	for y := 0; y < s.height; y++ {
+		for x := 0; x < s.width; x++ {
+			k := (y*s.width + x) * 3
+			if fmt.Sprintf("%02x%02x%02x", s.pixels[k], s.pixels[k+1], s.pixels[k+2]) != color {
+				continue
+			}
+			x0, y0 = min(x0, x), min(y0, y)
+			x1, y1 = max(x1, x+1), max(y1, y+1)
+		}
+	}
+	return
+}
+
+// TestGenesis_CheckedMultipliesRunOnThe68000 multiplies run-time values — read from the
+// pad, so nothing is folded — with Lyra's overflow checks: a chain of four i32 multiplies,
+// which LLVM's M68k backend compiled to the 68020's `muls.l` and the 68000 faulted on;
+// and an i16 multiply past i16, whose overflow flag that backend answered "never" for, so
+// it wrapped in silence. The first must run (green), the second trap (the runtime's red).
+func TestGenesis_CheckedMultipliesRunOnThe68000(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	for _, c := range []struct{ name, body, want string }{
+		{"four i32 multiplies run", `let zero = i32(pad.read(1))
+  let a = zero - 6
+  let b = zero + 7
+  let ok = a * a * b * b == 1764`, "00ff00"},
+		{"an i16 multiply past i16 traps", `let zero = i16(pad.read(1))
+  let a = zero + 300
+  let ok = a * a == 12345`, "ff0000"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := genesisProgram(t, "multiply", `import std.genesis.vdp
+import std.genesis.pad
+
+let main = () -> void => {
+  vdp.init()
+  pad.init()
+  vdp.display_on()
+  `+c.body+`
+  // Green when right, blue when wrong; the runtime's panic screen is red.
+  vdp.set_color(0, 0, if ok { vdp.rgb(0, 7, 0) } else { vdp.rgb(0, 0, 7) })
+  for {}
+}
+`)
+			if got := runROM(t, out, "60", "").dominant(); got != c.want {
+				t.Errorf("the screen is %s, want %s", got, c.want)
+			}
+		})
+	}
+}

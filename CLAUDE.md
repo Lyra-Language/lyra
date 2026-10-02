@@ -556,7 +556,11 @@ of Markdown.
   (`lyra-genesis/`), and linked by `pkg/rom` with the program and compiler-rt's helpers.
   **The M68k LLVM is patched** (`tools/llvm-m68k-patches/*.patch`, applied by
   `tools/llvm-m68k.sh` on top of its pin): an index beside a stack object was dropped
-  from the address, so `xs[i]` on the stack read `xs[0]` (`TestGenesis_AVariableIndex…`).
+  from the address, so `xs[i]` on the stack read `xs[0]` (`TestGenesis_AVariableIndex…`);
+  and a checked multiply was the 68020's `muls.l` (i32, a fault on the 68000) or never
+  overflowed (i8/i16) (`TestGenesis_CheckedMultipliesRunOnThe68000`). **A Genesis test
+  checks the backdrop too**: the runtime's panic screen is red, and a test reading only
+  where a sprite stopped passes on a program that faulted where it stopped.
   Every Genesis object goes through `llc -code-model=medium -relocation-model=static`: the
   default small model stores through a PC-relative destination, which no 68000 accepts.
   The runtime's interrupt entries are naked C with inline `movem`/`rte`, and its weak
@@ -577,7 +581,7 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites and camera modules —
+  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera and collision modules —
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives

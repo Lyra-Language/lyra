@@ -29,6 +29,13 @@
 #     `xs[0]`. `matchAddressBase` set an index beside a frame-index base, which
 #     `hasIndexReg()` does not see; the patch refuses one there (09/30; found by Vega's
 #     animations, whose step table is copied to the stack). Not yet reported upstream.
+#   - 0002: multiply-with-overflow (every checked `*` Lyra emits) was custom-lowered on
+#     every CPU: an i32 one to `muls.l`, a 68020 instruction the 68000 faults on, and an
+#     i8/i16 one to a word multiply whose V flag never sets, so it never trapped. On a
+#     68000 or 68010 they now take LLVM's generic expansion (a high-half multiply,
+#     compared — `__muldi3` for i32), and the branch and select lowering no longer
+#     re-lower an expanded one through the flags (10/01; found by the hero's game
+#     freezing — panicking — at a rock). Not yet reported upstream.
 #
 # Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
 # Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a

@@ -1,0 +1,164 @@
+module std.genesis.collision
+//! Collision shapes — boxes and ellipses on a sprite or a tile — and whether two overlap,
+//! or one overlaps a tile map's solid tiles.
+//!
+//! ```
+//! import std.genesis.collision
+//! import std.genesis.collision.{ Shape }
+//!
+//! const FEET: Shape = Shape { x: 3, y: 18, width: 10, height: 6 }
+//! const ROCK: Shape = Shape { ellipse: true, x: 1, y: 1, width: 6, height: 6 }
+//!
+//! if collision.overlaps(FEET, x, y, ROCK, rock_x, rock_y) { … }
+//! ```
+//!
+//! **A shape is placed by where its owner is**: its `x` and `y` are from the owner's
+//! top-left, so `overlaps(a, ax, ay, b, bx, by)` asks about `a` on something at (ax, ay)
+//! and `b` on something at (bx, by). Shapes that only touch do not overlap, so a player
+//! slides along a wall rather than sticking to it.
+//!
+//! **No arithmetic the 68000 emulates**: positions are `i16`, and the tests are 32-bit
+//! multiplications of differences no wider than a shape — exact for shapes up to 128
+//! pixels a side (Vega refuses larger). Two ellipses are tested as one ellipse whose radii
+//! are their sums: exact for circles, close for ellipses.
+//!
+//! A map's tiles may carry shapes too ([hits_map]): the tiles a shape covers are found
+//! from its name-table words (Vega's `assets.hits_<map>` passes the tables).
+
+/// A box, or the ellipse filling it, from its owner's top-left, in pixels.
+pub struct Shape {
+  ellipse: bool = false,
+  x: i16,
+  y: i16,
+  width: i16,
+  height: i16,
+}
+
+/// Whether `a` on something at (`ax`, `ay`) overlaps `b` on something at (`bx`, `by`).
+/// Touching is not overlapping.
+pub let overlaps = pure (
+  a: Shape,
+  ax: i16,
+  ay: i16,
+  b: Shape,
+  bx: i16,
+  by: i16
+) -> bool => {
+  let a_left = i32(ax) + i32(a.x)
+  let a_top = i32(ay) + i32(a.y)
+  let b_left = i32(bx) + i32(b.x)
+  let b_top = i32(by) + i32(b.y)
+  let a_right = a_left + i32(a.width)
+  let a_bottom = a_top + i32(a.height)
+  let b_right = b_left + i32(b.width)
+  let b_bottom = b_top + i32(b.height)
+  // The rectangles first: no pair overlaps unless they do, and past here every
+  // difference below is no wider than a shape.
+  if a_left >= b_right || b_left >= a_right || a_top >= b_bottom || b_top >= a_bottom {
+    return false
+  }
+  if !a.ellipse && !b.ellipse { return true }
+  // Doubled coordinates: an ellipse's centre and radius are whole numbers then.
+  if a.ellipse && b.ellipse {
+    // As one ellipse with the summed radii, about the difference of the centres — in
+    // single units, so the products stay inside 32 bits.
+    let dx = ((a_left * 2 + i32(a.width)) - (b_left * 2 + i32(b.width))) / 2
+    let dy = ((a_top * 2 + i32(a.height)) - (b_top * 2 + i32(b.height))) / 2
+    let rx = (i32(a.width) + i32(b.width)) / 2
+    let ry = (i32(a.height) + i32(b.height)) / 2
+    return inside(dx, dy, rx, ry)
+  }
+  if a.ellipse {
+    return box_meets_ellipse(
+      b_left,
+      b_top,
+      b_right,
+      b_bottom,
+      a_left,
+      a_top,
+      a.width,
+      a.height
+    )
+  }
+  box_meets_ellipse(a_left, a_top, a_right, a_bottom, b_left, b_top, b.width, b.height)
+}
+
+/// `s` mirrored left to right on an owner `width` wide — a sprite drawn mirrored.
+pub let mirrored = pure (s: Shape, width: i16) -> Shape =>
+  Shape { s | x: width - s.x - s.width }
+
+/// `s` flipped top to bottom on an owner `height` tall.
+pub let flipped = pure (s: Shape, height: i16) -> Shape =>
+  Shape { s | y: height - s.y - s.height }
+
+/// Whether `s` on something at (`x`, `y`) overlaps a shape of any of a tile map's cells.
+/// `cells` is the map's name-table words, row by row, `width` cells a row, the map's
+/// top-left at the world's (0, 0); its tile set's tiles start at video memory's tile
+/// `first_tile`. Tile `t`'s shapes are `shapes[starts[t]]` up to `shapes[starts[t + 1]]`,
+/// from the tile's top-left, mirrored and flipped as a cell shows its tile. A shape past
+/// the map's edge meets nothing there.
+pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
+  s: Shape,
+  x: i16,
+  y: i16,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Shape
+) -> bool => {
+  let left = i32(x) + i32(s.x)
+  let top = i32(y) + i32(s.y)
+  let rows = i32(cells.len()) / i32(width)
+  let tiles = i32(starts.len()) - 1
+  // The cells the shape's rectangle covers, inside the map.
+  let first_column = (left >> 3).max(0)
+  let last_column = ((left + i32(s.width) - 1) >> 3).min(i32(width) - 1)
+  let first_row = (top >> 3).max(0)
+  let last_row = ((top + i32(s.height) - 1) >> 3).min(rows - 1)
+  var row = first_row
+  for row <= last_row {
+    var column = first_column
+    for column <= last_column {
+      let word = cells[row * i32(width) + column]
+      let tile = i32(word & 0x7FF) - i32(first_tile)
+      if tile >= 0 && tile < tiles {
+        for k: u16 in starts[tile]..<starts[tile + 1] {
+          var shape = shapes[k]
+          if (word & 0x0800) != 0 { shape = mirrored(shape, 8) }
+          if (word & 0x1000) != 0 { shape = flipped(shape, 8) }
+          if overlaps(s, x, y, shape, i16(column * 8), i16(row * 8)) { return true }
+        }
+      }
+      column += 1
+    }
+    row += 1
+  }
+  false
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Whether (`dx`, `dy`) from an ellipse's centre is inside it, its radii `rx` and `ry`.
+let inside = pure (dx: i32, dy: i32, rx: i32, ry: i32) -> bool =>
+  dx * dx * ry * ry + dy * dy * rx * rx < rx * rx * ry * ry
+
+/// Whether the box `left`..`right`, `top`..`bottom` overlaps the ellipse filling
+/// `width` × `height` from (`ex`, `ey`): the box's point nearest the ellipse's centre is
+/// inside it. In doubled coordinates.
+let box_meets_ellipse = pure (
+  left: i32,
+  top: i32,
+  right: i32,
+  bottom: i32,
+  ex: i32,
+  ey: i32,
+  width: i16,
+  height: i16
+) -> bool => {
+  let cx = ex * 2 + i32(width)
+  let cy = ey * 2 + i32(height)
+  let nearest_x = cx.clamp(left * 2, right * 2)
+  let nearest_y = cy.clamp(top * 2, bottom * 2)
+  inside(nearest_x - cx, nearest_y - cy, i32(width), i32(height))
+}

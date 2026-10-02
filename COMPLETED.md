@@ -9,6 +9,48 @@ Newest first.
 
 ## Dated log
 
+### 10/01/26 — LLVM's M68k backend: checked multiplies on the 68000 (patch 0002)
+
+"The player freezes when he hits a rock." The hero's game was not frozen but panicked —
+the runtime's red screen, hidden behind the field on plane B, with his last sprites
+still shown. The first time his feet's rectangle met the rock's, `std.genesis.collision`
+took its ellipse branch, four checked i32 multiplies, and LLVM's M68k backend had
+compiled `llvm.smul.with.overflow.i32` to `muls.l` + `bvs` on every CPU: `muls.l` is a
+68020 instruction, an illegal one on the 68000. Its i8/i16 lowering was wrong the other
+way — a word multiply's product is 32 bits and never sets V, so the flag was the constant
+"no overflow" and an i16 multiply past i16 wrapped in silence. Patch 0002 gives i8/i16
+everywhere, and i32 below the 68020, LLVM's generic expansion (`__muldi3` and a compare
+for i32), and stops the branch and select lowering from rebuilding an expanded overflow
+node through the flags — which they did, so the first attempt still branched on a
+`muls.l`. Three things hid it: the Genesis collision test used a box tile (no multiply);
+my first probes multiplied `pad.read(1) & 0`, which LLVM folds, so nothing ran on the
+68000 at all; and that test measured only where the sprite stopped, which a panic at the
+wall satisfies. Its sprite now walks away again, a box tile and an ellipse one, and the
+backdrop must stay black; `TestGenesis_CheckedMultipliesRunOnThe68000` multiplies values
+read from the pad. Reverting the patch and rebuilding llc fails all three.
+
+### 10/01/26 — `std.genesis.collision`, and a comprehension's result takes its context
+
+Vega's collision shapes reach a game as `std.genesis.collision.Shape`s — a box, or the
+ellipse filling it, from its owner's top-left. `overlaps` tests two placed shapes:
+rectangles first (touching is not overlapping, so a player slides along a wall), then a
+box against an ellipse by the box's point nearest the ellipse's centre, in doubled
+coordinates so centres and radii are whole; two ellipses as one with the summed radii
+(exact for circles). Every product is 32-bit and bounded by a shape's size after the
+rectangle test, which is why Vega refuses a shape past 128 a side: no `i64`, so nothing
+the 68000 emulates. `hits_map` finds the cells a shape covers from a map's name-table
+words and tests their tiles' shapes, mirrored and flipped as each cell shows its tile.
+Tested on the host (the module touches no hardware) and on the 68000 in Sheliak, a sprite
+stopped by a solid tile; each mutation-checked.
+
+Gathering a tile set's shapes tile by tile, Vega wrote `[i in 0..<n | []]` against
+`[][]Shape` and lyrac failed in the backend: "dynamic array has no element type".
+`propagateExpectedType` pushed a context's element into an array literal's elements and a
+repeat's value, but had no arm for a comprehension — the literal arm's sibling (rule 8) —
+so each `[]` was never told its element. The new arm narrows the comprehension's result
+and re-records it as `[]elem`. `let xs: []u8 = [i in 0..<3 | 7]` is still refused, as it
+was: assignability runs on the eagerly inferred `[]i64` first (todo.md).
+
 ### 10/01/26 — a default is read in its declaring module
 
 `std.genesis.camera`'s `Camera` gave its zone a default, `zone: Zone = THIRDS`, and every

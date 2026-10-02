@@ -1,0 +1,46 @@
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.cpp b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+index d167e7f65..e1f6bb3a7 100644
+--- a/llvm/lib/Target/M68k/M68kISelLowering.cpp
++++ b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+@@ -98,10 +98,16 @@ M68kTargetLowering::M68kTargetLowering(const M68kTargetMachine &TM,
+     setOperationAction(OP, MVT::i16, Expand);
+   }
+ 
++  // Multiply-with-overflow sets V only in the 68020's long multiply: a word multiply's
++  // product is 32 bits and never overflows, so the custom lowering's flag answered "no
++  // overflow" for every i8 and i16 multiply, and on the 68000 and 68010 its i32 `muls.l`
++  // is an illegal instruction. Those take the generic expansion — a high-half multiply,
++  // compared — and only a 68020 and later the custom one.
+   for (auto OP : {ISD::SMULO, ISD::UMULO}) {
+-    setOperationAction(OP, MVT::i8,  Custom);
+-    setOperationAction(OP, MVT::i16, Custom);
+-    setOperationAction(OP, MVT::i32, Custom);
++    setOperationAction(OP, MVT::i8, Expand);
++    setOperationAction(OP, MVT::i16, Expand);
++    setOperationAction(OP, MVT::i32,
++                       Subtarget.atLeastM68020() ? Custom : Expand);
+   }
+ 
+   for (auto OP : {ISD::SHL_PARTS, ISD::SRA_PARTS, ISD::SRL_PARTS})
+@@ -2344,7 +2350,8 @@ SDValue M68kTargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
+       Cond = Cmp;
+       addTest = false;
+     }
+-  } else if (isOverflowArithmetic(CondOpcode)) {
++  } else if (isOverflowArithmetic(CondOpcode) &&
++             isOperationCustom(CondOpcode, Cond->getValueType(0))) {
+     // Result is unused here.
+     SDValue Result;
+     unsigned CCode;
+@@ -2508,7 +2515,10 @@ SDValue M68kTargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
+     }
+   }
+   CondOpcode = Cond.getOpcode();
+-  if (isOverflowArithmetic(CondOpcode)) {
++  // Only an operation this target lowers itself sets the flags a branch can test: an
++  // expanded one (a multiply with overflow on the 68000) is a value like any other.
++  if (isOverflowArithmetic(CondOpcode) &&
++      isOperationCustom(CondOpcode, Cond->getValueType(0))) {
+     SDValue Result;
+     unsigned CCode;
+     lowerOverflowArithmetic(Cond, DAG, Result, Cond, CCode);
