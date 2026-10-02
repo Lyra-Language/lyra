@@ -574,19 +574,29 @@ let main = () -> void => {
 // LLVM's M68k backend compiled to `muls.l`, a 68020 instruction: on the 68000 the first
 // touch faulted, the runtime's red panic screen came up, and the sprite stood frozen
 // (10/01, the hero at a rock). The backdrop must stay black — a panic is a test failure,
-// not a sprite that happens to have stopped.
+// not a sprite that happens to have stopped. Then by colliders (10/02): a tile on a layer
+// the sprite's collider looks for stops it, and one on another layer does not.
 func TestGenesis_ASolidTileStopsASprite(t *testing.T) {
 	genesisToolchainOrSkip(t)
-	for _, c := range []struct{ name, shape string }{
-		{"a box", "Shape { x: 0, y: 0, width: 8, height: 8 }"},
-		{"an ellipse", "Shape { ellipse: true, x: 0, y: 0, width: 8, height: 7 }"},
+	// The collider cases: the wall's tile is on layer 2 (water); a collider looking for it
+	// stops there, one looking only for layer 1 (walls) walks through.
+	const box = "Shape { x: 0, y: 0, width: 8, height: 8 }"
+	const tileOnWater = "Collider { shape: " + box + ", layers: 2, mask: 0 }"
+	for _, c := range []struct {
+		name, shapesType, shape, bodyType, body string
+		blocked                                 bool
+	}{
+		{"a box", "Shape", box, "Shape", box, true},
+		{"an ellipse", "Shape", "Shape { ellipse: true, x: 0, y: 0, width: 8, height: 7 }", "Shape", box, true},
+		{"a collider looking for its layer", "Collider", tileOnWater, "Collider", "Collider { shape: " + box + ", layers: 4, mask: 2 }", true},
+		{"a collider looking past its layer", "Collider", tileOnWater, "Collider", "Collider { shape: " + box + ", layers: 4, mask: 1 }", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			out := genesisProgram(t, "collide", `import std.genesis.vdp
 import std.genesis.sprites
 import std.genesis.sprites.{ Sprite }
 import std.genesis.collision
-import std.genesis.collision.{ Shape }
+import std.genesis.collision.{ Shape, Collider }
 
 const SOLID: [16]u32 = #[
   0x11111111, 0x11111111, 0x11111111, 0x11111111,
@@ -595,8 +605,8 @@ const SOLID: [16]u32 = #[
   0x22222222, 0x22222222, 0x22222222, 0x22222222,
 ]
 const STARTS: [3]u16 = #[0, 0, 1]
-const SHAPES: [1]Shape = #[`+c.shape+`]
-const BODY: Shape = Shape { x: 0, y: 0, width: 8, height: 8 }
+const SHAPES: [1]`+c.shapesType+` = #[`+c.shape+`]
+const BODY: `+c.bodyType+` = `+c.body+`
 
 let main = () -> void => {
   vdp.init()
@@ -613,7 +623,7 @@ let main = () -> void => {
   for {
     ticks += 1
     let dx: i16 = if ticks < 100 { 1 } else { -1 }
-    if !collision.hits_map(BODY, x + dx, 40, map, 20, 1, STARTS, SHAPES) { x += dx }
+    if !BODY.hits_map(x + dx, 40, map, 20, 1, STARTS, SHAPES) { x += dx }
     sprites.clear()
     sprites.add(Sprite { x: x, y: 40, tile: 1 })
     vdp.wait_vblank()
@@ -629,6 +639,13 @@ let main = () -> void => {
 					t.Fatalf("at %s frames the screen is %s, not the black backdrop: the program panicked", frames, bg)
 				}
 				x0, y0, x1, y1 := spriteBounds(screen, "00ff00")
+				if !c.blocked {
+					// Looking past the wall's layer: at 90 frames it is through, beyond it.
+					if frames == "90" && x0 <= 96 {
+						t.Errorf("at 90 frames the sprite is at x %d: a collider not looking for the wall's layer should have walked through it", x0)
+					}
+					continue
+				}
 				against := x0 == 88 && x1 == 96
 				if y0 != 40 || y1 != 48 || (frames == "90") != against || (frames == "170" && x0 > 60) {
 					t.Errorf("at %s frames the sprite is in [%d,%d)–[%d,%d): want it against the wall [88,96) at 90, back past 60 at 170", frames, x0, y0, x1, y1)
