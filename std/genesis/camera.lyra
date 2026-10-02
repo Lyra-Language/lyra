@@ -187,7 +187,12 @@ let cell_of = pure (x: i16) -> u16 => u16(x) >> 3
 let distance = pure (a: u16, b: u16) -> u16 => if a > b { a - b } else { b - a }
 
 /// Map cell (`mx`, `my`); 0, the blank tile, past the map's edge.
-let cell<const N: i64> = (cells: ref [N]u16, width: u16, mx: u16, my: u16) -> u16 => {
+let cell<const N: i64> = pure (
+  cells: ref [N]u16,
+  width: u16,
+  mx: u16,
+  my: u16
+) -> u16 => {
   if mx >= width { return 0 }
   let at = u32(my) * u32(width) + u32(mx)
   if at < u32(cells.len()) { cells[at] } else { 0 }

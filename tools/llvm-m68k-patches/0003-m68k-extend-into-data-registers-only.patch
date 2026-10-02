@@ -1,0 +1,16 @@
+diff --git a/llvm/lib/Target/M68k/M68kInstrData.td b/llvm/lib/Target/M68k/M68kInstrData.td
+index b7b2d0ac4..3a81eb477 100644
+--- a/llvm/lib/Target/M68k/M68kInstrData.td
++++ b/llvm/lib/Target/M68k/M68kInstrData.td
+@@ -619,7 +619,10 @@ foreach EXT = ["S", "Z"] in {
+ 
+     def MOV#EXT#Xd16d8  : MxPseudoMove_RR<MxType16d,  MxType8d>;
+     def MOV#EXT#Xd32d8  : MxPseudoMove_RR<MxType32d,  MxType8d>;
+-    def MOV#EXT#Xd32d16 : MxPseudoMove_RR<MxType32r, MxType16r>;
++    // Data registers only, as for the 8-bit forms: the expansion extends in place with
++    // `ext` or `and`, neither of which takes an address register — an `and.l #65535, %aN`
++    // is no 68000 instruction, and written to an object file it is another one.
++    def MOV#EXT#Xd32d16 : MxPseudoMove_RR<MxType32d, MxType16d>;
+ 
+     let mayLoad = 1 in {
+ 

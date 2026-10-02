@@ -36,6 +36,11 @@
 #     compared — `__muldi3` for i32), and the branch and select lowering no longer
 #     re-lower an expanded one through the flags (10/01; found by the hero's game
 #     freezing — panicking — at a rock). Not yet reported upstream.
+#   - 0003: the 16→32-bit sign- and zero-extend pseudos let their destination be an
+#     address register, and expanded in place with `ext`/`and`, which take data
+#     registers only: `and.l #65535, %aN` is no 68000 instruction, and llc's object
+#     writer encodes it as another — the hero's position came out as garbage once his
+#     game grew stars (10/01). They are data-register-only now, as the 8-bit ones were.
 #
 # Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
 # Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a

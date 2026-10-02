@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 10/01/26 — LLVM's M68k backend: no extension into an address register (patch 0003)
+
+The hero's stars came out scattered, and he stood where he did not start, frozen —
+only once the game's loop grew a star pickup. Bisecting the game: removing the
+`match` that mirrors his collision shapes made it right, but that code had worked for a
+day; `llc -O0` was right where `-O1`/`-O2` were not, and `-disable-machine-licm` or
+`-regalloc=fast` hid it. So: register allocation, not Lyra. The optimized output held
+`and.l #65535, %a4` — a zero-extension expanded into an address register. The 16→32
+sign- and zero-extend pseudos (`MOVSXd32d16`, `MOVZXd32d16`) took `xr32`, any register,
+while their expansion extends in place with `ext`/`and`, data registers only; the
+assembler refuses that text, but llc writes the object directly and encoded something
+else. Hoisting a value out of the loop gave the allocator the pressure to pick an
+address register. Patch 0003 makes them data-register-only, as the 8-bit forms were;
+`TestGenesis_NoExtendIntoAnAddressRegister` compiles the four-line function llvm-reduce
+cut from the game and fails with the old llc. `std.genesis.vdp.write_cell` (one cell of a
+plane, for a score's digits) came with the stars.
+
 ### 10/01/26 — LLVM's M68k backend: checked multiplies on the 68000 (patch 0002)
 
 "The player freezes when he hits a rock." The hero's game was not frozen but panicked —

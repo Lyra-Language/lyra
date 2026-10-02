@@ -176,6 +176,17 @@ pub let write_plane<const N: i64> = (
   }
 }
 
+/// One cell of a plane (`PLANE_A` or `PLANE_B`) set to a name-table word — a score's digit,
+/// a door opened in a level — `priority << 15 | palette << 13 | flip_y << 12 |
+/// flip_x << 11 | tile`. `x` and `y` are the plane's cells, wrapping at its edges.
+pub let write_cell = (plane: u16, x: u16, y: u16, word: u16) -> void => {
+  set_address(
+    VRAM_WRITE,
+    plane + ((y % PLANE_HEIGHT) * PLANE_WIDTH + x % PLANE_WIDTH) * 2
+  )
+  write_word(word)
+}
+
 /// Scroll `plane` (`PLANE_A` or `PLANE_B`) so its pixel (`x`, `y`) is at the screen's
 /// top-left — the whole screen at once, as [init] sets the VDP up. A plane wraps at its
 /// edges, so any position will do.

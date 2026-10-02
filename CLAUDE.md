@@ -558,7 +558,12 @@ of Markdown.
   `tools/llvm-m68k.sh` on top of its pin): an index beside a stack object was dropped
   from the address, so `xs[i]` on the stack read `xs[0]` (`TestGenesis_AVariableIndex…`);
   and a checked multiply was the 68020's `muls.l` (i32, a fault on the 68000) or never
-  overflowed (i8/i16) (`TestGenesis_CheckedMultipliesRunOnThe68000`). **A Genesis test
+  overflowed (i8/i16) (`TestGenesis_CheckedMultipliesRunOnThe68000`); and a 16→32-bit
+  extension into an address register was `and.l #65535, %aN`, no instruction at all
+  (`TestGenesis_NoExtendIntoAnAddressRegister`, IR cut by `llvm-reduce`). **llc writes
+  objects without assembling text**, so an instruction the 68000 lacks reaches the ROM
+  silently: when a Genesis program misbehaves, compare llc `-O0` with `-O2`, then toggle
+  its passes (`-disable-machine-licm`, `-regalloc=fast`) before suspecting Lyra. **A Genesis test
   checks the backdrop too**: the runtime's panic screen is red, and a test reading only
   where a sprite stopped passes on a program that faulted where it stopped.
   Every Genesis object goes through `llc -code-model=medium -relocation-model=static`: the

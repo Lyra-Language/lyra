@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -686,5 +687,68 @@ let main = () -> void => {
 				t.Errorf("the screen is %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// TestGenesis_WriteCellSetsOneCell puts one tile into plane A's cell (2, 1) with
+// vdp.write_cell: it must show at pixels 16–24 across and 8–16 down, and nothing else.
+func TestGenesis_WriteCellSetsOneCell(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "cell", `import std.genesis.vdp
+
+const SOLID: [8]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 1, vdp.rgb(0, 7, 0))
+  vdp.load_tiles(1, SOLID)
+  vdp.write_cell(vdp.PLANE_A, 2, 1, 1)
+  vdp.display_on()
+  for {}
+}
+`)
+	screen := runROM(t, out, "60", "")
+	if x0, y0, x1, y1 := screen.bounds("000000"); x0 != 16 || y0 != 8 || x1 != 24 || y1 != 16 {
+		t.Errorf("the cell is drawn in [%d,%d)–[%d,%d), want [16,8)–[24,16)", x0, y0, x1, y1)
+	}
+}
+
+// TestGenesis_NoExtendIntoAnAddressRegister compiles, with the toolchain's llc, the IR
+// llvm-reduce cut from the hero's game: a 16-bit value shifted and zero-extended for a
+// call. LLVM's M68k backend let that extension's destination be an address register and
+// expanded it as `and.l #65535, %aN` — no 68000 instruction; written to an object file it
+// is another one, and the hero's position came out as garbage once his game grew stars
+// (10/01). Patch 0003 keeps the 16→32 extensions to data registers.
+func TestGenesis_NoExtendIntoAnAddressRegister(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	tc, err := findM68kToolchain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "extend.ll")
+	if err := os.WriteFile(ll, []byte(`target datalayout = "E-m:e-p:32:16:32-i8:8:8-i16:16:16-i32:16:32-n8:16:32-a:0:16-S16"
+target triple = "m68k-unknown-unknown-elf"
+
+%Shape = type { i1, i16, i16, i16, i16 }
+
+define fastcc i1 @extend(%Shape %p.shape) {
+entry:
+  %y = extractvalue %Shape %p.shape, 2
+  %0 = shl i16 %y, 1
+  %1 = tail call fastcc i1 null(%Shape %p.shape, i16 0, i16 0, %Shape zeroinitializer, i16 0, i16 %0)
+  ret i1 %1
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asm, err := exec.Command(tc.tool("llc"), "-mtriple=m68k-unknown-elf", "-mcpu=M68000", "-O2", ll, "-o", "-").CombinedOutput()
+	if err != nil {
+		t.Fatalf("llc: %v\n%s", err, asm)
+	}
+	if bad := regexp.MustCompile(`and\.[lw]\s+#\d+, %a[0-7]`).Find(asm); bad != nil {
+		t.Errorf("llc extended into an address register (%q): rebuild it with tools/llvm-m68k.sh's patches", bad)
 	}
 }
