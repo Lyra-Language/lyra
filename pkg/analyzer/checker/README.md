@@ -47,6 +47,10 @@ Returns two results: `pure` violations (`lyra-E007`) and missing-bound warnings 
   row, re-run the walk for `pure` bodies, check declared callback bounds.
 - Reporting-only arm: a nested lambda's parameter defaults are held to the enclosing bound at the
   definition (inference bills the call sites via the default-args desugar).
+- **A call's callee is resolved in this order**: a declaration (`calleeFor`), the enclosing
+  function's parameter (charged its declared bound, or deferred to the caller as a callback),
+  a local function value (`calleeValueType` — **every effect**: its type's bound is not
+  enforced where it was stored, see LANGUAGE.md § Effects), a builtin, then unknown.
 - Tables live in embedded **`inference`**, shared by fixpoint and enforcement.
 - Method-to-method chains work because `checkTraitImplMethodBody` populates `MethodTable` inside
   impl bodies.

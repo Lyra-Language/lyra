@@ -1031,7 +1031,17 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 			// makeAdder(5)` binds a closure returned by a call. Its declared type is
 			// then a LambdaType, which carries everything a call site needs, so check
 			// against the signature rather than a body that isn't here.
-			declValType := tc.inferExprType(decl.Value)
+			//
+			// A binding with **no initializer** carries its type on the declaration
+			// instead: a `for` variable (typed from the iterable, setLoopVarType) and a
+			// destructured name (checkDestructuringDecl). Inferring their nil value is
+			// what reported `for g in fs { g() }` as a definition cycle.
+			var declValType types.Type
+			if decl.Value == nil {
+				declValType = tc.effectiveType(decl)
+			} else {
+				declValType = tc.inferExprType(decl.Value)
+			}
 			if lt, ok := tc.callableSignature(declValType, call.GetLocation()); ok {
 				tc.typeTable.Set(ident, lt) // the indirect call's signature (see above)
 				return tc.inferLambdaCallFromType(ident.Name, lt, call)
