@@ -9,6 +9,15 @@ Newest first.
 
 ## Dated log
 
+### 10/02/26 — `std.genesis.entity`: a diagonal is no faster
+
+Pushed both ways at once, an entity's axes each reached the top speed, so it went √2
+(1.4) times as fast along the diagonal — the hero did, holding two directions. `push` now
+gives each axis the top speed and acceleration over √2 when both are pushed (and there is
+no gravity, whose axis is its own), computed as 181/256 by shifts so the 68000 does no
+multiply: 512 a frame becomes 362 each way. `TestRun_EntitiesMoveCollideAndMeet` cases
+5 and 17–19 fail with the rule off.
+
 ### 10/02/26 — a `for` variable holding a function can be called
 
 `for g in fs { g() }` reported "cannot infer the type of `g`: its definition depends on

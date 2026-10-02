@@ -12,7 +12,8 @@ import (
 // wall on a layer its colliders look for and at the map's edge, sliding along the other;
 // turning beside a wall leaves its colliders unturned until they fit, so it is not stuck
 // (10/02: the hero, walking down after walking left into a rock, could not move); and
-// meeting is one-sided.
+// meeting is one-sided. Pushed both ways at once it goes no faster than its top speed
+// (10/02: the hero walked diagonally 1.4 times as fast).
 func TestRun_EntitiesMoveCollideAndMeet(t *testing.T) {
 	root := repoRoot(t)
 	t.Setenv("LYRA_STD", root)
@@ -58,10 +59,21 @@ let main = () -> u8 => {
   e.push(0, 0)
   e.push(0, 0)
   if e.vx != 0 { return 4 }
+  // Pushed both ways, each axis gains the acceleration over √2: 90.
   e.push(-1, -1)
-  if e.vx != -128 || e.vy != -128 { return 5 }
+  if e.vx != -90 || e.vy != -90 { return 5 }
   e.move()
-  if e.fx != (10 << 8) - 128 || e.x() != 9 { return 6 }
+  if e.fx != (10 << 8) - 90 || e.x() != 9 { return 6 }
+  // Both ways at once: each axis's top speed and acceleration over √2 (181/256), so the
+  // diagonal is the top speed — 362 a frame each way, about 512 along it.
+  var diagonal = HERO.spawn(0, 0)
+  diagonal.push(1, 1)
+  if diagonal.vx != 90 || diagonal.vy != 90 { return 17 }
+  for _ in 0..<10 { diagonal.push(1, -1) }
+  if diagonal.vx != 362 || diagonal.vy != -362 { return 18 }
+  // One axis let go: the other goes on to the full top speed.
+  for _ in 0..<10 { diagonal.push(1, 0) }
+  if diagonal.vx != 512 || diagonal.vy != 0 { return 19 }
   // Gravity: the vertical axis falls, whatever is pushed, at most MAX_FALL.
   var falling = EntityKind { HERO | gravity: 512 }.spawn(0, 0)
   for _ in 0..<10 { falling.push(0, -1) }

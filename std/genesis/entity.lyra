@@ -129,24 +129,22 @@ pub let place = (self: mut Entity, x: i16, y: i16) -> void => {
 /// the kind's acceleration towards its top speed, one not pushed loses its friction until
 /// it stands. With gravity the vertical axis is gravity's, falling at most [MAX_FALL], and
 /// `dy` is not used — a jump sets `vy`. Once a frame, before moving.
+///
+/// **Pushed both ways at once, it goes no faster**: each axis's top speed and acceleration
+/// are the kind's over √2, so the diagonal is the top speed, not 1.4 times it.
 pub let push = (self: mut Entity, dx: i16, dy: i16) -> void => {
-  self.vx = accelerate(
-    self.vx,
-    dx,
-    self.kind.acceleration,
-    self.kind.friction,
-    self.kind.max_speed
-  )
+  let diagonal = dx != 0 && dy != 0 && self.kind.gravity <= 0
+  let top = if diagonal { over_root_two(self.kind.max_speed) } else { self.kind.max_speed }
+  let rate = if diagonal {
+    over_root_two(self.kind.acceleration)
+  } else {
+    self.kind.acceleration
+  }
+  self.vx = accelerate(self.vx, dx, rate, self.kind.friction, top)
   self.vy = if self.kind.gravity > 0 {
     (self.vy + self.kind.gravity).min(MAX_FALL)
   } else {
-    accelerate(
-      self.vy,
-      dy,
-      self.kind.acceleration,
-      self.kind.friction,
-      self.kind.max_speed
-    )
+    accelerate(self.vy, dy, rate, self.kind.friction, top)
   }
 }
 
@@ -279,6 +277,11 @@ let hits_tiles<const N: i64, const M: i64, const K: i64> = pure (
   }
   false
 }
+
+/// `v` over √2, to a 256th: 181/256 (0.707) as shifts — ½ + ⅛ + 1/16 + 1/64 + 1/256 — so
+/// the 68000 does no multiply. For a speed or a rate, never negative.
+let over_root_two = pure (v: i16) -> i16 =>
+  (v >> 1) + (v >> 3) + (v >> 4) + (v >> 6) + (v >> 8)
 
 /// One axis's speed after a frame: pushed `d` (-1, 0 or 1) it gains `rate`, up to `top` either
 /// way; not pushed, it loses `friction` until it is 0.
