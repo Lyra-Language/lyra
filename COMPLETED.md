@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 10/02/26 — `lyra-W004`'s method-style warning is the importing file's own
+
+Vega's `import project.{ …, is_empty }`, called only as `cell.is_empty()`, warned in four
+files under `lyrac check src/ui_checks.lyra` and in none under `lyrac check src/vega.lyra`,
+the real entry. The warning's ambiguity guard asked `SymbolTable.ExportingModules`: if any
+module other than the one imported exports the name, stay silent, because there the list
+breaks a tie and dropping the name would make the call ambiguous. But the symbol table holds
+the entry's **whole import graph**, and `vega.lyra` imports `std.collections.{ parse_args }`,
+which loads `std/collections/hashmap.lyra` and its `HashMap.is_empty`. A module none of those
+four files imports was enough to silence them all. A minimal repro that imported `parse_args`
+was expected to reproduce it but warned, so the trigger wasn't the import itself. It was a
+same-named export *anywhere* in the program; reduced, a third module importing
+`std.collections` silenced it the same way.
+
+The guard now asks the question UFCS resolution asks. `ufcsImportedIn` admits a candidate
+only from the file's own module, the prelude, or a module the file imports, so only those can
+tie. `typechecker.UFCSReachableExporters(symTable, file, name)` filters `ExportingModules`
+to that set, and `ImportUse.Exports` takes the file. It is still coarse (any reachable
+exporter, receiver ignored) in the safe direction. `TestUnusedImport_NameUsedOnlyMethodStyle`
+gained the case: the rival `twice` is imported by the entry, not by the file that lists
+`lib.{ twice }`, and the warning must still land in that file. It fails without the fix. On
+Vega's tree, `check src/vega.lyra` now reports all four.
+
 ### 10/02/26 — `std.genesis.entity`, and an array field is indexed where it lies
 
 Vega's entities reach the game through **`std.genesis.entity`**: `EntityKind` (a sprite's

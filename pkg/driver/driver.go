@@ -410,7 +410,9 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 		Modules: tc.UFCSModules(),
 		Names:   tc.DispatchedTraits(),
 		Callees: tc.UFCSCallees(),
-		Exports: symTable.ExportingModules,
+		Exports: func(file, name string) []string {
+			return typechecker.UFCSReachableExporters(symTable, file, name)
+		},
 	})...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedParameters(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckTypeNames(program)...)
