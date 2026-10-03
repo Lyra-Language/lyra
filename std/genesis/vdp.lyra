@@ -42,6 +42,12 @@ pub const PLANE_B: u16 = 0xE000
 pub const SPRITE_TABLE: u16 = 0xF000
 pub const HSCROLL: u16 = 0xFC00
 
+/// Show the window plane over the top `rows` cell rows of the screen, in place of plane A —
+/// a strip that does not scroll, where a game keeps its score while plane A scrolls with
+/// the camera; 0 for none. Its cells are written like a plane's, at [WINDOW]
+/// (`write_cell(vdp.WINDOW, x, y, word)`), a row [PLANE_WIDTH] cells wide in 40-cell mode.
+pub let window_rows = (rows: u8) -> void => set_register(18, rows & 0x1F)
+
 /// A plane, as [init] sizes them, in cells.
 pub const PLANE_WIDTH: u16 = 64
 pub const PLANE_HEIGHT: u16 = 32

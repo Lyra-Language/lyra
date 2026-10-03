@@ -9,6 +9,16 @@ Newest first.
 
 ## Dated log
 
+### 10/02/26 — `std.genesis.vdp.window_rows`: a strip that does not scroll
+
+A game whose plane A is a map (Vega's scenes put a foreground there) loses the place it
+kept its score: plane A scrolls with the camera, and showing the map overwrites it. The
+VDP's window replaces plane A over a band of the screen and never scrolls;
+`window_rows(rows)` shows it over the top `rows` cell rows (register 18), its cells written
+at `vdp.WINDOW` as a plane's are. `TestGenesis_TheWindowDoesNotScroll` scrolls plane A 40
+pixels under a two-row window and finds the window's cell where it was written and none
+of plane A's there; it fails with the register left at 0.
+
 ### 10/02/26 — `std.genesis.entity`: a diagonal is no faster
 
 Pushed both ways at once, an entity's axes each reached the top speed, so it went √2

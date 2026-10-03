@@ -734,6 +734,43 @@ let main = () -> void => {
 	}
 }
 
+// TestGenesis_TheWindowDoesNotScroll shows the window over the top two rows: a cell written
+// to it stays at pixels 16–24 across and 8–16 down while plane A scrolls 40 pixels, and plane
+// A's own cell in that row is not shown at all — the window is drawn there instead. Where
+// a game keeps its score once plane A is a map (vdp.window_rows, 10/02).
+func TestGenesis_TheWindowDoesNotScroll(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "window", `import std.genesis.vdp
+
+const TILES: [16]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x22222222, 0x22222222, 0x22222222, 0x22222222,
+  0x22222222, 0x22222222, 0x22222222, 0x22222222,
+]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 1, vdp.rgb(0, 7, 0))
+  vdp.set_color(0, 2, vdp.rgb(7, 0, 0))
+  vdp.load_tiles(1, TILES)
+  vdp.write_cell(vdp.WINDOW, 2, 1, 1)
+  vdp.write_cell(vdp.PLANE_A, 2, 1, 2)
+  vdp.set_scroll(vdp.PLANE_A, 40, 0)
+  vdp.window_rows(2)
+  vdp.display_on()
+  for {}
+}
+`)
+	screen := runROM(t, out, "60", "")
+	if x0, y0, x1, y1 := spriteBounds(screen, "00ff00"); x0 != 16 || y0 != 8 || x1 != 24 || y1 != 16 {
+		t.Errorf("the window's cell is drawn in [%d,%d)–[%d,%d), want [16,8)–[24,16)", x0, y0, x1, y1)
+	}
+	if x0, _, x1, _ := spriteBounds(screen, "ff0000"); x1 > x0 {
+		t.Errorf("plane A shows under the window, from x %d", x0)
+	}
+}
+
 // TestGenesis_NoExtendIntoAnAddressRegister compiles, with the toolchain's llc, the IR
 // llvm-reduce cut from the hero's game: a 16-bit value shifted and zero-extended for a
 // call. LLVM's M68k backend let that extension's destination be an address register and
