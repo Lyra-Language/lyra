@@ -20,3 +20,23 @@ let main = () -> u8 => u8(bump(2))
 		t.Errorf("a function whose parameter is named entry exited %d; want 3", got)
 	}
 }
+
+// Any number of parameters may be `_` — a function's or a lambda's, a managed one among
+// them. The collector refused the second as "already declared" and, past that, the backend
+// named both LLVM arguments `p._`, which clang refused (found 10/02 by Vega's checks,
+// a pixel function ignoring both coordinates).
+func TestExec_SeveralUnderscoreParameters(t *testing.T) {
+	t.Parallel()
+	got := buildAndRunWithPrelude(t, `let apply = (f: (i64, string, i64) -> i64) -> i64 => f(1, "abc", 2)
+let seven = pure (_: i64, _: string) -> i64 => 7
+let main = () -> void => {
+  let k = 40
+  println(apply((_, _, c) => k + c))
+  println(apply((_, s, _) => s.len()))
+  println(seven(1, "y"))
+}
+`, "")
+	if got != "42\n3\n7\n" {
+		t.Errorf("parameters named _ printed %q; want 42, 3 and 7", got)
+	}
+}

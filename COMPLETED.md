@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 10/02/26 — `std.genesis.entity`: `play` is `set_animation`; Vega's `play` draws
+
+A platformer made in Vega showed no player: its loop called `entity.play(animation)`, which
+only chose what the entity shows, and never `draw(view)`. Choosing and drawing were apart
+because drawing needs the game's own tables (its steps and sprites, in Vega's
+`assets.lyra`) while the entity runtime is std's. So std's method is now named for what it
+does, `set_animation`, and the generated `assets.lyra` writes `play(animation, view,
+mirrored)`, which sets it and draws. Drawing twice is the new hazard — the scene's `draw()`
+draws every entity, and each draw advances the animation's clock — so `Entity.drawn` marks
+an entity drawn this frame, and the scene draws only the unmarked ones, clearing the mark.
+
+### 10/02/26 — `std.png`: PNG images read, for Vega's Import PNG
+
+Vega's sprite and tile-set editors import PNG art, so the standard library reads it:
+`read_png` gives the size and RGBA, and for an indexed image its palette and each pixel's
+index — kept because an artist's indexed sheet already *is* palette indices, and the
+import should keep their order rather than renumber by first appearance. It is written
+over `std.compress`'s `inflate` and `crc32`, checks every chunk's CRC and the zlib header,
+and refuses an interlaced image by name rather than reading Adam7: pixel-art tools rarely
+write one, and the message says how to fix the file. `TestRun_PngReadsEveryColourType`
+compares against Go's own decoder: Go's encoder for the paletted, RGB(A), 16-bit and grey
+types, hand-built files for what Go never writes (2-bit grey with `tRNS`, grey with alpha,
+16-bit RGB with `tRNS`) and an RGBA image cycling every row filter, since Go's encoder
+never chose Average for the test images and a broken Average passed. Mutating Paeth,
+narrow-sample scaling and Average each fails it.
+
+### 10/02/26 — any number of `_` parameters
+
+`(x, _) => …` worked; `(_, _) => …` was "parameter _ is already declared" — found by a
+Vega check passing a pixel function that ignored both coordinates. The collector checked a
+parameter's name for repeats without exempting `_`, which binds nothing; past that, the
+backend named both LLVM arguments `p._` and clang refused the module. `_` now skips the
+check, and `lowerParameter` names it by position (`p._1`), as it names a destructuring
+parameter. `TestExec_SeveralUnderscoreParameters` covers a function's and a lambda's,
+a `string` among them; it fails with either half put back.
+
 ### 10/02/26 — `std.genesis.vdp.window_rows`: a strip that does not scroll
 
 A game whose plane A is a map (Vega's scenes put a foreground there) loses the place it

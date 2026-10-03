@@ -444,7 +444,7 @@ func returnSigned(fn *ast.LambdaExpr) bool {
 }
 
 // lowerParameter builds the ir.Param for one declared parameter. idx is its position,
-// used only to name a *destructuring* parameter: its pattern has no single name
+// used only to name a *destructuring* parameter or a `_` (which may repeat): its pattern has no single name
 // (`Pattern.GetName()` is "" for a tuple or struct pattern), and an unnamed ir.Param
 // prints as a bare number that says nothing about which argument it is.
 //
@@ -466,8 +466,12 @@ func (l *lowerer) lowerParameter(param ast.Parameter, idx int) (*ir.Param, error
 		irType = lltypes.NewPointer(irType)
 	}
 	name := param.GetName()
-	if name == "" {
+	switch name {
+	case "":
 		name = fmt.Sprintf("arg%d", idx)
+	case "_":
+		// Any number of parameters may be `_`, and LLVM refuses two arguments of one name.
+		name = fmt.Sprintf("_%d", idx)
 	}
 	return ir.NewParam("p."+name, irType), nil
 }

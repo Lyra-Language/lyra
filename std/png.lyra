@@ -1,0 +1,274 @@
+module std.png
+//! PNG images, read: [read_png] gives an image's size and its pixels as RGBA — and, for an
+//! indexed image, its palette and each pixel's index, which a pixel-art tool wants kept.
+//!
+//! ```
+//! import std.io.{ read_bytes }
+//! import std.png.{ read_png }
+//!
+//! let png = read_png(read_bytes("hero.png").unwrap_or([]))?
+//! let alpha = png.rgba[(y * png.width + x) * 4 + 3]
+//! ```
+//!
+//! **What is read**: every colour type — greyscale, RGB, indexed, greyscale with alpha and
+//! RGBA — at every bit depth the format allows (1, 2, 4, 8 and 16), all five row filters, and
+//! transparency (`tRNS`) for the three types without an alpha channel. A 16-bit sample is
+//! kept to its high byte, and a sample under 8 bits is scaled to 0–255. Each chunk's CRC-32
+//! is checked, and so is the zlib header around the image data. **Refused, with a message
+//! naming it**: an interlaced (Adam7) image, a critical chunk this does not know, and
+//! anything malformed — a bad signature, a chunk past the end, data that does not inflate to
+//! the rows the header promises.
+
+import std.compress.{ inflate, crc32 }
+
+/// A decoded image.
+pub struct Png {
+  width: i64,
+  height: i64,
+  /// Four bytes a pixel — red, green, blue, alpha — rows top to bottom.
+  rgba: []u8,
+  /// An indexed image's palette, four bytes an entry as `rgba`, and each pixel's index into
+  /// it; both empty for any other.
+  palette: []u8 = [],
+  indices: []u8 = [],
+}
+
+/// The image a PNG file's bytes hold, or what is wrong with them.
+pub let read_png = pure (bytes: []u8) -> Result<Png, string> => {
+  let signature = [137, 80, 78, 71, 13, 10, 26, 10]
+  if bytes.len() < 8 { return Err("not a PNG: too short") }
+  for i in 0..<8 {
+    if i64(bytes[i]) != signature[i] { return Err("not a PNG: its signature is wrong") }
+  }
+  var pos = 8
+  var header: Maybe<Header> = None
+  var plte: []u8 = []
+  var trns: []u8 = []
+  var idat: []u8 = []
+  var ended = false
+  for pos < bytes.len() && !ended {
+    if pos + 12 > bytes.len() { return Err("a chunk runs past the end of the file") }
+    let length = i64(be32(bytes, pos))
+    let kind = bytes.slice(pos + 4, pos + 8).decode_utf8()
+    if length > bytes.len() - pos - 12 { return Err("chunk ${kind} runs past the end of the file") }
+    let body = bytes.slice(pos + 8, pos + 8 + length)
+    let stored = be32(bytes, pos + 8 + length)
+    if crc32(bytes.slice(pos + 4, pos + 8 + length)) != stored {
+      return Err("chunk ${kind} fails its CRC")
+    }
+    match kind {
+      "IHDR" => { header = Some(read_header(body)?) },
+      "PLTE" => { plte = body },
+      "tRNS" => { trns = body },
+      "IDAT" => { idat = [...idat, ...body] },
+      "IEND" => { ended = true },
+      _ => {
+        // A critical chunk (its first letter upper case) changes how the image reads; an
+        // ancillary one may be passed over.
+        let letter = bytes[pos + 4]
+        if letter >= 65 && letter <= 90 { return Err("a critical chunk this does not read: ${kind}") }
+      },
+    }
+    pos += 12 + length
+  }
+  let Some(h) = header else { return Err("no IHDR chunk") }
+  if h.color == 3 && plte.len() == 0 { return Err("an indexed image with no palette") }
+  let raw = unzlib(idat)?
+  let pixels = unfilter(raw, h)?
+  Ok(h.to_image(pixels, plte, trns))
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// What `IHDR` says: the size, the bits a sample, and the colour type — 0 grey, 2 RGB,
+/// 3 indexed, 4 grey and alpha, 6 RGBA.
+struct Header {
+  width: i64,
+  height: i64,
+  depth: i64,
+  color: i64,
+}
+
+let read_header = pure (body: []u8) -> Result<Header, string> => {
+  if body.len() != 13 { return Err("IHDR is ${body.len()} bytes, not 13") }
+  let h = Header {
+    width: i64(be32(body, 0)),
+    height: i64(be32(body, 4)),
+    depth: i64(body[8]),
+    color: i64(body[9]),
+  }
+  if h.width == 0 || h.height == 0 { return Err("an image of no size") }
+  let allowed = match h.color {
+    0 => [1, 2, 4, 8, 16],
+    3 => [1, 2, 4, 8],
+    2 | 4 | 6 => [8, 16],
+    _ => [],
+  }
+  if allowed.len() == 0 { return Err("colour type ${h.color} is not one PNG has") }
+  if allowed.filter((d) => d == h.depth).len() == 0 {
+    return Err("colour type ${h.color} has no depth of ${h.depth} bits")
+  }
+  if body[10] != 0 || body[11] != 0 { return Err("a compression or filter method PNG does not have") }
+  if body[12] == 1 { return Err("an interlaced image: save it without interlacing") }
+  if body[12] != 0 { return Err("interlace method ${body[12]} is not one PNG has") }
+  Ok(h)
+}
+
+/// The samples a pixel has.
+let channels = pure (self: Header) -> i64 => match self.color {
+  0 | 3 => 1,
+  4 => 2,
+  2 => 3,
+  _ => 4,
+}
+
+/// The image data out of its zlib wrapping: a deflate stream behind a two-byte header,
+/// checked (deflate, no preset dictionary), its Adler-32 after it left unread.
+let unzlib = pure (zlib: []u8) -> Result<[]u8, string> => {
+  if zlib.len() < 2 { return Err("no image data") }
+  let cmf = i64(zlib[0])
+  let flg = i64(zlib[1])
+  if cmf & 0x0F != 8 || (cmf * 256 + flg) % 31 != 0 || flg & 0x20 != 0 {
+    return Err("the image data's zlib header is not one PNG writes")
+  }
+  match inflate(zlib.slice(2, zlib.len())) {
+    Ok(out) => Ok(out),
+    Err(why) => Err("the image data does not inflate: ${why}"),
+  }
+}
+
+/// The rows with their filters undone — each row's filter byte gone — as one array of the
+/// image's samples, packed as the depth packs them.
+let unfilter = pure (raw: []u8, h: Header) -> Result<[]u8, string> => {
+  let bits = h.channels() * h.depth
+  let stride = (h.width * bits + 7) / 8
+  // How far back a filter looks: a whole pixel, or a byte when a pixel is less.
+  let back = (bits / 8).max(1)
+  if raw.len() < h.height * (stride + 1) {
+    return Err("the image data is ${raw.len()} bytes, short of the ${h.height * (stride + 1)} its rows need")
+  }
+  var out: []u8 = [0; h.height * stride]
+  for y in 0..<h.height {
+    let method = raw[y * (stride + 1)]
+    let from = y * (stride + 1) + 1
+    let at = y * stride
+    for x in 0..<stride {
+      let v = i64(raw[from + x])
+      let a = if x >= back { i64(out[at + x - back]) } else { 0 }
+      let b = if y > 0 { i64(out[at - stride + x]) } else { 0 }
+      let c = if y > 0 && x >= back { i64(out[at - stride + x - back]) } else { 0 }
+      let predicted = match method {
+        0 => 0,
+        1 => a,
+        2 => b,
+        3 => (a + b) / 2,
+        4 => paeth(a, b, c),
+        _ => return Err("row ${y} has filter ${method}, which PNG does not have"),
+      }
+      out[at + x] = u8((v + predicted) & 0xFF)
+    }
+  }
+  Ok(out)
+}
+
+/// The Paeth predictor: whichever of left, above and upper-left is nearest to their
+/// gradient, `a + b - c`, in that order of preference.
+let paeth = pure (a: i64, b: i64, c: i64) -> i64 => {
+  let p = a + b - c
+  let pa = (p - a).abs()
+  let pb = (p - b).abs()
+  let pc = (p - c).abs()
+  if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c }
+}
+
+/// Sample `i` of row `y`, as the depth packs it — under 8 bits most significant first,
+/// 16 bits big-endian — at its full precision.
+let sample = pure (self: Header, rows: []u8, y: i64, i: i64) -> i64 => {
+  let stride = (self.width * self.channels() * self.depth + 7) / 8
+  let at = y * stride
+  match self.depth {
+    16 => i64(rows[at + i * 2]) * 256 + i64(rows[at + i * 2 + 1]),
+    8 => i64(rows[at + i]),
+    _ => {
+      let bit = i * self.depth
+      let byte = i64(rows[at + bit / 8])
+      (byte >> (8 - self.depth - bit % 8)) & ((1 << self.depth) - 1)
+    },
+  }
+}
+
+/// A sample at full precision as a byte: a 16-bit one's high byte, a narrow one scaled up.
+let to_byte = pure (self: Header, v: i64) -> u8 => match self.depth {
+  16 => u8(v >> 8),
+  8 => u8(v),
+  _ => u8(v * 255 / ((1 << self.depth) - 1)),
+}
+
+/// The image, every pixel as RGBA; an indexed one keeps its palette and indices too.
+let to_image = pure (self: Header, rows: []u8, plte: []u8, trns: []u8) -> Png => {
+  let n = self.channels()
+  var rgba: []u8 = [0; self.width * self.height * 4]
+  var palette: []u8 = []
+  var indices: []u8 = []
+  if self.color == 3 {
+    let entries = plte.len() / 3
+    for e in 0..<entries {
+      palette.push(plte[e * 3])
+      palette.push(plte[e * 3 + 1])
+      palette.push(plte[e * 3 + 2])
+      palette.push(if e < trns.len() { trns[e] } else { 255 })
+    }
+    indices = [0; self.width * self.height]
+  }
+  // The one colour `tRNS` makes transparent in a grey or RGB image, at full precision.
+  let key = if trns.len() >= 6 && self.color == 2 {
+    Some((
+      i64(trns[0]) * 256 + i64(trns[1]),
+      i64(trns[2]) * 256 + i64(trns[3]),
+      i64(trns[4]) * 256 + i64(trns[5])
+    ))
+  } else if trns.len() >= 2 && self.color == 0 {
+    let g = i64(trns[0]) * 256 + i64(trns[1])
+    Some((g, g, g))
+  } else {
+    None
+  }
+  for y in 0..<self.height {
+    for x in 0..<self.width {
+      let o = (y * self.width + x) * 4
+      let s0 = self.sample(rows, y, x * n)
+      if self.color == 3 {
+        indices[y * self.width + x] = u8(s0)
+        if s0 * 4 + 3 < palette.len() {
+          for k in 0..<4 { rgba[o + k] = palette[s0 * 4 + k] }
+        }
+        continue
+      }
+      let (r, g, b) = if n >= 3 {
+        (s0, self.sample(rows, y, x * n + 1), self.sample(rows, y, x * n + 2))
+      } else {
+        (s0, s0, s0)
+      }
+      let alpha = match self.color {
+        4 => self.to_byte(self.sample(rows, y, x * n + 1)),
+        6 => self.to_byte(self.sample(rows, y, x * n + 3)),
+        _ => if key == Some((r, g, b)) { u8(0) } else { u8(255) },
+      }
+      rgba[o] = self.to_byte(r)
+      rgba[o + 1] = self.to_byte(g)
+      rgba[o + 2] = self.to_byte(b)
+      rgba[o + 3] = alpha
+    }
+  }
+  Png {
+    width: self.width,
+    height: self.height,
+    rgba: rgba,
+    palette: palette,
+    indices: indices
+  }
+}
+
+/// A big-endian `u32` at `at`.
+let be32 = pure (bytes: []u8, at: i64) -> u32 =>
+  (u32(bytes[at]) << 24) | (u32(bytes[at + 1]) << 16) | (u32(bytes[at + 2]) << 8) | u32(bytes[at + 3])

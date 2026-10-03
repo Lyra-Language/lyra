@@ -36,6 +36,11 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	parameters := collectParameters(parametersNode, ctx)
 	for i := range parameters {
 		pName := parameters[i].GetName()
+		// `_` binds nothing, so a second one repeats no name: `(_, _) => 0` is two
+		// parameters ignored, as a pattern's `_`s are.
+		if pName == "_" {
+			continue
+		}
 		if existing, alreadyDeclared := ctx.LookupCurrentScope(pName); alreadyDeclared {
 			ctx.AddError(parametersNode, diag.SeverityError,
 				"parameter %s is already declared in this scope (first declared at %s)",

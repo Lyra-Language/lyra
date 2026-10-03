@@ -9,8 +9,7 @@ module std.genesis.entity
 //! for {
 //!   hero.push(dx, dy)                            // the pad: -1, 0 or 1 a direction
 //!   hero.move_in_field()                         // assets: through the map, stopped by walls
-//!   hero.play(assets.HERO_WALK, facing_left)
-//!   hero.draw(view)                              // assets: into the sprite list
+//!   hero.play(assets.HERO_WALK, view, facing_left) // assets: shown, into the sprite list
 //!   if hero.meets(star) { … }
 //! }
 //! ```
@@ -95,6 +94,9 @@ pub struct Entity {
   /// and turning beside a wall pushed it in — every move from there met the wall, and the
   /// entity was stuck (10/02, the hero beside a rock).
   hit_mirrored: bool,
+  /// Drawn this frame: the game's assets set it as they draw it (`play`, `draw`), and a
+  /// scene's `draw` skips it and clears it, so an entity played is not drawn twice.
+  drawn: bool = false,
 }
 
 /// The fastest an entity falls, in 256ths of a pixel a frame: 8 pixels, a tile, so a fall
@@ -221,8 +223,9 @@ pub let move_in<const N: i64, const M: i64, const K: i64> = (
 }
 
 /// Show `animation`, facing the other way when `mirrored`: from its start when it is not
-/// what it shows now, else going on.
-pub let play = (
+/// what it shows now, else going on. Nothing is drawn: the game's assets' `play` sets this
+/// and draws the entity (`hero.play(assets.HERO_WALK, view)`), which needs their tables.
+pub let set_animation = (
   self: mut Entity,
   animation: Animation,
   mirrored: bool = false

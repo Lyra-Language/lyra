@@ -242,6 +242,7 @@ A `let`/`var`, a `for` variable or a pattern binding may take a name already in 
 - A capitalized name in a pattern is a constructor. Comparing against a `const` is a guard: `v if v == LIMIT` (`lyra-E057`).
 - **A range bound may be a `const`**: `LOW..<=HIGH`, `..<LIMIT`. It is the folded value, so exhaustiveness, overlap and `lyra-E048` read the number. The `const` must be in scope unqualified (import it by name) and fold to an integer, or a float for a float scrutinee; a float bound on an integer scrutinee is an error.
 - An all-caps constructor takes its payload in parentheses in a pattern: `CD(x)`, not `CD x`.
+- **`_` binds nothing, so it may repeat** — in a pattern and in a parameter list, a function's or a lambda's: `(_, _) => 0` takes two arguments and ignores both. Until 10/02 a second `_` parameter was "already declared".
 - **A plain `let` and a parameter take only a pattern that cannot fail** (`lyra-E077`): `let Some(v) = m` needs `let … else`, and a parameter wants a plain name and a `match`. A literal, range, regex or array pattern can fail; a one-constructor `data` pattern cannot (`let W(x) = w`).
 - **A `data` match covers a constructor only where it covers its payloads** (`lyra-E009`): `Some(0) => …, None => …` is not exhaustive. Coverage may be spread across arms at any depth, nested tuples and structs included.
 
@@ -378,6 +379,10 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 - `std.sevenzip` reads blocks of one coder — Copy, LZMA, LZMA2, DEFLATE — behind a plain or compressed header; a solid block is decompressed again for each entry extracted from it. Refused by name: other methods (PPMd, BZip2, …), coder chains (BCJ and other filters), encryption ("it needs a password"), and additional streams.
 - `unzip` reads methods 0 (stored) and 8 (DEFLATE) and checks the size and CRC-32 the archive records. Refused, each with its own message: other methods, encryption, multi-disk and Zip64 archives.
 - Names decode as UTF-8. The sizes come from the central directory, so entries written with data descriptors (streaming writers) read.
+
+### PNG images (`std.png`)
+
+`read_png(bytes) -> Result<Png, string>`, `pure`: a `Png` is its `width`, `height` and `rgba` (four bytes a pixel, rows top to bottom), and for an indexed image its `palette` (RGBA, four bytes an entry) and each pixel's `indices` — kept, since a pixel-art tool wants the artist's numbering, not only the colours. Every colour type at every depth PNG allows, all five row filters, and `tRNS` for the types without alpha; a 16-bit sample keeps its high byte and one under 8 bits is scaled to 0–255. Each chunk's CRC and the zlib header are checked. Refused by name: an interlaced image, an unknown critical chunk, and anything malformed. No writer yet.
 
 ### Dates (`std.temporal`)
 
