@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 10/04/26 — a parameter with a default is named by its name
+
+`lyrac build --emit-llvm` gave different IR on every run for `examples/imgui/pixels.lyra`:
+`%"p.size = &{{{…generated.lyra:2172:53-2172:76}} Vec2 [] <nil> [{x 0xc000356940} …]}"`.
+`ast.Parameter.GetName()` appended `fmt.Sprintf(" = %v", DefaultValue)` — a Go dump of
+the default expression, heap addresses included — and the backend named each LLVM argument
+`p.` + `GetName()`. Beyond reproducibility, it defeated `pkg/backend/llvm`'s binary cache,
+which is keyed on the emitted IR, for any program touching such a function.
+
+The suffix was wrong at the source rather than at that one caller: `GetName` is
+`ast.Named`'s, and the collector registers a parameter in its scope under it. A defaulted
+parameter `by` was filed under `by = &{…}`, so no use of `by` resolved to it in the scope —
+the typechecker never noticed (parameters resolve through `paramTypes`), but the editor did:
+renaming `by` from a use edited nothing. `GetName` now returns the bound name;
+`TestEmit_DefaultedParametersAreNamedDeterministically` emits a program three times and
+`TestRename_ParameterWithADefault` renames from a use. Nothing rendered the suffix as
+source (a `%v` of an expression pointer never could), and no golden carried one.
+
 ### 10/03/26 — an unimported call is not "private" because a namesake is
 
 Vega called `scaled(1.0)` without importing `sizes.scaled` and was told `scaled is private

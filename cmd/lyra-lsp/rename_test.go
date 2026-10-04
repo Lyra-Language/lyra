@@ -314,3 +314,27 @@ let f = pure (n: i64) -> i64 => n + n`
 		t.Errorf("got %d edit(s), want 3 (the parameter and both uses): %v", len(edits), edits)
 	}
 }
+
+// A parameter with a default is registered in its scope under its own name. It was filed
+// under `by = &{…}` (Parameter.GetName appended a Go dump of the default), so no use of
+// `by` reached the declaration and a rename from a use edited nothing but that use.
+func TestRename_ParameterWithADefault(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+	let scale = (n: i64, by: i64 = 2) -> i64 => {
+		let m = n * by
+		m + by
+	}`
+	openAndWait(t, h, src)
+	// "by" in `n * by` on line 2: two tabs, "let m = n * " is 12 chars, so col 14.
+	we, err := h.Rename(testURI, 2, 14, "factor")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	lines := editLines(we, testURI)
+	// The declaration on line 1, and the uses on lines 2 and 3.
+	want := []int{1, 2, 3}
+	if len(lines) != len(want) {
+		t.Fatalf("expected edits on lines %v, got %v", want, lines)
+	}
+}
