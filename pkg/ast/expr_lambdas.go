@@ -93,12 +93,14 @@ type Parameter struct {
 	DefaultValue Expression
 }
 
+// GetName is the name the parameter binds — what the scope registers it under and the
+// backend names its LLVM argument after. **Not the default value**: it appended
+// `fmt.Sprintf(" = %v", DefaultValue)`, a Go dump of the expression with its heap
+// addresses, so a defaulted parameter was registered in its scope under `by = &{…0xc000…}`
+// (unreachable by `by`) and its LLVM argument was named the same, which made the IR differ
+// from build to build.
 func (p *Parameter) GetName() string {
-	defaultValue := ""
-	if p.DefaultValue != nil {
-		defaultValue = fmt.Sprintf(" = %v", p.DefaultValue)
-	}
-	return fmt.Sprintf("%s%s", p.Pattern.GetName(), defaultValue)
+	return p.Pattern.GetName()
 }
 
 // ReturnStmt represents a return statement
