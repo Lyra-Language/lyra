@@ -114,6 +114,27 @@ let main = () -> u8 => u8(unlisted())`)))
 	}
 }
 
+// Nor when another module keeps a private function of the same name: the fix is still
+// the import of the exported one. Vega's unimported `sizes.scaled` was reported "private to
+// module std.json", which has a helper of its own called that (10/03).
+func TestImportVisibility_APrivateNamesakeDoesNotHideTheExport(t *testing.T) {
+	res := analyze(t, buildTree(t, map[string]string{
+		"app.lyra": `import lib.{ listed }
+import other.{ used }
+let main = () -> u8 => u8(listed() + used() + unlisted())`,
+		"lib.lyra": visLib,
+		"other.lyra": `module other
+pub let used = pure () -> i64 => unlisted()
+let unlisted = pure () -> i64 => 4`,
+	}))
+	if errorsContaining(res, "is private to module") {
+		t.Errorf("a private namesake must not hide the exported name; got %v", res.Errors())
+	}
+	if !errorsContaining(res, "add `import lib.{ unlisted }`") {
+		t.Errorf("the diagnostic should name the import that fixes it; got %v", res.Errors())
+	}
+}
+
 // A genuinely private name still gets the privacy message, not the import one.
 func TestImportVisibility_PrivateStillSaysPrivate(t *testing.T) {
 	res := analyze(t, buildTree(t, visTree(t, `import lib.{ listed }

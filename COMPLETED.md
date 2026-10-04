@@ -9,6 +9,16 @@ Newest first.
 
 ## Dated log
 
+### 10/03/26 — an unimported call is not "private" because a namesake is
+
+Vega called `scaled(1.0)` without importing `sizes.scaled` and was told `scaled is private
+to module "std.json"` — a helper of that name the JSON module keeps to itself. The type
+path already preferred the import message when another module exports the name
+(`reportPrivateType`); the call path asked only whether *some* module held a private one.
+Both now ask `exportedElsewhere`, so the message is "module sizes exports it, but this
+file does not import it". `TestImportVisibility_APrivateNamesakeDoesNotHideTheExport`
+fails with the call path's guard removed.
+
 ### 10/02/26 — `std.genesis.entity`: `play` is `set_animation`; Vega's `play` draws
 
 A platformer made in Vega showed no player: its loop called `entity.play(animation)`, which

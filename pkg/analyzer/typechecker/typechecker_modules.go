@@ -262,16 +262,8 @@ func (tc *TypeChecker) checkWrittenTypeNames() {
 // survives on for a bare call.
 func (tc *TypeChecker) reportPrivateType(name string, loc ast.Location) bool {
 	from := tc.symTable.ModuleOfFile[loc.File]
-	// A name the other module *exports* did not fail to resolve because it is private —
-	// it failed because this file did not import it, which is a different fix and has
-	// its own message. Before imports restricted visibility the two could not be told
-	// apart here, since an exported type always resolved; now the commoner of the two
-	// would otherwise be reported as the rarer, telling an author to add a `pub` that is
-	// already there.
-	for _, exporter := range tc.symTable.ExportingModules(name) {
-		if exporter != from {
-			return false
-		}
+	if tc.exportedElsewhere(name, loc) {
+		return false
 	}
 	for _, module := range tc.symTable.DeclaringModulesOf(name) {
 		if module == from {
@@ -280,6 +272,23 @@ func (tc *TypeChecker) reportPrivateType(name string, loc ast.Location) bool {
 		tc.addErrorCode(loc, SeverityError, diag.CodePrivateAccess,
 			"%s is private to module %q — declare it `pub` there to export it", name, module)
 		return true
+	}
+	return false
+}
+
+// exportedElsewhere reports whether a module other than the one at loc exports name. Such
+// a name did not fail to resolve because some module keeps one private — it failed
+// because this file did not import the exported one, a different fix with its own message
+// (`unimportedHint`). Before imports restricted visibility the two could not be told apart,
+// since an exported name always resolved; now the commoner would otherwise be reported as
+// the rarer, telling an author to add a `pub` to an unrelated module: Vega's call to
+// `sizes.scaled`, unimported, was "private to module std.json" (10/03).
+func (tc *TypeChecker) exportedElsewhere(name string, loc ast.Location) bool {
+	from := tc.symTable.ModuleOfFile[loc.File]
+	for _, exporter := range tc.symTable.ExportingModules(name) {
+		if exporter != from {
+			return true
+		}
 	}
 	return false
 }

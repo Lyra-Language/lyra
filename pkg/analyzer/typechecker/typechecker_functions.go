@@ -984,8 +984,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		}
 		// A name that exists but belongs privately to another module gets the
 		// privacy diagnostic rather than "undefined": the distinction between "no
-		// such function" and "not yours to call" is the whole point of the rule.
-		if v := tc.visibilityOf(ident.Name); v.found && !v.isPublic {
+		// such function" and "not yours to call" is the whole point of the rule. Unless
+		// another module exports the name: then the fix is an import (below).
+		if v := tc.visibilityOf(ident.Name); v.found && !v.isPublic && !tc.exportedElsewhere(ident.Name, call.GetLocation()) {
 			tc.checkVisible(v, call.GetLocation())
 			return nil
 		}
