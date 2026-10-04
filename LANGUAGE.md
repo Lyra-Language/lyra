@@ -384,6 +384,10 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 
 `read_png(bytes) -> Result<Png, string>`, `pure`: a `Png` is its `width`, `height` and `rgba` (four bytes a pixel, rows top to bottom), and for an indexed image its `palette` (RGBA, four bytes an entry) and each pixel's `indices` — kept, since a pixel-art tool wants the artist's numbering, not only the colours. Every colour type at every depth PNG allows, all five row filters, and `tRNS` for the types without alpha; a 16-bit sample keeps its high byte and one under 8 bits is scaled to 0–255. Each chunk's CRC and the zlib header are checked. Refused by name: an interlaced image, an unknown critical chunk, and anything malformed. No writer yet.
 
+### XML (`std.xml`)
+
+`parse_xml(text) -> Result<Element, string>`, `pure`: an `Element` is its `name`, `attributes` (each a `name` and `value`, in the order written), `children`, and `text` — every piece of character data directly inside it, CDATA included, joined in order **with its whitespace**, since whether indentation means anything is the format's to say. Accessors: `attribute(name) -> Maybe<string>`, `child(name) -> Maybe<Element>` (the first), `children_named(name) -> []Element`. Read: both quotes, the five named entities, decimal and hex character references (`&#x41;`, lower-case `x` as XML has it), comments, CDATA, processing instructions and a DOCTYPE (skipped, internal subset and all). **Not read**: namespaces (a prefix stays part of the name, `svg:rect`), a DTD's declarations and its entities, line-end normalisation, and any check past tags closing in order. An error names its line. Tested against Go's `encoding/xml` (`cmd/lyrac/xml_test.go`). Written for Vega's Tiled import.
+
 ### Dates (`std.temporal`)
 
 After the web's **Temporal** API: a wall-clock value and an exact instant are different

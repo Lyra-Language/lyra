@@ -9,6 +9,19 @@ Newest first.
 
 ## Dated log
 
+### 10/04/26 — `std.xml`: XML read into elements, for Vega's Tiled import
+
+Vega imports Tiled maps (`.tmx`, `.tsx`), which are XML, and nothing in std read it. The
+reader was written in Vega and moved here before anything depended on it, since nothing in
+it is Tiled's. It is `std.json`'s shape — pure, threading a byte offset — and reads what a
+program writes rather than all of XML: no namespaces, no DTD declarations. **Text keeps its
+whitespace**: Tiled's CSV layer data sits between newlines and indentation, and only the
+format knows whether that matters, so the caller trims. **Numbers are left as text**: the
+Vega draft rounded `12.5` to a whole pixel, which is Tiled's import's business, not
+XML's. `TestRun_XmlReadsWhatGoReads` compares each document's tree with Go's
+`encoding/xml` reading of it, which caught the draft accepting `&#X42;` — XML allows only
+a lower-case `x`. Breaking `&apos;` or the CDATA bounds fails it.
+
 ### 10/04/26 — a parameter with a default is named by its name
 
 `lyrac build --emit-llvm` gave different IR on every run for `examples/imgui/pixels.lyra`:

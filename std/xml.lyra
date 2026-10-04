@@ -1,0 +1,326 @@
+module std.xml
+//! XML read into a tree of elements: [parse_xml] gives the root, each [Element] its name,
+//! attributes, children and the text directly inside it.
+//!
+//! ```
+//! import std.xml.{ parse_xml }
+//!
+//! let map = parse_xml(read_file("level.tmx").unwrap_or(""))?
+//! let width = map.attribute("width").unwrap_or("0")
+//! for layer in map.children_named("layer") { show(layer.child("data")) }
+//! ```
+//!
+//! **Enough XML for files a program wrote**: elements, attributes in either quote, text,
+//! the five named entities and numeric character references, comments, CDATA, processing
+//! instructions (`<?xml …?>`) and a DOCTYPE, which are skipped or read. **Not read**:
+//! namespaces (a prefix stays part of the name, `svg:rect`), a DTD's declarations (its
+//! entities included), and any check past tags closing in order — a malformed document is
+//! an error naming its line. The text is taken as UTF-8 whatever the declaration says.
+//!
+//! **Text is kept as written.** An element's `text` is every piece of character data
+//! directly inside it, joined in order, whitespace and all: whether the indentation between
+//! children means anything is the format's to say, so a caller trims what it wants trimmed.
+//! Attribute values are kept as written too — no newline or tab normalisation.
+//!
+//! Pure: the parser threads its position through, each step answering what it read and the
+//! offset after it, as `std.json`'s does.
+
+/// An element: its name, attributes in the order written, child elements, and the text
+/// directly inside it (between its children, joined), entities decoded.
+pub struct Element {
+  name: string,
+  attributes: []Attribute,
+  children: []Element,
+  text: string,
+}
+
+pub struct Attribute {
+  name: string,
+  value: string,
+}
+
+/// The document's root element, or what is wrong with the text, with its line.
+pub let parse_xml = pure (source: string) -> Result<Element, string> => {
+  let b = source.encode_utf8()
+  let start = skip_misc(b, 0)?
+  if byte_at(b, start) != LT { return Err(fail(b, start, "no element")) }
+  let (root, next) = parse_element(b, start)?
+  let after = skip_misc(b, next)?
+  if after < b.len() { return Err(fail(b, after, "something after the root element")) }
+  Ok(root)
+}
+
+/// The value of attribute `name`; `None` when it has none.
+pub let attribute = pure (self: Element, name: string) -> Maybe<string> => {
+  for a in self.attributes {
+    if a.name == name { return Some(a.value) }
+  }
+  None
+}
+
+/// The first child element called `name`.
+pub let child = pure (self: Element, name: string) -> Maybe<Element> => {
+  for c in self.children {
+    if c.name == name { return Some(c) }
+  }
+  None
+}
+
+/// Every child element called `name`, in order.
+pub let children_named = pure (self: Element, name: string) -> []Element =>
+  self.children.filter((c) => c.name == name)
+
+// ── The parser ───────────────────────────────────────────────────────────────
+
+const LT: i64 = 60
+const GT: i64 = 62
+const SLASH: i64 = 47
+const AMP: i64 = 38
+const EQUALS: i64 = 61
+const QUOTE: i64 = 34
+const APOSTROPHE: i64 = 39
+
+/// The element whose `<` is at `open`, and the offset after its end tag (or its `/>`).
+let parse_element = pure (b: []u8, open: i64) -> Result<(Element, i64), string> => {
+  let (name, after_name) = read_name(b, open + 1)
+  if name.len() == 0 { return Err(fail(b, open, "a tag with no name")) }
+  var attributes: []Attribute = []
+  var i = skip_space(b, after_name)
+  for {
+    let c = byte_at(b, i)
+    if c == SLASH {
+      if byte_at(
+        b,
+        i + 1
+      ) != GT { return Err(fail(b, i, "`/` not followed by `>` in <${name}>")) }
+      let empty = Element { name: name, attributes: attributes, children: [], text: "" }
+      return Ok((empty, i + 2))
+    }
+    if c == GT { break }
+    if c < 0 { return Err(fail(b, open, "<${name}> is never closed")) }
+    let (key, after_key) = read_name(b, i)
+    if key.len() == 0 { return Err(fail(b, i, "an unexpected character in <${name}>")) }
+    i = skip_space(b, after_key)
+    if byte_at(
+      b,
+      i
+    ) != EQUALS { return Err(fail(b, i, "attribute ${key} of <${name}> has no value")) }
+    i = skip_space(b, i + 1)
+    let q = byte_at(b, i)
+    if q != QUOTE && q != APOSTROPHE {
+      return Err(fail(b, i, "attribute ${key} of <${name}> is not quoted"))
+    }
+    var end = i + 1
+    for end < b.len() && i64(b[end]) != q { end += 1 }
+    if end >= b.len() { return Err(fail(
+      b,
+      i,
+      "attribute ${key} of <${name}> is never closed"
+    )) }
+    let value = decode(b, i + 1, end)?
+    attributes.push(Attribute { name: key, value: value })
+    i = skip_space(b, end + 1)
+  }
+  // The content: text, children, comments, CDATA, up to the matching end tag.
+  i += 1
+  var children: []Element = []
+  var text: []u8 = []
+  for {
+    if i >= b.len() { return Err(fail(b, open, "<${name}> is never closed")) }
+    if i64(b[i]) != LT {
+      var end = i
+      for end < b.len() && i64(b[end]) != LT { end += 1 }
+      let piece = decode(b, i, end)?
+      for v in piece.encode_utf8() { text.push(v) }
+      i = end
+    } else if byte_at(b, i + 1) == SLASH {
+      let (closing, after) = read_name(b, i + 2)
+      if closing != name {
+        return Err(fail(b, i, "</${closing}> where </${name}> was expected"))
+      }
+      let end = skip_space(b, after)
+      if byte_at(
+        b,
+        end
+      ) != GT { return Err(fail(b, end, "</${name}> is not closed by `>`")) }
+      let element = Element {
+        name: name,
+        attributes: attributes,
+        children: children,
+        text: text.decode_utf8()
+      }
+      return Ok((element, end + 1))
+    } else if starts_at(b, i, "<!--") {
+      i = past(b, i + 4, "-->").ok_or(fail(b, i, "a comment is never closed"))?
+    } else if starts_at(b, i, "<![CDATA[") {
+      let end = past(
+        b,
+        i + 9,
+        "]]>"
+      ).ok_or(fail(b, i, "a CDATA section is never closed"))?
+      for k in i + 9..<end - 3 { text.push(b[k]) }
+      i = end
+    } else if starts_at(b, i, "<?") {
+      i = past(
+        b,
+        i + 2,
+        "?>"
+      ).ok_or(fail(b, i, "a processing instruction is never closed"))?
+    } else {
+      let (element, next) = parse_element(b, i)?
+      children.push(element)
+      i = next
+    }
+  }
+  Err(fail(b, open, "<${name}> is never closed"))
+}
+
+/// Whitespace, comments, processing instructions and a DOCTYPE — what may come before and
+/// after the root element.
+let skip_misc = pure (b: []u8, from: i64) -> Result<i64, string> => {
+  var i = skip_space(b, from)
+  for {
+    if starts_at(b, i, "<?") {
+      i = past(
+        b,
+        i + 2,
+        "?>"
+      ).ok_or(fail(b, i, "a processing instruction is never closed"))?
+    } else if starts_at(b, i, "<!--") {
+      i = past(b, i + 4, "-->").ok_or(fail(b, i, "a comment is never closed"))?
+    } else if starts_at(b, i, "<!DOCTYPE") {
+      // To its `>`, past any internal subset in brackets.
+      var depth = 0
+      var k = i + 9
+      for k < b.len() && !(byte_at(b, k) == GT && depth == 0) {
+        if byte_at(b, k) == 91 { depth += 1 }
+        if byte_at(b, k) == 93 { depth -= 1 }
+        k += 1
+      }
+      if k >= b.len() { return Err(fail(b, i, "a DOCTYPE is never closed")) }
+      i = k + 1
+    } else {
+      return Ok(i)
+    }
+    i = skip_space(b, i)
+  }
+  Ok(i)
+}
+
+/// A name at `from` — letters, digits and `_ - . :` — and the offset after it.
+let read_name = pure (b: []u8, from: i64) -> (string, i64) => {
+  var end = from
+  for end < b.len() && is_name_byte(i64(b[end])) { end += 1 }
+  (b.slice(from, end).decode_utf8(), end)
+}
+
+/// Bytes `from` to `to` as text, its entities and character references decoded.
+let decode = pure (b: []u8, from: i64, to: i64) -> Result<string, string> => {
+  var out: []u8 = []
+  var i = from
+  for i < to {
+    if i64(b[i]) != AMP {
+      out.push(b[i])
+      i += 1
+      continue
+    }
+    var end = i + 1
+    for end < to && byte_at(b, end) != 59 { end += 1 }
+    if end >= to { return Err(fail(b, i, "an `&` that starts no entity")) }
+    let name = b.slice(i + 1, end).decode_utf8()
+    let code = match name {
+      "amp" => 38,
+      "lt" => 60,
+      "gt" => 62,
+      "quot" => 34,
+      "apos" => 39,
+      _ => character_reference(name),
+    }
+    if code < 0 { return Err(fail(b, i, "an unknown entity &${name};")) }
+    for v in utf8_bytes(code) { out.push(v) }
+    i = end + 1
+  }
+  Ok(out.decode_utf8())
+}
+
+/// The code point `#65` or `#x41` stands for (a lower-case `x` only, as XML has it); -1
+/// when `name` is neither.
+let character_reference = pure (name: string) -> i64 => {
+  let b = name.encode_utf8()
+  if byte_at(b, 0) != 35 || b.len() < 2 { return -1 }
+  let hex = byte_at(b, 1) == 120
+  let from = if hex { 2 } else { 1 }
+  if from >= b.len() { return -1 }
+  var v = 0
+  for k in from..<b.len() {
+    let d = if hex { hex_digit(i64(b[k])) } else if is_digit(i64(b[k])) { i64(b[k]) - 48 } else { -1 }
+    if d < 0 { return -1 }
+    v = v * (if hex { 16 } else { 10 }) + d
+    if v > 0x10FFFF { return -1 }
+  }
+  v
+}
+
+/// A code point's UTF-8 encoding.
+let utf8_bytes = pure (cp: i64) -> []u8 => {
+  if cp < 0x80 { return [u8(cp)] }
+  if cp < 0x800 { return [u8(0xC0 | (cp >> 6)), u8(0x80 | (cp & 0x3F))] }
+  if cp < 0x10000 {
+    return [u8(0xE0 | (cp >> 12)), u8(0x80 | ((cp >> 6) & 0x3F)), u8(0x80 | (cp & 0x3F))]
+  }
+  [
+    u8(0xF0 | (cp >> 18)),
+    u8(0x80 | ((cp >> 12) & 0x3F)),
+    u8(0x80 | ((cp >> 6) & 0x3F)),
+    u8(0x80 | (cp & 0x3F))
+  ]
+}
+
+/// Whether `text`'s bytes are at `at`.
+let starts_at = pure (b: []u8, at: i64, text: string) -> bool => {
+  let t = text.encode_utf8()
+  if at + t.len() > b.len() { return false }
+  for k in 0..<t.len() {
+    if b[at + k] != t[k] { return false }
+  }
+  true
+}
+
+/// The offset just past the first `end` at or after `from`; `None` when there is none.
+let past = pure (b: []u8, from: i64, end: string) -> Maybe<i64> => {
+  var i = from
+  for i < b.len() {
+    if starts_at(b, i, end) { return Some(i + end.encode_utf8().len()) }
+    i += 1
+  }
+  None
+}
+
+/// What is wrong, and the line it is on.
+let fail = pure (b: []u8, at: i64, what: string) -> string => {
+  var line = 1
+  for k in 0..<at.min(b.len()) {
+    if b[k] == 10 { line += 1 }
+  }
+  "line ${line}: ${what}"
+}
+
+let byte_at = pure (b: []u8, i: i64) -> i64 =>
+  if i >= 0 && i < b.len() { i64(b[i]) } else { -1 }
+
+let skip_space = pure (b: []u8, from: i64) -> i64 => {
+  var i = from
+  for is_space(byte_at(b, i)) { i += 1 }
+  i
+}
+
+let is_space = pure (c: i64) -> bool => c == 32 || c == 9 || c == 10 || c == 13
+
+let is_digit = pure (c: i64) -> bool => c >= 48 && c <= 57
+
+let is_name_byte = pure (c: i64) -> bool =>
+  is_digit(c) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 45 ||
+  c == 46 || c == 58 || c >= 128
+
+let hex_digit = pure (c: i64) -> i64 =>
+  if is_digit(c) { c - 48 } else if c >= 97 && c <= 102 { c - 87 } else if c >= 65 && c <= 70 { c - 55 } else { -1 }

@@ -43,6 +43,10 @@ not a formality.
     today). Costs: a lambda-set type analysis through the typechecker and one copy of each
     higher-order function per lambda set. Verdict: not worth it for speed alone; revisit if
     the `noalloc` refusal starts biting or a self-hosting profile shows indirect-call cost.
+- **[OPEN] A module-qualified call inside a lambda fails in the backend** (10/04, Vega):
+  `[1, 2].map((x) => helper.twice(x))` is checked, then `no type recorded for captured
+  binding "helper"` — the module name is collected as a capture. Vega's `tiled_import`
+  calls the method style instead.
 
 ### Traits: a method's own type variables
 

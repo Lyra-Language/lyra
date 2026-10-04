@@ -592,7 +592,8 @@ of Markdown.
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read only; tested against Go's
-  `image/png` in `cmd/lyrac/png_test.go`), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
+  `image/png` in `cmd/lyrac/png_test.go`), `std/xml.lyra` (read only; tested against Go's
+  `encoding/xml` in `cmd/lyrac/xml_test.go`), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
   are `pkg/backend/llvm/testdata/sevenzip/`, made by the `make.sh` beside them),
   `std/rar.lyra` (RAR 5; `testdata/rar5/`, libarchive's archives and hand-built filter ones —
   its README says where each came from; never unRAR's code, whose licence forbids it).
