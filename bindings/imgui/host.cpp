@@ -37,6 +37,16 @@ enum {
     LYRA_DIALOG_FAILED = 2,
 };
 
+// A font a host loaded from a file, and how: the same file at another size or offset is
+// another font. `font` is NULL for a file that could not be read, so it is not tried again.
+enum { LYRA_IMGUI_MAX_FONT_FILES = 8, LYRA_IMGUI_FONT_PATH = 1024 };
+struct LyraFontFile {
+    char path[LYRA_IMGUI_FONT_PATH];
+    float size;
+    float offset_y;
+    ImFont* font;
+};
+
 struct LyraImGuiHost {
     SDL_Window* window;
     SDL_GPUDevice* device;
@@ -68,6 +78,11 @@ struct LyraImGuiHost {
     bool custom_title_bar;
     bool drag_area_set;
     SDL_FRect drag_area;
+    // Fonts loaded from files (lyra_imgui_host_font_file), each once: a font belongs to
+    // the context that loaded it, so it is kept with the host that owns that context and
+    // goes with it — a program-wide cache handed a later host the last one's freed font.
+    LyraFontFile fonts[LYRA_IMGUI_MAX_FONT_FILES];
+    int font_count;
 };
 
 // Flags for lyra_imgui_host_create; Lyra spells them HOST_DOCKING and HOST_VIEWPORTS.
@@ -295,6 +310,41 @@ void lyra_imgui_end_status_bar(void) {
         ImGui::EndMenuBar();
     ImGui::End();
     status_bar_open = false;
+}
+
+// ── Fonts from files ───────────────────────────────────────────────────────────
+
+// A TrueType/OpenType font from a file, for PushFont, loaded into the host's context the
+// first time it is asked for and kept with the host after — AddFontFromFileTTF, which the
+// generated bindings leave out (its glyph-range array). NULL when the file cannot be read:
+// ImGui asserts on a missing file rather than answering, so it is opened here first.
+// `size` is the size `offset_y` is written for — 1.92's fonts are dynamic, PushFont chooses
+// the size drawn, and the offset scales with it — and `offset_y` moves every glyph down
+// (negative: up), for a font whose line metrics set its letters low or high.
+ImFont* lyra_imgui_host_font_file(LyraImGuiHost* host, const char* path, float size, float offset_y) {
+    if (strlen(path) >= LYRA_IMGUI_FONT_PATH)
+        return NULL;
+    for (int i = 0; i < host->font_count; i++) {
+        LyraFontFile* known = &host->fonts[i];
+        if (strcmp(known->path, path) == 0 && known->size == size && known->offset_y == offset_y)
+            return known->font;
+    }
+    ImFont* font = NULL;
+    FILE* f = fopen(path, "rb");
+    if (f) {
+        fclose(f);
+        ImFontConfig config;
+        config.GlyphOffset = ImVec2(0.0f, offset_y);
+        font = ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size, &config);
+    }
+    if (host->font_count < LYRA_IMGUI_MAX_FONT_FILES) {
+        LyraFontFile* kept = &host->fonts[host->font_count++];
+        strcpy(kept->path, path);
+        kept->size = size;
+        kept->offset_y = offset_y;
+        kept->font = font;
+    }
+    return font;
 }
 
 // ── The window's own title bar (HOST_CUSTOM_TITLE_BAR) ───────────────────────

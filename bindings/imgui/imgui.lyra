@@ -305,6 +305,27 @@ pub let create_headless_host = (width: i32, height: i32, flags: u32) -> Maybe<Ho
   if h == nullptr { None } else { Some(h) }
 }
 
+/// A font from a TrueType or OpenType file, for `push_font_float` — loaded into `host`'s
+/// context the first time it is asked for, and the same font after (a font belongs to the
+/// context that loaded it, so the host keeps it); `None` when the file cannot be read. Its
+/// size is chosen as it is pushed (ImGui 1.92's fonts are dynamic); `offset_y` moves every
+/// glyph down (negative: up) by that many pixels at `size`, scaled with the size drawn — for
+/// a font whose line metrics set its letters low or high.
+pub let font_file = (
+  host: Host,
+  path: string,
+  size: f32 = 13.0,
+  offset_y: f32 = 0.0
+) -> Maybe<Font> => {
+  let font = path.with_cstring((c_path) => unsafe { lyra_imgui_host_font_file(
+    host,
+    c_path,
+    size,
+    offset_y
+  ) })
+  if font == nullptr { None } else { Some(font) }
+}
+
 /// Scale the whole interface — text, padding, spacing — by `scale`, for readability: 1 is
 /// as the host set it up (the display's density already applied), 1.25 a quarter larger.
 /// From the host's own style each time, so scales never compound; clamped to 0.5–3.
@@ -521,6 +542,14 @@ unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) ->
 
 @symbol("lyra_imgui_host_destroy")
 unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
+
+@symbol("lyra_imgui_host_font_file")
+unsafe extern lyra_imgui_host_font_file: (
+  host: Host,
+  path: ^u8,
+  size: f32,
+  offset_y: f32
+) -> Font
 
 @symbol("lyra_imgui_host_set_ui_scale")
 unsafe extern lyra_imgui_host_set_ui_scale: (host: Host, scale: f32) -> void

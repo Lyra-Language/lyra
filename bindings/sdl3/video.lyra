@@ -24,6 +24,19 @@ pub const WINDOW_RESIZABLE: u64 = 0x0000000000000020
 /// Ask for a backing store at the display's real pixel density.
 pub const WINDOW_HIGH_PIXEL_DENSITY: u64 = 0x0000000000002000
 
+/// Whether the system is set to a light or a dark appearance (`SDL_GetSystemTheme`) —
+/// unknown where it does not say, or before SDL's video is started.
+pub data SystemTheme = ThemeUnknown | ThemeLight | ThemeDark
+
+pub let system_theme = () -> SystemTheme => match unsafe { sdl_get_system_theme() } {
+  1 => ThemeLight,
+  2 => ThemeDark,
+  _ => ThemeUnknown,
+}
+
+@symbol("SDL_GetSystemTheme")
+unsafe extern sdl_get_system_theme: () -> i32
+
 @symbol("SDL_CreateWindow")
 unsafe extern sdl_create_window: (title: ^u8, w: i32, h: i32, flags: u64) -> Window
 

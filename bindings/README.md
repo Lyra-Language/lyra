@@ -55,7 +55,7 @@ SDL3 (3.4); `@link("SDL3")` on the header. Grown **by example**, towards an NES-
 | `keyboard.lyra` | `key_held(SCANCODE_*)`: held state by **position**, not label. Updated as events are pumped — read it after draining the queue. Bounds-checked against SDL's reported length. `modifiers()` (a `MOD_*` mask; `MOD_GUI` is Command), `key_name`/`scancode_name` (SDL's human names). |
 | `mouse.lyra` | `mouse_state()` (window position + button mask) and `button_held(state, BUTTON_*)`; `show_cursor`, `system_cursor(CURSOR_*)` → `Cursor` (`@must_release(destroy_cursor)`), `set_cursor`. **Positions are window pixels** — convert with `render.window_to_render` on a logical screen. |
 | `gamepad.lyra` | `Gamepad` is `@must_release(close_gamepad)`. `BUTTON_*` are positions (`SOUTH` = Xbox A / ✕ / Nintendo B; the shoulders `LEFT_SHOULDER`, `RIGHT_SHOULDER`); `AXIS_LEFT_*` runs -32768..32767, negative up. Needs `INIT_GAMEPAD`. |
-| `video.lyra` | `create_window(title, w, h, flags)` with `WINDOW_*` flags; `set_fullscreen` (borderless desktop); `set_window_size`, `set_window_title`. |
+| `video.lyra` | `create_window(title, w, h, flags)` with `WINDOW_*` flags; `set_fullscreen` (borderless desktop); `set_window_size`, `set_window_title`. `system_theme()` → `ThemeLight`/`ThemeDark`/`ThemeUnknown`, the system's appearance (unknown before SDL's video starts). |
 | `render.lyra` | `Color` (`SDL_Color`) and `rgb`; points, lines, outlined/filled `Rect`s; `debug_text`, SDL's 8×8 ASCII font (`DEBUG_TEXT_SIZE`). `set_logical_presentation(…, PRESENT_INTEGER_SCALE)` is the pixel-art screen: everything, text included, scales by a whole number. `set_vsync` paces the loop. `save_screenshot` (ReadPixels → BMP) must run **before** `present` and saves at window resolution. `window_to_render(renderer, x, y)` maps a window (mouse) position onto the logical screen, undoing scale and letterbox. |
 | `effect.lyra` | **Custom fragment shaders** on SDL's GPU renderer (3.4): `create_named_renderer(window, "gpu")` first, then `create_msl_effect(renderer, source, uniform_buffers)` → `Maybe<Effect>` (`None` on any other renderer, or a device without Metal); `set_effect_uniforms`, `use_effect(renderer, Some/None)` around the draws, `destroy_effect` before the renderer. The shader is **Metal Shading Language, entry `main0`**, and receives what SDL's own vertex shader hands on: colour at `[[user(locn0)]]`, texture coordinate at `[[user(locn1)]]`, the drawn texture and sampler at index 0, uniforms at `[[buffer(0)]]` — found from SDL's `tri_texture.vert` and `testgpurender_effects`, since the header does not say. Sheliak's display looks. |
 | `texture.lyra` | `Texture` (handle + size) is `@must_release(destroy_texture)`. **Set `set_default_scale_mode(…, SCALE_NEAREST)` before loading** — a texture takes the mode in force when made, and the default blurs pixel art. `draw_texture(src, dst)`, `draw_texture_flipped` (`FLIP_*`). `set_texture_color`/`set_texture_alpha` are the **texture's state**, not the draw's: reset them after a tinted draw. `adopt_texture` is `unsafe` (it keeps a pointer) and is how other bindings hand a texture over. `create_streaming_texture(renderer, w, h)` + `update_texture(texture, []u32)` is a screen a program draws itself (texels `0x00RRGGBB`, exactly `w × h` of them or nothing changes) — Sheliak's emulator window. |
@@ -263,6 +263,13 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     true) is a one-line menu bar along the viewport's bottom, over ImGui's internal
     `BeginViewportSideBar`. Call it before `dock_space_over_viewport`, which then docks in
     what is left.
+  - **A font from a file**: `font_file(host, path, size, offset_y)` → `Maybe<Font>`, for
+    `push_font_float` — `AddFontFromFileTTF`, which the generator leaves out for its
+    glyph-range array. Loaded once and **kept by the host**: a font belongs to the context
+    that loaded it, and a program-wide cache handed the next host a freed font (Vega's
+    checks, a host each, 10/05). `None` when the file cannot be read (ImGui itself asserts).
+    1.92's fonts are dynamic, so the size drawn is chosen at the push; `offset_y` raises
+    (negative) or lowers every glyph, in pixels at `size`. Vega's macOS look loads SF with it.
 - **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
   reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into
