@@ -83,6 +83,9 @@ struct LyraImGuiHost {
     // goes with it — a program-wide cache handed a later host the last one's freed font.
     LyraFontFile fonts[LYRA_IMGUI_MAX_FONT_FILES];
     int font_count;
+    // The window's buttons drawn as macOS's traffic lights — red, yellow and green circles —
+    // rather than as glyphs on the bar (lyra_imgui_host_set_traffic_lights).
+    bool traffic_lights;
 };
 
 // Flags for lyra_imgui_host_create; Lyra spells them HOST_DOCKING and HOST_VIEWPORTS.
@@ -395,14 +398,23 @@ bool lyra_imgui_host_window_buttons_left(LyraImGuiHost* host) {
 // First in the main menu bar, where the buttons go at its left end: the cursor at the
 // bar's very edge, so the first button sits in the corner.
 void lyra_imgui_title_bar_start(LyraImGuiHost* host) {
-    (void)host;
     ImGuiWindow* window = ImGui::GetCurrentWindow();
-    window->DC.CursorPos.x = window->MenuBarRect().Min.x;
+    // Traffic lights stand a little in from the corner, as macOS's do.
+    const float inset = host->traffic_lights ? IM_ROUND(ImGui::GetFontSize() * 0.4f) : 0.0f;
+    window->DC.CursorPos.x = window->MenuBarRect().Min.x + inset;
 }
 
-// A button's width: half as wide again as the bar is tall.
-static float window_button_width(void) {
+// A button's width: half as wide again as the bar is tall — or, as traffic lights, a
+// circle and the gap to the next.
+static float window_button_width(LyraImGuiHost* host) {
+    if (host->traffic_lights)
+        return IM_ROUND(ImGui::GetFontSize() * 1.55f);
     return IM_ROUND(ImGui::GetFrameHeight() * 1.5f);
+}
+
+// The window's buttons as macOS's traffic lights from now on, or as glyphs on the bar.
+void lyra_imgui_host_set_traffic_lights(LyraImGuiHost* host, bool on) {
+    host->traffic_lights = on;
 }
 
 // In the menu bar being drawn, after the program's menus (and the window's buttons, where
@@ -415,7 +427,7 @@ void lyra_imgui_title_bar(LyraImGuiHost* host, const char* title, int32_t button
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImRect bar = window->MenuBarRect();
     const float left = window->DC.CursorPos.x;
-    const float right = bar.Max.x - (float)buttons * window_button_width();
+    const float right = bar.Max.x - (float)buttons * window_button_width(host);
 
     const ImVec2 size = ImGui::CalcTextSize(title);
     float x = IM_ROUND((bar.Min.x + bar.Max.x - size.x) * 0.5f);
@@ -439,7 +451,7 @@ void lyra_imgui_title_bar(LyraImGuiHost* host, const char* title, int32_t button
 bool lyra_imgui_window_button(LyraImGuiHost* host, int32_t kind) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     const ImRect bar = window->MenuBarRect();
-    const float w = window_button_width();
+    const float w = window_button_width(host);
     const ImVec2 min(window->DC.CursorPos.x, bar.Min.y);
     ImGui::SetCursorScreenPos(min);
     ImGui::PushID(kind);
@@ -450,6 +462,45 @@ bool lyra_imgui_window_button(LyraImGuiHost* host, int32_t kind) {
 
     ImDrawList* draw = window->DrawList;
     const ImVec2 max(min.x + w, bar.Max.y);
+    if (host->traffic_lights) {
+        // macOS's: close red, minimize yellow, zoom green, grey while the window is not the
+        // one in use; under the pointer, darker, with its glyph.
+        const float font = ImGui::GetFontSize();
+        const float r = IM_ROUND(font * 0.46f);
+        const ImVec2 c(IM_ROUND((min.x + max.x) * 0.5f), IM_ROUND((min.y + max.y) * 0.5f));
+        const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) || host->headless;
+        ImU32 fill = kind == LYRA_WINDOW_CLOSE ? IM_COL32(255, 95, 87, 255)
+            : kind == LYRA_WINDOW_MINIMIZE    ? IM_COL32(254, 188, 46, 255)
+                                              : IM_COL32(40, 200, 64, 255);
+        ImU32 rim = kind == LYRA_WINDOW_CLOSE ? IM_COL32(224, 68, 62, 255)
+            : kind == LYRA_WINDOW_MINIMIZE   ? IM_COL32(222, 161, 35, 255)
+                                             : IM_COL32(29, 173, 43, 255);
+        if (!focused && !hovered) {
+            fill = IM_COL32(200, 200, 200, 255);
+            rim = IM_COL32(180, 180, 180, 255);
+        }
+        if (held) {
+            const ImVec4 v = ImGui::ColorConvertU32ToFloat4(fill);
+            fill = ImGui::GetColorU32(ImVec4(v.x * 0.8f, v.y * 0.8f, v.z * 0.8f, 1.0f));
+        }
+        draw->AddCircleFilled(c, r, fill, 24);
+        draw->AddCircle(c, r - 0.5f, rim, 24, 1.0f);
+        if (hovered || held) {
+            const ImU32 ink = IM_COL32(0, 0, 0, 150);
+            const float g = IM_ROUND(r * 0.5f);
+            const float t = ImMax(1.0f, IM_ROUND(font / 13.0f));
+            if (kind == LYRA_WINDOW_CLOSE) {
+                draw->AddLine(ImVec2(c.x - g, c.y - g), ImVec2(c.x + g, c.y + g), ink, t);
+                draw->AddLine(ImVec2(c.x - g, c.y + g), ImVec2(c.x + g, c.y - g), ink, t);
+            } else if (kind == LYRA_WINDOW_MINIMIZE) {
+                draw->AddLine(ImVec2(c.x - g, c.y), ImVec2(c.x + g, c.y), ink, t);
+            } else {
+                draw->AddLine(ImVec2(c.x - g, c.y), ImVec2(c.x + g, c.y), ink, t);
+                draw->AddLine(ImVec2(c.x, c.y - g), ImVec2(c.x, c.y + g), ink, t);
+            }
+        }
+        return pressed;
+    }
     ImU32 ink = ImGui::GetColorU32(ImGuiCol_Text);
     if (kind == LYRA_WINDOW_CLOSE && (hovered || held)) {
         draw->AddRectFilled(min, max, held ? IM_COL32(150, 30, 30, 255) : IM_COL32(196, 43, 28, 255));

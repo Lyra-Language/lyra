@@ -259,6 +259,9 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     `AppleActionOnDoubleClick`; Windows' caption does it natively; X11 and Wayland do
     nothing yet). `set_window_title` keeps the system's title (Dock, taskbar) in step. A
     headless host draws the buttons, so a test can click them.
+  - **Traffic lights**: `set_traffic_lights(host, on)` draws the title bar's buttons as
+    macOS's red, yellow and green circles (grey while the window is not in use, their
+    glyphs under the pointer) — Vega's macOS look turns it on.
   - **A status bar**: `begin_status_bar(name)` … `end_status_bar()` (only when it answered
     true) is a one-line menu bar along the viewport's bottom, over ImGui's internal
     `BeginViewportSideBar`. Call it before `dock_space_over_viewport`, which then docks in

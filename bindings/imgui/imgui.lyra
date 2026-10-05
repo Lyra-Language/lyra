@@ -357,6 +357,11 @@ pub let has_custom_title_bar = (host: Host) -> bool =>
 pub let set_window_title = (host: Host, title: string) -> void =>
   title.with_cstring((t) => unsafe { lyra_imgui_host_set_title(host, t) })
 
+/// The window's buttons drawn as macOS's traffic lights — red, yellow and green circles,
+/// their glyphs under the pointer — or, `false`, as glyphs on the bar. A look's choice.
+pub let set_traffic_lights = (host: Host, on: bool) -> void =>
+  unsafe { lyra_imgui_host_set_traffic_lights(host, on) }
+
 /// The main menu bar as the window's title bar: `begin_main_menu_bar`, and where the host
 /// has [HOST_CUSTOM_TITLE_BAR] on macOS, the window's buttons at its left end, in macOS's
 /// order — close, minimize, maximize — before the menus that follow. `true` when the bar is
@@ -574,6 +579,9 @@ unsafe extern lyra_imgui_host_minimize: (host: Host) -> void
 
 @symbol("lyra_imgui_host_toggle_maximized")
 unsafe extern lyra_imgui_host_toggle_maximized: (host: Host) -> void
+
+@symbol("lyra_imgui_host_set_traffic_lights")
+unsafe extern lyra_imgui_host_set_traffic_lights: (host: Host, on: bool) -> void
 
 @symbol("lyra_imgui_host_window_buttons_left")
 unsafe extern lyra_imgui_host_window_buttons_left: (host: Host) -> bool
