@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 10/04/26 — a `for` variable that shadows warns (`lyra-W001`)
+
+`for c in items` taking the name of a parameter `c` warned nothing, while `let c = …` and
+the three-clause loop's `for var c = 0` did; `TestShadow_NoDiag_ForInIterationVar` pinned the
+exemption without a reason. It was harmless while the typechecker ignored the shadow and
+read the parameter anyway; since 10/02 the loop variable really does shadow for the whole
+body, which is exactly what W001 exists to point out. `CheckShadowing` now warns on each
+for-in name the source wrote — both of `for i, x in`, not `_`, and not `for$elem`, the
+holder a destructuring loop binds its element to (its names already warn through the `let`
+prepended to the body).
+
+The repo had four such loops: `map` in `bindings/raylib/models.lyra` (twice) and
+`examples/raylib/gltf_viewer.lyra` shadowing the prelude's `map`, and `year` in
+`std/temporal/posix_tz.lyra` shadowing the module's own. Renamed (`slot`, `y`), so every
+example, std and binding file checks with the same diagnostics as before.
+
 ### 10/04/26 — `std.xml`: XML read into elements, for Vega's Tiled import
 
 Vega imports Tiled maps (`.tmx`, `.tsx`), which are XML, and nothing in std read it. The

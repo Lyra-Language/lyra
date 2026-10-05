@@ -995,9 +995,9 @@ let channel_sum = pure (c: Color) -> i64 => i64(c.r) + i64(c.g) + i64(c.b)
 let slots_filled = pure (model: Model) -> bool => {
   var every = true
   for i in 0..<i64(model.material_count) {
-    for map in [MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL, MATERIAL_MAP_OCCLUSION,
+    for slot in [MATERIAL_MAP_METALNESS, MATERIAL_MAP_NORMAL, MATERIAL_MAP_OCCLUSION,
       MATERIAL_MAP_EMISSION, MATERIAL_MAP_HEIGHT] {
-      if !model_material_has_texture(model, i, map) { every = false }
+      if !model_material_has_texture(model, i, slot) { every = false }
     }
   }
   every
