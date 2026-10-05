@@ -3,6 +3,7 @@ package checker
 import (
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -301,11 +302,22 @@ func (c *shadowChecker) checkExpr(expr ast.Expression, outerNames map[string]ast
 		case *ast.ForInLoopExpr:
 			c.checkExpr(ex.Iterable, outerNames)
 			bodyOuter := copyLocMap(outerNames)
-			if ex.Key != "" {
-				bodyOuter[ex.Key] = ex.GetLocation()
-			}
-			if ex.Value != "" {
-				bodyOuter[ex.Value] = ex.GetLocation()
+			// A loop variable is a declaration like a `let` — the three-clause loop's
+			// counter warned and `for c in items` did not, though since 10/02 it shadows
+			// for the whole body (a parameter included) where it was ignored before. A
+			// destructured element (`for (a, b) in …`) is warned by the prepended `let`
+			// in the body; its `for$elem` holder and a `_` name nothing a reader wrote.
+			for _, v := range []struct {
+				name string
+				loc  ast.Location
+			}{{ex.Key, ex.KeyLocation}, {ex.Value, ex.ValueLocation}} {
+				if !isUserLoopName(v.name) {
+					continue
+				}
+				if origLoc, ok := outerNames[v.name]; ok {
+					c.warn(v.loc, origLoc, v.name)
+				}
+				bodyOuter[v.name] = v.loc
 			}
 			c.checkStatements(ex.Body.Statements, bodyOuter)
 			return false
@@ -338,4 +350,12 @@ func copyLocMap(m map[string]ast.Location) map[string]ast.Location {
 	result := make(map[string]ast.Location, len(m))
 	maps.Copy(result, m)
 	return result
+}
+
+// isUserLoopName reports whether a for-in binding is a name the source wrote — not empty
+// (the one-variable form's second slot), not `_`, and not the holder a destructuring loop
+// binds its element to (`for$elem`: `$` is outside the identifier alphabet, so no name a
+// program writes contains one).
+func isUserLoopName(name string) bool {
+	return name != "" && name != "_" && !strings.Contains(name, "$")
 }

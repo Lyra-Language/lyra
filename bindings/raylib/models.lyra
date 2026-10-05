@@ -174,10 +174,10 @@ pub let unload_model = (model: Model) -> void => {
   for i in 0..<i64(model.material_count) {
     let maps = unsafe { model.materials.offset(i)^.maps }
     if maps != nullptr {
-      for map in 0..<MATERIAL_MAP_COUNT {
-        let id = unsafe { maps.offset(map)^.texture.id }
+      for slot in 0..<MATERIAL_MAP_COUNT {
+        let id = unsafe { maps.offset(slot)^.texture.id }
         if id != 0 && id != default_id && !holds(freed, id) {
-          unsafe { rl_unload_texture(maps.offset(map)^.texture) }
+          unsafe { rl_unload_texture(maps.offset(slot)^.texture) }
           freed.push(id)
         }
       }
@@ -634,8 +634,8 @@ let slot_at = pure (model: Model, material: i64, map: i32) -> ^mut MaterialMap =
 let texture_holders = pure (model: Model, id: u32) -> i64 => {
   var n = 0
   for i in 0..<i64(model.material_count) {
-    for map in 0..<MATERIAL_MAP_COUNT {
-      if unsafe { model.materials.offset(i)^.maps.offset(map)^.texture.id } == id { n += 1 }
+    for slot in 0..<MATERIAL_MAP_COUNT {
+      if unsafe { model.materials.offset(i)^.maps.offset(slot)^.texture.id } == id { n += 1 }
     }
   }
   n

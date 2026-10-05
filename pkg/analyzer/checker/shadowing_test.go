@@ -1,6 +1,7 @@
 package checker_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -140,16 +141,80 @@ let f = (y: i32) -> i32 => {
 	assertShadowingWarningContains(t, warns, "x shadows a name declared in an outer scope")
 }
 
-// TestShadow_NoDiag_ForInIterationVar verifies that a for-in loop's iteration
-// variable is NOT warned about even when it matches an outer-scope name.
-func TestShadow_NoDiag_ForInIterationVar(t *testing.T) {
+// A for-in loop variable is a declaration like any other: one taking an outer name warns,
+// as the three-clause loop's counter already did. It was exempt until 10/04 — harmless while
+// the typechecker ignored the shadow, misleading once the loop variable really shadowed.
+func TestShadow_Diag_ForInIterationVar(t *testing.T) {
 	source := `
 let item = 5
 for item in my_collection {
     println(item)
 }`
 	warns := parseCollectAndCheckShadowing(t, source)
-	assertNoShadowingWarnings(t, warns)
+	assertShadowingWarningCount(t, warns, 1)
+	assertShadowingWarningContains(t, warns, "item shadows a name declared in an outer scope")
+}
+
+func TestShadow_ForInLoopVariables(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   []string // the names warned, in order
+	}{
+		{"a parameter", `
+let f = (c: i64, xs: []i64) -> i64 => {
+    var t = 0
+    for c in xs { t += c }
+    t + c
+}`, []string{"c"}},
+		{"both names of the two-name form", `
+let i = 0
+let x = 1
+let f = (xs: []i64) -> void => {
+    for i, x in xs { println("${i}") }
+}`, []string{"i", "x"}},
+		{"an underscore names nothing", `
+let f = (xs: []i64) -> i64 => {
+    let _ = 0
+    var n = 0
+    for _ in xs { n += 1 }
+    n
+}`, nil},
+		{"a destructured element warns once per name", `
+let a = 0
+let f = (ps: [](i64, i64)) -> i64 => {
+    var t = 0
+    for (a, b) in ps { t += a + b }
+    t
+}`, []string{"a"}},
+		{"nested destructuring loops do not report their element holder", `
+let f = (ps: [](i64, i64), qs: [](i64, i64)) -> i64 => {
+    var t = 0
+    for (a, b) in ps {
+        for (c, d) in qs { t += a + b + c + d }
+    }
+    t
+}`, nil},
+		{"a fresh name warns nothing, and the loop variable does not leak", `
+let f = (xs: []i64) -> i64 => {
+    var t = 0
+    for v in xs { t += v }
+    let v = t
+    v
+}`, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			warns := parseCollectAndCheckShadowing(t, c.source)
+			var got []string
+			for _, w := range warns {
+				got = append(got, strings.Fields(w.Message)[0])
+			}
+			if !slices.Equal(got, c.want) {
+				t.Errorf("warned %v, want %v", got, c.want)
+			}
+		})
+	}
 }
 
 // TestShadow_Diag_ForLoopInitVar verifies that a for-loop's init variable DOES

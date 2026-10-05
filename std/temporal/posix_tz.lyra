@@ -96,10 +96,10 @@ let posix_next_transition = pure (zone: PosixZone, epoch_second: i64) -> Maybe<i
   ) = civil_from_days(floor_div(epoch_second + zone.std_offset, 86400))
   var soonest = 0
   var found = false
-  for year in local_year..<=(local_year + 1) {
+  for y in local_year..<=(local_year + 1) {
     for moment in [
-      rule_instant(zone.start, year, zone.std_offset),
-      rule_instant(zone.end, year, zone.dst_offset),
+      rule_instant(zone.start, y, zone.std_offset),
+      rule_instant(zone.end, y, zone.dst_offset),
     ] {
       if moment < epoch_second { continue }
       if !found || moment < soonest {
