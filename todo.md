@@ -77,6 +77,9 @@ Package management, versioning and separate compilation are out of scope by deci
   A **record-update literal** over budget explodes after the base's `|` but keeps the first
   field on the base's line — `Z80Cpu {⏎ new_z80() | pc: 0x1000,⏎ sp: …` (09/28, Sheliak's
   z80scenarios.lyra); the base belongs on a line of its own, or the fields together.
+  A **`for` whose one-line body is over budget** is broken at its binders' comma —
+  `for i,⏎ inputs in prefs.gamepads { … }` (10/06, Sheliak's prefs.lyra); the body belongs
+  on its own lines.
   **It also collapses deliberate spacing** in a table (`7, 7,  7, 7`, grouping rows), which
   is fine, but then a table written as rows of 8 in one line of 24 reads as noise.
 

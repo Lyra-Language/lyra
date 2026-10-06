@@ -154,7 +154,18 @@ queueing `tag` (once per drag) and read with `slider_value(tag)`.
 `choose_file(title, extensions)` is a **modal Open panel** answering `Maybe<string>` (`None`
 off macOS) — modal, so it answers on the main thread, with none of the queueing SDL's own
 asynchronous dialogs need (`bindings/imgui`'s host has those) — and `alert(message,
-detail)` a modal alert.
+detail)` a modal alert. `set_title(tag, title)` retitles an item (or a grid button).
+**A grid window** is a settings window built the same way: `grid_window(title, columns,
+close_tag)`, then `grid_row(label)` and `grid_cell(title, tag)` for its buttons and
+`grid_note(text)` beneath; `show_grid()` shows it, laid out on first show. A button's press
+and the window's close arrive through `poll_menu` like an item's; `set_title`,
+`set_checked` (pressed in, accent-tinted) and `set_enabled` reach its buttons too.
+`describe()` lists it after the bar (`window <title>`, a line a row).
+- **A key pressed in the grid window never reaches SDL** — the window is AppKit's. So
+  `capture_keys(true)` has a local event monitor take the window's keys (not ⌘-chords, so
+  ⌘W and ⌘Q still work; modifiers as they are pressed) and queue them as **SDL scancodes**
+  for `poll_key()`, translated from Mac virtual key codes by position with a table in
+  `menubar.m`. That is how a program asks "which key?" from a settings window.
 - **Built by `build.sh`** into `build/lib/liblyra-menubar.a`: `menubar.m` on macOS,
   `menubar_stub.c` elsewhere (every call a no-op, `install` false), so a program using it
   links everywhere. `lyrac` searches `<root>/lib`; `go run ./cmd/lyrac` needs

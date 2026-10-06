@@ -44,10 +44,14 @@ static void enqueue(int32_t tag) {
   queue_count++;
 }
 
-@interface LyraMenubarTarget : NSObject
+@interface LyraMenubarTarget : NSObject <NSWindowDelegate>
 - (void)chosen:(NSMenuItem *)item;
 - (void)slid:(NSSlider *)slider;
+- (void)pressed:(NSButton *)button;
 @end
+
+// The grid window's close tag, queued when the window is closed.
+static int32_t grid_close_tag = -1;
 
 @implementation LyraMenubarTarget
 - (void)chosen:(NSMenuItem *)item {
@@ -55,6 +59,13 @@ static void enqueue(int32_t tag) {
 }
 - (void)slid:(NSSlider *)slider {
   enqueue((int32_t)slider.tag);
+}
+- (void)pressed:(NSButton *)button {
+  enqueue((int32_t)button.tag);
+}
+- (void)windowWillClose:(NSNotification *)note {
+  (void)note;
+  if (grid_close_tag >= 0) enqueue(grid_close_tag);
 }
 @end
 
@@ -68,6 +79,11 @@ static NSMenu *windows_menu;
 static NSMenu *app_items;
 // Every program item by tag, for `set_checked`/`set_enabled` after installation.
 static NSMutableDictionary<NSNumber *, NSMenuItem *> *items_by_tag;
+// The grid window (`lyra_menubar_grid_window`) and its rows, each its label and buttons.
+static NSWindow *grid_window;
+static NSMutableArray<NSMutableArray<NSView *> *> *grid_rows;
+// Every grid window button by tag, as items are (`lyra_menubar_grid_cell`).
+static NSMutableDictionary<NSNumber *, NSButton *> *cells_by_tag;
 // Every slider by tag, for `lyra_menubar_slider_value`.
 static NSMutableDictionary<NSNumber *, NSSlider *> *sliders_by_tag;
 static LyraMenubarTarget *target;
@@ -292,6 +308,24 @@ const char *lyra_menubar_describe(void) {
     [out appendFormat:@"%@\n", top.title];
     describe_items(out, top.submenu, @"  ");
   }
+  // The grid window, if there is one: a line a row, its label then its buttons.
+  if (grid_window != nil) {
+    [out appendFormat:@"window %@\n", grid_window.title];
+    for (NSArray<NSView *> *row in grid_rows) {
+      NSMutableArray<NSString *> *parts = [NSMutableArray array];
+      for (NSView *view in row) {
+        if ([view isKindOfClass:[NSButton class]]) {
+          NSButton *button = (NSButton *)view;
+          [parts addObject:[NSString stringWithFormat:@"[%@]%@%@", button.title,
+                                     button.state == NSControlStateValueOn ? @" (on)" : @"",
+                                     button.enabled ? @"" : @" (off)"]];
+        } else if ([view isKindOfClass:[NSTextField class]]) {
+          [parts addObject:((NSTextField *)view).stringValue];
+        }
+      }
+      [out appendFormat:@"  %@\n", [parts componentsJoinedByString:@" "]];
+    }
+  }
   described = strdup(out.UTF8String);
   return described;
 }
@@ -307,12 +341,241 @@ int32_t lyra_menubar_next(void) {
 
 // Show a checkmark beside an item, or not. An unknown tag is ignored.
 void lyra_menubar_set_checked(int32_t tag, bool checked) {
-  items_by_tag[@(tag)].state = checked ? NSControlStateValueOn : NSControlStateValueOff;
+  NSControlStateValue state = checked ? NSControlStateValueOn : NSControlStateValueOff;
+  items_by_tag[@(tag)].state = state;
+  // A pushed-in button is drawn only a shade darker; the accent colour says it plainly.
+  NSButton *cell = cells_by_tag[@(tag)];
+  cell.state = state;
+  cell.bezelColor = checked ? NSColor.controlAccentColor : nil;
 }
 
 // Let an item be chosen, or grey it out. An unknown tag is ignored.
 void lyra_menubar_set_enabled(int32_t tag, bool enabled) {
   items_by_tag[@(tag)].enabled = enabled;
+  cells_by_tag[@(tag)].enabled = enabled;
+}
+
+// ── The grid window ──────────────────────────────────────────────────────────
+//
+// A window of push buttons in a grid — a settings window's rows of choices — built like the
+// menus: `lyra_menubar_grid_window` starts it, `_grid_row` a row (its label first),
+// `_grid_cell` a button in that row, queueing its tag when pressed, as a menu item does. It
+// is laid out the first time it is shown, so its buttons exist, and take titles and states,
+// before that.
+//
+// **Keys typed into it can be captured** (`lyra_menubar_capture_keys`): a key pressed while
+// the window is key is queued as an SDL scancode, for `lyra_menubar_next_key`, instead of
+// reaching AppKit. SDL never sees a key pressed in a window it does not own, which is the
+// whole reason this is here: a program asking "which key?" must hear it from AppKit.
+
+static NSMutableArray<NSString *> *grid_headers;
+static NSString *grid_note_text;
+static bool grid_laid_out = false;
+
+enum { KEY_QUEUE_SIZE = 16 };
+static uint32_t key_queue[KEY_QUEUE_SIZE];
+static int key_head = 0;
+static int key_count = 0;
+static bool capturing = false;
+static id key_monitor;
+
+static void enqueue_key(uint32_t scancode) {
+  if (key_count == KEY_QUEUE_SIZE) return;
+  key_queue[(key_head + key_count) % KEY_QUEUE_SIZE] = scancode;
+  key_count++;
+}
+
+// A Mac virtual key code (`kVK_…`, the key's position) as the USB HID usage SDL's scancodes
+// are — position for position, as SDL's own Cocoa table maps them. 0 for a key with none.
+static uint32_t scancode_of(unsigned short code) {
+  static const uint8_t table[128] = {
+    [0x00] = 4,   [0x01] = 22,  [0x02] = 7,   [0x03] = 9,   [0x04] = 11,  [0x05] = 10,
+    [0x06] = 29,  [0x07] = 27,  [0x08] = 6,   [0x09] = 25,  [0x0A] = 100, [0x0B] = 5,
+    [0x0C] = 20,  [0x0D] = 26,  [0x0E] = 8,   [0x0F] = 21,  [0x10] = 28,  [0x11] = 23,
+    [0x12] = 30,  [0x13] = 31,  [0x14] = 32,  [0x15] = 33,  [0x16] = 35,  [0x17] = 34,
+    [0x18] = 46,  [0x19] = 38,  [0x1A] = 36,  [0x1B] = 45,  [0x1C] = 37,  [0x1D] = 39,
+    [0x1E] = 48,  [0x1F] = 18,  [0x20] = 24,  [0x21] = 47,  [0x22] = 12,  [0x23] = 19,
+    [0x24] = 40,  [0x25] = 15,  [0x26] = 13,  [0x27] = 52,  [0x28] = 14,  [0x29] = 51,
+    [0x2A] = 49,  [0x2B] = 54,  [0x2C] = 56,  [0x2D] = 17,  [0x2E] = 16,  [0x2F] = 55,
+    [0x30] = 43,  [0x31] = 44,  [0x32] = 53,  [0x33] = 42,  [0x35] = 41,  [0x36] = 231,
+    [0x37] = 227, [0x38] = 225, [0x39] = 57,  [0x3A] = 226, [0x3B] = 224, [0x3C] = 229,
+    [0x3D] = 230, [0x3E] = 228, [0x40] = 108, [0x41] = 99,  [0x43] = 85,  [0x45] = 87,
+    [0x47] = 83,  [0x48] = 128, [0x49] = 129, [0x4A] = 127, [0x4B] = 84,  [0x4C] = 88,
+    [0x4E] = 86,  [0x4F] = 109, [0x50] = 110, [0x51] = 103, [0x52] = 98,  [0x53] = 89,
+    [0x54] = 90,  [0x55] = 91,  [0x56] = 92,  [0x57] = 93,  [0x58] = 94,  [0x59] = 95,
+    [0x5A] = 111, [0x5B] = 96,  [0x5C] = 97,  [0x60] = 62,  [0x61] = 63,  [0x62] = 64,
+    [0x63] = 60,  [0x64] = 65,  [0x65] = 66,  [0x67] = 68,  [0x69] = 104, [0x6A] = 107,
+    [0x6B] = 105, [0x6D] = 67,  [0x6F] = 69,  [0x71] = 106, [0x72] = 73,  [0x73] = 74,
+    [0x74] = 75,  [0x75] = 76,  [0x76] = 61,  [0x77] = 77,  [0x78] = 59,  [0x79] = 78,
+    [0x7A] = 58,  [0x7B] = 80,  [0x7C] = 79,  [0x7D] = 81,  [0x7E] = 82,
+  };
+  return code < 128 ? table[code] : 0;
+}
+
+// The modifier flag a modifier key's code sets, or 0 for a key that is not one. Caps Lock
+// is left out: it reports its lock, not whether it is held.
+static NSEventModifierFlags flag_of(unsigned short code) {
+  switch (code) {
+    case 0x38: case 0x3C: return NSEventModifierFlagShift;
+    case 0x3A: case 0x3D: return NSEventModifierFlagOption;
+    case 0x3B: case 0x3E: return NSEventModifierFlagControl;
+    case 0x37: case 0x36: return NSEventModifierFlagCommand;
+    default: return 0;
+  }
+}
+
+// Watch the grid window's keys, once. A key held with ⌘ is passed on — ⌘W closes the
+// window and ⌘Q quits, capturing or not — and so is everything while nothing is captured.
+static void watch_keys(void) {
+  if (key_monitor != nil) return;
+  NSEventMask mask = NSEventMaskKeyDown | NSEventMaskFlagsChanged;
+  key_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:mask
+                                                      handler:^NSEvent *(NSEvent *event) {
+    if (!capturing || event.window != grid_window) return event;
+    if (event.type == NSEventTypeFlagsChanged) {
+      NSEventModifierFlags flag = flag_of(event.keyCode);
+      // Pressed, not released: the flag is set now.
+      if (flag != 0 && (event.modifierFlags & flag) != 0) enqueue_key(scancode_of(event.keyCode));
+      return event;
+    }
+    if (event.modifierFlags & NSEventModifierFlagCommand) return event;
+    if (!event.isARepeat) {
+      uint32_t scancode = scancode_of(event.keyCode);
+      if (scancode != 0) enqueue_key(scancode);
+    }
+    return nil;
+  }];
+}
+
+// Start the grid window, titled `title`, its columns headed by the tab-separated `columns`
+// (the row labels' column first, unheaded). Closing it queues `close_tag`. Replaces any grid
+// window built before.
+void lyra_menubar_grid_window(const char *title, const char *columns, int32_t close_tag) {
+  if (target == nil) target = [[LyraMenubarTarget alloc] init];
+  if (grid_window != nil) [grid_window close];
+  grid_window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 400, 300)
+                                            styleMask:NSWindowStyleMaskTitled |
+                                                      NSWindowStyleMaskClosable
+                                              backing:NSBackingStoreBuffered
+                                                defer:YES];
+  grid_window.title = string_of(title);
+  grid_window.releasedWhenClosed = NO;
+  grid_window.delegate = target;
+  grid_close_tag = close_tag;
+  grid_headers = [NSMutableArray array];
+  NSString *list = string_of(columns);
+  if (list.length > 0) [grid_headers addObjectsFromArray:[list componentsSeparatedByString:@"\t"]];
+  grid_rows = [NSMutableArray array];
+  grid_note_text = nil;
+  grid_laid_out = false;
+  cells_by_tag = [NSMutableDictionary dictionary];
+  watch_keys();
+}
+
+// A row of the grid window, labelled `label`; cells added after it go in it.
+void lyra_menubar_grid_row(const char *label) {
+  if (grid_window == nil) return;
+  NSTextField *text = [NSTextField labelWithString:string_of(label)];
+  text.alignment = NSTextAlignmentRight;
+  [grid_rows addObject:[NSMutableArray arrayWithObject:text]];
+}
+
+// A button in the current row, titled `title`; pressing it queues `tag`. Shown pressed in
+// while `lyra_menubar_set_checked(tag, true)` — the button listening for a key, say.
+void lyra_menubar_grid_cell(const char *title, int32_t tag) {
+  if (grid_rows.count == 0) return;
+  NSButton *button = [NSButton buttonWithTitle:string_of(title)
+                                        target:target
+                                        action:@selector(pressed:)];
+  [button setButtonType:NSButtonTypePushOnPushOff];
+  button.tag = tag;
+  [button.widthAnchor constraintGreaterThanOrEqualToConstant:130].active = YES;
+  [grid_rows.lastObject addObject:button];
+  cells_by_tag[@(tag)] = button;
+}
+
+// A line of small text under the grid.
+void lyra_menubar_grid_note(const char *text) { grid_note_text = string_of(text); }
+
+// The grid window laid out, once: a header row, the rows, the note beneath.
+static void lay_out_grid(void) {
+  NSUInteger columns = grid_headers.count;
+  for (NSArray *row in grid_rows) columns = MAX(columns, row.count);
+  NSMutableArray<NSArray<NSView *> *> *views = [NSMutableArray array];
+  if (grid_headers.count > 0) {
+    NSMutableArray<NSView *> *header = [NSMutableArray array];
+    for (NSString *title in grid_headers) {
+      NSTextField *text = [NSTextField labelWithString:title];
+      text.font = [NSFont boldSystemFontOfSize:NSFont.systemFontSize];
+      text.alignment = NSTextAlignmentCenter;
+      [header addObject:text];
+    }
+    while (header.count < columns) [header addObject:NSGridCell.emptyContentView];
+    [views addObject:header];
+  }
+  for (NSMutableArray<NSView *> *row in grid_rows) {
+    while (row.count < columns) [row addObject:NSGridCell.emptyContentView];
+    [views addObject:row];
+  }
+  NSGridView *grid = [NSGridView gridViewWithViews:views];
+  grid.rowSpacing = 6;
+  grid.columnSpacing = 10;
+  // Each label level with its buttons' titles, and against them.
+  grid.rowAlignment = NSGridRowAlignmentFirstBaseline;
+  [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
+  for (NSUInteger c = 1; c < grid.numberOfColumns; c++) {
+    [grid columnAtIndex:c].xPlacement = NSGridCellPlacementFill;
+  }
+  NSStackView *stack = [NSStackView stackViewWithViews:@[ grid ]];
+  stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+  stack.alignment = NSLayoutAttributeLeading;
+  stack.spacing = 14;
+  stack.edgeInsets = NSEdgeInsetsMake(20, 20, 20, 20);
+  if (grid_note_text != nil) {
+    NSTextField *note = [NSTextField wrappingLabelWithString:grid_note_text];
+    note.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    note.textColor = NSColor.secondaryLabelColor;
+    // Wrapped to the grid's width: a label's own width is its text on one line, which
+    // would stretch the window, and the grid's label column with it.
+    note.preferredMaxLayoutWidth = grid.fittingSize.width;
+    [note setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+                                   forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [stack addArrangedSubview:note];
+  }
+  grid_window.contentView = stack;
+  [grid_window setContentSize:stack.fittingSize];
+  [grid_window center];
+  grid_laid_out = true;
+}
+
+// Show the grid window, laid out the first time, in front and key.
+void lyra_menubar_show_grid(void) {
+  if (grid_window == nil) return;
+  if (!grid_laid_out) lay_out_grid();
+  [grid_window makeKeyAndOrderFront:nil];
+}
+
+// Whether keys pressed in the grid window are captured for `lyra_menubar_next_key` rather
+// than passed on. Turning it off forgets any not yet read.
+void lyra_menubar_capture_keys(bool on) {
+  capturing = on;
+  if (!on) key_count = 0;
+}
+
+// The SDL scancode of the oldest key captured and not yet read, or 0.
+uint32_t lyra_menubar_next_key(void) {
+  if (key_count == 0) return 0;
+  uint32_t scancode = key_queue[key_head];
+  key_head = (key_head + 1) % KEY_QUEUE_SIZE;
+  key_count--;
+  return scancode;
+}
+
+// A menu item's or a grid button's title. An unknown tag is ignored.
+void lyra_menubar_set_title(int32_t tag, const char *title) {
+  NSString *text = string_of(title);
+  items_by_tag[@(tag)].title = text;
+  cells_by_tag[@(tag)].title = text;
 }
 
 // The last path `lyra_menubar_choose_file` answered, kept until the next call so the

@@ -35,6 +35,10 @@ module bindings.menubar
 //! sends `terminate:` and so reaches the program as SDL's quit event, like closing the
 //! window. [install] replaces the bar SDL made at `init`, so call it after that.
 //!
+//! **A settings window comes the same way** ([grid_window]): rows of buttons, read with
+//! [poll_menu] like items, and the keys pressed in it captured as SDL scancodes
+//! ([capture_keys], [poll_key]) — a window of AppKit's own, whose keys SDL never sees.
+//!
 //! **The C half is an archive `build.sh` builds**: `build/lib/liblyra-menubar.a`, from
 //! `menubar.m` on macOS and the do-nothing `menubar_stub.c` elsewhere, so a program using
 //! this module links everywhere. `lyrac` searches the install's `lib/`, so a program built
@@ -108,7 +112,9 @@ pub let install = (app_name: string) -> bool => app_name.with_cstring((a) => uns
 
 /// The installed menu bar as text — a line a menu, its items indented beneath with their key
 /// equivalents (`Cmd+Shift+S`), `[x]` when checked, `(off)` when greyed, `---` a separator,
-/// a submenu's title ending ` >` with its items indented beneath it —
+/// a submenu's title ending ` >` with its items indented beneath it; then the grid window,
+/// if there is one, `window <title>` and a line a row: its label, then `[title]` a button,
+/// `(on)` when pressed in —
 /// for a program's tests to read back what it installed. Empty off macOS.
 pub let describe = () -> string => {
   let p = unsafe { lyra_menubar_describe() }
@@ -122,14 +128,78 @@ pub let poll_menu = () -> Maybe<i32> => {
   if tag < 0 { None } else { Some(tag) }
 }
 
-/// Show a checkmark beside the item tagged `tag`, or take it away.
+/// Retitle the item — or grid window button — tagged `tag`.
+pub let set_title = (tag: i32, title: string) -> void =>
+  title.with_cstring((t) => unsafe {
+    lyra_menubar_set_title(tag, t)
+  })
+
+/// Show a checkmark beside the item tagged `tag`, or take it away; a grid window button
+/// shows pressed in.
 pub let set_checked = (tag: i32, checked: bool) -> void => unsafe {
   lyra_menubar_set_checked(tag, checked)
 }
 
-/// Let the item tagged `tag` be chosen, or grey it out.
+/// Let the item (or grid window button) tagged `tag` be chosen, or grey it out.
 pub let set_enabled = (tag: i32, enabled: bool) -> void => unsafe {
   lyra_menubar_set_enabled(tag, enabled)
+}
+
+// ── The grid window ──────────────────────────────────────────────────────────
+
+/// Start a **grid window** — a settings window's rows of buttons — titled `title`, its
+/// `columns` headed across the top (the first over the row labels, so usually `""`).
+/// Built like the menus: [grid_row] begins a row, [grid_cell] adds a button to it, and a
+/// button pressed is read with [poll_menu], by its tag, as a menu item is. Closing the
+/// window answers `close_tag` there too. Replaces any grid window built before; shown,
+/// laid out the first time, by [show_grid]. Nothing off macOS.
+///
+/// ```
+/// grid_window("Settings", ["", "Key"], CLOSED)
+/// grid_row("Jump")
+/// grid_cell("Space", JUMP)
+/// grid_note("Click a key's button, then press the key.")
+/// // on the Settings… item:
+/// show_grid()
+/// ```
+pub let grid_window = (title: string, columns: []string, close_tag: i32) -> void =>
+  with_cstrings(title, columns.join("\t"), (t, c) => unsafe {
+    lyra_menubar_grid_window(t, c, close_tag)
+  })
+
+/// Begin a row of the grid window, labelled `label` at its left.
+pub let grid_row = (label: string) -> void => label.with_cstring((l) => unsafe {
+  lyra_menubar_grid_row(l)
+})
+
+/// A button in the current row, titled `title`, its press answering `tag` from
+/// [poll_menu]. [set_title] retitles it and [set_checked] shows it pressed in — the one
+/// listening for a key, say.
+pub let grid_cell = (title: string, tag: i32) -> void =>
+  title.with_cstring((t) => unsafe {
+    lyra_menubar_grid_cell(t, tag)
+  })
+
+/// A line of small text beneath the grid: what its buttons do.
+pub let grid_note = (text: string) -> void => text.with_cstring((t) => unsafe {
+  lyra_menubar_grid_note(t)
+})
+
+/// Show the grid window in front, and make it the key window.
+pub let show_grid = () -> void => unsafe { lyra_menubar_show_grid() }
+
+/// Whether keys pressed in the grid window are **captured** — kept for [poll_key] rather
+/// than handed to AppKit — for a program asking which key to use for something. The window
+/// is AppKit's, so SDL never sees them. A key held with ⌘ is never captured (⌘W still
+/// closes the window); ⌘ and ⌃ themselves, Shift and Option are, as they are pressed.
+/// Turning capture off forgets keys not yet read.
+pub let capture_keys = (on: bool) -> void => unsafe { lyra_menubar_capture_keys(on) }
+
+/// The SDL scancode (`bindings.sdl3`'s `SCANCODE_…`, the key's position) of the oldest key
+/// captured and not yet read, or `None`.
+pub let poll_key = () -> Maybe<u32> => {
+  let scancode = unsafe { lyra_menubar_next_key() }
+  if scancode == 0 { None } else { Some(scancode) }
 }
 
 /// A modal Open panel titled `title`, offering files with one of `extensions` (without the
@@ -195,6 +265,30 @@ unsafe extern lyra_menubar_set_enabled: (tag: i32, enabled: bool) -> void
 
 @symbol("lyra_menubar_choose_file")
 unsafe extern lyra_menubar_choose_file: (title: ^u8, types: ^u8) -> ^u8
+
+@symbol("lyra_menubar_set_title")
+unsafe extern lyra_menubar_set_title: (tag: i32, title: ^u8) -> void
+
+@symbol("lyra_menubar_grid_window")
+unsafe extern lyra_menubar_grid_window: (title: ^u8, columns: ^u8, close_tag: i32) -> void
+
+@symbol("lyra_menubar_grid_row")
+unsafe extern lyra_menubar_grid_row: (label: ^u8) -> void
+
+@symbol("lyra_menubar_grid_cell")
+unsafe extern lyra_menubar_grid_cell: (title: ^u8, tag: i32) -> void
+
+@symbol("lyra_menubar_grid_note")
+unsafe extern lyra_menubar_grid_note: (text: ^u8) -> void
+
+@symbol("lyra_menubar_show_grid")
+unsafe extern lyra_menubar_show_grid: () -> void
+
+@symbol("lyra_menubar_capture_keys")
+unsafe extern lyra_menubar_capture_keys: (on: bool) -> void
+
+@symbol("lyra_menubar_next_key")
+unsafe extern lyra_menubar_next_key: () -> u32
 
 @symbol("lyra_menubar_alert")
 unsafe extern lyra_menubar_alert: (message: ^u8, detail: ^u8) -> void

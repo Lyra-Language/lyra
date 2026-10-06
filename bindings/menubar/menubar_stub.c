@@ -68,3 +68,29 @@ void lyra_menubar_alert(const char *message, const char *detail) {
   (void)message;
   (void)detail;
 }
+
+void lyra_menubar_grid_window(const char *title, const char *columns, int32_t close_tag) {
+  (void)title;
+  (void)columns;
+  (void)close_tag;
+}
+
+void lyra_menubar_grid_row(const char *label) { (void)label; }
+
+void lyra_menubar_grid_cell(const char *title, int32_t tag) {
+  (void)title;
+  (void)tag;
+}
+
+void lyra_menubar_grid_note(const char *text) { (void)text; }
+
+void lyra_menubar_show_grid(void) {}
+
+void lyra_menubar_capture_keys(bool on) { (void)on; }
+
+uint32_t lyra_menubar_next_key(void) { return 0; }
+
+void lyra_menubar_set_title(int32_t tag, const char *title) {
+  (void)tag;
+  (void)title;
+}

@@ -19,17 +19,36 @@ pub const BUTTON_EAST: i32 = 1
 pub const BUTTON_WEST: i32 = 2
 pub const BUTTON_NORTH: i32 = 3
 pub const BUTTON_BACK: i32 = 4
+/// The logo button. macOS keeps it (it opens the Game Overlay), so a game seldom gets it.
+pub const BUTTON_GUIDE: i32 = 5
 pub const BUTTON_START: i32 = 6
+/// A stick pressed in.
+pub const BUTTON_LEFT_STICK: i32 = 7
+pub const BUTTON_RIGHT_STICK: i32 = 8
 pub const BUTTON_LEFT_SHOULDER: i32 = 9
 pub const BUTTON_RIGHT_SHOULDER: i32 = 10
 pub const BUTTON_DPAD_UP: i32 = 11
 pub const BUTTON_DPAD_DOWN: i32 = 12
 pub const BUTTON_DPAD_LEFT: i32 = 13
 pub const BUTTON_DPAD_RIGHT: i32 = 14
+/// A pad's extra button: Xbox Series Share, PS5 microphone, Switch Pro capture.
+pub const BUTTON_MISC1: i32 = 15
+/// The back paddles (Xbox Elite, Steam Deck…), upper and lower on each side.
+pub const BUTTON_RIGHT_PADDLE1: i32 = 16
+pub const BUTTON_LEFT_PADDLE1: i32 = 17
+pub const BUTTON_RIGHT_PADDLE2: i32 = 18
+pub const BUTTON_LEFT_PADDLE2: i32 = 19
+/// A PlayStation pad's touchpad, pressed.
+pub const BUTTON_TOUCHPAD: i32 = 20
 
 /// `SDL_GamepadAxis`. A stick axis runs -32768..32767, negative left and **up**.
 pub const AXIS_LEFT_X: i32 = 0
 pub const AXIS_LEFT_Y: i32 = 1
+pub const AXIS_RIGHT_X: i32 = 2
+pub const AXIS_RIGHT_Y: i32 = 3
+/// A trigger runs 0 (released) to 32767 (pulled all the way).
+pub const AXIS_LEFT_TRIGGER: i32 = 4
+pub const AXIS_RIGHT_TRIGGER: i32 = 5
 
 @symbol("SDL_OpenGamepad")
 unsafe extern sdl_open_gamepad: (id: u32) -> ^u8
