@@ -260,11 +260,11 @@ Package management, versioning and separate compilation are out of scope by deci
     unverified things at once.
 
 - **[IDEA] Hot reload that keeps the program's state.** `lyrac run --watch` (10/06)
-  restarts the program on each save; the next step swaps changed functions into the running
-  one, so a game keeps its world and window. Likely shape: a host plus a reloadable dylib,
-  calls across through a table (the uniform `{ fn, env }` closure ABI was chosen with this in
-  mind), refusing a reload that changes a type's layout — open are globals, live `Seq`
-  coroutines and closures still pointing at old code.
+  restarts the program on each save; the next stage swaps changed code into the running
+  one, so a game keeps its world and window. Design proposed 10/06 in
+  [pkg/backend/LIVE.md](pkg/backend/LIVE.md): calls in `main` through patchable slots,
+  later generations as shared libraries bound to generation 0's globals, lyrac restarting
+  instead whenever a type's shape or `main` changed.
 - **[DECIDED, not built] Qualified type names — `ast.Program` in a type position.**
 
   **The gap.** A plain `import lib` binds a namespace that works for values and not for
