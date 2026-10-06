@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 10/06/26 — every warning has a warning's code (`lyra-W027`–`W030`)
+
+`if true { … }` printed `warning [lyra-E001]: condition is always true`. The typechecker's
+`addError(loc, sev, …)` always attached the generic `lyra-E001`, whatever `sev` said, and
+five warnings went through it: a literal `if`/`for` condition, a repeated literal arm, an
+overlapping range arm, and an impl method its trait does not declare. The collector's
+`var mut` warning went through `AddError` and had no code at all. Each now has one:
+
+- **`lyra-W027`** for the literal condition, `if` and `for` alike.
+- **`lyra-W021`** for the repeated literal. It is that rule: an earlier arm takes every
+  value this one could, and `1 | 2 => …, 1 => …` was already W021 through the alternation.
+- **`lyra-W028`** for the overlapping range, which is *not* W021, because part of the arm
+  is still live and the fix is to narrow it, not delete it.
+- **`lyra-W029`** for the undeclared impl method, **`lyra-W030`** for `var mut`.
+
+**Whether `for true` should warn at all**: it does, and the message now says what to
+write. `for { … }` is the infinite loop and has been all along (32 uses in the tree;
+`for true` had one, in an imgui doc comment, now changed). The two are not equivalent:
+`ast.LoopCanExit` answers yes for any loop with a condition, so `for true` is `void` and a
+function with a return type ending in it is refused, where `for { … }` is `never` and is
+accepted. A warning that only said "always true" left the reader to work that out.
+
+**So it cannot recur**, the uncoded reporters take only `SeverityError`, and
+`TestCodes_UncodedReportersTakeOnlyErrors` checks every call to them by parsing the source,
+not at run time: a warning on a path no test reaches is still caught. Dropping
+`addError`'s severity parameter would have made it a compile error instead, at the cost
+of editing ~300 call sites; the test gets the same guarantee without that churn. A
+forwarding reporter passing its own parameter on (`Collector.addError`) is exempt, and
+its callers are checked instead. Warnings already coded through `addErrorCode` moved to
+the new `addWarning`, so there is one way to report a warning.
+
 ### 10/06/26 — `lyrac run --watch`: rebuild and restart on save
 
 The restart kind of hot reload, the first of two stages (the second, swapping code into a

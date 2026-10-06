@@ -22,6 +22,21 @@ func TestTypeCheck_ForLoop_InfiniteLoop_NoError(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+// `for true` warns and names the spelling that does not: bare `for { }` is the infinite
+// loop (and the one that is `never` — TestTailLoop_ForTrueIsRefused).
+func TestTypeCheck_ForLoop_LiteralTrue_WarnsWithBareFor(t *testing.T) {
+	res := parseCollectAndCheck(t, `for true { }`, false)
+	assertWarningsAre(t, res,
+		"condition is always true: write `for { … }` for a loop that runs until it breaks")
+	assertSingleWarningWithCode(t, res, "lyra-W027")
+}
+
+func TestTypeCheck_ForLoop_LiteralFalse_Warns(t *testing.T) {
+	res := parseCollectAndCheck(t, `for false { }`, false)
+	assertWarningsAre(t, res, "condition is always false: the loop body never runs")
+	assertSingleWarningWithCode(t, res, "lyra-W027")
+}
+
 func TestTypeCheck_ForLoop_BoolVarCondition_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let done: bool = false

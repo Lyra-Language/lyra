@@ -12,11 +12,13 @@ import (
 func TestTypeCheck_If_Condition_BoolLiteralTrue_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `if true { 1 }`, false)
 	assertWarningsAre(t, res, "condition is always true")
+	assertSingleWarningWithCode(t, res, "lyra-W027")
 }
 
 func TestTypeCheck_If_Condition_BoolLiteralFalse_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `if false { 1 }`, false)
 	assertWarningsAre(t, res, "condition is always false")
+	assertSingleWarningWithCode(t, res, "lyra-W027")
 }
 
 func TestTypeCheck_If_Condition_BoolVar_NoError(t *testing.T) {

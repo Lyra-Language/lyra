@@ -42,6 +42,23 @@ let find = (n: i64) -> i64 => {
 	assertNoErrors(t, res)
 }
 
+// `for true` is not the infinite loop as far as types go: it has a condition, so it can
+// finish. Why lyra-W027 points at `for { … }` rather than only saying the condition is
+// constant.
+func TestTailLoop_ForTrueIsRefused(t *testing.T) {
+	source := `
+let find = (n: i64) -> i64 => {
+    var i = 0
+    for true {
+        i += 1
+        if i >= n { return i }
+    }
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertHasErrorContaining(t, res, "the body ends in a loop that can finish")
+	assertHasErrorContaining(t, res, "write `for { … }` for a loop that runs until it breaks")
+}
+
 func TestTailLoop_InfiniteLoopWithBreakIsRefused(t *testing.T) {
 	source := `
 let find = (n: i64) -> i64 => {

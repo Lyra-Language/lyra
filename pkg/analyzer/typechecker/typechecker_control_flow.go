@@ -188,7 +188,7 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 				"if condition must be boolean, got %s", condType)
 		}
 		if lit, ok := expr.Condition.(*ast.BooleanLiteralExpr); ok {
-			tc.addError(expr.Condition.GetLocation(), SeverityWarning,
+			tc.addWarning(expr.Condition.GetLocation(), diag.CodeConstantCondition,
 				"condition is always %t", lit.Value)
 		}
 	}
@@ -1356,7 +1356,7 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 				// `fcmp oeq`) — the same precision hazard the `==`/`!=` operator
 				// warns about (shared lyra-W008): a value off by an ULP silently
 				// won't match. A range pattern (`0.0..<1.0`) is the reliable form.
-				tc.addErrorCode(p.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
+				tc.addWarning(p.GetLocation(), diag.CodeImpreciseFloatEquality,
 					"matching a float against the literal '%s' tests exact equality, which may be unreliable due to floating-point precision; use a range pattern instead", p.Value)
 			}
 		}
@@ -1562,7 +1562,7 @@ func (tc *TypeChecker) checkUnreachableMatchArms(arms []ast.MatchArm) {
 			if !covers {
 				continue
 			}
-			tc.addErrorCode(arm.Pattern.GetLocation(), SeverityWarning,
+			tc.addWarning(arm.Pattern.GetLocation(),
 				diag.CodeUnreachableMatchArm,
 				"unreachable match arm: %s, so this arm can never run",
 				fmt.Sprintf(reason, earlier.Pattern.GetLocation().Pretty()))
@@ -1659,7 +1659,7 @@ func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
 		}
 		key := fmt.Sprintf("%v", p.Value)
 		if seen[key] {
-			tc.addError(arm.Pattern.GetLocation(), SeverityWarning,
+			tc.addWarning(arm.Pattern.GetLocation(), diag.CodeUnreachableMatchArm,
 				"duplicate match arm: pattern %s is already covered by an earlier arm", key)
 		}
 		seen[key] = true
@@ -1695,7 +1695,7 @@ func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
 	maxHi := ivs[0].hi
 	for i := 1; i < len(ivs); i++ {
 		if ivs[i].lo <= maxHi {
-			tc.addError(ivs[i].loc, SeverityWarning,
+			tc.addWarning(ivs[i].loc, diag.CodeOverlappingMatchArm,
 				"overlapping match arm: this range overlaps with a previous arm")
 		}
 		if ivs[i].hi > maxHi {
@@ -2010,9 +2010,17 @@ func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) types.Type {
 				tc.addError((*expr.Condition).GetLocation(), SeverityError,
 					"for loop condition must be boolean, got %s", condType)
 			}
+			// `for true` is the infinite loop's near miss: bare `for { … }` is the
+			// spelling, and the only one that is `never` without a `break`
+			// (ast.LoopCanExit), so the warning names it.
 			if lit, ok := (*expr.Condition).(*ast.BooleanLiteralExpr); ok {
-				tc.addError((*expr.Condition).GetLocation(), SeverityWarning,
-					"condition is always %t", lit.Value)
+				if lit.Value {
+					tc.addWarning((*expr.Condition).GetLocation(), diag.CodeConstantCondition,
+						"condition is always true: write `for { … }` for a loop that runs until it breaks")
+				} else {
+					tc.addWarning((*expr.Condition).GetLocation(), diag.CodeConstantCondition,
+						"condition is always false: the loop body never runs")
+				}
 			}
 		}
 		if expr.Post != nil {

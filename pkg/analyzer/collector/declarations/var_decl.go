@@ -46,7 +46,7 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	isPublic := cst.Field(node, "visibility") != nil
 	isMut := cst.Field(node, "mutability") != nil
 	if isMut && kind == ast.BindingVar {
-		ctx.AddError(node, diag.SeverityWarning,
+		ctx.AddErrorCoded(node, diag.SeverityWarning, diag.CodeRedundantVarMut,
 			"`var mut` is redundant: a `var` is already interior-mutable; write `var` (or use `let mut` for a non-reassignable but interior-mutable binding)")
 	}
 	name := ctx.NodeText(nameNode)

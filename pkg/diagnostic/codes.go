@@ -1225,10 +1225,12 @@ const (
 	// constructor. A guard on the earlier arm stops both, since a guard may fail; a
 	// *test* in it does too, which is why `Wrap(0)` covers nothing.
 	//
-	// Separate from the older duplicate-literal and overlapping-range warnings beside
-	// it in checkDuplicateMatchArms: those compare values within one arm's space,
-	// this asks whether an earlier arm's *shape* subsumes a later one. Neither fires
-	// where the other does.
+	// **A repeated top-level literal is this rule too** (`1 => …, 1 => …`), reported by
+	// checkDuplicateMatchArms rather than by shape: a literal is neither irrefutable nor
+	// a constructor, so the shape pass never sees it. It went out as lyra-E001 until
+	// 10/06, while the same literal repeated through an alternation (`1 | 2 => …,
+	// 1 => …`) was already this code. A range that only *overlaps* an earlier one is
+	// lyra-W028 — part of the arm is still live.
 	//
 	// **A warning, matching how a non-exhaustive scalar match is treated**, and it is
 	// the second half of a bug rather than a new opinion: the backend used to emit two
@@ -1298,4 +1300,31 @@ const (
 	// or floating point on a 68000 — reported once per function and type. A warning: it
 	// works, slowly, and a game's frame loop is where that matters.
 	CodeTargetEmulated = "lyra-W026"
+
+	// CodeConstantCondition: an `if` or `for` whose condition is a literal `true` or
+	// `false` — a branch that is always or never taken, or a loop body that never runs.
+	//
+	// **`for true { … }` is the case that matters**, because it reads as the infinite
+	// loop and is not quite one: a loop with a condition can finish, so its type is
+	// `void`, while bare `for { … }` with no `break` is `never` — the form a non-void
+	// function can end in. The message names `for { … }`, which is the warning-free
+	// spelling, rather than leaving the reader to guess what else to write.
+	CodeConstantCondition = "lyra-W027"
+
+	// CodeOverlappingMatchArm: a range arm whose interval overlaps an earlier
+	// unguarded range arm's, so part of it can never match. Separate from lyra-W021
+	// because the arm is still partly live: the fix is to narrow the range, not to
+	// delete the arm.
+	CodeOverlappingMatchArm = "lyra-W028"
+
+	// CodeUndeclaredImplMethod: an `impl Trait for T` defines a method the trait does
+	// not declare. Nothing dispatches to it through the trait, so it is most often a
+	// misspelling of a method the trait does declare, or one left behind after the
+	// trait dropped it.
+	CodeUndeclaredImplMethod = "lyra-W029"
+
+	// CodeRedundantVarMut: `var mut x` — a `var` is already interior-mutable, so the
+	// `mut` adds nothing. Write `var`, or `let mut` for a binding that is not
+	// reassignable but whose interior is.
+	CodeRedundantVarMut = "lyra-W030"
 )

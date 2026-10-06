@@ -222,7 +222,7 @@ pub let add_image = (
 /// unsaved work asks before it goes:
 ///
 /// ```
-/// for true {
+/// for {
 ///   if !begin_frame(host) {
 ///     if !has_unsaved_work { break }
 ///     cancel_quit(host)

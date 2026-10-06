@@ -264,6 +264,13 @@ Each of these produces something that looks like it works. Other docs cite them 
     - **Adding a way to write a binding**: the range pass must model it or untrack the name,
       and constant folding must not treat the binding as fixed.
 
+19. **A warning carries its own code.** The uncoded reporters — the typechecker's
+    `addError` (which attaches the generic `lyra-E001`) and the collector's `AddError` /
+    `AddErrorRelated` (which attach none) — take only `SeverityError`; a warning goes
+    through `addWarning(loc, code, …)` or `AddErrorCoded`. Otherwise it prints as
+    `warning [lyra-E001]`. `TestCodes_UncodedReportersTakeOnlyErrors` (`pkg/diagnostic`)
+    checks every call site statically, untested paths included.
+
 ## Feature implementation notes
 
 Semantics are in `LANGUAGE.md`; these are the compiler-side traps.

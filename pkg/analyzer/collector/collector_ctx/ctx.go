@@ -116,6 +116,9 @@ func (ctx *Ctx) NodeLocation(node *sitter.Node) ast.Location {
 	}
 }
 
+// AddError reports a diagnostic with no code. **sev must be SeverityError**, as for
+// AddErrorRelated: a warning is a rule the user can act on and needs a code, so it goes
+// through AddErrorCoded (TestCodes_UncodedReportersTakeOnlyErrors, pkg/diagnostic).
 func (ctx *Ctx) AddError(node *sitter.Node, sev diag.Severity, format string, args ...any) {
 	*ctx.errors = append(*ctx.errors, diag.Diagnostic{
 		Message:  fmt.Sprintf(format, args...),
