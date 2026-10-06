@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 10/06/26 — `std.genesis`: collision a 68000 can afford, and how it was measured
+
+Two, then four, walking cactuses in Vega's platformer took its game from 60 frames a second
+to 20 on the 68000. Timing was found the honest way: a scripted ROM in Sheliak reporting
+through the backdrop colour — operations timed in vertical blanks over 200 repetitions,
+idle spins counted while a frame waits for the blank (its least over 600 frames is the
+headroom), and, decisively, a throwaway Sheliak build counting master clocks by opcode
+address, the program's code found in the ROM by its bytes and named from the object's
+symbols. Guesses from reading IR were wrong twice; the profile was not.
+
+What it showed: **the search of a map's own colliders was 40% of a frame**, about 400
+cycles a collider. The M68k backend keeps few values in registers — the loop reloads its
+bounds from the stack with `movem` each pass — so shaving instructions bought little, and
+what paid was **searching less**:
+
+- **An axis with no speed is not tested** (`move_across`, `move_up_or_down`).
+- **A map's own colliders are gathered by 64-pixel band** (`hits_banded`,
+  `move_in_with(…, bands, map_shapes)`; Vega writes `<MAP>_COLLIDER_BANDS`), so a collider
+  searches the few in the columns it reaches. `#[0, n]` is one band of all.
+- **`any_stops` compares layers and rectangles inline**, with a `u16` counter (an `i64` one
+  cost an `addx` pair a pass and two registers), and **answers box against box itself**,
+  sparing the exact test's call with both colliders copied; `map_stops` returns at once when
+  the tiles carry no shapes; `Entity.meets` rejects on layers and rectangles before its
+  per-pair call.
+
+Two ideas measured and dropped: gathering a move's candidate colliders once for both axes
+and every collider (the per-candidate exact calls cost what the searches had), and moving
+the loop into a function holding only its bounds (inlined back, the same spills). The rest
+was the game's: a patroller asks the level only as it enters a new pixel column, and only
+enemies near the screen move — four cactuses now leave the worst frame half its time idle.
+`TestRun_EntitiesMoveCollideAndMeet` cases 30–36 pin the bands: the second band a collider
+reaches is searched, shapes off either edge are the edge bands', and a walker stops at a
+post found by band.
+
 ### 10/05/26 — `std.genesis`: one-way colliders
 
 A platform the player stands on and jumps up through (asked for a Tiled level's grass

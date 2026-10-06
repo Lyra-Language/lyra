@@ -168,23 +168,30 @@ pub let move_in<const N: i64, const M: i64, const K: i64> = (
   first_tile: u16,
   starts: ref [M]u16,
   shapes: ref [K]Collider
-) -> void => self.move_in_with(cells, width, first_tile, starts, shapes, NO_MAP_SHAPES)
+) -> void =>
+  self.move_in_with(cells, width, first_tile, starts, shapes, NO_BANDS, NO_MAP_SHAPES)
 
 /// [move_in], stopped too by the map's own colliders — shapes drawn on the map itself, in
-/// its pixels (`collision.hits_any`), where its tiles carry none.
+/// its pixels, where its tiles carry none — gathered by 64-pixel band, `bands` saying where
+/// each band's start in `map_shapes` (`collision.hits_banded`; `#[0, n]` for one band of
+/// all `n`).
 ///
 /// **A one-way collider** (a tile's or the map's) stops only the vertical move, and only
 /// coming down onto it from clear above: an entity stands on it, and jumps up through it or
 /// walks across it — and having come up into it, falls back through.
-pub let move_in_with<const N: i64, const M: i64, const K: i64, const P: i64> = (
+pub let move_in_with<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = (
   self: mut Entity,
   cells: ref [N]u16,
   width: u16,
   first_tile: u16,
   starts: ref [M]u16,
   shapes: ref [K]Collider,
+  bands: ref [B]u16,
   map_shapes: ref [P]Collider
 ) -> void => {
+  let rows = i32(cells.len()) / i32(width)
+  let right = (i32(width) * 8 - i32(self.kind.width)) << 8
+  let bottom = (rows * 8 - i32(self.kind.height)) << 8
   // Turned: its colliders turn too, unless that would put one into a wall here.
   if self.hit_mirrored != self.mirrored && !self.kind.hits_tiles(
     self.x(),
@@ -196,52 +203,33 @@ pub let move_in_with<const N: i64, const M: i64, const K: i64, const P: i64> = (
     first_tile,
     starts,
     shapes,
+    bands,
     map_shapes
   ) {
     self.hit_mirrored = self.mirrored
   }
-  let rows = i32(cells.len()) / i32(width)
-  let right = (i32(width) * 8 - i32(self.kind.width)) << 8
-  let bottom = (rows * 8 - i32(self.kind.height)) << 8
-  let wanted_x = self.fx + i32(self.vx)
-  let nx = wanted_x.clamp(0, right)
-  if self.kind.hits_tiles(
-    i16(nx >> 8),
-    self.y(),
-    self.y(),
-    self.hit_mirrored,
+  // An axis not moving is not tested: a still entity's tests are most of a frame's
+  // collision, and an enemy walking a platform never moves up or down (10/05).
+  if self.vx != 0 { self.move_across(
     cells,
     width,
     first_tile,
     starts,
     shapes,
-    map_shapes
-  ) {
-    self.vx = 0
-  } else {
-    // At the map's edge it stops, as at a wall.
-    if nx != wanted_x { self.vx = 0 }
-    self.fx = nx
-  }
-  let wanted_y = self.fy + i32(self.vy)
-  let ny = wanted_y.clamp(0, bottom)
-  if self.kind.hits_tiles(
-    self.x(),
-    i16(ny >> 8),
-    self.y(),
-    self.hit_mirrored,
+    bands,
+    map_shapes,
+    right
+  ) }
+  if self.vy != 0 { self.move_up_or_down(
     cells,
     width,
     first_tile,
     starts,
     shapes,
-    map_shapes
-  ) {
-    self.vy = 0
-  } else {
-    if ny != wanted_y { self.vy = 0 }
-    self.fy = ny
-  }
+    bands,
+    map_shapes,
+    bottom
+  ) }
 }
 
 /// Show `animation`, facing the other way when `mirrored`: from its start when it is not
@@ -262,13 +250,30 @@ pub let set_animation = (
 /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
 /// and their shapes overlap — each mirrored as its entity faces.
 pub let meets = pure (self: ref Entity, other: ref Entity) -> bool => {
+  let ax = self.x()
+  let ay = self.y()
+  let bx = other.x()
+  let by = other.y()
   for i: u16 in 0..<self.kind.collider_count {
     let ac = self.kind.colliders[i]
     let ap = if self.mirrored { ac.mirrored(self.kind.width) } else { ac }
+    // Layers, then the rectangles, compared here: most pairs a game asks about are not
+    // looking for each other, or are nowhere near, and a call each cost the 68000 a
+    // tenth of a frame for four enemies and a player (10/05).
+    let left = i32(ax) + i32(ap.shape.x)
+    let top = i32(ay) + i32(ap.shape.y)
+    let right = left + i32(ap.shape.width)
+    let bottom = top + i32(ap.shape.height)
     for j: u16 in 0..<other.kind.collider_count {
       let bc = other.kind.colliders[j]
+      if (ap.mask & bc.layers) == 0 { continue }
       let bp = if other.mirrored { bc.mirrored(other.kind.width) } else { bc }
-      if ap.meets(self.x(), self.y(), bp, other.x(), other.y()) { return true }
+      let b_left = i32(bx) + i32(bp.shape.x)
+      let b_top = i32(by) + i32(bp.shape.y)
+      if b_left >= right || b_left + i32(bp.shape.width) <= left || b_top >= bottom || b_top + i32(bp.shape.height) <= top {
+        continue
+      }
+      if ap.meets(ax, ay, bp, bx, by) { return true }
     }
   }
   false
@@ -282,12 +287,81 @@ pub let visible = pure (x: i16, y: i16, width: i16, height: i16) -> bool =>
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
+/// [move_in_with]'s move across, up to `right` (in 256ths of a pixel).
+let move_across<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = (
+  self: mut Entity,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Collider,
+  bands: ref [B]u16,
+  map_shapes: ref [P]Collider,
+  right: i32
+) -> void => {
+  let wanted_x = self.fx + i32(self.vx)
+  let nx = wanted_x.clamp(0, right)
+  if self.kind.hits_tiles(
+    i16(nx >> 8),
+    self.y(),
+    self.y(),
+    self.hit_mirrored,
+    cells,
+    width,
+    first_tile,
+    starts,
+    shapes,
+    bands,
+    map_shapes
+  ) {
+    self.vx = 0
+  } else {
+    // At the map's edge it stops, as at a wall.
+    if nx != wanted_x { self.vx = 0 }
+    self.fx = nx
+  }
+}
+
+/// [move_in_with]'s move up or down, to at most `bottom` (in 256ths of a pixel).
+let move_up_or_down<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = (
+  self: mut Entity,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Collider,
+  bands: ref [B]u16,
+  map_shapes: ref [P]Collider,
+  bottom: i32
+) -> void => {
+  let wanted_y = self.fy + i32(self.vy)
+  let ny = wanted_y.clamp(0, bottom)
+  if self.kind.hits_tiles(
+    self.x(),
+    i16(ny >> 8),
+    self.y(),
+    self.hit_mirrored,
+    cells,
+    width,
+    first_tile,
+    starts,
+    shapes,
+    bands,
+    map_shapes
+  ) {
+    self.vy = 0
+  } else {
+    if ny != wanted_y { self.vy = 0 }
+    self.fy = ny
+  }
+}
+
 /// Whether an entity of this kind moved to (`x`, `y`) from (`x`, `from_y`), mirrored or
 /// not, is stopped by a tile of the map, or one of the map's own colliders, on a layer one
 /// of its colliders looks for (`collision.hits_map_moving`: a one-way collider only from
 /// above). A move across, or no move, passes `from_y` = `y`, which no one-way collider
 /// stops.
-let hits_tiles<const N: i64, const M: i64, const K: i64, const P: i64> = pure (
+let hits_tiles<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = pure (
   self: ref EntityKind,
   x: i16,
   y: i16,
@@ -298,20 +372,33 @@ let hits_tiles<const N: i64, const M: i64, const K: i64, const P: i64> = pure (
   first_tile: u16,
   starts: ref [M]u16,
   shapes: ref [K]Collider,
+  bands: ref [B]u16,
   map_shapes: ref [P]Collider
 ) -> bool => {
+  // Tiles that carry no shapes — a map whose collision is its own — are not walked.
+  let tiled = starts[starts.len() - 1] != 0
   for i: u16 in 0..<self.collider_count {
     let c = self.colliders[i]
     let placed = if mirrored { c.mirrored(self.width) } else { c }
-    if placed.hits_map_moving(x, y, from_y, cells, width, first_tile, starts, shapes) {
+    if tiled && placed.hits_map_moving(
+      x,
+      y,
+      from_y,
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes
+    ) {
       return true
     }
-    if placed.hits_any_moving(x, y, from_y, map_shapes) { return true }
+    if placed.hits_banded_moving(x, y, from_y, bands, map_shapes) { return true }
   }
   false
 }
 
-/// A map with no colliders of its own: one that meets nothing.
+/// A map with no colliders of its own: one band of none, and a collider that meets nothing.
+const NO_BANDS: [2]u16 = #[0, 0]
 const NO_MAP_SHAPES: [1]Collider = #[NO_COLLIDER]
 
 /// `v` over √2, to a 256th: 181/256 (0.707) as shifts — ½ + ⅛ + 1/16 + 1/64 + 1/256 — so

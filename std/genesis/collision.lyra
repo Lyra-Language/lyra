@@ -38,6 +38,12 @@ module std.genesis.collision
 //! [hits_map] only on the tiles of layers it looks for: a boat's hull can stop at a wall
 //! and not at water.
 //!
+//! **A map's own colliders are searched by band** ([hits_banded]): the game's assets give
+//! them gathered by 64-pixel column ([BAND_SHIFT]), so a collider tests only those in the
+//! columns it reaches — a handful, not the level's every shape, which is what keeps a few
+//! walking enemies inside a frame of the 68000 (10/05). One band holding all is the plain
+//! list.
+//!
 //! **A one-way collider is solid from above only** (`one_way`): a platform stood on and
 //! jumped up through. Overlap does not say which way something came, so it counts only in
 //! a move — [hits_map_moving], [hits_any_moving], which `std.genesis.entity`'s moves ask —
@@ -194,7 +200,7 @@ pub let hits_any<const P: i64> = pure (
   x: i16,
   y: i16,
   others: ref [P]Collider
-) -> bool => self.any_stops(x, y, y, false, others)
+) -> bool => self.any_stops(x, y, y, false, others, 0, u16(others.len()))
 
 /// [hits_any] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way collider
 /// counts only when the move came down onto it — overlapping it at `y`, clear of it at
@@ -205,7 +211,35 @@ pub let hits_any_moving<const P: i64> = pure (
   y: i16,
   from_y: i16,
   others: ref [P]Collider
-) -> bool => self.any_stops(x, y, from_y, true, others)
+) -> bool => self.any_stops(x, y, from_y, true, others, 0, u16(others.len()))
+
+/// Which band of a map's own colliders a pixel column is in: its `x >> BAND_SHIFT`, bands
+/// being 64 pixels wide.
+pub const BAND_SHIFT: i32 = 6
+
+/// [hits_any] over colliders gathered by band: band `b`'s are `others[bands[b]]` up to
+/// `others[bands[b + 1]]`, every collider reaching into its 64 columns — so one wider than a
+/// band is in each it crosses, and one off the map's left or right in the first or last.
+/// Only the bands this collider's own shape reaches are searched. `#[0, n]`, one band,
+/// searches all `n`.
+pub let hits_banded<const B: i64, const P: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  bands: ref [B]u16,
+  others: ref [P]Collider
+) -> bool => self.banded_stops(x, y, y, false, bands, others)
+
+/// [hits_banded] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way collider
+/// counts only coming down onto it, as in [hits_any_moving].
+pub let hits_banded_moving<const B: i64, const P: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  from_y: i16,
+  bands: ref [B]u16,
+  others: ref [P]Collider
+) -> bool => self.banded_stops(x, y, from_y, true, bands, others)
 
 /// Whether this collider on something at (`x`, `y`) meets a tile of a map: as the shape
 /// form above, but each tile's shapes are colliders, and only those on a layer this one
@@ -263,16 +297,65 @@ let stopped_by = pure (
   ))
 }
 
-/// [hits_any] and [hits_any_moving].
+/// [hits_banded] and [hits_banded_moving]: each band the collider's shape reaches, from
+/// the first to the last, clamped to the bands there are.
+let banded_stops<const B: i64, const P: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  from_y: i16,
+  moving: bool,
+  bands: ref [B]u16,
+  others: ref [P]Collider
+) -> bool => {
+  let last = i32(bands.len()) - 2
+  let left = i32(x) + i32(self.shape.x)
+  var band = (left >> BAND_SHIFT).clamp(0, last)
+  let final = ((left + i32(self.shape.width) - 1) >> BAND_SHIFT).clamp(0, last)
+  for band <= final {
+    if self.any_stops(
+      x,
+      y,
+      from_y,
+      moving,
+      others,
+      bands[band],
+      bands[band + 1]
+    ) { return true }
+    band += 1
+  }
+  false
+}
+
+/// [hits_any] and [hits_any_moving], over `others[first]` up to `others[end]`.
 let any_stops<const P: i64> = pure (
   self: Collider,
   x: i16,
   y: i16,
   from_y: i16,
   moving: bool,
-  others: ref [P]Collider
+  others: ref [P]Collider,
+  first: u16,
+  end: u16
 ) -> bool => {
-  for k in 0..<others.len() {
+  // A map has tens of these and an entity tests them on each axis every frame, so the
+  // layers and rectangles are compared here, inline: a call a pair, with its colliders
+  // copied, cost the 68000 two thirds of a frame for two walking enemies (10/05).
+  if self.shape.width <= 0 || self.shape.height <= 0 { return false }
+  let left = i32(x) + i32(self.shape.x)
+  let top = i32(y) + i32(self.shape.y)
+  let right = left + i32(self.shape.width)
+  let bottom = top + i32(self.shape.height)
+  let boxed = !self.shape.ellipse
+  for k: u16 in first..<end {
+    if (self.mask & others[k].layers) == 0 { continue }
+    let o = others[k].shape
+    if i32(o.x) >= right || i32(o.x) + i32(o.width) <= left || i32(o.y) >= bottom || i32(o.y) + i32(o.height) <= top {
+      continue
+    }
+    // Two boxes whose rectangles overlap overlap: answered here, where the call would
+    // copy both — unless the other is one way, or has no area.
+    if boxed && !o.ellipse && !others[k].one_way && o.width > 0 && o.height > 0 { return true }
     if self.stopped_by(x, y, from_y, moving, others[k], 0, 0) { return true }
   }
   false
@@ -291,6 +374,8 @@ let map_stops<const N: i64, const M: i64, const K: i64> = pure (
   starts: ref [M]u16,
   shapes: ref [K]Collider
 ) -> bool => {
+  // Tiles that carry no shapes at all — a map whose collision is its own — meet nothing.
+  if starts[starts.len() - 1] == 0 { return false }
   let left = i32(x) + i32(self.shape.x)
   let top = i32(y) + i32(self.shape.y)
   let rows = i32(cells.len()) / i32(width)

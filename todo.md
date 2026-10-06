@@ -892,6 +892,13 @@ sets V on every add. What stands between that and a ROM:
   refused by a console profile (`noalloc` on the frame loop).
 - **[OPEN] Compiler helpers**: 64-bit multiply/divide and soft float (`__muldi3`,
   `__muldf3`, …) — compiler-rt's generic C builds with the M68k clang and is permissive.
+- **[OPEN] The M68k backend spills a loop's values to the stack** (10/06): the collision
+  search reloads its bounds with `movem` each pass, ~400 cycles a collider, and a function's
+  prologue saves eight registers. Probe `llc`'s register allocators and `i16` bounds before
+  writing more Genesis loops around it; COMPLETED 10/06 has the profile.
+- **[IDEA] A profiler in Sheliak**: master clocks by opcode address, named from the program's
+  symbols — the throwaway build that found the 10/06 hot spot. `pkg/rom` would need to keep
+  local symbols (it maps globals only) for the ROM's own map.
 - **[OPEN] Untyped loop variables default to `i64`** (09/29) — emulated, and slow, on the
   68000. A console profile should steer to `i16`/`i32`, or make the default per target.
 - **[OPEN] Memory-mapped I/O needs volatile reads and writes** (the VDP ports, the pads):

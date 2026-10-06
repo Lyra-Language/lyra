@@ -14,7 +14,8 @@ import (
 // (10/02: the hero, walking down after walking left into a rock, could not move); and
 // meeting is one-sided. Pushed both ways at once it goes no faster than its top speed
 // (10/02: the hero walked diagonally 1.4 times as fast). A one-way collider, the map's or
-// a tile's, is stood on from above and passed through from below and across.
+// a tile's, is stood on from above and passed through from below and across. A map's own
+// colliders, gathered by 64-pixel band, are searched only in the bands a collider reaches.
 func TestRun_EntitiesMoveCollideAndMeet(t *testing.T) {
 	root := repoRoot(t)
 	t.Setenv("LYRA_STD", root)
@@ -134,18 +135,20 @@ let main = () -> u8 => {
   // on layer 1 — with no tile under it — stops the feet as a tile's would; one on layer 2,
   // which the feet do not look for, does not.
   let empty: [16]u16 = #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  // One band of a map's own colliders, holding the one there is.
+  let one_band: [2]u16 = #[0, 1]
   let wall: [1]Collider = #[Collider { shape: Shape { x: 20, y: 0, width: 8, height: 32 }, layers: 1, mask: 0 }]
   var m = HERO.spawn(0, 0)
   for _ in 0..<20 {
     m.push(1, 0)
-    m.move_in_with(empty, 4, 1, starts, tiles, wall)
+    m.move_in_with(empty, 4, 1, starts, tiles, one_band, wall)
   }
   if m.x() != 8 || m.vx != 0 { return 20 }
   let other: [1]Collider = #[Collider { shape: Shape { x: 20, y: 0, width: 8, height: 32 }, layers: 2, mask: 0 }]
   var past = HERO.spawn(0, 0)
   for _ in 0..<20 {
     past.push(1, 0)
-    past.move_in_with(empty, 4, 1, starts, tiles, other)
+    past.move_in_with(empty, 4, 1, starts, tiles, one_band, other)
   }
   if past.x() != 16 { return 21 }
   // A large box is compared whole: a floor 300 pixels wide.
@@ -159,23 +162,23 @@ let main = () -> u8 => {
   var lands = faller.spawn(0, 0)
   for _ in 0..<40 {
     lands.push(0, 0)
-    lands.move_in_with(empty, 4, 1, starts, tiles, platform)
+    lands.move_in_with(empty, 4, 1, starts, tiles, one_band, platform)
   }
   if lands.y() != 4 || lands.vy != 0 { return 23 }
   var jumps = faller.spawn(0, 14)
   jumps.vy = -1024
-  jumps.move_in_with(empty, 4, 1, starts, tiles, platform)
+  jumps.move_in_with(empty, 4, 1, starts, tiles, one_band, platform)
   if jumps.y() != 10 { return 24 }
   var drops = faller.spawn(0, 10)
   drops.vy = 256
-  drops.move_in_with(empty, 4, 1, starts, tiles, platform)
+  drops.move_in_with(empty, 4, 1, starts, tiles, one_band, platform)
   if drops.y() != 11 { return 25 }
   // The gate's top, y 15, a pixel into the feet: no move from above could reach it.
   let gate: [1]Collider = #[Collider { shape: Shape { x: 20, y: 15, width: 8, height: 17 }, layers: 1, mask: 0, one_way: true }]
   var walks = HERO.spawn(0, 0)
   for _ in 0..<20 {
     walks.push(1, 0)
-    walks.move_in_with(empty, 4, 1, starts, tiles, gate)
+    walks.move_in_with(empty, 4, 1, starts, tiles, one_band, gate)
   }
   if walks.x() != 16 { return 26 }
   // A tile's collider one-way too, its tile at cell (2, 2), pixels x 16..24, y 16..24:
@@ -194,6 +197,41 @@ let main = () -> u8 => {
   if over.y() != 0 || over.vy != 0 { return 28 }
   // Overlap without a move meets it as any collider; a move with no fall does not.
   if !FEET.hits_any(0, 8, platform) || FEET.hits_any_moving(0, 8, 8, platform) { return 29 }
+
+  // Banded: three 64-pixel bands. A post at x 140..148 is band 2's; a beam x 40..100
+  // reaches bands 0 and 1, so it is in both. Only the bands a collider reaches are
+  // searched: the feet (x 2..12 of the entity) at x 126 reach x 128.. — band 2 — and meet
+  // the post; at x 100 they reach bands 1 and 2 (x 102..112), and meet nothing there.
+  let post = Collider { shape: Shape { x: 140, y: 0, width: 8, height: 32 }, layers: 1, mask: 0 }
+  let beam = Collider { shape: Shape { x: 40, y: 12, width: 60, height: 4 }, layers: 1, mask: 0 }
+  let bands: [4]u16 = #[0, 1, 2, 3]
+  let banded: [3]Collider = #[beam, beam, post]
+  if !FEET.hits_banded(132, 0, bands, banded) { return 30 }
+  if FEET.hits_banded(100, 0, bands, banded) { return 31 }
+  // Across two bands, the second is searched too: the feet at x 50 (52..62, band 0) and at
+  // x 60 (62..72, bands 0 and 1) both meet the beam; the post only from band 2.
+  if !FEET.hits_banded(50, 0, bands, banded) || !FEET.hits_banded(60, 0, bands, banded) { return 32 }
+  let only_post: [4]u16 = #[0, 0, 0, 1]
+  let post_alone: [1]Collider = #[post]
+  if !FEET.hits_banded(130, 0, only_post, post_alone) { return 33 }
+  // Off the map's edges, the first band and the last.
+  let edges: [3]u16 = #[0, 1, 2]
+  let left_wall = Collider { shape: Shape { x: -20, y: 0, width: 24, height: 32 }, layers: 1, mask: 0 }
+  let right_wall = Collider { shape: Shape { x: 120, y: 0, width: 40, height: 32 }, layers: 1, mask: 0 }
+  let walls: [2]Collider = #[left_wall, right_wall]
+  if !FEET.hits_banded(-6, 0, edges, walls) || !FEET.hits_banded(140, 0, edges, walls) { return 34 }
+  // An entity moved through banded colliders: walking right, it stops at the post.
+  let wide: [64]u16 = #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  var walker = HERO.spawn(100, 0)
+  for _ in 0..<40 {
+    walker.push(1, 0)
+    walker.move_in_with(wide, 32, 1, starts, tiles, only_post, post_alone)
+  }
+  if walker.x() != 128 || walker.vx != 0 { return 35 }
+  // A shape only in the second band a collider reaches: the feet at x 118 (120..130)
+  // reach bands 1 and 2, and a post at 128..136, band 2's alone, is met.
+  let second: [1]Collider = #[Collider { shape: Shape { x: 128, y: 0, width: 8, height: 32 }, layers: 1, mask: 0 }]
+  if !FEET.hits_banded(118, 0, only_post, second) { return 36 }
   0
 }
 `), 0o644); err != nil {
