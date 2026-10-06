@@ -37,6 +37,12 @@ module std.genesis.collision
 //! move, pick a star up. A map's tiles are colliders that look for nothing, so a collider
 //! [hits_map] only on the tiles of layers it looks for: a boat's hull can stop at a wall
 //! and not at water.
+//!
+//! **A one-way collider is solid from above only** (`one_way`): a platform stood on and
+//! jumped up through. Overlap does not say which way something came, so it counts only in
+//! a move — [hits_map_moving], [hits_any_moving], which `std.genesis.entity`'s moves ask —
+//! and there only when the move came down onto it from clear above it; [hits_map] and
+//! [hits_any] count it as they count any other.
 
 /// A box, or the ellipse filling it, from its owner's top-left, in pixels.
 pub struct Shape {
@@ -47,11 +53,13 @@ pub struct Shape {
   height: i16,
 }
 
-/// A shape on collision layers `layers`, looking for those in `mask` — one bit a layer.
+/// A shape on collision layers `layers`, looking for those in `mask` — one bit a layer;
+/// `one_way`, met in a move only coming down onto it ([hits_map_moving]).
 pub struct Collider {
   shape: Shape,
   layers: u16,
   mask: u16,
+  one_way: bool = false,
 }
 
 /// Whether this collider on something at (`ax`, `ay`) meets `b` on something at (`bx`,
@@ -178,9 +186,6 @@ pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
   false
 }
 
-/// Whether this collider on something at (`x`, `y`) meets a tile of a map: as the shape
-/// form above, but each tile's shapes are colliders, and only those on a layer this one
-/// looks for count.
 /// Whether this collider on something at (`x`, `y`) meets one of `others` it looks for —
 /// colliders placed in the world itself, at its origin: a map's own shapes, in the map's
 /// pixels. One-sided, as [meets] is.
@@ -189,20 +194,97 @@ pub let hits_any<const P: i64> = pure (
   x: i16,
   y: i16,
   others: ref [P]Collider
-) -> bool => {
-  for k in 0..<others.len() {
-    let other = others[k]
-    if (self.mask & other.layers) != 0 && self.shape.overlaps(x, y, other.shape, 0, 0) {
-      return true
-    }
-  }
-  false
-}
+) -> bool => self.any_stops(x, y, y, false, others)
 
+/// [hits_any] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way collider
+/// counts only when the move came down onto it — overlapping it at `y`, clear of it at
+/// `from_y` above.
+pub let hits_any_moving<const P: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  from_y: i16,
+  others: ref [P]Collider
+) -> bool => self.any_stops(x, y, from_y, true, others)
+
+/// Whether this collider on something at (`x`, `y`) meets a tile of a map: as the shape
+/// form above, but each tile's shapes are colliders, and only those on a layer this one
+/// looks for count.
 pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
   self: Collider,
   x: i16,
   y: i16,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Collider
+) -> bool => self.map_stops(x, y, y, false, cells, width, first_tile, starts, shapes)
+
+/// [hits_map] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way tile
+/// collider counts only when the move came down onto it, as in [hits_any_moving].
+pub let hits_map_moving<const N: i64, const M: i64, const K: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  from_y: i16,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Collider
+) -> bool => self.map_stops(x, y, from_y, true, cells, width, first_tile, starts, shapes)
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Whether this collider, at (`x`, `y`) — moved there from (`x`, `from_y`) when `moving` —
+/// is stopped by `other` placed at (`ox`, `oy`): it looks for one of `other`'s layers,
+/// their shapes overlap, and, `other` being one-way, a move came down onto it from clear
+/// above. Not moving, a one-way collider is met as any other is.
+let stopped_by = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  from_y: i16,
+  moving: bool,
+  other: Collider,
+  ox: i16,
+  oy: i16
+) -> bool => {
+  if (self.mask & other.layers) == 0 || !self.shape.overlaps(x, y, other.shape, ox, oy) {
+    return false
+  }
+  !other.one_way || !moving || (from_y < y && !self.shape.overlaps(
+    x,
+    from_y,
+    other.shape,
+    ox,
+    oy
+  ))
+}
+
+/// [hits_any] and [hits_any_moving].
+let any_stops<const P: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  from_y: i16,
+  moving: bool,
+  others: ref [P]Collider
+) -> bool => {
+  for k in 0..<others.len() {
+    if self.stopped_by(x, y, from_y, moving, others[k], 0, 0) { return true }
+  }
+  false
+}
+
+/// [hits_map] and [hits_map_moving].
+let map_stops<const N: i64, const M: i64, const K: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  from_y: i16,
+  moving: bool,
   cells: ref [N]u16,
   width: u16,
   first_tile: u16,
@@ -229,13 +311,9 @@ pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
           if (self.mask & other.layers) == 0 { continue }
           if (word & 0x0800) != 0 { other = other.mirrored(8) }
           if (word & 0x1000) != 0 { other = other.flipped(8) }
-          if self.shape.overlaps(
-            x,
-            y,
-            other.shape,
-            i16(column * 8),
-            i16(row * 8)
-          ) { return true }
+          if self.stopped_by(x, y, from_y, moving, other, i16(column * 8), i16(row * 8)) {
+            return true
+          }
         }
       }
       column += 1
@@ -244,8 +322,6 @@ pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
   }
   false
 }
-
-// ── Beneath ──────────────────────────────────────────────────────────────────────────
 
 /// Whether (`dx`, `dy`) from an ellipse's centre is inside it, its radii `rx` and `ry`.
 let inside = pure (dx: i32, dy: i32, rx: i32, ry: i32) -> bool =>

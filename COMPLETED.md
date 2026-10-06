@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 10/05/26 — `std.genesis`: one-way colliders
+
+A platform the player stands on and jumps up through (asked for a Tiled level's grass
+ledge). `Collider.one_way`, defaulting false so every existing literal stands. **Overlap
+cannot say which way something came**, so the rule lives in moves: `hits_map_moving` and
+`hits_any_moving` take where the collider came from (`from_y`), and a one-way collider
+stops it only when it came down onto it — overlapping at `y`, clear of it at `from_y`
+above. `move_in_with` passes the old `y` for the vertical move and the same `y` for the
+horizontal one and the turn check, so walking across one or turning inside one is never
+stopped; and having jumped up into one, the entity falls back through, since it was not
+clear above. The plain `hits_map`/`hits_any` count it as any overlap — a game asking
+"am I standing on something" a pixel lower still sees it. One private walk serves both
+forms (`map_stops`, `any_stops`). `TestRun_EntitiesMoveCollideAndMeet` cases 23–29: lands
+on a map platform, jumps up into it, falls on through from inside, walks across a one-way
+gate whose top is a pixel into the feet (a full-height gate let a `from_y = y - 1`
+mutant through), and a one-way tile jumped into and landed on. Vega's hero runs it on
+the 68000 too (`check_hero_one_way_ledge` in Sheliak).
+
 ### 10/05/26 — `std.genesis`: a map's own colliders
 
 Tiled levels mark collision with rectangles on an object layer, over cells whose tiles are

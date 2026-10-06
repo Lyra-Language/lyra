@@ -13,7 +13,8 @@ import (
 // turning beside a wall leaves its colliders unturned until they fit, so it is not stuck
 // (10/02: the hero, walking down after walking left into a rock, could not move); and
 // meeting is one-sided. Pushed both ways at once it goes no faster than its top speed
-// (10/02: the hero walked diagonally 1.4 times as fast).
+// (10/02: the hero walked diagonally 1.4 times as fast). A one-way collider, the map's or
+// a tile's, is stood on from above and passed through from below and across.
 func TestRun_EntitiesMoveCollideAndMeet(t *testing.T) {
 	root := repoRoot(t)
 	t.Setenv("LYRA_STD", root)
@@ -149,6 +150,50 @@ let main = () -> u8 => {
   if past.x() != 16 { return 21 }
   // A large box is compared whole: a floor 300 pixels wide.
   if !FEET.hits_any(100, 0, #[Collider { shape: Shape { x: 0, y: 14, width: 300, height: 8 }, layers: 1, mask: 0 }]) { return 22 }
+
+  // A one-way platform on the map, y 20..24 across it: falling, the feet (y 12..16 of the
+  // sprite) land on it, touching; jumping up from below into it passes; falling from
+  // inside it goes on through; walking across a one-way wall passes.
+  let platform: [1]Collider = #[Collider { shape: Shape { x: 0, y: 20, width: 32, height: 4 }, layers: 1, mask: 0, one_way: true }]
+  let faller = EntityKind { HERO | gravity: 64 }
+  var lands = faller.spawn(0, 0)
+  for _ in 0..<40 {
+    lands.push(0, 0)
+    lands.move_in_with(empty, 4, 1, starts, tiles, platform)
+  }
+  if lands.y() != 4 || lands.vy != 0 { return 23 }
+  var jumps = faller.spawn(0, 14)
+  jumps.vy = -1024
+  jumps.move_in_with(empty, 4, 1, starts, tiles, platform)
+  if jumps.y() != 10 { return 24 }
+  var drops = faller.spawn(0, 10)
+  drops.vy = 256
+  drops.move_in_with(empty, 4, 1, starts, tiles, platform)
+  if drops.y() != 11 { return 25 }
+  // The gate's top, y 15, a pixel into the feet: no move from above could reach it.
+  let gate: [1]Collider = #[Collider { shape: Shape { x: 20, y: 15, width: 8, height: 17 }, layers: 1, mask: 0, one_way: true }]
+  var walks = HERO.spawn(0, 0)
+  for _ in 0..<20 {
+    walks.push(1, 0)
+    walks.move_in_with(empty, 4, 1, starts, tiles, gate)
+  }
+  if walks.x() != 16 { return 26 }
+  // A tile's collider one-way too, its tile at cell (2, 2), pixels x 16..24, y 16..24:
+  // jumped up into from below, then landed on from above.
+  let low: [16]u16 = #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0]
+  let ledge: [1]Collider = #[Collider { shape: Shape { x: 0, y: 0, width: 8, height: 8 }, layers: 1, mask: 0, one_way: true }]
+  var under = faller.spawn(12, 14)
+  under.vy = -1024
+  under.move_in(low, 4, 1, starts, ledge)
+  if under.y() != 10 { return 27 }
+  var over = faller.spawn(12, 0)
+  for _ in 0..<40 {
+    over.push(0, 0)
+    over.move_in(low, 4, 1, starts, ledge)
+  }
+  if over.y() != 0 || over.vy != 0 { return 28 }
+  // Overlap without a move meets it as any collider; a move with no fall does not.
+  if !FEET.hits_any(0, 8, platform) || FEET.hits_any_moving(0, 8, 8, platform) { return 29 }
   0
 }
 `), 0o644); err != nil {
