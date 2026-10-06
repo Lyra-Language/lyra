@@ -14,6 +14,7 @@ func TestTypeCheck_DuplicateArms_IntLiteral_Warning(t *testing.T) {
   }`, false)
 	assertWarningsAre(t, res,
 		"duplicate match arm: pattern 1 is already covered by an earlier arm")
+	assertSingleWarningWithCode(t, res, "lyra-W021") // the arm is unreachable, as W021 says
 }
 
 func TestTypeCheck_DuplicateArms_StringLiteral_Warning(t *testing.T) {
@@ -74,6 +75,7 @@ func TestTypeCheck_OverlappingArms_Ranges_Warning(t *testing.T) {
   }`, false)
 	assertWarningsAre(t, res,
 		"overlapping match arm: this range overlaps with a previous arm")
+	assertSingleWarningWithCode(t, res, "lyra-W028")
 }
 
 func TestTypeCheck_OverlappingArms_NonOverlapping_Ok(t *testing.T) {

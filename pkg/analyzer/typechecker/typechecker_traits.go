@@ -127,7 +127,7 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 
 		// 3. Method not declared in the trait.
 		if !declared {
-			tc.addError(implMethod.Clause.GetLocation(), SeverityWarning,
+			tc.addWarning(implMethod.Clause.GetLocation(), diag.CodeUndeclaredImplMethod,
 				"impl of %s for %s: method %q is not declared in trait",
 				impl.TraitName, impl.Type, implMethod.Name.GetName())
 			continue

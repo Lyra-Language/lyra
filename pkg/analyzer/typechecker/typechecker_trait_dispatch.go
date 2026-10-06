@@ -1597,7 +1597,7 @@ func (tc *TypeChecker) warnFloatEqualityAtInstantiation(calleeName string, lambd
 				continue
 			}
 			if bound, ok := subst[g.Name]; ok && isFloatType(bound) {
-				tc.addErrorCode(call.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
+				tc.addWarning(call.GetLocation(), diag.CodeImpreciseFloatEquality,
 					"%s: %s is %s here, and its body compares values of that type with %s — "+
 						"comparing floats this way may give unexpected results due to floating-point precision",
 					calleeName, g.Name, bound, cmp.Operator)

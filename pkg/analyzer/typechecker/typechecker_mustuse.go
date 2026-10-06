@@ -31,7 +31,7 @@ func (tc *TypeChecker) checkMustUseResult(expr ast.Expression, t types.Type) {
 	if !ok {
 		return
 	}
-	tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeUnusedResult,
+	tc.addWarning(expr.GetLocation(), diag.CodeUnusedResult,
 		"unused %s: the value is discarded without handling its error/absence; "+
 			"match on it, propagate it with `?`, or bind it (`let _ = ...`) to discard it intentionally",
 		kind)

@@ -144,6 +144,91 @@ func TestCodes_UnusedAreDeclaredRetired(t *testing.T) {
 	}
 }
 
+// uncodedReporters are the functions that report a diagnostic without being handed a code:
+// the typechecker's addError (which attaches the generic lyra-E001) and the collector's
+// AddError family (which attaches none). Each takes its severity as argument 1.
+var uncodedReporters = map[string]bool{
+	"addError":        true,
+	"AddError":        true,
+	"AddErrorRelated": true,
+}
+
+// TestCodes_UncodedReportersTakeOnlyErrors holds every call to an uncoded reporter to a
+// literal `SeverityError`. A warning through one of them went out as `warning [lyra-E001]`
+// — an error's code on something that is not an error — or with no code at all; six did
+// until 10/06. A warning goes through a reporter that takes its code (the typechecker's
+// addWarning, the collector's AddErrorCoded).
+//
+// Static rather than a check at the reporting site, so a warning on a path no test reaches
+// is caught all the same. A reporter forwarding its own severity parameter to another is
+// the one exemption: its callers are checked instead, which is why only a reporter may.
+func TestCodes_UncodedReportersTakeOnlyErrors(t *testing.T) {
+	checked := 0
+	for _, root := range []string{"../../pkg", "../../cmd"} {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") ||
+				strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				params := map[string]bool{}
+				if uncodedReporters[fn.Name.Name] {
+					for _, field := range fn.Type.Params.List {
+						for _, name := range field.Names {
+							params[name.Name] = true
+						}
+					}
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok || len(call.Args) < 2 {
+						return true
+					}
+					sel, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok || !uncodedReporters[sel.Sel.Name] {
+						return true
+					}
+					checked++
+					// SeverityError, diag.SeverityError, or the collector's alias for it,
+					// CollectorErrorSeverityError.
+					switch sev := call.Args[1].(type) {
+					case *ast.Ident:
+						if strings.HasSuffix(sev.Name, "SeverityError") || params[sev.Name] {
+							return true
+						}
+					case *ast.SelectorExpr:
+						if strings.HasSuffix(sev.Sel.Name, "SeverityError") {
+							return true
+						}
+					}
+					t.Errorf("%s: %s is passed a severity other than SeverityError — it attaches "+
+						"no code of the diagnostic's own, so a warning would go out as lyra-E001 "+
+						"or uncoded. Give the warning a lyra-W… code in codes.go and report it "+
+						"through a reporter that takes one",
+						fset.Position(call.Pos()), sel.Sel.Name)
+					return true
+				})
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
+	}
+	if checked < 100 {
+		t.Fatalf("checked only %d calls — the walk is not seeing the reporters", checked)
+	}
+}
+
 // parseCodes reads the constant block out of codes.go in source order.
 func parseCodes(t *testing.T) []codeConst {
 	t.Helper()

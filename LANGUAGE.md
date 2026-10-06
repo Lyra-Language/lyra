@@ -210,6 +210,8 @@ operation the operator would have refused, as a value", and `%` traps there.
 
 A place is what `=` writes and `&` addresses: a binding, a field `p.x`, an element `xs[i]`, a tuple position `p.0`, or a deref `p^`, and any path of those (`b.t.1`, `xs[i].0`). A tuple position obeys a field's rules — the root must allow interior mutation, and the value must fit the element's type.
 
+A root allows interior mutation when it is a `var` (also reassignable) or a `let mut` (not); a plain `let` allows neither. `var mut` says nothing `var` does not, and warns `lyra-W030`.
+
 **Parameter modes.** A bare parameter and `own` are by value (`own` transfers ownership). `mut` is a mutable borrow **on every type, scalars included**: the parameter is the caller's storage, so `n = n + 1`, `n += 1` or `&mut n` in the callee reaches the caller's `n` (`types.IsByRefParam`). The argument must be a mutable place — a `var`, or a field/element of one; a literal, a temporary or a `let` is `lyra-E001` — and a write through a `mut` parameter is an effect `pure` refuses. `ref` is a read-only borrow, by reference except on a scalar, where it is the value; `own`/`ref` on a scalar are inert (`lyra-W010`). A `mut` scalar is what an in-out C pointer wraps as: `checkbox(label, open)` over ImGui's `bool *`. **A function with a by-reference parameter cannot be a value** (`lyra-E082`): a call through a function value passes every argument by value, so a nested lambda with one, or a named function with one referenced other than as a callee (`apply(inc, n)`), is refused — the latter segfaulted before 09/28.
 
 **A `mut` argument is exclusive by place.** `mut` and `ref` parameters point into the caller's storage, so within one call, no other `mut` or `ref` argument may reach the place a `mut` argument names (`lyra-E001`). Places overlap when one path is a prefix of the other (`s` and `s.a`, or `s.a` twice) and not when they part at a field or tuple position: `f(s.music, s.chip)` is two slots, as disjoint as two variables. Two elements `xs[i]`/`xs[j]` always overlap (an index is a runtime value), as do a union's members (one slot). Two `ref`s may share; a `ref` scalar is exempt (passed by value), a `mut` scalar is not (`swap(n, n)`). This is about the slots arguments point into, not heap aliasing: two fields holding one reference-counted array still share its buffer, as two variables can.
@@ -232,6 +234,11 @@ A `let`/`var`, a `for` variable or a pattern binding may take a name already in 
 - Places are the RHS's context: `(a, b) = (4.0, 0.5)` on f32 narrows both. The desugared `let` records its assignments in `DestructuringDeclStmt.Assigns` for this. A mismatch is reported with the stand-alone assignment's message.
 - Any tuple destructuring arity mismatch reports once; unpaired names are bound untyped (no cascading "undefined identifier").
 
+### Loops
+
+- **`for { … }` is the infinite loop**: it runs until a `break` or `return`, and with no `break` that leaves it, it is `never` — so a function with a return type may end in one. `for cond { … }`, `for init; cond; post { … }` and `for x in xs { … }` can finish, and a function with a return type that ends in one is refused.
+- **A literal condition warns `lyra-W027`**: `if true`, `if false`, `for false` (the body never runs), and `for true`, whose message names `for { … }` — it has a condition, so it can finish as far as types are concerned, and a function ending in it is refused where `for { … }` is not.
+
 ### Patterns
 
 - **One meaning in every position** — a `match` arm, `if let`, `let`, `let … else` and a parameter. A literal, range or regex at any depth is checked against the type in its position by the rule a `match` on that type applies.
@@ -244,6 +251,7 @@ A `let`/`var`, a `for` variable or a pattern binding may take a name already in 
 - An all-caps constructor takes its payload in parentheses in a pattern: `CD(x)`, not `CD x`.
 - **`_` binds nothing, so it may repeat** — in a pattern and in a parameter list, a function's or a lambda's: `(_, _) => 0` takes two arguments and ignores both. Until 10/02 a second `_` parameter was "already declared".
 - **A plain `let` and a parameter take only a pattern that cannot fail** (`lyra-E077`): `let Some(v) = m` needs `let … else`, and a parameter wants a plain name and a `match`. A literal, range, regex or array pattern can fail; a one-constructor `data` pattern cannot (`let W(x) = w`).
+- **An arm an earlier unguarded arm already covers warns `lyra-W021`** — a bind-only or irrefutable pattern, an alternation's alternative, or the same literal repeated (`1 => …, 1 => …`). A range arm that overlaps an earlier one only in part warns `lyra-W028`: narrow it rather than delete it.
 - **A `data` match covers a constructor only where it covers its payloads** (`lyra-E009`): `Some(0) => …, None => …` is not exhaustive. Coverage may be spread across arms at any depth, nested tuples and structs included.
 
 ### Operator overloading
@@ -472,6 +480,8 @@ A `gen` function yields into a `Seq<t>`; combinators are Lyra in `std/prelude/se
 ## 4. Traits, Generics and Dispatch
 
 In a trait method's signature `Self` is the implementing type at any depth: `(Self) -> []Self`, `Maybe<Self>`, `(Self, Self)` and a callback's `(Self) -> Self` all mean it, in the impl and at the call.
+
+An impl method the trait does not declare warns `lyra-W029` — usually a misspelt method name, or a method the trait has since dropped.
 
 ### Supertraits
 

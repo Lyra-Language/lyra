@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -38,6 +39,13 @@ func TestCollect_Let_PlainIsImmutable(t *testing.T) {
 func TestCollect_VarMut_Redundant_Warns(t *testing.T) {
 	errors := parseAndCollectErrors(t, `var mut x = 1`)
 	assertCollectorErrorContains(t, errors, "`var mut` is redundant")
+	for _, e := range errors {
+		if d, ok := e.(diag.Diagnostic); ok && d.Code == diag.CodeRedundantVarMut &&
+			d.Severity == diag.SeverityWarning {
+			return
+		}
+	}
+	t.Errorf("want a lyra-W030 warning, got %v", errors)
 }
 
 // A struct field marked `readonly` is frozen; an unmarked field is mutable.

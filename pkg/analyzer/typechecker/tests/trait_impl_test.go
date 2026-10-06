@@ -80,6 +80,7 @@ func TestTraitImpl_ExtraneousMethod(t *testing.T) {
 	}
 	`, false)
 	assertWarningsAre(t, res, `impl of Show for i64: method "extra" is not declared in trait`)
+	assertSingleWarningWithCode(t, res, "lyra-W029")
 }
 
 func TestTraitImpl_WrongArity(t *testing.T) {

@@ -2263,7 +2263,7 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 			// test (the prelude's float `min`/`max`/`clamp` use it). Only a bare name on
 			// both sides qualifies; `f() != f()` compares two evaluations.
 			if (isFloatType(leftType) || isFloatType(rightType)) && !isSelfComparison(expr) {
-				tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
+				tc.addWarning(expr.GetLocation(), diag.CodeImpreciseFloatEquality,
 					"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
 			}
 			tc.propagateComparisonWidth(expr, leftType, rightType)
@@ -5834,8 +5834,20 @@ func (tc *TypeChecker) inferTupleIndexExprType(t *ast.TupleIndexExpr) types.Type
 	return elem
 }
 
+// addError reports a type error under the generic lyra-E001. **sev must be
+// SeverityError**: a warning under E001 printed as `warning [lyra-E001]`, an error code
+// on something that is not one, and five warnings went out that way until 10/06. A
+// warning goes through addWarning, which cannot be called without a code;
+// TestCodes_UncodedReportersTakeOnlyErrors (pkg/diagnostic) holds every call site to a
+// literal SeverityError.
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {
 	tc.addErrorCode(loc, sev, diag.CodeTypeError, format, args...)
+}
+
+// addWarning reports a warning under its own code — a lyra-W…, or the code of a rule
+// whose severity depends on the reporting site (lyra-E009).
+func (tc *TypeChecker) addWarning(loc ast.Location, code, format string, args ...any) {
+	tc.addErrorCode(loc, SeverityWarning, code, format, args...)
 }
 
 // addErrorCode is addError with an explicit diagnostic code instead of the
