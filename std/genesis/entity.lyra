@@ -158,7 +158,9 @@ pub let move = (self: mut Entity) -> void => {
 
 /// Moved by its speed in a map, kept inside it: each axis on its own, and one whose move
 /// would meet a tile its colliders look for, or leave the map, stops — so it slides along
-/// a wall rather than sticking to it. Its colliders turn as it has once they fit. The map
+/// a wall rather than sticking to it. Not `kept_in`, the map's edges stop nothing: it
+/// leaves where the map's collision leaves a gap — down a hole, out of a door — and the
+/// game decides what that means. Its colliders turn as it has once they fit. The map
 /// is `std.genesis.collision.hits_map`'s: `cells` row by row, `width` a row, its tile
 /// set's tiles from `first_tile`, their colliders `shapes[starts[t]]` up to `starts[t + 1]`.
 pub let move_in<const N: i64, const M: i64, const K: i64> = (
@@ -167,9 +169,19 @@ pub let move_in<const N: i64, const M: i64, const K: i64> = (
   width: u16,
   first_tile: u16,
   starts: ref [M]u16,
-  shapes: ref [K]Collider
+  shapes: ref [K]Collider,
+  kept_in: bool = true
 ) -> void =>
-  self.move_in_with(cells, width, first_tile, starts, shapes, NO_BANDS, NO_MAP_SHAPES)
+  self.move_in_with(
+    cells,
+    width,
+    first_tile,
+    starts,
+    shapes,
+    NO_BANDS,
+    NO_MAP_SHAPES,
+    kept_in
+  )
 
 /// [move_in], stopped too by the map's own colliders — shapes drawn on the map itself, in
 /// its pixels, where its tiles carry none — gathered by 64-pixel band, `bands` saying where
@@ -187,11 +199,15 @@ pub let move_in_with<const N: i64, const M: i64, const K: i64, const B: i64, con
   starts: ref [M]u16,
   shapes: ref [K]Collider,
   bands: ref [B]u16,
-  map_shapes: ref [P]Collider
+  map_shapes: ref [P]Collider,
+  kept_in: bool = true
 ) -> void => {
   let rows = i32(cells.len()) / i32(width)
-  let right = (i32(width) * 8 - i32(self.kind.width)) << 8
-  let bottom = (rows * 8 - i32(self.kind.height)) << 8
+  // Where it may go, in 256ths of a pixel: the map, its edges' walls — or, not kept in,
+  // as far as its place stays a pixel an i16 holds.
+  let low = if kept_in { 0 } else { -OPEN_REACH }
+  let right = if kept_in { (i32(width) * 8 - i32(self.kind.width)) << 8 } else { OPEN_REACH }
+  let bottom = if kept_in { (rows * 8 - i32(self.kind.height)) << 8 } else { OPEN_REACH }
   // Turned: its colliders turn too, unless that would put one into a wall here.
   if self.hit_mirrored != self.mirrored && !self.kind.hits_tiles(
     self.x(),
@@ -218,6 +234,7 @@ pub let move_in_with<const N: i64, const M: i64, const K: i64, const B: i64, con
     shapes,
     bands,
     map_shapes,
+    low,
     right
   ) }
   if self.vy != 0 { self.move_up_or_down(
@@ -228,6 +245,7 @@ pub let move_in_with<const N: i64, const M: i64, const K: i64, const B: i64, con
     shapes,
     bands,
     map_shapes,
+    low,
     bottom
   ) }
 }
@@ -297,10 +315,11 @@ let move_across<const N: i64, const M: i64, const K: i64, const B: i64, const P:
   shapes: ref [K]Collider,
   bands: ref [B]u16,
   map_shapes: ref [P]Collider,
+  low: i32,
   right: i32
 ) -> void => {
   let wanted_x = self.fx + i32(self.vx)
-  let nx = wanted_x.clamp(0, right)
+  let nx = wanted_x.clamp(low, right)
   if self.kind.hits_tiles(
     i16(nx >> 8),
     self.y(),
@@ -332,10 +351,11 @@ let move_up_or_down<const N: i64, const M: i64, const K: i64, const B: i64, cons
   shapes: ref [K]Collider,
   bands: ref [B]u16,
   map_shapes: ref [P]Collider,
+  low: i32,
   bottom: i32
 ) -> void => {
   let wanted_y = self.fy + i32(self.vy)
-  let ny = wanted_y.clamp(0, bottom)
+  let ny = wanted_y.clamp(low, bottom)
   if self.kind.hits_tiles(
     self.x(),
     i16(ny >> 8),
@@ -396,6 +416,10 @@ let hits_tiles<const N: i64, const M: i64, const K: i64, const B: i64, const P: 
   }
   false
 }
+
+/// How far past a map's edges an entity not kept in may go, in 256ths of a pixel: 30,000
+/// pixels, so its whole-pixel place still fits an `i16`.
+const OPEN_REACH: i32 = 30000 << 8
 
 /// A map with no colliders of its own: one band of none, and a collider that meets nothing.
 const NO_BANDS: [2]u16 = #[0, 0]

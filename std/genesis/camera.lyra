@@ -103,6 +103,8 @@ pub let show_map<const N: i64> = (
   let left = cell_of(self.x)
   let top = cell_of(self.y)
   let shift = left % vdp.PLANE_WIDTH
+  // Its rows are runs of writes the vertical blank interrupt must not land in.
+  let held = vdp.hold_vblank()
   for row: u16 in 0..<vdp.PLANE_HEIGHT {
     let my = top + row
     vdp.set_vram_address(plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2)
@@ -112,6 +114,7 @@ pub let show_map<const N: i64> = (
       vdp.write_word(cell(cells, width, mx, my))
     }
   }
+  vdp.release_vblank(held)
   vdp.set_scroll(plane, self.x, self.y)
 }
 
@@ -133,6 +136,7 @@ pub let scroll_map<const N: i64> = (
     self.show_map(plane, cells, width)
     return
   }
+  let held = vdp.hold_vblank()
   if left > old_left {
     for mx: u16 in old_left + VIEW_COLUMNS..<left + VIEW_COLUMNS {
       write_column(plane, cells, width, mx, top)
@@ -147,6 +151,7 @@ pub let scroll_map<const N: i64> = (
   } else if top < old_top {
     for my: u16 in top..<old_top { write_row(plane, cells, width, my, left) }
   }
+  vdp.release_vblank(held)
   vdp.set_scroll(plane, self.x, self.y)
 }
 

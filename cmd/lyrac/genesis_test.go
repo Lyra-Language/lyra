@@ -408,6 +408,63 @@ let main = () -> void => {
 	}
 }
 
+// TestGenesis_APlaneDrawnUnderTheVBlankInterruptKeepsEveryCell draws two planes whole with
+// the display off and the vertical blank interrupt on — its handler writing the sprite
+// list, as every Vega game's does — the second long enough that the interrupt falls due
+// partway. The handler's writes move the VDP's address, so a row they landed in went on at
+// theirs and lost the rest of its cells: black bars across the platformer's level (10/06).
+// vdp's writers hold the interrupt off for their runs ([vdp.hold_vblank]). Every cell must
+// be green — tile 1's colour, set only once a later blank has come, so an interrupt held
+// and never let go fails too, the screen left red.
+func TestGenesis_APlaneDrawnUnderTheVBlankInterruptKeepsEveryCell(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	rom := genesisProgram(t, "race", `import std.genesis.vdp
+import std.genesis.sprites
+import std.genesis.camera.{ Camera }
+
+const SOLID: [8]u32 = #[
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+  0x11111111, 0x11111111, 0x11111111, 0x11111111,
+]
+const FULL: [2304]u16 = #[0x2001; 2304]
+const EMPTY: [2304]u16 = #[0; 2304]
+
+var blanks: u16 = 0
+
+@interrupt(vblank)
+let each_frame = () -> void => {
+  sprites.show()
+  blanks = blanks.wrapping_add(1)
+}
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(1, 1, vdp.rgb(7, 0, 0))
+  vdp.load_tiles(1, SOLID)
+  vdp.display_on()
+  vdp.enable_vblank_interrupt()
+  let view = Camera { world_width: 512, world_height: 288 }
+  let seen = blanks
+  for blanks == seen {}
+  vdp.display_off()
+  view.show_map(vdp.PLANE_A, EMPTY, 64)
+  view.show_map(vdp.PLANE_B, FULL, 64)
+  vdp.display_on()
+  let drawn = blanks
+  for blanks == drawn {}
+  vdp.set_color(1, 1, vdp.rgb(0, 7, 0))
+  for {}
+}
+`)
+	screen := runROM(t, rom, "120", "")
+	for k := 0; k+2 < len(screen.pixels); k += 3 {
+		if screen.pixels[k] != 0 || screen.pixels[k+1] != 0xff || screen.pixels[k+2] != 0 {
+			x, y := (k/3)%screen.width, (k/3)/screen.width
+			t.Fatalf("pixel (%d, %d) is %02x%02x%02x, not green: a cell lost, or the interrupt never back", x, y, screen.pixels[k], screen.pixels[k+1], screen.pixels[k+2])
+		}
+	}
+}
+
 // genesisProgram builds `source` as a Genesis program and answers the ROM's path.
 func genesisProgram(t *testing.T, name, source string) string {
 	t.Helper()

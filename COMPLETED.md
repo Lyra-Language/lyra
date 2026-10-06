@@ -24,6 +24,50 @@ program is asked to stop with SIGTERM — which SDL turns into a quit event — 
 after two seconds. `TestWatch_RestartsOnChangeAndSurvivesABrokenSave` runs one session
 end to end: a program that never exits replaced, a broken save surviving, an exit reported.
 
+### 10/06/26 — purity: a namespace call is not hidden by a local of its member's name
+
+`pad.held(held, pad.LEFT)` in a function with a parameter `held` was charged every effect —
+on the Genesis, "`run` allocates" (E085), naming the function and nothing in it. The purity
+pass resolved a dotted callee by checking the alias was no local and then looking the
+member up **through the capture stack**, where the parameter `held` stopped the search.
+`namespaceCallee` now resolves `alias.member` as the typechecker does (`moduleMemberType`):
+`NamespaceImport`, `ModuleDeclares`, `LookupFunctionIn` — a local named like the *alias*
+still hides the module. Found by Vega's platformer, its player's frame taking the pad
+state as `held`. `TestPurity_ANamespaceCallIsNotHiddenByALocalOfTheMembersName`.
+
+### 10/06/26 — modules: a directory of no source is not a second form
+
+Vega's platformer stopped building when its art kit — a folder named `assets`, of PNGs —
+was moved in beside the generated `assets.lyra`: `findModule` counted any directory as the
+module's directory form and refused the pair as ambiguous (E026). A directory now counts
+only when it holds a `.lyra` file directly (`holdsSource`); a lone directory of none is
+still reported as holding no source, as before. LANGUAGE.md § A module is a file or a
+directory. `TestResolve_ADirectoryOfNoSourceBesideTheFileIsNotTheModule`.
+
+### 10/06/26 — `std.genesis.vdp`: writes the vertical blank cannot land in
+
+The platformer showed black bars across its level once scenes were drawn during play: a
+plane written with the vertical blank interrupt on, and the handler's own writes (the
+sprite list) moving the VDP's address partway, so the rest of that row went on at theirs.
+Every Vega game's handler writes the sprite list, so every writer in `vdp` and the camera's
+`show_map`/`scroll_map` now hold the interrupt off for their run (`hold_vblank` /
+`release_vblank`, only when it was on — nested holds are harmless, and one that fell due is
+taken at the release). A game writing with `set_vram_address`/`write_word` holds it itself.
+Found in Sheliak only with the display off — with it on, the interrupt fell in rows below
+the screen — so `TestGenesis_APlaneDrawnUnderTheVBlankInterruptKeepsEveryCell` draws that
+way, and sets its colour only after a later blank, so a hold never let go fails too.
+
+### 10/06/26 — `std.genesis`: a map's edges may stop nothing
+
+`move_in` and `move_in_with` take `kept_in` (default true, so every caller stands): false,
+the map's edges are no walls, and an entity leaves where the map's collision leaves a gap —
+down a hole, out of a door — as far as its whole-pixel place still fits an `i16`
+(`OPEN_REACH`, 30,000 pixels). What leaving means is the game's: Vega's platformer loses a
+life below the map and changes scene through a side, its hero's field wraps. Tile and
+banded tests already met nothing past the edge, so nothing else changed.
+`TestRun_EntitiesMoveCollideAndMeet` cases 37–41: falls out of the bottom, walks out of the
+right and the left, stops at the edge when kept in, and a wall still stops him when not.
+
 ### 10/06/26 — `std.genesis`: collision a 68000 can afford, and how it was measured
 
 Two, then four, walking cactuses in Vega's platformer took its game from 60 frames a second

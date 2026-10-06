@@ -55,3 +55,22 @@ let main = () -> void => println("${use_one(1)} ${use_two(2)}")
 		}
 	})
 }
+
+// A namespace call is resolved in its module, whatever the caller's locals are named:
+// `pad.held(held, …)` inside a function with a parameter `held` found the parameter through
+// the capture stack and charged the call every effect — a `pure` caller refused, and on the
+// Genesis the function reported as allocating (10/06, Vega's platformer).
+func TestPurity_ANamespaceCallIsNotHiddenByALocalOfTheMembersName(t *testing.T) {
+	const pad = `module pad
+pub let held = pure (buttons: u16, button: u16) -> bool => (buttons & button) != 0
+`
+	const main = `module main
+import pad
+let run = pure (held: u16) -> bool => pad.held(held, 1)
+let main = () -> void => println("${run(1)}")
+`
+	res := analyzeFiles(t, map[string]string{"pad.lyra": pad, "main.lyra": main})
+	for _, d := range res.Errors() {
+		t.Errorf("unexpected: %s", d.Message)
+	}
+}

@@ -15,7 +15,8 @@ import (
 // meeting is one-sided. Pushed both ways at once it goes no faster than its top speed
 // (10/02: the hero walked diagonally 1.4 times as fast). A one-way collider, the map's or
 // a tile's, is stood on from above and passed through from below and across. A map's own
-// colliders, gathered by 64-pixel band, are searched only in the bands a collider reaches.
+// colliders, gathered by 64-pixel band, are searched only in the bands a collider reaches;
+// and a map's edges, not kept in, stop nothing.
 func TestRun_EntitiesMoveCollideAndMeet(t *testing.T) {
 	root := repoRoot(t)
 	t.Setenv("LYRA_STD", root)
@@ -137,6 +138,7 @@ let main = () -> u8 => {
   let empty: [16]u16 = #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   // One band of a map's own colliders, holding the one there is.
   let one_band: [2]u16 = #[0, 1]
+  let none_here: [1]Collider = #[Collider { shape: Shape { x: 0, y: 0, width: 0, height: 0 }, layers: 0, mask: 0 }]
   let wall: [1]Collider = #[Collider { shape: Shape { x: 20, y: 0, width: 8, height: 32 }, layers: 1, mask: 0 }]
   var m = HERO.spawn(0, 0)
   for _ in 0..<20 {
@@ -232,6 +234,40 @@ let main = () -> u8 => {
   // reach bands 1 and 2, and a post at 128..136, band 2's alone, is met.
   let second: [1]Collider = #[Collider { shape: Shape { x: 128, y: 0, width: 8, height: 32 }, layers: 1, mask: 0 }]
   if !FEET.hits_banded(118, 0, only_post, second) { return 36 }
+
+  // Open edges (not kept in): the map's edges stop nothing. Falling, he leaves the 32-pixel
+  // map's bottom; walking, its right side — where kept in, he stops at both.
+  var drop = faller.spawn(0, 0)
+  for _ in 0..<40 {
+    drop.push(0, 0)
+    drop.move_in_with(empty, 4, 1, starts, tiles, one_band, none_here, false)
+  }
+  if drop.y() <= 16 { return 37 }
+  var out = HERO.spawn(0, 0)
+  for _ in 0..<20 {
+    out.push(1, 0)
+    out.move_in_with(empty, 4, 1, starts, tiles, one_band, none_here, false)
+  }
+  if out.x() <= 16 || out.vx == 0 { return 38 }
+  var kept = HERO.spawn(0, 0)
+  for _ in 0..<20 {
+    kept.push(1, 0)
+    kept.move_in(empty, 4, 1, starts, tiles)
+  }
+  if kept.x() != 16 { return 39 }
+  // Out past the left edge too, and a wall still stops it there.
+  var back = HERO.spawn(0, 0)
+  for _ in 0..<20 {
+    back.push(-1, 0)
+    back.move_in(empty, 4, 1, starts, tiles, false)
+  }
+  if back.x() >= 0 { return 40 }
+  var walled = HERO.spawn(0, 0)
+  for _ in 0..<20 {
+    walled.push(1, 0)
+    walled.move_in_with(empty, 4, 1, starts, tiles, one_band, wall, false)
+  }
+  if walled.x() != 8 { return 41 }
   0
 }
 `), 0o644); err != nil {

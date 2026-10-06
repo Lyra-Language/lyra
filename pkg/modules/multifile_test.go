@@ -121,6 +121,31 @@ func TestResolve_BothFormsInOneRootIsAmbiguous(t *testing.T) {
 	}
 }
 
+// A directory of no source beside a module's file is not a second form of the module: the
+// file is it. A game's art kit, moved in beside its generated `assets.lyra` as `assets/`,
+// stopped Vega's platformer building (10/06).
+func TestResolve_ADirectoryOfNoSourceBesideTheFileIsNotTheModule(t *testing.T) {
+	root := write(t, map[string]string{
+		"app.lyra":               "import assets\nlet main = () -> u8 => u8(assets.one())",
+		"assets.lyra":            "module assets\npub let one = () -> i64 => 1",
+		"assets/1 Hero/idle.png": "not source",
+		"assets/readme.txt":      "art",
+	})
+	units, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root}, Options{})
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	found := false
+	for _, u := range units {
+		if filepath.Base(u.File) == "assets.lyra" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("assets.lyra is not the module; got %v", paths(units))
+	}
+}
+
 // Across *different* roots there is no ambiguity: the earlier root wins, which is the
 // ordinary shadowing every other lookup here does — a project's own module takes
 // precedence over the standard library's, in either form.

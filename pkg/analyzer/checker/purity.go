@@ -351,7 +351,39 @@ func (inf *inference) resolveCalleeAt(capture []scopeBindings, name string, loc 
 	if !strings.Contains(name, ".") {
 		return inf.resolveFunctionAt(capture, name, loc)
 	}
+	if lam, ok := inf.namespaceCallee(capture, name, loc); ok {
+		return lam, true
+	}
 	return resolveCallee(capture, name)
+}
+
+// namespaceCallee resolves `alias.member` when alias names a module the calling file
+// imported — in that module, as the typechecker does (moduleMemberType). A local of the
+// member's name does not hide it: `pad.held(held, …)` inside a function with a parameter
+// `held` resolved the member through the capture stack, found the parameter, and charged
+// the call every effect — refused on the Genesis as allocating (10/06, Vega's platformer).
+// A local named like the alias does hide the module, as it does for the typechecker.
+func (inf *inference) namespaceCallee(capture []scopeBindings, name string, loc ast.Location) (*ast.LambdaExpr, bool) {
+	if inf == nil || inf.lookup == nil {
+		return nil, false
+	}
+	alias, member, _ := strings.Cut(name, ".")
+	if strings.Contains(member, ".") {
+		return nil, false
+	}
+	for i := len(capture) - 1; i >= 1; i-- {
+		if _, shadowed := capture[i].mutable[alias]; shadowed {
+			return nil, false
+		}
+		if _, shadowed := capture[i].functions[alias]; shadowed {
+			return nil, false
+		}
+	}
+	imp, ok := inf.lookup.NamespaceImport(loc.File, alias)
+	if !ok || !inf.lookup.ModuleDeclares(imp.Path, member) {
+		return nil, false
+	}
+	return inf.lookup.LookupFunctionIn(imp.Path, member)
 }
 
 // resolveFunction resolves name to the function literal it is bound to,

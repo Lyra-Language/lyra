@@ -129,14 +129,18 @@ pub let rgb = pure (r: u16, g: u16, b: u16) -> u16 =>
 /// Colour `index` (0–15) of palette `palette` (0–3). Colour 0 of each palette is
 /// transparent in a sprite or a plane's tile.
 pub let set_color = (palette: u16, index: u16, color: u16) -> void => {
+  let held = hold_vblank()
   set_address(CRAM_WRITE, ((palette & 3) * 16 + (index & 15)) * 2)
   write_word(color)
+  release_vblank(held)
 }
 
 /// All sixteen colours of palette `palette` from a table.
 pub let load_palette = (palette: u16, colors: ref [16]u16) -> void => {
+  let held = hold_vblank()
   set_address(CRAM_WRITE, (palette & 3) * 32)
   for c in colors { write_word(c) }
+  release_vblank(held)
 }
 
 /// The colour behind everything: colour `index` of palette `palette`.
@@ -146,14 +150,18 @@ pub let set_backdrop = (palette: u16, index: u16) -> void =>
 /// Tiles into VRAM from tile `first` on, from a table of their rows — eight `u32` words a
 /// tile, two pixels a byte, the left one in the high nibble (what Vega exports).
 pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u32) -> void => {
+  let held = hold_vblank()
   set_address(VRAM_WRITE, first * 32)
   for row in tiles { write_long(row) }
+  release_vblank(held)
 }
 
 /// A table of words into VRAM at byte `address`.
 pub let write_vram<const N: i64> = (address: u16, words: ref [N]u16) -> void => {
+  let held = hold_vblank()
   set_address(VRAM_WRITE, address)
   for w in words { write_word(w) }
+  release_vblank(held)
 }
 
 /// A tile map into a plane (`PLANE_A` or `PLANE_B`): every one of the plane's cells, from
@@ -168,6 +176,7 @@ pub let write_plane<const N: i64> = (
   left: u16 = 0,
   top: u16 = 0
 ) -> void => {
+  let held = hold_vblank()
   let cell_count = u32(cells.len())
   // Where the map's row `top + row` starts, kept by adding a row's width each time.
   var start = u32(top) * u32(width)
@@ -180,17 +189,20 @@ pub let write_plane<const N: i64> = (
     }
     start += u32(width)
   }
+  release_vblank(held)
 }
 
 /// One cell of a plane (`PLANE_A` or `PLANE_B`) set to a name-table word — a score's digit,
 /// a door opened in a level — `priority << 15 | palette << 13 | flip_y << 12 |
 /// flip_x << 11 | tile`. `x` and `y` are the plane's cells, wrapping at its edges.
 pub let write_cell = (plane: u16, x: u16, y: u16, word: u16) -> void => {
+  let held = hold_vblank()
   set_address(
     VRAM_WRITE,
     plane + ((y % PLANE_HEIGHT) * PLANE_WIDTH + x % PLANE_WIDTH) * 2
   )
   write_word(word)
+  release_vblank(held)
 }
 
 /// Scroll `plane` (`PLANE_A` or `PLANE_B`) so its pixel (`x`, `y`) is at the screen's
@@ -198,15 +210,36 @@ pub let write_cell = (plane: u16, x: u16, y: u16, word: u16) -> void => {
 /// edges, so any position will do.
 pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
   let which: u16 = if plane == PLANE_A { 0 } else { 2 }
+  let held = hold_vblank()
   // Horizontal scroll moves the plane right, so the view at x is a scroll of -x.
   set_address(VRAM_WRITE, HSCROLL + which)
   write_word(u16((1024 - (i32(x) & 1023)) & 1023))
   set_address(VSRAM_WRITE, which)
   write_word(u16(i32(y) & 1023))
+  release_vblank(held)
+}
+
+/// The vertical blank interrupt held off, answering whether it was on — around a run of
+/// writes from the game's loop: an address, then its data. The interrupt's own writes (the
+/// sprite list) move the VDP's address, and a run they land in goes on at theirs: a map
+/// drawn with the interrupt on lost the rest of a row, black on the screen (10/06). One
+/// that falls due while held is taken as soon as it is let go ([release_vblank]). Every
+/// writer here holds it; a game holds it around its own [set_vram_address] and
+/// [write_word]s.
+pub let hold_vblank = () -> bool => {
+  let on = (mode & 0x20) != 0
+  if on { disable_vblank_interrupt() }
+  on
+}
+
+/// The vertical blank interrupt let go after [hold_vblank]: on again if it was on.
+pub let release_vblank = (held: bool) -> void => {
+  if held { enable_vblank_interrupt() }
 }
 
 /// Point the data port at byte `address` of VRAM, for [write_word]s to follow — how the
-/// sprite table and the planes are written.
+/// sprite table and the planes are written. From the game's loop, hold the vertical blank
+/// interrupt around it and the writes ([hold_vblank]).
 pub let set_vram_address = (address: u16) -> void => set_address(VRAM_WRITE, address)
 
 /// A word to the data port: to where the last address was set, which then moves on two

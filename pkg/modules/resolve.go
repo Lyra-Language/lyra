@@ -285,7 +285,8 @@ func (r *resolver) resolveImport(path, fromFile string, loc ast.Location) ([]Uni
 // missing standard library must not be an error — and returns the candidates it tried so
 // its caller can say where it looked.
 //
-// **A root offering both forms is an error rather than a silent preference.** Which one
+// **A root offering both forms is an error rather than a silent preference** — a directory
+// counting as a form only when it holds source ([holdsSource]). Which one
 // wins would decide what half the program's names mean, and a reader looking at
 // `std/prelude/strings.lyra` has no way to tell that `std/prelude.lyra` beside it is
 // quietly the real module. Across *different* roots there is no ambiguity: the earlier
@@ -296,7 +297,7 @@ func (r *resolver) findModule(path, fromFile string, loc ast.Location) (units []
 		file, dir := filepath.Join(root, rel+Extension), filepath.Join(root, rel)
 		hasFile, hasDir := r.exists(file), r.isModuleDir(dir)
 		switch {
-		case hasFile && hasDir:
+		case hasFile && hasDir && r.holdsSource(dir):
 			r.errorf(fromFile, loc, diag.CodeUnresolvedImport,
 				"module %q is both %s and %s — a module is one or the other, so delete "+
 					"whichever is not the module (move its declarations into the directory "+
@@ -385,6 +386,16 @@ func (r *resolver) checkHeader(u Unit, path, dir string) bool {
 		"%s is part of module %q (it is in %s), so it must begin with `module %s`%s",
 		filepath.Base(u.File), path, dir, path, declaredSuffix(declared))
 	return false
+}
+
+// holdsSource reports whether a directory holds a module's source: a `.lyra` file directly
+// in it. A directory beside a module's file that holds none — a game's art, named as its
+// generated `assets` module is — is no second form of the module, so the file is it
+// (10/06: Vega's platformer stopped building when its art kit was moved in beside
+// `assets.lyra`).
+func (r *resolver) holdsSource(dir string) bool {
+	files, err := r.moduleFiles(dir)
+	return err == nil && len(files) > 0
 }
 
 // isModuleDir reports whether a path is a module's directory. An overlaid file counts
