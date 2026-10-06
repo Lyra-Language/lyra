@@ -18,7 +18,8 @@ func TestRun_EntitiesMoveCollideAndMeet(t *testing.T) {
 	root := repoRoot(t)
 	t.Setenv("LYRA_STD", root)
 	src := filepath.Join(t.TempDir(), "main.lyra")
-	if err := os.WriteFile(src, []byte(`import std.genesis.collision.{ Shape, Collider }
+	if err := os.WriteFile(src, []byte(`import std.genesis.collision
+import std.genesis.collision.{ Shape, Collider }
 import std.genesis.entity.{ Animation, EntityKind, MAX_FALL, visible }
 
 const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
@@ -127,6 +128,27 @@ let main = () -> u8 => {
   looking.mirrored = true
   if !looking.meets(star) { return 15 }
   if visible(-16, 0, 16, 16) || !visible(-15, 0, 16, 16) || visible(320, 0, 8, 8) { return 16 }
+
+  // The map's own colliders (move_in_with): a box drawn on the map in its pixels, x 20..28,
+  // on layer 1 — with no tile under it — stops the feet as a tile's would; one on layer 2,
+  // which the feet do not look for, does not.
+  let empty: [16]u16 = #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  let wall: [1]Collider = #[Collider { shape: Shape { x: 20, y: 0, width: 8, height: 32 }, layers: 1, mask: 0 }]
+  var m = HERO.spawn(0, 0)
+  for _ in 0..<20 {
+    m.push(1, 0)
+    m.move_in_with(empty, 4, 1, starts, tiles, wall)
+  }
+  if m.x() != 8 || m.vx != 0 { return 20 }
+  let other: [1]Collider = #[Collider { shape: Shape { x: 20, y: 0, width: 8, height: 32 }, layers: 2, mask: 0 }]
+  var past = HERO.spawn(0, 0)
+  for _ in 0..<20 {
+    past.push(1, 0)
+    past.move_in_with(empty, 4, 1, starts, tiles, other)
+  }
+  if past.x() != 16 { return 21 }
+  // A large box is compared whole: a floor 300 pixels wide.
+  if !FEET.hits_any(100, 0, #[Collider { shape: Shape { x: 0, y: 14, width: 300, height: 8 }, layers: 1, mask: 0 }]) { return 22 }
   0
 }
 `), 0o644); err != nil {

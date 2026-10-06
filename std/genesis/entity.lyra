@@ -168,6 +168,18 @@ pub let move_in<const N: i64, const M: i64, const K: i64> = (
   first_tile: u16,
   starts: ref [M]u16,
   shapes: ref [K]Collider
+) -> void => self.move_in_with(cells, width, first_tile, starts, shapes, NO_MAP_SHAPES)
+
+/// [move_in], stopped too by the map's own colliders — shapes drawn on the map itself, in
+/// its pixels (`collision.hits_any`), where its tiles carry none.
+pub let move_in_with<const N: i64, const M: i64, const K: i64, const P: i64> = (
+  self: mut Entity,
+  cells: ref [N]u16,
+  width: u16,
+  first_tile: u16,
+  starts: ref [M]u16,
+  shapes: ref [K]Collider,
+  map_shapes: ref [P]Collider
 ) -> void => {
   // Turned: its colliders turn too, unless that would put one into a wall here.
   if self.hit_mirrored != self.mirrored && !self.kind.hits_tiles(
@@ -178,7 +190,8 @@ pub let move_in<const N: i64, const M: i64, const K: i64> = (
     width,
     first_tile,
     starts,
-    shapes
+    shapes,
+    map_shapes
   ) {
     self.hit_mirrored = self.mirrored
   }
@@ -195,7 +208,8 @@ pub let move_in<const N: i64, const M: i64, const K: i64> = (
     width,
     first_tile,
     starts,
-    shapes
+    shapes,
+    map_shapes
   ) {
     self.vx = 0
   } else {
@@ -213,7 +227,8 @@ pub let move_in<const N: i64, const M: i64, const K: i64> = (
     width,
     first_tile,
     starts,
-    shapes
+    shapes,
+    map_shapes
   ) {
     self.vy = 0
   } else {
@@ -261,8 +276,9 @@ pub let visible = pure (x: i16, y: i16, width: i16, height: i16) -> bool =>
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
 /// Whether an entity of this kind with its top-left at (`x`, `y`), mirrored or not, meets
-/// a tile of the map on a layer one of its colliders looks for.
-let hits_tiles<const N: i64, const M: i64, const K: i64> = pure (
+/// a tile of the map, or one of the map's own colliders, on a layer one of its colliders
+/// looks for.
+let hits_tiles<const N: i64, const M: i64, const K: i64, const P: i64> = pure (
   self: ref EntityKind,
   x: i16,
   y: i16,
@@ -271,15 +287,20 @@ let hits_tiles<const N: i64, const M: i64, const K: i64> = pure (
   width: u16,
   first_tile: u16,
   starts: ref [M]u16,
-  shapes: ref [K]Collider
+  shapes: ref [K]Collider,
+  map_shapes: ref [P]Collider
 ) -> bool => {
   for i: u16 in 0..<self.collider_count {
     let c = self.colliders[i]
     let placed = if mirrored { c.mirrored(self.width) } else { c }
     if placed.hits_map(x, y, cells, width, first_tile, starts, shapes) { return true }
+    if placed.hits_any(x, y, map_shapes) { return true }
   }
   false
 }
+
+/// A map with no colliders of its own: one that meets nothing.
+const NO_MAP_SHAPES: [1]Collider = #[NO_COLLIDER]
 
 /// `v` over √2, to a 256th: 181/256 (0.707) as shifts — ½ + ⅛ + 1/16 + 1/64 + 1/256 — so
 /// the 68000 does no multiply. For a speed or a rate, never negative.

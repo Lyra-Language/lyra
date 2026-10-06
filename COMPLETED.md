@@ -9,6 +9,17 @@ Newest first.
 
 ## Dated log
 
+### 10/05/26 — `std.genesis`: a map's own colliders
+
+Tiled levels mark collision with rectangles on an object layer, over cells whose tiles are
+not solid everywhere else they appear — collision that is the level's, not a tile's, which
+Vega's tile shapes could not hold. `collision.hits_any(collider, x, y, others)` meets
+colliders placed in the world at its origin, and `entity.move_in_with` is `move_in` with a
+map's own colliders tested beside its tiles' (`move_in` passes a table of none). Boxes are
+compared at any size; only an ellipse stays within 128. `TestRun_EntitiesMoveCollideAndMeet`
+cases 20–22 (a wall drawn on the map stops the feet, one on another layer does not, a
+300-pixel floor is met whole); 20 fails with the map's test taken out of `hits_tiles`.
+
 ### 10/04/26 — a `for` variable that shadows warns (`lyra-W001`)
 
 `for c in items` taking the name of a parameter `c` warned nothing, while `let c = …` and

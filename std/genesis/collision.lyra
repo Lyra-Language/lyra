@@ -25,7 +25,10 @@ module std.genesis.collision
 //! are their sums: exact for circles, close for ellipses.
 //!
 //! A map's tiles may carry shapes too ([hits_map]): the tiles a shape covers are found
-//! from its name-table words (Vega's `assets.hits_<map>` passes the tables).
+//! from its name-table words (Vega's `assets.hits_<map>` passes the tables). **So may the
+//! map itself** ([hits_any]): colliders drawn on it in its own pixels, wherever they are —
+//! what Tiled's object layers of rectangles make. Two boxes are compared at any size; only
+//! an ellipse is held to 128 pixels a side.
 //!
 //! **Colliders and layers**: a [Collider] is a shape on some collision layers — bits of a
 //! `u16`, which the game names — looking for others. Meeting is **one-sided**:
@@ -178,6 +181,24 @@ pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
 /// Whether this collider on something at (`x`, `y`) meets a tile of a map: as the shape
 /// form above, but each tile's shapes are colliders, and only those on a layer this one
 /// looks for count.
+/// Whether this collider on something at (`x`, `y`) meets one of `others` it looks for —
+/// colliders placed in the world itself, at its origin: a map's own shapes, in the map's
+/// pixels. One-sided, as [meets] is.
+pub let hits_any<const P: i64> = pure (
+  self: Collider,
+  x: i16,
+  y: i16,
+  others: ref [P]Collider
+) -> bool => {
+  for k in 0..<others.len() {
+    let other = others[k]
+    if (self.mask & other.layers) != 0 && self.shape.overlaps(x, y, other.shape, 0, 0) {
+      return true
+    }
+  }
+  false
+}
+
 pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
   self: Collider,
   x: i16,
