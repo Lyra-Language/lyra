@@ -146,35 +146,26 @@ func buildGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	return out, 0
 }
 
-// runGenesis is `lyrac run` for the Genesis: the ROM built to a temp file and played in
-// Sheliak — `$SHELIAK`, else `sheliak` on the PATH — with the arguments after `--` handed
-// to the emulator (`-- --frames 60 --screenshot shot.bmp` runs it headless).
-func runGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) int {
+// genesisCommand is `lyrac run` for the Genesis: the ROM built to a temp file, and the
+// command playing it in Sheliak — `$SHELIAK`, else `sheliak` on the PATH — with the
+// arguments after `--` handed to the emulator (`-- --frames 60 --screenshot shot.bmp`
+// runs it headless). A nil command means it failed, and code is the status to exit with.
+func genesisCommand(o buildOptions, res *driver.Result, entry *driver.EntryPoint) (*exec.Cmd, int) {
 	o.out += ".bin"
 	romPath, code := buildGenesis(o, res, entry)
 	if code != 0 {
-		return code
+		return nil, code
 	}
 	emulator := os.Getenv("SHELIAK")
 	if emulator == "" {
 		path, err := exec.LookPath("sheliak")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "lyrac: a Genesis program runs in an emulator, and there is no `sheliak` on the PATH (or set SHELIAK); `lyrac build` writes the ROM for any emulator\n")
-			return 1
+			return nil, 1
 		}
 		emulator = path
 	}
-	cmd := exec.Command(emulator, append([]string{romPath}, o.programArgs...)...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
-			return exit.ExitCode()
-		}
-		fmt.Fprintf(os.Stderr, "lyrac: %s: %v\n", filepath.Base(emulator), err)
-		return 1
-	}
-	return 0
+	return exec.Command(emulator, append([]string{romPath}, o.programArgs...)...), 0
 }
 
 // compileProgram optimizes the program's IR for the 68000 and compiles it to an object.

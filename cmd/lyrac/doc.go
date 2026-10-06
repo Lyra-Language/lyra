@@ -58,7 +58,7 @@ func parseDocArgs(args []string) (docOptions, bool) {
 // that does not type-check would print `?` where a type failed to resolve and publish
 // the result as though it were the API.
 func doc(o docOptions) int {
-	res, ok := analyze(o.path)
+	res, _, ok := analyze(o.path)
 	if !ok {
 		return 2
 	}

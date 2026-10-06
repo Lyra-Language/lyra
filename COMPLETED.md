@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/06/26 — `lyrac run --watch`: rebuild and restart on save
+
+The restart kind of hot reload, the first of two stages (the second, swapping code into a
+running program, is in todo.md). Every source file the build read is watched — the
+program, its imports, the prelude and the rest of `std`, so editing the standard library
+restarts the program too. **A failed build leaves the running program alone**: its
+diagnostics print and the old copy carries on, so a save made mid-edit costs nothing.
+**Polling rather than file-system notifications**: the set is tens of files and a stat
+of each four times a second is nothing beside a build, while each OS's notification API
+differs and an editor's atomic save replaces the watched inode rather than writing it.
+A stamp is mtime *and* size, since two saves can land within one timestamp tick. The old
+program is asked to stop with SIGTERM — which SDL turns into a quit event — and killed
+after two seconds. `TestWatch_RestartsOnChangeAndSurvivesABrokenSave` runs one session
+end to end: a program that never exits replaced, a broken save surviving, an exit reported.
+
 ### 10/06/26 — `std.genesis`: collision a 68000 can afford, and how it was measured
 
 Two, then four, walking cactuses in Vega's platformer took its game from 60 frames a second

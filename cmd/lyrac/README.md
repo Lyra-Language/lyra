@@ -6,7 +6,7 @@ Compiler CLI on `pkg/driver`. Build with `go build ./cmd/lyrac` (or `./build.sh`
 |---|---|
 | `lyrac check <file>` | parse + typecheck; exit 1 on any error |
 | `lyrac build <file>` | check, resolve the entry point, emit IR, link an executable |
-| `lyrac run <file>` | build into a temp dir and exec |
+| `lyrac run <file>` | build into a temp dir and exec; `--watch` rebuilds and restarts on save |
 | `lyrac doc <file>` | Markdown documentation, one page per module |
 
 Diagnostics print as `path:line:col: severity[code]: message` (`line:col` omitted when
@@ -68,6 +68,12 @@ panicking program when the toolchain is there, and runs them when `$SHELIAK` is 
   missing-compiler `.ll` fallback. `-o`/`--emit-llvm`/`--keep-ll` are refused.
 - **Prints no build summary** (`lowerAndEmit` returns the path; the caller reports), and the
   program's exit status is the command's.
+- **`--watch`** (`watch.go`) rebuilds and restarts on a change to any file the build read
+  (imports, prelude and `std` included), polling mtime and size every 250 ms; works for a
+  Genesis program too, restarting Sheliak. A failed build prints its diagnostics and leaves
+  the running program alone; the old one gets SIGTERM, then a kill after 2 s. Each build
+  has its own temp dir. A module created *after* an import of it failed is noticed on the
+  next save of a watched file. Restart only — state is not kept (todo.md).
 
 ## `doc`
 

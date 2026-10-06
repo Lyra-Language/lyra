@@ -256,6 +256,12 @@ Package management, versioning and separate compilation are out of scope by deci
     both in one walk, and doing the same here before the AST is checked would mean two
     unverified things at once.
 
+- **[IDEA] Hot reload that keeps the program's state.** `lyrac run --watch` (10/06)
+  restarts the program on each save; the next step swaps changed functions into the running
+  one, so a game keeps its world and window. Likely shape: a host plus a reloadable dylib,
+  calls across through a table (the uniform `{ fn, env }` closure ABI was chosen with this in
+  mind), refusing a reload that changes a type's layout — open are globals, live `Seq`
+  coroutines and closures still pointing at old code.
 - **[DECIDED, not built] Qualified type names — `ast.Program` in a type position.**
 
   **The gap.** A plain `import lib` binds a namespace that works for values and not for

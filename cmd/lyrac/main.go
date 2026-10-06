@@ -91,6 +91,9 @@ build flags:
 
 run flags:
   --cc <path>   as above; run leaves no executable or IR behind
+  --watch       rebuild and restart the program whenever a source file it reads
+                changes (its imports and the standard library included); a build
+                that fails leaves the running copy alone. Ctrl-C stops both
   --            everything after it is passed to the program, not to lyrac:
                 lyrac run prog.lyra -- --verbose input.txt
                 Reachable in the program through program_args(), with the
@@ -132,6 +135,10 @@ type buildOptions struct {
 	// written into the source tree — not even the IR that a failed link
 	// otherwise leaves behind for the user to compile by hand.
 	ephemeral bool
+
+	// watch is `run --watch`: rebuild and restart on every change to a source file
+	// the program reads, until interrupted (see watch.go).
+	watch bool
 
 	// programArgs is everything after a `--`, handed to the program `run` executes
 	// and reachable there through `program_args()`. Empty for a build, which runs
@@ -190,6 +197,12 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 			o.keepLL = true
 		case arg == "--progress":
 			o.progress = true
+		case arg == "--watch":
+			if cmd != "run" {
+				fmt.Fprintf(os.Stderr, "lyrac: --watch is a run flag (use `lyrac run --watch`)\n")
+				return o, false
+			}
+			o.watch = true
 		case isOptFlag(arg):
 			// Spelled the way clang spells it, and passed through unexamined
 			// beyond that: the C compiler is the authority on which levels it
@@ -229,7 +242,7 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 // check analyzes path and reports diagnostics. Exit status: 0 clean, 1 on any
 // error-severity diagnostic, 2 on a usage/IO failure.
 func check(path string) int {
-	res, ok := analyze(path)
+	res, _, ok := analyze(path)
 	if !ok {
 		return 2
 	}
@@ -244,7 +257,7 @@ func check(path string) int {
 // typed program to the backend, and links the emitted IR into an executable.
 func build(o buildOptions) int {
 	o.report(0, "checking "+filepath.Base(o.path))
-	res, entry, code := typedProgram(o.path)
+	res, entry, _, code := typedProgram(o.path)
 	if entry == nil {
 		return code
 	}
@@ -285,11 +298,9 @@ func (o buildOptions) report(percent int, what string) {
 // indistinguishable from a compile error — the same trade `go run` makes, and
 // the compiler's own failures are the ones that also print a diagnostic.
 func runProgram(o buildOptions) int {
-	res, entry, code := typedProgram(o.path)
-	if entry == nil {
-		return code
+	if o.watch {
+		return watchProgram(o)
 	}
-
 	dir, err := os.MkdirTemp("", "lyrac-run-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
@@ -297,61 +308,85 @@ func runProgram(o buildOptions) int {
 	}
 	defer os.RemoveAll(dir)
 
+	cmd, _, code := prepareRun(o, dir)
+	if cmd == nil {
+		return code
+	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return exitStatus(cmd, cmd.Run())
+}
+
+// prepareRun builds o's program into dir and returns the command that runs it — the
+// executable itself, or for a Genesis program the emulator given the ROM — with its
+// standard streams left for the caller to connect. It also returns every source file
+// the build read, which `--watch` watches, even when the build failed. A nil command
+// means it failed, and code is the status to exit with.
+func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
+	res, entry, files, code := typedProgram(o.path)
+	if entry == nil {
+		return nil, files, code
+	}
 	o.ephemeral = true
 	o.out = filepath.Join(dir, filepath.Base(replaceExt(o.path, "")))
 	if !res.Target.Host {
-		return runGenesis(o, res, entry)
+		cmd, code := genesisCommand(o, res, entry)
+		return cmd, files, code
 	}
 	exe, code := lowerAndEmit(o, res, entry)
 	if code != 0 {
-		return code
+		return nil, files, code
 	}
-
 	// argv[0] is the executable, as C's is, so `program_args()` indexes from the
 	// program's own name exactly as it does for a built binary.
-	cmd := exec.Command(exe, o.programArgs...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			// The program ran and chose this status (or was killed by a signal,
-			// which ExitCode reports as -1). Either way it is the program's
-			// outcome, not the compiler's, so it is reported without comment.
-			if status := exit.ExitCode(); status >= 0 {
-				return status
-			}
-			fmt.Fprintf(os.Stderr, "lyrac: %s: %v\n", filepath.Base(exe), exit)
-			return 1
+	return exec.Command(exe, o.programArgs...), files, 0
+}
+
+// exitStatus is the status lyrac exits with after running cmd, given what Run (or
+// Wait) returned: the program's own.
+func exitStatus(cmd *exec.Cmd, err error) int {
+	if err == nil {
+		return 0
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		// The program ran and chose this status (or was killed by a signal,
+		// which ExitCode reports as -1). Either way it is the program's
+		// outcome, not the compiler's, so it is reported without comment.
+		if status := exit.ExitCode(); status >= 0 {
+			return status
 		}
-		fmt.Fprintf(os.Stderr, "lyrac: cannot run %s: %v\n", exe, err)
+		fmt.Fprintf(os.Stderr, "lyrac: %s: %v\n", filepath.Base(cmd.Path), exit)
 		return 1
 	}
-	return 0
+	fmt.Fprintf(os.Stderr, "lyrac: cannot run %s: %v\n", cmd.Path, err)
+	return 1
 }
 
 // typedProgram is the front half both build and run need: analyze, report
 // diagnostics, and resolve the entry point. A nil entry means it failed and the
-// returned code is what the process should exit with.
-func typedProgram(path string) (*driver.Result, *driver.EntryPoint, int) {
-	res, ok := analyze(path)
+// returned code is what the process should exit with. files are the sources read,
+// as analyze returns them, whether or not it failed.
+func typedProgram(path string) (*driver.Result, *driver.EntryPoint, []string, int) {
+	res, files, ok := analyze(path)
 	if !ok {
-		return nil, nil, 2
+		return nil, nil, files, 2
 	}
 	printDiagnostics(path, res.Diagnostics)
 	if res.HasErrors() {
-		return nil, nil, 1
+		return nil, nil, files, 1
 	}
 	entry, entryDiags := driver.ResolveEntryPoint(res)
 	printDiagnostics(path, entryDiags)
 	if entry == nil {
-		return nil, nil, 1
+		return nil, nil, files, 1
 	}
-	return res, entry, 0
+	return res, entry, files, 0
 }
 
-// analyze reads path and runs the front-end pipeline. Returns ok=false (after
-// printing to stderr) when the file cannot be read.
-func analyze(path string) (*driver.Result, bool) {
+// analyze reads path and runs the front-end pipeline, returning the result and the
+// file of every unit it read (path's imports and the prelude included). Returns
+// ok=false (after printing to stderr) when the file cannot be read.
+func analyze(path string) (*driver.Result, []string, bool) {
 	// Resolve the import graph before analyzing: every unit is collected into one
 	// program, so they all have to be known up front (see driver.AnalyzeUnits). The
 	// roots and the prelude setting are modules' to define, so the compiler and the
@@ -361,13 +396,17 @@ func analyze(path string) (*driver.Result, bool) {
 		for _, d := range diags {
 			fmt.Fprintf(os.Stderr, "lyrac: %s\n", d.Message)
 		}
-		return nil, false
+		return nil, nil, false
+	}
+	files := make([]string, len(units))
+	for i, u := range units {
+		files[i] = u.File
 	}
 	res := driver.AnalyzeUnits(units)
 	// Resolver diagnostics come first: an unreadable import explains the errors that
 	// follow from the names it failed to provide.
 	res.Diagnostics = append(diags, res.Diagnostics...)
-	return res, true
+	return res, files, true
 }
 
 // lowerAndEmit runs the backend over a fully-typed, error-free program, then
