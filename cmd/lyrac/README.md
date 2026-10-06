@@ -10,7 +10,9 @@ Compiler CLI on `pkg/driver`. Build with `go build ./cmd/lyrac` (or `./build.sh`
 | `lyrac doc <file>` | Markdown documentation, one page per module |
 
 Diagnostics print as `path:line:col: severity[code]: message` (`line:col` omitted when
-there is no location).
+there is no location). On a terminal `severity[code]` is coloured — bold red for an error,
+bold yellow for a warning; piped output stays plain. `NO_COLOR` turns colour off,
+`FORCE_COLOR` on (`NO_COLOR` wins).
 
 ## `build`
 

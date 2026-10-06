@@ -609,8 +609,10 @@ func replaceExt(path, ext string) string {
 
 // printDiagnostics writes each diagnostic as `path:line:col: severity[code]: message`,
 // omitting the line:col when the diagnostic has no source location (a
-// program-level error such as a missing entry point).
+// program-level error such as a missing entry point). On a terminal the
+// `severity [code]` span is coloured — red for an error, yellow for a warning.
 func printDiagnostics(path string, diags []diag.Diagnostic) {
+	color := useColor(os.Stderr)
 	for _, d := range diags {
 		loc := d.Location
 		code := ""
@@ -630,8 +632,42 @@ func printDiagnostics(path string, diags []diag.Diagnostic) {
 		if loc.StartLine > 0 {
 			where = fmt.Sprintf("%s:%d:%d", file, loc.StartLine, loc.StartCol)
 		}
-		fmt.Fprintf(os.Stderr, "%s: %s%s: %s\n",
-			where, severityLabel(d.Severity), code, d.Message)
+		label := severityLabel(d.Severity) + code
+		if color {
+			label = colorize(d.Severity, label)
+		}
+		fmt.Fprintf(os.Stderr, "%s: %s: %s\n", where, label, d.Message)
+	}
+}
+
+// useColor reports whether diagnostics written to f should carry ANSI colour:
+// only when f is a terminal, so a pipe or file (editors, scripts, the tests)
+// gets plain text. NO_COLOR turns it off and FORCE_COLOR on, per their
+// conventions (no-color.org, force-color.org): any non-empty value counts.
+func useColor(f *os.File) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if os.Getenv("FORCE_COLOR") != "" {
+		return true
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// colorize wraps s in the ANSI colour for sev: bold red for an error,
+// bold yellow for a warning. Info stays uncoloured.
+func colorize(sev diag.Severity, s string) string {
+	switch sev {
+	case diag.SeverityWarning:
+		return "\x1b[1;33m" + s + "\x1b[0m"
+	case diag.SeverityInfo:
+		return s
+	default:
+		return "\x1b[1;31m" + s + "\x1b[0m"
 	}
 }
 

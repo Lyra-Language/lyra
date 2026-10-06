@@ -323,6 +323,48 @@ func TestSeverityLabel(t *testing.T) {
 	}
 }
 
+// Colour wraps the whole `severity [code]` span and falls back to red for an
+// unknown severity, matching severityLabel's fallback to "error".
+func TestColorize(t *testing.T) {
+	cases := []struct {
+		sev  diag.Severity
+		want string
+	}{
+		{diag.SeverityError, "\x1b[1;31merror [E1]\x1b[0m"},
+		{diag.SeverityWarning, "\x1b[1;33mwarning [E1]\x1b[0m"},
+		{diag.SeverityInfo, "info [E1]"},
+		{diag.Severity(99), "\x1b[1;31merror [E1]\x1b[0m"},
+	}
+	for _, c := range cases {
+		if got := colorize(c.sev, severityLabel(c.sev)+" [E1]"); got != c.want {
+			t.Errorf("colorize(%v) = %q, want %q", c.sev, got, c.want)
+		}
+	}
+}
+
+// Piped stderr stays plain unless FORCE_COLOR asks otherwise; NO_COLOR wins.
+func TestUseColor(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	if useColor(w) {
+		t.Error("useColor(pipe) = true, want false")
+	}
+	t.Setenv("FORCE_COLOR", "1")
+	if !useColor(w) {
+		t.Error("useColor(pipe) with FORCE_COLOR = false, want true")
+	}
+	t.Setenv("NO_COLOR", "1")
+	if useColor(w) {
+		t.Error("useColor with NO_COLOR and FORCE_COLOR = true, want false")
+	}
+}
+
 // The optimization level defaults to -O2 and is overridable per build.
 //
 // **-O2 rather than clang's own -O0 default**, because the tradeoff this compiler
