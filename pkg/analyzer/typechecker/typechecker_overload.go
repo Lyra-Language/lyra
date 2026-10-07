@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -38,26 +39,58 @@ import (
 // or `x.min(y)` and `min(x, y)` would resolve differently.
 
 // receiverAccepts reports whether fn's `self` parameter admits a receiver of recvType.
-func receiverAccepts(fn *ast.LambdaExpr, recvType types.Type) bool {
+//
+// The written `self` type has its **aliases expanded** first, because the receiver is a
+// value's type and a value's type is resolved: `self: A` over `type A = []i64` is an
+// UnresolvedType naming `A`, which nominalHead reads as a head of its own, so it matched
+// neither a `[]i64` nor an `A` — `ys.first()` was refused while `first(ys)`, checked by
+// assignability against the resolved parameter, was accepted (10/07). Only aliases: every
+// other name stays a name, which is what nominal matching compares.
+func receiverAccepts(symTable *symbols.SymbolTable, fn *ast.LambdaExpr, recvType types.Type) bool {
 	recv, ok := ast.ReceiverParam(fn)
 	if !ok || recvType == nil {
 		return false
 	}
-	return unifyGenericTarget(recv.Type, recvType, lambdaTypeVars(fn), map[string]types.Type{})
+	written := expandAliases(recv.Type, symTable, fn.GetLocation())
+	return unifyGenericTarget(written, recvType, lambdaTypeVars(fn), map[string]types.Type{})
+}
+
+// expandAliases replaces every transparent `type X = T` alias named anywhere in t with
+// what it names, as the module at loc sees the name, and leaves every other type alone.
+// It needs only a symbol table, so LSP completion (UFCSCallable) asks the same question
+// the checker does. An alias cycle is refused by checkTypeDecl, but completion runs on
+// invalid programs, so the chain is bounded.
+func expandAliases(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) types.Type {
+	if symTable == nil || t == nil {
+		return t
+	}
+	depth := 0
+	var leaf func(types.UnresolvedType, ast.Location) types.Type
+	leaf = func(u types.UnresolvedType, at ast.Location) types.Type {
+		decl, ok := symTable.LookupTypeRef(u.Name, u.Key, at)
+		if !ok || !decl.IsAlias || depth >= 32 {
+			return u
+		}
+		depth++
+		defer func() { depth-- }()
+		// The target's own names are the alias's declaring module's.
+		return walkTypeNames(types.WithAllocation(decl.Type, u.Allocation), decl.GetLocation(), leaf, nil)
+	}
+	return walkTypeNames(t, loc, leaf, nil)
 }
 
 // receiverAcceptsValue is receiverAccepts for a receiver *expression*: an array literal's
 // untyped elements are read at their default, so `[1, 2, 3].map(f)` matches a `[]t` receiver
 // as `[]i64` would. Its flavor needs no allowance (09/14): `[1, 2, 3]` is a `[]T` by
 // spelling, and `#[1, 2, 3].map(f)` is refused exactly as a fixed binding is.
-func receiverAcceptsValue(fn *ast.LambdaExpr, recvExpr ast.Expression, recvType types.Type) bool {
-	if receiverAccepts(fn, recvType) {
+func receiverAcceptsValue(symTable *symbols.SymbolTable, fn *ast.LambdaExpr, recvExpr ast.Expression, recvType types.Type) bool {
+	if receiverAccepts(symTable, fn, recvType) {
 		return true
 	}
 	if recvExpr == nil || recvType == nil {
 		return false
 	}
-	return receiverAccepts(fn, promoteToDefault(recvType))
+	return receiverAccepts(symTable, fn, promoteToDefault(recvType))
 }
 
 // resolveOverload picks the member of set that accepts a receiver of recvType.
@@ -76,7 +109,7 @@ func (tc *TypeChecker) resolveOverload(set *ast.OverloadSet, recvExpr ast.Expres
 	var matches []*ast.LambdaExpr
 	for _, member := range set.Members {
 		lam, ok := member.Value.(*ast.LambdaExpr)
-		if !ok || !receiverAcceptsValue(lam, recvExpr, recvType) {
+		if !ok || !receiverAcceptsValue(tc.symTable, lam, recvExpr, recvType) {
 			continue
 		}
 		matches = append(matches, lam)
@@ -190,7 +223,7 @@ func (tc *TypeChecker) receiverFallback(name string, recvType types.Type, call *
 		if _, isReceiver := ast.ReceiverParam(fn); !isReceiver {
 			continue
 		}
-		if !tc.ufcsImported(name, fn, loc) || !receiverAccepts(fn, recvType) {
+		if !tc.ufcsImported(name, fn, loc) || !receiverAccepts(tc.symTable, fn, recvType) {
 			continue
 		}
 		matches = append(matches, fn)
@@ -251,7 +284,7 @@ func (tc *TypeChecker) bareCalleeFor(name string, resolved *ast.LambdaExpr, call
 		return resolved
 	}
 	argType = tc.resolveType(argType, call.Arguments[0].GetLocation())
-	if receiverAccepts(resolved, argType) {
+	if receiverAccepts(tc.symTable, resolved, argType) {
 		return resolved
 	}
 	if fn, ok := tc.receiverFallback(name, argType, call); ok {
@@ -261,4 +294,68 @@ func (tc *TypeChecker) bareCalleeFor(name string, resolved *ast.LambdaExpr, call
 	// No reachable alternative: keep the resolved one so the error is about this call's
 	// arguments, which is what it is.
 	return resolved
+}
+
+// checkOverloadAliasOverlap refuses two members of one overload set whose receivers are
+// one type spelled through an alias — `self: A` beside `self: []i64` with `type A = []i64`.
+//
+// Registration (ast.OverloadableWith) compares the *written* heads, `A` and `[]`, because
+// it runs in the collector before an alias can be resolved; its premise that a written
+// name is a sound discriminant holds for every nominal type and fails only for a
+// transparent alias. Here the alias is known, so the overlap is refused with
+// registration's own wording, and the later member leaves the set as a refusal there
+// would have left it: one diagnostic at the declaration, rather than an ambiguity at
+// every call site.
+func (tc *TypeChecker) checkOverloadAliasOverlap() {
+	names := make([]string, 0, len(tc.symTable.OverloadSets))
+	for name := range tc.symTable.OverloadSets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		set := tc.symTable.OverloadSets[name]
+		seen := map[string]*ast.VarDeclStmt{}
+		kept := set.Members[:0:0]
+		for _, member := range set.Members {
+			head, ok := tc.expandedReceiverHead(member)
+			if !ok {
+				kept = append(kept, member)
+				continue
+			}
+			if prior, clash := seen[head]; clash {
+				tc.addError(member.GetLocation(), SeverityError,
+					"function %q is already defined at %s. Both take a `%s` receiver once "+
+						"the alias is expanded — overloads are told apart by their receiver's "+
+						"type, so two of one type cannot be", set.Name, describeDecl(prior), head)
+				continue
+			}
+			seen[head] = member
+			kept = append(kept, member)
+		}
+		set.Members = kept
+	}
+}
+
+// expandedReceiverHead is ast.ReceiverHead with the `self` type's aliases expanded. A
+// generic receiver, or a member registration already explained, has none to compare.
+func (tc *TypeChecker) expandedReceiverHead(member *ast.VarDeclStmt) (string, bool) {
+	if head, reason := ast.ReceiverHead(member); reason != "" || head == ast.GenericReceiverHead {
+		return "", false
+	}
+	lam, ok := member.Value.(*ast.LambdaExpr)
+	if !ok {
+		return "", false
+	}
+	recv, ok := ast.ReceiverParam(lam)
+	if !ok {
+		return "", false
+	}
+	return types.HeadName(expandAliases(recv.Type, tc.symTable, lam.GetLocation()))
+}
+
+// describeDecl names where a function binding was declared the way the collector's
+// "already defined" message does: the function's own position, file first.
+func describeDecl(decl *ast.VarDeclStmt) string {
+	loc := decl.Value.GetLocation()
+	return loc.File + ":" + loc.Pretty()
 }

@@ -189,3 +189,18 @@ let main = () => {
 		t.Fatalf("message names the pre-propagation type: %s", got[0])
 	}
 }
+
+// A struct whose field is an *alias* of a dynamic array shares that array when repeated.
+// SharedMutablePath tested for a dynamic array before resolving the name, so the alias
+// read as some other named type and the warning was silent (10/07).
+func TestRepeatAlias_FieldThroughAnAlias(t *testing.T) {
+	assertShared(t, `
+type Row = []rune
+struct Line { cells: Row }
+let main = () => {
+  let l = Line { cells: [' '] }
+  var grid: []Line = [l; 4]
+  grid[0].cells[0] = 'x'
+}
+`, "Line")
+}

@@ -140,6 +140,12 @@ Each of these produces something that looks like it works. Other docs cite them 
      `stripNewtypeResolving`. A binding's type may arrive as a bare declared name, and a
      generic newtype's base must be resolved to see the next wrapper. Annotated array
      bindings keep the wrapper recorded; indexing and assignability both depend on it.
+   - **An annotation keeps a `type` alias's *name*** (only the typechecker's own resolution
+     expands it), so a predicate asked of a name — `IsManaged`, `IsDynamicArray`, a
+     `LambdaType` test, a receiver's head — must be asked again of what the name resolves
+     to. Missing that made `let ys: A = [1, 2]` over `type A = []i64` a use-after-free and
+     `self: A` uncallable as a method (10/07). The backend's `stripNewtype` strips aliases
+     as well as newtypes; the typechecker's `expandAliases` expands only aliases.
    - **Sibling constructs are a pair**: `if` and `match` both push their join down via
      `propagateExpectedType`, tested together (`TestExec_IfBranchesJoinTheirUntypedWidths`
      and its match twin).
@@ -169,7 +175,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | a node's children | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` skips the node) |
    | statement expressions ownership must see | `ownership.analyzer.stmt` — **all** statement kinds |
    | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
-   | see through a newtype | `stripNewtypeResolving` (typechecker) |
+   | see through a newtype | `stripNewtypeResolving` (typechecker); `stripNewtype` (backend — aliases too) |
    | expression at a position | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
    | a pattern binding's type (no use in hand) | `TypeTable.Binding(loc)`, via `recordBindingType` |
    | what a name means at a use in a body (parameter or a local shadowing it) | `paramAt` / `lookupAt` (`typechecker/name_resolution.go`) — never `paramTypes[...]` or `scope.Lookup` alone |

@@ -365,8 +365,8 @@ func (l *lowerer) candidateKey(expr ast.Expression) (string, bool) {
 	return l.stripNewtype(l.applyTypeSubst(t)).String(), true
 }
 
-// stripNewtype removes newtype wrappers from t, resolving a type written as a
-// *name* through the symbol table — a struct field or array element declared as
+// stripNewtype removes newtype wrappers — and `type` aliases — from t, resolving a type
+// written as a *name* through the symbol table — a struct field or array element declared as
 // `Meters` is recorded as an UnresolvedType, so that lookup is the only way to
 // find the newtype at all.
 //
@@ -388,6 +388,16 @@ func (l *lowerer) stripNewtype(t types.Type) types.Type {
 		decl, ok := l.lookupTypeDeclKeyed(u.Key, u.Name)
 		if !ok {
 			return t
+		}
+		// A transparent alias is its target *more* plainly than a newtype is its base,
+		// and every caller here asks a representation question. Left as the name, an
+		// alias of `[]T` got drop glue of its own instead of the inline box release, and
+		// `struct H { f: Op }` refused `h.f(4)` ("unsupported method call") (10/07). An
+		// alias of a declared type resolves to that type's *name*,
+		// so the load-bearing UnresolvedType survives.
+		if decl.IsAlias {
+			t = types.WithAllocation(decl.Type, u.Allocation)
+			continue
 		}
 		ct, ok := decl.Type.(*types.ConstrainedType)
 		if !ok {

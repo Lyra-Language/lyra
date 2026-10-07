@@ -152,3 +152,51 @@ func TestTypeAlias_ANewtypeStillConstructs(t *testing.T) {
 let use = () -> Cents => Cents(150)`, false)
 	assertNoErrors(t, res)
 }
+
+// A `self` receiver written as an alias takes a method call — on a value of the alias
+// and of the type it names, as the plain call `first(ys)` always did. receiverAccepts
+// unified the written `self` type, where `A` was still a *name*, against the receiver's
+// resolved type, and nominal matching read `A` as a head of its own: `ys.first()` was
+// refused with "…; first takes DynamicArray<i64>", naming the type it had just refused
+// (10/07). Each spelling a receiver match compares: a bare alias, an alias of a
+// struct (heads `Point` and `Pt`), an overload set, and an alias inside a type argument.
+func TestTypeAlias_ReceiverTakesAMethodCall(t *testing.T) {
+	cases := map[string]string{
+		"alias of a dynamic array": `type A = []i64
+let first = (self: A) -> i64 => self[0]
+let use = (ys: A, zs: []i64) -> i64 => ys.first() + zs.first() + first(ys)`,
+		"alias of a struct": `struct Pt { x: i64 }
+type Point = Pt
+let getx = (self: Point) -> i64 => self.x
+let use = (p: Pt) -> i64 => p.getx()`,
+		"a member of an overload set": `type A = []i64
+let total = (self: A) -> i64 => self[0]
+let total = (self: string) -> i64 => self.len()
+let use = (ys: A) -> i64 => ys.total() + total(ys) + "ab".total()`,
+		"an alias inside a type argument": `type A = []i64
+type Pair = (A, A)
+let width = (self: [2]A) -> i64 => self[0].len()
+let left = (self: Pair) -> i64 => self.0[0]
+let use = (g: [2][]i64, p: ([]i64, []i64)) -> i64 => g.width() + p.left()`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			assertNoErrors(t, parseCollectAndCheck(t, src, false))
+		})
+	}
+}
+
+// Two overloads whose receivers are one type spelled through an alias overlap, and the
+// overlap is the declaration's error — registration compared the written heads (`A`, `[]`)
+// before the alias could be resolved, so the pair was admitted, and every call was then
+// an ambiguity. One error, at the second declaration, in registration's wording.
+func TestTypeAlias_OverloadsOverlappingThroughAnAliasAreRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `type A = []i64
+let total = (self: A) -> i64 => self[0]
+let total = (self: []i64) -> i64 => self[1]
+let use = (ys: A) -> i64 => ys.total() + total(ys)`, false)
+	if len(res.errors) != 1 {
+		t.Fatalf("want exactly one error, got %d: %v", len(res.errors), res.errors)
+	}
+	assertHasErrorContaining(t, res, "Both take a `[]` receiver once the alias is expanded")
+}

@@ -823,10 +823,38 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 	// a plain stack aggregate with a managed field, not just a managed value: the two
 	// must be framed on the same condition the pass grants the +1 on, or they'd
 	// disagree.
-	if ty := l.bindingType(vds); l.needsDrop(ty) {
+	ty := l.bindingType(vds)
+	if err := l.checkAnnotationOwnership(vds, ty); err != nil {
+		return nil, err
+	}
+	if l.needsDrop(ty) {
 		l.addManagedBinding(slot, ty)
 	}
 	return block, nil
+}
+
+// checkAnnotationOwnership refuses an annotated binding whose annotation and initializer
+// disagree about owning a reference (rule 5). The annotation decides both the +1 the
+// ownership pass mints and the frame this binding gets, but the value stored is the
+// initializer's: an annotation judged to own nothing over a value that is a box leaves
+// the box released as a temporary right after the store, and every later read dangling.
+// That was `type A = []i64` with `let ys: A = [1, 2]` until OwnsManaged saw through an
+// alias (10/07) — the two are assignable, so they own the same thing in any program
+// that got this far, and a mismatch is the compiler's, not the program's.
+func (l *lowerer) checkAnnotationOwnership(vds *ast.VarDeclStmt, ty types.Type) error {
+	if vds.Type == nil {
+		return nil
+	}
+	initTy, ok := l.recordedType(vds.Value)
+	if !ok || initTy == nil {
+		return nil
+	}
+	if annotated, held := l.needsDrop(ty), l.needsDrop(initTy); annotated != held {
+		return fmt.Errorf("llvm: the binding %q at %s is annotated %s (owns a reference: %t) "+
+			"but holds a %s (owns a reference: %t) — framing it and releasing its initializer "+
+			"would answer differently", vds.Name, vds.GetLocation().Pretty(), ty, annotated, initTy, held)
+	}
+	return nil
 }
 
 // bindingType is the Lyra type a `let`/`var` binding holds: its annotation when

@@ -91,3 +91,25 @@ let y = b.
 		t.Errorf("expected the method `widen`, got %v", got)
 	}
 }
+
+// A `self` written as an alias is offered on a value of the type it names, since that call
+// compiles. UFCSCallable shares the checker's receiverAccepts, which expands the alias;
+// before 10/07 both refused it, so the list agreed with the checker by both being wrong.
+func TestCompletion_UFCSOffersAnAliasReceiver(t *testing.T) {
+	t.Setenv("LYRA_NO_PRELUDE", "1")
+	h := servertest.New(t, newHandler())
+	src := `
+type Row = []i64
+let first = pure (self: Row) -> i64 => self[0]
+let xs: []i64 = [1, 2]
+let y = xs.
+`
+	openAndWait(t, h, src)
+	list, err := h.Completion(testURI, 4, 11)
+	if err != nil {
+		t.Fatalf("Completion: %v", err)
+	}
+	if _, ok := completionLabels(list)["first"]; !ok {
+		t.Errorf("`first` takes a Row, which is a []i64, so it must be offered; got %v", completionLabels(list))
+	}
+}

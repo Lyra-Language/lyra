@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -69,6 +70,35 @@ func TestExec_TypeAliases(t *testing.T) {
 			 }`,
 			9,
 		},
+		{
+			// A field typed through an alias of a function type is callable. The backend
+			// asked whether the field was a LambdaType of the alias's *name* and refused
+			// `h.f(4)` as "unsupported method call" until stripNewtype saw aliases (10/07).
+			"function-typed struct field via an alias",
+			`type Op = (i64) -> i64
+			 struct H { f: Op }
+			 let main = () -> u8 => {
+			   let k = 3
+			   let h = H { f: (x: i64) -> i64 => x + k }
+			   u8(h.f(4))
+			 }`,
+			7,
+		},
+		{
+			// A method on an alias receiver, overloaded beside another receiver: the
+			// member is emitted under its written head and reached through the
+			// typechecker's resolved callee (10/07, both spellings were refused).
+			"method call on an alias receiver",
+			`type A = []i64
+			 let total = (self: A) -> i64 => self[0] + self[1]
+			 let total = (self: string) -> i64 => self.len()
+			 let main = () -> u8 => {
+			   let ys: A = [20, 22]
+			   let zs: []i64 = [1, 2]
+			   u8(ys.total() + zs.total() - "abc".total())
+			 }`,
+			42,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -102,5 +132,183 @@ func TestEmit_StructAliasEmitsOneType(t *testing.T) {
 	}
 	if strings.Contains(got, "%Point = type") {
 		t.Errorf("the alias emitted a type of its own:\n%s", got)
+	}
+}
+
+// An alias of a **managed** type, in every position a value of it can be held. The
+// ownership pass asked IsManaged of the alias's *name*, which cannot see through it, and
+// then walked the resolved type's components — for `[]i64` the elements, owning nothing.
+// So `let ys: A = [1, 2]` was not an owning position: the literal was released as a
+// temporary straight after the store and the binding never framed, and `ys.len()` read a
+// freed box (10/07). A binding was a use-after-free; a struct field, tuple element or
+// `data` payload of the alias was a leak, since the copy and the drop agreed on "nothing".
+//
+// Each case runs in a helper, not `main`, so LeakSanitizer sees the frame gone — a
+// pointer still in main's frame at exit reads as reachable.
+func TestExec_ManagedTypeAliasesASan(t *testing.T) {
+	t.Parallel()
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang not found on PATH; skipping ASan test")
+	}
+	if !asanAvailable(t, clang) {
+		t.Skip("ASan runtime not available; skipping")
+	}
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"let of an alias of []i64", `type A = []i64
+let work = () -> i64 => {
+  let ys: A = [1, 2]
+  ys.len() * 10 + ys[1]
+}
+let main = () -> u8 => u8(work())`, 22},
+		{"let of aliases of []bool and [][]bool", `type B = []bool
+type G = [][]bool
+let work = () -> i64 => {
+  let g: G = [[true, false], [false, true]]
+  let r: B = g[1]
+  if r[1] { g.len() } else { 0 }
+}
+let main = () -> u8 => u8(work())`, 2},
+		{"let of an alias of string holding a heap string", `type S = string
+let work = () -> i64 => {
+  let a = "ab"
+  let s: S = a ++ "cd"
+  s.len()
+}
+let main = () -> u8 => u8(work())`, 4},
+		{"var, reassignment and push", `type A = []i64
+let work = () -> i64 => {
+  var ys: A = [1, 2]
+  var zs: A = [7]
+  zs = [3, 4, 5]
+  ys.push(6)
+  ys.len() + ys[2] + zs[2]
+}
+let main = () -> u8 => u8(work())`, 14},
+		{"struct field: copy, then field reassignment", `type A = []i64
+struct Pt { xs: A, n: i64 }
+let work = () -> i64 => {
+  var p = Pt { xs: [1, 2, 3], n: 1 }
+  let q = p
+  p.xs = [9]
+  p.xs.len() + q.xs[2]
+}
+let main = () -> u8 => u8(work())`, 4},
+		{"tuple element and array element", `type A = []i64
+type T = (A, string)
+let work = () -> i64 => {
+  let t: T = ([1, 2], "z" ++ "w")
+  let u = t
+  let rows: []A = [[1], [2, 3]]
+  u.0[1] + rows[1][1] + u.1.len()
+}
+let main = () -> u8 => u8(work())`, 7},
+		{"data payload", `type A = []i64
+data Shape = Poly(A) | Dot
+let work = () -> i64 => {
+  let s = Poly([1, 2, 3])
+  let t = s
+  match t {
+    Poly(xs) => xs[2],
+    Dot => 0,
+  }
+}
+let main = () -> u8 => u8(work())`, 3},
+		{"return type, own parameter and closure capture", `type A = []i64
+type S = string
+let mk = () -> A => [1, 2, 3]
+let take = (xs: own A) -> i64 => xs.len()
+let work = () -> i64 => {
+  let a: A = mk()
+  let s: S = "a" ++ "b"
+  let f = () => a[2] + s.len()
+  take(mk()) + f()
+}
+let main = () -> u8 => u8(work())`, 8},
+		{"interior writes through an alias of []string", `type SS = []string
+struct W { v: SS, n: i64 }
+let work = () -> i64 => {
+  let a = "x"
+  var w = W { v: [a ++ "1", a ++ "2"], n: 0 }
+  w.v = [a ++ "3"]
+  var rows: []SS = [[a ++ "4"], [a ++ "5"]]
+  rows[0] = [a ++ "6", a ++ "7"]
+  var t: (SS, i64) = ([a ++ "8"], 1)
+  t.0 = [a ++ "9"]
+  w.v.len() + rows[0].len() + t.0[0].len()
+}
+let main = () -> u8 => u8(work())`, 5},
+		{
+			// Already right before the fix — a fixed array is not managed itself, so the
+			// walk reached its managed elements — and kept beside the others because it
+			// is the sibling a fix to the managed case could break.
+			"fixed arrays via an alias", `type F = [2][]i64
+type FS = [2]string
+let work = () -> i64 => {
+  let f: F = #[[1, 2], [3]]
+  var g: F = f
+  g[0] = [5, 6, 7]
+  let x = "q"
+  let h: FS = #[x ++ "1", x ++ "22"]
+  f[0][1] + g[0][2] + h[1].len()
+}
+let main = () -> u8 => u8(work())`, 12},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// A prelude generic over the alias: `Maybe<A>` owns what `A` owns only once the alias
+// resolves inside the instantiation's payload. Its own test because `Maybe` needs the
+// resolving front half that emitSource skips.
+func TestExec_ManagedAliasInMaybeASan(t *testing.T) {
+	t.Parallel()
+	if !asanAvailable(t, lookClang(t)) {
+		t.Skip("ASan runtime not available; skipping")
+	}
+	src := `type A = []i64
+let work = () -> i64 => {
+  let m: Maybe<A> = Some([7, 8])
+  let n = m
+  match n {
+    Some(v) => v[1],
+    None => 0,
+  }
+}
+let main = () -> u8 => u8(work())`
+	if got := buildAndRunASanWithPrelude(t, src); got != 8 {
+		t.Errorf("exited %d; want 8", got)
+	}
+}
+
+// The binding is framed and its initializer kept, which is the fault seen statically: a
+// release of the array before its reads, and none at scope exit, was the miscompile.
+// Conservation catches both halves without an ASan runtime.
+func TestEmit_ManagedAliasBindingIsFramed(t *testing.T) {
+	t.Parallel()
+	ir, err := emitSource(t, `type A = []i64
+let main = () -> u8 => {
+  let ys: A = [1, 2]
+  u8(ys.len() + ys[1])
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := ir[strings.Index(ir, "define i32 @main"):]
+	main = main[:strings.Index(main, "\n}")]
+	read := strings.Index(main, "@lyra_panic_index_out_of_bounds")
+	release := strings.LastIndex(main, "@lyra_rc_release")
+	if read < 0 || release < 0 || release < read {
+		t.Errorf("want the array released after its last read, at scope exit:\n%s", main)
 	}
 }

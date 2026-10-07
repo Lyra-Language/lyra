@@ -55,6 +55,62 @@ generically. `parser.c` is unchanged (the scanner is compiled beside it), so Zed
 its pin moved to the scanner commit. Pinned by three tests in
 `tree-sitter-lyra/test/corpus/literals/string.txt`, two of which fail without the fix.
 
+### 10/07/26 — an alias is the type it names: ownership and receivers
+
+`type A = []i64` with `let ys: A = [1, 2]` printed a pointer for `ys.len()` and trapped on
+`ys[1]`. Not a layout fault: the IR released the array straight after storing it, and never
+framed the binding. **`ownership.OwnsManaged` asked `IsManaged` of the alias's *name***,
+which cannot see through it, then resolved the name and walked the target's *components*
+— for `[]i64` its elements, owning nothing. So the annotation said "owns nothing", the
+initializer was not an owning position, it was released as a temporary, and every read
+was a use-after-free. The same for any alias whose target is itself managed (`[]T`,
+`string`, a closure type); a fixed array or struct target was right by accident, since
+its components are where the managed part is.
+
+- **Wider than reported.** `type S = string` was broken too — a literal hid it, being
+  pinned; `a ++ "cd"` printed nothing. A `var` was broken whenever it was not reassigned
+  before use. A struct field, tuple element or `data` payload of the alias was a
+  **leak**, the copy and the drop agreeing on "nothing" (2 allocations, 0 releases). The
+  parameter case worked because a borrow releases nothing; `own A` leaked.
+- **Fix**: an alias name is asked again as what it names (`isAliasName`), with its name
+  in `seen` as a newtype's is, since the pass runs on invalid programs. `SharedMutablePath`
+  had the same order (dynamic-array test before resolution), so `lyra-W019` missed a
+  repeated struct whose field is an alias of `[]rune`; fixed alike.
+- **The backend's `stripNewtype` sees through an alias too.** Every one of its callers
+  asks a representation question, and the name had two more effects: the frame release
+  went through per-name glue (`lyra_drop_1___A`) instead of the inline box release, and
+  `struct H { f: Op }` over `type Op = (i64) -> i64` refused `h.f(4)` as "unsupported
+  method call". An alias of a declared type resolves to that type's name, so the
+  `UnresolvedType` the struct/data lookups key on survives.
+- **Rule 5**: `lowerVarDecl` now refuses an annotated binding whose annotation and
+  initializer disagree about owning a reference (`checkAnnotationOwnership`). They are
+  assignable, so they cannot disagree in a program that got this far; with the ownership
+  fix reverted the original program fails to build naming both types.
+- Tests: `TestExec_ManagedTypeAliasesASan` (each position in a helper, so LeakSanitizer
+  sees the frame gone — a pointer in `main`'s frame at exit reads as reachable),
+  `TestExec_ManagedAliasInMaybeASan`, `TestEmit_ManagedAliasBindingIsFramed`, the
+  function-field case in `TestExec_TypeAliases`, `TestOwnership_AliasOfManagedTypeIsManaged`
+  (an alias records exactly what the spelled-out type does) and
+  `TestRepeatAlias_FieldThroughAnAlias`; for receivers, `TestTypeAlias_ReceiverTakesAMethodCall`
+  (bare, struct, overload set, inside a type argument),
+  `TestTypeAlias_OverloadsOverlappingThroughAnAliasAreRefused`,
+  `TestCompletion_UFCSOffersAnAliasReceiver` and an exec case in `TestExec_TypeAliases`.
+- **A `self` receiver written as an alias takes a method call.** `let first = (self: A) …`
+  was refused as `ys.first()` with "…; first takes DynamicArray<i64>" — naming the type
+  it had just refused — while `first(ys)` worked. `receiverAccepts` unified the *written*
+  `self` type against the receiver's resolved one, and `nominalHead` read the unresolved
+  `A` as a head of its own; `self: Point` over `type Point = Pt` failed the same way
+  (heads `Point` and `Pt`). It now expands aliases first (`expandAliases`). That needs
+  only a symbol table, because LSP completion's `UFCSCallable` asks the same predicate;
+  rather than a second walk over the composites, `resolveTypeWith`'s recursion became the
+  free `walkTypeNames`, its one `tc` dependency (the parameterized-newtype hook) passed in.
+- **Overlap through an alias.** Registration compares *written* heads in the collector,
+  before an alias resolves, so `self: A` beside `self: []i64` was admitted as `A` and `[]`
+  — harmless while neither matched, an "internal: two overloads" error once both did.
+  `checkOverloadAliasOverlap` refuses it at the declaration in registration's wording and
+  drops the later member, so one mistake is one diagnostic. LANGUAGE.md says the head is
+  the type's, not its spelling.
+
 ### 10/06/26 — every warning has a warning's code (`lyra-W027`–`W030`)
 
 `if true { … }` printed `warning [lyra-E001]: condition is always true`. The typechecker's

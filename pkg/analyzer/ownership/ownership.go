@@ -242,6 +242,24 @@ func ownsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, 
 		return true
 	}
 	resolved := resolveNamedType(t, symTable, loc)
+	// A transparent **alias** registers its target with no wrapper, so the name resolves
+	// straight to a type that may itself be managed — and IsManaged above was asked of the
+	// name, which it cannot see through. Asked again of what the name means. Without it
+	// `type A = []i64` fell to eachComponent, which answered for the *elements* (i64, none):
+	// `let ys: A = [1, 2]` was not an owning position, so its literal was released as a
+	// temporary right after the store and every later read was a use-after-free (10/07).
+	// The name is remembered for the same reason a newtype's is, below: an alias cycle is
+	// refused by the typechecker, but this pass runs on invalid programs too.
+	if u, ok := t.(types.UnresolvedType); ok && isAliasName(u, symTable, loc) {
+		if seen[u.Name] {
+			return false
+		}
+		if seen == nil {
+			seen = map[string]bool{}
+		}
+		seen[u.Name] = true
+		return ownsManaged(resolved, symTable, loc, seen)
+	}
 	// A generic instantiation is the one arm this does not share with SharedMutablePath,
 	// and the difference is a cycle guard rather than an oversight: that walk carries a
 	// `seen` set keyed on the type's name, and this one does not need it. A recursive type
@@ -370,6 +388,15 @@ func resolveNamedType(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 	return types.WithAllocation(decl.Type, u.Allocation)
 }
 
+// isAliasName reports whether u names a transparent `type X = T` alias.
+func isAliasName(u types.UnresolvedType, symTable *symbols.SymbolTable, loc ast.Location) bool {
+	if symTable == nil {
+		return false
+	}
+	decl, ok := lookupNamed(u, symTable, loc)
+	return ok && decl.IsAlias
+}
+
 // lookupNamed resolves a type name to its declaration: **by its stamped identity where it
 // has one**, and otherwise as `loc`'s module sees it.
 //
@@ -475,6 +502,11 @@ func SharedMutablePath(t types.Type, symTable *symbols.SymbolTable, loc ast.Loca
 		seen[u.Name] = true
 	}
 	resolved := resolveNamedType(t, symTable, loc)
+	// An alias resolves to its target bare, which the dynamic-array test above was not
+	// asked of — OwnsManaged's case. The name is already in seen.
+	if u, ok := t.(types.UnresolvedType); ok && isAliasName(u, symTable, loc) {
+		return SharedMutablePath(resolved, symTable, loc, seen)
+	}
 	if types.AllocationOf(resolved) == types.Shared && hasWritableField(resolved, symTable, loc) {
 		return nil, true
 	}

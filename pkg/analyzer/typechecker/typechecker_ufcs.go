@@ -172,7 +172,7 @@ func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, membe
 		if !tc.ufcsImported(methodName, fn, loc) {
 			continue
 		}
-		if !receiverAcceptsValue(fn, member.Object, objType) {
+		if !receiverAcceptsValue(tc.symTable, fn, member.Object, objType) {
 			continue
 		}
 		matches = append(matches, fn)
@@ -475,14 +475,14 @@ func UFCSReachableExporters(symTable *symbols.SymbolTable, file, name string) []
 // owns, and a completion list that silently omits the function would leave the user with
 // no way to learn why — the error naming the call form is the better teacher.
 func UFCSCallable(symTable *symbols.SymbolTable, name string, fn *ast.LambdaExpr, objType types.Type, loc ast.Location) bool {
-	recv, ok := ufcsReceiverParam(fn)
+	_, ok := ufcsReceiverParam(fn)
 	if !ok || symTable == nil || objType == nil {
 		return false
 	}
 	if !ufcsImportedIn(symTable, name, fn, loc) {
 		return false
 	}
-	return unifyGenericTarget(recv.Type, objType, lambdaTypeVars(fn), map[string]types.Type{})
+	return receiverAccepts(symTable, fn, objType)
 }
 
 // desugarUFCSCall rewrites `recv.f(a, b)` into `f(recv, a, b)`.

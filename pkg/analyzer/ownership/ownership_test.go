@@ -1,6 +1,7 @@
 package ownership_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/driver"
@@ -272,6 +273,30 @@ func TestOwnership_NewtypeStringFieldOwnsManaged(t *testing.T) {
 	 }`)
 	if c.retains == 0 && c.transfers == 0 {
 		t.Error("newtype field: the struct copy recorded no ownership action at all")
+	}
+}
+
+// An alias of a managed type is managed: the pass records for `let ys: A = …` exactly
+// what it records for `let ys: []i64 = …`. It asked IsManaged of the alias's name and
+// then walked the target's elements, so the alias owned nothing, its initializer was a
+// temporary released after the store, and every read of the binding dangled (10/07).
+func TestOwnership_AliasOfManagedTypeIsManaged(t *testing.T) {
+	for _, target := range []string{"[]i64", "string"} {
+		init := "[1, 2]"
+		if target == "string" {
+			init = `"a" ++ "b"`
+		}
+		body := `
+		 let main = () -> u8 => {
+		   let ys: %s = ` + init + `
+		   let zs = ys
+		   if zs.len() == 2 { 1 } else { 0 }
+		 }`
+		spelled := analyze(t, fmt.Sprintf(body, target))
+		aliased := analyze(t, "type A = "+target+fmt.Sprintf(body, "A"))
+		if aliased != spelled {
+			t.Errorf("alias of %s: recorded %+v, spelled out %+v", target, aliased, spelled)
+		}
 	}
 }
 

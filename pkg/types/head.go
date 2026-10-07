@@ -27,7 +27,10 @@ import "strconv"
 //   - **It answers on an unresolved type.** Registration runs in the collector, before
 //     the typechecker resolves a written name, so `self: Point` arrives as an
 //     UnresolvedType. Within one module a name means one declaration, which is exactly
-//     the scope an overload set spans, so the written name is a sound discriminant.
+//     the scope an overload set spans, so the written name is a sound discriminant —
+//     **except for a transparent alias**, which is another spelling of its target, not a
+//     declaration with an identity. The typechecker re-asks with aliases expanded
+//     (checkOverloadAliasOverlap).
 
 // HeadName returns the name of t's type constructor, and whether t has one.
 //

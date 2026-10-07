@@ -440,8 +440,13 @@ One name may be declared several times in a module when every declaration takes 
 receiver heads (`types.HeadName`) differ.
 
 - Resolution is `receiverAccepts`, asked from exactly two sites: `inferOverloadedCall` (bare call)
-  and the UFCS rung (before desugaring).
-- Overlap is refused at the declaration (`ast.OverloadableWith`). A bare `self: t` is the set's
+  and the UFCS rung (before desugaring) — and by `UFCSCallable` for LSP completion. It expands
+  **aliases** in the written `self` type first (`expandAliases`, symbol table only, over the
+  `walkTypeNames` recursion `resolveTypeWith` uses): the receiver is resolved, so `self: A` left
+  as a name matched nothing.
+- Overlap is refused at the declaration (`ast.OverloadableWith`), on written heads; an overlap
+  only an alias reveals (`self: A` beside `self: []i64`) is refused by
+  `checkOverloadAliasOverlap` before any call resolves, which drops the later member. A bare `self: t` is the set's
   **generic fallback**, filed under `ast.GenericReceiverHead` (so a second one collides, and the
   backend's symbol is qualified by it). **`preferConcrete` drops it whenever a concrete member also
   matches** — applied in `resolveOverload`, `ufcsFunction` and `receiverFallback`; a new site

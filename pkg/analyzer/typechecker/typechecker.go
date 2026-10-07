@@ -277,6 +277,9 @@ func (tc *TypeChecker) prepare(program *ast.Program) {
 	// Before the bodies: a file naming a type it never imported is answered once, for
 	// every position that names one, rather than by whichever resolver happens to reach it.
 	tc.checkWrittenTypeNames()
+	// Before any call resolves against a set: an overlap through an alias is the
+	// declaration's error, and left in the set it is an ambiguity at every call.
+	tc.checkOverloadAliasOverlap()
 	tc.checkImplCoherence()
 	// Trait default-method bodies, checked once each with Self abstract. After the impls
 	// are collected: a call inside a default publishes one candidate per implementing
@@ -2646,7 +2649,16 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 // everyone's type. The value composites are safe to assign through because the type
 // switch already binds a copy.
 func (tc *TypeChecker) resolveTypeWith(t types.Type, loc ast.Location, leaf func(types.UnresolvedType, ast.Location) types.Type) types.Type {
-	recur := func(inner types.Type) types.Type { return tc.resolveTypeWith(inner, loc, leaf) }
+	return walkTypeNames(t, loc, leaf, tc.expandParameterizedNewtype)
+}
+
+// walkTypeNames is resolveTypeWith's walk without a TypeChecker, so a caller holding only
+// a symbol table (expandAliases, for UFCSCallable) shares the one recursion rather than
+// growing a second. expandNewtype is resolveTypeWith's parameterized-newtype hook; nil
+// leaves a ParameterizedType as its arguments resolved.
+func walkTypeNames(t types.Type, loc ast.Location, leaf func(types.UnresolvedType, ast.Location) types.Type,
+	expandNewtype func(types.ParameterizedType, ast.Location) (types.Type, bool)) types.Type {
+	recur := func(inner types.Type) types.Type { return walkTypeNames(inner, loc, leaf, expandNewtype) }
 	switch tt := t.(type) {
 	case types.UnresolvedType:
 		return leaf(tt, loc)
@@ -2699,8 +2711,10 @@ func (tc *TypeChecker) resolveTypeWith(t types.Type, loc ast.Location, leaf func
 		// compiler to treat it the way it already treats `newtype Plain = i64`. Left
 		// unexpanded, `StripNewtype` finds no ConstrainedType and every assignment to it
 		// is rejected — `cannot assign integer literal to Boxed<i64>`.
-		if expanded, ok := tc.expandParameterizedNewtype(tt, loc); ok {
-			return expanded
+		if expandNewtype != nil {
+			if expanded, ok := expandNewtype(tt, loc); ok {
+				return expanded
+			}
 		}
 		return tt
 	case *types.LambdaType:
