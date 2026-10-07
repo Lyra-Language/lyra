@@ -66,10 +66,58 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expres
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.IsNamed() && !cst.IsComment(child) {
-			arguments = appendCollected(arguments, CollectExpression(child, ctx))
+			arguments = appendCollected(arguments, collectArgument(child, ctx))
 		}
 	}
 	return arguments
+}
+
+// collectArgument is one call argument. The grammar parses two argument forms the language
+// does not have — `name: value` and a bare `_` — and both are refused here (lyra-E088).
+//
+// **Neither may fall through to CollectExpression.** Its wrapper fallback reads a node's
+// first named child: a `named_argument`'s is its `argument_name`, which collects to nil, and
+// a `wildcard` has none — so both came back nil and appendCollected dropped them. A dropped
+// `greeting: "Hi"` compiled and ran with the parameter's default in its place; a dropped
+// `_` reported only a wrong argument count. A named argument keeps its value as the
+// positional argument it stands in for, so the count stays right and nothing else is
+// reported about the call unless the value itself is wrong there (hazard 3).
+func collectArgument(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression {
+	switch node.Kind() {
+	case "named_argument":
+		name := ctx.NodeText(cst.Field(node, "name"))
+		ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeUnsupportedCallArgument,
+			"named argument `%s:`: Lyra call arguments are positional — pass the value alone, in its parameter's place", name)
+		if value := cst.Field(node, "value"); value != nil {
+			return CollectExpression(value, ctx)
+		}
+		if wildcard := cst.Field(node, "wildcard"); wildcard != nil {
+			return collectArgument(wildcard, ctx)
+		}
+		return placeholderArgument(ctx.NodeLocation(node))
+	case "wildcard":
+		ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeUnsupportedCallArgument,
+			"`_` is not a call argument: Lyra has no partial application — write a lambda, e.g. `(b) => f(a, b)`")
+		return placeholderArgument(ctx.NodeLocation(node))
+	}
+	return CollectExpression(node, ctx)
+}
+
+// placeholderArgument stands in for a refused argument whose parameter type is not known
+// here: `panic("…")`, which is `never` and so fits any parameter without a second
+// diagnostic. Like placeholderChar it is never run — the compile has already failed.
+func placeholderArgument(loc ast.Location) ast.Expression {
+	return &ast.FunctionCallExpr{
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Function: &ast.IdentifierExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Name:     "panic",
+		},
+		Arguments: []ast.Expression{&ast.StringLiteralExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Value:    "refused call argument",
+		}},
+	}
 }
 
 func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) ast.Expression {

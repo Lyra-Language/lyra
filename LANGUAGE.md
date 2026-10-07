@@ -49,6 +49,11 @@ code it is filled into need not import or see, and no name at that site shadows 
 literal or call that leaves the field or argument out is the same as one writing the value
 the declaration names.
 
+**Call arguments are positional**, and a defaulted parameter can be left out only from the
+end. There are no named arguments — `greet("Ada", greeting: "Hi")` is **`lyra-E088`** at the
+argument, and so is a bare `_` (`add(1, _)`; there is no partial application — write a
+lambda). The one named argument in the language is `@link`'s `pkg:`, an attribute's.
+
 ### Literals must fit
 
 A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a newtype constraint, a return-position `() -> u8 => 300` (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.

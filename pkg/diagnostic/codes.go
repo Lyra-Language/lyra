@@ -1030,6 +1030,14 @@ const (
 	// a program built for the host (checker/interrupts.go, 09/30).
 	CodeInterruptHandler = "lyra-E087"
 
+	// CodeUnsupportedCallArgument: a call argument in a form the grammar parses but the
+	// language does not have — `name: value` (Lyra has no named arguments; the one named
+	// argument anywhere is `@link`'s `pkg:`) or a bare `_` (no partial application).
+	// Both were dropped from the argument list in silence until 10/07, so
+	// `greet("Ada", greeting: "Hi")` compiled and greeted with the default
+	// (collector, postfix_expr.go).
+	CodeUnsupportedCallArgument = "lyra-E088"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

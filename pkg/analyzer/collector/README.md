@@ -43,6 +43,12 @@ unguarded. The placeholder is still what keeps one mistake to one diagnostic: a 
 earns an arity error on top. A value validated after the parse (an escape, a compound-assignment
 place) is reachable in every expression position, so its error path is never dead.
 
+**A drop is silent when nothing reported the nil**, and an unknown node kind returns nil with no
+diagnostic. A list site must dispatch every node kind its grammar rule admits: the argument list
+also admits `named_argument` and a bare `wildcard`, which the language does not have. Both were
+dropped silently until `collectArgument` refused them (`lyra-E088`). Check a new grammar shape
+inside a list the same way.
+
 Statement analogue: `CollectBlockExpr` skips a child that collects to nil (`isNilStmt`), because a
 block's value is its final statement — a trailing comment would otherwise become it. A
 comment-only body is an empty block.

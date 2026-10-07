@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 10/07/26 — a named call argument is refused, not dropped (`lyra-E088`)
+
+`println(greet("Ada", greeting: "Hi"))` compiled and printed `Hello, Ada`; so did
+`greet("Ada", nonsense: 5)`. Lyra has no named arguments, but **the grammar does**: an
+`argument_list` admits trailing `named_argument`s (`name: value`) and a bare `_`, both
+left from a partial-application design that never reached the compiler (the corpus still
+tests `sum(a: 1, b: 2)` and `add_one(b: 2)`). Nothing in Go read either node.
+`collectArgumentList` handed each to `CollectExpression`, whose wrapper fallback reads a
+node's first named child: a `named_argument`'s is its `argument_name`, which collects to
+nil, and a `wildcard` has none. `appendCollected` dropped the nil, so the argument
+vanished. A defaulted parameter then took its default, and the call was well-typed.
+`add(1, _)` was also dropped, but its only report was `expected 2 argument(s), got 1`.
+
+Both forms are now `lyra-E088` at the argument (`collectArgument`, `postfix_expr.go`):
+
+- **A named argument keeps its value** as the positional argument it stands in for, so a
+  call is not also charged a wrong count (hazard 3's second diagnostic). A value that does
+  not fit its position (`nonsense: 5` against a `string`) is reported as well, because that
+  is a second mistake, not an echo of the first.
+- **A `_` becomes `panic("…")`**, `never`, which fits any parameter without a second
+  diagnostic. The parameter's type is not known in the collector, so no other placeholder
+  could avoid one.
+
+**The grammar keeps the rule.** Deleting it would turn `greeting: "Hi"` into an `ERROR`
+node and a generic syntax error. Recognising the shape is what lets the diagnostic say
+"call arguments are positional" at the argument. It also needs no grammar push, no
+`parser.c` regeneration and no Zed pin bump. Same root as hazard 3's "a dead error path":
+a grammar rule with no collector consumer, the kind the phantom sweep in `CLAUDE.md`
+names. Regression: `cmd/lyrac/call_argument_test.go`, with the real prelude, which checks
+the advice (the value alone) runs.
+
 ### 10/07/26 — a lone `$` in a string is content, last or before `${`
 
 `println("$")`, `"${n}$"` and `"$${n}"` (a price, `$5`) were syntax errors, while `"$5"`,
