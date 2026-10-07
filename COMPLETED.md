@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/07/26 — a lone `$` in a string is content, last or before `${`
+
+`println("$")`, `"${n}$"` and `"$${n}"` (a price, `$5`) were syntax errors, while `"$5"`,
+`"a$b"`, `"$$"` and `"cost: $${n}"` parsed. The cause was in `tree-sitter-lyra`'s
+`src/scanner.c`, not the grammar: at the start of a content chunk the scanner probes for
+`${` by advancing past the `$`. When no `{` followed, it fell through to the content scan
+with that `$` already consumed, since a tree-sitter lexer cannot rewind, but without
+counting it as content. A following character such as `5` set the flag and saved it. A
+closing `"`, or a second `$` that turned out to open `${`, did not, so the chunk emitted
+nothing and the `$` was left as an error. The probe now marks the chunk as having content.
+The text was never wrong, only refused, since both collectors read `string_content`
+generically. `parser.c` is unchanged (the scanner is compiled beside it), so Zed needs only
+its pin moved to the scanner commit. Pinned by three tests in
+`tree-sitter-lyra/test/corpus/literals/string.txt`, two of which fail without the fix.
+
 ### 10/06/26 — every warning has a warning's code (`lyra-W027`–`W030`)
 
 `if true { … }` printed `warning [lyra-E001]: condition is always true`. The typechecker's
