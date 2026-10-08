@@ -268,7 +268,7 @@ func TestExec_IfDivergingBranch(t *testing.T) {
 		{"let g = (x: u8) -> u8 => {\n  if x > 1 { return 7 } else { return 2 }\n  0\n}\nlet main() -> u8 => g(0)\n", 2},
 		// both branches break inside a loop (both seal; the loop back-edge terminates
 		// the orphan merge).
-		{"let main() -> u8 => {\n  var i: u8 = 0\n  for { if i > 3 { break } else { break } }\n  i\n}\n", 0},
+		{"let main() -> u8 => {\n  var i: u8 = 0\n  loop { if i > 3 { break } else { break } }\n  i\n}\n", 0},
 		// a diverging branch in a value-position `let` binding.
 		{"let main() -> u8 => {\n  let y: u8 = if false { return 9 } else { 5 }\n  y\n}\n", 5},
 	}
@@ -473,19 +473,16 @@ let main() -> u8 => {
 	}
 }
 
-// TestExec_ForLoop exercises the cond/body/post/exit CFG end to end. These cases
-// use the infinite (`for {}`) and condition-only (`for cond {}`) forms with the
-// loop variable as an outer `var`; the three-clause `for var i=…; …; i+=…` form
-// is covered separately in TestExec_ForLoopThreeClause. Each case's exit code
-// distinguishes a correct CFG from a broken one:
+// TestExec_Loop exercises the cond/body/exit CFG of `loop` and `while` end to end,
+// with the loop variable as an outer `var`. Each case's exit code distinguishes a
+// correct CFG from a broken one:
 //   - accumulator: proves the back-edge runs the body N times (0+1+2+3+4 = 10).
 //   - break: an infinite loop that would never exit without break leaves at 4.
-//   - continue: `continue` still runs the loop step, so odd i are skipped and
-//     the even values 2+4+6+8+10 = 30 accumulate (proves continue targets the
-//     post/step path, not straight back to the condition losing the increment).
+//   - continue: odd i are skipped and the even values 2+4+6+8+10 = 30 accumulate
+//     (proves continue returns to the condition rather than leaving the loop).
 //   - nested + labeled break: `break outer` from the inner loop exits both;
 //     control reaches it after exactly two inner increments, so 2.
-func TestExec_ForLoop(t *testing.T) {
+func TestExec_Loop(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -498,7 +495,7 @@ func TestExec_ForLoop(t *testing.T) {
 let main() -> u8 => {
   var s = 0
   var i = 0
-  for i < 5 {
+  while i < 5 {
     s = s + i
     i = i + 1
   }
@@ -512,7 +509,7 @@ let main() -> u8 => {
 			`
 let main() -> u8 => {
   var s = 0
-  for {
+  loop {
     if s > 3 { break }
     s = s + 1
   }
@@ -527,7 +524,7 @@ let main() -> u8 => {
 let main() -> u8 => {
   var s = 0
   var i = 0
-  for i < 10 {
+  while i < 10 {
     i = i + 1
     if i % 2 == 1 { continue }
     s = s + i
@@ -544,9 +541,9 @@ let main() -> u8 => {
   var c = 0
   var i = 0
   var j = 0
-  outer: for i < 3 {
+  outer: while i < 3 {
     j = 0
-    for j < 3 {
+    while j < 3 {
       if j == 2 { break outer }
       c = c + 1
       j = j + 1
@@ -557,87 +554,6 @@ let main() -> u8 => {
 }
 `,
 			2,
-		},
-	}
-	for _, c := range cases {
-		t.Run("", func(t *testing.T) {
-			t.Parallel()
-			if got := buildAndRun(t, c.src); got != c.want {
-				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-			}
-		})
-	}
-}
-
-// TestExec_ForLoopThreeClause covers the full `for var i = init; cond; i op= step`
-// form, now that the two frontend gaps are fixed (a MathAssignOpExpr inferExprType
-// case for the `+=` post/body; entering the loop's scope so the init variable
-// resolves in the condition/post/body). Each case's exit code pins a distinct
-// behavior:
-//   - upward `+= 1` with the counter read in the body: 0+1+2+3+4 = 10.
-//   - `+=` used *inside* the body (not just the post) also lowers (load/op/store).
-//   - downward `-= 1` from 5 while `i > 0`: 5+4+3+2+1 = 15 (proves the post step
-//     and condition compose for a decreasing counter).
-//   - a narrow `u8` counter: the `+=` RHS literal takes the counter's width
-//     (checkMathAssignOp propagation), so it lowers at u8 instead of mismatching.
-func TestExec_ForLoopThreeClause(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		src  string
-		want int
-	}{
-		{
-			"upward",
-			`
-let main() -> u8 => {
-  var s = 0
-  for var i = 0; i < 5; i += 1 {
-    s = s + i
-  }
-  u8(s)
-}
-`,
-			10,
-		},
-		{
-			"compound-assign in body",
-			`
-let main() -> u8 => {
-  var s = 0
-  for var i = 0; i < 5; i += 1 {
-    s += i
-  }
-  u8(s)
-}
-`,
-			10,
-		},
-		{
-			"downward",
-			`
-let main() -> u8 => {
-  var s = 0
-  for var i = 5; i > 0; i -= 1 {
-    s += i
-  }
-  u8(s)
-}
-`,
-			15,
-		},
-		{
-			"narrow u8 counter",
-			`
-let main() -> u8 => {
-  var s: u8 = 0
-  for var i: u8 = 0; i < 5; i += 1 {
-    s = s + i
-  }
-  u8(s)
-}
-`,
-			10,
 		},
 	}
 	for _, c := range cases {
@@ -734,7 +650,7 @@ let main() -> u8 => isEven(10)
 let inc = (x: u8) -> u8 => x + 1
 let main() -> u8 => {
   var s: u8 = 0
-  for var i: u8 = 0; i < 5; i += 1 {
+  for i: u8 in 0..<5 {
     s = s + inc(i)
   }
   u8(s)

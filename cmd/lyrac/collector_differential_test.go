@@ -191,8 +191,9 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"an if inside a loop body", "for x in xs {\n  if x > 1 {\n    f(x)\n  }\n}"},
 		{"a loop whose body holds a loop", "for x in xs {\n  for y in ys {\n    f(y)\n  }\n}"},
 		{"a loop over a member", "for x in obj.items {\n  f(x)\n}"},
-		{"a labeled c-style loop with no header", "outer: for {\n  break outer\n}"},
-		{"a break with a label and a value", "for {\n  break outer 1 + 2\n}"},
+		{"a labeled loop", "outer: loop {\n  break outer\n}"},
+		{"a labeled while", "outer: while running {\n  continue outer\n}"},
+		{"a break with a label and a value", "loop {\n  break outer 1 + 2\n}"},
 		{"a compound assignment to a member", "p.x += 1"},
 		{"a compound assignment to an index", "xs[0] *= 2"},
 		{"a match inside a match arm", "let a = match x {\n  1 => match y {\n    2 => 3,\n  },\n}"},
@@ -250,7 +251,7 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 //
 // Two things it found immediately, which is the argument for having it:
 //
-//   - **The C-style `for` loop carried no location at all** in the *Go* collector, the same
+//   - **The C-style `for` loop (now `while`) carried no location at all** in the *Go* collector, the same
 //     gap its `for/in` sibling had until 08/18 and with the same cost — a diagnostic with a
 //     zero Location prints no `line:col` and escapes the driver's per-file filtering, so a
 //     warning on a prelude loop lands on every file compiled. A missing location is
@@ -271,7 +272,7 @@ func TestCollector_AgreesWithTheGoCollectorOnLocations(t *testing.T) {
 		{"a lambda with parameters and a body", "let f = (a: i64, b: i64) -> i64 => a + b"},
 		{"a block with several statements", "let f = () => {\n  let a = 1\n  let b = 2\n}"},
 		{"an if with both branches", "if c {\n  a()\n} else {\n  b()\n}"},
-		{"a c-style for loop", "for var i = 0; i < 10; i += 1 {\n  f(i)\n}"},
+		{"a while loop", "while i < 10 {\n  f(i)\n}"},
 		{"a for-in loop", "for x in xs {\n  f(x)\n}"},
 		{"a match with a guard", "let a = match x {\n  y if y > 0 => 1,\n  _ => 2,\n}"},
 		{"a struct declaration", "struct Point {\n  x: i64,\n  y: f64,\n}"},

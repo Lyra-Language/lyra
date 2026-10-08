@@ -8,7 +8,9 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopExpr {
+// CollectLoopExpr collects `loop { … }` (no condition) and `while cond { … }` into
+// one LoopExpr; the two node kinds differ only in the condition.
+func CollectLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.LoopExpr {
 	loopScope := ctx.PushLoopScope()
 	defer ctx.PopScope()
 
@@ -18,49 +20,32 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 		label = ctx.NodeText(labelNode)
 	}
 
-	forConditionNode := cst.Field(node, "for_condition")
-	var initExpr *ast.VarDeclStmt
 	var conditionExpr *ast.Expression
-	var postExpr *ast.Expression
-	if forConditionNode != nil {
-		conditionExprNode := cst.Field(forConditionNode, "condition_expr")
-		if conditionExprNode == nil {
-			ctx.AddError(forConditionNode, diag.SeverityError, "Expected for loop condition expression, got %s", forConditionNode.Kind())
+	bodyField := "loop_body"
+	if node.Kind() == "while_loop" {
+		bodyField = "while_body"
+		conditionNode := cst.Field(node, "condition")
+		if conditionNode == nil {
+			ctx.AddError(node, diag.SeverityError, "Expected while loop condition")
 			return nil
 		}
-		maybeConditionExpr := ctx.CollectExpr(conditionExprNode)
-		conditionExpr = &maybeConditionExpr
-
-		initExprNode := cst.Field(forConditionNode, "initial_expr")
-		if initExprNode != nil {
-			stmt := ctx.CollectStatement(initExprNode)
-			if varDecl, ok := stmt.(*ast.VarDeclStmt); ok {
-				initExpr = varDecl
-			} else {
-				ctx.AddError(initExprNode, diag.SeverityError, "Expected variable declaration in for loop initializer, got %s", initExprNode.Kind())
-			}
-		}
-
-		postExprNode := cst.Field(forConditionNode, "post_expr")
-		if postExprNode != nil {
-			expr := ctx.CollectExpr(postExprNode)
-			postExpr = &expr
-		}
+		condition := ctx.CollectExpr(conditionNode)
+		conditionExpr = &condition
 	}
 
-	bodyNode := cst.Field(node, "for_body")
+	bodyNode := cst.Field(node, bodyField)
 	if bodyNode == nil {
-		ctx.AddError(node, diag.SeverityError, "Expected for loop body")
+		ctx.AddError(node, diag.SeverityError, "Expected loop body")
 		return nil
 	}
 	body := ctx.CollectExpr(bodyNode)
 	bodyBlockPtr, ok := body.(*ast.BlockExpr)
 	if !ok {
-		ctx.AddError(bodyNode, diag.SeverityError, "Expected block expression for for loop body")
+		ctx.AddError(bodyNode, diag.SeverityError, "Expected block expression for loop body")
 		return nil
 	}
 
-	loop := &ast.ForLoopExpr{
+	loop := &ast.LoopExpr{
 		// **The loop's own span.** It carried none until 09/25, which is the same gap its
 		// `for/in` sibling had until 08/18 and the same cost: a diagnostic reported against
 		// a zero Location prints with no `line:col` *and* escapes the driver's per-file
@@ -70,9 +55,7 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 		// ASTs disagreed, which is the only way a *missing* location shows up at all.
 		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
 		Label:     label,
-		Init:      initExpr,
 		Condition: conditionExpr,
-		Post:      postExpr,
 		Body:      bodyBlockPtr,
 	}
 	ctx.RecordScope(loop, loopScope)

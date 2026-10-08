@@ -129,7 +129,7 @@ let rule_day = pure (rule: PosixRule, year: i64) -> i64 => {
   let target = if rule.weekday == 0 { 7 } else { rule.weekday }
   let ahead = (target - PlainDate(month_start).day_of_week() + 7) %% 7
   var of_month = 1 + ahead + (rule.week - 1) * 7
-  for of_month > days_in(year, rule.month) { of_month -= 7 }
+  while of_month > days_in(year, rule.month) { of_month -= 7 }
   days_from_civil(year, rule.month, of_month)
 }
 
@@ -139,7 +139,7 @@ let common_year_date = pure (ordinal: i64) -> (i64, i64) => {
   let lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
   var left = if ordinal < 1 { 1 } else { ordinal }
   var which = 1
-  for which < 12 && left > lengths[which - 1] {
+  while which < 12 && left > lengths[which - 1] {
     left -= lengths[which - 1]
     which += 1
   }
@@ -215,14 +215,14 @@ let scan_abbreviation = pure (runes: []rune, at: i64) -> Maybe<(string, i64)> =>
   var out: []rune = []
   if runes[i] == '<' {
     i += 1
-    for i < runes.len() && runes[i] != '>' {
+    while i < runes.len() && runes[i] != '>' {
       out.push(runes[i])
       i += 1
     }
     if i >= runes.len() { return None }
     return Some((out.join(""), i + 1))
   }
-  for i < runes.len() && runes[i].is_ascii_alpha() {
+  while i < runes.len() && runes[i].is_ascii_alpha() {
     out.push(runes[i])
     i += 1
   }
@@ -306,7 +306,7 @@ let scan_rule = pure (runes: []rune, at: i64) -> Maybe<(PosixRule, i64)> => {
 let scan_number = pure (runes: []rune, at: i64) -> Maybe<(i64, i64)> => {
   var i = at
   var value = 0
-  for i < runes.len() && runes[i].is_ascii_digit() {
+  while i < runes.len() && runes[i].is_ascii_digit() {
     value = value * 10 + (i64(runes[i]) - 48)
     i += 1
   }

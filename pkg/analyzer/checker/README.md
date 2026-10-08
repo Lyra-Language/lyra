@@ -305,7 +305,7 @@ never mentioned is `lyra-W013`. The list stays optional. Catches typo'd lowercas
 - Absent variable → ⊤. A float-adapted int literal is untracked (float source can be *wrong*).
 - Interval math overflowing int64 → ⊤ (`addI`/`subI`/`mulI`/`negI` guarded). **u64 uses a `+∞`
   upper sentinel**; `compareConst` has sentinel guards. i128/u128 are ⊤.
-- **C-style `for`** (`evalForLoop`): widening/narrowing fixpoint, body analyzed silently
+- **`while` / `loop`** (`evalLoop`): widening/narrowing fixpoint, body analyzed silently
   (`rangeChecker.silent`) then once loudly. After-loop state havocs.
 - **`for … in` range** (`forInRangeKey`): binds the interval only when provably non-empty; stepped,
   two-variable, variable-length, or maybe-empty ranges havoc.

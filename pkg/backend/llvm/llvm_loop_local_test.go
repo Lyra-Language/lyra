@@ -21,7 +21,7 @@ func TestExec_LoopBodyLocals(t *testing.T) {
 			"C-style loop",
 			`let main = () -> u8 => {
 			   var total = 0
-			   for var i = 0; i < 3; i += 1 {
+			   for i in 0..<3 {
 			     let doubled = i * 2
 			     total = total + doubled
 			   }
@@ -58,7 +58,7 @@ func TestExec_LoopBodyLocals(t *testing.T) {
 			"a mutable body-local",
 			`let main = () -> u8 => {
 			   var total = 0
-			   for var i = 0; i < 3; i += 1 {
+			   for i in 0..<3 {
 			     var step = i
 			     step = step + 1
 			     total = total + step
@@ -74,7 +74,7 @@ func TestExec_LoopBodyLocals(t *testing.T) {
 			`let main = () -> u8 => {
 			   let base = 10
 			   var total = 0
-			   for var i = 0; i < 3; i += 1 {
+			   for i in 0..<3 {
 			     let scaled = base + i
 			     total = total + scaled
 			   }
@@ -89,7 +89,7 @@ func TestExec_LoopBodyLocals(t *testing.T) {
 			`let call = (f: (i64) -> i64) -> i64 => f(10)
 			 let main = () -> u8 => {
 			   var total = 0
-			   for var i = 0; i < 3; i += 1 {
+			   for i in 0..<3 {
 			     let f = (x: i64) -> i64 => x + i
 			     total = total + call(f)
 			   }
@@ -105,7 +105,7 @@ func TestExec_LoopBodyLocals(t *testing.T) {
 			"a one-armed if as the last statement",
 			`let main = () -> u8 => {
 			   var n = 0
-			   for var i = 0; i < 3; i += 1 {
+			   for i in 0..<3 {
 			     if i > 1 { n = n + 1 }
 			   }
 			   u8(n)
@@ -117,9 +117,9 @@ func TestExec_LoopBodyLocals(t *testing.T) {
 			"nested loops with their own locals",
 			`let main = () -> u8 => {
 			   var total = 0
-			   for var i = 0; i < 2; i += 1 {
+			   for i in 0..<2 {
 			     let outer = i + 1
-			     for var j = 0; j < 2; j += 1 {
+			     for j in 0..<2 {
 			       let inner = j + 1
 			       total = total + outer * inner
 			     }
@@ -146,7 +146,7 @@ func TestExec_LoopBodyManagedLocal(t *testing.T) {
 	clang := lookClang(t)
 	src := `let main = () -> u8 => {
 	   var n = 0
-	   for var i = 0; i < 3; i += 1 {
+	   for i in 0..<3 {
 	     let s = "a" ++ "b"
 	     if s == "ab" { n = n + 1 }
 	   }

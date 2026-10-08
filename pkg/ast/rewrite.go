@@ -109,15 +109,9 @@ func rewriteExprChildren(expr Expression, rewrite func(Expression) Expression) {
 		for i := range e.LambdaClauses {
 			e.LambdaClauses[i].Body = RewriteExpr(e.LambdaClauses[i].Body, rewrite)
 		}
-	case *ForLoopExpr:
-		if e.Init != nil {
-			e.Init.Value = RewriteExpr(e.Init.Value, rewrite)
-		}
+	case *LoopExpr:
 		if e.Condition != nil {
 			*e.Condition = RewriteExpr(*e.Condition, rewrite)
-		}
-		if e.Post != nil {
-			*e.Post = RewriteExpr(*e.Post, rewrite)
 		}
 		rewriteBlock(e.Body, rewrite)
 	case *ForInLoopExpr:

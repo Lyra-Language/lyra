@@ -96,7 +96,7 @@ impl Rng {
     let m = ~u64(0);
     let cutoff = m - ((m %% b) + 1) %% b;
     var x = self.next_u64();
-    for x > cutoff { x = self.next_u64(); }
+    while x > cutoff { x = self.next_u64(); }
     i64(x %% b)
   }
 

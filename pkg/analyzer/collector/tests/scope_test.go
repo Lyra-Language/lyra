@@ -75,12 +75,12 @@ func TestScope_LambdaFunctionScope_ChildExists(t *testing.T) {
 	}
 }
 
-// --- for loop scope ---
+// --- for-in loop scope ---
 
-func TestScope_ForLoopInitVarInLoopScope(t *testing.T) {
-	// The loop init variable must not be at the file top level.
+func TestScope_ForInVarInLoopScope(t *testing.T) {
+	// The loop variable must not be at the file top level.
 	_, table, _, _ := parseAndCollect(t, `
-	for let i = 0; i < 10; i + 1 {
+	for i in 0..<10 {
 		let x = i
 	}`)
 
@@ -92,11 +92,11 @@ func TestScope_ForLoopInitVarInLoopScope(t *testing.T) {
 	}
 }
 
-func TestScope_ForLoopScopeHierarchy(t *testing.T) {
+func TestScope_ForInScopeHierarchy(t *testing.T) {
 	// The loop scope should be a direct child of the file scope,
 	// and the body block scope should be a child of the loop scope.
 	_, table, _, _ := parseAndCollect(t, `
-	for let i = 0; i < 10; i + 1 {
+	for i in 0..<10 {
 		let x = i
 	}`)
 

@@ -25,7 +25,7 @@ pub let sha256 = pure (data: []u8) -> []u8 => {
   var h = INITIAL_STATE
   let padded = pad(data)
   var at = 0
-  for at < padded.len() {
+  while at < padded.len() {
     h = compress(h, schedule(padded, at))
     at += 64
   }
@@ -52,7 +52,7 @@ let pad = pure (data: []u8) -> []u8 => {
   var out: []u8 = []
   for b in data { out.push(b) }
   out.push(128)
-  for out.len() % 64 != 56 { out.push(0) }
+  while out.len() % 64 != 56 { out.push(0) }
   let bits = data.len() * 8
   for i in 0..<8 { out.push(u8((bits >> (56 - i * 8)) & 255)) }
   out

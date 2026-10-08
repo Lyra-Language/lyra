@@ -25,13 +25,13 @@ func TestMatchArm_BareJumpCollectsAsTheBracedForm(t *testing.T) {
 	cases := []struct{ name, bare, braced string }{
 		{
 			"break",
-			"for {\n  match m {\n    A => break,\n    _ => 1,\n  }\n}",
-			"for {\n  match m {\n    A => { break },\n    _ => 1,\n  }\n}",
+			"loop {\n  match m {\n    A => break,\n    _ => 1,\n  }\n}",
+			"loop {\n  match m {\n    A => { break },\n    _ => 1,\n  }\n}",
 		},
 		{
 			"continue",
-			"for {\n  match m {\n    A => continue,\n    _ => 1,\n  }\n}",
-			"for {\n  match m {\n    A => { continue },\n    _ => 1,\n  }\n}",
+			"loop {\n  match m {\n    A => continue,\n    _ => 1,\n  }\n}",
+			"loop {\n  match m {\n    A => { continue },\n    _ => 1,\n  }\n}",
 		},
 		{
 			"return with a value",

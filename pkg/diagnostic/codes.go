@@ -1316,13 +1316,13 @@ const (
 	// works, slowly, and a game's frame loop is where that matters.
 	CodeTargetEmulated = "lyra-W026"
 
-	// CodeConstantCondition: an `if` or `for` whose condition is a literal `true` or
+	// CodeConstantCondition: an `if` or `while` whose condition is a literal `true` or
 	// `false` — a branch that is always or never taken, or a loop body that never runs.
 	//
-	// **`for true { … }` is the case that matters**, because it reads as the infinite
+	// **`while true { … }` is the case that matters**, because it reads as the infinite
 	// loop and is not quite one: a loop with a condition can finish, so its type is
-	// `void`, while bare `for { … }` with no `break` is `never` — the form a non-void
-	// function can end in. The message names `for { … }`, which is the warning-free
+	// `void`, while `loop { … }` with no `break` is `never` — the form a non-void
+	// function can end in. The message names `loop { … }`, which is the warning-free
 	// spelling, rather than leaving the reader to guess what else to write.
 	CodeConstantCondition = "lyra-W027"
 

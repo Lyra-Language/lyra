@@ -52,8 +52,10 @@ func TestEmit_OverflowElision(t *testing.T) {
 		// trap-free. (Havoc'd, i would be ⊤ and neither would elide.)
 		{"loop counter arithmetic", `let main = () -> u8 => {
 		  var r: u8 = 0
-		  for var i: u8 = 0; i < 3; i += 1 {
+		  var i: u8 = 0
+		  while i < 3 {
 		    r = i + 1
+		    i += 1
 		  }
 		  r
 		}`},
@@ -99,8 +101,10 @@ func TestExec_ElisionPreservesResults(t *testing.T) {
 		// r ends at i+1 for the last iteration i=2 → 3.
 		{`let main = () -> u8 => {
 		  var r: u8 = 0
-		  for var i: u8 = 0; i < 3; i += 1 {
+		  var i: u8 = 0
+		  while i < 3 {
 		    r = i + 1
+		    i += 1
 		  }
 		  r
 		}`, 3},
@@ -178,8 +182,10 @@ func TestEmit_BoundsElision(t *testing.T) {
 	elided := emit(`let main = () -> u8 => {
 	  let xs: [3]u8 = #[10, 20, 12]
 	  var sum: u8 = 0
-	  for var i: u8 = 0; i < 3; i += 1 {
+	  var i: u8 = 0
+	  while i < 3 {
 	    sum += xs[i]
+	    i += 1
 	  }
 	  sum
 	}`)
@@ -213,8 +219,10 @@ func TestExec_DivBoundsElisionPreservesResults(t *testing.T) {
 		{`let main = () -> u8 => {
 		  let xs: [3]u8 = #[10, 20, 12]
 		  var sum: u8 = 0
-		  for var i: u8 = 0; i < 3; i += 1 {
+		  var i: u8 = 0
+		  while i < 3 {
 		    sum += xs[i]
+		    i += 1
 		  }
 		  sum
 		}`, 42},

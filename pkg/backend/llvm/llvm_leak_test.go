@@ -151,11 +151,11 @@ let main = () -> u8 => {
   u8(t)
 }`, 39},
 		{"a sequence argument, stepped and broken out of", `module main
-let multiples = pure gen (k: i64) -> Seq<i64> => { var n = k; for { yield n; n += k } }
+let multiples = pure gen (k: i64) -> Seq<i64> => { var n = k; loop { yield n; n += k } }
 let pair = pure gen (a: Seq<i64>, b: Seq<i64>) -> Seq<i64> => {
   var xs = a
   var ys = b
-  for { match (xs.next(), ys.next()) { (Some(x), Some(y)) => { yield x + y }, _ => { break } } }
+  loop { match (xs.next(), ys.next()) { (Some(x), Some(y)) => { yield x + y }, _ => { break } } }
 }
 let main = () -> u8 => {
   var total = 0

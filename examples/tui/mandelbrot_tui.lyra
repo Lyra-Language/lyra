@@ -85,7 +85,7 @@ let main = () -> void => {
 
   var last_cols = cols0
   var last_rows = rows0
-  for running {
+  while running {
     if !events.event_available(redraw_interval_ms) {
       let (poll_cols, poll_rows) = terminal_size()
       if poll_cols != last_cols || poll_rows != last_rows {
@@ -108,7 +108,7 @@ let main = () -> void => {
       last_rows = rows
       let (fcols, frows, left, top) = frame_geometry(cols, rows)
       var more = true
-      for more {
+      while more {
         match events.next_event() {
           None => { running = false; more = false },
           Some(e) => {
@@ -358,7 +358,7 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> i64 => {
   var z = Complex { re: 0.0, im: 0.0 }
   var mag2 = 0.0
   var iter = 0
-  for iter < max_iter {
+  while iter < max_iter {
     z = z * z + c
     mag2 = z.re * z.re + z.im * z.im
     if mag2 > ESCAPE { break }

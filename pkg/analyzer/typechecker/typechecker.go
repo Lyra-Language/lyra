@@ -470,8 +470,8 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 		tc.checkMatchExpr(e, false)
 	case *ast.ForInLoopExpr:
 		tc.checkForInLoopExpr(e)
-	case *ast.ForLoopExpr:
-		tc.checkForLoopExpr(e)
+	case *ast.LoopExpr:
+		tc.checkLoopExpr(e)
 	case *ast.RangeExpr:
 		tc.inferRangeExpr(e)
 	default:
@@ -3236,7 +3236,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		// A compound assignment (`i += 1`) is a statement-like expression: it
 		// mutates its target and yields no usable value. It reaches inferExprType
 		// (rather than checkExpressionStmt's dedicated case) when it sits in value
-		// position — a block's last statement, or a `for` loop's post clause. Void
+		// position — a block's last statement. Void
 		// is the right "no value" result; a caller that needs a real value (e.g. a
 		// non-void function body) then correctly fails the assignability check.
 		tc.checkMathAssignOp(e)
@@ -3285,8 +3285,8 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return tc.inferRangeExpr(e)
 	case *ast.ForInLoopExpr:
 		return tc.checkForInLoopExpr(e)
-	case *ast.ForLoopExpr:
-		return tc.checkForLoopExpr(e)
+	case *ast.LoopExpr:
+		return tc.checkLoopExpr(e)
 	case *ast.NullCoalescingExpr:
 		return tc.inferNullCoalescingExpr(e)
 	case *ast.SizeofExpr:

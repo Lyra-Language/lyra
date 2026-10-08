@@ -376,7 +376,7 @@ let run_gallery = () -> void => {
   panels.upload("alpha", alpha_panel())
   panels.upload("region, canvas, palette", composed())
 
-  for !should_close() {
+  while !should_close() {
     begin_drawing()
     clear_background(RAYWHITE)
     draw_text(
@@ -569,7 +569,7 @@ let channels = () -> Image => {
   let src = scene()
   let strip = f32(CELL_W) / 4.0
   var i = 0
-  for i < 4 {
+  while i < 4 {
     var ch = image_channel(src, i32(i))
     ch.reformat(RGBA8)
     c.paint_image(ch, whole(ch), rect(f32(i) * strip, 0.0, strip, f32(CELL_H)), WHITE)

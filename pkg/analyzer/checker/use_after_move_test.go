@@ -192,7 +192,7 @@ func TestMove_MoveInsideLoop(t *testing.T) {
 	got := assertMoveErrors(t, movePreamble+`
 let main = () -> u8 => {
   let p: shared Person = Person { name: "a" }
-  for var i = 0; i < 3; i += 1 {
+  for i in 0..<3 {
     let a = peek(p)
     let b = consume(p)
   }
@@ -208,7 +208,7 @@ let main = () -> u8 => {
 func TestMove_ValueBuiltAndMovedInsideLoop_Ok(t *testing.T) {
 	assertMoveErrors(t, movePreamble+`
 let main = () -> u8 => {
-  for var i = 0; i < 3; i += 1 {
+  for i in 0..<3 {
     let p: shared Person = Person { name: "a" }
     let a = consume(p)
   }

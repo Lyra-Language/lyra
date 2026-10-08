@@ -1,0 +1,23 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				LoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								BreakStmt {
+								}
+							}
+						}
+					}
+					Condition: {
+						IdentifierExpr(running) {
+							Name: running
+						}
+					}
+				}
+			}
+		}
+	}
+}

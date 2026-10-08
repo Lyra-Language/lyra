@@ -29,7 +29,7 @@ func TestWatch_RestartsOnChangeAndSurvivesABrokenSave(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	save("let main = () => {\n  println(\"first\")\n  for true {\n  }\n}\n")
+	save("let main = () => {\n  println(\"first\")\n  while true {\n  }\n}\n")
 
 	stdout, stderr, restore := captureStreams(t)
 	stop := make(chan os.Signal, 1)

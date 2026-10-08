@@ -84,7 +84,7 @@ let main = () -> void => {
   var lives = LIVES
   var score = 0
 
-  for !should_close() {
+  while !should_close() {
     let dt = frame_time()
 
     if key_pressed(KEY_R) {
@@ -141,7 +141,7 @@ let main = () -> void => {
         // brick it has already passed.
         var i = 0
         var hit = false
-        for i < bricks.len() {
+        while i < bricks.len() {
           if !hit && bricks[i].alive && circle_hits_rect(ball, BALL_R, bricks[i].rect) {
             bricks[i].alive = false
             score += 10
@@ -162,7 +162,7 @@ let main = () -> void => {
     clear_background(rgb(24, 24, 32))
 
     var b = 0
-    for b < bricks.len() {
+    while b < bricks.len() {
       if bricks[b].alive { draw_rectangle(bricks[b].rect, bricks[b].color) }
       b += 1
     }
@@ -231,7 +231,7 @@ let tone_wav = pure (freq: i64, ms: i64) -> []u8 => {
   let period = rate / freq
   var samples: []u8 = []
   var i = 0
-  for i < frames {
+  while i < frames {
     let env = 1.0 - f64(i) / f64(frames)
     let amp = 70.0 * env
     let v = if (i % period) * 2 < period { 128.0 + amp } else { 128.0 - amp }
@@ -262,7 +262,7 @@ let wav_bytes = pure (samples: []u8, rate: i64) -> []u8 => {
   out = push_ascii(out, "data")
   out = push_u32(out, n)
   var i = 0
-  for i < n {
+  while i < n {
     out.push(samples[i])
     i += 1
   }
@@ -296,9 +296,9 @@ let push_u16 = pure (buf: []u8, v: i64) -> []u8 => {
 let build_bricks = pure () -> []Brick => {
   var out: []Brick = []
   var row = 0
-  for row < ROWS {
+  while row < ROWS {
     var col = 0
-    for col < COLS {
+    while col < COLS {
       let x = GAP + f32(col) * (BRICK_W + GAP)
       let y = BRICK_TOP + f32(row) * (BRICK_H + GAP)
       out.push(Brick {
@@ -335,7 +335,7 @@ let move_paddle = pure (x: f32, dt: f32) -> f32 => {
 let remaining = pure (bricks: []Brick) -> i64 => {
   var n = 0
   var i = 0
-  for i < bricks.len() {
+  while i < bricks.len() {
     if bricks[i].alive { n += 1 }
     i += 1
   }

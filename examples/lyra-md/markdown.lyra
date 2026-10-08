@@ -126,7 +126,7 @@ let render_inline = pure (text: string) -> string => {
   let runes = text.to_runes()
   var out: []string = []
   var i = 0
-  for i < runes.len() {
+  while i < runes.len() {
     let c = runes[i]
     // A backslash escapes an ASCII punctuation mark and nothing else — before `\n` in a
     // prose line means a literal backslash, not a line break.
@@ -194,7 +194,7 @@ struct Link {
 let link_at = pure (runes: []rune, open: i64) -> Maybe<Link> => {
   var depth = 0
   var i = open
-  for i < runes.len() {
+  while i < runes.len() {
     let c = runes[i]
     if c == '[' { depth += 1 }
     if c == ']' {
@@ -207,7 +207,7 @@ let link_at = pure (runes: []rune, open: i64) -> Maybe<Link> => {
   let close = i
   if close + 1 >= runes.len() || runes[close + 1] != '(' { return None }
   var j = close + 2
-  for j < runes.len() {
+  while j < runes.len() {
     let c = runes[j]
     if c == ')' { break }
     if c == ' ' || c == '(' { return None }
@@ -254,7 +254,7 @@ let code_content = pure (content: string) -> string => {
 /// How many times `c` repeats starting at `from`.
 let run_length = pure (runes: []rune, from: i64, c: rune) -> i64 => {
   var n = 0
-  for from + n < runes.len() && runes[from + n] == c { n += 1 }
+  while from + n < runes.len() && runes[from + n] == c { n += 1 }
   n
 }
 
@@ -294,7 +294,7 @@ let first_closing_run = pure (
   same: bool
 ) -> Maybe<i64> => {
   var i = from
-  for i < runes.len() {
+  while i < runes.len() {
     if runes[i] == c {
       // **A run is stepped over whole, never entered.** Advancing one rune at a time let a
       // run that had just been refused as a closer be reconsidered from its second

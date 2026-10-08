@@ -84,7 +84,7 @@ func TestCapturedAssignment_OwnLocalIsFine(t *testing.T) {
 let main = () -> u8 => {
   let f = () -> i64 => {
     var total = 0
-    for var i = 0; i < 3; i += 1 {
+    for i in 0..<3 {
       total = total + i
     }
     total

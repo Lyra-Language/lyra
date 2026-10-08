@@ -479,17 +479,11 @@ func (c *mustRelease) expr(st heldState, e ast.Expression) heldState {
 	case *ast.MatchExpr:
 		return c.matchArms(st, v)
 
-	case *ast.ForLoopExpr:
-		if v.Init != nil {
-			st = c.stmt(st, v.Init)
-		}
+	case *ast.LoopExpr:
 		if v.Condition != nil {
 			st = c.expr(st, *v.Condition)
 		}
 		st = c.loopBody(st, v.Body)
-		if v.Post != nil {
-			st = c.expr(st, *v.Post)
-		}
 		return st
 
 	case *ast.ForInLoopExpr:

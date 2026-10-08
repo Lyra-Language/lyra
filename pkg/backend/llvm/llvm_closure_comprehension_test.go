@@ -13,7 +13,7 @@ import (
 // refused outright: *"captured binding \"n\" is not in scope where the closure is created"*.
 // A comprehension simply could not appear inside a closure.
 //
-// It is the same bug the `ForLoopExpr` arm beside it exists to fix, whose comment describes
+// It is the same bug the `LoopExpr` arm beside it exists to fix, whose comment describes
 // a loop counter reading as a capture — hazard 8's "when adding an expression kind, grep for
 // the kind it is a variant of". A comprehension binds like a `for-in` and was missed.
 //

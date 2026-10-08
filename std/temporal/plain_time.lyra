@@ -93,7 +93,7 @@ impl Show for PlainTime {
     let fraction = i64(self) % NS_PER_SECOND
     if fraction == 0 { return whole }
     var written = "${fraction}".pad_start(9, "0")
-    for written.ends_with("0") { written = written.strip_suffix("0").unwrap_or(written) }
+    while written.ends_with("0") { written = written.strip_suffix("0").unwrap_or(written) }
     whole ++ "." ++ written
   }
 }

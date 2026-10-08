@@ -3,7 +3,7 @@ struct Count { word: string, n: i64 }
 
 let main = () => {
   let mut word_counts: []Count = []
-  for {
+  loop {
     match read_line() {
       Some(text) => {
         for w in text.split_when((r) => !r.is_ascii_alpha()) {

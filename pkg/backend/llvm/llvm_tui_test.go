@@ -53,7 +53,7 @@ func TestExec_ReadKeyDecodesAMultiByteCodePoint(t *testing.T) {
 module main
 let main = () -> void => {
   var i = 0;
-  for i < 3 {
+  while i < 3 {
     match read_key() {
       Some(k) => print("[${k}]"),
       None => print("[none]")
@@ -162,7 +162,7 @@ let describe = (e: Event) -> string => match e {
 let main = () -> void => {
   var ev = event_reader();
   var i = 0;
-  for i < ` + strconv.Itoa(n) + ` {
+  while i < ` + strconv.Itoa(n) + ` {
     match ev.next_event() { Some(e) => print("${describe(e)} "), None => print("EOF ") }
     i = i + 1;
   }

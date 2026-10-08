@@ -66,9 +66,9 @@ let run = (screen: Screen) -> u8 => {
   var status: u8 = 0
   var running = true
 
-  for running {
+  while running {
     var draining = true
-    for draining {
+    while draining {
       match poll_event() {
         None => { draining = false },
         // The first pad to arrive is the one read; SDL announces pads already plugged in

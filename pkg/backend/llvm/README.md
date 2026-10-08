@@ -136,7 +136,8 @@ branches at the call site, so an owned result behaves like an ordinary call's.
 
 ### Loops and ranges (`control_flow.go`)
 
-- Three `for` forms (infinite, condition, C-style) with labeled `break`/`continue` via the
+- `loop` and `while` (one `LoopExpr`; `continue` targets the condition) and `for … in`, with
+  labeled `break`/`continue` via the
   `l.loops []loopCtx` stack. A `loopCtx` carries frame and temp depths.
 - **`for x in xs`** over `[N]T`, `shared [N]T` or `[]T` is an index-counter loop; the loop
   variable **borrows** the element (not framed). `for i, x in xs` binds the index too

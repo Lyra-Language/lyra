@@ -212,7 +212,7 @@ impl Collider {
     let left = i32(x) + i32(self.shape.x)
     var band = (left >> BAND_SHIFT).clamp(0, last)
     let final = ((left + i32(self.shape.width) - 1) >> BAND_SHIFT).clamp(0, last)
-    for band <= final {
+    while band <= final {
       if self.any_stops(
         x,
         y,
@@ -285,9 +285,9 @@ impl Collider {
     let first_row = (top >> 3).max(0)
     let last_row = ((top + i32(self.shape.height) - 1) >> 3).min(rows - 1)
     var row = first_row
-    for row <= last_row {
+    while row <= last_row {
       var column = first_column
-      for column <= last_column {
+      while column <= last_column {
         let word = cells[row * i32(width) + column]
         let tile = i32(word & 0x7FF) - i32(first_tile)
         if tile >= 0 && tile < tiles {
@@ -402,9 +402,9 @@ impl Shape {
     let first_row = (top >> 3).max(0)
     let last_row = ((top + i32(self.height) - 1) >> 3).min(rows - 1)
     var row = first_row
-    for row <= last_row {
+    while row <= last_row {
       var column = first_column
-      for column <= last_column {
+      while column <= last_column {
         let word = cells[row * i32(width) + column]
         let tile = i32(word & 0x7FF) - i32(first_tile)
         if tile >= 0 && tile < tiles {

@@ -3,7 +3,7 @@ package typechecker_test
 import "testing"
 
 // A non-void function whose body ends in a loop: refused when the loop can finish (the
-// fall-through path has no value), accepted when it cannot (`for { … }` with no `break`
+// fall-through path has no value), accepted when it cannot (`loop { … }` with no `break`
 // is a `never`). Before 09/07 every shape passed, and the backend refused the ones that
 // could finish with "block has no value".
 
@@ -11,13 +11,13 @@ func TestTailLoop_WhileFormIsRefused(t *testing.T) {
 	source := `
 let find = (n: i64) -> i64 => {
     var i = 0
-    for i < n {
+    while i < n {
         i += 1
         if i >= n { return i }
     }
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res, "find: the body ends in a loop that can finish, so the function reaches its end without a value; end with an expression or a `return` (a `for { … }` with no `break` never finishes and needs neither)")
+	assertErrorsAre(t, res, "find: the body ends in a loop that can finish, so the function reaches its end without a value; end with an expression or a `return` (a `loop { … }` with no `break` never finishes and needs neither)")
 }
 
 func TestTailLoop_ForInIsRefused(t *testing.T) {
@@ -33,7 +33,7 @@ func TestTailLoop_InfiniteLoopIsNever(t *testing.T) {
 	source := `
 let find = (n: i64) -> i64 => {
     var i = 0
-    for {
+    loop {
         i += 1
         if i >= n { return i }
     }
@@ -42,28 +42,28 @@ let find = (n: i64) -> i64 => {
 	assertNoErrors(t, res)
 }
 
-// `for true` is not the infinite loop as far as types go: it has a condition, so it can
-// finish. Why lyra-W027 points at `for { … }` rather than only saying the condition is
+// `while true` is not the infinite loop as far as types go: it has a condition, so it can
+// finish. Why lyra-W027 points at `loop { … }` rather than only saying the condition is
 // constant.
-func TestTailLoop_ForTrueIsRefused(t *testing.T) {
+func TestTailLoop_WhileTrueIsRefused(t *testing.T) {
 	source := `
 let find = (n: i64) -> i64 => {
     var i = 0
-    for true {
+    while true {
         i += 1
         if i >= n { return i }
     }
 }`
 	res := parseCollectAndCheck(t, source, false)
 	assertHasErrorContaining(t, res, "the body ends in a loop that can finish")
-	assertHasErrorContaining(t, res, "write `for { … }` for a loop that runs until it breaks")
+	assertHasErrorContaining(t, res, "write `loop { … }` for a loop that runs until it breaks")
 }
 
 func TestTailLoop_InfiniteLoopWithBreakIsRefused(t *testing.T) {
 	source := `
 let find = (n: i64) -> i64 => {
     var i = 0
-    for {
+    loop {
         i += 1
         if i >= n { break }
     }
@@ -78,8 +78,8 @@ func TestTailLoop_NestedBreakDoesNotCount_LabeledOneDoes(t *testing.T) {
 	inner := `
 let f = (n: i64) -> i64 => {
     var i = 0
-    for {
-        for i < n { i += 1; break }
+    loop {
+        while i < n { i += 1; break }
         if i >= n { return i }
     }
 }`
@@ -89,8 +89,8 @@ let f = (n: i64) -> i64 => {
 	outer := `
 let f = (n: i64) -> i64 => {
     var i = 0
-    outer: for {
-        for i < n { i += 1; break outer }
+    outer: loop {
+        while i < n { i += 1; break outer }
         if i >= n { return i }
     }
 }`
@@ -102,7 +102,7 @@ func TestTailLoop_VoidFunctionIsUnaffected(t *testing.T) {
 	source := `
 let count = (n: i64) -> void => {
     var i = 0
-    for i < n { i += 1 }
+    while i < n { i += 1 }
 }`
 	res := parseCollectAndCheck(t, source, false)
 	assertNoErrors(t, res)

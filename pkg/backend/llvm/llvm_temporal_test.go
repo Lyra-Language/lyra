@@ -87,7 +87,7 @@ let main = () -> void => {
   var bad = 0
   var checked = 0
   var n = 0 - 110000
-  for n < 110000 {
+  while n < 110000 {
     let d = PlainDate(n)
     let back = plain_date(d.year(), d.month(), d.day()).unwrap_or(PlainDate(0))
     if i64(back) != n { bad += 1 }

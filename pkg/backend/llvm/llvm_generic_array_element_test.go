@@ -128,7 +128,7 @@ struct HashMap<k, v> { slots: []Maybe<Entry<k, v>>, count: i64 }
 
 let insert<k,v> where k: Hash = (self: mut HashMap<k,v>, key: k, value: v) -> void => {
   var i = i64(key.hash() % u64(self.slots.len()))
-  for {
+  loop {
     match self.slots[i] {
       Some(e) => {
         if e.key == key { self.slots[i] = Some(Entry { key: key, value: value }); return }

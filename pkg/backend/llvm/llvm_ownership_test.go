@@ -178,7 +178,7 @@ var ownershipCases = []struct {
 		`let hit = () -> i64 => if ("x" ++ "y") == "xy" { 1 } else { 0 }
 		 let main = () -> u8 => {
 		   var hits = 0
-		   for var i = 0; i < 5; i += 1 {
+		   for i in 0..<5 {
 		     hits += hit()
 		   }
 		   u8(hits)
@@ -193,7 +193,7 @@ var ownershipCases = []struct {
 		// when read after the loop (ASan-confirmed pre-fix).
 		"own string bound inside a loop body",
 		`let f = (s: own string) -> u8 => {
-		   for var i = 0; i < 2; i += 1 {
+		   for i in 0..<2 {
 		     let y: string = s
 		   }
 		   if s == "ab" { 3 } else { 4 }
@@ -319,7 +319,7 @@ var ownershipCases = []struct {
 		`let main = () -> u8 => {
 		   let s: string = "a" ++ "b"
 		   var n: u8 = 0
-		   for var i: u8 = 0; i < 3; i += 1 {
+		   for i: u8 in 0..<3 {
 		     if s == "ab" { n += 1 }
 		   }
 		   n

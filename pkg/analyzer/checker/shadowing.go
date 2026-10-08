@@ -281,20 +281,10 @@ func (c *shadowChecker) checkExpr(expr ast.Expression, outerNames map[string]ast
 			}
 			return false
 
-		case *ast.ForLoopExpr:
+		case *ast.LoopExpr:
 			forOuter := copyLocMap(outerNames)
-			if ex.Init != nil {
-				c.checkExpr(ex.Init.Value, outerNames)
-				if origLoc, ok := outerNames[ex.Init.Name]; ok {
-					c.warn(ex.Init.GetLocation(), origLoc, ex.Init.Name)
-				}
-				forOuter[ex.Init.Name] = ex.Init.GetLocation()
-			}
 			if ex.Condition != nil {
 				c.checkExpr(*ex.Condition, forOuter)
-			}
-			if ex.Post != nil {
-				c.checkExpr(*ex.Post, forOuter)
 			}
 			c.checkStatements(ex.Body.Statements, forOuter)
 			return false
@@ -302,7 +292,7 @@ func (c *shadowChecker) checkExpr(expr ast.Expression, outerNames map[string]ast
 		case *ast.ForInLoopExpr:
 			c.checkExpr(ex.Iterable, outerNames)
 			bodyOuter := copyLocMap(outerNames)
-			// A loop variable is a declaration like a `let` — the three-clause loop's
+			// A loop variable is a declaration like a `let` — the old three-clause loop's
 			// counter warned and `for c in items` did not, though since 10/02 it shadows
 			// for the whole body (a parameter included) where it was ignored before. A
 			// destructured element (`for (a, b) in …`) is warned by the prepended `let`

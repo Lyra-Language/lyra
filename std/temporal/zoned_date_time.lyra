@@ -182,7 +182,7 @@ let split_offset = pure (text: string) -> Maybe<(PlainDateTime, Maybe<i64>)> => 
   let Some(t) = text.index("T") else { return None }
   let runes = text.to_runes()
   var at = runes.len() - 1
-  for at > t && runes[at] != '+' && runes[at] != '-' { at -= 1 }
+  while at > t && runes[at] != '+' && runes[at] != '-' { at -= 1 }
   if at <= t {
     let Some(local) = parse_plain_date_time(text) else { return None }
     let unwritten: Maybe<i64> = None

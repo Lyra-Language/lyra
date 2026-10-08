@@ -32,7 +32,7 @@ func TestExec_BareConstructorTakesItsInstantiation(t *testing.T) {
 			 let main = () -> void => {
 			   var m = get(3)
 			   var seen = 0
-			   for m != None {
+			   while m != None {
 			     seen += 1
 			     m = get(0)
 			   }

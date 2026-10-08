@@ -672,7 +672,7 @@ pub let animation_name = pure (anims: Animations, index: i64) -> string => {
   // `name` is a fixed 32-byte C string: read up to the first NUL, or all 32.
   var bytes: []u8 = []
   var i = 0
-  for i < 32 {
+  while i < 32 {
     let b = clip.name[i]
     if b == 0 { break }
     bytes.push(b)

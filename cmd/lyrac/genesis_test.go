@@ -333,7 +333,7 @@ let main = () -> void => {
   pad.init()
   vdp.set_color(0, 0, find((pad.read(1) >> 3) & 3, 0))
   vdp.display_on()
-  for {}
+  loop {}
 }
 
 /// The colour of the first swatch from `+"`first`"+` on named at least `+"`name`"+`, as Vega's
@@ -392,7 +392,7 @@ let main = () -> void => {
   vdp.load_tiles(1, SOLID)
   vdp.write_plane(vdp.PLANE_B, MAP, 4, 1, 1)
   vdp.display_on()
-  for {}
+  loop {}
 }
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -445,15 +445,15 @@ let main = () -> void => {
   vdp.enable_vblank_interrupt()
   let view = Camera { world_width: 512, world_height: 288 }
   let seen = blanks
-  for blanks == seen {}
+  while blanks == seen {}
   vdp.display_off()
   view.show_map(vdp.PLANE_A, EMPTY, 64)
   view.show_map(vdp.PLANE_B, FULL, 64)
   vdp.display_on()
   let drawn = blanks
-  for blanks == drawn {}
+  while blanks == drawn {}
   vdp.set_color(1, 1, vdp.rgb(0, 7, 0))
-  for {}
+  loop {}
 }
 `)
 	screen := runROM(t, rom, "120", "")
@@ -512,7 +512,7 @@ let main = () -> void => {
   var view = Camera { world_width: 640, world_height: 320 }
   camera.show_map(view, vdp.PLANE_B, map, 80)
   vdp.display_on()
-  for {
+  loop {
     view.last_x = view.x
     view.last_y = view.y
     if view.x < 480 { view.x += 4 } else { view.y = (view.y + 2).min(96) }
@@ -565,7 +565,7 @@ let main = () -> void => {
   var view = Camera { world_width: 1024, world_height: 224 }
   `+c.zone+`
   var x: i16 = 152
-  for {
+  loop {
     x += 2
     view.follow(x, 100, 8, 8)
     let (sx, sy) = view.on_screen(x, 100)
@@ -608,7 +608,7 @@ let main = () -> void => {
   var view = Camera { x: 480, y: 96, last_x: 480, last_y: 96, world_width: 640, world_height: 320 }
   camera.show_map(view, vdp.PLANE_B, map, 80)
   vdp.display_on()
-  for {
+  loop {
     view.last_x = view.x
     view.last_y = view.y
     if view.x > 0 { view.x -= 4 } else { view.y = (view.y - 2).max(0) }
@@ -677,7 +677,7 @@ let main = () -> void => {
   vdp.display_on()
   var x: i16 = 40
   var ticks: u16 = 0
-  for {
+  loop {
     ticks += 1
     let dx: i16 = if ticks < 100 { 1 } else { -1 }
     if !BODY.hits_map(x + dx, 40, map, 20, 1, STARTS, SHAPES) { x += dx }
@@ -755,7 +755,7 @@ let main = () -> void => {
   `+c.body+`
   // Green when right, blue when wrong; the runtime's panic screen is red.
   vdp.set_color(0, 0, if ok { vdp.rgb(0, 7, 0) } else { vdp.rgb(0, 0, 7) })
-  for {}
+  loop {}
 }
 `)
 			if got := runROM(t, out, "60", "").dominant(); got != c.want {
@@ -782,7 +782,7 @@ let main = () -> void => {
   vdp.load_tiles(1, SOLID)
   vdp.write_cell(vdp.PLANE_A, 2, 1, 1)
   vdp.display_on()
-  for {}
+  loop {}
 }
 `)
 	screen := runROM(t, out, "60", "")
@@ -816,7 +816,7 @@ let main = () -> void => {
   vdp.set_scroll(vdp.PLANE_A, 40, 0)
   vdp.window_rows(2)
   vdp.display_on()
-  for {}
+  loop {}
 }
 `)
 	screen := runROM(t, out, "60", "")

@@ -21,7 +21,7 @@ import (
 //   - `UnsafeBlockExpr` (08/18) was missing from the LSP's expression walker, so hover,
 //     go-to-definition and rename silently returned nothing inside `unsafe { … }` — the
 //     whole of a program's FFI and raw-pointer code. Chasing that found **thirteen more**
-//     expression kinds missing from the same switch, including `ForLoopExpr`, so
+//     expression kinds missing from the same switch, including `LoopExpr`, so
 //     navigation was dead inside every loop body in every program.
 //
 // None of that is a failure of care. It is that "grep for the switches over it" requires

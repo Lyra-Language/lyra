@@ -152,8 +152,10 @@ func TestRange_NoOverflow_LoopCounter(t *testing.T) {
 	noDiag(t, `
 		let f = () -> u8 => {
 			var sum: u8 = 0
-			for var i: u8 = 0; i < 3; i += 1 {
+			var i: u8 = 0
+			while i < 3 {
 				sum += i
+				i += 1
 			}
 			sum
 		}
@@ -321,8 +323,10 @@ func TestRange_NoComparison_LoopCondition(t *testing.T) {
 	noDiag(t, `
 		let f = (n: u8) -> u8 => {
 			var total: u8 = 0
-			for var i: u8 = 0; i < 3; i += 1 {
+			var i: u8 = 0
+			while i < 3 {
 				total = i
+				i += 1
 			}
 			total
 		}
@@ -683,8 +687,10 @@ func TestRange_Safety_ProvableLoopIndexIsMarked(t *testing.T) {
 	program, safety := analyzeForSafety(t, `let main = () -> u8 => {
 		let xs: [3]u8 = #[10, 20, 30]
 		var sum: u8 = 0
-		for var i = 0; i < 3; i += 1 {
+		var i = 0
+		while i < 3 {
 			sum += xs[i]
+			i += 1
 		}
 		sum
 	}`)
@@ -717,7 +723,11 @@ func TestRange_Safety_HavocInNestedBlockNotElided(t *testing.T) {
 		let f = (xs: [10]u8, c: bool) -> u8 => {
 			var x: u8 = 5
 			if c {
-				for var i: u8 = 0; i < 8; i += 1 { x = i + 100 }
+				var i: u8 = 0
+				while i < 8 {
+					x = i + 100
+					i += 1
+				}
 			}
 			xs[x]
 		}
@@ -739,7 +749,11 @@ func TestRange_NoOverflow_HavocInNestedBlock(t *testing.T) {
 		let f = (c: bool) -> u8 => {
 			var x: u8 = 250
 			if c {
-				for var i: u8 = 0; i < 3; i += 1 { x = i }
+				var i: u8 = 0
+				while i < 3 {
+					x = i
+					i += 1
+				}
 			}
 			x + 100
 		}
@@ -773,8 +787,10 @@ func TestRange_Loop_CounterOverflow(t *testing.T) {
 	onlyDiag(t, `
 		let f = () -> u8 => {
 			var last: u8 = 0
-			for var i: u8 = 200; i < 250; i += 1 {
+			var i: u8 = 200
+			while i < 250 {
 				last = i + 100
+				i += 1
 			}
 			last
 		}
@@ -787,8 +803,10 @@ func TestRange_Loop_CounterComparison_UpperBound(t *testing.T) {
 	onlyDiag(t, `
 		let f = () -> u8 => {
 			var r: u8 = 0
-			for var i: u8 = 0; i < 3; i += 1 {
+			var i: u8 = 0
+			while i < 3 {
 				if i < 10 { r = 1 } else { r = 2 }
+				i += 1
 			}
 			r
 		}
@@ -802,8 +820,10 @@ func TestRange_Loop_DownwardCounter(t *testing.T) {
 	onlyDiag(t, `
 		let f = () -> u8 => {
 			var r: u8 = 0
-			for var i: u8 = 10; i > 0; i -= 1 {
+			var i: u8 = 10
+			while i > 0 {
 				if i > 50 { r = 1 } else { r = 2 }
+				i -= 1
 			}
 			r
 		}
@@ -817,8 +837,10 @@ func TestRange_Loop_AccumulatorNoFalsePositive(t *testing.T) {
 	noDiag(t, `
 		let f = () -> u8 => {
 			var sum: u8 = 0
-			for var i: u8 = 0; i < 3; i += 1 {
+			var i: u8 = 0
+			while i < 3 {
 				sum += i
+				i += 1
 			}
 			sum
 		}
@@ -832,8 +854,10 @@ func TestRange_Loop_LargeBoundTerminates(t *testing.T) {
 	noDiag(t, `
 		let f = () -> i32 => {
 			var acc: i32 = 0
-			for var i: i32 = 0; i < 1000000; i += 1 {
+			var i: i32 = 0
+			while i < 1000000 {
 				acc = i
+				i += 1
 			}
 			acc
 		}
@@ -847,10 +871,14 @@ func TestRange_Loop_Nested(t *testing.T) {
 	noDiag(t, `
 		let f = () -> u8 => {
 			var r: u8 = 0
-			for var i: u8 = 0; i < 3; i += 1 {
-				for var j: u8 = 0; j < 3; j += 1 {
+			var i: u8 = 0
+			while i < 3 {
+				var j: u8 = 0
+				while j < 3 {
 					r = i
+					j += 1
 				}
+				i += 1
 			}
 			r
 		}
@@ -861,7 +889,7 @@ func TestRange_Loop_Nested(t *testing.T) {
 // ── for…in range widening ────────────────────────────────────────────────────
 //
 // A numeric-range iterable bounds the loop variable precisely (the for-in analogue
-// of the C-style loop counter), when the range is provably non-empty.
+// of a `while` loop counter), when the range is provably non-empty.
 
 // A range that indexes past the end is a definite out-of-bounds — the loop
 // definitely runs (5 < 10), so `xs[i]` at i = 5 traps.

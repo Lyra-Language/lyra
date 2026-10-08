@@ -50,7 +50,7 @@ module main
 let main = () -> void => {
   let s = "héllo";
   var i = 0;
-  for i < s.len() {
+  while i < s.len() {
     print(s[i]);
     i = i + 1;
   }
@@ -461,7 +461,7 @@ func TestExec_EarlyReturnOfAConstructorLowers(t *testing.T) {
 module main
 let first_over = (xs: [4]i64, limit: i64) -> Maybe<i64> => {
   if limit < 0 { return None }
-  for var i = 0; i < 4; i+=1 {
+  for i in 0..<4 {
     if xs[i] > limit { return Some(xs[i]) }
   }
   None

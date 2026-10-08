@@ -21,7 +21,7 @@ module std.tui
 //! mouse_enable();
 //! var events = event_reader();
 //! var running = true;
-//! for running {
+//! while running {
 //!   match events.next_event() {
 //!     Some(Keyboard(Char c)) => { running = i64(c) != 113 },
 //!     Some(Keyboard(Up)) => println("up"),
@@ -180,7 +180,7 @@ let read_number = () -> Maybe<(i64, rune)> => {
   var term = '\x00'
   var done = false
   var ended = false
-  for !done {
+  while !done {
     match read_key() {
       None => { done = true; ended = true },
       Some(d) => {

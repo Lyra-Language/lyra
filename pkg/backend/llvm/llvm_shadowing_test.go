@@ -46,7 +46,7 @@ func TestExec_ShadowedBindingsAreScoped(t *testing.T) {
 			`let main = () -> u8 => {
 			   let n = 100
 			   var seen = 0
-			   for var i = 0; i < 2; i += 1 {
+			   for i in 0..<2 {
 			     let n = 5
 			     seen = seen + n
 			   }
@@ -55,21 +55,8 @@ func TestExec_ShadowedBindingsAreScoped(t *testing.T) {
 			10, // 5 + 5, with the outer n still 100
 		},
 		{
-			// The C-style loop *counter* shadowing an outer binding: the counter
-			// belongs to the loop, not to what follows it.
-			"a loop counter",
-			`let main = () -> u8 => {
-			   let x = 100
-			   var total = 0
-			   for var x = 0; x < 3; x += 1 {
-			     total = total + x
-			   }
-			   u8(total + x)
-			 }`,
-			103, // 0+1+2, then the outer x is still 100
-		},
-		{
-			// The same for a for-in loop variable.
+			// A for-in loop variable shadowing an outer binding: it belongs to the loop,
+			// not to what follows it.
 			"a for-in loop variable",
 			`let main = () -> u8 => {
 			   let i = 100

@@ -373,7 +373,7 @@ let run_check = (path: string) -> u8 => {
           println("  ${a.count} animation clip(s)")
           var i = 0
           var first_valid = 0 - 1
-          for i < i64(a.count) {
+          while i < i64(a.count) {
             let valid = animation_valid(o.model, a, i)
             let frames = animation_frame_count(a, i)
             println("    ${i}: ${animation_name(a, i)}  ${frames} frames  valid ${valid}")
@@ -459,7 +459,7 @@ let count_true = pure (flags: []bool) -> i64 => {
 let all_valid = (model: Model, a: Animations) -> bool => {
   var every = true
   var i = 0
-  for i < i64(a.count) {
+  while i < i64(a.count) {
     if !animation_valid(model, a, i) { every = false }
     i += 1
   }
@@ -500,7 +500,7 @@ let run_viewer = (paths: []string) -> void => {
   // The camera never moves: the model is framed to size FIT at the origin instead.
   let camera = camera_3d(vec3(0.0, 0.8, 5.2), vec3(0.0, 0.0, 0.0), 45.0)
 
-  for !should_close() {
+  while !should_close() {
     let now = f32(elapsed())
     let dt = now - last
     last = now
@@ -1209,7 +1209,7 @@ let arguments = () -> []string => {
   var out: []string = []
   let all = program_args()
   var i = 1
-  for i < all.len() {
+  while i < all.len() {
     out.push(all[i])
     i += 1
   }

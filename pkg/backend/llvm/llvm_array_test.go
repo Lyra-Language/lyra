@@ -25,7 +25,7 @@ func TestExec_StaticArray(t *testing.T) {
 		{"runtime index loop sum", `let main = () -> u8 => {
 		   let xs: [3]u8 = #[10, 20, 30]
 		   var sum: u8 = 0
-		   for var i = 0; i < 3; i += 1 {
+		   for i in 0..<3 {
 		     sum += xs[i]
 		   }
 		   sum

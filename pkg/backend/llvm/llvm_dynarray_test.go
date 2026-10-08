@@ -313,7 +313,7 @@ func TestExec_DynArrayPushGrows(t *testing.T) {
 	t.Parallel()
 	src := `let main = () -> u8 => {
   var xs: []i64 = []
-  for var i = 0; i < 10; i+=1 { xs.push(i * i) }
+  for i in 0..<10 { xs.push(i * i) }
   var sum = 0
   for x in xs { sum = sum + x }
   u8((xs.len() * 100 + sum) %% 256)
@@ -385,7 +385,7 @@ func TestExec_DynArrayPushNestedArrays(t *testing.T) {
 	t.Parallel()
 	src := `let main = () -> u8 => {
   var rows: [][]i64 = []
-  for var i = 0; i < 4; i+=1 {
+  for i in 0..<4 {
     var row: []i64 = []
     row.push(i)
     row.push(i * 2)

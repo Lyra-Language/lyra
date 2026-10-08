@@ -54,7 +54,7 @@ import std.sevenzip.{ open_7z, extract_7z }
 import std.compress.{ crc32 }
 import std.io.{ read_bytes }
 let main = () -> void => {
-  for {
+  loop {
     let Some(name) = read_line() else { break }
     println("== ${name}")
     let Some(data) = read_bytes("testdata/sevenzip/${name}.7z") else {

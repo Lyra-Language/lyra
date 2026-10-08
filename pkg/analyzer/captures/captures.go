@@ -307,8 +307,8 @@ func collectInto(body []ast.Expression, bound map[string]bool, reads map[string]
 			}
 		case *ast.ArrayCompExpr:
 			// `[n in xs | n * 2]` binds n, exactly as a `for-in` binds its loop variable
-			// — and for the same reason the ForLoopExpr arm below exists: a binder this
-			// walk does not know about reads as a *free* name, so a comprehension inside a
+			// — and for the same reason: a binder this walk does not know about reads as
+			// a *free* name, so a comprehension inside a
 			// a lambda made the lambda try to capture its own binder. The backend refused
 			// it outright ("captured binding \"n\" is not in scope where the closure is
 			// created"), so a comprehension simply could not appear inside a closure.
@@ -319,14 +319,6 @@ func collectInto(body []ast.Expression, bound map[string]bool, reads map[string]
 				if name := v.Generators[i].Identifier; name != "" {
 					bound[name] = true
 				}
-			}
-		case *ast.ForLoopExpr:
-			// A C-style loop's init declaration is reached by the generic walker only
-			// as an *expression* (it walks Init.Value), never as the statement it is —
-			// so the counter has to be bound here, or `for var i = 0; …; i += 1` inside
-			// a lambda reads as a capture and its `i += 1` as a write to one.
-			if v.Init != nil {
-				bound[v.Init.Name] = true
 			}
 		}
 		return true

@@ -36,7 +36,7 @@ let main = () -> void => {
   var y: i16 = (vdp.SCREEN_HEIGHT - HERO_SIZE) / 2
   var step: u16 = 0
   var frames: u16 = 0
-  for {
+  loop {
     let buttons = pad.read(1)
     var dx: i16 = 0
     var dy: i16 = 0
@@ -65,7 +65,7 @@ let main = () -> void => {
     sprites.add(Sprite { x: x, y: y, width: 2, height: 2, tile: 1 + step * 4 })
     // The next vertical blank shows it: wait for that before the next frame.
     let shown = vblanks
-    for vblanks == shown {}
+    while vblanks == shown {}
   }
 }
 

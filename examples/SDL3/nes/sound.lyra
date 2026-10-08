@@ -102,9 +102,9 @@ let run = (screen: Screen, audio: Maybe<AudioStream>) -> u8 => {
     None => true,
   }
 
-  for running {
+  while running {
     var draining = true
-    for draining {
+    while draining {
       match poll_event() {
         None => { draining = false },
         Some(event) => {
@@ -122,7 +122,7 @@ let run = (screen: Screen, audio: Maybe<AudioStream>) -> u8 => {
 
     match audio {
       Some(stream) => {
-        for queued_frames(stream) < AHEAD_TICKS * TICK_SAMPLES {
+        while queued_frames(stream) < AHEAD_TICKS * TICK_SAMPLES {
           var chunk: []f32 = []
           perform(player, chip, chunk, 1)
           put_audio(stream, chunk)
@@ -339,7 +339,7 @@ let run_checks = () -> u8 => {
 let lfsr_period = pure (short: bool) -> i64 => {
   var lfsr = lfsr_next(1, short)
   var steps = 1
-  for lfsr != 1 && steps < 40000 {
+  while lfsr != 1 && steps < 40000 {
     lfsr = lfsr_next(lfsr, short)
     steps += 1
   }

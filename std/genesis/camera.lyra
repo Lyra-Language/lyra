@@ -8,7 +8,7 @@ module std.genesis.camera
 //!
 //! var view = Camera { world_width: 640, world_height: 512 }
 //! view.show_map(vdp.PLANE_B, LEVEL, LEVEL_WIDTH)   // once, before display_on
-//! for {
+//! loop {
 //!   // … move the player, in the world's pixels
 //!   view.follow(x, y, PLAYER_WIDTH, PLAYER_HEIGHT)
 //!   let (sx, sy) = view.on_screen(x, y)   // … and draw its sprites there

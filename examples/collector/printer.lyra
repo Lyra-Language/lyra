@@ -53,7 +53,7 @@ import ast.{
   StructInstanceField,
   Conditional,
   ForInLoop,
-  ForLoop,
+  Loop,
   Break,
   Match,
   MatchArm,
@@ -302,8 +302,8 @@ let print_expr = pure (expr: shared Expr, depth: i64, show_loc: bool) -> string 
     // Condition, Else, Then — alphabetical, which puts the `else` branch *above* the `then`
     // one. Reading the golden top to bottom is not reading the program.
     IfExpr(conditional) => print_if(conditional, depth, show_loc),
-    ForInLoopExpr(loop) => print_for_in_loop(loop, depth, show_loc),
-    ForLoopExpr(loop) => print_for_loop(loop, depth, show_loc),
+    ForInLoopExpr(for_in) => print_for_in_loop(for_in, depth, show_loc),
+    LoopExpr(lp) => print_loop(lp, depth, show_loc),
     MathAssignOpExpr(op) => print_binary("MathAssignOpExpr", op, depth, show_loc),
     MatchExpr(match_expr) => print_match(match_expr, depth, show_loc),
     DataConstructorExpr(value) => {
@@ -567,29 +567,33 @@ let print_match_arm = pure (arm: MatchArm, depth: i64, show_loc: bool) -> string
 
 /// `ForInLoopExpr { Body, Iterable, Key, Label, Value }` — alphabetical, which scatters
 /// the header's three names across the node and puts the body first.
-let print_for_in_loop = pure (loop: ForInLoop, depth: i64, show_loc: bool) -> string => {
-  var out = header_unnamed("ForInLoopExpr", Some(loop.location), depth, show_loc)
-  out = out ++ node_field("Body", print_expr(loop.body, depth + 2, show_loc), depth + 1)
+let print_for_in_loop = pure (
+  for_in: ForInLoop,
+  depth: i64,
+  show_loc: bool
+) -> string => {
+  var out = header_unnamed("ForInLoopExpr", Some(for_in.location), depth, show_loc)
+  out = out ++ node_field("Body", print_expr(for_in.body, depth + 2, show_loc), depth + 1)
   out = out ++ node_field(
     "Iterable",
-    print_expr(loop.iterable, depth + 2, show_loc),
+    print_expr(for_in.iterable, depth + 2, show_loc),
     depth + 1
   )
-  if loop.key != "" { out = out ++ scalar("Key", loop.key, depth + 1) }
-  match loop.key_type {
+  if for_in.key != "" { out = out ++ scalar("Key", for_in.key, depth + 1) }
+  match for_in.key_type {
     Some(t) => { out = out ++ node_field("KeyType", print_type(t, depth + 2, show_loc), depth + 1) },
     None => {},
   }
-  if loop.label != "" { out = out ++ scalar("Label", loop.label, depth + 1) }
-  if loop.value != "" { out = out ++ scalar("Value", loop.value, depth + 1) }
+  if for_in.label != "" { out = out ++ scalar("Label", for_in.label, depth + 1) }
+  if for_in.value != "" { out = out ++ scalar("Value", for_in.value, depth + 1) }
   out ++ close(depth)
 }
 
-/// `ForLoopExpr { Body, Condition, Init, Label, Post }`.
-let print_for_loop = pure (loop: ForLoop, depth: i64, show_loc: bool) -> string => {
-  var out = header_unnamed("ForLoopExpr", Some(loop.location), depth, show_loc)
-  out = out ++ node_field("Body", print_expr(loop.body, depth + 2, show_loc), depth + 1)
-  match loop.condition {
+/// `LoopExpr { Body, Condition, Label }`.
+let print_loop = pure (lp: Loop, depth: i64, show_loc: bool) -> string => {
+  var out = header_unnamed("LoopExpr", Some(lp.location), depth, show_loc)
+  out = out ++ node_field("Body", print_expr(lp.body, depth + 2, show_loc), depth + 1)
+  match lp.condition {
     Some(condition) => {
       out = out ++ node_field(
         "Condition",
@@ -599,23 +603,7 @@ let print_for_loop = pure (loop: ForLoop, depth: i64, show_loc: bool) -> string 
     },
     None => {},
   }
-  match loop.init {
-    Some(init) => {
-      out = out ++ node_field(
-        "Init",
-        print_var_decl(init, depth + 2, show_loc),
-        depth + 1
-      )
-    },
-    None => {},
-  }
-  if loop.label != "" { out = out ++ scalar("Label", loop.label, depth + 1) }
-  match loop.post {
-    Some(post) => {
-      out = out ++ node_field("Post", print_expr(post, depth + 2, show_loc), depth + 1)
-    },
-    None => {},
-  }
+  if lp.label != "" { out = out ++ scalar("Label", lp.label, depth + 1) }
   out ++ close(depth)
 }
 
@@ -1133,8 +1121,8 @@ let expr_is_empty = pure (expr: shared Expr) -> bool => match expr {
   // A condition is always present, so the node never has nothing in it.
   IfExpr(conditional) => false,
   // A loop always has a body, and a compound assignment always has both operands.
-  ForInLoopExpr(loop) => false,
-  ForLoopExpr(loop) => false,
+  ForInLoopExpr(for_in) => false,
+  LoopExpr(lp) => false,
   MathAssignOpExpr(op) => false,
   // A match always has a scrutinee, and a guard always has a condition.
   MatchExpr(match_expr) => false,

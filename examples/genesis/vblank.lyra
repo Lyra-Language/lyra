@@ -22,7 +22,7 @@ let main = () -> void => {
   vdp.set_color(0, 0, vdp.rgb(7, 0, 0))
   vdp.display_on()
   vdp.enable_vblank_interrupt()
-  for frames < 30 {}
+  while frames < 30 {}
   vdp.set_color(0, 0, vdp.rgb(0, 0, 7))
-  for {}
+  loop {}
 }

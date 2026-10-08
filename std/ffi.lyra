@@ -90,7 +90,7 @@ impl CBuffer {
 pub let cstring_len = unsafe pure noalloc (p: ^u8) -> i64 => {
   var n = 0
   var b = unsafe { p^ }
-  for b != 0 {
+  while b != 0 {
     n += 1
     b = unsafe { p.offset(n)^ }
   }

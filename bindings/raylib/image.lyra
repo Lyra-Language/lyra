@@ -222,7 +222,7 @@ pub let image_palette = (image: Image, limit: i32) -> []Color => {
     if raw != nullptr {
       var i = 0
       let total = i64(found)
-      for i < total {
+      while i < total {
         out.push(unsafe { raw.offset(i)^ })
         i += 1
       }

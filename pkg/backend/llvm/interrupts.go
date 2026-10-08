@@ -45,7 +45,7 @@ func (l *lowerer) emitInterruptEntries(program *ast.Program) error {
 // not know: a main loop waiting on `frames < 30` was compiled to read `frames` once, and
 // the wait never ended however many times the handler ran. So every load and store of such
 // a variable is volatile — in the handler and out — and `frames += 1` in the handler with
-// `for frames < 30 {}` in `main` is simply correct.
+// `while frames < 30 {}` in `main` is simply correct.
 //
 // The set is what the handler's own body writes, by assignment, compound assignment or
 // `&mut`: a variable written only in a function the handler calls is not seen, and needs

@@ -88,21 +88,15 @@ func (c *bclChecker) exprVisitor(loopDepth int, labels []string) func(ast.Expres
 			walkLambdaBodies(e, c.stmtVisitor(0, nil), c.exprVisitor(0, nil))
 			return false
 
-		case *ast.ForLoopExpr:
+		case *ast.LoopExpr:
 			newDepth := loopDepth + 1
 			newLabels := labels
 			if e.Label != "" {
 				newLabels = append(append([]string{}, labels...), e.Label)
 			}
 			// Init/condition/post are outside the loop body proper.
-			if e.Init != nil {
-				ast.WalkExpr(e.Init.Value, c.stmtVisitor(loopDepth, labels), c.exprVisitor(loopDepth, labels))
-			}
 			if e.Condition != nil {
 				ast.WalkExpr(*e.Condition, c.stmtVisitor(loopDepth, labels), c.exprVisitor(loopDepth, labels))
-			}
-			if e.Post != nil {
-				ast.WalkExpr(*e.Post, c.stmtVisitor(loopDepth, labels), c.exprVisitor(loopDepth, labels))
 			}
 			for _, stmt := range e.Body.Statements {
 				ast.WalkStmt(stmt, c.stmtVisitor(newDepth, newLabels), c.exprVisitor(newDepth, newLabels))

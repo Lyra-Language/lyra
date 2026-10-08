@@ -11,7 +11,7 @@ import (
 
 // `break` and `continue` leave every statement between the jump and the loop without
 // reaching its flush, so the pending temporaries of those statements have to be
-// released at the jump. They were not: `for { if ("a" ++ "b") == "ab" { break } }`
+// released at the jump. They were not: `loop { if ("a" ++ "b") == "ab" { break } }`
 // leaked the concatenation, confirmed at 18 bytes with LeakSanitizer on Linux (macOS
 // has no LSan, which is why these are structural tests plus an ASan run).
 //
@@ -27,7 +27,7 @@ func TestEmit_BreakReleasesPendingTemp(t *testing.T) {
 	t.Parallel()
 	src := `let main = () -> u8 => {
   var i = 0
-  for {
+  loop {
     if ("a" ++ "b") == "ab" { break }
     i = i + 1
   }
@@ -64,7 +64,7 @@ func TestExec_ExitReleases(t *testing.T) {
 			"break with a temporary in the condition",
 			`let main = () -> u8 => {
 			   var i = 0
-			   for { if ("a" ++ "b") == "ab" { break }
+			   loop { if ("a" ++ "b") == "ab" { break }
 			     i = i + 1 }
 			   u8(i)
 			 }`,
@@ -76,7 +76,7 @@ func TestExec_ExitReleases(t *testing.T) {
 			"continue with a pending temporary",
 			`let main = () -> u8 => {
 			   var i = 0
-			   for i < 3 { i = i + 1
+			   while i < 3 { i = i + 1
 			     if ("p" ++ "q") == "pq" { continue } else { i = i + 10 } }
 			   u8(i)
 			 }`,
@@ -88,8 +88,8 @@ func TestExec_ExitReleases(t *testing.T) {
 			"labeled break out of nested loops",
 			`let main = () -> u8 => {
 			   var i = 0
-			   outer: for {
-			     for { if ("m" ++ "n") == "mn" { break outer } else { i = i + 1 } } }
+			   outer: loop {
+			     loop { if ("m" ++ "n") == "mn" { break outer } else { i = i + 1 } } }
 			   u8(i + 3)
 			 }`,
 			3,
@@ -103,7 +103,7 @@ func TestExec_ExitReleases(t *testing.T) {
 			`let use = (s: string, n: i64) -> i64 => n
 			 let main = () -> u8 => {
 			   let r = use("a" ++ "b", { var k = 0
-			     for { break }
+			     loop { break }
 			     5 })
 			   u8(r)
 			 }`,
@@ -115,7 +115,7 @@ func TestExec_ExitReleases(t *testing.T) {
 			"a temporary after the loop is unaffected",
 			`let main = () -> u8 => {
 			   var i = 0
-			   for { if i > 0 { break } else { i = i + 1 } }
+			   loop { if i > 0 { break } else { i = i + 1 } }
 			   if ("y" ++ "z") == "yz" { i = i + 4 } else { i = i + 9 }
 			   u8(i)
 			 }`,

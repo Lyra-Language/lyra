@@ -75,7 +75,7 @@ let run = (renderer: Renderer) -> void => {
   var tick: f32 = 0.0
   var running = true
 
-  for running {
+  while running {
     // **The event loop a tagged type buys.** `poll_event` already read the union's tag
     // and the member it licensed, so what arrives here is a value that cannot lie about
     // which event it is — no `unsafe`, and a `match` the compiler checks.
@@ -83,7 +83,7 @@ let run = (renderer: Renderer) -> void => {
     // once forced — `next != None` did not lower — and is now a choice: one `match`
     // reads better, because every outcome including "the queue is empty" is a case.
     var draining = true
-    for draining {
+    while draining {
       match poll_event() {
         None => { draining = false },
         // An assignment is a statement, not an expression, so an arm that assigns needs

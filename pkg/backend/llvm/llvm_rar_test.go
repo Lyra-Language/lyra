@@ -21,7 +21,7 @@ import std.rar.{ open_rar, extract_rar, is_rar }
 import std.compress.{ crc32 }
 import std.io.{ read_bytes }
 let main = () -> void => {
-  for {
+  loop {
     let Some(name) = read_line() else { break }
     println("== ${name}")
     let Some(data) = read_bytes("testdata/rar5/${name}") else {

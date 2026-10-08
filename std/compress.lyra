@@ -40,7 +40,7 @@ pub let inflate = pure (data: []u8) -> Result<[]u8, string> => {
   var out: []u8 = []
   var pos: i64 = 0
   let end = data.len() * 8
-  for {
+  loop {
     if pos + 3 > end { return Err("the input ends before its final block") }
     let last = bits(data, pos, 1) == 1
     let kind = bits(data, pos + 1, 2)
@@ -64,7 +64,7 @@ pub let inflate = pure (data: []u8) -> Result<[]u8, string> => {
       let tables = if kind == 1 { Ok(fixed_tables()) } else { dynamic_tables(data, pos) }
       let (literals, distances, header) = tables?
       pos += header
-      for {
+      loop {
         let (symbol, used) = decode(literals, bits(data, pos, 15))
         if used == 0 || pos + used > end {
           return Err(missing_code(pos, end, "a literal/length code is not in its table"))
@@ -138,7 +138,7 @@ pub let lzma2_decode = (data: []u8) -> Result<[]u8, string> => {
   var have_properties = false
   var have_dictionary = false
   var at: i64 = 0
-  for {
+  loop {
     if at >= data.len() { return Err("an LZMA2 stream ending without its end byte") }
     let control = i64(data[at])
     if control == 0 { break }
@@ -288,7 +288,7 @@ let dynamic_tables = pure (
   let length_code = huffman(code_lengths)?
   var lengths: []i64 = []
   let total = literal_count + distance_count
-  for lengths.len() < total {
+  while lengths.len() < total {
     let (symbol, used) = decode(length_code, bits(data, at, 15))
     if used == 0 || at + used > end {
       return Err(missing_code(at, end, "a code-length code is not in its table"))
@@ -469,7 +469,7 @@ let decode_lzma_chunk = (
   marker_allowed: bool
 ) -> Result<void, string> => {
   let pb_mask = (1 << lz.pb) - 1
-  for out.len() < until {
+  while out.len() < until {
     let pos = out.len() - lz.dict_start
     let pos_state = pos & pb_mask
     let s = lz.state
@@ -539,7 +539,7 @@ let literal = (lz: mut Lzma, rc: mut RangeDecoder, out: ref []u8, pos: i64) -> u
   var symbol: i64 = 1
   if lz.state >= 7 {
     var match_byte = i64(out[out.len() - lz.rep0 - 1])
-    for symbol < 0x100 {
+    while symbol < 0x100 {
       let match_bit = (match_byte >> 7) & 1
       match_byte = match_byte << 1
       let b = bit(rc, lz.probs, base + ((1 + match_bit) << 8) + symbol)
@@ -547,7 +547,7 @@ let literal = (lz: mut Lzma, rc: mut RangeDecoder, out: ref []u8, pos: i64) -> u
       if match_bit != b { break }
     }
   }
-  for symbol < 0x100 { symbol = (symbol << 1) | bit(rc, lz.probs, base + symbol) }
+  while symbol < 0x100 { symbol = (symbol << 1) | bit(rc, lz.probs, base + symbol) }
   u8(symbol - 0x100)
 }
 

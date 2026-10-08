@@ -212,7 +212,7 @@ data Maybe<t> = None | Some t
 let main = () -> u8 => {
   var n = 0
   var total = 0
-  for {
+  loop {
     n = n + 1
     let m: Maybe<i64> = if n < 4 { Some n } else { None }
     match m {
@@ -230,7 +230,7 @@ let main = () -> u8 => {
 			`
 let main = () -> u8 => {
   var total = 0
-  for var i = 1; i <= 9; i += 1 {
+  for i in 1..<=9 {
     match i %% 2 {
       0 => continue,
       _ => { total = total + i; },
@@ -296,7 +296,7 @@ data Maybe<t> = None | Some t
 let main = () -> u8 => {
   var n = 0
   var total = 0
-  for {
+  loop {
     n = n + 1
     let m: Maybe<i64> = if n < 5 { Some n } else { None }
     match m {

@@ -98,7 +98,7 @@ let print_schedule = (
   let base = first_date(recurrence, from)
   var found = 0
   var k = 0
-  for found < wanted && k < wanted * 40 {
+  while found < wanted && k < wanted * 40 {
     let local = step(recurrence, base, k).to_plain_date_time(recurrence.at)
     k += 1
     match local.to_zoned_date_time(zone, rule) {

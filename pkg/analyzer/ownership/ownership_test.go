@@ -205,11 +205,11 @@ func TestReuse_GuardedMatchNotReused(t *testing.T) {
 // Regression: a borrowed managed value bound into an owning `let` inside a loop
 // body is duplicated (a retain) — the backend releases that binding via its per-
 // iteration frame, so without the retain the source is freed with no balancing dup
-// (a use-after-free). The pass previously never walked loop bodies (no ForLoopExpr
+// (a use-after-free). The pass previously never walked loop bodies (no LoopExpr
 // case → `default`), recording nothing.
 func TestOwnership_RetainInLoopBody(t *testing.T) {
 	c := analyze(t, `let f = (s: own string) -> u8 => {
-	   for var i = 0; i < 2; i += 1 {
+	   for i in 0..<2 {
 	     let y: string = s
 	   }
 	   if s == "ab" { 3 } else { 4 }

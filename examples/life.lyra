@@ -57,7 +57,7 @@ let main = () => {
   var painting = false
   var paint_alive = true
 
-  for running {
+  while running {
     draw(grid, generation, paused)
 
     // Poll and animate in one call: true means a key is waiting, false means the window

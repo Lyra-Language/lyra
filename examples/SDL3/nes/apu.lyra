@@ -175,7 +175,7 @@ let step = (apu: mut Apu) -> void => {
     apu.triangle.phase = wrap(apu.triangle.phase + apu.triangle.hz / rate)
   }
   apu.noise.clock += CPU_HZ / f64(NOISE_PERIODS[apu.noise.period]) / rate
-  for apu.noise.clock >= 1.0 {
+  while apu.noise.clock >= 1.0 {
     apu.noise.clock -= 1.0
     apu.noise.lfsr = lfsr_next(apu.noise.lfsr, apu.noise.short)
   }

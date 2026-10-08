@@ -643,7 +643,7 @@ func (c *Collector) collectStatementByKind(node *sitter.Node) ast.Statement {
 		// Only reached below the top level; walkProgram expands the top-level ones.
 		c.refuseNestedInherentImpl(node)
 		return nil
-	case "declaration", "const_declaration", "for_initial_expr":
+	case "declaration", "const_declaration":
 		return declarations.CollectVariableDeclaration(node, c.ctx)
 	case "destructuring_if_declaration":
 		return declarations.CollectDestructuringIfStatement(node, c.ctx)

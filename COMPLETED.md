@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 10/08/26 — `loop` and `while`; `for` only iterates
+
+Asked for on readability: a bare `for { … }` reads better as `loop { … }`, and `for cond
+{ … }` as `while cond { … }`. The C-style `for init; cond; post` went in the same change:
+across lyra, Vega and Sheliak it had **no uses outside the compiler's own tests**, and with
+`while` beside it nothing needs it — a counted loop is `for i in 0..<n`.
+
+- **The keyword now carries the typing rule.** `loop` with no `break` leaving it is
+  `never`; `while true` has a condition and can finish. That distinction used to rest on
+  `for { … }` versus `for true { … }`, which `lyra-W027` existed to explain.
+- **One AST node, `LoopExpr`, for both** (Condition nil for `loop`), with `Init`/`Post`
+  removed — two kinds would double every pass's switch for a one-field difference. The
+  grammar has two rules (`infinite_loop`, `while_loop`); the parser shrank by 284 states.
+  The backend lost its post block: `continue` targets the condition.
+- **Migrated mechanically**, by a script that rewrote loop headers only where a statement
+  can begin and only inside Lyra text (string literals in Go tests). Three-clause loops
+  became `for i in A..<B` when the body never assigned the counter; the range-analysis and
+  elision tests became `var i` + `while`, since they exist to exercise the loop fixpoint
+  and a for-in would quietly have tested the range path instead. `loop` is reserved now, so
+  Vega's assembler labels (`let loop = self.here()`) became `top`.
+
 ### 10/07/26 — `impl t where t: Ord { … }`: a block's bounds reach every member
 
 Asked for converting the prelude's `min`/`max`, which had moved into `impl t { … }` with

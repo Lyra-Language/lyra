@@ -168,18 +168,16 @@ let main = () -> u8 => {
 `, "", "alpha,mid,zeta")
 }
 
-// A C-style loop's init declaration is reached by the generic AST walker only as
-// an *expression* (it walks Init.Value, never the statement), so the counter has
-// to be recognized as a binder explicitly. Missing it made every such loop inside
-// a lambda read as a capture — and its `i += 1` as a write to one, which the
-// captured-assignment check then rejected. Every existing loop-in-a-lambda test
-// in the suite failed at once, which is how it was caught.
+// A loop's counter is a binder, not a capture: `for i in 0..<n` inside a lambda reads
+// `i` as the lambda's own. (Until 10/08 the C-style loop's init declaration needed
+// recognizing explicitly; missing it made every such loop inside a lambda read as a
+// capture.)
 func TestCaptures_LoopCounterIsLocal(t *testing.T) {
 	assertCaptures(t, `
 let main = () -> u8 => {
   let f = (n: i64) -> i64 => {
     var total = 0
-    for var i = 0; i < n; i += 1 {
+    for i in 0..<n {
       total = total + i
     }
     total

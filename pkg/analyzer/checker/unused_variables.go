@@ -199,15 +199,9 @@ func (c *unusedVarChecker) findScopesInExpr(expr ast.Expression) {
 				c.findScopesInExpr(clause.Body)
 			}
 			return false
-		case *ast.ForLoopExpr:
-			if ex.Init != nil {
-				c.findScopesInExpr(ex.Init.Value)
-			}
+		case *ast.LoopExpr:
 			if ex.Condition != nil {
 				c.findScopesInExpr(*ex.Condition)
-			}
-			if ex.Post != nil {
-				c.findScopesInExpr(*ex.Post)
 			}
 			c.checkBlock(ex.Body.Statements)
 			return false

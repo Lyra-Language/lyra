@@ -50,7 +50,7 @@ func TestPurity_LocalMutation_Ok(t *testing.T) {
 	src := `
 let sum = pure (n: i64) -> i64 => {
     var acc = 0
-    for var i = 0; i < n; i += 1 {
+    for i in 0..<n {
         acc += i
     }
     acc
@@ -76,8 +76,8 @@ trait Weigh { weight: (Self) -> i64 }
 impl Weigh for Tag {
     weight = pure (self) => {
         var w = self.n
-        for w < 100 { w = w * 2 }
-        for var i = 0; i < 2; i += 1 { w = w + i }
+        while w < 100 { w = w * 2 }
+        for i in 0..<2 { w = w + i }
         w
     }
 }`

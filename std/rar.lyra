@@ -84,7 +84,7 @@ pub let open_rar = (data: []u8) -> Result<Rar, string> => {
   let Some(start) = find_signature(data) else { return Err("not a RAR archive") }
   var entries: []RarEntry = []
   var at = start + RAR5_SIGNATURE.len()
-  for at < data.len() {
+  while at < data.len() {
     let header = read_header(data, at)?
     if header.kind == HEAD_CRYPT { return Err("encrypted (it needs a password), which is not read") }
     if header.kind == HEAD_END { break }
@@ -236,7 +236,7 @@ let read_file_header = (data: []u8, header: Header) -> Result<RarEntry, string> 
   var encrypted = false
   var link = false
   var e = Cursor { data: data, at: header.extra }
-  for e.at < header.end {
+  while e.at < header.end {
     let record_size = vint(e)?
     let record_end = e.at + record_size
     let kind = vint(e)?
@@ -278,7 +278,7 @@ let unpack_entry = (archive: ref Rar, entry: ref RarEntry) -> Result<[]u8, strin
   // The run: back from this entry over compressed files that carry on from the one before.
   var run_start = own_index
   if entry.solid {
-    for run_start > 0 {
+    while run_start > 0 {
       let e = archive.entries[run_start]
       if e.method != 0 && !e.directory && !e.solid { break }
       run_start -= 1
@@ -368,7 +368,7 @@ let unpack_file = (d: mut Decoder, packed: []u8, size: i64) -> Result<[]u8, stri
   let start = d.window.len()
   var filters: []Filter = []
   var at: i64 = 0
-  for {
+  loop {
     if at + 3 > packed.len() { return Err("its data is cut off inside a block header") }
     let flags = i64(packed[at])
     let size_bytes = ((flags >> 3) & 7) + 1
@@ -403,7 +403,7 @@ let unpack_file = (d: mut Decoder, packed: []u8, size: i64) -> Result<[]u8, stri
 let read_tables = (d: mut Decoder, b: mut Bits) -> Result<void, string> => {
   var lengths: []i64 = []
   var nibble: i64 = 0
-  for lengths.len() < TABLE_BITS {
+  while lengths.len() < TABLE_BITS {
     if nibble / 2 >= b.size { return Err("a block's code tables are cut off") }
     let value = block_nibble(b, nibble)
     nibble += 1
@@ -427,7 +427,7 @@ let read_tables = (d: mut Decoder, b: mut Bits) -> Result<void, string> => {
   let bit_code = huff_table(lengths)?
   let total = TABLE_LITERALS + TABLE_DISTANCES + TABLE_LOW + TABLE_REPEATS
   var all: []i64 = []
-  for all.len() < total {
+  while all.len() < total {
     let n = decode_symbol(b, bit_code)
     if n < 16 {
       all.push(n)
@@ -516,7 +516,7 @@ let decode_block = (
   filters: mut []Filter,
   last_bits: i64
 ) -> Result<void, string> => {
-  for {
+  loop {
     if b.byte > b.size - 1 || (b.byte == b.size - 1 && b.bit >= last_bits) { break }
     let written = d.window.len() - start
     let n = decode_symbol(b, d.literals)
@@ -558,7 +558,7 @@ let decode_block = (
       let dist = d.dist[i]
       var moved = d.dist
       var j = i
-      for j > 0 {
+      while j > 0 {
         moved[j] = moved[j - 1]
         j -= 1
       }
@@ -635,7 +635,7 @@ let run_filter = (
     for channel in 0..<f.channels {
       var previous: i64 = 0
       var at = channel
-      for at < f.length {
+      while at < f.length {
         previous = (previous - i64(window[source])) & 0xFF
         out[f.start + at] = u8(previous)
         source += 1
@@ -646,7 +646,7 @@ let run_filter = (
     // x86 CALL (E8) and JMP (E9) targets, made relative again.
     let file_size: i64 = 0x1000000
     var i: i64 = 0
-    for i < f.length - 4 {
+    while i < f.length - 4 {
       let op = window[from + i]
       i += 1
       if op == 0xE8 || (f.kind == 2 && op == 0xE9) {
@@ -665,7 +665,7 @@ let run_filter = (
   } else {
     // ARM BL targets, made relative again.
     var i: i64 = 0
-    for i < f.length - 3 {
+    while i < f.length - 3 {
       if window[from + i + 3] == 0xEB {
         let target = (le32(window, from + i) & 0xFFFFFF) - (i + f.start) / 4
         put_le32(out, f.start + i, (target & 0xFFFFFF) | 0xEB000000)

@@ -467,9 +467,9 @@ let run = (
   var status: u8 = 0
   var running = true
 
-  for running {
+  while running {
     var draining = true
-    for draining {
+    while draining {
       match poll_event() {
         None => { draining = false },
         Some(event) => {
@@ -488,7 +488,7 @@ let run = (
 
     match audio {
       Some(stream) => {
-        for queued_frames(stream) < AHEAD_TICKS * TICK_SAMPLES {
+        while queued_frames(stream) < AHEAD_TICKS * TICK_SAMPLES {
           var chunk: []f32 = []
           music_tick(sound.music, sound.chip)
           render(sound.chip, chunk, TICK_SAMPLES)
@@ -695,7 +695,7 @@ let run_checks = () -> u8 => {
   var previous = RELEASED
   var died = false
   var steps = 0
-  for steps < 60 * 120 && !is_clear(auto.mode) {
+  while steps < 60 * 120 && !is_clear(auto.mode) {
     let now = autopilot(auto)
     update(auto, auto_sound, advance(previous, now))
     previous = now

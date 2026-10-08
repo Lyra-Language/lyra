@@ -88,7 +88,7 @@ let parse_element = pure (b: []u8, open: i64) -> Result<(Element, i64), string> 
   if name.len() == 0 { return Err(fail(b, open, "a tag with no name")) }
   var attributes: []Attribute = []
   var i = skip_space(b, after_name)
-  for {
+  loop {
     let c = byte_at(b, i)
     if c == SLASH {
       if byte_at(
@@ -113,7 +113,7 @@ let parse_element = pure (b: []u8, open: i64) -> Result<(Element, i64), string> 
       return Err(fail(b, i, "attribute ${key} of <${name}> is not quoted"))
     }
     var end = i + 1
-    for end < b.len() && i64(b[end]) != q { end += 1 }
+    while end < b.len() && i64(b[end]) != q { end += 1 }
     if end >= b.len() { return Err(fail(
       b,
       i,
@@ -127,11 +127,11 @@ let parse_element = pure (b: []u8, open: i64) -> Result<(Element, i64), string> 
   i += 1
   var children: []Element = []
   var text: []u8 = []
-  for {
+  loop {
     if i >= b.len() { return Err(fail(b, open, "<${name}> is never closed")) }
     if i64(b[i]) != LT {
       var end = i
-      for end < b.len() && i64(b[end]) != LT { end += 1 }
+      while end < b.len() && i64(b[end]) != LT { end += 1 }
       let piece = decode(b, i, end)?
       for v in piece.encode_utf8() { text.push(v) }
       i = end
@@ -181,7 +181,7 @@ let parse_element = pure (b: []u8, open: i64) -> Result<(Element, i64), string> 
 /// after the root element.
 let skip_misc = pure (b: []u8, from: i64) -> Result<i64, string> => {
   var i = skip_space(b, from)
-  for {
+  loop {
     if starts_at(b, i, "<?") {
       i = past(
         b,
@@ -194,7 +194,7 @@ let skip_misc = pure (b: []u8, from: i64) -> Result<i64, string> => {
       // To its `>`, past any internal subset in brackets.
       var depth = 0
       var k = i + 9
-      for k < b.len() && !(byte_at(b, k) == GT && depth == 0) {
+      while k < b.len() && !(byte_at(b, k) == GT && depth == 0) {
         if byte_at(b, k) == 91 { depth += 1 }
         if byte_at(b, k) == 93 { depth -= 1 }
         k += 1
@@ -212,7 +212,7 @@ let skip_misc = pure (b: []u8, from: i64) -> Result<i64, string> => {
 /// A name at `from` — letters, digits and `_ - . :` — and the offset after it.
 let read_name = pure (b: []u8, from: i64) -> (string, i64) => {
   var end = from
-  for end < b.len() && is_name_byte(i64(b[end])) { end += 1 }
+  while end < b.len() && is_name_byte(i64(b[end])) { end += 1 }
   (b.slice(from, end).decode_utf8(), end)
 }
 
@@ -220,14 +220,14 @@ let read_name = pure (b: []u8, from: i64) -> (string, i64) => {
 let decode = pure (b: []u8, from: i64, to: i64) -> Result<string, string> => {
   var out: []u8 = []
   var i = from
-  for i < to {
+  while i < to {
     if i64(b[i]) != AMP {
       out.push(b[i])
       i += 1
       continue
     }
     var end = i + 1
-    for end < to && byte_at(b, end) != 59 { end += 1 }
+    while end < to && byte_at(b, end) != 59 { end += 1 }
     if end >= to { return Err(fail(b, i, "an `&` that starts no entity")) }
     let name = b.slice(i + 1, end).decode_utf8()
     let code = match name {
@@ -291,7 +291,7 @@ let starts_at = pure (b: []u8, at: i64, text: string) -> bool => {
 /// The offset just past the first `end` at or after `from`; `None` when there is none.
 let past = pure (b: []u8, from: i64, end: string) -> Maybe<i64> => {
   var i = from
-  for i < b.len() {
+  while i < b.len() {
     if starts_at(b, i, end) { return Some(i + end.encode_utf8().len()) }
     i += 1
   }
@@ -312,7 +312,7 @@ let byte_at = pure (b: []u8, i: i64) -> i64 =>
 
 let skip_space = pure (b: []u8, from: i64) -> i64 => {
   var i = from
-  for is_space(byte_at(b, i)) { i += 1 }
+  while is_space(byte_at(b, i)) { i += 1 }
   i
 }
 

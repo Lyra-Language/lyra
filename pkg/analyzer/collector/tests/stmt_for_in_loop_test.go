@@ -54,3 +54,23 @@ func TestCollect_LabeledForInLoop(t *testing.T) {
 func TestCollectForInLoopWithTypedVariable(t *testing.T) {
 	runGoldenTest(t, "\n\tfor i: u16 in 0..<100 {\n\t\tprintln(i)\n\t}", "for_in_loop_with_typed_variable")
 }
+
+func TestCollect_ForInLoopAsExpression(t *testing.T) {
+	source := `
+	let found = for item in items {
+		if item > 10 {
+			break item
+		}
+	}`
+	runGoldenTest(t, source, "for_in_loop_as_expression")
+}
+
+func TestCollect_LabeledForInLoopBreakWithValue(t *testing.T) {
+	source := `
+	let result = outer: for i in 0..<=10 {
+		for j in 0..<=10 {
+			break outer i + j
+		}
+	}`
+	runGoldenTest(t, source, "labeled_for_loop_break_with_value")
+}

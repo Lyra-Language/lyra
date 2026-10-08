@@ -16,10 +16,10 @@ module bindings.menubar
 //! window_menu()
 //! let native = install("My Game")
 //! …
-//! for running {
+//! while running {
 //!   // poll_event() until None, then:
 //!   var choosing = true
-//!   for choosing {
+//!   while choosing {
 //!     match poll_menu() {
 //!       None => { choosing = false },
 //!       Some(tag) => on_menu(state, tag),

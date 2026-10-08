@@ -1221,12 +1221,10 @@ func (f *scopeFrames) addScopeSymbols(scope *symbols.Scope, frame *scopeBindings
 // destructuring bindings, stopping at nested lambdas.
 //
 // **It is a hand walk beside six others over the same nodes, and it had drifted**
-// (09/18). It once mirrored a `collectBody` that has since gone, and every other
-// pass that visits a `for` loop's init — typechecker, ownership, range analysis,
-// use-after-move, must-release, the backend — guards `Init != nil` while the field
-// is still a concrete `*VarDeclStmt`. This one handed it straight to
-// `mergeStmt(ast.Statement)`, so a while-style loop (`for cond { … }`, no init)
-// became a *typed* nil: a nil pointer inside a non-nil interface, which slips past
+// (09/18). It once mirrored a `collectBody` that has since gone, and until 10/08 it
+// also merged a C-style loop's init clause, which it handed straight to
+// `mergeStmt(ast.Statement)` without the `Init != nil` guard every other pass had —
+// so a loop with no init became a *typed* nil: a nil pointer inside a non-nil interface, which slips past
 // `== nil` and matches `case *ast.VarDeclStmt` (hazard 3). A `var` reassigned in
 // such a loop inside any trait method crashed the compiler; `std.temporal`'s
 // `Show for PlainTime` was the first to write one.
@@ -1253,16 +1251,8 @@ func directScopeBindingsForClause(clause *ast.LambdaClause) scopeBindings {
 			return true
 		},
 		func(e ast.Expression) bool {
-			switch n := e.(type) {
-			case *ast.LambdaExpr:
-				return false
-			case *ast.ForLoopExpr:
-				// Guard the concrete pointer, before it becomes an interface.
-				if n.Init != nil {
-					mergeStmt(n.Init)
-				}
-			}
-			return true
+			_, isLambda := e.(*ast.LambdaExpr)
+			return !isLambda
 		},
 	)
 	return scope

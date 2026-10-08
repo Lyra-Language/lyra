@@ -44,7 +44,7 @@ let main = () -> void => {
   var dy: f32 = 190.0
   var marks: []Vector2 = []
 
-  for !should_close() {
+  while !should_close() {
     // **Frame-rate independent movement**: raylib caps the rate, but scaling by the
     // frame's own duration is what keeps the ball at the same speed if it ever does not.
     let dt = frame_time()

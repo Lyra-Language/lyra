@@ -95,15 +95,9 @@ func (c *unreachableChecker) checkExpr(expr ast.Expression) {
 				c.checkExpr(clause.Body)
 			}
 			return false
-		case *ast.ForLoopExpr:
-			if ex.Init != nil {
-				c.checkExpr(ex.Init.Value)
-			}
+		case *ast.LoopExpr:
 			if ex.Condition != nil {
 				c.checkExpr(*ex.Condition)
-			}
-			if ex.Post != nil {
-				c.checkExpr(*ex.Post)
 			}
 			c.checkStmts(ex.Body.Statements)
 			return false

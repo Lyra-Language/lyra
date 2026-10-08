@@ -144,7 +144,7 @@ let main = () -> void => {
   var needs_preview = false
   var needs_full = true
 
-  for !should_close() {
+  while !should_close() {
     // **`f` toggles fullscreen**, borderless rather than exclusive: the window grows to
     // cover the screen instead of the display switching video modes. Measured on this
     // machine, both cover the screen exactly, so the one that leaves the display alone
@@ -466,7 +466,7 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> Color => {
   var z = Complex { re: 0.0, im: 0.0 }
   var mag2 = 0.0
   var iter = 0
-  for iter < max_iter {
+  while iter < max_iter {
     z = z * z + c
     mag2 = z.re * z.re + z.im * z.im
     if mag2 > ESCAPE { break }

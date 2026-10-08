@@ -57,7 +57,7 @@ import ast.{
   Location,
   Wildcard,
   ForInLoop,
-  ForLoop,
+  Loop,
   Break,
   Continue,
   VarReassignment,
@@ -122,7 +122,7 @@ let location_of = (self: Source, node: Node) -> Location => {
 let position_of = pure (self: Source, offset: i64) -> (i64, i64) => {
   var low = 0
   var high = self.line_starts.len() - 1
-  for low < high {
+  while low < high {
     // Round up, so the loop always moves: `low` is a candidate answer and `high` shrinks
     // toward it. Rounding down lets `low == mid` and spins forever on two entries.
     let mid = low + (high - low + 1) / 2
@@ -420,14 +420,14 @@ let collect_constructor_params = (node: Node, source: Source) -> []shared TypeNo
 let collect_tuple_elements = (node: Node, source: Source) -> []shared TypeNode => {
   var elements: []shared TypeNode = []
   var i = 0
-  for i < node.named_child_count() {
+  while i < node.named_child_count() {
     let child = node.named_child(i)
     if child.kind() != "tuple_type_body" {
       i += 1
       continue
     }
     var j = 0
-    for j < child.named_child_count() {
+    while j < child.named_child_count() {
       let element = child.named_child(j)
       if element.kind() == "tuple_type_element" {
         match element.field("type") {
@@ -878,12 +878,12 @@ let collect_expr = (node: Node, source: Source) -> Maybe<shared Expr> =>
     "block" => Some(collect_block(node, source)),
     "if_block_expr" => collect_if(node, source),
     "for_in_loop" => collect_for_in_loop(node, source),
-    "for_loop" => collect_for_loop(node, source),
+    "infinite_loop" | "while_loop" => collect_loop(node, source),
     "compound_assignment" => collect_compound_assignment(node, source),
     "match_expr" => collect_match(node, source),
     // A loop's body is a block under another name, which is how the Go collector reads it
     // too — so the three kinds share one collector rather than each growing a case.
-    "for_body" | "for_in_body" => Some(collect_block(node, source)),
+    "loop_body" | "while_body" | "for_in_body" => Some(collect_block(node, source)),
     // `a?.b` and `a?[i]` are **separate node kinds**, not a flag on the ordinary ones, so
     // the optional-ness is decided here and carried into one collector rather than
     // re-derived from the text.
@@ -1196,52 +1196,28 @@ let collect_for_in_loop = (node: Node, source: Source) -> Maybe<shared Expr> => 
   }))
 }
 
-/// `for var i = 0; i < n; i += 1 { … }`, and every shorter form.
-///
-/// The three header parts live inside a `for_condition` and each is optional; the infinite
-/// loop has no `for_condition` at all.
-let collect_for_loop = (node: Node, source: Source) -> Maybe<shared Expr> => {
+/// `while c { … }` and `loop { … }`, which differ only in the condition.
+let collect_loop = (node: Node, source: Source) -> Maybe<shared Expr> => {
   var label = ""
   var body: Maybe<shared Expr> = None
   var condition: Maybe<shared Expr> = None
-  var init: Maybe<VarDecl> = None
-  var post: Maybe<shared Expr> = None
   for child in node.named_children() {
     let k = child.kind()
     if k == "label" { label = child.text(source.bytes) }
-    if k == "for_body" { body = collect_expr(child, source) }
-    if k != "for_condition" { continue }
-    match child.field("condition_expr") {
-      Some(expr) => { condition = collect_expr(expr, source) },
-      None => {},
-    }
-    match child.field("initial_expr") {
-      Some(expr) => { init = collect_for_init(expr, source) },
-      None => {},
-    }
-    match child.field("post_expr") {
-      Some(expr) => { post = collect_wrapped_at(expr, source) },
-      None => {},
-    }
+    if k == "loop_body" || k == "while_body" { body = collect_expr(child, source) }
+  }
+  match node.field("condition") {
+    Some(expr) => { condition = collect_expr(expr, source) },
+    None => {},
   }
   let Some(block) = body else { return None }
-  Some(ForLoopExpr(ForLoop {
+  Some(LoopExpr(Loop {
     location: source.location_of(node),
     body: block,
     condition: condition,
-    init: init,
     label: label,
-    post: post,
   }))
 }
-
-/// `var i = 0` in a loop header — the same declaration node under another kind, which is
-/// why this reuses the declaration collector and then asks for the binding it produced.
-let collect_for_init = (node: Node, source: Source) -> Maybe<VarDecl> =>
-  match collect_declaration(node, source) {
-    Some(VarDeclStmt(decl)) => Some(decl),
-    _ => None,
-  }
 
 /// `i += 1`.
 ///
@@ -1772,7 +1748,7 @@ let has_interpolation = (node: Node) -> bool => {
 let decode_escapes = pure (runes: []rune) -> string => {
   var out = ""
   var i = 0
-  for i < runes.len() {
+  while i < runes.len() {
     let c = runes[i]
     if c != '\\' || i + 1 >= runes.len() {
       out = out ++ "${c}"

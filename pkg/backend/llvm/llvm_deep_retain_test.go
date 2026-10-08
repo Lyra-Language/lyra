@@ -250,7 +250,7 @@ let main = () -> u8 => {
 let main = () -> u8 => {
   let p: Person = Person { name: "a" ++ "b" }
   var q: Person = p
-  for var i: u8 = 0; i < 3; i += 1 { q = p }
+  for i: u8 in 0..<3 { q = p }
   if q.name == "ab" { if p.name == "ab" { 0 } else { 1 } } else { 2 }
 }`,
 		},

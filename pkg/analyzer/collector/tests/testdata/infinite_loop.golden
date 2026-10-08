@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		ExpressionStmt {
 			Expression: {
-				ForLoopExpr {
+				LoopExpr {
 					Body: {
 						BlockExpr {
 							Statements: {

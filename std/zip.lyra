@@ -136,7 +136,7 @@ const END_RECORD: u32 = 0x06054B50
 let find_end_record = pure (archive: []u8) -> Maybe<i64> => {
   var at = archive.len() - 22
   let stop = archive.len() - 22 - 0xFFFF
-  for at >= 0 && at >= stop {
+  while at >= 0 && at >= stop {
     let comment_length = i64(u16_at(archive, at + 20))
     if u32_at(archive, at) == END_RECORD && at + 22 + comment_length == archive.len() {
       return Some(at)

@@ -142,7 +142,7 @@ let f = (y: i32) -> i32 => {
 }
 
 // A for-in loop variable is a declaration like any other: one taking an outer name warns,
-// as the three-clause loop's counter already did. It was exempt until 10/04 — harmless while
+// as a `let` does. It was exempt until 10/04 — harmless while
 // the typechecker ignored the shadow, misleading once the loop variable really shadowed.
 func TestShadow_Diag_ForInIterationVar(t *testing.T) {
 	source := `
@@ -215,19 +215,6 @@ let f = (xs: []i64) -> i64 => {
 			}
 		})
 	}
-}
-
-// TestShadow_Diag_ForLoopInitVar verifies that a for-loop's init variable DOES
-// produce a warning when it shadows an outer-scope name.
-func TestShadow_Diag_ForLoopInitVar(t *testing.T) {
-	source := `
-let i = 100
-for var i = 0; i < 10; i + 1 {
-    println(i)
-}`
-	warns := parseCollectAndCheckShadowing(t, source)
-	assertShadowingWarningCount(t, warns, 1)
-	assertShadowingWarningContains(t, warns, "i shadows a name declared in an outer scope")
 }
 
 // TestShadow_NoDiag_MatchArmPatternBinding verifies that a match arm's pattern-

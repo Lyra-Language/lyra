@@ -142,7 +142,7 @@ let main = () -> void => {
   if pushed == 0 { println("push failed"); return }
   var got = SdlEvent { padding: #[0; 128] }
   var polling = unsafe { sdl_poll(&mut got) }
-  for polling != 0 {
+  while polling != 0 {
     let kind = unsafe { got.kind }
     if kind == SDL_EVENT_USER { println("${unsafe { got.user.code }}") }
     polling = unsafe { sdl_poll(&mut got) }
@@ -290,7 +290,7 @@ let wav_bytes = pure (freq: i64, ms: i64) -> []u8 => {
   let period = rate / freq
   var s: []u8 = []
   var i = 0
-  for i < frames {
+  while i < frames {
     let amp = 70.0 * (1.0 - f64(i) / f64(frames))
     let v = if (i % period) * 2 < period { 128.0 + amp } else { 128.0 - amp }
     s.push(u8(v.round()))
@@ -311,7 +311,7 @@ let wav_bytes = pure (freq: i64, ms: i64) -> []u8 => {
   out = ascii(out, "data")
   out = u32le(out, s.len())
   var j = 0
-  for j < s.len() { out.push(s[j]); j += 1 }
+  while j < s.len() { out.push(s[j]); j += 1 }
   out
 }
 let ascii = pure (buf: []u8, s: string) -> []u8 => {
@@ -731,7 +731,7 @@ let main = () -> void => {
   // DEFLATE of a very compressible input, round-tripped.
   var src: []u8 = []
   var i = 0
-  for i < 2000 { src.push(65) ; i += 1 }
+  while i < 2000 { src.push(65) ; i += 1 }
   let shrank = match compress(src) {
     Some(c) => match decompress(c) {
       Some(d) => c.len() < 100 && d.len() == 2000 && d[0] == 65 && d[1999] == 65,

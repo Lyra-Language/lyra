@@ -253,14 +253,14 @@ let run_scene = () -> void => {
   let material = load_material_default()
   var transforms: []Matrix = []
   var k = 0
-  for k < 9 {
+  while k < 9 {
     transforms.push(matrix_translation(vec3(0.0 - 4.0 + f32(k), 0.2, 0.0)))
     k += 1
   }
 
   var camera = camera_3d(vec3(18.0, 13.0, 18.0), vec3(0.0, 1.0, 0.0), 45.0)
 
-  for !should_close() {
+  while !should_close() {
     camera.update_camera(CAMERA_ORBITAL)
     let spin = turns(wrap01(f32(elapsed()) * 0.1))
 

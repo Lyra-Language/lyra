@@ -168,7 +168,7 @@ var aggregateDropCases = []struct {
 		 }
 		 let main = () -> u8 => {
 		   var hits = 0
-		   for var i = 0; i < 6; i += 1 {
+		   for i in 0..<6 {
 		     hits += once()
 		   }
 		   u8(hits * 7)

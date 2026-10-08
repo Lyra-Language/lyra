@@ -48,7 +48,7 @@ import (
 //
 // # Two known gaps, both in the direction of accepting
 //
-//   - **An infinite loop is not recognised.** `else { for true { } }` diverges and is
+//   - **An infinite loop is not recognised.** `else { while true { } }` diverges and is
 //     reported here — deciding otherwise means proving no `break` is reachable, which is
 //     a real analysis rather than a shape test. The backend refuses it too, so the two
 //     agree and nothing that used to build stops.

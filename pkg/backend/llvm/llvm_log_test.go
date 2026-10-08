@@ -85,7 +85,7 @@ let escape = pure (cre: f64, cim: f64, max_iter: i64) -> f64 => {
   var zim = 0.0
   var n = 0
   var mag2 = 0.0
-  for n < max_iter {
+  while n < max_iter {
     let next_re = zre * zre - zim * zim + cre
     zim = 2.0 * zre * zim + cim
     zre = next_re

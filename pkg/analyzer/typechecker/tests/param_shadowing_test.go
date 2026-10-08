@@ -108,17 +108,6 @@ let f = pure (c: []Pt) -> i64 => {
 	assertIdentTypes(t, res, "c", "DynamicArray<Pt>", "Pt")
 }
 
-func TestParamShadowing_ThreeClauseForVariable(t *testing.T) {
-	res := parseCollectAndCheck(t, shadowTypes+`
-let f = pure (c: Box) -> i64 => {
-  var sum = 0
-  for var c = 0; c < 3; c += 1 { sum += c }
-  sum + c.side
-}`, false)
-	assertNoErrors(t, res)
-	assertIdentTypes(t, res, "c", "i64", "i64", "i64", "Box")
-}
-
 func TestParamShadowing_NestedBlockEndsTheShadow(t *testing.T) {
 	res := parseCollectAndCheck(t, shadowTypes+`
 let f = pure (c: Box) -> i64 => {

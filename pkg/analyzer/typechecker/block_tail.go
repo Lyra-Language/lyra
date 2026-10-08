@@ -80,7 +80,7 @@ func (tc *TypeChecker) tailWithoutValue(block *ast.BlockExpr) types.Type {
 // blockCannotFallThrough reports whether control can leave block only by a jump: some
 // statement in it leaves every time. The shape of checker.letElseDiverges, which asks the
 // same question of an `else`; it reads the TypeTable for `never`, so a `panic(…)` or a
-// `for { … }` with no `break` counts without being named.
+// `loop { … }` with no `break` counts without being named.
 func (tc *TypeChecker) blockCannotFallThrough(block *ast.BlockExpr) bool {
 	if block == nil {
 		return false

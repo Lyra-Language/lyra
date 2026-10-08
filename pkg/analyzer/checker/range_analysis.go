@@ -67,9 +67,9 @@ import (
 //   - A branch refines a variable only against a comparison with a *pure* constant
 //     side (literal / negated literal / another tracked variable); anything else
 //     leaves the branch un-refined.
-//   - A C-style `for` loop is analyzed with a **widening/narrowing fixpoint**
-//     (evalForLoop), so its counter is tracked precisely inside the body
-//     (`for var i: u8 = 0; i < 3; i += 1` → the body sees i ∈ [0,2]); an
+//   - A `while` loop is analyzed with a **widening/narrowing fixpoint**
+//     (evalLoop), so its counter is tracked precisely inside the body
+//     (`var i: u8 = 0; while i < 3 { …; i += 1 }` → the body sees i ∈ [0,2]); an
 //     accumulator with no bounding guard still widens to ⊤. The *after*-loop state
 //     havocs the loop-assigned variables (sound under `break`). A `for … in` loop
 //     (no counter/guard to narrow) still havocs its variables.
@@ -680,8 +680,8 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 	case *ast.MatchExpr:
 		return c.evalMatch(st, v)
 
-	case *ast.ForLoopExpr:
-		return c.evalForLoop(st, v)
+	case *ast.LoopExpr:
+		return c.evalLoop(st, v)
 
 	case *ast.ForInLoopExpr:
 		return interval{}, false, c.evalForIn(st, v)
@@ -971,8 +971,8 @@ func patternBound(e ast.Expression) (int64, bool) {
 // safety net, never the normal exit.
 const maxFixpointIters = 32
 
-// evalForLoop analyzes a C-style `for` with a **widening/narrowing fixpoint**, so
-// a loop counter is tracked precisely (`for var i: u8 = 0; i < 3; i += 1` → the
+// evalLoop analyzes a `while` or `loop` with a **widening/narrowing fixpoint**, so
+// a loop counter is tracked precisely (`while i < 3 { …; i += 1 }`, i a u8 from 0 → the
 // body sees i ∈ [0,2]) instead of havoc'd. The body is analyzed *silently* to find
 // the loop-head invariant H — a sound over-approximation of every state the loop
 // head can be in — then **once loudly** with H, so diagnostics fire once and
@@ -983,20 +983,8 @@ const maxFixpointIters = 32
 // The after-loop state havocs the loop-assigned variables, which is sound in the
 // presence of `break` (a mid-body break carries a state H — the loop *head*
 // invariant — need not cover); the precision that matters is inside the body.
-func (c *rangeChecker) evalForLoop(st rangeEnv, v *ast.ForLoopExpr) (interval, bool, rangeEnv) {
-	// The init runs once, loudly (so `var i: i8 = <overflow>` is still caught).
-	if v.Init != nil {
-		st = c.evalStmt(st, v.Init)
-	}
+func (c *rangeChecker) evalLoop(st rangeEnv, v *ast.LoopExpr) (interval, bool, rangeEnv) {
 	assigned := assignedNames(v.Body)
-	if v.Init != nil {
-		assigned[v.Init.Name] = true
-	}
-	if v.Post != nil {
-		for n := range assignedNames(*v.Post) {
-			assigned[n] = true
-		}
-	}
 
 	// Compute the loop-head invariant H silently: widen to a fixpoint (fast), then
 	// narrow to recover the bounds the loop guard implies.
@@ -1031,18 +1019,14 @@ func (c *rangeChecker) evalForLoop(st rangeEnv, v *ast.ForLoopExpr) (interval, b
 }
 
 // stepLoopBody runs one iteration's worth of the loop from a loop-head state:
-// evaluate the condition, refine to the guard-true branch, then the body and the
-// post step. Returns the state at the *next* loop head (before its guard).
-func (c *rangeChecker) stepLoopBody(H rangeEnv, v *ast.ForLoopExpr) rangeEnv {
+// evaluate the condition, refine to the guard-true branch, then the body. Returns the state at the *next* loop head (before its guard).
+func (c *rangeChecker) stepLoopBody(H rangeEnv, v *ast.LoopExpr) rangeEnv {
 	entry := H.clone()
 	if v.Condition != nil {
 		_, _, entry = c.eval(entry, *v.Condition)
 		entry, _ = c.refine(entry, *v.Condition) // guard held to enter the body
 	}
 	_, _, exit := c.eval(entry, v.Body)
-	if v.Post != nil {
-		_, _, exit = c.eval(exit, *v.Post)
-	}
 	return exit
 }
 
@@ -1135,7 +1119,7 @@ func (c *rangeChecker) evalForIn(st rangeEnv, v *ast.ForInLoopExpr) rangeEnv {
 		assigned[v.Value] = true
 	}
 	// A numeric-range iterable bounds the loop variable precisely (`for i in 0..<n`
-	// → i ∈ [start, end)), the for-in analogue of the C-style loop's counter — so the
+	// → i ∈ [start, end)), the for-in analogue of a `while` loop's counter — so the
 	// body sees a tracked counter (elision + diagnostics) instead of ⊤. Other
 	// iterables (an array/string, whose element/index we don't track here) keep the
 	// variable havoc'd.

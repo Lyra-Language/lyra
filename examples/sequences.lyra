@@ -36,7 +36,7 @@ let main = () -> void => {
 let fib = pure gen () -> Seq<i64> => {
   var a = 0
   var b = 1
-  for {
+  loop {
     yield a
     let after = a + b
     a = b
@@ -47,13 +47,13 @@ let fib = pure gen () -> Seq<i64> => {
 // 0, 1, 2, … with no end.
 let naturals = pure gen () -> Seq<i64> => {
   var n = 0
-  for { yield n; n += 1 }
+  loop { yield n; n += 1 }
 }
 
 // k, 2k, 3k, …
 let multiples = pure gen (k: i64) -> Seq<i64> => {
   var n = k
-  for { yield n; n += k }
+  loop { yield n; n += k }
 }
 
 // The ascending merge of two ascending sequences, each value once. This is what next()
@@ -64,7 +64,7 @@ let merge = pure gen (a: Seq<i64>, b: Seq<i64>) -> Seq<i64> => {
   var ys = b
   var x = xs.next()
   var y = ys.next()
-  for {
+  loop {
     match (x, y) {
       (None, None) => { break },
       (Some(v), None) => { yield v; x = xs.next() },

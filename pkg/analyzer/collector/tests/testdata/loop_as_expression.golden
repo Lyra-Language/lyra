@@ -1,13 +1,41 @@
-Program(1 statements) {
+Program(2 statements) {
 	Statements: {
+		VarDeclStmt(i) {
+			BindingKind: var
+			Name: i
+			Value: {
+				IntegerLiteralExpr {
+					Base: 10
+					Value: 0
+				}
+			}
+		}
 		VarDeclStmt(result) {
 			BindingKind: let
 			Name: result
 			Value: {
-				ForLoopExpr {
+				LoopExpr {
 					Body: {
 						BlockExpr {
 							Statements: {
+								ExpressionStmt {
+									Expression: {
+										MathAssignOpExpr {
+											Left: {
+												IdentifierExpr(i) {
+													Name: i
+												}
+											}
+											Operator: +=
+											Right: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+										}
+									}
+								}
 								ExpressionStmt {
 									Expression: {
 										IfExpr {
@@ -62,50 +90,6 @@ Program(1 statements) {
 											}
 										}
 									}
-								}
-							}
-						}
-					}
-					Condition: {
-						BooleanBinaryOpExpr {
-							Left: {
-								IdentifierExpr(i) {
-									Name: i
-								}
-							}
-							Operator: <
-							Right: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 100
-								}
-							}
-						}
-					}
-					Init: {
-						VarDeclStmt(i) {
-							BindingKind: var
-							Name: i
-							Value: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 0
-								}
-							}
-						}
-					}
-					Post: {
-						MathAssignOpExpr {
-							Left: {
-								IdentifierExpr(i) {
-									Name: i
-								}
-							}
-							Operator: +=
-							Right: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
 								}
 							}
 						}

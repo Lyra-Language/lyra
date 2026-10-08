@@ -140,8 +140,8 @@ pub data Expr =
   | IfExpr(Conditional)
   /// `for i in xs { … }` — an expression too, since `break x` gives it a value.
   | ForInLoopExpr(ForInLoop)
-  /// `for var i = 0; i < n; i += 1 { … }`, and its shorter forms.
-  | ForLoopExpr(ForLoop)
+  /// `while c { … }`, or `loop { … }` with no condition.
+  | LoopExpr(Loop)
   /// `i += 1` — a compound assignment, which is an expression here.
   | MathAssignOpExpr(BinaryOp)
   /// `match x { … }`.
@@ -432,19 +432,13 @@ pub struct ForInLoop {
   value: string,
 }
 
-/// `for var i = 0; i < n; i += 1 { … }`.
-///
-/// Every part but the body is optional, and each combination parses: `for { … }` is the
-/// infinite loop, `for c { … }` the while, `for c; p { … }` the two-part form.
-pub struct ForLoop {
+/// `while c { … }`, or `loop { … }` when there is no condition — one node for both, as
+/// the Go AST has.
+pub struct Loop {
   location: Location = Location {},
   body: shared Expr,
   condition: Maybe<shared Expr>,
-  /// The `var i = 0`, which is a declaration rather than an expression — the one place a
-  /// statement is held by a field instead of by a list.
-  init: Maybe<VarDecl>,
   label: string,
-  post: Maybe<shared Expr>,
 }
 
 /// `if c { a } else { b }`.

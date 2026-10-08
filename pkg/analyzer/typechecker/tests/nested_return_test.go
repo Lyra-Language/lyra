@@ -37,7 +37,7 @@ let g = (n: i64) -> Maybe<i64> => {
 			`data Maybe<t> = None | Some t
 let g = (n: i64) -> Maybe<i64> => {
   var i = 0;
-  for i < 3 {
+  while i < 3 {
     if i == n { return Some(i) }
     i = i + 1;
   }

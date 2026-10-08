@@ -451,7 +451,7 @@ let trailing_defaults = pure (params: []Param) -> []Param => {
   var out = [p in params | p]
   var open = true
   var i = out.len() - 1
-  for i >= 0 {
+  while i >= 0 {
     let p = out[i]
     if p.role == Given || p.role == MaybeText {
       if p.default == None { open = false }
@@ -664,7 +664,7 @@ let render = (doc: JsonValue, fns: []Function, skipped: []string) -> string => {
   out.push("// ── Functions ───────────────────────────────────────────────────────────────")
   // A run of wrappers on one receiver is that type's `impl` block; the rest stand alone.
   var i = 0
-  for i < fns.len() {
+  while i < fns.len() {
     let receiver = receiver_type(fns[i])
     out.push("")
     if receiver == "" {
@@ -673,7 +673,7 @@ let render = (doc: JsonValue, fns: []Function, skipped: []string) -> string => {
       continue
     }
     var members: []string = []
-    for i < fns.len() && receiver_type(fns[i]) == receiver {
+    while i < fns.len() && receiver_type(fns[i]) == receiver {
       if members.len() > 0 { members.push("") }
       render_wrapper(members, fns[i])
       i += 1
@@ -821,7 +821,7 @@ let render_wrapper = (out: mut []string, f: Function) -> void => {
   }
   var call = "unsafe { ${f.extern_name}(${args.join(", ")}) }"
   var i = texts.len() - 1
-  for i >= 0 {
+  while i >= 0 {
     let (name, maybe) = texts[i]
     call = if maybe {
       "with_maybe_cstring(${name}, (c_${name}) => ${call})"

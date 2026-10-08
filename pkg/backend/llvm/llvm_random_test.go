@@ -27,7 +27,7 @@ let main = () -> void => {
   var a = rng_seeded(42);
   var b = rng_seeded(42);
   var i = 0;
-  for i < 5 {
+  while i < 5 {
     println("${a.below(1000)} ${b.below(1000)}");
     i = i + 1;
   }
@@ -59,7 +59,7 @@ let main = () -> void => {
   var r = rng_seeded(0);
   var i = 0;
   var zeros = 0;
-  for i < 20 {
+  while i < 20 {
     if r.below(1000) == 0 { zeros = zeros + 1; }
     i = i + 1;
   }
@@ -81,7 +81,7 @@ module main
 let main = () -> void => {
   var r = rng_seeded(12345);
   var i = 0;
-  for i < 2000 {
+  while i < 2000 {
     println("${r.below(10)}");
     i = i + 1;
   }
@@ -160,7 +160,7 @@ let main = () -> void => {
   var hi = 0;
   var bad = 0;
   var i = 0;
-  for i < 3000 {
+  while i < 3000 {
     let n = r.between(1, 6);
     if n == 1 { lo = lo + 1; }
     if n == 6 { hi = hi + 1; }
@@ -210,7 +210,7 @@ let main = () -> void => {
   var r = rng_seeded(2024);
   var bad = 0;
   var i = 0;
-  for i < 500 {
+  while i < 500 {
     let n = r.between(-10, -5);
     if n < -10 || n > -5 { bad = bad + 1; }
     i = i + 1;
@@ -232,7 +232,7 @@ func TestExec_RandomBelowVariesAcrossRuns(t *testing.T) {
 module main
 let main = () -> void => {
   var i = 0;
-  for i < 8 {
+  while i < 8 {
     println("${random_below(1000000)}");
     i = i + 1;
   }

@@ -39,7 +39,7 @@ pub let read_file_bytes = (path: string) -> Maybe<[]u8> => {
   var out: []u8 = []
   var i = 0
   let total = i64(size)
-  for i < total {
+  while i < total {
     out.push(unsafe { raw.offset(i)^ })
     i += 1
   }
@@ -265,7 +265,7 @@ let copy_paths = pure (list: FilePathList) -> []string => {
   if list.paths == nullptr { return out }
   var i = 0
   let total = i64(list.count)
-  for i < total {
+  while i < total {
     match copy_c_string(unsafe { list.paths.offset(i)^ }) {
       Some(path) => out.push(path),
       None => {},
@@ -368,10 +368,10 @@ let hash_hex = (bytes: []u8, words: i64, which: i64) -> string => {
   if raw == nullptr { return "" }
   var out = ""
   var w = 0
-  for w < words {
+  while w < words {
     let v = unsafe { raw.offset(w)^ }
     var b = 0
-    for b < 4 {
+    while b < 4 {
       // MD5's words are little-endian and the SHA family's are big-endian.
       let shift = if which == 0 { b * 8 } else { 24 - b * 8 }
       out = out ++ hex_byte(u8((v >> u32(shift)) & 255))
@@ -392,7 +392,7 @@ let take_bytes = (raw: ^u8, size: i64) -> Maybe<[]u8> => {
   if raw == nullptr { return None }
   var out: []u8 = []
   var i = 0
-  for i < size {
+  while i < size {
     out.push(unsafe { raw.offset(i)^ })
     i += 1
   }

@@ -191,11 +191,8 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 			}
 			return false
 
-		case *ast.ForLoopExpr:
+		case *ast.LoopExpr:
 			loopScope := seen
-			if ex.Init != nil {
-				loopScope = withNames(seen, ex.Init.Name)
-			}
 			c.checkStatementsInScope(ex.Body.Statements, loopScope)
 			return false
 

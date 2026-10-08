@@ -59,7 +59,7 @@ let main = () => {
 
   var last_cols = cols0
   var last_rows = rows0
-  for running {
+  while running {
     // **Poll rather than block**, so the loop can do something other than wait for a key.
     // Here that something is noticing a resize: `terminal_size` is EffectInput precisely
     // because the window can change without the user typing, and until `wait_for_key_ms`

@@ -62,7 +62,7 @@ func collectExpressionByKind(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expr
 		return collectIfExpr(node, ctx, loc)
 	case "match_expr":
 		return CollectMatchExpression(node, ctx, loc)
-	case "block", "for_body", "for_in_body":
+	case "block", "loop_body", "while_body", "for_in_body":
 		return CollectBlockExpr(node, ctx, loc)
 	case "identifier":
 		return CollectIdentifierExpr(node, false, loc, ctx)
@@ -134,8 +134,8 @@ func collectExpressionByKind(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expr
 		return collectDerefExpr(node, ctx, loc)
 	case "compound_assignment":
 		return collectCompoundAssignmentExpr(node, ctx, loc)
-	case "for_loop":
-		return statements.CollectForLoopExpr(node, ctx)
+	case "infinite_loop", "while_loop":
+		return statements.CollectLoopExpr(node, ctx)
 	case "for_in_loop":
 		return statements.CollectForInLoopExpr(node, ctx)
 	}

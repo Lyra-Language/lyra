@@ -12,8 +12,7 @@ capture.
 - **Flow-insensitive**, which is sound: reading an outer binding later shadowed by an inner one is
   already a use-before-declaration error.
 - **Binders are enumerated explicitly** (`addPatternNames` plus statement/expression cases) —
-  match arms have no recorded scope, and the generic walker reaches a C-style loop's `Init` only as
-  an expression. A binder missing here reads as a capture.
+  match arms have no recorded scope. A binder missing here reads as a capture.
 - **A global is subtracted only where nothing in the enclosing lambdas shadows it**
   (`analyzer.outer`); otherwise a parameter sharing a top-level name gets no slot.
 - **Both failure directions are loud**: a spurious capture is a wasted copy or a backend error; a

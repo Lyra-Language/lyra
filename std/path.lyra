@@ -150,7 +150,7 @@ impl string {
     let to_parts = to.components()
     let from_parts = from.components()
     var shared = 0
-    for shared < to_parts.len() && shared < from_parts.len() && to_parts[shared] == from_parts[shared] {
+    while shared < to_parts.len() && shared < from_parts.len() && to_parts[shared] == from_parts[shared] {
       shared += 1
     }
     var parts: []string = []
@@ -168,7 +168,7 @@ impl string {
   /// root is left alone: `/` without its slash is the empty string, which names nothing.
   let without_trailing_slashes = pure (self) -> string => {
     var end = self.len()
-    for end > 1 && self.slice(end - 1, end) == "/" { end -= 1 }
+    while end > 1 && self.slice(end - 1, end) == "/" { end -= 1 }
     self.slice(0, end)
   }
 

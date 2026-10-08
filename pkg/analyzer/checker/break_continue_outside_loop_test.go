@@ -34,19 +34,19 @@ func assertBCLErrorCount(t *testing.T, errs []diag.Diagnostic, count int) {
 	}
 }
 
-// TestBCL_NoDiag_BreakInsideForLoop verifies that break inside a for loop is valid.
-func TestBCL_NoDiag_BreakInsideForLoop(t *testing.T) {
+// TestBCL_NoDiag_BreakInsideWhileLoop verifies that break inside a while loop is valid.
+func TestBCL_NoDiag_BreakInsideWhileLoop(t *testing.T) {
 	source := `
-for var i = 0; i < 10; i + 1 {
+while i < 10 {
     break
 }`
 	assertNoBCLErrors(t, parseCollectAndCheckBCL(t, source))
 }
 
-// TestBCL_NoDiag_ContinueInsideForLoop verifies that continue inside a for loop is valid.
-func TestBCL_NoDiag_ContinueInsideForLoop(t *testing.T) {
+// TestBCL_NoDiag_ContinueInsideWhileLoop verifies that continue inside a while loop is valid.
+func TestBCL_NoDiag_ContinueInsideWhileLoop(t *testing.T) {
 	source := `
-for var i = 0; i < 10; i + 1 {
+while i < 10 {
     continue
 }`
 	assertNoBCLErrors(t, parseCollectAndCheckBCL(t, source))
@@ -105,7 +105,7 @@ let f = () -> void => {
 func TestBCL_NoDiag_BreakInsideFunctionLoop(t *testing.T) {
 	source := `
 let f = () -> void => {
-    for var i = 0; i < 10; i + 1 {
+    while i < 10 {
         break
     }
 }`
@@ -116,7 +116,7 @@ let f = () -> void => {
 // resets the loop context — break inside the lambda is an error.
 func TestBCL_Diag_BreakInsideLambdaInsideLoop(t *testing.T) {
 	source := `
-for var i = 0; i < 10; i + 1 {
+while i < 10 {
     let f = () -> void => {
         break
     }
@@ -127,8 +127,8 @@ for var i = 0; i < 10; i + 1 {
 // TestBCL_NoDiag_LabeledBreak verifies that break with a valid label is accepted.
 func TestBCL_NoDiag_LabeledBreak(t *testing.T) {
 	source := `
-outer: for var i = 0; i < 10; i + 1 {
-    for var j = 0; j < 10; j + 1 {
+outer: while i < 10 {
+    while j < 10 {
         break outer
     }
 }`
@@ -138,8 +138,8 @@ outer: for var i = 0; i < 10; i + 1 {
 // TestBCL_NoDiag_LabeledContinue verifies that continue with a valid label is accepted.
 func TestBCL_NoDiag_LabeledContinue(t *testing.T) {
 	source := `
-outer: for var i = 0; i < 10; i + 1 {
-    for var j = 0; j < 10; j + 1 {
+outer: while i < 10 {
+    while j < 10 {
         continue outer
     }
 }`
@@ -149,7 +149,7 @@ outer: for var i = 0; i < 10; i + 1 {
 // TestBCL_Diag_UnknownLabelBreak verifies that break with an unknown label is rejected.
 func TestBCL_Diag_UnknownLabelBreak(t *testing.T) {
 	source := `
-for var i = 0; i < 10; i + 1 {
+while i < 10 {
     break unknown
 }`
 	errs := parseCollectAndCheckBCL(t, source)
@@ -163,7 +163,7 @@ for var i = 0; i < 10; i + 1 {
 // TestBCL_Diag_UnknownLabelContinue verifies that continue with an unknown label is rejected.
 func TestBCL_Diag_UnknownLabelContinue(t *testing.T) {
 	source := `
-for var i = 0; i < 10; i + 1 {
+while i < 10 {
     continue unknown
 }`
 	errs := parseCollectAndCheckBCL(t, source)
@@ -183,8 +183,8 @@ func TestBCL_Diag_UnknownLabelTopLevel(t *testing.T) {
 // TestBCL_NoDiag_NestedLoops verifies that break/continue in nested loops are valid.
 func TestBCL_NoDiag_NestedLoops(t *testing.T) {
 	source := `
-for var i = 0; i < 3; i + 1 {
-    for var j = 0; j < 3; j + 1 {
+while i < 3 {
+    while j < 3 {
         break
         continue
     }

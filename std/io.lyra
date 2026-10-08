@@ -73,7 +73,7 @@ pub let read_stdin = () -> string => read_all(STDIN)
 let read_all = (fd: i32) -> string => {
   var chunks: []string = []
   var buf: []u8 = [0; CHUNK]
-  for {
+  loop {
     let n = unsafe { read(fd, &mut buf[0], u64(CHUNK)) }
     if n <= 0 { break }
     chunks.push(buf.slice(0, n).decode_utf8())
@@ -207,7 +207,7 @@ let write_all = (fd: i32, contents: string) -> bool =>
 let write_all_bytes = (fd: i32, bytes: []u8) -> bool => {
   var written = 0
   let total = bytes.len()
-  for written < total {
+  while written < total {
     let n = unsafe { write(fd, &bytes[written], u64(total - written)) }
     if n <= 0 { break }
     written += n
@@ -273,7 +273,7 @@ pub let read_bytes = (path: string) -> Maybe<[]u8> => {
   var out: []u8 = []
   var buf: []u8 = [0; CHUNK]
   var failed = false
-  for {
+  loop {
     let n = unsafe { read(fd, &mut buf[0], u64(CHUNK)) }
     if n == 0 { break }
     if n < 0 {
@@ -339,7 +339,7 @@ pub let copy_file = (from: string, to: string) -> bool => {
   }
   var buf: []u8 = [0; CHUNK]
   var moved = true
-  for {
+  loop {
     let n = unsafe { read(src, &mut buf[0], u64(CHUNK)) }
     if n == 0 { break }
     if n < 0 {
@@ -347,7 +347,7 @@ pub let copy_file = (from: string, to: string) -> bool => {
       break
     }
     var written = 0
-    for written < n {
+    while written < n {
       let put = unsafe { write(dst, &buf[written], u64(n - written)) }
       if put <= 0 { break }
       written += put

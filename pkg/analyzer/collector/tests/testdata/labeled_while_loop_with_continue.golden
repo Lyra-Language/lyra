@@ -12,28 +12,38 @@ Program(2 statements) {
 		}
 		ExpressionStmt {
 			Expression: {
-				ForLoopExpr {
+				LoopExpr {
 					Body: {
 						BlockExpr {
 							Statements: {
 								ExpressionStmt {
 									Expression: {
-										FunctionCallExpr {
-											Arguments: {
-												InterpolatedStringExpr {
-													Segments: {
-														StringLiteralExpr {
-															Value: i == 
-														}
-														IdentifierExpr(i) {
-															Name: i
-														}
-													}
+										MathAssignOpExpr {
+											Left: {
+												IdentifierExpr(i) {
+													Name: i
 												}
 											}
-											Function: {
-												IdentifierExpr(println) {
-													Name: println
+											Operator: +=
+											Right: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+										}
+									}
+								}
+								ExpressionStmt {
+									Expression: {
+										LoopExpr {
+											Body: {
+												BlockExpr {
+													Statements: {
+														ContinueStmt {
+															Label: outer
+														}
+													}
 												}
 											}
 										}
@@ -58,22 +68,7 @@ Program(2 statements) {
 							}
 						}
 					}
-					Post: {
-						MathAssignOpExpr {
-							Left: {
-								IdentifierExpr(i) {
-									Name: i
-								}
-							}
-							Operator: +=
-							Right: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
-								}
-							}
-						}
-					}
+					Label: outer
 				}
 			}
 		}

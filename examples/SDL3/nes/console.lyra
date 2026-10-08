@@ -2,7 +2,7 @@ module console
 //! The part of every NES-style example that is not the example: SDL up, a window, and a
 //! 256×240 screen integer-scaled into it; the `--shot` flag; and shutting it all down.
 //!
-//! **Pieces rather than a loop.** Each example keeps its own `for running { … }`, because
+//! **Pieces rather than a loop.** Each example keeps its own `while running { … }`, because
 //! what a loop does with events and state is the example's subject. Owning the loop here
 //! would mean threading every example's state through a callback, and captures are by
 //! value, so that callback could not simply update a `var`.

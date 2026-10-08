@@ -11,7 +11,7 @@ import (
 func CollectModuleDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ModuleDeclStmt {
 	moduleDecl := &ast.ModuleDeclStmt{
 		// **The declaration's own span**, which it carried none of until 09/25 — the
-		// third node found this way in two days, after `ForLoopExpr` and the AST's
+		// third node found this way in two days, after `LoopExpr` and the AST's
 		// locations slice. A zero Location prints no `line:col` and escapes the driver's
 		// per-file filtering (hazard 14), and it also makes the node invisible to
 		// anything asking *where* it is: the editor's "add an import after the module

@@ -140,13 +140,13 @@ impl u64 {
   pub let to_hex = pure (self, width: i64 = 0) -> string => {
     var digits: []rune = []
     var rest = self
-    for rest != 0 || digits.len() < width || digits.len() == 0 {
+    while rest != 0 || digits.len() < width || digits.len() == 0 {
       digits.push(HEX_DIGITS[i64(rest % 16)])
       rest = rest / 16
     }
     var out: []rune = []
     var i = digits.len() - 1
-    for i >= 0 {
+    while i >= 0 {
       out.push(digits[i])
       i -= 1
     }

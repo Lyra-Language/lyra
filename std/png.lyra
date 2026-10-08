@@ -46,7 +46,7 @@ pub let read_png = pure (bytes: []u8) -> Result<Png, string> => {
   var trns: []u8 = []
   var idat: []u8 = []
   var ended = false
-  for pos < bytes.len() && !ended {
+  while pos < bytes.len() && !ended {
     if pos + 12 > bytes.len() { return Err("a chunk runs past the end of the file") }
     let length = i64(be32(bytes, pos))
     let kind = bytes.slice(pos + 4, pos + 8).decode_utf8()

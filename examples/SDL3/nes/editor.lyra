@@ -474,11 +474,11 @@ let on_press = (ed: mut Editor, button: u8, x: f32, y: f32) -> void => {
 /// The wheel: vertical changes brush a notch at a time, sideways scrolls the view.
 let on_wheel = (ed: mut Editor, dx: f32, dy: f32) -> void => {
   ed.wheel += dy
-  for ed.wheel >= 1.0 {
+  while ed.wheel >= 1.0 {
     cycle_brush(ed, -1)
     ed.wheel -= 1.0
   }
-  for ed.wheel <= -1.0 {
+  while ed.wheel <= -1.0 {
     cycle_brush(ed, 1)
     ed.wheel += 1.0
   }
@@ -527,9 +527,9 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
   // Nothing shown yet, so the first frame sets every mark.
   var marked = (-1, false, false, false)
 
-  for running {
+  while running {
     var draining = true
-    for draining {
+    while draining {
       match poll_event() {
         None => { draining = false },
         Some(event) => {
@@ -548,7 +548,7 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
     }
     // The menu's choices were queued while the events above were pumped.
     var choosing = true
-    for choosing {
+    while choosing {
       match poll_menu() {
         None => { choosing = false },
         Some(tag) => on_menu(ed, tag),

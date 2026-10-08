@@ -13,16 +13,16 @@ import "github.com/Lyra-Language/lyra/pkg/types"
 // effect was that a `let` declared inside any loop body was invisible there
 // ("undefined identifier"), because the collector had defined it in the body's
 // own block scope, which nothing could reach.
-type ForLoopExpr struct {
+// LoopExpr is `while cond { … }`, or `loop { … }` when Condition is nil. One node
+// serves both so no consumer switches over two kinds for what differs by one field.
+type LoopExpr struct {
 	ExprBase
 	Label     string
-	Init      *VarDeclStmt
 	Condition *Expression
-	Post      *Expression
 	Body      *BlockExpr
 }
 
-func (t *ForLoopExpr) GetName() string { return "for_loop" }
+func (t *LoopExpr) GetName() string { return "loop" }
 
 type ForInLoopExpr struct {
 	ExprBase
@@ -44,15 +44,15 @@ type ForInLoopExpr struct {
 
 func (t *ForInLoopExpr) GetName() string { return "for_in_loop" }
 
-// LoopCanExit reports whether a `for` loop can finish — fall through to whatever follows
-// it. It can when it has a condition, or when its body contains a `break` that targets it:
-// an unlabeled `break` not inside a nested loop, or a labeled one naming this loop. A
-// `for { … }` with neither runs until a `return` or a `panic`, so it is a `never`: the
+// LoopCanExit reports whether a `loop` or `while` can finish — fall through to whatever
+// follows it. It can when it has a condition, or when its body contains a `break` that
+// targets it: an unlabeled `break` not inside a nested loop, or a labeled one naming this
+// loop. A `loop { … }` with neither runs until a `return` or a `panic`, so it is a `never`: the
 // typechecker lets it stand as the value of a non-void body, and the backend seals its
 // exit block as unreachable rather than leaving a block with no terminator.
 //
 // A lambda is not entered: a `break` cannot cross one.
-func LoopCanExit(e *ForLoopExpr) bool {
+func LoopCanExit(e *LoopExpr) bool {
 	if e.Condition != nil {
 		return true
 	}
@@ -81,7 +81,7 @@ func breaksOutOf(body *BlockExpr, label string, depth int) bool {
 			switch inner := ex.(type) {
 			case *LambdaExpr:
 				return false
-			case *ForLoopExpr:
+			case *LoopExpr:
 				if breaksOutOf(inner.Body, label, depth+1) {
 					found = true
 				}

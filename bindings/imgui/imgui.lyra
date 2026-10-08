@@ -14,7 +14,7 @@ module bindings.imgui
 //!     return
 //!   }
 //!   var loud = false
-//!   for begin_frame(host) {
+//!   while begin_frame(host) {
 //!     if begin("Settings") {
 //!       checkbox("Loud", loud)
 //!       if button("Save") { save(loud) }
@@ -224,7 +224,7 @@ impl DrawList {
 /// unsaved work asks before it goes:
 ///
 /// ```
-/// for {
+/// loop {
 ///   if !begin_frame(host) {
 ///     if !has_unsaved_work { break }
 ///     cancel_quit(host)

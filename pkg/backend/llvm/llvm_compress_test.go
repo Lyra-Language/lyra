@@ -84,7 +84,7 @@ import std.compress.{ inflate, crc32 }
 import std.io.{ read_bytes }
 let main = () -> void => {
   let Some(dir) = read_line() else { return }
-  for {
+  loop {
     let Some(line) = read_line() else { break }
     let parts = line.split(" ")
     let name = parts[0]

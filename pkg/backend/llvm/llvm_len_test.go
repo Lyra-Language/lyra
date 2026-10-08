@@ -46,12 +46,14 @@ func TestExec_ArrayLen(t *testing.T) {
 		},
 		{
 			// The practical idiom: index a dynamic array up to its runtime length.
-			"len drives a C-style index loop",
+			"len drives a while index loop",
 			`let main = () -> u8 => {
   var sum: u8 = 0
   let xs: []u8 = [10, 20, 12]
-  for var i: i64 = 0; i < xs.len(); i += 1 {
+  var i: i64 = 0
+  while i < xs.len() {
     sum += xs[i]
+    i += 1
   }
   sum
 }`,

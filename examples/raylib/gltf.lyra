@@ -614,7 +614,7 @@ let sample = pure (ch: AnimChannel, t: f32) -> Vector4 => {
   // The last key at or before t.
   var lo = 0
   var hi = n - 1
-  for hi - lo > 1 {
+  while hi - lo > 1 {
     let mid = (lo + hi) / 2
     if ch.times[mid] <= t { lo = mid } else { hi = mid }
   }

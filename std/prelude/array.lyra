@@ -96,7 +96,7 @@ impl []t {
     let n = self.len()
     var budget = 0
     var m = n
-    for m > 1 { m = m / 2; budget += 2 }
+    while m > 1 { m = m / 2; budget += 2 }
     quick_sort_range(self, cmp, 0, n, budget)
   }
 
@@ -144,12 +144,12 @@ impl []t {
 
     // Runs of 16 by insertion sort — stable, and the fewest compares on a short range.
     var run = 0
-    for run < n {
+    while run < n {
       let stop = min(run + 16, n)
       for i in (run + 1)..<stop {
         let v = src[i]
         var j = i
-        for j > run && cmp(src[j - 1], v) == Greater {
+        while j > run && cmp(src[j - 1], v) == Greater {
           src[j] = src[j - 1]
           j -= 1
         }
@@ -161,15 +161,15 @@ impl []t {
     // Merge runs of `width` from src into dst, then swap the buffers' roles.
     var dst = [...self]
     var width = 16
-    for width < n {
+    while width < n {
       var start = 0
-      for start < n {
+      while start < n {
         let mid = min(start + width, n)
         let end = min(start + 2 * width, n)
         var i = start
         var j = mid
         var k = start
-        for i < mid && j < end {
+        while i < mid && j < end {
           // The left element wins a tie: that is the whole of stability.
           if cmp(src[j], src[i]) == Less {
             dst[k] = src[j]
@@ -180,8 +180,8 @@ impl []t {
           }
           k += 1
         }
-        for i < mid { dst[k] = src[i]; i += 1; k += 1 }
-        for j < end { dst[k] = src[j]; j += 1; k += 1 }
+        while i < mid { dst[k] = src[i]; i += 1; k += 1 }
+        while j < end { dst[k] = src[j]; j += 1; k += 1 }
         start = end
       }
       (src, dst) = (dst, src)
@@ -214,7 +214,7 @@ impl []t {
     var lo = start
     var hi = end
     var left = budget
-    for hi - lo > 16 {
+    while hi - lo > 16 {
       if left == 0 {
         heap_sort_range(self, cmp, lo, hi)
         return
@@ -262,11 +262,11 @@ impl []t {
     let pivot = self[start]
     var i = start
     var j = end
-    for {
+    loop {
       i += 1
-      for cmp(self[i], pivot) == Less { i += 1 }
+      while cmp(self[i], pivot) == Less { i += 1 }
       j -= 1
-      for cmp(self[j], pivot) == Greater { j -= 1 }
+      while cmp(self[j], pivot) == Greater { j -= 1 }
       if i >= j { break }
       (self[i], self[j]) = (self[j], self[i])
     }
@@ -284,7 +284,7 @@ impl []t {
     for i in (start + 1)..<end {
       let v = self[i]
       var j = i
-      for j > start && cmp(self[j - 1], v) == Greater {
+      while j > start && cmp(self[j - 1], v) == Greater {
         self[j] = self[j - 1]
         j -= 1
       }

@@ -51,7 +51,7 @@ let main = () -> u8 => {
     return 1
   }
   var frames = 0
-  for frames != limit && begin_frame(host) {
+  while frames != limit && begin_frame(host) {
     dock_space_over_viewport()
     menu_bar(show_demo)
     if show_demo { show_demo_window_closable(show_demo) }

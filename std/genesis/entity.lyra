@@ -6,7 +6,7 @@ module std.genesis.entity
 //! import std.genesis.entity.{ Entity }
 //!
 //! var hero = assets.HERO.spawn(160, 208)        // Vega's entity editor makes the kind
-//! for {
+//! loop {
 //!   hero.push(dx, dy)                            // the pad: -1, 0 or 1 a direction
 //!   hero.move_in_field()                         // assets: through the map, stopped by walls
 //!   hero.play(assets.HERO_WALK, view, facing_left) // assets: shown, into the sprite list

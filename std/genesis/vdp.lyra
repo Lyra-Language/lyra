@@ -10,7 +10,7 @@ module std.genesis.vdp
 //!   vdp.init()
 //!   vdp.set_color(0, 0, vdp.rgb(0, 0, 7))   // palette 0, colour 0: blue
 //!   vdp.display_on()
-//!   for {
+//!   loop {
 //!     vdp.wait_vblank()
 //!     // … move things, then show them
 //!   }
@@ -118,8 +118,8 @@ pub let disable_hblank_interrupt = () -> void => set_register(0, 0x04)
 /// changes what is shown, once a frame (60 times a second on an NTSC console).
 pub let wait_vblank = () -> void => {
   // Out of any blank still under way, then into the next: status bit 3 is set during it.
-  for (status() & 8) != 0 {}
-  for (status() & 8) == 0 {}
+  while (status() & 8) != 0 {}
+  while (status() & 8) == 0 {}
 }
 
 /// A colour as CRAM holds it, from three levels of 0–7.

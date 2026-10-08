@@ -113,7 +113,7 @@ pub let hashmap_new<k, v> = pure () -> HashMap<k, v> => hashmap_with_capacity(0)
 pub let hashmap_with_capacity<k, v> = pure (capacity: i64) -> HashMap<k, v> => {
   if capacity < 0 { panic("hashmap_with_capacity: capacity must not be negative") }
   var slots = 8
-  for slots * 3 < capacity * 4 { slots *= 2 }
+  while slots * 3 < capacity * 4 { slots *= 2 }
   HashMap { slots: [None; slots], count: 0 }
 }
 
@@ -322,7 +322,7 @@ impl HashMap<k, v> {
   let place<k, v> = det noalloc (self: mut, entry: Entry<k, v>) -> void => {
     let mask = u64(self.slots.len() - 1)
     var i = i64(entry.hash & mask)
-    for self.slots[i].is_some() { i = i64((u64(i) + 1) & mask) }
+    while self.slots[i].is_some() { i = i64((u64(i) + 1) & mask) }
     self.slots[i] = Some(entry)
   }
 
@@ -347,7 +347,7 @@ impl HashMap<k, v> {
     let mask = u64(self.slots.len() - 1)
     var hole = found
     var j = found
-    for {
+    loop {
       j = i64((u64(j) + 1) & mask)
       match self.slots[j] {
         None => { break },

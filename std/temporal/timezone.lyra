@@ -119,7 +119,7 @@ impl TimeZone {
     if self.transitions.len() == 0 || epoch_second < self.transitions[0] { return self.initial }
     var low = 0
     var high = self.transitions.len() - 1
-    for low < high {
+    while low < high {
       let mid = (low + high + 1) / 2
       if self.transitions[mid] <= epoch_second { low = mid } else { high = mid - 1 }
     }
@@ -218,11 +218,11 @@ let read_footer = pure (
   // Past the leap records and the two flag arrays, whose sizes the header gave.
   if at >= data.len() { return None }
   var i = at
-  for i < data.len() && data[i] != 10 { i += 1 }
+  while i < data.len() && data[i] != 10 { i += 1 }
   if i >= data.len() { return None }
   var out: []u8 = []
   var j = i + 1
-  for j < data.len() && data[j] != 10 {
+  while j < data.len() && data[j] != 10 {
     out.push(data[j])
     j += 1
   }
@@ -281,7 +281,7 @@ let read_int = pure (data: []u8, at: i64, width: i64) -> i64 => {
 let read_designation = pure (data: []u8, at: i64, end: i64) -> string => {
   var out: []u8 = []
   var i = at
-  for i < end && data[i] != 0 {
+  while i < end && data[i] != 0 {
     out.push(data[i])
     i += 1
   }

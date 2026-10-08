@@ -309,10 +309,10 @@ func blockValueExpr(block *ast.BlockExpr) (ast.Expression, bool) {
 	// Without this, a function whose body ends in a loop could not infer its return
 	// type at all: the loop has no recorded type, so inference fell through to the
 	// "annotate it" error, which additionally blamed *recursion* — a cause that has
-	// nothing to do with it. `let main = () => { for { … } }` is an ordinary shape,
+	// nothing to do with it. `let main = () => { loop { … } }` is an ordinary shape,
 	// and it is the shape a read-until-EOF program has.
 	switch last.Expression.(type) {
-	case *ast.ForLoopExpr, *ast.ForInLoopExpr:
+	case *ast.LoopExpr, *ast.ForInLoopExpr:
 		return nil, false
 	}
 	return last.Expression, true
@@ -450,11 +450,11 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					// A loop that can finish as the body's last statement leaves the
 					// function with no value on the path where it does. The generic
 					// mismatch ("expected i64, got void") is true but names the wrong
-					// thing; say what the shape is and what fixes it. A `for { … }` with
+					// thing; say what the shape is and what fixes it. A `loop { … }` with
 					// no `break` is a `never`, and checkReturnValue accepts it below.
 					if tc.tailLoopCanFinish(s.Expression) && declaredReturn != nil {
 						tc.addError(s.GetLocation(), SeverityError,
-							"%s: the body ends in a loop that can finish, so the function reaches its end without a value; end with an expression or a `return` (a `for { … }` with no `break` never finishes and needs neither)",
+							"%s: the body ends in a loop that can finish, so the function reaches its end without a value; end with an expression or a `return` (a `loop { … }` with no `break` never finishes and needs neither)",
 							funcName)
 						continue
 					}
@@ -492,7 +492,7 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 // checkBlockReturn names specially. It checks the loop too, so its body is typed.
 func (tc *TypeChecker) tailLoopCanFinish(expr ast.Expression) bool {
 	switch e := expr.(type) {
-	case *ast.ForLoopExpr:
+	case *ast.LoopExpr:
 		_, isVoid := tc.inferExprType(e).(types.VoidType)
 		return isVoid
 	case *ast.ForInLoopExpr:

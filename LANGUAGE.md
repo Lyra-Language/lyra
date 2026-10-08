@@ -241,8 +241,9 @@ A `let`/`var`, a `for` variable or a pattern binding may take a name already in 
 
 ### Loops
 
-- **`for { … }` is the infinite loop**: it runs until a `break` or `return`, and with no `break` that leaves it, it is `never` — so a function with a return type may end in one. `for cond { … }`, `for init; cond; post { … }` and `for x in xs { … }` can finish, and a function with a return type that ends in one is refused.
-- **A literal condition warns `lyra-W027`**: `if true`, `if false`, `for false` (the body never runs), and `for true`, whose message names `for { … }` — it has a condition, so it can finish as far as types are concerned, and a function ending in it is refused where `for { … }` is not.
+- **Three keywords, one per shape**: `loop { … }` runs until a `break` or `return`; `while cond { … }` runs while a `bool` holds; `for x in xs { … }` iterates. `for` always iterates — there is no bare `for`, no `for cond`, and **no C-style `for init; cond; post`** (removed 10/08: a counted loop is `for i in 0..<n`). Each takes a label (`outer: loop { … }`), and `break value` gives any of them a value.
+- **`loop { … }` with no `break` that leaves it is `never`**, so a function with a return type may end in one. `while` and `for` can finish, and a function with a return type that ends in one is refused.
+- **A literal condition warns `lyra-W027`**: `if true`, `if false`, `while false` (the body never runs), and `while true`, whose message names `loop { … }` — it has a condition, so it can finish as far as types are concerned, and a function ending in it is refused where `loop { … }` is not.
 
 ### Patterns
 
@@ -768,7 +769,7 @@ target = "genesis"
   with `rte`; with no handler, the interrupt does nothing.
   - **A module-level `var` the handler writes is volatile everywhere** — its every load and
     store in and out of the handler — so `frames += 1` in the handler and
-    `for frames < 30 {}` in `main` is correct as written. The set is what the handler's own
+    `while frames < 30 {}` in `main` is correct as written. The set is what the handler's own
     body writes (`=`, `+=`, `&mut`); a variable written only in a function it calls must be
     read with `read_volatile`. `examples/genesis/vblank.lyra` counts frames in one;
     `walker.lyra` shows its sprites from one, and its main loop waits on the count.

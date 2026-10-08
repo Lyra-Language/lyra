@@ -80,7 +80,7 @@ let decode_numeric = (start: i64) -> Maybe<Event> => {
   var code = start
   var done = false
   var ended = false
-  for !done {
+  while !done {
     match read_key() {
       None => { done = true; ended = true },
       Some(d) => {

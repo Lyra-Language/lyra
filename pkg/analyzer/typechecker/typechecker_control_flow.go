@@ -1825,7 +1825,7 @@ func (tc *TypeChecker) inferRangeExpr(expr *ast.RangeExpr) types.Type {
 // checked in the enclosing scope and every use of the loop variable was an
 // "undefined identifier" (no existing test exercised a non-empty body, so the gap
 // went unnoticed). Body-local declarations resolve too, since `Body` became a
-// pointer (see checkForLoopExpr), and the body is checked *for effect* — a loop
+// pointer (see checkLoopExpr), and the body is checked *for effect* — a loop
 // body has no value, so its last statement must not be put in value position.
 func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 	iterType := tc.inferExprType(expr.Iterable)
@@ -1979,17 +1979,13 @@ func isUntypedNumeric(t types.Type) bool {
 	return p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt || p.Name == types.UntypedFloat
 }
 
-// checkForLoopExpr type-checks a C-style for loop.
+// checkLoopExpr type-checks `while cond { … }` and `loop { … }`.
 //
 // The whole loop is checked inside the loop's own scope (registered on the loop
-// node by the collector, RecordScope(loop, loopScope)), which holds an init
-// clause's variable. Entering it lets the init variable resolve in the condition,
-// the post clause, and the body — so the three-clause `for var i = 0; i < n; i +=
-// 1` form type-checks. The init clause is checked first so its variable's type is
-// recorded before those uses.
+// node by the collector, RecordScope(loop, loopScope)).
 //
 // A `let`/`var` declared *inside* the body resolves there because `Body` is a
-// **pointer** (ast/stmt_for_loop.go): the collector puts body-locals in a child
+// **pointer** (ast/stmt_loop.go): the collector puts body-locals in a child
 // block scope keyed on the body block, and a value field copied that block, so
 // enterScope missed the scope and — silently, since a miss just runs in the
 // enclosing scope — checked the body in loopScope, where those names were never
@@ -1999,32 +1995,26 @@ func isUntypedNumeric(t types.Type) bool {
 // targets it — and `void` otherwise. Until 09/07 it was nil, the "already reported"
 // convention, so a non-void function whose body *ended* in a loop passed the return check
 // with no value on the fall-through path and failed in the backend instead.
-func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) types.Type {
+func (tc *TypeChecker) checkLoopExpr(expr *ast.LoopExpr) types.Type {
 	tc.enterScope(expr, func() {
-		if expr.Init != nil {
-			tc.checkVarDecl(expr.Init)
-		}
 		if expr.Condition != nil {
 			condType := tc.inferExprType(*expr.Condition)
 			if condType != nil && !types.IsBoolean(condType) {
 				tc.addError((*expr.Condition).GetLocation(), SeverityError,
-					"for loop condition must be boolean, got %s", condType)
+					"while condition must be boolean, got %s", condType)
 			}
-			// `for true` is the infinite loop's near miss: bare `for { … }` is the
+			// `while true` is the infinite loop's near miss: `loop { … }` is the
 			// spelling, and the only one that is `never` without a `break`
 			// (ast.LoopCanExit), so the warning names it.
 			if lit, ok := (*expr.Condition).(*ast.BooleanLiteralExpr); ok {
 				if lit.Value {
 					tc.addWarning((*expr.Condition).GetLocation(), diag.CodeConstantCondition,
-						"condition is always true: write `for { … }` for a loop that runs until it breaks")
+						"condition is always true: write `loop { … }` for a loop that runs until it breaks")
 				} else {
 					tc.addWarning((*expr.Condition).GetLocation(), diag.CodeConstantCondition,
 						"condition is always false: the loop body never runs")
 				}
 			}
-		}
-		if expr.Post != nil {
-			tc.inferExprType(*expr.Post)
 		}
 		tc.checkBlockForEffect(expr.Body)
 	})

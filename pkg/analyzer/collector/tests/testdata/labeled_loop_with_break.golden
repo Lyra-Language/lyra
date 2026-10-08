@@ -1,0 +1,37 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				LoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										LoopExpr {
+											Body: {
+												BlockExpr {
+													Statements: {
+														BreakStmt {
+															Label: outer
+														}
+													}
+												}
+											}
+											Condition: {
+												IdentifierExpr(ready) {
+													Name: ready
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Label: outer
+				}
+			}
+		}
+	}
+}

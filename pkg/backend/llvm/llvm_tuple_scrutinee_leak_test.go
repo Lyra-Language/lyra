@@ -30,7 +30,7 @@ let pick = (m: Maybe<string>, fb: string) -> string {
 }
 let main = () -> void => {
   var i = 0;
-  for i < 3 {
+  while i < 3 {
     let line = read_line();
     println(pick(line, "!"));
     i = i + 1;
@@ -49,7 +49,7 @@ func TestExec_PreludeUnwrapOrInALoopDoesNotLeak(t *testing.T) {
 module main
 let main = () -> void => {
   var i = 0;
-  for i < 3 {
+  while i < 3 {
     let line = read_line();
     println(line.unwrap_or("?"));
     i = i + 1;

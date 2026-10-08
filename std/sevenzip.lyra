@@ -171,7 +171,7 @@ struct Streams {
 let read_header = (c: mut Cursor, data: []u8) -> Result<SevenZip, string> => {
   var id = byte(c)?
   if id == ARCHIVE_PROPERTIES {
-    for {
+    loop {
       if byte(c)? == END { break }
       skip(c, number(c)?)?
     }
@@ -203,13 +203,13 @@ let read_streams = (c: mut Cursor, data: []u8) -> Result<Streams, string> => {
   var sizes: []i64 = []
   var crcs: []Maybe<u32> = []
   var have_substreams = false
-  for {
+  loop {
     let id = byte(c)?
     if id == END { break }
     if id == PACK_INFO {
       pack_start = 32 + number(c)?
       let n = number(c)?
-      for {
+      loop {
         let sub = byte(c)?
         if sub == END { break }
         if sub == SIZE {
@@ -239,7 +239,7 @@ let read_streams = (c: mut Cursor, data: []u8) -> Result<Streams, string> => {
           if j == outs[i] - 1 { blocks[i].size = size }
         }
       }
-      for {
+      loop {
         let sub = byte(c)?
         if sub == END { break }
         if sub != CRC { return Err("a 7z unpack-info section with an unknown part (${sub})") }
@@ -250,7 +250,7 @@ let read_streams = (c: mut Cursor, data: []u8) -> Result<Streams, string> => {
       have_substreams = true
       counts = [1; blocks.len()]
       var have_sizes = false
-      for {
+      loop {
         let sub = byte(c)?
         if sub == END { break }
         if sub == UNPACK_STREAMS {
@@ -394,7 +394,7 @@ let read_files = (c: mut Cursor, streams: Streams) -> Result<[]SevenZipEntry, st
   var empty_stream: []bool = [false; n]
   var empty_file: []bool = []
   var names: []string = []
-  for {
+  loop {
     let kind = number(c)?
     if kind == 0 { break }
     let size = number(c)?
@@ -435,7 +435,7 @@ let read_files = (c: mut Cursor, streams: Streams) -> Result<[]SevenZipEntry, st
       })
       continue
     }
-    for block < streams.counts.len() && in_block >= streams.counts[block] {
+    while block < streams.counts.len() && in_block >= streams.counts[block] {
       block += 1
       in_block = 0
       offset = 0
@@ -590,7 +590,7 @@ let utf16_names = pure (data: []u8, from: i64, to: i64) -> []string => {
   var names: []string = []
   var name = ""
   var at = from
-  for at + 1 < to {
+  while at + 1 < to {
     var unit = i64(data[at]) | (i64(data[at + 1]) << 8)
     at += 2
     if unit == 0 {

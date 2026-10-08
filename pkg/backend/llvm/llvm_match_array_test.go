@@ -272,7 +272,7 @@ func TestExec_ArrayMatch_TailBinding_GuardFailReleases(t *testing.T) {
 }
 let main = () -> u8 => {
   var total = 0
-  for var i = 0; i < 50; i += 1 {
+  for i in 0..<50 {
     total = total + pick(["yes" ++ "", "a" ++ "1"])
     total = total + pick(["no" ++ "", "b" ++ "2"])
     total = total + pick(["other" ++ "", "c" ++ "3"])

@@ -42,7 +42,7 @@ let arguments = () -> []string => {
   var out: []string = []
   var i = 1
   let all = program_args()
-  for i < all.len() {
+  while i < all.len() {
     out.push(all[i])
     i += 1
   }
@@ -130,7 +130,7 @@ let run_checks = () -> u8 => {
 
   var runs: []u8 = []
   var i = 0
-  for i < 2000 { runs.push(65) ; i += 1 }
+  while i < 2000 { runs.push(65) ; i += 1 }
   match compress(runs) {
     Some(packed) => {
       failures += check("compress shrinks 2000 identical bytes", packed.len() < 100, true)

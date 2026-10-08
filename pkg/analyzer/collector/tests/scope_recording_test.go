@@ -9,7 +9,7 @@ import (
 
 // findFirst walks the program and returns the first expression/statement for
 // which pick returns a non-nil node, or nil if none matches.
-func findScopeBearingNodes(program *ast.Program) (lambda, forLoop, forIn ast.Expression, with ast.Statement) {
+func findScopeBearingNodes(program *ast.Program) (lambda, loop, forIn ast.Expression, with ast.Statement) {
 	onStmt := func(s ast.Statement) bool {
 		if w, ok := s.(*ast.WithStmt); ok && with == nil {
 			with = w
@@ -22,9 +22,9 @@ func findScopeBearingNodes(program *ast.Program) (lambda, forLoop, forIn ast.Exp
 			if lambda == nil {
 				lambda = ex
 			}
-		case *ast.ForLoopExpr:
-			if forLoop == nil {
-				forLoop = ex
+		case *ast.LoopExpr:
+			if loop == nil {
+				loop = ex
 			}
 		case *ast.ForInLoopExpr:
 			if forIn == nil {
@@ -50,8 +50,8 @@ func TestScopeRecording_LambdaLoopsWith(t *testing.T) {
 	src := `
 let f = (n: i64) -> i64 => {
     var total = 0
-    for var i = 0; i < n; i += 1 {
-        total += i
+    while total < n {
+        total += 1
     }
     for x in [1, 2, 3] {
         total += x
@@ -62,7 +62,7 @@ let f = (n: i64) -> i64 => {
     total
 }`
 	program, _, scopeTable, _ := parseAndCollect(t, src)
-	lambda, forLoop, forIn, with := findScopeBearingNodes(program)
+	lambda, loop, forIn, with := findScopeBearingNodes(program)
 
 	cases := []struct {
 		name string
@@ -70,7 +70,7 @@ let f = (n: i64) -> i64 => {
 		kind symbols.ScopeKind
 	}{
 		{"lambda", lambda, symbols.ScopeFunction},
-		{"for-loop", forLoop, symbols.ScopeLoop},
+		{"while-loop", loop, symbols.ScopeLoop},
 		{"for-in-loop", forIn, symbols.ScopeLoop},
 		{"with", with, symbols.ScopeBlock},
 	}
@@ -90,24 +90,24 @@ let f = (n: i64) -> i64 => {
 }
 
 // TestScopeRecording_LoopVarInLoopScope verifies the recorded scope is the right
-// one: a C-style loop's init variable is registered in the loop scope, so it is
+// one: a for-in loop's variable is registered in the loop scope, so it is
 // findable there (and not leaked to the parent).
 func TestScopeRecording_LoopVarInLoopScope(t *testing.T) {
 	src := `
 let f = (n: i64) -> i64 => {
-    for var i = 0; i < n; i += 1 {
+    for i in 0..<n {
         i
     }
     0
 }`
 	program, _, scopeTable, _ := parseAndCollect(t, src)
-	_, forLoop, _, _ := findScopeBearingNodes(program)
-	if forLoop == nil {
-		t.Fatal("for-loop not found")
+	_, _, forIn, _ := findScopeBearingNodes(program)
+	if forIn == nil {
+		t.Fatal("for-in loop not found")
 	}
-	scope, ok := scopeTable.Get(forLoop)
+	scope, ok := scopeTable.Get(forIn)
 	if !ok {
-		t.Fatal("no scope recorded for for-loop")
+		t.Fatal("no scope recorded for for-in loop")
 	}
 	if _, found := scope.LookupLocal("i"); !found {
 		t.Errorf("loop variable `i` not registered in the loop scope")

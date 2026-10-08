@@ -117,15 +117,9 @@ func WalkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(
 		for _, clause := range e.LambdaClauses {
 			WalkExpr(clause.Body, onStmt, onExpr)
 		}
-	case *ForLoopExpr:
-		if e.Init != nil {
-			WalkExpr(e.Init.Value, onStmt, onExpr)
-		}
+	case *LoopExpr:
 		if e.Condition != nil {
 			WalkExpr(*e.Condition, onStmt, onExpr)
-		}
-		if e.Post != nil {
-			WalkExpr(*e.Post, onStmt, onExpr)
 		}
 		for _, stmt := range e.Body.Statements {
 			WalkStmt(stmt, onStmt, onExpr)

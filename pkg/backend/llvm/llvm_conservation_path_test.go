@@ -130,7 +130,7 @@ let main = () -> u8 => u8(pick(true))`,
 			// invisible there (fixed by making the loop bodies pointers).
 			"allocation in a loop", `let main = () -> u8 => {
   var n = 0
-  for var i = 0; i < 5; i += 1 {
+  for i in 0..<5 {
     let s = "a" ++ "b"
     if s == "ab" { n = n + 1 } else { n = n + 2 }
   }
@@ -151,7 +151,7 @@ let main = () -> u8 => u8(f(true))`,
 			"break past a live box", `let f = (limit: i64) -> i64 => {
   let s = "a" ++ "b"
   var n = 0
-  for var i = 0; i < limit; i += 1 {
+  for i in 0..<limit {
     if s == "ab" { return n }
     n = n + 1
   }
@@ -207,7 +207,7 @@ let main = () -> u8 => u8(f(5))`,
 			// released inside the loop, or it leaks once per turn.
 			"closure created in a loop", `let main = () -> u8 => {
   var total = 0
-  for var i = 0; i < 3; i += 1 {
+  for i in 0..<3 {
     let f = (x: i64) -> i64 => x + i
     total = total + 1
   }

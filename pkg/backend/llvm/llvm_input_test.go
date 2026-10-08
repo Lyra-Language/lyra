@@ -150,7 +150,7 @@ module main
 let main = () -> void => {
   var n = 0;
   var done = false;
-  for done == false {
+  while done == false {
     let line = read_line();
     if line.is_none() {
       done = true;
@@ -186,7 +186,7 @@ let show = (s: string) -> void => {
 }
 let main = () -> void => {
   var done = false;
-  for done == false {
+  while done == false {
     let line = read_line();
     if line.is_none() { done = true; } else { show(line.unwrap_or("")); }
   }
@@ -238,7 +238,7 @@ let main = () -> void => {
   let secret = 37;
   var guesses = 0;
   var done = false;
-  for done == false {
+  while done == false {
     let line = read_line();
     if line.is_none() {
       println("gave up after ${guesses}");
@@ -312,7 +312,7 @@ module main
 let main = () -> void => {
   var n = 0;
   var done = false;
-  for done == false {
+  while done == false {
     let line = read_line();
     if line.is_none() {
       done = true;

@@ -90,7 +90,7 @@ let f = () => {
 func TestUnreachable_Diag_AfterBreak(t *testing.T) {
 	src := `
 let f = () => {
-    for var i = 0; i < 10; i += 1 {
+    for i in 0..<10 {
         break
         let x = 1
     }
@@ -105,7 +105,7 @@ let f = () => {
 func TestUnreachable_Diag_AfterContinue(t *testing.T) {
 	src := `
 let f = () => {
-    for var i = 0; i < 10; i += 1 {
+    for i in 0..<10 {
         continue
         let x = 1
     }

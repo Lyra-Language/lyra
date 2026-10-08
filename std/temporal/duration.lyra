@@ -111,7 +111,7 @@ pub let parse_duration = pure (text: string) -> Maybe<Duration> => {
   var any = false
   // The date units, in order: each must come after the last one seen.
   var rank = 0
-  for i < runes.len() && runes[i] != 'T' {
+  while i < runes.len() && runes[i] != 'T' {
     let Some((n, next)) = number_at(runes, i) else { return None }
     if next >= runes.len() { return None }
     let unit = runes[next]
@@ -130,7 +130,7 @@ pub let parse_duration = pure (text: string) -> Maybe<Duration> => {
     i += 1
     if i >= runes.len() { return None }
     var clock_rank = 0
-    for i < runes.len() {
+    while i < runes.len() {
       let Some((n, next)) = number_at(runes, i) else { return None }
       if next >= runes.len() { return None }
       if runes[next] == '.' {
@@ -282,7 +282,7 @@ pub data TimeUnit =
 /// is no digit there.
 let number_at = pure (runes: []rune, from: i64) -> Maybe<(i64, i64)> => {
   var i = from
-  for i < runes.len() && runes[i].is_ascii_digit() { i += 1 }
+  while i < runes.len() && runes[i].is_ascii_digit() { i += 1 }
   if i == from { return None }
   let Some(n) = digits(runes, from, i) else { return None }
   Some((n, i))

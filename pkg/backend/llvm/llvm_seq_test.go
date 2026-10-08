@@ -19,7 +19,7 @@ import (
 func TestExec_SeqConsumersAndControl(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `module main
-let nums = pure gen () -> Seq<i64> => { var n = 0; for { yield n; n += 1 } }
+let nums = pure gen () -> Seq<i64> => { var n = 0; loop { yield n; n += 1 } }
 let main = () -> void => {
   var seen = 0
   for x in nums().filter((n) => n % 2 == 0) {
@@ -92,7 +92,7 @@ let main = () -> void => {
 func TestExec_SeqValuesNextAndZip(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `module main
-let nums = pure gen () -> Seq<i64> => { var n = 0; for { yield n; n += 1 } }
+let nums = pure gen () -> Seq<i64> => { var n = 0; loop { yield n; n += 1 } }
 let names = pure gen () -> Seq<string> => { for i in 0..<4 { yield "name-" ++ "${i}" } }
 let main = () -> void => {
   let held = nums().take(3)

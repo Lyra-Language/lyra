@@ -821,7 +821,7 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 	addrTaken := map[string]bool{}
 	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
 		switch le := e.(type) {
-		case *ast.ForLoopExpr:
+		case *ast.LoopExpr:
 			collectNames(le.Body, loopUsed)
 		case *ast.ForInLoopExpr:
 			collectNames(le.Body, loopUsed)
@@ -1591,7 +1591,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.table.ReleaseTemp[e] = true
 		}
 
-	case *ast.ForLoopExpr:
+	case *ast.LoopExpr:
 		// A loop's value is discarded (it's a statement). Walk its parts so managed
 		// reads inside record their retains. Previously the loop hit `default` and its
 		// body was never analyzed, so a borrowed managed value bound into an owning
@@ -1604,20 +1604,14 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// computeLastUse).
 		savedCond := a.conditional
 		a.conditional = true
-		if e.Init != nil {
-			a.stmt(e.Init)
-		}
 		if e.Condition != nil {
 			a.expr(*e.Condition, false)
 		}
 		a.block(e.Body, false)
-		if e.Post != nil {
-			a.expr(*e.Post, false)
-		}
 		a.conditional = savedCond
 
 	case *ast.ForInLoopExpr:
-		// Same as the C-style loop: the iterable is borrowed (the loop reads elements
+		// Same as a `while` loop: the iterable is borrowed (the loop reads elements
 		// out of it and the loop variable borrows each), and the body is analyzed under
 		// `conditional` so an owning read of an outer binding or of the borrowed loop
 		// variable records a retain, not a transfer.

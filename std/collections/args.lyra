@@ -47,7 +47,7 @@ pub let parse_args = (valued: []string) -> ProgramArgs => {
   }
   var i = 1
   var only_operands = false
-  for i < args.len() {
+  while i < args.len() {
     let arg = args[i]
     // **`--` ends the flags**, and everything after it is an operand however it begins —
     // POSIX's tenth utility guideline, and the only way to name a file called `-x` or to

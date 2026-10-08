@@ -268,20 +268,15 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"for_in_loop_as_expression", "\n\tlet found = for item in items {\n\t\tif item > 10 {\n\t\t\tbreak item\n\t\t}\n\t}"},
 		{"labeled_for_in_loop", "\n\touter: for item in [1, 2, 3] {\n\t\tbreak outer\n\t}"},
 		{"labeled_for_loop_break_with_value", "\n\tlet result = outer: for i in 0..<=10 {\n\t\tfor j in 0..<=10 {\n\t\t\tbreak outer i + j\n\t\t}\n\t}"},
-		// The C-style loop, in all five combinations its three optional header parts
-		// make. `Init` is a declaration held by a field, the one place in this AST a
-		// statement is not in a list — and it is the same `declaration` node under another
-		// kind, so it reuses the declaration collector.
-		{"infinite_for_loop", "\n\tfor {\n\t\tprintln(\"All work and no play makes Homer something something...\")\n\t}"},
-		{"for_loop_with_condition", "\n\tvar i = 0\n\tfor i < 10 {\n\t\tprintln(\"i == ${i}\")\n\t\ti += 1\n\t}"},
-		{"for_loop_with_condition_and_post", "\n\tvar i = 0\n\tfor i < 10; i += 1 {\n\t\tprintln(\"i == ${i}\")\n\t}"},
-		{"for_loop_with_init_and_condition", "\n\tfor var i = 0; i < 10 {\n\t\tprintln(\"i == ${i}\")\n\t\ti += 1\n\t}"},
-		{"for_loop_with_init_and_condition_and_post", "\n\tfor var i = 0; i < 10; i += 1 {\n\t\tprintln(\"i == ${i}\")\n\t}"},
-		{"for_loop_as_expression", "\n\tlet result = for var i = 0; i < 100; i += 1 {\n\t\tif i * i > 50 {\n\t\t\tbreak i * i\n\t\t}\n\t}"},
-		{"for_loop_with_break", "\n\tfor var i = 0; i < 10; i += 1 {\n\t\tbreak\n\t}"},
-		{"for_loop_with_continue", "\n\tfor var i = 0; i < 10; i += 1 {\n\t\tif i % 2 == 0 {\n\t\t\tcontinue\n\t\t}\n\t\tprintln(\"i == ${i}\")\n\t}"},
-		{"labeled_for_loop_with_break", "\n\touter: for var i = 0; i < 10; i += 1 {\n\t\tfor var y = 0; y < 10; y += 1 {\n\t\t\tif y == 5 {\n\t\t\t\tbreak outer\n\t\t\t}\n\t\t\tprintln(\"y == ${y}\")\n\t\t}\n\t}"},
-		{"labeled_for_loop_with_continue", "\n\touter: for var i = 0; i < 10; i += 1 {\n\t\tfor var y = 0; y < 10; y += 1 {\n\t\t\tif y % 2 == 0 {\n\t\t\t\tcontinue outer\n\t\t\t}\n\t\t\tprintln(\"y == ${y}\")\n\t\t}\n\t}"},
+		// `loop` and `while` are one node, LoopExpr, told apart by whether it has a
+		// Condition; each takes a label, and `break` gives it a value.
+		{"infinite_loop", "\n\tloop {\n\t\tprintln(\"All work and no play makes Homer something something...\")\n\t}"},
+		{"while_loop", "\n\tvar i = 0\n\twhile i < 10 {\n\t\tprintln(\"i == ${i}\")\n\t\ti += 1\n\t}"},
+		{"while_loop_with_break", "\n\twhile running {\n\t\tbreak\n\t}"},
+		{"while_loop_with_continue", "\n\tvar i = 0\n\twhile i < 10 {\n\t\ti += 1\n\t\tif i % 2 == 0 {\n\t\t\tcontinue\n\t\t}\n\t\tprintln(\"i == ${i}\")\n\t}"},
+		{"labeled_loop_with_break", "\n\touter: loop {\n\t\twhile ready {\n\t\t\tbreak outer\n\t\t}\n\t}"},
+		{"labeled_while_loop_with_continue", "\n\tvar i = 0\n\touter: while i < 10 {\n\t\ti += 1\n\t\tloop {\n\t\t\tcontinue outer\n\t\t}\n\t}"},
+		{"loop_as_expression", "\n\tvar i = 0\n\tlet result = loop {\n\t\ti += 1\n\t\tif i * i > 50 {\n\t\t\tbreak i * i\n\t\t}\n\t}"},
 		// A compound assignment is an expression with its own node kind, so `+=` is never
 		// reached by the arithmetic operator table. A reassignment's name has **no field**
 		// — it is the first named child, which is how the Go collector reads it, and

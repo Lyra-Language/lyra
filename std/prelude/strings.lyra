@@ -270,7 +270,7 @@ impl string {
     let n = self.len();
     var i = 0;
     var scanning = true;
-    for scanning && i < n {
+    while scanning && i < n {
       if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
     }
     self.slice(i, n)
@@ -283,7 +283,7 @@ impl string {
     let n = self.len();
     var end = n;
     var scanning = true;
-    for scanning && end > 0 {
+    while scanning && end > 0 {
       if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
     }
     self.slice(0, end)
@@ -315,12 +315,12 @@ impl string {
     let n = self.len();
     var i = 0;
     var scanning = true;
-    for scanning && i < n {
+    while scanning && i < n {
       if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
     }
     var end = n;
     scanning = true;
-    for scanning && end > i {
+    while scanning && end > i {
       if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
     }
     self.slice(i, end)
@@ -694,7 +694,7 @@ impl string {
     var found: Maybe<Index> = None
     var at = offset
     var searching = true
-    for searching {
+    while searching {
       match self.index(needle, at) {
         None => { searching = false },
         Some(i) => {

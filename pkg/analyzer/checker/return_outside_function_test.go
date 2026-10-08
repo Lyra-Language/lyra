@@ -103,12 +103,12 @@ return 2`
 	assertReturnErrorCount(t, errs, 2)
 }
 
-// TestReturn_NoDiag_InsideForLoop verifies that return inside a for loop that
+// TestReturn_NoDiag_InsideWhileLoop verifies that return inside a while loop that
 // is inside a function is accepted.
-func TestReturn_NoDiag_InsideForLoop(t *testing.T) {
+func TestReturn_NoDiag_InsideWhileLoop(t *testing.T) {
 	source := `
 let f = (xs: [i32]) -> i32 => {
-    for var i = 0; i < 10; i + 1 {
+    while i < 10 {
         return i
     }
     return 0
@@ -117,11 +117,11 @@ let f = (xs: [i32]) -> i32 => {
 	assertNoReturnErrors(t, errs)
 }
 
-// TestReturn_Diag_InsideTopLevelForLoop verifies that return inside a top-level
-// for loop (not inside any function) is rejected.
-func TestReturn_Diag_InsideTopLevelForLoop(t *testing.T) {
+// TestReturn_Diag_InsideTopLevelWhileLoop verifies that return inside a top-level
+// while loop (not inside any function) is rejected.
+func TestReturn_Diag_InsideTopLevelWhileLoop(t *testing.T) {
 	source := `
-for var i = 0; i < 10; i + 1 {
+while i < 10 {
     return i
 }`
 	errs := parseCollectAndCheckReturn(t, source)

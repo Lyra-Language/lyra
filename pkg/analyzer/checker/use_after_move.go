@@ -394,17 +394,11 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 		}
 		return merged
 
-	case *ast.ForLoopExpr:
-		if v.Init != nil {
-			st = c.stmt(st, v.Init)
-		}
+	case *ast.LoopExpr:
 		if v.Condition != nil {
 			st = c.expr(st, *v.Condition)
 		}
 		st = c.loopBody(st, v.Body)
-		if v.Post != nil {
-			st = c.expr(st, *v.Post)
-		}
 		return st
 
 	case *ast.ForInLoopExpr:

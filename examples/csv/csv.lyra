@@ -118,7 +118,7 @@ let split_records = pure (runes: []rune) -> Result<[]Record, CsvError> => {
   var fields: []string = []
   var start = 0
   var i = 0
-  for i < runes.len() {
+  while i < runes.len() {
     let field = scan_field(runes, i)?
     fields.push(field.text)
     i = field.next
@@ -159,7 +159,7 @@ let scan_field = pure (runes: []rune, start: i64) -> Result<Field, CsvError> =>
 let scan_bare = pure (runes: []rune, start: i64) -> Result<Field, CsvError> => {
   var text: []rune = []
   var i = start
-  for i < runes.len() {
+  while i < runes.len() {
     let c = runes[i]
     if c == ',' { return Ok(Field {
       text: text.join(""),
@@ -183,7 +183,7 @@ let scan_bare = pure (runes: []rune, start: i64) -> Result<Field, CsvError> => {
 let scan_quoted = pure (runes: []rune, start: i64) -> Result<Field, CsvError> => {
   var text: []rune = []
   var i = start
-  for i < runes.len() {
+  while i < runes.len() {
     let c = runes[i]
     if c != '"' {
       text.push(c)

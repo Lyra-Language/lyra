@@ -50,7 +50,7 @@ let main = () -> void => {
   let t0 = wall_clock_nanos();
   var spin = 0;
   var i = 0;
-  for i < 200000 {
+  while i < 200000 {
     spin = spin + i;
     i = i + 1;
   }

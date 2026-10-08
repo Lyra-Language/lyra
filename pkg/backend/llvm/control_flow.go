@@ -279,42 +279,27 @@ func (l *lowerer) lowerReturn(block *ir.Block, s *ast.ReturnStmt) (*ir.Block, er
 	return block, l.emitReturn(start, block, v)
 }
 
-// lowerForLoop lowers a C-style `for` loop to the standard cond/body/post/exit
-// CFG with a back-edge:
+// lowerLoop lowers `while cond { … }` and `loop { … }` to the standard
+// cond/body/exit CFG with a back-edge:
 //
-//	init (once, current block)
 //	br cond
-//	cond: <condition> ; cond_br body, exit   (nil condition → br body: infinite loop)
-//	body: <body for effect> ; br post
-//	post: <post> ; br cond                    (continue targets post, so it runs)
-//	exit: ...                                 (break targets exit; control continues here)
+//	cond: <condition> ; cond_br body, exit   (nil condition → br body: `loop`)
+//	body: <body for effect> ; br cond        (continue targets cond)
+//	exit: ...                                (break targets exit; control continues here)
 //
 // A loop is a statement (no value), so it returns a nil value and the exit block.
 //
-// Every fall-through `br` is guarded by `end.Term == nil`: a body (or post) that
-// ended in break/continue/return has already sealed its block, and emitting a
-// second terminator would be invalid IR.
-//
-// All three forms reach here: infinite (`for {}`, nil condition → an
-// unconditional branch into the body), condition-only (`for cond {}`), and the
-// three-clause `for var i = 0; i < n; i += 1` (Init via lowerVarDecl, Post a
-// MathAssignOpExpr via lowerMathAssignOp).
-func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value, *ir.Block, error) {
-	// The loop variable (and a C-style init's counter) belongs to the loop, not to
-	// whatever follows it: scope its binding here so it cannot outlive the loop or
-	// permanently shadow an outer binding of the same name.
+// The fall-through `br` is guarded by `end.Term == nil`: a body that ended in
+// break/continue/return has already sealed its block, and emitting a second
+// terminator would be invalid IR.
+func (l *lowerer) lowerLoop(block *ir.Block, e *ast.LoopExpr) (value.Value, *ir.Block, error) {
+	// Bindings made in the loop belong to it, not to whatever follows it: scope them
+	// here so they cannot outlive the loop or permanently shadow an outer binding.
 	defer l.pushLocalScope()()
-	if e.Init != nil {
-		var err error
-		if block, err = l.lowerVarDecl(block, e.Init); err != nil {
-			return nil, nil, err
-		}
-	}
 
 	fn := block.Parent
 	condBlock := fn.NewBlock("")
 	bodyBlock := fn.NewBlock("")
-	postBlock := fn.NewBlock("") // continue target; brs to cond (with the post effect, if any)
 	exitBlock := fn.NewBlock("") // break target; where control continues after the loop
 	block.NewBr(condBlock)
 
@@ -335,27 +320,14 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 	// own frame), so a break/continue releases exactly the frames the loop body (and
 	// any nested block) introduced — the current iteration's managed bindings —
 	// without touching the loop variable or enclosing scopes.
-	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: postBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: condBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
 	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
 		return nil, nil, err
 	}
 	if bodyEnd.Term == nil {
-		bodyEnd.NewBr(postBlock)
-	}
-
-	// Post, then back to the condition.
-	if e.Post != nil {
-		postEnd, err := l.lowerForEffect(postBlock, *e.Post)
-		if err != nil {
-			return nil, nil, err
-		}
-		if postEnd.Term == nil {
-			postEnd.NewBr(condBlock)
-		}
-	} else {
-		postBlock.NewBr(condBlock)
+		bodyEnd.NewBr(condBlock)
 	}
 
 	// A loop nothing can leave — no condition, no `break` to it — never reaches its
@@ -378,7 +350,7 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 // it is bound into l.locals but *not* framed for release (reading an element consumes
 // no reference; for a managed element type the array frees it when the array itself
 // dies). Managed values *declared inside* the body are framed/released per iteration
-// by the ordinary block machinery, exactly as in the C-style loop.
+// by the ordinary block machinery, exactly as in a `while` loop.
 //
 // The two-variable form `for i, x in xs` binds the loop counter as the index `i`
 // (i64) in addition to the element `x`; the collector puts the first name in Key
@@ -388,7 +360,7 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 // A numeric range iterable (`for i in 0..<n`) is delegated to lowerForInRange (a
 // counter loop) and a string iterable to lowerForInString (yields runes).
 func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
-	// The loop variable (and a C-style init's counter) belongs to the loop, not to
+	// The loop variable belongs to the loop, not to
 	// whatever follows it: scope its binding here so it cannot outlive the loop or
 	// permanently shadow an outer binding of the same name.
 	defer l.pushLocalScope()()
@@ -521,7 +493,7 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 // only known at run time traps for the same reason (the constant form is refused at
 // check time). There is no two-variable form over a range.
 func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
-	// The loop variable (and a C-style init's counter) belongs to the loop, not to
+	// The loop variable belongs to the loop, not to
 	// whatever follows it: scope its binding here so it cannot outlive the loop or
 	// permanently shadow an outer binding of the same name.
 	defer l.pushLocalScope()()
@@ -717,7 +689,7 @@ func (l *lowerer) rangeIntType(rng *ast.RangeExpr) (*lltypes.IntType, bool) {
 // audit's last standing tension. The convention matches arrays: first name is the
 // index, second the element.
 func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
-	// The loop variable (and a C-style init's counter) belongs to the loop, not to
+	// The loop variable belongs to the loop, not to
 	// whatever follows it: scope its binding here so it cannot outlive the loop or
 	// permanently shadow an outer binding of the same name.
 	defer l.pushLocalScope()()

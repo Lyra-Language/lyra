@@ -533,6 +533,13 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   only `import std.json.{ parse_json }`, and listing `JsonString` draws `lyra-W004` ("never
   used") — yet std.json's own docs list `JsonNull`. Decide the rule; either the visibility or
   the warning is wrong. Found 09/29 in Vega.
+- **[DONE 10/08] `loop { … }` and `while cond { … }`**; `for` only iterates, and the
+  C-style `for init; cond; post` is gone. (COMPLETED.md, 10/08.)
+- **[OPEN] `while let p = v { … }`**, the loop twin of `if let`. Not built; `loop` with a
+  `let … else { break }` is the spelling today.
+- **[OPEN] A struct pattern as a `for` binding** (`for Pt { x, y } in points`). Its rival was
+  the conditional `for` reading the literal as a condition; with that form now `while`, the
+  grammar may admit it. Untried; a tuple covers the spelling.
 - **[OPEN] A written loop-variable type in the other positions**: a comprehension clause
   (`[i: u8 in 0..<10 | …]`) and the two-variable form's element. `for i: u16 in …` covers
   the one-variable loop (09/29).

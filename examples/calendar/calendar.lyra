@@ -201,7 +201,7 @@ let interactive = (events: []Entry) -> void => {
   var running = true
   var last_cols = 0
   var last_rows = 0
-  for running {
+  while running {
     let (cols, rows) = terminal_size()
     if cols != last_cols || rows != last_rows {
       // **A resize is noticed without a keypress** (09/18). A terminal that changes size
@@ -309,7 +309,7 @@ let grid = pure (
   // digits of the day beneath it.
   var out: []string = [centred(title, GRID), "  Mo Tu We Th Fr Sa Su  wk"]
   var week = 0
-  for week * 7 - lead < length {
+  while week * 7 - lead < length {
     // The Monday that starts this row, which may sit in the previous month; an ISO week
     // runs Monday to Sunday, so its week number is the row's.
     let monday = start.add(days(week * 7 - lead))
@@ -325,7 +325,7 @@ let grid = pure (
     out.push(row ++ "${monday.week_of_year()}".pad_start(4))
     week += 1
   }
-  for out.len() < 8 { out.push("".pad_start(GRID)) }
+  while out.len() < 8 { out.push("".pad_start(GRID)) }
   out
 }
 
