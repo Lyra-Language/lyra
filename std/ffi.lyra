@@ -315,7 +315,7 @@ impl []t {
 /// ```
 ///
 /// **An `alias` rather than a nominal `type`**, which reverses what `todo.md` recorded, and the
-/// program is the argument. A newtype would demand `CLong(n)` at every crossing and
+/// program is the argument. A `type` would demand `CLong(n)` at every crossing and
 /// `i64(r)` at every result, on every target, forever — and buy nothing, because the thing
 /// it would catch is already caught: change this line to `i32` and every site that passes
 /// an `i64` fails to compile, naming `CLong` in the message. The nominal identity would be

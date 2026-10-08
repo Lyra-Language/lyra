@@ -2,7 +2,7 @@ module std.path
 //! Paths as text: joining, and the three questions a file name answers — where it lives,
 //! what it is called, and what kind of file it is.
 //!
-//! **Text, not a type.** A `Path` newtype would buy an invariant only if there were an
+//! **Text, not a type.** A `type Path = string` would buy an invariant only if there were an
 //! invalid path to refuse, and there is not: every string names a path on some system,
 //! and the ones this refuses (an empty component, a `..` that escapes) are refused by the
 //! filesystem, which answers a better error than a constructor could. So these are
