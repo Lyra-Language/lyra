@@ -65,48 +65,65 @@ pub let load_time_zone = (name: string) -> Maybe<TimeZone> => {
   parse_tzif(name, data)
 }
 
-/// The offset from UTC, in seconds east, that `self` was using at `epoch_second`.
-pub let offset_at = pure (self: TimeZone, epoch_second: i64) -> i64 =>
-  self.rule_at(epoch_second).offset
+impl TimeZone {
+  /// The offset from UTC, in seconds east, that `self` was using at `epoch_second`.
+  pub let offset_at = pure (self, epoch_second: i64) -> i64 =>
+    self.rule_at(epoch_second).offset
 
-/// What a clock in `self` was called at `epoch_second` — `EST`, `EDT`, `+0530`.
-pub let abbreviation_at = pure (self: TimeZone, epoch_second: i64) -> string =>
-  self.rule_at(epoch_second).abbreviation
+  /// What a clock in `self` was called at `epoch_second` — `EST`, `EDT`, `+0530`.
+  pub let abbreviation_at = pure (self, epoch_second: i64) -> string =>
+    self.rule_at(epoch_second).abbreviation
 
-/// Whether `self` was on its daylight rule at `epoch_second`.
-pub let is_dst_at = pure (self: TimeZone, epoch_second: i64) -> bool =>
-  self.rule_at(epoch_second).is_dst
+  /// Whether `self` was on its daylight rule at `epoch_second`.
+  pub let is_dst_at = pure (self, epoch_second: i64) -> bool =>
+    self.rule_at(epoch_second).is_dst
 
-/// The rule in effect at `epoch_second`: from the table while it reaches, and from the
-/// footer after it stops.
-///
-/// **The footer governs from the last transition on**, which is RFC 8536's rule and not an
-/// approximation of it: the table's final entry is the last change the file was willing to
-/// write down, and everything after it belongs to the sentence at the end of the file.
-let rule_at = pure (self: TimeZone, epoch_second: i64) -> ZoneType => {
-  let covered = self.transitions.len() > 0 &&
-    epoch_second < self.transitions[self.transitions.len() - 1]
-  if !covered {
+  /// The rule in effect at `epoch_second`: from the table while it reaches, and from the
+  /// footer after it stops.
+  ///
+  /// **The footer governs from the last transition on**, which is RFC 8536's rule and not an
+  /// approximation of it: the table's final entry is the last change the file was willing to
+  /// write down, and everything after it belongs to the sentence at the end of the file.
+  let rule_at = pure (self, epoch_second: i64) -> ZoneType => {
+    let covered = self.transitions.len() > 0 &&
+      epoch_second < self.transitions[self.transitions.len() - 1]
+    if !covered {
+      match self.after {
+        Some(rule) => return posix_type(rule, epoch_second),
+        None => {},
+      }
+    }
+    self.types[self.type_at(epoch_second)]
+  }
+
+  /// The instant of the first transition at or after `epoch_second`, or `None` when the
+  /// zone's table has none — which is either a zone that never changes or one whose table
+  /// has run out (the footer rule is not read yet).
+  pub let next_transition = pure (self, epoch_second: i64) -> Maybe<i64> => {
+    for at in self.transitions {
+      if at >= epoch_second { return Some(at) }
+    }
+    // Past the table, the footer still knows: its two rules fire every year, so the answer
+    // is the earlier of this year's remaining ones or the first of next year's.
     match self.after {
-      Some(rule) => return posix_type(rule, epoch_second),
-      None => {},
+      Some(rule) => posix_next_transition(rule, epoch_second),
+      None => None,
     }
   }
-  self.types[self.type_at(epoch_second)]
-}
 
-/// The instant of the first transition at or after `epoch_second`, or `None` when the
-/// zone's table has none — which is either a zone that never changes or one whose table
-/// has run out (the footer rule is not read yet).
-pub let next_transition = pure (self: TimeZone, epoch_second: i64) -> Maybe<i64> => {
-  for at in self.transitions {
-    if at >= epoch_second { return Some(at) }
-  }
-  // Past the table, the footer still knows: its two rules fire every year, so the answer
-  // is the earlier of this year's remaining ones or the first of next year's.
-  match self.after {
-    Some(rule) => posix_next_transition(rule, epoch_second),
-    None => None,
+  /// The index into `types` of the rule in effect at `epoch_second`.
+  ///
+  /// A binary search for the last transition at or before the instant: a zone has a few
+  /// hundred of them, and this is asked once per conversion.
+  let type_at = pure (self, epoch_second: i64) -> i64 => {
+    if self.transitions.len() == 0 || epoch_second < self.transitions[0] { return self.initial }
+    var low = 0
+    var high = self.transitions.len() - 1
+    for low < high {
+      let mid = (low + high + 1) / 2
+      if self.transitions[mid] <= epoch_second { low = mid } else { high = mid - 1 }
+    }
+    self.indices[low]
   }
 }
 
@@ -133,21 +150,6 @@ const DEFAULT_ZONEINFO_DIR = "/usr/share/zoneinfo"
 /// Whether `name` is a zone name rather than a way out of the database's directory.
 let names_a_zone = pure (name: string) -> bool =>
   name.len() > 0 && !name.starts_with("/") && !name.contains("..")
-
-/// The index into `types` of the rule in effect at `epoch_second`.
-///
-/// A binary search for the last transition at or before the instant: a zone has a few
-/// hundred of them, and this is asked once per conversion.
-let type_at = pure (self: TimeZone, epoch_second: i64) -> i64 => {
-  if self.transitions.len() == 0 || epoch_second < self.transitions[0] { return self.initial }
-  var low = 0
-  var high = self.transitions.len() - 1
-  for low < high {
-    let mid = (low + high + 1) / 2
-    if self.transitions[mid] <= epoch_second { low = mid } else { high = mid - 1 }
-  }
-  self.indices[low]
-}
 
 /// The zone described by `data`, or `None` when it is not a TZif file this understands.
 ///

@@ -75,111 +75,114 @@ pub let parse_json = pure (text: string) -> Result<JsonValue, JsonError> => {
   Ok(value)
 }
 
-/// Member `key` of an object — the last, if the key repeats — or `None` for a missing key
-/// or a value that is not an object.
-pub let field = pure (self: JsonValue, key: string) -> Maybe<JsonValue> => match self {
-  JsonObject(ms) => {
-    var found: Maybe<JsonValue> = None
-    for m in ms { if m.key == key { found = Some(m.value) } }
-    found
-  },
-  _ => None,
-}
+impl JsonValue {
 
-/// Element `index` of an array, or `None` past its end or for a value that is not one.
-pub let element = pure (self: JsonValue, index: i64) -> Maybe<JsonValue> => match self {
-  JsonArray(xs) => if index >= 0 && index < xs.len() { Some(xs[index]) } else { None },
-  _ => None,
-}
-
-/// An array's elements, or none for a value that is not an array.
-pub let elements = pure (self: JsonValue) -> []JsonValue => {
-  let none: []JsonValue = []
-  match self {
-    JsonArray(xs) => xs,
-    _ => none,
+  /// Member `key` of an object — the last, if the key repeats — or `None` for a missing key
+  /// or a value that is not an object.
+  pub let field = pure (self, key: string) -> Maybe<JsonValue> => match self {
+    JsonObject(ms) => {
+      var found: Maybe<JsonValue> = None
+      for m in ms { if m.key == key { found = Some(m.value) } }
+      found
+    },
+    _ => None,
   }
-}
 
-/// An object's members in order, or none for a value that is not an object.
-pub let members = pure (self: JsonValue) -> []JsonMember => {
-  let none: []JsonMember = []
-  match self {
-    JsonObject(ms) => ms,
-    _ => none,
+  /// Element `index` of an array, or `None` past its end or for a value that is not one.
+  pub let element = pure (self, index: i64) -> Maybe<JsonValue> => match self {
+    JsonArray(xs) => if index >= 0 && index < xs.len() { Some(xs[index]) } else { None },
+    _ => None,
   }
+
+  /// An array's elements, or none for a value that is not an array.
+  pub let elements = pure (self) -> []JsonValue => {
+    let none: []JsonValue = []
+    match self {
+      JsonArray(xs) => xs,
+      _ => none,
+    }
+  }
+
+  /// An object's members in order, or none for a value that is not an object.
+  pub let members = pure (self) -> []JsonMember => {
+    let none: []JsonMember = []
+    match self {
+      JsonObject(ms) => ms,
+      _ => none,
+    }
+  }
+
+  /// A number, or `None` for any other kind of value.
+  pub let as_number = pure (self) -> Maybe<f64> => match self {
+    JsonNumber(n) => Some(n),
+    _ => None,
+  }
+
+  /// A number with no fractional part that an `i64` can hold, or `None`.
+  pub let as_int = pure (self) -> Maybe<i64> => match self {
+    JsonNumber(n) => {
+      if n >= 0.0 - 9.0e18 && n <= 9.0e18 && n - f64(n.floor()) <= 0.0 { Some(n.floor()) } else { None }
+    },
+    _ => None,
+  }
+
+  /// A string, or `None` for any other kind of value — a number is not rendered as text.
+  pub let as_text = pure (self) -> Maybe<string> => match self {
+    JsonString(s) => Some(s),
+    _ => None,
+  }
+
+  /// A `true` or `false`, or `None` for any other kind of value — there is no truthiness.
+  pub let as_bool = pure (self) -> Maybe<bool> => match self {
+    JsonBool(v) => Some(v),
+    _ => None,
+  }
+
+  /// What kind of value this is — `"null"`, `"bool"`, `"number"`, `"string"`, `"array"` or
+  /// `"object"` — for a message about a document of the wrong shape.
+  pub let kind = pure (self) -> string => match self {
+    JsonNull => "null",
+    JsonBool(_) => "bool",
+    JsonNumber(_) => "number",
+    JsonString(_) => "string",
+    JsonArray(_) => "array",
+    JsonObject(_) => "object",
+  }
+
+  /// The value as JSON text, compact: no whitespace at all, members in the order they are
+  /// held. [parse_json] reads it back to an equal value, numbers included — each is written
+  /// in the shortest form that reads back as the same `f64`.
+  ///
+  /// **A number JSON cannot hold is written `null`**: JSON has no NaN or infinity, and
+  /// `null` is what JavaScript's `JSON.stringify` writes for them, so a reader in any
+  /// language gets a document it can parse rather than one it must refuse.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let doc = JsonObject([JsonMember { key: "size", value: JsonArray([JsonNumber(2.0)]) }])
+  /// println(doc.to_json())   // {"size":[2]}
+  /// ```
+  pub let to_json = pure (self) -> string => render(self, 0, 0)
+
+  /// The value as JSON text for a person to read: each array element and object member on a
+  /// line of its own, indented `indent` spaces a level, `"key": value` with a space. Empty
+  /// arrays and objects stay `[]` and `{}`. Everything [to_json] says about numbers holds.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let doc = JsonObject([JsonMember { key: "tags", value: JsonArray([JsonString("a")]) }])
+  /// println(doc.to_json_pretty())
+  /// // {
+  /// //   "tags": [
+  /// //     "a"
+  /// //   ]
+  /// // }
+  /// ```
+  pub let to_json_pretty = pure (self, indent: i64 = 2) -> string =>
+    render(self, indent.max(1), 0)
 }
-
-/// A number, or `None` for any other kind of value.
-pub let as_number = pure (self: JsonValue) -> Maybe<f64> => match self {
-  JsonNumber(n) => Some(n),
-  _ => None,
-}
-
-/// A number with no fractional part that an `i64` can hold, or `None`.
-pub let as_int = pure (self: JsonValue) -> Maybe<i64> => match self {
-  JsonNumber(n) => {
-    if n >= 0.0 - 9.0e18 && n <= 9.0e18 && n - f64(n.floor()) <= 0.0 { Some(n.floor()) } else { None }
-  },
-  _ => None,
-}
-
-/// A string, or `None` for any other kind of value — a number is not rendered as text.
-pub let as_text = pure (self: JsonValue) -> Maybe<string> => match self {
-  JsonString(s) => Some(s),
-  _ => None,
-}
-
-/// A `true` or `false`, or `None` for any other kind of value — there is no truthiness.
-pub let as_bool = pure (self: JsonValue) -> Maybe<bool> => match self {
-  JsonBool(v) => Some(v),
-  _ => None,
-}
-
-/// What kind of value this is — `"null"`, `"bool"`, `"number"`, `"string"`, `"array"` or
-/// `"object"` — for a message about a document of the wrong shape.
-pub let kind = pure (self: JsonValue) -> string => match self {
-  JsonNull => "null",
-  JsonBool(_) => "bool",
-  JsonNumber(_) => "number",
-  JsonString(_) => "string",
-  JsonArray(_) => "array",
-  JsonObject(_) => "object",
-}
-
-/// The value as JSON text, compact: no whitespace at all, members in the order they are
-/// held. [parse_json] reads it back to an equal value, numbers included — each is written
-/// in the shortest form that reads back as the same `f64`.
-///
-/// **A number JSON cannot hold is written `null`**: JSON has no NaN or infinity, and
-/// `null` is what JavaScript's `JSON.stringify` writes for them, so a reader in any
-/// language gets a document it can parse rather than one it must refuse.
-///
-/// # Examples
-///
-/// ```
-/// let doc = JsonObject([JsonMember { key: "size", value: JsonArray([JsonNumber(2.0)]) }])
-/// println(doc.to_json())   // {"size":[2]}
-/// ```
-pub let to_json = pure (self: JsonValue) -> string => render(self, 0, 0)
-
-/// The value as JSON text for a person to read: each array element and object member on a
-/// line of its own, indented `indent` spaces a level, `"key": value` with a space. Empty
-/// arrays and objects stay `[]` and `{}`. Everything [to_json] says about numbers holds.
-///
-/// # Examples
-///
-/// ```
-/// let doc = JsonObject([JsonMember { key: "tags", value: JsonArray([JsonString("a")]) }])
-/// println(doc.to_json_pretty())
-/// // {
-/// //   "tags": [
-/// //     "a"
-/// //   ]
-/// // }
-/// ```
-pub let to_json_pretty = pure (self: JsonValue, indent: i64 = 2) -> string =>
-  render(self, indent.max(1), 0)
 
 // ---------------------------------------------------------------------------------------
 // The writer

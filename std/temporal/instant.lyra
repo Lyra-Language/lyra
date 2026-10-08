@@ -30,47 +30,49 @@ pub let instant = pure (epoch_second: i64, nanosecond: i64 = 0) -> Maybe<Instant
 /// time with and to store.
 pub let now_instant = () -> Instant => Instant(i128(wall_clock_nanos()))
 
-/// Whole seconds since the epoch, rounded **down** — so the second an instant falls in,
-/// for instants before 1970 as well as after.
-pub let epoch_second = pure (self: Instant) -> i64 =>
-  i64(floor_div_i128(i128(self), i128(NS_PER_SECOND)))
+impl Instant {
+  /// Whole seconds since the epoch, rounded **down** — so the second an instant falls in,
+  /// for instants before 1970 as well as after.
+  pub let epoch_second = pure (self) -> i64 =>
+    i64(floor_div_i128(i128(self), i128(NS_PER_SECOND)))
 
-/// Nanoseconds since the epoch, the whole of what an instant is.
-pub let epoch_nanosecond = pure (self: Instant) -> i128 => i128(self)
+  /// Nanoseconds since the epoch, the whole of what an instant is.
+  pub let epoch_nanosecond = pure (self) -> i128 => i128(self)
 
-/// How far into its second the instant is, 0 to 999999999 — the remainder `epoch_second`
-/// floors away, and never negative.
-pub let nanosecond_of_second = pure (self: Instant) -> i64 =>
-  i64(i128(self) - i128(self.epoch_second()) * i128(NS_PER_SECOND))
+  /// How far into its second the instant is, 0 to 999999999 — the remainder `epoch_second`
+  /// floors away, and never negative.
+  pub let nanosecond_of_second = pure (self) -> i64 =>
+    i64(i128(self) - i128(self.epoch_second()) * i128(NS_PER_SECOND))
 
-/// This instant moved by `amount`, or `None` when the duration carries calendar units or
-/// the result leaves the representable range.
-///
-/// **Years, months, weeks and days are refused**, which is Temporal's rule and the whole
-/// difference between an instant and a date: a day is not a fixed number of seconds where
-/// a zone changes offset, so "tomorrow" is a question for a `ZonedDateTime` and has no
-/// answer here. Hours and smaller are exact.
-pub let add = pure (self: Instant, amount: Duration) -> Maybe<Instant> => {
-  if amount.years != 0 || amount.months != 0 || amount.weeks != 0 || amount.days != 0 {
-    return None
+  /// This instant moved by `amount`, or `None` when the duration carries calendar units or
+  /// the result leaves the representable range.
+  ///
+  /// **Years, months, weeks and days are refused**, which is Temporal's rule and the whole
+  /// difference between an instant and a date: a day is not a fixed number of seconds where
+  /// a zone changes offset, so "tomorrow" is a question for a `ZonedDateTime` and has no
+  /// answer here. Hours and smaller are exact.
+  pub let add = pure (self, amount: Duration) -> Maybe<Instant> => {
+    if amount.years != 0 || amount.months != 0 || amount.weeks != 0 || amount.days != 0 {
+      return None
+    }
+    let moved = i128(self) + clock_nanoseconds(amount)
+    if moved < i128(0) - MAX_INSTANT || moved > MAX_INSTANT { return None }
+    Some(Instant(moved))
   }
-  let moved = i128(self) + clock_nanoseconds(amount)
-  if moved < i128(0) - MAX_INSTANT || moved > MAX_INSTANT { return None }
-  Some(Instant(moved))
+
+  /// This instant moved back by `amount`: `add` of its negation.
+  pub let subtract = pure (self, amount: Duration) -> Maybe<Instant> =>
+    self.add(amount.negated())
+
+  /// The time from this instant to `other` — Temporal's `until`, with its default largest
+  /// unit for an instant: **hours down to nanoseconds**, and never days, since a day is not
+  /// a fixed length of time anywhere a zone changes.
+  pub let until = pure (self, other: Instant) -> Duration =>
+    balanced_to(i128(other) - i128(self), 1)
+
+  /// The time from `other` to this instant: `until` the other way round.
+  pub let since = pure (self, other: Instant) -> Duration => other.until(self)
 }
-
-/// This instant moved back by `amount`: `add` of its negation.
-pub let subtract = pure (self: Instant, amount: Duration) -> Maybe<Instant> =>
-  self.add(amount.negated())
-
-/// The time from this instant to `other` — Temporal's `until`, with its default largest
-/// unit for an instant: **hours down to nanoseconds**, and never days, since a day is not
-/// a fixed length of time anywhere a zone changes.
-pub let until = pure (self: Instant, other: Instant) -> Duration =>
-  balanced_to(i128(other) - i128(self), 1)
-
-/// The time from `other` to this instant: `until` the other way round.
-pub let since = pure (self: Instant, other: Instant) -> Duration => other.until(self)
 
 /// Instants order by when they are, everywhere and for everyone — which is the property a
 /// wall-clock reading does not have, and the reason to store one of these.

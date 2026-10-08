@@ -18,8 +18,6 @@ module bindings.sdl3
 //!                       sampler s [[sampler(0)]]) { return t.sample(s, in.uv) * in.color; }
 //! ```
 
-import std.ffi
-
 /// A shader drawing textures on one GPU renderer, with what it takes to release it.
 pub struct Effect {
   state: ^u8,
@@ -113,9 +111,9 @@ pub let set_effect_uniforms = (effect: Effect, slot: u32, values: []f32) -> bool
 }
 
 /// Draw what follows through `effect`, or plainly with `None`.
-pub let use_effect = (renderer: Renderer, effect: Maybe<Effect>) -> bool => match effect {
-  Some(e) => unsafe { sdl_set_gpu_render_state(renderer, e.state) },
-  None => unsafe { sdl_set_gpu_render_state(renderer, nullptr) },
+pub let use_effect = (self: Renderer, effect: Maybe<Effect>) -> bool => match effect {
+  Some(e) => unsafe { sdl_set_gpu_render_state(self, e.state) },
+  None => unsafe { sdl_set_gpu_render_state(self, nullptr) },
 }
 
 /// Release an effect. It must not be in use, or used again.

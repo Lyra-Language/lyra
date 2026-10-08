@@ -37,23 +37,81 @@ pub struct Rng {
   state: u64
 }
 
-/// The next raw 64-bit draw, advancing the generator.
-///
-/// Every bit is usable. For a bounded draw use `below` or `between` rather than taking a
-/// remainder of this, which is not uniform.
-///
-/// **Not suitable for anything security-sensitive.** The algorithm is xorshift64*, chosen
-/// for being *legible* — three shift/xor steps and a multiply, no tables — and its state
-/// is recoverable from a couple of outputs. That is a property of the algorithm and not
-/// of the seed: seeding from `random_seed()` does not make it a CSPRNG. It is entirely
-/// adequate for a game, a shuffle or a sampled test.
-pub let next_u64 = det noalloc (self: mut Rng) -> u64 => {
-  var x = self.state;
-  x = x ~ (x >> 12);
-  x = x ~ (x << 25);
-  x = x ~ (x >> 27);
-  self.state = x;
-  x.wrapping_mul(2685821657736338717)
+impl Rng {
+  /// The next raw 64-bit draw, advancing the generator.
+  ///
+  /// Every bit is usable. For a bounded draw use `below` or `between` rather than taking a
+  /// remainder of this, which is not uniform.
+  ///
+  /// **Not suitable for anything security-sensitive.** The algorithm is xorshift64*, chosen
+  /// for being *legible* — three shift/xor steps and a multiply, no tables — and its state
+  /// is recoverable from a couple of outputs. That is a property of the algorithm and not
+  /// of the seed: seeding from `random_seed()` does not make it a CSPRNG. It is entirely
+  /// adequate for a game, a shuffle or a sampled test.
+  pub let next_u64 = det noalloc (self: mut) -> u64 => {
+    var x = self.state;
+    x = x ~ (x >> 12);
+    x = x ~ (x << 25);
+    x = x ~ (x >> 27);
+    self.state = x;
+    x.wrapping_mul(2685821657736338717)
+  }
+
+  /// A uniform draw from `0..<bound` — zero up to but not including `bound`.
+  ///
+  /// **Without modulo bias.** The naive `next_u64() %% bound` is not uniform: 2^64 values do
+  /// not divide evenly into `bound` buckets, so the low residues get one extra value each.
+  /// The bias is tiny for a small bound and total for a large one, which is the worst shape
+  /// for a bug — it never shows up in the case you test. This rejects the top partial bucket
+  /// and redraws instead.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst         |
+  /// | ---------- | ---- | ------- | ------------- |
+  /// | **Time**   | O(1) | O(1)    | **unbounded** |
+  /// | **Memory** | O(1) | O(1)    | O(1)          |
+  ///
+  /// The worst case is the honest entry in this table: rejection sampling has no bound at
+  /// all, because a draw landing in the top partial bucket is redrawn and *that* draw may
+  /// land there too. What it has instead is a probability — at most `bound / 2^64` per
+  /// iteration, so for any bound a program actually passes, the loop runs once and the
+  /// expected cost is O(1). Unboundedness is what buys the uniformity; a modulo would be
+  /// O(1) flat and biased.
+  ///
+  /// # Panics
+  ///
+  /// Traps when `bound` is zero or negative — there is no value to return from an empty
+  /// range, and a `Maybe` here would burden every correct call site.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// var rng = rng_seeded(42);
+  /// let index = rng.below(xs.len())    // always a valid index into a non-empty xs
+  /// ```
+  pub let below = det noalloc (self: mut, bound: i64) -> i64 => {
+    if bound <= 0 { panic("Rng.below: bound must be positive") }
+    let b = u64(bound);
+    let m = ~u64(0);
+    let cutoff = m - ((m %% b) + 1) %% b;
+    var x = self.next_u64();
+    for x > cutoff { x = self.next_u64(); }
+    i64(x %% b)
+  }
+
+  /// A uniform draw from `lo..<=hi`, **inclusive at both ends**.
+  ///
+  /// Inclusive because that is what "a number between 0 and 100" means; `below` is there
+  /// when a half-open count is what is wanted.
+  ///
+  /// # Panics
+  ///
+  /// Traps when `hi` is below `lo`.
+  pub let between = det noalloc (self: mut, lo: i64, hi: i64) -> i64 => {
+    if hi < lo { panic("Rng.between: the high bound is below the low one") }
+    lo + self.below(hi - lo + 1)
+  }
 }
 
 /// A generator from an explicit seed — reproducible, so a simulation or a test gets the
@@ -77,62 +135,6 @@ pub let rng_seeded = pure noalloc (seed: u64) -> Rng =>
 /// This is where a seed nobody supplied enters the program, so it carries `EffectRand` and
 /// `pure`/`det` code refuses it. Use `rng_seeded` there.
 pub let rng_from_entropy = () -> Rng => rng_seeded(random_seed())
-
-/// A uniform draw from `0..<bound` — zero up to but not including `bound`.
-///
-/// **Without modulo bias.** The naive `next_u64() %% bound` is not uniform: 2^64 values do
-/// not divide evenly into `bound` buckets, so the low residues get one extra value each.
-/// The bias is tiny for a small bound and total for a large one, which is the worst shape
-/// for a bug — it never shows up in the case you test. This rejects the top partial bucket
-/// and redraws instead.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst         |
-/// | ---------- | ---- | ------- | ------------- |
-/// | **Time**   | O(1) | O(1)    | **unbounded** |
-/// | **Memory** | O(1) | O(1)    | O(1)          |
-///
-/// The worst case is the honest entry in this table: rejection sampling has no bound at
-/// all, because a draw landing in the top partial bucket is redrawn and *that* draw may
-/// land there too. What it has instead is a probability — at most `bound / 2^64` per
-/// iteration, so for any bound a program actually passes, the loop runs once and the
-/// expected cost is O(1). Unboundedness is what buys the uniformity; a modulo would be
-/// O(1) flat and biased.
-///
-/// # Panics
-///
-/// Traps when `bound` is zero or negative — there is no value to return from an empty
-/// range, and a `Maybe` here would burden every correct call site.
-///
-/// # Examples
-///
-/// ```
-/// var rng = rng_seeded(42);
-/// let index = rng.below(xs.len())    // always a valid index into a non-empty xs
-/// ```
-pub let below = det noalloc (self: mut Rng, bound: i64) -> i64 => {
-  if bound <= 0 { panic("Rng.below: bound must be positive") }
-  let b = u64(bound);
-  let m = ~u64(0);
-  let cutoff = m - ((m %% b) + 1) %% b;
-  var x = self.next_u64();
-  for x > cutoff { x = self.next_u64(); }
-  i64(x %% b)
-}
-
-/// A uniform draw from `lo..<=hi`, **inclusive at both ends**.
-///
-/// Inclusive because that is what "a number between 0 and 100" means; `below` is there
-/// when a half-open count is what is wanted.
-///
-/// # Panics
-///
-/// Traps when `hi` is below `lo`.
-pub let between = det noalloc (self: mut Rng, lo: i64, hi: i64) -> i64 => {
-  if hi < lo { panic("Rng.between: the high bound is below the low one") }
-  lo + self.below(hi - lo + 1)
-}
 
 /// One uniform draw from `0..<bound`, seeded from the OS.
 ///

@@ -23,62 +23,64 @@ pub let seq<t> = pure gen (self: []t) -> Seq<t> => {
   for x in self { yield x }
 }
 
-/// Each element with `f` applied, lazily: `f` runs when the consumer asks, not here.
-pub let map<t, u> = pure gen (self: Seq<t>, f: (t) -> u) -> Seq<u> => {
-  for x in self { yield f(x) }
-}
+impl Seq<t> {
+  /// Each element with `f` applied, lazily: `f` runs when the consumer asks, not here.
+  pub let map<t, u> = pure gen (self, f: (t) -> u) -> Seq<u> => {
+    for x in self { yield f(x) }
+  }
 
-/// The elements satisfying `predicate`, lazily.
-pub let filter<t> = pure gen (self: Seq<t>, predicate: (t) -> bool) -> Seq<t> => {
-  for x in self { if predicate(x) { yield x } }
-}
+  /// The elements satisfying `predicate`, lazily.
+  pub let filter<t> = pure gen (self, predicate: (t) -> bool) -> Seq<t> => {
+    for x in self { if predicate(x) { yield x } }
+  }
 
-/// The first `n` elements, then done — the way to end an infinite sequence.
-///
-/// Fewer when the source runs out first; none for `n <= 0`.
-pub let take<t> = pure gen (self: Seq<t>, n: i64) -> Seq<t> => {
-  var left = n
-  for x in self {
-    if left <= 0 { break }
-    yield x
-    left -= 1
+  /// The first `n` elements, then done — the way to end an infinite sequence.
+  ///
+  /// Fewer when the source runs out first; none for `n <= 0`.
+  pub let take<t> = pure gen (self, n: i64) -> Seq<t> => {
+    var left = n
+    for x in self {
+      if left <= 0 { break }
+      yield x
+      left -= 1
+    }
+  }
+
+  /// The leading elements while `predicate` holds, then done: the first element that
+  /// fails ends the sequence and is not yielded.
+  pub let take_while<t> = pure gen (self, predicate: (t) -> bool) -> Seq<t> => {
+    for x in self {
+      if !predicate(x) { break }
+      yield x
+    }
+  }
+
+  /// The sequence materialized as an array — the brackets, named.
+  ///
+  /// Prefer the brackets at a site where they read: `[x in s | x]` is this function's
+  /// whole body. Allocates the array, so `noalloc` refuses it.
+  pub let to_array<t> = pure (self) -> []t => [x in self | x]
+
+  /// How many elements the sequence yields. Consumes it, so an infinite sequence never
+  /// answers — `take` first.
+  pub let count<t> = pure noalloc (self) -> i64 => {
+    var n = 0
+    for _ in self { n += 1 }
+    n
+  }
+
+  /// The first element, or `None` for an empty sequence. Consumes only that element.
+  pub let first<t> = pure noalloc (self) -> Maybe<t> => {
+    for x in self { return Some(x) }
+    None
   }
 }
-
-/// The leading elements while `predicate` holds, then done: the first element that
-/// fails ends the sequence and is not yielded.
-pub let take_while<t> = pure gen (self: Seq<t>, predicate: (t) -> bool) -> Seq<t> => {
-  for x in self {
-    if !predicate(x) { break }
-    yield x
-  }
-}
-
-/// The sequence materialized as an array — the brackets, named.
-///
-/// Prefer the brackets at a site where they read: `[x in s | x]` is this function's
-/// whole body. Allocates the array, so `noalloc` refuses it.
-pub let to_array<t> = pure (self: Seq<t>) -> []t => [x in self | x]
 
 /// The sum of an integer sequence. Consumes it.
 pub let sum = pure noalloc (self: Seq<i64>) -> i64 => {
   var total = 0
   for x in self { total += x }
   total
-}
-
-/// How many elements the sequence yields. Consumes it, so an infinite sequence never
-/// answers — `take` first.
-pub let count<t> = pure noalloc (self: Seq<t>) -> i64 => {
-  var n = 0
-  for _ in self { n += 1 }
-  n
-}
-
-/// The first element, or `None` for an empty sequence. Consumes only that element.
-pub let first<t> = pure noalloc (self: Seq<t>) -> Maybe<t> => {
-  for x in self { return Some(x) }
-  None
 }
 
 /// Pairs of the two sequences' elements, in lockstep, ending with the shorter.

@@ -50,25 +50,27 @@ pub let parse_xml = pure (source: string) -> Result<Element, string> => {
   Ok(root)
 }
 
-/// The value of attribute `name`; `None` when it has none.
-pub let attribute = pure (self: Element, name: string) -> Maybe<string> => {
-  for a in self.attributes {
-    if a.name == name { return Some(a.value) }
+impl Element {
+  /// The value of attribute `name`; `None` when it has none.
+  pub let attribute = pure (self, name: string) -> Maybe<string> => {
+    for a in self.attributes {
+      if a.name == name { return Some(a.value) }
+    }
+    None
   }
-  None
-}
 
-/// The first child element called `name`.
-pub let child = pure (self: Element, name: string) -> Maybe<Element> => {
-  for c in self.children {
-    if c.name == name { return Some(c) }
+  /// The first child element called `name`.
+  pub let child = pure (self, name: string) -> Maybe<Element> => {
+    for c in self.children {
+      if c.name == name { return Some(c) }
+    }
+    None
   }
-  None
-}
 
-/// Every child element called `name`, in order.
-pub let children_named = pure (self: Element, name: string) -> []Element =>
-  self.children.filter((c) => c.name == name)
+  /// Every child element called `name`, in order.
+  pub let children_named = pure (self, name: string) -> []Element =>
+    self.children.filter((c) => c.name == name)
+}
 
 // ── The parser ───────────────────────────────────────────────────────────────
 

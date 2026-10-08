@@ -10,8 +10,6 @@ module bindings.sdl3
 //! Samples are mono or interleaved `f32` in -1.0..1.0, at the rate the stream was opened
 //! with; SDL converts to whatever the device wants. Needs `INIT_AUDIO`.
 
-import std.ffi
-
 /// An open playback stream, bound to the default output device. Released by
 /// [close_audio].
 @must_release(close_audio)
@@ -76,24 +74,26 @@ pub let open_audio = (sample_rate: i32, channels: i32) -> Maybe<AudioStream> => 
   }
 }
 
-/// Stop the device and free the stream. Queued samples not yet played are dropped.
-pub let close_audio = (stream: AudioStream) -> void =>
-  unsafe { sdl_destroy_audio_stream(stream.handle) }
+impl AudioStream {
+  /// Stop the device and free the stream. Queued samples not yet played are dropped.
+  pub let close_audio = (self) -> void =>
+    unsafe { sdl_destroy_audio_stream(self.handle) }
 
-/// Queue `samples` to play after everything already queued. An empty array queues
-/// nothing and succeeds.
-pub let put_audio = (stream: AudioStream, samples: []f32) -> bool => {
-  if samples.len() == 0 {
-    true
-  } else {
-    let bytes = i32(samples.len() * 4)
-    unsafe { sdl_put_audio_stream_data(stream.handle, samples.data(), bytes) }
+  /// Queue `samples` to play after everything already queued. An empty array queues
+  /// nothing and succeeds.
+  pub let put_audio = (self, samples: []f32) -> bool => {
+    if samples.len() == 0 {
+      true
+    } else {
+      let bytes = i32(samples.len() * 4)
+      unsafe { sdl_put_audio_stream_data(self.handle, samples.data(), bytes) }
+    }
   }
-}
 
-/// How many frames (one sample per channel) are queued and not yet played — what a loop
-/// compares against its target to decide how much more to render.
-pub let queued_frames = (stream: AudioStream) -> i64 => {
-  let bytes = unsafe { sdl_get_audio_stream_queued(stream.handle) }
-  if bytes < 0 { 0 } else { i64(bytes) / (4 * i64(stream.channels)) }
+  /// How many frames (one sample per channel) are queued and not yet played — what a loop
+  /// compares against its target to decide how much more to render.
+  pub let queued_frames = (self) -> i64 => {
+    let bytes = unsafe { sdl_get_audio_stream_queued(self.handle) }
+    if bytes < 0 { 0 } else { i64(bytes) / (4 * i64(self.channels)) }
+  }
 }

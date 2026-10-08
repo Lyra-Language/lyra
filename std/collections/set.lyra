@@ -29,25 +29,27 @@ pub struct Set<t> {
 /// An empty set.
 pub let set_new<t> = pure () -> Set<t> => Set { items: hashmap_new::<t, bool>() }
 
-/// Adds `item`, and answers whether it was new — so a caller can tell the first sight of
-/// something from the rest without asking twice.
-pub let insert<t> where t: Hash = det (self: mut Set<t>, item: t) -> bool => {
-  let fresh = !self.items.contains_key(item)
-  self.items.insert(item, true)
-  fresh
+impl Set<t> {
+  /// Adds `item`, and answers whether it was new — so a caller can tell the first sight of
+  /// something from the rest without asking twice.
+  pub let insert<t> where t: Hash = det (self: mut, item: t) -> bool => {
+    let fresh = !self.items.contains_key(item)
+    self.items.insert(item, true)
+    fresh
+  }
+
+  /// Whether `item` is in the set.
+  pub let contains<t> where t: Hash = pure noalloc (self, item: t) -> bool =>
+    self.items.contains_key(item)
+
+  /// Removes `item`, answering whether it was there.
+  pub let remove<t> where t: Hash = det noalloc (self: mut, item: t) -> bool =>
+    self.items.remove(item).is_some()
+
+  /// How many items the set holds.
+  pub let len<t> = pure noalloc (self) -> i64 => self.items.len()
+
+  /// The items, in no order — `HashMap`'s key order, which is the table's and not the
+  /// insertion's.
+  pub let members<t> = pure (self) -> []t => self.items.keys()
 }
-
-/// Whether `item` is in the set.
-pub let contains<t> where t: Hash = pure noalloc (self: Set<t>, item: t) -> bool =>
-  self.items.contains_key(item)
-
-/// Removes `item`, answering whether it was there.
-pub let remove<t> where t: Hash = det noalloc (self: mut Set<t>, item: t) -> bool =>
-  self.items.remove(item).is_some()
-
-/// How many items the set holds.
-pub let len<t> = pure noalloc (self: Set<t>) -> i64 => self.items.len()
-
-/// The items, in no order — `HashMap`'s key order, which is the table's and not the
-/// insertion's.
-pub let members<t> = pure (self: Set<t>) -> []t => self.items.keys()

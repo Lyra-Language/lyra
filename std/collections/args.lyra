@@ -82,13 +82,15 @@ pub let parse_args = (valued: []string) -> ProgramArgs => {
   parsed
 }
 
-/// Whether `flag` was written, as a switch or with a value.
-pub let has = pure noalloc (self: ProgramArgs, flag: string) -> bool =>
-  self.switches.holds(flag) || self.options.contains_key(flag)
+impl ProgramArgs {
+  /// Whether `flag` was written, as a switch or with a value.
+  pub let has = pure noalloc (self, flag: string) -> bool =>
+    self.switches.holds(flag) || self.options.contains_key(flag)
 
-/// The value written after `flag`, or `None` if it had none or was not written.
-pub let value = pure noalloc (self: ProgramArgs, flag: string) -> Maybe<string> =>
-  self.options.get(flag)
+  /// The value written after `flag`, or `None` if it had none or was not written.
+  pub let value = pure noalloc (self, flag: string) -> Maybe<string> =>
+    self.options.get(flag)
+}
 
 // Whether `s` is an element of `xs`. Linear, and the lists here are a handful long.
 let holds = pure noalloc (self: []string, s: string) -> bool => {

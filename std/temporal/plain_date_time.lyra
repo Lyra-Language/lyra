@@ -12,13 +12,15 @@ pub struct PlainDateTime {
   time: PlainTime,
 }
 
-/// This date at `time` — Temporal's `toPlainDateTime`.
-///
-/// ```
-/// let meeting = day.to_plain_date_time(nine)
-/// ```
-pub let to_plain_date_time = pure (self: PlainDate, time: PlainTime) -> PlainDateTime =>
-  PlainDateTime { date: self, time: time }
+impl PlainDate {
+  /// This date at `time` — Temporal's `toPlainDateTime`.
+  ///
+  /// ```
+  /// let meeting = day.to_plain_date_time(nine)
+  /// ```
+  pub let to_plain_date_time = pure (self, time: PlainTime) -> PlainDateTime =>
+    PlainDateTime { date: self, time: time }
+}
 
 /// The date-time an ISO 8601 string names — `2026-09-18T14:30`, with seconds and a fraction
 /// allowed as `parse_plain_time` allows them — or `None`.
@@ -32,53 +34,55 @@ pub let parse_plain_date_time = pure (text: string) -> Maybe<PlainDateTime> => {
   Some(PlainDateTime { date: date, time: time })
 }
 
-/// This date-time moved by `amount` — Temporal's `add`, with **constrain** overflow.
-///
-/// Temporal's order: the calendar units move the date first (a month after 31 January is
-/// the last of February), then the clock units move the time, **carrying whole days** into
-/// the date — 23:30 plus an hour is 00:30 the next day. The carry is computed in `i128`,
-/// since a duration's clock fields are each `i64` and their total in nanoseconds need not
-/// fit.
-pub let add = pure (self: PlainDateTime, amount: Duration) -> PlainDateTime => {
-  let calendar = Duration { duration() | years: amount.years, months: amount.months,
-    weeks: amount.weeks, days: amount.days }
-  let clock_ns = i128(i64(self.time)) + clock_nanoseconds(amount)
-  let day_ns = i128(NS_PER_DAY)
-  let rem = clock_ns %% day_ns
-  let carry = i64((clock_ns - rem) / day_ns)
-  PlainDateTime {
-    date: self.date.add(calendar).add(days(carry)),
-    time: PlainTime(i64(rem)),
+impl PlainDateTime {
+  /// This date-time moved by `amount` — Temporal's `add`, with **constrain** overflow.
+  ///
+  /// Temporal's order: the calendar units move the date first (a month after 31 January is
+  /// the last of February), then the clock units move the time, **carrying whole days** into
+  /// the date — 23:30 plus an hour is 00:30 the next day. The carry is computed in `i128`,
+  /// since a duration's clock fields are each `i64` and their total in nanoseconds need not
+  /// fit.
+  pub let add = pure (self, amount: Duration) -> PlainDateTime => {
+    let calendar = Duration { duration() | years: amount.years, months: amount.months,
+      weeks: amount.weeks, days: amount.days }
+    let clock_ns = i128(i64(self.time)) + clock_nanoseconds(amount)
+    let day_ns = i128(NS_PER_DAY)
+    let rem = clock_ns %% day_ns
+    let carry = i64((clock_ns - rem) / day_ns)
+    PlainDateTime {
+      date: self.date.add(calendar).add(days(carry)),
+      time: PlainTime(i64(rem)),
+    }
   }
+
+  /// This date-time moved back by `amount`: `add` of its negation.
+  pub let subtract = pure (
+    self,
+    amount: Duration
+  ) -> PlainDateTime => self.add(amount.negated())
+
+  /// The time from this date-time to `other` — Temporal's `until`, with its default largest
+  /// unit for a date-time: **days, then hours down to nanoseconds**, balanced so that no
+  /// field overflows the next (never 25 hours, never 90 minutes). Every field has the sign of
+  /// the whole, which is Temporal's rule, so "2 hours 10 minutes ago" is `-2h -10m` and never
+  /// `-3h +50m`.
+  ///
+  /// ```
+  /// let left = now.until(meeting)   // { hours: 2, minutes: 10, … }
+  /// ```
+  pub let until = pure (self, other: PlainDateTime) -> Duration => {
+    let day_ns = i128(NS_PER_DAY)
+    let from = i128(i64(self.date)) * day_ns + i128(i64(self.time))
+    let to = i128(i64(other.date)) * day_ns + i128(i64(other.time))
+    balanced_to(to - from, 0)
+  }
+
+  /// The time from `other` to this date-time: `until` the other way round.
+  pub let since = pure (
+    self,
+    other: PlainDateTime
+  ) -> Duration => other.until(self)
 }
-
-/// This date-time moved back by `amount`: `add` of its negation.
-pub let subtract = pure (
-  self: PlainDateTime,
-  amount: Duration
-) -> PlainDateTime => self.add(amount.negated())
-
-/// The time from this date-time to `other` — Temporal's `until`, with its default largest
-/// unit for a date-time: **days, then hours down to nanoseconds**, balanced so that no
-/// field overflows the next (never 25 hours, never 90 minutes). Every field has the sign of
-/// the whole, which is Temporal's rule, so "2 hours 10 minutes ago" is `-2h -10m` and never
-/// `-3h +50m`.
-///
-/// ```
-/// let left = now.until(meeting)   // { hours: 2, minutes: 10, … }
-/// ```
-pub let until = pure (self: PlainDateTime, other: PlainDateTime) -> Duration => {
-  let day_ns = i128(NS_PER_DAY)
-  let from = i128(i64(self.date)) * day_ns + i128(i64(self.time))
-  let to = i128(i64(other.date)) * day_ns + i128(i64(other.time))
-  balanced_to(to - from, 0)
-}
-
-/// The time from `other` to this date-time: `until` the other way round.
-pub let since = pure (
-  self: PlainDateTime,
-  other: PlainDateTime
-) -> Duration => other.until(self)
 
 /// Date-times order by the date, then the time.
 impl Ord for PlainDateTime {

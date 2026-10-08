@@ -75,84 +75,95 @@ pub struct Camera {
   last_y: i16 = 0,
 }
 
-/// Move the view to keep the rectangle `x`, `y`, `width` × `height` (in the world's
-/// pixels) inside the camera's zone on the screen: it moves only when the rectangle crosses
-/// the zone's edge, and then just enough — never past the world's edges. Call once a
-/// frame, after moving what it follows.
-pub let follow = (self: mut Camera, x: i16, y: i16, width: i16, height: i16) -> void => {
-  self.last_x = self.x
-  self.last_y = self.y
-  let z = self.zone
-  self.x = along(self.x, x, width, z.left, z.right, vdp.SCREEN_WIDTH, self.world_width)
-  self.y = along(self.y, y, height, z.top, z.bottom, vdp.SCREEN_HEIGHT, self.world_height)
-}
+impl Camera {
 
-/// Where world position (`x`, `y`) is on the screen, for a sprite.
-pub let on_screen = pure (self: Camera, x: i16, y: i16) -> (i16, i16) =>
-  (x - self.x, y - self.y)
+  /// Move the view to keep the rectangle `x`, `y`, `width` × `height` (in the world's
+  /// pixels) inside the camera's zone on the screen: it moves only when the rectangle crosses
+  /// the zone's edge, and then just enough — never past the world's edges. Call once a
+  /// frame, after moving what it follows.
+  pub let follow = (self: mut, x: i16, y: i16, width: i16, height: i16) -> void => {
+    self.last_x = self.x
+    self.last_y = self.y
+    let z = self.zone
+    self.x = along(self.x, x, width, z.left, z.right, vdp.SCREEN_WIDTH, self.world_width)
+    self.y = along(
+      self.y,
+      y,
+      height,
+      z.top,
+      z.bottom,
+      vdp.SCREEN_HEIGHT,
+      self.world_height
+    )
+  }
 
-/// A map into `plane` around the view, and the plane scrolled to it: every cell the plane
-/// holds. Once, before `vdp.display_on()` — and after a jump too far for [scroll_map].
-/// `cells` is the map row by row, `width` cells a row.
-pub let show_map<const N: i64> = (
-  self: Camera,
-  plane: u16,
-  cells: ref [N]u16,
-  width: u16
-) -> void => {
-  let left = cell_of(self.x)
-  let top = cell_of(self.y)
-  let shift = left % vdp.PLANE_WIDTH
-  // Its rows are runs of writes the vertical blank interrupt must not land in.
-  let held = vdp.hold_vblank()
-  for row: u16 in 0..<vdp.PLANE_HEIGHT {
-    let my = top + row
-    vdp.set_vram_address(plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2)
-    for column: u16 in 0..<vdp.PLANE_WIDTH {
-      // The map column this plane column holds while the view's left is at `left`.
-      let mx = left + (column + vdp.PLANE_WIDTH - shift) % vdp.PLANE_WIDTH
-      vdp.write_word(cell(cells, width, mx, my))
-    }
-  }
-  vdp.release_vblank(held)
-  vdp.set_scroll(plane, self.x, self.y)
-}
+  /// Where world position (`x`, `y`) is on the screen, for a sprite.
+  pub let on_screen = pure (self, x: i16, y: i16) -> (i16, i16) =>
+    (x - self.x, y - self.y)
 
-/// Keep a map in `plane` as the view moves: the columns and rows that came into view since
-/// the last [follow] written, and the plane scrolled to the view. Once a frame, in the
-/// vertical blank, with the map [show_map] wrote.
-pub let scroll_map<const N: i64> = (
-  self: Camera,
-  plane: u16,
-  cells: ref [N]u16,
-  width: u16
-) -> void => {
-  let old_left = cell_of(self.last_x)
-  let old_top = cell_of(self.last_y)
-  let left = cell_of(self.x)
-  let top = cell_of(self.y)
-  // A jump a view wide or more: nothing in the plane is kept, so draw it all.
-  if distance(old_left, left) >= VIEW_COLUMNS || distance(old_top, top) >= VIEW_ROWS {
-    self.show_map(plane, cells, width)
-    return
-  }
-  let held = vdp.hold_vblank()
-  if left > old_left {
-    for mx: u16 in old_left + VIEW_COLUMNS..<left + VIEW_COLUMNS {
-      write_column(plane, cells, width, mx, top)
+  /// A map into `plane` around the view, and the plane scrolled to it: every cell the plane
+  /// holds. Once, before `vdp.display_on()` — and after a jump too far for [scroll_map].
+  /// `cells` is the map row by row, `width` cells a row.
+  pub let show_map<const N: i64> = (
+    self,
+    plane: u16,
+    cells: ref [N]u16,
+    width: u16
+  ) -> void => {
+    let left = cell_of(self.x)
+    let top = cell_of(self.y)
+    let shift = left % vdp.PLANE_WIDTH
+    // Its rows are runs of writes the vertical blank interrupt must not land in.
+    let held = vdp.hold_vblank()
+    for row: u16 in 0..<vdp.PLANE_HEIGHT {
+      let my = top + row
+      vdp.set_vram_address(plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2)
+      for column: u16 in 0..<vdp.PLANE_WIDTH {
+        // The map column this plane column holds while the view's left is at `left`.
+        let mx = left + (column + vdp.PLANE_WIDTH - shift) % vdp.PLANE_WIDTH
+        vdp.write_word(cell(cells, width, mx, my))
+      }
     }
-  } else if left < old_left {
-    for mx: u16 in left..<old_left { write_column(plane, cells, width, mx, top) }
+    vdp.release_vblank(held)
+    vdp.set_scroll(plane, self.x, self.y)
   }
-  if top > old_top {
-    for my: u16 in old_top + VIEW_ROWS..<top + VIEW_ROWS {
-      write_row(plane, cells, width, my, left)
+
+  /// Keep a map in `plane` as the view moves: the columns and rows that came into view since
+  /// the last [follow] written, and the plane scrolled to the view. Once a frame, in the
+  /// vertical blank, with the map [show_map] wrote.
+  pub let scroll_map<const N: i64> = (
+    self,
+    plane: u16,
+    cells: ref [N]u16,
+    width: u16
+  ) -> void => {
+    let old_left = cell_of(self.last_x)
+    let old_top = cell_of(self.last_y)
+    let left = cell_of(self.x)
+    let top = cell_of(self.y)
+    // A jump a view wide or more: nothing in the plane is kept, so draw it all.
+    if distance(old_left, left) >= VIEW_COLUMNS || distance(old_top, top) >= VIEW_ROWS {
+      self.show_map(plane, cells, width)
+      return
     }
-  } else if top < old_top {
-    for my: u16 in top..<old_top { write_row(plane, cells, width, my, left) }
+    let held = vdp.hold_vblank()
+    if left > old_left {
+      for mx: u16 in old_left + VIEW_COLUMNS..<left + VIEW_COLUMNS {
+        write_column(plane, cells, width, mx, top)
+      }
+    } else if left < old_left {
+      for mx: u16 in left..<old_left { write_column(plane, cells, width, mx, top) }
+    }
+    if top > old_top {
+      for my: u16 in old_top + VIEW_ROWS..<top + VIEW_ROWS {
+        write_row(plane, cells, width, my, left)
+      }
+    } else if top < old_top {
+      for my: u16 in top..<old_top { write_row(plane, cells, width, my, left) }
+    }
+    vdp.release_vblank(held)
+    vdp.set_scroll(plane, self.x, self.y)
   }
-  vdp.release_vblank(held)
-  vdp.set_scroll(plane, self.x, self.y)
 }
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────

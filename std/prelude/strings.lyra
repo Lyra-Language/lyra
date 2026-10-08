@@ -11,512 +11,516 @@ module std.prelude
 // them is ordinary code. Trimming is a loop over runes and one slice, so it is
 // ordinary code.
 
-/// Whether this rune is one of the five ASCII whitespace characters: space, tab, newline,
-/// carriage return, form feed.
-///
-/// **Deliberately not Unicode's full `White_Space` set.** That larger set needs a table
-/// (U+00A0, U+2000–200A, U+3000 and more), and a table belongs in a real Unicode library
-/// rather than smuggled into a prelude; a caller trimming input from a keyboard or a file
-/// wants exactly these five. Anything wider should be an explicit choice made against a
-/// real table, not a default nobody can see.
-pub let is_ascii_space = pure noalloc (self: rune) -> bool => {
-  let c = i64(self)
-  c == 32 || c == 9 || c == 10 || c == 13 || c == 12
-}
-
-/// Whether this rune is an ASCII control code: `U+0000`–`U+001F`, or `DEL` (`U+007F`).
-///
-/// **ASCII's controls only, which is what the name bounds.** Unicode has a second block of
-/// them at `U+0080`–`U+009F` (the C1 controls), and this reports `false` for every one —
-/// deciding otherwise would need the caller to know which definition it got, so the name
-/// says. The same bound runs through every classifier in this group: each answers a
-/// question about ASCII, and a rune above `U+007F` is outside all of them rather than
-/// falling into whichever one is spelled as a complement.
-///
-/// # Examples
-///
-/// ```
-/// let a = '\n'.is_ascii_control_code()      // true
-/// let b = ' '.is_ascii_control_code()       // false — space is printable
-/// ```
-pub let is_ascii_control_code = pure noalloc (self: rune) -> bool => {
-  let c = i64(self)
-  (0 <= c && c <= 31) || c == 127
-}
-
-/// Whether this rune is printable ASCII: space (`U+0020`) through `~` (`U+007E`).
-///
-/// **A range rather than the complement of `is_ascii_control_code`**, and the difference is
-/// everything above `U+007F`. A complement calls every non-ASCII rune printable, which then
-/// makes `é` and `π` *punctuation* — they are not letters, digits or spaces by ASCII's
-/// reckoning either, so a complement-shaped `is_ascii_punctuation` has nowhere else to put
-/// them. Stating the range is what keeps a rune this module cannot classify outside all of
-/// its answers instead of inside the last one.
-///
-/// Space is printable here, as it is to C's `isprint`: it occupies a column. The four other
-/// characters `is_ascii_space` accepts are control codes and are not.
-///
-/// # Examples
-///
-/// ```
-/// let a = 'x'.is_ascii_printable()   // true
-/// let b = ' '.is_ascii_printable()   // true
-/// let c = '\t'.is_ascii_printable()  // false
-/// let d = 'é'.is_ascii_printable()   // false — outside ASCII
-/// ```
-pub let is_ascii_printable = pure noalloc (self: rune) -> bool => {
-  ' ' <= self && self <= '~'
-}
-
-/// Whether this rune is an ASCII uppercase letter, `A`–`Z`.
-///
-/// Written as a comparison against rune literals rather than against 65 and 90, so the
-/// bounds are checkable by eye. The characters on either side are `@` and `[`, neither of
-/// which looks like a letter — which is exactly why an off-by-one here reads as correct.
-pub let is_ascii_upper = pure noalloc (self: rune) -> bool => {
-  'A' <= self && self <= 'Z'
-}
-
-/// Whether this rune is an ASCII lowercase letter, `a`–`z`.
-///
-/// The neighbours are `` ` `` and `{`. The backtick is the one that hides: it sits at 96,
-/// directly below `a`, where a reader scanning for the start of the alphabet skips it.
-pub let is_ascii_lower = pure noalloc (self: rune) -> bool => {
-  'a' <= self && self <= 'z'
-}
-
-/// Whether this rune is an ASCII letter, upper or lower.
-///
-/// **Not a general "is this a letter" test**, which is worth knowing before reaching for it
-/// as a word boundary: `é`, `π` and every other non-ASCII letter answer `false`, so
-/// `split_when((r) => !r.is_ascii_alpha())` treats an accented letter as a separator and
-/// cuts `"héllo"` into two words. Splitting on `is_ascii_space` is the predicate that
-/// survives non-ASCII text. A real answer needs Unicode's `Alphabetic` property, which
-/// needs a table, which belongs in a Unicode library rather than here — the same argument
-/// `is_ascii_space` makes about whitespace.
-pub let is_ascii_alpha = pure noalloc (self: rune) -> bool => {
-  is_ascii_upper(self) || is_ascii_lower(self)
-}
-
-/// Whether this rune is an ASCII decimal digit, `0`–`9`.
-///
-/// The ten ASCII digits and nothing else: Unicode has decimal digits in many scripts
-/// (`U+0660` Arabic-Indic, `U+0966` Devanagari), and none of them is accepted here. A
-/// parser built on this therefore reads only the digits `parse_i64` reads, which is the
-/// agreement worth having between the two.
-pub let is_ascii_digit = pure noalloc (self: rune) -> bool => {
-  '0' <= self && self <= '9'
-}
-
-/// Whether this rune is ASCII punctuation: printable, but not a letter, digit or space.
-///
-/// **The complement is taken inside the printable range, not over every rune** — which is
-/// the whole reason `is_ascii_printable` leads the clause rather than trailing it. Without
-/// that bound `é` and `π` land here, being none of the three things excluded; with it they
-/// are simply outside ASCII and outside this answer.
-///
-/// Defined by exclusion rather than as a list of the 32 characters, which is not only
-/// shorter but harder to get wrong: an enumerated version omitted the backtick, in the same
-/// slot (96) a hand-written ASCII table also skipped.
-///
-/// # Examples
-///
-/// ```
-/// let a = '!'.is_ascii_punctuation()   // true
-/// let b = '`'.is_ascii_punctuation()   // true
-/// let c = '4'.is_ascii_punctuation()   // false
-/// let d = '—'.is_ascii_punctuation()   // false — an em dash is outside ASCII
-/// ```
-pub let is_ascii_punctuation = pure noalloc (self: rune) -> bool => {
-  self.is_ascii_printable() &&
-    !self.is_ascii_alpha() &&
-    !self.is_ascii_digit() &&
-    !self.is_ascii_space()
-}
-
-/// This rune folded to ASCII lowercase — unchanged if it is not an ASCII uppercase letter.
-///
-/// **Total, not partial.** A `Result` or a `Maybe` here would make the *common* case the
-/// error arm: a caller folding a document meets far more spaces, digits and punctuation
-/// than uppercase letters, so every call site would end in `.unwrap_or(c)` restoring the
-/// value the function already had. The identity is what lets the call sit inline.
-///
-/// ASCII only, so `É` is returned unchanged. Case folding in general is not a per-rune
-/// operation at all — `ß` uppercases to two characters, and Turkish `I` folds to a dotless
-/// `ı` — which is why a real implementation needs a table and a locale rather than a wider
-/// version of this.
-///
-/// # Examples
-///
-/// ```
-/// let a = 'A'.to_ascii_lower()   // 'a'
-/// let b = '7'.to_ascii_lower()   // '7' — unchanged
-/// ```
-pub let to_ascii_lower = pure noalloc (self: rune) -> rune => {
-  if self.is_ascii_upper() { rune(i64(self) + 32) } else { self }
-}
-
-/// `self` with every ASCII uppercase letter folded to lowercase, and everything else left
-/// alone.
-///
-/// **The same name as the rune version, at a different receiver.** Receiver-keyed
-/// overloading is what allows that, and it is the point: one operation should have one
-/// name, so `c.to_ascii_lower()` and `s.to_ascii_lower()` are the same word for the same
-/// thing rather than a `to_ascii_lower` beside a `to_lower_string`.
-///
-/// ASCII only, exactly as the rune version is — `É` and `Ω` come back unchanged. The
-/// argument against widening it is stronger here than for a classifier: case folding is not
-/// a per-rune operation at all in the general case (`ß` uppercases to two characters,
-/// Turkish `I` folds to a dotless `ı`), so a Unicode version is a different function with a
-/// different shape, not this one with a bigger table.
-///
-/// Allocates, and so is `pure` but not `noalloc`: a string is immutable, so folding one
-/// builds another.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(n)    | O(n)  |
-/// | **Memory** | O(n) | O(n)    | O(n)  |
-///
-/// **Linear because `join` accumulates bytes and decodes once**, which is the whole reason
-/// it is written as a pipeline rather than as the loop it looks like. The obvious spelling —
-/// `result = result ++ "${c}"` over the runes — is **quadratic**: a string is immutable, so
-/// every `++` copies everything accumulated so far. `join`'s own documentation measures that
-/// gap at 31× over 9600 parts and widening.
-///
-/// It does pay three allocations to get there (the rune array, the mapped array, the result),
-/// where a hand-written loop pushing into a `[]u8` with `push_utf8` and decoding once at the
-/// end would pay one. That is a constant factor rather than the asymptotics, and reusing
-/// `join` means there is one accumulation strategy in this file to get right instead of two.
-///
-/// # Examples
-///
-/// ```
-/// let a = "Hello, World!".to_ascii_lower()   // "hello, world!"
-/// let b = "already lower".to_ascii_lower()   // unchanged
-/// let c = "Ünïcode".to_ascii_lower()         // "Ünïcode" — only ASCII letters fold
-/// ```
-///
-/// Folding before counting is what makes `The` and `the` one word:
-///
-/// ```
-/// for w in line.split_when((r) => !r.is_ascii_alpha()) {
-///   tally(w.to_ascii_lower())
-/// }
-/// ```
-pub let to_ascii_lower = pure (self: string) -> string => {
-  self.to_runes().map((r) => r.to_ascii_lower()).join()
-}
-
-/// This rune folded to ASCII uppercase — unchanged if it is not an ASCII lowercase letter.
-///
-/// `to_ascii_lower`'s mirror, and the same reasoning applies to all of it: total rather
-/// than partial, ASCII only, and 32 is the one bit that separates the two ASCII cases.
-///
-/// The pair is idempotent, not invertible — `'A'.to_ascii_lower().to_ascii_upper()` is
-/// `'A'` only because `A` was a letter to begin with, and nothing here records the case a
-/// rune had before it was folded.
-///
-/// # Examples
-///
-/// ```
-/// let a = 'a'.to_ascii_upper()   // 'A'
-/// let b = '!'.to_ascii_upper()   // '!' — unchanged
-/// ```
-pub let to_ascii_upper = pure noalloc (self: rune) -> rune => {
-  if self.is_ascii_lower() { rune(i64(self) - 32) } else { self }
-}
-
-/// `self` with every ASCII lowercase letter folded to uppercase, and everything else left
-/// alone — `to_ascii_lower`'s mirror for a string, under the rune version's name for the
-/// same reason that one shares its rune twin's. LANGUAGE.md promised both case maps on both
-/// receivers; only the lower one had its string form until 09/28, when Sheliak's generator
-/// wrote the loop by hand.
-///
-/// ASCII only, allocating, linear — see the string `to_ascii_lower` for all three.
-///
-/// # Examples
-///
-/// ```
-/// let a = "window_flags".to_ascii_upper()   // "WINDOW_FLAGS"
-/// let b = "Ünïcode".to_ascii_upper()        // "ÜNïCODE" — only ASCII letters fold
-/// ```
-pub let to_ascii_upper = pure (self: string) -> string => {
-  self.to_runes().map((r) => r.to_ascii_upper()).join()
-}
-
-/// `self` with leading whitespace removed.
-///
-/// Whitespace is what `is_ascii_space` accepts. Allocates: a substring is a copy, since a
-/// ref-counted box's header sits at its start and a pointer into the middle cannot reach
-/// it — so this is `pure` but not `noalloc`.
-pub let trim_start = pure (self: string) -> string => {
-  let n = self.len();
-  var i = 0;
-  var scanning = true;
-  for scanning && i < n {
-    if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
+impl rune {
+  /// Whether this rune is one of the five ASCII whitespace characters: space, tab, newline,
+  /// carriage return, form feed.
+  ///
+  /// **Deliberately not Unicode's full `White_Space` set.** That larger set needs a table
+  /// (U+00A0, U+2000–200A, U+3000 and more), and a table belongs in a real Unicode library
+  /// rather than smuggled into a prelude; a caller trimming input from a keyboard or a file
+  /// wants exactly these five. Anything wider should be an explicit choice made against a
+  /// real table, not a default nobody can see.
+  pub let is_ascii_space = pure noalloc (self) -> bool => {
+    let c = i64(self)
+    c == 32 || c == 9 || c == 10 || c == 13 || c == 12
   }
-  self.slice(i, n)
-}
 
-/// `self` with trailing whitespace removed.
-///
-/// Allocates, as `trim_start` does.
-pub let trim_end = pure (self: string) -> string => {
-  let n = self.len();
-  var end = n;
-  var scanning = true;
-  for scanning && end > 0 {
-    if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
+  /// Whether this rune is an ASCII control code: `U+0000`–`U+001F`, or `DEL` (`U+007F`).
+  ///
+  /// **ASCII's controls only, which is what the name bounds.** Unicode has a second block of
+  /// them at `U+0080`–`U+009F` (the C1 controls), and this reports `false` for every one —
+  /// deciding otherwise would need the caller to know which definition it got, so the name
+  /// says. The same bound runs through every classifier in this group: each answers a
+  /// question about ASCII, and a rune above `U+007F` is outside all of them rather than
+  /// falling into whichever one is spelled as a complement.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let a = '\n'.is_ascii_control_code()      // true
+  /// let b = ' '.is_ascii_control_code()       // false — space is printable
+  /// ```
+  pub let is_ascii_control_code = pure noalloc (self) -> bool => {
+    let c = i64(self)
+    (0 <= c && c <= 31) || c == 127
   }
-  self.slice(0, end)
-}
 
-/// `self` with whitespace removed from both ends.
-///
-/// One pass over each end and a **single** allocation — `self.trim_start().trim_end()`
-/// reads better and allocates twice, building a whole intermediate string only to copy
-/// most of it again. An all-whitespace input yields `""`.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(n)    | O(n)  |
-/// | **Memory** | O(1) | O(n)    | O(n)  |
-///
-/// Both ends are scanned whatever they hold, so time does not vary. Memory is the copy
-/// `slice` makes: an all-whitespace input yields `""` and copies nothing, a string with no
-/// whitespace copies all of it.
-///
-/// # Examples
-///
-/// ```
-/// let name = read_line().unwrap_or("").trim()
-/// ```
-pub let trim = pure (self: string) -> string => {
-  let n = self.len();
-  var i = 0;
-  var scanning = true;
-  for scanning && i < n {
-    if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
+  /// Whether this rune is printable ASCII: space (`U+0020`) through `~` (`U+007E`).
+  ///
+  /// **A range rather than the complement of `is_ascii_control_code`**, and the difference is
+  /// everything above `U+007F`. A complement calls every non-ASCII rune printable, which then
+  /// makes `é` and `π` *punctuation* — they are not letters, digits or spaces by ASCII's
+  /// reckoning either, so a complement-shaped `is_ascii_punctuation` has nowhere else to put
+  /// them. Stating the range is what keeps a rune this module cannot classify outside all of
+  /// its answers instead of inside the last one.
+  ///
+  /// Space is printable here, as it is to C's `isprint`: it occupies a column. The four other
+  /// characters `is_ascii_space` accepts are control codes and are not.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let a = 'x'.is_ascii_printable()   // true
+  /// let b = ' '.is_ascii_printable()   // true
+  /// let c = '\t'.is_ascii_printable()  // false
+  /// let d = 'é'.is_ascii_printable()   // false — outside ASCII
+  /// ```
+  pub let is_ascii_printable = pure noalloc (self) -> bool => {
+    ' ' <= self && self <= '~'
   }
-  var end = n;
-  scanning = true;
-  for scanning && end > i {
-    if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
+
+  /// Whether this rune is an ASCII uppercase letter, `A`–`Z`.
+  ///
+  /// Written as a comparison against rune literals rather than against 65 and 90, so the
+  /// bounds are checkable by eye. The characters on either side are `@` and `[`, neither of
+  /// which looks like a letter — which is exactly why an off-by-one here reads as correct.
+  pub let is_ascii_upper = pure noalloc (self) -> bool => {
+    'A' <= self && self <= 'Z'
   }
-  self.slice(i, end)
+
+  /// Whether this rune is an ASCII lowercase letter, `a`–`z`.
+  ///
+  /// The neighbours are `` ` `` and `{`. The backtick is the one that hides: it sits at 96,
+  /// directly below `a`, where a reader scanning for the start of the alphabet skips it.
+  pub let is_ascii_lower = pure noalloc (self) -> bool => {
+    'a' <= self && self <= 'z'
+  }
+
+  /// Whether this rune is an ASCII letter, upper or lower.
+  ///
+  /// **Not a general "is this a letter" test**, which is worth knowing before reaching for it
+  /// as a word boundary: `é`, `π` and every other non-ASCII letter answer `false`, so
+  /// `split_when((r) => !r.is_ascii_alpha())` treats an accented letter as a separator and
+  /// cuts `"héllo"` into two words. Splitting on `is_ascii_space` is the predicate that
+  /// survives non-ASCII text. A real answer needs Unicode's `Alphabetic` property, which
+  /// needs a table, which belongs in a Unicode library rather than here — the same argument
+  /// `is_ascii_space` makes about whitespace.
+  pub let is_ascii_alpha = pure noalloc (self) -> bool => {
+    is_ascii_upper(self) || is_ascii_lower(self)
+  }
+
+  /// Whether this rune is an ASCII decimal digit, `0`–`9`.
+  ///
+  /// The ten ASCII digits and nothing else: Unicode has decimal digits in many scripts
+  /// (`U+0660` Arabic-Indic, `U+0966` Devanagari), and none of them is accepted here. A
+  /// parser built on this therefore reads only the digits `parse_i64` reads, which is the
+  /// agreement worth having between the two.
+  pub let is_ascii_digit = pure noalloc (self) -> bool => {
+    '0' <= self && self <= '9'
+  }
+
+  /// Whether this rune is ASCII punctuation: printable, but not a letter, digit or space.
+  ///
+  /// **The complement is taken inside the printable range, not over every rune** — which is
+  /// the whole reason `is_ascii_printable` leads the clause rather than trailing it. Without
+  /// that bound `é` and `π` land here, being none of the three things excluded; with it they
+  /// are simply outside ASCII and outside this answer.
+  ///
+  /// Defined by exclusion rather than as a list of the 32 characters, which is not only
+  /// shorter but harder to get wrong: an enumerated version omitted the backtick, in the same
+  /// slot (96) a hand-written ASCII table also skipped.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let a = '!'.is_ascii_punctuation()   // true
+  /// let b = '`'.is_ascii_punctuation()   // true
+  /// let c = '4'.is_ascii_punctuation()   // false
+  /// let d = '—'.is_ascii_punctuation()   // false — an em dash is outside ASCII
+  /// ```
+  pub let is_ascii_punctuation = pure noalloc (self) -> bool => {
+    self.is_ascii_printable() &&
+      !self.is_ascii_alpha() &&
+      !self.is_ascii_digit() &&
+      !self.is_ascii_space()
+  }
+
+  /// This rune folded to ASCII lowercase — unchanged if it is not an ASCII uppercase letter.
+  ///
+  /// **Total, not partial.** A `Result` or a `Maybe` here would make the *common* case the
+  /// error arm: a caller folding a document meets far more spaces, digits and punctuation
+  /// than uppercase letters, so every call site would end in `.unwrap_or(c)` restoring the
+  /// value the function already had. The identity is what lets the call sit inline.
+  ///
+  /// ASCII only, so `É` is returned unchanged. Case folding in general is not a per-rune
+  /// operation at all — `ß` uppercases to two characters, and Turkish `I` folds to a dotless
+  /// `ı` — which is why a real implementation needs a table and a locale rather than a wider
+  /// version of this.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let a = 'A'.to_ascii_lower()   // 'a'
+  /// let b = '7'.to_ascii_lower()   // '7' — unchanged
+  /// ```
+  pub let to_ascii_lower = pure noalloc (self) -> rune => {
+    if self.is_ascii_upper() { rune(i64(self) + 32) } else { self }
+  }
+
+  /// This rune folded to ASCII uppercase — unchanged if it is not an ASCII lowercase letter.
+  ///
+  /// `to_ascii_lower`'s mirror, and the same reasoning applies to all of it: total rather
+  /// than partial, ASCII only, and 32 is the one bit that separates the two ASCII cases.
+  ///
+  /// The pair is idempotent, not invertible — `'A'.to_ascii_lower().to_ascii_upper()` is
+  /// `'A'` only because `A` was a letter to begin with, and nothing here records the case a
+  /// rune had before it was folded.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let a = 'a'.to_ascii_upper()   // 'A'
+  /// let b = '!'.to_ascii_upper()   // '!' — unchanged
+  /// ```
+  pub let to_ascii_upper = pure noalloc (self) -> rune => {
+    if self.is_ascii_lower() { rune(i64(self) - 32) } else { self }
+  }
+
+  /// How many bytes this rune encodes to in UTF-8: 1 below U+0080, 2 below U+0800, 3 below
+  /// U+10000, 4 above.
+  ///
+  /// Computed from the code point alone, so it needs no string to look at. It is what lets a
+  /// rune walk keep a byte cursor alongside it — the trick that makes `index` linear, since
+  /// advancing by `s[i]` instead would be quadratic.
+  pub let utf8_len = pure noalloc (self) -> i64 => {
+    let cp = i64(self);
+    if cp < 128 { 1 } else if cp < 2048 { 2 } else if cp < 65536 { 3 } else { 4 }
+  }
 }
 
-// **Byte-level, and that is not an approximation.** UTF-8 is prefix-free and
-// self-synchronizing, so for well-formed strings a byte-prefix is exactly a
-// rune-prefix and a byte-suffix exactly a rune-suffix — every Lyra string is
-// well-formed, so one memcmp answers the language-level question. This is the same
-// property `impl Ord for string` leans on: byte order is code-point order.
-//
-// The rune-indexed version these replaced was O(m²) for a prefix and O(n·m) for a
-// suffix, because `s[i]` is O(i) — and it paid an O(n) `len()` before comparing
-// anything, so `s.starts_with("--")` on a 2000-rune string decoded the whole string
-// to answer a question about its first two bytes. Measured, the length calls alone
-// were 99.7% of it. These are O(m) with no decoding at all.
+impl string {
+  /// `self` with every ASCII uppercase letter folded to lowercase, and everything else left
+  /// alone.
+  ///
+  /// **The same name as the rune version, at a different receiver.** Receiver-keyed
+  /// overloading is what allows that, and it is the point: one operation should have one
+  /// name, so `c.to_ascii_lower()` and `s.to_ascii_lower()` are the same word for the same
+  /// thing rather than a `to_ascii_lower` beside a `to_lower_string`.
+  ///
+  /// ASCII only, exactly as the rune version is — `É` and `Ω` come back unchanged. The
+  /// argument against widening it is stronger here than for a classifier: case folding is not
+  /// a per-rune operation at all in the general case (`ß` uppercases to two characters,
+  /// Turkish `I` folds to a dotless `ı`), so a Unicode version is a different function with a
+  /// different shape, not this one with a bigger table.
+  ///
+  /// Allocates, and so is `pure` but not `noalloc`: a string is immutable, so folding one
+  /// builds another.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(n)    | O(n)  |
+  /// | **Memory** | O(n) | O(n)    | O(n)  |
+  ///
+  /// **Linear because `join` accumulates bytes and decodes once**, which is the whole reason
+  /// it is written as a pipeline rather than as the loop it looks like. The obvious spelling —
+  /// `result = result ++ "${c}"` over the runes — is **quadratic**: a string is immutable, so
+  /// every `++` copies everything accumulated so far. `join`'s own documentation measures that
+  /// gap at 31× over 9600 parts and widening.
+  ///
+  /// It does pay three allocations to get there (the rune array, the mapped array, the result),
+  /// where a hand-written loop pushing into a `[]u8` with `push_utf8` and decoding once at the
+  /// end would pay one. That is a constant factor rather than the asymptotics, and reusing
+  /// `join` means there is one accumulation strategy in this file to get right instead of two.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let a = "Hello, World!".to_ascii_lower()   // "hello, world!"
+  /// let b = "already lower".to_ascii_lower()   // unchanged
+  /// let c = "Ünïcode".to_ascii_lower()         // "Ünïcode" — only ASCII letters fold
+  /// ```
+  ///
+  /// Folding before counting is what makes `The` and `the` one word:
+  ///
+  /// ```
+  /// for w in line.split_when((r) => !r.is_ascii_alpha()) {
+  ///   tally(w.to_ascii_lower())
+  /// }
+  /// ```
+  pub let to_ascii_lower = pure (self) -> string => {
+    self.to_runes().map((r) => r.to_ascii_lower()).join()
+  }
 
-/// Whether `self` begins with `other`.
-///
-/// Every string is the prefix of itself, and `""` is a prefix of everything.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(1) | O(m)    | O(m)  |
-/// | **Memory** | O(1) | O(1)    | O(1)  |
-///
-/// m is the length of `other`, and the bound is in *m* rather than n — one `memcmp`, no
-/// decoding, and no O(n) length call, which is what makes this usable from the code that
-/// most wants a cheap prefix test. The best case is a difference in the first byte.
-///
-/// # Examples
-///
-/// ```
-/// if arg.starts_with("--") { … }
-/// ```
-pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
-  self.compare_bytes_at(0, other) == 0
+  /// `self` with every ASCII lowercase letter folded to uppercase, and everything else left
+  /// alone — `to_ascii_lower`'s mirror for a string, under the rune version's name for the
+  /// same reason that one shares its rune twin's. LANGUAGE.md promised both case maps on both
+  /// receivers; only the lower one had its string form until 09/28, when Sheliak's generator
+  /// wrote the loop by hand.
+  ///
+  /// ASCII only, allocating, linear — see the string `to_ascii_lower` for all three.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let a = "window_flags".to_ascii_upper()   // "WINDOW_FLAGS"
+  /// let b = "Ünïcode".to_ascii_upper()        // "ÜNïCODE" — only ASCII letters fold
+  /// ```
+  pub let to_ascii_upper = pure (self) -> string => {
+    self.to_runes().map((r) => r.to_ascii_upper()).join()
+  }
 
-// The suffix test is the prefix test **offset**, and that is the whole of it: the
-// comparison must start where the suffix would, not at 0. Comparing `self[i]` against
-// `other[i]` is a prefix test whichever direction the loop runs — which is what
-// `ends_with` first did, so `"hello".ends_with("lo")` was false and
-// `"hello".ends_with("he")` was true, each answering the other one's question.
-//
-// A negative offset needs no guard: `compare_bytes_at` is total, and answers negative
-// for a range that does not exist.
+  /// `self` with leading whitespace removed.
+  ///
+  /// Whitespace is what `is_ascii_space` accepts. Allocates: a substring is a copy, since a
+  /// ref-counted box's header sits at its start and a pointer into the middle cannot reach
+  /// it — so this is `pure` but not `noalloc`.
+  pub let trim_start = pure (self) -> string => {
+    let n = self.len();
+    var i = 0;
+    var scanning = true;
+    for scanning && i < n {
+      if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
+    }
+    self.slice(i, n)
+  }
 
-/// Whether `self` ends with `other`.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(1) | O(m)    | O(m)  |
-/// | **Memory** | O(1) | O(1)    | O(1)  |
-///
-/// The same `memcmp` as `starts_with`, offset to where the suffix would begin.
-pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
-  self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
+  /// `self` with trailing whitespace removed.
+  ///
+  /// Allocates, as `trim_start` does.
+  pub let trim_end = pure (self) -> string => {
+    let n = self.len();
+    var end = n;
+    var scanning = true;
+    for scanning && end > 0 {
+      if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
+    }
+    self.slice(0, end)
+  }
 
-/// `self` padded at the start with `fill` until it is `width` runes long.
-///
-/// `"7".pad_start(2, "0")` is `"07"`; `"18".pad_start(3)` is `" 18"`. A string already at
-/// least `width` long comes back unchanged — never truncated, because a pad that cuts
-/// content turns a formatting slip into a wrong value. A fill longer than one rune repeats
-/// and is cut to fit, so `"5".pad_start(4, "ab")` is `"aba5"`: JavaScript's `padStart`,
-/// which is the semantics the most people already carry around.
-///
-/// Added 09/18 for `std.temporal`, which zero-pads every ISO field, and for the calendar
-/// example's grid, which right-aligns day numbers — the two callers that made it more
-/// than a guess.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(w)    | O(w)  |
-/// | **Memory** | O(n) | O(w)    | O(w)  |
-///
-/// # Examples
-///
-/// ```
-/// let mm = "${month}".pad_start(2, "0")
-/// ```
-pub let pad_start = pure (self: string, width: i64, fill: string = " ") -> string => {
-  let missing = width - self.len()
-  if missing <= 0 || fill.len() == 0 { return self }
-  let pattern = fill.to_runes()
-  [i in 0..<missing | pattern[i % pattern.len()]].join("") ++ self
-}
+  /// `self` with whitespace removed from both ends.
+  ///
+  /// One pass over each end and a **single** allocation — `self.trim_start().trim_end()`
+  /// reads better and allocates twice, building a whole intermediate string only to copy
+  /// most of it again. An all-whitespace input yields `""`.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(n)    | O(n)  |
+  /// | **Memory** | O(1) | O(n)    | O(n)  |
+  ///
+  /// Both ends are scanned whatever they hold, so time does not vary. Memory is the copy
+  /// `slice` makes: an all-whitespace input yields `""` and copies nothing, a string with no
+  /// whitespace copies all of it.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let name = read_line().unwrap_or("").trim()
+  /// ```
+  pub let trim = pure (self) -> string => {
+    let n = self.len();
+    var i = 0;
+    var scanning = true;
+    for scanning && i < n {
+      if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
+    }
+    var end = n;
+    scanning = true;
+    for scanning && end > i {
+      if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
+    }
+    self.slice(i, end)
+  }
 
-/// `self` padded at the end with `fill` until it is `width` runes long — `pad_start`'s
-/// mirror, with the same rules: never truncated, and a longer fill repeated and cut.
-///
-/// `"09:00".pad_end(8)` is `"09:00   "`, which is how a column of left-aligned text keeps
-/// what follows it lined up. Added 09/18 with two callers in `examples/calendar`: the
-/// event list's time column, and centring a title, which had been building the right-hand
-/// padding out of `"".pad_start(n)`.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(w)    | O(w)  |
-/// | **Memory** | O(n) | O(w)    | O(w)  |
-///
-/// # Examples
-///
-/// ```
-/// println("${name.pad_end(12)}${value}")
-/// ```
-pub let pad_end = pure (self: string, width: i64, fill: string = " ") -> string => {
-  let missing = width - self.len()
-  if missing <= 0 || fill.len() == 0 { return self }
-  let pattern = fill.to_runes()
-  self ++ [i in 0..<missing | pattern[i % pattern.len()]].join("")
-}
+  // **Byte-level, and that is not an approximation.** UTF-8 is prefix-free and
+  // self-synchronizing, so for well-formed strings a byte-prefix is exactly a
+  // rune-prefix and a byte-suffix exactly a rune-suffix — every Lyra string is
+  // well-formed, so one memcmp answers the language-level question. This is the same
+  // property `impl Ord for string` leans on: byte order is code-point order.
+  //
+  // The rune-indexed version these replaced was O(m²) for a prefix and O(n·m) for a
+  // suffix, because `s[i]` is O(i) — and it paid an O(n) `len()` before comparing
+  // anything, so `s.starts_with("--")` on a 2000-rune string decoded the whole string
+  // to answer a question about its first two bytes. Measured, the length calls alone
+  // were 99.7% of it. These are O(m) with no decoding at all.
 
-/// `self` without `prefix`, or `None` if it does not start with it.
-///
-/// **The `Maybe` is the point.** `starts_with` then `slice` asks the same question twice
-/// and writes the length in two places — the bug being that the slice's start and the
-/// prefix's length are the same number, spelled apart. Here they cannot disagree, and the
-/// `None` arm is where a caller says what "it was not there" means.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(1) | O(n)    | O(n)  |
-/// | **Memory** | O(1) | O(n)    | O(n)  |
-///
-/// The test is `starts_with`'s `memcmp`; the copy is `slice`'s, and only happens on the
-/// `Some` path.
-///
-/// # Examples
-///
-/// ```
-/// let flag = arg.strip_prefix("--").unwrap_or(arg)
-/// ```
-pub let strip_prefix = pure (self: string, prefix: string) -> Maybe<string> => {
-  if !self.starts_with(prefix) { return None }
-  Some(self.slice(prefix.len(), self.len()))
-}
+  /// Whether `self` begins with `other`.
+  ///
+  /// Every string is the prefix of itself, and `""` is a prefix of everything.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(1) | O(m)    | O(m)  |
+  /// | **Memory** | O(1) | O(1)    | O(1)  |
+  ///
+  /// m is the length of `other`, and the bound is in *m* rather than n — one `memcmp`, no
+  /// decoding, and no O(n) length call, which is what makes this usable from the code that
+  /// most wants a cheap prefix test. The best case is a difference in the first byte.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// if arg.starts_with("--") { … }
+  /// ```
+  pub let starts_with = pure noalloc (self, other: string) -> bool =>
+    self.compare_bytes_at(0, other) == 0
 
-/// `self` without `suffix`, or `None` if it does not end with it.
-///
-/// The mirror of `strip_prefix`, and the same reason for answering a `Maybe`: the end
-/// position and the suffix's length are one number.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(1) | O(n)    | O(n)  |
-/// | **Memory** | O(1) | O(n)    | O(n)  |
-///
-/// # Examples
-///
-/// ```
-/// let stem = name.strip_suffix(".lyra").unwrap_or(name)
-/// ```
-pub let strip_suffix = pure (self: string, suffix: string) -> Maybe<string> => {
-  if !self.ends_with(suffix) { return None }
-  Some(self.slice(0, self.len() - suffix.len()))
-}
+  // The suffix test is the prefix test **offset**, and that is the whole of it: the
+  // comparison must start where the suffix would, not at 0. Comparing `self[i]` against
+  // `other[i]` is a prefix test whichever direction the loop runs — which is what
+  // `ends_with` first did, so `"hello".ends_with("lo")` was false and
+  // `"hello".ends_with("he")` was true, each answering the other one's question.
+  //
+  // A negative offset needs no guard: `compare_bytes_at` is total, and answers negative
+  // for a range that does not exist.
 
-/// `self` split into lines, without their terminators.
-///
-/// **The two details every program gets wrong by hand**, which is the whole reason this is
-/// here rather than at each call site:
-///
-///   - a trailing newline does not make a last empty line — a file ending in one has as
-///     many lines as it has, which is what every line-oriented tool means by a line;
-///   - `\r\n` is one terminator, so a file written on Windows does not leave an invisible
-///     byte at the end of every line, where it silently breaks a comparison against text
-///     that was written anywhere else.
-///
-/// An empty string has no lines. A line that is only `"\r"` keeps nothing, and a `\r` in
-/// the middle of a line is ordinary content — only a terminating one is a terminator.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(n)    | O(n)  |
-/// | **Memory** | O(n) | O(n)    | O(n)  |
-///
-/// # Examples
-///
-/// ```
-/// for line in read_stdin().lines() { println(line) }
-/// ```
-pub let lines = pure (self: string) -> []string => {
-  if self.len() == 0 { return [] }
-  let body = self.strip_suffix("\n").unwrap_or(self)
-  [line in body.split("\n") | line.strip_suffix("\r").unwrap_or(line)]
-}
+  /// Whether `self` ends with `other`.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(1) | O(m)    | O(m)  |
+  /// | **Memory** | O(1) | O(1)    | O(1)  |
+  ///
+  /// The same `memcmp` as `starts_with`, offset to where the suffix would begin.
+  pub let ends_with = pure noalloc (self, other: string) -> bool =>
+    self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
 
-/// How many bytes this rune encodes to in UTF-8: 1 below U+0080, 2 below U+0800, 3 below
-/// U+10000, 4 above.
-///
-/// Computed from the code point alone, so it needs no string to look at. It is what lets a
-/// rune walk keep a byte cursor alongside it — the trick that makes `index` linear, since
-/// advancing by `s[i]` instead would be quadratic.
-pub let utf8_len = pure noalloc (self: rune) -> i64 => {
-  let cp = i64(self);
-  if cp < 128 { 1 } else if cp < 2048 { 2 } else if cp < 65536 { 3 } else { 4 }
+  /// `self` padded at the start with `fill` until it is `width` runes long.
+  ///
+  /// `"7".pad_start(2, "0")` is `"07"`; `"18".pad_start(3)` is `" 18"`. A string already at
+  /// least `width` long comes back unchanged — never truncated, because a pad that cuts
+  /// content turns a formatting slip into a wrong value. A fill longer than one rune repeats
+  /// and is cut to fit, so `"5".pad_start(4, "ab")` is `"aba5"`: JavaScript's `padStart`,
+  /// which is the semantics the most people already carry around.
+  ///
+  /// Added 09/18 for `std.temporal`, which zero-pads every ISO field, and for the calendar
+  /// example's grid, which right-aligns day numbers — the two callers that made it more
+  /// than a guess.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(w)    | O(w)  |
+  /// | **Memory** | O(n) | O(w)    | O(w)  |
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let mm = "${month}".pad_start(2, "0")
+  /// ```
+  pub let pad_start = pure (self, width: i64, fill: string = " ") -> string => {
+    let missing = width - self.len()
+    if missing <= 0 || fill.len() == 0 { return self }
+    let pattern = fill.to_runes()
+    [i in 0..<missing | pattern[i % pattern.len()]].join("") ++ self
+  }
+
+  /// `self` padded at the end with `fill` until it is `width` runes long — `pad_start`'s
+  /// mirror, with the same rules: never truncated, and a longer fill repeated and cut.
+  ///
+  /// `"09:00".pad_end(8)` is `"09:00   "`, which is how a column of left-aligned text keeps
+  /// what follows it lined up. Added 09/18 with two callers in `examples/calendar`: the
+  /// event list's time column, and centring a title, which had been building the right-hand
+  /// padding out of `"".pad_start(n)`.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(w)    | O(w)  |
+  /// | **Memory** | O(n) | O(w)    | O(w)  |
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// println("${name.pad_end(12)}${value}")
+  /// ```
+  pub let pad_end = pure (self, width: i64, fill: string = " ") -> string => {
+    let missing = width - self.len()
+    if missing <= 0 || fill.len() == 0 { return self }
+    let pattern = fill.to_runes()
+    self ++ [i in 0..<missing | pattern[i % pattern.len()]].join("")
+  }
+
+  /// `self` without `prefix`, or `None` if it does not start with it.
+  ///
+  /// **The `Maybe` is the point.** `starts_with` then `slice` asks the same question twice
+  /// and writes the length in two places — the bug being that the slice's start and the
+  /// prefix's length are the same number, spelled apart. Here they cannot disagree, and the
+  /// `None` arm is where a caller says what "it was not there" means.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(1) | O(n)    | O(n)  |
+  /// | **Memory** | O(1) | O(n)    | O(n)  |
+  ///
+  /// The test is `starts_with`'s `memcmp`; the copy is `slice`'s, and only happens on the
+  /// `Some` path.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let flag = arg.strip_prefix("--").unwrap_or(arg)
+  /// ```
+  pub let strip_prefix = pure (self, prefix: string) -> Maybe<string> => {
+    if !self.starts_with(prefix) { return None }
+    Some(self.slice(prefix.len(), self.len()))
+  }
+
+  /// `self` without `suffix`, or `None` if it does not end with it.
+  ///
+  /// The mirror of `strip_prefix`, and the same reason for answering a `Maybe`: the end
+  /// position and the suffix's length are one number.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(1) | O(n)    | O(n)  |
+  /// | **Memory** | O(1) | O(n)    | O(n)  |
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let stem = name.strip_suffix(".lyra").unwrap_or(name)
+  /// ```
+  pub let strip_suffix = pure (self, suffix: string) -> Maybe<string> => {
+    if !self.ends_with(suffix) { return None }
+    Some(self.slice(0, self.len() - suffix.len()))
+  }
+
+  /// `self` split into lines, without their terminators.
+  ///
+  /// **The two details every program gets wrong by hand**, which is the whole reason this is
+  /// here rather than at each call site:
+  ///
+  ///   - a trailing newline does not make a last empty line — a file ending in one has as
+  ///     many lines as it has, which is what every line-oriented tool means by a line;
+  ///   - `\r\n` is one terminator, so a file written on Windows does not leave an invisible
+  ///     byte at the end of every line, where it silently breaks a comparison against text
+  ///     that was written anywhere else.
+  ///
+  /// An empty string has no lines. A line that is only `"\r"` keeps nothing, and a `\r` in
+  /// the middle of a line is ordinary content — only a terminating one is a terminator.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(n)    | O(n)  |
+  /// | **Memory** | O(n) | O(n)    | O(n)  |
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// for line in read_stdin().lines() { println(line) }
+  /// ```
+  pub let lines = pure (self) -> []string => {
+    if self.len() == 0 { return [] }
+    let body = self.strip_suffix("\n").unwrap_or(self)
+    [line in body.split("\n") | line.strip_suffix("\r").unwrap_or(line)]
+  }
 }
 
 /// A position in a string, counted in runes.
@@ -626,272 +630,275 @@ impl Needle for string {
   }
 }
 
-/// The rune index where `needle` first occurs at or after `offset`, or `None`.
-///
-/// Both `offset` and the result are **rune** indices, so the answer feeds straight into
-/// `slice`. A negative `offset` is `None`.
-///
-/// The scan is naive rather than Rabin–Karp, which would trade a libc memcmp for
-/// byte-at-a-time arithmetic in Lyra and buy only an *expected* bound. A real guarantee
-/// wants a `memmem` builtin.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst  |
-/// | ---------- | ---- | ------- | ------ |
-/// | **Time**   | O(m) | O(n)    | O(n·m) |
-/// | **Memory** | O(1) | O(1)    | O(1)   |
-///
-/// n is the haystack and m the needle. The columns differ here, and that is the point of
-/// the table: a naive scan behaves like O(n) on ordinary text, where a mismatch is usually
-/// found in the first byte or two, and degrades to O(n·m) on input built to defeat it —
-/// a needle that repeatedly *almost* matches. The best case is a match at the offset.
-///
-/// # Examples
-///
-/// ```
-/// let at = "a::b::c".index("::").unwrap_or(-1)   // 1
-/// ```
-pub let index<t> where t: Needle = pure noalloc(
-  self: string,
-  needle: t,
-  offset: Index = 0
-) -> Maybe<Index> =>
-  match needle.found_at(self, offset) {
-    None => None,
-    Some((idx, _)) => Some(idx)
-  }
+impl string {
 
-/// The offset of the **last** occurrence of `needle` at or after `offset`, or `None`.
-///
-/// What `index` answers from the other end, and the one a path needs: a file's name is
-/// what follows its *last* `/`, and its extension what follows its *last* `.`. Written
-/// here rather than in `std.path` because it is a fact about strings, and the second
-/// caller would have copied it.
-///
-/// # Complexity
-///
-/// Every match is visited, so this is `index`'s cost times the number of occurrences —
-/// O(n) over a haystack with a handful of them, which is what a path is. A needle that
-/// occurs on every byte makes it O(n·m), as `index`'s own table says.
-///
-/// # Examples
-///
-/// ```
-/// let at = "a::b::c".last_index("::").unwrap_or(-1)   // 4
-/// ```
-pub let last_index<t> where t: Needle = pure noalloc (
-  self: string,
-  needle: t,
-  offset: Index = 0
-) -> Maybe<Index> => {
-  var found: Maybe<Index> = None
-  var at = offset
-  var searching = true
-  for searching {
-    match self.index(needle, at) {
-      None => { searching = false },
-      Some(i) => {
-        found = Some(i)
-        at = i + 1
-      },
+  /// The rune index where `needle` first occurs at or after `offset`, or `None`.
+  ///
+  /// Both `offset` and the result are **rune** indices, so the answer feeds straight into
+  /// `slice`. A negative `offset` is `None`.
+  ///
+  /// The scan is naive rather than Rabin–Karp, which would trade a libc memcmp for
+  /// byte-at-a-time arithmetic in Lyra and buy only an *expected* bound. A real guarantee
+  /// wants a `memmem` builtin.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst  |
+  /// | ---------- | ---- | ------- | ------ |
+  /// | **Time**   | O(m) | O(n)    | O(n·m) |
+  /// | **Memory** | O(1) | O(1)    | O(1)   |
+  ///
+  /// n is the haystack and m the needle. The columns differ here, and that is the point of
+  /// the table: a naive scan behaves like O(n) on ordinary text, where a mismatch is usually
+  /// found in the first byte or two, and degrades to O(n·m) on input built to defeat it —
+  /// a needle that repeatedly *almost* matches. The best case is a match at the offset.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let at = "a::b::c".index("::").unwrap_or(-1)   // 1
+  /// ```
+  pub let index<t> where t: Needle = pure noalloc(
+    self,
+    needle: t,
+    offset: Index = 0
+  ) -> Maybe<Index> =>
+    match needle.found_at(self, offset) {
+      None => None,
+      Some((idx, _)) => Some(idx)
     }
-  }
-  found
-}
 
-/// Whether `needle` occurs in `self` at or after `offset`.
-pub let contains<t> where t: Needle = pure noalloc(
-  self: string,
-  needle: t,
-  offset: Index = 0
-) -> bool =>
-  self.index(needle, offset).is_some()
-
-/// The string's runes, one element each.
-///
-/// This is what "split on an empty separator" actually means, stated as what it returns
-/// rather than smuggled through a degenerate argument — Go's `strings.Split(s, "")` is the
-/// implicit version of this function, and `split` refuses that spelling and names this one
-/// instead.
-///
-/// `[]rune`, not `[]string`: a caller who wants characters wants code points, and a box
-/// per character would buy nothing.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(n)    | O(n)  |
-/// | **Memory** | O(n) | O(n)    | O(n)  |
-///
-/// One decoding pass, one `rune` out per code point in. n counts runes, not bytes, so a
-/// string of multi-byte characters costs less than its byte length suggests.
-///
-/// The memory is n and not "n rounded up": a comprehension sizes its box from the source
-/// and hands back what the guards did not use, where a `push` loop from empty reaches n by
-/// doubling and keeps up to twice it. That is the whole reason this is written as a
-/// comprehension — it is also slightly faster (142 µs against 152 for 328k ASCII runes,
-/// 212 against 247 for 131k CJK ones), but the shape that matters is the one that stops
-/// exactly where the answer does.
-pub let to_runes = pure (self: string) -> []rune => [c in self | c]
-
-/// `self` split on every occurrence of `sep`, with the separators removed.
-///
-/// Always returns at least one part: a string not containing `sep` splits into itself, and
-/// adjacent separators yield empty parts.
-///
-/// # Panics
-///
-/// Traps when `sep` is an empty string — it matches everywhere without consuming anything,
-/// so there is no answer to give. Use `to_runes` to split a string into its characters. A
-/// `rune` separator cannot be empty, so that call never risks it.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst  |
-/// | ---------- | ---- | ------- | ------ |
-/// | **Time**   | O(n) | O(n)    | O(n·m) |
-/// | **Memory** | O(n) | O(n)    | O(n)   |
-///
-/// `index`'s scan repeated across the string, so it inherits that row: linear on ordinary
-/// text, O(n·m) against a needle built to almost-match. Memory is O(n) whatever the
-/// separator does — the parts together hold about as many runes as the input, since
-/// `slice` copies each one.
-///
-/// # Examples
-///
-/// ```
-/// let fields = "a::b::c".split("::")   // ["a", "b", "c"]
-/// let chars  = "abc".to_runes()        // not split("")
-/// ```
-pub let split<t> where t: Needle = pure (self: string, sep: t = " ") -> []string => {
-  var parts: []string = []
-  // The bytes once, so a part costs what it copies rather than where it starts: slicing
-  // the *string* is rune-indexed and walks from rune 0, which was the second of this
-  // function's two quadratics (the first was searching from the start on every part).
-  let bytes = self.encode_utf8()
-  var part_start = 0
-  var pending = 0 - 1
-  var skip_until = 0
-  var byte_i = 0
-  for i, c in self {
-    // A part begins where the previous separator ended, and the walk learns that byte
-    // offset only when it arrives — which is also what makes two adjacent separators
-    // yield the empty part between them.
-    if i == pending {
-      part_start = byte_i
-      pending = 0 - 1
-    }
-    if i >= skip_until {
-      match sep.matches_at(self, i, byte_i, c) {
-        Some(span) => {
-          // A zero-span match can never advance the cursor, so it is not a question this
-          // loop can answer — an empty separator would sit here forever. A trap rather
-          // than a Maybe, on `slice`'s reasoning about its inverted range: this is a
-          // caller bug, not an answer, and the empty result a soft path would hand back
-          // is indistinguishable from a real one. A rune separator cannot be empty, so
-          // the common call never pays for the check it cannot fail.
-          //
-          // The guard lives here and not in Needle because a zero-length match is
-          // *legitimate* to `found_at`: `"".index("")` answering `Some((0, 0))` is what
-          // makes a search for an empty needle terminate.
-          if span == 0 {
-            panic("split: empty separator; to split a string into its runes, use to_runes()")
-          }
-          parts.push(bytes.slice(part_start, byte_i).decode_utf8())
-          skip_until = i + span
-          pending = i + span
+  /// The offset of the **last** occurrence of `needle` at or after `offset`, or `None`.
+  ///
+  /// What `index` answers from the other end, and the one a path needs: a file's name is
+  /// what follows its *last* `/`, and its extension what follows its *last* `.`. Written
+  /// here rather than in `std.path` because it is a fact about strings, and the second
+  /// caller would have copied it.
+  ///
+  /// # Complexity
+  ///
+  /// Every match is visited, so this is `index`'s cost times the number of occurrences —
+  /// O(n) over a haystack with a handful of them, which is what a path is. A needle that
+  /// occurs on every byte makes it O(n·m), as `index`'s own table says.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let at = "a::b::c".last_index("::").unwrap_or(-1)   // 4
+  /// ```
+  pub let last_index<t> where t: Needle = pure noalloc (
+    self,
+    needle: t,
+    offset: Index = 0
+  ) -> Maybe<Index> => {
+    var found: Maybe<Index> = None
+    var at = offset
+    var searching = true
+    for searching {
+      match self.index(needle, at) {
+        None => { searching = false },
+        Some(i) => {
+          found = Some(i)
+          at = i + 1
         },
-        None => {},
       }
     }
-    byte_i += c.utf8_len()
+    found
   }
-  // The tail, which is a part even when it is empty: `"a,"` is two fields, and a
-  // separator that ran to the very end leaves the last one with nothing in it.
-  if pending >= 0 { part_start = bytes.len() }
-  parts.push(bytes.slice(part_start, bytes.len()).decode_utf8())
-  parts
-}
 
-/// `self` with every occurrence of `from` replaced by `to`, scanning left to right without
-/// overlap: `"aaa".replace("aa", "b")` is `"ba"`. A string without `from` comes back equal
-/// to itself.
-///
-/// # Panics
-///
-/// Traps when `from` is an empty string, as `split` does on an empty separator: it occurs
-/// between every two runes and consumes nothing, so there is no one answer. Build the
-/// result from `to_runes` for an insertion between characters.
-///
-/// # Complexity
-///
-/// `split` then `join`, and their rows: linear on ordinary text, O(n·m) against a needle
-/// built to almost-match; O(n) memory.
-///
-/// # Examples
-///
-/// ```
-/// let path = "a/b/c".replace("/", "::")    // "a::b::c"
-/// let tidy = "x  y".replace("  ", " ")     // "x y"
-/// ```
-pub let replace = pure (self: string, from: string, to: string) -> string => {
-  if from == "" { panic("replace: empty pattern; to insert between runes, build from to_runes()") }
-  self.split(from).join(to)
-}
+  /// Whether `needle` occurs in `self` at or after `offset`.
+  pub let contains<t> where t: Needle = pure noalloc(
+    self,
+    needle: t,
+    offset: Index = 0
+  ) -> bool =>
+    self.index(needle, offset).is_some()
 
-/// The parts of `self` separated by every rune `pred` accepts.
-///
-/// `split`'s predicate form, for a boundary that is a *set* of runes rather than one
-/// needle: splitting on "anything that is not a letter" is one call here and has no
-/// spelling at all in terms of a `Needle`.
-///
-/// **Empty parts are dropped, where `split` keeps them** — the one place the two disagree,
-/// and deliberately. A separator in `split` is a value the caller named, so an empty part
-/// between two of them is data: `"a,,b"` is a CSV row with an empty middle field, and
-/// collapsing it would lose a column. A predicate names a *boundary*, and a run of
-/// boundaries is one boundary — `"hello, world."` is two words, not four. The same rule
-/// covers the edges, so a leading or trailing separator contributes no part either, and
-/// a string of nothing but separators yields no parts at all.
-///
-/// The walk is rune-indexed, so a bound handed to `slice` counts code points and cannot
-/// land inside a multi-byte character.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(n)    | O(n)  |
-/// | **Memory** | O(1) | O(n)    | O(n)  |
-///
-/// n is the length of the input. One linear walk, and `push` grows by doubling, so the
-/// parts cost O(n) across every reallocation together. Each part is a `slice`, which
-/// copies — so this allocates, and is `pure` but not `noalloc`. The best column is an
-/// input that is entirely separators, which pushes nothing.
-///
-/// # Examples
-///
-/// ```
-/// let words = "hello, world.".split_when((r) => !r.is_ascii_alpha())   // ["hello", "world"]
-/// let cells = "a  b".split_when((r) => r.is_ascii_space())             // ["a", "b"]
-/// let none  = "   ".split_when((r) => r.is_ascii_space())              // []
-/// ```
-pub let split_when = pure (self: string, pred: (rune) -> bool) -> []string => {
-  let mut result: []string = []
-  var start = 0
-  for i, c in self {
-    if pred(c) {
-      if i > start {
-        result.push(self.slice(start, i))
+  /// The string's runes, one element each.
+  ///
+  /// This is what "split on an empty separator" actually means, stated as what it returns
+  /// rather than smuggled through a degenerate argument — Go's `strings.Split(s, "")` is the
+  /// implicit version of this function, and `split` refuses that spelling and names this one
+  /// instead.
+  ///
+  /// `[]rune`, not `[]string`: a caller who wants characters wants code points, and a box
+  /// per character would buy nothing.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(n)    | O(n)  |
+  /// | **Memory** | O(n) | O(n)    | O(n)  |
+  ///
+  /// One decoding pass, one `rune` out per code point in. n counts runes, not bytes, so a
+  /// string of multi-byte characters costs less than its byte length suggests.
+  ///
+  /// The memory is n and not "n rounded up": a comprehension sizes its box from the source
+  /// and hands back what the guards did not use, where a `push` loop from empty reaches n by
+  /// doubling and keeps up to twice it. That is the whole reason this is written as a
+  /// comprehension — it is also slightly faster (142 µs against 152 for 328k ASCII runes,
+  /// 212 against 247 for 131k CJK ones), but the shape that matters is the one that stops
+  /// exactly where the answer does.
+  pub let to_runes = pure (self) -> []rune => [c in self | c]
+
+  /// `self` split on every occurrence of `sep`, with the separators removed.
+  ///
+  /// Always returns at least one part: a string not containing `sep` splits into itself, and
+  /// adjacent separators yield empty parts.
+  ///
+  /// # Panics
+  ///
+  /// Traps when `sep` is an empty string — it matches everywhere without consuming anything,
+  /// so there is no answer to give. Use `to_runes` to split a string into its characters. A
+  /// `rune` separator cannot be empty, so that call never risks it.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst  |
+  /// | ---------- | ---- | ------- | ------ |
+  /// | **Time**   | O(n) | O(n)    | O(n·m) |
+  /// | **Memory** | O(n) | O(n)    | O(n)   |
+  ///
+  /// `index`'s scan repeated across the string, so it inherits that row: linear on ordinary
+  /// text, O(n·m) against a needle built to almost-match. Memory is O(n) whatever the
+  /// separator does — the parts together hold about as many runes as the input, since
+  /// `slice` copies each one.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let fields = "a::b::c".split("::")   // ["a", "b", "c"]
+  /// let chars  = "abc".to_runes()        // not split("")
+  /// ```
+  pub let split<t> where t: Needle = pure (self, sep: t = " ") -> []string => {
+    var parts: []string = []
+    // The bytes once, so a part costs what it copies rather than where it starts: slicing
+    // the *string* is rune-indexed and walks from rune 0, which was the second of this
+    // function's two quadratics (the first was searching from the start on every part).
+    let bytes = self.encode_utf8()
+    var part_start = 0
+    var pending = 0 - 1
+    var skip_until = 0
+    var byte_i = 0
+    for i, c in self {
+      // A part begins where the previous separator ended, and the walk learns that byte
+      // offset only when it arrives — which is also what makes two adjacent separators
+      // yield the empty part between them.
+      if i == pending {
+        part_start = byte_i
+        pending = 0 - 1
       }
-      start = i + 1
+      if i >= skip_until {
+        match sep.matches_at(self, i, byte_i, c) {
+          Some(span) => {
+            // A zero-span match can never advance the cursor, so it is not a question this
+            // loop can answer — an empty separator would sit here forever. A trap rather
+            // than a Maybe, on `slice`'s reasoning about its inverted range: this is a
+            // caller bug, not an answer, and the empty result a soft path would hand back
+            // is indistinguishable from a real one. A rune separator cannot be empty, so
+            // the common call never pays for the check it cannot fail.
+            //
+            // The guard lives here and not in Needle because a zero-length match is
+            // *legitimate* to `found_at`: `"".index("")` answering `Some((0, 0))` is what
+            // makes a search for an empty needle terminate.
+            if span == 0 {
+              panic("split: empty separator; to split a string into its runes, use to_runes()")
+            }
+            parts.push(bytes.slice(part_start, byte_i).decode_utf8())
+            skip_until = i + span
+            pending = i + span
+          },
+          None => {},
+        }
+      }
+      byte_i += c.utf8_len()
     }
+    // The tail, which is a part even when it is empty: `"a,"` is two fields, and a
+    // separator that ran to the very end leaves the last one with nothing in it.
+    if pending >= 0 { part_start = bytes.len() }
+    parts.push(bytes.slice(part_start, bytes.len()).decode_utf8())
+    parts
   }
-  if start < self.len() {
-    result.push(self.slice(start, self.len()))
+
+  /// `self` with every occurrence of `from` replaced by `to`, scanning left to right without
+  /// overlap: `"aaa".replace("aa", "b")` is `"ba"`. A string without `from` comes back equal
+  /// to itself.
+  ///
+  /// # Panics
+  ///
+  /// Traps when `from` is an empty string, as `split` does on an empty separator: it occurs
+  /// between every two runes and consumes nothing, so there is no one answer. Build the
+  /// result from `to_runes` for an insertion between characters.
+  ///
+  /// # Complexity
+  ///
+  /// `split` then `join`, and their rows: linear on ordinary text, O(n·m) against a needle
+  /// built to almost-match; O(n) memory.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let path = "a/b/c".replace("/", "::")    // "a::b::c"
+  /// let tidy = "x  y".replace("  ", " ")     // "x y"
+  /// ```
+  pub let replace = pure (self, from: string, to: string) -> string => {
+    if from == "" { panic("replace: empty pattern; to insert between runes, build from to_runes()") }
+    self.split(from).join(to)
   }
-  result
+
+  /// The parts of `self` separated by every rune `pred` accepts.
+  ///
+  /// `split`'s predicate form, for a boundary that is a *set* of runes rather than one
+  /// needle: splitting on "anything that is not a letter" is one call here and has no
+  /// spelling at all in terms of a `Needle`.
+  ///
+  /// **Empty parts are dropped, where `split` keeps them** — the one place the two disagree,
+  /// and deliberately. A separator in `split` is a value the caller named, so an empty part
+  /// between two of them is data: `"a,,b"` is a CSV row with an empty middle field, and
+  /// collapsing it would lose a column. A predicate names a *boundary*, and a run of
+  /// boundaries is one boundary — `"hello, world."` is two words, not four. The same rule
+  /// covers the edges, so a leading or trailing separator contributes no part either, and
+  /// a string of nothing but separators yields no parts at all.
+  ///
+  /// The walk is rune-indexed, so a bound handed to `slice` counts code points and cannot
+  /// land inside a multi-byte character.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(n)    | O(n)  |
+  /// | **Memory** | O(1) | O(n)    | O(n)  |
+  ///
+  /// n is the length of the input. One linear walk, and `push` grows by doubling, so the
+  /// parts cost O(n) across every reallocation together. Each part is a `slice`, which
+  /// copies — so this allocates, and is `pure` but not `noalloc`. The best column is an
+  /// input that is entirely separators, which pushes nothing.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let words = "hello, world.".split_when((r) => !r.is_ascii_alpha())   // ["hello", "world"]
+  /// let cells = "a  b".split_when((r) => r.is_ascii_space())             // ["a", "b"]
+  /// let none  = "   ".split_when((r) => r.is_ascii_space())              // []
+  /// ```
+  pub let split_when = pure (self, pred: (rune) -> bool) -> []string => {
+    let mut result: []string = []
+    var start = 0
+    for i, c in self {
+      if pred(c) {
+        if i > start {
+          result.push(self.slice(start, i))
+        }
+        start = i + 1
+      }
+    }
+    if start < self.len() {
+      result.push(self.slice(start, self.len()))
+    }
+    result
+  }
 }
 
 /// The parts joined with `sep` between them — `split`'s inverse.

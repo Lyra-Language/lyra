@@ -20,166 +20,168 @@ module std.path
 //! let out = "build".join(page.with_extension("html"))
 //! ```
 
-/// `other` appended to `self`, with exactly one separator between them.
-///
-/// **Called `join` because `join` is taken**, by the prelude's `join` over an array — and
-/// a name may not be exported by two modules at once, so a `std.path.join` would be
-/// unusable in any program that also joins a list of strings, which is most of them. The
-/// name that remains says what the result is: the path to something under `self`.
-///
-/// **An absolute `other` wins**, as it does in every language's join: `"docs".join("/etc")`
-/// is `/etc`, because a caller who wrote a leading `/` said where they meant. An empty
-/// `self` is no prefix at all, so `"".join("a")` is `a` rather than `/a`.
-pub let join = pure (self: string, other: string) -> string => {
-  if other.is_absolute() || self.len() == 0 { return other }
-  if other.len() == 0 { return self }
-  if self.ends_with("/") { self ++ other } else { self ++ "/" ++ other }
-}
-
-/// The directory `self` names a file in, or `None` when it names no directory — a bare
-/// name, or the root itself.
-///
-/// ```
-/// "docs/guide/intro.md".parent()   // Some("docs/guide")
-/// "intro.md".parent()              // None
-/// "/intro.md".parent()             // Some("/")
-/// ```
-pub let parent = pure (self: string) -> Maybe<string> => {
-  let trimmed = self.without_trailing_slashes()
-  let Some(at) = trimmed.last_index("/") else { return None }
-  if at == 0 { Some("/") } else { Some(trimmed.slice(0, at)) }
-}
-
-/// The file name at the end of `self` — what follows its last separator.
-///
-/// Trailing separators are not part of a name: `"docs/guide/"` is a way of writing
-/// `"docs/guide"`, and both are called `guide`. The root is called `/`, having nothing
-/// else to be called.
-pub let base = pure (self: string) -> string => {
-  let trimmed = self.without_trailing_slashes()
-  if trimmed == "/" || trimmed.len() == 0 { return "/" }
-  let Some(at) = trimmed.last_index("/") else { return trimmed }
-  trimmed.slice(at + 1, trimmed.len())
-}
-
-/// The file name without its extension: `"docs/intro.md"` has the stem `intro`.
-pub let stem = pure (self: string) -> string => {
-  let name = self.base()
-  let Some(at) = name.extension_dot() else { return name }
-  name.slice(0, at)
-}
-
-/// The extension after the file name's last `.`, without the dot, or `None`.
-///
-/// **A leading dot is not an extension**: `.gitignore` is a file called `.gitignore`, not
-/// an extensionless file with the extension `gitignore`, and every tool that gets this
-/// wrong hides dotfiles' names. A trailing dot is not one either — `"notes."` has no
-/// extension to name — and `"archive.tar.gz"` has the extension `gz`, the last one being
-/// the one that says what the file is.
-pub let extension = pure (self: string) -> Maybe<string> => {
-  let name = self.base()
-  let Some(at) = name.extension_dot() else { return None }
-  Some(name.slice(at + 1, name.len()))
-}
-
-/// `self` with its extension replaced by `ext`, which is written without a dot. A path
-/// with no extension gains one; an `ext` of `""` removes it.
-///
-/// ```
-/// "docs/intro.md".with_extension("html")   // "docs/intro.html"
-/// ```
-pub let with_extension = pure (self: string, ext: string) -> string => {
-  let trimmed = self.without_trailing_slashes()
-  let name = trimmed.base()
-  let stem_of = match name.extension_dot() {
-    Some(at) => name.slice(0, at),
-    None => name,
+impl string {
+  /// `other` appended to `self`, with exactly one separator between them.
+  ///
+  /// **Called `join` because `join` is taken**, by the prelude's `join` over an array — and
+  /// a name may not be exported by two modules at once, so a `std.path.join` would be
+  /// unusable in any program that also joins a list of strings, which is most of them. The
+  /// name that remains says what the result is: the path to something under `self`.
+  ///
+  /// **An absolute `other` wins**, as it does in every language's join: `"docs".join("/etc")`
+  /// is `/etc`, because a caller who wrote a leading `/` said where they meant. An empty
+  /// `self` is no prefix at all, so `"".join("a")` is `a` rather than `/a`.
+  pub let join = pure (self, other: string) -> string => {
+    if other.is_absolute() || self.len() == 0 { return other }
+    if other.len() == 0 { return self }
+    if self.ends_with("/") { self ++ other } else { self ++ "/" ++ other }
   }
-  let renamed = if ext.len() == 0 { stem_of } else { stem_of ++ "." ++ ext }
-  match trimmed.parent() {
-    Some(dir) => dir.join(renamed),
-    None => renamed,
-  }
-}
 
-/// `self` with its `.` and `..` components resolved as text: `"docs/guide/../intro.md"` is
-/// `"docs/intro.md"`.
-///
-/// **Lexical, not on disk**, which is a real difference and the reason this says so: where
-/// `guide` is a symlink, the filesystem's answer to `guide/..` is wherever the link points
-/// and this one is `docs`. For deciding what a link in a page *refers to* the lexical
-/// answer is the right one — a reader following `../intro.md` from `guide/deep.md` means
-/// the page beside `guide`, whatever the disk has done.
-///
-/// A `..` with nothing to pop is kept in a relative path (`"../x"` names something outside
-/// and cannot be simplified) and dropped in an absolute one (`"/.."` is `/`). An empty
-/// result is `"."`, the directory a bare path is relative to.
-pub let normalize = pure (self: string) -> string => {
-  let rooted = self.is_absolute()
-  var parts: []string = []
-  for part in self.split("/") {
-    if part == "" || part == "." { continue }
-    if part != ".." {
-      parts.push(part)
-      continue
+  /// The directory `self` names a file in, or `None` when it names no directory — a bare
+  /// name, or the root itself.
+  ///
+  /// ```
+  /// "docs/guide/intro.md".parent()   // Some("docs/guide")
+  /// "intro.md".parent()              // None
+  /// "/intro.md".parent()             // Some("/")
+  /// ```
+  pub let parent = pure (self) -> Maybe<string> => {
+    let trimmed = self.without_trailing_slashes()
+    let Some(at) = trimmed.last_index("/") else { return None }
+    if at == 0 { Some("/") } else { Some(trimmed.slice(0, at)) }
+  }
+
+  /// The file name at the end of `self` — what follows its last separator.
+  ///
+  /// Trailing separators are not part of a name: `"docs/guide/"` is a way of writing
+  /// `"docs/guide"`, and both are called `guide`. The root is called `/`, having nothing
+  /// else to be called.
+  pub let base = pure (self) -> string => {
+    let trimmed = self.without_trailing_slashes()
+    if trimmed == "/" || trimmed.len() == 0 { return "/" }
+    let Some(at) = trimmed.last_index("/") else { return trimmed }
+    trimmed.slice(at + 1, trimmed.len())
+  }
+
+  /// The file name without its extension: `"docs/intro.md"` has the stem `intro`.
+  pub let stem = pure (self) -> string => {
+    let name = self.base()
+    let Some(at) = name.extension_dot() else { return name }
+    name.slice(0, at)
+  }
+
+  /// The extension after the file name's last `.`, without the dot, or `None`.
+  ///
+  /// **A leading dot is not an extension**: `.gitignore` is a file called `.gitignore`, not
+  /// an extensionless file with the extension `gitignore`, and every tool that gets this
+  /// wrong hides dotfiles' names. A trailing dot is not one either — `"notes."` has no
+  /// extension to name — and `"archive.tar.gz"` has the extension `gz`, the last one being
+  /// the one that says what the file is.
+  pub let extension = pure (self) -> Maybe<string> => {
+    let name = self.base()
+    let Some(at) = name.extension_dot() else { return None }
+    Some(name.slice(at + 1, name.len()))
+  }
+
+  /// `self` with its extension replaced by `ext`, which is written without a dot. A path
+  /// with no extension gains one; an `ext` of `""` removes it.
+  ///
+  /// ```
+  /// "docs/intro.md".with_extension("html")   // "docs/intro.html"
+  /// ```
+  pub let with_extension = pure (self, ext: string) -> string => {
+    let trimmed = self.without_trailing_slashes()
+    let name = trimmed.base()
+    let stem_of = match name.extension_dot() {
+      Some(at) => name.slice(0, at),
+      None => name,
     }
-    let last = parts.len() - 1
-    if last >= 0 && parts[last] != ".." {
-      parts = parts.slice(0, last)
-    } else if !rooted {
-      parts.push("..")
+    let renamed = if ext.len() == 0 { stem_of } else { stem_of ++ "." ++ ext }
+    match trimmed.parent() {
+      Some(dir) => dir.join(renamed),
+      None => renamed,
     }
   }
-  let joined = parts.join("/")
-  if rooted { "/" ++ joined } else if joined.len() == 0 { "." } else { joined }
-}
 
-/// The path from the directory `base` to `self`, which `base.join(result)` names again:
-/// `"games/hero/main.lyra".relative_to("games")` is `"hero/main.lyra"`, and
-/// `"art/hero.vega".relative_to("code")` is `"../art/hero.vega"`. Both are [normalize]d
-/// first, and the same path is `"."`.
-///
-/// **Lexical**, as [normalize] is, so a symlink in `base` is not followed. And one
-/// absolute path and one relative have nothing to be relative to each other by — the
-/// relative one's directory is not known here — so `self` comes back as it is, normalized.
-pub let relative_to = pure (self: string, base: string) -> string => {
-  let to = self.normalize()
-  let from = base.normalize()
-  if to.is_absolute() != from.is_absolute() { return to }
-  let to_parts = to.components()
-  let from_parts = from.components()
-  var shared = 0
-  for shared < to_parts.len() && shared < from_parts.len() && to_parts[shared] == from_parts[shared] {
-    shared += 1
+  /// `self` with its `.` and `..` components resolved as text: `"docs/guide/../intro.md"` is
+  /// `"docs/intro.md"`.
+  ///
+  /// **Lexical, not on disk**, which is a real difference and the reason this says so: where
+  /// `guide` is a symlink, the filesystem's answer to `guide/..` is wherever the link points
+  /// and this one is `docs`. For deciding what a link in a page *refers to* the lexical
+  /// answer is the right one — a reader following `../intro.md` from `guide/deep.md` means
+  /// the page beside `guide`, whatever the disk has done.
+  ///
+  /// A `..` with nothing to pop is kept in a relative path (`"../x"` names something outside
+  /// and cannot be simplified) and dropped in an absolute one (`"/.."` is `/`). An empty
+  /// result is `"."`, the directory a bare path is relative to.
+  pub let normalize = pure (self) -> string => {
+    let rooted = self.is_absolute()
+    var parts: []string = []
+    for part in self.split("/") {
+      if part == "" || part == "." { continue }
+      if part != ".." {
+        parts.push(part)
+        continue
+      }
+      let last = parts.len() - 1
+      if last >= 0 && parts[last] != ".." {
+        parts = parts.slice(0, last)
+      } else if !rooted {
+        parts.push("..")
+      }
+    }
+    let joined = parts.join("/")
+    if rooted { "/" ++ joined } else if joined.len() == 0 { "." } else { joined }
   }
-  var parts: []string = []
-  for _ in shared..<from_parts.len() { parts.push("..") }
-  for i in shared..<to_parts.len() { parts.push(to_parts[i]) }
-  if parts.len() == 0 { "." } else { parts.join("/") }
-}
 
-/// Whether `self` begins at the root.
-pub let is_absolute = pure noalloc (self: string) -> bool => self.starts_with("/")
+  /// The path from the directory `base` to `self`, which `base.join(result)` names again:
+  /// `"games/hero/main.lyra".relative_to("games")` is `"hero/main.lyra"`, and
+  /// `"art/hero.vega".relative_to("code")` is `"../art/hero.vega"`. Both are [normalize]d
+  /// first, and the same path is `"."`.
+  ///
+  /// **Lexical**, as [normalize] is, so a symlink in `base` is not followed. And one
+  /// absolute path and one relative have nothing to be relative to each other by — the
+  /// relative one's directory is not known here — so `self` comes back as it is, normalized.
+  pub let relative_to = pure (self, base: string) -> string => {
+    let to = self.normalize()
+    let from = base.normalize()
+    if to.is_absolute() != from.is_absolute() { return to }
+    let to_parts = to.components()
+    let from_parts = from.components()
+    var shared = 0
+    for shared < to_parts.len() && shared < from_parts.len() && to_parts[shared] == from_parts[shared] {
+      shared += 1
+    }
+    var parts: []string = []
+    for _ in shared..<from_parts.len() { parts.push("..") }
+    for i in shared..<to_parts.len() { parts.push(to_parts[i]) }
+    if parts.len() == 0 { "." } else { parts.join("/") }
+  }
 
-// ---------------------------------------------------------------------------------------
+  /// Whether `self` begins at the root.
+  pub let is_absolute = pure noalloc (self) -> bool => self.starts_with("/")
 
-/// `self` without the separators at its end, which name the same directory it does. The
-/// root is left alone: `/` without its slash is the empty string, which names nothing.
-let without_trailing_slashes = pure (self: string) -> string => {
-  var end = self.len()
-  for end > 1 && self.slice(end - 1, end) == "/" { end -= 1 }
-  self.slice(0, end)
-}
+  // ---------------------------------------------------------------------------------------
 
-/// A normalized path's names, root and `.` left out: `"/a/b"` and `"a/b"` are both `a`, `b`.
-let components = pure (self: string) -> []string =>
-  self.split("/").filter((part) => part != "" && part != ".")
+  /// `self` without the separators at its end, which name the same directory it does. The
+  /// root is left alone: `/` without its slash is the empty string, which names nothing.
+  let without_trailing_slashes = pure (self) -> string => {
+    var end = self.len()
+    for end > 1 && self.slice(end - 1, end) == "/" { end -= 1 }
+    self.slice(0, end)
+  }
 
-/// Where a file name's extension begins — the offset of the `.` that starts it — or
-/// `None`. The one place the rules above are written down, so `stem`, `extension` and
-/// `with_extension` cannot disagree about what an extension is.
-let extension_dot = pure (self: string) -> Maybe<i64> => {
-  let Some(at) = self.last_index(".") else { return None }
-  if at == 0 || at + 1 >= self.len() { return None }
-  Some(at)
+  /// A normalized path's names, root and `.` left out: `"/a/b"` and `"a/b"` are both `a`, `b`.
+  let components = pure (self) -> []string =>
+    self.split("/").filter((part) => part != "" && part != ".")
+
+  /// Where a file name's extension begins — the offset of the `.` that starts it — or
+  /// `None`. The one place the rules above are written down, so `stem`, `extension` and
+  /// `with_extension` cannot disagree about what an extension is.
+  let extension_dot = pure (self) -> Maybe<i64> => {
+    let Some(at) = self.last_index(".") else { return None }
+    if at == 0 || at + 1 >= self.len() { return None }
+    Some(at)
+  }
 }

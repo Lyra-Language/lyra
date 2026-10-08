@@ -117,190 +117,252 @@ pub let hashmap_with_capacity<k, v> = pure (capacity: i64) -> HashMap<k, v> => {
   HashMap { slots: [None; slots], count: 0 }
 }
 
-/// Maps `key` to `value`, replacing any value it already had.
-///
-/// Answers nothing, so the common insert discards nothing — `replace` is the same
-/// operation answering the value it displaced. A replaced entry keeps its position; a
-/// new one may trigger a grow, which rehashes nothing — every entry carries its hash —
-/// but does move every entry.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(1) | O(1)    | O(n)  |
-/// | **Memory** | O(1) | O(1)    | O(n)  |
-///
-/// The worst case is the insert that grows the table: n entries move to a buffer twice
-/// the size. Amortized over the inserts that filled it, that is O(1) each.
-pub let insert<k, v> where k: Hash = det (
-  self: mut HashMap<k,
-  v>,
-  key: k,
-  value: v
-) -> void => {
-  let _ = self.replace(key, value)
-}
-
-/// Maps `key` to `value` and answers the value it replaced, or `None` when the key was
-/// new.
-///
-/// `insert` is this with the answer dropped. A discarded `Maybe` warns (`lyra-W006`), so
-/// reach for this one only when the previous value is wanted.
-pub let replace<k, v> where k: Hash = det (
-  self: mut HashMap<k,
-  v>,
-  key: k,
-  value: v
-) -> Maybe<v> => {
-  let hash = hash_key(key)
-  match self.find_index(key, hash) {
-    Some(i) => {
-      let previous = match self.slots[i] { Some(e) => Some(e.value), None => None }
-      self.slots[i] = Some(Entry { hash: hash, key: key, value: value })
-      previous
-    },
-    None => {
-      if (self.count + 1) * 4 > self.slots.len() * 3 { self.grow() }
-      self.place(Entry { hash: hash, key: key, value: value })
-      self.count += 1
-      None
-    },
-  }
-}
-
-/// Maps `key` to `f` of its current value — or of `default`, when the key is absent.
-///
-/// The counting idiom in one probe: `counts.update(word, 0, (n) => n + 1)` is what
-/// `counts.insert(word, counts.get_or(word, 0) + 1)` says, without finding the key twice.
-/// `default` is evaluated whether or not it is used, being an ordinary argument; `f`
-/// runs exactly once. A new key may trigger a grow, as `insert` may.
-pub let update<k, v> where k: Hash = det (
-  self: mut HashMap<k,
-  v>,
-  key: k,
-  default: v,
-  f: (v) -> v
-) -> void => {
-  let hash = hash_key(key)
-  match self.find_index(key, hash) {
-    Some(i) => match self.slots[i] {
-      Some(e) => { self.slots[i] = Some(Entry { hash: hash, key: key, value: f(e.value) }) },
-      None => {},
-    },
-    None => {
-      if (self.count + 1) * 4 > self.slots.len() * 3 { self.grow() }
-      self.place(Entry { hash: hash, key: key, value: f(default) })
-      self.count += 1
-    },
-  }
-}
-
-/// The value mapped to `key`, or `None` if there is none.
-///
-/// Expected O(1): a probe from the key's hash, confirmed with `==`.
-pub let get<k, v> where k: Hash = pure noalloc (
-  self: HashMap<k,
-  v>,
-  key: k
-) -> Maybe<v> =>
-  match self.find_index(key, hash_key(key)) {
-    Some(i) => match self.slots[i] { Some(e) => Some(e.value), None => None },
-    None => None,
+impl HashMap<k, v> {
+  /// Maps `key` to `value`, replacing any value it already had.
+  ///
+  /// Answers nothing, so the common insert discards nothing — `replace` is the same
+  /// operation answering the value it displaced. A replaced entry keeps its position; a
+  /// new one may trigger a grow, which rehashes nothing — every entry carries its hash —
+  /// but does move every entry.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(1) | O(1)    | O(n)  |
+  /// | **Memory** | O(1) | O(1)    | O(n)  |
+  ///
+  /// The worst case is the insert that grows the table: n entries move to a buffer twice
+  /// the size. Amortized over the inserts that filled it, that is O(1) each.
+  pub let insert<k, v> where k: Hash = det (
+    self: mut,
+    key: k,
+    value: v
+  ) -> void => {
+    let _ = self.replace(key, value)
   }
 
-/// The value mapped to `key`, or `fallback` if there is none.
-///
-/// `fallback` is evaluated whether or not it is used, being an ordinary argument — the
-/// same rule as `Maybe`'s `unwrap_or`, which this is one call over.
-pub let get_or<k, v> where k: Hash = pure noalloc (
-  self: HashMap<k,
-  v>,
-  key: k,
-  fallback: v
-) -> v =>
-  self.get(key).unwrap_or(fallback)
-
-/// Whether the map has an entry for `key`.
-pub let contains_key<k, v> where k: Hash = pure noalloc (
-  self: HashMap<k,
-  v>,
-  key: k
-) -> bool =>
-  self.find_index(key, hash_key(key)).is_some()
-
-/// Removes `key`'s entry, answering the value it had, or `None` if there was none.
-///
-/// Expected O(1). The table never shrinks; the capacity stays for the entries that
-/// replace the removed one. When the value is not wanted, `let _ = m.remove(key)` is
-/// how to say so — a discarded `Maybe` warns.
-pub let remove<k, v> where k: Hash = det noalloc (
-  self: mut HashMap<k,
-  v>,
-  key: k
-) -> Maybe<v> => {
-  match self.find_index(key, hash_key(key)) {
-    None => None,
-    Some(found) => {
-      let removed = match self.slots[found] { Some(e) => Some(e.value), None => None }
-      self.close_hole(found)
-      self.count -= 1
-      removed
-    },
+  /// Maps `key` to `value` and answers the value it replaced, or `None` when the key was
+  /// new.
+  ///
+  /// `insert` is this with the answer dropped. A discarded `Maybe` warns (`lyra-W006`), so
+  /// reach for this one only when the previous value is wanted.
+  pub let replace<k, v> where k: Hash = det (
+    self: mut,
+    key: k,
+    value: v
+  ) -> Maybe<v> => {
+    let hash = hash_key(key)
+    match self.find_index(key, hash) {
+      Some(i) => {
+        let previous = match self.slots[i] { Some(e) => Some(e.value), None => None }
+        self.slots[i] = Some(Entry { hash: hash, key: key, value: value })
+        previous
+      },
+      None => {
+        if (self.count + 1) * 4 > self.slots.len() * 3 { self.grow() }
+        self.place(Entry { hash: hash, key: key, value: value })
+        self.count += 1
+        None
+      },
+    }
   }
-}
 
-/// The number of entries.
-pub let len<k, v> = pure noalloc (self: HashMap<k, v>) -> i64 => self.count
-
-/// Whether the map has no entries.
-pub let is_empty<k, v> = pure noalloc (self: HashMap<k, v>) -> bool => self.count == 0
-
-/// Removes every entry. The capacity is kept.
-pub let clear<k, v> = det noalloc (self: mut HashMap<k, v>) -> void => {
-  for i in 0..<self.slots.len() { self.slots[i] = None }
-  self.count = 0
-}
-
-/// Every key, in table order.
-///
-/// Allocates the array. The order is the table's, not insertion order — sort the result
-/// when the order matters.
-pub let keys<k, v> = pure (self: HashMap<k, v>) -> []k => {
-  let mut out: []k = []
-  out.reserve(self.count)
-  for slot in self.slots {
-    match slot { Some(e) => out.push(e.key), None => {} }
+  /// Maps `key` to `f` of its current value — or of `default`, when the key is absent.
+  ///
+  /// The counting idiom in one probe: `counts.update(word, 0, (n) => n + 1)` is what
+  /// `counts.insert(word, counts.get_or(word, 0) + 1)` says, without finding the key twice.
+  /// `default` is evaluated whether or not it is used, being an ordinary argument; `f`
+  /// runs exactly once. A new key may trigger a grow, as `insert` may.
+  pub let update<k, v> where k: Hash = det (
+    self: mut,
+    key: k,
+    default: v,
+    f: (v) -> v
+  ) -> void => {
+    let hash = hash_key(key)
+    match self.find_index(key, hash) {
+      Some(i) => match self.slots[i] {
+        Some(e) => { self.slots[i] = Some(Entry { hash: hash, key: key, value: f(e.value) }) },
+        None => {},
+      },
+      None => {
+        if (self.count + 1) * 4 > self.slots.len() * 3 { self.grow() }
+        self.place(Entry { hash: hash, key: key, value: f(default) })
+        self.count += 1
+      },
+    }
   }
-  out
-}
 
-/// Every value, in table order — the order `keys` answers, so the two arrays line up.
-///
-/// Allocates the array.
-pub let values<k, v> = pure (self: HashMap<k, v>) -> []v => {
-  let mut out: []v = []
-  out.reserve(self.count)
-  for slot in self.slots {
-    match slot { Some(e) => out.push(e.value), None => {} }
-  }
-  out
-}
+  /// The value mapped to `key`, or `None` if there is none.
+  ///
+  /// Expected O(1): a probe from the key's hash, confirmed with `==`.
+  pub let get<k, v> where k: Hash = pure noalloc (self, key: k) -> Maybe<v> =>
+    match self.find_index(key, hash_key(key)) {
+      Some(i) => match self.slots[i] { Some(e) => Some(e.value), None => None },
+      None => None,
+    }
 
-/// Every `(key, value)` pair, in table order.
-///
-/// Allocates the array. This is the way to walk a map:
-///
-/// ```
-/// for (word, n) in counts.entries() { println("${word}: ${n}") }
-/// ```
-pub let entries<k, v> = pure (self: HashMap<k, v>) -> [](k, v) => {
-  let mut out: [](k, v) = []
-  out.reserve(self.count)
-  for slot in self.slots {
-    match slot { Some(e) => out.push((e.key, e.value)), None => {} }
+  /// The value mapped to `key`, or `fallback` if there is none.
+  ///
+  /// `fallback` is evaluated whether or not it is used, being an ordinary argument — the
+  /// same rule as `Maybe`'s `unwrap_or`, which this is one call over.
+  pub let get_or<k, v> where k: Hash = pure noalloc (
+    self,
+    key: k,
+    fallback: v
+  ) -> v =>
+    self.get(key).unwrap_or(fallback)
+
+  /// Whether the map has an entry for `key`.
+  pub let contains_key<k, v> where k: Hash = pure noalloc (self, key: k) -> bool =>
+    self.find_index(key, hash_key(key)).is_some()
+
+  /// Removes `key`'s entry, answering the value it had, or `None` if there was none.
+  ///
+  /// Expected O(1). The table never shrinks; the capacity stays for the entries that
+  /// replace the removed one. When the value is not wanted, `let _ = m.remove(key)` is
+  /// how to say so — a discarded `Maybe` warns.
+  pub let remove<k, v> where k: Hash = det noalloc (
+    self: mut,
+    key: k
+  ) -> Maybe<v> => {
+    match self.find_index(key, hash_key(key)) {
+      None => None,
+      Some(found) => {
+        let removed = match self.slots[found] { Some(e) => Some(e.value), None => None }
+        self.close_hole(found)
+        self.count -= 1
+        removed
+      },
+    }
   }
-  out
+
+  /// The number of entries.
+  pub let len<k, v> = pure noalloc (self) -> i64 => self.count
+
+  /// Whether the map has no entries.
+  pub let is_empty<k, v> = pure noalloc (self) -> bool => self.count == 0
+
+  /// Removes every entry. The capacity is kept.
+  pub let clear<k, v> = det noalloc (self: mut) -> void => {
+    for i in 0..<self.slots.len() { self.slots[i] = None }
+    self.count = 0
+  }
+
+  /// Every key, in table order.
+  ///
+  /// Allocates the array. The order is the table's, not insertion order — sort the result
+  /// when the order matters.
+  pub let keys<k, v> = pure (self) -> []k => {
+    let mut out: []k = []
+    out.reserve(self.count)
+    for slot in self.slots {
+      match slot { Some(e) => out.push(e.key), None => {} }
+    }
+    out
+  }
+
+  /// Every value, in table order — the order `keys` answers, so the two arrays line up.
+  ///
+  /// Allocates the array.
+  pub let values<k, v> = pure (self) -> []v => {
+    let mut out: []v = []
+    out.reserve(self.count)
+    for slot in self.slots {
+      match slot { Some(e) => out.push(e.value), None => {} }
+    }
+    out
+  }
+
+  /// Every `(key, value)` pair, in table order.
+  ///
+  /// Allocates the array. This is the way to walk a map:
+  ///
+  /// ```
+  /// for (word, n) in counts.entries() { println("${word}: ${n}") }
+  /// ```
+  pub let entries<k, v> = pure (self) -> [](k, v) => {
+    let mut out: [](k, v) = []
+    out.reserve(self.count)
+    for slot in self.slots {
+      match slot { Some(e) => out.push((e.key, e.value)), None => {} }
+    }
+    out
+  }
+
+  // ---- private helpers ----
+
+  // The slot holding `key`, or `None` when the map has no entry for it. `hash` is
+  // `hash_key(key)`, passed in because every caller already has it. A probe compares the
+  // stored hash before the key, so a `string` key is compared only on a hash match.
+  //
+  // The loop is bounded by the slot count rather than infinite: the load-factor cap
+  // guarantees an empty slot, but a bound makes the function's termination visible on the
+  // page rather than an invariant the reader has to trust.
+  let find_index<k, v> where k: Hash = pure noalloc (
+    self,
+    key: k,
+    hash: u64
+  ) -> Maybe<i64> => {
+    let mask = u64(self.slots.len() - 1)
+    var i = i64(hash & mask)
+    for _ in 0..<self.slots.len() {
+      match self.slots[i] {
+        None => { return None },
+        Some(e) => { if e.hash == hash && e.key == key { return Some(i) } },
+      }
+      i = i64((u64(i) + 1) & mask)
+    }
+    None
+  }
+
+  // Puts `entry` in the first empty slot of its probe sequence. The caller has already
+  // established that its key is absent and that the table has room.
+  let place<k, v> = det noalloc (self: mut, entry: Entry<k, v>) -> void => {
+    let mask = u64(self.slots.len() - 1)
+    var i = i64(entry.hash & mask)
+    for self.slots[i].is_some() { i = i64((u64(i) + 1) & mask) }
+    self.slots[i] = Some(entry)
+  }
+
+  // Doubles the table and re-places every entry. No key is rehashed — each entry carries
+  // its hash — so this costs one allocation and n probes.
+  let grow<k, v> = det (self: mut) -> void => {
+    let old = self.slots
+    self.slots = [None; old.len() * 2]
+    for slot in old {
+      match slot { Some(e) => self.place(e), None => {} }
+    }
+  }
+
+  // Backward-shift deletion: empties slot `hole`, then walks the cluster after it and pulls
+  // back each entry that may legally sit earlier. An entry at `j` whose ideal slot is `p`
+  // can move to `hole` exactly when `p` is not strictly inside the cyclic range
+  // `(hole, j]` — that is, when its distance from `p` to `j` is at least the distance from
+  // `hole` to `j` — because a probe for it starts at `p`, passes `hole` before `j`, and
+  // would otherwise stop early at the emptied slot. The walk ends at the first empty slot,
+  // which no probe crosses.
+  let close_hole<k, v> = det noalloc (self: mut, found: i64) -> void => {
+    let mask = u64(self.slots.len() - 1)
+    var hole = found
+    var j = found
+    for {
+      j = i64((u64(j) + 1) & mask)
+      match self.slots[j] {
+        None => { break },
+        Some(e) => {
+          let from_ideal = (u64(j).wrapping_sub(e.hash)) & mask
+          let from_hole = (u64(j).wrapping_sub(u64(hole))) & mask
+          if from_ideal >= from_hole {
+            self.slots[hole] = Some(e)
+            hole = j
+          }
+        },
+      }
+    }
+    self.slots[hole] = None
+  }
 }
 
 /// `key`'s hash as the table uses it: `Hash::hash` run through a `splitmix64`
@@ -324,80 +386,6 @@ pub let hash_combine = pure noalloc (h: u64, next: u64) -> u64 =>
       .wrapping_add(11400714819323198485)
       .wrapping_add(h << 6)
       .wrapping_add(h >> 2))
-
-// ---- private helpers ----
-
-// The slot holding `key`, or `None` when the map has no entry for it. `hash` is
-// `hash_key(key)`, passed in because every caller already has it. A probe compares the
-// stored hash before the key, so a `string` key is compared only on a hash match.
-//
-// The loop is bounded by the slot count rather than infinite: the load-factor cap
-// guarantees an empty slot, but a bound makes the function's termination visible on the
-// page rather than an invariant the reader has to trust.
-let find_index<k, v> where k: Hash = pure noalloc (
-  self: HashMap<k,
-  v>,
-  key: k,
-  hash: u64
-) -> Maybe<i64> => {
-  let mask = u64(self.slots.len() - 1)
-  var i = i64(hash & mask)
-  for _ in 0..<self.slots.len() {
-    match self.slots[i] {
-      None => { return None },
-      Some(e) => { if e.hash == hash && e.key == key { return Some(i) } },
-    }
-    i = i64((u64(i) + 1) & mask)
-  }
-  None
-}
-
-// Puts `entry` in the first empty slot of its probe sequence. The caller has already
-// established that its key is absent and that the table has room.
-let place<k, v> = det noalloc (self: mut HashMap<k, v>, entry: Entry<k, v>) -> void => {
-  let mask = u64(self.slots.len() - 1)
-  var i = i64(entry.hash & mask)
-  for self.slots[i].is_some() { i = i64((u64(i) + 1) & mask) }
-  self.slots[i] = Some(entry)
-}
-
-// Doubles the table and re-places every entry. No key is rehashed — each entry carries
-// its hash — so this costs one allocation and n probes.
-let grow<k, v> = det (self: mut HashMap<k, v>) -> void => {
-  let old = self.slots
-  self.slots = [None; old.len() * 2]
-  for slot in old {
-    match slot { Some(e) => self.place(e), None => {} }
-  }
-}
-
-// Backward-shift deletion: empties slot `hole`, then walks the cluster after it and pulls
-// back each entry that may legally sit earlier. An entry at `j` whose ideal slot is `p`
-// can move to `hole` exactly when `p` is not strictly inside the cyclic range
-// `(hole, j]` — that is, when its distance from `p` to `j` is at least the distance from
-// `hole` to `j` — because a probe for it starts at `p`, passes `hole` before `j`, and
-// would otherwise stop early at the emptied slot. The walk ends at the first empty slot,
-// which no probe crosses.
-let close_hole<k, v> = det noalloc (self: mut HashMap<k, v>, found: i64) -> void => {
-  let mask = u64(self.slots.len() - 1)
-  var hole = found
-  var j = found
-  for {
-    j = i64((u64(j) + 1) & mask)
-    match self.slots[j] {
-      None => { break },
-      Some(e) => {
-        let from_ideal = (u64(j).wrapping_sub(e.hash)) & mask
-        let from_hole = (u64(j).wrapping_sub(u64(hole))) & mask
-        if from_ideal >= from_hole {
-          self.slots[hole] = Some(e)
-          hole = j
-        }
-      },
-    }
-  }
-  self.slots[hole] = None
-}
 
 // The `splitmix64` finalizer: a bijection on u64, so it loses nothing an `impl Hash`
 // provided, and it spreads sequential inputs across every bit.

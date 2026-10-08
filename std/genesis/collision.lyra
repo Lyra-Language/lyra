@@ -68,345 +68,364 @@ pub struct Collider {
   one_way: bool = false,
 }
 
-/// Whether this collider on something at (`ax`, `ay`) meets `b` on something at (`bx`,
-/// `by`): it looks for one of `b`'s layers, and their shapes overlap. One-sided — `b` need
-/// not look for this one's. The layers are tested first, so most pairs cost an `and`.
-pub let meets = pure (
-  self: Collider,
-  ax: i16,
-  ay: i16,
-  b: Collider,
-  bx: i16,
-  by: i16
-) -> bool => (self.mask & b.layers) != 0 && self.shape.overlaps(ax, ay, b.shape, bx, by)
+impl Collider {
+  /// Whether this collider on something at (`ax`, `ay`) meets `b` on something at (`bx`,
+  /// `by`): it looks for one of `b`'s layers, and their shapes overlap. One-sided — `b` need
+  /// not look for this one's. The layers are tested first, so most pairs cost an `and`.
+  pub let meets = pure (
+    self,
+    ax: i16,
+    ay: i16,
+    b: Collider,
+    bx: i16,
+    by: i16
+  ) -> bool => (self.mask & b.layers) != 0 && self.shape.overlaps(ax, ay, b.shape, bx, by)
 
-/// Whether this shape on something at (`ax`, `ay`) overlaps `b` on something at (`bx`, `by`).
-/// Touching is not overlapping, and a shape with no area overlaps nothing.
-pub let overlaps = pure (
-  self: Shape,
-  ax: i16,
-  ay: i16,
-  b: Shape,
-  bx: i16,
-  by: i16
-) -> bool => {
-  if self.width <= 0 || self.height <= 0 || b.width <= 0 || b.height <= 0 { return false }
-  let a_left = i32(ax) + i32(self.x)
-  let a_top = i32(ay) + i32(self.y)
-  let b_left = i32(bx) + i32(b.x)
-  let b_top = i32(by) + i32(b.y)
-  let a_right = a_left + i32(self.width)
-  let a_bottom = a_top + i32(self.height)
-  let b_right = b_left + i32(b.width)
-  let b_bottom = b_top + i32(b.height)
-  // The rectangles first: no pair overlaps unless they do, and past here every
-  // difference below is no wider than a shape.
-  if a_left >= b_right || b_left >= a_right || a_top >= b_bottom || b_top >= a_bottom {
-    return false
-  }
-  if !self.ellipse && !b.ellipse { return true }
-  // Doubled coordinates: an ellipse's centre and radius are whole numbers then.
-  if self.ellipse && b.ellipse {
-    // As one ellipse with the summed radii, about the difference of the centres — in
-    // single units, so the products stay inside 32 bits.
-    let dx = ((a_left * 2 + i32(self.width)) - (b_left * 2 + i32(b.width))) / 2
-    let dy = ((a_top * 2 + i32(self.height)) - (b_top * 2 + i32(b.height))) / 2
-    let rx = (i32(self.width) + i32(b.width)) / 2
-    let ry = (i32(self.height) + i32(b.height)) / 2
-    return inside(dx, dy, rx, ry)
-  }
-  if self.ellipse {
-    return box_meets_ellipse(
-      b_left,
-      b_top,
-      b_right,
-      b_bottom,
-      a_left,
-      a_top,
-      self.width,
-      self.height
-    )
-  }
-  box_meets_ellipse(a_left, a_top, a_right, a_bottom, b_left, b_top, b.width, b.height)
-}
+  /// The collider with its shape mirrored left to right on an owner `width` wide.
+  pub let mirrored = pure (self, width: i16) -> Collider =>
+    Collider { self | shape: self.shape.mirrored(width) }
 
-/// The shape mirrored left to right on an owner `width` wide — a sprite drawn mirrored.
-pub let mirrored = pure (self: Shape, width: i16) -> Shape =>
-  Shape { self | x: width - self.x - self.width }
+  /// The collider with its shape flipped top to bottom on an owner `height` tall.
+  pub let flipped = pure (self, height: i16) -> Collider =>
+    Collider { self | shape: self.shape.flipped(height) }
 
-/// The shape flipped top to bottom on an owner `height` tall.
-pub let flipped = pure (self: Shape, height: i16) -> Shape =>
-  Shape { self | y: height - self.y - self.height }
+  /// Whether this collider on something at (`x`, `y`) meets one of `others` it looks for —
+  /// colliders placed in the world itself, at its origin: a map's own shapes, in the map's
+  /// pixels. One-sided, as [meets] is.
+  pub let hits_any<const P: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    others: ref [P]Collider
+  ) -> bool => self.any_stops(x, y, y, false, others, 0, u16(others.len()))
 
-/// The collider with its shape mirrored left to right on an owner `width` wide.
-pub let mirrored = pure (self: Collider, width: i16) -> Collider =>
-  Collider { self | shape: self.shape.mirrored(width) }
+  /// [hits_any] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way collider
+  /// counts only when the move came down onto it — overlapping it at `y`, clear of it at
+  /// `from_y` above.
+  pub let hits_any_moving<const P: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    from_y: i16,
+    others: ref [P]Collider
+  ) -> bool => self.any_stops(x, y, from_y, true, others, 0, u16(others.len()))
 
-/// The collider with its shape flipped top to bottom on an owner `height` tall.
-pub let flipped = pure (self: Collider, height: i16) -> Collider =>
-  Collider { self | shape: self.shape.flipped(height) }
+  /// [hits_any] over colliders gathered by band: band `b`'s are `others[bands[b]]` up to
+  /// `others[bands[b + 1]]`, every collider reaching into its 64 columns — so one wider than a
+  /// band is in each it crosses, and one off the map's left or right in the first or last.
+  /// Only the bands this collider's own shape reaches are searched. `#[0, n]`, one band,
+  /// searches all `n`.
+  pub let hits_banded<const B: i64, const P: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    bands: ref [B]u16,
+    others: ref [P]Collider
+  ) -> bool => self.banded_stops(x, y, y, false, bands, others)
 
-/// Whether the shape on something at (`x`, `y`) overlaps a shape of any of a tile map's cells.
-/// `cells` is the map's name-table words, row by row, `width` cells a row, the map's
-/// top-left at the world's (0, 0); its tile set's tiles start at video memory's tile
-/// `first_tile`. Tile `t`'s shapes are `shapes[starts[t]]` up to `shapes[starts[t + 1]]`,
-/// from the tile's top-left, mirrored and flipped as a cell shows its tile. A shape past
-/// the map's edge meets nothing there.
-pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
-  self: Shape,
-  x: i16,
-  y: i16,
-  cells: ref [N]u16,
-  width: u16,
-  first_tile: u16,
-  starts: ref [M]u16,
-  shapes: ref [K]Shape
-) -> bool => {
-  let left = i32(x) + i32(self.x)
-  let top = i32(y) + i32(self.y)
-  let rows = i32(cells.len()) / i32(width)
-  let tiles = i32(starts.len()) - 1
-  // The cells the shape's rectangle covers, inside the map.
-  let first_column = (left >> 3).max(0)
-  let last_column = ((left + i32(self.width) - 1) >> 3).min(i32(width) - 1)
-  let first_row = (top >> 3).max(0)
-  let last_row = ((top + i32(self.height) - 1) >> 3).min(rows - 1)
-  var row = first_row
-  for row <= last_row {
-    var column = first_column
-    for column <= last_column {
-      let word = cells[row * i32(width) + column]
-      let tile = i32(word & 0x7FF) - i32(first_tile)
-      if tile >= 0 && tile < tiles {
-        for k: u16 in starts[tile]..<starts[tile + 1] {
-          var shape = shapes[k]
-          if (word & 0x0800) != 0 { shape = shape.mirrored(8) }
-          if (word & 0x1000) != 0 { shape = shape.flipped(8) }
-          if self.overlaps(x, y, shape, i16(column * 8), i16(row * 8)) { return true }
-        }
-      }
-      column += 1
+  /// [hits_banded] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way collider
+  /// counts only coming down onto it, as in [hits_any_moving].
+  pub let hits_banded_moving<const B: i64, const P: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    from_y: i16,
+    bands: ref [B]u16,
+    others: ref [P]Collider
+  ) -> bool => self.banded_stops(x, y, from_y, true, bands, others)
+
+  /// Whether this collider on something at (`x`, `y`) meets a tile of a map: as the shape
+  /// form above, but each tile's shapes are colliders, and only those on a layer this one
+  /// looks for count.
+  pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    cells: ref [N]u16,
+    width: u16,
+    first_tile: u16,
+    starts: ref [M]u16,
+    shapes: ref [K]Collider
+  ) -> bool => self.map_stops(x, y, y, false, cells, width, first_tile, starts, shapes)
+
+  /// [hits_map] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way tile
+  /// collider counts only when the move came down onto it, as in [hits_any_moving].
+  pub let hits_map_moving<const N: i64, const M: i64, const K: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    from_y: i16,
+    cells: ref [N]u16,
+    width: u16,
+    first_tile: u16,
+    starts: ref [M]u16,
+    shapes: ref [K]Collider
+  ) -> bool =>
+    self.map_stops(x, y, from_y, true, cells, width, first_tile, starts, shapes)
+
+  // ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+  /// Whether this collider, at (`x`, `y`) — moved there from (`x`, `from_y`) when `moving` —
+  /// is stopped by `other` placed at (`ox`, `oy`): it looks for one of `other`'s layers,
+  /// their shapes overlap, and, `other` being one-way, a move came down onto it from clear
+  /// above. Not moving, a one-way collider is met as any other is.
+  let stopped_by = pure (
+    self,
+    x: i16,
+    y: i16,
+    from_y: i16,
+    moving: bool,
+    other: Collider,
+    ox: i16,
+    oy: i16
+  ) -> bool => {
+    if (self.mask & other.layers) == 0 || !self.shape.overlaps(
+      x,
+      y,
+      other.shape,
+      ox,
+      oy
+    ) {
+      return false
     }
-    row += 1
+    !other.one_way || !moving || (from_y < y && !self.shape.overlaps(
+      x,
+      from_y,
+      other.shape,
+      ox,
+      oy
+    ))
   }
-  false
+
+  /// [hits_banded] and [hits_banded_moving]: each band the collider's shape reaches, from
+  /// the first to the last, clamped to the bands there are.
+  let banded_stops<const B: i64, const P: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    from_y: i16,
+    moving: bool,
+    bands: ref [B]u16,
+    others: ref [P]Collider
+  ) -> bool => {
+    let last = i32(bands.len()) - 2
+    let left = i32(x) + i32(self.shape.x)
+    var band = (left >> BAND_SHIFT).clamp(0, last)
+    let final = ((left + i32(self.shape.width) - 1) >> BAND_SHIFT).clamp(0, last)
+    for band <= final {
+      if self.any_stops(
+        x,
+        y,
+        from_y,
+        moving,
+        others,
+        bands[band],
+        bands[band + 1]
+      ) { return true }
+      band += 1
+    }
+    false
+  }
+
+  /// [hits_any] and [hits_any_moving], over `others[first]` up to `others[end]`.
+  let any_stops<const P: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    from_y: i16,
+    moving: bool,
+    others: ref [P]Collider,
+    first: u16,
+    end: u16
+  ) -> bool => {
+    // A map has tens of these and an entity tests them on each axis every frame, so the
+    // layers and rectangles are compared here, inline: a call a pair, with its colliders
+    // copied, cost the 68000 two thirds of a frame for two walking enemies (10/05).
+    if self.shape.width <= 0 || self.shape.height <= 0 { return false }
+    let left = i32(x) + i32(self.shape.x)
+    let top = i32(y) + i32(self.shape.y)
+    let right = left + i32(self.shape.width)
+    let bottom = top + i32(self.shape.height)
+    let boxed = !self.shape.ellipse
+    for k: u16 in first..<end {
+      if (self.mask & others[k].layers) == 0 { continue }
+      let o = others[k].shape
+      if i32(o.x) >= right || i32(o.x) + i32(o.width) <= left || i32(o.y) >= bottom || i32(o.y) + i32(o.height) <= top {
+        continue
+      }
+      // Two boxes whose rectangles overlap overlap: answered here, where the call would
+      // copy both — unless the other is one way, or has no area.
+      if boxed && !o.ellipse && !others[k].one_way && o.width > 0 && o.height > 0 { return true }
+      if self.stopped_by(x, y, from_y, moving, others[k], 0, 0) { return true }
+    }
+    false
+  }
+
+  /// [hits_map] and [hits_map_moving].
+  let map_stops<const N: i64, const M: i64, const K: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    from_y: i16,
+    moving: bool,
+    cells: ref [N]u16,
+    width: u16,
+    first_tile: u16,
+    starts: ref [M]u16,
+    shapes: ref [K]Collider
+  ) -> bool => {
+    // Tiles that carry no shapes at all — a map whose collision is its own — meet nothing.
+    if starts[starts.len() - 1] == 0 { return false }
+    let left = i32(x) + i32(self.shape.x)
+    let top = i32(y) + i32(self.shape.y)
+    let rows = i32(cells.len()) / i32(width)
+    let tiles = i32(starts.len()) - 1
+    let first_column = (left >> 3).max(0)
+    let last_column = ((left + i32(self.shape.width) - 1) >> 3).min(i32(width) - 1)
+    let first_row = (top >> 3).max(0)
+    let last_row = ((top + i32(self.shape.height) - 1) >> 3).min(rows - 1)
+    var row = first_row
+    for row <= last_row {
+      var column = first_column
+      for column <= last_column {
+        let word = cells[row * i32(width) + column]
+        let tile = i32(word & 0x7FF) - i32(first_tile)
+        if tile >= 0 && tile < tiles {
+          for k: u16 in starts[tile]..<starts[tile + 1] {
+            var other = shapes[k]
+            if (self.mask & other.layers) == 0 { continue }
+            if (word & 0x0800) != 0 { other = other.mirrored(8) }
+            if (word & 0x1000) != 0 { other = other.flipped(8) }
+            if self.stopped_by(
+              x,
+              y,
+              from_y,
+              moving,
+              other,
+              i16(column * 8),
+              i16(row * 8)
+            ) {
+              return true
+            }
+          }
+        }
+        column += 1
+      }
+      row += 1
+    }
+    false
+  }
 }
 
-/// Whether this collider on something at (`x`, `y`) meets one of `others` it looks for —
-/// colliders placed in the world itself, at its origin: a map's own shapes, in the map's
-/// pixels. One-sided, as [meets] is.
-pub let hits_any<const P: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  others: ref [P]Collider
-) -> bool => self.any_stops(x, y, y, false, others, 0, u16(others.len()))
+impl Shape {
+  /// Whether this shape on something at (`ax`, `ay`) overlaps `b` on something at (`bx`, `by`).
+  /// Touching is not overlapping, and a shape with no area overlaps nothing.
+  pub let overlaps = pure (
+    self,
+    ax: i16,
+    ay: i16,
+    b: Shape,
+    bx: i16,
+    by: i16
+  ) -> bool => {
+    if self.width <= 0 || self.height <= 0 || b.width <= 0 || b.height <= 0 { return false }
+    let a_left = i32(ax) + i32(self.x)
+    let a_top = i32(ay) + i32(self.y)
+    let b_left = i32(bx) + i32(b.x)
+    let b_top = i32(by) + i32(b.y)
+    let a_right = a_left + i32(self.width)
+    let a_bottom = a_top + i32(self.height)
+    let b_right = b_left + i32(b.width)
+    let b_bottom = b_top + i32(b.height)
+    // The rectangles first: no pair overlaps unless they do, and past here every
+    // difference below is no wider than a shape.
+    if a_left >= b_right || b_left >= a_right || a_top >= b_bottom || b_top >= a_bottom {
+      return false
+    }
+    if !self.ellipse && !b.ellipse { return true }
+    // Doubled coordinates: an ellipse's centre and radius are whole numbers then.
+    if self.ellipse && b.ellipse {
+      // As one ellipse with the summed radii, about the difference of the centres — in
+      // single units, so the products stay inside 32 bits.
+      let dx = ((a_left * 2 + i32(self.width)) - (b_left * 2 + i32(b.width))) / 2
+      let dy = ((a_top * 2 + i32(self.height)) - (b_top * 2 + i32(b.height))) / 2
+      let rx = (i32(self.width) + i32(b.width)) / 2
+      let ry = (i32(self.height) + i32(b.height)) / 2
+      return inside(dx, dy, rx, ry)
+    }
+    if self.ellipse {
+      return box_meets_ellipse(
+        b_left,
+        b_top,
+        b_right,
+        b_bottom,
+        a_left,
+        a_top,
+        self.width,
+        self.height
+      )
+    }
+    box_meets_ellipse(a_left, a_top, a_right, a_bottom, b_left, b_top, b.width, b.height)
+  }
 
-/// [hits_any] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way collider
-/// counts only when the move came down onto it — overlapping it at `y`, clear of it at
-/// `from_y` above.
-pub let hits_any_moving<const P: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  from_y: i16,
-  others: ref [P]Collider
-) -> bool => self.any_stops(x, y, from_y, true, others, 0, u16(others.len()))
+  /// The shape mirrored left to right on an owner `width` wide — a sprite drawn mirrored.
+  pub let mirrored = pure (self, width: i16) -> Shape =>
+    Shape { self | x: width - self.x - self.width }
+
+  /// The shape flipped top to bottom on an owner `height` tall.
+  pub let flipped = pure (self, height: i16) -> Shape =>
+    Shape { self | y: height - self.y - self.height }
+
+  /// Whether the shape on something at (`x`, `y`) overlaps a shape of any of a tile map's cells.
+  /// `cells` is the map's name-table words, row by row, `width` cells a row, the map's
+  /// top-left at the world's (0, 0); its tile set's tiles start at video memory's tile
+  /// `first_tile`. Tile `t`'s shapes are `shapes[starts[t]]` up to `shapes[starts[t + 1]]`,
+  /// from the tile's top-left, mirrored and flipped as a cell shows its tile. A shape past
+  /// the map's edge meets nothing there.
+  pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
+    self,
+    x: i16,
+    y: i16,
+    cells: ref [N]u16,
+    width: u16,
+    first_tile: u16,
+    starts: ref [M]u16,
+    shapes: ref [K]Shape
+  ) -> bool => {
+    let left = i32(x) + i32(self.x)
+    let top = i32(y) + i32(self.y)
+    let rows = i32(cells.len()) / i32(width)
+    let tiles = i32(starts.len()) - 1
+    // The cells the shape's rectangle covers, inside the map.
+    let first_column = (left >> 3).max(0)
+    let last_column = ((left + i32(self.width) - 1) >> 3).min(i32(width) - 1)
+    let first_row = (top >> 3).max(0)
+    let last_row = ((top + i32(self.height) - 1) >> 3).min(rows - 1)
+    var row = first_row
+    for row <= last_row {
+      var column = first_column
+      for column <= last_column {
+        let word = cells[row * i32(width) + column]
+        let tile = i32(word & 0x7FF) - i32(first_tile)
+        if tile >= 0 && tile < tiles {
+          for k: u16 in starts[tile]..<starts[tile + 1] {
+            var shape = shapes[k]
+            if (word & 0x0800) != 0 { shape = shape.mirrored(8) }
+            if (word & 0x1000) != 0 { shape = shape.flipped(8) }
+            if self.overlaps(x, y, shape, i16(column * 8), i16(row * 8)) { return true }
+          }
+        }
+        column += 1
+      }
+      row += 1
+    }
+    false
+  }
+}
 
 /// Which band of a map's own colliders a pixel column is in: its `x >> BAND_SHIFT`, bands
 /// being 64 pixels wide.
 pub const BAND_SHIFT: i32 = 6
-
-/// [hits_any] over colliders gathered by band: band `b`'s are `others[bands[b]]` up to
-/// `others[bands[b + 1]]`, every collider reaching into its 64 columns — so one wider than a
-/// band is in each it crosses, and one off the map's left or right in the first or last.
-/// Only the bands this collider's own shape reaches are searched. `#[0, n]`, one band,
-/// searches all `n`.
-pub let hits_banded<const B: i64, const P: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  bands: ref [B]u16,
-  others: ref [P]Collider
-) -> bool => self.banded_stops(x, y, y, false, bands, others)
-
-/// [hits_banded] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way collider
-/// counts only coming down onto it, as in [hits_any_moving].
-pub let hits_banded_moving<const B: i64, const P: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  from_y: i16,
-  bands: ref [B]u16,
-  others: ref [P]Collider
-) -> bool => self.banded_stops(x, y, from_y, true, bands, others)
-
-/// Whether this collider on something at (`x`, `y`) meets a tile of a map: as the shape
-/// form above, but each tile's shapes are colliders, and only those on a layer this one
-/// looks for count.
-pub let hits_map<const N: i64, const M: i64, const K: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  cells: ref [N]u16,
-  width: u16,
-  first_tile: u16,
-  starts: ref [M]u16,
-  shapes: ref [K]Collider
-) -> bool => self.map_stops(x, y, y, false, cells, width, first_tile, starts, shapes)
-
-/// [hits_map] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way tile
-/// collider counts only when the move came down onto it, as in [hits_any_moving].
-pub let hits_map_moving<const N: i64, const M: i64, const K: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  from_y: i16,
-  cells: ref [N]u16,
-  width: u16,
-  first_tile: u16,
-  starts: ref [M]u16,
-  shapes: ref [K]Collider
-) -> bool => self.map_stops(x, y, from_y, true, cells, width, first_tile, starts, shapes)
-
-// ── Beneath ──────────────────────────────────────────────────────────────────────────
-
-/// Whether this collider, at (`x`, `y`) — moved there from (`x`, `from_y`) when `moving` —
-/// is stopped by `other` placed at (`ox`, `oy`): it looks for one of `other`'s layers,
-/// their shapes overlap, and, `other` being one-way, a move came down onto it from clear
-/// above. Not moving, a one-way collider is met as any other is.
-let stopped_by = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  from_y: i16,
-  moving: bool,
-  other: Collider,
-  ox: i16,
-  oy: i16
-) -> bool => {
-  if (self.mask & other.layers) == 0 || !self.shape.overlaps(x, y, other.shape, ox, oy) {
-    return false
-  }
-  !other.one_way || !moving || (from_y < y && !self.shape.overlaps(
-    x,
-    from_y,
-    other.shape,
-    ox,
-    oy
-  ))
-}
-
-/// [hits_banded] and [hits_banded_moving]: each band the collider's shape reaches, from
-/// the first to the last, clamped to the bands there are.
-let banded_stops<const B: i64, const P: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  from_y: i16,
-  moving: bool,
-  bands: ref [B]u16,
-  others: ref [P]Collider
-) -> bool => {
-  let last = i32(bands.len()) - 2
-  let left = i32(x) + i32(self.shape.x)
-  var band = (left >> BAND_SHIFT).clamp(0, last)
-  let final = ((left + i32(self.shape.width) - 1) >> BAND_SHIFT).clamp(0, last)
-  for band <= final {
-    if self.any_stops(
-      x,
-      y,
-      from_y,
-      moving,
-      others,
-      bands[band],
-      bands[band + 1]
-    ) { return true }
-    band += 1
-  }
-  false
-}
-
-/// [hits_any] and [hits_any_moving], over `others[first]` up to `others[end]`.
-let any_stops<const P: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  from_y: i16,
-  moving: bool,
-  others: ref [P]Collider,
-  first: u16,
-  end: u16
-) -> bool => {
-  // A map has tens of these and an entity tests them on each axis every frame, so the
-  // layers and rectangles are compared here, inline: a call a pair, with its colliders
-  // copied, cost the 68000 two thirds of a frame for two walking enemies (10/05).
-  if self.shape.width <= 0 || self.shape.height <= 0 { return false }
-  let left = i32(x) + i32(self.shape.x)
-  let top = i32(y) + i32(self.shape.y)
-  let right = left + i32(self.shape.width)
-  let bottom = top + i32(self.shape.height)
-  let boxed = !self.shape.ellipse
-  for k: u16 in first..<end {
-    if (self.mask & others[k].layers) == 0 { continue }
-    let o = others[k].shape
-    if i32(o.x) >= right || i32(o.x) + i32(o.width) <= left || i32(o.y) >= bottom || i32(o.y) + i32(o.height) <= top {
-      continue
-    }
-    // Two boxes whose rectangles overlap overlap: answered here, where the call would
-    // copy both — unless the other is one way, or has no area.
-    if boxed && !o.ellipse && !others[k].one_way && o.width > 0 && o.height > 0 { return true }
-    if self.stopped_by(x, y, from_y, moving, others[k], 0, 0) { return true }
-  }
-  false
-}
-
-/// [hits_map] and [hits_map_moving].
-let map_stops<const N: i64, const M: i64, const K: i64> = pure (
-  self: Collider,
-  x: i16,
-  y: i16,
-  from_y: i16,
-  moving: bool,
-  cells: ref [N]u16,
-  width: u16,
-  first_tile: u16,
-  starts: ref [M]u16,
-  shapes: ref [K]Collider
-) -> bool => {
-  // Tiles that carry no shapes at all — a map whose collision is its own — meet nothing.
-  if starts[starts.len() - 1] == 0 { return false }
-  let left = i32(x) + i32(self.shape.x)
-  let top = i32(y) + i32(self.shape.y)
-  let rows = i32(cells.len()) / i32(width)
-  let tiles = i32(starts.len()) - 1
-  let first_column = (left >> 3).max(0)
-  let last_column = ((left + i32(self.shape.width) - 1) >> 3).min(i32(width) - 1)
-  let first_row = (top >> 3).max(0)
-  let last_row = ((top + i32(self.shape.height) - 1) >> 3).min(rows - 1)
-  var row = first_row
-  for row <= last_row {
-    var column = first_column
-    for column <= last_column {
-      let word = cells[row * i32(width) + column]
-      let tile = i32(word & 0x7FF) - i32(first_tile)
-      if tile >= 0 && tile < tiles {
-        for k: u16 in starts[tile]..<starts[tile + 1] {
-          var other = shapes[k]
-          if (self.mask & other.layers) == 0 { continue }
-          if (word & 0x0800) != 0 { other = other.mirrored(8) }
-          if (word & 0x1000) != 0 { other = other.flipped(8) }
-          if self.stopped_by(x, y, from_y, moving, other, i16(column * 8), i16(row * 8)) {
-            return true
-          }
-        }
-      }
-      column += 1
-    }
-    row += 1
-  }
-  false
-}
 
 /// Whether (`dx`, `dy`) from an ellipse's centre is inside it, its radii `rx` and `ry`.
 let inside = pure (dx: i32, dy: i32, rx: i32, ry: i32) -> bool =>

@@ -120,15 +120,15 @@ unsafe extern sdl_destroy_surface: (surface: Surface) -> void
 ///
 /// `nullptr` asks SDL to choose a driver, which is the call the null literal exists for:
 /// before it there was no way to pass NULL and no way to test one either.
-pub let create_renderer = (window: Window) -> Maybe<Renderer> => {
-  let r = unsafe { sdl_create_renderer(window, nullptr) }
+pub let create_renderer = (self: Window) -> Maybe<Renderer> => {
+  let r = unsafe { sdl_create_renderer(self, nullptr) }
   if r == nullptr { None } else { Some(r) }
 }
 
 /// A renderer of the kind named — `"gpu"` for SDL's GPU renderer, the one custom shaders
 /// run on ([create_msl_effect]) — or `None` if SDL has no such renderer here.
-pub let create_named_renderer = (window: Window, name: string) -> Maybe<Renderer> => {
-  let r = name.with_cstring((n) => unsafe { sdl_create_renderer(window, n) })
+pub let create_named_renderer = (self: Window, name: string) -> Maybe<Renderer> => {
+  let r = name.with_cstring((n) => unsafe { sdl_create_renderer(self, n) })
   if r == nullptr { None } else { Some(r) }
 }
 
@@ -136,82 +136,84 @@ pub let create_named_renderer = (window: Window, name: string) -> Maybe<Renderer
 pub let destroy_renderer = (renderer: Renderer) -> void =>
   unsafe { sdl_destroy_renderer(renderer) }
 
-/// Draw in a `width` × `height` coordinate space whatever size the window is. `mode` is a
-/// `PRESENT_*` constant and says how that space is fitted to the window.
-///
-/// Everything drawn is scaled — points become squares and [debug_text] grows with them —
-/// which is exactly the look of a low-resolution screen blown up.
-pub let set_logical_presentation = (
-  renderer: Renderer,
-  width: i32,
-  height: i32,
-  mode: i32,
-) -> bool =>
-  unsafe { sdl_set_render_logical_presentation(renderer, width, height, mode) }
+impl Renderer {
+  /// Draw in a `width` × `height` coordinate space whatever size the window is. `mode` is a
+  /// `PRESENT_*` constant and says how that space is fitted to the window.
+  ///
+  /// Everything drawn is scaled — points become squares and [debug_text] grows with them —
+  /// which is exactly the look of a low-resolution screen blown up.
+  pub let set_logical_presentation = (
+    self,
+    width: i32,
+    height: i32,
+    mode: i32,
+  ) -> bool =>
+    unsafe { sdl_set_render_logical_presentation(self, width, height, mode) }
 
-/// Wait for the display's refresh on [present], which paces a loop at the display's rate
-/// with no timing code at all. `false` turns it off.
-pub let set_vsync = (renderer: Renderer, on: bool) -> bool =>
-  unsafe { sdl_set_render_vsync(renderer, if on { 1 } else { 0 }) }
+  /// Wait for the display's refresh on [present], which paces a loop at the display's rate
+  /// with no timing code at all. `false` turns it off.
+  pub let set_vsync = (self, on: bool) -> bool =>
+    unsafe { sdl_set_render_vsync(self, if on { 1 } else { 0 }) }
 
-/// Set the colour subsequent drawing uses.
-pub let set_draw_color = (renderer: Renderer, color: Color) -> bool =>
-  unsafe { sdl_set_draw_color(renderer, color.r, color.g, color.b, color.a) }
+  /// Set the colour subsequent drawing uses.
+  pub let set_draw_color = (self, color: Color) -> bool =>
+    unsafe { sdl_set_draw_color(self, color.r, color.g, color.b, color.a) }
 
-/// Fill the whole target with the current draw colour.
-pub let clear = (renderer: Renderer) -> bool => unsafe { sdl_render_clear(renderer) }
+  /// Fill the whole target with the current draw colour.
+  pub let clear = (self) -> bool => unsafe { sdl_render_clear(self) }
 
-/// Plot one point in the current draw colour.
-pub let draw_point = (renderer: Renderer, x: f32, y: f32) -> bool =>
-  unsafe { sdl_render_point(renderer, x, y) }
+  /// Plot one point in the current draw colour.
+  pub let draw_point = (self, x: f32, y: f32) -> bool =>
+    unsafe { sdl_render_point(self, x, y) }
 
-/// Draw a line between two points, both ends included.
-pub let draw_line = (renderer: Renderer, x1: f32, y1: f32, x2: f32, y2: f32) -> bool =>
-  unsafe { sdl_render_line(renderer, x1, y1, x2, y2) }
+  /// Draw a line between two points, both ends included.
+  pub let draw_line = (self, x1: f32, y1: f32, x2: f32, y2: f32) -> bool =>
+    unsafe { sdl_render_line(self, x1, y1, x2, y2) }
 
-/// Outline one rectangle, one pixel wide, inside its bounds.
-pub let draw_rect = (renderer: Renderer, rect: Rect) -> bool =>
-  unsafe { sdl_render_rect(renderer, &rect) }
+  /// Outline one rectangle, one pixel wide, inside its bounds.
+  pub let draw_rect = (self, rect: Rect) -> bool =>
+    unsafe { sdl_render_rect(self, &rect) }
 
-/// Fill one rectangle with the current draw colour.
-///
-/// The rectangle is taken **by reference** here as it is in C — `&rect` at the call is the
-/// address of the caller's own storage, and SDL only reads through it.
-pub let fill_rect = (renderer: Renderer, rect: Rect) -> bool =>
-  unsafe { sdl_render_fill_rect(renderer, &rect) }
+  /// Fill one rectangle with the current draw colour.
+  ///
+  /// The rectangle is taken **by reference** here as it is in C — `&rect` at the call is the
+  /// address of the caller's own storage, and SDL only reads through it.
+  pub let fill_rect = (self, rect: Rect) -> bool =>
+    unsafe { sdl_render_fill_rect(self, &rect) }
 
-/// Write `text` with SDL's built-in 8×8 font, top-left corner at (`x`, `y`), in the
-/// current draw colour. It covers ASCII only — anything else draws as a placeholder.
-pub let debug_text = (renderer: Renderer, x: f32, y: f32, text: string) -> bool =>
-  text.with_cstring((t) => unsafe { sdl_render_debug_text(renderer, x, y, t) })
+  /// Write `text` with SDL's built-in 8×8 font, top-left corner at (`x`, `y`), in the
+  /// current draw colour. It covers ASCII only — anything else draws as a placeholder.
+  pub let debug_text = (self, x: f32, y: f32, text: string) -> bool =>
+    text.with_cstring((t) => unsafe { sdl_render_debug_text(self, x, y, t) })
 
-/// Show everything drawn since the last present.
-pub let present = (renderer: Renderer) -> bool =>
-  unsafe { sdl_render_present(renderer) }
+  /// Show everything drawn since the last present.
+  pub let present = (self) -> bool =>
+    unsafe { sdl_render_present(self) }
 
-/// Write what has been drawn this frame to `path` as a BMP. Call it **before** [present],
-/// which is what hands the frame away.
-///
-/// The image is the window's real pixels, not the logical screen's, so a 256×240 screen in
-/// a 768×720 window saves at 768×720.
-pub let save_screenshot = (renderer: Renderer, path: string) -> bool => {
-  let surface = unsafe { sdl_render_read_pixels(renderer, nullptr) }
-  if surface == nullptr {
-    false
-  } else {
-    let saved = path.with_cstring((p) => unsafe { sdl_save_bmp(surface, p) })
-    unsafe { sdl_destroy_surface(surface) }
-    saved
+  /// Write what has been drawn this frame to `path` as a BMP. Call it **before** [present],
+  /// which is what hands the frame away.
+  ///
+  /// The image is the window's real pixels, not the logical screen's, so a 256×240 screen in
+  /// a 768×720 window saves at 768×720.
+  pub let save_screenshot = (self, path: string) -> bool => {
+    let surface = unsafe { sdl_render_read_pixels(self, nullptr) }
+    if surface == nullptr {
+      false
+    } else {
+      let saved = path.with_cstring((p) => unsafe { sdl_save_bmp(surface, p) })
+      unsafe { sdl_destroy_surface(surface) }
+      saved
+    }
   }
-}
 
-/// A window position — a mouse event's, or [mouse_state]'s — in the renderer's own
-/// coordinates: the logical screen when one is set, with its scale and letterboxing
-/// undone. A point in the letterbox answers a position off the logical screen (negative,
-/// or past its size), which is how a program tells the mouse is outside it.
-pub let window_to_render = (renderer: Renderer, x: f32, y: f32) -> (f32, f32) => {
-  var rx: f32 = 0.0
-  var ry: f32 = 0.0
-  unsafe { sdl_render_coordinates_from_window(renderer, x, y, &mut rx, &mut ry) }
-  (rx, ry)
+  /// A window position — a mouse event's, or [mouse_state]'s — in the renderer's own
+  /// coordinates: the logical screen when one is set, with its scale and letterboxing
+  /// undone. A point in the letterbox answers a position off the logical screen (negative,
+  /// or past its size), which is how a program tells the mouse is outside it.
+  pub let window_to_render = (self, x: f32, y: f32) -> (f32, f32) => {
+    var rx: f32 = 0.0
+    var ry: f32 = 0.0
+    unsafe { sdl_render_coordinates_from_window(self, x, y, &mut rx, &mut ry) }
+    (rx, ry)
+  }
 }

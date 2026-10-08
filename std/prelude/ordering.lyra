@@ -186,84 +186,88 @@ impl Ord for rune { compare = pure noalloc (self, other) => self <=> other }
 // The **receiver** is still pinned to its default before dispatch, which is a different
 // pass — so `200.min(w)` on a `u8` `w` fails where `w.min(200)` works. In `todo.md`.
 
-/// The smaller of two values, or `self` when they compare equal.
-///
-/// ```
-/// let width = requested.min(terminal_width)
-/// ```
-///
-/// **Both spellings work**, because the first parameter is named `self`: `a.min(b)` and
-/// `min(a, b)` are the same call. The method form is what reads well in a chain
-/// (`count.min(cap).max(0)`); the free form is what reads well when neither argument is
-/// the subject.
-///
-/// **Ties go to `self`, and `max` gives them to `other`** — so `min(a, b)` and `max(a, b)`
-/// between them still name *both* values when the two compare equal but are not
-/// interchangeable (a struct ordered on one field, say). Had both returned `self`, the
-/// pair would answer `a` twice and the other value would simply vanish. It is the same
-/// rule Rust's `Ord::min`/`max` follow, for the same reason.
-pub let min<t> where t: Ord = pure noalloc (self: t, other: t) -> t =>
-  match self.compare(other) { Greater => other, _ => self }
+impl t where t: Ord {
+  /// The smaller of two values, or `self` when they compare equal.
+  ///
+  /// ```
+  /// let width = requested.min(terminal_width)
+  /// ```
+  ///
+  /// **Both spellings work**, because the first parameter is named `self`: `a.min(b)` and
+  /// `min(a, b)` are the same call. The method form is what reads well in a chain
+  /// (`count.min(cap).max(0)`); the free form is what reads well when neither argument is
+  /// the subject.
+  ///
+  /// **Ties go to `self`, and `max` gives them to `other`** — so `min(a, b)` and `max(a, b)`
+  /// between them still name *both* values when the two compare equal but are not
+  /// interchangeable (a struct ordered on one field, say). Had both returned `self`, the
+  /// pair would answer `a` twice and the other value would simply vanish. It is the same
+  /// rule Rust's `Ord::min`/`max` follow, for the same reason.
+  pub let min<t> = pure noalloc (self, other: t) -> t =>
+    match self.compare(other) { Greater => other, _ => self }
 
-/// The larger of two values, or `other` when they compare equal — see [min] for why the
-/// tie goes the other way.
-pub let max<t> where t: Ord = pure noalloc (self: t, other: t) -> t =>
-  match self.compare(other) { Less => other, Equal => other, Greater => self }
+  /// The larger of two values, or `other` when they compare equal — see [min] for why the
+  /// tie goes the other way.
+  pub let max<t> = pure noalloc (self, other: t) -> t =>
+    match self.compare(other) { Less => other, Equal => other, Greater => self }
 
-/// `self` unless it is `Equal`, in which case `next` — the tie-break, so a comparator
-/// over two keys reads as one line: `(a.count <=> b.count).then(a.name <=> b.name)`.
-///
-/// `next` is evaluated whether or not it is needed, being an ordinary argument. That is
-/// a compare of the second key, which for the keys a comparator is usually written over
-/// costs nothing worth a closure; `then_with` is the lazy form for when it does.
-///
-/// # Examples
-///
-/// ```
-/// pairs.sorted_by(((word_a, count_a), (word_b, count_b)) =>
-///   (count_b <=> count_a).then(word_a <=> word_b))
-/// ```
-pub let then = pure noalloc (self: Ordering, next: Ordering) -> Ordering =>
-  match self { Equal => next, decided => decided }
-
-/// `self` unless it is `Equal`, in which case the result of calling `f` — the lazy
-/// `then`, for a tie-break that is expensive or has an effect worth skipping.
-///
-/// `f` runs only on the `Equal` branch, so a comparator whose second key is computed
-/// (a lowercased copy, a parsed number, a lookup) pays for it only on a tie. The same
-/// relation `unwrap_or_else` has to `unwrap_or`.
-///
-/// # Examples
-///
-/// ```
-/// (a.count <=> b.count).then_with(() => a.name.to_ascii_lower() <=> b.name.to_ascii_lower())
-/// ```
-pub let then_with = pure noalloc (self: Ordering, f: () -> Ordering) -> Ordering =>
-  match self { Equal => f(), decided => decided }
-
-/// `self` restricted to the range `lo..=hi`.
-///
-/// ```
-/// let row = cursor.clamp(0, rows - 1)
-/// ```
-///
-/// **Clamping is the alternative to trapping**, and the reason to reach for it: an index
-/// out of bounds is a bug and `xs[i]` traps, but a value being *fitted* to a window is
-/// ordinary — a scroll position past the end of a document, a colour past the end of a
-/// gradient — and the appropriate answer is the nearest one in range rather than the end
-/// of the program.
-///
-/// # Panics
-/// Traps if `lo > hi`, which describes an empty range and so has no nearest value to
-/// answer with. Returning either bound would pick one arbitrarily and hide the mistake
-/// that produced the reversed pair, which is the silently-wrong answer this language
-/// refuses everywhere else. The message is a constant, so `clamp` allocates nothing.
-pub let clamp<t> where t: Ord = pure noalloc (self: t, lo: t, hi: t) -> t => {
-  match lo.compare(hi) { Greater => panic("clamp: lo is greater than hi"), _ => {} }
-  match self.compare(lo) {
-    Less => lo,
-    _ => match self.compare(hi) { Greater => hi, _ => self },
+  /// `self` restricted to the range `lo..=hi`.
+  ///
+  /// ```
+  /// let row = cursor.clamp(0, rows - 1)
+  /// ```
+  ///
+  /// **Clamping is the alternative to trapping**, and the reason to reach for it: an index
+  /// out of bounds is a bug and `xs[i]` traps, but a value being *fitted* to a window is
+  /// ordinary — a scroll position past the end of a document, a colour past the end of a
+  /// gradient — and the appropriate answer is the nearest one in range rather than the end
+  /// of the program.
+  ///
+  /// # Panics
+  /// Traps if `lo > hi`, which describes an empty range and so has no nearest value to
+  /// answer with. Returning either bound would pick one arbitrarily and hide the mistake
+  /// that produced the reversed pair, which is the silently-wrong answer this language
+  /// refuses everywhere else. The message is a constant, so `clamp` allocates nothing.
+  pub let clamp<t> = pure noalloc (self, lo: t, hi: t) -> t => {
+    match lo.compare(hi) { Greater => panic("clamp: lo is greater than hi"), _ => {} }
+    match self.compare(lo) {
+      Less => lo,
+      _ => match self.compare(hi) { Greater => hi, _ => self },
+    }
   }
+}
+
+impl Ordering {
+  /// `self` unless it is `Equal`, in which case `next` — the tie-break, so a comparator
+  /// over two keys reads as one line: `(a.count <=> b.count).then(a.name <=> b.name)`.
+  ///
+  /// `next` is evaluated whether or not it is needed, being an ordinary argument. That is
+  /// a compare of the second key, which for the keys a comparator is usually written over
+  /// costs nothing worth a closure; `then_with` is the lazy form for when it does.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// pairs.sorted_by(((word_a, count_a), (word_b, count_b)) =>
+  ///   (count_b <=> count_a).then(word_a <=> word_b))
+  /// ```
+  pub let then = pure noalloc (self, next: Ordering) -> Ordering =>
+    match self { Equal => next, decided => decided }
+
+  /// `self` unless it is `Equal`, in which case the result of calling `f` — the lazy
+  /// `then`, for a tie-break that is expensive or has an effect worth skipping.
+  ///
+  /// `f` runs only on the `Equal` branch, so a comparator whose second key is computed
+  /// (a lowercased copy, a parsed number, a lookup) pays for it only on a tie. The same
+  /// relation `unwrap_or_else` has to `unwrap_or`.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// (a.count <=> b.count).then_with(() => a.name.to_ascii_lower() <=> b.name.to_ascii_lower())
+  /// ```
+  pub let then_with = pure noalloc (self, f: () -> Ordering) -> Ordering =>
+    match self { Equal => f(), decided => decided }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -284,93 +288,99 @@ pub let clamp<t> where t: Ord = pure noalloc (self: t, lo: t, hi: t) -> t => {
 // `0.0` compare equal, so which zero comes back follows the same tie rule.
 // ---------------------------------------------------------------------------------------
 
-/// The smaller of two `f64`s, or `self` when they are equal.
-///
-/// # Panics
-/// Traps if either is NaN, which has no order to be the smaller of.
-pub let min = pure noalloc (self: f64, other: f64) -> f64 => {
-  if self != self || other != other { panic("min: NaN has no order") }
-  if other < self { other } else { self }
+impl f16 {
+  /// The smaller of two `f16`s, or `self` when they are equal.
+  ///
+  /// # Panics
+  /// Traps if either is NaN, which has no order to be the smaller of.
+  pub let min = pure noalloc (self, other: f16) -> f16 => {
+    if self != self || other != other { panic("min: NaN has no order") }
+    if other < self { other } else { self }
+  }
+
+  /// The larger of two `f16`s, or `other` when they are equal.
+  ///
+  /// # Panics
+  /// Traps if either is NaN, which has no order to be the larger of.
+  pub let max = pure noalloc (self, other: f16) -> f16 => {
+    if self != self || other != other { panic("max: NaN has no order") }
+    if other < self { self } else { other }
+  }
+
+  /// `self` restricted to `lo..=hi`.
+  ///
+  /// # Panics
+  /// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
+  /// generic [clamp].
+  pub let clamp = pure noalloc (self, lo: f16, hi: f16) -> f16 => {
+    if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
+    if lo > hi { panic("clamp: lo is greater than hi") }
+    if self < lo { lo } else if self > hi { hi } else { self }
+  }
 }
 
-/// The smaller of two `f32`s, or `self` when they are equal.
-///
-/// # Panics
-/// Traps if either is NaN, which has no order to be the smaller of.
-pub let min = pure noalloc (self: f32, other: f32) -> f32 => {
-  if self != self || other != other { panic("min: NaN has no order") }
-  if other < self { other } else { self }
+impl f32 {
+  /// The smaller of two `f32`s, or `self` when they are equal.
+  ///
+  /// # Panics
+  /// Traps if either is NaN, which has no order to be the smaller of.
+  pub let min = pure noalloc (self, other: f32) -> f32 => {
+    if self != self || other != other { panic("min: NaN has no order") }
+    if other < self { other } else { self }
+  }
+
+  /// The larger of two `f32`s, or `other` when they are equal.
+  ///
+  /// # Panics
+  /// Traps if either is NaN, which has no order to be the larger of.
+  pub let max = pure noalloc (self, other: f32) -> f32 => {
+    if self != self || other != other { panic("max: NaN has no order") }
+    if other < self { self } else { other }
+  }
+
+  /// `self` restricted to `lo..=hi`.
+  ///
+  /// # Panics
+  /// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
+  /// generic [clamp].
+  pub let clamp = pure noalloc (self, lo: f32, hi: f32) -> f32 => {
+    if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
+    if lo > hi { panic("clamp: lo is greater than hi") }
+    if self < lo { lo } else if self > hi { hi } else { self }
+  }
 }
 
-/// The smaller of two `f16`s, or `self` when they are equal.
-///
-/// # Panics
-/// Traps if either is NaN, which has no order to be the smaller of.
-pub let min = pure noalloc (self: f16, other: f16) -> f16 => {
-  if self != self || other != other { panic("min: NaN has no order") }
-  if other < self { other } else { self }
-}
+impl f64 {
+  /// The smaller of two `f64`s, or `self` when they are equal.
+  ///
+  /// # Panics
+  /// Traps if either is NaN, which has no order to be the smaller of.
+  pub let min = pure noalloc (self, other: f64) -> f64 => {
+    if self != self || other != other { panic("min: NaN has no order") }
+    if other < self { other } else { self }
+  }
 
-/// The larger of two `f64`s, or `other` when they are equal.
-///
-/// # Panics
-/// Traps if either is NaN, which has no order to be the larger of.
-pub let max = pure noalloc (self: f64, other: f64) -> f64 => {
-  if self != self || other != other { panic("max: NaN has no order") }
-  if other < self { self } else { other }
-}
+  /// The larger of two `f64`s, or `other` when they are equal.
+  ///
+  /// # Panics
+  /// Traps if either is NaN, which has no order to be the larger of.
+  pub let max = pure noalloc (self, other: f64) -> f64 => {
+    if self != self || other != other { panic("max: NaN has no order") }
+    if other < self { self } else { other }
+  }
 
-/// The larger of two `f32`s, or `other` when they are equal.
-///
-/// # Panics
-/// Traps if either is NaN, which has no order to be the larger of.
-pub let max = pure noalloc (self: f32, other: f32) -> f32 => {
-  if self != self || other != other { panic("max: NaN has no order") }
-  if other < self { self } else { other }
-}
-
-/// The larger of two `f16`s, or `other` when they are equal.
-///
-/// # Panics
-/// Traps if either is NaN, which has no order to be the larger of.
-pub let max = pure noalloc (self: f16, other: f16) -> f16 => {
-  if self != self || other != other { panic("max: NaN has no order") }
-  if other < self { self } else { other }
-}
-
-/// `self` restricted to `lo..=hi`.
-///
-/// ```
-/// let x = (x + dx).clamp(0.0, 248.0)
-/// ```
-///
-/// # Panics
-/// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
-/// generic [clamp].
-pub let clamp = pure noalloc (self: f64, lo: f64, hi: f64) -> f64 => {
-  if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
-  if lo > hi { panic("clamp: lo is greater than hi") }
-  if self < lo { lo } else if self > hi { hi } else { self }
-}
-
-/// `self` restricted to `lo..=hi`.
-///
-/// # Panics
-/// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
-/// generic [clamp].
-pub let clamp = pure noalloc (self: f32, lo: f32, hi: f32) -> f32 => {
-  if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
-  if lo > hi { panic("clamp: lo is greater than hi") }
-  if self < lo { lo } else if self > hi { hi } else { self }
-}
-
-/// `self` restricted to `lo..=hi`.
-///
-/// # Panics
-/// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
-/// generic [clamp].
-pub let clamp = pure noalloc (self: f16, lo: f16, hi: f16) -> f16 => {
-  if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
-  if lo > hi { panic("clamp: lo is greater than hi") }
-  if self < lo { lo } else if self > hi { hi } else { self }
+  /// `self` restricted to `lo..=hi`.
+  ///
+  /// ```
+  /// let x = (x + dx).clamp(0.0, 248.0)
+  /// ```
+  ///
+  /// # Panics
+  /// Traps if any of the three is NaN, or if `lo > hi` — an empty range, as for the
+  /// generic [clamp].
+  pub let clamp = pure noalloc (self, lo: f64, hi: f64) -> f64 => {
+    if self != self || lo != lo || hi != hi { panic("clamp: NaN has no order") }
+    if lo > hi { panic("clamp: lo is greater than hi") }
+    if self < lo { lo } else if self > hi { hi } else { self }
+  }
 }

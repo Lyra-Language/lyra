@@ -82,40 +82,42 @@ pub let parse_instant = pure (text: string) -> Maybe<Instant> => {
   instant(moment, i64(local.time) % NS_PER_SECOND)
 }
 
-/// The moment itself, with the zone forgotten.
-pub let to_instant = pure (self: ZonedDateTime) -> Instant => self.instant
+impl ZonedDateTime {
+  /// The moment itself, with the zone forgotten.
+  pub let to_instant = pure (self) -> Instant => self.instant
 
-/// The zone's offset from UTC at this moment, in seconds east.
-pub let offset_seconds = pure (self: ZonedDateTime) -> i64 =>
-  self.zone.offset_at(self.instant.epoch_second())
+  /// The zone's offset from UTC at this moment, in seconds east.
+  pub let offset_seconds = pure (self) -> i64 =>
+    self.zone.offset_at(self.instant.epoch_second())
 
-/// What a clock showing this moment is called here — `EST`, `EDT`, `+0530`.
-pub let abbreviation = pure (self: ZonedDateTime) -> string =>
-  self.zone.abbreviation_at(self.instant.epoch_second())
+  /// What a clock showing this moment is called here — `EST`, `EDT`, `+0530`.
+  pub let abbreviation = pure (self) -> string =>
+    self.zone.abbreviation_at(self.instant.epoch_second())
 
-/// Whether the zone is on its daylight rule at this moment.
-pub let is_dst = pure (self: ZonedDateTime) -> bool =>
-  self.zone.is_dst_at(self.instant.epoch_second())
+  /// Whether the zone is on its daylight rule at this moment.
+  pub let is_dst = pure (self) -> bool =>
+    self.zone.is_dst_at(self.instant.epoch_second())
 
-/// The date and wall-clock time a person here would read off a clock.
-pub let to_plain_date_time = pure (self: ZonedDateTime) -> PlainDateTime => {
-  let local = i128(self.instant) + i128(self.offset_seconds()) * i128(NS_PER_SECOND)
-  let day_ns = i128(NS_PER_DAY)
-  let into_day = local %% day_ns
-  PlainDateTime {
-    date: PlainDate(i64((local - into_day) / day_ns)),
-    time: PlainTime(i64(into_day)),
+  /// The date and wall-clock time a person here would read off a clock.
+  pub let to_plain_date_time = pure (self) -> PlainDateTime => {
+    let local = i128(self.instant) + i128(self.offset_seconds()) * i128(NS_PER_SECOND)
+    let day_ns = i128(NS_PER_DAY)
+    let into_day = local %% day_ns
+    PlainDateTime {
+      date: PlainDate(i64((local - into_day) / day_ns)),
+      time: PlainTime(i64(into_day)),
+    }
   }
+
+  /// The date here, which is not always the date in UTC — at 23:30 in New York it is already
+  /// tomorrow in Greenwich.
+  pub let to_plain_date = pure (self) -> PlainDate =>
+    self.to_plain_date_time().date
+
+  /// The wall-clock time here.
+  pub let to_plain_time = pure (self) -> PlainTime =>
+    self.to_plain_date_time().time
 }
-
-/// The date here, which is not always the date in UTC — at 23:30 in New York it is already
-/// tomorrow in Greenwich.
-pub let to_plain_date = pure (self: ZonedDateTime) -> PlainDate =>
-  self.to_plain_date_time().date
-
-/// The wall-clock time here.
-pub let to_plain_time = pure (self: ZonedDateTime) -> PlainTime =>
-  self.to_plain_date_time().time
 
 /// Zoned date-times order by their **instant**, not by their clocks: 09:00 in Berlin comes
 /// before 09:00 in New York, because it happened first, and a clock-by-clock comparison
