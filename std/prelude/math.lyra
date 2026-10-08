@@ -26,7 +26,7 @@ module std.prelude
 /// is what lets a generic function add operands whose type it does not know.
 ///
 /// **A primitive never routes through an impl** — `1 + 1` is a machine add whatever a
-/// program declares — but a `newtype` over a scalar does, which is how arithmetic on a unit
+/// program declares — but a nominal `type` over a scalar does, which is how arithmetic on a unit
 /// type is opted into: `impl Add for Cents` makes `+` work on `Cents` and nothing else.
 ///
 /// Both operands and the result are `Self`, so a mixed-operand operation — scaling a vector

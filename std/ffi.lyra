@@ -314,7 +314,7 @@ impl []t {
 /// unsafe extern pure labs: (n: CLong) -> CLong
 /// ```
 ///
-/// **An alias rather than a `newtype`**, which reverses what `todo.md` recorded, and the
+/// **An `alias` rather than a nominal `type`**, which reverses what `todo.md` recorded, and the
 /// program is the argument. A newtype would demand `CLong(n)` at every crossing and
 /// `i64(r)` at every result, on every target, forever — and buy nothing, because the thing
 /// it would catch is already caught: change this line to `i32` and every site that passes
