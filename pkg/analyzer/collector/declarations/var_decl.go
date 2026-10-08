@@ -42,6 +42,9 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) ast.S
 }
 
 func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.VarDeclStmt {
+	// Taken before the value is collected, so a `let` inside a member's body is local.
+	inherent := ctx.InherentTarget
+	ctx.InherentTarget = nil
 	kind := bindingKind(ctx.NodeText(cst.Field(node, "keyword")), ctx)
 	isPublic := cst.Field(node, "visibility") != nil
 	isMut := cst.Field(node, "mutability") != nil
@@ -87,6 +90,10 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	}
 
 	collectDeclarationAttributes(node, initExpr, ctx)
+
+	if inherent != nil {
+		genericParameters = applyInherentReceiver(node, nameNode, kind, isMut, initExpr, genericParameters, inherent, ctx)
+	}
 
 	// Lift the declaration's `where` bounds onto the lambda, for the same reason the
 	// modifiers above are lifted: they are written on the *binding* while every

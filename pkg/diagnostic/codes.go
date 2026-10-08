@@ -1038,6 +1038,13 @@ const (
 	// (collector, postfix_expr.go).
 	CodeUnsupportedCallArgument = "lyra-E088"
 
+	// CodeInherentMember: a member of an `impl Type { … }` block that is not a method of
+	// `Type` — a `var`, a non-function, a destructuring, no `self` first, a `self` that
+	// writes its own type, or the block itself not at the top level. The block is sugar
+	// for top-level `let name = (self: Type, …)` declarations (collector,
+	// inherent_impl.go), so whatever it cannot desugar into one is refused by name.
+	CodeInherentMember = "lyra-E089"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

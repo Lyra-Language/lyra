@@ -9,6 +9,67 @@ Newest first.
 
 ## Dated log
 
+### 10/07/26 — `impl t where t: Ord { … }`: a block's bounds reach every member
+
+Asked for converting the prelude's `min`/`max`, which had moved into `impl t { … }` with
+`where t: Ord` repeated on each. A `where` on the block is the declaration's
+`generic_parameter_constraints`, so a bound reads the same in both places. **A bound only
+reaches a body through the member's `<…>` list** (`pushGenericBounds` reads the list, not
+`LambdaExpr.GenericBounds`), so a member that wrote none is given one: every variable its
+signature mentions, in the order written (`types.AppendTypeVars`, the ordered twin of
+`CollectTypeVars`) — a list holding only the bounded variables would be authoritative and
+refuse the rest (`lyra-E031`). It also opens the member to a turbofish, as writing the
+list would. `impl t` itself needed nothing: a bare variable is a type, and the entry below
+was wrong to say a generic fallback had no block to go in.
+
+### 10/07/26 — `impl Person { … }`: methods grouped under their type
+
+Asked for as Rust's syntax, for readability: a type's methods in one place under its name,
+without `self: Person` on each. **Built as sugar, not as Rust's model.** In Rust a method
+belongs to the type and `say_hi(p)` does not exist; here a method is a top-level function
+whose first parameter is `self`, and the dispatch rules rest on that — both spellings,
+receiver-keyed overloading in one module, import lists breaking ties, privacy deciding
+candidacy, a generic fallback (`self: t`) that no single type could host. Moving methods
+into the type would have rewritten that section of LANGUAGE.md and some 820 `self:`
+declarations across std, the examples and Vega. Instead the collector expands each member
+into the declaration it stands for, and nothing past it knows a block was written.
+
+Four decisions:
+
+- **Members are written with `let`**, as the request wrote them, rather than `name = …` like
+  a trait impl's. A member *is* a top-level `let`, so it is the grammar's `declaration`
+  rule verbatim and inherits `pub`, docs, attributes, generic lists, `where`, every function
+  modifier and the `let f(self) => …` sugar; the trait-impl form has none of those and
+  would have needed each added. The two kinds of block differ because they are different
+  things: one implements a signature the trait wrote, the other declares functions.
+- **`self: mut`, not `mut self`.** The borrow mode binds to the type (`self: mut Rng`;
+  `mut self: Rng` is a syntax error, found by the docgen round-trip test), so with the type
+  supplied by the block the mode stays after the colon. The grammar already admitted a
+  mode with no type.
+- **The type is written into `self` before the binding registers**, not after: overloading
+  is decided at registration (`DeclareOverload` reads the receiver's head), so a member
+  typed afterwards would collide with the same name in another block. The `impl` walk hands
+  the type to the declaration collector through `Ctx.InherentTarget`, which takes it before
+  collecting the value — a `let` in a member's body is a local, not a member.
+- **Refused by name rather than hoisted as written (`lyra-E089`)**: a `var`, a constant, a
+  member without `self` would each still compile as a top-level declaration, so a block that
+  admitted them would hold things that are not methods of its type. Constructors stay bare
+  functions (`lyra-E035` already refuses `Person::new` by design).
+
+A member's own `<…>` list is authoritative (`lyra-E031`), so `impl Box<t> { let map<u> … }`
+appends `t` — **after** `u`, so `b.map::<string>(f)` binds what the member wrote. The grammar
+needed one conflict entry (`impl Name<…` is a trait's arguments or a generic target until
+`for` or `{`): 8,205 → 8,519 states. `lyrafmt` treats `inherent_members` as block-like;
+without it every member after the first indented as a continuation.
+
+**Moving `std/prelude/result.lyra` into a block exposed a breaker bug that predated it.**
+`<` was no delimiter to `plan_breaks`, so a type list's commas belonged to the enclosing
+list, and exploding that list split them — the committed `unwrap` already read
+`(self: Result<t,` ⏎ `e>)`. In a block the enclosing list is the block's `{`, so one long
+member split `<t, e>` in every member. Type lists are now delimiters the breaker tracks
+and never explodes, told from a comparison by their parent node. The hand-joined
+leftovers (`( self )`) brought a spacing rule with them: none just inside parentheses.
+
 ### 10/07/26 — the Lyra collector refuses them too: its first diagnostic
 
 `examples/collector` dropped `name: value` and `_` from an argument list exactly as the Go

@@ -304,6 +304,19 @@ Semantics are in `LANGUAGE.md`; these are the compiler-side traps.
 - Resolution is `resolveTraitMethodNamed`, shared with `.method()` calls. Purity charges
   operators via `operatorImplEffect`.
 
+**`impl Type { … }` blocks** (`collector/inherent_impl.go`, `declarations/inherent_member.go`)
+- Erased in the collector: `walkProgram` expands each member into its top-level
+  `VarDeclStmt` with `self` typed. **No pass downstream may learn about the block**; a
+  behaviour difference between a member and the hand-written method is a collector bug.
+- The type reaches the member through `Ctx.InherentTarget`, taken (and cleared) at the top
+  of `collectIdentifierDeclaration` — before the value, so a nested `let` is local, and
+  before registration, since `DeclareOverload` keys on the receiver's type.
+- Refusals are `lyra-E089`; `collectStatementByKind` reaches the node only below the top
+  level, and refuses it there.
+- A block's `where` (`InherentTarget.Bounds`) is merged into each member's
+  `GenericParams`, never only into `LambdaExpr.GenericBounds`: the list is what
+  `pushGenericBounds` puts in scope. A member with no list is given its signature's.
+
 **Supertraits**
 - Obligation `lyra-E040` in `checkTraitImpl`. Use: `closeOverSupertraits`
   (`typechecker_trait_dispatch.go`), a transitive closure at the **two writers** of

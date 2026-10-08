@@ -536,6 +536,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] A written loop-variable type in the other positions**: a comprehension clause
   (`[i: u8 in 0..<10 | …]`) and the two-variable form's element. `for i: u16 in …` covers
   the one-variable loop (09/29).
+- **[OPEN] A private method's hint says "import it"** when its module already is imported
+  (`shapes.square(2).hidden()`; `typechecker_ufcs.go`, the `ufcsImported` branches). It
+  should say the method is private to its module. Found 10/07 testing `impl` blocks; a
+  hand-written private method gets the same message.
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as

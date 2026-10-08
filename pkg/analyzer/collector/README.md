@@ -8,9 +8,12 @@ errors)`.
 **Dispatch:** `collector.go` owns `CollectStatement`, `CollectExpr` (switch on `node.Kind()`) and
 `ParseType`. Subpackages call back through the `Collector` interface to avoid import cycles.
 
+**`impl Type { … }` is erased here** (`inherent_impl.go`): `walkProgram` expands each member
+into the top-level `let` it stands for, with `self` typed, so no later pass sees the block.
+
 | Subpackage | Handles |
 |---|---|
-| `declarations/` | `let`/`var`/`const`, destructuring, `if let`, traits, impls, modules |
+| `declarations/` | `let`/`var`/`const`, destructuring, `if let`, traits, impls, modules; `inherent_member.go` types an `impl Type { … }` member's `self` |
 | `typedecls/` | `struct`, `data`, named tuples, `newtype`, constrained types, attributes |
 | `expressions/` | every expression kind, one file each |
 | `statements/` | `for`, `for-in`, `return`, `break`, `continue`, `with`, reassignment, deref assignment |

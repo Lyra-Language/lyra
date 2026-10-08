@@ -7,7 +7,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 1. [Types and Literals](#1-types-and-literals) — primitives, literal checking, ranges, newtypes
 2. [Operators and Assignment](#2-operators-and-assignment) — bitwise, overflow, compound and tuple assignment, overloading
 3. [Collections and Strings](#3-collections-and-strings) — arrays, sorting, strings, HashMap, JSON, lazy sequences
-4. [Traits, Generics and Dispatch](#4-traits-generics-and-dispatch) — supertraits, defaults, UFCS, Show, type arguments
+4. [Traits, Generics and Dispatch](#4-traits-generics-and-dispatch) — supertraits, defaults, UFCS, `impl` blocks, Show, type arguments
 5. [Effects](#5-effects)
 6. [Modules and Documentation](#6-modules-and-documentation)
 7. [I/O and Runtime Builtins](#7-io-and-runtime-builtins) — console, files, args, terminal, randomness, float math, clock
@@ -533,6 +533,43 @@ Opt in by naming the first parameter `self`.
 - **The import list breaks a tie between methods; it does not gate the call.** Two reachable candidates accepting one receiver is ambiguous (`lyra-E001`), and naming one of them in an import settles it — as does declaring your own, which wins first. Leaving a method out of the list is **not** an error: `import std.collections.{ parse_args }` still admits `args.value(…)`. Requiring the name was measured and rejected (todo.md, 09/22): accessors on types that cannot have public fields are ordinary methods here, so the rule would tax exactly the code the lack of field privacy forces, and would put names like `day` and `value` in the file's bare scope, where they shadow the locals those calls are assigned to. It is also **not** Rust's rule, which imports a *trait* and never binds the method name.
   - So a listed name that this file only ever calls method-style is doing no work, and is `lyra-W004` ("only ever called method-style"): `import lib` alone compiles. It is silent when a module **this file can reach** (its own, the prelude, or one it imports) also exports the name, since there the list is breaking a tie. The warning depends on the file and its imports alone: a module elsewhere in the program is never a candidate here, so it can't make the list load-bearing. Until 10/02 any module the entry loaded silenced it.
 - A type named inside a declaration — a constructor's payload, a field — means what it means in the **declaring** module. `Cons(n) =>` in an importer binds `n` at the library's `Node`, even when `Node` is private there or the importer declares its own; naming the private type explicitly is still refused.
+
+### Methods grouped in an `impl` block
+
+```lyra
+impl Person {
+  pub let say_hi = (self) => println("Hello, ${self.name}")
+  let birthday = (self: mut, age: u8) => { self.age = age }
+}
+```
+
+**Sugar for top-level methods, erased by the collector** (10/07): each member is exactly
+`let say_hi = (self: Person) => …` written at the top level, so everything in "Calling on a
+receiver" above applies unchanged — both spellings, receiver-keyed overloading (the same
+name in `impl Person` and `impl Robot`), `pub`, privacy, `///` docs on each member. Any type
+may head a block — a builtin, or a bare variable: `impl t where t: Ord { … }` is the
+generic fallback (`self: t`) the prelude's `min`/`max` are. The free form stays, and nothing
+has to move into a block.
+
+- **A member is a `let` binding a function whose first parameter is `self`**, written with
+  every form a top-level `let` takes (modifiers, attributes, `<…>`/`where`, the
+  `let f(self) => …` sugar). `self` takes the block's type: write `self`, or `self: mut` /
+  `self: ref` for the mode — the mode binds to the type, as everywhere, so it stays after
+  the colon.
+- **Refused (`lyra-E089`):** `var`/`let mut`, a non-function, a destructuring or constant,
+  a member without `self` (a constructor is a bare function outside the block), a `self`
+  that writes its own type, and a block below the top level.
+- **Generic targets:** `impl Box<t> { … }` — variables lexical, as a trait impl's. A member
+  with no `<…>` list needs none; one that writes a list (`let map<u> = …`) gets the
+  target's variables appended after its own, so a turbofish binds what the member wrote
+  (and, as for any generic, must give all of them: `<u, t>`).
+- **A `where` on the block** (`impl Pair<k, v> where k: Show, v: Show`) bounds the target's
+  variables in every member, as if each had written it. A member with no list is given the
+  one its signature implies, every variable in order of appearance, since a list is what
+  puts a bound in scope. A bound on a variable the target does not mention is `lyra-E031`.
+  A member's own `where` on a target variable still needs it in the member's list.
+- The block takes no `///` of its own (one above it is `lyra-W017`). The body is required,
+  and may be empty.
 
 ### Show
 

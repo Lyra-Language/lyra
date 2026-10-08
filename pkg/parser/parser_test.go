@@ -35,6 +35,15 @@ func TestParse_TerminatesOnTruncatedInput(t *testing.T) {
 		parseWithin(t, src, src)
 	}
 
+	// An `impl Type { … }` block, cut at every byte: the form is newer than every file the
+	// sweep below walks, so none of them would reach it.
+	const inherent = "impl Box<t> {\n  /// Doc.\n  pub let get = pure (self: ref) -> t => self.value\n  let set = (self: mut, v: t) => { self.value = v }\n}\n"
+	for cut := 1; cut < len(inherent); cut++ {
+		if !parseWithin(t, inherent[:cut], "inherent impl") {
+			return
+		}
+	}
+
 	root := filepath.Join("..", "..")
 	var files []string
 	for _, dir := range []string{"std", "examples", "bindings"} {

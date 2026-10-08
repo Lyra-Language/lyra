@@ -553,6 +553,13 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 
+		if child.Kind() == "inherent_implementation" {
+			for _, stmt := range c.collectInherentImpl(child) {
+				c.ast.Statements = append(c.ast.Statements, stmt)
+			}
+			continue
+		}
+
 		stmt := c.CollectStatement(child)
 
 		// Guard against both untyped nils and typed nils. The latter arise when a
@@ -632,6 +639,10 @@ func (c *Collector) collectStatementByKind(node *sitter.Node) ast.Statement {
 		return declarations.CollectTraitDeclaration(node, c.ctx)
 	case "trait_implementation":
 		return declarations.CollectTraitImplementation(node, c.ctx)
+	case "inherent_implementation":
+		// Only reached below the top level; walkProgram expands the top-level ones.
+		c.refuseNestedInherentImpl(node)
+		return nil
 	case "declaration", "const_declaration", "for_initial_expr":
 		return declarations.CollectVariableDeclaration(node, c.ctx)
 	case "destructuring_if_declaration":

@@ -1,5 +1,7 @@
 package types
 
+import "slices"
+
 // Type variables in a signature — the one walker.
 //
 // A lowercase type name is a type variable (the collector turns it into a
@@ -47,6 +49,19 @@ func CollectTypeVars(t Type, vars map[string]bool) {
 			vars[tt.SizeVar] = true
 		}
 	})
+}
+
+// AppendTypeVars appends to out each type variable t mentions that out does not hold yet,
+// in the order the signature first writes them — CollectTypeVars for a caller that needs
+// an order, as one building a `<…>` list a turbofish binds by position does. Size
+// variables are not included: a `const` parameter is never inferred into a list.
+func AppendTypeVars(t Type, out []string) []string {
+	walkSignature(t, func(t Type) {
+		if tt, ok := t.(GenericType); ok && !slices.Contains(out, tt.Name) {
+			out = append(out, tt.Name)
+		}
+	})
+	return out
 }
 
 // CollectSizeVars adds to vars every `const` parameter t writes an array size as — the N

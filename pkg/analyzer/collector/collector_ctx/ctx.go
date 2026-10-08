@@ -86,7 +86,22 @@ type Ctx struct {
 	// something, so ReportStrayDocs can report the rest. It is reset per file, since
 	// a start byte identifies a node only within the source it was parsed from.
 	claimedDocs map[uint]bool
+	// InherentTarget is set by the `impl Type { … }` walk for exactly one member's
+	// collection: the declaration collector takes it (clearing it, so a `let` nested in the
+	// member's body is an ordinary local) and writes the type into the `self` parameter
+	// before the binding is registered — receiver-keyed overloading is decided at
+	// registration, so filling the type in afterwards would be too late.
+	InherentTarget *InherentTarget
 	Collector
+}
+
+// InherentTarget is the type an `impl` block's header names, with its source text for
+// messages, and the bounds its `where` puts on the type's variables (one entry per
+// variable, in the order written).
+type InherentTarget struct {
+	Type   types.Type
+	Text   string
+	Bounds []ast.GenericParam
 }
 
 // NewCtx constructs a [Ctx] for use by the root collector. The error slice pointer
