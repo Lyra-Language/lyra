@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 10/08/26 — `while let`
+
+The loop twin of `if let`, asked for after `loop` and `while` landed. **Erased in the
+collector** into `label: loop { if let p = v { body } else { break } }`
+(`CollectWhileLetLoop`): `if let` already had every rule the loop needs — the pattern's
+names scoped to the body, its patterns checked as any `if let`'s, a `weak` value upgraded
+— and a `continue` returning to the loop head re-evaluates the scrutinee, which is the
+loop's meaning. No pass past the collector knows the form; a difference between it and the
+hand-written loop is a collector bug. The grammar rule is `while` + `declaration` + a
+block, the shape `if let` has, and a statement like it (7 parser states). The one trap was
+scopes: every synthesized block records one, nested as the source would nest them, since
+the typechecker re-enters scopes by node and a miss is silent. An ASan test drops a fresh
+string scrutinee on each pass, including through `continue` and the final failed match.
+
 ### 10/08/26 — `loop` and `while`; `for` only iterates
 
 Asked for on readability: a bare `for { … }` reads better as `loop { … }`, and `for cond

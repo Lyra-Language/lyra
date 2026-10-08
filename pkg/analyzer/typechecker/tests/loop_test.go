@@ -201,3 +201,52 @@ func TestTypeCheck_ForInLoop_OneArmedIfAsLastStatement(t *testing.T) {
 		}
 	`, false))
 }
+
+// ── while let ────────────────────────────────────────────────────────────────
+//
+// The collector erases `while let p = v { … }` into `loop { if let p = v { … } else
+// { break } }`, so the pattern's names are the body's and no one else's.
+
+const whileLetItem = `
+data Item = Got(i64) | Done
+let at = (i: i64) -> Item => if i < 3 { Got(i) } else { Done }
+`
+
+func TestTypeCheck_WhileLet_BindsInTheBody(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, whileLetItem+`
+		let main = () -> u8 => {
+		  var i = 0
+		  var total = 0
+		  while let Got(x) = at(i) {
+		    let doubled = x * 2
+		    total = total + doubled
+		    i += 1
+		  }
+		  u8(total)
+		}
+	`, false))
+}
+
+func TestTypeCheck_WhileLet_BindingDoesNotEscape(t *testing.T) {
+	res := parseCollectAndCheck(t, whileLetItem+`
+		let main = () -> u8 => {
+		  var i = 0
+		  while let Got(x) = at(i) { i += 1 }
+		  u8(x)
+		}
+	`, false)
+	assertErrorsAre(t, res, `undefined identifier "x"`)
+}
+
+// The pattern is checked against the scrutinee as an `if let`'s is.
+func TestTypeCheck_WhileLet_PatternMustFitTheScrutinee(t *testing.T) {
+	res := parseCollectAndCheck(t, whileLetItem+`
+		let main = () -> u8 => {
+		  while let (a, b) = at(0) { }
+		  0
+		}
+	`, false)
+	if len(res.errors) == 0 {
+		t.Fatal("a tuple pattern over a data value should be refused")
+	}
+}

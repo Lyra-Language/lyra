@@ -107,3 +107,19 @@ let count = (n: i64) -> void => {
 	res := parseCollectAndCheck(t, source, false)
 	assertNoErrors(t, res)
 }
+
+// A `while let` can finish — the pattern can fail — so a non-void body may not end in one.
+func TestTailLoop_WhileLetIsRefused(t *testing.T) {
+	source := `
+data Item = Got(i64) | Done
+let at = (i: i64) -> Item => if i < 3 { Got(i) } else { Done }
+let find = (n: i64) -> i64 => {
+    var i = 0
+    while let Got(x) = at(i) {
+        if x == n { return x }
+        i += 1
+    }
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertHasErrorContaining(t, res, "the body ends in a loop that can finish")
+}

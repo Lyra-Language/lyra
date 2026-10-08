@@ -535,8 +535,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   the warning is wrong. Found 09/29 in Vega.
 - **[DONE 10/08] `loop { … }` and `while cond { … }`**; `for` only iterates, and the
   C-style `for init; cond; post` is gone. (COMPLETED.md, 10/08.)
-- **[OPEN] `while let p = v { … }`**, the loop twin of `if let`. Not built; `loop` with a
-  `let … else { break }` is the spelling today.
+- **[DONE 10/08] `while let p = v { … }`**, erased by the collector into `loop { if let … }`.
+  (COMPLETED.md, 10/08.) Sheliak's three poll loops and lyra-md's link scan use it.
 - **[OPEN] A struct pattern as a `for` binding** (`for Pt { x, y } in points`). Its rival was
   the conditional `for` reading the literal as a condition; with that form now `while`, the
   grammar may admit it. Untried; a tuple covers the spelling.

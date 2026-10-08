@@ -90,6 +90,9 @@ and skips the rewrite. Patterns already resolved these.
   (`collectAppliedConstructorExpr`).
 - `None => break` builds the single-statement `BlockExpr` that `None => { break }` builds
   (`collectMatchArmBody`), so `MatchArm.Body` stays an expression.
+- `label: while let p = v { … }` builds `label: loop { if let p = v { … } else { break } }`
+  (`CollectWhileLetLoop`). Every synthesized block gets a recorded scope, nested as written
+  — the typechecker re-enters scopes by node, and a miss is silent.
 
 **The two spellings must stay identical in the AST**, or every downstream pass becomes a place they
 can differ. `TestMatchArm_BareJumpCollectsAsTheBracedForm` pins it.

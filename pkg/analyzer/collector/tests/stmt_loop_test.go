@@ -74,3 +74,13 @@ func TestCollect_LoopAsExpression(t *testing.T) {
 	}`
 	runGoldenTest(t, source, "loop_as_expression")
 }
+
+// `while let` is erased here, into `loop { if let … { body } else { break } }`; the golden
+// is that shape, so a later pass never meets the form.
+func TestCollect_WhileLetLoop(t *testing.T) {
+	source := `
+	outer: while let Some(x) = next() {
+		println(x)
+	}`
+	runGoldenTest(t, source, "while_let_loop")
+}

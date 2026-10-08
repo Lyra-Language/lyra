@@ -242,12 +242,13 @@ A `let`/`var`, a `for` variable or a pattern binding may take a name already in 
 ### Loops
 
 - **Three keywords, one per shape**: `loop { … }` runs until a `break` or `return`; `while cond { … }` runs while a `bool` holds; `for x in xs { … }` iterates. `for` always iterates — there is no bare `for`, no `for cond`, and **no C-style `for init; cond; post`** (removed 10/08: a counted loop is `for i in 0..<n`). Each takes a label (`outer: loop { … }`), and `break value` gives any of them a value.
+- **`while let p = v { … }` runs while `v` matches `p`**, re-evaluating `v` before every pass, with `p`'s names bound in the body only. It is `loop { if let p = v { … } else { break } }` — the collector erases it to exactly that — so the pattern follows `if let`'s rules (any pattern, refutable or not; a `weak` value is upgraded) and `continue` returns to the match. It is a statement, like `if let`, and can finish.
 - **`loop { … }` with no `break` that leaves it is `never`**, so a function with a return type may end in one. `while` and `for` can finish, and a function with a return type that ends in one is refused.
 - **A literal condition warns `lyra-W027`**: `if true`, `if false`, `while false` (the body never runs), and `while true`, whose message names `loop { … }` — it has a condition, so it can finish as far as types are concerned, and a function ending in it is refused where `loop { … }` is not.
 
 ### Patterns
 
-- **One meaning in every position** — a `match` arm, `if let`, `let`, `let … else` and a parameter. A literal, range or regex at any depth is checked against the type in its position by the rule a `match` on that type applies.
+- **One meaning in every position** — a `match` arm, `if let`, `while let`, `let`, `let … else` and a parameter. A literal, range or regex at any depth is checked against the type in its position by the rule a `match` on that type applies.
 - **Tuple rest**: `(a, ...mid, z)` — positions after the rest count from the end, and `mid` binds a **tuple** of what it covers, whatever the count (one position is a one-element tuple, none is `()`). The same in a constructor payload: `Tri(i, ...more)`.
 - **Array rest is the tail**: `[h, ...t]`. A rest before the end of an array pattern, or a second rest in any pattern, is `lyra-E076`.
 - `Rect _` stands for `Rect(_, _)`, and `Rect pair` for `Rect(...pair)`: one name for a multi-field payload binds it as a tuple of the fields. With one field, `Some x` binds the field itself.

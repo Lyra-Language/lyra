@@ -206,9 +206,7 @@ let rewrite_links = pure (
   var out = ""
   var broken: []string = []
   var at = 0
-  var scanning = true
-  while scanning {
-    let Some(start) = html.index("href=\"", at) else { break }
+  while let Some(start) = html.index("href=\"", at) {
     let opened = start + 6
     let Some(closed) = html.index("\"", opened) else { break }
     let (link, report) = retarget(html.slice(opened, closed), page, known)

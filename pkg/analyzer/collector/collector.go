@@ -649,6 +649,8 @@ func (c *Collector) collectStatementByKind(node *sitter.Node) ast.Statement {
 		return declarations.CollectDestructuringIfStatement(node, c.ctx)
 	case "destructuring_else_declaration":
 		return declarations.CollectDestructuringElseStatement(node, c.ctx)
+	case "while_let_loop":
+		return declarations.CollectWhileLetLoop(node, c.ctx)
 	case "expression_statement":
 		return expressions.CollectExpressionStatement(node, c.ctx)
 	case "with_statement":

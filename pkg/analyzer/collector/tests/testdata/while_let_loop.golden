@@ -1,0 +1,77 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				LoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								IfDestructuringStmt {
+									DestructuringStatement: {
+										DestructuringDeclStmt {
+											Keyword: let
+											Pattern: {
+												DataPattern(Some) {
+													Name: Some
+													Pattern: {
+														TuplePattern {
+															Elements: {
+																IdentifierPattern(x) {
+																	Name: x
+																}
+															}
+														}
+													}
+												}
+											}
+											Value: {
+												FunctionCallExpr {
+													Function: {
+														IdentifierExpr(next) {
+															Name: next
+														}
+													}
+												}
+											}
+										}
+									}
+									Else: {
+										BlockExpr {
+											Statements: {
+												BreakStmt {
+												}
+											}
+										}
+									}
+									Then: {
+										BlockExpr {
+											Statements: {
+												ExpressionStmt {
+													Expression: {
+														FunctionCallExpr {
+															Arguments: {
+																IdentifierExpr(x) {
+																	Name: x
+																}
+															}
+															Function: {
+																IdentifierExpr(println) {
+																	Name: println
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Label: outer
+				}
+			}
+		}
+	}
+}
