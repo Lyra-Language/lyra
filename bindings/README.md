@@ -28,9 +28,12 @@ notes are in [`pkg/backend/FFI.md`](../pkg/backend/FFI.md); language rules are i
 - **Unloading is the caller's** — Lyra has no destructors. Mark resource structs
   `@must_release(unload_x)` (`lyra-W022`). A function that takes over a resource takes it
   `own` (`model_from_mesh(own Mesh)`), so a later unload is a use-after-move error.
-- **An in-place C edit takes `self: mut T`** (the modifier binds to the type, after the
-  colon). raylib's `ImageResize` frees the old buffer, so a form returning a new value would
-  leave the caller holding a freed one.
+- **An in-place C edit takes `self: mut`**, in the type's `impl` block (the modifier binds
+  to the type, after the colon, so it is `self: mut T` outside one). raylib's `ImageResize`
+  frees the old buffer, so a form returning a new value would leave the caller holding a
+  freed one.
+- **A type's methods go in its `impl` block**, `impl Image { … }`; the imgui generator
+  writes each handle's wrappers into one.
 - **Mark an extern `pure` only when it is arithmetic on its arguments** (collision tests,
   spline getters). An extern bound is recorded, not checked; anything reading the world or
   returning a pointer into a static buffer (all of `files.lyra`) stays unmarked.

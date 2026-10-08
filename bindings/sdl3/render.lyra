@@ -116,20 +116,22 @@ unsafe extern sdl_save_bmp: (surface: Surface, file: ^u8) -> bool
 @symbol("SDL_DestroySurface")
 unsafe extern sdl_destroy_surface: (surface: Surface) -> void
 
-/// The renderer for a window, or `None` if SDL could not make one.
-///
-/// `nullptr` asks SDL to choose a driver, which is the call the null literal exists for:
-/// before it there was no way to pass NULL and no way to test one either.
-pub let create_renderer = (self: Window) -> Maybe<Renderer> => {
-  let r = unsafe { sdl_create_renderer(self, nullptr) }
-  if r == nullptr { None } else { Some(r) }
-}
+impl Window {
+  /// The renderer for a window, or `None` if SDL could not make one.
+  ///
+  /// `nullptr` asks SDL to choose a driver, which is the call the null literal exists for:
+  /// before it there was no way to pass NULL and no way to test one either.
+  pub let create_renderer = (self) -> Maybe<Renderer> => {
+    let r = unsafe { sdl_create_renderer(self, nullptr) }
+    if r == nullptr { None } else { Some(r) }
+  }
 
-/// A renderer of the kind named — `"gpu"` for SDL's GPU renderer, the one custom shaders
-/// run on ([create_msl_effect]) — or `None` if SDL has no such renderer here.
-pub let create_named_renderer = (self: Window, name: string) -> Maybe<Renderer> => {
-  let r = name.with_cstring((n) => unsafe { sdl_create_renderer(self, n) })
-  if r == nullptr { None } else { Some(r) }
+  /// A renderer of the kind named — `"gpu"` for SDL's GPU renderer, the one custom shaders
+  /// run on ([create_msl_effect]) — or `None` if SDL has no such renderer here.
+  pub let create_named_renderer = (self, name: string) -> Maybe<Renderer> => {
+    let r = name.with_cstring((n) => unsafe { sdl_create_renderer(self, n) })
+    if r == nullptr { None } else { Some(r) }
+  }
 }
 
 /// Release a renderer.

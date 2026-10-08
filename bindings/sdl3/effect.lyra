@@ -110,10 +110,12 @@ pub let set_effect_uniforms = (effect: Effect, slot: u32, values: []f32) -> bool
   ) }
 }
 
-/// Draw what follows through `effect`, or plainly with `None`.
-pub let use_effect = (self: Renderer, effect: Maybe<Effect>) -> bool => match effect {
-  Some(e) => unsafe { sdl_set_gpu_render_state(self, e.state) },
-  None => unsafe { sdl_set_gpu_render_state(self, nullptr) },
+impl Renderer {
+  /// Draw what follows through `effect`, or plainly with `None`.
+  pub let use_effect = (self, effect: Maybe<Effect>) -> bool => match effect {
+    Some(e) => unsafe { sdl_set_gpu_render_state(self, e.state) },
+    None => unsafe { sdl_set_gpu_render_state(self, nullptr) },
+  }
 }
 
 /// Release an effect. It must not be in use, or used again.

@@ -22,7 +22,7 @@
 // default arguments into a short helper (`ImGui_Button`) and a full `…Ex` form; the
 // wrapper is the full form under the short name, with C++'s defaults as Lyra's
 // (`button(label, size = Vec2 { … })`). A C++ method becomes a method on its handle
-// (`draw_list.add_line(p1, p2, col)`).
+// (`draw_list.add_line(p1, p2, col)`), in the handle's `impl` block.
 //
 // **A nullable pointer is left out.** `p_open` (`bool *` defaulting to NULL) makes a second
 // wrapper, `…_closable`, taking `open: mut bool`; the plain one passes NULL. A nullable
@@ -426,6 +426,15 @@ let disambiguate = (fns: []Function, dropped: mut []string) -> []Function => {
   out
 }
 
+/// The Lyra type of a wrapper's receiver — the `impl` block it is rendered in — or `""`
+/// for a free function.
+let receiver_type = pure (f: Function) -> string => {
+  for p in f.params {
+    if p.role == Receiver { return lyra_type(p.kind) }
+  }
+  ""
+}
+
 /// The handle a method is called on, or `""` for a free function.
 let receiver_of = pure (f: Function) -> string => {
   for p in f.params {
@@ -653,9 +662,25 @@ let render = (doc: JsonValue, fns: []Function, skipped: []string) -> string => {
   }
   out.push("")
   out.push("// ── Functions ───────────────────────────────────────────────────────────────")
-  for f in fns {
+  // A run of wrappers on one receiver is that type's `impl` block; the rest stand alone.
+  var i = 0
+  for i < fns.len() {
+    let receiver = receiver_type(fns[i])
     out.push("")
-    render_wrapper(out, f)
+    if receiver == "" {
+      render_wrapper(out, fns[i])
+      i += 1
+      continue
+    }
+    var members: []string = []
+    for i < fns.len() && receiver_type(fns[i]) == receiver {
+      if members.len() > 0 { members.push("") }
+      render_wrapper(members, fns[i])
+      i += 1
+    }
+    out.push("impl ${receiver} {")
+    for line in members { out.push(if line.len() == 0 { "" } else { "  " ++ line }) }
+    out.push("}")
   }
   out.push("")
   out.push("// ── Externs ─────────────────────────────────────────────────────────────────")
@@ -740,7 +765,8 @@ let render_wrapper = (out: mut []string, f: Function) -> void => {
   var shown: []string = []
   for p in f.params {
     match p.role {
-      Receiver => shown.push("self: ${lyra_type(p.kind)}"),
+      // Its type is the `impl` block's (render).
+      Receiver => shown.push("self"),
       Null => {},
       MaybeText => shown.push("${p.name}: Maybe<string> = None"),
       Given => {

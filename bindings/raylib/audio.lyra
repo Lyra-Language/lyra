@@ -331,18 +331,25 @@ pub let wave_copy = (wave: Wave) -> Maybe<Wave> => {
   if wave_valid(c) { Some(c) } else { None }
 }
 
-/// Trim a wave to a frame range, in place.
-pub let crop_wave = (self: mut Wave, first_frame: i64, last_frame: i64) -> void =>
-  unsafe { rl_wave_crop(&mut self, i32(first_frame), i32(last_frame)) }
+impl Wave {
+  /// Trim a wave to a frame range, in place.
+  pub let crop_wave = (self: mut, first_frame: i64, last_frame: i64) -> void =>
+    unsafe { rl_wave_crop(&mut self, i32(first_frame), i32(last_frame)) }
 
-/// Convert a wave's sample rate, bit depth or channel count, in place.
-pub let format_wave = (
-  self: mut Wave,
-  sample_rate: i64,
-  sample_size: i64,
-  channels: i64
-) -> void =>
-  unsafe { rl_wave_format(&mut self, i32(sample_rate), i32(sample_size), i32(channels)) }
+  /// Convert a wave's sample rate, bit depth or channel count, in place.
+  pub let format_wave = (
+    self: mut,
+    sample_rate: i64,
+    sample_size: i64,
+    channels: i64
+  ) -> void =>
+    unsafe { rl_wave_format(
+      &mut self,
+      i32(sample_rate),
+      i32(sample_size),
+      i32(channels)
+    ) }
+}
 
 /// A wave's samples as `[]f32`, one entry per frame per channel, normalised to -1.0..1.0.
 ///

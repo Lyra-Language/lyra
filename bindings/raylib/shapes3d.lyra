@@ -110,31 +110,33 @@ pub let end_mode_3d = () -> void => unsafe { rl_end_mode_3d() }
 // Moving the camera
 // ---------------------------------------------------------------------------------------
 
-/// Let raylib drive the camera from the mouse and keyboard, in one of the `CAMERA_*` modes.
-///
-/// Takes `self: mut Camera3D` because raylib's parameter is a `Camera *` it writes through
-/// — the same rule the in-place image edits follow. `CAMERA_CUSTOM` does nothing, which is
-/// what a program driving its own camera passes.
-pub let update_camera = (self: mut Camera3D, mode: i32) -> void =>
-  unsafe { rl_update_camera(&mut self, mode) }
+impl Camera3D {
+  /// Let raylib drive the camera from the mouse and keyboard, in one of the `CAMERA_*` modes.
+  ///
+  /// Takes `self: mut Camera3D` because raylib's parameter is a `Camera *` it writes through
+  /// — the same rule the in-place image edits follow. `CAMERA_CUSTOM` does nothing, which is
+  /// what a program driving its own camera passes.
+  pub let update_camera = (self: mut, mode: i32) -> void =>
+    unsafe { rl_update_camera(&mut self, mode) }
 
-/// Move and turn the camera by explicit amounts, bypassing the built-in modes.
-///
-/// `movement` is forward/right/up in world units and `rotation` is yaw/pitch/roll in
-/// **degrees**, which is why it is a [Degrees] triple rather than three bare floats — the
-/// unit mistake this binding set catches everywhere else.
-pub let update_camera_pro = (
-  self: mut Camera3D,
-  movement: Vector3,
-  yaw: Degrees,
-  pitch: Degrees,
-  roll: Degrees,
-  zoom: f32
-) -> void =>
-  unsafe {
-    rl_update_camera_pro(&mut self, movement,
-      vec3(f32(yaw), f32(pitch), f32(roll)), zoom)
-  }
+  /// Move and turn the camera by explicit amounts, bypassing the built-in modes.
+  ///
+  /// `movement` is forward/right/up in world units and `rotation` is yaw/pitch/roll in
+  /// **degrees**, which is why it is a [Degrees] triple rather than three bare floats — the
+  /// unit mistake this binding set catches everywhere else.
+  pub let update_camera_pro = (
+    self: mut,
+    movement: Vector3,
+    yaw: Degrees,
+    pitch: Degrees,
+    roll: Degrees,
+    zoom: f32
+  ) -> void =>
+    unsafe {
+      rl_update_camera_pro(&mut self, movement,
+        vec3(f32(yaw), f32(pitch), f32(roll)), zoom)
+    }
+}
 
 /// The camera's view-projection matrix, which is what a shader uniform wants.
 pub let camera_matrix = pure (camera: Camera3D) -> Matrix =>

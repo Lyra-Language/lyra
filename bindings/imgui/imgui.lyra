@@ -191,28 +191,30 @@ pub let image_button = (
   lyra_imgui_image_button(c_id, texture.handle, size, uv0, uv1, filter == Nearest)
 })
 
-/// `ImDrawList::AddImage`: the texture's `uv0`..`uv1` region stretched over the rectangle
-/// `p_min`..`p_max`, tinted by `col` (white leaves it as it is).
-pub let add_image = (
-  self: DrawList,
-  texture: Texture,
-  p_min: Vec2,
-  p_max: Vec2,
-  uv0: Vec2 = Vec2 { x: 0.0, y: 0.0 },
-  uv1: Vec2 = Vec2 { x: 1.0, y: 1.0 },
-  col: u32 = 0xFFFFFFFF,
-  filter: Filter = Nearest
-) -> void => unsafe {
-  lyra_imgui_draw_list_add_image(
+impl DrawList {
+  /// `ImDrawList::AddImage`: the texture's `uv0`..`uv1` region stretched over the rectangle
+  /// `p_min`..`p_max`, tinted by `col` (white leaves it as it is).
+  pub let add_image = (
     self,
-    texture.handle,
-    p_min,
-    p_max,
-    uv0,
-    uv1,
-    col,
-    filter == Nearest
-  )
+    texture: Texture,
+    p_min: Vec2,
+    p_max: Vec2,
+    uv0: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+    uv1: Vec2 = Vec2 { x: 1.0, y: 1.0 },
+    col: u32 = 0xFFFFFFFF,
+    filter: Filter = Nearest
+  ) -> void => unsafe {
+    lyra_imgui_draw_list_add_image(
+      self,
+      texture.handle,
+      p_min,
+      p_max,
+      uv0,
+      uv1,
+      col,
+      filter == Nearest
+    )
+  }
 }
 
 // ── Quitting ─────────────────────────────────────────────────────────────────

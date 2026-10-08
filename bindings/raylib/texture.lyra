@@ -224,45 +224,47 @@ pub let gen_image_text = (width: i32, height: i32, text: string) -> Image =>
 // insist on unloading — a double free the type system would have argued for.
 // ---------------------------------------------------------------------------------------
 
-/// Resize, smoothly (bicubic).
-pub let resize = (self: mut Image, width: i32, height: i32) -> void =>
-  unsafe { rl_image_resize(&mut self, width, height) }
+impl Image {
+  /// Resize, smoothly (bicubic).
+  pub let resize = (self: mut, width: i32, height: i32) -> void =>
+    unsafe { rl_image_resize(&mut self, width, height) }
 
-/// Resize by nearest neighbour, which keeps pixel art crisp.
-pub let resize_nearest = (self: mut Image, width: i32, height: i32) -> void =>
-  unsafe { rl_image_resize_nn(&mut self, width, height) }
+  /// Resize by nearest neighbour, which keeps pixel art crisp.
+  pub let resize_nearest = (self: mut, width: i32, height: i32) -> void =>
+    unsafe { rl_image_resize_nn(&mut self, width, height) }
 
-/// Crop to a rectangle.
-pub let crop = (self: mut Image, area: Rectangle) -> void =>
-  unsafe { rl_image_crop(&mut self, area) }
+  /// Crop to a rectangle.
+  pub let crop = (self: mut, area: Rectangle) -> void =>
+    unsafe { rl_image_crop(&mut self, area) }
 
-/// Flip top to bottom.
-pub let flip_vertical = (self: mut Image) -> void =>
-  unsafe { rl_image_flip_vertical(&mut self) }
+  /// Flip top to bottom.
+  pub let flip_vertical = (self: mut) -> void =>
+    unsafe { rl_image_flip_vertical(&mut self) }
 
-/// Flip left to right.
-pub let flip_horizontal = (self: mut Image) -> void =>
-  unsafe { rl_image_flip_horizontal(&mut self) }
+  /// Flip left to right.
+  pub let flip_horizontal = (self: mut) -> void =>
+    unsafe { rl_image_flip_horizontal(&mut self) }
 
-/// Rotate clockwise by `degrees`.
-pub let rotate = (self: mut Image, degrees: i32) -> void =>
-  unsafe { rl_image_rotate(&mut self, degrees) }
+  /// Rotate clockwise by `degrees`.
+  pub let rotate = (self: mut, degrees: i32) -> void =>
+    unsafe { rl_image_rotate(&mut self, degrees) }
 
-/// Multiply every pixel by a colour.
-pub let tint = (self: mut Image, color: Color) -> void =>
-  unsafe { rl_image_color_tint(&mut self, color) }
+  /// Multiply every pixel by a colour.
+  pub let tint = (self: mut, color: Color) -> void =>
+    unsafe { rl_image_color_tint(&mut self, color) }
 
-/// Invert every pixel.
-pub let invert = (self: mut Image) -> void =>
-  unsafe { rl_image_color_invert(&mut self) }
+  /// Invert every pixel.
+  pub let invert = (self: mut) -> void =>
+    unsafe { rl_image_color_invert(&mut self) }
 
-/// Convert to greyscale.
-pub let grayscale = (self: mut Image) -> void =>
-  unsafe { rl_image_color_grayscale(&mut self) }
+  /// Convert to greyscale.
+  pub let grayscale = (self: mut) -> void =>
+    unsafe { rl_image_color_grayscale(&mut self) }
 
-/// Convert to another pixel format — one of the `PIXELFORMAT_*` constants.
-pub let reformat = (self: mut Image, format: i32) -> void =>
-  unsafe { rl_image_format(&mut self, format) }
+  /// Convert to another pixel format — one of the `PIXELFORMAT_*` constants.
+  pub let reformat = (self: mut, format: i32) -> void =>
+    unsafe { rl_image_format(&mut self, format) }
+}
 
 // ---------------------------------------------------------------------------------------
 // Images — reading pixels
@@ -351,9 +353,11 @@ pub let update_texture_rect = (
   }
 }
 
-/// Generate mipmaps for a texture, in place.
-pub let gen_mipmaps = (self: mut Texture2D) -> void =>
-  unsafe { rl_gen_texture_mipmaps(&mut self) }
+impl Texture2D {
+  /// Generate mipmaps for a texture, in place.
+  pub let gen_mipmaps = (self: mut) -> void =>
+    unsafe { rl_gen_texture_mipmaps(&mut self) }
+}
 
 /// How a magnified texture is sampled — one of the `FILTER_*` constants.
 pub let set_texture_filter = (texture: Texture2D, filter: i32) -> void =>

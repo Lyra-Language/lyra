@@ -232,13 +232,15 @@ pub let draw_model_wires_ex = (
 pub let draw_bounding_box = (box: BoundingBox, color: Color) -> void =>
   unsafe { rl_draw_bounding_box(box, color) }
 
-/// Draw one of the model's meshes with a different one of its materials.
-pub let set_model_mesh_material = (
-  self: mut Model,
-  mesh_id: i32,
-  material_id: i32
-) -> void =>
-  unsafe { rl_set_model_mesh_material(&mut self, mesh_id, material_id) }
+impl Model {
+  /// Draw one of the model's meshes with a different one of its materials.
+  pub let set_model_mesh_material = (
+    self: mut,
+    mesh_id: i32,
+    material_id: i32
+  ) -> void =>
+    unsafe { rl_set_model_mesh_material(&mut self, mesh_id, material_id) }
+}
 
 // ---------------------------------------------------------------------------------------
 // Generating meshes
@@ -336,15 +338,17 @@ pub let unload_mesh = (mesh: Mesh) -> void => unsafe { rl_unload_mesh(mesh) }
 pub let mesh_bounding_box = (mesh: Mesh) -> BoundingBox =>
   unsafe { rl_mesh_bounding_box(mesh) }
 
-/// Compute tangents from the normals and texture coordinates, which a normal map needs.
-pub let gen_tangents = (self: mut Mesh) -> void =>
-  unsafe { rl_gen_mesh_tangents(&mut self) }
+impl Mesh {
+  /// Compute tangents from the normals and texture coordinates, which a normal map needs.
+  pub let gen_tangents = (self: mut) -> void =>
+    unsafe { rl_gen_mesh_tangents(&mut self) }
 
-/// Upload a mesh built by hand. The `gen_mesh_*` functions already have; this is for a mesh
-/// whose vertex arrays were filled some other way. Does nothing with no window.
-pub let upload_mesh = (self: mut Mesh, dynamic: bool) -> void => {
-  if window_ready() {
-    unsafe { rl_upload_mesh(&mut self, if dynamic { 1 } else { 0 }) }
+  /// Upload a mesh built by hand. The `gen_mesh_*` functions already have; this is for a mesh
+  /// whose vertex arrays were filled some other way. Does nothing with no window.
+  pub let upload_mesh = (self: mut, dynamic: bool) -> void => {
+    if window_ready() {
+      unsafe { rl_upload_mesh(&mut self, if dynamic { 1 } else { 0 }) }
+    }
   }
 }
 
@@ -473,13 +477,15 @@ pub let material_valid = (material: Material) -> bool =>
 pub let unload_material = (material: Material) -> void =>
   unsafe { rl_unload_material(material) }
 
-/// Put a texture in one of the material's slots — one of the `MATERIAL_MAP_*` constants.
-pub let set_material_texture = (
-  self: mut Material,
-  map: i32,
-  texture: Texture2D
-) -> void =>
-  unsafe { rl_set_material_texture(&mut self, map, texture) }
+impl Material {
+  /// Put a texture in one of the material's slots — one of the `MATERIAL_MAP_*` constants.
+  pub let set_material_texture = (
+    self: mut,
+    map: i32,
+    texture: Texture2D
+  ) -> void =>
+    unsafe { rl_set_material_texture(&mut self, map, texture) }
+}
 
 // ---------------------------------------------------------------------------------------
 // A model's meshes and materials
