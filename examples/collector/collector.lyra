@@ -5,6 +5,7 @@
 //     build/lyrac build -o build/collector examples/collector/collector.lyra
 //   build/collector file.lyra      # the AST, in pkg/printer's format
 //   build/collector -              # the same, from standard input
+//   build/collector --diagnostics file.lyra   # what it refuses, as `lyrac check` prints it
 //
 // The bootstrap's third slice. The output is the format `pkg/printer` produces for the Go
 // AST, so it can be compared against the Go collector's own golden files — 245 of them,
@@ -50,15 +51,29 @@ let main = () -> u8 => {
   // 245 goldens are dumps of the format without it; on, it is the only way to check that
   // the spans this collector records are the ones the Go collector records, which no
   // golden can say (`pkg/printer` skips the embedded base a location lives in).
+  //
+  // `--diagnostics` prints what the collector refuses instead of the tree, one per line in
+  // `lyrac check`'s format, so the two can be compared line for line. Not beside the tree:
+  // the tree's output is compared byte for byte against the Go printer's. A refusal still
+  // fails the exit code when the tree is printed, as a broken parse does.
   var show_loc = false
+  var show_diagnostics = false
   for switch in args.switches {
     if switch == "--locations" { show_loc = true }
+    if switch == "--diagnostics" { show_diagnostics = true }
   }
   let file = source_of(source.cstring())
-  print(print_ast(tree.root().collect(file), show_loc))
+  let refused = tree.root().refused_arguments(file)
+  if show_diagnostics {
+    for d in refused {
+      println("${path}:${d.location.start_line}:${d.location.start_col}: error [${d.code}]: ${d.message}")
+    }
+  } else {
+    print(print_ast(tree.root().collect(file), show_loc))
+  }
   delete(tree)
   delete(parser)
-  if broken { 1 } else { 0 }
+  if broken || refused.len() > 0 { 1 } else { 0 }
 }
 
 /// The file's text, or standard input for `-`.

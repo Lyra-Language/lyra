@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 10/07/26 — the Lyra collector refuses them too: its first diagnostic
+
+`examples/collector` dropped `name: value` and `_` from an argument list exactly as the Go
+collector had, and now refuses both as it does. It collects each to the Go collector's
+placeholder: the named argument's value in its position, and `panic("refused call
+argument")` for a `_`. It reports `lyra-E088` with the same text, in the same order. The
+default mode prints the tree and exits 1, as a broken parse does. `--diagnostics` prints the
+refusals instead, in `lyrac check`'s format. They are not printed beside the tree, because
+the tree is compared byte for byte with `pkg/printer`'s output.
+
+**The report is a walk of its own over the CST** (`refused_arguments`), not a sink threaded
+through `collect`. The obvious sink is a `shared` list on `Source`, which every collector
+already takes. The compiler refuses a write through an immutable parameter even to a
+`shared` field ("its interior cannot be mutated"), so that design means `mut` on every
+collector's signature. A CST walk is pure. It also reports inside constructs the collector
+does not collect yet, which is every position the Go collector reports from. That is the
+open choice for the next diagnostic (todo.md). The oracle is the Go collector itself:
+`TestCollector_RefusesTheArgumentsTheGoCollectorRefuses` compares the tree, the tree with
+spans, and the diagnostic list.
+
 ### 10/07/26 — a named call argument is refused, not dropped (`lyra-E088`)
 
 `println(greet("Ada", greeting: "Hi"))` compiled and printed `Hello, Ada`; so did

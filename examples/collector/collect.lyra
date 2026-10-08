@@ -143,6 +143,61 @@ pub let collect = (self: Node, source: Source) -> Program => {
   Program { statements: statements }
 }
 
+/// A diagnostic, as `lyrac` prints one: where it starts, the rule's code, and the message.
+pub struct Diagnostic {
+  location: Location,
+  code: string,
+  message: string,
+}
+
+/// Every call argument written in a form the language does not have — `name: value` and a
+/// bare `_` — as the Go collector reports them (`lyra-E088`), in the same order and with
+/// the same text, so the two lists can be compared the way the trees are.
+///
+/// **A walk of its own rather than a report from `collect`**: a collector's `source` is an
+/// immutable borrow, and the compiler refuses a write through one even to a `shared` sink,
+/// so reporting from inside the collect walk would put `mut` on every collector's
+/// signature. Walking the CST also finds an argument inside a construct `collect` does not
+/// collect yet, which is every position the Go collector reports from. An `ERROR` node is
+/// not entered: the syntax error is the report there.
+pub let refused_arguments = (self: Node, source: Source) -> []Diagnostic => {
+  var found: []Diagnostic = []
+  find_refused_arguments(self, source, found)
+  found
+}
+
+/// The walk behind `refused_arguments`: pre-order, which is the Go collector's order — a
+/// named argument is reported before the `_` or the call inside its value.
+let find_refused_arguments = (
+  node: Node,
+  source: Source,
+  found: mut []Diagnostic
+) -> void => {
+  match node.kind() {
+    "ERROR" => { return },
+    "named_argument" => {
+      let name = match node.field("name") {
+        Some(name_node) => name_node.text(source.bytes),
+        None => "",
+      }
+      found.push(Diagnostic {
+        location: source.location_of(node),
+        code: "lyra-E088",
+        message: "named argument `${name}:`: Lyra call arguments are positional — pass the value alone, in its parameter's place",
+      })
+    },
+    "wildcard" => found.push(Diagnostic {
+      location: source.location_of(node),
+      code: "lyra-E088",
+      message: "`_` is not a call argument: Lyra has no partial application — write a lambda, e.g. `(b) => f(a, b)`",
+    }),
+    _ => {},
+  }
+  for child in node.named_children() {
+    find_refused_arguments(child, source, found)
+  }
+}
+
 /// One statement, or `None` for a node this slice does not collect.
 ///
 /// **A comment is a named node** — verified, not assumed: `// x` at the top level is a
@@ -966,22 +1021,47 @@ let collect_arguments = (node: Node, source: Source) -> []shared Expr => {
   var arguments: []shared Expr = []
   let Some(list) = node.field("arguments") else { return arguments }
   for i in 0..<list.named_child_count() {
-    // **Each argument is wrapped in a `value` node** by the grammar, so the expression
-    // is one level down; a walk that took the wrapper would ask for the kind of a node
-    // that is never an expression and collect nothing.
-    let wrapper = list.named_child(i)
-    let inner = if wrapper.kind() == "value" && wrapper.named_child_count() > 0 {
-      wrapper.named_child(0)
-    } else {
-      wrapper
-    }
-    match collect_expr(inner, source) {
+    match collect_argument(list.named_child(i), source) {
       Some(argument) => arguments.push(argument),
       None => {},
     }
   }
   arguments
 }
+
+/// One call argument.
+///
+/// **Each argument is wrapped in a `value` node** by the grammar, so the expression is one
+/// level down; a walk that took the wrapper would ask for the kind of a node that is never
+/// an expression and collect nothing.
+///
+/// The grammar also parses two forms the language does not have, `name: value` and a bare
+/// `_`, and both are `lyra-E088` (reported by `refused_arguments`, below). Each collects to
+/// the Go collector's placeholder (`collectArgument`, `postfix_expr.go`): a named argument
+/// to its value, in the position it was written in, and a `_` to `panic("…")`. Until 10/07
+/// both were dropped here, as they were there.
+let collect_argument = (node: Node, source: Source) -> Maybe<shared Expr> =>
+  match node.kind() {
+    "value" => if node.named_child_count() > 0 { collect_expr(node.named_child(0), source) } else { None },
+    "named_argument" => match node.field("value") {
+      Some(value) => collect_argument(value, source),
+      None => match node.field("wildcard") {
+        Some(wildcard) => collect_argument(wildcard, source),
+        None => Some(refused_argument(source.location_of(node))),
+      },
+    },
+    "wildcard" => Some(refused_argument(source.location_of(node))),
+    _ => collect_expr(node, source),
+  }
+
+/// What a refused argument collects to: `panic("refused call argument")`, which is the Go
+/// collector's `placeholderArgument` node for node, every span the refused argument's.
+let refused_argument = pure (location: Location) -> shared Expr =>
+  FunctionCallExpr(FunctionCall {
+    location: location,
+    arguments: [StringLiteralExpr(StringLiteral { location: location, value: "refused call argument" })],
+    function: IdentifierExpr(Identifier { location: location, name: "panic" }),
+  })
 
 /// What `m?.x`, `m?.f(a)` and `m?[i]` mean — the match the Go collector builds
 /// (`postfix_expr.go`, `optionalChain`), node for node, so the two print alike:

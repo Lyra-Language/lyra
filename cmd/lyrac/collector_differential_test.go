@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/printer"
 )
@@ -305,6 +308,98 @@ func TestCollector_AgreesWithTheGoCollectorOnLocations(t *testing.T) {
 			}
 		})
 	}
+}
+
+// **A call argument the language does not have is refused by both collectors** (`lyra-E088`):
+// `name: value` and a bare `_`, which the grammar parses and both collectors dropped from the
+// argument list until 10/07. The Go collector is the oracle three ways — the tree with and
+// without spans (a named argument keeps its value in its position, a `_` becomes
+// `panic("…")`), and the diagnostics, which `--diagnostics` prints in `lyrac`'s format.
+//
+// A case marked diagnosticsOnly sits inside a construct the Lyra collector does not collect
+// yet, so its trees differ by that construct; its refusal must not, since the diagnostics
+// walk the CST rather than the collected tree.
+func TestCollector_RefusesTheArgumentsTheGoCollectorRefuses(t *testing.T) {
+	bin := buildCollector(t)
+
+	for _, c := range []struct {
+		name, source    string
+		diagnosticsOnly bool
+	}{
+		{"a named argument after a positional one", `let a = greet("Ada", greeting: "Hi")`, false},
+		{"only named arguments", `let a = greet(name: "Ada", greeting: "Hi")`, false},
+		{"a bare wildcard", "let b = add(1, _)", false},
+		{"a named wildcard, which is two refusals", "let c = add(1, b: _)", false},
+		{"a named argument inside another's value", "let d = outer(x: inner(y: 2))", false},
+		{"a named argument in a method call", "let e = p.move(dx: 1)", false},
+		{"a named argument in a lambda body", "let f = () => {\n  g(k: 1)\n}", false},
+		{"a named argument inside an impl", "trait T2 { t2: (Self) -> i64 }\n" +
+			"impl T2 for i64 { t2 = (self) => f(n: 1) }", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "in.lyra")
+			if err := os.WriteFile(source, []byte(c.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			tree, wantDiagnostics := goCollectorRefusing(t, c.source, source, printer.PrintAST)
+			if len(wantDiagnostics) == 0 {
+				t.Fatalf("the Go collector refused nothing in %q", c.source)
+			}
+
+			got, err := exec.Command(bin, "--diagnostics", source).Output()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Errorf("--diagnostics should exit 1 on a refusal; got %v", err)
+			}
+			if want := strings.Join(wantDiagnostics, "\n") + "\n"; string(got) != want {
+				t.Errorf("the two collectors refuse differently in %q\n Lyra:\n%s\n Go:\n%s",
+					c.source, got, want)
+			}
+			if c.diagnosticsOnly {
+				return
+			}
+
+			withLocations, _ := goCollectorRefusing(t, c.source, source, printer.PrintASTWithLocations)
+			for _, mode := range []struct {
+				args []string
+				want string
+			}{{nil, tree}, {[]string{"--locations"}, withLocations}} {
+				got, err := exec.Command(bin, append(mode.args, source)...).Output()
+				if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+					t.Errorf("a refusal should fail the exit code with the tree printed; got %v", err)
+				}
+				if string(got) != mode.want {
+					t.Errorf("the two collectors disagree on %q %v\n Lyra:\n%s\n Go:\n%s",
+						c.source, mode.args, got, mode.want)
+				}
+			}
+		})
+	}
+}
+
+// goCollectorRefusing is goCollectorPrinted for a source the Go collector refuses: the tree,
+// and each diagnostic as `lyrac` prints one against path.
+func goCollectorRefusing(t *testing.T, source, path string, print func(any) string) (string, []string) {
+	t.Helper()
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parsing %q: %v", source, err)
+	}
+	program, _, _, errs := collector.NewCollector([]byte(source)).Collect(tree.RootNode())
+	var diagnostics []string
+	for _, e := range errs {
+		var d diag.Diagnostic
+		if !errors.As(e, &d) {
+			t.Fatalf("the Go collector reported %q with no location", e)
+		}
+		diagnostics = append(diagnostics, fmt.Sprintf("%s:%d:%d: error [%s]: %s",
+			path, d.Location.StartLine, d.Location.StartCol, d.Code, d.Message))
+	}
+	out := print(program)
+	if !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return out, diagnostics
 }
 
 // goCollectorASTWithLocations is goCollectorAST with each node's span.

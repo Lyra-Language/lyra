@@ -252,9 +252,10 @@ Package management, versioning and separate compilation are out of scope by deci
     collector keeps written types' positions in a side table instead.
     It also found a **missing** location in the Go collector (below), which is the only way
     a missing one ever shows up. (COMPLETED.md, 09/25.)
-  - **[OPEN] Next on this axis: diagnostics.** The collector can report now — it has spans
-    and rule 3's placeholder shape to follow — and the Go collector's errors are a list
-    this can be compared against the same way the AST was.
+  - **[PARTIAL] Next on this axis: diagnostics.** The first is in (10/07): `lyra-E088`
+    from a CST walk (`refused_arguments`), printed by `--diagnostics` and checked against
+    the Go collector's list. The rest need a channel inside the collect walk, which an
+    immutable `source` refuses — so it is `mut` threading or a walk per rule.
   - The `SymbolTable` is a second axis, deliberately after the AST: the Go collector builds
     both in one walk, and doing the same here before the AST is checked would mean two
     unverified things at once.
