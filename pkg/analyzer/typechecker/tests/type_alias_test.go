@@ -9,13 +9,13 @@ import "testing"
 // It is implemented by registering the aliased type *itself* under the alias's name,
 // so most of the language needs no knowledge of aliases at all — these tests exist to
 // pin that the transparency actually holds at each place a type is compared, since
-// "resolve one hop and stop" passes a naive test and fails on `type Point = Pt`.
+// "resolve one hop and stop" passes a naive test and fails on `alias Point = Pt`.
 
 func TestTypeAlias_FunctionTypeIsInterchangeable(t *testing.T) {
 	// The motivating case: a function type is the shape Lyra reads worst, and the
 	// double parens (one *tuple* parameter, since single parens would be two
 	// arguments) cannot be spelled away — only named.
-	res := parseCollectAndCheck(t, `type Op = ((i64, i64)) -> i64
+	res := parseCollectAndCheck(t, `alias Op = ((i64, i64)) -> i64
 let apply = (g: Op, p: (i64, i64)) -> i64 => g(p)
 let use = () -> i64 => apply(((a, b)) => a * b, (3, 4))`, false)
 	assertNoErrors(t, res)
@@ -26,7 +26,7 @@ let use = () -> i64 => apply(((a, b)) => a * b, (3, 4))`, false)
 // name and assignability then rejects a real Pt with "cannot assign Pt to Point".
 func TestTypeAlias_ToNamedTypeIsInterchangeable(t *testing.T) {
 	res := parseCollectAndCheck(t, `struct Pt { x: i64, y: i64 }
-type Point = Pt
+alias Point = Pt
 let sum = (p: Point) -> i64 => p.x + p.y
 let use = () -> i64 => sum(Pt { x: 3, y: 4 })`, false)
 	assertNoErrors(t, res)
@@ -34,15 +34,15 @@ let use = () -> i64 => sum(Pt { x: 3, y: 4 })`, false)
 
 func TestTypeAlias_ChainResolves(t *testing.T) {
 	res := parseCollectAndCheck(t, `struct Pt { x: i64 }
-type A = Pt
-type B = A
+alias A = Pt
+alias B = A
 let get = (p: B) -> i64 => p.x
 let use = () -> i64 => get(Pt { x: 9 })`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeAlias_InReturnPosition(t *testing.T) {
-	res := parseCollectAndCheck(t, `type Op = (i64) -> i64
+	res := parseCollectAndCheck(t, `alias Op = (i64) -> i64
 let mk = (n: i64) -> Op => (x: i64) -> i64 => x + n`, false)
 	assertNoErrors(t, res)
 }
@@ -51,8 +51,8 @@ let mk = (n: i64) -> Op => (x: i64) -> i64 => x + n`, false)
 // twin of the one in inferExprType, and for the same reason: the alternative is a
 // stack overflow that takes the language server with it.
 func TestTypeAlias_CircularIsRejected(t *testing.T) {
-	res := parseCollectAndCheck(t, `type A = B
-type B = A`, false)
+	res := parseCollectAndCheck(t, `alias A = B
+alias B = A`, false)
 	assertHasErrorContaining(t, res, "is circular")
 }
 
@@ -60,12 +60,12 @@ type B = A`, false)
 // nothing mentions would otherwise be checked by nobody, and a declaration that
 // cannot mean anything should not need a use to be told so.
 func TestTypeAlias_UnknownTargetIsRejectedWithoutAUse(t *testing.T) {
-	res := parseCollectAndCheck(t, `type X = Nonexistent`, false)
+	res := parseCollectAndCheck(t, `alias X = Nonexistent`, false)
 	assertHasErrorContaining(t, res, `unknown type "Nonexistent"`)
 }
 
 func TestTypeAlias_UnusedButValidIsSilent(t *testing.T) {
-	res := parseCollectAndCheck(t, `type Op = (i64) -> i64`, false)
+	res := parseCollectAndCheck(t, `alias Op = (i64) -> i64`, false)
 	assertNoErrors(t, res)
 }
 
@@ -74,7 +74,7 @@ func TestTypeAlias_UnusedButValidIsSilent(t *testing.T) {
 // create a type that rejects its own base. This is the assertion that would fail if
 // someone "improved" aliases into nominal types.
 func TestTypeAlias_IsNotNominal(t *testing.T) {
-	res := parseCollectAndCheck(t, `type Id = i64
+	res := parseCollectAndCheck(t, `alias Id = i64
 let plain = (n: i64) -> i64 => n
 let aliased = (n: Id) -> Id => n
 let use = () -> i64 => plain(aliased(1)) + aliased(plain(2))`, false)
@@ -91,7 +91,7 @@ let use = () -> i64 => plain(aliased(1)) + aliased(plain(2))`, false)
 // alias exists for. `&mut n` on an `i64` binding produced `^mut i64` and the parameter
 // wanted `^mut Id`.
 func TestTypeAlias_IsTransparentInsideAPointer(t *testing.T) {
-	res := parseCollectAndCheck(t, `type Id = i64
+	res := parseCollectAndCheck(t, `alias Id = i64
 let through = unsafe (p: ^mut Id) -> i64 => unsafe { p^ }
 let use = () -> i64 => { var n: i64 = 1; unsafe { through(&mut n) } }`, false)
 	assertNoErrors(t, res)
@@ -101,7 +101,7 @@ let use = () -> i64 => { var n: i64 = 1; unsafe { through(&mut n) } }`, false)
 // reported. An alias inside an array, a tuple and a function type all have to resolve, and
 // each of those cases was added to the walk for a failure of its own.
 func TestTypeAlias_IsTransparentInsideEveryComposite(t *testing.T) {
-	res := parseCollectAndCheck(t, `type Id = i64
+	res := parseCollectAndCheck(t, `alias Id = i64
 let arr = pure (xs: []Id) -> i64 => xs.len()
 let fixed = pure (xs: [2]Id) -> i64 => xs.len()
 let tup = pure (p: (Id, Id)) -> i64 => p.0
@@ -120,7 +120,7 @@ let use = () -> i64 => {
 // type that is not a tuple and was never going to be. That is the same wording lyra-E044's
 // history records having already replaced once, for `newtype`.
 func TestTypeAlias_ConstructionNamesTheConversion(t *testing.T) {
-	res := parseCollectAndCheck(t, `type CULong = u64
+	res := parseCollectAndCheck(t, `alias CULong = u64
 let use = () -> u64 => CULong(5)`, false)
 	assertHasErrorContaining(t, res, "has no constructor")
 	assertHasErrorContaining(t, res, "write `u64(...)`")
@@ -130,7 +130,7 @@ let use = () -> u64 => CULong(5)`, false)
 // call form — so it must reach the same arm rather than falling through to a second,
 // worse message.
 func TestTypeAlias_JuxtaposedConstructionIsTheSameError(t *testing.T) {
-	res := parseCollectAndCheck(t, `type CULong = u64
+	res := parseCollectAndCheck(t, `alias CULong = u64
 let use = () -> u64 => CULong 5`, false)
 	assertHasErrorContaining(t, res, "has no constructor")
 }
@@ -140,7 +140,7 @@ let use = () -> u64 => CULong 5`, false)
 // pointing at a wrapper that does not exist. Naming `[]i64(…)` would be worse than saying
 // nothing: it does not parse.
 func TestTypeAlias_ConstructionOfAnUnconvertibleBaseSaysDropIt(t *testing.T) {
-	res := parseCollectAndCheck(t, `type Row = []i64
+	res := parseCollectAndCheck(t, `alias Row = []i64
 let use = () -> i64 => { let r = Row([1, 2]); r[0] }`, false)
 	assertHasErrorContaining(t, res, "Drop the wrapper")
 }
@@ -148,7 +148,7 @@ let use = () -> i64 => { let r = Row([1, 2]); r[0] }`, false)
 // The arm must not swallow the case it sits next to: a `newtype` **does** have a
 // constructor, and `Cents(150)` is how a base value becomes one.
 func TestTypeAlias_ANewtypeStillConstructs(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Cents = i64
+	res := parseCollectAndCheck(t, `type Cents = i64
 let use = () -> Cents => Cents(150)`, false)
 	assertNoErrors(t, res)
 }
@@ -162,19 +162,19 @@ let use = () -> Cents => Cents(150)`, false)
 // struct (heads `Point` and `Pt`), an overload set, and an alias inside a type argument.
 func TestTypeAlias_ReceiverTakesAMethodCall(t *testing.T) {
 	cases := map[string]string{
-		"alias of a dynamic array": `type A = []i64
+		"alias of a dynamic array": `alias A = []i64
 let first = (self: A) -> i64 => self[0]
 let use = (ys: A, zs: []i64) -> i64 => ys.first() + zs.first() + first(ys)`,
 		"alias of a struct": `struct Pt { x: i64 }
-type Point = Pt
+alias Point = Pt
 let getx = (self: Point) -> i64 => self.x
 let use = (p: Pt) -> i64 => p.getx()`,
-		"a member of an overload set": `type A = []i64
+		"a member of an overload set": `alias A = []i64
 let total = (self: A) -> i64 => self[0]
 let total = (self: string) -> i64 => self.len()
 let use = (ys: A) -> i64 => ys.total() + total(ys) + "ab".total()`,
-		"an alias inside a type argument": `type A = []i64
-type Pair = (A, A)
+		"an alias inside a type argument": `alias A = []i64
+alias Pair = (A, A)
 let width = (self: [2]A) -> i64 => self[0].len()
 let left = (self: Pair) -> i64 => self.0[0]
 let use = (g: [2][]i64, p: ([]i64, []i64)) -> i64 => g.width() + p.left()`,
@@ -191,7 +191,7 @@ let use = (g: [2][]i64, p: ([]i64, []i64)) -> i64 => g.width() + p.left()`,
 // before the alias could be resolved, so the pair was admitted, and every call was then
 // an ambiguity. One error, at the second declaration, in registration's wording.
 func TestTypeAlias_OverloadsOverlappingThroughAnAliasAreRefused(t *testing.T) {
-	res := parseCollectAndCheck(t, `type A = []i64
+	res := parseCollectAndCheck(t, `alias A = []i64
 let total = (self: A) -> i64 => self[0]
 let total = (self: []i64) -> i64 => self[1]
 let use = (ys: A) -> i64 => ys.total() + total(ys)`, false)

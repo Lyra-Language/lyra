@@ -9,14 +9,14 @@ import (
 //
 // It was a compile-time assertion and nothing else: it caught a literal, and
 // whatever the value-range pass could pin to an interval, and silently accepted
-// everything else. So on `newtype Percent = u8 where range(0..<=100)`,
+// everything else. So on `type Percent = u8 where range(0..<=100)`,
 // `Percent(n)` with a runtime n of 200 built, ran and printed 200 — leaving the
 // language's own ladder (provable → compile error, otherwise → trap) with a first
 // rung and no second, in the one construct whose entire purpose is to be checked.
 // The values a constrained newtype sees at run time are exactly the ones from
 // outside the program, which is where a range or unit mistake lives.
 
-const percentPrelude = `newtype Percent = u8 where range(0..<=100)
+const percentPrelude = `type Percent = u8 where range(0..<=100)
 let mk = (n: u8) -> Percent => Percent(n)
 `
 
@@ -57,7 +57,7 @@ func TestExec_RangeConstraintBoundariesPass(t *testing.T) {
 // An exclusive end (`..<`) excludes its bound, where the inclusive one includes it.
 func TestExec_RangeConstraintExclusiveEnd(t *testing.T) {
 	t.Parallel()
-	src := `newtype Heading = i64 where range(0..<360)
+	src := `type Heading = i64 where range(0..<360)
 let mk = (n: i64) -> Heading => Heading(n)
 let main = () -> u8 => {
   println(i64(mk(359)))
@@ -75,7 +75,7 @@ let main = () -> u8 => {
 
 func TestExec_ValuesConstraintTrapsAtRuntime(t *testing.T) {
 	t.Parallel()
-	src := `newtype Status = i32 where values(200, 404, 500)
+	src := `type Status = i32 where values(200, 404, 500)
 let mk = (n: i32) -> Status => Status(n)
 let main = () -> u8 => {
   println(i64(i32(mk(404))))
@@ -96,7 +96,7 @@ let main = () -> u8 => {
 // from the range's start. Nothing read StepConstraint at all until 08/13.
 func TestExec_StepConstraintTrapsAtRuntime(t *testing.T) {
 	t.Parallel()
-	src := `newtype Heading = i64 where range(0..<360), step(15)
+	src := `type Heading = i64 where range(0..<360), step(15)
 let mk = (n: i64) -> Heading => Heading(n)
 let main = () -> u8 => {
   println(i64(mk(45)))
@@ -116,7 +116,7 @@ let main = () -> u8 => {
 // and `step(10)`, 15 is on the grid and 10 is not.
 func TestExec_StepConstraintGridIsOffsetByRangeStart(t *testing.T) {
 	t.Parallel()
-	ok := `newtype Odd = i64 where range(5..<=95), step(10)
+	ok := `type Odd = i64 where range(5..<=95), step(10)
 let mk = (n: i64) -> Odd => Odd(n)
 let main = () -> void => println(i64(mk(15)))`
 	out, code := buildAndRunCapture(t, ok)
@@ -124,7 +124,7 @@ let main = () -> void => println(i64(mk(15)))`
 		t.Errorf("on-grid value: stdout = %q, exit = %d; want %q, 0", out, code, "15\n")
 	}
 
-	bad := `newtype Odd = i64 where range(5..<=95), step(10)
+	bad := `type Odd = i64 where range(5..<=95), step(10)
 let mk = (n: i64) -> Odd => Odd(n)
 let main = () -> void => println(i64(mk(10)))`
 	if _, code := buildAndRunCapture(t, bad); code != trapExitCode {
@@ -135,7 +135,7 @@ let main = () -> void => println(i64(mk(10)))`
 // A float base uses the same rules, with `fmod` for the step.
 func TestExec_FloatConstraintTraps(t *testing.T) {
 	t.Parallel()
-	src := `newtype Quarter = f64 where range(0.0..<=1.0), step(0.25)
+	src := `type Quarter = f64 where range(0.0..<=1.0), step(0.25)
 let mk = (x: f64) -> Quarter => Quarter(x)
 let main = () -> u8 => {
   println(f64(mk(0.5)))
@@ -157,7 +157,7 @@ let main = () -> u8 => {
 // as it was.
 func TestEmit_ConstantConstructionEmitsNoConstraintCheck(t *testing.T) {
 	t.Parallel()
-	ir, err := emitSource(t, `newtype Percent = u8 where range(0..<=100)
+	ir, err := emitSource(t, `type Percent = u8 where range(0..<=100)
 let main = () -> void => {
   let p: Percent = 50
   println(i64(u8(p)))

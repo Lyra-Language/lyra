@@ -88,7 +88,7 @@ func plantableVars(subst map[string]types.Type) map[string]bool {
 
 // resolveDeclaredParam is a parameter's annotation as unification must see it: type
 // aliases expanded, everything else as written. `offset: Index = 0` for
-// `type Index = i64` otherwise reaches unifyGenericTarget as an UnresolvedType, fails
+// `alias Index = i64` otherwise reaches unifyGenericTarget as an UnresolvedType, fails
 // against the argument's resolved i64, and the whole call reports "cannot infer type
 // variable t" — blaming a variable the alias had nothing to do with.
 //
@@ -531,7 +531,7 @@ func (tc *TypeChecker) constructionContext(decl *ast.TypeDeclStmt, vars map[stri
 // signature, giving the concrete parameter types and return type a call site is
 // checked against.
 // A method rather than the free function it was, because the annotations must be
-// **resolved before they are substituted**: `offset: Index = 0` for `type Index = i64`
+// **resolved before they are substituted**: `offset: Index = 0` for `alias Index = i64`
 // otherwise reaches the argument check as an UnresolvedType and rejects a plain i64
 // ("argument 3: cannot assign i64 to Index") — the same raw-annotation read
 // solveTypeVars had, one consumer further down. Resolved from the declaration's own

@@ -10,7 +10,7 @@ import "testing"
 const nestedTypes = `
   data Box<t> = Wrap(t) | Empty
   data Either<a, b> = Pick(a) | Other(b)
-  newtype Meters = i64
+  type Meters = i64
 `
 
 func TestNestedConstruction_TakesItsContext(t *testing.T) {

@@ -500,7 +500,7 @@ func TestRange_Match_CatchAll_NoDiag(t *testing.T) {
 // A variable refined past the constraint's range is a definite violation.
 func TestRange_Constraint_RefinedVar(t *testing.T) {
 	onlyDiag(t, `
-		newtype Percent = u8 where range(0..<=100)
+		type Percent = u8 where range(0..<=100)
 		let f = (x: u8) -> u8 => if x > 100 { let p: Percent = Percent(x)
 			0
 		} else { 0 }
@@ -512,7 +512,7 @@ func TestRange_Constraint_RefinedVar(t *testing.T) {
 // identifier `y`, so this is the range pass's to catch.
 func TestRange_Constraint_ConstPropagatedBinding(t *testing.T) {
 	onlyDiag(t, `
-		newtype Percent = u8 where range(0..<=100)
+		type Percent = u8 where range(0..<=100)
 		let f = () -> u8 => {
 			let y: u8 = 150
 			let p: Percent = Percent(y)
@@ -527,7 +527,7 @@ func TestRange_Constraint_ConstPropagatedBinding(t *testing.T) {
 // A variable refined into range is fine.
 func TestRange_Constraint_RefinedInRange_NoDiag(t *testing.T) {
 	noDiag(t, `
-		newtype Percent = u8 where range(0..<=100)
+		type Percent = u8 where range(0..<=100)
 		let f = (x: u8) -> u8 => if x < 50 { let p: Percent = Percent(x)
 			0
 		} else { 0 }
@@ -539,7 +539,7 @@ func TestRange_Constraint_RefinedInRange_NoDiag(t *testing.T) {
 // runtime — a possible, not definite, violation.
 func TestRange_Constraint_PossibleNotDefinite_NoDiag(t *testing.T) {
 	noDiag(t, `
-		newtype Percent = u8 where range(0..<=100)
+		type Percent = u8 where range(0..<=100)
 		let f = (x: u8) -> u8 => {
 			let p: Percent = Percent(x)
 			0
@@ -973,7 +973,7 @@ func TestRange_Safety_ForInRangeIndexInBounds(t *testing.T) {
 // would have reported it here too, and one out-of-range value is one mistake.
 func TestRange_Constraint_ConstructedConstantNotDoubleReported(t *testing.T) {
 	noDiag(t, `
-		newtype Percent = u8 where range(0..<=100)
+		type Percent = u8 where range(0..<=100)
 		let f = () -> u8 => {
 			let p: Percent = Percent(50)
 			0

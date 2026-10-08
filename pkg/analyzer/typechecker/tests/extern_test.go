@@ -74,7 +74,7 @@ func TestExtern_SignatureRefusesTypesWithNoCSpelling(t *testing.T) {
 		// Named through an alias because `() -> ((i64) -> i64)` parses its parenthesized
 		// return as an anonymous *tuple*, so the direct spelling tests the grammar rather
 		// than this rule.
-		{"function returned", "type Cb = (i64) -> i64\nunsafe extern pure get: () -> Cb", "not a C function pointer"},
+		{"function returned", "alias Cb = (i64) -> i64\nunsafe extern pure get: () -> Cb", "not a C function pointer"},
 		// `bool` itself crosses since 09/15 (`i1 zeroext`); a callback's does not.
 		{"bool in a callback", `unsafe extern on_each: (cb: (i32) -> bool) -> void`, "callback whose return type is boolean"},
 	} {
@@ -93,12 +93,12 @@ extern flush: () -> void
 `, false))
 }
 
-// A newtype is looked *through*: it is nominal only, so `newtype Fd = i32` is an i32 at the
+// A newtype is looked *through*: it is nominal only, so `type Fd = i32` is an i32 at the
 // boundary — and refusing it would refuse the one wrapper that makes a foreign signature
 // readable.
 func TestExtern_SignatureLooksThroughANewtype(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Fd = i32
+type Fd = i32
 unsafe extern det close: (n: Fd) -> i32
 `, false))
 }

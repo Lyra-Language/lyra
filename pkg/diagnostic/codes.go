@@ -146,7 +146,7 @@ const (
 	CodeIndexOutOfBounds = "lyra-E022"
 
 	// CodeRangeConstraintViolation: a compile-time numeric constant assigned to a
-	// range-constrained newtype (`newtype Percent = u8 where range(0..<=100)`) falls
+	// range-constrained newtype (`type Percent = u8 where range(0..<=100)`) falls
 	// outside the declared range (`let p: Percent = 150`). The numeric analogue of
 	// the string PatternConstraint check; checked for a foldable constant value (int
 	// or float literal) against foldable literal bounds. A non-constant value is left
@@ -378,7 +378,7 @@ const (
 	//
 	// `newtype` exists to give nominal identity to a **structural** type: `newtype
 	// Meters = f64` makes an f64 that is not interchangeable with other f64s, and
-	// `newtype Rgb = (u8, u8, u8)` does the same for an anonymous tuple. A struct or a
+	// `type Rgb = (u8, u8, u8)` does the same for an anonymous tuple. A struct or a
 	// data type is already its own type, so wrapping one buys a second name and nothing
 	// else — and the three nominal declarations are already distinguished on purpose
 	// (todo.md's consistency section), so a fourth way to get a nominal product is the
@@ -443,7 +443,7 @@ const (
 	CodeNewtypeConstructorCall = "lyra-E044"
 
 	// CodeValuesConstraintViolation: a compile-time literal assigned to a newtype with
-	// a `values(...)` constraint is not one of them (`newtype Status = i32 where
+	// a `values(...)` constraint is not one of them (`type Status = i32 where
 	// values(200, 404, 500)` given `302`). The literal-union analogue of E023.
 	//
 	// Nothing enforced this until 08/12 — the constraint was collected, its shape
@@ -568,7 +568,7 @@ const (
 	// CodeStepConstraintViolation: a compile-time constant that is not on the grid a
 	// newtype's `step(...)` describes — `start, start+step, start+2*step, …`, with
 	// `start` from its `range(...)` when it declares one and 0 otherwise. So
-	// `newtype CompassHeading = i64 where range(0..<360), step(15)` refuses 7.
+	// `type CompassHeading = i64 where range(0..<360), step(15)` refuses 7.
 	//
 	// Nothing read StepConstraint until 08/13: the constraint was collected and
 	// validated for well-formedness (types/step.go refuses a zero step, and a
@@ -616,7 +616,7 @@ const (
 	// worth keeping — a value-parameterized `fixed<I, F>` commits to binary scaling,
 	// which is the design that serves *determinism* (lockstep simulation, replays).
 	// Decimal money wants a different type and already has a better answer here
-	// (`newtype Cents = i64` with a range constraint), so the grammar has already
+	// (`type Cents = i64` with a range constraint), so the grammar has already
 	// made the choice this diagnostic is holding open.
 	//
 	// The one design question it does not settle is what arithmetic does to the

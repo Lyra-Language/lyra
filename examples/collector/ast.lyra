@@ -674,7 +674,7 @@ pub data TypeNode =
   | TupleType(TupleTypeDef)
   /// `data Color = Red | Green`.
   | DataType(DataTypeDef)
-  /// `newtype Angle = f64` — a name over a base type, with constraints it may carry.
+  /// `type Angle = f64` — a name over a base type, with constraints it may carry.
   | ConstrainedType(ConstrainedTypeDef)
 
 /// The body of a struct declaration.

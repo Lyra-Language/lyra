@@ -49,7 +49,7 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 		// A transparent alias has no representation of its own — it *is* the type it
 		// names, which has its own declaration (or, for a primitive or a structural
 		// type, needs none). Skipping is not just an optimization: an alias holds the
-		// aliased type itself, so `type Point = Pt` would otherwise declare and define
+		// aliased type itself, so `alias Point = Pt` would otherwise declare and define
 		// Pt's struct a second time under the name Point.
 		return nil
 	}
@@ -75,7 +75,7 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 		// A `newtype` declares no representation of its own — it is nominal to
 		// the typechecker and *is* its base at run time (types.StripNewtype), so
 		// there is nothing to register. Deliberately not an LLVM type alias: a
-		// distinct named type for `newtype Meters = i64` would make every
+		// distinct named type for `type Meters = i64` would make every
 		// arithmetic, comparison, and coercion site reconcile two llir types for
 		// one machine value, for no gain — nominal identity has already done its
 		// work by the time codegen runs.
@@ -318,7 +318,7 @@ func (l *lowerer) lowerStructDefInto(st *lltypes.StructType, t types.NamedStruct
 // recordedType returns the Lyra type the typechecker recorded for expr, with any
 // newtype wrapper stripped. Every lowering decision reads types through this one
 // accessor rather than the TypeTable directly, because a newtype is nominal only:
-// a `newtype Percent = u8` value *is* a u8 at run time, and a representation
+// a `type Percent = u8` value *is* a u8 at run time, and a representation
 // decision made against the wrapper (which LLVM type, is it managed, how does
 // print format it) would fall through to the "unsupported type" arm or, worse,
 // silently pick the i64 default.
@@ -373,8 +373,8 @@ func (l *lowerer) candidateKey(expr ast.Expression) (string, bool) {
 // It resolves a name only far enough to answer "is this a newtype?": anything
 // else is returned untouched, since UnresolvedType is load-bearing downstream
 // (lookupNamedType, namedStructFields, resolveDataType all key off the name).
-// The depth cap is a backstop against a cyclic declaration (`newtype A = B`,
-// `newtype B = A`), which the recursive-type check rejects before codegen.
+// The depth cap is a backstop against a cyclic declaration (`type A = B`,
+// `type B = A`), which the recursive-type check rejects before codegen.
 func (l *lowerer) stripNewtype(t types.Type) types.Type {
 	for range 64 {
 		if ct, ok := t.(*types.ConstrainedType); ok {
@@ -450,7 +450,7 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 	switch t := lyraType.(type) {
 	case *types.ConstrainedType:
 		// A newtype has no representation of its own — it lowers as its base
-		// (`newtype Percent = u8` → i8). This is the annotation-side counterpart
+		// (`type Percent = u8` → i8). This is the annotation-side counterpart
 		// of recordedType, which does the same for a type read off the TypeTable.
 		return l.lowerType(t.Type)
 	case types.StaticArrayType:
@@ -609,7 +609,7 @@ func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 	// typechecker resolves types for its own use without rewriting the AST — so the
 	// backend has to expand it here, at the one place a named type is resolved.
 	//
-	// Recursion handles a chain (`type A = B` with `type B = Pt`) because the alias's
+	// Recursion handles a chain (`alias A = B` with `alias B = Pt`) because the alias's
 	// own recorded type is an UnresolvedType that comes straight back through
 	// lowerType. A *cycle* would not terminate, and is not guarded here on purpose:
 	// the typechecker rejects one (resolveType's resolvingTypes guard), and `lyrac

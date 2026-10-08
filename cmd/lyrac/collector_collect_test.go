@@ -103,8 +103,8 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 		{"data_type_with_generic_parameter", "pub data Maybe<t> = Nil | Some t"},
 		// A `newtype`. Its `where` constraints are not collected yet, so the goldens that
 		// carry them still differ — these two are the forms without.
-		{"basic_constrained_type_without_constraints", "newtype Angle = f64"},
-		{"parameterized_constrained_type", "newtype Point<t> = Tuple"},
+		{"basic_constrained_type_without_constraints", "type Angle = f64"},
+		{"parameterized_constrained_type", "type Point<t> = Tuple"},
 		// A declaration whose left side matches rather than names. The same grammar node
 		// as a `let`, carrying a `pattern` field instead of a `name`.
 		{"destructuring_simple_data", "let Some x = some_data"},

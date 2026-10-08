@@ -51,7 +51,7 @@ func (tc *TypeChecker) checkUnpinnedNullPtrs(node ast.AstNode) {
 
 // nullPtrIsPinned reports whether a context recorded a pointer type on this literal.
 //
-// A newtype over a pointer is stripped first: a `newtype Window = ^u8` context records
+// A newtype over a pointer is stripped first: a `type Window = ^u8` context records
 // the wrapper on the leaf (propagateExpected puts it back on the root, as it does for
 // every base), and the pointee is underneath it. Refusing that would refuse the shape
 // `std.ffi` recommends for a C handle.

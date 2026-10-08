@@ -524,9 +524,9 @@ impl string {
 }
 
 /// A position in a string, counted in runes.
-pub type Index = i64
+pub alias Index = i64
 /// A span of a string, counted in runes.
-pub type Length = i64
+pub alias Length = i64
 
 /// Things that can be searched for in a string.
 ///

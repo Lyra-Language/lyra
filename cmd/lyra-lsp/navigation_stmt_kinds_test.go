@@ -27,7 +27,7 @@ func TestNavigation_InsideATraitImplMethod(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	src := `
 let helper = pure (n: i64) -> i64 => n
-type Counter = struct { n: i64 }
+alias Counter = struct { n: i64 }
 trait Bump { pure bump: (Self) -> i64 }
 impl Bump for Counter {
   bump = pure (self) => helper(self.n)
@@ -72,7 +72,7 @@ func TestNavigation_InLValueAssignmentAndDestructuring(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	src := `
 let helper = pure (n: i64) -> i64 => n
-type Point = struct { x: i64, y: i64 }
+alias Point = struct { x: i64, y: i64 }
 let main = () -> void => {
   var p = Point { x: 1, y: 2 }
   p.x = helper(3)

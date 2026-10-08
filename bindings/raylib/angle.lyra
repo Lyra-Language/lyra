@@ -26,7 +26,7 @@ import std.math.{ PI }
 ///
 /// It carries no arithmetic either: operators on a newtype are opt-in (`lyra-E043`), and
 /// nothing here needs to add two angles. Read one out with `f32(d)` and compute on that.
-pub newtype Degrees = f32
+pub type Degrees = f32
 
 // **The two conversion factors are derived, not typed.** They were `57.295780` and
 // `0.017453292`, which are 180/π and π/180 transcribed by hand — and the first is not

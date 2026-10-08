@@ -11,7 +11,7 @@ module std.temporal
 /// **An instant is not a time of day.** It has no offset, no zone and no date until one is
 /// named: `instant.to_zoned_date_time(zone)` is where those come from, and there is no
 /// `hour()` here for the same reason there is no `year()`.
-pub newtype Instant = i128
+pub type Instant = i128
   where range(-8640000000000000000000..<=8640000000000000000000)
 
 /// The instant `epoch_second` seconds after the epoch, plus `nanosecond`, or `None` when

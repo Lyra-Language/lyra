@@ -232,7 +232,7 @@ let main = () -> u8 => 0`},
 let main = () -> u8 => u8(make().x)`},
 		{"a struct field", `struct Holder { at: Point }
 let main = () -> u8 => 0`},
-		{"a type alias", `type Spot = Point
+		{"a type alias", `alias Spot = Point
 let main = () -> u8 => 0`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -249,7 +249,7 @@ let main = () -> u8 => 0`},
 func TestImportVisibility_EveryWrittenPositionAcceptsAnImport(t *testing.T) {
 	res := analyze(t, buildTree(t, visTree(t, `import lib.{ Point, listed }
 struct Holder { at: Point }
-type Spot = Point
+alias Spot = Point
 let take = pure (p: Point) -> i64 => p.x
 let make = pure () -> Point => Point { x: 1 }
 let main = () -> u8 => {

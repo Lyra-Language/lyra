@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 10/08/26 — `type` is nominal, `alias` is transparent
+
+The keywords were `newtype` (nominal) and `type` (an alias), and are now `type` and `alias`.
+Raised while writing the website's types page, which had to explain that the plain word
+was the one that *doesn't* keep values apart. **The safe meaning gets the plain word**: a
+`type` keeps meters out of seconds by default, and interchangeability is what you opt into.
+The misreading also changes direction. A TypeScript or Rust reader takes `type Meters = f64`
+for an alias and is corrected at the first compile error; under the old spelling a Go
+reader took `type` for nominal — Go's `type Meters float64` is — and nothing ever corrected
+them. Usage agreed: 44 nominal declarations against 4 aliases. Rejected: renaming only
+`type` → `alias` and keeping `newtype`, which buys the clarity and gives up the default.
+
+**Only the keywords changed.** The CST nodes (`constrained_type`, `type_alias`), the AST and
+types (`ConstrainedType`, `IsAlias`) and helpers (`stripNewtype`) keep the old vocabulary,
+a contract with lyrafmt and both editors' queries, as `generator` is; what a user reads —
+diagnostics, hover, `lyrac doc` — says `type` and `alias`. **The hazard is that old source
+still parses**: `type X = Y` written as an alias is now a nominal type, a change of meaning
+rather than an error. The migration therefore rewrote aliases first (std's `CLong`,
+`CULong`, `Index`, `Length`, and every test source) and `newtype` second; the rewrite
+touched only Go string literals and comments, never Go code, which has a `type X = Y` of its
+own. `alias` is a keyword only where a declaration starts — raylib names a parameter
+`alias` — as `type` already was.
+
 ### 10/08/26 — `while let`
 
 The loop twin of `if let`, asked for after `loop` and `while` landed. **Erased in the

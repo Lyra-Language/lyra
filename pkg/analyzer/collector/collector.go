@@ -1196,7 +1196,7 @@ func (c *Collector) parseFixedPointType(node *sitter.Node) types.Type {
 	}
 	c.ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeFixedPointNotImplemented,
 		"fixed-point types are not implemented: `fixed<%d, %d>` parses but no value of it "+
-			"can be constructed; use `f64` for fractional arithmetic, or `newtype Cents = i64` "+
+			"can be constructed; use `f64` for fractional arithmetic, or `type Cents = i64` "+
 			"with a `where range(...)` constraint for a scaled integer",
 		intBits, fracBits)
 	return nil

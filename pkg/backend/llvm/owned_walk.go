@@ -83,7 +83,7 @@ func (l *lowerer) emitOwnedValue(block *ir.Block, v value.Value, t types.Type, w
 		return block, nil
 	}
 	// Resolved once up front, which also strips any newtype wrapper so the managed check
-	// below sees the base a `newtype Email = string` actually is.
+	// below sees the base a `type Email = string` actually is.
 	resolved := l.resolveNamedType(t)
 	if ownership.IsManaged(resolved) {
 		return block, w.leaf(l, block, v, resolved)

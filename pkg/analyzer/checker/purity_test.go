@@ -1166,7 +1166,7 @@ let main = () -> u8 => u8(Cat { n: 1 }.say())`)
 // typechecker's marker (TypeTable.IsBaseReadout) rather than by the callee's name.
 func TestPurity_BaseReadoutIsEffectFree(t *testing.T) {
 	errs := checkPurity(t, `
-newtype Row = []i64
+type Row = []i64
 let first = pure noalloc (r: Row) -> i64 => base(r)[0]
 let main = () -> u8 => u8(first([1, 2]))`)
 	assertPurityCount(t, errs, 0)
@@ -1191,7 +1191,7 @@ let f = pure (n: i64) -> i64 => base(n)`)
 // callback — a `pure` combinator over a Handler is writable, with a pure argument.
 func TestPurity_CallThroughFunctionNewtypeParamIsPolymorphic(t *testing.T) {
 	errs := checkPurity(t, `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let run = pure (f: Handler, n: i64) -> i64 => f(n)
 let main = () -> u8 => u8(run((k) => k + 1, 41))`)
 	assertPurityCount(t, errs, 0)

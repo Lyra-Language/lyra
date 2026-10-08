@@ -205,7 +205,7 @@ func TestAnalyze_ConstantOutOfBounds_NoDuplicate(t *testing.T) {
 // TestAnalyze_RangeConstraint_Violation: a constant outside a range-constrained
 // newtype's declared range surfaces as lyra-E023 through the full pipeline.
 func TestAnalyze_RangeConstraint_Violation(t *testing.T) {
-	src := "newtype Percent = u8 where range(0..<=100)\n" +
+	src := "type Percent = u8 where range(0..<=100)\n" +
 		"let p: Percent = 150\n" +
 		"let main = () -> u8 => 0\n"
 	res := Analyze([]byte(src))
@@ -218,7 +218,7 @@ func TestAnalyze_RangeConstraint_Violation(t *testing.T) {
 // value-range analysis) entirely outside a range-constrained newtype's range is
 // E023 — beyond the typechecker's constant-only check.
 func TestAnalyze_RangeConstraint_FlowSensitive(t *testing.T) {
-	src := "newtype Percent = u8 where range(0..<=100)\n" +
+	src := "type Percent = u8 where range(0..<=100)\n" +
 		"let f = (x: u8) -> u8 => if x > 100 { let p: Percent = x\n0 } else { 0 }\n" +
 		"let main = () -> u8 => 0\n"
 	res := Analyze([]byte(src))
@@ -231,7 +231,7 @@ func TestAnalyze_RangeConstraint_FlowSensitive(t *testing.T) {
 // owns it, and the flow-sensitive pass (scoped to identifier values) does not also
 // fire, so there's no duplicate.
 func TestAnalyze_RangeConstraint_LiteralSingleReport(t *testing.T) {
-	src := "newtype Percent = u8 where range(0..<=100)\n" +
+	src := "type Percent = u8 where range(0..<=100)\n" +
 		"let p: Percent = 150\n" +
 		"let main = () -> u8 => 0\n"
 	res := Analyze([]byte(src))

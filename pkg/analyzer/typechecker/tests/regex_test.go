@@ -41,7 +41,7 @@ func TestTypeCheck_RegexLiteralExpr_UnterminatedClass_Refused(t *testing.T) {
 
 // ── PatternConstraint on type declarations ──────────────────────────────────
 //
-// Lyra syntax: newtype Name = string where pattern(r"…")
+// Lyra syntax: type Name = string where pattern(r"…")
 // The PatternConstraint.Pattern field stores the full r"…" literal text;
 // the typechecker strips the r" and " delimiters before calling regex.Compile.
 
@@ -49,7 +49,7 @@ func TestTypeCheck_PatternConstraint_ValidDecl_Ok(t *testing.T) {
 	// A well-formed pattern constraint on a type declaration should produce no
 	// type errors.
 	res := parseCollectAndCheck(t, `
-newtype Slug = string where pattern(r"[a-z][a-z0-9-]*")
+type Slug = string where pattern(r"[a-z][a-z0-9-]*")
 `, false)
 	assertNoErrors(t, res)
 }
@@ -57,7 +57,7 @@ newtype Slug = string where pattern(r"[a-z][a-z0-9-]*")
 func TestTypeCheck_PatternConstraint_InvalidPattern_Error(t *testing.T) {
 	// An invalid regex in a pattern constraint should be flagged at the type
 	// declaration site.
-	res := parseCollectAndCheck(t, `newtype Bad = string where pattern(r"a*?")`, false)
+	res := parseCollectAndCheck(t, `type Bad = string where pattern(r"a*?")`, false)
 	if len(res.errors) == 0 {
 		t.Fatalf("expected a compile-time error for invalid pattern constraint, got none")
 	}
@@ -78,7 +78,7 @@ func TestTypeCheck_PatternConstraint_InvalidPattern_Error(t *testing.T) {
 func TestTypeCheck_PatternConstraint_MatchingLiteral_Ok(t *testing.T) {
 	// A string literal that satisfies the pattern constraint should be accepted.
 	res := parseCollectAndCheck(t, `
-newtype Hex = string where pattern(r"[0-9a-fA-F]+")
+type Hex = string where pattern(r"[0-9a-fA-F]+")
 let color: Hex = "1a2b3c"
 `, false)
 	assertNoErrors(t, res)
@@ -87,7 +87,7 @@ let color: Hex = "1a2b3c"
 func TestTypeCheck_PatternConstraint_NonMatchingLiteral_Error(t *testing.T) {
 	// A string literal that does NOT match the pattern should produce an error.
 	res := parseCollectAndCheck(t, `
-newtype Digits = string where pattern(r"[0-9]+")
+type Digits = string where pattern(r"[0-9]+")
 let bad: Digits = "abc"
 `, false)
 	if len(res.errors) == 0 {
@@ -108,7 +108,7 @@ let bad: Digits = "abc"
 func TestTypeCheck_PatternConstraint_EmptyString_Error(t *testing.T) {
 	// The pattern .+ requires at least one character; empty string should fail.
 	res := parseCollectAndCheck(t, `
-newtype NonEmpty = string where pattern(r".+")
+type NonEmpty = string where pattern(r".+")
 let x: NonEmpty = ""
 `, false)
 	if len(res.errors) == 0 {
@@ -129,7 +129,7 @@ let x: NonEmpty = ""
 // compiling, and the engine can run *then* with only its answer shipping.
 func TestTypeCheck_PatternConstraint_NonLiteralCheckedAtRuntime(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Digits = string where pattern(r"[0-9]+")
+type Digits = string where pattern(r"[0-9]+")
 let s = "123"
 let d: Digits = Digits(s)
 `, false))
@@ -140,7 +140,7 @@ let d: Digits = Digits(s)
 // depends on text preceding the input, which a flat byte table has no way to hold.
 func TestTypeCheck_PatternConstraint_UncompilablePatternRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Odd = string where pattern(r"(?<=a)b")
+type Odd = string where pattern(r"(?<=a)b")
 let s = "ab"
 let d: Odd = Odd(s)
 `, false)
@@ -154,7 +154,7 @@ let d: Odd = Odd(s)
 // about what the compiler cannot read, not about the constraint being unusable.
 func TestTypeCheck_PatternConstraint_LiteralStillWorks(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Digits = string where pattern(r"[0-9]+")
+type Digits = string where pattern(r"[0-9]+")
 let d: Digits = "123"
 `, false))
 }
@@ -163,7 +163,7 @@ func TestTypeCheck_PatternConstraint_StringAssignableToBase_Ok(t *testing.T) {
 	// A constrained-type value should be assignable back to its base type
 	// (string), so `let s: string = someDigits` should be fine.
 	res := parseCollectAndCheck(t, `
-newtype Digits = string where pattern(r"[0-9]+")
+type Digits = string where pattern(r"[0-9]+")
 let d: Digits = "42"
 let s = string(d)
 `, false)
@@ -174,7 +174,7 @@ func TestTypeCheck_PatternConstraint_MultiPattern_AllMustMatch(t *testing.T) {
 	// "123" matches r"[0-9a-f]+" but NOT r"[a-f]+", so the second pattern
 	// should produce an error.
 	res := parseCollectAndCheck(t, `
-newtype HexLower = string where pattern(r"[0-9a-f]+"), pattern(r"[a-f]+")
+type HexLower = string where pattern(r"[0-9a-f]+"), pattern(r"[a-f]+")
 let x: HexLower = "123"
 `, false)
 	if len(res.errors) == 0 {
@@ -204,7 +204,7 @@ let commented = r/2 // a trailing comment's slashes are not a delimiter either
 // which the old form required for every slash (`r/\/usr\/local\/bin/`).
 func TestTypeCheck_RegexLiteral_SlashesNeedNoEscape(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Path = string where pattern(r"/usr/local/.*")
+type Path = string where pattern(r"/usr/local/.*")
 let p: Path = "/usr/local/bin"
 `, false)
 	assertNoErrors(t, res)
@@ -212,6 +212,6 @@ let p: Path = "/usr/local/bin"
 
 // The delimiter itself can still be matched, via `\"`.
 func TestTypeCheck_RegexLiteral_EscapedQuote(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Quoted = string where pattern(r"\"[a-z]+\"")`, false)
+	res := parseCollectAndCheck(t, `type Quoted = string where pattern(r"\"[a-z]+\"")`, false)
 	assertNoErrors(t, res)
 }

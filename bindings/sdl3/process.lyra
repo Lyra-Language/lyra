@@ -7,7 +7,7 @@ module bindings.sdl3
 
 /// An `SDL_Process *`: a program started with [create_process]. Hand it to
 /// [destroy_process] once finished with — whether or not the program has ended.
-pub newtype Process = ^u8
+pub type Process = ^u8
 
 @symbol("SDL_CreateProcess")
 unsafe extern sdl_create_process: (args: ^^u8, pipe_stdio: bool) -> Process

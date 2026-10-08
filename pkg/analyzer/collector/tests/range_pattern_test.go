@@ -133,7 +133,7 @@ func TestRangeExpr_SuggestionKeepsStep(t *testing.T) {
 }
 
 func TestRangeConstraint_MissingEndOperatorIsRejected(t *testing.T) {
-	got := rangeEndOperatorErrors(t, `newtype Pct = u8 where range(0..100)`)
+	got := rangeEndOperatorErrors(t, `type Pct = u8 where range(0..100)`)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 error on a range constraint, got %d: %v", len(got), got)
 	}
@@ -146,10 +146,10 @@ func TestRangeConstraint_MissingEndOperatorIsRejected(t *testing.T) {
 
 func TestRangeConstraint_ExplicitAndOpenFormsAccepted(t *testing.T) {
 	for _, src := range []string{
-		`newtype Pct = u8 where range(0..<=100)`,
-		`newtype Angle = f64 where range(0..<360)`,
-		`newtype AtLeast = i64 where range(0..)`, // open end: no operator to write
-		`newtype Below = i64 where range(..<10)`,
+		`type Pct = u8 where range(0..<=100)`,
+		`type Angle = f64 where range(0..<360)`,
+		`type AtLeast = i64 where range(0..)`, // open end: no operator to write
+		`type Below = i64 where range(..<10)`,
 	} {
 		if got := rangeEndOperatorErrors(t, src); len(got) != 0 {
 			t.Errorf("%s must not be flagged, got: %v", src, got)
@@ -189,7 +189,7 @@ func stepErrors(t *testing.T, source string) []diag.Diagnostic {
 }
 
 func TestStepConstraint_ZeroIsRejected(t *testing.T) {
-	got := stepErrors(t, `newtype Q = f32 where step(0)`)
+	got := stepErrors(t, `type Q = f32 where step(0)`)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 invalid-step error, got %d: %v", len(got), got)
 	}
@@ -199,7 +199,7 @@ func TestStepConstraint_ZeroIsRejected(t *testing.T) {
 }
 
 func TestStepConstraint_FractionalOverIntegerBaseIsRejected(t *testing.T) {
-	got := stepErrors(t, `newtype N = u8 where range(0..<=100), step(0.5)`)
+	got := stepErrors(t, `type N = u8 where range(0..<=100), step(0.5)`)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 invalid-step error, got %d: %v", len(got), got)
 	}
@@ -211,20 +211,20 @@ func TestStepConstraint_FractionalOverIntegerBaseIsRejected(t *testing.T) {
 // The motivating good case: a quarter-step over a float domain, which is exactly
 // what the constraint spelling is for and what `saturating_add` cannot express.
 func TestStepConstraint_FractionalOverFloatBaseIsAccepted(t *testing.T) {
-	if got := stepErrors(t, `newtype Quarter = f32 where range(0..<=100), step(0.25)`); len(got) != 0 {
+	if got := stepErrors(t, `type Quarter = f32 where range(0..<=100), step(0.25)`); len(got) != 0 {
 		t.Fatalf("a fractional step over f32 is legal, got: %v", got)
 	}
 }
 
 func TestStepConstraint_WholeStepOverIntegerBaseIsAccepted(t *testing.T) {
-	if got := stepErrors(t, `newtype Even = u8 where range(0..<=100), step(2)`); len(got) != 0 {
+	if got := stepErrors(t, `type Even = u8 where range(0..<=100), step(2)`); len(got) != 0 {
 		t.Fatalf("a whole step over u8 is legal, got: %v", got)
 	}
 }
 
 // A step that folds to no constant is legal and simply not decidable here.
 func TestStepConstraint_NonConstantStepIsNotFlagged(t *testing.T) {
-	if got := stepErrors(t, `newtype S = f32 where step(SOME_CONST)`); len(got) != 0 {
+	if got := stepErrors(t, `type S = f32 where step(SOME_CONST)`); len(got) != 0 {
 		t.Fatalf("a non-constant step cannot be judged here, got: %v", got)
 	}
 }

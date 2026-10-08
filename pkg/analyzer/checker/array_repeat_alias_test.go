@@ -195,7 +195,7 @@ let main = () => {
 // read as some other named type and the warning was silent (10/07).
 func TestRepeatAlias_FieldThroughAnAlias(t *testing.T) {
 	assertShared(t, `
-type Row = []rune
+alias Row = []rune
 struct Line { cells: Row }
 let main = () => {
   let l = Line { cells: [' '] }

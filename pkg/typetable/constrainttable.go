@@ -15,7 +15,7 @@ import (
 //	let mk = (n: u8) -> Percent => Percent(n)
 //	mk(200)     // built, ran, printed 200
 //
-// on `newtype Percent = u8 where range(0..<=100)`. That left the language's own
+// on `type Percent = u8 where range(0..<=100)`. That left the language's own
 // ladder — provable → compile error, otherwise → trap — with a first rung and no
 // second, in the one construct whose entire purpose is to be checked. The values
 // that reach a constrained newtype at run time are exactly the ones from outside

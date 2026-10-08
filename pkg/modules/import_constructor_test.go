@@ -36,7 +36,7 @@ let main = () -> u8 => if unit() == Circle { 1 } else { 0 }`,
 			root := buildTree(t, map[string]string{
 				"app.lyra": app,
 				"util/shapes.lyra": "module util.shapes\npub data Shape = Circle | Square(i64)\n" +
-					"pub newtype Label = string\npub let unit = pure () -> Shape => Square(1)",
+					"pub type Label = string\npub let unit = pure () -> Shape => Square(1)",
 			})
 			res := analyze(t, root)
 			if errs := res.Errors(); len(errs) != 0 {

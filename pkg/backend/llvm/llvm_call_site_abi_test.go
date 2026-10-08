@@ -91,7 +91,7 @@ func callLines(ir string) string {
 func TestEmit_NarrowIntegersCrossExtended(t *testing.T) {
 	t.Parallel()
 	const src = `module main
-newtype Channel = u8
+type Channel = u8
 struct Big { a: i64, b: i64, c: i64, d: i64 }
 unsafe extern narrow: (a: u8, b: i8, c: u16, d: i16, e: i32, f: Channel) -> u8
 unsafe extern narrow_signed: () -> i16

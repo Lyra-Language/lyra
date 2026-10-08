@@ -17,7 +17,7 @@ import (
 //
 // A constraint used to be a compile-time assertion and nothing else: it caught a
 // literal, and whatever the value-range pass could pin to an interval, and silently
-// accepted the rest. So on `newtype Percent = u8 where range(0..<=100)`,
+// accepted the rest. So on `type Percent = u8 where range(0..<=100)`,
 //
 //	let mk = (n: u8) -> Percent => Percent(n)
 //	mk(200)      // built, ran, printed 200

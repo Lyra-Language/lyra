@@ -4,7 +4,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 **Contents**
 
-1. [Types and Literals](#1-types-and-literals) — primitives, literal checking, ranges, newtypes
+1. [Types and Literals](#1-types-and-literals) — primitives, literal checking, ranges, nominal types and aliases
 2. [Operators and Assignment](#2-operators-and-assignment) — bitwise, overflow, compound and tuple assignment, overloading
 3. [Collections and Strings](#3-collections-and-strings) — arrays, sorting, strings, HashMap, JSON, lazy sequences
 4. [Traits, Generics and Dispatch](#4-traits-generics-and-dispatch) — supertraits, defaults, UFCS, `impl` blocks, Show, type arguments
@@ -56,7 +56,7 @@ lambda). The one named argument in the language is `@link`'s `pkg:`, an attribut
 
 ### Literals must fit
 
-A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a newtype constraint, a return-position `() -> u8 => 300` (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
+A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a `type` constraint, a return-position `() -> u8 => 300` (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
 
 ### Ranges
 
@@ -71,7 +71,7 @@ A literal that cannot hold its value is a compile error **in every position, flo
 - Step: `0..<10:2`, a **magnitude**. Negative literal step is an error; a non-positive step known only at run time traps (`lyra: range step must be positive`). A comprehension with a degenerate step yields an empty array.
 - `for-in` **terminates at the type's edge**: `0..<=hi` with `hi` at the type max visits max and exits; a large step cannot leap an exclusive end.
 - **A loop variable over literal bounds is an `i64`**, as `let n = 5` is (09/29; it was left untyped, so `t = i` took `t`'s width — which the backend, counting at i64, did not honour: a `u8` could hold 299). **Its type may be written**, one-variable form only: `for i: u16 in 0..<100`. Literal bounds narrow to it and must fit (`for b: u8 in 0..<300` is refused), the loop counts at that width (`for b: u8 in 250..<=255` stops at 255), a typed bound must already be that type, and the type must be an integer. Over an array the written type must be the element's.
-- As a match pattern or newtype constraint a range is a set: `..>`/`..>=` there are `lyra-E034`.
+- As a match pattern or `type` constraint a range is a set: `..>`/`..>=` there are `lyra-E034`.
 - **A range pattern on a `rune` is written in runes** (`'0'..<='9'`), and numeric bounds
   there are refused: `48..<=57` is the same set with its meaning removed, so the scrutinee's
   type decides how its patterns are spelled. An open bound names the type's own edge and so
@@ -89,15 +89,26 @@ A literal that cannot hold its value is a compile error **in every position, flo
   tells them apart, so `match a | b { 3 | 7 => … }` is a bitor scrutinee matched against an
   alternation.
 
-### Newtypes
+### Nominal types (`type`) and aliases (`alias`)
 
-`newtype Meters = f64` gives nominal identity to a **structural** base: scalars, `string`, arrays, raw pointers, function types. `lyra-E041` refuses a `struct`, `data`, named tuple or anonymous tuple (suggest `tuple Rgb(u8, u8, u8)`).
+**`type` declares a new type; `alias` names an existing one.** `type Meters = f64` is a
+distinct type stored as an `f64`, and does not mix with other `f64`s; `alias Grid =
+[][]bool` is another spelling of `[][]bool`, interchangeable with it everywhere. The
+keywords were `newtype` and `type` until 10/08 and were swapped so the safe meaning gets
+the plain word: a reader who takes `type` for an alias is corrected by a compile error, and
+nobody can read `alias` as nominal. Older text calls a nominal type a *newtype*.
+
+**An alias** takes no `<…>` list, so its body can mention no type variable (`lyra-E031`),
+and it may not lead back to itself. It is the type it names for every purpose — ownership,
+method receivers and overloading included (see "Calling on a receiver").
+
+**A nominal type**, `type Meters = f64`, gives nominal identity to a **structural** base: scalars, `string`, arrays, raw pointers, function types. `lyra-E041` refuses a `struct`, `data`, named tuple or anonymous tuple (suggest `tuple Rgb(u8, u8, u8)`).
 
 - **Constructor:** `Cents(150)` or juxtaposed `Cents 150` (same node); lowers to its operand. Generic: `Boxed(5)` is `Boxed<i64>`, `Boxed::<u8>(200)` binds explicitly. Malformed forms: `lyra-E044`.
-- **Into (`lyra-E046`):** an untyped literal converts implicitly (`let c: Cents = 150`, `let xs: []Percent = [10, 20]`); a typed value needs the constructor. An array literal/repeat written in place — or an `if`/`match`/block every branch of which is one — converts implicitly (a typed *binding* holding one does not). A lambda literal converts implicitly to a function-type newtype, including in argument position; its parameters are elaborated from the base and the signature checked. Scalar/string operations (`x + y`, `a ++ b`) still need the constructor.
-- **Out (`lyra-E047`):** always explicit — base name where it has one (`i64(c)`, `string(e)`, `bool(f)`; these exist only for this, no stringification/truthiness), else `base(v)`. `base` strips exactly one layer; newtype→newtype has no path. Conversions look through a newtype (`u8(cents)` = `u8(plain_i64)`). `base` is a builtin resolved after scope (a user binding shadows it); later passes recognise it via `TypeTable.IsBaseReadout`, never by spelling.
-- **Constraints** (`range(...)`, `step(...)`, `pattern(...)`) are checked wherever the newtype flows and through the constructor (`lyra-E023`). `values(...)` is `lyra-E045`. `step` measures from the range start (`range(5..<=95), step(10)` accepts 15, refuses 10: `lyra-E053`). Unprovable values trap at construction (`lyra: value violates its newtype's constraint`); only unsettled sites pay a compare.
-- **Transparent to the base's methods** (builtins and prelude `self:` functions), tried after every other rung, so a newtype's own method wins. A function-type newtype is callable (`h(5)`) in every position.
+- **Into (`lyra-E046`):** an untyped literal converts implicitly (`let c: Cents = 150`, `let xs: []Percent = [10, 20]`); a typed value needs the constructor. An array literal/repeat written in place — or an `if`/`match`/block every branch of which is one — converts implicitly (a typed *binding* holding one does not). A lambda literal converts implicitly to a function-type `type`, including in argument position; its parameters are elaborated from the base and the signature checked. Scalar/string operations (`x + y`, `a ++ b`) still need the constructor.
+- **Out (`lyra-E047`):** always explicit — base name where it has one (`i64(c)`, `string(e)`, `bool(f)`; these exist only for this, no stringification/truthiness), else `base(v)`. `base` strips exactly one layer; nominal→nominal has no path. Conversions look through a nominal type (`u8(cents)` = `u8(plain_i64)`). `base` is a builtin resolved after scope (a user binding shadows it); later passes recognise it via `TypeTable.IsBaseReadout`, never by spelling.
+- **Constraints** (`range(...)`, `step(...)`, `pattern(...)`) are checked wherever the type flows and through the constructor (`lyra-E023`). `values(...)` is `lyra-E045`. `step` measures from the range start (`range(5..<=95), step(10)` accepts 15, refuses 10: `lyra-E053`). Unprovable values trap at construction (`lyra: value violates its type's constraint`); only unsettled sites pay a compare.
+- **Transparent to the base's methods** (builtins and prelude `self:` functions), tried after every other rung, so the type's own method wins. A function-type `type` is callable (`h(5)`) in every position.
 - **Except** `wrapping_*`/`saturating_*`/`checked_*` (`lyra-E043`): use an operator impl or convert to the base. Float `floor`/`ceil`/`round` stay transparent. `println(c)` is refused — write `impl Show for Cents`.
 
 ### Data constructors
@@ -110,7 +121,7 @@ A literal that cannot hold its value is a compile error **in every position, flo
 
 `r"…"` is one engine everywhere: a DFA compiled **at compile time** (RE2 discipline, O(n), no backtracking/allocation; flattened tables + one shared driver).
 
-- Used as a newtype `pattern(...)` argument or as a **pattern against a string** at any depth — an arm (`w @ r"^[a-z]+$" => …`), a tuple element, a struct field, an array element, a payload (`Some(r"a.*")`). It matches the whole string. Regex arms never make a match exhaustive.
+- Used as a `type`'s `pattern(...)` argument or as a **pattern against a string** at any depth — an arm (`w @ r"^[a-z]+$" => …`), a tuple element, a struct field, an array element, a payload (`Some(r"a.*")`). It matches the whole string. Regex arms never make a match exhaustive.
 - `lyra-E054`: lookbehind or DFA past `regex.MaxTableStates`. As a value (`let re = r"…"`) it is `lyra-E052`.
 - There is no `regex` type: `(re: regex)` declares a type variable.
 
@@ -272,7 +283,7 @@ impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x, y: self.y + o.y
 
 - `+ - * / % << >> & | ~`, prefix `-`/`~`, and compound assignments dispatch by **method name**; the trait name is the author's. Two traits providing one operator for one type is an ambiguity at the operator.
 - `Eq`/`Ord` own the comparisons (`<` and `<=>` must agree); `(_==_)` as a method name is `lyra-E039`. The prelude marks them `@builtin(Eq)`/`@builtin(Ord)` — found by identity, so a user `trait Ord` is ordinary.
-- A primitive (unstripped) is never routed through an impl: `impl Add for i64` is inert; a newtype over a scalar **is** routed.
+- A primitive (unstripped) is never routed through an impl: `impl Add for i64` is inert; a nominal `type` over a scalar **is** routed.
 - An operator is a call for `pure`/`det`/`noalloc`.
 - Inert with a warning: `&&`/`||`, `!`, `**`, suffix `_++`/`_--`.
 - A type-parameter operand resolves via a `where` bound: `let sum<t> where t: Add = (a: t, b: t) -> t => a + b`.
@@ -409,7 +420,7 @@ After the web's **Temporal** API: a wall-clock value and an exact instant are di
 types, and arithmetic on a date is calendar arithmetic. ISO 8601 calendar only. Built slice
 by slice against `examples/calendar`; what exists is what that program has needed.
 
-- **`PlainDate`** — `newtype PlainDate = i64`, days since 1970-01-01, range `-271821-04-19`
+- **`PlainDate`** — `type PlainDate = i64`, days since 1970-01-01, range `-271821-04-19`
   to `+275760-09-13` (Temporal's; ±10⁸ days, one extra at the start). **A day count because
   Lyra has no field privacy**: a three-field struct could be forged as 30 February by any
   module, and a day count has no invalid values. `year()`/`month()`/`day()` are O(1)
@@ -434,7 +445,7 @@ by slice against `examples/calendar`; what exists is what that program has neede
   `struct tm` has **one layout on both platforms** (56 bytes, `tm_gmtoff` at 40 — measured),
   unlike `struct dirent`. It reads the clock, so it is neither `pure` nor `det`; take a
   `PlainDate` parameter and call it once at the edge.
-- **`PlainTime`** — `newtype PlainTime = i64`, nanoseconds since midnight, for `PlainDate`'s
+- **`PlainTime`** — `type PlainTime = i64`, nanoseconds since midnight, for `PlainDate`'s
   reason. `plain_time(h, m = 0, s = 0) -> Maybe` rejects `24:00` and `:60`;
   `parse_plain_time` reads `HH:MM`, `HH:MM:SS` and a one-to-nine-digit fraction; `show`
   writes seconds always and a fraction only when there is one. `hour()`/`minute()`/
@@ -461,7 +472,7 @@ by slice against `examples/calendar`; what exists is what that program has neede
   partial; field-identical durations are `Equal` even with calendar units.
   `total(unit: TimeUnit) -> Maybe<f64>`, `TimeUnit` being `Days` down to `Nanoseconds`.
 - **`TimeZone`** — a zone's rules, read from the system's IANA database (`/usr/share/zoneinfo`, RFC 8536), not from libc: `load_time_zone(name)`, `offset_at`, `abbreviation_at`, `is_dst_at`, `next_transition`, all in epoch seconds. The database is `TZDIR` when set and non-empty, else `/usr/share/zoneinfo` — which is how a test pins the data it reads, since a country changing its rules moves the system copy under every test that reads it. The **64-bit block** is the one read, so a transition past 2038 survives, and **the POSIX footer** (`EST5EDT,M3.2.0,M11.1.0`) governs every instant from the last transition on — a table stops around 2037 and the rule after it does not, so a schedule projecting a decade ahead needs it. POSIX writes its offsets **west**-positive (`EST5` is −5·3600 east), `Mm.w.d` means the `w`th `d`-day of month `m` with 5 meaning the last, and `Jn`/`n` are the two day-count forms. `next_transition` projects from the rule once past the table. POSIX only, as `std.path` is. A name reaching the filesystem is checked: `..` and a leading `/` are refused.
-- **`Instant`** — `newtype Instant = i128`, nanoseconds since the epoch (an `i64` of them runs out in 2262), range ±10⁸ days as Temporal's is. `instant(sec, nsec)`, `now_instant()`, `epoch_second`/`epoch_nanosecond`/`nanosecond_of_second`, `add`/`subtract` (**calendar units refused** — a day is not a fixed length of time where a zone changes offset), `until`/`since` balanced hours-down, `Ord`, and `Show` as `…Z`.
+- **`Instant`** — `type Instant = i128`, nanoseconds since the epoch (an `i64` of them runs out in 2262), range ±10⁸ days as Temporal's is. `instant(sec, nsec)`, `now_instant()`, `epoch_second`/`epoch_nanosecond`/`nanosecond_of_second`, `add`/`subtract` (**calendar units refused** — a day is not a fixed length of time where a zone changes offset), `until`/`since` balanced hours-down, `Ord`, and `Show` as `…Z`.
 - **`ZonedDateTime`** — a struct `{ instant, zone }`, and the local fields are computed, never stored: the clock reading `01:30` on a fall-back morning names two instants, so a struct holding `01:30` could not say which. `to_zoned_date_time(zone)`, `now_in_zone`, `to_instant`, `offset_seconds`, `abbreviation`, `is_dst`, `to_plain_date_time`/`to_plain_date`/`to_plain_time`. `Show` is RFC 9557's `2026-09-22T14:30:00-04:00[America/New_York]` — all three parts, since any two are ambiguous — and **`parse_zoned_date_time` reads it back**: the bracketed zone is required, the offset optional, and where it is written *it decides*, which is how `01:30-04:00` and `01:30-05:00` name two different instants on a fall-back morning. An offset the zone was not using is refused (Temporal's `offset: 'reject'`). Not `pure`: it reads the zone database. `parse_instant` is the same for `…Z` or any offset, and is `pure` — an offset names an instant without a zone. **`<=>` compares instants and `==` is structural** (instant *and* zone), which is Temporal's `compare`/`equals` split.
 - **Disambiguation** — `PlainDateTime.to_zoned_date_time(zone, how)` going the other way, where a wall clock is not a moment: `02:30` never happens on a spring-forward morning and `01:30` happens twice on a fall-back one. `possible_instants` answers 0, 1 or 2 candidates; `Disambiguation` is `Compatible` (the default: forward across a gap, the first of a repeat), `Earlier`, `Later`, `Reject` (`None`). Temporal's option, and its defaults.
 - **`ZonedDateTime.add`/`subtract`** — **calendar units move the wall clock and clock units move the timeline**: a week after 09:00 is 09:00, while 168 hours after it is 08:00 or 10:00 when the clocks changed. This is what a `Duration`'s split between calendar and clock fields is *for*; the calendar part is resolved by `how`, since a monthly 02:30 meets the March morning that has no 02:30.
@@ -527,7 +538,7 @@ Opt in by naming the first parameter `self`.
   and ranking never reaches **across traits** — two traits providing one method name is a
   choice for the caller to state (`Pilot::fly(b)`), not a question about which target is
   narrower. Identical targets are still refused at the impls (`lyra-E037`).
-- **Receiver-keyed overloading:** one module may declare a name several times if each takes `self` with a different receiver type head (`Maybe<t>` vs `Result<t,e>`); a second `Maybe<…>` is refused. **The head is the type's, not its spelling**: a `type` alias is the type it names, so `self: A` beside `self: []i64` (with `type A = []i64`) is one head twice and refused, and `self: A` takes a method call on any `[]i64`. A name still may not be exported by two modules.
+- **Receiver-keyed overloading:** one module may declare a name several times if each takes `self` with a different receiver type head (`Maybe<t>` vs `Result<t,e>`); a second `Maybe<…>` is refused. **The head is the type's, not its spelling**: an `alias` is the type it names, so `self: A` beside `self: []i64` (with `alias A = []i64`) is one head twice and refused, and `self: A` takes a method call on any `[]i64`. A name still may not be exported by two modules.
   - **One generic fallback per set:** a member whose receiver is a bare type variable (`self: t`) is admitted and **ranked below every concrete member** — it answers only when none accepts the receiver (the prelude's `min<t> where t: Ord` beside `min(self: f64, …)`). A second one is refused. "This type beats any type" is the only ranking; there is none between concrete types. It applies to method calls across modules too, so `x.f()` and `f(x)` agree.
   - An untyped literal receiver is read at its default for this choice (`min(1.5, 2.0)` reaches `self: f64`).
   - **Through a namespace too**: `collision.mirrored(s, 8)` picks its member by `s`, as `s.mirrored(8)` and an imported `mirrored(s, 8)` do — the set is one member of the module, chosen at the call (10/02; before, the namespace lookup reported no such member).
@@ -603,7 +614,7 @@ Solved from argument types first, then:
 A lowercase type name is a type variable wherever it appears. What a written `<…>` list must agree with depends on what declares it:
 
 - **A binding** (`let f<t> = …`): the list is optional; written, it is authoritative. A signature variable missing from it is `lyra-E031`, a listed one the signature never mentions is `lyra-W013`.
-- **A type** (struct, `data`, named tuple, newtype, union): every variable its body mentions must be in its list (`lyra-E031`). A parameter may carry a bound, `struct Bx<t: Tag>`, **enforced at instantiation** (`lyra-E036`) as a function's is; a type-variable argument is left to the enclosing declaration's own bound — the list is how `Box<i64>` gives one a type, so there is no list-less generic type. An **unused** parameter is fine: `struct Id<t> { n: i64 }` is a phantom type. A type alias takes no list, so its body can mention no variable.
+- **A type** (struct, `data`, named tuple, nominal `type`, union): every variable its body mentions must be in its list (`lyra-E031`). A parameter may carry a bound, `struct Bx<t: Tag>`, **enforced at instantiation** (`lyra-E036`) as a function's is; a type-variable argument is left to the enclosing declaration's own bound — the list is how `Box<i64>` gives one a type, so there is no list-less generic type. An **unused** parameter is fine: `struct Id<t> { n: i64 }` is a phantom type. An `alias` takes no list, so its body can mention no variable.
 - **A trait**: a parameter no method mentions is `lyra-W013`. A parameter may carry a bound, `trait Holder<t: Tag>`, **enforced at the impl that binds it** (`lyra-E036`) — a trait's parameter has no value until an impl gives it one. A method may be generic in variables of its own (`mapv: (Self, (i64) -> b) -> b`), since there is no method-level list to declare them in. A call solves them from its arguments like a generic function's call — at a concrete receiver, or through a `where` bound, where the solution may name the enclosing function's variables and is specialized with it. One named like the impl's (or the bound receiver's) variable is a different variable. `Self<x…>` is the impl target's head at those arguments: `map: (Self<a>, (a) -> b) -> Self<b>` on `impl Functor for Box<t>` answers `Box<b>`, the receiver solving `a`. The target is either a generic type applied to exactly that many distinct type variables (`Box<t>`, `Pair<k, v>`) or one with exactly that many **holes**, `_`, marking the positions the arguments fill: `impl Functor for Result<_, e>` makes `Self<b>` `Result<b, e>`, `Table<k, _>` varies the last parameter, and `Table<string, _>` fixes the other. No positional convention decides for you — `Result<t, e>` without a hole is refused, as are `i64`, `Box<i64>` and `Pair<t, t>`. A hole is refused anywhere but an impl target, and a holed target refuses a trait whose method writes a bare `Self` (nothing says what fills `_`). A default method may write `Self<…>`: its body is checked with `Self` the abstract head, so `Self<a>` and `Self<b>` are distinct types there and `self.map(f)` resolves through the trait itself. A call through a `where` bound cannot reach a `Self<…>` method: a bare `t` has no head to apply (that would need a higher-kinded variable).
 - **An impl** has no written list; its variables are lexical.
 - **A `const` parameter** (`let total<const N: i64> = (xs: ref [N]i64) -> i64`) is a
@@ -792,7 +803,7 @@ target = "genesis"
   reaches a function, a type, **and a `const` or top-level `let`/`var`** (`pad.LEFT`,
   `vdp.SCREEN_WIDTH`) — the last was "no member" until 09/30.
 - Resolution: **own scope → imports → prelude**. Using an export you didn't import names the fix (`add import lib.{ … }`), distinct from a missing `pub`.
-- **Every position that writes a type's name takes the rule**: parameter, return type, local annotation, struct field, `type` alias. It is one pass over the written occurrences (`TypeRefs`), not a check inside a resolver — until 09/22 it was the latter, and the first two were refused while the last three were not. A type a value merely *carries* across the boundary is untouched: `m.col` on a value from a constructor payload writes no name, so there is nothing to refuse.
+- **Every position that writes a type's name takes the rule**: parameter, return type, local annotation, struct field, `alias`. It is one pass over the written occurrences (`TypeRefs`), not a check inside a resolver — until 09/22 it was the latter, and the first two were refused while the last three were not. A type a value merely *carries* across the boundary is untouched: `m.col` on a value from a constructor payload writes no name, so there is nothing to refuse.
 - **So does every position that writes a trait's name**: an impl head (`impl Bus for TestBus`), a `where` bound, a supertrait list, a `Trait::method` path. Each needs the trait imported, and each counts as a use of the import (no `lyra-W004`); implementing another module's private trait is `lyra-E028`. A trait reached only by dispatch (`x.area()`, an operator) writes no name and needs only its module loaded. Until 09/28 all four positions resolved an unimported public trait.
 
 ### Shadowing
@@ -947,7 +958,7 @@ On a `struct`: the value names a foreign resource released by `fn`. A binding le
 - `Maybe<Sound>` carries the obligation; the unwrapping alternative that sees the value must discharge. Tracked: `match` arm, `if let`, `let … else`, destructuring `let` (incl. `let Some(v) = load_sound(p) else { return }`). Patterns binding more than one name are not tracked.
 - Field reads are borrows.
 - Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
-- `struct` only (`newtype Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
+- `struct` only (`type Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
 - **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It and `@interrupt` are the attributes a `let` takes; any other is an error.
 - **Releasing a borrowed resource is `lyra-W025`** — `unload_font(default_font())`, directly or through a binding or an unwrap: it frees what the lender still uses.
 

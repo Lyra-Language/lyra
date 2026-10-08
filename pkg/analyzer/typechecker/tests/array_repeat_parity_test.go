@@ -8,7 +8,7 @@ import "testing"
 // the two spellings of one thing diverged:
 //
 //   - `isSyntacticLiteral` (assignable.go) decides whether a value has "provenance to lose"
-//     for the implicit-newtype rule, so `let n: Nums = [7; 3]` over `newtype Nums = []i64`
+//     for the implicit-newtype rule, so `let n: Nums = [7; 3]` over `type Nums = []i64`
 //     was lyra-E046 demanding `Nums(...)` while `[7, 7, 7]` went through.
 //   - `firstNonConstant` (typechecker_const.go) decides what a `const` may hold, so
 //     `const XS = [7; 3]` was "not a compile-time constant" while `const XS = [1, 2, 3]` was
@@ -25,20 +25,20 @@ import "testing"
 func TestTypeCheck_ArrayRepeatIsALiteralWhereArrayLiteralIs(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		{"newtype over a dynamic array", `
-newtype Nums = []i64
+type Nums = []i64
 let n: Nums = [7; 3]`},
 		{"newtype over a fixed array", `
-newtype Trio = [3]i64
+type Trio = [3]i64
 let t: Trio = #[7; 3]`},
 		{"newtype over an array of strings", `
-newtype Names = []string
+type Names = []string
 let n: Names = ["ab"; 2]`},
 		{"a const of repeated elements", `
 const XS = [7; 3]
 let first = XS[0]`},
 		// The comma forms, as the parity baseline.
 		{"comma form (baseline)", `
-newtype Nums = []i64
+type Nums = []i64
 let n: Nums = [7, 7, 7]`},
 		{"const comma form (baseline)", `
 const XS = [1, 2, 3]
@@ -59,11 +59,11 @@ let first = XS[0]`},
 func TestTypeCheck_ArrayOfComputedValuesIsAConstructionInBothSpellings(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		{"repeat of a variable", `
-newtype Nums = []i64
+type Nums = []i64
 let x = 7
 let n: Nums = [x; 3]`},
 		{"comma form of a variable (baseline)", `
-newtype Nums = []i64
+type Nums = []i64
 let x = 7
 let n: Nums = [x, x, x]`},
 	} {
@@ -91,10 +91,10 @@ const XS = [7; k]
 func TestTypeCheck_ComputedElementsStayAConstruction(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		{"concat elements", `
-newtype Bag = []string
+type Bag = []string
 let b: Bag = ["a" ++ "1", "b" ++ "2"]`},
 		{"mixed literal and variable", `
-newtype Nums = []i64
+type Nums = []i64
 let x = 7
 let n: Nums = [1, x, 3]`},
 	} {
@@ -109,8 +109,8 @@ let n: Nums = [1, x, 3]`},
 // newtype — the check lands where the discard actually is.
 func TestTypeCheck_FormExemptionDoesNotBypassElementNewtypes(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
-newtype Row = []Cents
+type Cents = i64
+type Row = []Cents
 let x = 7
 let r: Row = [x]
 `, false)
@@ -122,7 +122,7 @@ let r: Row = [x]
 // written in place, and an identifier is not one, whatever it holds.
 func TestTypeCheck_ATypedArrayBindingStillNeedsTheConstructor(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Nums = []i64
+type Nums = []i64
 let xs: []i64 = [1, 2, 3]
 let n: Nums = xs
 `, false)
@@ -139,11 +139,11 @@ let n: Nums = xs
 func TestTypeCheck_LambdaIntoFunctionTypeBase_BothSpellingsAgree(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		{"constructor form", `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let h: Handler = Handler((n: i64) -> i64 => n + 1)
 let out: i64 = base(h)(41)`},
 		{"annotation form", `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let h: Handler = (n: i64) -> i64 => n + 1
 let out: i64 = base(h)(41)`},
 	} {

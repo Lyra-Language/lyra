@@ -445,7 +445,7 @@ let collect_tuple_elements = (node: Node, source: Source) -> []shared TypeNode =
   elements
 }
 
-/// `newtype Angle = f64`.
+/// `type Angle = f64`.
 ///
 /// The constraints a newtype may carry (`where range(…)`) are not collected yet, which is
 /// why the goldens that have them still differ — an honest gap rather than a silent one.

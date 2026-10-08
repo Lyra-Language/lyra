@@ -17,7 +17,7 @@ import "testing"
 // base after the first.
 func TestTypeCheck_NewtypeReadOutFromEveryBindingPosition(t *testing.T) {
 	const decl = `
-newtype Meters = i64
+type Meters = i64
 struct Leg { d: Meters, n: i64 }
 `
 	for _, c := range []struct{ name, body string }{
@@ -51,7 +51,7 @@ let s = "abc"
 let out = i64(s)`, "cannot convert string to i64"},
 		// A newtype over string: stripping is right, and the *base* is then what fails.
 		{"newtype over string to i64", `
-newtype Name = string
+type Name = string
 let n: Name = "x"
 let out = i64(n)`, "cannot convert string to i64"},
 		{"lossy float", `
@@ -59,7 +59,7 @@ let f = 1.5
 let out = i64(f)`, "cannot convert f64 to i64: use floor(), ceil(), or round() to convert explicitly"},
 		{"bool is identity-only", `
 let n = 1
-let out = bool(n)`, "cannot convert i64 to bool: `bool(...)` only reads a value of that type — or a newtype over it — back out"},
+let out = bool(n)`, "cannot convert i64 to bool: `bool(...)` only reads a value of that type — or a `type` declared over it — back out"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			assertErrorsAre(t, parseCollectAndCheck(t, c.src, false), c.want)

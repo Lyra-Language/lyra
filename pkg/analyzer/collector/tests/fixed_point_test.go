@@ -72,11 +72,11 @@ let main = () => {
 func TestFixedPoint_RefusedInEveryTypePosition(t *testing.T) {
 	for name, source := range map[string]string{
 		"struct field":  `struct Point { x: fixed<16, 16> }`,
-		"newtype base":  `newtype Scaled = fixed<8, 8>`,
+		"newtype base":  `type Scaled = fixed<8, 8>`,
 		"parameter":     `let take = (v: fixed<16, 16>) -> i64 => 1`,
 		"return type":   `let give = () -> fixed<16, 16> => 1`,
 		"array element": `let arr: []fixed<16, 16> = []`,
-		"type alias":    `type Alias = fixed<4, 4>`,
+		"type alias":    `alias Alias = fixed<4, 4>`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixedPointRefusal(t, source, 1)

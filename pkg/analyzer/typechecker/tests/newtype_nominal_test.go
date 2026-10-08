@@ -14,7 +14,7 @@ func TestTypeCheck_NewtypeStaysNominalAcrossCalls(t *testing.T) {
 		// Passed before the fix as well — the base was never implicitly admitted. Kept
 		// because it is the half a change like this could plausibly loosen.
 		{"base does not flow into a newtype", `
-newtype Bag = []string
+type Bag = []string
 let take = (b: Bag) -> i64 => 1
 let xs: []string = ["x"]
 let out = take(xs)`,
@@ -23,19 +23,19 @@ let out = take(xs)`,
 		// which it could not do while the wrapper was being lost — it used to describe the
 		// base instead.
 		{"two newtypes over one base", `
-newtype Bag = []string
-newtype Sack = []string
+type Bag = []string
+type Sack = []string
 let take = (s: Sack) -> i64 => 1
 let b: Bag = ["x"]
 let out = take(b)`,
 			"take: argument 1 (s): cannot assign Bag to Sack"},
 		// Also passed before: a scalar base never lost its wrapper.
 		{"a scalar newtype needs its read-out written", `
-newtype Cents = i64
+type Cents = i64
 let take = (n: i64) -> i64 => n
 let c: Cents = 5
 let out = take(c)`,
-			"cannot use Cents as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`"},
+			"cannot use Cents as i64 implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `i64(...)`"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			assertErrorsAre(t, parseCollectAndCheck(t, c.src, false), c.want)
@@ -47,19 +47,19 @@ let out = take(c)`,
 // boundary exactly as a scalar one is, and `base(...)` is the spelling offered.
 func TestTypeCheck_NewtypeOverAnArrayIsRefusedAtCallsToo(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Bag = []string
+type Bag = []string
 let take = (xs: []string) -> i64 => 1
 let b: Bag = ["x"]
 let out = take(b)
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Bag as DynamicArray<string> implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `base(...)`")
+		"cannot use Bag as DynamicArray<string> implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `base(...)`")
 }
 
 // …and writing the read-out is the way through at a call, as everywhere.
 func TestTypeCheck_NewtypeOverAnArrayReadsOutWithBase(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Bag = []string
+type Bag = []string
 let take = (xs: []string) -> i64 => 1
 let b: Bag = ["x"]
 let out = take(base(b))

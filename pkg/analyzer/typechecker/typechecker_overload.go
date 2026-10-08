@@ -41,7 +41,7 @@ import (
 // receiverAccepts reports whether fn's `self` parameter admits a receiver of recvType.
 //
 // The written `self` type has its **aliases expanded** first, because the receiver is a
-// value's type and a value's type is resolved: `self: A` over `type A = []i64` is an
+// value's type and a value's type is resolved: `self: A` over `alias A = []i64` is an
 // UnresolvedType naming `A`, which nominalHead reads as a head of its own, so it matched
 // neither a `[]i64` nor an `A` — `ys.first()` was refused while `first(ys)`, checked by
 // assignability against the resolved parameter, was accepted (10/07). Only aliases: every
@@ -55,7 +55,7 @@ func receiverAccepts(symTable *symbols.SymbolTable, fn *ast.LambdaExpr, recvType
 	return unifyGenericTarget(written, recvType, lambdaTypeVars(fn), map[string]types.Type{})
 }
 
-// expandAliases replaces every transparent `type X = T` alias named anywhere in t with
+// expandAliases replaces every transparent `alias X = T` alias named anywhere in t with
 // what it names, as the module at loc sees the name, and leaves every other type alone.
 // It needs only a symbol table, so LSP completion (UFCSCallable) asks the same question
 // the checker does. An alias cycle is refused by checkTypeDecl, but completion runs on
@@ -297,7 +297,7 @@ func (tc *TypeChecker) bareCalleeFor(name string, resolved *ast.LambdaExpr, call
 }
 
 // checkOverloadAliasOverlap refuses two members of one overload set whose receivers are
-// one type spelled through an alias — `self: A` beside `self: []i64` with `type A = []i64`.
+// one type spelled through an alias — `self: A` beside `self: []i64` with `alias A = []i64`.
 //
 // Registration (ast.OverloadableWith) compares the *written* heads, `A` and `[]`, because
 // it runs in the collector before an alias can be resolved; its premise that a written

@@ -13,109 +13,109 @@ pub struct Vec4 { x: f32, y: f32, z: f32, w: f32 }
 // ── Handles ─────────────────────────────────────────────────────────────────
 
 /// A pointer to ImGui's `ImGuiColor`, owned by ImGui.
-pub newtype Color = ^u8
+pub type Color = ^u8
 
 /// A pointer to ImGui's `ImGuiContext`, owned by ImGui.
-pub newtype Context = ^u8
+pub type Context = ^u8
 
 /// A pointer to ImGui's `ImDrawCmd`, owned by ImGui.
-pub newtype DrawCmd = ^u8
+pub type DrawCmd = ^u8
 
 /// A pointer to ImGui's `ImDrawData`, owned by ImGui.
-pub newtype DrawData = ^u8
+pub type DrawData = ^u8
 
 /// A pointer to ImGui's `ImDrawList`, owned by ImGui.
-pub newtype DrawList = ^u8
+pub type DrawList = ^u8
 
 /// A pointer to ImGui's `ImDrawListSharedData`, owned by ImGui.
-pub newtype DrawListSharedData = ^u8
+pub type DrawListSharedData = ^u8
 
 /// A pointer to ImGui's `ImDrawListSplitter`, owned by ImGui.
-pub newtype DrawListSplitter = ^u8
+pub type DrawListSplitter = ^u8
 
 /// A pointer to ImGui's `ImFont`, owned by ImGui.
-pub newtype Font = ^u8
+pub type Font = ^u8
 
 /// A pointer to ImGui's `ImFontAtlas`, owned by ImGui.
-pub newtype FontAtlas = ^u8
+pub type FontAtlas = ^u8
 
 /// A pointer to ImGui's `ImFontAtlasRect`, owned by ImGui.
-pub newtype FontAtlasRect = ^u8
+pub type FontAtlasRect = ^u8
 
 /// A pointer to ImGui's `ImFontBaked`, owned by ImGui.
-pub newtype FontBaked = ^u8
+pub type FontBaked = ^u8
 
 /// A pointer to ImGui's `ImFontConfig`, owned by ImGui.
-pub newtype FontConfig = ^u8
+pub type FontConfig = ^u8
 
 /// A pointer to ImGui's `ImFontGlyph`, owned by ImGui.
-pub newtype FontGlyph = ^u8
+pub type FontGlyph = ^u8
 
 /// A pointer to ImGui's `ImFontGlyphRangesBuilder`, owned by ImGui.
-pub newtype FontGlyphRangesBuilder = ^u8
+pub type FontGlyphRangesBuilder = ^u8
 
 /// A pointer to ImGui's `ImFontLoader`, owned by ImGui.
-pub newtype FontLoader = ^u8
+pub type FontLoader = ^u8
 
 /// A pointer to ImGui's `ImGuiIO`, owned by ImGui.
-pub newtype IO = ^u8
+pub type IO = ^u8
 
 /// A pointer to ImGui's `ImGuiInputTextCallbackData`, owned by ImGui.
-pub newtype InputTextCallbackData = ^u8
+pub type InputTextCallbackData = ^u8
 
 /// A pointer to ImGui's `ImGuiListClipper`, owned by ImGui.
-pub newtype ListClipper = ^u8
+pub type ListClipper = ^u8
 
 /// A pointer to ImGui's `ImGuiMultiSelectIO`, owned by ImGui.
-pub newtype MultiSelectIO = ^u8
+pub type MultiSelectIO = ^u8
 
 /// A pointer to ImGui's `ImGuiPayload`, owned by ImGui.
-pub newtype Payload = ^u8
+pub type Payload = ^u8
 
 /// A pointer to ImGui's `ImGuiPlatformIO`, owned by ImGui.
-pub newtype PlatformIO = ^u8
+pub type PlatformIO = ^u8
 
 /// A pointer to ImGui's `ImGuiSelectionBasicStorage`, owned by ImGui.
-pub newtype SelectionBasicStorage = ^u8
+pub type SelectionBasicStorage = ^u8
 
 /// A pointer to ImGui's `ImGuiSelectionExternalStorage`, owned by ImGui.
-pub newtype SelectionExternalStorage = ^u8
+pub type SelectionExternalStorage = ^u8
 
 /// A pointer to ImGui's `ImGuiStorage`, owned by ImGui.
-pub newtype Storage = ^u8
+pub type Storage = ^u8
 
 /// A pointer to ImGui's `ImGuiStyle`, owned by ImGui.
-pub newtype Style = ^u8
+pub type Style = ^u8
 
 /// A pointer to ImGui's `ImGuiTableSortSpecs`, owned by ImGui.
-pub newtype TableSortSpecs = ^u8
+pub type TableSortSpecs = ^u8
 
 /// A pointer to ImGui's `ImGuiTextBuffer`, owned by ImGui.
-pub newtype TextBuffer = ^u8
+pub type TextBuffer = ^u8
 
 /// A pointer to ImGui's `ImGuiTextFilter`, owned by ImGui.
-pub newtype TextFilter = ^u8
+pub type TextFilter = ^u8
 
 /// A pointer to ImGui's `ImGuiTextFilterTextRange`, owned by ImGui.
-pub newtype TextFilterTextRange = ^u8
+pub type TextFilterTextRange = ^u8
 
 /// A pointer to ImGui's `ImTextureData`, owned by ImGui.
-pub newtype TextureData = ^u8
+pub type TextureData = ^u8
 
 /// A pointer to ImGui's `ImTextureRef`, owned by ImGui.
-pub newtype TextureRef = ^u8
+pub type TextureRef = ^u8
 
 /// A pointer to ImGui's `ImGuiVectorTextRange`, owned by ImGui.
-pub newtype VectorTextRange = ^u8
+pub type VectorTextRange = ^u8
 
 /// A pointer to ImGui's `ImGuiVectorWchar`, owned by ImGui.
-pub newtype VectorWchar = ^u8
+pub type VectorWchar = ^u8
 
 /// A pointer to ImGui's `ImGuiViewport`, owned by ImGui.
-pub newtype Viewport = ^u8
+pub type Viewport = ^u8
 
 /// A pointer to ImGui's `ImGuiWindowClass`, owned by ImGui.
-pub newtype WindowClass = ^u8
+pub type WindowClass = ^u8
 
 // ── Enums and flags ─────────────────────────────────────────────────────────
 

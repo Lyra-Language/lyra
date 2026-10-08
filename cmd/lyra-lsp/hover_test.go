@@ -98,8 +98,8 @@ func TestHover_TypeInATypePosition(t *testing.T) {
 		name, needle, wantCode, wantDoc string
 	}{
 		{"struct", "Point,", "struct Point", "A point in the plane."},
-		{"alias", "Coord,", "type Coord = i64", "A column index."},
-		{"newtype", "Cents,", "newtype Cents = i64", "Money, in cents."},
+		{"alias", "Coord,", "alias Coord = i64", "A column index."},
+		{"newtype", "Cents,", "type Cents = i64", "Money, in cents."},
 		{"data", "Shape)", "data Shape", "A shape, one way or another."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,9 +108,9 @@ func TestHover_TypeInATypePosition(t *testing.T) {
 /// A point in the plane.
 struct Point { x: i64, y: i64 }
 /// A column index.
-type Coord = i64
+alias Coord = i64
 /// Money, in cents.
-newtype Cents = i64
+type Cents = i64
 /// A shape, one way or another.
 data Shape = Dot | Box i64
 let f = pure (p: Point, c: Coord, m: Cents, s: Shape) -> i64 => 0`

@@ -86,7 +86,7 @@ let f = (p: (u8, u8)) -> u8 => match p {
 // The constraint half of "the check follows the type": a value the newtype's range
 // excludes is a dead arm too, reported against the constraint rather than the width.
 func TestPatternRange_NewtypeConstraint(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let f = (p: Percent) -> u8 => match p {
   200 => 9,
   _ => 2,
@@ -98,7 +98,7 @@ let f = (p: Percent) -> u8 => match p {
 // matched none of checkMatchExpr's kind branches, so its arms were never checked and
 // its match never exhaustiveness-tested. The wrong-kind literal is the pin.
 func TestPatternRange_NewtypeScrutineeKindPoliced(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let f = (p: Percent) -> u8 => match p {
   "fifty" => 1,
   _ => 2,

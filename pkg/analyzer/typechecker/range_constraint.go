@@ -172,7 +172,7 @@ func constraintValueIsFoldable(value ast.Expression, base types.PrimitiveType) b
 }
 
 // checkLiteralUnionConstraints tests a literal against a `values(...)` constraint
-// (`newtype Status = i32 where values(200, 404, 500)`).
+// (`type Status = i32 where values(200, 404, 500)`).
 //
 // **Nothing enforced this until 08/12** — `let s: Status = 302` compiled clean — which
 // made `values(...)` a constraint the compiler collected, validated the *shape* of, and
@@ -248,7 +248,7 @@ func literalConstantText(expr ast.Expression) (string, bool) {
 //
 // **Nothing read StepConstraint until 08/13.** `step(15)` was collected, validated for
 // well-formedness (zero and fractional-over-integer steps refused) and then enforced
-// against no value at all, so `newtype CompassHeading = i64 where range(0..<360),
+// against no value at all, so `type CompassHeading = i64 where range(0..<360),
 // step(15)` accepted 7. That is the collected-and-unread shape this project keeps
 // digging out, and `types/step.go`'s own comment recorded it as a known asymmetry.
 //

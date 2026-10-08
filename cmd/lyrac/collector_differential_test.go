@@ -75,7 +75,7 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 		{"an interpolation holding an index", `let s = "${xs[0]}"`},
 		{"adjacent interpolations with no text between", `let s = "${a}${b}"`},
 		{"an interpolation at the start and end", `let s = "${a} mid ${b}"`},
-		{"a newtype over a declared type", "newtype Id = UserKey"},
+		{"a newtype over a declared type", "type Id = UserKey"},
 		// All four range end operators. The descending pair is legal in an expression and
 		// appears in no golden, so without these the data type modelling the operator
 		// would have two constructors nothing ever built.

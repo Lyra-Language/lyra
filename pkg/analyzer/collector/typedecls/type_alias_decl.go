@@ -8,7 +8,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// collectTypeAliasDeclaration lowers `type Op = ((i64, i64)) -> i64`.
+// collectTypeAliasDeclaration lowers `alias Op = ((i64, i64)) -> i64`.
 //
 // **The whole of transparency is the `Type` field below: the alias registers the
 // aliased type *itself*, with no wrapper.** Nothing downstream then needs to know
@@ -33,7 +33,7 @@ func collectTypeAliasDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast
 		// parse. Bail rather than register a half-built type: a nil `Type` in the
 		// symbol table would surface much later, as an unexplained nil dereference in
 		// whichever pass first resolved the name.
-		ctx.AddError(node, diag.SeverityError, "malformed type alias")
+		ctx.AddError(node, diag.SeverityError, "malformed alias")
 		return nil
 	}
 
@@ -48,7 +48,7 @@ func collectTypeAliasDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {
-		ctx.AddError(node, diag.SeverityError, "failed to register type alias %q: %v", name, err)
+		ctx.AddError(node, diag.SeverityError, "failed to register alias %q: %v", name, err)
 	}
 
 	return astNode

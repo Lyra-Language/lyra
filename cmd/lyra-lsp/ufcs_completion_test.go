@@ -99,7 +99,7 @@ func TestCompletion_UFCSOffersAnAliasReceiver(t *testing.T) {
 	t.Setenv("LYRA_NO_PRELUDE", "1")
 	h := servertest.New(t, newHandler())
 	src := `
-type Row = []i64
+alias Row = []i64
 let first = pure (self: Row) -> i64 => self[0]
 let xs: []i64 = [1, 2]
 let y = xs.

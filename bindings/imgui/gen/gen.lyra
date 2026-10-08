@@ -653,7 +653,7 @@ let render = (doc: JsonValue, fns: []Function, skipped: []string) -> string => {
   for h in handles_used(fns) {
     out.push("")
     out.push("/// A pointer to ImGui's `${h.0}`, owned by ImGui.")
-    out.push("pub newtype ${h.1} = ^u8")
+    out.push("pub type ${h.1} = ^u8")
   }
   out.push("")
   out.push("// ── Enums and flags ─────────────────────────────────────────────────────────")
@@ -924,7 +924,7 @@ const RESERVED: []string = [
   "return",
   "break",
   "continue",
-  "newtype",
+  "alias",
   "union",
   "in",
   "nullptr",

@@ -141,7 +141,7 @@ func TestDefinition_TypeInATypePosition(t *testing.T) {
 			src := `data Maybe<t> = None | Some t
 struct Point { x: i64, y: i64 }
 struct Line { a: Point, b: Point }
-type Spot = Point
+alias Spot = Point
 impl Shownish for Point { }
 let takes = pure (p: Point) -> i64 => p.x
 let gives = pure (n: i64) -> Point => Point { x: n, y: n }

@@ -102,9 +102,9 @@ func TestSignature_RendersSourceSyntax(t *testing.T) {
 		},
 		{
 			name: "type alias",
-			src:  "pub type Index = i64",
+			src:  "pub alias Index = i64",
 			decl: "Index",
-			want: "pub type Index = i64",
+			want: "pub alias Index = i64",
 		},
 		{
 			name: "bool is spelled bool, not boolean",

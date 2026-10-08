@@ -33,7 +33,7 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx
 	// two spellings cannot disagree about which steps are legal.
 	checkStepConstraints(constraints, typeType, constraintsNode, ctx)
 
-	// A generic `newtype` — `newtype Meters<t> = t`. The grammar had no slot for the
+	// A generic `newtype` — `type Meters<t> = t`. The grammar had no slot for the
 	// parameters until 08/07, so they landed in an ERROR node and the declaration
 	// collected with them silently dropped; the golden file for that case recorded the
 	// drop as if it were the intended output.

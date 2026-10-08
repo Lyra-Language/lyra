@@ -395,7 +395,7 @@ func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
 	if decl.IsAlias {
 		// Resolve the alias's target here, at its declaration, rather than waiting for
 		// a use. Resolution is what reports an unknown target and what detects a cycle
-		// (`type A = B` with `type B = A`), and an alias nothing happens to mention
+		// (`alias A = B` with `alias B = A`), and an alias nothing happens to mention
 		// would otherwise be checked by nobody — a declaration that cannot mean
 		// anything should not need a use site to be told so.
 		tc.resolveType(decl.Type, decl.GetLocation())
@@ -1427,7 +1427,7 @@ func (tc *TypeChecker) resolveGenericAggregate(t types.Type, loc ast.Location) t
 		d.Constructors = ctors
 		return types.WithAllocation(d, p.Allocation)
 	case *types.ConstrainedType:
-		// A generic `newtype` — `newtype Boxed<t> = t`, so `Boxed<i64>`'s base is i64.
+		// A generic `newtype` — `type Boxed<t> = t`, so `Boxed<i64>`'s base is i64.
 		// The parameters had nowhere to be written until 08/07 (the grammar put them in
 		// an ERROR node), so this arm had nothing to resolve and its absence cost
 		// nothing; with them collected, a missing case here is the difference between
@@ -2405,7 +2405,7 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 	//
 	// **Only the unpinned side is given a context.** Pushing the pointer type onto both
 	// would hand a real operand a context it does not need — and where that operand is a
-	// `newtype Window = ^u8`, the stripped `^u8` reads as an implicit read-out and draws
+	// `type Window = ^u8`, the stripped `^u8` reads as an implicit read-out and draws
 	// lyra-E047 about a comparison whose two sides are one type. Two already-typed
 	// pointers need nothing from this at all.
 	if pt := nullPtrComparisonPointee(leftType, rightType); pt != nil {
@@ -2552,7 +2552,7 @@ func comparisonInstantiation(a, b types.Type) types.Type {
 // other side of a `==`/`!=`, or nil when neither side is one.
 //
 // **Newtypes are stripped**, which is what makes a handle type work: a
-// `newtype Window = ^u8` is a pointer at run time, and `w == nullptr` is the whole reason
+// `type Window = ^u8` is a pointer at run time, and `w == nullptr` is the whole reason
 // a binding declares one. The literal is pinned to the *base* pointer, since that is what
 // it will be lowered as — the newtype's identity belongs to the operand that has it.
 //
@@ -2565,7 +2565,7 @@ func comparisonInstantiation(a, b types.Type) types.Type {
 // nullptr` has no type to compare at, and lyra-E069 says so at each of them.
 func nullPtrComparisonPointee(a, b types.Type) types.Type {
 	// **Newtypes are stripped first**, which is what makes a handle type work: a
-	// `newtype Window = ^u8` is a pointer at run time and `w == nullptr` is the whole
+	// `type Window = ^u8` is a pointer at run time and `w == nullptr` is the whole
 	// reason a binding declares one. Without this the comparison did not pin the
 	// literal and reported lyra-E069 about a `nullptr` that had a pointer right beside
 	// it. Found writing the SDL3 bindings, where every opaque handle is such a newtype.
@@ -2708,7 +2708,7 @@ func walkTypeNames(t types.Type, loc ast.Location, leaf func(types.UnresolvedTyp
 		// data type which stays a ParameterizedType for the instantiation machinery.
 		// The asymmetry is the point: a newtype *is* its base plus a nominal name, so
 		// `Boxed<i64>` has to become a ConstrainedType over `i64` for the rest of the
-		// compiler to treat it the way it already treats `newtype Plain = i64`. Left
+		// compiler to treat it the way it already treats `type Plain = i64`. Left
 		// unexpanded, `StripNewtype` finds no ConstrainedType and every assignment to it
 		// is rejected — `cannot assign integer literal to Boxed<i64>`.
 		if expandNewtype != nil {
@@ -2893,7 +2893,7 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 		return tt
 	}
 	// **Resolve what the declaration holds, too.** One hop is not enough once
-	// transparent aliases exist: `type Point = Pt` registers `UnresolvedType{Pt}`,
+	// transparent aliases exist: `alias Point = Pt` registers `UnresolvedType{Pt}`,
 	// so stopping here hands back a name rather than a type, and assignability
 	// then rejects a perfectly good value with "cannot assign Pt to Point". Every
 	// composite in the walk above already recurses for the same reason.
@@ -2902,13 +2902,13 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 	// on the walk's default and returns as-is — so this only walks alias chains,
 	// which is exactly what it is for.
 	if tc.resolvingTypes[key] {
-		// `type A = B` with `type B = A`. Report once and hand back the unresolved
+		// `alias A = B` with `alias B = A`. Report once and hand back the unresolved
 		// name: the caller's own diagnostic ("unknown type", a mismatch) then reads
 		// normally, and, more to the point, we do not recurse until the stack ends
 		// — the same failure the expression-level guard in inferExprType exists to
 		// prevent, one level up in the type world.
 		tc.addError(loc, SeverityError,
-			"type alias %q is circular: its definition leads back to itself", tt.Name)
+			"alias %q is circular: its definition leads back to itself", tt.Name)
 		tc.resolvedTypes[key] = tt
 		return tt
 	}
@@ -3425,7 +3425,7 @@ func promoteToDefault(t types.Type) types.Type {
 // resolved `*ConstrainedType` — which is how a pattern-bound `d: Meters` reached the
 // conversion check and was refused — and a **generic** newtype's base is a
 // `ParameterizedType` that has to be resolved before the next wrapper underneath it is
-// visible, so `newtype Outer<t> = Inner<t>` over `newtype Inner<t> = []t` stops one layer
+// visible, so `type Outer<t> = Inner<t>` over `type Inner<t> = []t` stops one layer
 // short.
 //
 // Resolution is the quiet variant: a name this cannot resolve is reported by whatever is
@@ -3465,7 +3465,7 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 		return targetType
 	}
 	// A conversion looks through a newtype on its operand (08/12): `i64(c)` for
-	// `newtype Cents = i64` is the read-out spelling lyra-E047 requires — an identity
+	// `type Cents = i64` is the read-out spelling lyra-E047 requires — an identity
 	// at runtime, exactly as the constructor is in the other direction — and a
 	// non-identity target behaves as it would on the bare base, so `u8(cents)` is
 	// admitted or refused by the same rules as `u8(plain_i64)`. Resolved as it strips,
@@ -3484,7 +3484,7 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	if !isNumericTarget {
 		if !types.TypesEqual(argType, targetType) {
 			tc.addError(call.GetLocation(), SeverityError,
-				"cannot convert %s to %s: `%s(...)` only reads a value of that type — or a newtype over it — back out",
+				"cannot convert %s to %s: `%s(...)` only reads a value of that type — or a `type` declared over it — back out",
 				argType, ident.Name, ident.Name)
 		}
 		return targetType
@@ -3720,7 +3720,7 @@ func (tc *TypeChecker) propagateExpectedType(expr ast.Expression, expected types
 // resets through the aggregate arms, whose element recursions are genuinely new
 // contexts.
 func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Type, viaNewtype bool) {
-	// A newtype context propagates its *base*: `newtype Percent = u8` is nominal
+	// A newtype context propagates its *base*: `type Percent = u8` is nominal
 	// only, so `let p: Percent = 40 + 2` must narrow its leaves to u8 exactly as an
 	// annotated u8 would. Without this the leaves stay untyped and the backend
 	// lowers the arithmetic at the i64 default, then truncates on the way out —
@@ -3739,7 +3739,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		tc.propagateExpected(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()), true)
 		// **Put the wrapper back on the root.** The recursion narrows the leaves against the
 		// base, and the array arms re-record the node they were handed with the base's own
-		// shape — so `let b: Bag = ["x"]` over `newtype Bag = []string` came out recorded as
+		// shape — so `let b: Bag = ["x"]` over `type Bag = []string` came out recorded as
 		// `DynamicArray<string>`, and every later reference to `b` read that: returning it
 		// was lyra-E046 ("cannot use DynamicArray<string> as Bag implicitly") and passing it
 		// to a `(b: Bag)` parameter the same.
@@ -4037,7 +4037,7 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 	if !ok {
 		// A non-primitive context reaches no leaf arm below, but a settled value in it
 		// is still the read-out surface: `take(b)` against `(xs: []string)` for a
-		// `newtype Bag = []string` is the same silent discard as `take(c)` against
+		// `type Bag = []string` is the same silent discard as `take(c)` against
 		// `(x: i64)`, and lyra-E047 is position-uniform now that `base(...)` gives
 		// every base a spelling (08/28). Guarded exactly as the default arm below is.
 		if !viaNewtype {
@@ -4566,7 +4566,7 @@ func (tc *TypeChecker) inferInterpolatedStringExpr(e *ast.InterpolatedStringExpr
 // still awaiting its context. Deliberately excludes every float, including
 // untyped_float — `IsNumeric` is the wrong test for these operators.
 func isIntegerOperand(t types.Type) bool {
-	// A constrained newtype over an integer is one: `newtype Mask = u8` is a u8
+	// A constrained newtype over an integer is one: `type Mask = u8` is a u8
 	// wearing a name, and masking it is exactly what such a type is for.
 	p, ok := types.StripNewtype(t).(types.PrimitiveType)
 	if !ok {
@@ -4925,7 +4925,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name string, ct *types.ConstrainedType, decl *ast.TypeDeclStmt) types.Type {
 	if len(expr.Elements) != 1 {
 		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
-			"%s is a newtype over %s, so it takes exactly one operand, not %d",
+			"%s is a `type` over %s, so it takes exactly one operand, not %d",
 			name, ct.Type, len(expr.Elements))
 		return nil
 	}
@@ -4951,7 +4951,7 @@ func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name
 			for _, gp := range decl.GenericParams {
 				bound, ok := subst[gp.Name]
 				if !ok {
-					// A parameter the base never mentions (`newtype Weird<t> = i64`)
+					// A parameter the base never mentions (`type Weird<t> = i64`)
 					// cannot be solved from any operand; only the turbofish can bind it.
 					tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
 						"%s: cannot infer %s from the operand — write the type arguments (`%s<...>(...)`)",
@@ -4998,7 +4998,7 @@ func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name
 //
 // Two messages, because there are two fixes. Where the aliased type is one a conversion
 // can *name*, a width change is the only thing the wrapper could have meant, so the
-// message hands over that spelling — `u64(n)` for `type CULong = u64`. Where it is not
+// message hands over that spelling — `u64(n)` for `alias CULong = u64`. Where it is not
 // (an alias for an array or a function type) there is no conversion to offer and none is
 // needed, so the message says the operand is already of that type rather than leaving the
 // author to guess at a wrapper that does not exist.
@@ -5224,7 +5224,7 @@ func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 	indexType := tc.inferExprType(expr.Index)
 
 	// **Indexing looks through a newtype**, the way the method fallback and the read-out
-	// conversion already do: `newtype Sorted = []i64` is a `[]i64` at run time, so `s[0]`
+	// conversion already do: `type Sorted = []i64` is a `[]i64` at run time, so `s[0]`
 	// is the base's index. Resolved first, since a binding's type can arrive as the bare
 	// declared name rather than as a resolved `*ConstrainedType`.
 	//
@@ -5981,8 +5981,8 @@ func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc
 // identity — a struct, a `data` type, or a *named* tuple.
 //
 // The rule is structural-versus-nominal, not scalar-versus-compound. `newtype` exists to
-// give identity to a type that has none: `newtype Meters = f64` makes an f64 that will
-// not mix with other f64s, and `newtype Rgb = (u8, u8, u8)` does the same for an
+// give identity to a type that has none: `type Meters = f64` makes an f64 that will
+// not mix with other f64s, and `type Rgb = (u8, u8, u8)` does the same for an
 // anonymous tuple. An array base earns its place the same way and is the only route to a
 // *transparent* nominal array — `struct Matrix { cells: [16]f64 }` is a wrapper with a
 // field, not an alias.
@@ -6003,7 +6003,7 @@ func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc
 // **The alias-cycle guard does not cover this.** resolveTypeWith deliberately never descends
 // into a ConstrainedType's base — a newtype is nominal, so resolving its *name* finishes
 // once the newtype itself is in hand — so a cycle of newtypes never enters the resolution
-// stack that guard watches. Nothing else looked, and `newtype A = B` beside `newtype B = A`
+// stack that guard watches. Nothing else looked, and `type A = B` beside `type B = A`
 // was accepted.
 //
 // What then happened depended on which walk reached it first, and all of them are fatal:
@@ -6037,7 +6037,7 @@ func (tc *TypeChecker) checkNewtypeCycles() {
 		}
 		tc.circularNewtypes[ct.Name] = true
 		tc.addError(decl.GetLocation(), SeverityError,
-			"newtype %q is circular: its base leads back to itself", ct.Name)
+			"type %q is circular: its base leads back to itself", ct.Name)
 	}
 }
 
@@ -6062,7 +6062,7 @@ func (tc *TypeChecker) newtypeChainReturnsTo(ct *types.ConstrainedType, loc ast.
 
 func (tc *TypeChecker) checkNewtypeBaseIsStructural(decl *ast.TypeDeclStmt, ct *types.ConstrainedType) {
 	base := tc.resolveTypeIfKnown(ct.Type, decl.GetLocation())
-	// Strip a chain of newtypes: `newtype B = A` over `newtype A = Pt` is the same
+	// Strip a chain of newtypes: `type B = A` over `type A = Pt` is the same
 	// mistake one level down, and reporting it at B is where the author can fix it.
 	base = types.StripNewtype(base)
 
@@ -6075,7 +6075,7 @@ func (tc *TypeChecker) checkNewtypeBaseIsStructural(decl *ast.TypeDeclStmt, ct *
 	case types.TupleType:
 		if types.IsAnonymousTupleName(b.Name) {
 			// The one structural base the language already has a dedicated nominal
-			// declaration for. `tuple Rgb(u8, u8, u8)` and `newtype Rgb = (u8, u8, u8)`
+			// declaration for. `tuple Rgb(u8, u8, u8)` and `type Rgb = (u8, u8, u8)`
 			// differ only in whether the name is a constructor — the named tuple
 			// refuses `let c: Rgb = (1, 2, 3)`, the newtype refuses `Rgb(1, 2, 3)` —
 			// which is two spellings of "give this product a name", the redundancy this
@@ -6083,7 +6083,7 @@ func (tc *TypeChecker) checkNewtypeBaseIsStructural(decl *ast.TypeDeclStmt, ct *
 			// newtype because nothing else names them: `struct Matrix { cells: [16]f64 }`
 			// is a wrapper with a field, not an alias.
 			tc.addErrorCode(decl.NameLocation, SeverityError, diag.CodeNominalNewtypeBase,
-				"newtype %s: an anonymous tuple is named by declaring a tuple — write `tuple %s%s` instead, "+
+				"type %s: an anonymous tuple is named by declaring a tuple — write `tuple %s%s` instead, "+
 					"which also gives %s a constructor",
 				decl.Name, decl.Name, tupleParamList(b), decl.Name)
 			return
@@ -6093,7 +6093,7 @@ func (tc *TypeChecker) checkNewtypeBaseIsStructural(decl *ast.TypeDeclStmt, ct *
 		return
 	}
 	tc.addErrorCode(decl.NameLocation, SeverityError, diag.CodeNominalNewtypeBase,
-		"newtype %s: %s is %s, which already has its own identity — a newtype over it adds a second name and nothing else; %s",
+		"type %s: %s is %s, which already has its own identity — a `type` over it adds a second name and nothing else; %s",
 		decl.Name, base, kind, alternative)
 }
 

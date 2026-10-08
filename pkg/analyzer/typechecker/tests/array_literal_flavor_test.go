@@ -33,8 +33,8 @@ let d: [2][]u8 = #[[1], []]
 let e: []u8 = []
 let f = [["a"], []]`,
 		"a newtype over each flavor": `
-newtype Row = [3]i64
-newtype Bag = []string
+type Row = [3]i64
+type Bag = []string
 let r: Row = #[1, 2, 3]
 let b: Bag = ["a"]`,
 	}

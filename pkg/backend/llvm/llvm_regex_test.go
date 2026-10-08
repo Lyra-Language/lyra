@@ -27,7 +27,7 @@ import (
 // value the compiler cannot fold, so the run either completes (matched) or trips the
 // constraint trap (did not match).
 func regexProbe(pattern, input string) string {
-	return fmt.Sprintf(`newtype Probe = string where pattern(r"%s")
+	return fmt.Sprintf(`type Probe = string where pattern(r"%s")
 let mk = (s: string) -> Probe => Probe(s)
 let main = () -> u8 => {
   let v = %s ++ ""
@@ -105,7 +105,7 @@ func TestExec_RegexMismatchTrapsLikeAnyConstraint(t *testing.T) {
 	if code != trapExitCode {
 		t.Errorf("exit = %d; want %d", code, trapExitCode)
 	}
-	if !strings.Contains(stderr, "violates its newtype's constraint") {
+	if !strings.Contains(stderr, "violates its type's constraint") {
 		t.Errorf("stderr = %q; want the constraint trap message", stderr)
 	}
 }
@@ -115,7 +115,7 @@ func TestExec_RegexMismatchTrapsLikeAnyConstraint(t *testing.T) {
 // the reason adding runtime matching did not make constrained newtypes expensive.
 func TestEmit_LiteralPatternEmitsNoMatcher(t *testing.T) {
 	t.Parallel()
-	ir, err := emitSource(t, `newtype Digits = string where pattern(r"^[0-9]+$")
+	ir, err := emitSource(t, `type Digits = string where pattern(r"^[0-9]+$")
 let main = () -> void => {
   let d: Digits = "123"
   println(string(d))
@@ -134,7 +134,7 @@ let main = () -> void => {
 // large part of this feature, so sharing them is what keeps it affordable.
 func TestEmit_OnePatternEmitsOneTable(t *testing.T) {
 	t.Parallel()
-	ir, err := emitSource(t, `newtype Digits = string where pattern(r"^[0-9]+$")
+	ir, err := emitSource(t, `type Digits = string where pattern(r"^[0-9]+$")
 let a = (s: string) -> Digits => Digits(s)
 let b = (s: string) -> Digits => Digits(s)
 let main = () -> void => {
@@ -191,7 +191,7 @@ let main = () -> u8 => {
 // the two run-time consumers.
 func TestExec_RegexPatternSharedBetweenConstraintAndMatch(t *testing.T) {
 	t.Parallel()
-	src := `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
+	src := `type Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
 let is_hex = pure (s: string) -> bool => match s { r"^#[0-9a-fA-F]{6}$" => true, _ => false }
 let main = () -> u8 => {
   let h: Hex = Hex("#00ff00")

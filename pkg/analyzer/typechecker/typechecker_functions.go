@@ -662,8 +662,8 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 // trait-method-path callees (TraitName::method(...)).
 // callableSignature is the signature a call-through-value goes through: newtypes are
 // stripped, because **a call is a use-form of the base exactly as indexing is** —
-// `h(5)` on a `newtype Handler = (i64) -> i64` value dispatches through the base's
-// signature the same way `b[0]` on a `newtype Bag = []string` indexes the base's
+// `h(5)` on a `type Handler = (i64) -> i64` value dispatches through the base's
+// signature the same way `b[0]` on a `type Bag = []string` indexes the base's
 // elements, via the same one answer (stripNewtypeResolving). Without this rung a
 // function-type newtype was call-dead in every position — binding, parameter, struct
 // field — which made it write-only in practice (08/28).
@@ -1510,7 +1510,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 
-	// A `newtype` is transparent to its base's methods: `newtype Name = string`
+	// A `newtype` is transparent to its base's methods: `type Name = string`
 	// supports `len()`, `slice()` and `trim()`, because a Name **is** a string at run
 	// time and the isolation newtype buys is about assignment, not about losing every
 	// operation the base has. Without this a wrapped string is a string you cannot do
@@ -1527,8 +1527,8 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// only agrees with what lowering was going to do anyway). It is this *occurrence*
 	// of the receiver, not the binding, so the variable keeps its newtype elsewhere.
 	// Resolved as it strips: a *generic* newtype's base is a ParameterizedType that has to
-	// be resolved before the wrapper underneath it is visible, so `newtype Outer<t> =
-	// Inner<t>` over `newtype Inner<t> = []t` stopped one layer short and `o.len()` reported
+	// be resolved before the wrapper underneath it is visible, so `type Outer<t> =
+	// Inner<t>` over `type Inner<t> = []t` stopped one layer short and `o.len()` reported
 	// "member access on non-struct type Outer".
 	if base := tc.stripNewtypeResolving(objType, member.Object.GetLocation()); base != nil {
 		if _, isNewtype := objType.(*types.ConstrainedType); isNewtype {
@@ -1555,7 +1555,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				// newtype" was not one of them.
 				if isOverflowArithBuiltin(methodName) {
 					tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeNewtypeArithmeticOptIn,
-						"arithmetic on a newtype is opt-in: %s is nominal over %s, so %q does not reach through the wrapper — give %s an operator impl, or convert to its base (`%s(...)`) and operate there",
+						"arithmetic on a `type` is opt-in: %s is nominal over %s, so %q does not reach through the wrapper — give %s an operator impl, or convert to its base (`%s(...)`) and operate there",
 						objType, base, methodName, objType, base)
 					return nil
 				}
@@ -1564,7 +1564,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(base, methodName),
 					builtinMethodMutates(base, methodName))
 				// A newtype is transparent to its base's methods, so it is transparent to
-				// their argument rules too — `newtype Name = string` slices exactly as a
+				// their argument rules too — `type Name = string` slices exactly as a
 				// string does, and a negative bound is as wrong through the wrapper.
 				tc.checkSliceBounds(methodName, call)
 				return tc.inferLambdaCallFromType(methodName, sig, call)
@@ -1837,7 +1837,7 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 	// Resolved at use, because enclosingRet stores the return type **as written** —
 	// both set sites fill it before their own resolution runs. Every other return
 	// position checks against a resolved type, and the drift showed exactly where the
-	// twin paths differ: `-> Maybe<(Idx, Len)>` for `type Idx = i64` accepted a tail
+	// twin paths differ: `-> Maybe<(Idx, Len)>` for `alias Idx = i64` accepted a tail
 	// `Some((n, 1))` and rejected the same value from a nested return, "expected
 	// Maybe<AnonymousTuple(Idx, Len)>, got Maybe<AnonymousTuple(i64, i64)>". The quiet
 	// twin, since an unknown name in the annotation was already reported by the

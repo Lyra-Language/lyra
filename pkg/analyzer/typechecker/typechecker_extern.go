@@ -125,7 +125,7 @@ func (tc *TypeChecker) requireFFISafe(t types.Type, decl *ast.ExternDeclStmt, wh
 
 // isFFISafe reports whether a type may cross the boundary.
 //
-// A **newtype is looked through**, because it is nominal only: `newtype Fd = i32` is an
+// A **newtype is looked through**, because it is nominal only: `type Fd = i32` is an
 // i32 at run time, and refusing it would refuse the one wrapper that makes a foreign
 // signature readable.
 func isFFISafe(t types.Type) bool {

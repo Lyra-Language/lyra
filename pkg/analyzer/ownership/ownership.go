@@ -168,7 +168,7 @@ func (t *Table) IsReuseTarget(e ast.Expression) bool {
 // ref-counted box). This is the single definition of "managed", shared by the
 // pass and the backend.
 func IsManaged(t types.Type) bool {
-	// A newtype is nominal only — `newtype Email = string` is represented exactly
+	// A newtype is nominal only — `type Email = string` is represented exactly
 	// as a string — so managed-ness is a property of the base (types.StripNewtype).
 	t = types.StripNewtype(t)
 	// A `weak T` is a non-owning reference to a box, and it too has a lifecycle: it
@@ -229,7 +229,7 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) 
 // **seen tracks newtype names, and it exists because this pass runs on invalid programs.**
 // The termination argument below holds for every *well-formed* type: a recursive one must
 // break its cycle with a `shared` or `weak` field (lyra-E014), and both are managed
-// outright. A newtype cycle — `newtype A = B` beside `newtype B = A` — satisfies none of
+// outright. A newtype cycle — `type A = B` beside `type B = A` — satisfies none of
 // that and is refused by the typechecker, but the driver runs every pass regardless so an
 // editor still gets diagnostics from all of them, so "the typechecker rejected it" is not
 // a guarantee this walk may rely on. Without the set it recursed until the stack ended,
@@ -245,7 +245,7 @@ func ownsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, 
 	// A transparent **alias** registers its target with no wrapper, so the name resolves
 	// straight to a type that may itself be managed — and IsManaged above was asked of the
 	// name, which it cannot see through. Asked again of what the name means. Without it
-	// `type A = []i64` fell to eachComponent, which answered for the *elements* (i64, none):
+	// `alias A = []i64` fell to eachComponent, which answered for the *elements* (i64, none):
 	// `let ys: A = [1, 2]` was not an owning position, so its literal was released as a
 	// temporary right after the store and every later read was a use-after-free (10/07).
 	// The name is remembered for the same reason a newtype's is, below: an alias cycle is
@@ -388,7 +388,7 @@ func resolveNamedType(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 	return types.WithAllocation(decl.Type, u.Allocation)
 }
 
-// isAliasName reports whether u names a transparent `type X = T` alias.
+// isAliasName reports whether u names a transparent `alias X = T` alias.
 func isAliasName(u types.UnresolvedType, symTable *symbols.SymbolTable, loc ast.Location) bool {
 	if symTable == nil {
 		return false
@@ -486,7 +486,7 @@ func SharedMutablePath(t types.Type, symTable *symbols.SymbolTable, loc ast.Loca
 	if t == nil {
 		return nil, false
 	}
-	// Nominal only — `newtype Grid = []i64` is represented exactly as its base, and
+	// Nominal only — `type Grid = []i64` is represented exactly as its base, and
 	// shares exactly what its base shares.
 	t = types.StripNewtype(t)
 	if types.IsDynamicArray(t) {

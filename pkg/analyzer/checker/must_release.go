@@ -76,7 +76,7 @@ import (
 //   - **Only a `struct` carries the attribute.** That is where a C handle arrives, and
 //     it is the shape raylib's `Sound`/`Wave` and every SDL handle take. A `data` type
 //     is Lyra's own tagged union — marking one would be claiming a Lyra-managed value is
-//     foreign — and a `newtype` (the plausible `newtype Fd = i32`) cannot carry an
+//     foreign — and a `newtype` (the plausible `type Fd = i32`) cannot carry an
 //     attribute at all until the grammar's constrained_type rule takes an attribute_list.
 //   - **Only a local binding.** A resource stored in a field, an array or a global has a
 //     lifetime this pass cannot see the end of, so storing one is an escape.

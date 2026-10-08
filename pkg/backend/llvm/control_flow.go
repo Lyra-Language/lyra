@@ -810,7 +810,7 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 // ownership pass mints and the frame this binding gets, but the value stored is the
 // initializer's: an annotation judged to own nothing over a value that is a box leaves
 // the box released as a temporary right after the store, and every later read dangling.
-// That was `type A = []i64` with `let ys: A = [1, 2]` until OwnsManaged saw through an
+// That was `alias A = []i64` with `let ys: A = [1, 2]` until OwnsManaged saw through an
 // alias (10/07) — the two are assignable, so they own the same thing in any program
 // that got this far, and a mismatch is the compiler's, not the program's.
 func (l *lowerer) checkAnnotationOwnership(vds *ast.VarDeclStmt, ty types.Type) error {

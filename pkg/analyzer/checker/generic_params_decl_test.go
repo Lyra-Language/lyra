@@ -18,7 +18,7 @@ func TestGenericParams_TypeBodyVariablesMustBeDeclared(t *testing.T) {
 		{"data payload", `data Opt<t> = Has(u) | Gone`, "u"},
 		{"data inline record", `data Tree<t> = Node { val: u, left: shared Tree<t> } | Leaf`, "u"},
 		{"named tuple", `tuple Pair<t>(t, u)`, "u"},
-		{"newtype", `newtype Wrap<t> = []u`, "u"},
+		{"newtype", `type Wrap<t> = []u`, "u"},
 		{"nested in a generic argument", `struct Holder<t> { items: []Maybe<u> }`, "u"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -32,7 +32,7 @@ func TestGenericParams_TypeBodyVariablesMustBeDeclared(t *testing.T) {
 
 // An alias cannot take a list, so its message says so rather than suggesting one.
 func TestGenericParams_AnAliasCannotMentionAVariable(t *testing.T) {
-	got := errorsOnly(checkGenericParams(t, `type Lst = []t`))
+	got := errorsOnly(checkGenericParams(t, `alias Lst = []t`))
 	if len(got) != 1 || !strings.Contains(got[0].Message, "an alias takes no parameters") {
 		t.Errorf("want the alias form of lyra-E031, got %v", got)
 	}
@@ -44,7 +44,7 @@ func TestGenericParams_PhantomTypeParametersAreFine(t *testing.T) {
 	assertNoGenericParamDiags(t, `
 struct Id<t> { n: i64 }
 data Tagged<t> = Named(string) | Anon
-newtype Meters<unit> = f64
+type Meters<unit> = f64
 struct Box<t> { v: t }
 data Tree<t> = Node(t, shared Tree<t>) | Leaf
 `)

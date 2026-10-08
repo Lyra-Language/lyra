@@ -53,7 +53,7 @@ func HeadName(t Type) (string, bool) {
 		// A name the collector has not resolved yet — see the note above.
 		return nonEmpty(tt.Name)
 	case *ConstrainedType:
-		// A newtype is nominally distinct from its base (`newtype Percent = u8` is not
+		// A newtype is nominally distinct from its base (`type Percent = u8` is not
 		// a u8 to the typechecker), so it heads as itself. Stripping to the base here
 		// would let `Percent` and `u8` collide as one head and refuse a pair of
 		// overloads the checker can plainly tell apart.

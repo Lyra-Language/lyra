@@ -20,14 +20,14 @@ func TestExec_TypeAliases(t *testing.T) {
 			// The case aliases exist for: a function type, where the double parens (a
 			// single *tuple* parameter) cannot be spelled away, only named.
 			"alias of a function type",
-			`type Op = ((i64, i64)) -> i64
+			`alias Op = ((i64, i64)) -> i64
 			 let apply = (g: Op, p: (i64, i64)) -> i64 => g(p)
 			 let main = () -> u8 => u8(apply(((a, b)) => a * b, (3, 4)))`,
 			12,
 		},
 		{
 			"alias of a primitive",
-			`type Id = i64
+			`alias Id = i64
 			 let double = (n: Id) -> Id => n * 2
 			 let main = () -> u8 => u8(double(21))`,
 			42,
@@ -38,7 +38,7 @@ func TestExec_TypeAliases(t *testing.T) {
 			// time under the name Point if lowerTypeDecl did not skip aliases.
 			"alias of a struct",
 			`struct Pt { x: i64, y: i64 }
-			 type Point = Pt
+			 alias Point = Pt
 			 let sum = (p: Point) -> i64 => p.x + p.y
 			 let main = () -> u8 => {
 			   let p = Pt { x: 3, y: 4 }
@@ -48,7 +48,7 @@ func TestExec_TypeAliases(t *testing.T) {
 		},
 		{
 			"alias in return position",
-			`type Op = (i64) -> i64
+			`alias Op = (i64) -> i64
 			 let mk = (n: i64) -> Op => (x: i64) -> i64 => x + n
 			 let main = () -> u8 => {
 			   let f = mk(1)
@@ -61,8 +61,8 @@ func TestExec_TypeAliases(t *testing.T) {
 			// recorded type comes back as another named type.
 			"alias chain",
 			`struct Pt { x: i64 }
-			 type A = Pt
-			 type B = A
+			 alias A = Pt
+			 alias B = A
 			 let get = (p: B) -> i64 => p.x
 			 let main = () -> u8 => {
 			   let p = Pt { x: 9 }
@@ -75,7 +75,7 @@ func TestExec_TypeAliases(t *testing.T) {
 			// asked whether the field was a LambdaType of the alias's *name* and refused
 			// `h.f(4)` as "unsupported method call" until stripNewtype saw aliases (10/07).
 			"function-typed struct field via an alias",
-			`type Op = (i64) -> i64
+			`alias Op = (i64) -> i64
 			 struct H { f: Op }
 			 let main = () -> u8 => {
 			   let k = 3
@@ -89,7 +89,7 @@ func TestExec_TypeAliases(t *testing.T) {
 			// member is emitted under its written head and reached through the
 			// typechecker's resolved callee (10/07, both spellings were refused).
 			"method call on an alias receiver",
-			`type A = []i64
+			`alias A = []i64
 			 let total = (self: A) -> i64 => self[0] + self[1]
 			 let total = (self: string) -> i64 => self.len()
 			 let main = () -> u8 => {
@@ -118,7 +118,7 @@ func TestExec_TypeAliases(t *testing.T) {
 func TestEmit_StructAliasEmitsOneType(t *testing.T) {
 	t.Parallel()
 	got, err := emitSource(t, `struct Pt { x: i64, y: i64 }
-	 type Point = Pt
+	 alias Point = Pt
 	 let sum = (p: Point) -> i64 => p.x + p.y
 	 let main = () -> u8 => {
 	   let p = Pt { x: 1, y: 2 }
@@ -159,28 +159,28 @@ func TestExec_ManagedTypeAliasesASan(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"let of an alias of []i64", `type A = []i64
+		{"let of an alias of []i64", `alias A = []i64
 let work = () -> i64 => {
   let ys: A = [1, 2]
   ys.len() * 10 + ys[1]
 }
 let main = () -> u8 => u8(work())`, 22},
-		{"let of aliases of []bool and [][]bool", `type B = []bool
-type G = [][]bool
+		{"let of aliases of []bool and [][]bool", `alias B = []bool
+alias G = [][]bool
 let work = () -> i64 => {
   let g: G = [[true, false], [false, true]]
   let r: B = g[1]
   if r[1] { g.len() } else { 0 }
 }
 let main = () -> u8 => u8(work())`, 2},
-		{"let of an alias of string holding a heap string", `type S = string
+		{"let of an alias of string holding a heap string", `alias S = string
 let work = () -> i64 => {
   let a = "ab"
   let s: S = a ++ "cd"
   s.len()
 }
 let main = () -> u8 => u8(work())`, 4},
-		{"var, reassignment and push", `type A = []i64
+		{"var, reassignment and push", `alias A = []i64
 let work = () -> i64 => {
   var ys: A = [1, 2]
   var zs: A = [7]
@@ -189,7 +189,7 @@ let work = () -> i64 => {
   ys.len() + ys[2] + zs[2]
 }
 let main = () -> u8 => u8(work())`, 14},
-		{"struct field: copy, then field reassignment", `type A = []i64
+		{"struct field: copy, then field reassignment", `alias A = []i64
 struct Pt { xs: A, n: i64 }
 let work = () -> i64 => {
   var p = Pt { xs: [1, 2, 3], n: 1 }
@@ -198,8 +198,8 @@ let work = () -> i64 => {
   p.xs.len() + q.xs[2]
 }
 let main = () -> u8 => u8(work())`, 4},
-		{"tuple element and array element", `type A = []i64
-type T = (A, string)
+		{"tuple element and array element", `alias A = []i64
+alias T = (A, string)
 let work = () -> i64 => {
   let t: T = ([1, 2], "z" ++ "w")
   let u = t
@@ -207,7 +207,7 @@ let work = () -> i64 => {
   u.0[1] + rows[1][1] + u.1.len()
 }
 let main = () -> u8 => u8(work())`, 7},
-		{"data payload", `type A = []i64
+		{"data payload", `alias A = []i64
 data Shape = Poly(A) | Dot
 let work = () -> i64 => {
   let s = Poly([1, 2, 3])
@@ -218,8 +218,8 @@ let work = () -> i64 => {
   }
 }
 let main = () -> u8 => u8(work())`, 3},
-		{"return type, own parameter and closure capture", `type A = []i64
-type S = string
+		{"return type, own parameter and closure capture", `alias A = []i64
+alias S = string
 let mk = () -> A => [1, 2, 3]
 let take = (xs: own A) -> i64 => xs.len()
 let work = () -> i64 => {
@@ -229,7 +229,7 @@ let work = () -> i64 => {
   take(mk()) + f()
 }
 let main = () -> u8 => u8(work())`, 8},
-		{"interior writes through an alias of []string", `type SS = []string
+		{"interior writes through an alias of []string", `alias SS = []string
 struct W { v: SS, n: i64 }
 let work = () -> i64 => {
   let a = "x"
@@ -246,8 +246,8 @@ let main = () -> u8 => u8(work())`, 5},
 			// Already right before the fix — a fixed array is not managed itself, so the
 			// walk reached its managed elements — and kept beside the others because it
 			// is the sibling a fix to the managed case could break.
-			"fixed arrays via an alias", `type F = [2][]i64
-type FS = [2]string
+			"fixed arrays via an alias", `alias F = [2][]i64
+alias FS = [2]string
 let work = () -> i64 => {
   let f: F = #[[1, 2], [3]]
   var g: F = f
@@ -276,7 +276,7 @@ func TestExec_ManagedAliasInMaybeASan(t *testing.T) {
 	if !asanAvailable(t, lookClang(t)) {
 		t.Skip("ASan runtime not available; skipping")
 	}
-	src := `type A = []i64
+	src := `alias A = []i64
 let work = () -> i64 => {
   let m: Maybe<A> = Some([7, 8])
   let n = m
@@ -296,7 +296,7 @@ let main = () -> u8 => u8(work())`
 // Conservation catches both halves without an ASan runtime.
 func TestEmit_ManagedAliasBindingIsFramed(t *testing.T) {
 	t.Parallel()
-	ir, err := emitSource(t, `type A = []i64
+	ir, err := emitSource(t, `alias A = []i64
 let main = () -> u8 => {
   let ys: A = [1, 2]
   u8(ys.len() + ys[1])

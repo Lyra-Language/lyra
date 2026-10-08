@@ -46,7 +46,7 @@ import std.ffi.{ cstring_len }
 // ── The host ─────────────────────────────────────────────────────────────────
 
 /// A running ImGui host: the main window, its GPU device and the ImGui context.
-pub newtype Host = ^u8
+pub type Host = ^u8
 
 /// [create_host] flags, combined with `|`. Docking lets windows dock into each other and
 /// into the main window.

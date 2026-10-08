@@ -26,7 +26,7 @@ func TestExec_TopLevelFunctionValuedBindingIsCallable(t *testing.T) {
 			// The shape that surfaced the gap: a constructor-built function-type
 			// newtype at top level, called directly.
 			"a constructor-built function-type newtype",
-			`newtype Handler = (i64) -> i64
+			`type Handler = (i64) -> i64
 			 let h: Handler = Handler((n: i64) -> i64 => n + 1)
 			 let main = () -> u8 => u8(h(41))`,
 			42,

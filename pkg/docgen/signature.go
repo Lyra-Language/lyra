@@ -202,12 +202,12 @@ func typeSignature(s *ast.TypeDeclStmt) string {
 	case types.DataType:
 		b.WriteString("data " + name + " = " + constructorList(t))
 	case *types.ConstrainedType:
-		b.WriteString("newtype " + name + " = " + typeName(t.Type))
+		b.WriteString("type " + name + " = " + typeName(t.Type))
 	case types.TupleType:
 		b.WriteString("tuple " + name + "(" + typeNames(t.Elements) + ")")
 	default:
 		if s.IsAlias {
-			b.WriteString("type " + name + " = " + typeName(s.Type))
+			b.WriteString("alias " + name + " = " + typeName(s.Type))
 		} else {
 			b.WriteString("type " + name)
 		}

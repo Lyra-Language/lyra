@@ -936,7 +936,7 @@ func (tc *TypeChecker) inferBaseReadoutCall(call *ast.FunctionCallExpr) types.Ty
 	ct, ok := resolved.(*types.ConstrainedType)
 	if !ok {
 		tc.addError(call.GetLocation(), SeverityError,
-			"base: operand must be a newtype, got %s — `base(...)` reads a newtype out to its base type", argType)
+			"base: operand must be a value of a declared `type`, got %s — `base(...)` reads one out to the type it is declared over", argType)
 		return nil
 	}
 	tc.typeTable.SetBaseReadout(call)

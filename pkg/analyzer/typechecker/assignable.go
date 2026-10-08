@@ -104,7 +104,7 @@ func (tc *TypeChecker) checkImplicitNewtypeReadout(value ast.Expression, from, t
 	}
 	tc.readoutReported[value] = true
 	tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodeImplicitNewtypeReadout,
-		"cannot use %s as %s implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `%s(...)`",
+		"cannot use %s as %s implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `%s(...)`",
 		ct.Name, to, spelling)
 }
 
@@ -175,7 +175,7 @@ func (tc *TypeChecker) assignableValue(expr ast.Expression, from, to types.Type)
 // [2, 3]]`. The walk still matters for nesting, since `[ys1, ys2]` with `[2]i64` bindings
 // inside is a real mismatch while `[#[1, 2], #[3, 4]]` under `[][2]u8` is narrowing.
 func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Type) bool {
-	// A newtype over an array is its base at run time, so `newtype Row = []i64`
+	// A newtype over an array is its base at run time, so `type Row = []i64`
 	// accepts the literal its base accepts. The constraint itself is checked
 	// elsewhere; this is only about representation.
 	if toCT, ok := to.(*types.ConstrainedType); ok {
@@ -390,7 +390,7 @@ func isUntypedLiteralType(t types.Type) bool {
 //
 // **An aggregate or function construction counts by form, elements unexamined**
 // (08/28). The provenance rule exists to catch an *existing* value being re-labeled
-// with a unit it never carried — and for `newtype Nums = []i64` the unit-carrier is
+// with a unit it never carried — and for `type Nums = []i64` the unit-carrier is
 // the container, which `[x, y]` builds right here, aimed at this annotation. No
 // pre-existing `[]i64` is being reinterpreted, so `Nums([x, y])` would assert nothing
 // the annotation does not already say: the constructor is "a compile-time assertion

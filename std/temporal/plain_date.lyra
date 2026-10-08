@@ -13,7 +13,7 @@ module std.temporal
 /// The range is Temporal's: from `-271821-04-19` to `+275760-09-13`, which is ±10⁸ days
 /// around the epoch with one extra day at the start (Temporal lets a date sit a day before
 /// the earliest instant, so that every instant has a date in some time zone).
-pub newtype PlainDate = i64 where range(-100000001..<=100000000)
+pub type PlainDate = i64 where range(-100000001..<=100000000)
 
 /// The date `year`-`month`-`day`, or `None` when there is no such date.
 ///

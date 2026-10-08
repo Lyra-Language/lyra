@@ -13,7 +13,7 @@ import std.ffi
 ///
 /// It is deliberately **not** a struct wrapping the pointer: a handle is one machine word,
 /// and the only operations on it are "hand it back to SDL" and "is it null".
-pub newtype Window = ^u8
+pub type Window = ^u8
 
 /// `SDL_WindowFlags` for [create_window], combined with `|`. `0` is an ordinary window.
 pub const WINDOW_FULLSCREEN: u64 = 0x0000000000000001

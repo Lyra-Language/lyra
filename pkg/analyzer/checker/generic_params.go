@@ -73,7 +73,7 @@ func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
 
 // checkTypeDeclGenericParams reports a type variable a type declaration's body mentions and
 // its list does not declare (lyra-E031) — `struct Box<t> { v: u }`, `tuple Pair<t>(t, u)`,
-// `type Lst = []t`.
+// `alias Lst = []t`.
 //
 // **For a type the list is not optional.** A binding with no list is generic in whatever its
 // signature mentions, because a call solves the variables from its arguments. A type has no
@@ -105,7 +105,7 @@ func checkTypeDeclGenericParams(decl *ast.TypeDeclStmt) []diag.Diagnostic {
 			name, decl.Name, decl.Name, strings.Join(withVar(decl.GenericParams, name), ", "), name)
 		if decl.IsAlias {
 			msg = fmt.Sprintf(
-				"type alias %q mentions the type variable %q, but an alias takes no parameters, so nothing can ever give %q a type — write a concrete type",
+				"alias %q mentions the type variable %q, but an alias takes no parameters, so nothing can ever give %q a type — write a concrete type",
 				decl.Name, name, name)
 		}
 		diags = append(diags, diag.Diagnostic{

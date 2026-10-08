@@ -327,10 +327,10 @@ impl []t {
 /// differs across targets Lyra intends to support. `wchar_t` (16 on Windows, 32 elsewhere)
 /// is the next candidate; `int`, `size_t` and the explicit widths are not candidates at
 /// all, and giving them names would bury the two that matter.
-pub type CLong = i64
+pub alias CLong = i64
 
 /// C's `unsigned long` — the same story as [CLong], unsigned.
-pub type CULong = u64
+pub alias CULong = u64
 
 impl ^t {
   /// Whether `self` is the null pointer.

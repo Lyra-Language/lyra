@@ -953,7 +953,7 @@ sets V on every add. What stands between that and a ROM:
 ## Constraints are ordinary Lyra
 
 **[IDEA]** A constraint becomes a `pure det` predicate with the value as `self`
-(`newtype Lane = i64 where power_of(2)`), and the keywords are rewritten in the prelude:
+(`type Lane = i64 where power_of(2)`), and the keywords are rewritten in the prelude:
 `range` → `at_least`/`at_most` (retiring E034), `values` → `one_of([...])`, `step` →
 `congruent(offset, n)`. `pattern` stays a builtin, declared with `@builtin(Pattern)`.
 

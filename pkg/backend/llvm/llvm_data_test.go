@@ -389,7 +389,7 @@ func TestExec_GenericInstantiatedAtATypeAlias(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-type Idx = i64
+alias Idx = i64
 data Opt<t> = Nil | One t
 let viaAlias = (n: i64) -> Opt<Idx> => One(n)
 let viaConcrete = (n: i64) -> Opt<i64> => One(n)
@@ -429,8 +429,8 @@ func TestExec_TypeAliasIsTransparentInGenerics(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-type Idx = i64
-type Len = i64
+alias Idx = i64
+alias Len = i64
 data Opt<t> = Nil | One t
 trait Finder {
   find: (Self, i64) -> Opt<(Idx, Len)>

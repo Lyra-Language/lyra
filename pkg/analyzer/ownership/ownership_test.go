@@ -237,13 +237,13 @@ func TestOwnership_RetainIndexIntoBinding(t *testing.T) {
 	}
 }
 
-// A newtype over a managed base is managed. `newtype Email = string` is a string
+// A newtype over a managed base is managed. `type Email = string` is a string
 // box wearing a name, so the pass must record the same retains, transfers, and
 // drops it would for a bare string — the wrapper is the typechecker's business,
 // not the reference count's. Treating it as unmanaged would leak every heap
 // string that passed through one.
 func TestOwnership_NewtypeOverStringIsManaged(t *testing.T) {
-	newtyped := analyze(t, `newtype Email = string
+	newtyped := analyze(t, `type Email = string
 	 let main = () -> u8 => {
 	   let a: Email = Email("x" ++ "y")
 	   let b: Email = a
@@ -263,7 +263,7 @@ func TestOwnership_NewtypeOverStringIsManaged(t *testing.T) {
 // UnresolvedType naming the newtype, which is the case a direct wrapper strip
 // would miss.
 func TestOwnership_NewtypeStringFieldOwnsManaged(t *testing.T) {
-	c := analyze(t, `newtype Email = string
+	c := analyze(t, `type Email = string
 	 struct User { name: Email, age: u8 }
 	 let main = () -> u8 => {
 	   let n: Email = Email("a" ++ "b")
@@ -293,7 +293,7 @@ func TestOwnership_AliasOfManagedTypeIsManaged(t *testing.T) {
 		   if zs.len() == 2 { 1 } else { 0 }
 		 }`
 		spelled := analyze(t, fmt.Sprintf(body, target))
-		aliased := analyze(t, "type A = "+target+fmt.Sprintf(body, "A"))
+		aliased := analyze(t, "alias A = "+target+fmt.Sprintf(body, "A"))
 		if aliased != spelled {
 			t.Errorf("alias of %s: recorded %+v, spelled out %+v", target, aliased, spelled)
 		}

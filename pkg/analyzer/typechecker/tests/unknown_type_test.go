@@ -206,7 +206,7 @@ func TestUnknownType_FunctionParam_CallSite_CompoundErrors(t *testing.T) {
 
 func TestKnownUserType_FunctionParam_CallSite_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		newtype Degree = i64 where range(0..<360)
+		type Degree = i64 where range(0..<360)
 		let f = (x: Degree) -> i64 => 42
 		f(90)
 	`, false)

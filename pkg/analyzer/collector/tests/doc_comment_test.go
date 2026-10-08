@@ -368,7 +368,7 @@ func TestTypeRefs_EveryWrittenPositionIsRecorded(t *testing.T) {
 	_, table, _, _ := parseAndCollect(t, `module main
 struct Point { x: i64 }
 struct Holder { p: Point, ps: []Point, m: Maybe<Point> }
-type Coord = Point
+alias Coord = Point
 trait Shown { pure show: (Self) -> Point }
 data Wrap = W Point
 tuple Pair(Point, i64)

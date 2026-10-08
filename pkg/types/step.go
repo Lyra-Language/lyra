@@ -7,7 +7,7 @@ import "math"
 // A step means the same thing in both places it can be written: the values
 // covered are start, start+step, start+2*step, … Two spellings express it —
 // an expression range's `:step` (`0..<=100:2`) and a `newtype`'s `step()`
-// constraint (`newtype Quarter = f32 where range(0..<=100), step(0.25)`).
+// constraint (`type Quarter = f32 where range(0..<=100), step(0.25)`).
 //
 // **They stay separate spellings on purpose.** The constraint form composes with
 // `precision()` and with the newtype's own domain, which an inline `:step` cannot;
@@ -36,7 +36,7 @@ import "math"
 //     terminate; as a constraint it admits only the start value, which `values()`
 //     already says better. Neither is plausibly intended.
 //   - **A fractional step over an integer domain is unrepresentable.** `0..<=10:0.5`
-//     and `newtype N = u8 where step(0.5)` both describe values the domain cannot
+//     and `type N = u8 where step(0.5)` both describe values the domain cannot
 //     hold.
 //
 // **A negative step is now a rule** (08/04), and the reason it was not before is worth

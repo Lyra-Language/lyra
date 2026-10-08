@@ -30,7 +30,7 @@ let classify = (n: i64) -> i64 => match n {
 }
 
 func TestDescendingRange_RefusedInAConstraint(t *testing.T) {
-	errs := collectOnly(t, "newtype Pct = u8 where range(100..>=0)\n")
+	errs := collectOnly(t, "type Pct = u8 where range(100..>=0)\n")
 	if errs == "" {
 		t.Fatal("expected a descending range constraint to be refused")
 	}

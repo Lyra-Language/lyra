@@ -184,7 +184,7 @@ func traitDeclSummary(decl *ast.TraitDeclStmt) string {
 }
 
 // typeDeclSummary is the one-line spelling of what a type declaration is: the keyword a
-// reader would have written, then the name. `type X = …` says its target too, since an
+// reader would have written, then the name. `alias X = …` says its target too, since an
 // alias's whole content is what it aliases and hiding it would leave the hover saying
 // nothing the name did not.
 func typeDeclSummary(decl *ast.TypeDeclStmt) string {
@@ -197,7 +197,7 @@ func typeDeclSummary(decl *ast.TypeDeclStmt) string {
 		name += "<" + strings.Join(params, ", ") + ">"
 	}
 	if decl.IsAlias {
-		return "type " + name + " = " + decl.Type.GetName()
+		return "alias " + name + " = " + decl.Type.GetName()
 	}
 	switch decl.Type.(type) {
 	case types.NamedStructType:
@@ -208,9 +208,9 @@ func typeDeclSummary(decl *ast.TypeDeclStmt) string {
 		return "tuple " + name
 	case *types.ConstrainedType:
 		// The **base**, not `decl.Type.GetName()`: a ConstrainedType's name is the
-		// newtype's own, so asking it produced `newtype Cents = Cents`.
+		// newtype's own, so asking it produced `type Cents = Cents`.
 		ct := decl.Type.(*types.ConstrainedType)
-		return "newtype " + name + " = " + ct.Type.GetName()
+		return "type " + name + " = " + ct.Type.GetName()
 	}
 	return "type " + name
 }

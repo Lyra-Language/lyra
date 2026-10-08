@@ -135,7 +135,7 @@ let main = () -> u8 => 0
 // is the absence of a `%Meters = type` definition plus a body that still lowers.
 func TestEmit_NewtypeDecl_NoLLVMType(t *testing.T) {
 	t.Parallel()
-	got, err := emitSource(t, "newtype Meters = i32\nlet main = () -> u8 => 0\n")
+	got, err := emitSource(t, "type Meters = i32\nlet main = () -> u8 => 0\n")
 	if err != nil {
 		t.Fatal(err)
 	}

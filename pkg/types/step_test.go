@@ -64,7 +64,7 @@ func TestStepDomainIsInteger(t *testing.T) {
 }
 
 // A newtype is nominal but represented as its base, so a step over
-// `newtype Count = u8` is an integer step.
+// `type Count = u8` is an integer step.
 func TestStepDomainIsIntegerThroughNewtype(t *testing.T) {
 	count := &ConstrainedType{Name: "Count", Type: PrimitiveType{Name: UInt8}}
 	if !StepDomainIsInteger(count) {

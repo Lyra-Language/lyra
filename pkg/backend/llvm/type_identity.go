@@ -149,7 +149,7 @@ func (l *lowerer) lookupTypeDecl(name string) (*ast.TypeDeclStmt, bool) {
 // spelling to preserve.
 func (l *lowerer) instantiationSymbol(p types.ParameterizedType) string {
 	// The arguments are **resolved** before they are mangled, because a type alias is
-	// transparent: `type Idx = i64` does not name a type of its own, so `Maybe<Idx>` and
+	// transparent: `alias Idx = i64` does not name a type of its own, so `Maybe<Idx>` and
 	// `Maybe<i64>` are one instantiation and must produce one symbol. Left unresolved, a
 	// declared return type mangled as `Maybe$Idx` while the value constructed for it
 	// mangled as `Maybe$i64`, and the function emitted `ret %Maybe$i64` against a declared

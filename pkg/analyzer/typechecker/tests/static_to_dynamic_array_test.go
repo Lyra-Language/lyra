@@ -64,7 +64,7 @@ let bad: [][]i64 = [y1, y2]
 
 func TestStaticToDynamic_LiteralForms_Allowed(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Row = []i64
+type Row = []i64
 let take = (xs: []i64) -> i64 => xs[0]
 let mk = () -> []i64 => [4, 5, 6]
 

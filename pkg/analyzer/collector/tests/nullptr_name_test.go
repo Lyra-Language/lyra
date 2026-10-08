@@ -61,7 +61,7 @@ func TestNullPtr_CannotBeBoundAsAVarOrConst(t *testing.T) {
 // **A `pub newtype` is public**, which it silently was not until 09/09.
 //
 // `collectConstrainedTypeDeclaration` never read the declaration's `visibility` field, so
-// `pub newtype Handle = ^u8` collected with IsPublic false: the type was exportable in the
+// `pub type Handle = ^u8` collected with IsPublic false: the type was exportable in the
 // grammar, refused at every import with lyra-E028, and the diagnostic told the author to
 // add a `pub` that was already there.
 //
@@ -71,9 +71,9 @@ func TestNullPtr_CannotBeBoundAsAVarOrConst(t *testing.T) {
 // `bindings/sdl3`, where every opaque C handle is a `pub newtype` over a raw pointer.
 func TestNewtype_PubIsCollected(t *testing.T) {
 	for _, src := range []string{
-		"\npub newtype Handle = ^u8\n",
-		"\npub newtype Meters = f64\n",
-		"\npub newtype Percent = u8 where range(0..<=100)\n",
+		"\npub type Handle = ^u8\n",
+		"\npub type Meters = f64\n",
+		"\npub type Percent = u8 where range(0..<=100)\n",
 	} {
 		program, _, _, _ := parseAndCollect(t, src)
 		found := false
@@ -94,7 +94,7 @@ func TestNewtype_PubIsCollected(t *testing.T) {
 // The negative half: an unmarked newtype stays private, so the fix reads the field rather
 // than defaulting to public.
 func TestNewtype_WithoutPubIsPrivate(t *testing.T) {
-	program, _, _, _ := parseAndCollect(t, "\nnewtype Handle = ^u8\n")
+	program, _, _, _ := parseAndCollect(t, "\ntype Handle = ^u8\n")
 	for _, stmt := range program.Statements {
 		if td, ok := stmt.(*ast.TypeDeclStmt); ok && td.IsPublic {
 			t.Errorf("newtype %s without `pub` collected as public", td.Name)

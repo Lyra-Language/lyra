@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// A generic `newtype` — `newtype Boxed<t> = t`.
+// A generic `newtype` — `type Boxed<t> = t`.
 //
 // `newtype` was the one type declaration whose grammar had no slot for generic
 // parameters: struct, data, tuple and trait all took them. The `<t>` landed in an ERROR
@@ -18,8 +18,8 @@ func TestExec_GenericNewtypeIsItsSubstitutedBase(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Boxed<t> = t
-newtype Plain = i64
+type Boxed<t> = t
+type Plain = i64
 let main = () -> void => {
   let b: Boxed<i64> = 5;
   let raw = i64(b);
@@ -38,7 +38,7 @@ func TestExec_GenericNewtypeAtTwoInstantiations(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Tagged<t> = t
+type Tagged<t> = t
 let main = () -> void => {
   let n: Tagged<i64> = 41;
   let s: Tagged<string> = "hi";
@@ -59,7 +59,7 @@ func TestCheck_GenericNewtypeIsStillNominal(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Boxed<t> = t
+type Boxed<t> = t
 let takes = (n: i64) -> i64 => n
 let main = () -> void => {
   let b: Boxed<string> = "x";
@@ -80,7 +80,7 @@ func TestExec_GenericNewtypeConstructorLowers(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Boxed<t> = t
+type Boxed<t> = t
 let main = () -> void => {
   let a = Boxed(41)
   let s = Boxed("hi")

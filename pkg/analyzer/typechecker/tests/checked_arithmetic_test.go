@@ -62,11 +62,11 @@ let a: Maybe<u8> = u8(200).checked_mul(2)
 // lyra-E043 section, and COMPLETED.md 08/12.
 func TestChecked_NotReachableThroughANewtype(t *testing.T) {
 	res := parseCollectAndCheck(t, canonicalMaybe+`
-newtype Count = i64
+type Count = i64
 let n: Count = 5
 let a: Maybe<i64> = n.checked_add(1)
 `, false)
-	assertHasErrorContaining(t, res, "arithmetic on a newtype is opt-in")
+	assertHasErrorContaining(t, res, "arithmetic on a `type` is opt-in")
 }
 
 // With **no** Maybe declared anywhere, the signature still resolves: `canonicalTypeName`

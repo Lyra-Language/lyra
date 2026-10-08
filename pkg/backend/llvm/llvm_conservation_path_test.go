@@ -218,7 +218,7 @@ let main = () -> u8 => u8(f(5))`,
 			// A newtype over a managed base, branched on. The wrapper is nominal only,
 			// so the box behind it must be released on both edges exactly as a bare
 			// string's is — a name is not a place to lose a reference.
-			"newtype over string in a branch", `newtype Email = string
+			"newtype over string in a branch", `type Email = string
 let main = () -> u8 => {
   let e: Email = Email("a" ++ "b")
   let s = string(e)

@@ -140,10 +140,10 @@ Each of these produces something that looks like it works. Other docs cite them 
      `stripNewtypeResolving`. A binding's type may arrive as a bare declared name, and a
      generic newtype's base must be resolved to see the next wrapper. Annotated array
      bindings keep the wrapper recorded; indexing and assignability both depend on it.
-   - **An annotation keeps a `type` alias's *name*** (only the typechecker's own resolution
+   - **An annotation keeps an `alias`'s *name*** (only the typechecker's own resolution
      expands it), so a predicate asked of a name — `IsManaged`, `IsDynamicArray`, a
      `LambdaType` test, a receiver's head — must be asked again of what the name resolves
-     to. Missing that made `let ys: A = [1, 2]` over `type A = []i64` a use-after-free and
+     to. Missing that made `let ys: A = [1, 2]` over `alias A = []i64` a use-after-free and
      `self: A` uncallable as a method (10/07). The backend's `stripNewtype` strips aliases
      as well as newtypes; the typechecker's `expandAliases` expands only aliases.
    - **Sibling constructs are a pair**: `if` and `match` both push their join down via
@@ -303,6 +303,15 @@ Semantics are in `LANGUAGE.md`; these are the compiler-side traps.
   operator-dead). Overflow builtins on a newtype are `lyra-E043`.
 - Resolution is `resolveTraitMethodNamed`, shared with `.method()` calls. Purity charges
   operators via `operatorImplEffect`.
+
+**`type` and `alias` — the internal names are the old ones**
+- The source keywords are `type` (nominal, a *newtype*) and `alias` (transparent); until
+  10/08 they were `newtype` and `type`. Everything inside keeps the old vocabulary: the CST
+  nodes `constrained_type`/`type_alias`, `types.ConstrainedType`, `TypeDeclStmt.IsAlias`,
+  `stripNewtype`, the `newtype` test files. Text a user reads — diagnostics, hover,
+  `lyrac doc` signatures — says `type` and `alias`.
+- **Old source with `type X = Y` still parses**, now as a nominal type: a silent change of
+  meaning, not an error. Rewrite aliases to `alias` before (or with) `newtype` → `type`.
 
 **`impl Type { … }` blocks** (`collector/inherent_impl.go`, `declarations/inherent_member.go`)
 - Erased in the collector: `walkProgram` expands each member into its top-level

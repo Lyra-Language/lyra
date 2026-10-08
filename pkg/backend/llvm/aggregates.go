@@ -36,7 +36,7 @@ func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr
 	if raw, ok := l.res.TypeTable.Get(e); ok {
 		if _, isNewtype := l.applyTypeSubst(raw).(*types.ConstrainedType); isNewtype {
 			if len(e.Elements) != 1 {
-				return nil, nil, fmt.Errorf("llvm: a newtype construction has %d operands, want 1", len(e.Elements))
+				return nil, nil, fmt.Errorf("llvm: a `type` construction has %d operands, want 1", len(e.Elements))
 			}
 			return l.lowerExpr(block, e.Elements[0])
 		}

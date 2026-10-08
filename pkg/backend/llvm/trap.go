@@ -48,7 +48,7 @@ const (
 	matchFailedTrapMessage     = "lyra: match not exhaustive\n"
 	shiftOverflowTrapMessage   = "lyra: shift amount out of range\n"
 	rangeStepTrapMessage       = "lyra: range step must be positive\n"
-	constraintTrapMessage      = "lyra: value violates its newtype's constraint\n"
+	constraintTrapMessage      = "lyra: value violates its type's constraint\n"
 	// A rounded float that no i64 can hold, or a NaN. Named for the *conversion*
 	// rather than for `floor`/`ceil`/`round`, because that is where the loss happens —
 	// the rounding itself is exact and total.

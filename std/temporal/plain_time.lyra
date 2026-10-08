@@ -9,7 +9,7 @@ module std.temporal
 /// A day is exactly 24 hours here, because a `PlainTime` has no zone and so no
 /// daylight-saving change to make one 23 or 25. That is Temporal's model too: a wall-clock
 /// time is what a clock on the wall says, not an amount of elapsed time.
-pub newtype PlainTime = i64 where range(0..<86400000000000)
+pub type PlainTime = i64 where range(0..<86400000000000)
 
 /// The time `hour`:`minute`:`second`, or `None` when there is no such time.
 ///

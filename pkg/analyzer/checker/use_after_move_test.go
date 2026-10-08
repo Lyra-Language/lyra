@@ -317,7 +317,7 @@ let main = () -> u8 => 0`, 0)
 // the base would silently drop this diagnostic.
 func TestMove_NewtypeOverStringIsManaged(t *testing.T) {
 	got := assertMoveErrors(t, `
-newtype Email = string
+type Email = string
 let consume = (e: own Email) -> u8 => 1
 let main = () -> u8 => {
   let e: Email = "a" ++ "b"

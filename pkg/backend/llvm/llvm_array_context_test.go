@@ -100,7 +100,7 @@ let main = () -> u8 => {
 // push onto each result, so ASan sees any record that disagrees with what was built.
 func TestExec_ArrayLiteralBranchesTakeTheContext(t *testing.T) {
 	t.Parallel()
-	src := `newtype Bag = []string
+	src := `type Bag = []string
 let pick = (c: bool) -> []string => if c { ["a".slice(0, 1) ++ "x"] } else { ["b", "c" ++ "d"] }
 let nums = (n: i64) -> []i64 => match n { 0 => [], 1 => [5], _ => { let k = n * 2; [k, k, k] } }
 let bag = (c: bool) -> Bag => if c { [] } else { ["p", "q" ++ "r"] }

@@ -18,9 +18,9 @@ type TypeDeclStmt struct {
 	GenericParams []GenericParam
 	Type          types.Type
 	IsPublic      bool
-	// IsAlias marks a transparent `type X = T` declaration. Type alone cannot say:
+	// IsAlias marks a transparent `alias X = T` declaration. Type alone cannot say:
 	// an alias registers the aliased type *itself* (that is what transparency
-	// means), so `type Point = Pt` is a TypeDeclStmt holding the very
+	// means), so `alias Point = Pt` is a TypeDeclStmt holding the very
 	// NamedStructType that `struct Pt` holds. Without this flag the backend would
 	// declare and define that struct a second time, under the alias's name.
 	IsAlias bool

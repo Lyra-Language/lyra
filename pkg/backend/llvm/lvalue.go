@@ -210,7 +210,7 @@ func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (lvalueLoc, *
 	// or element declared as a newtype arrives as that name, and every consumer of
 	// `ty` asks a *representation* question (which LLVM type, is it managed, which
 	// release shape). Answering those against the wrapper silently skipped the
-	// release of an overwritten `newtype Email = string` field — and, had only the
+	// release of an overwritten `type Email = string` field — and, had only the
 	// managed test been fixed, would have released a string fat pointer as if it
 	// were a bare box pointer. One place, so the two can't disagree.
 	loc.ty = l.stripNewtype(loc.ty)

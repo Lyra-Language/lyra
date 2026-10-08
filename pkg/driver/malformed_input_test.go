@@ -55,7 +55,7 @@ func TestAnalyzeDoesNotPanicOnMalformedInput(t *testing.T) {
 		"import, empty members":        "import .{ }",
 		"module, bare":                 "module",
 		"type, bare":                   "type",
-		"type, no right-hand side":     "type Foo =",
+		"type, no right-hand side":     "alias Foo =",
 		"trait, no name":               "trait { }",
 		"sizeof, no type":              `let main = () -> void => { println("${sizeof()}") }`,
 		"unsafe, no body":              "let main = () -> void => { unsafe }",

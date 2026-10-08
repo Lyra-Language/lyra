@@ -7,13 +7,13 @@ import "testing"
 // declaration time rather than first use.
 
 func TestConstrainedType_ValidPattern(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype HexStr = string where pattern(r"^#[0-9a-fA-F]{6}$")`, false)
+	res := parseCollectAndCheck(t, `type HexStr = string where pattern(r"^#[0-9a-fA-F]{6}$")`, false)
 	assertNoErrors(t, res)
 }
 
 func TestConstrainedType_InvalidPatternReported(t *testing.T) {
 	// `[` opens a character class that is never closed — an invalid regex.
-	res := parseCollectAndCheck(t, `newtype Bad = string where pattern(r"[")`, false)
+	res := parseCollectAndCheck(t, `type Bad = string where pattern(r"[")`, false)
 	assertErrorsAre(t, res,
 		`type Bad: invalid pattern constraint r"[": regex parse error at offset 0: unterminated character class`)
 }
@@ -24,22 +24,22 @@ func TestConstrainedType_InvalidPatternReported(t *testing.T) {
 // into the constrained-type branch.
 
 func TestConstrainedType_RangeNoErrors(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Angle = f64 where range(0.0..<360.0)`, false)
+	res := parseCollectAndCheck(t, `type Angle = f64 where range(0.0..<360.0)`, false)
 	assertNoErrors(t, res)
 }
 
 func TestConstrainedType_ValuesNoErrors(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)`, false)
+	res := parseCollectAndCheck(t, `type Status = i32 where values(200, 404, 500)`, false)
 	assertNoErrors(t, res)
 }
 
 func TestConstrainedType_StepConstraintNoErrors(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Heading = i64 where range(0..<360), step(15)`, false)
+	res := parseCollectAndCheck(t, `type Heading = i64 where range(0..<360), step(15)`, false)
 	assertNoErrors(t, res)
 }
 
 func TestConstrainedType_PrecisionConstraintNoErrors(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0.0..<1.0), precision(0.01)`, false)
+	res := parseCollectAndCheck(t, `type Ratio = f64 where range(0.0..<1.0), precision(0.01)`, false)
 	assertNoErrors(t, res)
 }
 
@@ -49,64 +49,64 @@ func TestConstrainedType_PrecisionConstraintNoErrors(t *testing.T) {
 // fall within the declared range.
 
 func TestRangeConstraint_IntAboveInclusiveEnd(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let p: Percent = 150`, false)
 	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
 }
 
 func TestRangeConstraint_IntBelowStart(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Grade = i32 where range(1..<=5)
+	res := parseCollectAndCheck(t, `type Grade = i32 where range(1..<=5)
 let g: Grade = 0`, false)
 	assertErrorsAre(t, res, "value 0 is outside the range 1..<=5 of Grade")
 }
 
 func TestRangeConstraint_IntInRange_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let p: Percent = 50`, false)
 	assertNoErrors(t, res)
 }
 
 // The exclusive end `..<`: the end value itself is out of range, the one below is in.
 func TestRangeConstraint_ExclusiveEndBoundary(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Angle = i32 where range(0..<360)
+	res := parseCollectAndCheck(t, `type Angle = i32 where range(0..<360)
 let a: Angle = 360`, false)
 	assertErrorsAre(t, res, "value 360 is outside the range 0..<360 of Angle")
 }
 
 func TestRangeConstraint_ExclusiveEndInRange_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Angle = i32 where range(0..<360)
+	res := parseCollectAndCheck(t, `type Angle = i32 where range(0..<360)
 let a: Angle = 359`, false)
 	assertNoErrors(t, res)
 }
 
 // Open-ended bounds: only a lower / only an upper bound.
 func TestRangeConstraint_OpenLowerBound(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype NonNeg = i32 where range(0..)
+	res := parseCollectAndCheck(t, `type NonNeg = i32 where range(0..)
 let n: NonNeg = -5`, false)
 	assertErrorsAre(t, res, "value -5 is outside the range 0.. of NonNeg")
 }
 
 func TestRangeConstraint_OpenUpperBound(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Small = i32 where range(..<=100)
+	res := parseCollectAndCheck(t, `type Small = i32 where range(..<=100)
 let s: Small = 150`, false)
 	assertErrorsAre(t, res, "value 150 is outside the range ..<=100 of Small")
 }
 
 // A negative start via a negated-literal bound.
 func TestRangeConstraint_NegativeStart(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Temp = i32 where range(-40..<=50)
+	res := parseCollectAndCheck(t, `type Temp = i32 where range(-40..<=50)
 let t2: Temp = -50`, false)
 	assertErrorsAre(t, res, "value -50 is outside the range -40..<=50 of Temp")
 }
 
 func TestRangeConstraint_FloatAboveRange(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0..<=1)
+	res := parseCollectAndCheck(t, `type Ratio = f64 where range(0..<=1)
 let r: Ratio = 1.5`, false)
 	assertErrorsAre(t, res, "value 1.5 is outside the range 0..<=1 of Ratio")
 }
 
 func TestRangeConstraint_FloatInRange_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0..<=1)
+	res := parseCollectAndCheck(t, `type Ratio = f64 where range(0..<=1)
 let r: Ratio = 0.5`, false)
 	assertNoErrors(t, res)
 }
@@ -116,14 +116,14 @@ let r: Ratio = 0.5`, false)
 // typed value no longer converts implicitly (lyra-E046); the two rules meet here, and
 // the point survives: `Percent(x)` for a runtime x is accepted and unchecked.
 func TestRangeConstraint_NonConstant_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let f = (x: u8) -> Percent => Percent(x)`, false)
 	assertNoErrors(t, res)
 }
 
 // Reassigning an out-of-range constant to a constrained var is also enforced.
 func TestRangeConstraint_Reassignment(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let f = () -> u8 => {
 	var p: Percent = 50
 	p = 200
@@ -144,27 +144,27 @@ let f = () -> u8 => {
 // too — the guard that matters, since a leaf can be narrowed by more than one context.
 
 func TestConstraint_CheckedInArgumentPosition(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let show_it = (p: Percent) -> i64 => 1
 let x = show_it(150)`, false)
 	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
 }
 
 func TestConstraint_CheckedInReturnPosition(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let make = () -> Percent => 150`, false)
 	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
 }
 
 func TestConstraint_CheckedInArrayElementPosition(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let xs: []Percent = [10, 150, 20]`, false)
 	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
 }
 
 // A pattern constraint travels the same path, so it is no longer annotation-only either.
 func TestConstraint_PatternCheckedInArgumentPosition(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
+	res := parseCollectAndCheck(t, `type Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
 let paint = (c: Hex) -> i64 => 1
 let x = paint("nope")`, false)
 	assertErrorsAre(t, res,
@@ -174,7 +174,7 @@ let x = paint("nope")`, false)
 // The pattern message used to wrap an already-delimited pattern in a second `r"…"`,
 // reading `pattern constraint r"r"^#…$""`. Pinned by the assertion above and here.
 func TestConstraint_PatternMessageIsNotDoubleQuoted(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
+	res := parseCollectAndCheck(t, `type Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
 let h: Hex = "nope"`, false)
 	assertErrorsAre(t, res,
 		`value "nope" does not satisfy pattern constraint r"^#[0-9a-fA-F]{6}$" of Hex`)
@@ -188,19 +188,19 @@ let h: Hex = "nope"`, false)
 // of writing the declaration.
 
 func TestValuesConstraint_ViolationReported(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+	res := parseCollectAndCheck(t, `type Status = i32 where values(200, 404, 500)
 let s: Status = 302`, false)
 	assertErrorsAre(t, res, "value 302 is not one of the values allowed by Status (200, 404, 500)")
 }
 
 func TestValuesConstraint_AllowedValueOk(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+	assertNoErrors(t, parseCollectAndCheck(t, `type Status = i32 where values(200, 404, 500)
 let s: Status = 404`, false))
 }
 
 // It rides the same path, so it reaches an argument too.
 func TestValuesConstraint_CheckedInArgumentPosition(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+	res := parseCollectAndCheck(t, `type Status = i32 where values(200, 404, 500)
 let handle = (s: Status) -> i64 => 1
 let x = handle(302)`, false)
 	assertErrorsAre(t, res, "value 302 is not one of the values allowed by Status (200, 404, 500)")
@@ -208,7 +208,7 @@ let x = handle(302)`, false)
 
 // A string union compares by value, not by source spelling.
 func TestValuesConstraint_StringUnion(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Mode = string where values("r", "w")
+	res := parseCollectAndCheck(t, `type Mode = string where values("r", "w")
 let m: Mode = "x"`, false)
 	assertErrorsAre(t, res, `value "x" is not one of the values allowed by Mode ("r", "w")`)
 }
@@ -216,7 +216,7 @@ let m: Mode = "x"`, false)
 // A non-constant is skipped, as everywhere else in this file — definite-only, so
 // never a false positive.
 func TestValuesConstraint_NonConstantSkipped(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+	assertNoErrors(t, parseCollectAndCheck(t, `type Status = i32 where values(200, 404, 500)
 let f = (x: i32) -> Status => Status(x)`, false))
 }
 
@@ -231,8 +231,8 @@ let f = (x: i32) -> Status => Status(x)`, false))
 
 func TestNewtype_DistinctNewtypesDoNotInterconvert(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Meters = i64
-newtype Feet = i64
+type Meters = i64
+type Feet = i64
 let convert = (m: Meters) -> Feet => m
 `, false)
 	assertErrorsAre(t, res, "convert: return type mismatch: expected Feet, got Meters")
@@ -242,7 +242,7 @@ let convert = (m: Meters) -> Feet => m
 // unbuildable.
 func TestNewtype_ConstructionFromBase_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = i64
+type Meters = i64
 let m: Meters = 5
 `, false))
 }
@@ -253,7 +253,7 @@ let m: Meters = 5
 // refused (lyra-E047) without making a newtype write-only.
 func TestNewtype_ToBase_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = i64
+type Meters = i64
 let m: Meters = 5
 let raw = i64(m)
 let sum = raw + 1
@@ -263,7 +263,7 @@ let sum = raw + 1
 // The same newtype is of course assignable to itself.
 func TestNewtype_SameType_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = i64
+type Meters = i64
 let a: Meters = 5
 let b: Meters = a
 `, false))
@@ -272,8 +272,8 @@ let b: Meters = a
 // Distinctness holds through a call argument too, not just an annotation.
 func TestNewtype_DistinctAtCallSite_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Meters = i64
-newtype Feet = i64
+type Meters = i64
+type Feet = i64
 let takesFeet = (f: Feet) -> i64 => 0
 let m: Meters = 5
 let x = takesFeet(m)
@@ -291,7 +291,7 @@ let x = takesFeet(m)
 
 func TestNewtype_ThroughCallReturn_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = i64
+type Meters = i64
 let mk = () -> Meters => 5
 let m: Meters = mk()
 let raw = i64(m)
@@ -310,7 +310,7 @@ let v: i64 = p.x
 
 func TestNewtype_ReadFromStructField_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = i64
+type Meters = i64
 struct Trip { dist: Meters }
 let t = Trip { dist: 5 }
 let d = i64(t.dist)
@@ -321,8 +321,8 @@ let d = i64(t.dist)
 // still not a Feet.
 func TestNewtype_DistinctThroughCallReturn_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Meters = i64
-newtype Feet = i64
+type Meters = i64
+type Feet = i64
 let mk = () -> Meters => 5
 let f: Feet = mk()
 `, false)
@@ -338,7 +338,7 @@ let f: Feet = mk()
 
 func TestNewtype_LiteralOverflowsBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Small = u8
+type Small = u8
 let s: Small = 300
 `, false)
 	assertErrorsAre(t, res, "s: literal value 300 overflows u8")
@@ -347,7 +347,7 @@ let s: Small = 300
 // A folded constant expression is checked the same way.
 func TestNewtype_FoldedConstantOverflowsBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Small = u8
+type Small = u8
 let s: Small = 200 + 100
 `, false)
 	assertErrorsAre(t, res, "s: literal value 300 overflows u8")
@@ -356,7 +356,7 @@ let s: Small = 200 + 100
 // A value inside the base's range is fine.
 func TestNewtype_LiteralWithinBase_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Small = u8
+type Small = u8
 let s: Small = 200
 `, false))
 }
@@ -366,7 +366,7 @@ let s: Small = 200
 // the base, so a violation of it subsumes any base overflow).
 func TestNewtype_RangeConstraintOwnsTheReport(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Percent = u8 where range(0..<=100)
+type Percent = u8 where range(0..<=100)
 let p: Percent = 300
 `, false)
 	assertErrorsAre(t, res, "value 300 is outside the range 0..<=100 of Percent")
@@ -382,7 +382,7 @@ let p: Percent = 300
 func TestNewtype_StructBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 struct Pt { x: i64, y: i64 }
-newtype WrapS = Pt
+type WrapS = Pt
 `, false)
 	assertHasErrorContaining(t, res, "Pt is a struct, which already has its own identity")
 }
@@ -390,7 +390,7 @@ newtype WrapS = Pt
 func TestNewtype_DataBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 data Color = Red | Green
-newtype WrapD = Color
+type WrapD = Color
 `, false)
 	assertHasErrorContaining(t, res, "is a `data` type, which already has its own identity")
 }
@@ -400,7 +400,7 @@ newtype WrapD = Color
 // constructor. The message shows the `tuple` line to write.
 func TestNewtype_AnonymousTupleBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Rgb = (u8, u8, u8)
+type Rgb = (u8, u8, u8)
 `, false)
 	assertHasErrorContaining(t, res, "write `tuple Rgb(u8, u8, u8)` instead")
 }
@@ -408,7 +408,7 @@ newtype Rgb = (u8, u8, u8)
 func TestNewtype_NamedTupleBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 tuple Pair(i64, i64)
-newtype WrapT = Pair
+type WrapT = Pair
 `, false)
 	assertHasErrorContaining(t, res, "is a named tuple, which already has its own identity")
 }
@@ -417,8 +417,8 @@ newtype WrapT = Pair
 func TestNewtype_ChainedStructBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 struct Pt { x: i64, y: i64 }
-newtype A = Pt
-newtype B = A
+type A = Pt
+type B = A
 `, false)
 	assertHasErrorContaining(t, res, "is a struct, which already has its own identity")
 }
@@ -426,10 +426,10 @@ newtype B = A
 // The structural bases keep working — this is the feature, not a casualty of it.
 func TestNewtype_StructuralBases_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = f64
-newtype Name = string
-newtype Grid = [3]i64
-newtype Handle = ^u8
+type Meters = f64
+type Name = string
+type Grid = [3]i64
+type Handle = ^u8
 `, false))
 }
 
@@ -437,7 +437,7 @@ newtype Handle = ^u8
 
 func TestNewtype_StringBase_HasStringMethods(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Name = string
+type Name = string
 let n: Name = "abc"
 let a = n.len()
 let b = n.slice(0, 2)
@@ -448,7 +448,7 @@ let b = n.slice(0, 2)
 // user-code-beats-builtin ordering everywhere else.
 func TestNewtype_OwnMethodBeatsBaseMethod(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Name = string
+type Name = string
 pub let len = (self: Name) -> string => "mine"
 let n: Name = "abc"
 let a: string = n.len()
@@ -459,7 +459,7 @@ let a: string = n.len()
 // A UFCS function taking the base receives the newtype through the same fallback.
 func TestNewtype_BaseUFCSFunctionReachable(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = f64
+type Meters = f64
 pub let describe = (self: f64) -> string => "float"
 let m: Meters = 1.5
 let d = m.describe()
@@ -481,7 +481,7 @@ let d = m.describe()
 
 func TestNewtype_ConstructorCall(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let c = Cents(150)
 let raw = i64(c)
 `, false))
@@ -490,7 +490,7 @@ let raw = i64(c)
 // The juxtaposed spelling reaches the same collector path, so it works for free.
 func TestNewtype_JuxtaposedConstructor(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let c = Cents 150
 let raw = i64(c)
 `, false))
@@ -501,8 +501,8 @@ let raw = i64(c)
 // over the same base refusing it.
 func TestNewtype_ConstructorYieldsTheNewtype(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
-newtype Feet = i64
+type Cents = i64
+type Feet = i64
 let takesFeet = (f: Feet) -> i64 => 0
 let x = takesFeet(Cents(150))
 `, false)
@@ -512,16 +512,16 @@ let x = takesFeet(Cents(150))
 // A newtype names exactly one base, so it takes exactly one operand.
 func TestNewtype_ConstructorArity(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let c = Cents(1, 2)
 `, false)
-	assertErrorsAre(t, res, "Cents is a newtype over i64, so it takes exactly one operand, not 2")
+	assertErrorsAre(t, res, "Cents is a `type` over i64, so it takes exactly one operand, not 2")
 }
 
 // The operand is checked against the base.
 func TestNewtype_ConstructorOperandMustFitTheBase(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let c = Cents("hi")
 `, false)
 	assertErrorsAre(t, res, "cannot construct Cents from string: its base is i64")
@@ -531,7 +531,7 @@ let c = Cents("hi")
 // newtype onto its operand rather than the base — so this is the same report
 // `let p: Percent = 150` gets, from one predicate.
 func TestNewtype_ConstructorEnforcesConstraints(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+	res := parseCollectAndCheck(t, `type Percent = u8 where range(0..<=100)
 let p = Percent(150)`, false)
 	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
 }
@@ -545,7 +545,7 @@ let p = Percent(150)`, false)
 // missing solver, not a missing answer.
 func TestNewtype_GenericConstructorSolves(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Boxed<t> = t
+type Boxed<t> = t
 let a = Boxed(5)
 let ra = i64(a)
 let b = Boxed("hi")
@@ -559,7 +559,7 @@ let rc = u8(c)
 // has for a constructor's type arguments.
 func TestNewtype_GenericConstructorTurbofish(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Boxed<t> = t
+type Boxed<t> = t
 let c = Boxed::<u8>(200)
 let rc = u8(c)
 `, false))
@@ -569,20 +569,20 @@ let rc = u8(c)
 // solving the parameter must not weaken the identity it parameterizes.
 func TestNewtype_GenericConstructorResultIsNominal(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Boxed<t> = t
+type Boxed<t> = t
 let takes = (n: i64) -> i64 => n
 let b = Boxed(5)
 let x = takes(b)
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Boxed as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+		"cannot use Boxed as i64 implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `i64(...)`")
 }
 
 // A parameter the base never mentions cannot be solved from any operand — only the
 // turbofish can bind it, and the message says so.
 func TestNewtype_GenericConstructorUnsolvableParam(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Weird<t> = i64
+type Weird<t> = i64
 let w = Weird(5)
 `, false)
 	assertErrorsAre(t, res,
@@ -611,7 +611,7 @@ let p = Point(1, 2)
 
 func TestImplicitNewtype_TypedValueRefusedAtCall(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let take = (c: Cents) -> i64 => 0
 let plain: i64 = 150
 let x = take(plain)
@@ -622,7 +622,7 @@ let x = take(plain)
 
 func TestImplicitNewtype_TypedValueRefusedAtBinding(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let plain: i64 = 150
 let c: Cents = plain
 `, false)
@@ -632,7 +632,7 @@ let c: Cents = plain
 
 func TestImplicitNewtype_TypedValueRefusedAtReturn(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let widen = (n: i64) -> Cents => n
 `, false)
 	assertErrorsAre(t, res,
@@ -642,7 +642,7 @@ let widen = (n: i64) -> Cents => n
 // The constructor is the way through, and it is accepted in every one of those spots.
 func TestImplicitNewtype_ConstructorIsTheWayThrough(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let take = (c: Cents) -> i64 => 0
 let widen = (n: i64) -> Cents => Cents(n)
 let plain: i64 = 150
@@ -656,7 +656,7 @@ let x = take(Cents(plain))
 // by the same clause, because the sum of two untyped literals is still untyped.
 func TestImplicitNewtype_LiteralsStillImplicit(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let take = (c: Cents) -> i64 => 0
 let a: Cents = 150
 let b: Cents = 100 + 50
@@ -671,9 +671,9 @@ let make = () -> Cents => 999
 // is why the rule reads the expression and not just the type.
 func TestImplicitNewtype_NonNumericLiteralsStillImplicit(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Name = string
-newtype Flag = bool
-newtype Row = []i64
+type Name = string
+type Flag = bool
+type Row = []i64
 let n: Name = "abc"
 let f: Flag = true
 let r: Row = [1, 2, 3]
@@ -685,7 +685,7 @@ let r: Row = [1, 2, 3]
 // has provenance in a way `"abc"` does not.
 func TestImplicitNewtype_ComputedStringNeedsTheConstructor(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Email = string
+type Email = string
 let mk = (a: string, b: string) -> Email => a ++ b
 `, false)
 	assertErrorsAre(t, res,
@@ -704,40 +704,40 @@ let mk = (a: string, b: string) -> Email => a ++ b
 
 func TestImplicitReadout_RefusedAtBinding(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let c: Cents = 150
 let raw: i64 = c
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Cents as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+		"cannot use Cents as i64 implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `i64(...)`")
 }
 
 func TestImplicitReadout_RefusedAtCall(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let take = (x: i64) -> i64 => x
 let c: Cents = 150
 let r = take(c)
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Cents as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+		"cannot use Cents as i64 implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `i64(...)`")
 }
 
 func TestImplicitReadout_RefusedAtReturn(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let unwrap = (c: Cents) -> i64 => c
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Cents as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+		"cannot use Cents as i64 implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `i64(...)`")
 }
 
 // The conversion is the way through, in every one of those spots — and for a string
 // base the spelling is `string(...)`, which exists exactly for this.
 func TestImplicitReadout_ConversionIsTheWayThrough(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
-newtype Email = string
+type Cents = i64
+type Email = string
 let take = (x: i64) -> i64 => x
 let c: Cents = 150
 let raw = i64(c)
@@ -756,7 +756,7 @@ func TestIdentityConversion_RefusesNonIdentity(t *testing.T) {
 let s = string(42)
 `, false)
 	assertErrorsAre(t, res,
-		"cannot convert integer literal to string: `string(...)` only reads a value of that type — or a newtype over it — back out")
+		"cannot convert integer literal to string: `string(...)` only reads a value of that type — or a `type` declared over it — back out")
 }
 
 // A newtype over a base the conversion cannot *name* — an array, here — is refused
@@ -765,19 +765,19 @@ let s = string(42)
 // always a spelling to offer, so no base is exempt.
 func TestImplicitReadout_UnnameableBaseIsRefusedToo(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Row = []i64
+type Row = []i64
 let r: Row = [1, 2, 3]
 let plain: []i64 = r
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Row as DynamicArray<i64> implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `base(...)`")
+		"cannot use Row as DynamicArray<i64> implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `base(...)`")
 }
 
 // …and `base(r)` is the way through: it strips exactly one newtype layer, is an
 // identity at run time like the named conversions, and works whatever the base is.
 func TestImplicitReadout_BaseIsTheWayThrough(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Row = []i64
+type Row = []i64
 let r: Row = [1, 2, 3]
 let plain: []i64 = base(r)
 let first = base(r)[0]
@@ -791,7 +791,7 @@ func TestBaseReadout_NonNewtypeOperandRefused(t *testing.T) {
 let n = base(5)
 `, false)
 	assertErrorsAre(t, res,
-		"base: operand must be a newtype, got integer literal — `base(...)` reads a newtype out to its base type")
+		"base: operand must be a value of a declared `type`, got integer literal — `base(...)` reads one out to the type it is declared over")
 }
 
 // A user binding named `base` shadows the builtin — the same rule print/read_line
@@ -808,8 +808,8 @@ let ten = base(5)
 // newtype→newtype conversion having no path.
 func TestBaseReadout_StripsOneLayer(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Inner = []i64
-newtype Outer = Inner
+type Inner = []i64
+type Outer = Inner
 let o: Outer = [1, 2]
 let i: Inner = base(o)
 let plain: []i64 = base(base(o))
@@ -820,7 +820,7 @@ let plain: []i64 = base(base(o))
 // carries the base below a newtype context, and must not mistake that for one.
 func TestImplicitReadout_SameNewtypeThroughArms(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let pick = (b: bool, c: Cents) -> Cents => if b { c } else { 1 }
 `, false))
 }
@@ -828,7 +828,7 @@ let pick = (b: bool, c: Cents) -> Cents => if b { c } else { 1 }
 // A value that is already the newtype is not a conversion at all.
 func TestImplicitNewtype_SameNewtypeUnaffected(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let a: Cents = 150
 let b: Cents = a
 `, false))
@@ -838,8 +838,8 @@ let b: Cents = a
 // one — the rule exempts a ConstrainedType source so the two do not double up.
 func TestImplicitNewtype_DistinctNewtypeKeepsItsOwnError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Meters = i64
-newtype Feet = i64
+type Meters = i64
+type Feet = i64
 let convert = (m: Meters) -> Feet => m
 `, false)
 	assertErrorsAre(t, res, "convert: return type mismatch: expected Feet, got Meters")
@@ -858,37 +858,37 @@ let convert = (m: Meters) -> Feet => m
 
 func TestNewtype_WrappingArithmeticRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let a: Cents = 150
 let b: Cents = 275
 let c = a.wrapping_add(b)
 `, false)
 	assertErrorsAre(t, res,
-		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
+		"arithmetic on a `type` is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
 }
 
 // The mixed operand — the case the bypass made silently legal.
 func TestNewtype_MixedOperandArithmeticRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let a: Cents = 150
 let plain: i64 = 5
 let c = a.wrapping_add(plain)
 `, false)
 	assertErrorsAre(t, res,
-		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
+		"arithmetic on a `type` is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
 }
 
 // checked_* is the third member of the family and is refused the same way.
 func TestNewtype_CheckedArithmeticRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let a: Cents = 150
 let b: Cents = 275
 let c = a.checked_add(b)
 `, false)
 	assertErrorsAre(t, res,
-		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"checked_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
+		"arithmetic on a `type` is opt-in: Cents is nominal over i64, so \"checked_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
 }
 
 // The refusal is exactly the overflow-arithmetic family. The float rounding ops are
@@ -896,7 +896,7 @@ let c = a.checked_add(b)
 // the string methods the transparency rule was argued for in the first place.
 func TestNewtype_FloatRoundingStaysTransparent(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Meters = f64
+type Meters = f64
 let m: Meters = 1.5
 let f = m.floor()
 `, false))
@@ -906,7 +906,7 @@ let f = m.floor()
 // documented assignability, and the base value then has the whole family.
 func TestNewtype_BaseReadoutReachesArithmetic(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 let a: Cents = 150
 let raw = i64(a)
 let c = raw.wrapping_add(5)
@@ -927,7 +927,7 @@ let c = raw.wrapping_add(5)
 // annotation alone would not pin it, since base → newtype is assignable anyway.
 func TestNewtype_OperatorImplDispatches(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Cents = i64
+type Cents = i64
 trait Add { (_+_): (Self, Self) -> Self }
 impl Add for Cents {
   (_+_) = (self, o) => {
@@ -960,36 +960,36 @@ let total: Cents = x + y + x
 // either one fixes the program.
 func TestNewtype_CircularBase_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype A = B
-newtype B = A
+type A = B
+type B = A
 let a: A = 0`, false)
 	assertErrorsAre(t, res,
-		`newtype "A" is circular: its base leads back to itself`,
-		`newtype "B" is circular: its base leads back to itself`,
+		`type "A" is circular: its base leads back to itself`,
+		`type "B" is circular: its base leads back to itself`,
 		"a: cannot assign integer literal to A")
 }
 
 // A cycle of any length, and the degenerate one-element cycle.
 func TestNewtype_LongerCycleAndSelfCycle_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype P = Q
-newtype Q = R
-newtype R = P`, false)
+type P = Q
+type Q = R
+type R = P`, false)
 	assertErrorsAre(t, res,
-		`newtype "P" is circular: its base leads back to itself`,
-		`newtype "Q" is circular: its base leads back to itself`,
-		`newtype "R" is circular: its base leads back to itself`)
+		`type "P" is circular: its base leads back to itself`,
+		`type "Q" is circular: its base leads back to itself`,
+		`type "R" is circular: its base leads back to itself`)
 
-	res = parseCollectAndCheck(t, `newtype S = S`, false)
-	assertErrorsAre(t, res, `newtype "S" is circular: its base leads back to itself`)
+	res = parseCollectAndCheck(t, `type S = S`, false)
+	assertErrorsAre(t, res, `type "S" is circular: its base leads back to itself`)
 }
 
 // A newtype chain that *does* terminate is untouched — the guard must refuse cycles, not
 // chains.
 func TestNewtype_TerminatingChain_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Meters = f64
-newtype Distance = Meters
+type Meters = f64
+type Distance = Meters
 let f = (d: Distance) -> Distance => d`, false)
 	assertNoErrors(t, res)
 }
@@ -1005,7 +1005,7 @@ let f = (d: Distance) -> Distance => d`, false)
 
 func TestNewtypeOverFunction_AnnotationIsNominalAndCallable(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let take = (f: Handler) -> i64 => f(20)
 struct Hooks { on: Handler }
 let h: Handler = (n) => n + 1
@@ -1018,7 +1018,7 @@ let use = () -> i64 => {
 
 func TestNewtypeOverFunction_LocalConstructorFormCallable(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let use = () -> i64 => {
   let h: Handler = Handler((n: i64) -> i64 => n + 1)
   h(41)
@@ -1030,7 +1030,7 @@ let use = () -> i64 => {
 // written in place, the array rule's function-type sibling.
 func TestNewtypeOverFunction_LambdaArgumentConvertsImplicitly(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let take = (f: Handler) -> i64 => f(20)
 let out = take((n: i64) -> i64 => n * 2)
 `, false))
@@ -1040,12 +1040,12 @@ let out = take((n: i64) -> i64 => n * 2)
 // what the wrapper exists for, and `base(...)` is the spelling.
 func TestNewtypeOverFunction_ReadOutStaysExplicit(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let h: Handler = (n) => n + 1
 let g: (i64) -> i64 = h
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Handler as (i64) -> i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `base(...)`")
+		"cannot use Handler as (i64) -> i64 implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `base(...)`")
 }
 
 // The annotation is checked, not assumed — for the newtype form and, closing a
@@ -1055,7 +1055,7 @@ let g: (i64) -> i64 = h
 func TestLambdaBindingAnnotationIsChecked(t *testing.T) {
 	t.Run("newtype over a function type", func(t *testing.T) {
 		res := parseCollectAndCheck(t, `
-newtype Handler = (i64) -> i64
+type Handler = (i64) -> i64
 let h: Handler = (s: string) -> string => s
 `, false)
 		assertErrorsAre(t, res, "h: cannot assign (string) -> string to Handler")

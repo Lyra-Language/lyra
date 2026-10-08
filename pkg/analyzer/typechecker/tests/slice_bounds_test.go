@@ -38,11 +38,11 @@ let main = () -> void => println("hello".slice(0, -1))
 }
 
 // A **newtype is transparent to its base's methods**, so it is transparent to their argument
-// rules too: `newtype Name = string` slices exactly as a string does, and a negative bound is
+// rules too: `type Name = string` slices exactly as a string does, and a negative bound is
 // as wrong through the wrapper as without it.
 func TestSliceBounds_RefusedThroughANewtype(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Name = string
+type Name = string
 let main = () -> void => {
   let n: Name = "hello"
   println(n.slice(-1, 2))

@@ -130,7 +130,7 @@ let take = (xs: []i64) -> i64 => xs.len()
 let g = (c: bool) -> i64 => take(if c { [1] } else { [2, 3] })`,
 		"a dynamic binding in one branch": `let g = (c: bool, ys: []i64) -> []i64 => if c { ys } else { [1, 2, 3] }`,
 		"newtype over an array": `
-newtype Bag = []string
+type Bag = []string
 let g = (c: bool) -> Bag => if c { ["a"] } else { ["b", "c"] }`,
 		"the result is dynamic": `let g = (c: bool) -> i64 => { var xs: []i64 = if c { [1] } else { [2, 3] }; xs.push(4); xs.len() }`,
 	}
@@ -157,7 +157,7 @@ func TestArrayLiteralContext_BranchesKeepTheirRefusals(t *testing.T) {
 			`let g = (c: bool) -> i64 => { let k = if c { #[1] } else { #[2, 3] }; 0 }`,
 			"if/else branches have incompatible types: then is StaticArray<integer literal, 1>, else is StaticArray<integer literal, 2>"},
 		"a binding into a newtype": {`
-newtype Bag = []string
+type Bag = []string
 let g = (c: bool, ys: []string) -> Bag => if c { ys } else { ["b"] }`,
 			"cannot use DynamicArray<string> as Bag implicitly: Bag is a distinct type over DynamicArray<string>, so the conversion must be written — `Bag(...)`"},
 	}

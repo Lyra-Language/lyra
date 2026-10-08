@@ -12,7 +12,7 @@ import (
 // concrete shape it denotes, so that construction, field access, match, layout and the
 // retain/drop glue can all keep switching on NamedStructType / TupleType / DataType. It had
 // arms for those three and none for `*ConstrainedType` — which is what a parameterized
-// newtype expands to — so `newtype Sorted<t> = []t` checked clean and failed the build with
+// newtype expands to — so `type Sorted<t> = []t` checked clean and failed the build with
 // *"\"Sorted\" is not a generic type that can be instantiated"*. Rule 5 inverted: the front
 // end accepting a form the backend cannot build.
 //
@@ -27,34 +27,34 @@ import (
 func TestExec_GenericNewtypeOverAManagedBase(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ name, src, want string }{
-		{"dynamic array base", `newtype Sorted<t> = []t
+		{"dynamic array base", `type Sorted<t> = []t
 let main = () -> void => {
   let s: Sorted<i64> = [1, 2, 3]
   println(i64(s.len()))
 }`, "3"},
-		{"array of strings", `newtype Names<t> = []t
+		{"array of strings", `type Names<t> = []t
 let main = () -> void => {
   var n: Names<string> = ["a", "b"]
   println(n[0] ++ n[1])
 }`, "ab"},
 		// A newtype whose base is another newtype: the arm recurses through StripNewtype
 		// rather than reading `.Type` once.
-		{"newtype over newtype", `newtype Inner<t> = []t
-newtype Outer<t> = Inner<t>
+		{"newtype over newtype", `type Inner<t> = []t
+type Outer<t> = Inner<t>
 let main = () -> void => {
   let o: Outer<i64> = [4, 5]
   println(i64(o.len()))
 }`, "2"},
 		// Two managed instantiations of one generic newtype must not collide on the
 		// mangled name.
-		{"two managed instantiations", `newtype Bag<t> = []t
+		{"two managed instantiations", `type Bag<t> = []t
 let main = () -> void => {
   var a: Bag<i64> = [1, 2]
   var b: Bag<string> = ["p", "q"]
   println(i64(a.len()) + i64(b.len()))
 }`, "4"},
 		// Nested in a struct, so layout and the drop glue both have to reach it.
-		{"nested in a struct", `newtype Bag<t> = []t
+		{"nested in a struct", `type Bag<t> = []t
 struct Holder { b: Bag<i64>, k: i64 }
 let main = () -> void => {
   var h = Holder { b: [1, 2, 3], k: 4 }

@@ -6,7 +6,7 @@ import (
 )
 
 // A `newtype` is nominal to the typechecker and *transparent* to codegen: a
-// `newtype Percent = u8` value is a u8 at run time, with no wrapper, no tag, and
+// `type Percent = u8` value is a u8 at run time, with no wrapper, no tag, and
 // no LLVM type of its own. These tests pin that end to end — a newtype value is
 // constructed, copied, passed, returned, stored in aggregates, matched on, and
 // read back out to its base, and the observable result is the base's.
@@ -22,7 +22,7 @@ func TestExec_Newtype(t *testing.T) {
 		// this shape is in nearly every program that uses one.
 		{
 			"construct and read out",
-			`newtype Percent = u8 where range(0..<=100)
+			`type Percent = u8 where range(0..<=100)
 			 let main = () -> u8 => {
 			   let p: Percent = 42
 			   let raw = u8(p)
@@ -36,7 +36,7 @@ func TestExec_Newtype(t *testing.T) {
 		// Percent"), which made a newtype unusable through any call.
 		{
 			"through a parameter and a return",
-			`newtype Percent = u8
+			`type Percent = u8
 			 let bump = (p: Percent) -> Percent => p
 			 let main = () -> u8 => {
 			   let p: Percent = 42
@@ -49,7 +49,7 @@ func TestExec_Newtype(t *testing.T) {
 		// A copy is a copy of the base value — nothing wrapped, nothing boxed.
 		{
 			"copied between bindings",
-			`newtype Meters = i64
+			`type Meters = i64
 			 let main = () -> u8 => {
 			   let a: Meters = 5
 			   let b: Meters = a
@@ -63,7 +63,7 @@ func TestExec_Newtype(t *testing.T) {
 		// field read (assignable to i64) have to see through the name.
 		{
 			"as a struct field",
-			`newtype Meters = i64
+			`type Meters = i64
 			 struct Trip { dist: Meters, legs: u8 }
 			 let main = () -> u8 => {
 			   let t = Trip { dist: 5, legs: 2 }
@@ -74,7 +74,7 @@ func TestExec_Newtype(t *testing.T) {
 		},
 		{
 			"as a fixed-array element",
-			`newtype Meters = i64
+			`type Meters = i64
 			 let main = () -> u8 => {
 			   let xs: [3]Meters = #[1, 2, 3]
 			   let d = i64(xs[1])
@@ -84,7 +84,7 @@ func TestExec_Newtype(t *testing.T) {
 		},
 		{
 			"as a dynamic-array element",
-			`newtype Meters = i64
+			`type Meters = i64
 			 let main = () -> u8 => {
 			   let xs: []Meters = [10, 20, 30]
 			   let d = i64(xs[2])
@@ -96,7 +96,7 @@ func TestExec_Newtype(t *testing.T) {
 		// the range arm is a u8 comparison.
 		{
 			"match on a newtype scrutinee",
-			`newtype Percent = u8 where range(0..<=100)
+			`type Percent = u8 where range(0..<=100)
 			 let bucket = (p: Percent) -> u8 => match p {
 			   0..<=50 => 1,
 			   _ => 2,
@@ -107,7 +107,7 @@ func TestExec_Newtype(t *testing.T) {
 		// A non-numeric base works the same way: the representation is i1.
 		{
 			"over bool",
-			`newtype Flag = bool
+			`type Flag = bool
 			 let main = () -> u8 => {
 			   let f: Flag = true
 			   let b = bool(f)
@@ -119,7 +119,7 @@ func TestExec_Newtype(t *testing.T) {
 		// both i64 operations, so this is 5 rather than a wrapped value.
 		{
 			"over a signed base, negative value",
-			`newtype Delta = i64
+			`type Delta = i64
 			 let main = () -> u8 => {
 			   let d: Delta = -5
 			   let x = i64(d)
@@ -155,7 +155,7 @@ func TestExec_NewtypeArithmeticUsesBaseWidth(t *testing.T) {
 		t.Parallel()
 		// The value reaches u8 through a call, so it is not a foldable constant —
 		// the check that fires is the emitted trap, not the typechecker's.
-		src := `newtype Small = u8
+		src := `type Small = u8
 		 let widen = (n: u8) -> Small => Small(n)
 		 let main = () -> u8 => {
 		   let a: Small = widen(200)
@@ -171,7 +171,7 @@ func TestExec_NewtypeArithmeticUsesBaseWidth(t *testing.T) {
 	t.Run("literal leaves narrow to the base", func(t *testing.T) {
 		t.Parallel()
 		// 40 + 2 under a `Percent = u8` annotation must lower as u8 arithmetic.
-		got, err := emitSource(t, `newtype Percent = u8 where range(0..<=100)
+		got, err := emitSource(t, `type Percent = u8 where range(0..<=100)
 		 let main = () -> u8 => {
 		   let p: Percent = 40 + 2
 		   let raw = u8(p)
@@ -189,7 +189,7 @@ func TestExec_NewtypeArithmeticUsesBaseWidth(t *testing.T) {
 	})
 }
 
-// A newtype over a *managed* base is managed: `newtype Email = string` is a
+// A newtype over a *managed* base is managed: `type Email = string` is a
 // string box, so it is retained on copy and released on death exactly as the
 // base is. Getting this wrong is not cosmetic — treating the wrapper as
 // unmanaged would leak every heap string that passed through one.
@@ -204,7 +204,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			// A heap string built inside a function returning the newtype, then read
 			// back out to `string` and printed.
 			"built and returned as a newtype",
-			`newtype Email = string
+			`type Email = string
 			 let mk = (a: string, b: string) -> Email => Email(a ++ "@" ++ b)
 			 let main = () -> u8 => {
 			   let e: Email = mk("user", "host")
@@ -219,7 +219,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			// must take its own reference on the field (deep retain), or the first
 			// death frees a box the second still holds.
 			"as a struct field, copied",
-			`newtype Email = string
+			`type Email = string
 			 struct User { name: Email, age: u8 }
 			 let main = () -> u8 => {
 			   let n: Email = Email("a" ++ "b")
@@ -235,7 +235,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			// Managed elements under a newtype element type: the dynamic array's
 			// per-element drop glue has to see the string through the name.
 			"as a dynamic-array element",
-			`newtype Email = string
+			`type Email = string
 			 let main = () -> u8 => {
 			   let es: []Email = [Email("a" ++ "1"), Email("b" ++ "2")]
 			   let s = string(es[1])
@@ -269,7 +269,7 @@ func TestExec_NewtypeOverString_ASan(t *testing.T) {
 
 	// One allocation ("a" ++ "b"), one retain (the struct copy duplicates the
 	// reference its Email field holds), two releases (each struct's death).
-	src := `newtype Email = string
+	src := `type Email = string
 	 struct User { name: Email, age: u8 }
 	 let main = () -> u8 => {
 	   let n: Email = Email("a" ++ "b")
@@ -321,7 +321,7 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 			// Two boxes: the initial field value and the replacement. Three release
 			// sites: the overwritten value, the struct's scope-exit drop glue, and
 			// the glue's own body.
-			"struct field", `newtype Email = string
+			"struct field", `type Email = string
 			 struct User { name: Email, age: u8 }
 			 let main = () -> u8 => {
 			   var u = User { name: Email("a" ++ "b"), age: 1 }
@@ -333,7 +333,7 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 			"cd\n", 2, 3,
 		},
 		{
-			"dynamic-array element", `newtype Email = string
+			"dynamic-array element", `type Email = string
 			 let main = () -> u8 => {
 			   var xs: []Email = [Email("a" ++ "b"), Email("c" ++ "d")]
 			   xs[0] = Email("e" ++ "f")
@@ -378,7 +378,7 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 // value, which is why this asserts the *absence*.
 func TestEmit_NewtypeIsTransparent(t *testing.T) {
 	t.Parallel()
-	got, err := emitSource(t, `newtype Percent = u8 where range(0..<=100)
+	got, err := emitSource(t, `type Percent = u8 where range(0..<=100)
 	 let bump = (p: Percent) -> Percent => p
 	 let main = () -> u8 => {
 	   let p: Percent = 42
@@ -406,7 +406,7 @@ func TestEmit_NewtypeIsTransparent(t *testing.T) {
 // second copy under a different name.
 func TestEmit_NewtypeOverStringSharesBaseGlue(t *testing.T) {
 	t.Parallel()
-	got, err := emitSource(t, `newtype Email = string
+	got, err := emitSource(t, `type Email = string
 	 struct User { name: Email, age: u8 }
 	 let main = () -> u8 => {
 	   let n: Email = Email("a" ++ "b")
@@ -425,7 +425,7 @@ func TestEmit_NewtypeOverStringSharesBaseGlue(t *testing.T) {
 	}
 }
 
-// A newtype is **transparent to its base's methods**: a `newtype Name = string`
+// A newtype is **transparent to its base's methods**: a `type Name = string`
 // that could not be measured, sliced or trimmed would be a string you cannot do
 // anything with. The base's builtins and its `self:`-taking prelude functions both
 // reach through, and a multi-byte string is used so the rune semantics travel with
@@ -434,7 +434,7 @@ func TestExec_NewtypeOverStringKeepsStringMethods(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Name = string
+type Name = string
 let main = () -> void => {
   let n: Name = "  héllo  ";
   println("${n.len()}");
@@ -458,7 +458,7 @@ func TestExec_NewtypeOwnMethodBeatsBaseMethod(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Name = string
+type Name = string
 pub let len = (self: Name) -> i64 => 99
 let main = () -> void => {
   let n: Name = "abc";
@@ -477,7 +477,7 @@ func TestExec_NewtypeOverArray(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Grid = [3]i64
+type Grid = [3]i64
 let main = () -> void => {
   let g: Grid = #[4, 5, 6];
   println("${g.len()} ${g[1]}");
@@ -503,8 +503,8 @@ func TestExec_NewtypeConstructorLowers(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Cents = i64
-newtype Small = u8
+type Cents = i64
+type Small = u8
 let take = (c: Cents) -> i64 => {
   let r = i64(c)
   r
@@ -538,7 +538,7 @@ func TestExec_BaseReadout(t *testing.T) {
 	}{
 		{
 			"array base, indexed and summed",
-			`newtype Row = []i64
+			`type Row = []i64
 			 let sum = pure (xs: []i64) -> i64 => {
 			   var t = 0
 			   for x in xs { t = t + x }
@@ -553,7 +553,7 @@ func TestExec_BaseReadout(t *testing.T) {
 		},
 		{
 			"managed elements through the read-out",
-			`newtype Bag = []string
+			`type Bag = []string
 			 let main = () -> u8 => {
 			   let b: Bag = ["a" ++ "1", "b" ++ "2"]
 			   println(base(b)[1])
@@ -563,7 +563,7 @@ func TestExec_BaseReadout(t *testing.T) {
 		},
 		{
 			"function-type base, called",
-			`newtype Handler = (i64) -> i64
+			`type Handler = (i64) -> i64
 			 let h: Handler = Handler((n: i64) -> i64 => n + 1)
 			 let main = () -> u8 => {
 			   println("${base(h)(41)}")
@@ -573,8 +573,8 @@ func TestExec_BaseReadout(t *testing.T) {
 		},
 		{
 			"a chain reads out one layer at a time",
-			`newtype Inner = []i64
-			 newtype Outer = Inner
+			`type Inner = []i64
+			 type Outer = Inner
 			 let main = () -> u8 => {
 			   let o: Outer = [5, 6]
 			   println("${base(base(o))[1]}")
@@ -608,7 +608,7 @@ func TestExec_BaseReadout(t *testing.T) {
 func TestExec_BaseReadout_ASan(t *testing.T) {
 	t.Parallel()
 	clang := lookClang(t)
-	src := `newtype Bag = []string
+	src := `type Bag = []string
 	 let main = () -> u8 => {
 	   let b: Bag = ["a" ++ "1", "b" ++ "2"]
 	   let s = base(b)[1]
@@ -653,7 +653,7 @@ func TestExec_NewtypeOverFunctionType(t *testing.T) {
 	}{
 		{
 			"every call position, annotation-form binding",
-			`newtype Handler = (i64) -> i64
+			`type Handler = (i64) -> i64
 			 let take = (f: Handler) -> i64 => f(20)
 			 struct Hooks { on: Handler }
 			 let h: Handler = (n) => n + 1
@@ -665,7 +665,7 @@ func TestExec_NewtypeOverFunctionType(t *testing.T) {
 		},
 		{
 			"local constructor form, called directly",
-			`newtype Handler = (i64) -> i64
+			`type Handler = (i64) -> i64
 			 let main = () -> u8 => {
 			   let h: Handler = Handler((n: i64) -> i64 => n + 1)
 			   u8(h(41))
@@ -674,7 +674,7 @@ func TestExec_NewtypeOverFunctionType(t *testing.T) {
 		},
 		{
 			"lambda literal as a Handler argument",
-			`newtype Handler = (i64) -> i64
+			`type Handler = (i64) -> i64
 			 let run = pure (f: Handler, n: i64) -> i64 => f(n)
 			 let main = () -> u8 => u8(run((k) => k + 1, 41))`,
 			42,

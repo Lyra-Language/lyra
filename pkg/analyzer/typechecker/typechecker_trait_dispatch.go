@@ -423,7 +423,7 @@ func nominalHead(t types.Type) (name string, args []types.Type, ok bool) {
 	case *types.ConstrainedType:
 		// A newtype is nominal — `types.HeadName` says so for receiver-keyed
 		// overloading, and this is the same question one layer down. Without the arm a
-		// `newtype Name = string` receiver fell through to TypesEqual against the
+		// `type Name = string` receiver fell through to TypesEqual against the
 		// declared `self: Name` (an UnresolvedType at that point) and never matched, so
 		// a method *written for* a newtype was unreachable while the base's were not —
 		// hazard 8, and it inverted the precedence the call chain promises.

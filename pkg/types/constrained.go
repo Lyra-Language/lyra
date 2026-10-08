@@ -22,7 +22,7 @@ func (c *ConstrainedType) GetName() string { return c.Name }
 func (c *ConstrainedType) String() string  { return c.GetName() }
 
 // StripNewtype returns t with any newtype wrapper removed. A newtype is
-// *nominal only*: `newtype Percent = u8` is a distinct type to the typechecker
+// *nominal only*: `type Percent = u8` is a distinct type to the typechecker
 // (that isolation is the whole point — see isAssignable), but a Percent value
 // **is** a u8 at run time, with no wrapper of its own. So every decision about
 // representation — the LLVM type, whether the value is refcount-managed, an

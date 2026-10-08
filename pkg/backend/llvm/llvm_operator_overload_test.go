@@ -291,7 +291,7 @@ func TestExec_OperatorOnScalarNewtype(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-newtype Cents = i64
+type Cents = i64
 trait Add { (_+_): (Self, Self) -> Self }
 impl Add for Cents {
   (_+_) = (self, o) => {

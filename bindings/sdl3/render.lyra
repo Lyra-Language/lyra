@@ -3,10 +3,10 @@ module bindings.sdl3
 //! the frame back out.
 
 /// An `SDL_Renderer *`. A newtype for the reason [Window] is one.
-pub newtype Renderer = ^u8
+pub type Renderer = ^u8
 
 /// An `SDL_Surface *`, which only [save_screenshot] ever holds — so it stays private.
-newtype Surface = ^u8
+type Surface = ^u8
 
 /// `SDL_FRect` — the rectangle SDL draws, in floats.
 ///

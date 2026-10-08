@@ -76,7 +76,7 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 		inst.Name = name
 		return types.WithAllocation(inst, p.Allocation), nil
 	case *types.ConstrainedType:
-		// A **generic newtype**: `newtype Sorted<t> = []t`. The wrapper is nominal only —
+		// A **generic newtype**: `type Sorted<t> = []t`. The wrapper is nominal only —
 		// a Sorted value *is* its base at run time — so the instantiation is the base's,
 		// substituted, and there is nothing here to rename: the mangled name belongs to a
 		// declaration with a layout of its own, and this one borrows the base's.
@@ -93,7 +93,7 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 		// compiler goes through that same accessor.
 		base := types.StripNewtype(inst)
 		if pt, ok := base.(types.ParameterizedType); ok {
-			// The base is itself generic (`newtype Wrapper<t> = Box<t>`), so it has an
+			// The base is itself generic (`type Wrapper<t> = Box<t>`), so it has an
 			// instantiation of its own to resolve rather than a shape to hand back.
 			return l.resolveInstantiation(types.WithAllocation(pt, p.Allocation))
 		}
@@ -139,7 +139,7 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
 
 	// **A generic newtype is handled before anything is declared**, because it has no
-	// layout of its own: `newtype Sorted<t> = []t` is its base at run time, so the type
+	// layout of its own: `type Sorted<t> = []t` is its base at run time, so the type
 	// wanted here is the base's. Declaring the placeholder first and dropping it later is
 	// not equivalent — `declareNamedStruct` registers the name with the *module*, and
 	// deleting the map entry leaves `%Sorted$i64 = type {}` in the emitted IR, which clang
@@ -178,7 +178,7 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 		// placeholder is declared. Kept so this switch still names every shape a
 		// declaration can have — an arm that says "handled elsewhere" is a claim, and a
 		// silent default here would be the hazard-8 failure this whole change is one of.
-		err = fmt.Errorf("llvm: generic newtype %q reached the layout switch; it should have "+
+		err = fmt.Errorf("llvm: generic `type` %q reached the layout switch; it should have "+
 			"been resolved to its base before the placeholder was declared", p.Name)
 		_ = t
 	default:

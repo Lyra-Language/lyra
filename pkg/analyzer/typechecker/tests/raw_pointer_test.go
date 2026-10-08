@@ -353,7 +353,7 @@ let main = () -> void => {
 // mutability it is not a strictly-weaker permission.
 func TestPointers_PointeeIsInvariant(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Meters = i64
+type Meters = i64
 let takes = pure (p: ^i64) -> i64 => unsafe { p^ }
 let main = () -> void => {
   var m: Meters = 5
