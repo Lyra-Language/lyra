@@ -534,3 +534,82 @@ func TestExample_LyrafmtAttributesStayFlush(t *testing.T) {
 		t.Errorf("formatted:\n%s\nwant it unchanged:\n%s", got, src)
 	}
 }
+
+// **An `impl Type { … }` block's members are each a line of its own** (10/07). Its `let`s
+// sit under `inherent_members`, which had to join the block-like kinds: owned by the list,
+// every member after the first was indented as a continuation of the one before.
+func TestExample_LyrafmtIndentsInherentMembers(t *testing.T) {
+	bin := buildLyrafmt(t)
+	src := "impl Person {\n/// Greets.\n     pub let say_hi = (self) =>\n   println(self.name)\n  let birthday = (self: mut, age: u8) => {\n        self.age = age\n    }\n}\n"
+	want := "impl Person {\n  /// Greets.\n  pub let say_hi = (self) =>\n    println(self.name)\n  let birthday = (self: mut, age: u8) => {\n    self.age = age\n  }\n}\n"
+	path := filepath.Join(t.TempDir(), "in.lyra")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := exec.Command(bin, path).Output()
+	if err != nil {
+		t.Fatalf("formatting: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("formatted:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// **A type list is never exploded, and is not part of the list around it** (10/07). `<`
+// was no delimiter to the breaker, so the commas of `<t, e>` belonged to the enclosing list:
+// a long line split `(self: Result<t,` ⏎ `e>)`, and in an `impl` block — whose `{` encloses
+// every member — one long member split the `<t, e>` of every member. Found formatting
+// `std/prelude/result.lyra` once its methods moved into `impl Result<t, e>`.
+func TestExample_LyrafmtKeepsTypeListsWhole(t *testing.T) {
+	bin := buildLyrafmt(t)
+	src := "impl Result<t, e> {\n" +
+		"  pub let is_ok<t, e> = pure noalloc (self) -> bool => true\n" +
+		"  pub let flat_map<t, u, e> = pure noalloc (self, f: (t) -> Result<u, e>) -> Result<u, e> {\n" +
+		"    (Ok v, f) => f(v),\n" +
+		"    (Err err, _) => Err err,\n" +
+		"  }\n" +
+		"}\n" +
+		"pub let unwrap<t, e> = pure noalloc (self: Result<t, e>) -> t => expect(self, \"unwrap on an Err\")\n"
+	want := "impl Result<t, e> {\n" +
+		"  pub let is_ok<t, e> = pure noalloc (self) -> bool => true\n" +
+		"  pub let flat_map<t, u, e> = pure noalloc (\n" +
+		"    self,\n" +
+		"    f: (t) -> Result<u, e>\n" +
+		"  ) -> Result<u, e> {\n" +
+		"    (Ok v, f) => f(v),\n" +
+		"    (Err err, _) => Err err,\n" +
+		"  }\n" +
+		"}\n" +
+		"pub let unwrap<t, e> = pure noalloc (self: Result<t, e>) -> t =>\n" +
+		"  expect(self, \"unwrap on an Err\")\n"
+	path := filepath.Join(t.TempDir(), "in.lyra")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := exec.Command(bin, path).Output()
+	if err != nil {
+		t.Fatalf("formatting: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("formatted:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Parentheses hold nothing apart: `( self )` closes up to `(self)`, as a hand-joined list
+// leaves it. A trailing comma before `)` stays the author's business.
+func TestExample_LyrafmtClosesUpParentheses(t *testing.T) {
+	bin := buildLyrafmt(t)
+	src := "let f = pure ( a: i64, b: i64 ) -> i64 => g( a, b )\n"
+	want := "let f = pure (a: i64, b: i64) -> i64 => g(a, b)\n"
+	path := filepath.Join(t.TempDir(), "in.lyra")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := exec.Command(bin, path).Output()
+	if err != nil {
+		t.Fatalf("formatting: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("formatted:\n%s\nwant:\n%s", got, want)
+	}
+}

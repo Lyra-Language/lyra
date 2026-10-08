@@ -45,11 +45,11 @@
 //   - **trailing whitespace** is dropped, and a file ends with exactly one newline;
 //   - **blank lines** run at most one deep;
 //   - **spacing** between two tokens on a line is one space or none: none where it is
-//     forbidden (before `,` and `:`), one where it is required (each side of `=>`, after
-//     `,` and `:`), and otherwise one if anything was there and none if nothing was — so
-//     `a   +   b` closes up and `xs.len()` stays closed. A run of spaces is not preserved,
-//     which does lose hand alignment; that is the trade for two files with the same tokens
-//     formatting the same way;
+//     forbidden (before `,` and `:`, just inside `(`…`)`), one where it is required (each
+//     side of `=>`, after `,` and `:`), and otherwise one if anything was there and none if
+//     nothing was — so `a   +   b` closes up and `xs.len()` stays closed. A run of spaces
+//     is not preserved, which does lose hand alignment; that is the trade for two files
+//     with the same tokens formatting the same way;
 //   - **an inline block** — a `{` with its `}` on the same line, and so also a struct's
 //     fields, a struct literal and an inline import list — holds its contents one space
 //     from each brace: `{ n }`, never `{n}` or `{ n}`. Empty braces close up to `{}`,
@@ -396,12 +396,14 @@ let parameter_list_start = (lambda: Node, fallback: i64) -> i64 => {
 }
 
 /// Whether a node's children are each their own line's business: the program, a block, a
-/// loop's body, and the member lists a newline separates — attributes included, since each
-/// of `@link("a")` and `@link("b")` above a `module` is a line of its own, and the second
-/// was indented as a continuation of the first (09/27, found formatting `bindings.imgui`).
+/// loop's body, and the member lists a newline separates — an `impl Type { … }` block's
+/// `let`s among them, and attributes, since each of `@link("a")` and `@link("b")` above a
+/// `module` is a line of its own, and the second was indented as a continuation of the
+/// first (09/27, found formatting `bindings.imgui`).
 let is_block_like = pure (k: string) -> bool =>
   k == "program" || k == "block" || k == "for_body" || k == "for_in_body" ||
-  k == "impl_methods" || k == "trait_methods" || k == "attribute_list"
+  k == "impl_methods" || k == "inherent_members" || k == "trait_methods" ||
+  k == "attribute_list"
 
 /// Whether the token before a node makes the node an owner: an opening delimiter or a
 /// comma, so an argument, a parameter, a field, a match arm or an import name starts
@@ -632,7 +634,7 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
   var interp_depth = 0
   for i in 0..<leaves.len() {
     let kind = leaves[i].kind
-    if closes(kind) && open_stack.len() > 0 {
+    if (closes(kind) || closes_type_arguments(leaves[i])) && open_stack.len() > 0 {
       let opener = open_stack[open_stack.len() - 1]
       open_stack = open_stack.slice(0, open_stack.len() - 1)
       closer_of[opener] = i
@@ -640,7 +642,7 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
     }
     inside[i] = if open_stack.len() > 0 { open_stack[open_stack.len() - 1] } else { 0 - 1 }
     in_interp[i] = interp_depth > 0
-    if opens(kind) {
+    if opens(kind) || opens_type_arguments(leaves[i]) {
       if kind == `${` { interp_depth += 1 }
       open_stack.push(i)
     }
@@ -1001,7 +1003,7 @@ let widest_list = pure (
     if leaves[i].kind != "," || in_interp[i] { continue }
     let owner = inside[i]
     if owner < 0 || closer_of[owner] < 0 { continue }
-    if leaves[owner].kind == `${` { continue }
+    if leaves[owner].kind == `${` || opens_type_arguments(leaves[owner]) { continue }
     let depth = nesting(inside, owner)
     if best < 0 || depth < best_depth {
       best = owner
@@ -1010,6 +1012,27 @@ let widest_list = pure (
   }
   best
 }
+
+/// Whether a token opens a type-argument or type-parameter list — `Result<t, e>`,
+/// `let f<t, e>`, `sum::<i64>`, `impl From<A> for B` — as opposed to a `<` that compares.
+///
+/// **The breaker tracks these as delimiters and never explodes one.** Untracked, their
+/// commas belonged to whatever list enclosed them, so a long line exploded the enclosing
+/// list *through* them: `(self: Result<t,` ⏎ `e>)`, and inside an `impl` block — whose `{`
+/// encloses every member — one long member split the `<t, e>` of every member in the
+/// block (10/07). A type list is never what makes a line long enough to need it broken.
+/// Known by the parent, since the grammar spells all of these and the comparison `<`.
+let opens_type_arguments = pure (leaf: Leaf) -> bool =>
+  leaf.kind == "::<" || (leaf.kind == "<" && is_type_list(leaf.parent))
+
+/// Whether a token closes one (see opens_type_arguments).
+let closes_type_arguments = pure (leaf: Leaf) -> bool =>
+  leaf.kind == ">" && (is_type_list(leaf.parent) || leaf.parent == "generic_arguments")
+
+/// The nodes whose own `<` and `>` delimit a list of types or type parameters.
+let is_type_list = pure (k: string) -> bool =>
+  k == "parameterized_type" || k == "generic_parameters" || k == "generic_type" ||
+  k == "trait_implementation"
 
 /// How many delimiters enclose the one at `i`, itself included.
 let nesting = pure (inside: []i64, i: i64) -> i64 => {
@@ -1160,8 +1183,15 @@ let wanted_space = pure (
   if before == "," { return if closes(after) { 0 } else { 1 } }
   if before == ":" { return 1 }
   if before == "=>" || after == "=>" { return 1 }
+  // Parentheses hold nothing apart: `(self)`, never `( self )`. A comment beside one is
+  // left as written.
+  if before == "(" && !is_comment(after) || after == ")" && !is_comment(before) { return 0 - 1 }
   0
 }
+
+/// Whether a token is a comment of any kind.
+let is_comment = pure (k: string) -> bool =>
+  k == "comment" || k == "doc_comment" || k == "inner_doc_comment"
 
 /// Whether a token is a range's step separator, `:` directly inside a `range_expr`.
 let is_range_step = pure (
