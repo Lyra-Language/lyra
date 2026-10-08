@@ -901,78 +901,80 @@ impl string {
   }
 }
 
-/// The parts joined with `sep` between them — `split`'s inverse.
-///
-/// Generic over the element rather than taking `[]string`, so a list of anything
-/// printable joins without being converted first: `[1, 2, 3].join(", ")` is `"1, 2, 3"`.
-/// A `[]string` pays nothing for that, since `impl Show for string` returns the value
-/// rather than interpolating it.
-///
-/// An empty array joins to `""`, and a single element to itself — `sep` appears between
-/// parts, never around them, so `parts.len() - 1` separators are used.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(1) | O(n)    | O(n)  |
-/// | **Memory** | O(1) | O(n)    | O(n)  |
-///
-/// n is the total length of the output, not the number of parts. Linear because the result
-/// is accumulated as **bytes** and decoded once at the end: `push` grows by doubling, so
-/// the n bytes cost O(n) copying across every reallocation together. Building it with `++`
-/// instead is quadratic — a string is immutable, so each concatenation copies everything
-/// accumulated so far — which is what this used to do and what a caller writing the loop by
-/// hand still would. Measured against this prelude, joining `"field${i}"` with `", "`:
-/// 215 µs → 100 µs over 600 parts, 1.54 ms → 0.34 ms over 2400, and 35.7 ms → 1.13 ms over
-/// 9600 — a 31× gap that keeps widening, since quadrupling the input costs the old shape
-/// 23× and this one 3.3×. The best column is the empty and single-element cases, which
-/// return without accumulating anything.
-///
-/// # Examples
-///
-/// ```
-/// let row = ["a", "b", "c"].join("")       // "abc"
-/// let csv = ["x", "y"].join(", ")          // "x, y"
-/// let out = rows.join("\n")                // a frame, one string
-/// ```
-pub let join<t> where t: Show = pure (self: []t, sep: string = "") -> string => {
-  if self.len() == 0 {
-    ""
-  } else if self.len() == 1 {
-    // Not merely the loop's base case: one part is the whole answer already, so returning
-    // it costs nothing where going through the buffer would encode and decode it — two
-    // copies of a string to arrive back at the string. `rows.join("\n")` on a one-row
-    // frame is an ordinary call, not a degenerate one.
-    self[0].show()
-  } else {
-    // **Bytes, not `++`.** A string is immutable, so concatenation has to copy the whole
-    // accumulator every time and n parts cost O(n²). A `[]u8` is mutable and `push` grows
-    // by doubling, so the same n bytes cost O(n) across every reallocation together — the
-    // asymptotic difference, not a constant. It needs no size known up front, which is
-    // what the earlier note here assumed a linear version would require; what it needed
-    // was amortized growth and a way to read a string's bytes, and `encode_utf8` is that.
-    //
-    // The result is valid UTF-8 because every part is, and `decode_utf8` counts runes as
-    // the non-continuation bytes — so the length is right without a validating pass.
-    var bytes: []u8 = []
-    // **The separators are the one part of the result whose size is known before anything
-    // is evaluated** — there are exactly `len - 1` of them — so reserving that much is a
-    // floor rather than a guess: the result cannot come out smaller. It costs a multiply
-    // when the separator is empty (`reserve(0)` is a no-op) and saves most of the growth
-    // when it is not.
-    //
-    // The *exact* size is not available here and would not be worth it if it were. Getting
-    // it means `self[i].show().byte_len()` before the loop, which calls `show` twice per
-    // element and makes the call count a detail of this function — the objection that
-    // refused a counting pre-pass for `filter`. Measured, the exact version is **not
-    // faster than this one**: summing costs what the precision buys.
-    bytes.reserve(sep.byte_len() * (self.len() - 1))
-    bytes.push_utf8(self[0].show())
-    for i in 1..<self.len() {
-      bytes.push_utf8(sep)
-      bytes.push_utf8(self[i].show())
+impl []t {
+  /// The parts joined with `sep` between them — `split`'s inverse.
+  ///
+  /// Generic over the element rather than taking `[]string`, so a list of anything
+  /// printable joins without being converted first: `[1, 2, 3].join(", ")` is `"1, 2, 3"`.
+  /// A `[]string` pays nothing for that, since `impl Show for string` returns the value
+  /// rather than interpolating it.
+  ///
+  /// An empty array joins to `""`, and a single element to itself — `sep` appears between
+  /// parts, never around them, so `parts.len() - 1` separators are used.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(1) | O(n)    | O(n)  |
+  /// | **Memory** | O(1) | O(n)    | O(n)  |
+  ///
+  /// n is the total length of the output, not the number of parts. Linear because the result
+  /// is accumulated as **bytes** and decoded once at the end: `push` grows by doubling, so
+  /// the n bytes cost O(n) copying across every reallocation together. Building it with `++`
+  /// instead is quadratic — a string is immutable, so each concatenation copies everything
+  /// accumulated so far — which is what this used to do and what a caller writing the loop by
+  /// hand still would. Measured against this prelude, joining `"field${i}"` with `", "`:
+  /// 215 µs → 100 µs over 600 parts, 1.54 ms → 0.34 ms over 2400, and 35.7 ms → 1.13 ms over
+  /// 9600 — a 31× gap that keeps widening, since quadrupling the input costs the old shape
+  /// 23× and this one 3.3×. The best column is the empty and single-element cases, which
+  /// return without accumulating anything.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let row = ["a", "b", "c"].join("")       // "abc"
+  /// let csv = ["x", "y"].join(", ")          // "x, y"
+  /// let out = rows.join("\n")                // a frame, one string
+  /// ```
+  pub let join<t> where t: Show = pure (self, sep: string = "") -> string => {
+    if self.len() == 0 {
+      ""
+    } else if self.len() == 1 {
+      // Not merely the loop's base case: one part is the whole answer already, so returning
+      // it costs nothing where going through the buffer would encode and decode it — two
+      // copies of a string to arrive back at the string. `rows.join("\n")` on a one-row
+      // frame is an ordinary call, not a degenerate one.
+      self[0].show()
+    } else {
+      // **Bytes, not `++`.** A string is immutable, so concatenation has to copy the whole
+      // accumulator every time and n parts cost O(n²). A `[]u8` is mutable and `push` grows
+      // by doubling, so the same n bytes cost O(n) across every reallocation together — the
+      // asymptotic difference, not a constant. It needs no size known up front, which is
+      // what the earlier note here assumed a linear version would require; what it needed
+      // was amortized growth and a way to read a string's bytes, and `encode_utf8` is that.
+      //
+      // The result is valid UTF-8 because every part is, and `decode_utf8` counts runes as
+      // the non-continuation bytes — so the length is right without a validating pass.
+      var bytes: []u8 = []
+      // **The separators are the one part of the result whose size is known before anything
+      // is evaluated** — there are exactly `len - 1` of them — so reserving that much is a
+      // floor rather than a guess: the result cannot come out smaller. It costs a multiply
+      // when the separator is empty (`reserve(0)` is a no-op) and saves most of the growth
+      // when it is not.
+      //
+      // The *exact* size is not available here and would not be worth it if it were. Getting
+      // it means `self[i].show().byte_len()` before the loop, which calls `show` twice per
+      // element and makes the call count a detail of this function — the objection that
+      // refused a counting pre-pass for `filter`. Measured, the exact version is **not
+      // faster than this one**: summing costs what the precision buys.
+      bytes.reserve(sep.byte_len() * (self.len() - 1))
+      bytes.push_utf8(self[0].show())
+      for i in 1..<self.len() {
+        bytes.push_utf8(sep)
+        bytes.push_utf8(self[i].show())
+      }
+      bytes.decode_utf8()
     }
-    bytes.decode_utf8()
   }
 }

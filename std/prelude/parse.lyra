@@ -25,68 +25,70 @@ module std.prelude
 // is bounded separately — by 8 for a negative number and 7 for a positive one,
 // which is exactly the asymmetry described above, applied one digit at a time.
 
-/// Parses a base-10 `i64`, with an optional leading `+` or `-`.
-///
-/// **Strict**: `None` for anything that is not exactly a number — an empty string, a lone
-/// sign, a stray character, surrounding whitespace, or a value outside the i64 range. The
-/// caller asked whether this *is* a number, and `"1abc"` is not one. Call `trim` first if
-/// the input may be padded.
-///
-/// An out-of-range value is `None` rather than a trap, which is what arithmetic would
-/// give: parsing is exactly the boundary where a number too large is the input's problem
-/// and not the program's.
-///
-/// Named for its width rather than being a bare `parse`, because a function's return type
-/// cannot be chosen by the context it is called in.
-///
-/// # Complexity
-///
-/// |            | Best | Average | Worst |
-/// | ---------- | ---- | ------- | ----- |
-/// | **Time**   | O(n) | O(n)    | O(n)  |
-/// | **Memory** | O(1) | O(1)    | O(1)  |
-///
-/// One pass over the runes, and it does not stop early on bad input — a stray character
-/// sets the failure flag and the walk continues, so a malformed string costs the same as
-/// a well-formed one. Nothing is allocated: the accumulator is an `i64`.
-///
-/// # Examples
-///
-/// ```
-/// println("42".parse_i64().unwrap_or(0))        // 42
-/// println("-7".parse_i64().unwrap_or(0))        // -7
-/// println(" 42".parse_i64().unwrap_or(0))       // 0 — leading space is not a number
-/// println("1abc".parse_i64().unwrap_or(0))      // 0 — trailing garbage
-/// ```
-pub let parse_i64 = pure noalloc (self: string) -> Maybe<i64> => {
-  var acc = 0;
-  var digits = 0;
-  var negative = false;
-  var at_start = true;
-  var bad = false;
-  for c in self {
-    let code = i64(c);
-    if at_start && (code == 43 || code == 45) {
-      negative = code == 45;
-    } else if code < 48 || code > 57 {
-      bad = true;
-    } else {
-      let d = code - 48;
-      let last_digit = if negative { 8 } else { 7 };
-      if acc < -922337203685477580 || (acc == -922337203685477580 && d > last_digit) {
+impl string {
+  /// Parses a base-10 `i64`, with an optional leading `+` or `-`.
+  ///
+  /// **Strict**: `None` for anything that is not exactly a number — an empty string, a lone
+  /// sign, a stray character, surrounding whitespace, or a value outside the i64 range. The
+  /// caller asked whether this *is* a number, and `"1abc"` is not one. Call `trim` first if
+  /// the input may be padded.
+  ///
+  /// An out-of-range value is `None` rather than a trap, which is what arithmetic would
+  /// give: parsing is exactly the boundary where a number too large is the input's problem
+  /// and not the program's.
+  ///
+  /// Named for its width rather than being a bare `parse`, because a function's return type
+  /// cannot be chosen by the context it is called in.
+  ///
+  /// # Complexity
+  ///
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(n) | O(n)    | O(n)  |
+  /// | **Memory** | O(1) | O(1)    | O(1)  |
+  ///
+  /// One pass over the runes, and it does not stop early on bad input — a stray character
+  /// sets the failure flag and the walk continues, so a malformed string costs the same as
+  /// a well-formed one. Nothing is allocated: the accumulator is an `i64`.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// println("42".parse_i64().unwrap_or(0))        // 42
+  /// println("-7".parse_i64().unwrap_or(0))        // -7
+  /// println(" 42".parse_i64().unwrap_or(0))       // 0 — leading space is not a number
+  /// println("1abc".parse_i64().unwrap_or(0))      // 0 — trailing garbage
+  /// ```
+  pub let parse_i64 = pure noalloc (self) -> Maybe<i64> => {
+    var acc = 0;
+    var digits = 0;
+    var negative = false;
+    var at_start = true;
+    var bad = false;
+    for c in self {
+      let code = i64(c);
+      if at_start && (code == 43 || code == 45) {
+        negative = code == 45;
+      } else if code < 48 || code > 57 {
         bad = true;
       } else {
-        acc = acc * 10 - d;
-        digits = digits + 1;
+        let d = code - 48;
+        let last_digit = if negative { 8 } else { 7 };
+        if acc < -922337203685477580 || (acc == -922337203685477580 && d > last_digit) {
+          bad = true;
+        } else {
+          acc = acc * 10 - d;
+          digits = digits + 1;
+        }
       }
+      at_start = false;
     }
-    at_start = false;
-  }
-  if bad || digits == 0 {
-    None
-  } else if negative {
-    Some acc
-  } else {
-    Some(-acc)
+    if bad || digits == 0 {
+      None
+    } else if negative {
+      Some acc
+    } else {
+      Some(-acc)
+    }
   }
 }

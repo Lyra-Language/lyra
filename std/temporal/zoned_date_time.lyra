@@ -17,14 +17,16 @@ pub struct ZonedDateTime {
   zone: TimeZone,
 }
 
-/// This instant as `zone` shows it.
-///
-/// ```
-/// let Some(zone) = load_time_zone("America/New_York") else { return }
-/// println("${now_instant().to_zoned_date_time(zone)}")
-/// ```
-pub let to_zoned_date_time = pure (self: Instant, zone: TimeZone) -> ZonedDateTime =>
-  ZonedDateTime { instant: self, zone: zone }
+impl Instant {
+  /// This instant as `zone` shows it.
+  ///
+  /// ```
+  /// let Some(zone) = load_time_zone("America/New_York") else { return }
+  /// println("${now_instant().to_zoned_date_time(zone)}")
+  /// ```
+  pub let to_zoned_date_time = pure (self, zone: TimeZone) -> ZonedDateTime =>
+    ZonedDateTime { instant: self, zone: zone }
+}
 
 /// The clock in `zone` right now — Temporal's `Now.zonedDateTimeISO(tz)`. Reads the clock,
 /// so it is neither `pure` nor `det`.

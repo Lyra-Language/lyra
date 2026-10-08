@@ -18,144 +18,156 @@ module std.prelude
 // value it can perfectly well render. Splitting first bounds the multiplication by
 // `10^places` regardless of how large the number is.
 
-/// `self` rendered with exactly `places` digits after the decimal point.
-///
-/// Rounds half away from zero, and pads with trailing zeros so a column lines up:
-/// `0.5.to_fixed(3)` is `0.500`, not `0.5`. With `places` of 0 there is no decimal point.
-///
-/// **Never scientific notation**, unlike the default float rendering, which switches to it
-/// for very large and very small magnitudes. That switch is what makes the default
-/// unusable for a status line; a fixed rendering of a tiny value is `0.0000` rather than
-/// `1.234e-06`, which is the honest answer at four places.
-///
-/// Only `f64`, which is the type an untyped float literal defaults to. An `f32` converts
-/// first — `f64(x).to_fixed(2)`.
-///
-/// # Complexity
-///
-/// Writing d for the digits in the whole part and p for `places`:
-///
-/// |            | Best     | Average  | Worst    |
-/// | ---------- | -------- | -------- | -------- |
-/// | **Time**   | O(d + p) | O(d + p) | O(d + p) |
-/// | **Memory** | O(d + p) | O(d + p) | O(d + p) |
-///
-/// Fixed by the arguments rather than by the value: the fractional part is built one
-/// digit at a time, `places` of them, and the result is one string of that length. The
-/// concatenations that assemble it allocate intermediates along the way.
-///
-/// # Examples
-///
-/// ```
-/// let zoom = 1.0 / 3.0
-/// println("zoom ${zoom.to_fixed(4)}")   // zoom 0.3333
-/// ```
-///
-/// # Panics
-///
-/// Traps on a negative `places`, which is a caller's mistake rather than a value this can
-/// render — the same reasoning `slice` applies to an inverted range.
-///
-/// Traps on a magnitude at or beyond 2^63, and on a NaN — the whole part is carried as an
-/// integer, and a float that large has no fractional precision left to render anyway.
-///
-/// The check here is for the *message*, not for safety: `floor` traps on the same values
-/// as of 08/14, so removing it would still refuse them, just less specifically. It was
-/// safety until that landed — an unguarded draft rendered `1.0e20` as
-/// `9223372036854775807.9223372036854775807`.
-pub let to_fixed = pure (self: f64, places: i64) -> string => {
-  if places < 0 {
-    panic("to_fixed: places must not be negative")
-  }
-  let negative = self < 0.0
-  let magnitude = self.abs()
-
-  // Guarded here for the message rather than for safety: `floor` traps on these values
-  // too as of 08/14, so this only decides whether the reader is told *to_fixed* could not
-  // render the value or that some conversion was out of range. Written as a negated `<`
-  // so a NaN takes the branch — every comparison with one is false, including this one.
-  if !(magnitude < 9223372036854775808.0) {
-    panic("to_fixed: the value is too large to render, or is not a number")
-  }
-
-  var scale = 1
-  for _ in 0..<places {
-    scale *= 10
-  }
-
-  // floor before scaling, so the multiplication below is bounded by `scale` however
-  // large the value is.
-  let truncated: i64 = magnitude.floor()
-  let scaled: i64 = ((magnitude - f64(truncated)) * f64(scale)).round()
-
-  // A fraction that rounds up to a whole unit carries: 0.999 at two places scales to
-  // 100, which is `1.00` and not `0.100`.
-  let carried = scaled == scale
-  let whole = if carried { truncated + 1 } else { truncated }
-  let fraction = if carried { 0 } else { scaled }
-
-  let sign = if negative { "-" } else { "" }
-  if places == 0 {
-    sign ++ "${whole}"
-  } else {
-    var digits = "${fraction}"
-    for _ in 0..<(places - digits.len()) {
-      digits = "0" ++ digits
+impl f64 {
+  /// `self` rendered with exactly `places` digits after the decimal point.
+  ///
+  /// Rounds half away from zero, and pads with trailing zeros so a column lines up:
+  /// `0.5.to_fixed(3)` is `0.500`, not `0.5`. With `places` of 0 there is no decimal point.
+  ///
+  /// **Never scientific notation**, unlike the default float rendering, which switches to it
+  /// for very large and very small magnitudes. That switch is what makes the default
+  /// unusable for a status line; a fixed rendering of a tiny value is `0.0000` rather than
+  /// `1.234e-06`, which is the honest answer at four places.
+  ///
+  /// Only `f64`, which is the type an untyped float literal defaults to. An `f32` converts
+  /// first — `f64(x).to_fixed(2)`.
+  ///
+  /// # Complexity
+  ///
+  /// Writing d for the digits in the whole part and p for `places`:
+  ///
+  /// |            | Best     | Average  | Worst    |
+  /// | ---------- | -------- | -------- | -------- |
+  /// | **Time**   | O(d + p) | O(d + p) | O(d + p) |
+  /// | **Memory** | O(d + p) | O(d + p) | O(d + p) |
+  ///
+  /// Fixed by the arguments rather than by the value: the fractional part is built one
+  /// digit at a time, `places` of them, and the result is one string of that length. The
+  /// concatenations that assemble it allocate intermediates along the way.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// let zoom = 1.0 / 3.0
+  /// println("zoom ${zoom.to_fixed(4)}")   // zoom 0.3333
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Traps on a negative `places`, which is a caller's mistake rather than a value this can
+  /// render — the same reasoning `slice` applies to an inverted range.
+  ///
+  /// Traps on a magnitude at or beyond 2^63, and on a NaN — the whole part is carried as an
+  /// integer, and a float that large has no fractional precision left to render anyway.
+  ///
+  /// The check here is for the *message*, not for safety: `floor` traps on the same values
+  /// as of 08/14, so removing it would still refuse them, just less specifically. It was
+  /// safety until that landed — an unguarded draft rendered `1.0e20` as
+  /// `9223372036854775807.9223372036854775807`.
+  pub let to_fixed = pure (self, places: i64) -> string => {
+    if places < 0 {
+      panic("to_fixed: places must not be negative")
     }
-    sign ++ "${whole}" ++ "." ++ digits
+    let negative = self < 0.0
+    let magnitude = self.abs()
+
+    // Guarded here for the message rather than for safety: `floor` traps on these values
+    // too as of 08/14, so this only decides whether the reader is told *to_fixed* could not
+    // render the value or that some conversion was out of range. Written as a negated `<`
+    // so a NaN takes the branch — every comparison with one is false, including this one.
+    if !(magnitude < 9223372036854775808.0) {
+      panic("to_fixed: the value is too large to render, or is not a number")
+    }
+
+    var scale = 1
+    for _ in 0..<places {
+      scale *= 10
+    }
+
+    // floor before scaling, so the multiplication below is bounded by `scale` however
+    // large the value is.
+    let truncated: i64 = magnitude.floor()
+    let scaled: i64 = ((magnitude - f64(truncated)) * f64(scale)).round()
+
+    // A fraction that rounds up to a whole unit carries: 0.999 at two places scales to
+    // 100, which is `1.00` and not `0.100`.
+    let carried = scaled == scale
+    let whole = if carried { truncated + 1 } else { truncated }
+    let fraction = if carried { 0 } else { scaled }
+
+    let sign = if negative { "-" } else { "" }
+    if places == 0 {
+      sign ++ "${whole}"
+    } else {
+      var digits = "${fraction}"
+      for _ in 0..<(places - digits.len()) {
+        digits = "0" ++ digits
+      }
+      sign ++ "${whole}" ++ "." ++ digits
+    }
   }
 }
 
-/// The bytes as lowercase hexadecimal, two characters each and nothing between them.
-///
-/// What a checksum is written as, and what a byte dump is read as. Lowercase because that
-/// is what `sha256sum`, `git` and every checksum file in the wild write, and a comparison
-/// against one of those is the point of having the digest at all.
-///
-/// The digit table is a module-level `const`, built once rather than per call. It was a
-/// local for a day: a `const` here indexed from this function crashed the backend on any
-/// program importing `bindings/raylib`, which has a private `HEX_DIGITS` of its own —
-/// consts were keyed by bare name, so one module's replaced the other's (COMPLETED.md).
-pub let to_hex = pure (self: []u8) -> string => {
-  var out: []rune = []
-  for b in self {
-    out.push(HEX_DIGITS[i64(b) / 16])
-    out.push(HEX_DIGITS[i64(b) % 16])
+impl []u8 {
+  /// The bytes as lowercase hexadecimal, two characters each and nothing between them.
+  ///
+  /// What a checksum is written as, and what a byte dump is read as. Lowercase because that
+  /// is what `sha256sum`, `git` and every checksum file in the wild write, and a comparison
+  /// against one of those is the point of having the digest at all.
+  ///
+  /// The digit table is a module-level `const`, built once rather than per call. It was a
+  /// local for a day: a `const` here indexed from this function crashed the backend on any
+  /// program importing `bindings/raylib`, which has a private `HEX_DIGITS` of its own —
+  /// consts were keyed by bare name, so one module's replaced the other's (COMPLETED.md).
+  pub let to_hex = pure (self) -> string => {
+    var out: []rune = []
+    for b in self {
+      out.push(HEX_DIGITS[i64(b) / 16])
+      out.push(HEX_DIGITS[i64(b) % 16])
+    }
+    out.join("")
   }
-  out.join("")
 }
 
-/// The number in lowercase hexadecimal, at least `width` digits (zero-padded), no prefix:
-/// `255.to_hex()` is `"ff"`, `u32(0x2700).to_hex(8)` is `"00002700"`.
-///
-/// For the unsigned widths only, beside the byte-array `to_hex` under the same name
-/// (receiver-keyed overloading). A signed value would have to choose between `-1` and its
-/// two's complement, and the conversion to an unsigned type already says which. Added 09/28
-/// for Sheliak, whose test runner prints registers and addresses and wrote its own.
-pub let to_hex = pure (self: u64, width: i64 = 0) -> string => {
-  var digits: []rune = []
-  var rest = self
-  for rest != 0 || digits.len() < width || digits.len() == 0 {
-    digits.push(HEX_DIGITS[i64(rest % 16)])
-    rest = rest / 16
+impl u64 {
+  /// The number in lowercase hexadecimal, at least `width` digits (zero-padded), no prefix:
+  /// `255.to_hex()` is `"ff"`, `u32(0x2700).to_hex(8)` is `"00002700"`.
+  ///
+  /// For the unsigned widths only, beside the byte-array `to_hex` under the same name
+  /// (receiver-keyed overloading). A signed value would have to choose between `-1` and its
+  /// two's complement, and the conversion to an unsigned type already says which. Added 09/28
+  /// for Sheliak, whose test runner prints registers and addresses and wrote its own.
+  pub let to_hex = pure (self, width: i64 = 0) -> string => {
+    var digits: []rune = []
+    var rest = self
+    for rest != 0 || digits.len() < width || digits.len() == 0 {
+      digits.push(HEX_DIGITS[i64(rest % 16)])
+      rest = rest / 16
+    }
+    var out: []rune = []
+    var i = digits.len() - 1
+    for i >= 0 {
+      out.push(digits[i])
+      i -= 1
+    }
+    out.join("")
   }
-  var out: []rune = []
-  var i = digits.len() - 1
-  for i >= 0 {
-    out.push(digits[i])
-    i -= 1
-  }
-  out.join("")
 }
 
-/// A `u32` in hexadecimal, as the `u64` form writes it.
-pub let to_hex = pure (self: u32, width: i64 = 0) -> string => u64(self).to_hex(width)
+impl u32 {
+  /// A `u32` in hexadecimal, as the `u64` form writes it.
+  pub let to_hex = pure (self, width: i64 = 0) -> string => u64(self).to_hex(width)
+}
 
-/// A `u16` in hexadecimal, as the `u64` form writes it.
-pub let to_hex = pure (self: u16, width: i64 = 0) -> string => u64(self).to_hex(width)
+impl u16 {
+  /// A `u16` in hexadecimal, as the `u64` form writes it.
+  pub let to_hex = pure (self, width: i64 = 0) -> string => u64(self).to_hex(width)
+}
 
-/// A `u8` in hexadecimal, as the `u64` form writes it.
-pub let to_hex = pure (self: u8, width: i64 = 0) -> string => u64(self).to_hex(width)
+impl u8 {
+  /// A `u8` in hexadecimal, as the `u64` form writes it.
+  pub let to_hex = pure (self, width: i64 = 0) -> string => u64(self).to_hex(width)
+}
 
 /// Hex digits, low to high. A fixed array: a table of constants needs no heap, and a
 /// dynamic one was built by every program's start-up, whether or not it formatted a

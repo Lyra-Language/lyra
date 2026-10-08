@@ -65,22 +65,24 @@ pub let parse_plain_date = pure (text: string) -> Maybe<PlainDate> => {
   plain_date(yyyy, mm, dd)
 }
 
-/// The year, proleptic Gregorian: 1 BC is year 0 and 2 BC is year -1, as ISO 8601 counts.
-pub let year = pure (self: PlainDate) -> i64 => {
-  let (y, _, _) = civil_from_days(i64(self))
-  y
-}
+impl PlainDate {
+  /// The year, proleptic Gregorian: 1 BC is year 0 and 2 BC is year -1, as ISO 8601 counts.
+  pub let year = pure (self) -> i64 => {
+    let (y, _, _) = civil_from_days(i64(self))
+    y
+  }
 
-/// The month, 1 (January) to 12 (December).
-pub let month = pure (self: PlainDate) -> i64 => {
-  let (_, m, _) = civil_from_days(i64(self))
-  m
-}
+  /// The month, 1 (January) to 12 (December).
+  pub let month = pure (self) -> i64 => {
+    let (_, m, _) = civil_from_days(i64(self))
+    m
+  }
 
-/// The day of the month, from 1.
-pub let day = pure (self: PlainDate) -> i64 => {
-  let (_, _, d) = civil_from_days(i64(self))
-  d
+  /// The day of the month, from 1.
+  pub let day = pure (self) -> i64 => {
+    let (_, _, d) = civil_from_days(i64(self))
+    d
+  }
 }
 
 impl PlainDate {

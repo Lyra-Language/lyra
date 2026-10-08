@@ -11,16 +11,18 @@ module std.prelude
 // both `map`s exist in one module (receiver-keyed overloading); `xs.seq()` is the
 // spelling that crosses from one to the other.
 
-/// The array as a lazy sequence — the entry to the lazy combinators.
-///
-/// `xs.map(f)` is eager and answers an array; `xs.seq().map(f)` answers a `Seq` and
-/// runs `f` at the consumer, one element at a time, allocating nothing.
-///
-/// ```
-/// for y in xs.seq().filter(is_even).map(square) { println(y) }
-/// ```
-pub let seq<t> = pure gen (self: []t) -> Seq<t> => {
-  for x in self { yield x }
+impl []t {
+  /// The array as a lazy sequence — the entry to the lazy combinators.
+  ///
+  /// `xs.map(f)` is eager and answers an array; `xs.seq().map(f)` answers a `Seq` and
+  /// runs `f` at the consumer, one element at a time, allocating nothing.
+  ///
+  /// ```
+  /// for y in xs.seq().filter(is_even).map(square) { println(y) }
+  /// ```
+  pub let seq<t> = pure gen (self) -> Seq<t> => {
+    for x in self { yield x }
+  }
 }
 
 impl Seq<t> {
@@ -76,28 +78,32 @@ impl Seq<t> {
   }
 }
 
-/// The sum of an integer sequence. Consumes it.
-pub let sum = pure noalloc (self: Seq<i64>) -> i64 => {
-  var total = 0
-  for x in self { total += x }
-  total
+impl Seq<i64> {
+  /// The sum of an integer sequence. Consumes it.
+  pub let sum = pure noalloc (self) -> i64 => {
+    var total = 0
+    for x in self { total += x }
+    total
+  }
 }
 
-/// Pairs of the two sequences' elements, in lockstep, ending with the shorter.
-///
-/// The one combinator that needs a sequence as a *value*: `other` is stepped with
-/// `next()` while `self` is walked, so the two advance together. A sequence held as a
-/// value is a cursor, and copies share it.
-///
-/// ```
-/// for (i, name) in naturals().zip(names.seq()) { println("${i}: ${name}") }
-/// ```
-pub let zip<a, b> = pure gen (self: Seq<a>, other: Seq<b>) -> Seq<(a, b)> => {
-  var rest = other
-  for x in self {
-    match rest.next() {
-      Some(y) => { yield (x, y) },
-      None => { break },
+impl Seq<a> {
+  /// Pairs of the two sequences' elements, in lockstep, ending with the shorter.
+  ///
+  /// The one combinator that needs a sequence as a *value*: `other` is stepped with
+  /// `next()` while `self` is walked, so the two advance together. A sequence held as a
+  /// value is a cursor, and copies share it.
+  ///
+  /// ```
+  /// for (i, name) in naturals().zip(names.seq()) { println("${i}: ${name}") }
+  /// ```
+  pub let zip<a, b> = pure gen (self, other: Seq<b>) -> Seq<(a, b)> => {
+    var rest = other
+    for x in self {
+      match rest.next() {
+        Some(y) => { yield (x, y) },
+        None => { break },
+      }
     }
   }
 }

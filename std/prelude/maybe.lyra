@@ -143,8 +143,12 @@ impl Maybe<t> {
 // ranked below the `Maybe` one (LANGUAGE.md § receiver-keyed overloading). Not for
 // calling by name.
 
-/// Safe navigation's result when the value read is already a Maybe: itself, so `a?.b`
-/// on an optional `b` is one Maybe, not two.
-pub let __optional_chain<t> = pure noalloc (self: Maybe<t>) -> Maybe<t> => self
-/// Safe navigation's result when the value read is a plain value: `Some` of it.
-pub let __optional_chain<t> = pure noalloc (self: t) -> Maybe<t> => Some(self)
+impl Maybe<t> {
+  /// Safe navigation's result when the value read is already a Maybe: itself, so `a?.b`
+  /// on an optional `b` is one Maybe, not two.
+  pub let __optional_chain<t> = pure noalloc (self) -> Maybe<t> => self
+}
+impl t {
+  /// Safe navigation's result when the value read is a plain value: `Some` of it.
+  pub let __optional_chain<t> = pure noalloc (self) -> Maybe<t> => Some(self)
+}

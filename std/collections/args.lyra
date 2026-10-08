@@ -92,8 +92,10 @@ impl ProgramArgs {
     self.options.get(flag)
 }
 
-// Whether `s` is an element of `xs`. Linear, and the lists here are a handful long.
-let holds = pure noalloc (self: []string, s: string) -> bool => {
-  for x in self { if x == s { return true } }
-  false
+impl []string {
+  // Whether `s` is an element of `xs`. Linear, and the lists here are a handful long.
+  let holds = pure noalloc (self, s: string) -> bool => {
+    for x in self { if x == s { return true } }
+    false
+  }
 }

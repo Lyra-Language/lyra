@@ -114,12 +114,14 @@ let read_header = pure (body: []u8) -> Result<Header, string> => {
   Ok(h)
 }
 
-/// The samples a pixel has.
-let channels = pure (self: Header) -> i64 => match self.color {
-  0 | 3 => 1,
-  4 => 2,
-  2 => 3,
-  _ => 4,
+impl Header {
+  /// The samples a pixel has.
+  let channels = pure (self) -> i64 => match self.color {
+    0 | 3 => 1,
+    4 => 2,
+    2 => 3,
+    _ => 4,
+  }
 }
 
 /// The image data out of its zlib wrapping: a deflate stream behind a two-byte header,
@@ -181,91 +183,93 @@ let paeth = pure (a: i64, b: i64, c: i64) -> i64 => {
   if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c }
 }
 
-/// Sample `i` of row `y`, as the depth packs it — under 8 bits most significant first,
-/// 16 bits big-endian — at its full precision.
-let sample = pure (self: Header, rows: []u8, y: i64, i: i64) -> i64 => {
-  let stride = (self.width * self.channels() * self.depth + 7) / 8
-  let at = y * stride
-  match self.depth {
-    16 => i64(rows[at + i * 2]) * 256 + i64(rows[at + i * 2 + 1]),
-    8 => i64(rows[at + i]),
-    _ => {
-      let bit = i * self.depth
-      let byte = i64(rows[at + bit / 8])
-      (byte >> (8 - self.depth - bit % 8)) & ((1 << self.depth) - 1)
-    },
-  }
-}
-
-/// A sample at full precision as a byte: a 16-bit one's high byte, a narrow one scaled up.
-let to_byte = pure (self: Header, v: i64) -> u8 => match self.depth {
-  16 => u8(v >> 8),
-  8 => u8(v),
-  _ => u8(v * 255 / ((1 << self.depth) - 1)),
-}
-
-/// The image, every pixel as RGBA; an indexed one keeps its palette and indices too.
-let to_image = pure (self: Header, rows: []u8, plte: []u8, trns: []u8) -> Png => {
-  let n = self.channels()
-  var rgba: []u8 = [0; self.width * self.height * 4]
-  var palette: []u8 = []
-  var indices: []u8 = []
-  if self.color == 3 {
-    let entries = plte.len() / 3
-    for e in 0..<entries {
-      palette.push(plte[e * 3])
-      palette.push(plte[e * 3 + 1])
-      palette.push(plte[e * 3 + 2])
-      palette.push(if e < trns.len() { trns[e] } else { 255 })
+impl Header {
+  /// Sample `i` of row `y`, as the depth packs it — under 8 bits most significant first,
+  /// 16 bits big-endian — at its full precision.
+  let sample = pure (self, rows: []u8, y: i64, i: i64) -> i64 => {
+    let stride = (self.width * self.channels() * self.depth + 7) / 8
+    let at = y * stride
+    match self.depth {
+      16 => i64(rows[at + i * 2]) * 256 + i64(rows[at + i * 2 + 1]),
+      8 => i64(rows[at + i]),
+      _ => {
+        let bit = i * self.depth
+        let byte = i64(rows[at + bit / 8])
+        (byte >> (8 - self.depth - bit % 8)) & ((1 << self.depth) - 1)
+      },
     }
-    indices = [0; self.width * self.height]
   }
-  // The one colour `tRNS` makes transparent in a grey or RGB image, at full precision.
-  let key = if trns.len() >= 6 && self.color == 2 {
-    Some((
-      i64(trns[0]) * 256 + i64(trns[1]),
-      i64(trns[2]) * 256 + i64(trns[3]),
-      i64(trns[4]) * 256 + i64(trns[5])
-    ))
-  } else if trns.len() >= 2 && self.color == 0 {
-    let g = i64(trns[0]) * 256 + i64(trns[1])
-    Some((g, g, g))
-  } else {
-    None
+
+  /// A sample at full precision as a byte: a 16-bit one's high byte, a narrow one scaled up.
+  let to_byte = pure (self, v: i64) -> u8 => match self.depth {
+    16 => u8(v >> 8),
+    8 => u8(v),
+    _ => u8(v * 255 / ((1 << self.depth) - 1)),
   }
-  for y in 0..<self.height {
-    for x in 0..<self.width {
-      let o = (y * self.width + x) * 4
-      let s0 = self.sample(rows, y, x * n)
-      if self.color == 3 {
-        indices[y * self.width + x] = u8(s0)
-        if s0 * 4 + 3 < palette.len() {
-          for k in 0..<4 { rgba[o + k] = palette[s0 * 4 + k] }
+
+  /// The image, every pixel as RGBA; an indexed one keeps its palette and indices too.
+  let to_image = pure (self, rows: []u8, plte: []u8, trns: []u8) -> Png => {
+    let n = self.channels()
+    var rgba: []u8 = [0; self.width * self.height * 4]
+    var palette: []u8 = []
+    var indices: []u8 = []
+    if self.color == 3 {
+      let entries = plte.len() / 3
+      for e in 0..<entries {
+        palette.push(plte[e * 3])
+        palette.push(plte[e * 3 + 1])
+        palette.push(plte[e * 3 + 2])
+        palette.push(if e < trns.len() { trns[e] } else { 255 })
+      }
+      indices = [0; self.width * self.height]
+    }
+    // The one colour `tRNS` makes transparent in a grey or RGB image, at full precision.
+    let key = if trns.len() >= 6 && self.color == 2 {
+      Some((
+        i64(trns[0]) * 256 + i64(trns[1]),
+        i64(trns[2]) * 256 + i64(trns[3]),
+        i64(trns[4]) * 256 + i64(trns[5])
+      ))
+    } else if trns.len() >= 2 && self.color == 0 {
+      let g = i64(trns[0]) * 256 + i64(trns[1])
+      Some((g, g, g))
+    } else {
+      None
+    }
+    for y in 0..<self.height {
+      for x in 0..<self.width {
+        let o = (y * self.width + x) * 4
+        let s0 = self.sample(rows, y, x * n)
+        if self.color == 3 {
+          indices[y * self.width + x] = u8(s0)
+          if s0 * 4 + 3 < palette.len() {
+            for k in 0..<4 { rgba[o + k] = palette[s0 * 4 + k] }
+          }
+          continue
         }
-        continue
+        let (r, g, b) = if n >= 3 {
+          (s0, self.sample(rows, y, x * n + 1), self.sample(rows, y, x * n + 2))
+        } else {
+          (s0, s0, s0)
+        }
+        let alpha = match self.color {
+          4 => self.to_byte(self.sample(rows, y, x * n + 1)),
+          6 => self.to_byte(self.sample(rows, y, x * n + 3)),
+          _ => if key == Some((r, g, b)) { u8(0) } else { u8(255) },
+        }
+        rgba[o] = self.to_byte(r)
+        rgba[o + 1] = self.to_byte(g)
+        rgba[o + 2] = self.to_byte(b)
+        rgba[o + 3] = alpha
       }
-      let (r, g, b) = if n >= 3 {
-        (s0, self.sample(rows, y, x * n + 1), self.sample(rows, y, x * n + 2))
-      } else {
-        (s0, s0, s0)
-      }
-      let alpha = match self.color {
-        4 => self.to_byte(self.sample(rows, y, x * n + 1)),
-        6 => self.to_byte(self.sample(rows, y, x * n + 3)),
-        _ => if key == Some((r, g, b)) { u8(0) } else { u8(255) },
-      }
-      rgba[o] = self.to_byte(r)
-      rgba[o + 1] = self.to_byte(g)
-      rgba[o + 2] = self.to_byte(b)
-      rgba[o + 3] = alpha
     }
-  }
-  Png {
-    width: self.width,
-    height: self.height,
-    rgba: rgba,
-    palette: palette,
-    indices: indices
+    Png {
+      width: self.width,
+      height: self.height,
+      rgba: rgba,
+      palette: palette,
+      indices: indices
+    }
   }
 }
 

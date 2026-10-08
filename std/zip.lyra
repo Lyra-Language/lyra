@@ -122,8 +122,10 @@ pub let unzip = pure (archive: []u8, entry: ref ZipEntry) -> Result<[]u8, string
   Ok(bytes)
 }
 
-/// Whether an entry is a directory rather than a file.
-pub let is_directory = pure (self: ref ZipEntry) -> bool => self.name.ends_with("/")
+impl ZipEntry {
+  /// Whether an entry is a directory rather than a file.
+  pub let is_directory = pure (self: ref) -> bool => self.name.ends_with("/")
+}
 
 const LOCAL_HEADER: u32 = 0x04034B50
 const DIRECTORY_HEADER: u32 = 0x02014B50

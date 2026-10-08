@@ -47,22 +47,24 @@ pub struct CBuffer {
   len: i64,
 }
 
-/// The byte at `i`.
-///
-/// `pure` here means what the compiler means by it — no tracked effect — and **not** that
-/// two calls must agree. The bytes belong to someone else, who may write them between one
-/// call and the next; that is a property of foreign memory rather than of this function,
-/// and no bound could describe it.
-///
-/// # Panics
-/// Traps if `i` is outside the buffer, which is the same answer `xs[i]` gives and the
-/// reason this type exists. The message is a constant rather than an interpolation, so
-/// `get` allocates nothing and stays callable from `noalloc` code.
-pub let get = pure noalloc (self: CBuffer, i: i64) -> u8 => {
-  if i < 0 || i >= self.len {
-    panic("std.ffi: CBuffer index out of bounds")
+impl CBuffer {
+  /// The byte at `i`.
+  ///
+  /// `pure` here means what the compiler means by it — no tracked effect — and **not** that
+  /// two calls must agree. The bytes belong to someone else, who may write them between one
+  /// call and the next; that is a property of foreign memory rather than of this function,
+  /// and no bound could describe it.
+  ///
+  /// # Panics
+  /// Traps if `i` is outside the buffer, which is the same answer `xs[i]` gives and the
+  /// reason this type exists. The message is a constant rather than an interpolation, so
+  /// `get` allocates nothing and stays callable from `noalloc` code.
+  pub let get = pure noalloc (self, i: i64) -> u8 => {
+    if i < 0 || i >= self.len {
+      panic("std.ffi: CBuffer index out of bounds")
+    }
+    unsafe { self.ptr.offset(i)^ }
   }
-  unsafe { self.ptr.offset(i)^ }
 }
 
 /// The length of a NUL-terminated C string, not counting the NUL — `strlen`, in Lyra.
@@ -95,125 +97,129 @@ pub let cstring_len = unsafe pure noalloc (p: ^u8) -> i64 => {
   n
 }
 
-/// The buffer's bytes as a Lyra string, read as UTF-8.
-///
-/// The same name the byte-array builtin has, because it is the same operation on the same
-/// bytes — only the container differs, and a reader should not have to remember two words
-/// for it. The receiver tells them apart.
-///
-/// **It copies once**, and that copy is not avoidable: a string is a ref-counted box whose
-/// header sits at its start, so it cannot point into memory it does not own — foreign
-/// memory least of all, which may be freed or rewritten the moment the call returns.
-///
-/// It used to copy *twice* — a bounds-checked `get` and a capacity-checked `push` per byte
-/// into a `[]u8`, then that array's own `decode_utf8` into the string. Measured over
-/// 400 KB: 548 µs, against 253 µs for the array builtin doing the same job on memory Lyra
-/// already owned. The pointer spelling of `decode_utf8` is the one memcpy it always needed.
-///
-/// Invalid UTF-8 is not rejected, matching `read_line` and the builtin: the rune count is
-/// the number of non-continuation bytes, so malformed input yields a string whose length
-/// disagrees with what it holds. One unvalidated answer is better than two different ones.
-pub let decode_utf8 = pure (self: CBuffer) -> string =>
-  unsafe { self.ptr.decode_utf8(self.len) }
-
-/// A NUL-terminated copy of `self`, to hand to a C function taking `char*`.
-///
-/// ```
-/// import std.ffi.{ cstring }
-///
-/// var buf = path.cstring()
-/// let fd = unsafe { open(&buf[0], 0) }
-/// ```
-///
-/// **A plain `[]u8` rather than a `CString` type**, which is a decision worth stating
-/// because every language with an FFI makes it differently. Three things settled it here:
-///
-/// The dangerous shape is already refused. `open(&"x".cstring()[0], 0)` — the pointer into
-/// a buffer that stops existing at the end of the statement — is `lyra-E059`, *cannot take
-/// the address of a temporary*. That is the exact bug Rust's `CString::new(…).as_ptr()`
-/// produces silently and that Clippy carries a dedicated lint for, and Lyra's type checker
-/// refuses it outright. A wrapper type would not add to that.
-///
-/// A struct pairing the bytes with a stored pointer is *worse*, not better. A `[]u8`'s
-/// elements live behind a pointer in the box, so growth reallocates them: a pointer stored
-/// at construction goes stale on the next `push` while the struct holding it is perfectly
-/// alive, and the read is silent garbage. Recomputing the pointer at the call site cannot
-/// have that failure.
-///
-/// And the wrapper that would genuinely help is not a wrapper. What every language that
-/// ships a `CString` also ships — and documents as the default — is a *scoped* form,
-/// `withCString`/`with_cstring`, where the pointer cannot outlive the callback. That is
-/// worth adding here later; a name around a `[]u8` is not a step toward it.
-///
-/// The buffer is the caller's to keep alive, and nothing in the language enforces that:
-/// `let escapes = (xs: []u8) -> ^u8 => &xs[0]` compiles. Bind it, use it, and let it fall
-/// out of scope after the call.
-///
-/// # Panics
-/// Traps if `self` contains a NUL byte, because C cannot represent one: the string would
-/// arrive truncated at that byte, which is the silently-wrong answer this language traps
-/// for everywhere else. Rust returns an error here instead; a trap is the same call
-/// `split("")` makes, an argument with no meaningful answer rather than input a program
-/// did not choose.
-pub let cstring = pure (self: string) -> []u8 => {
-  var bytes = self.encode_utf8()
-  for i in 0..<bytes.len() {
-    if bytes[i] == 0 { panic("std.ffi: a C string cannot contain a NUL byte") }
-  }
-  bytes.push(0)
-  bytes
+impl CBuffer {
+  /// The buffer's bytes as a Lyra string, read as UTF-8.
+  ///
+  /// The same name the byte-array builtin has, because it is the same operation on the same
+  /// bytes — only the container differs, and a reader should not have to remember two words
+  /// for it. The receiver tells them apart.
+  ///
+  /// **It copies once**, and that copy is not avoidable: a string is a ref-counted box whose
+  /// header sits at its start, so it cannot point into memory it does not own — foreign
+  /// memory least of all, which may be freed or rewritten the moment the call returns.
+  ///
+  /// It used to copy *twice* — a bounds-checked `get` and a capacity-checked `push` per byte
+  /// into a `[]u8`, then that array's own `decode_utf8` into the string. Measured over
+  /// 400 KB: 548 µs, against 253 µs for the array builtin doing the same job on memory Lyra
+  /// already owned. The pointer spelling of `decode_utf8` is the one memcpy it always needed.
+  ///
+  /// Invalid UTF-8 is not rejected, matching `read_line` and the builtin: the rune count is
+  /// the number of non-continuation bytes, so malformed input yields a string whose length
+  /// disagrees with what it holds. One unvalidated answer is better than two different ones.
+  pub let decode_utf8 = pure (self) -> string =>
+    unsafe { self.ptr.decode_utf8(self.len) }
 }
 
-/// Run `f` with a NUL-terminated copy of `self`, and throw the copy away after.
-///
-/// ```
-/// import std.ffi.{ with_cstring }
-///
-/// let fd = path.with_cstring((p) => unsafe { open(p, 0) })
-/// ```
-///
-/// **The scoped form every language with an FFI ships**, and documents as the default:
-/// Swift's `withCString`, Haskell's, C#'s `fixed`. The reason is always the same — the
-/// buffer's lifetime is the call's, so there is no moment at which the pointer is valid
-/// and the bytes are not. Compare the unscoped spelling, where keeping the buffer alive is
-/// a rule the author has to remember and nothing checks:
-///
-/// ```
-/// var buf = path.cstring()                        // must outlive the call…
-/// let fd = unsafe { open(buf.data(), 0) }
-/// ```
-///
-/// **Not marked `unsafe`, and that is the whole point of it.** `data` is marked because it
-/// hands a pointer *out to keep*; this lends one for the duration of a call and takes it
-/// back, which is the obligation being discharged rather than passed on — the same reason
-/// `CBuffer.get` is not marked either. Marking it would have made the safer shape the more
-/// ceremonious one (an outer block for this call, an inner one for the foreign call, since
-/// `unsafe` does not cross a lambda boundary), and a safer shape that costs more is a
-/// shape nobody reaches for.
-///
-/// The one hole is that a scope is not a lifetime: Lyra cannot say that `f` may not keep
-/// what it was handed, so `s.with_cstring((p) => p)` compiles and yields a pointer into
-/// freed memory. Closing it needs a lifetime system. What holds meanwhile is that such a
-/// pointer cannot be *used* without `unsafe` — `p^`, `p.offset(n)` and a foreign call are
-/// each marked at their own site, which is where this language marks memory-unsafety
-/// everywhere else.
-///
-/// **`pure noalloc`, as of 08/26**, because it no longer copies. Every string carries a NUL
-/// past its own bytes (STRING_LAYOUT.md), so what C is handed is the string Lyra is already
-/// holding: `cstring_ptr` checks for an interior NUL and yields the address. It used to
-/// encode the string into a fresh array, scan it, append a terminator and pass *that* — an
-/// allocation and two passes at every crossing, measured at **125 ns for a 26-byte string**
-/// against 0.7 ns for the call it wrapped.
-///
-/// The effect of a call is this function's base effect plus the callback's, so a `pure`
-/// caller may pass a `pure` callback and is refused an impure one — the polymorphism the
-/// prelude's combinators already rely on. `noalloc` now composes the same way.
-///
-/// # Panics
-/// Traps if `self` contains a NUL byte, for the reason `cstring` does: C cannot represent
-/// one, so the string would arrive truncated at that byte.
-pub let with_cstring = pure noalloc (self: string, f: (^u8) -> t) -> t =>
-  f(unsafe { self.cstring_ptr() })
+impl string {
+  /// A NUL-terminated copy of `self`, to hand to a C function taking `char*`.
+  ///
+  /// ```
+  /// import std.ffi.{ cstring }
+  ///
+  /// var buf = path.cstring()
+  /// let fd = unsafe { open(&buf[0], 0) }
+  /// ```
+  ///
+  /// **A plain `[]u8` rather than a `CString` type**, which is a decision worth stating
+  /// because every language with an FFI makes it differently. Three things settled it here:
+  ///
+  /// The dangerous shape is already refused. `open(&"x".cstring()[0], 0)` — the pointer into
+  /// a buffer that stops existing at the end of the statement — is `lyra-E059`, *cannot take
+  /// the address of a temporary*. That is the exact bug Rust's `CString::new(…).as_ptr()`
+  /// produces silently and that Clippy carries a dedicated lint for, and Lyra's type checker
+  /// refuses it outright. A wrapper type would not add to that.
+  ///
+  /// A struct pairing the bytes with a stored pointer is *worse*, not better. A `[]u8`'s
+  /// elements live behind a pointer in the box, so growth reallocates them: a pointer stored
+  /// at construction goes stale on the next `push` while the struct holding it is perfectly
+  /// alive, and the read is silent garbage. Recomputing the pointer at the call site cannot
+  /// have that failure.
+  ///
+  /// And the wrapper that would genuinely help is not a wrapper. What every language that
+  /// ships a `CString` also ships — and documents as the default — is a *scoped* form,
+  /// `withCString`/`with_cstring`, where the pointer cannot outlive the callback. That is
+  /// worth adding here later; a name around a `[]u8` is not a step toward it.
+  ///
+  /// The buffer is the caller's to keep alive, and nothing in the language enforces that:
+  /// `let escapes = (xs: []u8) -> ^u8 => &xs[0]` compiles. Bind it, use it, and let it fall
+  /// out of scope after the call.
+  ///
+  /// # Panics
+  /// Traps if `self` contains a NUL byte, because C cannot represent one: the string would
+  /// arrive truncated at that byte, which is the silently-wrong answer this language traps
+  /// for everywhere else. Rust returns an error here instead; a trap is the same call
+  /// `split("")` makes, an argument with no meaningful answer rather than input a program
+  /// did not choose.
+  pub let cstring = pure (self) -> []u8 => {
+    var bytes = self.encode_utf8()
+    for i in 0..<bytes.len() {
+      if bytes[i] == 0 { panic("std.ffi: a C string cannot contain a NUL byte") }
+    }
+    bytes.push(0)
+    bytes
+  }
+
+  /// Run `f` with a NUL-terminated copy of `self`, and throw the copy away after.
+  ///
+  /// ```
+  /// import std.ffi.{ with_cstring }
+  ///
+  /// let fd = path.with_cstring((p) => unsafe { open(p, 0) })
+  /// ```
+  ///
+  /// **The scoped form every language with an FFI ships**, and documents as the default:
+  /// Swift's `withCString`, Haskell's, C#'s `fixed`. The reason is always the same — the
+  /// buffer's lifetime is the call's, so there is no moment at which the pointer is valid
+  /// and the bytes are not. Compare the unscoped spelling, where keeping the buffer alive is
+  /// a rule the author has to remember and nothing checks:
+  ///
+  /// ```
+  /// var buf = path.cstring()                        // must outlive the call…
+  /// let fd = unsafe { open(buf.data(), 0) }
+  /// ```
+  ///
+  /// **Not marked `unsafe`, and that is the whole point of it.** `data` is marked because it
+  /// hands a pointer *out to keep*; this lends one for the duration of a call and takes it
+  /// back, which is the obligation being discharged rather than passed on — the same reason
+  /// `CBuffer.get` is not marked either. Marking it would have made the safer shape the more
+  /// ceremonious one (an outer block for this call, an inner one for the foreign call, since
+  /// `unsafe` does not cross a lambda boundary), and a safer shape that costs more is a
+  /// shape nobody reaches for.
+  ///
+  /// The one hole is that a scope is not a lifetime: Lyra cannot say that `f` may not keep
+  /// what it was handed, so `s.with_cstring((p) => p)` compiles and yields a pointer into
+  /// freed memory. Closing it needs a lifetime system. What holds meanwhile is that such a
+  /// pointer cannot be *used* without `unsafe` — `p^`, `p.offset(n)` and a foreign call are
+  /// each marked at their own site, which is where this language marks memory-unsafety
+  /// everywhere else.
+  ///
+  /// **`pure noalloc`, as of 08/26**, because it no longer copies. Every string carries a NUL
+  /// past its own bytes (STRING_LAYOUT.md), so what C is handed is the string Lyra is already
+  /// holding: `cstring_ptr` checks for an interior NUL and yields the address. It used to
+  /// encode the string into a fresh array, scan it, append a terminator and pass *that* — an
+  /// allocation and two passes at every crossing, measured at **125 ns for a 26-byte string**
+  /// against 0.7 ns for the call it wrapped.
+  ///
+  /// The effect of a call is this function's base effect plus the callback's, so a `pure`
+  /// caller may pass a `pure` callback and is refused an impure one — the polymorphism the
+  /// prelude's combinators already rely on. `noalloc` now composes the same way.
+  ///
+  /// # Panics
+  /// Traps if `self` contains a NUL byte, for the reason `cstring` does: C cannot represent
+  /// one, so the string would arrive truncated at that byte.
+  pub let with_cstring = pure noalloc (self, f: (^u8) -> t) -> t =>
+    f(unsafe { self.cstring_ptr() })
+}
 
 /// The same, for a C function taking **two** strings — `strcmp`, `fopen`, `setenv`,
 /// `symlink`.
@@ -239,56 +245,58 @@ pub let with_cstring = pure noalloc (self: string, f: (^u8) -> t) -> t =>
 pub let with_cstrings = pure noalloc (a: string, b: string, f: (^u8, ^u8) -> t) -> t =>
   f(unsafe { a.cstring_ptr() }, unsafe { b.cstring_ptr() })
 
-/// The address of a buffer's first element, to hand to a C function taking a pointer and
-/// a length.
-///
-/// ```
-/// import std.ffi.{ data }
-///
-/// let checksum = (xs: []u8) -> u64 => unsafe { crc32(0, xs.data(), u32(xs.len())) }
-/// ```
-///
-/// **No copy, unlike `cstring`.** A `[]T`'s elements already live behind a contiguous
-/// `T*` inside its box — they are not inline, which is exactly what makes `push` safe —
-/// so the buffer C wants is the one Lyra is already holding. What crosses is the pointer;
-/// the length crosses beside it as `xs.len()`, because a raw pointer carries none.
-///
-/// **`unsafe`, because handing the pointer out is the unverifiable act.** Nothing here can
-/// dereference anything, so the danger is entirely in what the caller does next — which is
-/// the same reason `cstring_len` is marked and `CBuffer.get` is not.
-///
-/// **Dynamic arrays only.** A `[N]T` carries its size in its type, so it cannot be a
-/// generic parameter until const generics exist (todo.md); a fixed buffer still spells
-/// this `&xs[0]` by hand, which is what this function is.
-///
-/// **The pointer is valid until the next mutation.** `push` reallocates the element
-/// buffer, so a pointer taken before one addresses memory the array no longer owns. That
-/// is Rust's `as_ptr` hazard exactly, it is not checkable, and it is why the caller is
-/// already inside an `unsafe` block.
-///
-/// # Panics
-/// Traps on an empty array, which has no first element to point at. The alternative is
-/// handing back the address of nothing, and the alternative to trapping *here* is the
-/// index check's own message — which names a `[0]` the caller did not write.
-pub let data = unsafe pure noalloc (self: []t) -> ^t => {
-  if self.len() == 0 { panic("std.ffi: data() on an empty array") }
-  &self[0]
-}
+impl []t {
+  /// The address of a buffer's first element, to hand to a C function taking a pointer and
+  /// a length.
+  ///
+  /// ```
+  /// import std.ffi.{ data }
+  ///
+  /// let checksum = (xs: []u8) -> u64 => unsafe { crc32(0, xs.data(), u32(xs.len())) }
+  /// ```
+  ///
+  /// **No copy, unlike `cstring`.** A `[]T`'s elements already live behind a contiguous
+  /// `T*` inside its box — they are not inline, which is exactly what makes `push` safe —
+  /// so the buffer C wants is the one Lyra is already holding. What crosses is the pointer;
+  /// the length crosses beside it as `xs.len()`, because a raw pointer carries none.
+  ///
+  /// **`unsafe`, because handing the pointer out is the unverifiable act.** Nothing here can
+  /// dereference anything, so the danger is entirely in what the caller does next — which is
+  /// the same reason `cstring_len` is marked and `CBuffer.get` is not.
+  ///
+  /// **Dynamic arrays only.** A `[N]T` carries its size in its type, so it cannot be a
+  /// generic parameter until const generics exist (todo.md); a fixed buffer still spells
+  /// this `&xs[0]` by hand, which is what this function is.
+  ///
+  /// **The pointer is valid until the next mutation.** `push` reallocates the element
+  /// buffer, so a pointer taken before one addresses memory the array no longer owns. That
+  /// is Rust's `as_ptr` hazard exactly, it is not checkable, and it is why the caller is
+  /// already inside an `unsafe` block.
+  ///
+  /// # Panics
+  /// Traps on an empty array, which has no first element to point at. The alternative is
+  /// handing back the address of nothing, and the alternative to trapping *here* is the
+  /// index check's own message — which names a `[0]` the caller did not write.
+  pub let data = unsafe pure noalloc (self) -> ^t => {
+    if self.len() == 0 { panic("std.ffi: data() on an empty array") }
+    &self[0]
+  }
 
-/// The same address, writable — for a C function that fills the buffer rather than
-/// reading it.
-///
-/// **Two functions rather than one, because `&x` and `&mut x` are two spellings.**
-/// Mutability is written at the point a pointer is taken, and a method call has nowhere to
-/// put the word; the receiver carries it instead, so `data_mut` needs a `mut` receiver for
-/// the same reason `xs.push(v)` and `xs[i] = v` do. Everything `data` documents holds here
-/// too, and the stale-pointer hazard holds harder: this is the direction that writes.
-///
-/// # Panics
-/// Traps on an empty array, exactly as `data` does.
-pub let data_mut = unsafe pure noalloc (self: mut []t) -> ^mut t => {
-  if self.len() == 0 { panic("std.ffi: data_mut() on an empty array") }
-  &mut self[0]
+  /// The same address, writable — for a C function that fills the buffer rather than
+  /// reading it.
+  ///
+  /// **Two functions rather than one, because `&x` and `&mut x` are two spellings.**
+  /// Mutability is written at the point a pointer is taken, and a method call has nowhere to
+  /// put the word; the receiver carries it instead, so `data_mut` needs a `mut` receiver for
+  /// the same reason `xs.push(v)` and `xs[i] = v` do. Everything `data` documents holds here
+  /// too, and the stale-pointer hazard holds harder: this is the direction that writes.
+  ///
+  /// # Panics
+  /// Traps on an empty array, exactly as `data` does.
+  pub let data_mut = unsafe pure noalloc (self: mut) -> ^mut t => {
+    if self.len() == 0 { panic("std.ffi: data_mut() on an empty array") }
+    &mut self[0]
+  }
 }
 
 /// C's `long`, and the only integer whose width is not the same on every target Lyra
@@ -324,51 +332,53 @@ pub type CLong = i64
 /// C's `unsigned long` — the same story as [CLong], unsigned.
 pub type CULong = u64
 
-/// Whether `self` is the null pointer.
-///
-/// ```
-/// import std.ffi.{ is_null }
-///
-/// let w = unsafe { SDL_CreateWindow(t, 800, 600, 0) }
-/// if w.is_null() { panic("could not create a window") }
-/// ```
-///
-/// **Not `unsafe`, and that is the point of it.** Everything else in this module that
-/// touches a pointer is marked because it reads through one or hands one out; this
-/// dereferences nothing and answers a question about the address itself. Marking it
-/// would have put an `unsafe` block around the *guard* that exists to make the
-/// following deref safe — the same argument [with_cstring] makes, and the same shape:
-/// the ceremony belongs on the act that can be wrong.
-///
-/// It exists because a C function that answers a pointer answers NULL on failure, and
-/// that convention has no other spelling. `open` could report failure as -1 because a
-/// file descriptor is an integer (see `std.io`); a pointer had no equivalent until
-/// `nullptr`, so a failed `SDL_CreateWindow` or `getenv` was indistinguishable from a
-/// successful one.
-pub let is_null = pure noalloc (self: ^t) -> bool => self == nullptr
+impl ^t {
+  /// Whether `self` is the null pointer.
+  ///
+  /// ```
+  /// import std.ffi.{ is_null }
+  ///
+  /// let w = unsafe { SDL_CreateWindow(t, 800, 600, 0) }
+  /// if w.is_null() { panic("could not create a window") }
+  /// ```
+  ///
+  /// **Not `unsafe`, and that is the point of it.** Everything else in this module that
+  /// touches a pointer is marked because it reads through one or hands one out; this
+  /// dereferences nothing and answers a question about the address itself. Marking it
+  /// would have put an `unsafe` block around the *guard* that exists to make the
+  /// following deref safe — the same argument [with_cstring] makes, and the same shape:
+  /// the ceremony belongs on the act that can be wrong.
+  ///
+  /// It exists because a C function that answers a pointer answers NULL on failure, and
+  /// that convention has no other spelling. `open` could report failure as -1 because a
+  /// file descriptor is an integer (see `std.io`); a pointer had no equivalent until
+  /// `nullptr`, so a failed `SDL_CreateWindow` or `getenv` was indistinguishable from a
+  /// successful one.
+  pub let is_null = pure noalloc (self) -> bool => self == nullptr
 
-/// `self` as a `Maybe`, `None` where it is null — C's convention translated into the
-/// language's own.
-///
-/// ```
-/// import std.ffi.{ to_maybe }
-///
-/// match unsafe { getenv(name) }.to_maybe() {
-///   Some(p) => unsafe { p.decode_utf8(cstring_len(p)) },
-///   None => "",
-/// }
-/// ```
-///
-/// **A `Maybe` cannot cross the boundary, which is why this is a separate step rather
-/// than something an `extern` could declare.** Only the FFI-safe types cross
-/// (lyra-E063), so a C function's return type is written `^T` and the null check
-/// happens on the Lyra side of it. That is the same division `read_line` draws — the
-/// builtin answers what libc gives and the `Maybe` is put on afterwards — and it keeps
-/// the `extern` a transcription of the C prototype rather than an interpretation of it.
-///
-/// **It does not make the pointer valid.** `Some(p)` says only that `p` is not null; a
-/// pointer into freed memory is non-null and this answers `Some` for it. What the
-/// `Maybe` buys is that the *documented* failure is now a case the language forces a
-/// reader to handle, which is what a bare `^T` did not.
-pub let to_maybe = pure noalloc (self: ^t) -> Maybe<^t> =>
-  if self.is_null() { None } else { Some(self) }
+  /// `self` as a `Maybe`, `None` where it is null — C's convention translated into the
+  /// language's own.
+  ///
+  /// ```
+  /// import std.ffi.{ to_maybe }
+  ///
+  /// match unsafe { getenv(name) }.to_maybe() {
+  ///   Some(p) => unsafe { p.decode_utf8(cstring_len(p)) },
+  ///   None => "",
+  /// }
+  /// ```
+  ///
+  /// **A `Maybe` cannot cross the boundary, which is why this is a separate step rather
+  /// than something an `extern` could declare.** Only the FFI-safe types cross
+  /// (lyra-E063), so a C function's return type is written `^T` and the null check
+  /// happens on the Lyra side of it. That is the same division `read_line` draws — the
+  /// builtin answers what libc gives and the `Maybe` is put on afterwards — and it keeps
+  /// the `extern` a transcription of the C prototype rather than an interpretation of it.
+  ///
+  /// **It does not make the pointer valid.** `Some(p)` says only that `p` is not null; a
+  /// pointer into freed memory is non-null and this answers `Some` for it. What the
+  /// `Maybe` buys is that the *documented* failure is now a case the language forces a
+  /// reader to handle, which is what a bare `^T` did not.
+  pub let to_maybe = pure noalloc (self) -> Maybe<^t> =>
+    if self.is_null() { None } else { Some(self) }
+}
