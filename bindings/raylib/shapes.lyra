@@ -9,7 +9,7 @@ module bindings.raylib
 //! [draw_pixel] beside [draw_pixel_v], because a single pixel is as often addressed by
 //! two integers as by a point.
 //!
-//! Angles are [Degrees], a newtype over f32 — raylib measures in degrees and an `f32`
+//! Angles are [Degrees], a `type` over f32 — raylib measures in degrees and an `f32`
 //! does not say so. See `angle.lyra`. `segments` is how many straight edges approximate a curve; 0 lets raylib choose.
 
 /// `Vector2` — two floats, raylib's most-passed type.

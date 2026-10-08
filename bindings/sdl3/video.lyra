@@ -5,7 +5,7 @@ import std.ffi
 
 /// An `SDL_Window *`.
 ///
-/// **A newtype over a raw pointer**, which is the shape a C handle wants and costs
+/// **A `type` over a raw pointer**, which is the shape a C handle wants and costs
 /// nothing: it is a `^u8` at run time, and `isFFISafe` looks through it, so an extern may
 /// take one directly. What it buys is that a `Window` and a [Renderer] are different
 /// types, where two bare `^u8`s are interchangeable and getting them the wrong way round

@@ -8,7 +8,7 @@ module bindings.sdl3
 /// An `SDL_Texture *` together with its size, so a program can lay out a sprite sheet
 /// without asking SDL.
 ///
-/// **A struct rather than a newtype** because `@must_release` needs one (todo.md), and a
+/// **A struct rather than a `type`** because `@must_release` needs one (todo.md), and a
 /// texture is exactly the resource it is for: GPU memory SDL frees only on request.
 /// `handle` is SDL's and nothing outside these bindings reads it.
 @must_release(destroy_texture)

@@ -13,7 +13,7 @@
 // |---|---|---|
 // | `int`, `float`, `ImU32`, an enum or flags type | `i32`, `f32`, `u32`, `i32` | itself |
 // | `ImVec2` / `ImVec4` | `Vec2` / `Vec4` | by value |
-// | `ImDrawList *` and every other ImGui struct pointer | a handle newtype, `DrawList` | itself |
+// | `ImDrawList *` and every other ImGui struct pointer | a handle `type`, `DrawList` | itself |
 // | `const char *` | `string` (`Maybe<string>` when C's default is `NULL`) | `with_cstring` |
 // | `bool *`, `float *` … | `mut bool`, `mut f32` — the caller's own variable | `&mut` |
 // | `float[3]` | `mut [3]f32` | `&mut` |
@@ -97,7 +97,7 @@ data Kind =
   Scalar(string)
   /// `ImVec2` or `ImVec4`, by value, as `Vec2` or `Vec4`.
   | Vector(string)
-  /// A pointer to an ImGui struct, as the handle newtype named here.
+  /// A pointer to an ImGui struct, as the handle `type` named here.
   | Handle(string)
   /// `const char *`.
   | Text

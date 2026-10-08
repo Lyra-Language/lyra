@@ -7,7 +7,7 @@ module bindings.raylib
 //! author meant — a wrong picture rather than an error, and one that reads as "the maths
 //! is off somewhere" rather than as a unit mixup.
 //!
-//! [Degrees] is the type that says so. It costs nothing at run time — a newtype lowers to
+//! [Degrees] is the type that says so. It costs nothing at run time — a `type` lowers to
 //! its operand — and it costs nothing at a *literal* call site either, since an untyped
 //! literal converts implicitly: `draw_poly(centre, 6, 30.0, 45.0, GREEN)` is unchanged. A
 //! **computed** `f32` is the case it catches, and there the conversion has to be written.
@@ -24,7 +24,7 @@ import std.math.{ PI }
 /// take it. The type is here to catch a *unit* mistake, which is nominal identity's job;
 /// range is a different question with a different answer.
 ///
-/// It carries no arithmetic either: operators on a newtype are opt-in (`lyra-E043`), and
+/// It carries no arithmetic either: operators on a `type` are opt-in (`lyra-E043`), and
 /// nothing here needs to add two angles. Read one out with `f32(d)` and compute on that.
 pub type Degrees = f32
 

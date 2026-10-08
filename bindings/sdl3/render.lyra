@@ -2,7 +2,7 @@ module bindings.sdl3
 //! The 2D renderer: colours, primitives, debug text, a logical screen size, and reading
 //! the frame back out.
 
-/// An `SDL_Renderer *`. A newtype for the reason [Window] is one.
+/// An `SDL_Renderer *`. A `type` for the reason [Window] is one.
 pub type Renderer = ^u8
 
 /// An `SDL_Surface *`, which only [save_screenshot] ever holds — so it stays private.
