@@ -630,7 +630,9 @@ of Markdown.
   60 updates a second: screen, pad, planes, sprites, camera, collision, entity — the first std
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
-  `cmd/lyrac/game_test.go`; `examples/game/walker.lyra`), `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
+  `cmd/lyrac/game_test.go`; a `Sprite` also fades, tints, turns, grows and draws as light —
+  what a console cannot — shown off by `examples/game/wisps.lyra`; `examples/game/walker.lyra`),
+  `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read only; tested against Go's
   `image/png` in `cmd/lyrac/png_test.go`), `std/xml.lyra` (read only; tested against Go's
   `encoding/xml` in `cmd/lyrac/xml_test.go`), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives

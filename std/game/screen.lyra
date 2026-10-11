@@ -37,8 +37,9 @@ import bindings.sdl3.{
   init, quit, last_error, INIT_VIDEO, INIT_GAMEPAD, Window, create_window, destroy_window,
   WINDOW_RESIZABLE, Renderer, destroy_renderer, PRESENT_INTEGER_SCALE, SCALE_NEAREST,
   set_default_scale_mode, Color, rgb, Rect, Texture, create_texture, destroy_texture,
-  draw_texture_flipped, FLIP_NONE, FLIP_HORIZONTAL, FLIP_VERTICAL, poll_event, KEY_ESCAPE,
-  ticks_ns,
+  draw_texture_flipped, draw_texture_rotated, set_texture_alpha, set_texture_color,
+  set_texture_blend, BLEND_ALPHA, BLEND_ADD, FLIP_NONE, FLIP_HORIZONTAL, FLIP_VERTICAL,
+  poll_event, KEY_ESCAPE, ticks_ns,
 }
 import std.io.{ write_bytes }
 import std.game.pad
@@ -53,6 +54,7 @@ import std.game.planes.{
   FLIP_Y
 }
 import std.game.sprites
+import std.game.sprites.{ Sprite }
 
 /// One update, in nanoseconds: 60 a second.
 pub const STEP_NS: i64 = 16666667
@@ -325,25 +327,66 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
   }
 }
 
-/// The sprites in front, or those behind — the earliest added on top.
+/// The sprites in front, or those behind — the earliest added on top. One drawn as it is
+/// keeps to whole pixels; one faded, tinted, turned, grown or added as light sets the
+/// sprite art's state for its draw ([draw_changed]).
 let draw_sprites = (r: Renderer, front: bool) -> void => {
   let Some(art) = sprite_art else { return }
   let list = sprites.added()
   var i = list.len() - 1
   while i >= 0 {
     let s = list[i]
-    if s.front == front {
+    if s.front == front && s.alpha > 0.0 && s.scale > 0.0 {
       let source = Rect { x: s.sheet_x, y: s.sheet_y, w: s.width, h: s.height }
-      let place = Rect {
-        x: f32(s.x.floor()),
-        y: f32(s.y.floor()),
-        w: s.width,
-        h: s.height
+      if s.as_drawn() {
+        let place = Rect {
+          x: f32(s.x.floor()),
+          y: f32(s.y.floor()),
+          w: s.width,
+          h: s.height
+        }
+        draw_texture_flipped(r, art, source, place, flips(s.flip_x, s.flip_y))
+      } else {
+        draw_changed(r, art, s, source)
       }
-      draw_texture_flipped(r, art, source, place, flips(s.flip_x, s.flip_y))
     }
     i -= 1
   }
+}
+
+/// A sprite faded, tinted, turned, grown or added as light: the sprite art's alpha, colour
+/// and blending set for it — they are the texture's, not the draw's — and put back after.
+/// Grown about its middle, at the fraction of a pixel it is at.
+let draw_changed = (r: Renderer, art: Texture, s: Sprite, source: Rect) -> void => {
+  let w = s.width * s.scale
+  let h = s.height * s.scale
+  let place = Rect {
+    x: s.x + (s.width - w) / 2.0,
+    y: s.y + (s.height - h) / 2.0,
+    w: w,
+    h: h
+  }
+  set_texture_alpha(art, u8((s.alpha.min(1.0) * 255.0).round()))
+  set_texture_color(
+    art,
+    rgb(u8((s.tint >> 16) & 0xFF), u8((s.tint >> 8) & 0xFF), u8(s.tint & 0xFF))
+  )
+  set_texture_blend(art, if s.additive { BLEND_ADD } else { BLEND_ALPHA })
+  draw_texture_rotated(r, art, source, place, f64(s.angle), flips(s.flip_x, s.flip_y))
+  set_texture_alpha(art, 255)
+  set_texture_color(art, rgb(255, 255, 255))
+  set_texture_blend(art, BLEND_ALPHA)
+}
+
+impl Sprite {
+  /// Whether the sprite is drawn as its art is: opaque as drawn, untinted, unturned, its own
+  /// size, painted.
+  let as_drawn = pure (self) -> bool =>
+    self.alpha >= 1.0 &&
+    self.tint == 0xFFFFFF &&
+    !self.additive &&
+    self.angle >= 0.0 && self.angle <= 0.0 &&
+    self.scale >= 1.0 && self.scale <= 1.0
 }
 
 let flips = pure (x: bool, y: bool) -> i32 =>

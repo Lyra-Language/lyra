@@ -16,6 +16,11 @@ module std.game.sprites
 //! (`draw_hero`, `play`), knowing where each frame is. **Earlier sprites are in front**, as
 //! on the Genesis; a sprite in [Sprite]'s `front` is in front of the planes' front cells too.
 //! There is no limit to how many.
+//!
+//! **What a console's sprites cannot do**, a modern one can, each a field with a default that
+//! draws it as it is: see through it (`alpha`), colour it (`tint`), turn it (`angle`), grow it
+//! (`scale`, about its middle), and make it light rather than paint (`additive`: its colours
+//! add to what is beneath — a glow, a spark, fire).
 
 /// One sprite: where on the screen, how big, and which part of the sprite art it shows, in
 /// pixels.
@@ -30,6 +35,17 @@ pub struct Sprite {
   flip_y: bool = false,
   /// In front of the planes' front cells too.
   front: bool = false,
+  /// How opaque, 0 to 1: 1 as drawn, 0.5 half see-through, 0 not shown. Its art's own alpha
+  /// is multiplied by it.
+  alpha: f32 = 1.0,
+  /// Its colours multiplied by `0xRRGGBB`: white leaves them; red keeps only their red.
+  tint: u32 = 0xFFFFFF,
+  /// Turned clockwise about its middle, in degrees.
+  angle: f32 = 0.0,
+  /// Drawn this many times its size, about its middle.
+  scale: f32 = 1.0,
+  /// Light rather than paint: its colours, times its alpha, added to what is beneath.
+  additive: bool = false,
 }
 
 /// Start a new list: nothing is shown until [add]ed.

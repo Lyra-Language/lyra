@@ -527,3 +527,97 @@ func playGame(t *testing.T, src string, args ...string) ppm {
 	p.rgb = data[len(header):]
 	return p
 }
+
+// What a modern sprite can do that a console's cannot, each over a blue backdrop: half
+// see-through (white at alpha 0.5 is a mid lilac), tinted (white times red is red), added as
+// light (red added to blue is magenta, where painting it would be red), shrunk about its middle
+// (half size leaves its corner blue), and turned (half red, half green, turned 180° shows green
+// where red was drawn).
+func TestRun_GameSpritesFadeTintTurnGrowAndGlow(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.screen
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+
+let main = () -> u8 => {
+  if !screen.open("sprites", 20, 4) { return 2 }
+  screen.set_backdrop(0, 0, 255)
+  // 8×4: a white square, then a square red on its left half and green on its right.
+  var art: [32]u32 = #[0xFFFFFFFF; 32]
+  for y in 0..<4 {
+    for x in 4..<8 { art[y * 8 + x] = if x < 6 { 0xFFFF0000 } else { 0xFF00FF00 } }
+  }
+  screen.load_sprites(8, art)
+  while screen.running() {
+    sprites.clear()
+    let white = Sprite { x: 0, y: 0, width: 4, height: 4, sheet_x: 0, sheet_y: 0 }
+    sprites.add(Sprite { white | alpha: 0.5 })
+    sprites.add(Sprite { white | x: 4, tint: 0xFF0000 })
+    sprites.add(Sprite { white | x: 8, tint: 0xFF0000, additive: true })
+    sprites.add(Sprite { white | x: 12, scale: 0.5 })
+    sprites.add(Sprite { white | x: 16, sheet_x: 4, angle: 180 })
+    screen.show()
+  }
+  screen.close()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := playGame(t, src, "--frames", "1")
+	near := func(got, want [3]byte) bool {
+		for i := range got {
+			d := int(got[i]) - int(want[i])
+			if d < -3 || d > 3 {
+				return false
+			}
+		}
+		return true
+	}
+	for _, c := range []struct {
+		x, y int
+		want [3]byte
+		what string
+	}{
+		{1, 1, [3]byte{128, 128, 255}, "white at alpha 0.5 over blue"},
+		{5, 1, [3]byte{255, 0, 0}, "white tinted red"},
+		{9, 1, [3]byte{255, 0, 255}, "red added to blue"},
+		{12, 0, [3]byte{0, 0, 255}, "the corner a half-size sprite leaves"},
+		{13, 1, [3]byte{255, 255, 255}, "the half-size sprite's middle"},
+		{16, 1, [3]byte{0, 255, 0}, "green where red was drawn, turned 180°"},
+		{19, 1, [3]byte{255, 0, 0}, "red where green was drawn, turned 180°"},
+	} {
+		if got := frame.at(c.x, c.y); !near(got, c.want) {
+			t.Errorf("%s: (%d, %d) is %v, want %v", c.what, c.x, c.y, got, c.want)
+		}
+	}
+}
+
+// examples/game/wisps.lyra played headless, 150 frames holding right and down: it runs and
+// shows its screen — the night's dark field, and the wisp gone right and down, its light the
+// brightest thing about it.
+func TestRun_GameWispsPlaysItself(t *testing.T) {
+	frame := playGame(t, filepath.Join(repoRoot(t), "examples", "game", "wisps.lyra"),
+		"--frames", "150", "--hold", "right,down")
+	if frame.w != 384 || frame.h != 216 {
+		t.Fatalf("the frame is %dx%d, want 384x216", frame.w, frame.h)
+	}
+	bright := func(x, y int) int {
+		p := frame.at(x, y)
+		return int(p[0]) + int(p[1]) + int(p[2])
+	}
+	// Held right and down from the middle, the wisp is in the bottom-right corner by now.
+	brightest, bx, by := 0, 0, 0
+	for y := 0; y < frame.h; y++ {
+		for x := 0; x < frame.w; x++ {
+			if b := bright(x, y); b > brightest {
+				brightest, bx, by = b, x, y
+			}
+		}
+	}
+	if bx < 300 || by < 150 || brightest < 600 {
+		t.Errorf("the brightest pixel is (%d, %d), %d — want the wisp's light, bright, bottom right", bx, by, brightest)
+	}
+	if bright(150, 100) > 450 {
+		t.Errorf("the field at (150, 100) is %d bright: the night is not dark", bright(150, 100))
+	}
+}

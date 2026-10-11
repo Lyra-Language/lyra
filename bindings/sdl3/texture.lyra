@@ -52,8 +52,19 @@ const TEXTUREACCESS_STREAMING: i32 = 1
 const PIXELFORMAT_ARGB8888: u32 = 0x16362004
 const TEXTUREACCESS_STATIC: i32 = 0
 
+/// `SDL_BlendMode`, for [set_texture_blend]: how a drawn texel meets what is beneath.
+///
+/// `BLEND_ALPHA`, what [create_texture] sets, covers by the texel's alpha. `BLEND_ADD` adds
+/// its colour (times its alpha) to what is there — light: a glow, a spark, fire — so dark
+/// texels change nothing. `BLEND_NONE` copies the texel, alpha and all; `BLEND_MULTIPLY`
+/// darkens by it, a shadow or a tint over the scene.
+pub const BLEND_NONE: u32 = 0
+pub const BLEND_ALPHA: u32 = 1
+pub const BLEND_ADD: u32 = 2
+pub const BLEND_MULTIPLY: u32 = 8
+
 /// `SDL_BLENDMODE_BLEND`: a texel's alpha says how much of it covers what is beneath.
-const BLENDMODE_BLEND: u32 = 1
+const BLENDMODE_BLEND: u32 = BLEND_ALPHA
 
 @symbol("SDL_CreateTexture")
 unsafe extern sdl_create_texture: (
@@ -234,6 +245,31 @@ pub let draw_texture_flipped = (
     nullptr,
     flip
   ) }
+
+/// [draw_texture], turned `angle` degrees clockwise about the middle of `dst` and mirrored
+/// by a `FLIP_*` constant.
+pub let draw_texture_rotated = (
+  renderer: Renderer,
+  texture: Texture,
+  src: Rect,
+  dst: Rect,
+  angle: f64,
+  flip: i32,
+) -> bool =>
+  unsafe { sdl_render_texture_rotated(
+    renderer,
+    texture.handle,
+    &src,
+    &dst,
+    angle,
+    nullptr,
+    flip
+  ) }
+
+/// How the texture's texels meet what they are drawn over: a `BLEND_*` constant. The
+/// **texture's state**, as its colour and alpha are: set it back after a draw that changed it.
+pub let set_texture_blend = (texture: Texture, mode: u32) -> bool =>
+  unsafe { sdl_set_texture_blend_mode(texture.handle, mode) }
 
 /// Multiply every texel by `color` when drawing (its `a` is ignored — see
 /// [set_texture_alpha]). White leaves the texture as it is, so a sprite drawn in light

@@ -1,0 +1,528 @@
+// Wisps — a small game made of what a console cannot draw, on `std.game`.
+//
+//   lyrac run wisps.lyra                                           # the arrows move the wisp
+//   lyrac run wisps.lyra -- --frames 120 --hold right --ppm wisps.ppm    # plays itself
+//
+// A wisp of light drifts over a meadow at night, gathering the sparks scattered about it,
+// while two shades wander the field; touching one costs a spark. Everything on the screen is
+// something a Genesis could not show:
+//
+//   - **See-through art.** The mist drifting across the field is 432 tiles whose pixels are
+//     partly transparent — one smooth field of it, a tile for every cell of its repeat — in
+//     plane A's front cells, over the wisp, the sparks and the shades, and scrolled by
+//     fractions of a pixel. The wisp's and the sparks' edges fade out rather than stop.
+//   - **A sprite's own alpha.** The shades fade in and out as they wander; the wisp flickers
+//     when one touches it.
+//   - **Light.** The wisp's halo, the sparks' glow and every particle are drawn additively:
+//     their colour adds to what is beneath, so they brighten the mist instead of covering it.
+//   - **Turned, grown and tinted.** The sparks spin and pulse, and one white star is drawn
+//     in six colours.
+//   - **No sprite limit.** The wisp's trail and each spark's burst are hundreds of particles,
+//     each fading on its own.
+//   - **Sub-pixel motion.** The wisp gathers speed and drifts to a stop by fractions of a
+//     pixel an update, and the shades follow smooth curves.
+//
+// All of the art is drawn here, pixel by pixel, into module-level tables the screen loads;
+// a game made in Vega has it from its project.
+
+import std.game.screen
+import std.game.pad
+import std.game.planes
+import std.game.planes.{ FRONT }
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+
+/// The screen: the modern target's 384×216, in 8-pixel cells.
+const WIDTH: i64 = 384
+const HEIGHT: i64 = 216
+const COLUMNS: i64 = 48
+const ROWS: i64 = 27
+
+/// The wisp: its top speed, the speed it gains an update while pushed, and what it loses
+/// while not — in pixels an update.
+const TOP_SPEED: f32 = 2.5
+const ACCELERATION: f32 = 0.25
+const DRAG: f32 = 0.12
+
+/// Sparks about the field at once, shades wandering it, and how close the wisp's middle must
+/// come to a spark's or a shade's to meet it.
+const SPARKS: i64 = 8
+const SHADES: i64 = 2
+const REACH: f32 = 12
+
+/// How long the wisp flickers after a shade touches it, in updates — a shade cannot take
+/// another spark until it stops.
+const HURT_UPDATES: i64 = 90
+
+/// A spark: where it is, its colour, and how far through its spin and pulse it starts.
+struct Spark {
+  x: f32,
+  y: f32,
+  colour: u32,
+  phase: f32,
+}
+
+/// A mote of light: where, how fast, how much of its life is left (1 to 0), how much it loses
+/// an update, its colour and how big it starts.
+struct Mote {
+  x: f32,
+  y: f32,
+  vx: f32,
+  vy: f32,
+  life: f32,
+  fade: f32,
+  colour: u32,
+  size: f32,
+}
+
+/// A shade: the middle of the loop it wanders, how far each way, and how fast.
+struct Shade {
+  cx: f32,
+  cy: f32,
+  rx: f32,
+  ry: f32,
+  speed: f32,
+  phase: f32,
+}
+
+let main = () -> u8 => {
+  if !screen.open("Wisps", WIDTH, HEIGHT) { return 1 }
+  screen.set_backdrop(6, 10, 22)
+  var rng = rng_seeded(7)
+  paint_tiles()
+  paint_sprites()
+  lay_meadow(rng)
+  lay_mist()
+  screen.load_tiles(TILE_COLUMNS, tile_art)
+  screen.load_sprites(SHEET_WIDTH, sprite_art)
+  planes.write_plane(planes.PLANE_B, meadow, COLUMNS)
+  planes.write_plane(planes.PLANE_A, mist, MIST_COLUMNS)
+  planes.window_rows(2)
+
+  var x = f32(WIDTH) / 2 - 8
+  var y = f32(HEIGHT) / 2 - 8
+  var vx: f32 = 0
+  var vy: f32 = 0
+  var sparks: []Spark = []
+  for _ in 0..<SPARKS { sparks.push(new_spark(rng)) }
+  let shades = [
+    Shade { cx: 110, cy: 90, rx: 80, ry: 40, speed: 0.011, phase: 0 },
+    Shade { cx: 270, cy: 140, rx: 70, ry: 50, speed: 0.008, phase: 2 },
+  ]
+  var motes: []Mote = []
+  var score = 0
+  var hurt = 0
+  var t = 0
+  show_score(score)
+  while screen.running() {
+    for _ in 0..<screen.updates_due() {
+      t += 1
+      // The pad steers: each way it is pushed gains speed towards the top speed; let go,
+      // the wisp drifts to a stop.
+      let buttons = pad.read(1)
+      vx = steer(vx, axis(pad.held(buttons, pad.LEFT), pad.held(buttons, pad.RIGHT)))
+      vy = steer(vy, axis(pad.held(buttons, pad.UP), pad.held(buttons, pad.DOWN)))
+      x = (x + vx).clamp(0, f32(WIDTH) - 16)
+      // Below the score's strip at the top.
+      y = (y + vy).clamp(16, f32(HEIGHT) - 16)
+      // Its trail: a mote every other update, left behind it.
+      if t % 2 == 0 {
+        motes.push(Mote {
+          x: x + 6,
+          y: y + 6,
+          vx: -vx * 0.2,
+          vy: -vy * 0.2 - 0.15,
+          life: 1,
+          fade: 0.03,
+          colour: 0x80C8FF,
+          size: 1,
+        })
+      }
+      // A spark it reaches bursts, counts, and another appears somewhere else.
+      for i in 0..<sparks.len() {
+        let s = sparks[i]
+        if distance(x, y, s.x, s.y) < REACH {
+          burst(motes, s)
+          score += 1
+          show_score(score)
+          sparks[i] = new_spark(rng)
+        }
+      }
+      // A shade it meets takes a spark back, and it flickers a while.
+      if hurt > 0 { hurt -= 1 }
+      for sh in shades {
+        let (sx, sy) = sh.at(t)
+        if hurt == 0 && distance(x, y, sx, sy) < REACH {
+          hurt = HURT_UPDATES
+          score = (score - 1).max(0)
+          show_score(score)
+        }
+      }
+      motes = aged(motes)
+      planes.set_scroll(planes.PLANE_A, mist_scroll(t), 0)
+    }
+    draw(x, y, hurt, t, sparks, shades, motes)
+    screen.show()
+  }
+  screen.close()
+}
+
+/// The frame's sprites. Earlier ones are in front: the motes and the wisp's halo, light
+/// over everything, in front of the mist; the wisp; then, behind the mist, the sparks and
+/// the shades.
+let draw = (
+  x: f32,
+  y: f32,
+  hurt: i64,
+  t: i64,
+  sparks: []Spark,
+  shades: []Shade,
+  motes: []Mote
+) -> void => {
+  sprites.clear()
+  let time = f32(t)
+  for m in motes {
+    sprites.add(Sprite {
+      x: m.x,
+      y: m.y,
+      width: 4,
+      height: 4,
+      sheet_x: DOT_X,
+      sheet_y: DOT_Y,
+      front: true,
+      alpha: m.life,
+      tint: m.colour,
+      scale: m.size * (0.5 + m.life * 1.5),
+      additive: true,
+    })
+  }
+  // The wisp: its halo breathing, its body flickering while a shade's touch lasts.
+  let flicker = hurt > 0 && (hurt / 4) % 2 == 0
+  sprites.add(Sprite {
+    x: x - 8,
+    y: y - 8,
+    width: 32,
+    height: 32,
+    sheet_x: HALO_X,
+    sheet_y: HALO_Y,
+    front: true,
+    alpha: if flicker { 0.2 } else { 0.7 },
+    tint: if hurt > 0 { 0xFF9090 } else { 0x9FD8FF },
+    scale: 1.1 + 0.15 * (time * 0.08).sin(),
+    additive: true,
+  })
+  sprites.add(Sprite {
+    x: x,
+    y: y,
+    width: 16,
+    height: 16,
+    sheet_x: WISP_X,
+    sheet_y: WISP_Y,
+    front: true,
+    alpha: if flicker { 0.35 } else { 1.0 },
+  })
+  // The sparks: each spins and pulses, and glows in its colour.
+  for s in sparks {
+    let pulse = 1 + 0.15 * (time * 0.1 + s.phase).sin()
+    sprites.add(Sprite {
+      x: s.x,
+      y: s.y,
+      width: 16,
+      height: 16,
+      sheet_x: STAR_X,
+      sheet_y: STAR_Y,
+      tint: s.colour,
+      angle: time * 2 + s.phase * 57,
+      scale: pulse,
+    })
+    sprites.add(Sprite {
+      x: s.x - 8,
+      y: s.y - 8,
+      width: 32,
+      height: 32,
+      sheet_x: HALO_X,
+      sheet_y: HALO_Y,
+      alpha: 0.45,
+      tint: s.colour,
+      scale: pulse * 0.8,
+      additive: true,
+    })
+  }
+  // The shades: half there, fading in and out as they go.
+  for sh in shades {
+    let (sx, sy) = sh.at(t)
+    sprites.add(Sprite {
+      x: sx,
+      y: sy,
+      width: 16,
+      height: 16,
+      sheet_x: SHADE_X,
+      sheet_y: SHADE_Y,
+      alpha: 0.45 + 0.25 * (time * 0.05 + sh.phase).sin(),
+      flip_x: (time * sh.speed + sh.phase).cos() < 0,
+    })
+  }
+}
+
+/// -1, 0 or 1: the way two opposite buttons push.
+let axis = pure (back: bool, forth: bool) -> f32 =>
+  if back && !forth { -1 } else if forth && !back { 1 } else { 0 }
+
+/// One axis's speed after an update pushed `d`: towards the top speed that way by the
+/// acceleration, or — not pushed — towards 0 by the drag.
+let steer = pure (v: f32, d: f32) -> f32 => {
+  if d > 0 { return (v + ACCELERATION).min(TOP_SPEED) }
+  if d < 0 { return (v - ACCELERATION).max(-TOP_SPEED) }
+  if v > 0 { (v - DRAG).max(0) } else { (v + DRAG).min(0) }
+}
+
+/// The distance between the middles of two 16×16 things with their top-lefts at (`ax`,
+/// `ay`) and (`bx`, `by`).
+let distance = pure (ax: f32, ay: f32, bx: f32, by: f32) -> f32 => {
+  let dx = ax - bx
+  let dy = ay - by
+  (dx * dx + dy * dy).sqrt()
+}
+
+impl Shade {
+  /// Where the shade is `t` updates in: on its loop, a smooth curve.
+  let at = pure (self, t: i64) -> (f32, f32) => {
+    let a = f32(t) * self.speed + self.phase
+    (self.cx + self.rx * a.sin(), self.cy + self.ry * (a * 1.7).cos())
+  }
+}
+
+/// A spark somewhere on the field below the score's strip, in one of six colours.
+let new_spark = (rng: mut Rng) -> Spark => Spark {
+  x: f32(rng.below(WIDTH - 32) + 8),
+  y: f32(rng.below(HEIGHT - 48) + 24),
+  colour: SPARK_COLOURS[rng.below(6)],
+  phase: f32(rng.below(628)) / 100,
+}
+
+const SPARK_COLOURS: [6]u32 = #[0xFFD45A, 0x7CF0FF, 0xFF7AD9, 0x9DFF7A, 0xFFA04A, 0xB89CFF]
+
+/// A spark's burst: twenty motes flying out from it in its colour.
+let burst = (motes: mut []Mote, s: Spark) -> void => {
+  for k in 0..<20 {
+    let a = f32(k) * 0.31415927
+    let speed = 1.2 + f32(k % 3) * 0.4
+    motes.push(Mote {
+      x: s.x + 6,
+      y: s.y + 6,
+      vx: a.cos() * speed,
+      vy: a.sin() * speed,
+      life: 1,
+      fade: 0.025,
+      colour: s.colour,
+      size: 1.5,
+    })
+  }
+}
+
+/// The motes an update on: moved, slowed a little, faded — and gone once they have faded.
+let aged = pure (motes: []Mote) -> []Mote => {
+  var alive: []Mote = []
+  for m in motes {
+    let life = m.life - m.fade
+    if life > 0 {
+      alive.push(Mote {
+        m | x: m.x + m.vx,
+        y: m.y + m.vy,
+        vx: m.vx * 0.96,
+        vy: m.vy * 0.96,
+        life: life
+      })
+    }
+  }
+  alive
+}
+
+/// The score, in the window's top row: three digits from tile [DIGIT_TILE], in front.
+let show_score = (score: i64) -> void => {
+  var rest = score
+  for i in 0..<3 {
+    planes.write_cell(planes.WINDOW, 3 - i, 0, FRONT | u32(DIGIT_TILE + rest % 10))
+    rest = rest / 10
+  }
+}
+
+// ── The field ────────────────────────────────────────────────────────────────
+
+/// The meadow, plane B: grass of two kinds, and a stone here and there.
+let lay_meadow = (rng: mut Rng) -> void => {
+  for i in 0..<COLUMNS * ROWS {
+    let roll = rng.below(100)
+    let tile = if roll < 6 { STONE_TILE } else if roll < 50 { GRASS_TILE } else { GRASS_TILE + 1 }
+    meadow[i] = u32(tile)
+  }
+}
+
+/// The mist's pattern repeats every [MIST_PERIOD] columns, and plane A holds it a period
+/// wider than the screen, so scrolling it by up to a period and back shows no seam.
+const MIST_PERIOD: i64 = 16
+const MIST_COLUMNS: i64 = 64
+
+/// The mist, plane A: each cell the mist tile of its place in the repeat, in front of the
+/// sprites — the mist's pixels are partly see-through, so they show through it.
+let lay_mist = () -> void => {
+  for row in 0..<ROWS {
+    for column in 0..<MIST_COLUMNS {
+      mist[row * MIST_COLUMNS + column] = FRONT | u32(MIST_TILE + row * MIST_PERIOD + column % MIST_PERIOD)
+    }
+  }
+}
+
+/// How thick the mist is at world pixel (`x`, `y`), as an alpha: banks and gaps from a few
+/// waves, every one repeating across [MIST_PERIOD] columns so the scroll shows no seam.
+let mist_alpha = pure (x: f32, y: f32) -> f32 => {
+  let u = x / f32(MIST_PERIOD * 8) * 6.2831853
+  let v = u.sin() * 0.6 + (2 * u + y * 0.045).sin() * 0.35 + (u + y * 0.03).cos() * 0.5 + (3 * u - y * 0.06).sin() * 0.2
+  0.34 * ((v - 0.1) / 0.9).clamp(0, 1)
+}
+
+/// How far the mist has drifted `t` updates in: a third of a pixel an update, round its
+/// period.
+let mist_scroll = pure (t: i64) -> f32 => {
+  let span = f32(MIST_PERIOD * 8)
+  let s = f32(t) / 3
+  s - span * f32((s / span).floor())
+}
+
+// ── The art ──────────────────────────────────────────────────────────────────
+
+/// The tile art, 16 tiles a row: blank, two grasses, a stone and the digits, then the mist —
+/// a tile for each cell of its repeat, row by row.
+const TILE_COLUMNS: i64 = 16
+const GRASS_TILE: i64 = 1
+const STONE_TILE: i64 = 3
+const DIGIT_TILE: i64 = 4
+const MIST_TILE: i64 = 16
+const ART_ROWS: i64 = 28
+
+let paint_tiles = () -> void => {
+  for y in 0..<8 {
+    for x in 0..<8 {
+      let n = noise(x, y)
+      // Night grass: dark teal, its blades a shade darker or lighter.
+      tile_art[y * 128 + 8 + x] = if n % 7 == 0 { 0xFF0E2420 } else { 0xFF15302A }
+      tile_art[y * 128 + 16 + x] = if n % 5 == 0 { 0xFF1E4236 } else { 0xFF183528 }
+      // A stone: grey-blue, darker at its edge.
+      let edge = x == 0 || y == 0 || x == 7 || y == 7
+      tile_art[y * 128 + 24 + x] = if edge { 0xFF1E2630 } else if n % 4 == 0 { 0xFF3A4858 } else { 0xFF2E3A48 }
+    }
+  }
+  // The mist: pale, and mostly see-through, each pixel as thick as the field is there.
+  for row in 0..<ROWS {
+    for column in 0..<MIST_PERIOD {
+      let tile = MIST_TILE + row * MIST_PERIOD + column
+      let left = (tile % TILE_COLUMNS) * 8
+      let top = (tile / TILE_COLUMNS) * 8
+      for y in 0..<8 {
+        for x in 0..<8 {
+          let a = mist_alpha(f32(column * 8 + x), f32(row * 8 + y))
+          tile_art[(top + y) * 128 + left + x] = argb(a, 0xC8D8F0)
+        }
+      }
+    }
+  }
+  // The digits, 5×7 pixels each with a shadow, in pale gold.
+  for d in 0..<10 {
+    let left = (DIGIT_TILE + d) * 8
+    let shape = DIGITS[d]
+    for row in 0..<7 {
+      for column in 0..<5 {
+        if shape.slice(row * 5 + column, row * 5 + column + 1) == "1" {
+          tile_art[(row + 1) * 128 + left + column + 2] = 0xFF101010
+          tile_art[row * 128 + left + column + 1] = 0xFFFFF0C0
+        }
+      }
+    }
+  }
+}
+
+const DIGITS: [10]string = #[
+  "01110100011001110101110011000101110",
+  "00100011000010000100001000010001110",
+  "01110100010000100010001000100011111",
+  "11111000100010000010000011000101110",
+  "00010001100101010010111110001000010",
+  "11111100001111000001000011000101110",
+  "00110010001000011110100011000101110",
+  "11111000010001000100010000100001000",
+  "01110100011000101110100011000101110",
+  "01110100011000101111000010001001100",
+]
+
+/// The sprite art, 64×32: the wisp, the halo, a star, a shade and a dot of light, each with
+/// soft edges — alpha falling off from its middle.
+const SHEET_WIDTH: i64 = 64
+const WISP_X: f32 = 0
+const WISP_Y: f32 = 0
+const HALO_X: f32 = 16
+const HALO_Y: f32 = 0
+const STAR_X: f32 = 48
+const STAR_Y: f32 = 0
+const SHADE_X: f32 = 0
+const SHADE_Y: f32 = 16
+const DOT_X: f32 = 48
+const DOT_Y: f32 = 16
+
+let paint_sprites = () -> void => {
+  for y in 0..<32 {
+    for x in 0..<32 {
+      // The halo: white, its alpha falling off with the square of the distance out.
+      let d = from(x, y, 16)
+      sprite_art[y * 64 + 16 + x] = argb(0.8 * (1 - d / 16).max(0).pow(2), 0xFFFFFF)
+    }
+  }
+  for y in 0..<16 {
+    for x in 0..<16 {
+      let d = from(x, y, 8)
+      // The wisp: pale blue, white at its heart, fading out to its edge.
+      sprite_art[y * 64 + x] = argb(
+        (1 - d / 8).max(0).pow(0.7),
+        if d < 3 { 0xFFFFFF } else { 0xA8DCFF }
+      )
+      // A star: four rays and a bright middle, white to be tinted.
+      let dx = (f32(x) + 0.5 - 8).abs()
+      let dy = (f32(y) + 0.5 - 8).abs()
+      let ray = (1 - dx.min(dy) / 1.6).max(0) * (1 - dx.max(dy) / 8).max(0)
+      sprite_art[y * 64 + 48 + x] = argb((ray + (1 - d / 3).max(0)).min(1), 0xFFFFFF)
+      // A shade: a hooded shape of dusk, its hem ragged, its eyes two pale points.
+      let head = from(x, y, 8) < 6 && y < 8
+      let body = y >= 7 && y < 15 - (x / 2) % 2 && x >= 2 && x < 14
+      let eye = y == 6 && (x == 5 || x == 10)
+      let shade: u32 = if eye { 0xFFE8F0FF } else if head || body { argb(0.85, 0x6A5CB8) } else { 0 }
+      sprite_art[(y + 16) * 64 + x] = shade
+    }
+  }
+  for y in 0..<4 {
+    for x in 0..<4 {
+      sprite_art[(y + 16) * 64 + 48 + x] = argb((1 - from(x, y, 2) / 2.5).max(0), 0xFFFFFF)
+    }
+  }
+}
+
+/// How far pixel (`x`, `y`)'s middle is from (`centre`, `centre`).
+let from = pure (x: i64, y: i64, centre: i64) -> f32 => {
+  let dx = f32(x) + 0.5 - f32(centre)
+  let dy = f32(y) + 0.5 - f32(centre)
+  (dx * dx + dy * dy).sqrt()
+}
+
+/// `0xRRGGBB` at opacity `alpha` (0 to 1), as `0xAARRGGBB`.
+let argb = pure (alpha: f32, rgb: u32) -> u32 =>
+  (u32((alpha.clamp(0, 1) * 255).round()) << 24) | (rgb & 0xFFFFFF)
+
+/// A small hash of a pixel's place, for grass that does not repeat too plainly.
+let noise = pure (x: i64, y: i64) -> i64 => (x * 7 + y * 13 + x * y * 3) % 11
+
+// ── The tables ───────────────────────────────────────────────────────────────
+
+/// The art and the planes' maps, painted at the start into these — tables the screen and
+/// planes take whole by reference, painted in place.
+var tile_art: [28672]u32 = #[0; 28672]
+var sprite_art: [2048]u32 = #[0; 2048]
+var meadow: [1296]u32 = #[0; 1296]
+var mist: [1728]u32 = #[0; 1728]
