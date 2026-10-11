@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 10/11/26 — Large arrays read and started in place
+
+`examples/game/wisps.lyra`'s tile art is a 28,672-word table, and its first build did not
+finish: clang at `-O2` grew to 30 GB in five minutes. A fixed array is a first-class LLVM
+aggregate wherever it is a *value*, and LLVM's optimizer is superlinear in them — a function
+returning an `[8192]u32` built in 262 seconds, an `[2048]u32` in 8. Two places made such
+values for nothing, and both now go through memory:
+
+- **A literal index loaded the whole array** to `extractvalue` one element, where a runtime
+  index already addressed it: `xs[5]` on a `ref [N]T` was a load of the caller's whole array.
+  An array with storage — a name with a slot, a field path through stack structs — is now
+  read in place for a literal index too (`addressableArray`).
+- **A module's `var` of `#[0; n]` was built on the stack at start-up and stored whole**, into
+  a global defined zeroed already. `initGlobals` now skips it (`zeroRepeat`).
+
+The test program went from 9 seconds to 0.7. **Returning a large array by value is still the
+slow shape** (`todo.md`); the game paints its art into module tables instead.
+
 ### 10/11/26 — `std.game`: the Genesis runtime for every modern platform
 
 Vega is to make games for desktops, phones and modern consoles as well as retro ones, and

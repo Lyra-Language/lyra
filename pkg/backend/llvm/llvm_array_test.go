@@ -148,7 +148,8 @@ func TestExec_ArrayFromEnd(t *testing.T) {
 }
 
 // TestEmit_ArrayIR pins the lowering shapes: construction is insertvalue into an
-// [N x T]; a constant index is a bare extractvalue with no bounds trap; a runtime
+// [N x T]; a constant index reads an array with storage in place (getelementptr + load) and
+// takes one from a value with none by extractvalue, with no bounds trap either way; a runtime
 // index is a bounds compare + trap + getelementptr; the OOB trap is defined once.
 func TestEmit_ArrayIR(t *testing.T) {
 	t.Parallel()
@@ -171,8 +172,14 @@ func TestEmit_ArrayIR(t *testing.T) {
 	if !strings.Contains(constIdx, "insertvalue [3 x i8]") {
 		t.Error("expected insertvalue array construction")
 	}
-	if !strings.Contains(constIdx, "extractvalue") {
-		t.Error("expected a constant index to use extractvalue")
+	if !strings.Contains(constIdx, "getelementptr [3 x i8]") {
+		t.Error("expected a constant index into a local to read it in place")
+	}
+	// An array with no storage of its own — a call's result — is taken apart by value.
+	valueIdx := emit(`let three = () -> [3]u8 => #[10, 20, 30]
+	 let main = () -> u8 => three()[1]`)
+	if !strings.Contains(valueIdx, "extractvalue [3 x i8]") {
+		t.Error("expected a constant index into a call's result to use extractvalue")
 	}
 	if strings.Contains(constIdx, "@lyra_panic_index_out_of_bounds") {
 		t.Error("a constant index (already range-checked by the typechecker) must not emit a bounds trap")

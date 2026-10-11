@@ -87,6 +87,7 @@ package llvm
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 
 	"github.com/llir/llvm/ir"
@@ -1134,6 +1135,13 @@ func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 		if !ok {
 			continue
 		}
+		// **A fixed array of zeros is already there**: every global is defined zeroed, so
+		// `var art: [28672]u32 = #[0; 28672]` needs no start-up code. Lowered, it built the
+		// array on the stack and stored it whole — a 112 KB aggregate value, the kind LLVM's
+		// optimizer is slowest on, for nothing (10/11, a game's tile art).
+		if zeroRepeat(vd.Value) {
+			continue
+		}
 		v, next, err := l.lowerExpr(block, vd.Value)
 		if err != nil {
 			return nil, fmt.Errorf("llvm: top-level %q: %w", vd.Name, err)
@@ -1145,6 +1153,24 @@ func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 		block.NewStore(v, g)
 	}
 	return block, nil
+}
+
+// zeroRepeat reports whether e is `#[0; n]` — a fixed array of a literal zero, `0.0` or
+// `false` — which a zeroed global already holds.
+func zeroRepeat(e ast.Expression) bool {
+	rep, ok := e.(*ast.ArrayRepeatExpr)
+	if !ok || !rep.Fixed {
+		return false
+	}
+	switch v := rep.Value.(type) {
+	case *ast.IntegerLiteralExpr:
+		return v.Value == 0 && !v.Unsigned
+	case *ast.FloatLiteralExpr:
+		return v.Value == 0 && !math.Signbit(v.Value)
+	case *ast.BooleanLiteralExpr:
+		return !v.Value
+	}
+	return false
 }
 
 // declareLibc lazily declares an external libc function, cached by symbol so every call

@@ -945,6 +945,15 @@ sets V on every add. What stands between that and a ROM:
   base, which `hasIndexReg` does not see). Patched locally by
   `tools/llvm-m68k-patches/0001`; check `main` for the same code before reporting.
 
+## Large aggregates
+
+- **[OPEN] A large fixed array returned by value is a first-class aggregate**, and LLVM's
+  optimizer is superlinear in them: `pure () -> [8192]u32` built in 262 s, `[2048]u32` in 8
+  (10/11, `examples/game/wisps.lyra`, which paints module tables instead). Returning through
+  memory past a size — an `sret` slot, as C compilers do — and copying with `memcpy` rather
+  than `load`/`store` of the aggregate, is the fix; literal indexing and zeroed globals
+  already avoid it (COMPLETED.md 10/11).
+
 ## Building for other platforms
 
 `std.game` runs on every platform SDL3 does; `lyrac` builds for its host alone (Vega's modern

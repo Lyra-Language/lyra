@@ -123,6 +123,19 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	// large-unsigned literal used as an index is nonsensical — fall to the runtime
 	// path, which bounds-checks it.
 	if lit, ok := e.Index.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned && !lit.IsWide() {
+		// **An array with storage is read in place** — a local, a parameter (a `ref [N]T`
+		// is the caller's array), a module's table, a field through slots — as a runtime
+		// index reads it. `extractvalue` on it loaded the whole array first: `xs[5]` on a
+		// `ref [28672]u32` was a 112 KB load, and such loads and the aggregates they make
+		// are what LLVM's optimizer is slowest on (10/11, std.game's tile art).
+		if !isShared && l.addressableArray(e.Object) {
+			arrPtr, arrayTy, block, err := l.arrayLValue(block, e.Object)
+			if err != nil {
+				return nil, nil, err
+			}
+			elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, i64c(0), i64c(lit.Value))
+			return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
+		}
 		if !isShared {
 			arr, block, err := l.lowerExpr(block, e.Object)
 			if err != nil {
@@ -236,6 +249,22 @@ func (l *lowerer) arrayLValue(block *ir.Block, obj ast.Expression) (value.Value,
 	slot := entry.NewAlloca(at)
 	block.NewStore(arr, slot)
 	return slot, at, block, nil
+}
+
+// addressableArray reports whether arrayLValue addresses obj's own storage — a name with
+// an array slot, or a field path through stack structs from one — rather than copying a
+// value into a fresh slot, which for a constant index would only add a store.
+func (l *lowerer) addressableArray(obj ast.Expression) bool {
+	if id, ok := obj.(*ast.IdentifierExpr); ok {
+		if slot, found := l.slotFor(id.Name, id.GetLocation()); found {
+			if elem, err := slotElemType(slot); err == nil {
+				if _, ok := elem.(*lltypes.ArrayType); ok {
+					return true
+				}
+			}
+		}
+	}
+	return l.fieldPathInPlace(obj)
 }
 
 // fieldPathInPlace reports whether obj is a chain of `.field` reads through stack (not
