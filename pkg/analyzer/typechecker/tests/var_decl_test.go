@@ -291,3 +291,22 @@ func TestTypeCheck_InitializedVar_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `var x: i64 = 0`, false)
 	assertNoErrors(t, res)
 }
+
+// A module-level `var` read above its declaration — functions first, their state below, the
+// order the house style asks for — is typed by its annotation *resolved*. It was answered
+// as written, `[]Thing` over a bare name, which then met the resolved type: returning the
+// list was refused as "expected DynamicArray<Thing>, got DynamicArray<Thing>", and passing
+// an element on as "cannot assign Thing to Thing" (10/11, std.game's sprite list and pads).
+func TestVarDecl_ModuleVarReadAboveItsDeclaration(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Thing { n: i64 }
+
+let added = () -> []Thing => list
+let first = () -> Thing => list[0]
+let count = (t: Thing) -> i64 => t.n
+let total = () -> i64 => count(list[0])
+
+var list: []Thing = [Thing { n: 1 }]
+`, false)
+	assertNoErrors(t, res)
+}

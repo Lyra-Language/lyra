@@ -88,3 +88,63 @@ let main = () -> void => println("hi")
 		})
 	}
 }
+
+// A pure function's reads resolve as the reading module sees them. The purity pass looked a
+// read name up in one bare-name frame over the merged program, so another module's private
+// `var frame` made a pure function reading its own `let frame` — or a `for frame in …` loop
+// variable, which the frames did not record at all — "read captured mutable binding" (10/11,
+// std.game's screen keeps a `var frame`, and a game drew its art in a `for frame` loop). A
+// genuine read of the module's own `var` is still refused.
+func TestPurity_ReadsResolveAsTheReadingModuleSeesThem(t *testing.T) {
+	const lib = `module lib
+pub let bump = () -> void => { frame += 1 }
+var frame: i64 = 0
+`
+	for _, c := range []struct {
+		name, main string
+		refused    bool
+	}{
+		{"its own let", `module main
+import lib
+let frame = 5
+let total = pure () -> i64 => frame * 2
+let main = () -> void => { lib.bump(); println(total()) }
+`, false},
+		{"a loop variable", `module main
+import lib
+let total = pure () -> i64 => {
+  var sum = 0
+  for frame in 0..<3 { sum += frame }
+  sum
+}
+let main = () -> void => { lib.bump(); println(total()) }
+`, false},
+		{"a loop variable over its own var", `module main
+var frame: i64 = 0
+let total = pure () -> i64 => {
+  var sum = 0
+  for frame in 0..<3 { sum += frame }
+  sum
+}
+let main = () -> void => { frame += 1; println(total()) }
+`, false},
+		{"its own var", `module main
+var frame: i64 = 0
+let total = pure () -> i64 => frame * 2
+let main = () -> void => { frame += 1; println(total()) }
+`, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := analyzeFiles(t, map[string]string{"lib.lyra": lib, "main.lyra": c.main})
+			refused := false
+			for _, d := range res.Errors() {
+				if strings.Contains(d.Message, `reads captured mutable binding "frame"`) {
+					refused = true
+				}
+			}
+			if refused != c.refused {
+				t.Errorf("refused = %v, want %v; errors: %v", refused, c.refused, res.Errors())
+			}
+		})
+	}
+}

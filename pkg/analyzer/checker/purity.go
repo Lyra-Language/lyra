@@ -321,6 +321,49 @@ func resolveCallee(capture []scopeBindings, name string) (*ast.LambdaExpr, bool)
 	return resolveFunction(capture, member)
 }
 
+// capturedMutableAt is capturedMutable for a name read at loc: the enclosing functions'
+// frames first, and then the top level **as loc's module sees it** — its own declaration,
+// else an import's — never another module's private `var` of the same name, which the
+// bare-name top-level frame cannot tell apart (rule 4, as resolveFunctionAt). A pure
+// function reading its own `let frame = 5` was refused because a module it imported kept a
+// private `var frame` (10/11, std.game's screen). Without a symbol table, the top-level
+// frame.
+func (inf *inference) capturedMutableAt(capture []scopeBindings, name string, loc ast.Location) bool {
+	for i := len(capture) - 1; i >= 1; i-- {
+		if mutable, declared := capture[i].mutable[name]; declared {
+			return mutable
+		}
+	}
+	if inf == nil || inf.lookup == nil {
+		return capturedMutable(capture, name)
+	}
+	st := inf.lookup
+	module := st.ModuleOfFile[loc.File]
+	if st.ModuleDeclares(module, name) {
+		if decl, ok := st.BindingIn(module, name); ok {
+			return mutableBinding(decl)
+		}
+		return capturedMutable(capture[:min(len(capture), 1)], name)
+	}
+	if imports := st.ImportScopes[module]; imports != nil {
+		if sym, found := imports.LookupLocal(name); found {
+			if decl, ok := sym.(*ast.VarDeclStmt); ok {
+				return mutableBinding(decl)
+			}
+		}
+	}
+	return false
+}
+
+// mutableBinding reports whether a top-level declaration is one whose value can change: a
+// `var` or `let mut` holding data, not a function.
+func mutableBinding(decl *ast.VarDeclStmt) bool {
+	if _, isLambda := decl.Value.(*ast.LambdaExpr); isLambda {
+		return false
+	}
+	return decl.CanMutateInterior()
+}
+
 // resolveFunctionAt is resolveFunction for a name used at loc: the enclosing functions'
 // frames first, as before, and then the top level **as loc's module sees it** — its own
 // private function before another module's, which the bare-name top-level frame could not
@@ -1043,8 +1086,8 @@ type scopeFrames struct {
 	// only from a program that already fails to check (lyra-E050 refuses `with`);
 	// kept for the reason declaredMutability's WithStmt case is.
 	arenaScopes map[*symbols.Scope]bool
-	// forInScopes are `for … in` loop scopes whose own symbols (the key/value
-	// loop variables) are skipped — the AST walk never collected them.
+	// forInScopes are `for … in` loop scopes, whose own symbols are the loop variables:
+	// immutable bindings of the function, whatever the scope's symbols are declared as.
 	forInScopes map[*symbols.Scope]bool
 }
 
@@ -1185,10 +1228,19 @@ func (f *scopeFrames) collectSubtree(scope *symbols.Scope, frame *scopeBindings)
 
 // addScopeSymbols folds one scope's directly-declared names into frame, deriving
 // each name's interior-mutability from its declaring node. A `for … in` loop
-// scope's own key/value variables are skipped (never body bindings); an arena
-// scope's handle reads as mutable.
+// scope's own key/value variables are immutable bindings; an arena scope's handle
+// reads as mutable.
+//
+// **A loop variable is the function's own binding.** It was skipped, to reproduce a walk
+// that never collected it — so it was not "declared here", and a `for frame in …` read
+// in a pure function resolved past it to a module's `var frame`: "pure function reads
+// captured mutable binding" for a loop counter (10/11, std.game's screen beside a game's
+// art loop).
 func (f *scopeFrames) addScopeSymbols(scope *symbols.Scope, frame *scopeBindings) {
 	if f.forInScopes[scope] {
+		for name := range scope.Symbols {
+			frame.mutable[name] = false
+		}
 		return
 	}
 	arena := f.arenaScopes[scope]
@@ -1245,14 +1297,38 @@ func directScopeBindingsForClause(clause *ast.LambdaClause) scopeBindings {
 			}
 		}
 	}
+	// The binders that are expressions — a loop's variables, a comprehension clause's, a
+	// `match` arm's names — are immutable bindings of the method too. Without them a loop
+	// variable read past itself to a captured `var` of its name, as addScopeSymbols did.
+	bindImmutable := func(name string) {
+		if _, seen := scope.mutable[name]; !seen && name != "" {
+			scope.mutable[name] = false
+		}
+	}
 	ast.WalkExpr(clause.Body,
 		func(s ast.Statement) bool {
 			mergeStmt(s)
 			return true
 		},
 		func(e ast.Expression) bool {
-			_, isLambda := e.(*ast.LambdaExpr)
-			return !isLambda
+			switch v := e.(type) {
+			case *ast.LambdaExpr:
+				return false
+			case *ast.ForInLoopExpr:
+				bindImmutable(v.Key)
+				bindImmutable(v.Value)
+			case *ast.ArrayCompExpr:
+				for i := range v.Generators {
+					bindImmutable(v.Generators[i].Identifier)
+				}
+			case *ast.MatchExpr:
+				for _, arm := range v.MatchArms {
+					for _, n := range patternBoundNames(arm.Pattern) {
+						bindImmutable(n)
+					}
+				}
+			}
+			return true
 		},
 	)
 	return scope
@@ -2446,7 +2522,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			// also visits its root as an IdentifierExpr, but those nodes are already
 			// counted by the mutation cases above, so double-counting the bit here is
 			// harmless — the *report* is what assignRoots suppresses.)
-			if !c.declares(ex.Name) && capturedMutable(c.capture, ex.Name) {
+			if !c.declares(ex.Name) && inf.capturedMutableAt(c.capture, ex.Name, ex.GetLocation()) {
 				found |= EffectMut
 				if !c.assignRoots[ex] {
 					c.pure(ex.GetLocation(),

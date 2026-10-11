@@ -685,3 +685,40 @@ let main = () -> void => {
 }
 `, "s")
 }
+
+// Storing a resource in a module's `var` is an escape, as storing it in a field is: the
+// value outlives the function. It was tracked as a local and reported going out of scope —
+// with advice to release what the line before had just released (10/11, std.game's screen
+// keeping its textures in module state).
+func TestMustRelease_StoringInAModuleVarEscapes(t *testing.T) {
+	assertClean(t, `
+var held: Maybe<Sound> = None
+
+let replace = (n: i64) -> void => {
+  match held {
+    Some(old) => unload_sound(old),
+    None => {},
+  }
+  held = Some(load_sound(n))
+}
+
+let forget = () -> void => {
+  match held {
+    Some(s) => unload_sound(s),
+    None => {},
+  }
+  held = None
+}
+`)
+}
+
+// The other side of it: a local reassigned to a fresh resource still holds it, and leaks.
+func TestMustRelease_ALocalReassignedStillLeaks(t *testing.T) {
+	assertLeaks(t, `
+let f = () -> void => {
+  var s = load_sound(1)
+  unload_sound(s)
+  s = load_sound(2)
+}
+`, "s")
+}

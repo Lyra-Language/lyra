@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -139,6 +140,10 @@ type mustRelease struct {
 	releasers map[*ast.LambdaExpr]map[int]string
 	// probe is set while inferring whether one parameter is released; nil otherwise.
 	probe *releaseProbe
+	// own is every name the function being walked binds — its parameters and what its body
+	// declares. A reassigned name outside it is a module's `var`, so the value stored
+	// there escapes (see VarReassignmentStmt).
+	own map[string]bool
 }
 
 // releaseProbe is one question inferReleasers asks: is the parameter `param` released
@@ -262,6 +267,9 @@ func mergeHeld(a, b heldState) heldState {
 // whether a closure runs once, later or never is the question captures raise.
 func (c *mustRelease) lambda(lam *ast.LambdaExpr) {
 	c.checkBorrowedAttribute(lam)
+	saved := c.own
+	c.own = ownNames(lam)
+	defer func() { c.own = saved }()
 	run := func(body ast.Expression) {
 		if body == nil {
 			return
@@ -274,6 +282,23 @@ func (c *mustRelease) lambda(lam *ast.LambdaExpr) {
 	for i := range lam.LambdaClauses {
 		run(lam.LambdaClauses[i].Body)
 	}
+}
+
+// ownNames is every name lam binds: its parameters, its clauses' patterns, and the names its
+// body declares (captures.BodyBinders, the one binder walk). Flow-insensitive, so a local
+// declared after a module `var` of the same name is reassigned makes that reassignment
+// count as local — the reporting direction this pass already takes.
+func ownNames(lam *ast.LambdaExpr) map[string]bool {
+	own := captures.BodyBinders(lam)
+	for _, p := range lam.Parameters {
+		ast.EachPatternBinding(p.Pattern, func(b ast.PatternBinding) { own[b.Name] = true })
+	}
+	for _, c := range lam.LambdaClauses {
+		for _, p := range c.Patterns {
+			ast.EachPatternBinding(p, func(b ast.PatternBinding) { own[b.Name] = true })
+		}
+	}
+	return own
 }
 
 // checkBorrowedAttribute refuses `@borrowed` on a function whose declared result carries no
@@ -361,6 +386,13 @@ func (c *mustRelease) stmt(st heldState, s ast.Statement) heldState {
 	case *ast.VarReassignmentStmt:
 		st = c.expr(st, v.Value)
 		delete(st, v.Name)
+		// **Storing into a module's `var` is an escape**, as storing into a field is: the
+		// value outlives the function, so its end is not where it is lost. Tracked as a
+		// local, `art = Some(texture)` was reported as going out of scope, with advice to
+		// release what the line before had just released (10/11, std.game's screen).
+		if !c.own[v.Name] {
+			return st
+		}
 		if r, ok := c.acquiredBy(v.Value); ok {
 			r.loc = v.GetLocation()
 			st[v.Name] = r

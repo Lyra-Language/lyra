@@ -3329,8 +3329,16 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 					t = cached
 				}
 			}
-			if t == nil {
-				t = v.Type
+			// A binding read before its declaration has been checked — a module-level `var`
+			// below the functions using it, the order the house style asks for — has only
+			// its annotation, as written: `[]Thing` with `Thing` a bare name. Answered
+			// unresolved, it met the resolved type everywhere it flowed, and `-> []Thing =>
+			// list` was refused as "expected DynamicArray<Thing>, got DynamicArray<Thing>"
+			// (10/11, std.game). Resolved here as checkVarDecl will resolve it — at the
+			// declaration's own site, quietly, since an unknown name is the declaration's
+			// to report.
+			if t == nil && v.Type != nil {
+				t = tc.resolveTypeIfKnown(v.Type, v.Location)
 			}
 			// A function *referred to* before its declaration has been checked — passed
 			// as a value to a call above it in the file, the order the house style asks
