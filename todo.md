@@ -578,7 +578,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] A comprehension's literal result is typed before its context reaches it.**
   `let xs: []u8 = [i in 0..<3 | 7]` is refused as `[]i64` into `[]u8`, where `[7, 7]` is
   accepted: the comprehension is inferred eagerly and assignability runs before
-  `propagateExpectedType` (which now narrows a comprehension's result, 10/01).
+  `propagateExpectedType` (which now narrows a comprehension's result, 10/01). Its sharper
+  form: `var art: []Maybe<Texture> = [p in 0..<16 | None]` is lyra-E073, the annotation
+  never solving `None`'s parameter — `[None; 16]` is typed (10/11, std.game).
 - **[OPEN] No `contains` (or `any`) on an array.** `string.contains` exists; for `[]t` a
   program writes the loop — Vega's `project.is_taken` did (10/01). A `contains<t> where t:
   Eq` on arrays, and `any`/`all` taking a predicate, would replace it.
@@ -942,6 +944,26 @@ sets V on every add. What stands between that and a ROM:
   addressed as the object alone (`matchAddressBase` set an index beside a frame-index
   base, which `hasIndexReg` does not see). Patched locally by
   `tools/llvm-m68k-patches/0001`; check `main` for the same code before reporting.
+
+## Building for other platforms
+
+`std.game` runs on every platform SDL3 does; `lyrac` builds for its host alone (Vega's modern
+target, 10/11). In order:
+
+- **[OPEN] A target descriptor and `--target`.** `pkg/target`'s `Host bool` answers "has an
+  OS" and "use the host toolchain" at once; a triple, OS, arch and sysroot go beside it, clang
+  gets `--target`/`--sysroot` (`cmd/lyrac/main.go`'s link line), `abi.FromTriple` replaces
+  `DetectTarget`, and `dirent.go`/`tui.go` read the target's OS, not `runtime.GOOS`. A
+  per-target `build/lib/<triple>/` for the bindings' C halves, and a cross-aware pkg-config.
+- **[OPEN] iOS** — `arm64-apple-ios` already classifies as AAPCS64 (a diff-test row to add);
+  SDL3 as an xcframework, an app bundle, `SDL_main`, the Simulator for checks.
+- **[OPEN] Android** — `aarch64-linux-android` is AAPCS64 too; the NDK's clang, a `.so` run by
+  SDL's Java activity, an APK.
+- **[OPEN] Windows** — `abi.Win64` (1/2/4/8-byte aggregates as integers, else by pointer, no
+  `byval`), then the POSIX pieces the runtime and std call (`opendir`, termios, `getentropy`,
+  `clock_gettime`, `localtime_r`, std.io's `open`/`mkdir`/`readlink`).
+- **[OPEN] The web** — the backend's 64-bit pointers and `i64` `size_t` (`layout.go`'s
+  `pointerSize`, the libc declarations, `coro.size.i64`) need a per-target width first.
 
 ## Target introspection
 

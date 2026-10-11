@@ -1,6 +1,7 @@
 module bindings.sdl3
-//! Textures: images on the GPU, drawn whole or a cell at a time, flipped, and tinted —
-//! and the streaming kind a program draws itself, a frame of pixels at a time.
+//! Textures: images on the GPU, drawn whole or a cell at a time, flipped, and tinted — made
+//! once from a program's own pixels ([create_texture]), or the streaming kind a program
+//! draws itself, a frame of pixels at a time.
 //!
 //! SDL itself only makes a texture from pixels or a surface; loading one from a PNG is
 //! `bindings.sdl3_image`'s [load_texture], a separate library with its own module.
@@ -18,7 +19,7 @@ pub struct Texture {
   height: f32,
 }
 
-/// `SDL_ScaleMode`, for [set_default_scale_mode].
+/// `SDL_ScaleMode`, for [set_default_scale_mode] and [set_texture_scale_mode].
 ///
 /// `SCALE_NEAREST` is what pixel art wants: the default, `SCALE_LINEAR`, blurs every edge
 /// the logical presentation scales up. `SCALE_PIXELART` (SDL 3.4) is nearest sampling
@@ -45,6 +46,15 @@ struct Point {
 const PIXELFORMAT_XRGB8888: u32 = 0x16161804
 const TEXTUREACCESS_STREAMING: i32 = 1
 
+/// `SDL_PIXELFORMAT_ARGB8888` and `SDL_TEXTUREACCESS_STATIC`, what [create_texture] makes: a
+/// texel is a `u32` holding `0xAARRGGBB`. A *packed* format, so the number means the same
+/// on every byte order, as the streaming kind's does.
+const PIXELFORMAT_ARGB8888: u32 = 0x16362004
+const TEXTUREACCESS_STATIC: i32 = 0
+
+/// `SDL_BLENDMODE_BLEND`: a texel's alpha says how much of it covers what is beneath.
+const BLENDMODE_BLEND: u32 = 1
+
 @symbol("SDL_CreateTexture")
 unsafe extern sdl_create_texture: (
   renderer: Renderer,
@@ -67,6 +77,12 @@ unsafe extern sdl_destroy_texture: (texture: ^u8) -> void
 
 @symbol("SDL_GetTextureSize")
 unsafe extern sdl_get_texture_size: (texture: ^u8, w: ^mut f32, h: ^mut f32) -> bool
+
+@symbol("SDL_SetTextureBlendMode")
+unsafe extern sdl_set_texture_blend_mode: (texture: ^u8, mode: u32) -> bool
+
+@symbol("SDL_SetTextureScaleMode")
+unsafe extern sdl_set_texture_scale_mode: (texture: ^u8, mode: i32) -> bool
 
 @symbol("SDL_SetDefaultTextureScaleMode")
 unsafe extern sdl_set_default_texture_scale_mode: (renderer: Renderer, mode: i32) -> bool
@@ -131,6 +147,41 @@ pub let create_streaming_texture = (
     ))
   }
 
+/// A texture of `width` × `height` texels from `pixels`, row by row, `0xAARRGGBB` each —
+/// a sprite sheet or a tile set a program holds as data — or `None` if SDL cannot make one,
+/// or there is not exactly one pixel per texel. It is drawn **blended**: alpha 0 is
+/// transparent, so a sprite's background shows what is behind it.
+pub let create_texture = (
+  renderer: Renderer,
+  width: i64,
+  height: i64,
+  pixels: []u32
+) -> Maybe<Texture> => {
+  if width <= 0 || height <= 0 || pixels.len() != width * height {
+    return None
+  }
+  let made = unsafe {
+    adopt_texture(sdl_create_texture(
+      renderer,
+      PIXELFORMAT_ARGB8888,
+      TEXTUREACCESS_STATIC,
+      i32(width),
+      i32(height)
+    ))
+  }
+  let Some(texture) = made else { return None }
+  let filled = unsafe {
+    sdl_update_texture(texture.handle, nullptr, pixels.data(), i32(width * 4)) &&
+      sdl_set_texture_blend_mode(texture.handle, BLENDMODE_BLEND)
+  }
+  if filled {
+    Some(texture)
+  } else {
+    destroy_texture(texture)
+    None
+  }
+}
+
 /// Replace a streaming texture's texels with `pixels`, row by row, `0x00RRGGBB` each. Fails
 /// (answers `false`, changing nothing) unless there is exactly one per texel.
 pub let update_texture = (texture: Texture, pixels: []u32) -> bool => {
@@ -149,6 +200,11 @@ pub let destroy_texture = (texture: Texture) -> void =>
 /// How textures created *from now on* are sampled when scaled. Set it before loading.
 pub let set_default_scale_mode = (renderer: Renderer, mode: i32) -> bool =>
   unsafe { sdl_set_default_texture_scale_mode(renderer, mode) }
+
+/// How this texture is sampled when scaled, whatever the renderer's default was when it was
+/// made.
+pub let set_texture_scale_mode = (texture: Texture, mode: i32) -> bool =>
+  unsafe { sdl_set_texture_scale_mode(texture.handle, mode) }
 
 /// Draw the `src` part of a texture into `dst`, stretching it to fit — for a sprite sheet,
 /// `src` is one cell and `dst` the same size where it goes on screen.

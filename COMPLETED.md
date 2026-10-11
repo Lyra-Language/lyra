@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 10/11/26 — `std.game`: the Genesis runtime for every modern platform
+
+Vega is to make games for desktops, phones and modern consoles as well as retro ones, and
+the decision was **one runtime for every modern platform**, on SDL3 (which runs on all of
+them), mirroring `std.genesis` module for module — `screen` where the VDP was, `pad`,
+`planes` (A, B and the window), `sprites`, `camera`, `collision`, `entity` — so a game ports
+between the two by changing its imports and its number types. **`f32` pixels** rather than
+8.8 fixed point: natural on every modern CPU, and room for analog sticks (`push` takes a
+lean, heading for that fraction of the top speed) and later rotation and scaling. Updates
+stay at a fixed 60 a second (`screen.updates_due`), so a speed is pixels an update as a
+Genesis speed is pixels a frame. **Kept from the Genesis**: the table parameters as
+`ref [N]T` (a `const` dynamic array is rebuilt at every use; a fixed one is data), a
+cell's tile, palette and flags in one word (`planes.palette(p)`, bits 24–27) — the palette
+choosing which of the tile art's per-palette pictures the tile is drawn from, so a game's
+`DIGITS_TILE + d` and a map's collision read tiles as on the Genesis, where colouring the
+art once per (tile, palette) would have scattered a set's tiles — tile 0 blank, the
+compositing order (B, A, sprites, then the front cells and front sprites) and the window in
+plane A's place. **Played headless as
+Sheliak plays a ROM** — `--frames N --ppm FILE --hold BUTTONS`, one update a frame, at scale
+1, under `SDL_VIDEODRIVER=dummy` with `SDL_RENDER_DRIVER=software` (the offscreen driver
+still wants OpenGL) — so Vega's checks can drive a desktop game with the same flags. The
+bindings gained `create_texture` (static, blended, `0xAARRGGBB`), `set_texture_scale_mode`
+and `read_pixels`.
+
+**It found three compiler bugs**, each a position that refused a correct program:
+
+- **A module-level `var` read above its declaration had its annotation unresolved.** The
+  identifier fallback answered `v.Type` as written, so `-> []Sprite => list` met the
+  resolved type and was refused as "expected DynamicArray<Sprite>, got
+  DynamicArray<Sprite>" — the house style puts state below the functions that use it. Now
+  resolved quietly at the declaration's site, as `checkVarDecl` will
+  (`TestVarDecl_ModuleVarReadAboveItsDeclaration`).
+- **lyra-W022 tracked a store into a module's `var` as a local.** `art = Some(texture)` was
+  reported going out of scope, with advice to release what the line before had released.
+  The pass's own rule says a global is an escape; a reassigned name the function does not
+  bind (`captures.BodyBinders` plus its parameters) is now one
+  (`TestMustRelease_StoringInAModuleVarEscapes`, with its local twin still leaking).
+- **The purity pass read names in one bare-name frame over the merged program, and did not
+  record loop variables at all.** So `for frame in 0..<2` in a pure function read
+  `std.game.screen`'s private `var frame`, and so did a module's own `let frame`. Loop
+  variables are now immutable bindings of the function (the method-clause walk learned
+  them, and comprehension and `match` binders, too), and a top-level read resolves as the
+  reading module sees it (`capturedMutableAt`, as `resolveFunctionAt` already did for
+  calls) (`TestPurity_ReadsResolveAsTheReadingModuleSeesThem`).
+
 ### 10/11/26 — A namespace inside a closure is not a capture
 
 `p.palettes.map((q) => project.clone_palette(q))` in Vega checked clean and failed in the

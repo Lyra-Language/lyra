@@ -1,0 +1,112 @@
+module std.game.planes
+//! The tile planes a game's maps are shown through — `std.genesis.vdp`'s planes A and B and
+//! its window, for every modern platform: a map written into a plane once, scrolled as the
+//! view moves, and a strip at the top that does not scroll for a score.
+//!
+//! ```
+//! import std.game.planes
+//!
+//! planes.write_plane(planes.PLANE_B, FIELD_CELLS, FIELD_WIDTH)
+//! planes.set_scroll(planes.PLANE_B, view.x, view.y)
+//! planes.window_rows(2)
+//! planes.write_cell(planes.WINDOW, 1, 0, planes.FRONT | DIGITS_TILE)
+//! ```
+//!
+//! **A cell is a `u32`**: a tile of the tile art (`std.game.screen`'s `load_tiles`) in its
+//! low bits ([TILE_MASK]), the palette it is shown in ([palette]), mirrored ([FLIP_X]),
+//! flipped ([FLIP_Y]), and in front of the sprites or behind them ([FRONT]) — the
+//! Genesis's name-table word, widened. Tile 0 is the blank one: a cell that shows nothing
+//! holds 0.
+//!
+//! **Drawn in the Genesis's order** by `screen.show`: plane B, then A, then the sprites —
+//! each once for its cells behind and once more for those in [FRONT] — so a tree's canopy
+//! covers the hero walking under it. The [WINDOW] takes plane A's place in its rows, and
+//! never scrolls.
+//!
+//! This module only keeps the planes; `std.game.screen` draws them, so a game's camera and
+//! collision can name these without the window.
+
+/// The planes, as the Genesis names them: A in front of B.
+pub const PLANE_A: i64 = 0
+pub const PLANE_B: i64 = 1
+/// The strip over the top [window_rows] rows that does not scroll, in front of plane B and
+/// in plane A's place.
+pub const WINDOW: i64 = 2
+
+/// A cell's tile, its palette (0–15, [palette]), and its flags.
+pub const TILE_MASK: u32 = 0x000FFFFF
+pub const PALETTE_MASK: u32 = 0x0F000000
+pub const PALETTE_SHIFT: u32 = 24
+pub const FRONT: u32 = 0x20000000
+pub const FLIP_Y: u32 = 0x40000000
+pub const FLIP_X: u32 = 0x80000000
+
+/// What a plane holds: its cells row by row, `width` a row, and where its top-left is
+/// scrolled to — the world position at the screen's top-left.
+pub struct Plane {
+  cells: []u32,
+  width: i64,
+  x: f32 = 0.0,
+  y: f32 = 0.0,
+}
+
+/// A cell's bits for palette `p`: `FRONT | planes.palette(2) | tile`.
+pub let palette = pure (p: u32) -> u32 => (p << PALETTE_SHIFT) & PALETTE_MASK
+
+/// The window's width in cells: wide enough for any screen a game opens, up to 1024 pixels.
+pub const WINDOW_COLUMNS: i64 = 128
+
+/// Show a map in `plane`, replacing what it held: `cells` row by row, `width` cells a row,
+/// the map's top-left at the world's (0, 0). The plane keeps a copy, so the table may be a
+/// `const`.
+pub let write_plane<const N: i64> = (
+  plane: i64,
+  cells: ref [N]u32,
+  width: i64
+) -> void => {
+  if plane < 0 || plane >= 3 || width <= 0 { return }
+  all[plane] = Plane { all[plane] | cells: [c in cells | c], width: width }
+}
+
+/// One cell of `plane`, at column `x` and row `y`. A cell past a map's edge is not kept;
+/// the [WINDOW] grows downwards to hold any row written.
+pub let write_cell = (plane: i64, x: i64, y: i64, word: u32) -> void => {
+  if plane < 0 || plane >= 3 || x < 0 || y < 0 { return }
+  if plane == WINDOW {
+    while all[WINDOW].cells.len() < (y + 1) * WINDOW_COLUMNS { all[WINDOW].cells.push(0) }
+  }
+  let p = all[plane]
+  if x < p.width && y * p.width + x < p.cells.len() { all[plane].cells[y * p.width + x] = word }
+}
+
+/// Scroll `plane` so world position (`x`, `y`) is at the screen's top-left. The window does
+/// not scroll.
+pub let set_scroll = (plane: i64, x: f32, y: f32) -> void => {
+  if plane == PLANE_A || plane == PLANE_B {
+    all[plane].x = x
+    all[plane].y = y
+  }
+}
+
+/// How many rows of cells the [WINDOW] covers at the top of the screen: 0, the default,
+/// shows none.
+pub let window_rows = (rows: i64) -> void => { shown_rows = rows.max(0) }
+
+/// Empty `plane`: it shows nothing until written again.
+pub let clear = (plane: i64) -> void => {
+  if plane >= 0 && plane < 3 { all[plane] = empty(all[plane].width) }
+}
+
+/// What `plane` holds now — for `std.game.screen`, which draws it.
+pub let plane = (index: i64) -> Plane => all[index]
+
+/// How many rows the window covers — for `std.game.screen`.
+pub let rows_in_window = () -> i64 => shown_rows
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// A plane holding nothing, `width` cells a row. Above the planes: their initializer calls it.
+let empty = pure (width: i64) -> Plane => Plane { cells: [], width: width }
+
+var all: []Plane = [empty(0), empty(0), empty(WINDOW_COLUMNS)]
+var shown_rows: i64 = 0

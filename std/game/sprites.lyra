@@ -1,0 +1,46 @@
+module std.game.sprites
+//! The sprites a frame shows — `std.genesis.sprites`' list, for every modern platform: a
+//! list built each frame and drawn by `std.game.screen`'s `show`.
+//!
+//! ```
+//! import std.game.sprites
+//! import std.game.sprites.{ Sprite }
+//!
+//! sprites.clear()
+//! sprites.add(Sprite { x: 40.0, y: 100.0, width: 16.0, height: 24.0, sheet_x: 0.0, sheet_y: 0.0 })
+//! screen.show()
+//! ```
+//!
+//! **A sprite is a rectangle of the sprite art** (`screen.load_sprites`): its top-left
+//! there, its size, and where it goes on the screen. Vega's `assets` add them
+//! (`draw_hero`, `play`), knowing where each frame is. **Earlier sprites are in front**, as
+//! on the Genesis; a sprite in [Sprite]'s `front` is in front of the planes' front cells too.
+//! There is no limit to how many.
+
+/// One sprite: where on the screen, how big, and which part of the sprite art it shows, in
+/// pixels.
+pub struct Sprite {
+  x: f32,
+  y: f32,
+  width: f32,
+  height: f32,
+  sheet_x: f32,
+  sheet_y: f32,
+  flip_x: bool = false,
+  flip_y: bool = false,
+  /// In front of the planes' front cells too.
+  front: bool = false,
+}
+
+/// Start a new list: nothing is shown until [add]ed.
+pub let clear = () -> void => { list = [] }
+
+/// Add a sprite behind those already added.
+pub let add = (s: Sprite) -> void => { list.push(s) }
+
+/// The list, front first — for `std.game.screen`, which draws it.
+pub let added = () -> []Sprite => list
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+var list: []Sprite = []

@@ -1,0 +1,362 @@
+module std.game.entity
+//! The things a game is made of — a hero, a star, an enemy — as kinds and the entities of
+//! them: `std.genesis.entity`'s, in `f32` pixels, for every modern platform.
+//!
+//! ```
+//! import std.game.entity.{ Entity }
+//!
+//! var hero = assets.HERO.spawn(160.0, 208.0)    // Vega's entity editor makes the kind
+//! loop {
+//!   hero.push(dx, dy)                            // the pad: -1, 0 or 1 a direction
+//!   hero.move_in_field()                         // assets: through the map, stopped by walls
+//!   hero.play(assets.HERO_WALK, view, facing_left) // assets: shown, into the sprite list
+//!   if hero.meets(star) { … }
+//! }
+//! ```
+//!
+//! **A kind is data, an entity is its instance.** An [EntityKind] — usually a constant
+//! Vega writes (`assets.HERO`) — holds a sprite's size, the animation it starts with, its
+//! [Collider]s and its motion; an [Entity] is one of it in the game, the kind copied in.
+//! What needs the game's own tables — drawing a sprite, a map's cells — is the game's
+//! assets', which pass them here ([move_in]).
+//!
+//! **Speeds are pixels an update**, 60 updates a second (`std.game.screen`): the kind's top
+//! speed, acceleration, friction and gravity, and an entity's `vx` and `vy`. A place is any
+//! `f32`, so an entity moves by fractions of a pixel; it is drawn at whole ones.
+//!
+//! **Meeting is one-sided**, as `std.game.collision` says: `a.meets(b)` asks whether a
+//! collider of `a` looks for a layer one of `b`'s is on, whatever `b` looks for.
+
+import std.game.collision.{ Shape, Collider, TILE }
+
+/// An animation of a sprite: where its steps are in the game's step table, how many, how
+/// long they take in all (updates, 1/60 s), and whether it goes round. The game's assets
+/// play one (Vega's `assets.lyra`); here it is only carried.
+pub struct Animation {
+  /// Which sprite (its place in the project), and its steps.
+  sprite: i64,
+  first: i64,
+  count: i64,
+  total: i64,
+  /// Back to the start after the end; else the last step holds.
+  looping: bool,
+}
+
+/// The most colliders a kind has: a kind is copied into each of its entities, so its
+/// colliders are a fixed array, the unused ones empty.
+pub const MAX_COLLIDERS: i64 = 4
+
+/// A collider of no shape, on no layer and looking for none: what fills a kind's unused
+/// collider places.
+pub const NO_COLLIDER: Collider = Collider {
+  shape: Shape { x: 0.0, y: 0.0, width: 0.0, height: 0.0 },
+  layers: 0,
+  mask: 0
+}
+
+/// A kind of thing in the game: its sprite's size, what it shows when spawned, what it
+/// collides by, and how it moves — its top speed, the speed it gains an update while
+/// pushed, loses an update while not, and gains downwards an update from gravity, in pixels.
+pub struct EntityKind {
+  width: f32,
+  height: f32,
+  animation: Animation,
+  /// The first `collider_count` of `colliders` are its own.
+  colliders: [4]Collider,
+  collider_count: i64,
+  max_speed: f32,
+  acceleration: f32,
+  friction: f32,
+  gravity: f32,
+}
+
+/// An entity: one of a kind in the game, where it is and how fast it is going, what it
+/// shows, and which way it faces.
+pub struct Entity {
+  kind: EntityKind,
+  /// Its top-left in the world, in pixels.
+  fx: f32,
+  fy: f32,
+  /// Its speed an update — the game may set it (a jump, a knock back).
+  vx: f32,
+  vy: f32,
+  /// What it shows and how many updates in.
+  animation: Animation,
+  tick: i64,
+  /// Whether it faces the other way, which mirrors its colliders too.
+  mirrored: bool,
+  /// Which way its colliders face against a map: `mirrored`'s once turning would not put
+  /// one into a tile it looks for — turning beside a wall must not push it in.
+  hit_mirrored: bool,
+  /// Drawn this frame: the game's assets set it as they draw it (`play`, `draw`), and a
+  /// scene's `draw` skips it and clears it, so an entity played is not drawn twice.
+  drawn: bool = false,
+}
+
+/// The fastest an entity falls, in pixels an update: a tile, so a fall never steps over a
+/// tile it should land on.
+pub const MAX_FALL: f32 = 8.0
+
+impl Entity {
+  /// Its top-left in the world, in pixels.
+  pub let x = pure (self: ref) -> f32 => self.fx
+  pub let y = pure (self: ref) -> f32 => self.fy
+
+  /// Put it with its top-left at (`x`, `y`), its speed kept.
+  pub let place = (self: mut, x: f32, y: f32) -> void => {
+    self.fx = x
+    self.fy = y
+  }
+
+  /// An update's push, `dx` and `dy` each from -1 to 1 (the pad's directions, or a stick's
+  /// lean): a pushed axis gains the kind's acceleration towards its top speed (times the
+  /// push), one not pushed loses its friction until it stands. With gravity the vertical
+  /// axis is gravity's, falling at most [MAX_FALL], and `dy` is not used — a jump sets `vy`.
+  /// Once an update, before moving.
+  ///
+  /// **Pushed both ways at once, it goes no faster**: each axis's top speed and acceleration
+  /// are the kind's over √2, so the diagonal is the top speed, not 1.4 times it.
+  pub let push = (self: mut, dx: f32, dy: f32) -> void => {
+    let diagonal = nonzero(dx) && nonzero(dy) && self.kind.gravity <= 0.0
+    let scale: f32 = if diagonal { 0.70710678 } else { 1.0 }
+    let top = self.kind.max_speed * scale
+    let rate = self.kind.acceleration * scale
+    self.vx = accelerate(self.vx, dx, rate, self.kind.friction, top)
+    self.vy = if self.kind.gravity > 0.0 {
+      (self.vy + self.kind.gravity).min(MAX_FALL)
+    } else {
+      accelerate(self.vy, dy, rate, self.kind.friction, top)
+    }
+  }
+
+  /// Moved by its speed, an update's worth, through anything.
+  pub let move = (self: mut) -> void => {
+    self.fx += self.vx
+    self.fy += self.vy
+  }
+
+  /// Moved by its speed in a map, kept inside it: each axis on its own, and one whose move
+  /// would meet a tile its colliders look for, or leave the map, stops — so it slides along
+  /// a wall rather than sticking to it. Not `kept_in`, the map's edges stop nothing: it
+  /// leaves where the map's collision leaves a gap, and the game decides what that means.
+  /// Its colliders turn as it has once they fit. The map is `std.game.collision`'s
+  /// `hits_map`'s: `cells` row by row, `width` a row, its tile set's tiles from
+  /// `first_tile`, their colliders `shapes[starts[t]]` up to `starts[t + 1]`.
+  pub let move_in<const N: i64, const M: i64, const K: i64> = (
+    self: mut,
+    cells: ref [N]u32,
+    width: i64,
+    first_tile: u32,
+    starts: ref [M]u32,
+    shapes: ref [K]Collider,
+    kept_in: bool = true
+  ) -> void =>
+    self.move_in_with(
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes,
+      NO_BANDS,
+      NO_MAP_SHAPES,
+      kept_in
+    )
+
+  /// [move_in], stopped too by the map's own colliders — shapes drawn on the map itself, in
+  /// its pixels — gathered by band, `bands` saying where each band starts in `map_shapes`
+  /// (`collision.hits_banded`; `#[0, n]` for one band of all `n`).
+  ///
+  /// **A one-way collider** (a tile's or the map's) stops only the vertical move, and only
+  /// coming down onto it from clear above: an entity stands on it, and jumps up through it or
+  /// walks across it.
+  pub let move_in_with<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = (
+    self: mut,
+    cells: ref [N]u32,
+    width: i64,
+    first_tile: u32,
+    starts: ref [M]u32,
+    shapes: ref [K]Collider,
+    bands: ref [B]u32,
+    map_shapes: ref [P]Collider,
+    kept_in: bool = true
+  ) -> void => {
+    let rows = if width > 0 { cells.len() / width } else { 0 }
+    let open = !kept_in
+    let right = f32(width) * TILE - self.kind.width
+    let bottom = f32(rows) * TILE - self.kind.height
+    // Turned: its colliders turn too, unless that would put one into a wall here.
+    if self.hit_mirrored != self.mirrored && !self.kind.hits_tiles(
+      self.fx,
+      self.fy,
+      self.fy,
+      self.mirrored,
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes,
+      bands,
+      map_shapes
+    ) {
+      self.hit_mirrored = self.mirrored
+    }
+    // An axis not moving is not tested.
+    if nonzero(self.vx) {
+      let wanted = self.fx + self.vx
+      let edged = !open && (wanted < 0.0 || wanted > right)
+      let nx = if edged { wanted.clamp(0.0, right) } else { wanted }
+      if self.kind.hits_tiles(
+        nx,
+        self.fy,
+        self.fy,
+        self.hit_mirrored,
+        cells,
+        width,
+        first_tile,
+        starts,
+        shapes,
+        bands,
+        map_shapes
+      ) {
+        self.vx = 0.0
+      } else {
+        // At the map's edge it stops, as at a wall.
+        if edged { self.vx = 0.0 }
+        self.fx = nx
+      }
+    }
+    if nonzero(self.vy) {
+      let wanted = self.fy + self.vy
+      let edged = !open && (wanted < 0.0 || wanted > bottom)
+      let ny = if edged { wanted.clamp(0.0, bottom) } else { wanted }
+      if self.kind.hits_tiles(
+        self.fx,
+        ny,
+        self.fy,
+        self.hit_mirrored,
+        cells,
+        width,
+        first_tile,
+        starts,
+        shapes,
+        bands,
+        map_shapes
+      ) {
+        self.vy = 0.0
+      } else {
+        if edged { self.vy = 0.0 }
+        self.fy = ny
+      }
+    }
+  }
+
+  /// Show `animation`, facing the other way when `mirrored`: from its start when it is not
+  /// what it shows now, else going on. Nothing is drawn: the game's assets' `play` sets this
+  /// and draws the entity, which needs their tables.
+  pub let set_animation = (
+    self: mut,
+    animation: Animation,
+    mirrored: bool = false
+  ) -> void => {
+    if animation.first != self.animation.first || animation.sprite != self.animation.sprite {
+      self.animation = animation
+      self.tick = 0
+    }
+    self.mirrored = mirrored
+  }
+
+  /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
+  /// and their shapes overlap — each mirrored as its entity faces.
+  pub let meets = pure (self: ref, other: ref Entity) -> bool => {
+    for i in 0..<self.kind.collider_count {
+      let ac = self.kind.colliders[i]
+      let a = if self.mirrored { ac.mirrored(self.kind.width) } else { ac }
+      for j in 0..<other.kind.collider_count {
+        let bc = other.kind.colliders[j]
+        let b = if other.mirrored { bc.mirrored(other.kind.width) } else { bc }
+        if a.meets(self.fx, self.fy, b, other.fx, other.fy) { return true }
+      }
+    }
+    false
+  }
+}
+
+impl EntityKind {
+  /// An entity of this kind with its top-left at (`x`, `y`) in the world, still, showing
+  /// what the kind starts with.
+  pub let spawn = pure (self, x: f32, y: f32) -> Entity => Entity {
+    kind: self,
+    fx: x,
+    fy: y,
+    vx: 0.0,
+    vy: 0.0,
+    animation: self.animation,
+    tick: 0,
+    mirrored: false,
+    hit_mirrored: false,
+  }
+
+  /// Whether an entity of this kind moved to (`x`, `y`) from (`x`, `from_y`), mirrored or
+  /// not, is stopped by a tile of the map, or one of the map's own colliders, on a layer one
+  /// of its colliders looks for (a one-way collider only from above). A move across, or no
+  /// move, passes `from_y` = `y`, which no one-way collider stops.
+  let hits_tiles<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = pure (
+    self: ref,
+    x: f32,
+    y: f32,
+    from_y: f32,
+    mirrored: bool,
+    cells: ref [N]u32,
+    width: i64,
+    first_tile: u32,
+    starts: ref [M]u32,
+    shapes: ref [K]Collider,
+    bands: ref [B]u32,
+    map_shapes: ref [P]Collider
+  ) -> bool => {
+    // Tiles that carry no shapes — a map whose collision is its own — are not walked.
+    let tiled = starts[starts.len() - 1] != 0
+    for i in 0..<self.collider_count {
+      let c = self.colliders[i]
+      let placed = if mirrored { c.mirrored(self.width) } else { c }
+      if tiled && placed.hits_map_moving(
+        x,
+        y,
+        from_y,
+        cells,
+        width,
+        first_tile,
+        starts,
+        shapes
+      ) {
+        return true
+      }
+      if placed.hits_banded_moving(x, y, from_y, bands, map_shapes) { return true }
+    }
+    false
+  }
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// A map with no colliders of its own: one band of none, and a collider that meets nothing.
+const NO_BANDS: [2]u32 = #[0, 0]
+const NO_MAP_SHAPES: [1]Collider = #[NO_COLLIDER]
+
+/// One axis's speed after an update. Pushed `d` (towards -1 or 1), it heads for `d` times
+/// `top`: gaining `rate` while it is slower that way or going the other, and losing
+/// `friction` while it is faster (a lighter lean than before). Not pushed, it loses
+/// `friction` until it stands.
+let accelerate = pure (v: f32, d: f32, rate: f32, friction: f32, top: f32) -> f32 => {
+  if !nonzero(d) { return toward(v, 0.0, friction) }
+  let target = top * d.clamp(-1.0, 1.0)
+  let behind = if target > 0.0 { v < target } else { v > target }
+  toward(v, target, if behind { rate } else { friction })
+}
+
+/// Whether `v` is anything but zero — a speed, or a push.
+let nonzero = pure (v: f32) -> bool => v < 0.0 || v > 0.0
+
+/// `v` moved `step` towards `target`, never past it.
+let toward = pure (v: f32, target: f32, step: f32) -> f32 =>
+  if v < target { (v + step).min(target) } else { (v - step).max(target) }

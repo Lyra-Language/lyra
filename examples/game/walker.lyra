@@ -1,0 +1,128 @@
+// A hero who walks where the pad says — the first game on `std.game`, and
+// `examples/genesis/walker.lyra` ported to it: the same walk on every platform SDL3 runs on.
+//
+//   lyrac run walker.lyra                                    # the arrow keys move him
+//   lyrac run walker.lyra -- --frames 30 --hold right --ppm walker.ppm   # plays itself
+//
+// Each update: read the pad, move (two pixels an update, stopped at the screen's edges),
+// step the walk while moving and stand still otherwise. Each frame: put the sprite in the
+// list and show it over a field of grass in plane B. The art is drawn here, pixel by pixel,
+// where a game made in Vega has its `assets`.
+
+import std.game.screen
+import std.game.pad
+import std.game.planes
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+
+/// How far a held direction moves the hero each update, in pixels.
+const SPEED: f32 = 2.0
+
+/// How many updates each step of the walk shows for.
+const STEP_UPDATES: i64 = 8
+
+/// The hero is 16×16, two frames side by side in the sprite art.
+const HERO_SIZE: f32 = 16.0
+
+/// The screen, the Genesis's.
+const WIDTH: i64 = 320
+const HEIGHT: i64 = 224
+
+let main = () -> u8 => {
+  if !screen.open("Walker", WIDTH, HEIGHT) { return 1 }
+  screen.set_backdrop(32, 64, 160)
+  screen.load_tiles(2, tile_art())
+  screen.load_sprites(32, hero_art())
+  planes.write_plane(planes.PLANE_B, field(), WIDTH / 8)
+
+  var x = (f32(WIDTH) - HERO_SIZE) / 2.0
+  var y = (f32(HEIGHT) - HERO_SIZE) / 2.0
+  var step = 0
+  var updates = 0
+  while screen.running() {
+    for _ in 0..<screen.updates_due() {
+      let buttons = pad.read(1)
+      var dx: f32 = 0.0
+      var dy: f32 = 0.0
+      if pad.held(buttons, pad.LEFT) { dx = -SPEED }
+      if pad.held(buttons, pad.RIGHT) { dx = SPEED }
+      if pad.held(buttons, pad.UP) { dy = -SPEED }
+      if pad.held(buttons, pad.DOWN) { dy = SPEED }
+      let nx = (x + dx).clamp(0.0, f32(WIDTH) - HERO_SIZE)
+      let ny = (y + dy).clamp(0.0, f32(HEIGHT) - HERO_SIZE)
+      if nx < x || nx > x || ny < y || ny > y {
+        // Walking: the next step every STEP_UPDATES updates.
+        updates += 1
+        if updates == STEP_UPDATES {
+          updates = 0
+          step = 1 - step
+        }
+      } else {
+        // Standing — against a wall too.
+        step = 0
+        updates = 0
+      }
+      x = nx
+      y = ny
+    }
+    sprites.clear()
+    sprites.add(Sprite {
+      x: x,
+      y: y,
+      width: HERO_SIZE,
+      height: HERO_SIZE,
+      sheet_x: f32(step) * HERO_SIZE,
+      sheet_y: 0.0,
+    })
+    screen.show()
+  }
+  screen.close()
+}
+
+/// Two tiles, side by side: tile 0 blank, tile 1 grass — green, with darker blades.
+let tile_art = pure () -> [128]u32 => {
+  var art: [128]u32 = #[0; 128]
+  for row in 0..<8 {
+    for column in 0..<8 {
+      let blade = (row + column * 3) % 5 == 0
+      art[row * 16 + 8 + column] = if blade { GRASS_DARK } else { GRASS }
+    }
+  }
+  art
+}
+
+/// The field: grass everywhere but a border of nothing, where the backdrop shows.
+let field = pure () -> [1120]u32 => {
+  var cells: [1120]u32 = #[0; 1120]
+  let columns = WIDTH / 8
+  let rows = HEIGHT / 8
+  for row in 1..<rows - 1 {
+    for column in 1..<columns - 1 { cells[row * columns + column] = 1 }
+  }
+  cells
+}
+
+/// The hero's two frames, 16×16 each: a red body with a white eye, its feet apart in the
+/// second. Transparent around him.
+let hero_art = pure () -> [512]u32 => {
+  var art: [512]u32 = #[0; 512]
+  for frame in 0..<2 {
+    for row in 2..<14 {
+      for column in 3..<13 { art[row * 32 + frame * 16 + column] = RED }
+    }
+    for row in 4..<7 {
+      for column in 8..<11 { art[row * 32 + frame * 16 + column] = WHITE }
+    }
+    let spread = frame * 2
+    for row in 14..<16 {
+      art[row * 32 + frame * 16 + 4 - spread] = RED
+      art[row * 32 + frame * 16 + 11 + spread] = RED
+    }
+  }
+  art
+}
+
+const GRASS: u32 = 0xFF30A030
+const GRASS_DARK: u32 = 0xFF207020
+const RED: u32 = 0xFFE03020
+const WHITE: u32 = 0xFFFFFFFF

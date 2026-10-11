@@ -1,0 +1,159 @@
+module std.game.camera
+//! A camera on a world bigger than the screen — `std.genesis.camera`'s, for every modern
+//! platform: where the view is, moved to follow the player, and a map in a plane scrolled
+//! with it.
+//!
+//! ```
+//! import std.game.camera.{ Camera }
+//!
+//! var view = Camera { world_width: 640.0, world_height: 512.0, view_width: 384.0, view_height: 216.0 }
+//! view.zone = view.thirds()
+//! view.show_map(planes.PLANE_B, LEVEL, LEVEL_WIDTH)   // once
+//! loop {
+//!   // … move the player, in the world's pixels
+//!   view.follow(x, y, PLAYER_WIDTH, PLAYER_HEIGHT)
+//!   let (sx, sy) = view.on_screen(x, y)              // … and draw its sprites there
+//!   view.scroll_map(planes.PLANE_B, LEVEL, LEVEL_WIDTH)
+//! }
+//! ```
+//!
+//! **The camera moves only when it must**: what it follows is free inside the camera's
+//! [Zone], a rectangle of the screen, and the view moves when it crosses the zone's edge —
+//! just enough to keep it there — and never past the world's edges. The view is kept at
+//! whole pixels, so the planes and sprites scroll together without shimmering.
+//!
+//! **A plane holds the whole map** (`std.game.planes`), so scrolling is only telling the
+//! plane where the view is; [show_map] and [scroll_map] keep the Genesis camera's names, so
+//! a game ports between the two unchanged.
+
+import std.game.planes
+
+/// The part of the screen what a camera follows may move in without the view moving, in
+/// screen pixels: `left` ≤ x and x + its width ≤ `right`, and the same down.
+pub struct Zone {
+  left: f32,
+  top: f32,
+  right: f32,
+  bottom: f32,
+}
+
+/// Where the view is in a world, how big it is, and where what it follows may move freely.
+pub struct Camera {
+  /// The view's top-left in the world, in whole pixels.
+  x: f32 = 0.0,
+  y: f32 = 0.0,
+  /// The world's size in pixels: the view never leaves it.
+  world_width: f32,
+  world_height: f32,
+  /// The view's size: the screen's (`screen.width()`, `screen.height()`).
+  view_width: f32,
+  view_height: f32,
+  /// Where on the screen what it follows may move without the view moving: the whole
+  /// screen unless the game sets one ([thirds], [centred_zone]).
+  zone: Zone = Zone { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 },
+}
+
+impl Camera {
+  /// The middle third of the view each way.
+  pub let thirds = pure (self) -> Zone => Zone {
+    left: whole(self.view_width / 3.0),
+    top: whole(self.view_height / 3.0),
+    right: whole(self.view_width * 2.0 / 3.0),
+    bottom: whole(self.view_height * 2.0 / 3.0),
+  }
+
+  /// A zone `width` × `height` in the middle of the view. One smaller than what the camera
+  /// follows keeps that centred: `centred_zone(0.0, 0.0)` pans with every step.
+  pub let centred_zone = pure (self, width: f32, height: f32) -> Zone => Zone {
+    left: whole((self.view_width - width) / 2.0),
+    top: whole((self.view_height - height) / 2.0),
+    right: whole((self.view_width + width) / 2.0),
+    bottom: whole((self.view_height + height) / 2.0),
+  }
+
+  /// Move the view to keep the rectangle `x`, `y`, `width` × `height` (in the world's
+  /// pixels) inside the camera's zone: it moves only when the rectangle crosses the zone's
+  /// edge, and then just enough — never past the world's edges. Once an update, after
+  /// moving what it follows.
+  pub let follow = (self: mut, x: f32, y: f32, width: f32, height: f32) -> void => {
+    let z = self.effective_zone()
+    self.x = along(self.x, x, width, z.left, z.right, self.view_width, self.world_width)
+    self.y = along(
+      self.y,
+      y,
+      height,
+      z.top,
+      z.bottom,
+      self.view_height,
+      self.world_height
+    )
+  }
+
+  /// Where world position (`x`, `y`) is on the screen, for a sprite.
+  pub let on_screen = pure (self, x: f32, y: f32) -> (f32, f32) =>
+    (x - self.x, y - self.y)
+
+  /// Whether something `width` × `height` with its top-left at (`x`, `y`) on the screen
+  /// shows on it.
+  pub let sees = pure (self, x: f32, y: f32, width: f32, height: f32) -> bool =>
+    x > -width && x < self.view_width && y > -height && y < self.view_height
+
+  /// A map into `plane`, scrolled to the view: `cells` row by row, `width` cells a row.
+  /// Once — and again to show another map there.
+  pub let show_map<const N: i64> = (
+    self,
+    plane: i64,
+    cells: ref [N]u32,
+    width: i64
+  ) -> void => {
+    planes.write_plane(plane, cells, width)
+    planes.set_scroll(plane, self.x, self.y)
+  }
+
+  /// Keep `plane`'s map under the view as it moves: once a frame, after [follow]. The plane
+  /// holds the whole map, so only its scroll changes.
+  pub let scroll_map<const N: i64> = (
+    self,
+    plane: i64,
+    _cells: ref [N]u32,
+    _width: i64
+  ) -> void => planes.set_scroll(plane, self.x, self.y)
+
+  // ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+  /// The zone, or the whole view when none was set.
+  let effective_zone = pure (self) -> Zone =>
+    if self.zone.right > self.zone.left || self.zone.bottom > self.zone.top {
+      self.zone
+    } else {
+      Zone { left: 0.0, top: 0.0, right: self.view_width, bottom: self.view_height }
+    }
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// One axis of [follow]: the view's start `at` moved so `from`..`from + size` stays
+/// between `low` and `high` on the screen, then kept inside `world`, at a whole pixel.
+/// Something bigger than the zone is centred on it.
+let along = pure (
+  at: f32,
+  from: f32,
+  size: f32,
+  low: f32,
+  high: f32,
+  screen: f32,
+  world: f32
+) -> f32 => {
+  var moved = at
+  if size > high - low {
+    moved = from + size / 2.0 - (low + high) / 2.0
+  } else if from < at + low {
+    moved = from - low
+  } else if from + size > at + high {
+    moved = from + size - high
+  }
+  whole(moved.clamp(0.0, (world - screen).max(0.0)))
+}
+
+/// The whole number at or below `v`, still an `f32`.
+let whole = pure (v: f32) -> f32 => f32(v.floor())

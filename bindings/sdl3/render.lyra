@@ -5,7 +5,8 @@ module bindings.sdl3
 /// An `SDL_Renderer *`. A `type` for the reason [Window] is one.
 pub type Renderer = ^u8
 
-/// An `SDL_Surface *`, which only [save_screenshot] ever holds — so it stays private.
+/// An `SDL_Surface *`, which only [save_screenshot] and [read_pixels] ever hold — so it
+/// stays private.
 type Surface = ^u8
 
 /// `SDL_FRect` — the rectangle SDL draws, in floats.
@@ -27,6 +28,14 @@ pub struct Color {
   g: u8,
   b: u8,
   a: u8,
+}
+
+/// A frame read back from the renderer ([read_pixels]): `width` × `height` pixels, row by
+/// row, `0xAARRGGBB` each — what a test compares against the picture it expected.
+pub struct Pixels {
+  width: i64,
+  height: i64,
+  argb: []u32,
 }
 
 /// An opaque colour, which is nearly every colour a program names.
@@ -112,6 +121,24 @@ unsafe extern sdl_render_read_pixels: (renderer: Renderer, rect: ^Rect) -> Surfa
 
 @symbol("SDL_SaveBMP")
 unsafe extern sdl_save_bmp: (surface: Surface, file: ^u8) -> bool
+
+@symbol("SDL_GetCurrentRenderOutputSize")
+unsafe extern sdl_get_current_render_output_size: (
+  renderer: Renderer,
+  w: ^mut i32,
+  h: ^mut i32
+) -> bool
+
+@symbol("SDL_ReadSurfacePixel")
+unsafe extern sdl_read_surface_pixel: (
+  surface: Surface,
+  x: i32,
+  y: i32,
+  r: ^mut u8,
+  g: ^mut u8,
+  b: ^mut u8,
+  a: ^mut u8,
+) -> bool
 
 @symbol("SDL_DestroySurface")
 unsafe extern sdl_destroy_surface: (surface: Surface) -> void
@@ -206,6 +233,50 @@ impl Renderer {
       unsafe { sdl_destroy_surface(surface) }
       saved
     }
+  }
+
+  /// What has been drawn this frame, as pixels — or `None` if SDL cannot read it back. Call
+  /// it **before** [present], as [save_screenshot].
+  ///
+  /// The size is the window's real pixels, not the logical screen's, as a screenshot's is:
+  /// a test that wants one pixel per logical pixel opens its window at scale 1.
+  ///
+  /// A pixel at a time (`SDL_ReadSurfacePixel`), which converts from whatever format the
+  /// renderer reads in: slow for a large window, and only a test reads a frame back.
+  pub let read_pixels = (self) -> Maybe<Pixels> => {
+    var w: i32 = 0
+    var h: i32 = 0
+    if !unsafe { sdl_get_current_render_output_size(self, &mut w, &mut h) } {
+      return None
+    }
+    let surface = unsafe { sdl_render_read_pixels(self, nullptr) }
+    if surface == nullptr {
+      return None
+    }
+    var argb: []u32 = []
+    var r: u8 = 0
+    var g: u8 = 0
+    var b: u8 = 0
+    var a: u8 = 0
+    var whole = true
+    for y in 0..<h {
+      for x in 0..<w {
+        if !unsafe { sdl_read_surface_pixel(
+          surface,
+          x,
+          y,
+          &mut r,
+          &mut g,
+          &mut b,
+          &mut a
+        ) } {
+          whole = false
+        }
+        argb.push(u32(a) << 24 | u32(r) << 16 | u32(g) << 8 | u32(b))
+      }
+    }
+    unsafe { sdl_destroy_surface(surface) }
+    if whole { Some(Pixels { width: i64(w), height: i64(h), argb: argb }) } else { None }
   }
 
   /// A window position — a mouse event's, or [mouse_state]'s — in the renderer's own

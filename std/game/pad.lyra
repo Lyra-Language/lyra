@@ -1,0 +1,170 @@
+module std.game.pad
+//! The player's controls, read as the buttons held — `std.genesis.pad`'s buttons, for every
+//! modern platform, from the keyboard and any gamepad at once.
+//!
+//! ```
+//! import std.game.pad
+//!
+//! let buttons = pad.read(1)
+//! if pad.held(buttons, pad.LEFT) { x -= 1.0 }
+//! if pad.pressed(buttons, last, pad.A) { jump() }   // down this frame, not the last
+//! ```
+//!
+//! **A Genesis 6-button pad's buttons**, and the bits [read] answers are the Genesis's, so
+//! a game reads its controls the same way on both. Pad 1 is the keyboard and the first
+//! gamepad, merged; pad 2 the second gamepad. The keyboard is Sheliak's:
+//!
+//! | button | keyboard | gamepad |
+//! |---|---|---|
+//! | up, down, left, right | arrows | d-pad, left stick |
+//! | A, B, C | Z, X, C | the face buttons' left, bottom, right |
+//! | X, Y, Z | A, S, D | left shoulder, top face button, right shoulder |
+//! | Start, Mode | Return, Q | Start, Back |
+//!
+//! Left and right held at once cancel to neither, as up and down do: a d-pad cannot press
+//! both, and games are written knowing it.
+//!
+//! **`--hold up,right,a`** (`std.game.screen` reads it) holds those buttons on pad 1 from
+//! the first frame — how a game is played without anyone at it, as Sheliak's `--hold` plays
+//! a ROM.
+
+import bindings.sdl3.{
+  key_held, SCANCODE_UP, SCANCODE_DOWN, SCANCODE_LEFT, SCANCODE_RIGHT, SCANCODE_Z,
+  SCANCODE_X, SCANCODE_C, SCANCODE_RETURN, SCANCODE_A, SCANCODE_S, SCANCODE_D, SCANCODE_Q,
+  Gamepad, open_gamepad, close_gamepad, gamepad_id, gamepad_button, gamepad_axis,
+  BUTTON_SOUTH, BUTTON_EAST, BUTTON_WEST, BUTTON_NORTH, BUTTON_BACK, BUTTON_START,
+  BUTTON_LEFT_SHOULDER, BUTTON_RIGHT_SHOULDER, BUTTON_DPAD_UP, BUTTON_DPAD_DOWN,
+  BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT, AXIS_LEFT_X, AXIS_LEFT_Y, Event,
+}
+
+/// The buttons, as bits of what [read] answers — the Genesis's eight, then a 6-button
+/// pad's four more.
+pub const UP: u16 = 0x0001
+pub const DOWN: u16 = 0x0002
+pub const LEFT: u16 = 0x0004
+pub const RIGHT: u16 = 0x0008
+pub const B: u16 = 0x0010
+pub const C: u16 = 0x0020
+pub const A: u16 = 0x0040
+pub const START: u16 = 0x0080
+pub const X: u16 = 0x0100
+pub const Y: u16 = 0x0200
+pub const Z: u16 = 0x0400
+pub const MODE: u16 = 0x0800
+
+/// The buttons held on pad `port` (1 or 2), one bit each. Read it once an update, after
+/// `screen.running`, which is when the keyboard and gamepads are up to date.
+pub let read = (port: u8) -> u16 => {
+  var buttons: u16 = 0
+  if port == 1 { buttons = held_keys() | holding }
+  let slot = i64(port) - 1
+  if slot >= 0 && slot < pads.len() { buttons = buttons | from_gamepad(pads[slot]) }
+  opposites_cancel(buttons)
+}
+
+/// Whether `button` is among `buttons`.
+pub let held = pure (buttons: u16, button: u16) -> bool => (buttons & button) != 0
+
+/// Whether `button` went down: held in `buttons` and not in `before`, the last update's —
+/// true for one update a press, which is what a jump or a menu choice wants.
+pub let pressed = pure (buttons: u16, before: u16, button: u16) -> bool =>
+  (buttons & button) != 0 && (before & button) == 0
+
+/// Pad buttons from their names, comma-separated (`up,a`), as `--hold` and Sheliak's take
+/// them — or the first name not known.
+pub let buttons_named = pure (names: string) -> Result<u16, string> => {
+  var buttons: u16 = 0
+  for name in names.split(",") {
+    let button = match name.trim().to_ascii_lower() {
+      "up" => UP,
+      "down" => DOWN,
+      "left" => LEFT,
+      "right" => RIGHT,
+      "a" => A,
+      "b" => B,
+      "c" => C,
+      "x" => X,
+      "y" => Y,
+      "z" => Z,
+      "start" => START,
+      "mode" => MODE,
+      other => return Err(other),
+    }
+    buttons = buttons | button
+  }
+  Ok(buttons)
+}
+
+/// Hold `buttons` on pad 1 from now on, whatever the keyboard says — `--hold`'s.
+pub let hold = (buttons: u16) -> void => { holding = buttons }
+
+/// A gamepad plugged in or out: the first two are pads 1 and 2, in the order they came.
+/// `std.game.screen` passes every event here.
+pub let track = (event: Event) -> void => match event {
+  GamepadAdded(id) => {
+    if let Some(pad) = open_gamepad(id) { pads.push(pad) }
+  },
+  GamepadRemoved(id) => {
+    var kept: []Gamepad = []
+    for pad in pads {
+      if gamepad_id(pad) == id { close_gamepad(pad) } else { kept.push(pad) }
+    }
+    pads = kept
+  },
+  _ => {},
+}
+
+/// Close every gamepad — `std.game.screen`'s `close` does.
+pub let release = () -> void => {
+  for pad in pads { close_gamepad(pad) }
+  pads = []
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+var pads: []Gamepad = []
+var holding: u16 = 0
+
+/// How far a stick must lean, of 32767, before it counts as the d-pad: half-way.
+const STICK_THRESHOLD: i16 = 16384
+
+let held_keys = () -> u16 =>
+  bit(key_held(SCANCODE_UP), UP) |
+  bit(key_held(SCANCODE_DOWN), DOWN) |
+  bit(key_held(SCANCODE_LEFT), LEFT) |
+  bit(key_held(SCANCODE_RIGHT), RIGHT) |
+  bit(key_held(SCANCODE_Z), A) |
+  bit(key_held(SCANCODE_X), B) |
+  bit(key_held(SCANCODE_C), C) |
+  bit(key_held(SCANCODE_RETURN), START) |
+  bit(key_held(SCANCODE_A), X) |
+  bit(key_held(SCANCODE_S), Y) |
+  bit(key_held(SCANCODE_D), Z) |
+  bit(key_held(SCANCODE_Q), MODE)
+
+let from_gamepad = (pad: Gamepad) -> u16 => {
+  let x = gamepad_axis(pad, AXIS_LEFT_X)
+  let y = gamepad_axis(pad, AXIS_LEFT_Y)
+  bit(gamepad_button(pad, BUTTON_DPAD_UP) || y <= -STICK_THRESHOLD, UP) |
+    bit(gamepad_button(pad, BUTTON_DPAD_DOWN) || y >= STICK_THRESHOLD, DOWN) |
+    bit(gamepad_button(pad, BUTTON_DPAD_LEFT) || x <= -STICK_THRESHOLD, LEFT) |
+    bit(gamepad_button(pad, BUTTON_DPAD_RIGHT) || x >= STICK_THRESHOLD, RIGHT) |
+    bit(gamepad_button(pad, BUTTON_WEST), A) |
+    bit(gamepad_button(pad, BUTTON_SOUTH), B) |
+    bit(gamepad_button(pad, BUTTON_EAST), C) |
+    bit(gamepad_button(pad, BUTTON_START), START) |
+    bit(gamepad_button(pad, BUTTON_LEFT_SHOULDER), X) |
+    bit(gamepad_button(pad, BUTTON_NORTH), Y) |
+    bit(gamepad_button(pad, BUTTON_RIGHT_SHOULDER), Z) |
+    bit(gamepad_button(pad, BUTTON_BACK), MODE)
+}
+
+let bit = pure (on: bool, button: u16) -> u16 => if on { button } else { 0 }
+
+/// Left with right is neither, and up with down.
+let opposites_cancel = pure (b: u16) -> u16 => {
+  var out = b
+  if (b & LEFT) != 0 && (b & RIGHT) != 0 { out = out & ~(LEFT | RIGHT) }
+  if (b & UP) != 0 && (b & DOWN) != 0 { out = out & ~(UP | DOWN) }
+  out
+}

@@ -1,0 +1,363 @@
+module std.game.screen
+//! The screen a modern game draws on — what `std.genesis.vdp` is to a Genesis game, for
+//! every platform SDL3 runs on: a window showing a small screen scaled up by whole numbers,
+//! the art the planes and sprites are drawn from, a steady 60 updates a second, and each
+//! frame composed from `std.game.planes` and `std.game.sprites`.
+//!
+//! ```
+//! import std.game.screen
+//!
+//! let main = () -> u8 => {
+//!   if !screen.open("Hero", 384, 216) { return 1 }
+//!   assets.load()                          // Vega's: the art, into the screen
+//!   while screen.running() {
+//!     for _ in 0..<screen.updates_due() { update() }
+//!     draw()                               // planes and sprites
+//!     screen.show()
+//!   }
+//!   screen.close()
+//! }
+//! ```
+//!
+//! **Updates are 60 a second, whatever the display's rate** ([updates_due]): a game's
+//! speeds are pixels an update, as a Genesis game's are pixels a frame, so it plays at the
+//! same pace on a 60 Hz screen and a 144 Hz one.
+//!
+//! **The frame is composed in the Genesis's order** ([show]): the backdrop; plane B's cells,
+//! then plane A's (the window in its rows), then the sprites; then the planes' cells in
+//! front, and the sprites in front. Pixel art stays sharp: the screen is scaled by whole
+//! numbers into the window, nearest-neighbour.
+//!
+//! **Played without anyone at it**, as Sheliak plays a ROM: `--frames N` stops after N
+//! frames, one update each, at scale 1; `--ppm FILE` writes the last as a binary PPM;
+//! `--hold up,right` holds pad 1's buttons. With `SDL_VIDEODRIVER=dummy` and
+//! `SDL_RENDER_DRIVER=software` no window appears — how Vega's checks play a game.
+
+import bindings.sdl3.{
+  init, quit, last_error, INIT_VIDEO, INIT_GAMEPAD, Window, create_window, destroy_window,
+  WINDOW_RESIZABLE, Renderer, destroy_renderer, PRESENT_INTEGER_SCALE, SCALE_NEAREST,
+  set_default_scale_mode, Color, rgb, Rect, Texture, create_texture, destroy_texture,
+  draw_texture_flipped, FLIP_NONE, FLIP_HORIZONTAL, FLIP_VERTICAL, poll_event, KEY_ESCAPE,
+  ticks_ns,
+}
+import std.io.{ write_bytes }
+import std.game.pad
+import std.game.planes
+import std.game.planes.{
+  Plane,
+  TILE_MASK,
+  PALETTE_MASK,
+  PALETTE_SHIFT,
+  FRONT,
+  FLIP_X,
+  FLIP_Y
+}
+import std.game.sprites
+
+/// One update, in nanoseconds: 60 a second.
+pub const STEP_NS: i64 = 16666667
+
+/// At most this many updates a frame: after a stall the game resumes slowed, rather than
+/// running a second of updates at once.
+pub const MAX_STEPS: i64 = 5
+
+/// Open a window showing a screen `width` × `height` pixels, scaled up — or print why not and
+/// answer `false`. The arguments the game was run with may ask it to play itself (`--frames`,
+/// `--ppm`, `--hold`).
+pub let open = (title: string, width: i64, height: i64) -> bool => {
+  if !read_arguments() { return false }
+  if !init(INIT_VIDEO | INIT_GAMEPAD) {
+    println("SDL could not start: ${last_error()}")
+    return false
+  }
+  let scale = if limit > 0 { 1 } else { WINDOW_SCALE }
+  let Some(w) = create_window(
+    title,
+    i32(width * scale),
+    i32(height * scale),
+    WINDOW_RESIZABLE
+  ) else {
+    println("could not open a window: ${last_error()}")
+    quit()
+    return false
+  }
+  let Some(r) = w.create_renderer() else {
+    println("could not make a renderer: ${last_error()}")
+    destroy_window(w)
+    quit()
+    return false
+  }
+  r.set_logical_presentation(i32(width), i32(height), PRESENT_INTEGER_SCALE)
+  r.set_vsync(limit <= 0)
+  set_default_scale_mode(r, SCALE_NEAREST)
+  window = Some(w)
+  renderer = Some(r)
+  screen_width = width
+  screen_height = height
+  last_ns = i64(ticks_ns())
+  owed_ns = 0
+  true
+}
+
+/// The screen's size, in pixels.
+pub let width = () -> i64 => screen_width
+pub let height = () -> i64 => screen_height
+
+/// Whether the game goes on: the events since the last frame handled — gamepads come and
+/// go, the window closed or Escape ends it — and, played with `--frames`, frames still to
+/// show.
+pub let running = () -> bool => {
+  while let Some(event) = poll_event() {
+    match event {
+      Quit => { quitting = true },
+      KeyDown(key) => { if key == KEY_ESCAPE { quitting = true } },
+      _ => pad.track(event),
+    }
+  }
+  !quitting && (limit <= 0 || frame < limit)
+}
+
+/// How many updates this frame should run: on average 60 a second, whatever the display
+/// refreshes at — on a 120 Hz screen 1, 0, 1, 0… Played with `--frames`, always 1, so a
+/// frame is the same on every machine.
+pub let updates_due = () -> i64 => {
+  if limit > 0 { return 1 }
+  let now = i64(ticks_ns())
+  let (steps, owed) = accrue(owed_ns, now - last_ns)
+  last_ns = now
+  owed_ns = owed
+  steps
+}
+
+/// The updates to run and the time still owed, given what was owed and the time just
+/// elapsed — [updates_due]'s arithmetic, pure so it can be tested.
+pub let accrue = pure (owed: i64, elapsed: i64) -> (i64, i64) => {
+  let total = owed + elapsed.max(0)
+  let steps = total / STEP_NS
+  if steps > MAX_STEPS { (MAX_STEPS, 0) } else { (steps, total % STEP_NS) }
+}
+
+/// The colour behind everything, where no cell or sprite is.
+pub let set_backdrop = (r: u8, g: u8, b: u8) -> void => { backdrop = rgb(r, g, b) }
+
+/// The art the planes' cells show in `palette` (0–15): `columns` tiles a row, 8×8 pixels
+/// each, `pixels` the whole picture row by row, `0xAARRGGBB` (alpha 0 is transparent). Tile
+/// `t` is the `t`-th, left to right, top to bottom; tile 0 should be blank. A cell in palette
+/// `p` shows tile `t` of palette `p`'s art — the Genesis's tile and palette, apart — so each
+/// palette a game's cells use has its art, every one laid out alike. Replaces any loaded
+/// for that palette before.
+pub let load_tiles<const N: i64> = (
+  columns: i64,
+  pixels: ref [N]u32,
+  palette: i64 = 0
+) -> bool => {
+  if palette < 0 || palette >= PALETTES { return false }
+  let Some(t) = picture(columns * TILE, pixels) else { return false }
+  if let Some(old) = tile_art[palette] { destroy_texture(old) }
+  tile_art[palette] = Some(t)
+  tile_columns = columns
+  true
+}
+
+/// The art the sprites show: a picture `width` pixels wide, `pixels` row by row,
+/// `0xAARRGGBB`. A [Sprite] names a rectangle of it. Replaces any loaded before.
+pub let load_sprites<const N: i64> = (width: i64, pixels: ref [N]u32) -> bool => {
+  let Some(t) = picture(width, pixels) else { return false }
+  if let Some(old) = sprite_art { destroy_texture(old) }
+  sprite_art = Some(t)
+  true
+}
+
+/// Draw the frame — the planes and sprites as they are now — and show it. Played with
+/// `--ppm`, the last frame is written there first.
+pub let show = () -> void => {
+  let Some(r) = renderer else { return }
+  r.set_draw_color(backdrop)
+  r.clear()
+  draw_planes(r, false)
+  draw_sprites(r, false)
+  draw_planes(r, true)
+  draw_sprites(r, true)
+  frame += 1
+  if limit > 0 && frame == limit && ppm_path != "" && !write_ppm(r, ppm_path) {
+    println("could not write ${ppm_path}")
+    failed = true
+  }
+  r.present()
+}
+
+/// Close the window and release everything: the game's last call. Answers the program's
+/// exit status: 0, or 1 when `--ppm` could not be written.
+pub let close = () -> u8 => {
+  for art in tile_art {
+    if let Some(t) = art { destroy_texture(t) }
+  }
+  if let Some(t) = sprite_art { destroy_texture(t) }
+  tile_art = [None; PALETTES]
+  sprite_art = None
+  pad.release()
+  if let Some(r) = renderer { destroy_renderer(r) }
+  if let Some(w) = window { destroy_window(w) }
+  renderer = None
+  window = None
+  quit()
+  if failed { 1 } else { 0 }
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// The window opens at this many times the screen; resizing it keeps whole-number scaling.
+const WINDOW_SCALE: i64 = 3
+
+/// A tile's side, in pixels.
+const TILE: i64 = 8
+
+/// The palettes a cell may name.
+const PALETTES: i64 = 16
+
+var window: Maybe<Window> = None
+var renderer: Maybe<Renderer> = None
+var screen_width: i64 = 0
+var screen_height: i64 = 0
+var backdrop: Color = rgb(0, 0, 0)
+var tile_art: []Maybe<Texture> = [None; PALETTES]
+var tile_columns: i64 = 1
+var sprite_art: Maybe<Texture> = None
+var quitting = false
+var failed = false
+/// Frames shown, and — played with `--frames` — how many to show.
+var frame: i64 = 0
+var limit: i64 = 0
+var ppm_path: string = ""
+/// The clock: when it was last read, and the time not yet spent on updates.
+var last_ns: i64 = 0
+var owed_ns: i64 = 0
+
+/// `--frames N`, `--ppm FILE` and `--hold BUTTONS`, from the program's arguments — or
+/// `false`, having said what is wrong.
+let read_arguments = () -> bool => {
+  let args = program_args()
+  var i = 1
+  while i + 1 < args.len() {
+    let value = args[i + 1]
+    if args[i] == "--frames" {
+      let Some(n) = value.parse_i64() else {
+        println("--frames takes a number of frames, not ${value}")
+        return false
+      }
+      limit = n.max(1)
+    } else if args[i] == "--ppm" {
+      ppm_path = value
+    } else if args[i] == "--hold" {
+      match pad.buttons_named(value) {
+        Ok(buttons) => pad.hold(buttons),
+        Err(name) => {
+          println("--hold takes up, down, left, right, a, b, c, x, y, z, start and mode, not ${name}")
+          return false
+        },
+      }
+    } else {
+      i += 1
+      continue
+    }
+    i += 2
+  }
+  true
+}
+
+/// A texture of `pixels`, `width` wide.
+let picture<const N: i64> = (width: i64, pixels: ref [N]u32) -> Maybe<Texture> => {
+  let Some(r) = renderer else { return None }
+  if width <= 0 || pixels.len() % width != 0 { return None }
+  create_texture(r, width, pixels.len() / width, [p in pixels | p])
+}
+
+/// Plane B, then plane A below the window's rows and the window in them — the cells in
+/// front, or those behind.
+let draw_planes = (r: Renderer, front: bool) -> void => {
+  let window_bottom = planes.rows_in_window() * TILE
+  draw_plane(r, planes.plane(planes.PLANE_B), front, 0, screen_height)
+  draw_plane(r, planes.plane(planes.PLANE_A), front, window_bottom, screen_height)
+  if window_bottom > 0 {
+    let w = planes.plane(planes.WINDOW)
+    draw_plane(r, Plane { w | x: 0.0, y: 0.0 }, front, 0, window_bottom)
+  }
+}
+
+/// A plane's cells that show between screen rows `top` and `bottom`, those in front or
+/// those behind.
+let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> void => {
+  if p.width <= 0 || top >= bottom { return }
+  let rows = p.cells.len() / p.width
+  let sx = p.x.floor()
+  let sy = p.y.floor()
+  let first_column = (sx / TILE).max(0)
+  let last_column = ((sx + screen_width - 1) / TILE).min(p.width - 1)
+  let first_row = ((sy + top) / TILE).max(0)
+  let last_row = ((sy + bottom - 1) / TILE).min(rows - 1)
+  for row in first_row..<=last_row {
+    for column in first_column..<=last_column {
+      let word = p.cells[row * p.width + column]
+      let tile = i64(word & TILE_MASK)
+      if tile == 0 || ((word & FRONT) != 0) != front { continue }
+      let Some(art) = tile_art[i64((word & PALETTE_MASK) >> PALETTE_SHIFT)] else { continue }
+      // The part of the cell between `top` and `bottom` on the screen.
+      let y = row * TILE - sy
+      let from = y.max(top)
+      let to = (y + TILE).min(bottom)
+      if from >= to { continue }
+      let flip_y = (word & FLIP_Y) != 0
+      let cut = if flip_y { y + TILE - to } else { from - y }
+      let source = Rect {
+        x: f32((tile % tile_columns) * TILE),
+        y: f32((tile / tile_columns) * TILE + cut),
+        w: f32(TILE),
+        h: f32(to - from),
+      }
+      let place = Rect {
+        x: f32(column * TILE - sx),
+        y: f32(from),
+        w: f32(TILE),
+        h: f32(to - from)
+      }
+      draw_texture_flipped(r, art, source, place, flips((word & FLIP_X) != 0, flip_y))
+    }
+  }
+}
+
+/// The sprites in front, or those behind — the earliest added on top.
+let draw_sprites = (r: Renderer, front: bool) -> void => {
+  let Some(art) = sprite_art else { return }
+  let list = sprites.added()
+  var i = list.len() - 1
+  while i >= 0 {
+    let s = list[i]
+    if s.front == front {
+      let source = Rect { x: s.sheet_x, y: s.sheet_y, w: s.width, h: s.height }
+      let place = Rect {
+        x: f32(s.x.floor()),
+        y: f32(s.y.floor()),
+        w: s.width,
+        h: s.height
+      }
+      draw_texture_flipped(r, art, source, place, flips(s.flip_x, s.flip_y))
+    }
+    i -= 1
+  }
+}
+
+let flips = pure (x: bool, y: bool) -> i32 =>
+  (if x { FLIP_HORIZONTAL } else { FLIP_NONE }) | (if y { FLIP_VERTICAL } else { FLIP_NONE })
+
+/// The frame drawn so far, as a binary PPM at `path`: red, green, blue a pixel.
+let write_ppm = (r: Renderer, path: string) -> bool => {
+  let Some(frame_pixels) = r.read_pixels() else { return false }
+  var bytes: []u8 = []
+  for c in "P6\n${frame_pixels.width} ${frame_pixels.height}\n255\n" { bytes.push(u8(i64(c))) }
+  for p in frame_pixels.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+  }
+  write_bytes(path, bytes)
+}
