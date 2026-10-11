@@ -283,3 +283,26 @@ let main = () -> u8 => {
 		t.Errorf("exit %d, want 122", code)
 	}
 }
+
+// TestExec_LambdaCallsThroughANamespace calls a function through an imported namespace
+// from inside a closure. Capture analysis read the qualifier `opt` as a free name and made
+// it a capture; a module has no type, so the backend failed with `no type recorded for
+// captured binding "opt"` on a program the front end had checked clean (10/11, Vega's
+// `p.palettes.map((q) => project.clone_palette(q))`). The second closure pins the other
+// direction: an enclosing parameter of the namespace's name shadows it, and is captured.
+func TestExec_LambdaCallsThroughANamespace(t *testing.T) {
+	t.Parallel()
+	got := buildAndRunModules(t, map[string]string{
+		"util/opt.lyra": optModule,
+		"app.lyra": `import util.opt
+let apply = (f: (i64) -> i64, n: i64) -> i64 => f(n)
+let shadowed = (opt: i64) -> i64 => apply((n) => n + opt, 4)
+let main = () -> u8 => {
+  let twice = (n: i64) -> i64 => opt.double(n)
+  u8(apply((n) => opt.double(n), 3) + twice(3) + shadowed(10))
+}`,
+	})
+	if got != 26 {
+		t.Errorf("exit code: got %d, want 26 (6 through the namespace, 6 from a local closure, 14 shadowed)", got)
+	}
+}

@@ -15,6 +15,9 @@ capture.
   match arms have no recorded scope. A binder missing here reads as a capture.
 - **A global is subtracted only where nothing in the enclosing lambdas shadows it**
   (`analyzer.outer`); otherwise a parameter sharing a top-level name gets no slot.
+- **A namespace the reading file imports is not a capture** (`SymbolTable.NamespaceImport`), under
+  the same shadowing rule: the `project` in `project.clone_palette(q)` has no type, and as a capture
+  failed in the backend with `no type recorded for captured binding`.
 - **Both failure directions are loud**: a spurious capture is a wasted copy or a backend error; a
   missed one errors because a lifted body starts with an empty local set.
 - **A local generic that captures nothing is not captured** — a lambda calling it builds its

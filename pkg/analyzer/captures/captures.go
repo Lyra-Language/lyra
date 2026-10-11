@@ -83,6 +83,7 @@ func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.
 		globals:       globalNames(program, symTable),
 		outer:         map[string]bool{},
 		outerGenerics: map[string]*ast.LambdaExpr{},
+		symTable:      symTable,
 		tt:            tt,
 	}
 	for _, node := range program.Statements {
@@ -112,7 +113,10 @@ type analyzer struct {
 	// build that closure where it stands; one that does capture stays a capture, and the
 	// backend refuses it by name (local_generic.go).
 	outerGenerics map[string]*ast.LambdaExpr
-	tt            *typetable.TypeTable
+	// symTable answers whether a name is a namespace the reading file imports; see
+	// capturesOf.
+	symTable *symbols.SymbolTable
+	tt       *typetable.TypeTable
 }
 
 func (a *analyzer) onStmt(ast.Statement) bool { return true }
@@ -228,6 +232,15 @@ func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 		if a.globals[name] && !a.outer[name] {
 			continue
 		}
+		// **A namespace import is not a binding**, by the same rule: the `project` in
+		// `project.clone_palette(q)` is read as an identifier, and taken for a capture it
+		// has no type, so the backend failed with `no type recorded for captured binding`
+		// on a program the front end had checked clean (10/11, Vega). Only where nothing
+		// encloses a binder of that name, which shadows the namespace (`namespaceCallee`
+		// asks `l.locals` first for the same reason).
+		if a.isNamespace(name, read) && !a.outer[name] {
+			continue
+		}
 		// A captureless local generic is called where it stands; see outerGenerics.
 		if g, isGeneric := a.outerGenerics[name]; isGeneric && g != fn {
 			if caps, analyzed := a.table.byLambda[g]; analyzed && len(caps) == 0 {
@@ -242,6 +255,15 @@ func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 	}
 	slices.SortFunc(out, func(x, y Capture) int { return cmp.Compare(x.Name, y.Name) })
 	return out
+}
+
+// isNamespace reports whether name, read at read, is a namespace the reading file imports.
+func (a *analyzer) isNamespace(name string, read ast.Expression) bool {
+	if a.symTable == nil {
+		return false
+	}
+	_, ok := a.symTable.NamespaceImport(read.GetLocation().File, name)
+	return ok
 }
 
 // bodyOf returns the expressions that make up a lambda's body — the single body

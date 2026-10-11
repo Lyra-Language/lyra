@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 10/11/26 — A namespace inside a closure is not a capture
+
+`p.palettes.map((q) => project.clone_palette(q))` in Vega checked clean and failed in the
+backend with `no type recorded for captured binding "project"`. Capture analysis takes every
+identifier read inside a lambda, minus its binders and the globals, and the qualifier of a
+namespace call is read as an identifier; a module has no type, so the capture had none.
+Vega had worked around it method-style (`q.clone_palette()`), and a cloud session's PR put the
+qualified call back on 10/07 with this fix — which never reached `lyra`, so Vega's `main` failed
+to build from the merge on 10/08 until now.
+
+**The namespace is subtracted where the global is, and under the same condition**: only where
+no enclosing lambda binds the name (`analyzer.outer`), since a parameter called `opt` shadows
+`import util.opt` — the backend's `namespaceCallee` asks `l.locals` first for the same reason.
+The question goes to `SymbolTable.NamespaceImport` with the read's file, the one answer the
+backend already uses, rather than a set of import aliases built here: imports are per file, and
+a program-wide set would drop a genuine capture in a file that does not import the name.
+`TestExec_LambdaCallsThroughANamespace` holds both directions.
+
 ### 10/08/26 — `type` is nominal, `alias` is transparent
 
 The keywords were `newtype` (nominal) and `type` (an alias), and are now `type` and `alias`.

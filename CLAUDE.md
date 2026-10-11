@@ -206,7 +206,8 @@ Each of these produces something that looks like it works. Other docs cite them 
    - **A by-name set consulted where the enclosing scope is the question fails silently.**
      `l.locals` must not decide a desugared UFCS callee (`data.data()` on a parameter named
      `data`) — ask `Callee` first (`calleeIsDeclared`). `captures.globalNames` subtracts a
-     global only where `analyzer.outer` (the enclosing binders) doesn't shadow it.
+     global only where `analyzer.outer` (the enclosing binders) doesn't shadow it, and a
+     namespace import (`isNamespace`) likewise.
    - A trigger may need a *sibling file of the same module*. When reductions keep failing,
      stop reducing and instrument.
    - **Allocation flavor rides the expected type**: `propagateExpectedType` is the one walk
