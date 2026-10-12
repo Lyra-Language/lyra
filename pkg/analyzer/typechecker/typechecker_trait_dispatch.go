@@ -962,6 +962,13 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 				calleeName, i+1, got, want)
 			continue
 		}
+		// **The parameter type is the argument's context**, as at every other call (rule 9:
+		// width and allocation flavor ride propagateExpectedType). Missing here, a literal
+		// passed to a trait method kept its default width: `brush.paint(1)` against a `u32`
+		// parameter called the impl with an `i64` — accepted by Apple's clang, refused by
+		// clang 15's typed pointers as a call of the wrong type (10/11, found by the sret
+		// tests on Linux).
+		tc.propagateExpectedType(arg, paramType)
 		// The borrow modes a trait signature declares are checked exactly as a free
 		// function's are (inferLambdaCall): a `mut` argument must be a mutable lvalue,
 		// since the callee writes through to it, and an `own` one adopts the value into

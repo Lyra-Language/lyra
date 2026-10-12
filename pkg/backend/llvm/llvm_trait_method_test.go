@@ -567,3 +567,24 @@ func TestExec_ConversionTraits(t *testing.T) {
 		})
 	}
 }
+
+// A literal argument to a trait method takes the parameter's width, as at any other call.
+// The method-call path never pushed the parameter type onto its arguments, so `paint(1)`
+// against a `u32` passed an `i64`: a call of the wrong type, which Apple's clang let through
+// and clang 15's typed pointers refused (10/11).
+func TestEmit_ATraitMethodsLiteralArgumentTakesTheParametersWidth(t *testing.T) {
+	t.Parallel()
+	ir, err := emitSource(t, `trait Paint { pure paint: (Self, u32) -> u32 }
+struct Brush { step: u32 }
+impl Paint for Brush {
+  paint = (self, base) => base + self.step
+}
+let main = () -> u8 => u8((Brush { step: 2 }).paint(1))
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ir, "@Brush$Paint$paint(%Brush %1, i32 1)") {
+		t.Errorf("the literal is not passed as a u32:\n%s", ir)
+	}
+}
