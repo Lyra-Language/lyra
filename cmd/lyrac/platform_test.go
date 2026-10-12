@@ -102,6 +102,34 @@ func TestTarget_BuildsForAnIOSDevice(t *testing.T) {
 	}
 }
 
+// A program over `bindings.sdl3` links SDL3 for the Simulator — the static library and its
+// frameworks `tools/sdl3-ios.sh` installs, its `sdl3.pc` saying which — and runs there.
+func TestTarget_LinksSDL3ForTheIOSSimulator(t *testing.T) {
+	requireSimulator(t)
+	build := filepath.Join(repoRoot(t), "build")
+	if _, err := os.Stat(filepath.Join(build, "lib", "ios-simulator", "lib", "libSDL3.a")); err != nil {
+		t.Skip("no SDL3 for the iOS Simulator; tools/sdl3-ios.sh builds it")
+	}
+	t.Setenv("LYRA_STD", build) // the install root: std/ and lib/<platform>/ beside each other
+	src := filepath.Join(t.TempDir(), "version.lyra")
+	if err := os.WriteFile(src, []byte(`import bindings.sdl3
+
+let main = () -> u8 => {
+  println("SDL ${sdl3.version() / 1000000} on ${sdl3.platform()}")
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", "--target", "ios-simulator", src)
+	if code != 0 {
+		t.Fatalf("exit %d; %s", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); !strings.HasSuffix(got, "SDL 3 on iOS") {
+		t.Errorf("the program printed %q; want SDL 3 on iOS", got)
+	}
+}
+
 func TestTarget_RunsOnLinux(t *testing.T) {
 	requireLinuxCross(t)
 	for _, name := range []string{"linux-arm64", "linux-x86_64"} {

@@ -57,8 +57,10 @@ machine's (`target.Machine()`), as before. Another platform's build is two steps
 `--target=<triple> [-isysroot <sdk>] -O2 -c prog.ll`, then its linker — Xcode's clang with the
 platform's SDK (`xcrun --sdk iphonesimulator --show-sdk-path`) for iOS, `zig cc -target
 aarch64-linux-gnu.2.36` (`$LYRA_ZIG`, else the PATH) for Linux. The triple is passed, never
-written in the IR (clang normalises and warns). Libraries are `<root>/lib/<platform>/`, with no
-pkg-config. `run --target` runs through the platform's runner (`runCommand`):
+written in the IR (clang normalises and warns). Libraries are `<root>/lib/<platform>/` and its
+`lib/`, and a `pkg:` is answered by the platform's own `.pc` files there (`PKG_CONFIG_LIBDIR`,
+`--static --libs`, in full — SDL3 for iOS brings its frameworks; `platformPkgFlags`), never
+this machine's. `tools/sdl3-ios.sh` installs SDL3 for iOS and the Simulator so. `run --target` runs through the platform's runner (`runCommand`):
 
 - `ios-simulator`: `xcrun simctl spawn <device> <exe> args`, the device `$LYRA_SIMULATOR`,
   else the first booted, else the first iPhone available, booted and left booted;

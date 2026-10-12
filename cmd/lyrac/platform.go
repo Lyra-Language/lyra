@@ -132,6 +132,32 @@ func platformLibDir(p target.Platform) string {
 	return ""
 }
 
+// platformPkgFlags is pkg-config's `--static --libs` for pkg on p, from the `.pc` files in the
+// platform's `lib/pkgconfig/` alone — never this machine's, which describe libraries built for
+// it — or why there is none. A variable so the link tests answer for it.
+var platformPkgFlags = func(p target.Platform, pkg string) ([]string, error) {
+	dir := platformLibDir(p)
+	if dir == "" {
+		return nil, fmt.Errorf("no libraries are built for %s (%s), so @link's pkg: %q is linked by name alone%s",
+			p.Name, filepath.Join("lib", p.Name), pkg, buildHint(p, pkg))
+	}
+	cmd := exec.Command("pkg-config", "--static", "--libs", pkg)
+	cmd.Env = append(os.Environ(), "PKG_CONFIG_LIBDIR="+filepath.Join(dir, "lib", "pkgconfig"), "PKG_CONFIG_PATH=")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s has no %q library in %s%s", p.Name, pkg, dir, buildHint(p, pkg))
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// buildHint says how to build pkg for p, where lyra knows: SDL3 for iOS.
+func buildHint(p target.Platform, pkg string) string {
+	if pkg == "sdl3" && p.OS == "ios" {
+		return "; tools/sdl3-ios.sh builds SDL3 for iOS"
+	}
+	return ""
+}
+
 // runCommand is the command running exe with args on p from here: exe itself on the
 // machine, in an iOS Simulator, or in a Linux container. A platform that cannot be run
 // from here — a device, whose program is installed, not run — is an error saying so.

@@ -571,19 +571,40 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 // as one over a packaged library does through `pkg:`.
 //
 // **For another platform** the libraries are that platform's: the install's
-// `lib/<platform>/` (platformLibDir), and no pkg-config, which answers for this machine.
+// `lib/<platform>/` (platformLibDir) and its `lib/`, and each `pkg:` answered by the
+// platform's own `.pc` files there (platformPkgFlags) — in full, since a static library's
+// needs are part of the answer: SDL3 for iOS is `-lSDL3` and seventeen frameworks
+// (`tools/sdl3-ios.sh` installs it so).
 func linkFlags(res *driver.Result, p target.Platform) []string {
 	flags := []string{}
 	seenDir := map[string]bool{}
 	if !p.IsMachine() {
-		if dir := platformLibDir(p); dir != "" {
-			flags = append(flags, "-L"+dir)
-		}
-		flags = append(flags, "-lm")
-		for _, lib := range res.Links {
-			if lib != "m" {
-				flags = append(flags, "-l"+lib)
+		seen := map[string]bool{}
+		add := func(flag string) {
+			if !seen[flag] {
+				seen[flag] = true
+				flags = append(flags, flag)
 			}
+		}
+		if dir := platformLibDir(p); dir != "" {
+			add("-L" + dir)
+			if info, err := os.Stat(filepath.Join(dir, "lib")); err == nil && info.IsDir() {
+				add("-L" + filepath.Join(dir, "lib"))
+			}
+		}
+		for _, pkg := range res.Packages {
+			pkgFlags, err := platformPkgFlags(p, pkg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "lyrac: note: %v\n", err)
+				continue
+			}
+			for _, flag := range pkgFlags {
+				add(flag)
+			}
+		}
+		add("-lm")
+		for _, lib := range res.Links {
+			add("-l" + lib)
 		}
 		return flags
 	}

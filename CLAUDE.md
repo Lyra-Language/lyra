@@ -558,7 +558,11 @@ cc`) and runner (here; `simctl spawn`; Docker). `--target` names one (`PlatformN
 `--target=<triple> [-isysroot <sdk>] -c prog.ll`, then the platform's linker; the machine's
 build stays one step. **The triple rides the command line, never the IR**: clang normalises
 a module's triple (`ios17.0` → `ios17.0.0`) and warns at every difference. A cross build's
-libraries are `<root>/lib/<platform>/` with no pkg-config. `LYRA_TEST_TARGET=<platform>`
+libraries are `<root>/lib/<platform>/`, and a `pkg:` is the platform's own `.pc` file there
+(`platformPkgFlags`: `--static --libs`, frameworks and all), never the machine's.
+**`tools/sdl3-ios.sh`** builds SDL3 for iOS and the Simulator into `build/lib/ios*/`: a
+pinned, SHA-checked release, static, without HIDAPI (whose CoreBluetooth would need a usage
+string in every app). `LYRA_TEST_TARGET=<platform>`
 runs `pkg/backend/llvm`'s behavioural suite there (`platform_harness_test.go`: every test
 binary through `command(bin, …)`, a Linux one in a container sharing the temp and cache
 directories at their own paths; the sanitizer tests skip).
@@ -637,6 +641,8 @@ of Markdown.
 - **`build.sh` builds `build/lib/liblyra-imgui.a`** when it can (`bindings/imgui/build.sh`):
   it downloads a pinned, SHA-256-checked ImGui and dear_bindings into `build/deps/` (not
   vendored), needs SDL3, and skips with a note when offline or without it.
+- **`tools/sdl3-ios.sh`** (not run by `build.sh`, as `llvm-m68k.sh` is not) builds SDL3 for
+  `--target ios|ios-simulator` into `build/lib/<platform>/`.
 - **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling
   `tree-sitter-lyra` checkout are present, and skips it with a note otherwise. It lands
   beside `lyra-lsp`, which is where the server looks for it (`cmd/lyra-lsp/formatting.go`)

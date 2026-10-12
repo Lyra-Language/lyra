@@ -70,6 +70,12 @@ unsafe extern sdl_quit: () -> void
 @symbol("SDL_GetError")
 unsafe extern sdl_get_error: () -> ^u8
 
+@symbol("SDL_GetVersion")
+unsafe extern sdl_get_version: () -> i32
+
+@symbol("SDL_GetPlatform")
+unsafe extern sdl_get_platform: () -> ^u8
+
 /// Bring up the named subsystems. `false` means SDL refused; [last_error] says why.
 ///
 /// SDL3's predicates answer C's `bool`, and every extern here declares it as Lyra's `bool`:
@@ -89,6 +95,22 @@ pub let quit = () -> void => unsafe { sdl_quit() }
 /// walking from address zero.
 pub let last_error = () -> string => {
   let p = unsafe { sdl_get_error() }
+  if p == nullptr {
+    ""
+  } else {
+    unsafe { p.decode_utf8(cstring_len(p)) }
+  }
+}
+
+/// The version of the SDL linked, as `major * 1000000 + minor * 1000 + micro` — 3004018 for
+/// 3.4.18. Needs no [init].
+pub let version = () -> i64 => i64(unsafe { sdl_get_version() })
+
+/// The platform the program runs on, as SDL names it: `"macOS"`, `"iOS"`, `"Linux"`,
+/// `"Windows"`, `"Android"`. One build runs on one, so a program asks to do what that one
+/// wants (`std.game.screen` opens a full-screen window on iOS). Needs no [init].
+pub let platform = () -> string => {
+  let p = unsafe { sdl_get_platform() }
   if p == nullptr {
     ""
   } else {

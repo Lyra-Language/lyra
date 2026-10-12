@@ -116,3 +116,30 @@ func mustMachine() target.Platform {
 	}
 	return m
 }
+
+// **Another platform's `pkg:` is answered by its own `.pc` files** (platformPkgFlags), and in
+// full: SDL3 for iOS is a static library and seventeen frameworks, all on its `Libs:` line.
+// A flag the answer and `@link` both give — `-lSDL3`, `-lm` — is passed once.
+func TestLinkFlags_AnotherPlatformsPackagesComeFromItsOwnPkgConfig(t *testing.T) {
+	saved := platformPkgFlags
+	t.Cleanup(func() { platformPkgFlags = saved })
+	platformPkgFlags = func(p target.Platform, pkg string) ([]string, error) {
+		if p.Name != "ios-simulator" || pkg != "sdl3" {
+			t.Errorf("asked for %s on %s", pkg, p.Name)
+		}
+		return []string{"-lSDL3", "-Wl,-framework,UIKit", "-Wl,-weak_framework,CoreHaptics", "-lm"}, nil
+	}
+	sim, err := target.PlatformNamed("ios-simulator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, flag := range linkFlags(&driver.Result{Links: []string{"SDL3"}, Packages: []string{"sdl3"}}, sim) {
+		if !strings.HasPrefix(flag, "-L") { // the install's own lib/<platform>, where there is one
+			kept = append(kept, flag)
+		}
+	}
+	if got, want := strings.Join(kept, " "), "-lSDL3 -Wl,-framework,UIKit -Wl,-weak_framework,CoreHaptics -lm"; got != want {
+		t.Errorf("linkFlags = %q; want %q", got, want)
+	}
+}

@@ -48,8 +48,12 @@ notes are in [`pkg/backend/FFI.md`](../pkg/backend/FFI.md); language rules are i
 
 ## `bindings/sdl3/`
 
-SDL3 (3.4); `@link("SDL3")` on the header. Grown **by example**, towards an NES-style game
-(the ladder is in `todo.md`): each example binds only what it draws with.
+SDL3 (3.4); `@link("SDL3", pkg: "sdl3")` on the header. Grown **by example**, towards an
+NES-style game (the ladder is in `todo.md`): each example binds only what it draws with.
+`version()` (`major * 1000000 + minor * 1000 + micro`) and `platform()` (`"macOS"`,
+`"iOS"`, …) need no `init`. **For iOS** (`lyrac --target ios|ios-simulator`) SDL3 is a
+static library `tools/sdl3-ios.sh` builds into `<root>/lib/<platform>/`, its `sdl3.pc`
+naming the frameworks it needs; the machine's is the system's (Homebrew, a distribution).
 
 | file | what, and gotchas |
 |---|---|
