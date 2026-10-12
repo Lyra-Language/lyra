@@ -190,6 +190,6 @@ func emitWithPreludeErr(t *testing.T, src string) (string, error) {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
-	ir, err := New().Emit(res, ep)
+	ir, err := testBackend().Emit(res, ep)
 	return string(ir), err
 }

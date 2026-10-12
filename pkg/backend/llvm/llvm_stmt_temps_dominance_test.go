@@ -1,7 +1,6 @@
 package llvm
 
 import (
-	"os/exec"
 	"testing"
 )
 
@@ -33,7 +32,7 @@ let main = () -> u8 => {
   if line == "clip 2: fox#1   frame 7/9" { 0 } else { 1 }
 }
 `
-	if got := exitCodeOf(t, exec.Command(preludeBinary(t, src)).Run()); got != 0 {
+	if got := exitCodeOf(t, command(preludeBinary(t, src)).Run()); got != 0 {
 		t.Errorf("exited %d; want 0 (the line intact)", got)
 	}
 	if got := buildAndRunASanWithPrelude(t, src); got != 0 {
@@ -58,7 +57,7 @@ let main = () -> u8 => {
   if line == "clip 2: fox#3   frame 7/9" { 0 } else { 1 }
 }
 `
-	if got := exitCodeOf(t, exec.Command(preludeBinary(t, src)).Run()); got != 0 {
+	if got := exitCodeOf(t, command(preludeBinary(t, src)).Run()); got != 0 {
 		t.Errorf("exited %d; want 0 (the line intact)", got)
 	}
 	if got := buildAndRunASanWithPrelude(t, src); got != 0 {

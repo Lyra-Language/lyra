@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"fmt"
-	"runtime"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -31,8 +30,8 @@ import (
 // on — `scandir` and `glob` hand back the same struct, and `fts`/`ftw` take function
 // pointers, which Lyra cannot yet pass to C. Meanwhile Lyra source has no way to ask what
 // platform it is being compiled for (todo.md's target predicates are unbuilt), so the
-// offset cannot be written in `std.io` at all. The knowledge has to live where the host is
-// known, and that is here.
+// offset cannot be written in `std.io` at all. The knowledge has to live where the platform
+// is known, and that is here.
 //
 // # Platform
 //
@@ -40,8 +39,9 @@ import (
 // `TIOCGWINSZ` is the first), and it goes one step further than that one: tui.go carries
 // `struct termios` as an oversized opaque buffer precisely so it never has to know a field
 // offset, and this file cannot, because the field *is* the answer. Both constants below
-// are chosen from the compiling host, which is sound for the same reason tui.go's is —
-// `lyrac` compiles for its host and has no notion of a target.
+// are chosen by the platform the program is built for (`lowerer.os`, `lowerer.arch`) —
+// never the machine compiling it, which for `--target ios-simulator` or `linux-arm64` is
+// not where the program runs.
 //
 // Both numbers were measured rather than remembered (09/17), with `offsetof` through each
 // platform's own `dirent.h`:
@@ -60,7 +60,8 @@ import (
 // `std/io.lyra`'s `creat` comment was written about, and it is why the symbol is chosen
 // here rather than assumed.
 //
-// An unknown host is refused rather than guessed, on the backend's own rule: emitting a
+// iOS is Darwin: its `struct dirent` is macOS's (arm64, 64-bit inodes only). An unknown
+// platform is refused rather than guessed, on the backend's own rule: emitting a
 // plausible offset for a platform nobody measured is exactly the silent wrongness the
 // loud error exists to prevent.
 
@@ -68,26 +69,25 @@ import (
 // `Some` of the names, or `None` when the directory cannot be opened.
 const ShimReadDir = "lyra_read_dir"
 
-// direntNameOffset is the byte offset of `d_name` within `struct dirent` on the compiling
-// host. See this file's Platform note for the measurements and for why a host constant is
-// sound here.
-func direntNameOffset() (int64, error) {
-	switch runtime.GOOS {
-	case "darwin":
+// direntNameOffset is the byte offset of `d_name` within `struct dirent` on the platform
+// built for. See this file's Platform note for the measurements.
+func direntNameOffset(os string) (int64, error) {
+	switch os {
+	case "darwin", "ios":
 		return 21, nil
 	case "linux":
 		return 19, nil
 	default:
-		return 0, fmt.Errorf("llvm: dir_names is unsupported on %s: "+
-			"the offset of d_name within struct dirent has not been measured there", runtime.GOOS)
+		return 0, fmt.Errorf("llvm: dir_names is unsupported on %q: "+
+			"the offset of d_name within struct dirent has not been measured there", os)
 	}
 }
 
-// readdirSymbol is the C symbol `readdir` resolves to on the compiling host. See this
+// readdirSymbol is the C symbol `readdir` resolves to on the platform built for. See this
 // file's Platform note: on x86_64 macOS the bare name is the legacy 32-bit-inode entry
 // point, whose struct has a different layout and which links without complaint.
-func readdirSymbol() string {
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
+func readdirSymbol(os, arch string) string {
+	if os == "darwin" && arch == "x86_64" {
 		return "readdir$INODE64"
 	}
 	return "readdir"
@@ -110,7 +110,7 @@ func (l *lowerer) ensureReadDirRuntime(dt types.DataType, elemLyra types.Type,
 	if l.readDir != nil {
 		return l.readDir, nil
 	}
-	nameOffset, err := direntNameOffset()
+	nameOffset, err := direntNameOffset(l.os)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (l *lowerer) ensureReadDirRuntime(dt types.DataType, elemLyra types.Type,
 	// `DIR *` is opaque and only ever carried, never indexed — the one thing tui.go's
 	// termios buffer and this have in common.
 	opendir, _ := l.declareLibc("opendir", i8ptr, i8ptr)
-	readdir, _ := l.declareLibc(readdirSymbol(), i8ptr, i8ptr)
+	readdir, _ := l.declareLibc(readdirSymbol(l.os, l.arch), i8ptr, i8ptr)
 	closedir, _ := l.declareLibc("closedir", lltypes.I32, i8ptr)
 
 	path := ir.NewParam("path", i8ptr)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/driver"
+	"github.com/Lyra-Language/lyra/pkg/target"
 )
 
 // The link line: `-lm` unconditionally, plus one `-l` per library an `extern`'s `@link`
@@ -16,7 +17,7 @@ import (
 // module's requirement would not compose into its callers' build.
 func TestLinkFlags_AddsOneFlagPerLinkedLibrary(t *testing.T) {
 	res := &driver.Result{Links: []string{"curl", "z"}}
-	if got := strings.Join(linkFlags(res), " "); got != "-lm -lcurl -lz" {
+	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != "-lm -lcurl -lz" {
 		t.Errorf("linkFlags = %q; want \"-lm -lcurl -lz\"", got)
 	}
 }
@@ -25,13 +26,13 @@ func TestLinkFlags_AddsOneFlagPerLinkedLibrary(t *testing.T) {
 // intrinsics, and a program that also names it explicitly is asking for what it has.
 func TestLinkFlags_DoesNotRepeatLibm(t *testing.T) {
 	res := &driver.Result{Links: []string{"m"}}
-	if got := strings.Join(linkFlags(res), " "); got != "-lm" {
+	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != "-lm" {
 		t.Errorf("linkFlags = %q; want \"-lm\"", got)
 	}
 }
 
 func TestLinkFlags_NothingAskedIsJustLibm(t *testing.T) {
-	if got := strings.Join(linkFlags(&driver.Result{}), " "); got != "-lm" {
+	if got := strings.Join(linkFlags(&driver.Result{}, mustMachine()), " "); got != "-lm" {
 		t.Errorf("linkFlags = %q; want \"-lm\"", got)
 	}
 }
@@ -85,7 +86,7 @@ func TestLinkFlags_AddsThePackagesLibraryDirectories(t *testing.T) {
 		Packages: []string{"missing", "sdl3", "sdl3-image"},
 	}
 	want := "-L/opt/brew/lib -L/opt/brew/Cellar/sdl3_image/lib -lm -lSDL3 -lSDL3_image"
-	if got := strings.Join(linkFlags(res), " "); got != want {
+	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
 		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
 }
@@ -102,7 +103,16 @@ func TestLinkFlags_SearchesTheInstallsLibFirst(t *testing.T) {
 	}
 	res := &driver.Result{Links: []string{"lyra-menubar", "SDL3"}, Packages: []string{"sdl3"}}
 	want := "-L/opt/lyra/lib -L/opt/brew/lib -lm -llyra-menubar -lSDL3"
-	if got := strings.Join(linkFlags(res), " "); got != want {
+	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
 		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
+}
+
+// mustMachine is the platform lyrac runs on, which the link tests build for.
+func mustMachine() target.Platform {
+	m, err := target.Machine()
+	if err != nil {
+		panic(err)
+	}
+	return m
 }

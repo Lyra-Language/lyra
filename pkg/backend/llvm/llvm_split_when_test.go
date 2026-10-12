@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -197,7 +196,7 @@ let main = () -> void => {
 let text_of = pure (n: i64) -> string => ["lyra lyra lyra lyra lyra lyra lyra lyra"; n].join("\n")
 `
 	const small, large = 500, 8000
-	out, err := exec.Command(preludeBinary(t, src), strconv.Itoa(small), strconv.Itoa(large)).Output()
+	out, err := command(preludeBinary(t, src), strconv.Itoa(small), strconv.Itoa(large)).Output()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

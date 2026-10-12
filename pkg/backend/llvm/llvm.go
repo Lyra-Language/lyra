@@ -101,6 +101,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/backend"
 	"github.com/Lyra-Language/lyra/pkg/driver"
+	"github.com/Lyra-Language/lyra/pkg/target"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
@@ -116,19 +117,36 @@ type Backend struct {
 	// Only the *extern* boundary reads it. Lyra's own calling convention is Lyra's and
 	// does not vary by target.
 	target abi.Target
+	// os and arch are the platform's ("darwin", "ios", "linux"; "arm64", "x86_64"), which
+	// the backend's few OS facts are keyed by — `struct dirent`'s layout and `readdir`'s
+	// symbol (dirent.go), TIOCGWINSZ (tui.go). Empty for a target with no OS, where those
+	// builtins are refused before the backend (checker.CheckTarget). **Told, never asked
+	// of the machine**: a program built here for another platform takes that one's facts.
+	os, arch string
 }
 
-// New returns an LLVM backend targeting the host.
+// New returns an LLVM backend for the machine it runs on (target.Machine).
 //
-// **The host rather than nothing**, because a backend with no target refuses every
+// **The machine rather than nothing**, because a backend with no target refuses every
 // by-value aggregate at the boundary, and "I did not say" almost always means "this
 // machine" — which is what the tests want, and what an embedder would be surprised not to
-// get. `lyrac` still calls NewForTarget with the *C compiler's* answer, which is the
-// authority: it is what compiles the IR, and it is right under `--cc` naming a
-// cross-compiler where the host is not.
-func New() *Backend { return &Backend{target: abi.HostTarget()} }
+// get. `lyrac` calls NewForPlatform with the platform it builds for.
+func New() *Backend {
+	m, err := target.Machine()
+	if err != nil {
+		return &Backend{target: abi.Unknown}
+	}
+	return NewForPlatform(m)
+}
 
-// NewForTarget returns a backend that classifies aggregates for t.
+// NewForPlatform returns a backend emitting for p: its C calling convention at the extern
+// boundary, and its OS facts.
+func NewForPlatform(p target.Platform) *Backend {
+	return &Backend{target: abi.FromTriple(p.Triple), os: p.OS, arch: p.Arch}
+}
+
+// NewForTarget returns a backend that classifies aggregates for t, for a target with no
+// operating system (the Genesis), or a test of the boundary alone.
 func NewForTarget(t abi.Target) *Backend { return &Backend{target: t} }
 
 // Compile-time assertion that Backend satisfies the contract.
@@ -166,6 +184,8 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		module:             m,
 		res:                res,
 		target:             b.target,
+		os:                 b.os,
+		arch:               b.arch,
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
 		seqSkipped:         map[string]bool{},
@@ -354,6 +374,8 @@ type lowerer struct {
 	res            *driver.Result // gives you TypeTable, SymbolTable, MethodTable, …
 	// target is the C calling convention for the extern boundary; see Backend.target.
 	target abi.Target
+	// os and arch are the platform's; see Backend.os.
+	os, arch string
 	// externPlans holds the ABI plan for each foreign function whose signature carries an
 	// aggregate by value, keyed by the declared function so the call site can find it.
 	// Absent for every other extern, which is the common case.

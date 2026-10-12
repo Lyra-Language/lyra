@@ -1,8 +1,6 @@
 package llvm
 
 import (
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -161,8 +159,8 @@ let main = () -> void => println("${today()}")
 			t.Skipf("no zoneinfo for %s: %v", zone, err)
 		}
 		run := func() (string, string) {
-			cmd := exec.Command(bin)
-			cmd.Env = append(os.Environ(), "TZ="+zone)
+			cmd := command(bin)
+			withEnv(cmd, "TZ="+zone)
 			out, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("%s: run: %v", zone, err)
@@ -286,8 +284,8 @@ let main = () -> void => println("${now_plain_date_time()}")
 			t.Skipf("no zoneinfo for %s: %v", zone, err)
 		}
 		run := func() (string, string) {
-			cmd := exec.Command(bin)
-			cmd.Env = append(os.Environ(), "TZ="+zone)
+			cmd := command(bin)
+			withEnv(cmd, "TZ="+zone)
 			out, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("%s: run: %v", zone, err)

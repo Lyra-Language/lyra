@@ -1,7 +1,6 @@
 package llvm
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -77,7 +76,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the raylib-shaders binary failed: %v", err)
 	}

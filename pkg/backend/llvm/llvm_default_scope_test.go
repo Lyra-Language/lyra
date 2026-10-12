@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"os"
-	"os/exec"
 	"testing"
 )
 
@@ -75,7 +74,7 @@ let main = () -> u8 => {
 func buildAndRunModulesASan(t *testing.T, files map[string]string) int {
 	t.Helper()
 	clang := lookClang(t)
-	cmd := exec.Command(compileCached(t, clang, instrumentForASan(emitModules(t, files)), "-fsanitize=address"))
+	cmd := command(compileCached(t, clang, instrumentForASan(emitModules(t, files)), "-fsanitize=address"))
 	cmd.Env = append(os.Environ(), asanOptions())
 	asanRunSlots <- struct{}{}
 	defer func() { <-asanRunSlots }()

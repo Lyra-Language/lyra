@@ -19,7 +19,7 @@ import (
 func runModule(t *testing.T, m *ir.Module) int {
 	t.Helper()
 	clang := lookClang(t)
-	runErr := exec.Command(compileCached(t, clang, m.String())).Run()
+	runErr := command(compileCached(t, clang, m.String())).Run()
 	if runErr == nil {
 		return 0
 	}

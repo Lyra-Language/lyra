@@ -959,13 +959,16 @@ sets V on every add. What stands between that and a ROM:
 `std.game` runs on every platform SDL3 does; `lyrac` builds for its host alone (Vega's modern
 target, 10/11). In order:
 
-- **[OPEN] A target descriptor and `--target`.** `pkg/target`'s `Host bool` answers "has an
-  OS" and "use the host toolchain" at once; a triple, OS, arch and sysroot go beside it, clang
-  gets `--target`/`--sysroot` (`cmd/lyrac/main.go`'s link line), `abi.FromTriple` replaces
-  `DetectTarget`, and `dirent.go`/`tui.go` read the target's OS, not `runtime.GOOS`. A
-  per-target `build/lib/<triple>/` for the bindings' C halves, and a cross-aware pkg-config.
-- **[OPEN] iOS** — `arm64-apple-ios` already classifies as AAPCS64 (a diff-test row to add);
-  SDL3 as an xcframework, an app bundle, `SDL_main`, the Simulator for checks.
+- **[DONE 10/12] A target descriptor and `--target`** — `pkg/target`'s platforms; iOS, the
+  Simulator and Linux built from a Mac and the suite run on each (COMPLETED.md 10/12). Left
+  for the platforms that need them: `<root>/lib/<platform>/` is searched but nothing builds
+  into it yet, and the bindings' C halves are built for the machine alone.
+- **[OPEN] iOS** — the platforms build and run command-line programs; a game needs SDL3
+  built for iOS into `lib/ios*/` (from `~/Dev/SDL`'s Xcode project), `-framework` linking
+  (`@link` cannot say one), an entry through `SDL_RunApp` (`main` is the backend's), an app
+  bundle for `simctl install`/`launch`, touch and lifecycle events in `bindings.sdl3`, and
+  `bindings.menubar`/`imgui` built per platform (their `uname` and `__APPLE__` tests mean the
+  machine).
 - **[OPEN] Android** — `aarch64-linux-android` is AAPCS64 too; the NDK's clang, a `.so` run by
   SDL's Java activity, an APK.
 - **[OPEN] Windows** — `abi.Win64` (1/2/4/8-byte aggregates as integers, else by pointer, no

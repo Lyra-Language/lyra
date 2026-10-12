@@ -11,7 +11,7 @@ import (
 // while the stdout-only runner sees an empty string either way.
 func runPreludeCombined(t *testing.T, src string) (string, int) {
 	t.Helper()
-	out, err := exec.Command(preludeBinary(t, src)).CombinedOutput()
+	out, err := command(preludeBinary(t, src)).CombinedOutput()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()

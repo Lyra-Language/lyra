@@ -120,6 +120,15 @@ func compileCachedSalted(t *testing.T, clang, ir, salt string, extraArgs ...stri
 		if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		// Another platform's program (LYRA_TEST_TARGET, platform_harness_test.go) is
+		// compiled for its triple and linked by its own driver.
+		if p, cross := testPlatform(t); cross {
+			if out, err := compileForPlatform(t, clang, p, llPath, binPath, extraArgs); err != nil {
+				os.Remove(binPath)
+				t.Fatalf("building for %s failed: %v\n%s\n--- IR ---\n%s", p.Name, err, out, ir)
+			}
+			return
+		}
 		args := append(append([]string{}, extraArgs...), llPath, "-lm", "-o", binPath)
 		if out, err := exec.Command(clang, args...).CombinedOutput(); err != nil {
 			os.Remove(binPath)
@@ -135,7 +144,8 @@ func compileCachedSalted(t *testing.T, clang, ir, salt string, extraArgs ...stri
 	}
 
 	h := sha256.New()
-	h.Write([]byte(clangTool.ver + "|" + runtime.GOOS + "/" + runtime.GOARCH + "|" + strings.Join(extraArgs, " ") + "|" + salt + "\x00"))
+	p, _ := testPlatform(t)
+	h.Write([]byte(clangTool.ver + "|" + runtime.GOOS + "/" + runtime.GOARCH + "|" + p.Name + "|" + strings.Join(extraArgs, " ") + "|" + salt + "\x00"))
 	h.Write([]byte(ir))
 	bin := filepath.Join(dir, hex.EncodeToString(h.Sum(nil)))
 	if _, err := os.Stat(bin); err == nil {

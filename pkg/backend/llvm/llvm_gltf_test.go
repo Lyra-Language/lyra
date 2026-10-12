@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,7 +54,7 @@ let main = () -> void => {
 	src = strings.Replace(src, "(m: bindings.raylib.Matrix)", "(m: Matrix)", 1)
 	src = strings.Replace(src, "import gltf.{", "import bindings.raylib.{ Matrix }\nimport gltf.{", 1)
 	bin := compileCached(t, lookClang(t), emitWithSibling(t, src, "examples/raylib/gltf.lyra"), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the gltf-anim binary failed: %v", err)
 	}
@@ -124,7 +123,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithSibling(t, src, "examples/raylib/gltf.lyra"), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the material-params binary failed: %v", err)
 	}
@@ -176,7 +175,7 @@ func emitWithSibling(t *testing.T, src, sibling string) string {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
-	ir, err := New().Emit(res, ep)
+	ir, err := testBackend().Emit(res, ep)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}

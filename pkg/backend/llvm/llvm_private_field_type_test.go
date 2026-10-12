@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,11 +108,11 @@ func runModules(t *testing.T, files map[string]string) string {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
-	ir, err := New().Emit(res, ep)
+	ir, err := testBackend().Emit(res, ep)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	out, err := exec.Command(compileCached(t, lookClang(t), string(ir))).Output()
+	out, err := command(compileCached(t, lookClang(t), string(ir))).Output()
 	if err != nil {
 		t.Fatalf("running the binary failed: %v", err)
 	}

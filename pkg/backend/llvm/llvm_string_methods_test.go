@@ -805,11 +805,11 @@ func buildAndRunPanicWithPrelude(t *testing.T, src string) (string, int) {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
-	ir, err := New().Emit(res, ep)
+	ir, err := testBackend().Emit(res, ep)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	cmd := exec.Command(compileCached(t, clang, string(ir)))
+	cmd := command(compileCached(t, clang, string(ir)))
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()

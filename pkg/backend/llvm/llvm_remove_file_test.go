@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,7 +33,7 @@ let main = () -> void => {
   println(remove_file(args[3]))
 }`
 	bin := preludeBinary(t, src)
-	out, err := exec.Command(bin, file, dir, link).Output()
+	out, err := command(bin, file, dir, link).Output()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

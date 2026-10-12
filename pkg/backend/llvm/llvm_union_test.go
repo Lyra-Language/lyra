@@ -151,7 +151,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lSDL3")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		if _, isExit := err.(*exec.ExitError); !isExit {
 			t.Fatalf("running the SDL3 binary failed: %v", err)
@@ -192,7 +192,7 @@ let main = () -> void => unsafe {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		if _, isExit := err.(*exec.ExitError); !isExit {
 			t.Fatalf("running the raylib binary failed: %v", err)
@@ -236,7 +236,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		if _, isExit := err.(*exec.ExitError); !isExit {
 			t.Fatalf("running the raylib-bindings binary failed: %v", err)
@@ -335,7 +335,7 @@ let u16le = pure (buf: []u8, v: i64) -> []u8 => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		if _, isExit := err.(*exec.ExitError); !isExit {
 			t.Fatalf("running the raylib-audio binary failed: %v", err)
@@ -404,7 +404,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the raylib-geometry binary failed: %v", err)
 	}
@@ -546,7 +546,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the raylib-image-editing binary failed: %v", err)
 	}
@@ -602,7 +602,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the raylib-image binary failed: %v", err)
 	}
@@ -685,7 +685,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the raylib-3d binary failed: %v", err)
 	}
@@ -767,7 +767,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the raylib-files binary failed: %v", err)
 	}
@@ -853,7 +853,7 @@ let main = () -> void => {
 }
 `
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the raylib-models binary failed: %v", err)
 	}

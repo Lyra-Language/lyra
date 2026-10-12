@@ -26,6 +26,8 @@ lyrac build --emit-llvm -o out.ll prog.lyra  # -o names the .ll
 lyrac build -O0 prog.lyra                    # default -O2
 lyrac build --cc /path/to/clang …            # else $LYRA_CC, else clang on PATH
 lyrac build --progress prog.lyra             # "progress: 40% compiling for the 68000" lines on stderr
+lyrac build --target ios-simulator prog.lyra # another platform: ios, ios-simulator, linux-arm64, linux-x86_64, macos
+lyrac run --target linux-arm64 prog.lyra     # run there: the Simulator, or Docker for Linux
 ```
 
 - Links with `clang <ir> -lm -o <exe>` plus `-l` flags from `@link` (`linkFlags`); `-lm` is
@@ -47,6 +49,27 @@ lyrac build --progress prog.lyra             # "progress: 40% compiling for the 
 - A sequence value needs clang ≥ 15 (`CheckCoroutineSupport`); lyrac refuses by name and
   keeps the `.ll`.
 - The entry point (`driver.ResolveEntryPoint`) is checked only by `build`/`run`.
+
+### For another platform (`platform.go`)
+
+`--target` builds a `host` program for one of `pkg/target`'s platforms; without it, for this
+machine's (`target.Machine()`), as before. Another platform's build is two steps: clang
+`--target=<triple> [-isysroot <sdk>] -O2 -c prog.ll`, then its linker — Xcode's clang with the
+platform's SDK (`xcrun --sdk iphonesimulator --show-sdk-path`) for iOS, `zig cc -target
+aarch64-linux-gnu.2.36` (`$LYRA_ZIG`, else the PATH) for Linux. The triple is passed, never
+written in the IR (clang normalises and warns). Libraries are `<root>/lib/<platform>/`, with no
+pkg-config. `run --target` runs through the platform's runner (`runCommand`):
+
+- `ios-simulator`: `xcrun simctl spawn <device> <exe> args`, the device `$LYRA_SIMULATOR`,
+  else the first booted, else the first iPhone available, booted and left booted;
+- `linux-*`: `docker run --rm -i --platform linux/<arch> -v <dir>:/lyra <image>`, the image
+  `$LYRA_LINUX_IMAGE`, else `debian:bookworm-slim` (glibc 2.36, what programs are linked
+  against);
+- `ios`: refused — a device's program is installed, not run (app bundles: the iOS plan).
+
+`--target` on a `genesis` program is refused. `platform_test.go` builds and runs a program
+reading a directory (the platform's `struct dirent`) on each, skipping without Xcode, zig or
+Docker.
 
 ### For the Genesis (`genesis.go`)
 

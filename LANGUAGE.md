@@ -729,6 +729,14 @@ target = "genesis"
 - **Targets**: `host`, and `genesis` (a 68000 with 64 KB of RAM: no operating system, no heap,
   no floating point). `lyrac` and `lyra-lsp` read the same file, so the editor and the build
   agree; the target is the code's, never an editor setting.
+- **`host` means "a program with an operating system"**, and which one is the build's choice,
+  not the code's: **`lyrac build --target <platform>`** — `ios`, `ios-simulator`,
+  `linux-arm64`, `linux-x86_64`, `macos` (`macos`/`linux` are this machine's processor's) —
+  with this machine's platform when none is given. One program builds for each. `run --target`
+  runs it there: `ios-simulator` in a booted iOS Simulator, `linux-*` in a Docker container; a
+  device's program (`ios`) is built, not run. iOS needs Xcode; Linux is linked by `zig cc`
+  (glibc 2.36, Debian 12's). `--target` on a `genesis` program is an error: it has no
+  operating system to choose. Every platform is 64-bit (LP64).
 - **The file is small and strict**: top-level `key = "string"` lines, `#` comments. An unknown
   target or setting, or any other line, is **`lyra-E086`** at the top of the entry file —
   refused, not ignored, since an ignored setting is a program checked for the wrong machine.

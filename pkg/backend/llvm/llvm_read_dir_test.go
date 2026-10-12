@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -52,7 +51,7 @@ func TestExec_DirNames(t *testing.T) {
   }
 }`
 	bin := preludeBinary(t, src)
-	out, err := exec.Command(bin, dir, empty,
+	out, err := command(bin, dir, empty,
 		filepath.Join(dir, "no-such-dir"), filepath.Join(dir, "a.txt")).Output()
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -98,7 +97,7 @@ let main = () -> void => {
   }
 }`
 	bin := preludeBinary(t, src)
-	out, err := exec.Command(bin, dir, empty, filepath.Join(dir, "no-such-dir")).Output()
+	out, err := command(bin, dir, empty, filepath.Join(dir, "no-such-dir")).Output()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -145,7 +144,7 @@ let main = () -> void => {
   for i in 1..<args.len() { println(is_symlink(args[i])) }
 }`
 	bin := preludeBinary(t, src)
-	out, err := exec.Command(bin, file, sub, toFile, toDir, broken,
+	out, err := command(bin, file, sub, toFile, toDir, broken,
 		filepath.Join(dir, "no-such-path")).Output()
 	if err != nil {
 		t.Fatalf("run: %v", err)

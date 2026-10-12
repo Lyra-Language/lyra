@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -35,7 +34,7 @@ let main = () -> void => {
   println(args[3].len())
 }`
 	bin := preludeBinary(t, src)
-	out, err := exec.Command(bin, path, missing, "two wörds").Output()
+	out, err := command(bin, path, missing, "two wörds").Output()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

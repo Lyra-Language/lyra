@@ -3,7 +3,6 @@ package llvm
 import (
 	"encoding/base64"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,7 +56,7 @@ let main = () -> void => {
 `
 	src = strings.Replace(src, "JPEG_PATH", path, 1)
 	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+raylibDir, "-lraylib", "-L"+jpegDir, "-lturbojpeg")
-	raw, err := exec.Command(bin).Output()
+	raw, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the jpeg binary failed: %v", err)
 	}

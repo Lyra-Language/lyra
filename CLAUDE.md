@@ -483,7 +483,7 @@ such changes on a user module.
 | `pkg/analyzer/captures` | Lambda free variables | [README](pkg/analyzer/captures/README.md) |
 | `pkg/analyzer/ownership` | Retain/release placement; Perceus | [README](pkg/analyzer/ownership/README.md) |
 | `pkg/modules` | Import resolution, namespacing, implicit prelude | [README](pkg/modules/README.md) |
-| `pkg/target` | What a program is compiled for: `lyra.toml` lookup, the target table (`host`, `genesis`) | below |
+| `pkg/target` | What a program is compiled for: `lyra.toml` lookup, the target table (`host`, `genesis`), and the platforms a `host` program builds for (`--target`) | below |
 | `pkg/rom` | A small ELF linker for 68000 objects, and the Genesis cartridge layout and header | below |
 | `pkg/driver` | The reusable front-end pipeline | below |
 | `pkg/abi` | C calling conventions per target | below |
@@ -537,14 +537,31 @@ with all errors as `[]diagnostic.Diagnostic` (CST positions converted to 1-based
   returning `u8` or void. Build-time only, not part of `Analyze`.
 
 **`pkg/backend`** — `backend.Backend{Name(); Emit(res, entry)}`, called only on error-free
-analysis. `backend/llvm/tui.go` and `backend/llvm/dirent.go` are the **only** `runtime.GOOS`
-consumers (`TIOCGWINSZ`; `struct dirent`'s name offset and `readdir`'s symbol), sound
-because `lyrac` compiles for its host. An unmeasured host is refused, not guessed.
+analysis. **The backend is told its platform, never asks the machine**
+(`llvm.NewForPlatform(p)`: the extern ABI from `p.Triple`, and `p.OS`/`p.Arch`): its only OS
+facts — `TIOCGWINSZ` (`tui.go`), `struct dirent`'s name offset and `readdir`'s symbol
+(`dirent.go`) — are keyed by the platform, so a program built here for the iOS Simulator or
+Linux takes that platform's. **No `runtime.GOOS` in `pkg/backend`**
+(`TestBackend_AsksTheMachineNothing`); an unmeasured platform is refused, not guessed.
+`llvm.New()` is the machine's platform (`target.Machine()`).
 
 **`pkg/target`** — `target.ForFile(entry)`: the nearest `lyra.toml` above the entry file,
 strictly parsed (`target = "…"` and comments; anything else is `lyra-E086`), and the target
 table (`host`, `genesis`: host, heap, CPU, emulated types). The driver records it on
-`Result.Target`; `checker.CheckTarget` and `lyrac build` read it.
+`Result.Target`; `checker.CheckTarget` and `lyrac build` read it. **A `host` program is built
+for a `Platform`** (`platform.go`) — `macos-*`, `ios`, `ios-simulator`, `linux-*`: its triple,
+OS, processor, Apple SDK, linker (the machine's C compiler; Xcode's clang with the SDK; `zig
+cc`) and runner (here; `simctl spawn`; Docker). `--target` names one (`PlatformNamed`), else
+`Machine()` — **the one place `runtime.GOOS` is asked**. Every platform is LP64.
+
+**`cmd/lyrac`'s builds for another platform** (`platform.go`) are two steps: clang
+`--target=<triple> [-isysroot <sdk>] -c prog.ll`, then the platform's linker; the machine's
+build stays one step. **The triple rides the command line, never the IR**: clang normalises
+a module's triple (`ios17.0` → `ios17.0.0`) and warns at every difference. A cross build's
+libraries are `<root>/lib/<platform>/` with no pkg-config. `LYRA_TEST_TARGET=<platform>`
+runs `pkg/backend/llvm`'s behavioural suite there (`platform_harness_test.go`: every test
+binary through `command(bin, …)`, a Linux one in a container sharing the temp and cache
+directories at their own paths; the sanitizer tests skip).
 
 **`pkg/rom`** — `rom.Link(required, library, layout)`: relocatable ELF32 68000 objects to a
 flat image — vectors at 0, code and constants from `CodeStart`, `.data` running in RAM with
@@ -555,9 +572,10 @@ writes the header and checksum; `ExplainUndefined` turns a missing `malloc` into
 Tested against checked-in objects (`testdata/*.o`, rebuilt by `testdata/make.sh`).
 
 **`pkg/abi`** — `Classify(target, aggregate, isReturn)` for AAPCS64 and SysV AMD64.
-`abi_diff_test.go` checks against clang (19 shapes × 3 targets). AAPCS64 register-passes an
+`abi_diff_test.go` checks against clang (19 shapes × 5 targets). AAPCS64 register-passes an
 HFA of any size and has asymmetric param/return widths; SysV can change arity, so
-classification reaches call lowering. `DetectTarget(cc)` / `HostTarget()`. **Windows is
+classification reaches call lowering. `FromTriple` (lyrac, from the platform) /
+`DetectTarget(cc)` / `HostTarget()`. iOS and the Simulator are rows of the diff test. **Windows is
 `Unknown`** — refused at the crossing, never guessed.
 
 **`pkg/docgen`** — `Collect(res, opts) []Module` + `RenderMarkdown(m)`; the model knows nothing

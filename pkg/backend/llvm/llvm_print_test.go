@@ -16,7 +16,7 @@ func buildAndRunCapture(t *testing.T, src string) (string, int) {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	out, err := exec.Command(compileCached(t, clang, ir)).Output()
+	out, err := command(compileCached(t, clang, ir)).Output()
 	code := 0
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

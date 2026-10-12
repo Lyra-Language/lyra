@@ -19,7 +19,7 @@ import (
 func buildAndRunModules(t *testing.T, files map[string]string) int {
 	t.Helper()
 	clang := lookClang(t)
-	return exitCodeOf(t, exec.Command(compileCached(t, clang, emitModules(t, files))).Run())
+	return exitCodeOf(t, command(compileCached(t, clang, emitModules(t, files))).Run())
 }
 
 // emitModules is buildAndRunModules' front half: resolve, analyze and emit, returning the
@@ -61,7 +61,7 @@ func emitModulesErr(t *testing.T, files map[string]string) (string, error) {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
-	ir, err := New().Emit(res, ep)
+	ir, err := testBackend().Emit(res, ep)
 	return string(ir), err
 }
 

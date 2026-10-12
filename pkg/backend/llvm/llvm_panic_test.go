@@ -18,7 +18,7 @@ func buildAndRunPanic(t *testing.T, src string) (string, int) {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	cmd := exec.Command(compileCached(t, clang, ir))
+	cmd := command(compileCached(t, clang, ir))
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()

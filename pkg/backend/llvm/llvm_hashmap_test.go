@@ -58,7 +58,7 @@ let main = () -> u8 => {
   }
   if names.len() == 32 && names.get_or("k1", "?") == "again" && names.get_or("k2", "?") == "?" { 3 } else { 1 }
 }`
-	if got := exitCode(t, exec.Command(preludeBinary(t, src)).Run()); got != 3 {
+	if got := exitCode(t, command(preludeBinary(t, src)).Run()); got != 3 {
 		t.Errorf("exited %d; want 3", got)
 	}
 	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
@@ -71,7 +71,7 @@ let main = () -> u8 => {
 func buildAndRunASanWithPrelude(t *testing.T, src string) int {
 	t.Helper()
 	ir := instrumentForASan(emitWithPrelude(t, src))
-	cmd := exec.Command(compileCached(t, lookClang(t), ir, "-fsanitize=address"))
+	cmd := command(compileCached(t, lookClang(t), ir, "-fsanitize=address"))
 	cmd.Env = append(os.Environ(), asanOptions())
 	asanRunSlots <- struct{}{}
 	defer func() { <-asanRunSlots }()

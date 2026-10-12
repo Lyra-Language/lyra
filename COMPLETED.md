@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 10/12/26 — `lyrac --target`: built for iOS and Linux from a Mac
+
+`lyrac` built for the machine it ran on and had no word for anything else: the IR named no
+triple, the link was `clang prog.ll -o prog`, and the backend's three OS facts — `struct
+dirent`'s `d_name` offset, `readdir`'s symbol, TIOCGWINSZ — were `runtime.GOOS`'s, the
+machine's. A `host` program is now built for a **platform** (`pkg/target`'s `Platform`:
+`macos-*`, `ios`, `ios-simulator`, `linux-arm64`, `linux-x86_64`), `--target` naming one and
+the machine's otherwise. The backend is told the platform (`NewForPlatform`) and keys those
+facts by it; nothing in `pkg/backend` asks `runtime` (a test holds it). Another platform's
+build is two steps — clang for the triple to an object, then Xcode's clang with the SDK or
+`zig cc` for glibc 2.36 — and `run` runs it there: `simctl spawn` in a booted Simulator,
+`docker run` for Linux. A device's program is built and not run.
+
+- **The triple is not written into the IR**, though the plan said it would be: clang
+  normalises a module's triple (`ios17.0` → `ios17.0.0`, a bare `macosx` gains the SDK's
+  version) and warns at every difference, `--target` given or not. The command line says it
+  once.
+- **The proof is the behavioural suite on each platform** (`LYRA_TEST_TARGET`): every test
+  binary built for the platform and run there, through one `command(bin, …)` in the harness.
+  All of it passes on the iOS Simulator and on Linux arm64 in Docker but what cannot run
+  there — the sanitizer tests, and the 14 linking this Mac's raylib, SDL3 or libjpeg, which
+  skip saying so. What failed on the way was the harness, not the backend: a program started
+  in the Simulator's data directory, not the test's (`testdata/…` unreadable — a shell moves
+  it, and must give back `DYLD_ROOT_PATH`, which the shell drops and dyld aborts without);
+  `TZ` reaches a Simulator program only as `SIMCTL_CHILD_TZ` (`withEnv`); and the FFI
+  fixture's C oracle was built for the Mac — which on iOS *passed*, the Simulator running a
+  Mac arm64 binary, and in Docker failed. It is built for the platform now, so C and Lyra are
+  compared where both run.
+- `linux-x86_64` runs under Docker's emulation; its suite was not run, its programs were.
+
 ### 10/11/26 — Large aggregates through memory on the 68000 too
 
 The 68000 was left out of `sret` and by-copy parameters, the hero's scenes having

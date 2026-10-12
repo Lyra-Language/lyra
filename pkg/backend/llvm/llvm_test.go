@@ -20,7 +20,7 @@ func emitSource(t *testing.T, src string) (string, error) {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", diags)
 	}
-	ir, err := New().Emit(res, ep)
+	ir, err := testBackend().Emit(res, ep)
 	return string(ir), err
 }
 
@@ -80,7 +80,7 @@ func buildAndRun(t *testing.T, src string) int {
 		t.Fatalf("emit: %v", err)
 	}
 
-	runErr := exec.Command(compileCached(t, clang, ir)).Run()
+	runErr := command(compileCached(t, clang, ir)).Run()
 	if runErr == nil {
 		return 0
 	}
@@ -753,7 +753,7 @@ func TestEmit_LiteralExceedsContextWidth_Error(t *testing.T) {
 
 func TestEmit_NilArgs(t *testing.T) {
 	t.Parallel()
-	if _, err := New().Emit(nil, nil); err == nil {
+	if _, err := testBackend().Emit(nil, nil); err == nil {
 		t.Fatal("expected an error for nil program/entry point")
 	}
 }

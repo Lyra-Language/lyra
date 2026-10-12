@@ -103,6 +103,9 @@ var targets = []struct {
 	triple string
 }{
 	{abi.AArch64, "arm64-apple-macosx14.0.0"},
+	// lyrac's iOS platforms (pkg/target): Apple's AArch64, as the Mac's.
+	{abi.AArch64, "arm64-apple-ios17.0"},
+	{abi.AArch64, "arm64-apple-ios17.0-simulator"},
 	{abi.AArch64, "aarch64-unknown-linux-gnu"},
 	{abi.X86_64SysV, "x86_64-unknown-linux-gnu"},
 }

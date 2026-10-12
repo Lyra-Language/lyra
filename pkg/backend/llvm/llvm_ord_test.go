@@ -194,7 +194,7 @@ let main = () -> void => {
 // Returning either bound would pick one arbitrarily and hide the mistake that produced it.
 func TestExec_ClampWithAReversedRangeTraps(t *testing.T) {
 	t.Parallel()
-	out, err := exec.Command(preludeBinary(t, `
+	out, err := command(preludeBinary(t, `
 module main
 let main = () -> void => { println("${(5).clamp(10, 0)}") }
 `)).CombinedOutput()
@@ -249,7 +249,7 @@ func TestExec_FloatMinMaxClampTrapOnNaN(t *testing.T) {
 	} {
 		t.Run(c.expr, func(t *testing.T) {
 			t.Parallel()
-			out, err := exec.Command(preludeBinary(t, `
+			out, err := command(preludeBinary(t, `
 module main
 let main = () -> void => {
   let zero: f64 = 0.0

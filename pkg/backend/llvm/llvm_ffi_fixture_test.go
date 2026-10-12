@@ -64,7 +64,7 @@ func runWithFixture(t *testing.T, src string) string {
 	ir := emitWithPrelude(t, src)
 	path, source := fixtureParts(t)
 	bin := compileCachedSalted(t, clang, ir, source, path)
-	out, err := exec.Command(bin).Output()
+	out, err := command(bin).Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
@@ -287,10 +287,10 @@ func TestExec_FFIFixture_CAgreesWithLyra(t *testing.T) {
 	oracle := testdataPath(t, "ffi_oracle.c")
 
 	bin := filepath.Join(t.TempDir(), "oracle")
-	if out, err := exec.Command(clang, "-std=c99", oracle, fixture, "-o", bin).CombinedOutput(); err != nil {
+	if out, err := compileC(t, clang, bin, "-std=c99", oracle, fixture); err != nil {
 		t.Fatalf("compiling the oracle failed: %v\n%s", err, out)
 	}
-	out, err := exec.Command(bin).Output()
+	out, err := command(bin).Output()
 	if err != nil {
 		t.Fatalf("running the oracle failed: %v", err)
 	}

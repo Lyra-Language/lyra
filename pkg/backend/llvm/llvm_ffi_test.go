@@ -37,7 +37,7 @@ func TestExec_CBufferGetTrapsOutsideTheBuffer(t *testing.T) {
 	// Through the binary rather than the stdout runner: a trap writes to stderr and
 	// exits 101, and a stdout-only assertion would pass on a program that printed
 	// nothing for any other reason.
-	out, err := exec.Command(preludeBinary(t, `
+	out, err := command(preludeBinary(t, `
 module main
 import std.ffi.{ CBuffer }
 let main = () -> void => {
@@ -204,7 +204,7 @@ let main = () -> void => {
 // for an argument with no meaningful answer rather than input a program did not choose.
 func TestExec_CStringWithAnInteriorNulTraps(t *testing.T) {
 	t.Parallel()
-	out, err := exec.Command(preludeBinary(t, `
+	out, err := command(preludeBinary(t, `
 module main
 import std.ffi.{ cstring }
 let main = () -> void => {
@@ -287,7 +287,7 @@ let main = () -> void => {
   print("${unsafe { p^ }}")
 }
 `
-		out, err := exec.Command(preludeBinary(t, src)).CombinedOutput()
+		out, err := command(preludeBinary(t, src)).CombinedOutput()
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) || ee.ExitCode() != 101 {
 			t.Fatalf("%s() on an empty array must trap; got %v", fn, err)

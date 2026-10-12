@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"fmt"
-	"runtime"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -31,10 +30,8 @@ import (
 //
 // This file is the **first place the backend is not platform-neutral**, and only in one
 // spot: `TIOCGWINSZ` is 0x5413 on Linux and 0x40087468 on macOS (its ioctl numbers encode
-// direction and payload size, Linux's do not). It is chosen from `runtime.GOOS` at
-// emission time, which is honest rather than convenient — `lyrac` hands its IR to the
-// host's clang with no target flag, so the compiling host *is* the target, and that holds
-// inside the Debian container `asan.sh` runs too, where both halves are Linux.
+// direction and payload size, Linux's do not). It is chosen by the platform the program
+// is built for (`lowerer.os`) — iOS's is Darwin's — never by the machine compiling it.
 //
 // The other two dodge the question rather than answering it, and that is worth keeping:
 // `struct termios` has a genuinely different layout on the two platforms (4- vs 8-byte
@@ -54,10 +51,10 @@ const termiosBufBytes = 128
 // output the program has already queued.
 const tcsaNow = 0
 
-// tiocgwinsz is the ioctl selector for the window size. See this file's Platform note
-// for why this one constant is chosen from the compiling host.
-func tiocgwinsz() int64 {
-	if runtime.GOOS == "darwin" {
+// tiocgwinsz is the ioctl selector for the window size on `os`. See this file's Platform
+// note for why this one constant is the platform's.
+func tiocgwinsz(os string) int64 {
+	if os == "darwin" || os == "ios" {
 		return 0x40087468
 	}
 	return 0x5413
@@ -365,7 +362,7 @@ func (l *lowerer) ensureTerminalSizeRuntime(tt types.TupleType) (*ir.Func, error
 	b.NewStore(constant.NewInt(lltypes.I16, 0), colPtr)
 
 	b.NewCall(ioctl, i32c(1),
-		i64c(tiocgwinsz()), b.NewBitCast(ws, i8ptr))
+		i64c(tiocgwinsz(l.os)), b.NewBitCast(ws, i8ptr))
 
 	// The ioctl's own return value is ignored in favour of testing the values: a
 	// terminal reporting a zero dimension is as unusable as a failed call, and this way

@@ -1,7 +1,6 @@
 package llvm
 
 import (
-	"os/exec"
 	"testing"
 )
 
@@ -85,7 +84,7 @@ let main = () -> u8 => {
   sum += grid[1][1] + grid[2].len()
   u8(sum)   // 1 + 3 + 2 + 2 + 2, then 1 + 2 + 4, then 3 + 0
 }`
-	if got := exitCode(t, exec.Command(preludeBinary(t, src)).Run()); got != 20 {
+	if got := exitCode(t, command(preludeBinary(t, src)).Run()); got != 20 {
 		t.Errorf("exited %d; want 20", got)
 	}
 	if got := buildAndRunASanWithPrelude(t, src); got != 20 {

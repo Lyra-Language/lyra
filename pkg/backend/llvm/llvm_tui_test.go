@@ -436,7 +436,7 @@ let main = () -> void => {
 func TestExec_ABoxNarrowerThanItsBordersTraps(t *testing.T) {
 	t.Parallel()
 	for _, form := range []string{`box_top(1)`, `box_bottom(1)`, `box_row("x", 1)`, `box_top_titled("t", 1)`} {
-		out, err := exec.Command(preludeBinary(t, `
+		out, err := command(preludeBinary(t, `
 module main
 import std.tui.{ box_top, box_bottom, box_row, box_top_titled }
 let main = () -> void => { println(`+form+`) }

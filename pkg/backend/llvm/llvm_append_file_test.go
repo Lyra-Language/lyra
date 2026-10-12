@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -39,7 +38,7 @@ let main = () -> void => {
 	unopenable := filepath.Join(dir, "no-such-dir", "x.txt")
 
 	bin := preludeBinary(t, src)
-	out, err := exec.Command(bin, path, existing, replaced, unopenable).Output()
+	out, err := command(bin, path, existing, replaced, unopenable).Output()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

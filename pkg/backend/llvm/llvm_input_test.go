@@ -47,7 +47,7 @@ func repoStdRoot(t *testing.T) string {
 // readable, replaceable Lyra. Testing the real file is what keeps that honest.
 func buildAndRunWithPrelude(t *testing.T, src, input string) string {
 	t.Helper()
-	cmd := exec.Command(preludeBinary(t, src))
+	cmd := command(preludeBinary(t, src))
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {
@@ -96,7 +96,7 @@ func emitWithPrelude(t *testing.T, src string) string {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
-	ir, err := New().Emit(res, ep)
+	ir, err := testBackend().Emit(res, ep)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
@@ -343,7 +343,7 @@ let main = () -> void => {
 	if ep == nil {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
-	irText, err := New().Emit(res, ep)
+	irText, err := testBackend().Emit(res, ep)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
@@ -353,7 +353,7 @@ let main = () -> void => {
 	if runtime.GOOS == "linux" {
 		leaks = "1"
 	}
-	cmd := exec.Command(bin)
+	cmd := command(bin)
 	cmd.Stdin = strings.NewReader("1\n2\n" + strings.Repeat("7", 200) + "\nnot a number\n39\n")
 	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks="+leaks)
 

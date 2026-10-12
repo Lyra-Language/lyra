@@ -18,7 +18,7 @@ import (
 // assertion would pass on a program that printed garbage.
 func assertTraps(t *testing.T, src, wantMessage string) {
 	t.Helper()
-	out, err := exec.Command(preludeBinary(t, src)).CombinedOutput()
+	out, err := command(preludeBinary(t, src)).CombinedOutput()
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) {
 		t.Fatalf("the program must trap; it exited cleanly with %q", out)

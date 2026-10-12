@@ -504,7 +504,7 @@ func buildAndRunASan(t *testing.T, clang, src string) int {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	cmd := exec.Command(compileCached(t, clang, instrumentForASan(ir), "-fsanitize=address"))
+	cmd := command(compileCached(t, clang, instrumentForASan(ir), "-fsanitize=address"))
 	cmd.Env = append(os.Environ(), asanOptions())
 	asanRunSlots <- struct{}{}
 	defer func() { <-asanRunSlots }()
@@ -581,7 +581,7 @@ func asanAvailable(t *testing.T, clang string) bool {
 		if err := exec.Command(clang, "-fsanitize=address", src, "-o", bin).Run(); err != nil {
 			return
 		}
-		cmd := exec.Command(bin)
+		cmd := exec.Command(bin) // the machine's probe: the sanitizers run here
 		cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0")
 		asanProbe.ok = cmd.Run() == nil
 	})

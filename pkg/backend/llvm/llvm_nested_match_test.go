@@ -1,7 +1,6 @@
 package llvm
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -59,7 +58,7 @@ let main = () -> u8 => {
   }
   if total == 280 { 3 } else { 1 }
 }`
-	if got := exitCodeOf(t, exec.Command(preludeBinary(t, src)).Run()); got != 3 {
+	if got := exitCodeOf(t, command(preludeBinary(t, src)).Run()); got != 3 {
 		t.Errorf("exited %d; want 3", got)
 	}
 	if got := buildAndRunASanWithPrelude(t, src); got != 3 {

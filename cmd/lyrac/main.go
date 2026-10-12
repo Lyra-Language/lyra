@@ -16,11 +16,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Lyra-Language/lyra/pkg/abi"
 	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/modules"
+	"github.com/Lyra-Language/lyra/pkg/target"
 )
 
 func main() {
@@ -86,11 +86,19 @@ build flags:
                 -O0 for the fastest build; -Os for size. No debug info is emitted
                 at any level, so -O0 buys build time rather than debuggability.
   --cc <path>   C compiler used to assemble and link (default: $LYRA_CC, else clang)
+  --target <platform>
+                build for another platform: ios, ios-simulator, linux-arm64,
+                linux-x86_64, macos (default: this machine). iOS needs Xcode; Linux
+                is linked by zig (or $LYRA_ZIG)
   --progress    report each stage on stderr as it starts, a line each:
                 "progress: 40% compiling for the 68000" — for a tool showing a bar
 
 run flags:
   --cc <path>   as above; run leaves no executable or IR behind
+  --target <platform>
+                as above, run there: ios-simulator in a booted iOS Simulator
+                ($LYRA_SIMULATOR, else the first booted, else an iPhone it boots),
+                linux-* in Docker ($LYRA_LINUX_IMAGE, else debian:bookworm-slim)
   --watch       rebuild and restart the program whenever a source file it reads
                 changes (its imports and the standard library included); a build
                 that fails leaves the running copy alone. Ctrl-C stops both
@@ -119,7 +127,10 @@ type buildOptions struct {
 	emitOnly bool   // --emit-llvm: write the .ll and stop
 	keepLL   bool   // --keep-ll: keep the .ll as well as the executable
 	cc       string // C compiler override
-	progress bool   // --progress: a "progress: N% stage" line on stderr as each starts
+	// targetName is `--target`: the platform a program with an OS is built for
+	// (pkg/target's platforms); empty for the machine's.
+	targetName string
+	progress   bool // --progress: a "progress: N% stage" line on stderr as each starts
 
 	// opt is the optimization level handed to the C compiler, as clang spells it
 	// ("-O2"). It defaults to -O2 rather than to clang's own -O0 default: this
@@ -174,7 +185,7 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 		}
 		// A flag taking a value consumes the next argument; running off the end
 		// is a usage error rather than an empty value silently taking effect.
-		takesValue := arg == "-o" || arg == "--cc"
+		takesValue := arg == "-o" || arg == "--cc" || arg == "--target"
 		if takesValue {
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "lyrac: %s needs a value\n", arg)
@@ -191,6 +202,8 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 			o.out = args[i]
 		case arg == "--cc":
 			o.cc = args[i]
+		case arg == "--target":
+			o.targetName = args[i]
 		case arg == "--emit-llvm":
 			o.emitOnly = true
 		case arg == "--keep-ll":
@@ -262,6 +275,10 @@ func build(o buildOptions) int {
 		return code
 	}
 	if !res.Target.Host {
+		if o.targetName != "" {
+			fmt.Fprintf(os.Stderr, "lyrac: --target chooses a platform for a program with an OS; this one is for %s (lyra.toml)\n", res.Target.Display)
+			return 2
+		}
 		_, code := buildGenesis(o, res, entry)
 		return code
 	}
@@ -329,6 +346,10 @@ func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
 	o.ephemeral = true
 	o.out = filepath.Join(dir, filepath.Base(replaceExt(o.path, "")))
 	if !res.Target.Host {
+		if o.targetName != "" {
+			fmt.Fprintf(os.Stderr, "lyrac: --target chooses a platform for a program with an OS; this one is for %s (lyra.toml)\n", res.Target.Display)
+			return nil, files, 2
+		}
 		cmd, code := genesisCommand(o, res, entry)
 		return cmd, files, code
 	}
@@ -337,8 +358,19 @@ func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
 		return nil, files, code
 	}
 	// argv[0] is the executable, as C's is, so `program_args()` indexes from the
-	// program's own name exactly as it does for a built binary.
-	return exec.Command(exe, o.programArgs...), files, 0
+	// program's own name exactly as it does for a built binary — run where the platform
+	// runs it (platform.go).
+	p, err := platformOf(o)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+		return nil, files, 2
+	}
+	cmd, err := runCommand(p, exe, o.programArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+		return nil, files, 1
+	}
+	return cmd, files, 0
 }
 
 // exitStatus is the status lyrac exits with after running cmd, given what Run (or
@@ -418,18 +450,17 @@ func analyze(path string) (*driver.Result, []string, bool) {
 // It prints nothing on success — the caller knows whether its command has a
 // summary to report — so `lyrac run`'s output is the program's alone.
 func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) (string, int) {
-	// **The target is resolved before emitting, not after**, because an aggregate crossing
-	// the C boundary is classified per target (pkg/abi) — so the IR itself is
-	// target-specific the moment a program passes a struct by value. `findCC` runs again
-	// below for the link step and is cheap; an error here is deliberately ignored, since
-	// the target then stays `abi.Unknown` and a by-value aggregate is refused with a clear
-	// message rather than guessed at. A program that passes none is unaffected.
-	target := abi.Unknown
-	if cc, err := findCC(o.cc); err == nil {
-		target = abi.DetectTarget(cc)
+	// **The platform is resolved before emitting, not after**, because an aggregate
+	// crossing the C boundary is classified per platform (pkg/abi), and the backend's few
+	// OS facts are the platform's (dirent.go, tui.go) — so the IR itself is
+	// platform-specific.
+	p, err := platformOf(o)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+		return "", 2
 	}
-	be := llvm.NewForTarget(target)
-	libs := linkFlags(res)
+	be := llvm.NewForPlatform(p)
+	libs := linkFlags(res, p)
 	ir, err := be.Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
@@ -459,7 +490,11 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		// suggested compiling the `.ll` into itself; there is no executable in this
 		// mode, so the name to offer is the one an ordinary build would have produced.
 		fmt.Printf("%s: wrote %s (%s backend)\n", o.path, llFile, be.Name())
-		fmt.Printf("  compile with: clang %s %s %s -o %s\n", o.opt, llFile, strings.Join(libs, " "), replaceExt(o.path, ""))
+		if p.IsMachine() {
+			fmt.Printf("  compile with: clang %s %s %s -o %s\n", o.opt, llFile, strings.Join(libs, " "), replaceExt(o.path, ""))
+		} else {
+			fmt.Printf("  for %s: clang %s --target=%s -c %s, then link with %s\n", p.Name, o.opt, p.Triple, llFile, strings.Join(libs, " "))
+		}
 		return llFile, 0
 	}
 
@@ -493,6 +528,13 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		return "", 1
 	}
 	exe := exePath(o)
+	if !p.IsMachine() {
+		if err := crossCompile(p, cc, o.opt, llFile, libs, exe); err != nil {
+			fmt.Fprintf(os.Stderr, "lyrac: %v", err)
+			return "", 1
+		}
+		return exe, 0
+	}
 	cmd := exec.Command(cc, append(append([]string{o.opt, llFile}, libs...), "-o", exe)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s failed to compile the emitted IR: %v\n%s", cc, err, out)
@@ -527,9 +569,24 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 // `std/` and `bindings/` also holds the archives a binding's C half builds into — `build.sh`
 // puts `liblyra-menubar.a` there — so a binding with a shim links with no `LIBRARY_PATH`,
 // as one over a packaged library does through `pkg:`.
-func linkFlags(res *driver.Result) []string {
+//
+// **For another platform** the libraries are that platform's: the install's
+// `lib/<platform>/` (platformLibDir), and no pkg-config, which answers for this machine.
+func linkFlags(res *driver.Result, p target.Platform) []string {
 	flags := []string{}
 	seenDir := map[string]bool{}
+	if !p.IsMachine() {
+		if dir := platformLibDir(p); dir != "" {
+			flags = append(flags, "-L"+dir)
+		}
+		flags = append(flags, "-lm")
+		for _, lib := range res.Links {
+			if lib != "m" {
+				flags = append(flags, "-l"+lib)
+			}
+		}
+		return flags
+	}
 	if dir := installLibDir(); dir != "" {
 		seenDir[dir] = true
 		flags = append(flags, "-L"+dir)
