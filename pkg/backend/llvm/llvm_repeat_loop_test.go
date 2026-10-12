@@ -109,7 +109,7 @@ let main = () -> void => {
 	if n := strings.Count(ir, "insertvalue [20000 x i32]"); n != 0 {
 		t.Errorf("want no per-element insertvalue, got %d", n)
 	}
-	if !strings.Contains(ir, "@memset(") || strings.Contains(ir, "store [20000 x i32] zeroinitializer") {
+	if !strings.Contains(ir, "@llvm.memset") || strings.Contains(ir, "store [20000 x i32] zeroinitializer") {
 		t.Errorf("a zero repeat should be one memset, not a store of the whole array")
 	}
 	if len(ir) > 400_000 {

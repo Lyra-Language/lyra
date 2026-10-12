@@ -951,9 +951,8 @@ sets V on every add. What stands between that and a ROM:
   `memcpy`/`memset` for large copies and zero-fills (COMPLETED.md 10/11, `sret.go`).
 - **[DONE 10/11] A large aggregate passed by value** — a pointer to a copy the caller makes
   as the argument is made (COMPLETED.md 10/11, `sret.go`).
-- **[OPEN] `sret` on the 68000** — the hero's scene builders misbehaved under it with IR that
-  differs only in the convention, so `returnsInMemory` is the host's only. Reduce it against
-  the M68k LLVM (a patch, as `tools/llvm-m68k-patches` holds) before turning it on there.
+- **[DONE 10/11] `sret` on the 68000** — not the M68k LLVM: a libc `memcpy` declared with an
+  `i64` length, read as 0 by a 32-bit `size_t`. LLVM's intrinsics now (COMPLETED.md 10/11).
 
 ## Building for other platforms
 

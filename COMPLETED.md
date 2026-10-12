@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/11/26 — Large aggregates through memory on the 68000 too
+
+The 68000 was left out of `sret` and by-copy parameters, the hero's scenes having
+misbehaved under them, and the entry below put it down to the M68k LLVM. **It was ours.**
+A 288-byte struct returned through memory came back wrong in a ten-line Genesis program,
+and the copy was the reason: the backend called a `memcpy(i8*, i8*, i64)` it had declared,
+and the runtime's takes a 32-bit `size_t`, so of the eight bytes pushed it read the high
+half — 0 — and copied nothing. The struct came back as whatever its slot held. The copies
+and zero-fills are LLVM's `llvm.memcpy` and `llvm.memset` now (`copyBytes`, `zeroBytes`),
+which take an `i64` length on every target and are lowered with the target's own `size_t`;
+both conventions are on for every target, and the hero's checks pass under them.
+`TestGenesis_ALargeStructReturnsAndPassesThroughMemory` fails with the old call. A libc
+function declared with an `i64` size is wrong on any 32-bit target — `todo.md`'s "Sizes are
+still `i64`" is the general form of it.
+
 ### 10/11/26 — Large aggregates passed by copy
 
 The other half of the large-aggregate cost: an argument of one, `(xs: [8192]u32)`, built in

@@ -44,10 +44,12 @@ import (
 // aggregate handling is shaped for, and a struct of a few fields returns in registers.
 const sretMinBytes = 256
 
-// returnsInMemory reports whether a function returning t returns it through an `sret` slot:
-// a large aggregate, on the host. A console keeps returning by value — see [isLarge].
+// returnsInMemory reports whether a function returning t returns it through an `sret` slot: a
+// large aggregate, on every target. (The 68000 was left out for a day: its copies had come
+// back empty, which looked like the M68k LLVM's `sret` and was a `memcpy` of the wrong
+// length — see [copyBytes].)
 func (l *lowerer) returnsInMemory(t lltypes.Type) bool {
-	return l.res.Target.Host && isLarge(t)
+	return isLarge(t)
 }
 
 // isLarge reports whether t is an aggregate of [sretMinBytes] or more.
@@ -84,10 +86,10 @@ func (l *lowerer) lyraParams(fn *ir.Func) []*ir.Param {
 	return fn.Params
 }
 
-// passByCopy makes irParam, a by-value parameter of a large aggregate on the host, a pointer
-// to the caller's copy, and records it so the body binds it and each call copies for it.
+// passByCopy makes irParam, a by-value parameter of a large aggregate, a pointer to the
+// caller's copy, and records it so the body binds it and each call copies for it.
 func (l *lowerer) passByCopy(param ast.Parameter, irParam *ir.Param) {
-	if !l.res.Target.Host || paramIsByRef(param) || !isLarge(irParam.Typ) {
+	if paramIsByRef(param) || !isLarge(irParam.Typ) {
 		return
 	}
 	irParam.Typ = lltypes.NewPointer(irParam.Typ)
@@ -163,11 +165,7 @@ func (l *lowerer) storeAggregate(block *ir.Block, val value.Value, dest value.Va
 	if ld.Src == dest {
 		return // `a = a`: already there, and memcpy must not overlap itself
 	}
-	i8ptr := lltypes.NewPointer(lltypes.I8)
-	block.NewCall(l.memcpyFunc(),
-		block.NewBitCast(dest, i8ptr),
-		block.NewBitCast(ld.Src, i8ptr),
-		sizeOf(val.Type()))
+	l.copyBytes(block, dest, ld.Src, sizeOf(val.Type()))
 }
 
 // untouchedSince reports whether ld is in block and nothing after it there can write memory:
@@ -201,9 +199,25 @@ func (l *lowerer) zeroFill(block *ir.Block, slot value.Value, ty lltypes.Type) {
 		block.NewStore(constant.NewZeroInitializer(ty), slot)
 		return
 	}
+	l.zeroBytes(block, slot, sizeOf(ty))
+}
+
+// copyBytes copies size bytes from src to dest with `llvm.memcpy`, and zeroBytes zeroes them
+// with `llvm.memset`. **LLVM's own, never libc's declared here**: the intrinsics take an
+// `i64` length on every target and are lowered with the target's own `size_t`, where a
+// declared `memcpy(i8*, i8*, i64)` passes eight bytes to a 68000 runtime reading four — the
+// high half of the length, 0, so nothing was copied, and a large struct returned through
+// memory came back as whatever its slot held (10/11).
+func (l *lowerer) copyBytes(block *ir.Block, dest, src, size value.Value) {
 	i8ptr := lltypes.NewPointer(lltypes.I8)
-	memset, _ := l.declareLibc("memset", i8ptr, i8ptr, lltypes.I32, lltypes.I64)
-	block.NewCall(memset, block.NewBitCast(slot, i8ptr), i32c(0), sizeOf(ty))
+	fn := l.coroIntrinsic("llvm.memcpy.p0i8.p0i8.i64", lltypes.Void, i8ptr, i8ptr, lltypes.I64, lltypes.I1)
+	block.NewCall(fn, block.NewBitCast(dest, i8ptr), block.NewBitCast(src, i8ptr), size, constant.False)
+}
+
+func (l *lowerer) zeroBytes(block *ir.Block, dest, size value.Value) {
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	fn := l.coroIntrinsic("llvm.memset.p0i8.i64", lltypes.Void, i8ptr, lltypes.I8, lltypes.I64, lltypes.I1)
+	block.NewCall(fn, block.NewBitCast(dest, i8ptr), constant.NewInt(lltypes.I8, 0), size, constant.False)
 }
 
 // sizeOf is ty's allocation size as the target lays it out — `ptrtoint (gep T, T* null, 1)`,

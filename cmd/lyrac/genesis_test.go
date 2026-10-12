@@ -864,3 +864,43 @@ entry:
 		t.Errorf("llc extended into an address register (%q): rebuild it with tools/llvm-m68k.sh's patches", bad)
 	}
 }
+
+// A large struct returned through memory and passed by copy runs on the 68000. Its copies
+// called a `memcpy(i8*, i8*, i64)` the backend declared, and the runtime's reads a 32-bit
+// `size_t`: the eight bytes pushed were read as their high half, 0, so nothing was copied and
+// the struct came back as whatever its slot held. The copies are LLVM's `llvm.memcpy` and
+// `llvm.memset` now, which take the target's own length (10/11).
+func TestGenesis_ALargeStructReturnsAndPassesThroughMemory(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "large", `import std.genesis.vdp
+import std.genesis.pad
+
+struct Big {
+  cells: [70]i32,
+  tag: i32,
+}
+
+let make = pure (n: i32) -> Big => {
+  var b = Big { cells: #[0; 70], tag: n }
+  for i: u16 in 0..<70 { b.cells[i] = n + i32(i) }
+  b
+}
+
+let last = pure (b: Big) -> i32 => b.cells[69] + b.tag
+
+let main = () -> void => {
+  vdp.init()
+  pad.init()
+  vdp.display_on()
+  let zero = i32(pad.read(1))
+  let b = make(zero + 5)
+  let right = b.tag == 5 && b.cells[0] == 5 && b.cells[69] == 74 && last(b) == 79
+  // Green when right, blue when wrong; the runtime's panic screen is red.
+  vdp.set_color(0, 0, if right { vdp.rgb(0, 7, 0) } else { vdp.rgb(0, 0, 7) })
+  loop {}
+}
+`)
+	if got := runROM(t, out, "60", "").dominant(); got != "00ff00" {
+		t.Errorf("the screen is %s, want 00ff00", got)
+	}
+}
