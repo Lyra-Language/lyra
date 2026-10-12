@@ -307,6 +307,14 @@ pub let create_headless_host = (width: i32, height: i32, flags: u32) -> Maybe<Ho
   if h == nullptr { None } else { Some(h) }
 }
 
+/// Keep `host`'s layout — where its windows are and how big, what is docked where, which
+/// are torn off — in the file at `path`, rather than ImGui's default, `imgui.ini` in the
+/// working directory (for an app opened from the Finder, `/`, where it cannot be written).
+/// Before the first frame, when it is read; written as the layout changes and as the host
+/// is destroyed. A headless host keeps no layout, whatever is asked.
+pub let set_layout_file = (host: Host, path: string) -> void =>
+  path.with_cstring((c_path) => unsafe { lyra_imgui_host_set_layout_file(host, c_path) })
+
 /// A font from a TrueType or OpenType file, for `push_font_float` — loaded into `host`'s
 /// context the first time it is asked for, and the same font after (a font belongs to the
 /// context that loaded it, so the host keeps it); `None` when the file cannot be read. Its
@@ -549,6 +557,9 @@ unsafe extern lyra_imgui_host_end_frame: (host: Host, r: f32, g: f32, b: f32) ->
 
 @symbol("lyra_imgui_host_destroy")
 unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
+
+@symbol("lyra_imgui_host_set_layout_file")
+unsafe extern lyra_imgui_host_set_layout_file: (host: Host, path: ^u8) -> void
 
 @symbol("lyra_imgui_host_font_file")
 unsafe extern lyra_imgui_host_font_file: (

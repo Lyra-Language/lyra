@@ -86,6 +86,10 @@ struct LyraImGuiHost {
     // The window's buttons drawn as macOS's traffic lights — red, yellow and green circles —
     // rather than as glyphs on the bar (lyra_imgui_host_set_traffic_lights).
     bool traffic_lights;
+    // Where the layout is kept (lyra_imgui_host_set_layout_file), or NULL for ImGui's
+    // default: the host's own copy, since io.IniFilename keeps the pointer and ImGui writes
+    // the file again as the context is destroyed.
+    char* layout_file;
 };
 
 // Flags for lyra_imgui_host_create; Lyra spells them HOST_DOCKING and HOST_VIEWPORTS.
@@ -313,6 +317,22 @@ void lyra_imgui_end_status_bar(void) {
         ImGui::EndMenuBar();
     ImGui::End();
     status_bar_open = false;
+}
+
+// ── The layout ───────────────────────────────────────────────────────────────────
+
+// The layout read from and written to `path` rather than imgui.ini in the working directory
+// — which, for an app launched from the Finder, is `/`. Before the first frame, when ImGui
+// reads it. A headless host keeps no layout and is left so.
+void lyra_imgui_host_set_layout_file(LyraImGuiHost* host, const char* path) {
+    if (host->headless)
+        return;
+    char* copy = strdup(path);
+    if (copy == nullptr)
+        return;
+    ImGui::GetIO().IniFilename = copy;
+    free(host->layout_file);
+    host->layout_file = copy;
 }
 
 // ── Fonts from files ───────────────────────────────────────────────────────────
@@ -1004,6 +1024,8 @@ void lyra_imgui_host_destroy(LyraImGuiHost* host) {
     ImGui_ImplSDL3_Shutdown();
     ImGui_ImplSDLGPU3_Shutdown();
     ImGui::DestroyContext();
+    // After DestroyContext, which writes the layout through it.
+    free(host->layout_file);
     SDL_ReleaseWindowFromGPUDevice(host->device, host->window);
     SDL_DestroyGPUDevice(host->device);
     SDL_DestroyWindow(host->window);

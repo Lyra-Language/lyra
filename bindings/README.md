@@ -192,6 +192,10 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   (`HOST_DOCKING | HOST_VIEWPORTS`), then `for begin_frame(host) { …; end_frame(host, r, g, b) }`,
   then `destroy_host`. It owns the window, the SDL_GPU device and the frame loop, so Lyra
   binds no SDL_GPU. SDL_GPU because SDL_Renderer's ImGui backend has no multi-viewport support.
+- **`set_layout_file(host, path)`** keeps the layout (`io.IniFilename`) somewhere of the
+  program's choosing, before the first frame; ImGui's default is `imgui.ini` in the working
+  directory. The host keeps its own copy of the path, since ImGui holds the pointer and
+  writes the file again as the context is destroyed. A headless host keeps no layout.
 - **`host_macos.m` lets a torn-off window reach a monitor above.** AppKit's
   `constrainFrameRect:toScreen:` pulled every borderless window straddling two displays back
   below the menu bar, and ImGui moves a dragged panel a few pixels a frame, so it never got
