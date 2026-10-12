@@ -169,3 +169,125 @@ let main = () -> u8 => {
 		t.Errorf("case %d failed", got)
 	}
 }
+
+// A large aggregate passed by value is a pointer to a copy the caller makes for the call
+// (sret.go). Still by value: the callee sees the argument as it was when the call began even
+// while the caller's array is written through a `mut` beside it. Every shape that passes one —
+// a plain call, an inherent and a trait method's receiver, `==` through an `Eq` impl, a generic
+// specialization, a function value through its thunk, recursion, a destructured parameter.
+// (`==` through an `Eq` impl needs the prelude: TestExec_ALargeOwnedParameterIsReleasedOnce.)
+func TestExec_LargeAggregatesPassByCopy(t *testing.T) {
+	t.Parallel()
+	src := `struct Grid { cells: [400]i64, tag: i64 }
+
+trait Sum { pure sum: (Self) -> i64 }
+impl Sum for Grid {
+  sum = (self) => {
+    var s = 0
+    for c in self.cells { s += c }
+    s
+  }
+}
+
+impl Grid {
+  let last = pure (self) -> i64 => self.cells[399]
+}
+
+let grid = pure (v: i64) -> Grid => Grid { cells: #[v; 400], tag: v }
+
+let first = pure (xs: [400]i64) -> i64 => xs[0]
+
+let snapshot = (xs: [400]i64, ys: mut [400]i64) -> i64 => {
+  ys[0] = 99
+  xs[0]
+}
+
+let generic_last<t> = pure (xs: [400]t) -> t => xs[399]
+
+let total = pure (g: Grid, n: i64) -> i64 => if n == 0 { g.cells[0] } else { total(g, n - 1) + 1 }
+
+let tagged = pure ({ tag, cells }: Grid) -> i64 => tag + cells[1]
+
+let apply = pure (f: ([400]i64) -> i64, xs: [400]i64) -> i64 => f(xs)
+
+let main = () -> u8 => {
+  let g = grid(3)
+  if first(g.cells) != 3 { return 1 }
+  var a: [400]i64 = #[5; 400]
+  if snapshot(a, a) != 5 || a[0] != 99 { return 2 }
+  if g.last() != 3 || g.sum() != 1200 { return 3 }
+  if generic_last(g.cells) != 3 { return 5 }
+  if total(g, 10) != 13 { return 6 }
+  if tagged(g) != 6 { return 7 }
+  if apply(first, g.cells) != 3 { return 8 }
+  0
+}
+`
+	ir, err := emitSource(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ir, "define i64 @lyra.first([400 x i64]* %p.xs)") {
+		t.Errorf("a [400]i64 by value is not passed as a pointer to a copy")
+	}
+	if got := buildAndRun(t, src); got != 0 {
+		t.Errorf("case %d failed", got)
+	}
+}
+
+// An `own` parameter of a large array of strings, passed by copy, is released once by the
+// callee — and an unowned one not at all — under ASan; and `==` on a large struct through its
+// `Eq` impl passes both operands by copy.
+func TestExec_ALargeOwnedParameterIsReleasedOnce(t *testing.T) {
+	t.Parallel()
+	src := `let names = (n: i64) -> [64]string => {
+  var out: [64]string = #[""; 64]
+  for i in 0..<64 { out[i] = "name ${i + n}" }
+  out
+}
+
+let consume = (xs: own [64]string) -> i64 => xs[63].len()
+
+struct Grid { cells: [400]i64, tag: i64 }
+
+impl Eq for Grid {
+  eq = (self, other) => self.tag == other.tag && self.cells[399] == other.cells[399]
+}
+
+let grid = pure (v: i64) -> Grid => Grid { cells: #[v; 400], tag: v }
+let read = (xs: [64]string) -> i64 => xs[0].len()
+
+let main = () -> u8 => {
+  let kept = names(1)
+  if read(kept) != 6 { return 1 }
+  if consume(names(2)) != 7 { return 2 }
+  if kept[63] != "name 64" { return 3 }
+  if !(grid(3) == grid(3)) || grid(3) == grid(4) { return 4 }
+  0
+}
+`
+	if got := buildAndRunASanWithPrelude(t, src); got != 0 {
+		t.Errorf("case %d failed", got)
+	}
+}
+
+// A by-copy argument is copied as it is made, so the copy is a `memcpy` from where it was
+// loaded even when a later argument's code calls something. Copied at the call instead, it was
+// a store of the whole value, and `at(table, seven())` on a `[8192]u32` built in 2.3 seconds.
+func TestEmit_AByCopyArgumentIsCopiedAsItIsMade(t *testing.T) {
+	t.Parallel()
+	ir, err := emitSource(t, `var table: [4096]u32 = #[0; 4096]
+let at = pure (xs: [4096]u32, i: i64) -> u32 => xs[i]
+let seven = () -> i64 => {
+  table[0] = 1
+  7
+}
+let main = () -> u8 => u8(at(table, seven()) % 256)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ir, "store [4096 x i32]") {
+		t.Errorf("the argument's copy stored the whole array:\n%s", ir)
+	}
+}

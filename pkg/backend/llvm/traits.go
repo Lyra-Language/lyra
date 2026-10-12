@@ -204,6 +204,11 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 	if err != nil {
 		return nil, nil, err
 	}
+	// Each operand for a parameter passed by copy gets its copy as it is made (sret.go).
+	lyra := l.lyraParams(fn)
+	if len(lyra) > 0 {
+		recv = l.copyForParam(block, recv, lyra[0])
+	}
 	args := []value.Value{recv}
 	for i, arg := range call.Arguments {
 		v, next, err := l.methodOperand(block, arg, params, i+1)
@@ -213,6 +218,9 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 		block = next
 		if diverged(v, block) {
 			return nil, block, nil
+		}
+		if i+1 < len(lyra) {
+			v = l.copyForParam(block, v, lyra[i+1])
 		}
 		args = append(args, v)
 	}
@@ -343,13 +351,13 @@ func (l *lowerer) lowerOrdComparison(block *ir.Block, e *ast.BooleanBinaryOpExpr
 	// because the shape is identical — call the impl, read the answer — and the only
 	// difference is which trait was resolved.
 	if e.Operator == ast.BooleanBinaryOpEq || e.Operator == ast.BooleanBinaryOpNEq {
-		eq := block.NewCall(fn, left, right)
+		eq := l.callLyra(block, fn, []value.Value{left, right})
 		if e.Operator == ast.BooleanBinaryOpEq {
 			return eq, block, nil
 		}
 		return block.NewXor(eq, constant.NewInt(lltypes.I1, 1)), block, nil
 	}
-	ord := block.NewCall(fn, left, right)
+	ord := l.callLyra(block, fn, []value.Value{left, right})
 	if e.Operator == ast.BooleanBinaryOpSpaceship {
 		return ord, block, nil
 	}
@@ -489,6 +497,7 @@ func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr
 		return nil, nil, err
 	}
 	params := l.methodParams(call, res)
+	lyra := l.lyraParams(fn)
 	args := make([]value.Value, 0, len(call.Arguments))
 	for i, arg := range call.Arguments {
 		v, next, err := l.methodOperand(block, arg, params, i)
@@ -498,6 +507,10 @@ func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr
 		block = next
 		if diverged(v, block) {
 			return nil, block, nil
+		}
+		// Copied as it is made, for a parameter passed by copy (sret.go).
+		if i < len(lyra) {
+			v = l.copyForParam(block, v, lyra[i])
 		}
 		args = append(args, v)
 	}

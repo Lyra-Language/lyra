@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/11/26 — Large aggregates passed by copy
+
+The other half of the large-aggregate cost: an argument of one, `(xs: [8192]u32)`, built in
+six seconds. A by-value parameter of 256 bytes or more is now a **pointer to a copy the
+caller makes for the call** (`passByCopy`, `byCopyParams`), on the host, for the same
+functions as a return (plain, specializations, trait methods; closures keep values, the
+thunk copying for them). The callee binds the pointer as the parameter's slot, so its body
+is unchanged; the argument stays by value — the copy is the caller's, so the callee cannot
+see later writes to the original (`snapshot(a, a)` with a `mut` beside it) nor write back.
+**The copy is taken as each argument is made** (`copyForParam`, in `lowerCallArgs` and the
+trait operand loops), where the load it came from is still the last thing to touch that
+memory and the copy is a `memcpy`; taken at the call, after a later argument's code had
+called something, it fell back to a store of the whole value and `at(table, seven())` built
+in 2.3 seconds rather than 0.27. Six seconds is 0.6.
+
 ### 10/11/26 — Large aggregates returned through memory
 
 A function returning a large fixed array was the slowest thing a program could ask of clang:

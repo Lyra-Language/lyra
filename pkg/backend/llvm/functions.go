@@ -383,6 +383,7 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 		if err != nil {
 			return nil, err
 		}
+		l.passByCopy(param, irParam)
 		irParams = append(irParams, irParam)
 	}
 	if !inMemory {
@@ -667,7 +668,7 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 		return l.lowerExternCall(block, e, fn, plan)
 	}
 	placed := len(fn.Params) - len(l.lyraParams(fn))
-	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params, calleeParamTypes(fn, placed))
+	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params, calleeParamTypes(fn, placed), fn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -713,7 +714,7 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 // `panic` through a function value handed a nil argument to NewCall and segfaulted
 // inside llir — a Go crash out of lyrac, which is exactly what the guard exists to
 // prevent (hazard 8: the two argument loops travel in pairs).
-func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []ast.Expression, params []ast.Parameter, want []lltypes.Type) ([]value.Value, *ir.Block, bool, error) {
+func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []ast.Expression, params []ast.Parameter, want []lltypes.Type, callee *ir.Func) ([]value.Value, *ir.Block, bool, error) {
 	for i, argExpr := range argExprs {
 		// **A C function-pointer slot takes the function's own symbol**, not Lyra's boxed
 		// closure. The expected type is the signal rather than a flag on the call: only an
@@ -769,6 +770,10 @@ func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []
 			return nil, block, false, nil
 		}
 		v = l.promoteVariadicArg(block, argExpr, v)
+		// A Lyra callee's parameter passed by copy gets its copy now (sret.go).
+		if callee != nil && i < len(l.lyraParams(callee)) {
+			v = l.copyForParam(block, v, l.lyraParams(callee)[i])
+		}
 		args = append(args, v)
 	}
 	return args, block, true, nil
@@ -981,6 +986,11 @@ func (l *lowerer) lowerCFunctionArgument(block *ir.Block, arg ast.Expression, wa
 	// (sret.go). FFI-safety refuses such a callback first; this is rule 5's repeat.
 	if _, inMemory := l.sretResults[fn]; inMemory {
 		return nil, nil, fmt.Errorf("llvm: %q returns a large aggregate, which a C callback cannot", id.Name)
+	}
+	for _, p := range fn.Params {
+		if l.byCopyParams[p] {
+			return nil, nil, fmt.Errorf("llvm: %q takes a large aggregate by value, which a C callback cannot", id.Name)
+		}
 	}
 	// The signatures agree by construction — the front end checked every type in the
 	// callback against the same FFI-safe predicate the extern's own parameters take — so

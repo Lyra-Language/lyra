@@ -189,7 +189,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | is this CST node a comment? | `cst.IsComment` |
    | a constructor's payload fields (a lone `void` is none — `Ok()`) | `DataTypeConstructor.FieldTypes` |
    | declare a libc function the runtime calls | `declareLibc` / `declareLibcVariadic` — **never `module.NewFunc`**, which a program's `extern` of the same name collides with |
-   | store, copy or zero a possibly large aggregate; call a Lyra function | `storeAggregate`, `zeroFill`, `sizeOf` (LLVM's size, padding included — never a sum of fields) and `callLyra` (`sret.go`): a large aggregate is returned through memory and never moved as a whole value |
+   | store, copy or zero a possibly large aggregate; call a Lyra function | `storeAggregate`, `zeroFill`, `sizeOf` (LLVM's size, padding included — never a sum of fields), `callLyra` and `copyForParam` (`sret.go`): a large aggregate is returned through memory, passed as a pointer to the caller's copy, and never moved as a whole value |
 
 9. **A name does not identify a declaration, or even one function.** Keys are
    module-qualified (rule 4) and a receiver-overloaded name maps to several declarations. To

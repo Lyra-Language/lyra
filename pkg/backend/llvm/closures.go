@@ -587,7 +587,7 @@ func (l *lowerer) closureThunk(name string) (*ir.Func, error) {
 	}
 	params := []*ir.Param{ir.NewParam("env", lltypes.NewPointer(lltypes.I8))}
 	for i, p := range l.lyraParams(target) {
-		params = append(params, ir.NewParam(fmt.Sprintf("a%d", i), p.Typ))
+		params = append(params, ir.NewParam(fmt.Sprintf("a%d", i), l.valueParamType(p)))
 	}
 	// The entry module's identity prefix is empty (`::double`), so trimming it keeps
 	// the thunk's symbol the readable `double.closure`; a named module's stays
@@ -713,7 +713,7 @@ func (l *lowerer) lowerIndirectCallOn(block *ir.Block, e *ast.FunctionCallExpr, 
 	// is what gives an indirect call the same diverging-argument guard a direct one
 	// has. No parameter list is passed because a lambda *type* carries no borrow
 	// modes (see lambdaTypeParams), so no argument here is by reference.
-	args, block, ok, err := l.lowerCallArgs(block, []value.Value{env}, e.Arguments, nil, nil)
+	args, block, ok, err := l.lowerCallArgs(block, []value.Value{env}, e.Arguments, nil, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}

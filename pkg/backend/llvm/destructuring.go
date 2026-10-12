@@ -266,8 +266,14 @@ func (l *lowerer) bindParameters(entry *ir.Block, irFn *ir.Func, params []ast.Pa
 			continue
 		}
 		if isIdent {
-			slot := entry.NewAlloca(p.Type())
-			entry.NewStore(p, slot)
+			// A large aggregate passed by copy arrives as a pointer to the caller's copy for
+			// this call, which is the parameter's own storage (sret.go): bound as the slot,
+			// with nothing copied again.
+			var slot value.Value = p
+			if !l.byCopyParams[p] {
+				slot = entry.NewAlloca(p.Type())
+				entry.NewStore(p, slot)
+			}
 			l.locals[ident.Name] = slot
 			// An `own` parameter is consumed by the callee: the caller transferred its
 			// +1, so the callee releases it at function exit. A bare/`ref`/`mut` param
@@ -281,6 +287,9 @@ func (l *lowerer) bindParameters(entry *ir.Block, irFn *ir.Func, params []ast.Pa
 		}
 
 		val := value.Value(p)
+		if l.byCopyParams[p] {
+			val = entry.NewLoad(l.valueParamType(p), p)
+		}
 		if byRef {
 			if param.TypeModifier == types.Mut {
 				// The pattern's names are *copies* of the fields, so a write to one could

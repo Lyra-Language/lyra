@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
@@ -27,6 +28,14 @@ import (
 // functions, generic specializations, trait methods — and each call of one goes through
 // [callLyra]. A closure keeps returning by value: the thunk that makes a named function a
 // value ([closureThunk]) adapts it, so the closure calling convention is untouched.
+
+// **A large aggregate passed by value is the same cost**, and gets the same answer: a
+// parameter of one is a pointer to a copy the caller makes for the call ([passByCopy]) —
+// `(xs: [8192]u32)` took six seconds to build. The callee binds the pointer as the
+// parameter's slot, so nothing in the body changes; the caller copies with `memcpy` from
+// where the argument was loaded ([callLyra]), so a by-value parameter still cannot see the
+// caller's later writes, nor write back to it. A closure's parameters stay values, the thunk
+// adapting, as for a return.
 
 // sretMinBytes is the size from which an aggregate is returned through memory — a threshold,
 // so llSizeOf's sum of field sizes (without padding) is near enough; a copy's size is
@@ -75,9 +84,50 @@ func (l *lowerer) lyraParams(fn *ir.Func) []*ir.Param {
 	return fn.Params
 }
 
-// callLyra calls a Lyra function and produces its result: for one returning through memory,
-// a slot in the caller's entry block is passed first and loaded after.
+// passByCopy makes irParam, a by-value parameter of a large aggregate on the host, a pointer
+// to the caller's copy, and records it so the body binds it and each call copies for it.
+func (l *lowerer) passByCopy(param ast.Parameter, irParam *ir.Param) {
+	if !l.res.Target.Host || paramIsByRef(param) || !isLarge(irParam.Typ) {
+		return
+	}
+	irParam.Typ = lltypes.NewPointer(irParam.Typ)
+	l.byCopyParams[irParam] = true
+}
+
+// valueParamType is p's type as a caller has the argument: the aggregate itself for a
+// parameter passed by copy.
+func (l *lowerer) valueParamType(p *ir.Param) lltypes.Type {
+	if l.byCopyParams[p] {
+		return p.Typ.(*lltypes.PointerType).ElemType
+	}
+	return p.Typ
+}
+
+// copyForParam is the argument a for parameter p: for a parameter passed by copy, a copy of
+// it in a slot of the caller's entry block, and the slot; anything else, a itself — an
+// argument already copied included. **Taken as each argument is made**, where a load it was
+// made by is still the last thing written to its memory, so the copy is a `memcpy`
+// ([storeAggregate]); made at the call, after the later arguments' code had run, it was a
+// store of the whole value, and `at(table, seven())` built in 2.3 seconds rather than 0.4.
+func (l *lowerer) copyForParam(block *ir.Block, a value.Value, p *ir.Param) value.Value {
+	if !l.byCopyParams[p] || a.Type().Equal(p.Typ) {
+		return a
+	}
+	slot := block.Parent.Blocks[0].NewAlloca(a.Type())
+	l.storeAggregate(block, a, slot)
+	return slot
+}
+
+// callLyra calls a Lyra function and produces its result. Each argument for a parameter passed
+// by copy is copied into a slot of the caller's entry block and the slot passed; for a function
+// returning through memory, a slot is passed first and loaded after.
 func (l *lowerer) callLyra(block *ir.Block, fn *ir.Func, args []value.Value) value.Value {
+	params := l.lyraParams(fn)
+	for i, a := range args {
+		if i < len(params) {
+			args[i] = l.copyForParam(block, a, params[i])
+		}
+	}
 	ty, ok := l.sretResults[fn]
 	if !ok {
 		return callWithDeclaredAttrs(block, fn, args)

@@ -949,9 +949,8 @@ sets V on every add. What stands between that and a ROM:
 
 - **[DONE 10/11] A large aggregate returned by value** — through an `sret` slot now, with
   `memcpy`/`memset` for large copies and zero-fills (COMPLETED.md 10/11, `sret.go`).
-- **[OPEN] A large aggregate passed by value** is the same cost: `(xs: [8192]u32)` built in
-  6 s. Passing a pointer to a caller's copy past `sretMinBytes` is the fix, and it reaches
-  method receivers, operator operands and the closure thunk as well as plain calls.
+- **[DONE 10/11] A large aggregate passed by value** — a pointer to a copy the caller makes
+  as the argument is made (COMPLETED.md 10/11, `sret.go`).
 - **[OPEN] `sret` on the 68000** — the hero's scene builders misbehaved under it with IR that
   differs only in the convention, so `returnsInMemory` is the host's only. Reduce it against
   the M68k LLVM (a patch, as `tools/llvm-m68k-patches` holds) before turning it on there.

@@ -123,6 +123,7 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 		if err != nil {
 			return err
 		}
+		l.passByCopy(param, irParam)
 		irParams = append(irParams, irParam)
 	}
 	// Prefixed like any other user function (userSymbol): a specialization is still

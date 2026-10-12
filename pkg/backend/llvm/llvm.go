@@ -192,6 +192,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		closures:           map[closureKey]*ir.Func{},
 		closureThunks:      map[string]*ir.Func{},
 		sretResults:        map[*ir.Func]lltypes.Type{},
+		byCopyParams:       map[*ir.Param]bool{},
 		envDropFns:         map[string]*ir.Func{},
 		externs:            map[string]externDecl{},
 	}
@@ -552,6 +553,9 @@ type lowerer struct {
 	// sretResults maps a function returning a large aggregate through memory to that
 	// aggregate's type (sret.go).
 	sretResults map[*ir.Func]lltypes.Type
+	// byCopyParams are parameters of Lyra functions taking a large aggregate by value, passed
+	// as a pointer to a copy the caller made (sret.go).
+	byCopyParams map[*ir.Param]bool
 	// sretSlot is the caller's slot the function being lowered writes its result to, when it
 	// returns through memory; nil otherwise.
 	sretSlot       value.Value
