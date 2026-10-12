@@ -586,20 +586,22 @@ func (l *lowerer) closureThunk(name string) (*ir.Func, error) {
 		return nil, fmt.Errorf("llvm: no such function %q to use as a value", name)
 	}
 	params := []*ir.Param{ir.NewParam("env", lltypes.NewPointer(lltypes.I8))}
-	for i, p := range target.Params {
+	for i, p := range l.lyraParams(target) {
 		params = append(params, ir.NewParam(fmt.Sprintf("a%d", i), p.Typ))
 	}
 	// The entry module's identity prefix is empty (`::double`), so trimming it keeps
 	// the thunk's symbol the readable `double.closure`; a named module's stays
-	// module-qualified, as a private function's always was.
-	thunk := l.module.NewFunc(strings.TrimPrefix(name, "::")+".closure", target.Sig.RetType, params...)
+	// module-qualified, as a private function's always was. A closure returns by value, so
+	// a target returning through memory is called with a slot of the thunk's (sret.go).
+	result := l.resultType(target)
+	thunk := l.module.NewFunc(strings.TrimPrefix(name, "::")+".closure", result, params...)
 	entry := thunk.NewBlock("entry")
 	args := make([]value.Value, 0, len(params)-1)
 	for _, p := range params[1:] {
 		args = append(args, p)
 	}
-	call := entry.NewCall(target, args...)
-	if _, isVoid := target.Sig.RetType.(*lltypes.VoidType); isVoid {
+	call := l.callLyra(entry, target, args)
+	if _, isVoid := result.(*lltypes.VoidType); isVoid {
 		entry.NewRet(nil)
 	} else {
 		entry.NewRet(call)

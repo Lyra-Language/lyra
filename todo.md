@@ -947,12 +947,14 @@ sets V on every add. What stands between that and a ROM:
 
 ## Large aggregates
 
-- **[OPEN] A large fixed array returned by value is a first-class aggregate**, and LLVM's
-  optimizer is superlinear in them: `pure () -> [8192]u32` built in 262 s, `[2048]u32` in 8
-  (10/11, `examples/game/wisps.lyra`, which paints module tables instead). Returning through
-  memory past a size — an `sret` slot, as C compilers do — and copying with `memcpy` rather
-  than `load`/`store` of the aggregate, is the fix; literal indexing and zeroed globals
-  already avoid it (COMPLETED.md 10/11).
+- **[DONE 10/11] A large aggregate returned by value** — through an `sret` slot now, with
+  `memcpy`/`memset` for large copies and zero-fills (COMPLETED.md 10/11, `sret.go`).
+- **[OPEN] A large aggregate passed by value** is the same cost: `(xs: [8192]u32)` built in
+  6 s. Passing a pointer to a caller's copy past `sretMinBytes` is the fix, and it reaches
+  method receivers, operator operands and the closure thunk as well as plain calls.
+- **[OPEN] `sret` on the 68000** — the hero's scene builders misbehaved under it with IR that
+  differs only in the convention, so `returnsInMemory` is the host's only. Reduce it against
+  the M68k LLVM (a patch, as `tools/llvm-m68k-patches` holds) before turning it on there.
 
 ## Building for other platforms
 

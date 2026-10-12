@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	lltypes "github.com/llir/llvm/ir/types"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -110,7 +111,13 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// A defaulted parameter is an ordinary parameter in a specialization too: the
 	// typechecker fills every omitted argument before the call is solved, so the default
 	// participates in inference like any other argument and this signature is complete.
-	irParams := make([]*ir.Param, 0, len(inst.Func.Parameters))
+	irParams := make([]*ir.Param, 0, len(inst.Func.Parameters)+1)
+	// A large aggregate is returned through the caller's slot, as from a plain function
+	// (sret.go).
+	inMemory := l.returnsInMemory(retType)
+	if inMemory {
+		irParams = append(irParams, sretParam(retType))
+	}
 	for i, param := range inst.Func.Parameters {
 		irParam, err := l.lowerParameter(param, i)
 		if err != nil {
@@ -121,7 +128,13 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// Prefixed like any other user function (userSymbol): a specialization is still
 	// user code, and its symbol has to be unique across modules and safe against libc.
 	symbol := "lyra." + inst.Symbol()
-	l.specialized[inst.Key()] = l.module.NewFunc(symbol, retType, irParams...)
+	if inMemory {
+		irFn := l.module.NewFunc(symbol, lltypes.Void, irParams...)
+		l.sretResults[irFn] = retType
+		l.specialized[inst.Key()] = irFn
+	} else {
+		l.specialized[inst.Key()] = l.module.NewFunc(symbol, retType, irParams...)
+	}
 	l.specializedParams[inst.Key()] = inst.Func.Parameters
 	// A lambda written inside this body is lifted to a function of its own, and its
 	// signature mentions the type variables this instantiation binds — so it is declared

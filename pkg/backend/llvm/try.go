@@ -216,7 +216,7 @@ func (l *lowerer) lowerTryPropagate(block, preBranch *ir.Block, transferred, scr
 		var errVal value.Value = block.NewExtractValue(payload, 0)
 		switch {
 		case convert != nil:
-			errVal = block.NewCall(convert, errVal)
+			errVal = l.callLyra(block, convert, []value.Value{errVal})
 		case !transferring:
 			// A *borrowed* operand (a binding, a field) still owns its copy and will
 			// release it — at scope exit, or via the releaseAllManagedFrames that

@@ -786,7 +786,7 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 	// Alloca in the *entry* block (mem2reg only promotes entry-block allocas).
 	entry := block.Parent.Blocks[0]
 	slot := entry.NewAlloca(init.Type())
-	block.NewStore(init, slot)
+	l.storeAggregate(block, init, slot)
 	l.locals[vds.Name] = slot // later re-declaration of the same name just overwrites
 	// An *owning* binding holds a +1 on everything it owns — its initializer was
 	// coerced to +1 by the ownership pass (bindingOwnsManaged makes the initializer an
@@ -890,7 +890,11 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	// loads from it. For a by-reference `mut` parameter the slot is the caller's
 	// storage, so this store is exactly how a whole-binding reassignment reaches
 	// the caller.
-	block.NewStore(rhsVal, slot).Volatile = l.sharedWithInterrupt(vrs.Name, vrs.GetLocation(), slot)
+	if l.sharedWithInterrupt(vrs.Name, vrs.GetLocation(), slot) {
+		block.NewStore(rhsVal, slot).Volatile = true
+	} else {
+		l.storeAggregate(block, rhsVal, slot)
+	}
 	return block, nil
 }
 

@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 10/11/26 — Large aggregates returned through memory
+
+A function returning a large fixed array was the slowest thing a program could ask of clang:
+`() -> [8192]u32` built in 262 seconds, `[2048]u32` in 8, and a 28,672-word tile table not at
+all. Measured by editing the IR by hand, **the `ret [N x T]` itself was the cost** — copying
+the array to a temporary first, or keeping the zero-fill out of the function, changed
+nothing while it remained — and a function returning through an `sret` slot with a `memcpy`
+built in 0.18 seconds. So a function returning an aggregate of 256 bytes or more now takes
+the caller's slot first and returns void (`sret.go`): plain functions, generic
+specializations and trait methods; a closure keeps returning by value, the thunk that makes
+a named function a value adapting it. **Only the convention changed**: a call still produces
+the aggregate, as a load of the slot it wrote, and a return still takes one.
+
+Three more whole-aggregate moves had to go before the times were right, each found by
+timing variants of the IR: a large value stored into a binding (`let a = fill()`), into a
+by-reference argument's temporary (`load_tiles(16, art())`), or as the `zeroinitializer` of
+`#[0; n]`. A store of a value just loaded from memory is now a `memcpy` from there
+(`storeAggregate`), and a large zero-fill a `memset` (`zeroFill`). 262 seconds is 0.35; 73
+for a result handed to a `ref` parameter is 0.52.
+
+**Two bugs on the way, both found by Vega rather than the tests.** The copies were first
+sized by summing field sizes, which misses padding: a struct holding a `Result` (a one-byte
+tag, an 8-aligned payload) was copied 7 bytes short, and Vega crashed in its own drop glue.
+A copy's size is now LLVM's (`sizeOf`: `ptrtoint (gep T, null, 1)`), right on every target.
+And the copy reads the memory when it runs, so it is taken only where nothing since the load
+can have written it, and a return writes the caller's slot before releasing anything — after
+the releases it read a box they had freed. **`sret` is the host's only**: on the 68000 the
+hero's scenes (a kilobyte, built by `field_scene()`) misbehaved under it with IR that differs
+only in the convention, so the M68k LLVM's `sret` is under suspicion (`todo.md`); a console
+keeps returning by value, which at its sizes costs nothing.
+
+The `sret` tests also found that a literal passed to a **trait method** kept its default
+width — the method-call path never pushed the parameter type onto its arguments, so
+`paint(1)` against a `u32` called the impl with an `i64`, which clang 15 refuses.
+`inferDotCallFromType` now propagates, as every other call does.
+
 ### 10/11/26 — Large arrays read and started in place
 
 `examples/game/wisps.lyra`'s tile art is a 28,672-word table, and its first build did not

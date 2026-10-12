@@ -247,7 +247,7 @@ func (l *lowerer) arrayLValue(block *ir.Block, obj ast.Expression) (value.Value,
 	}
 	entry := block.Parent.Blocks[0]
 	slot := entry.NewAlloca(at)
-	block.NewStore(arr, slot)
+	l.storeAggregate(block, arr, slot)
 	return slot, at, block, nil
 }
 
@@ -434,7 +434,7 @@ func (l *lowerer) fillFixedArray(block *ir.Block, arrayTy *lltypes.ArrayType, el
 	slot := block.Parent.Blocks[0].NewAlloca(arrayTy)
 	n := i64c(int64(arrayTy.Len))
 	if isZeroConstant(elemVal) {
-		block.NewStore(constant.NewZeroInitializer(arrayTy), slot)
+		l.zeroFill(block, slot, arrayTy)
 		return block.NewLoad(arrayTy, slot), block, nil
 	}
 	var err error

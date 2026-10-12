@@ -191,6 +191,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		specializedParams:  map[string][]ast.Parameter{},
 		closures:           map[closureKey]*ir.Func{},
 		closureThunks:      map[string]*ir.Func{},
+		sretResults:        map[*ir.Func]lltypes.Type{},
 		envDropFns:         map[string]*ir.Func{},
 		externs:            map[string]externDecl{},
 	}
@@ -548,11 +549,17 @@ type lowerer struct {
 	localGenericInsts    map[*ast.LambdaExpr][]typetable.Instantiation
 	localGenericExcluded map[*ast.LambdaExpr]bool
 	closureThunks        map[string]*ir.Func
-	envDropFns           map[string]*ir.Func
-	closureEnvDrop       *ir.Func
-	emptyEnvPtr          value.Value
-	closureCount         int
-	envDropCount         int
+	// sretResults maps a function returning a large aggregate through memory to that
+	// aggregate's type (sret.go).
+	sretResults map[*ir.Func]lltypes.Type
+	// sretSlot is the caller's slot the function being lowered writes its result to, when it
+	// returns through memory; nil otherwise.
+	sretSlot       value.Value
+	envDropFns     map[string]*ir.Func
+	closureEnvDrop *ir.Func
+	emptyEnvPtr    value.Value
+	closureCount   int
+	envDropCount   int
 
 	// eqFns caches the per-type structural equality glue (equality.go), keyed the same
 	// way dropFns is — on the base type, so a newtype shares its base's function.

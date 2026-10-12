@@ -216,11 +216,11 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 		}
 		args = append(args, v)
 	}
-	if len(args) != len(fn.Params) {
+	if len(args) != len(l.lyraParams(fn)) {
 		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s) including the receiver, got %d",
-			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
+			fn.GlobalIdent.Ident(), len(l.lyraParams(fn)), len(args))
 	}
-	return block.NewCall(fn, args...), block, nil
+	return l.callLyra(block, fn, args), block, nil
 }
 
 // methodParams returns the trait signature's parameters for a trait-method call — the
@@ -427,7 +427,7 @@ func (l *lowerer) lowerOperatorImplCall(block *ir.Block, res typetable.Resolutio
 	}
 	args := make([]value.Value, len(operands))
 	copy(args, operands)
-	return block.NewCall(fn, args...), block, nil
+	return l.callLyra(block, fn, args), block, nil
 }
 
 // operatorCandidate finds the impl an operator dispatches to when the typechecker could
@@ -501,9 +501,9 @@ func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr
 		}
 		args = append(args, v)
 	}
-	if len(args) != len(fn.Params) {
+	if len(args) != len(l.lyraParams(fn)) {
 		return nil, nil, fmt.Errorf("llvm: %s::%s expects %d argument(s) including the receiver, got %d",
-			path.TraitName, path.Method.Name, len(fn.Params), len(args))
+			path.TraitName, path.Method.Name, len(l.lyraParams(fn)), len(args))
 	}
-	return block.NewCall(fn, args...), block, nil
+	return l.callLyra(block, fn, args), block, nil
 }

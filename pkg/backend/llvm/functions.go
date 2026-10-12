@@ -38,6 +38,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSig
 	l.seqParams = map[string]seqBinding{}
 	l.yield = nil
 	l.inlineRet = nil
+	l.sretSlot = nil
 }
 
 // paramIsByRef reports whether a parameter is passed as a **pointer to the caller's
@@ -106,6 +107,13 @@ func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
 // temporaries before returning, having released them itself, and recording everything
 // below the raised base would release those a second time.
 func (l *lowerer) emitReturnOwing(start, block *ir.Block, val value.Value, owed int) error {
+	// A large aggregate goes to the caller's slot **before anything is released**: the value
+	// may be a load of memory those releases free, and the store reads it (sret.go).
+	stored := false
+	if l.sretSlot != nil && l.inlineRet == nil && val != nil && !l.entryABI {
+		l.storeResult(block, val, l.sretSlot)
+		stored = true
+	}
 	if err := l.flushStmtTemps(start, block); err != nil {
 		return err
 	}
@@ -149,6 +157,14 @@ func (l *lowerer) emitReturnOwing(start, block *ir.Block, val value.Value, owed 
 	}
 	if floatTy, ok := l.retType.(*lltypes.FloatType); ok {
 		block.NewRet(coerceFloatWidth(block, val, floatTy))
+		return nil
+	}
+	if l.sretSlot != nil {
+		// The large aggregate went to the caller's slot above; the function returns void.
+		if !stored && val != nil {
+			l.storeResult(block, val, l.sretSlot)
+		}
+		block.NewRet(nil)
 		return nil
 	}
 	if _, ok := l.retType.(*lltypes.StructType); ok {
@@ -357,7 +373,11 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 	// (`typechecker/default_args.go`), so the emitted function always receives all of them
 	// and needs no notion of defaults. The guard in lowerDirectCall is what catches a call
 	// that somehow did not get filled, loudly, rather than emitting a short argument list.
-	irParams := make([]*ir.Param, 0, len(fn.Parameters))
+	irParams := make([]*ir.Param, 0, len(fn.Parameters)+1)
+	inMemory := l.returnsInMemory(retType)
+	if inMemory {
+		irParams = append(irParams, sretParam(retType))
+	}
 	for i, param := range fn.Parameters {
 		irParam, err := l.lowerParameter(param, i)
 		if err != nil {
@@ -365,7 +385,13 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 		}
 		irParams = append(irParams, irParam)
 	}
-	return l.module.NewFunc(name, retType, irParams...), nil
+	if !inMemory {
+		return l.module.NewFunc(name, retType, irParams...), nil
+	}
+	// A large aggregate is returned through the caller's slot (sret.go).
+	irFn := l.module.NewFunc(name, lltypes.Void, irParams...)
+	l.sretResults[irFn] = retType
+	return irFn, nil
 }
 
 // defineFunction lowers a declared function's body: bind each parameter into a
@@ -400,7 +426,13 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 	l.beginFunction(retType, fn.ReturnType.Type, returnSigned(fn), false)
 
 	entry := irFn.NewBlock("entry")
-	if err := l.bindParameters(entry, irFn, fn.Parameters, 0); err != nil {
+	// A function returning through memory has the caller's slot first (sret.go).
+	offset := 0
+	if _, ok := l.sretResults[irFn]; ok {
+		l.sretSlot = irFn.Params[0]
+		offset = 1
+	}
+	if err := l.bindParameters(entry, irFn, fn.Parameters, offset); err != nil {
 		return fmt.Errorf("%w (in %q)", err, name)
 	}
 
@@ -634,7 +666,8 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 	if plan := l.externPlans[fn]; plan != nil {
 		return l.lowerExternCall(block, e, fn, plan)
 	}
-	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params, calleeParamTypes(fn, 0))
+	placed := len(fn.Params) - len(l.lyraParams(fn))
+	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params, calleeParamTypes(fn, placed))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -658,11 +691,11 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 	// A short argument list means a default the front end should have filled did not reach
 	// here. Emitting the call anyway would produce IR whose argument count disagrees with
 	// the callee — invalid, and on a good day caught by clang rather than by us.
-	if len(params) > 0 && len(args) != len(fn.Params) {
+	if len(params) > 0 && len(args) != len(l.lyraParams(fn)) {
 		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s), got %d",
-			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
+			fn.GlobalIdent.Ident(), len(l.lyraParams(fn)), len(args))
 	}
-	return callWithDeclaredAttrs(block, fn, args), block, nil
+	return l.callLyra(block, fn, args), block, nil
 }
 
 // lowerCallArgs lowers a call's arguments left to right onto `args`, and is the one
@@ -815,7 +848,7 @@ func (l *lowerer) argumentAddress(block *ir.Block, arg ast.Expression) (value.Va
 	}
 	entry := block.Parent.Blocks[0]
 	slot := entry.NewAlloca(v.Type())
-	block.NewStore(v, slot)
+	l.storeAggregate(block, v, slot)
 	return slot, block, nil
 }
 
@@ -943,6 +976,11 @@ func (l *lowerer) lowerCFunctionArgument(block *ir.Block, arg ast.Expression, wa
 	fn, ok := l.funcs[l.funcKey(id.Name, arg.GetLocation())]
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no emitted function named %q for a C callback argument", id.Name)
+	}
+	// A function returning a large aggregate through memory has no C signature to give
+	// (sret.go). FFI-safety refuses such a callback first; this is rule 5's repeat.
+	if _, inMemory := l.sretResults[fn]; inMemory {
+		return nil, nil, fmt.Errorf("llvm: %q returns a large aggregate, which a C callback cannot", id.Name)
 	}
 	// The signatures agree by construction — the front end checked every type in the
 	// callback against the same FFI-safe predicate the extern's own parameters take — so

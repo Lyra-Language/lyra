@@ -91,8 +91,9 @@ let main = () -> void => {
 
 // **The fixed-size path gets the same limit** (09/13). It had none: one `insertvalue` per
 // element, so a `[20000]u32` was 1.16 MB of IR. Above repeatUnrollLimit it now fills a stack
-// slot in a loop and loads the aggregate, and a zero value is a single `zeroinitializer`
-// store — neither grows with the count.
+// slot in a loop and loads the aggregate, and a zero value is a single `memset` — neither
+// grows with the count. (A `zeroinitializer` store of the whole array until 10/11: as costly
+// to LLVM's optimizer as storing any whole aggregate, sret.go's zeroFill says.)
 func TestEmit_LargeFixedRepeatLiteralDoesNotUnroll(t *testing.T) {
 	t.Parallel()
 	ir, err := emitSource(t, `
@@ -108,8 +109,8 @@ let main = () -> void => {
 	if n := strings.Count(ir, "insertvalue [20000 x i32]"); n != 0 {
 		t.Errorf("want no per-element insertvalue, got %d", n)
 	}
-	if !strings.Contains(ir, "store [20000 x i32] zeroinitializer") {
-		t.Errorf("a zero repeat should be one zeroinitializer store")
+	if !strings.Contains(ir, "@memset(") || strings.Contains(ir, "store [20000 x i32] zeroinitializer") {
+		t.Errorf("a zero repeat should be one memset, not a store of the whole array")
 	}
 	if len(ir) > 400_000 {
 		t.Errorf("IR is %d bytes; it should not scale with the count", len(ir))

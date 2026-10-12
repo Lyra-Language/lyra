@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
-	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -57,7 +56,7 @@ func (l *lowerer) lowerUnionInstanceExpr(block *ir.Block, e *ast.StructInstanceE
 	}
 
 	slot := block.Parent.Blocks[0].NewAlloca(unionTy)
-	block.NewStore(constant.NewZeroInitializer(unionTy), slot)
+	l.zeroFill(block, slot, unionTy)
 	memberPtr := block.NewBitCast(slot, lltypes.NewPointer(memberTy))
 	block.NewStore(val, memberPtr)
 	return block.NewLoad(unionTy, slot), block, nil
