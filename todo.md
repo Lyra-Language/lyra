@@ -581,6 +581,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   `propagateExpectedType` (which now narrows a comprehension's result, 10/01). Its sharper
   form: `var art: []Maybe<Texture> = [p in 0..<16 | None]` is lyra-E073, the annotation
   never solving `None`'s parameter — `[None; 16]` is typed (10/11, std.game).
+- **[OPEN] A context does not reach an `if` that is a constructor's argument.**
+  `-> Maybe<Result<[]u8, string>> => Some(if b { Ok([]) } else { Err("no") })` is E001
+  (`DynamicArray<?>`), where `Some(Ok([]))` and a bare `if b { Ok([]) } else { … }` are
+  typed: the if-arms are not walked with the argument's expected type (10/12, Vega's
+  `poll_game_build`, which names the empty array's type instead).
 - **[OPEN] No `contains` (or `any`) on an array.** `string.contains` exists; for `[]t` a
   program writes the loop — Vega's `project.is_taken` did (10/01). A `contains<t> where t:
   Eq` on arrays, and `any`/`all` taking a predicate, would replace it.
@@ -965,10 +970,11 @@ target, 10/11). In order:
   into it yet, and the bindings' C halves are built for the machine alone.
 - **[OPEN] iOS** — SDL3 for iOS links (`tools/sdl3-ios.sh`), and a program over it is an app
   started through `SDL_RunApp`, playing in the Simulator frame for frame as on the Mac, full
-  screen with an on-screen pad, and signed for and run on an iPhone (10/13: installed,
-  launched and stopped by `devicectl`; a device needs Developer Mode on). Left: the pad and
-  leaving the app checked by hand on a device, and `bindings.menubar`/`imgui` built per
-  platform.
+  screen with an on-screen pad, and signed for and run on an iPhone (10/12: installed,
+  launched and stopped by `devicectl`; a device needs Developer Mode on), and Vega builds and
+  runs one there (File > Platform; `lyrac run --progress` ends `100% running`, and a killed
+  run ends its app). Left: the pad and leaving the app checked by hand on a device, and
+  `bindings.menubar`/`imgui` built per platform.
 - **[OPEN] Android** — `aarch64-linux-android` is AAPCS64 too; the NDK's clang, a `.so` run by
   SDL's Java activity, an APK.
 - **[OPEN] Windows** — `abi.Win64` (1/2/4/8-byte aggregates as integers, else by pointer, no

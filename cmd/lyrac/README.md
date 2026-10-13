@@ -44,8 +44,9 @@ lyrac run --target linux-arm64 prog.lyra     # run there: the Simulator, or Dock
 - **`--progress`** prints a line on stderr as each stage starts (`o.report`): checking,
   then for the Genesis generating code, optimizing, compiling for the 68000, each runtime
   object a first build compiles (the slow part, 50–90%), linking. Percentages are a
-  stage's place, not measured time; the process ending is the end. Vega reads them to show
-  a game's build.
+  stage's place, not measured time; a build's end is the process ending. `run` reports the
+  build's stages, `installing` for an app, and last `100% running` as the program starts —
+  how Vega knows an iOS Run has become the game. Vega reads them to show a game's build.
 - A sequence value needs clang ≥ 15 (`CheckCoroutineSupport`); lyrac refuses by name and
   keeps the `.ll`.
 - The entry point (`driver.ResolveEntryPoint`) is checked only by `build`/`run`.
@@ -76,7 +77,9 @@ beside it, `-o x` writing `x.app/` (the program, an `Info.plist` — identifier 
 else `dev.lyra.x`; iPhone and iPad, landscape, `UILaunchScreen` — signed ad hoc). `run`
 installs it in the Simulator and launches it with `simctl launch --console-pty`, `SDL_*` and
 `TZ` passed as `SIMCTL_CHILD_…`; the app's status is its last line, `lyra-exit: N`
-(`appOutput`), since `simctl` answers 0; an interrupt terminates the app.
+(`appOutput`), since `simctl` answers 0; an interrupt or SIGTERM to lyrac terminates the app
+(`stopApp`) — the launcher alone would leave it running, and Vega's Stop is a SIGTERM
+(`TestRun_AStoppedRunEndsItsAppInTheSimulator`).
 
 **A device's app** (`device.go`) is signed with a provisioning profile: `$LYRA_IOS_PROFILE`,
 else the newest unexpired one Xcode keeps (`~/Library/Developer/Xcode/UserData/Provisioning

@@ -572,7 +572,9 @@ start-up's last line is `lyra-exit: N`, which `appOutput` strips and exits with.
 without SDL3 stays a command-line one (`simctl spawn`). **A device's app** (`device.go`) is
 signed with the provisioning profile covering its identifier (exact before a wildcard
 `TEAM.*`, `$LYRA_IOS_PROFILE` first) and the keychain identity whose certificate it carries,
-the profile embedded; `run` installs and launches it with `devicectl`. `LYRA_TEST_TARGET=<platform>`
+the profile embedded; `run` installs and launches it with `devicectl`. **The app is not lyrac's
+child**: an interrupt or SIGTERM reaches only the launcher, so lyrac terminates the app itself
+(`stopApp`) — Vega stops an iOS Run by killing its `lyrac run`. `LYRA_TEST_TARGET=<platform>`
 runs `pkg/backend/llvm`'s behavioural suite there (`platform_harness_test.go`: every test
 binary through `command(bin, …)`, a Linux one in a container sharing the temp and cache
 directories at their own paths; the sanitizer tests skip).

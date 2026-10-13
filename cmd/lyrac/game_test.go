@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // std.game's pure modules are plain Lyra, so they run on the host: each case answers its own
@@ -642,6 +646,71 @@ func TestRun_GamesPlayTheSameInTheIOSSimulator(t *testing.T) {
 	}
 	checkWisps(t, playGameInSimulator(t, filepath.Join(repoRoot(t), "examples", "game", "wisps.lyra"),
 		"--frames", "150", "--hold", "right,down"))
+}
+
+// A `lyrac run` stopped as Vega stops one — SIGTERM, to lyrac alone — ends the app it launched
+// in the Simulator, which the signal never reaches: the run's last progress line says it is
+// running, and once lyrac has gone the app is no longer among the Simulator's processes.
+func TestRun_AStoppedRunEndsItsAppInTheSimulator(t *testing.T) {
+	requireSimulatorSDL3(t)
+	device, err := simulatorDevice()
+	if err != nil {
+		t.Skip(err)
+	}
+	walker := filepath.Join(repoRoot(t), "examples", "game", "walker.lyra")
+	cmd := asLyrac("run", "--progress", "--target", "ios-simulator", walker)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	said := bufio.NewScanner(stderr)
+	running := false
+	for !running && said.Scan() {
+		running = said.Text() == "progress: 100% running"
+	}
+	if !running {
+		t.Fatalf("lyrac never said the game was running")
+	}
+	app := "UIKitApplication:dev.lyra.walker"
+	listed := func() bool {
+		out, _ := exec.Command("xcrun", "simctl", "spawn", device, "launchctl", "list").Output()
+		return strings.Contains(string(out), app)
+	}
+	for i := 0; i < 50 && !listed(); i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !listed() {
+		t.Fatalf("the walker never showed among the Simulator's processes")
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	go io.Copy(io.Discard, stderr)
+	ended := make(chan error, 1)
+	go func() { ended <- cmd.Wait() }()
+	select {
+	case <-ended:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("lyrac had not ended 20s after it was stopped")
+	}
+	for i := 0; i < 50 && listed(); i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if listed() {
+		t.Errorf("the walker was still running after its lyrac was stopped")
+	}
+}
+
+// asLyrac is the command running lyrac with args as its own process: this test binary,
+// which TestMain makes lyrac when LYRAC_TEST_AS_LYRAC is set.
+func asLyrac(args ...string) *exec.Cmd {
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(os.Environ(), "LYRAC_TEST_AS_LYRAC=1")
+	return cmd
 }
 
 // The screen's pad on a phone (std.game.pad's touch_layout): on a 2556 × 1179 screen held

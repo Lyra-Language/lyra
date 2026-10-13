@@ -9,7 +9,20 @@ Newest first.
 
 ## Dated log
 
-### 10/13/26 — A module's unannotated `var`, read above its declaration, has a type there
+### 10/12/26 — A stopped `lyrac run` ends the app it launched
+
+Vega's Run on iOS is `lyrac run --target` kept as the running game, and Vega stops a game by
+SIGTERM to the process it started. An app is not lyrac's child — `simctl launch` or
+`devicectl` launched it — so the signal reached the launcher at most, and the app played on.
+`runProgram` had a handler terminating the app (`stopApp`), installed only *after* the
+branch that runs an app and returns: it covered the one case with no app. It now goes in
+first, for SIGTERM as for an interrupt. Ctrl-C in a terminal had hidden it, reaching
+`devicectl` through the process group. `TestRun_AStoppedRunEndsItsAppInTheSimulator` starts
+a whole lyrac (the test binary, as lyrac by `LYRAC_TEST_AS_LYRAC`), waits for `--progress`'s
+new last stage, `100% running`, and finds the walker gone from the Simulator after the
+signal; with the handler disabled lyrac never ends, and the test says so after 20 s.
+
+### 10/12/26 — A module's unannotated `var`, read above its declaration, has a type there
 
 `std.game.pad`'s on-screen pad keeps its state below the functions using it, as the house
 style asks — `var touch_shown = false` — and `touch_shown = touch_shown || buttons != 0` failed

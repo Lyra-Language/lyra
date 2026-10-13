@@ -100,7 +100,10 @@ run flags:
   --target <platform>
                 as above, run there: ios-simulator in a booted iOS Simulator
                 ($LYRA_SIMULATOR, else the first booted, else an iPhone it boots),
-                linux-* in Docker ($LYRA_LINUX_IMAGE, else debian:bookworm-slim)
+                linux-* in Docker ($LYRA_LINUX_IMAGE, else debian:bookworm-slim),
+                ios on the connected iPhone or iPad ($LYRA_IOS_DEVICE)
+  --progress    as above, its last stage "progress: 100% running" as the program
+                starts
   --watch       rebuild and restart the program whenever a source file it reads
                 changes (its imports and the standard library included); a build
                 that fails leaves the running copy alone. Ctrl-C stops both
@@ -306,7 +309,8 @@ func build(o buildOptions) int {
 
 // report is `--progress`: a stage starting, `percent` of the way through the build. The
 // percentages are a stage's place, not measured time — a bar that moves in the right
-// order — and the build ends with the process, not a 100% line.
+// order — and a build ends with the process, not a 100% line; `lyrac run`'s last stage,
+// 100% "running", is the program started.
 func (o buildOptions) report(percent int, what string) {
 	if o.progress {
 		fmt.Fprintf(os.Stderr, "progress: %d%% %s\n", percent, what)
@@ -337,23 +341,9 @@ func runProgram(o buildOptions) int {
 		return code
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if launchedID != "" {
-		// The app's status is its last line, not its launcher's (app.go's appOutput).
-		out := newAppOutput(os.Stdout, launchedID)
-		cmd.Stdout = out
-		err := cmd.Run()
-		out.flush()
-		if err != nil {
-			return exitStatus(cmd, err)
-		}
-		if out.status < 0 {
-			fmt.Fprintf(os.Stderr, "lyrac: the app ended without saying how (it crashed, or was stopped)\n")
-			return 1
-		}
-		return out.status
-	}
-	// An app runs in the Simulator, not under lyrac: an interrupt reaches only the launcher,
-	// so the app is ended too (app.go's stopApp), as a program run here ends with lyrac.
+	// An app runs in the Simulator or on a device, not under lyrac: an interrupt or a kill
+	// (Vega's Stop) reaches only the launcher, so the app is ended too (app.go's stopApp), as
+	// a program run here ends with lyrac.
 	if stopApp != nil {
 		interrupt := make(chan os.Signal, 1)
 		signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
@@ -364,7 +354,23 @@ func runProgram(o buildOptions) int {
 			}
 		}()
 	}
-	return exitStatus(cmd, cmd.Run())
+	o.report(100, "running")
+	if launchedID == "" {
+		return exitStatus(cmd, cmd.Run())
+	}
+	// The app's status is its last line, not its launcher's (app.go's appOutput).
+	out := newAppOutput(os.Stdout, launchedID)
+	cmd.Stdout = out
+	err = cmd.Run()
+	out.flush()
+	if err != nil {
+		return exitStatus(cmd, err)
+	}
+	if out.status < 0 {
+		fmt.Fprintf(os.Stderr, "lyrac: the app ended without saying how (it crashed, or was stopped)\n")
+		return 1
+	}
+	return out.status
 }
 
 // prepareRun builds o's program into dir and returns the command that runs it — the
@@ -373,6 +379,7 @@ func runProgram(o buildOptions) int {
 // the build read, which `--watch` watches, even when the build failed. A nil command
 // means it failed, and code is the status to exit with.
 func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
+	o.report(0, "checking "+filepath.Base(o.path))
 	res, entry, files, code := typedProgram(o.path)
 	if entry == nil {
 		return nil, files, code
@@ -387,6 +394,7 @@ func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
 		cmd, code := genesisCommand(o, res, entry)
 		return cmd, files, code
 	}
+	o.report(30, "compiling")
 	exe, code := lowerAndEmit(o, res, entry)
 	if code != 0 {
 		return nil, files, code
@@ -403,6 +411,7 @@ func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
 	launchedID, stopApp = "", nil
 	var cmd *exec.Cmd
 	if strings.HasSuffix(exe, ".app") {
+		o.report(90, "installing")
 		cmd, err = appRunCommand(p, exe, bundleID(o, exe), o.programArgs)
 	} else {
 		cmd, err = runCommand(p, exe, o.programArgs)
