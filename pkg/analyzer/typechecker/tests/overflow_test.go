@@ -252,3 +252,30 @@ func TestOverflow_RepresentableFloatIsAcceptedEverywhere(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// A branch's arms (10/13)
+// ---------------------------------------------------------------------------
+
+// The context narrows each arm's literal, so each must fit: until 10/13 the check looked at
+// the `if` node, no literal, and `let x: u8 = if c { 300 } else { 2 }` stored 300 into a u8
+// — in a `let`, a return, an argument, a tuple or array element and a construction alike.
+func TestTypeCheck_Overflow_InABranchsArms(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+  data Box<t> = Wrap(t) | Empty
+  let f = (c: bool) -> void => {
+    let x: u8 = if c { 300 } else { 2 }
+    let y: u8 = match c { true => 2, false => { 256 } }
+    let z: []u8 = [if c { 1000 } else { 0 }]
+    let m: Box<u8> = Wrap(if c { 400 } else { 1 })
+    let ok: u8 = if c { 255 } else { 0 }
+  }
+  let r = (c: bool) -> u8 => if c { 500 } else { 2 }
+	`, false)
+	assertErrorsAre(t, res,
+		"x: literal value 300 overflows u8",
+		"y: literal value 256 overflows u8",
+		"element 1: literal value 1000 overflows u8",
+		"Wrap: literal value 400 overflows u8",
+		"r: literal value 500 overflows u8")
+}

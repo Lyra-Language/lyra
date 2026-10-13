@@ -56,7 +56,7 @@ lambda). The one named argument in the language is `@link`'s `pkg:`, an attribut
 
 ### Literals must fit
 
-A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a `type` constraint, a return-position `() -> u8 => 300` (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
+A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a `type` constraint, a return-position `() -> u8 => 300`, and each arm of an `if` or `match` whose value has the type (`let x: u8 = if c { 300 } else { 2 }`) (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
 
 ### Ranges
 

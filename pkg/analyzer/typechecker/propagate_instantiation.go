@@ -678,23 +678,39 @@ func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expressi
 	return false
 }
 
-// leavesArgumentOpen reports whether an instantiation carries, at any depth, a bare
-// **generic** data type — what a construction infers to when its payload left a parameter
-// for the context (`Ok(5)` is the bare `Result`, so `Some(Ok(5))` records
-// `Maybe<Result>`). A bare *non-generic* data type is a settled type, not an open one.
+// leavesArgumentOpen reports whether an instantiation carries, at any depth, an argument
+// the context has yet to decide: a bare **generic** data type — what a construction infers
+// to when its payload left a parameter for the context (`Ok(5)` is the bare `Result`, so
+// `Some(Ok(5))` records `Maybe<Result>`) — or an array whose element nothing has said, an
+// empty literal's (`[]`, `DynamicArray<?>`). A bare *non-generic* data type is a settled
+// type, not an open one.
+//
+// The array arm is 10/13's: `Some(if b { Ok([]) } else { Err("no") })` records
+// `Maybe<Result<DynamicArray<?>, string>>`, the arms' join having solved `Result` all but
+// its element, and against `-> Maybe<Result<[]u8, string>>` read as settled — so the
+// context never reached the `if`, and a type refused against its own annotation (E001).
+// `Some(Ok([]))` never showed it, the inner `Ok`'s bare `e` keeping the outer open.
 func (tc *TypeChecker) leavesArgumentOpen(inst types.ParameterizedType, loc ast.Location) bool {
 	for _, arg := range inst.TypeArguments {
-		switch a := arg.(type) {
-		case types.DataType:
-			if decl, ok := tc.symTable.LookupTypeRef(a.Name, a.Key, loc); ok && decl != nil &&
-				len(decl.GenericParams) > 0 {
-				return true
-			}
-		case types.ParameterizedType:
-			if tc.leavesArgumentOpen(a, loc) {
-				return true
-			}
+		if tc.typeLeftOpen(arg, loc) {
+			return true
 		}
+	}
+	return false
+}
+
+// typeLeftOpen is leavesArgumentOpen's question of one type argument.
+func (tc *TypeChecker) typeLeftOpen(t types.Type, loc ast.Location) bool {
+	switch a := t.(type) {
+	case types.DataType:
+		decl, ok := tc.symTable.LookupTypeRef(a.Name, a.Key, loc)
+		return ok && decl != nil && len(decl.GenericParams) > 0
+	case types.ParameterizedType:
+		return tc.leavesArgumentOpen(a, loc)
+	case types.DynamicArrayType:
+		return a.ElementType == nil || tc.typeLeftOpen(a.ElementType, loc)
+	case types.StaticArrayType:
+		return a.ElementType == nil || tc.typeLeftOpen(a.ElementType, loc)
 	}
 	return false
 }

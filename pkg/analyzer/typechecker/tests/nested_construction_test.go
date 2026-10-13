@@ -42,3 +42,17 @@ func TestNestedConstruction_ArgumentsStayInvariant(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, "f: return type mismatch: expected Box<Meters>, got Box<i64>")
 }
+
+// A branch as a construction's payload takes the context too (10/13): `Wrap(if …)` whose
+// arms leave an empty array's element open, or default a literal's width, is decided by the
+// annotation as `Wrap(Pick([]))` and `Wrap([1])` are. Found in Vega's `poll_game_build`, which
+// had to name its empty array's type. An arm the program settled still settles the join.
+func TestNestedConstruction_ABranchPayloadTakesItsContext(t *testing.T) {
+	res := parseCollectAndCheck(t, nestedTypes+`
+  let a = (c: bool) -> Box<Either<[]u8, string>> => Wrap(if c { Pick([]) } else { Other("no") })
+  let b = (c: bool) -> Box<Either<[]u8, string>> => Wrap(match c { true => Pick([]), false => Other("no") })
+  let d = (c: bool) -> Box<[]u8> => Wrap(if c { [] } else { [1] })
+  let e = (c: bool, x: i64) -> Box<u8> => Wrap(if c { x } else { 2 })
+	`, false)
+	assertErrorsAre(t, res, "e: return type mismatch: expected Box<u8>, got Box<i64>")
+}

@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/13/26 — A branch as a construction's payload takes its context; its arms are range-checked
+
+Vega's `poll_game_build` wrote `Some(if b { Ok([]) } else { Err("…") })` against
+`-> Maybe<Result<[]u8, string>>` and was refused, `DynamicArray<?>` against `DynamicArray<u8>`,
+though `Some(Ok([]))` and the bare `if` were each typed. A construction re-stamps its payload
+from a context only while its recorded type leaves something open (`stampableDataType`), and
+`leavesArgumentOpen` counted only a bare generic data type as open: the arms' join had solved
+`Result` all but the array's element, which it did not recognise. It now counts an array of no
+known element, at any depth. `Some(Ok([]))` never showed it — the inner `Ok`'s bare `e` kept
+the outer one open. The same path refused `Some(if b { [] } else { [1] })` as `Maybe<[]u8>`:
+the `[1]`'s i64 is a default, as `Some([1])`'s is, but `payloadIsAGuess` did not look through
+a branch. A branch is a guess now when *every* arm is; one arm the program settled
+(`if b { x } else { 2 }`, `x: i64`) still settles the join, and the context is refused.
+
+Testing it found the hole it sat beside: **an out-of-range literal in a branch's arm was
+accepted in every position.** `let x: u8 = if c { 300 } else { 2 }` stored 300 into a u8 — and
+in a return, an argument, a tuple or array element and a construction alike — because the
+context narrows each arm (`propagateExpected` follows if, match and a block's tail) while
+`checkLiteralRange`, which all fifteen sites call, looked at the `if` node and found no
+literal. It follows the same arms now. Nothing in Vega, Sheliak or the examples tripped it.
+`TestNestedConstruction_ABranchPayloadTakesItsContext` and
+`TestTypeCheck_Overflow_InABranchsArms` fail without the fixes (four refusals of valid code;
+five overflows accepted).
+
 ### 10/13/26 — On Linux, `lyrac run` ran the program in place again
 
 The platform table's Linux rows describe building *from a Mac* — linked by `zig cc`, run in

@@ -96,7 +96,32 @@ func signedTypeMinMagnitude(name types.PrimitiveTypeName) (int64, bool) {
 // Floats joined 09/10, and until then that claim held for integers only: `let x: f32 =
 // 1.0e40` was silently `inf` in every one of those positions. It was named
 // `checkLiteralRange` while it was the integer check.
+//
+// **A branch is checked arm by arm** (10/13): the context narrows each arm's literal to its
+// width (propagateExpected follows if, match and a block's tail), so each must fit it —
+// `let x: u8 = if b { 300 } else { 2 }` stored 300 into a u8 in every one of the fifteen
+// positions, the check having looked only at the `if` node, which is no literal.
 func (tc *TypeChecker) checkLiteralRange(varName string, expr ast.Expression, targetType types.Type) {
+	switch e := expr.(type) {
+	case *ast.IfExpr:
+		tc.checkLiteralRange(varName, e.Then, targetType)
+		if e.Else != nil {
+			tc.checkLiteralRange(varName, e.Else, targetType)
+		}
+		return
+	case *ast.MatchExpr:
+		for _, arm := range e.MatchArms {
+			tc.checkLiteralRange(varName, arm.Body, targetType)
+		}
+		return
+	case *ast.BlockExpr:
+		if n := len(e.Statements); n > 0 {
+			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
+				tc.checkLiteralRange(varName, es.Expression, targetType)
+			}
+		}
+		return
+	}
 	// A newtype is checked against its base — a Percent value is a u8 and cannot
 	// hold 300 either. Skipped when the newtype carries a range constraint, since
 	// that constraint is a subset of the base and checkRangeConstraints already

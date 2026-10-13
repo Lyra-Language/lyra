@@ -4224,6 +4224,25 @@ func (tc *TypeChecker) payloadIsAGuess(elem ast.Expression) bool {
 				return true
 			}
 		}
+	case *ast.IfExpr:
+		// **A branch is a guess when every arm's value is**: `Some(if b { [] } else { [1] })`
+		// is a `Maybe<[]i64>` only because 1 defaults to i64, as `Some([1])` is, so
+		// `Maybe<[]u8>` may still decide it (10/13). One arm the program settled settles the
+		// join, and a context differing from it is assignability's to refuse.
+		return e.Else != nil && tc.payloadIsAGuess(e.Then) && tc.payloadIsAGuess(e.Else)
+	case *ast.MatchExpr:
+		for _, arm := range e.MatchArms {
+			if !tc.payloadIsAGuess(arm.Body) {
+				return false
+			}
+		}
+		return len(e.MatchArms) > 0
+	case *ast.BlockExpr:
+		if n := len(e.Statements); n > 0 {
+			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
+				return tc.payloadIsAGuess(es.Expression)
+			}
+		}
 	}
 	return false
 }
