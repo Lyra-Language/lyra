@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -621,8 +622,9 @@ func TestRun_GameWispsPlaysItself(t *testing.T) {
 }
 
 // The games played as apps in the iOS Simulator (cmd/lyrac/app.go: SDL started through
-// SDL_RunApp, UIKit's window, SDL's Metal renderer): the walker's frame is the Mac's byte for
-// byte, and the wisps' is the same picture — not the same bytes, since the Metal renderer
+// SDL_RunApp, UIKit's window — the whole screen, its real pixels, the game ×5 in it — SDL's
+// Metal renderer): the walker's frame is the Mac's byte for byte, read back at the game's own
+// size, and the wisps' is the same picture — not the same bytes, since the Metal renderer
 // rounds a blend and samples a turned sprite otherwise than the software one does.
 func TestRun_GamesPlayTheSameInTheIOSSimulator(t *testing.T) {
 	walker := filepath.Join(repoRoot(t), "examples", "game", "walker.lyra")
@@ -632,8 +634,79 @@ func TestRun_GamesPlayTheSameInTheIOSSimulator(t *testing.T) {
 	if ios.w != mac.w || ios.h != mac.h || !bytes.Equal(ios.rgb, mac.rgb) {
 		t.Errorf("the walker's frame in the Simulator (%dx%d) is not the Mac's (%dx%d)", ios.w, ios.h, mac.w, mac.h)
 	}
+	// A finger on the screen's pad's right arm walks him as holding right does: the phone's
+	// controls, through the same hit test a finger takes (`--touch`).
+	touched := playGameInSimulator(t, walker, "--frames", "30", "--touch", "right")
+	if !bytes.Equal(touched.rgb, mac.rgb) {
+		t.Errorf("a finger on the pad's right arm did not walk him as holding right does")
+	}
 	checkWisps(t, playGameInSimulator(t, filepath.Join(repoRoot(t), "examples", "game", "wisps.lyra"),
 		"--frames", "150", "--hold", "right,down"))
+}
+
+// The screen's pad on a phone (std.game.pad's touch_layout): on a 2556 × 1179 screen held
+// sideways — an iPhone's real pixels — a finger in the d-pad's right arm holds right, one in its
+// top-left corner up and left, its middle nothing; A, B and C sit bottom right and Start top
+// right; two fingers hold both their buttons, and one off every button nothing. The points
+// are worked out here from the layout's rule (a unit 0.13 of the short side, half a unit of
+// margin), not read from it.
+func TestRun_GameTouchPadLayout(t *testing.T) {
+	requireCC(t)
+	t.Setenv("LYRA_STD", repoRoot(t))
+	const w, h = 2556.0, 1179.0
+	unit := h * 0.13
+	margin := unit / 2
+	dpadLeft, dpadTop := margin, h-margin-3*unit
+	cell := func(col, row float64) (float64, float64) {
+		return dpadLeft + (col+0.5)*unit, dpadTop + (row+0.5)*unit
+	}
+	face := func(k float64) (float64, float64) {
+		return w - margin - unit*(3.6-1.2*k) + unit/2, h - margin - 2*unit + unit/2
+	}
+	type point struct{ x, y float64 }
+	at := func(x, y float64) point { return point{x, y} }
+	cases := []struct {
+		points []point
+		want   int
+		what   string
+	}{
+		{[]point{at(cell(2, 1))}, 0x0008, "the d-pad's right arm holds right"},
+		{[]point{at(cell(0, 0))}, 0x0005, "its top-left corner holds up and left"},
+		{[]point{at(cell(1, 1))}, 0, "its middle holds nothing"},
+		{[]point{at(cell(1, 2))}, 0x0002, "its bottom arm holds down"},
+		{[]point{at(face(0))}, 0x0040, "A, the first face button"},
+		{[]point{at(face(2))}, 0x0020, "C, the last"},
+		{[]point{at(w-margin-unit*0.6, margin+unit*0.25)}, 0x0080, "Start, top right"},
+		{[]point{at(cell(2, 1)), at(face(1))}, 0x0018, "two fingers: right and B"},
+		{[]point{at(w/2, h/2)}, 0, "the middle of the screen holds nothing"},
+	}
+	var src strings.Builder
+	src.WriteString("import std.game.pad\n\nlet main = () -> u8 => {\n  let layout = pad.touch_layout(2556.0, 1179.0)\n")
+	for _, c := range cases {
+		var pts []string
+		for _, p := range c.points {
+			pts = append(pts, fmt.Sprintf("(%.3f, %.3f)", p.x, p.y))
+		}
+		fmt.Fprintf(&src, "  println(\"${pad.touched(layout, [%s])}\")\n", strings.Join(pts, ", "))
+	}
+	src.WriteString("  0\n}\n")
+	file := filepath.Join(t.TempDir(), "layout.lyra")
+	if err := os.WriteFile(file, []byte(src.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", file)
+	if code != 0 {
+		t.Fatalf("exit %d; %s", code, stderr)
+	}
+	got := strings.Fields(stdout)
+	if len(got) != len(cases) {
+		t.Fatalf("printed %q", stdout)
+	}
+	for i, c := range cases {
+		if got[i] != fmt.Sprint(c.want) {
+			t.Errorf("%s: buttons %s, want %d", c.what, got[i], c.want)
+		}
+	}
 }
 
 // checkWisps says whether frame is wisps.lyra held right and down: the wisp's light bottom

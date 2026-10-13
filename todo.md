@@ -964,9 +964,11 @@ target, 10/11). In order:
   for the platforms that need them: `<root>/lib/<platform>/` is searched but nothing builds
   into it yet, and the bindings' C halves are built for the machine alone.
 - **[OPEN] iOS** — SDL3 for iOS links (`tools/sdl3-ios.sh`), and a program over it is an app
-  started through `SDL_RunApp`, playing in the Simulator frame for frame as on the Mac (10/13).
-  Left: `std.game` on a phone (full screen, an on-screen pad, lifecycle), devices (signing,
-  `devicectl`), and `bindings.menubar`/`imgui` built per platform.
+  started through `SDL_RunApp`, playing in the Simulator frame for frame as on the Mac, full
+  screen with an on-screen pad (10/13). Left: devices (signing, `devicectl`), and
+  `bindings.menubar`/`imgui` built per platform. Pausing in the background is seen only to
+  survive leaving and coming back; whether no time is caught up wants a device and a game
+  that does not stop at the screen's edge.
 - **[OPEN] Android** — `aarch64-linux-android` is AAPCS64 too; the NDK's clang, a `.so` run by
   SDL's Java activity, an APK.
 - **[OPEN] Windows** — `abi.Win64` (1/2/4/8-byte aggregates as integers, else by pointer, no

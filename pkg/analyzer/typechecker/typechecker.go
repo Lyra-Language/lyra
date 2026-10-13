@@ -2617,6 +2617,12 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 		if t, ok := tc.typeTable.Get(decl.Value); ok {
 			return t
 		}
+		// Not checked yet — a module's `var shown = false` below the function assigning it:
+		// a literal's type is its own wherever it is asked (the read's arm in
+		// inferExprTypeUncached says why this matters).
+		if isPlainLiteral(decl.Value) {
+			return tc.inferExprType(decl.Value)
+		}
 	}
 	return nil
 }
@@ -3339,6 +3345,16 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 			// to report.
 			if t == nil && v.Type != nil {
 				t = tc.resolveTypeIfKnown(v.Type, v.Location)
+			}
+			// The same, unannotated: `var shown = false` below the functions reading it had
+			// no type at all above its declaration, and an expression around the read went
+			// untyped with it — `shown = shown || buttons != 0` left the `0` beside a `u16`
+			// to the backend's default, a width mismatch at code generation, and `"${shown}"`
+			// an interpolation segment with no type (10/13, std.game's on-screen pad). A
+			// literal's type is its own, wherever it is asked, so it is inferred here as the
+			// declaration will infer it; anything else waits for an annotation.
+			if t == nil && v.Type == nil && isPlainLiteral(v.Value) {
+				t = tc.inferExprType(v.Value)
 			}
 			// A function *referred to* before its declaration has been checked — passed
 			// as a value to a call above it in the file, the order the house style asks
@@ -6149,4 +6165,15 @@ func isSelfComparison(expr *ast.BooleanBinaryOpExpr) bool {
 	}
 	r, ok := expr.Right.(*ast.IdentifierExpr)
 	return ok && l.Name == r.Name
+}
+
+// isPlainLiteral reports whether e is a literal whose type needs nothing around it: a bool,
+// a number, a character, or a string (an interpolated one is a node of its own).
+func isPlainLiteral(e ast.Expression) bool {
+	switch e.(type) {
+	case *ast.BooleanLiteralExpr, *ast.IntegerLiteralExpr, *ast.FloatLiteralExpr,
+		*ast.CharacterLiteralExpr, *ast.StringLiteralExpr:
+		return true
+	}
+	return false
 }

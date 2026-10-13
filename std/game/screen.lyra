@@ -29,17 +29,60 @@ module std.game.screen
 //! numbers into the window, nearest-neighbour.
 //!
 //! **Played without anyone at it**, as Sheliak plays a ROM: `--frames N` stops after N
-//! frames, one update each, at scale 1; `--ppm FILE` writes the last as a binary PPM;
-//! `--hold up,right` holds pad 1's buttons. With `SDL_VIDEODRIVER=dummy` and
+//! frames, one update each, at scale 1; `--ppm FILE` writes the last as a binary PPM, at the
+//! screen's size whatever the window's; `--hold up,right` holds pad 1's buttons, and `--touch
+//! up,right` puts fingers on the screen's pad's. With `SDL_VIDEODRIVER=dummy` and
 //! `SDL_RENDER_DRIVER=software` no window appears — how Vega's checks play a game.
+//!
+//! **On a phone** (`std.game` asks SDL which platform it is): the whole screen, at its real
+//! pixels — a 384 × 216 screen ×5 on a phone held sideways, not ×1 as its points would make it
+//! — landscape whichever way it is held, and a pad on the screen for the fingers
+//! (`std.game.pad`'s [touch_layout], drawn in the screen's real pixels over the game).
+//! Leaving the app pauses the game; coming back, it goes on where it was, with no time to
+//! catch up. A relative `--ppm` is written in the app's own folder.
 
+import bindings.sdl3
 import bindings.sdl3.{
-  init, quit, last_error, INIT_VIDEO, INIT_GAMEPAD, Window, create_window, destroy_window,
-  WINDOW_RESIZABLE, Renderer, destroy_renderer, PRESENT_INTEGER_SCALE, SCALE_NEAREST,
-  set_default_scale_mode, Color, rgb, Rect, Texture, create_texture, destroy_texture,
-  draw_texture_flipped, draw_texture_rotated, set_texture_alpha, set_texture_color,
-  set_texture_blend, BLEND_ALPHA, BLEND_ADD, FLIP_NONE, FLIP_HORIZONTAL, FLIP_VERTICAL,
-  poll_event, KEY_ESCAPE, ticks_ns,
+  init,
+  quit,
+  last_error,
+  INIT_VIDEO,
+  INIT_GAMEPAD,
+  Window,
+  create_window,
+  destroy_window,
+  WINDOW_RESIZABLE,
+  WINDOW_FULLSCREEN,
+  WINDOW_HIGH_PIXEL_DENSITY,
+  HINT_ORIENTATIONS,
+  set_hint,
+  pref_path,
+  PRESENT_DISABLED,
+  BLEND_NONE,
+  Renderer,
+  destroy_renderer,
+  PRESENT_INTEGER_SCALE,
+  SCALE_NEAREST,
+  set_default_scale_mode,
+  Color,
+  rgb,
+  Rect,
+  Texture,
+  create_texture,
+  destroy_texture,
+  draw_texture_flipped,
+  draw_texture_rotated,
+  set_texture_alpha,
+  set_texture_color,
+  set_texture_blend,
+  BLEND_ALPHA,
+  BLEND_ADD,
+  FLIP_NONE,
+  FLIP_HORIZONTAL,
+  FLIP_VERTICAL,
+  poll_event,
+  KEY_ESCAPE,
+  ticks_ns,
 }
 import std.io.{ write_bytes }
 import std.game.pad
@@ -68,16 +111,27 @@ pub const MAX_STEPS: i64 = 5
 /// `--ppm`, `--hold`).
 pub let open = (title: string, width: i64, height: i64) -> bool => {
   if !read_arguments() { return false }
+  // A phone's window is its whole screen, in its real pixels, on its side.
+  let platform = sdl3.platform()
+  phone = platform == "iOS" || platform == "Android"
+  if phone {
+    set_hint(HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight")
+    pad.use_touch_screen()
+    if ppm_path != "" && !ppm_path.starts_with("/") {
+      if let Some(folder) = pref_path("Lyra", title) { ppm_path = folder ++ ppm_path }
+    }
+  }
   if !init(INIT_VIDEO | INIT_GAMEPAD) {
     println("SDL could not start: ${last_error()}")
     return false
   }
   let scale = if limit > 0 { 1 } else { WINDOW_SCALE }
+  let flags = if phone { WINDOW_FULLSCREEN | WINDOW_HIGH_PIXEL_DENSITY } else { WINDOW_RESIZABLE }
   let Some(w) = create_window(
     title,
     i32(width * scale),
     i32(height * scale),
-    WINDOW_RESIZABLE
+    flags
   ) else {
     println("could not open a window: ${last_error()}")
     quit()
@@ -111,10 +165,24 @@ pub let height = () -> i64 => screen_height
 pub let running = () -> bool => {
   while let Some(event) = poll_event() {
     match event {
-      Quit => { quitting = true },
-      KeyDown(key) => { if key == KEY_ESCAPE { quitting = true } },
+      Quit | Terminating => { quitting = true },
+      KeyDown(key) => {
+        if key == KEY_ESCAPE { quitting = true }
+        pad.track(event)
+      },
+      // Away, the game waits; back, it goes on where it was — the time away not owed.
+      WillEnterBackground => { paused = true },
+      DidEnterForeground => {
+        paused = false
+        last_ns = i64(ticks_ns())
+        owed_ns = 0
+      },
       _ => pad.track(event),
     }
+  }
+  if let Some(r) = renderer {
+    let (w, h) = r.output_size()
+    pad.set_touch_area(f32(w), f32(h))
   }
   !quitting && (limit <= 0 || frame < limit)
 }
@@ -123,6 +191,7 @@ pub let running = () -> bool => {
 /// refreshes at — on a 120 Hz screen 1, 0, 1, 0… Played with `--frames`, always 1, so a
 /// frame is the same on every machine.
 pub let updates_due = () -> i64 => {
+  if paused { return 0 }
   if limit > 0 { return 1 }
   let now = i64(ticks_ns())
   let (steps, owed) = accrue(owed_ns, now - last_ns)
@@ -174,6 +243,7 @@ pub let load_sprites<const N: i64> = (width: i64, pixels: ref [N]u32) -> bool =>
 /// `--ppm`, the last frame is written there first.
 pub let show = () -> void => {
   let Some(r) = renderer else { return }
+  if paused { return }
   r.set_draw_color(backdrop)
   r.clear()
   draw_planes(r, false)
@@ -185,6 +255,7 @@ pub let show = () -> void => {
     println("could not write ${ppm_path}")
     failed = true
   }
+  if pad.touch_pad_shown() { draw_touch_pad(r) }
   r.present()
 }
 
@@ -227,6 +298,9 @@ var tile_columns: i64 = 1
 var sprite_art: Maybe<Texture> = None
 var quitting = false
 var failed = false
+/// A phone's screen (full, real pixels, a pad for the fingers), and the app away from it.
+var phone = false
+var paused = false
 /// Frames shown, and — played with `--frames` — how many to show.
 var frame: i64 = 0
 var limit: i64 = 0
@@ -250,6 +324,14 @@ let read_arguments = () -> bool => {
       limit = n.max(1)
     } else if args[i] == "--ppm" {
       ppm_path = value
+    } else if args[i] == "--touch" {
+      match pad.buttons_named(value) {
+        Ok(buttons) => pad.touch(buttons),
+        Err(name) => {
+          println("--touch takes up, down, left, right, a, b, c and start, not ${name}")
+          return false
+        },
+      }
     } else if args[i] == "--hold" {
       match pad.buttons_named(value) {
         Ok(buttons) => pad.hold(buttons),
@@ -392,15 +474,63 @@ impl Sprite {
 let flips = pure (x: bool, y: bool) -> i32 =>
   (if x { FLIP_HORIZONTAL } else { FLIP_NONE }) | (if y { FLIP_VERTICAL } else { FLIP_NONE })
 
-/// The frame drawn so far, as a binary PPM at `path`: red, green, blue a pixel.
+/// The frame drawn so far, as a binary PPM at `path`: the screen's own pixels, red, green, blue
+/// each — read back from the window, which may show it larger (a phone's, ×5), a pixel of the
+/// screen taken from the middle of the square it was scaled to.
 let write_ppm = (r: Renderer, path: string) -> bool => {
   let Some(frame_pixels) = r.read_pixels() else { return false }
+  let scale = (frame_pixels.width / screen_width).min(frame_pixels.height / screen_height)
+  let (
+    w,
+    h
+  ) = if scale >= 1 { (
+    screen_width,
+    screen_height
+  ) } else { (frame_pixels.width, frame_pixels.height) }
+  let step = scale.max(1)
+  let left = (frame_pixels.width - w * step) / 2
+  let top = (frame_pixels.height - h * step) / 2
   var bytes: []u8 = []
-  for c in "P6\n${frame_pixels.width} ${frame_pixels.height}\n255\n" { bytes.push(u8(i64(c))) }
-  for p in frame_pixels.argb {
-    bytes.push(u8((p >> 16) & 0xFF))
-    bytes.push(u8((p >> 8) & 0xFF))
-    bytes.push(u8(p & 0xFF))
+  for c in "P6\n${w} ${h}\n255\n" { bytes.push(u8(i64(c))) }
+  for y in 0..<h {
+    for x in 0..<w {
+      let p = frame_pixels.argb[(top + y * step + step / 2) * frame_pixels.width + left + x * step + step / 2]
+      bytes.push(u8((p >> 16) & 0xFF))
+      bytes.push(u8((p >> 8) & 0xFF))
+      bytes.push(u8(p & 0xFF))
+    }
   }
   write_bytes(path, bytes)
+}
+
+/// The screen's pad (`std.game.pad`'s [touch_layout]) over the frame, in the window's real
+/// pixels rather than the screen's — so it can lie beside a game the window shows smaller,
+/// as a phone's does: see-through squares, those held brighter, each with its letter.
+let draw_touch_pad = (r: Renderer) -> void => {
+  let (w, h) = r.output_size()
+  r.set_logical_presentation(0, 0, PRESENT_DISABLED)
+  r.set_draw_blend(BLEND_ALPHA)
+  let layout = pad.touch_layout(f32(w), f32(h))
+  let held = pad.read(1)
+  for b in layout {
+    if b.label == "" { continue }
+    let lit = b.buttons != 0 && (held & b.buttons) == b.buttons
+    r.set_draw_color(Color { r: 255, g: 255, b: 255, a: if lit { 110 } else { 45 } })
+    r.fill_rect(Rect { x: b.x, y: b.y, w: b.width, h: b.height })
+    r.set_draw_color(Color { r: 255, g: 255, b: 255, a: 150 })
+    r.draw_rect(Rect { x: b.x, y: b.y, w: b.width, h: b.height })
+    // The letter, SDL's 8-pixel font grown to a third of the button.
+    let size = (b.height / 3.0).max(8.0)
+    let grow = size / 8.0
+    r.set_scale(grow, grow)
+    let across = f32(b.label.len()) * 8.0
+    r.debug_text(
+      (b.x + b.width / 2.0) / grow - across / 2.0,
+      (b.y + b.height / 2.0) / grow - 4.0,
+      b.label
+    )
+    r.set_scale(1.0, 1.0)
+  }
+  r.set_draw_blend(BLEND_NONE)
+  r.set_logical_presentation(i32(screen_width), i32(screen_height), PRESENT_INTEGER_SCALE)
 }

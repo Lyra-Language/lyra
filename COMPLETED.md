@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 10/13/26 — A module's unannotated `var`, read above its declaration, has a type there
+
+`std.game.pad`'s on-screen pad keeps its state below the functions using it, as the house
+style asks — `var touch_shown = false` — and `touch_shown = touch_shown || buttons != 0` failed
+code generation: "comparison of mismatched integer widths (i16 vs i64)". A `var` read before
+its declaration was checked had only its annotation to go on (10/11 resolved that one), and
+an unannotated one had nothing: the read was untyped, the `||` with it, and the `0` beside a
+`u16` fell to the backend's default width. A single-file program showed the same hole as
+`"${shown}"` with "no type recorded for interpolation segment". A plain literal initializer
+— a bool, number, character or string — is now inferred where it is read (the identifier's
+arm) or assigned (`effectiveType`), as the declaration will infer it; anything else still
+wants an annotation to be read above its declaration.
+`TestExec_AnUnannotatedModuleVarIsTypedAboveItsDeclaration` fails without it.
+
 ### 10/12/26 — `lyrac --target`: built for iOS and Linux from a Mac
 
 `lyrac` built for the machine it ran on and had no word for anything else: the IR named no

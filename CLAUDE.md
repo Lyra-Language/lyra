@@ -663,7 +663,11 @@ of Markdown.
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
   `cmd/lyrac/game_test.go`; a `Sprite` also fades, tints, turns, grows and draws as light —
-  what a console cannot — shown off by `examples/game/wisps.lyra`; `examples/game/walker.lyra`),
+  what a console cannot — shown off by `examples/game/wisps.lyra`; `examples/game/walker.lyra`;
+  **on a phone** the screen is the whole display in real pixels, landscape, with an on-screen
+  pad (`pad.touch_layout`, drawn in real pixels beside the game, `--touch` scripting it), a
+  pause while the app is away, and `--ppm` sampling the game's own pixels back out of the
+  scaled window — the walker's frame in the Simulator is the Mac's byte for byte),
   `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read only; tested against Go's
   `image/png` in `cmd/lyrac/png_test.go`), `std/xml.lyra` (read only; tested against Go's

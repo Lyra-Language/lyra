@@ -27,6 +27,13 @@ module std.game.pad
 //! **`--hold up,right,a`** (`std.game.screen` reads it) holds those buttons on pad 1 from
 //! the first frame — how a game is played without anyone at it, as Sheliak's `--hold` plays
 //! a ROM.
+//!
+//! **On a phone, a pad on the screen** ([touch_layout]): a d-pad bottom left and A, B, C
+//! bottom right, Start at the top right, drawn over the game (`std.game.screen`) from the first
+//! touch until a key or a gamepad button is pressed. A finger on one holds it on pad 1, as a
+//! key does — a game reads the same bits and changes nothing. The d-pad's corners hold two
+//! directions. **`--touch right,a`** puts a finger on those of the pad's buttons from the first
+//! frame — `--hold` through the screen, for testing a phone's controls.
 
 import bindings.sdl3.{
   key_held, SCANCODE_UP, SCANCODE_DOWN, SCANCODE_LEFT, SCANCODE_RIGHT, SCANCODE_Z,
@@ -56,7 +63,7 @@ pub const MODE: u16 = 0x0800
 /// `screen.running`, which is when the keyboard and gamepads are up to date.
 pub let read = (port: u8) -> u16 => {
   var buttons: u16 = 0
-  if port == 1 { buttons = held_keys() | holding }
+  if port == 1 { buttons = held_keys() | holding | touched_now() }
   let slot = i64(port) - 1
   if slot >= 0 && slot < pads.len() { buttons = buttons | from_gamepad(pads[slot]) }
   opposites_cancel(buttons)
@@ -98,9 +105,23 @@ pub let buttons_named = pure (names: string) -> Result<u16, string> => {
 /// Hold `buttons` on pad 1 from now on, whatever the keyboard says — `--hold`'s.
 pub let hold = (buttons: u16) -> void => { holding = buttons }
 
-/// A gamepad plugged in or out: the first two are pads 1 and 2, in the order they came.
+/// A gamepad plugged in or out — the first two are pads 1 and 2, in the order they came — a
+/// finger on the screen, or a key or button pressed, which hides the screen's pad.
 /// `std.game.screen` passes every event here.
 pub let track = (event: Event) -> void => match event {
+  FingerDown(id, x, y) => {
+    if touch_screen {
+      fingers = fingers.filter((f) => f.0 != id)
+      fingers.push((id, x, y))
+      touch_shown = true
+    }
+  },
+  FingerMotion(id, x, y) => {
+    fingers = fingers.map((f) => if f.0 == id { (id, x, y) } else { f })
+  },
+  FingerUp(id, _, _) => { fingers = fingers.filter((f) => f.0 != id) },
+  KeyDown(_) => { touch_shown = false },
+  GamepadButtonDown(_, _) => { touch_shown = false },
   GamepadAdded(id) => {
     if let Some(pad) = open_gamepad(id) { pads.push(pad) }
   },
@@ -120,10 +141,134 @@ pub let release = () -> void => {
   pads = []
 }
 
+/// One of the screen's pad's buttons: a rectangle in the screen's real pixels, and the pad
+/// buttons a finger on it holds — none for the d-pad's middle. `label` is what it shows,
+/// `""` for one that is not drawn (a corner of the d-pad, holding two directions).
+pub struct TouchButton {
+  x: f32,
+  y: f32,
+  width: f32,
+  height: f32,
+  buttons: u16,
+  label: string,
+}
+
+/// The screen's pad on a screen `width` × `height` real pixels: sized from its short side, so a
+/// button is about a thumb's on a phone; the d-pad a 3 × 3 grid bottom left (its corners
+/// diagonals), A, B and C in a row bottom right, Start small at the top right.
+pub let touch_layout = pure (width: f32, height: f32) -> []TouchButton => {
+  let unit = width.min(height) * 0.13
+  let margin = unit * 0.5
+  let left = margin
+  let top = height - margin - unit * 3.0
+  var layout: []TouchButton = []
+  let grid: [9]u16 = #[
+    UP | LEFT,
+    UP,
+    UP | RIGHT,
+    LEFT,
+    0,
+    RIGHT,
+    DOWN | LEFT,
+    DOWN,
+    DOWN | RIGHT
+  ]
+  let labels: [9]string = #["", "^", "", "<", "", ">", "", "v", ""]
+  for k in 0..<9 {
+    layout.push(TouchButton {
+      x: left + f32(k % 3) * unit,
+      y: top + f32(k / 3) * unit,
+      width: unit,
+      height: unit,
+      buttons: grid[k],
+      label: labels[k],
+    })
+  }
+  let row = height - margin - unit * 2.0
+  let faces: [3](u16, string) = #[(A, "A"), (B, "B"), (C, "C")]
+  for k in 0..<3 {
+    let (button, label) = faces[k]
+    layout.push(TouchButton {
+      x: width - margin - unit * (3.6 - 1.2 * f32(k)),
+      y: row,
+      width: unit,
+      height: unit,
+      buttons: button,
+      label: label,
+    })
+  }
+  layout.push(TouchButton {
+    x: width - margin - unit * 1.2,
+    y: margin,
+    width: unit * 1.2,
+    height: unit * 0.5,
+    buttons: START,
+    label: "START",
+  })
+  layout
+}
+
+/// The pad buttons fingers at `points` (real pixels) hold on `layout`.
+pub let touched = pure (layout: []TouchButton, points: [](f32, f32)) -> u16 => {
+  var buttons: u16 = 0
+  for (x, y) in points {
+    for b in layout {
+      if x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height { buttons = buttons | b.buttons }
+    }
+  }
+  buttons
+}
+
+/// Whether the screen's pad is shown: on a touch screen, since the last touch and until a key
+/// or gamepad button. `std.game.screen` draws it when it is.
+pub let touch_pad_shown = () -> bool => touch_shown
+
+/// This is a touch screen — a phone's or a tablet's — on which fingers hold the screen's pad's
+/// buttons. `std.game.screen` says so when it opens on one; elsewhere a trackpad's touches,
+/// which SDL reports as fingers too, hold nothing.
+pub let use_touch_screen = () -> void => { touch_screen = true }
+
+/// The screen's size in real pixels, which the pad is laid out over: `std.game.screen` sets it
+/// each frame.
+pub let set_touch_area = (width: f32, height: f32) -> void => {
+  touch_width = width
+  touch_height = height
+}
+
+/// Fingers on `buttons` of the screen's pad from now on, whatever the screen is touched —
+/// `--touch`'s. Shows the pad.
+pub let touch = (buttons: u16) -> void => {
+  scripted_touch = buttons
+  touch_shown = touch_shown || buttons != 0
+}
+
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
 var pads: []Gamepad = []
 var holding: u16 = 0
+
+/// The touch screen, the fingers on it (id, and where, 0–1), its size in pixels, whether its
+/// pad shows, and `--touch`'s buttons.
+var touch_screen = false
+var fingers: [](u64, f32, f32) = []
+var touch_width: f32 = 0.0
+var touch_height: f32 = 0.0
+var touch_shown = false
+var scripted_touch: u16 = 0
+
+/// The buttons fingers hold on the screen's pad now — the fingers on the screen, and
+/// `--touch`'s on the middle of each of its buttons, through the same hit test.
+let touched_now = () -> u16 => {
+  if touch_width <= 0.0 || (fingers.len() == 0 && scripted_touch == 0) { return 0 }
+  let layout = touch_layout(touch_width, touch_height)
+  var points = fingers.map((f) => (f.1 * touch_width, f.2 * touch_height))
+  for b in layout {
+    if b.label != "" && (b.buttons & scripted_touch) == b.buttons {
+      points.push((b.x + b.width / 2.0, b.y + b.height / 2.0))
+    }
+  }
+  touched(layout, points)
+}
 
 /// How far a stick must lean, of 32767, before it counts as the d-pad: half-way.
 const STICK_THRESHOLD: i16 = 16384

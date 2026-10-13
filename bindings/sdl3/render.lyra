@@ -75,6 +75,19 @@ unsafe extern sdl_set_render_vsync: (renderer: Renderer, vsync: i32) -> bool
 @symbol("SDL_SetRenderDrawColor")
 unsafe extern sdl_set_draw_color: (renderer: Renderer, r: u8, g: u8, b: u8, a: u8) -> bool
 
+@symbol("SDL_SetRenderDrawBlendMode")
+unsafe extern sdl_set_render_draw_blend_mode: (renderer: Renderer, mode: u32) -> bool
+
+@symbol("SDL_SetRenderScale")
+unsafe extern sdl_set_render_scale: (renderer: Renderer, x: f32, y: f32) -> bool
+
+@symbol("SDL_GetRenderOutputSize")
+unsafe extern sdl_get_render_output_size: (
+  renderer: Renderer,
+  w: ^mut i32,
+  h: ^mut i32
+) -> bool
+
 @symbol("SDL_RenderClear")
 unsafe extern sdl_render_clear: (renderer: Renderer) -> bool
 
@@ -190,6 +203,25 @@ impl Renderer {
 
   /// Fill the whole target with the current draw colour.
   pub let clear = (self) -> bool => unsafe { sdl_render_clear(self) }
+
+  /// How what is drawn next — points, lines, rectangles — meets what is there: `BLEND_NONE`
+  /// (replacing it, SDL's default), or `BLEND_ALPHA` for a colour's alpha to see through.
+  pub let set_draw_blend = (self, mode: u32) -> bool =>
+    unsafe { sdl_set_render_draw_blend_mode(self, mode) }
+
+  /// Draw everything that follows `x` and `y` times its size — [debug_text]'s 8-pixel letters
+  /// grown for a large screen. `1, 1` is as drawn.
+  pub let set_scale = (self, x: f32, y: f32) -> bool =>
+    unsafe { sdl_set_render_scale(self, x, y) }
+
+  /// The whole window's size, in its real pixels — a phone's, not its points — whatever logical
+  /// screen is drawn in it (`SDL_GetCurrentRenderOutputSize` answers that screen's share).
+  pub let output_size = (self) -> (i64, i64) => {
+    var w: i32 = 0
+    var h: i32 = 0
+    unsafe { sdl_get_render_output_size(self, &mut w, &mut h) }
+    (i64(w), i64(h))
+  }
 
   /// Plot one point in the current draw colour.
   pub let draw_point = (self, x: f32, y: f32) -> bool =>

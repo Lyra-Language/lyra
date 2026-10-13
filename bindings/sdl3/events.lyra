@@ -91,6 +91,34 @@ struct GamepadDeviceEvent {
   which: u32,
 }
 
+/// `SDL_GamepadButtonEvent` — a pad's button pressed or let go.
+struct GamepadButtonEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  which: u32,
+  button: u8,
+  down: u8,
+  padding1: u8,
+  padding2: u8,
+}
+
+/// `SDL_TouchFingerEvent` — a finger on a touch screen (or a trackpad), its place normalised
+/// to 0–1 across the window.
+struct TouchFingerEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  touch: u64,
+  finger: u64,
+  x: f32,
+  y: f32,
+  dx: f32,
+  dy: f32,
+  pressure: f32,
+  window: u32,
+}
+
 /// `SDL_Event` — 128 bytes, read as a `u32` to find the tag and as a struct to read the
 /// payload that tag selects.
 ///
@@ -106,10 +134,15 @@ union RawEvent {
   button: MouseButtonEvent,
   wheel: MouseWheelEvent,
   device: GamepadDeviceEvent,
+  gamepad_button: GamepadButtonEvent,
+  finger: TouchFingerEvent,
   padding: [128]u8,
 }
 
 const EVENT_QUIT: u32 = 0x100
+const EVENT_TERMINATING: u32 = 0x101
+const EVENT_WILL_ENTER_BACKGROUND: u32 = 0x103
+const EVENT_DID_ENTER_FOREGROUND: u32 = 0x106
 const EVENT_KEY_DOWN: u32 = 0x300
 const EVENT_KEY_UP: u32 = 0x301
 const EVENT_MOUSE_MOTION: u32 = 0x400
@@ -119,8 +152,13 @@ const EVENT_MOUSE_WHEEL: u32 = 0x403
 /// `SDL_MOUSEWHEEL_FLIPPED`: the platform's "natural scrolling" is on, and the amounts
 /// arrive negated. [poll_event] undoes it, so a wheel event always means the same thing.
 const WHEEL_FLIPPED: u32 = 1
+const EVENT_GAMEPAD_BUTTON_DOWN: u32 = 0x651
 const EVENT_GAMEPAD_ADDED: u32 = 0x653
 const EVENT_GAMEPAD_REMOVED: u32 = 0x654
+const EVENT_FINGER_DOWN: u32 = 0x700
+const EVENT_FINGER_UP: u32 = 0x701
+const EVENT_FINGER_MOTION: u32 = 0x702
+const EVENT_FINGER_CANCELED: u32 = 0x703
 
 
 /// One thing that happened, as a type that records which thing it is.
@@ -140,6 +178,21 @@ pub data Event =
   | MouseWheel(f32, f32)
   | GamepadAdded(u32)
   | GamepadRemoved(u32)
+  /// A gamepad's button pressed: the pad's id, and the button (`BUTTON_*`).
+  | GamepadButtonDown(u32, u8)
+  /// A finger touching, moving or lifted — its id, and where, `0.0`–`1.0` across and down
+  /// the window. A finger the system took back (a gesture of its own) is lifted.
+  | FingerDown(u64, f32, f32)
+  | FingerMotion(u64, f32, f32)
+  | FingerUp(u64, f32, f32)
+  /// The app about to leave the screen (another app, the home screen, a call), and back on
+  /// it: on a phone, a game pauses between them. **Arrives late**: SDL asks for these in a
+  /// callback (`SDL_AddEventWatch`), and polled they can come only when the app is running
+  /// again — enough to stop a game catching up the time it was away.
+  | WillEnterBackground
+  | DidEnterForeground
+  /// The system is ending the app.
+  | Terminating
   | Other(u32)
 
 @symbol("SDL_PollEvent")
@@ -188,6 +241,35 @@ let classify = pure (raw: RawEvent) -> Event => {
   } else if kind == EVENT_MOUSE_WHEEL {
     let sign: f32 = if unsafe { raw.wheel.direction } == WHEEL_FLIPPED { -1.0 } else { 1.0 }
     MouseWheel(unsafe { raw.wheel.x } * sign, unsafe { raw.wheel.y } * sign)
+  } else if kind == EVENT_TERMINATING {
+    Terminating
+  } else if kind == EVENT_WILL_ENTER_BACKGROUND {
+    WillEnterBackground
+  } else if kind == EVENT_DID_ENTER_FOREGROUND {
+    DidEnterForeground
+  } else if kind == EVENT_GAMEPAD_BUTTON_DOWN {
+    GamepadButtonDown(
+      unsafe { raw.gamepad_button.which },
+      unsafe { raw.gamepad_button.button }
+    )
+  } else if kind == EVENT_FINGER_DOWN {
+    FingerDown(
+      unsafe { raw.finger.finger },
+      unsafe { raw.finger.x },
+      unsafe { raw.finger.y }
+    )
+  } else if kind == EVENT_FINGER_MOTION {
+    FingerMotion(
+      unsafe { raw.finger.finger },
+      unsafe { raw.finger.x },
+      unsafe { raw.finger.y }
+    )
+  } else if kind == EVENT_FINGER_UP || kind == EVENT_FINGER_CANCELED {
+    FingerUp(
+      unsafe { raw.finger.finger },
+      unsafe { raw.finger.x },
+      unsafe { raw.finger.y }
+    )
   } else if kind == EVENT_GAMEPAD_ADDED {
     GamepadAdded(unsafe { raw.device.which })
   } else if kind == EVENT_GAMEPAD_REMOVED {

@@ -76,6 +76,9 @@ unsafe extern sdl_get_version: () -> i32
 @symbol("SDL_GetPlatform")
 unsafe extern sdl_get_platform: () -> ^u8
 
+@symbol("SDL_SetHint")
+unsafe extern sdl_set_hint: (name: ^u8, value: ^u8) -> bool
+
 /// Bring up the named subsystems. `false` means SDL refused; [last_error] says why.
 ///
 /// SDL3's predicates answer C's `bool`, and every extern here declares it as Lyra's `bool`:
@@ -117,3 +120,12 @@ pub let platform = () -> string => {
     unsafe { p.decode_utf8(cstring_len(p)) }
   }
 }
+
+/// Ask SDL to behave a way it has a hint for — before what it affects starts, mostly before
+/// [init] or the window. Whether SDL took it.
+pub let set_hint = (name: string, value: string) -> bool =>
+  name.with_cstring((n) => value.with_cstring((v) => unsafe { sdl_set_hint(n, v) }))
+
+/// The orientations a phone's window may take, space-separated — `"LandscapeLeft
+/// LandscapeRight"` keeps a game on its side, whichever way the phone is held.
+pub const HINT_ORIENTATIONS: string = "SDL_ORIENTATIONS"
