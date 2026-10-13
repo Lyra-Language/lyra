@@ -108,7 +108,7 @@ func PlatformNamed(name string) (Platform, error) {
 		name = alias()
 	}
 	if p, ok := platforms[name]; ok {
-		return p, nil
+		return asMachine(p), nil
 	}
 	return Platform{}, fmt.Errorf("unknown platform %q; the platforms are %s", name, strings.Join(PlatformNames(), ", "))
 }
@@ -118,20 +118,33 @@ func PlatformNamed(name string) (Platform, error) {
 // does not know is an error, never a guess: its OS facts (a `struct dirent`'s layout, an
 // ioctl's number) would be wrong in silence.
 func Machine() (Platform, error) {
-	var name string
-	switch runtime.GOOS {
-	case "darwin":
-		name = "macos-" + machineArch()
-	case "linux":
-		name = "linux-" + machineArch()
-	default:
-		return Platform{}, fmt.Errorf("lyrac does not know this machine's platform (%s/%s)", runtime.GOOS, runtime.GOARCH)
-	}
-	p, ok := platforms[name]
+	p, ok := platforms[machineName()]
 	if !ok {
 		return Platform{}, fmt.Errorf("lyrac does not know this machine's platform (%s/%s)", runtime.GOOS, runtime.GOARCH)
 	}
-	return p, nil
+	return asMachine(p), nil
+}
+
+// machineName is the table's name for this machine, "" for an OS it has none for.
+func machineName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macos-" + machineArch()
+	case "linux":
+		return "linux-" + machineArch()
+	}
+	return ""
+}
+
+// asMachine is p as this machine builds and runs it: the table's Linux rows are for
+// building from a Mac (zig, Docker), but on that Linux itself a program is linked by its own
+// C compiler and run in place — as named by `--target` too. Found 10/13 by the suite run on
+// Linux (`asan.sh ./...`), where every `lyrac run` asked for Docker.
+func asMachine(p Platform) Platform {
+	if p.Name == machineName() {
+		p.Linker, p.Runner = MachineCC, Local
+	}
+	return p
 }
 
 // IsMachine reports whether p is the machine lyrac runs on: built in one step by the

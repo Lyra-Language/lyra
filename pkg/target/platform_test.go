@@ -47,6 +47,9 @@ func TestMachine_IsThisMachine(t *testing.T) {
 	if m.OS != wantOS || !m.IsMachine() || m.Runner != Local {
 		t.Errorf("Machine() = %+v on %s", m, runtime.GOOS)
 	}
+	if named, err := PlatformNamed(m.Name); err != nil || named != m {
+		t.Errorf("--target %s is not the machine as Machine() gives it: %+v", m.Name, named)
+	}
 	sim, _ := PlatformNamed("ios-simulator")
 	if sim.IsMachine() {
 		t.Error("the iOS Simulator is never the machine")

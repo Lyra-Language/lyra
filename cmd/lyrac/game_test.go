@@ -721,6 +721,10 @@ func asLyrac(args ...string) *exec.Cmd {
 // margin), not read from it.
 func TestRun_GameTouchPadLayout(t *testing.T) {
 	requireCC(t)
+	// The layout is pure, but std.game.pad imports SDL3, which the program links.
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
 	t.Setenv("LYRA_STD", repoRoot(t))
 	const w, h = 2556.0, 1179.0
 	unit := h * 0.13

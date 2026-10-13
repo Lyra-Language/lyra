@@ -552,7 +552,9 @@ table (`host`, `genesis`: host, heap, CPU, emulated types). The driver records i
 for a `Platform`** (`platform.go`) — `macos-*`, `ios`, `ios-simulator`, `linux-*`: its triple,
 OS, processor, Apple SDK, linker (the machine's C compiler; Xcode's clang with the SDK; `zig
 cc`) and runner (here; `simctl spawn`; Docker). `--target` names one (`PlatformNamed`), else
-`Machine()` — **the one place `runtime.GOOS` is asked**. Every platform is LP64.
+`Machine()` — **the one place `runtime.GOOS` is asked**. **The machine's own row is built and
+run as the machine** (`asMachine`, by either way in): the Linux rows link with zig and run in
+Docker from a Mac, but on that Linux with its own compiler, in place. Every platform is LP64.
 
 **`cmd/lyrac`'s builds for another platform** (`platform.go`) are two steps: clang
 `--target=<triple> [-isysroot <sdk>] -c prog.ll`, then the platform's linker; the machine's

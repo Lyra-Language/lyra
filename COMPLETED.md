@@ -9,6 +9,17 @@ Newest first.
 
 ## Dated log
 
+### 10/13/26 — On Linux, `lyrac run` ran the program in place again
+
+The platform table's Linux rows describe building *from a Mac* — linked by `zig cc`, run in
+Docker — and `Machine()` handed the row back unchanged, so on Linux itself every `lyrac run`
+asked for Docker (`cannot run docker`), and `TestMachine_IsThisMachine` failed. The build was
+right all along: it goes by `IsMachine()`, a name match. Only the runner was wrong, and only
+the suite run on Linux could see it (`./asan.sh ./...`; the Mac's suite never takes a Linux
+row as its machine). `asMachine` now gives the machine's row its own compiler and `Local`,
+from `Machine()` and from `--target` naming it alike; the test holds the two equal. The same
+run found `TestRun_GameTouchPadLayout` linking SDL3 without skipping where there is none.
+
 ### 10/12/26 — iOS games: `std.game` programs as apps, in the Simulator and on a device
 
 `--target ios|ios-simulator` built command-line programs; a game could not run. Five things
