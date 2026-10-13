@@ -22,6 +22,12 @@ type IdentifierExpr struct {
 	ExprBase
 	Name    string
 	IsConst bool
+	// FromMethodCall marks the callee the typechecker builds from a method-form call
+	// (`b.get(k)` → `get(b, k)`, desugarUFCSCall). It names a module-level function the
+	// file can see — never a local binding — so a pass resolving names lexically must not
+	// read it as one: a local closure also called `get` was taken for a capture of itself
+	// (10/13, "captured binding "get" is not in scope").
+	FromMethodCall bool
 }
 
 func (i *IdentifierExpr) GetName() string {

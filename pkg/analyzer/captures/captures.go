@@ -296,7 +296,9 @@ func collectInto(body []ast.Expression, bound map[string]bool, reads map[string]
 	onExpr := func(e ast.Expression) bool {
 		switch v := e.(type) {
 		case *ast.IdentifierExpr:
-			if reads == nil {
+			// A method-form call's callee names a module-level function, whatever a local
+			// of its name says (ast.IdentifierExpr.FromMethodCall).
+			if reads == nil || v.FromMethodCall {
 				break
 			}
 			if _, seen := reads[v.Name]; !seen {

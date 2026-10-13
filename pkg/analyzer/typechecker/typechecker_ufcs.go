@@ -505,7 +505,7 @@ func UFCSCallable(symTable *symbols.SymbolTable, name string, fn *ast.LambdaExpr
 func (tc *TypeChecker) desugarUFCSCall(
 	member *ast.MemberExpr, call *ast.FunctionCallExpr, fn *ast.LambdaExpr,
 ) {
-	callee := &ast.IdentifierExpr{Name: member.Property.Name}
+	callee := &ast.IdentifierExpr{Name: member.Property.Name, FromMethodCall: true}
 	callee.Location = member.Property.GetLocation()
 	if fn != nil {
 		if sig := tc.lambdaSignature(fn); sig != nil {

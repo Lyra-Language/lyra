@@ -9,6 +9,19 @@ Newest first.
 
 ## Dated log
 
+### 10/13/26 — A closure named like the method it calls is no capture of itself
+
+Vega's command reader bound a closure `field` whose body called `v.field(key)`, and the
+backend refused it: "captured binding "field" is not in scope where the closure is created".
+The typechecker rewrites a method-form call on a declared function into a direct one
+(`b.get(k)` → `get(b, k)`, `desugarUFCSCall`) with a fresh identifier as the callee — and the
+capture analysis, which resolves names lexically, read that identifier as the enclosing
+`let get`, the closure being defined. The callee always names a module-level function the
+file can see, so the identifier now says so (`ast.IdentifierExpr.FromMethodCall`) and
+captures skip it. Lowering already resolved it right (a later `b.get(2)` beside a local
+`get` called the method); only the capture pass misread it. `TestExec_Closures` has the
+case.
+
 ### 10/13/26 — A branch as a construction's payload takes its context; its arms are range-checked
 
 Vega's `poll_game_build` wrote `Some(if b { Ok([]) } else { Err("…") })` against

@@ -27,6 +27,21 @@ func TestExec_Closures(t *testing.T) {
 			 let main = () -> u8 => u8(apply(double, 3))`,
 			6,
 		},
+		// A method-form call inside a closure bound to the method's own name: the call is
+		// rewritten to `get(b, k)`, whose callee is the module's function, not the closure
+		// being defined — read as a capture of itself, it was "captured binding "get" is
+		// not in scope" (10/13, Vega's `read_edit` and its `field`).
+		{
+			"a closure named like the method it calls",
+			`struct Box { n: i64 }
+			 impl Box { pub let get = pure (self, k: i64) -> i64 => self.n + k }
+			 let main = () -> u8 => {
+			   let b = Box { n: 40 }
+			   let get = (k: i64) -> i64 => b.get(k)
+			   u8(get(2))
+			 }`,
+			42,
+		},
 		// A lambda bound locally and called by name: the binding holds a closure
 		// value, so this is an indirect call, not a direct one.
 		{
