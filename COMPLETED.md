@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 10/12/26 — iOS games: `std.game` programs as apps, in the Simulator and on a device
+
+`--target ios|ios-simulator` built command-line programs; a game could not run. Five things
+stood between: no SDL3 for iOS, no way to link Apple's frameworks, SDL refusing to start
+outside `SDL_RunApp`, no app bundle, and a `std.game` made for a desktop window. Now
+`lyrac run --target ios-simulator examples/game/walker.lyra` plays in the Simulator and
+`--target ios` on an iPhone, and Vega's File > Platform builds and runs there.
+
+- **SDL3 is built like the M68k LLVM** (`tools/sdl3-ios.sh`: a pinned, SHA-checked 3.4
+  release, static, into `build/lib/<platform>/`), and **frameworks need no language change**:
+  a static install's `sdl3.pc` lists every one, so the cross link answers `@link(pkg:)` with
+  that platform's pkg-config alone. HIDAPI is off — its CoreBluetooth wants a usage string in
+  every app.
+- **A program over SDL3 is an app; one without stays a command-line program.** The backend
+  emits the entry as `lyra_main` (`EntrySymbol`) and `runtime/ios/main.c` hands it to
+  `SDL_RunApp`, then exits with its status — SDL never returns from UIKit's loop by itself.
+  **`simctl launch` answers 0 whatever the app did**, so the start-up prints `lyra-exit: N`
+  last and `appOutput` strips it, with the launchers' own lines (devicectl's two were caught
+  only on a device).
+- **The proof is the frame**: the walker's in the Simulator is the Mac's byte for byte, read
+  at the game's own size (`write_ppm` samples the logical frame — `SDL_GetCurrentRenderOutputSize`
+  gave the logical share, `SDL_GetRenderOutputSize` the pixels). The wisps' is the same
+  picture, not the same bytes: Metal rounds a blend and samples a turned sprite otherwise.
+  Vega's modern hero is within 2 a channel, in the glow alone.
+- **`std.game` on a phone**: full screen at the display's pixels (the 216-line screen ×5, not
+  ×1), landscape by hint, an on-screen pad hit-tested from the fingers into `pad.read(1)`
+  (`--touch` for the tests, as `--hold`), paused in the background with the clock reset on
+  return so nothing catches up in a burst.
+- **A device** signs with the provisioning profile covering the app (exact before a
+  wildcard), the keychain identity whose certificate it carries, and the profile's
+  entitlements narrowed to the app; `devicectl` installs and launches it. A real device has
+  no `reality` field and its tunnel reads disconnected while idle, so "connected" is
+  `reality != "simulated"` and paired. Developer Mode off is the one refusal a person meets
+  first, and is said in one line.
+- Found on the way: an unannotated module `var` read above its declaration had no type
+  (below), and a stopped `lyrac run` left its app running (above).
+
 ### 10/12/26 — A stopped `lyrac run` ends the app it launched
 
 Vega's Run on iOS is `lyrac run --target` kept as the running game, and Vega stops a game by
