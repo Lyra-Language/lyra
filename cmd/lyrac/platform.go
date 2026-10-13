@@ -183,8 +183,11 @@ func runCommand(p target.Platform, exe string, args []string) (*exec.Cmd, error)
 		docker := []string{"run", "--rm", "-i", "--platform", "linux/" + dockerArch(p),
 			"-v", filepath.Dir(abs) + ":/lyra", linuxImage(), "/lyra/" + filepath.Base(abs)}
 		return exec.Command("docker", append(docker, args...)...), nil
+	case target.Device:
+		return nil, fmt.Errorf("a program for %s is built here, not run: only an app runs on a device — "+
+			"a program over SDL3 is one (std.game's games)", p.Name)
 	default:
-		return nil, fmt.Errorf("a program for %s is built here, not run: install it through Xcode (app bundles come with iOS support)", p.Name)
+		return nil, fmt.Errorf("a program for %s is built here, not run", p.Name)
 	}
 }
 

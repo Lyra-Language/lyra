@@ -733,8 +733,9 @@ target = "genesis"
   not the code's: **`lyrac build --target <platform>`** — `ios`, `ios-simulator`,
   `linux-arm64`, `linux-x86_64`, `macos` (`macos`/`linux` are this machine's processor's) —
   with this machine's platform when none is given. One program builds for each. `run --target`
-  runs it there: `ios-simulator` in a booted iOS Simulator, `linux-*` in a Docker container; a
-  device's program (`ios`) is built, not run. iOS needs Xcode; Linux is linked by `zig cc`
+  runs it there: `ios-simulator` in a booted iOS Simulator, `linux-*` in a Docker container,
+  `ios` on a connected iPhone or iPad — an app only, signed with a provisioning profile
+  Xcode made for the developer's team. iOS needs Xcode; Linux is linked by `zig cc`
   (glibc 2.36, Debian 12's). `--target` on a `genesis` program is an error: it has no
   operating system to choose. Every platform is 64-bit (LP64). **On iOS a program over SDL3
   is an app** (`<name>.app`, started through SDL so UIKit hosts it) — `std.game`'s games among

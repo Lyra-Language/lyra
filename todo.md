@@ -965,10 +965,10 @@ target, 10/11). In order:
   into it yet, and the bindings' C halves are built for the machine alone.
 - **[OPEN] iOS** — SDL3 for iOS links (`tools/sdl3-ios.sh`), and a program over it is an app
   started through `SDL_RunApp`, playing in the Simulator frame for frame as on the Mac, full
-  screen with an on-screen pad (10/13). Left: devices (signing, `devicectl`), and
-  `bindings.menubar`/`imgui` built per platform. Pausing in the background is seen only to
-  survive leaving and coming back; whether no time is caught up wants a device and a game
-  that does not stop at the screen's edge.
+  screen with an on-screen pad, and signed for and run on an iPhone (10/13: installed,
+  launched and stopped by `devicectl`; a device needs Developer Mode on). Left: the pad and
+  leaving the app checked by hand on a device, and `bindings.menubar`/`imgui` built per
+  platform.
 - **[OPEN] Android** — `aarch64-linux-android` is AAPCS64 too; the NDK's clang, a `.so` run by
   SDL's Java activity, an APK.
 - **[OPEN] Windows** — `abi.Win64` (1/2/4/8-byte aggregates as integers, else by pointer, no

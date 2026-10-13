@@ -58,7 +58,10 @@ const (
 	Simulator
 	// Docker runs it in a Linux container.
 	Docker
-	// NoRunner cannot run it from here: a device's program is installed, not run.
+	// Device installs an app on a connected iPhone or iPad and launches it (`devicectl`); a
+	// command-line program cannot run there.
+	Device
+	// NoRunner cannot run it from here.
 	NoRunner
 )
 
@@ -68,7 +71,7 @@ var platforms = map[string]Platform{
 	"macos-x86_64": {Name: "macos-x86_64", Triple: "x86_64-apple-macosx", OS: "darwin", Arch: "x86_64", Linker: MachineCC, Runner: Local},
 	"ios": {
 		Name: "ios", Triple: "arm64-apple-ios17.0", OS: "ios", Arch: "arm64",
-		SDK: "iphoneos", Linker: AppleClang, Runner: NoRunner,
+		SDK: "iphoneos", Linker: AppleClang, Runner: Device,
 	},
 	"ios-simulator": {
 		Name: "ios-simulator", Triple: "arm64-apple-ios17.0-simulator", OS: "ios", Arch: "arm64",

@@ -95,7 +95,7 @@ func buildApp(p target.Platform, cc, opt, llFile string, libs []string, bundle, 
 	if err := os.WriteFile(filepath.Join(bundle, "Info.plist"), []byte(infoPlist(p, name, id)), 0o644); err != nil {
 		return err
 	}
-	return signApp(p, bundle)
+	return signApp(p, bundle, id)
 }
 
 // infoPlist is the app's Info.plist: what iOS reads before it runs a line of it.
@@ -143,8 +143,12 @@ func iosMinimum(p target.Platform) string {
 	return version
 }
 
-// signApp signs the app: ad hoc for the Simulator, which needs no more.
-func signApp(p target.Platform, bundle string) error {
+// signApp signs the app: ad hoc for the Simulator, which needs no more; for a device, with a
+// provisioning profile and the developer identity it names (device.go).
+func signApp(p target.Platform, bundle, id string) error {
+	if devicePlatform(p) {
+		return signForDevice(bundle, id)
+	}
 	out, err := exec.Command("codesign", "--force", "--sign", "-", "--timestamp=none", bundle).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("signing %s failed: %v\n%s", bundle, err, out)
@@ -161,8 +165,9 @@ var stopApp func()
 // reads; "" for none.
 var launchedID string
 
-// appOutput passes a launched app's output on to w but for two lines that are the launch's,
-// not the program's: `simctl launch`'s own first line (`<bundle id>: <pid>`), and the
+// appOutput passes a launched app's output on to w but for the lines that are the launch's,
+// not the program's: `simctl launch`'s own first line (`<bundle id>: <pid>`) or devicectl's
+// two (`Launched application with …`, `Waiting for the application to terminate…`), and the
 // `lyra-exit: N` the start-up says last (runtime/ios/main.c), which is the status — `simctl`
 // answers 0 whatever the app did. A line is passed on whole, when it ends.
 type appOutput struct {
@@ -193,8 +198,12 @@ func (a *appOutput) Write(p []byte) (int, error) {
 				continue
 			}
 		}
-		if !a.launched && strings.HasPrefix(text, a.id+": ") {
+		// The launchers' own lines: simctl's `<id>: <pid>`, devicectl's two.
+		if !a.launched && (strings.HasPrefix(text, a.id+": ") || strings.HasPrefix(text, "Launched application with ")) {
 			a.launched = true
+			continue
+		}
+		if strings.HasPrefix(text, "Waiting for the application to terminate") {
 			continue
 		}
 		if _, err := a.w.Write(line); err != nil {
@@ -216,8 +225,11 @@ func (a *appOutput) flush() {
 // app to end. lyrac's `SDL_` variables and `TZ` reach the app (as `SIMCTL_CHILD_…`, the only
 // way the Simulator passes one).
 func appRunCommand(p target.Platform, bundle, id string, args []string) (*exec.Cmd, error) {
+	if p.Runner == target.Device {
+		return deviceRunCommand(bundle, id, args)
+	}
 	if p.Runner != target.Simulator {
-		return nil, fmt.Errorf("an app for %s is built here, not run (devices come next)", p.Name)
+		return nil, fmt.Errorf("an app for %s is built here, not run", p.Name)
 	}
 	device, err := simulatorDevice()
 	if err != nil {

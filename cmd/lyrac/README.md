@@ -67,7 +67,8 @@ this machine's. `tools/sdl3-ios.sh` installs SDL3 for iOS and the Simulator so. 
 - `linux-*`: `docker run --rm -i --platform linux/<arch> -v <dir>:/lyra <image>`, the image
   `$LYRA_LINUX_IMAGE`, else `debian:bookworm-slim` (glibc 2.36, what programs are linked
   against);
-- `ios`: refused — a device's program is installed, not run (app bundles: the iOS plan).
+- `ios`: an app installed and launched on a connected iPhone or iPad (`device.go`); a
+  command-line program is refused, since only an app runs there.
 
 **A program over SDL3 is an app on iOS** (`app.go`): its entry emitted as `lyra_main`,
 `<root>/runtime/ios/main.c` (`SDL_RunApp`, then `exit` with the status) compiled and linked
@@ -75,8 +76,19 @@ beside it, `-o x` writing `x.app/` (the program, an `Info.plist` — identifier 
 else `dev.lyra.x`; iPhone and iPad, landscape, `UILaunchScreen` — signed ad hoc). `run`
 installs it in the Simulator and launches it with `simctl launch --console-pty`, `SDL_*` and
 `TZ` passed as `SIMCTL_CHILD_…`; the app's status is its last line, `lyra-exit: N`
-(`appOutput`), since `simctl` answers 0; an interrupt terminates the app. A device's app is
-built and not yet run.
+(`appOutput`), since `simctl` answers 0; an interrupt terminates the app.
+
+**A device's app** (`device.go`) is signed with a provisioning profile: `$LYRA_IOS_PROFILE`,
+else the newest unexpired one Xcode keeps (`~/Library/Developer/Xcode/UserData/Provisioning
+Profiles/`) whose app identifier covers the app's — exact before a wildcard `TEAM.*` — read
+with `security cms -D` and a small XML plist reader (`parsePlist`). The identity is the
+keychain's whose certificate the profile carries (SHA-1, `security find-identity`); the
+entitlements are the app's identifier, the team and `get-task-allow`; the profile goes in as
+`embedded.mobileprovision`. `run` installs with `devicectl device install app` and launches
+with `devicectl device process launch --console --terminate-existing`, `SDL_*` and `TZ` as
+`DEVICECTL_CHILD_…`, on `$LYRA_IOS_DEVICE` or the first iPhone or iPad connected; an
+interrupt terminates the app by its process. `device_test.go` checks a device app's signature
+(`codesign --verify --strict`), skipping without a profile.
 
 `--target` on a `genesis` program is refused. `platform_test.go` builds and runs a program
 reading a directory (the platform's `struct dirent`) on each, skipping without Xcode, zig or

@@ -569,7 +569,10 @@ with its status; lyrac writes `<name>.app` (program, `Info.plist` with `UILaunch
 without it iOS runs the app below the screen's resolution — signed ad hoc) and `run` installs
 it and runs `simctl launch --console-pty`. **`simctl` answers 0 whatever the app did**, so the
 start-up's last line is `lyra-exit: N`, which `appOutput` strips and exits with. A program
-without SDL3 stays a command-line one (`simctl spawn`). `LYRA_TEST_TARGET=<platform>`
+without SDL3 stays a command-line one (`simctl spawn`). **A device's app** (`device.go`) is
+signed with the provisioning profile covering its identifier (exact before a wildcard
+`TEAM.*`, `$LYRA_IOS_PROFILE` first) and the keychain identity whose certificate it carries,
+the profile embedded; `run` installs and launches it with `devicectl`. `LYRA_TEST_TARGET=<platform>`
 runs `pkg/backend/llvm`'s behavioural suite there (`platform_harness_test.go`: every test
 binary through `command(bin, …)`, a Linux one in a container sharing the temp and cache
 directories at their own paths; the sanitizer tests skip).
