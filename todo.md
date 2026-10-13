@@ -529,6 +529,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
   and alternations below the top of a pattern (`Some(1 | 2)`, `(1 | 2, _)`, both refused
   today). Neither needed yet.
+- **[OPEN] An imported name the file also declares is silently its own.** `import
+  owner.{ OfMap }` beside a `data Tool = … | OfMap` compiles with no word, every `OfMap`
+  the file's — an import that does nothing, and a reader who trusts it misreads every use
+  (10/13, Vega's `commands.MapShapes` against the map editor's tool of that name). An
+  error naming both, as a duplicate declaration is.
 - **[OPEN] A data constructor resolves without its import**: `JsonString("a")` compiles with
   only `import std.json.{ parse_json }`, and listing `JsonString` draws `lyra-W004` ("never
   used") — yet std.json's own docs list `JsonNull`. Decide the rule; either the visibility or
