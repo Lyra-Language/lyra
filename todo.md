@@ -963,11 +963,10 @@ target, 10/11). In order:
   Simulator and Linux built from a Mac and the suite run on each (COMPLETED.md 10/12). Left
   for the platforms that need them: `<root>/lib/<platform>/` is searched but nothing builds
   into it yet, and the bindings' C halves are built for the machine alone.
-- **[OPEN] iOS** — SDL3 for iOS links, frameworks and all (`tools/sdl3-ios.sh`, the
-  platform's `sdl3.pc`; 10/13). A game still needs an entry through `SDL_RunApp` (`main` is
-  the backend's), an app bundle for `simctl install`/`launch` and a device, touch and
-  lifecycle events in `bindings.sdl3`, and `bindings.menubar`/`imgui` built per platform
-  (their `uname` and `__APPLE__` tests mean the machine).
+- **[OPEN] iOS** — SDL3 for iOS links (`tools/sdl3-ios.sh`), and a program over it is an app
+  started through `SDL_RunApp`, playing in the Simulator frame for frame as on the Mac (10/13).
+  Left: `std.game` on a phone (full screen, an on-screen pad, lifecycle), devices (signing,
+  `devicectl`), and `bindings.menubar`/`imgui` built per platform.
 - **[OPEN] Android** — `aarch64-linux-android` is AAPCS64 too; the NDK's clang, a `.so` run by
   SDL's Java activity, an APK.
 - **[OPEN] Windows** — `abi.Win64` (1/2/4/8-byte aggregates as integers, else by pointer, no

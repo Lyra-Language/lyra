@@ -69,6 +69,15 @@ this machine's. `tools/sdl3-ios.sh` installs SDL3 for iOS and the Simulator so. 
   against);
 - `ios`: refused — a device's program is installed, not run (app bundles: the iOS plan).
 
+**A program over SDL3 is an app on iOS** (`app.go`): its entry emitted as `lyra_main`,
+`<root>/runtime/ios/main.c` (`SDL_RunApp`, then `exit` with the status) compiled and linked
+beside it, `-o x` writing `x.app/` (the program, an `Info.plist` — identifier `--bundle-id`,
+else `dev.lyra.x`; iPhone and iPad, landscape, `UILaunchScreen` — signed ad hoc). `run`
+installs it in the Simulator and launches it with `simctl launch --console-pty`, `SDL_*` and
+`TZ` passed as `SIMCTL_CHILD_…`; the app's status is its last line, `lyra-exit: N`
+(`appOutput`), since `simctl` answers 0; an interrupt terminates the app. A device's app is
+built and not yet run.
+
 `--target` on a `genesis` program is refused. `platform_test.go` builds and runs a program
 reading a directory (the platform's `struct dirent`) on each, skipping without Xcode, zig or
 Docker.

@@ -150,6 +150,9 @@ const stopGrace = 2 * time.Second
 // close button — and killed if it has not gone within stopGrace. Windows has no
 // SIGTERM to send, so there it is killed at once.
 func (c *child) stop() {
+	if stopApp != nil {
+		stopApp() // an app in the Simulator, whose launcher the signal alone would not end it
+	}
 	if err := c.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		c.cmd.Process.Kill()
 	}

@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -130,7 +132,10 @@ type buildOptions struct {
 	// targetName is `--target`: the platform a program with an OS is built for
 	// (pkg/target's platforms); empty for the machine's.
 	targetName string
-	progress   bool // --progress: a "progress: N% stage" line on stderr as each starts
+	// bundleID is `--bundle-id`: an iOS app's identifier (app.go); empty for
+	// `dev.lyra.<name>`.
+	bundleID string
+	progress bool // --progress: a "progress: N% stage" line on stderr as each starts
 
 	// opt is the optimization level handed to the C compiler, as clang spells it
 	// ("-O2"). It defaults to -O2 rather than to clang's own -O0 default: this
@@ -185,7 +190,7 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 		}
 		// A flag taking a value consumes the next argument; running off the end
 		// is a usage error rather than an empty value silently taking effect.
-		takesValue := arg == "-o" || arg == "--cc" || arg == "--target"
+		takesValue := arg == "-o" || arg == "--cc" || arg == "--target" || arg == "--bundle-id"
 		if takesValue {
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "lyrac: %s needs a value\n", arg)
@@ -204,6 +209,8 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 			o.cc = args[i]
 		case arg == "--target":
 			o.targetName = args[i]
+		case arg == "--bundle-id":
+			o.bundleID = args[i]
 		case arg == "--emit-llvm":
 			o.emitOnly = true
 		case arg == "--keep-ll":
@@ -330,6 +337,33 @@ func runProgram(o buildOptions) int {
 		return code
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if launchedID != "" {
+		// The app's status is its last line, not its launcher's (app.go's appOutput).
+		out := newAppOutput(os.Stdout, launchedID)
+		cmd.Stdout = out
+		err := cmd.Run()
+		out.flush()
+		if err != nil {
+			return exitStatus(cmd, err)
+		}
+		if out.status < 0 {
+			fmt.Fprintf(os.Stderr, "lyrac: the app ended without saying how (it crashed, or was stopped)\n")
+			return 1
+		}
+		return out.status
+	}
+	// An app runs in the Simulator, not under lyrac: an interrupt reaches only the launcher,
+	// so the app is ended too (app.go's stopApp), as a program run here ends with lyrac.
+	if stopApp != nil {
+		interrupt := make(chan os.Signal, 1)
+		signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(interrupt)
+		go func() {
+			if _, ok := <-interrupt; ok {
+				stopApp()
+			}
+		}()
+	}
 	return exitStatus(cmd, cmd.Run())
 }
 
@@ -365,7 +399,14 @@ func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return nil, files, 2
 	}
-	cmd, err := runCommand(p, exe, o.programArgs)
+	// A run launches at most one app; one launched before (in a test's lyrac) is not this one.
+	launchedID, stopApp = "", nil
+	var cmd *exec.Cmd
+	if strings.HasSuffix(exe, ".app") {
+		cmd, err = appRunCommand(p, exe, bundleID(o, exe), o.programArgs)
+	} else {
+		cmd, err = runCommand(p, exe, o.programArgs)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return nil, files, 1
@@ -460,6 +501,10 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		return "", 2
 	}
 	be := llvm.NewForPlatform(p)
+	app := isApp(p, res)
+	if app {
+		be.EntrySymbol(appEntry) // runtime/ios/main.c's `main` calls it (app.go)
+	}
 	libs := linkFlags(res, p)
 	ir, err := be.Emit(res, entry)
 	if err != nil {
@@ -528,6 +573,14 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		return "", 1
 	}
 	exe := exePath(o)
+	if app {
+		bundle, _ := bundlePaths(exe)
+		if err := buildApp(p, cc, o.opt, llFile, libs, bundle, bundleID(o, bundle)); err != nil {
+			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+			return "", 1
+		}
+		return bundle, 0
+	}
 	if !p.IsMachine() {
 		if err := crossCompile(p, cc, o.opt, llFile, libs, exe); err != nil {
 			fmt.Fprintf(os.Stderr, "lyrac: %v", err)

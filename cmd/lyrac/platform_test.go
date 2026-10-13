@@ -104,29 +104,46 @@ func TestTarget_BuildsForAnIOSDevice(t *testing.T) {
 
 // A program over `bindings.sdl3` links SDL3 for the Simulator — the static library and its
 // frameworks `tools/sdl3-ios.sh` installs, its `sdl3.pc` saying which — and runs there.
+//
+// **A program over SDL3 is an app on iOS** (app.go): built as `<name>.app`, started through
+// `SDL_RunApp` — so SDL starts, which it refuses outside UIKit's application — and launched by
+// `simctl launch`. Its arguments reach it, and its status comes back, though `simctl` answers
+// 0 whatever the app did: the start-up's last line carries it.
 func TestTarget_LinksSDL3ForTheIOSSimulator(t *testing.T) {
-	requireSimulator(t)
-	build := filepath.Join(repoRoot(t), "build")
-	if _, err := os.Stat(filepath.Join(build, "lib", "ios-simulator", "lib", "libSDL3.a")); err != nil {
-		t.Skip("no SDL3 for the iOS Simulator; tools/sdl3-ios.sh builds it")
-	}
-	t.Setenv("LYRA_STD", build) // the install root: std/ and lib/<platform>/ beside each other
+	requireSimulatorSDL3(t)
 	src := filepath.Join(t.TempDir(), "version.lyra")
 	if err := os.WriteFile(src, []byte(`import bindings.sdl3
 
 let main = () -> u8 => {
-  println("SDL ${sdl3.version() / 1000000} on ${sdl3.platform()}")
-  0
+  let started = sdl3.init(sdl3.INIT_VIDEO)
+  println("SDL ${sdl3.version() / 1000000} on ${sdl3.platform()}, started ${started}, ${program_args().len()} args")
+  5
 }
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := captureRun(t, "run", "--target", "ios-simulator", src)
-	if code != 0 {
-		t.Fatalf("exit %d; %s", code, stderr)
+	stdout, stderr, code := captureRun(t, "run", "--target", "ios-simulator", src, "--", "a", "b")
+	if code != 5 {
+		t.Fatalf("exit %d, want the app's 5; %s", code, stderr)
 	}
-	if got := strings.TrimSpace(stdout); !strings.HasSuffix(got, "SDL 3 on iOS") {
-		t.Errorf("the program printed %q; want SDL 3 on iOS", got)
+	if got := strings.TrimSpace(stdout); got != "SDL 3 on iOS, started true, 3 args" {
+		t.Errorf("the app printed %q; want only its own line", got)
+	}
+	exe := filepath.Join(t.TempDir(), "version")
+	if _, stderr, code := captureRun(t, "build", "--target", "ios-simulator", "-o", exe, src); code != 0 {
+		t.Fatalf("build: exit %d; %s", code, stderr)
+	}
+	plist, err := os.ReadFile(filepath.Join(exe+".app", "Info.plist"))
+	if err != nil {
+		t.Fatalf("no app: %v", err)
+	}
+	for _, want := range []string{"<string>dev.lyra.version</string>", "<key>UILaunchScreen</key>", "<string>iPhoneSimulator</string>"} {
+		if !strings.Contains(string(plist), want) {
+			t.Errorf("the Info.plist lacks %s", want)
+		}
+	}
+	if out, err := exec.Command("codesign", "--verify", exe+".app").CombinedOutput(); err != nil {
+		t.Errorf("the app is not signed: %v\n%s", err, out)
 	}
 }
 
@@ -150,6 +167,19 @@ func requireSimulator(t *testing.T) {
 	if devices, err := simulators(); err != nil || len(devices) == 0 {
 		t.Skip("no iOS Simulator device is available")
 	}
+}
+
+// requireSimulatorSDL3 skips unless an app over SDL3 can be built and run in the iOS
+// Simulator — Xcode, a device, and SDL3 built for it by tools/sdl3-ios.sh — and points the
+// standard library at the install it is in (build/: std/ and lib/<platform>/ beside each other).
+func requireSimulatorSDL3(t *testing.T) {
+	t.Helper()
+	requireSimulator(t)
+	build := filepath.Join(repoRoot(t), "build")
+	if _, err := os.Stat(filepath.Join(build, "lib", "ios-simulator", "lib", "libSDL3.a")); err != nil {
+		t.Skip("no SDL3 for the iOS Simulator; tools/sdl3-ios.sh builds it")
+	}
+	t.Setenv("LYRA_STD", build)
 }
 
 // requireLinuxCross skips without zig to link a Linux program or Docker to run one.

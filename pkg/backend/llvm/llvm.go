@@ -123,6 +123,18 @@ type Backend struct {
 	// builtins are refused before the backend (checker.CheckTarget). **Told, never asked
 	// of the machine**: a program built here for another platform takes that one's facts.
 	os, arch string
+	// entry is the C symbol the program's entry is emitted as: `main`, unless the platform
+	// starts the program itself — an iOS app comes in through `SDL_RunApp`, which a shim's
+	// `main` calls with this (`lyra_main`; runtime/ios/main.c). EntrySymbol sets it.
+	entry string
+}
+
+// EntrySymbol emits the program's entry as the C function name rather than `main`, with
+// `main`'s signature (`i32 (i32, i8**)`) and everything it does — the arguments stashed, the
+// module's globals filled — for a runtime's own `main` to call. b, for chaining.
+func (b *Backend) EntrySymbol(name string) *Backend {
+	b.entry = name
+	return b
 }
 
 // New returns an LLVM backend for the machine it runs on (target.Machine).
@@ -186,6 +198,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		target:             b.target,
 		os:                 b.os,
 		arch:               b.arch,
+		entry:              b.entry,
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
 		seqSkipped:         map[string]bool{},
@@ -376,6 +389,8 @@ type lowerer struct {
 	target abi.Target
 	// os and arch are the platform's; see Backend.os.
 	os, arch string
+	// entry is the entry's C symbol; see Backend.entry ("" is `main`).
+	entry string
 	// externPlans holds the ABI plan for each foreign function whose signature carries an
 	// aggregate by value, keyed by the declared function so the call site can find it.
 	// Absent for every other extern, which is the common case.

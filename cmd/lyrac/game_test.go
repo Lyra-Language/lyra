@@ -510,6 +510,26 @@ func playGame(t *testing.T, src string, args ...string) ppm {
 	} else if err != nil {
 		t.Fatalf("playing: %v\n%s", err, out)
 	}
+	return readPPM(t, shot)
+}
+
+// playGameInSimulator is playGame in the iOS Simulator: src built as an app (cmd/lyrac/app.go)
+// and played there by `lyrac run --target ios-simulator`, in a real window, its frame written
+// to this machine's disk. Skips without Xcode, a Simulator device or SDL3 built for it.
+func playGameInSimulator(t *testing.T, src string, args ...string) ppm {
+	t.Helper()
+	requireSimulatorSDL3(t)
+	shot := filepath.Join(t.TempDir(), "frame.ppm")
+	runArgs := append([]string{"run", "--target", "ios-simulator", src, "--"}, args...)
+	if _, stderr, code := captureRun(t, append(runArgs, "--ppm", shot)...); code != 0 {
+		t.Fatalf("playing in the Simulator exited %d\nstderr: %s", code, stderr)
+	}
+	return readPPM(t, shot)
+}
+
+// readPPM reads the binary PPM a game wrote with `--ppm`.
+func readPPM(t *testing.T, shot string) ppm {
+	t.Helper()
 	data, err := os.ReadFile(shot)
 	if err != nil {
 		t.Fatal(err)
@@ -596,8 +616,30 @@ let main = () -> u8 => {
 // shows its screen — the night's dark field, and the wisp gone right and down, its light the
 // brightest thing about it.
 func TestRun_GameWispsPlaysItself(t *testing.T) {
-	frame := playGame(t, filepath.Join(repoRoot(t), "examples", "game", "wisps.lyra"),
-		"--frames", "150", "--hold", "right,down")
+	checkWisps(t, playGame(t, filepath.Join(repoRoot(t), "examples", "game", "wisps.lyra"),
+		"--frames", "150", "--hold", "right,down"))
+}
+
+// The games played as apps in the iOS Simulator (cmd/lyrac/app.go: SDL started through
+// SDL_RunApp, UIKit's window, SDL's Metal renderer): the walker's frame is the Mac's byte for
+// byte, and the wisps' is the same picture — not the same bytes, since the Metal renderer
+// rounds a blend and samples a turned sprite otherwise than the software one does.
+func TestRun_GamesPlayTheSameInTheIOSSimulator(t *testing.T) {
+	walker := filepath.Join(repoRoot(t), "examples", "game", "walker.lyra")
+	args := []string{"--frames", "30", "--hold", "right"}
+	ios := playGameInSimulator(t, walker, args...)
+	mac := playGame(t, walker, args...)
+	if ios.w != mac.w || ios.h != mac.h || !bytes.Equal(ios.rgb, mac.rgb) {
+		t.Errorf("the walker's frame in the Simulator (%dx%d) is not the Mac's (%dx%d)", ios.w, ios.h, mac.w, mac.h)
+	}
+	checkWisps(t, playGameInSimulator(t, filepath.Join(repoRoot(t), "examples", "game", "wisps.lyra"),
+		"--frames", "150", "--hold", "right,down"))
+}
+
+// checkWisps says whether frame is wisps.lyra held right and down: the wisp's light bottom
+// right on a dark field.
+func checkWisps(t *testing.T, frame ppm) {
+	t.Helper()
 	if frame.w != 384 || frame.h != 216 {
 		t.Fatalf("the frame is %dx%d, want 384x216", frame.w, frame.h)
 	}

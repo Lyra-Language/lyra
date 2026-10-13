@@ -736,7 +736,9 @@ target = "genesis"
   runs it there: `ios-simulator` in a booted iOS Simulator, `linux-*` in a Docker container; a
   device's program (`ios`) is built, not run. iOS needs Xcode; Linux is linked by `zig cc`
   (glibc 2.36, Debian 12's). `--target` on a `genesis` program is an error: it has no
-  operating system to choose. Every platform is 64-bit (LP64).
+  operating system to choose. Every platform is 64-bit (LP64). **On iOS a program over SDL3
+  is an app** (`<name>.app`, started through SDL so UIKit hosts it) — `std.game`'s games among
+  them; it plays in the Simulator as it does on the Mac, frame for frame.
 - **The file is small and strict**: top-level `key = "string"` lines, `#` comments. An unknown
   target or setting, or any other line, is **`lyra-E086`** at the top of the entry file —
   refused, not ignored, since an ignored setting is a program checked for the wrong machine.

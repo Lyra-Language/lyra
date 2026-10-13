@@ -214,7 +214,11 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	// including a module-level initializer below.
 	argcParam := ir.NewParam("argc", lltypes.I32)
 	argvParam := ir.NewParam("argv", lltypes.NewPointer(lltypes.NewPointer(lltypes.I8)))
-	fn := l.module.NewFunc("main", lltypes.I32, argcParam, argvParam)
+	symbol := l.entry
+	if symbol == "" {
+		symbol = "main"
+	}
+	fn := l.module.NewFunc(symbol, lltypes.I32, argcParam, argvParam)
 	l.beginFunction(lltypes.I32, entry.Lambda.ReturnType.Type, false, true) // entryABI: emitReturn handles the u8→i32 coercion
 	block := fn.NewBlock("entry")
 	l.storeProgramArgs(block, argcParam, argvParam)

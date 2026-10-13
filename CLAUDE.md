@@ -562,7 +562,14 @@ libraries are `<root>/lib/<platform>/`, and a `pkg:` is the platform's own `.pc`
 (`platformPkgFlags`: `--static --libs`, frameworks and all), never the machine's.
 **`tools/sdl3-ios.sh`** builds SDL3 for iOS and the Simulator into `build/lib/ios*/`: a
 pinned, SHA-checked release, static, without HIDAPI (whose CoreBluetooth would need a usage
-string in every app). `LYRA_TEST_TARGET=<platform>`
+string in every app). **An iOS program over SDL3 is an app** (`app.go`): SDL starts on iOS
+only inside UIKit's application, so the backend emits the entry as `lyra_main`
+(`Backend.EntrySymbol`) and `runtime/ios/main.c`'s `main` hands it to `SDL_RunApp`, exiting
+with its status; lyrac writes `<name>.app` (program, `Info.plist` with `UILaunchScreen` —
+without it iOS runs the app below the screen's resolution — signed ad hoc) and `run` installs
+it and runs `simctl launch --console-pty`. **`simctl` answers 0 whatever the app did**, so the
+start-up's last line is `lyra-exit: N`, which `appOutput` strips and exits with. A program
+without SDL3 stays a command-line one (`simctl spawn`). `LYRA_TEST_TARGET=<platform>`
 runs `pkg/backend/llvm`'s behavioural suite there (`platform_harness_test.go`: every test
 binary through `command(bin, …)`, a Linux one in a container sharing the temp and cache
 directories at their own paths; the sanitizer tests skip).
