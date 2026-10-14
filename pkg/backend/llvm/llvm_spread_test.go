@@ -140,3 +140,23 @@ func TestExec_ArraySpreadUnderASan(t *testing.T) {
 		t.Errorf("under ASan: exited %d; want 3", got)
 	}
 }
+
+// A spread of a literal takes the context's element type, as the literal would alone: under
+// `[]u8`, `[...[0x55, 0x55], ...[0x33; 2]]` is four bytes of 0x55, 0x55, 0x33, 0x33. The
+// inner literal was left `[]i64` and copied into the `u8` array a byte at a time — 85, 0, 51,
+// 0 — with nothing reported (10/14, a Vega check comparing an NES tile). A fixed operand
+// keeps its flavor, and a binding's spread its declared type.
+func TestExec_ArraySpreadOfALiteralTakesTheContextsWidth(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> void => {
+  let a: []u8 = [...[0x55, 0x55], ...[0x33; 2]]
+  let b: []u16 = [...#[1000, 2000], 3000]
+  let parts: []u8 = [7, 8]
+  let c: []u8 = [...parts, ...[9]]
+  println("${a.map((x) => "${x}").join(",")} ${b.map((x) => "${x}").join(",")} ${c.map((x) => "${x}").join(",")} ${a == [85, 85, 51, 51]}")
+}`
+	got := buildAndRunWithPrelude(t, src, "")
+	if want := "85,85,51,51 1000,2000,3000 7,8,9 true\n"; got != want {
+		t.Errorf("output %q; want %q", got, want)
+	}
+}

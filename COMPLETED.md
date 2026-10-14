@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/14/26 — A spread of a literal takes the context's width
+
+`let b: []u8 = [...[0x55, 0x55], ...[0x33, 0x33]]` held 85, 0, 51, 0. The array arm of
+`propagateExpected` narrowed each element to the context's element type, and a spread element
+took that `u8` too — which reaches nothing, a spread's operand being an array. So the inner
+literal stayed `[]i64`, and the backend, building a `[]u8`, copied its elements a byte at a
+time: the low byte of each `i64`, then the high bytes of the first. Nothing was reported, and
+a 300 inside the inner literal was neither refused nor stored right. A spread's operand now
+takes the context as an array, in its own flavor (`[N]u8` for a fixed literal), so its
+literal elements narrow and are range-checked as the outer ones are; a spread of a binding is
+its declared type's and narrows nothing. Found by a Vega check comparing an NES tile's
+encoding with `[...[0x55; 8], ...[0x33; 8]]`, which compared false against the right bytes.
+`TestExec_ArraySpreadOfALiteralTakesTheContextsWidth` and
+`TestTypeCheck_Overflow_InASpreadLiteral` fail without it.
+
 ### 10/13/26 — A chain's context reaches its last call alone
 
 `-> Maybe<string> => m.flat_map((n) => Some(n * 2)).flat_map((k) => Some("${k}"))` was refused

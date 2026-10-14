@@ -279,3 +279,11 @@ func TestTypeCheck_Overflow_InABranchsArms(t *testing.T) {
 		"Wrap: literal value 400 overflows u8",
 		"r: literal value 500 overflows u8")
 }
+
+// A spread literal's elements are checked against the outer array's element type, as the
+// literal would be alone (10/14): until then they were never narrowed, so a 300 inside one
+// was neither refused nor stored as a u8.
+func TestTypeCheck_Overflow_InASpreadLiteral(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: []u8 = [...[300, 1], 2]`, false)
+	assertErrorsAre(t, res, "element 1: literal value 300 overflows u8")
+}

@@ -3936,6 +3936,21 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		}
 		resolved := tc.resolveType(ctxElem, expr.GetLocation())
 		for i, elem := range al.Elements {
+			// **A spread's operand is an array of the same elements**, so it takes the
+			// context as an array, in its own flavor — pushing the element type into the
+			// spread reached nothing, and `let b: []u8 = [...[0x55, 0x55], ...]` copied the
+			// inner literal's i64 elements a byte at a time: 85, 0, 51, 0 (10/14, Vega's NES
+			// tile check). A spread of a binding is its declared type's and narrows nothing.
+			if sp, isSpread := elem.(*ast.SpreadExpr); isSpread {
+				operand := types.Type(types.DynamicArrayType{ElementType: resolved})
+				if t, ok := tc.typeTable.Get(sp.Value); ok {
+					if st, fixed := t.(types.StaticArrayType); fixed {
+						operand = types.StaticArrayType{ElementType: resolved, Size: st.Size}
+					}
+				}
+				tc.propagateExpectedType(sp.Value, operand)
+				continue
+			}
 			// As in the repeat arm: resolved carries the element's own flavor, so a
 			// `[]shared T` context stamps each element's construction through the
 			// same recursion that narrows its width.
