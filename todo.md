@@ -529,6 +529,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
   and alternations below the top of a pattern (`Some(1 | 2)`, `(1 | 2, _)`, both refused
   today). Neither needed yet.
+- **[OPEN] A chain's return context reaches its first call's lambda.** `-> Maybe<string> =>
+  m.flat_map((n) => Some(n * 2)).flat_map((k) => Some("${k}"))` is E001 at the *first*
+  lambda ("expected Maybe<string>, got Maybe<i64>"): the expected type of the whole chain is
+  pushed into the receiver call too, where only the last call's result has it. Split at a
+  `let`, it is typed (10/13, Vega's `mcp_checks.image_png`).
 - **[OPEN] An imported name the file also declares is silently its own.** `import
   owner.{ OfMap }` beside a `data Tool = … | OfMap` compiles with no word, every `OfMap`
   the file's — an import that does nothing, and a reader who trusts it misreads every use
@@ -571,6 +576,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
+- **[OPEN] A deflate compressor.** `std.compress` inflates only, so `std.png.write_png` stores
+  its pixels uncompressed: an MCP image from Vega is ~1.8 MB of base64 for a 768×432 frame
+  that compresses to a tenth of it. Fixed-Huffman deflate with a small hash-chain matcher
+  would do.
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
   Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.
