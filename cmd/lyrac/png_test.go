@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/zlib"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -316,4 +317,142 @@ func abs(v int) int {
 		return -v
 	}
 	return v
+}
+
+// std.png writes what Go's decoder reads, pixel for pixel: a 1×1, an odd size, and one whose
+// rows run past a stored deflate block's 65,535 bytes, so the stream is several blocks; and
+// it refuses pixels that are not the size it is told.
+func TestRun_PngWritesWhatGoReads(t *testing.T) {
+	t.Setenv("LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	at := func(x, y int) [4]uint8 {
+		return [4]uint8{uint8(x*7 + y), uint8(255 - x - y*3), uint8(x * y), uint8(40 + x + y)}
+	}
+	sizes := [][2]int{{1, 1}, {7, 5}, {200, 100}}
+	var calls []string
+	for i, size := range sizes {
+		calls = append(calls, fmt.Sprintf("  save(%d, %d, %q)", size[0], size[1], filepath.Join(dir, fmt.Sprintf("out%d.png", i))))
+	}
+	src := filepath.Join(dir, "write.lyra")
+	if err := os.WriteFile(src, []byte(`import std.io.{ write_bytes }
+import std.png.{ write_png }
+
+let main = () -> void => {
+`+strings.Join(calls, "\n")+`
+  match write_png(2, 2, [1, 2, 3]) {
+    Err(why) => println("refused: ${why}"),
+    Ok(_) => println("wrote three bytes as four pixels"),
+  }
+}
+
+let save = (w: i64, h: i64, path: string) -> void => {
+  var rgba: []u8 = []
+  for y in 0..<h {
+    for x in 0..<w {
+      rgba.push(u8((x * 7 + y) & 255))
+      rgba.push(u8((255 - x - y * 3) & 255))
+      rgba.push(u8((x * y) & 255))
+      rgba.push(u8((40 + x + y) & 255))
+    }
+  }
+  match write_png(w, h, rgba) {
+    Err(why) => println("error: ${why}"),
+    Ok(bytes) => { let _ = write_bytes(path, bytes) },
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	if code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "refused: 3 bytes are not 2×2 RGBA pixels") {
+		t.Errorf("pixels of the wrong size were not refused: %q", stdout)
+	}
+	for i, size := range sizes {
+		data, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("out%d.png", i)))
+		if err != nil {
+			t.Fatalf("%dx%d was not written: %v", size[0], size[1], err)
+		}
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("%dx%d: Go cannot read it: %v", size[0], size[1], err)
+		}
+		if b := img.Bounds(); b.Dx() != size[0] || b.Dy() != size[1] {
+			t.Fatalf("%dx%d decoded as %dx%d", size[0], size[1], b.Dx(), b.Dy())
+		}
+		for y := 0; y < size[1]; y++ {
+			for x := 0; x < size[0]; x++ {
+				c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+				want := at(x, y)
+				if [4]uint8{c.R, c.G, c.B, c.A} != want {
+					t.Fatalf("%dx%d at %d,%d: %v, want %v", size[0], size[1], x, y, c, want)
+				}
+			}
+		}
+	}
+}
+
+// std.base64 agrees with Go's encoding/base64 both ways on every length round a group of
+// three, and refuses what is not base64, saying where.
+func TestRun_Base64AgreesWithGo(t *testing.T) {
+	t.Setenv("LYRA_STD", repoRoot(t))
+	var inputs [][]byte
+	for n := 0; n <= 9; n++ {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte(i*97 + n*13)
+		}
+		inputs = append(inputs, b)
+	}
+	var calls, want []string
+	for _, in := range inputs {
+		var nums []string
+		for _, b := range in {
+			nums = append(nums, fmt.Sprint(b))
+		}
+		calls = append(calls, fmt.Sprintf("  both([%s])", strings.Join(nums, ", ")))
+		enc := base64.StdEncoding.EncodeToString(in)
+		want = append(want, enc+" "+strings.Join(nums, ","))
+	}
+	for _, bad := range []string{"abc", "ab=c", "a-bc", "ab c", "=abc"} {
+		calls = append(calls, fmt.Sprintf("  refuse(%q)", bad))
+		want = append(want, "refused "+bad)
+	}
+	src := filepath.Join(t.TempDir(), "b64.lyra")
+	if err := os.WriteFile(src, []byte(`import std.base64.{ encode, decode }
+
+let main = () -> void => {
+`+strings.Join(calls, "\n")+`
+}
+
+let both = (bytes: []u8) -> void => {
+  let text = encode(bytes)
+  match decode(text) {
+    Err(why) => println("error ${why}"),
+    Ok(back) => println("${text} ${back.map((b) => "${b}").join(",")}"),
+  }
+}
+
+let refuse = (text: string) -> void => match decode(text) {
+  Err(_) => println("refused ${text}"),
+  Ok(_) => println("read ${text}"),
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	if code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, stderr)
+	}
+	got := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(got) != len(want) {
+		t.Fatalf("%d lines, want %d:\n%s", len(got), len(want), stdout)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
 }

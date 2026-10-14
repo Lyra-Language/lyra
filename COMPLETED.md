@@ -9,6 +9,17 @@ Newest first.
 
 ## Dated log
 
+### 10/13/26 — `std.png` writes, and `std.base64`
+
+Vega's MCP server shows an agent its pictures, and MCP carries an image as base64 PNG; Lyra
+read PNGs and wrote neither. `write_png` writes 8-bit RGBA, rows unfiltered, the image data
+in deflate's **stored** blocks — the zlib header, blocks of at most 65,535 bytes, Adler-32 —
+so it needs no compressor (`std.compress` inflates only) and every reader reads it; a
+sprite's or a screen's file is its pixels' size and a little more, which is what it is for.
+`std.base64` encodes and strictly decodes the standard alphabet. Go's `image/png` decodes
+what Lyra writes pixel for pixel — a 1×1, an odd size and one of two stored blocks — and
+`encoding/base64` agrees both ways on every length round a group of three.
+
 ### 10/13/26 — A closure named like the method it calls is no capture of itself
 
 Vega's command reader bound a closure `field` whose body called `v.field(key)`, and the

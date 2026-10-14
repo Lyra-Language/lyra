@@ -676,8 +676,10 @@ of Markdown.
   pause while the app is away, and `--ppm` sampling the game's own pixels back out of the
   scaled window — the walker's frame in the Simulator is the Mac's byte for byte),
   `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
-  (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read only; tested against Go's
-  `image/png` in `cmd/lyrac/png_test.go`), `std/xml.lyra` (read only; tested against Go's
+  (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read, and written as 8-bit RGBA in stored
+  deflate blocks — no compressor; both tested against Go's `image/png` in
+  `cmd/lyrac/png_test.go`), `std/base64.lyra` (standard alphabet, padded, strict; tested
+  against Go's `encoding/base64`), `std/xml.lyra` (read only; tested against Go's
   `encoding/xml` in `cmd/lyrac/xml_test.go`), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
   are `pkg/backend/llvm/testdata/sevenzip/`, made by the `make.sh` beside them),
   `std/rar.lyra` (RAR 5; `testdata/rar5/`, libarchive's archives and hand-built filter ones —

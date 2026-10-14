@@ -1,0 +1,79 @@
+module std.base64
+//! Base64 (RFC 4648 §4: the standard alphabet, `=` padding) — bytes as text that survives
+//! JSON and email, as an MCP image or a data URL carries a PNG.
+//!
+//! ```
+//! import std.base64.{ encode, decode }
+//!
+//! let text = encode("hi".encode_utf8())      // "aGk="
+//! let back = decode(text)?.decode_utf8()     // "hi"
+//! ```
+//!
+//! [decode] is strict: only the alphabet, in fours, `=` only as the last one or two
+//! characters — whitespace or the URL-safe alphabet's `-` and `_` are refused, naming where.
+
+/// `bytes` as base64.
+pub let encode = pure (bytes: []u8) -> string => {
+  let alphabet = ALPHABET.encode_utf8()
+  var out: []u8 = []
+  var at = 0
+  while at < bytes.len() {
+    let left = bytes.len() - at
+    let b0 = u32(bytes[at])
+    let b1 = if left > 1 { u32(bytes[at + 1]) } else { 0 }
+    let b2 = if left > 2 { u32(bytes[at + 2]) } else { 0 }
+    let n = (b0 << 16) | (b1 << 8) | b2
+    out.push(alphabet[i64((n >> 18) & 63)])
+    out.push(alphabet[i64((n >> 12) & 63)])
+    out.push(if left > 1 { alphabet[i64((n >> 6) & 63)] } else { PAD })
+    out.push(if left > 2 { alphabet[i64(n & 63)] } else { PAD })
+    at += 3
+  }
+  out.decode_utf8()
+}
+
+/// The bytes base64 `text` spells, or where it is not base64.
+pub let decode = pure (text: string) -> Result<[]u8, string> => {
+  let chars = text.encode_utf8()
+  if chars.len() % 4 != 0 { return Err("base64 comes in fours; this is ${chars.len()} characters") }
+  var out: []u8 = []
+  var at = 0
+  while at < chars.len() {
+    var n: u32 = 0
+    var pads = 0
+    for k in 0..<4 {
+      let c = chars[at + k]
+      if c == PAD {
+        // Only the last one or two of the last four.
+        if at + 4 != chars.len() || k < 2 { return Err("= at ${at + k} is not padding at the end") }
+        pads += 1
+        n = n << 6
+        continue
+      }
+      if pads > 0 { return Err("${at + k}: a character after padding") }
+      let Some(v) = sextet(c) else { return Err("${at + k}: not a base64 character") }
+      n = (n << 6) | v
+    }
+    out.push(u8((n >> 16) & 0xFF))
+    if pads < 2 { out.push(u8((n >> 8) & 0xFF)) }
+    if pads < 1 { out.push(u8(n & 0xFF)) }
+    at += 4
+  }
+  Ok(out)
+}
+
+/// The 64 characters, in order: a sextet's value is its place.
+const ALPHABET: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+/// `=`.
+const PAD: u8 = 61
+
+/// The value `c` stands for, or `None` for a character outside the alphabet.
+let sextet = pure (c: u8) -> Maybe<u32> => {
+  if c >= 65 && c <= 90 { return Some(u32(c - 65)) }
+  if c >= 97 && c <= 122 { return Some(u32(c - 97 + 26)) }
+  if c >= 48 && c <= 57 { return Some(u32(c - 48 + 52)) }
+  if c == 43 { return Some(62) }
+  if c == 47 { return Some(63) }
+  None
+}

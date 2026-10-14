@@ -1,6 +1,7 @@
 module std.png
-//! PNG images, read: [read_png] gives an image's size and its pixels as RGBA — and, for an
-//! indexed image, its palette and each pixel's index, which a pixel-art tool wants kept.
+//! PNG images, read and written: [read_png] gives an image's size and its pixels as RGBA —
+//! and, for an indexed image, its palette and each pixel's index, which a pixel-art tool
+//! wants kept; [write_png] makes a file of RGBA pixels.
 //!
 //! ```
 //! import std.io.{ read_bytes }
@@ -18,6 +19,11 @@ module std.png
 //! naming it**: an interlaced (Adam7) image, a critical chunk this does not know, and
 //! anything malformed — a bad signature, a chunk past the end, data that does not inflate to
 //! the rows the header promises.
+//!
+//! **What is written**: 8-bit RGBA, not interlaced, every row unfiltered and the image data
+//! *stored* — deflate's uncompressed blocks inside the zlib stream — so writing needs no
+//! compressor and any reader reads it. A file is the pixels' size and a little more: right for
+//! a sprite, a screen or a picture an agent is shown, not for an archive.
 
 import std.compress.{ inflate, crc32 }
 
@@ -88,6 +94,46 @@ struct Header {
   depth: i64,
   color: i64,
 }
+
+/// `rgba` — four bytes a pixel, red, green, blue, alpha, rows top to bottom — as the bytes
+/// of a PNG file `width` × `height` pixels; or why it cannot be, when `rgba` is not that
+/// many pixels.
+pub let write_png = pure (
+  width: i64,
+  height: i64,
+  rgba: []u8
+) -> Result<[]u8, string> => {
+  if width < 1 || height < 1 { return Err("a PNG is at least 1×1, not ${width}×${height}") }
+  if rgba.len() != width * height * 4 {
+    return Err("${rgba.len()} bytes are not ${width}×${height} RGBA pixels (${width * height * 4})")
+  }
+  // Each row is its filter, 0 (none), then its pixels.
+  var raw: []u8 = []
+  for y in 0..<height {
+    raw.push(0)
+    let row = y * width * 4
+    for k in 0..<width * 4 { raw.push(rgba[row + k]) }
+  }
+  // 8 bits a sample, colour type 6 (RGBA), deflate, the one filter method, no interlace.
+  let header: []u8 = [
+    ...be32_bytes(u32(width)),
+    ...be32_bytes(u32(height)),
+    8,
+    6,
+    0,
+    0,
+    0
+  ]
+  Ok([
+    ...SIGNATURE,
+    ...chunk("IHDR", header),
+    ...chunk("IDAT", zlib_stored(raw)),
+    ...chunk("IEND", [])
+  ])
+}
+
+/// The eight bytes every PNG file starts with.
+const SIGNATURE: []u8 = [137, 80, 78, 71, 13, 10, 26, 10]
 
 let read_header = pure (body: []u8) -> Result<Header, string> => {
   if body.len() != 13 { return Err("IHDR is ${body.len()} bytes, not 13") }
@@ -272,6 +318,49 @@ impl Header {
     }
   }
 }
+
+/// A chunk: its length, its kind, `body`, and the CRC-32 of the kind and body.
+let chunk = pure (kind: string, body: []u8) -> []u8 => {
+  let named = [...kind.encode_utf8(), ...body]
+  [...be32_bytes(u32(body.len())), ...named, ...be32_bytes(crc32(named))]
+}
+
+/// `data` as a zlib stream of stored deflate blocks: the header (deflate, a 32 KB window,
+/// no dictionary), blocks of at most 65,535 bytes — the last one marked so, an empty stream
+/// one empty block — and the Adler-32 of `data`.
+let zlib_stored = pure (data: []u8) -> []u8 => {
+  var out: []u8 = [0x78, 0x01]
+  var at = 0
+  loop {
+    let n = (data.len() - at).min(65535)
+    let last = at + n >= data.len()
+    out.push(if last { 1 } else { 0 })
+    out.push(u8(n & 0xFF))
+    out.push(u8(n >> 8))
+    out.push(u8(~n & 0xFF))
+    out.push(u8((~n >> 8) & 0xFF))
+    for k in 0..<n { out.push(data[at + k]) }
+    at += n
+    if last { break }
+  }
+  for b in be32_bytes(adler32(data)) { out.push(b) }
+  out
+}
+
+/// The Adler-32 checksum zlib ends a stream with.
+let adler32 = pure (data: []u8) -> u32 => {
+  var a: u32 = 1
+  var b: u32 = 0
+  for x in data {
+    a = (a + u32(x)) % 65521
+    b = (b + a) % 65521
+  }
+  (b << 16) | a
+}
+
+/// `v`'s four bytes, big-endian.
+let be32_bytes = pure (v: u32) -> []u8 =>
+  [u8(v >> 24), u8((v >> 16) & 0xFF), u8((v >> 8) & 0xFF), u8(v & 0xFF)]
 
 /// A big-endian `u32` at `at`.
 let be32 = pure (bytes: []u8, at: i64) -> u32 =>
