@@ -352,6 +352,16 @@ pub let begin_status_bar = (name: string) -> bool =>
 /// Finish the bar [begin_status_bar] began.
 pub let end_status_bar = () -> void => unsafe { lyra_imgui_end_status_bar() }
 
+/// A tool bar across the top of the main window, under its menu bar: `height` tall inside
+/// `padding` on every side, which the dock space and other windows leave room for, as they
+/// do the status bar. `true` when its contents may be drawn; call [end_tool_bar] after,
+/// whatever it answered. Call it after the menu bar and before `dock_space_over_viewport`.
+pub let begin_tool_bar = (name: string, height: f32, padding: f32) -> bool =>
+  name.with_cstring((n) => unsafe { lyra_imgui_begin_tool_bar(n, height, padding) })
+
+/// Finish the bar [begin_tool_bar] began.
+pub let end_tool_bar = () -> void => unsafe { lyra_imgui_end_tool_bar() }
+
 /// The scale [set_ui_scale] last applied, clamped; 1 until it is called.
 pub let ui_scale = (host: Host) -> f32 => unsafe { lyra_imgui_host_ui_scale(host) }
 
@@ -577,6 +587,12 @@ unsafe extern lyra_imgui_begin_status_bar: (name: ^u8) -> bool
 
 @symbol("lyra_imgui_end_status_bar")
 unsafe extern lyra_imgui_end_status_bar: () -> void
+
+@symbol("lyra_imgui_begin_tool_bar")
+unsafe extern lyra_imgui_begin_tool_bar: (name: ^u8, height: f32, padding: f32) -> bool
+
+@symbol("lyra_imgui_end_tool_bar")
+unsafe extern lyra_imgui_end_tool_bar: () -> void
 
 @symbol("lyra_imgui_host_custom_title_bar")
 unsafe extern lyra_imgui_host_custom_title_bar: (host: Host) -> bool

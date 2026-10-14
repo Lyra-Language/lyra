@@ -319,6 +319,22 @@ void lyra_imgui_end_status_bar(void) {
     status_bar_open = false;
 }
 
+// A bar across the top of the main window, under its menu bar, `height` tall with `padding`
+// around what it holds — a tool bar, which the dock space and other windows leave room for,
+// as they do the status bar. Call it after the menu bar and before the dock space. True when
+// its contents may be drawn; end it either way.
+bool lyra_imgui_begin_tool_bar(const char* name, float height, float padding) {
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+    bool open = ImGui::BeginViewportSideBar(name, ImGui::GetMainViewport(), ImGuiDir_Up, height + 2.0f * padding, flags);
+    ImGui::PopStyleVar();
+    return open;
+}
+
+void lyra_imgui_end_tool_bar(void) {
+    ImGui::End();
+}
+
 // ── The layout ───────────────────────────────────────────────────────────────────
 
 // The layout read from and written to `path` rather than imgui.ini in the working directory
