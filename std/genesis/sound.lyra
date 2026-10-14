@@ -1,0 +1,53 @@
+module std.genesis.sound
+//! Sound effects on the Genesis's PSG (the SN76489 inside its VDP): a jump, a coin, a hit,
+//! made in Vega's sound editor and played by name.
+//!
+//! ```
+//! import std.genesis.sound
+//!
+//! sound.init()                 // the PSG silenced: it may power up sounding
+//! assets.JUMP.play()           // an effect, by the name Vega gave it
+//! // each vertical blank, after the frame is shown:
+//! assets.update_sounds()       // Vega's: sound.update(its steps)
+//! ```
+//!
+//! **The playing is `std.chips.psg_effects`'s**, the bytes it says each frame written to the
+//! PSG's port — as `std.game.sound` writes the same bytes to the chip it runs, so an effect
+//! is the same sound in a ROM and a modern game. A tone effect plays on tone channel 0, a
+//! noise effect on the noise channel, pitched by tone channel 2; one effect at a time on
+//! each, a new one taking the old one's place.
+
+import std.chips.psg_effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.sn76489.{ attenuation_byte }
+
+/// Every channel silent. A PSG may power up sounding, so a game calls this first.
+pub let init = () -> void => {
+  for channel: u8 in 0..<4 { write(attenuation_byte(channel, 15)) }
+  player = new_player()
+}
+
+impl Effect {
+  /// Start the effect from its first step, in place of any its channel was playing. It is
+  /// heard from the next [update].
+  pub let play = (self) -> void => player.start(self)
+}
+
+/// Whether an effect is still playing.
+pub let playing = () -> bool => player.playing()
+
+/// The frame's step of each effect playing, written to the PSG: once each vertical blank.
+/// `steps` is the game's table of them (Vega's `assets.lyra` passes its own).
+pub let update<const N: i64> = (steps: ref [N]EffectStep) -> void => {
+  var out: [8]u8 = #[0; 8]
+  let n = player.frame(steps, out)
+  for i in 0..<n { write(out[i]) }
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// A byte to the PSG's port.
+let write = (value: u8) -> void => unsafe { port().write_volatile(value) }
+
+let port = pure () -> ^mut u8 => unsafe { pointer_at(0xC00011) }
+
+var player: Player = new_player()

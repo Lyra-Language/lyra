@@ -1,0 +1,56 @@
+module std.chips.resample
+//! A steady stream of samples at one rate made a stream at another — a sound chip's
+//! (the SN76489 ticks about 224,000 times a second) made a sound card's 48 kHz.
+//!
+//! ```
+//! import std.chips.resample.{ new_resampler }
+//!
+//! // A chip ticking every 240 master clocks, heard at 48 kHz on a 53.69 MHz clock.
+//! var r = new_resampler(240.0, 53693175.0 / 48000.0)
+//! var out: []f64 = []
+//! r.push(level, level, out)   // each input sample: `out` gains one when it is whole
+//! ```
+//!
+//! **By area**: each output sample is the average of the input samples that fall in its
+//! span, weighted by how much of each does — a box filter, which is also what keeps a
+//! chip's fast square waves from aliasing on their way down. Spans are measured on any one
+//! clock both rates divide (a console's master clock), so the two never drift apart.
+
+/// A resampler between two steady rates, given as the clocks each sample spans.
+pub struct Resampler {
+  /// Clocks per input sample and per output sample.
+  in_span: f64,
+  out_span: f64,
+  /// How far into the output sample under way, and what has been summed into it.
+  pos: f64 = 0.0,
+  sum_l: f64 = 0.0,
+  sum_r: f64 = 0.0,
+}
+
+/// A resampler from samples `in_span` clocks long to samples `out_span` long.
+pub let new_resampler = pure (in_span: f64, out_span: f64) -> Resampler =>
+  Resampler { in_span: in_span, out_span: out_span }
+
+impl Resampler {
+  /// One input sample, left and right: summed into the output sample under way for as much
+  /// of its span as that has room for, the rest into the next; each output sample finished
+  /// is pushed onto `out` (left, then right), the average of its span.
+  pub let push = (self: mut, l: f64, r: f64, out: mut []f64) -> void => {
+    var remaining = self.in_span
+    while remaining > 0.0 {
+      let room = self.out_span - self.pos
+      let portion = if room < remaining { room } else { remaining }
+      self.sum_l += l * portion
+      self.sum_r += r * portion
+      self.pos += portion
+      remaining -= portion
+      if self.pos >= self.out_span - 0.000001 {
+        out.push(self.sum_l / self.out_span)
+        out.push(self.sum_r / self.out_span)
+        self.sum_l = 0.0
+        self.sum_r = 0.0
+        self.pos = 0.0
+      }
+    }
+  }
+}

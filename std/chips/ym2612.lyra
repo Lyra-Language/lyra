@@ -1,0 +1,998 @@
+module std.chips.ym2612
+//! The Yamaha YM2612 (OPN2), the Genesis's FM synthesiser: six channels of four operators,
+//! an LFO, two timers, and a DAC that can take channel 6's place.
+//!
+//! ```
+//! import std.chips.ym2612.{ new_ym2612 }
+//!
+//! var ym = new_ym2612()
+//! ym.write(0, 0x28)        // the key-on register's address, on port 0
+//! ym.write(1, 0xF0)        // every operator of channel 1 keyed on
+//! ym.clock()               // one internal cycle: 24 make a sample
+//! let left = ym.out_l
+//! ```
+//!
+//! **Modelled as the die works**, one internal cycle at a time — 24 to a sample, six YM
+//! clocks (42 master clocks) each — because the chip is a pipeline: in each cycle, each of
+//! its units works on a *different* operator slot, and when a register write lands, how an
+//! envelope steps and which sample a modulator's output reaches are all consequences of
+//! that. The facts here are the chip's, as Nuked-OPN2 — a transcription of the decapped die
+//! (LGPL, never linked; the Sheliak emulator's `tests/ym.sh` runs it as a separate program
+//! against this module) — exhibits them, and the output is held to Nuked-OPN2's sample for
+//! sample, bit for bit. This is not its code:
+//! the structure, names and tables' forms are this file's own, the ROM tables generated
+//! from their formulas.
+//!
+//! **Slots**: operator slot s (0–23) is channel s % 6's operator 1 (s < 6), 3 (6–11), 2
+//! (12–17) or 4 (18–23) — the chip's order. The units' offsets: key-on, SSG-EG, the phase
+//! increment and the envelope's rate work on slot c (the cycle); the envelope's step on
+//! c + 22, its output on c + 23; the phase counter on c + 19 (its reset on c + 20); the
+//! operator itself on c + 19, its modulation prepared on c + 6; the channel accumulator on
+//! c + 18.
+//!
+//! **Output**: the YM2612's 9-bit DAC is time-multiplexed — each channel is on it for one
+//! cycle in four — and between channels it rests at the sign of the last, a crossover
+//! distortion (the "ladder effect") the YM3438 does not have. [Ym2612.clock] answers the DAC's
+//! two outputs each cycle; a sample is the sum of a sample's 24.
+//!
+//! Not modelled: the LSI test registers (21, 2C) and pins.
+
+/// The chip's state: its registers, and each unit's.
+pub struct Ym2612 {
+  /// The cycle within the sample, 0–23.
+  cycle: i64,
+  // The bus interface.
+  /// The last byte written and its port's A1, as bit 8.
+  write_data: u16,
+  /// The write strobes, shifted a cycle at a time: a write is seen when bit 0 of one is
+  /// set and bit 1 is not.
+  write_a: u8,
+  write_d: u8,
+  /// A data write busies the chip for 32 cycles.
+  busy: bool,
+  busy_pending: bool,
+  busy_count: u8,
+  /// The last address written is an FM register (30 and up), and a data byte for it has
+  /// come, which the register file takes as its slot or channel comes round.
+  fm_address: bool,
+  fm_data: bool,
+  /// The address for a mode register (21–2C) and for the register file, and the data.
+  mode_address: u16,
+  address: u16,
+  data: u8,
+  // The LFO.
+  lfo_enable: u8,
+  lfo_rate: u8,
+  lfo_count: u8,
+  lfo_divider: u8,
+  lfo_step: bool,
+  /// Its phase and amplitude modulations, taken at cycle 0.
+  lfo_pm: u8,
+  lfo_am: u8,
+  // The phase generator.
+  pg_fnum: u16,
+  pg_block: u8,
+  pg_kcode: u8,
+  pg_inc: [24]u32,
+  pg_phase: [24]u32,
+  pg_reset: [24]bool,
+  // The envelope generator.
+  eg_divider: u8,
+  eg_timer: u16,
+  eg_timer_carry: u16,
+  eg_bit: u8,
+  eg_bit_found: bool,
+  eg_shift: u8,
+  eg_shift_locked: u8,
+  eg_timer_low: u8,
+  eg_rate: u8,
+  eg_ksv: u8,
+  eg_inc: u8,
+  eg_rate_max: bool,
+  eg_lfo_am: u16,
+  eg_tl: [2]u16,
+  eg_sl: [2]u8,
+  eg_state: [24]u8,
+  eg_level: [24]u16,
+  eg_out: [24]u16,
+  eg_key: [24]bool,
+  eg_key_latch: [24]bool,
+  eg_key_csm: [24]bool,
+  ssg_enable: [24]bool,
+  ssg_reset: [24]bool,
+  ssg_repeat: [24]bool,
+  ssg_hold: [24]bool,
+  ssg_dir: [24]bool,
+  ssg_inv: [24]bool,
+  // The operators.
+  /// Operator 1's last two outputs per channel (its feedback), operator 2's last.
+  op1_out: [12]i16,
+  op2_out: [6]i16,
+  fm_out: [24]i16,
+  fm_mod: [24]i16,
+  // The channels.
+  ch_acc: [6]i16,
+  ch_out: [6]i16,
+  ch_lock: i16,
+  ch_lock_l: bool,
+  ch_lock_r: bool,
+  // The timers.
+  timer_a: Timer,
+  timer_b: Timer,
+  timer_b_sub: u8,
+  // The registers.
+  mode_ch3: u8,
+  mode_csm: bool,
+  csm_key: bool,
+  key_channel: u8,
+  key_ops: [4]bool,
+  key: [24]bool,
+  dac_on: bool,
+  dac_data: u16,
+  dt: [24]u8,
+  multi: [24]u8,
+  tl: [24]u8,
+  ks: [24]u8,
+  ar: [24]u8,
+  am: [24]bool,
+  dr: [24]u8,
+  sr: [24]u8,
+  sl: [24]u8,
+  rr: [24]u8,
+  ssg_eg: [24]u8,
+  fnum: [6]u16,
+  block: [6]u8,
+  kcode: [6]u8,
+  fnum3: [6]u16,
+  block3: [6]u8,
+  kcode3: [6]u8,
+  latch_a4: u8,
+  latch_ac: u8,
+  algorithm: [6]u8,
+  feedback: [6]u8,
+  pan_l: [6]bool,
+  pan_r: [6]bool,
+  ams: [6]u8,
+  pms: [6]u8,
+  /// The status last read, and how many cycles it stays readable on the other ports.
+  status: u8,
+  status_time: i64,
+  /// The DAC's outputs this cycle.
+  out_l: i64,
+  out_r: i64,
+  /// The chip's ROMs.
+  logsin: []u16,
+  exp: []u16,
+}
+
+/// A timer: timer A counts 10 bits once a sample, timer B 8 bits once every 16.
+pub struct Timer {
+  count: u16,
+  period: u16,
+  load: bool,
+  load_lock: bool,
+  load_latch: bool,
+  enable: bool,
+  reset: bool,
+  overflow: bool,
+  flag: bool,
+}
+
+let idle_timer = Timer {
+  count: 0,
+  period: 0,
+  load: false,
+  load_lock: false,
+  load_latch: false,
+  enable: false,
+  reset: false,
+  overflow: false,
+  flag: false,
+}
+
+/// Envelope states.
+const ATTACK: u8 = 0
+const DECAY: u8 = 1
+const SUSTAIN: u8 = 2
+const RELEASE: u8 = 3
+
+/// The chip after /IC: everything zero but the envelopes (silent, released), MUL 1, and
+/// both outputs on for every channel.
+/// A YM2612 as it powers up.
+pub let new_ym2612 = pure () -> Ym2612 => Ym2612 {
+  cycle: 0,
+  write_data: 0,
+  write_a: 0,
+  write_d: 0,
+  busy: false,
+  busy_pending: false,
+  busy_count: 0,
+  fm_address: false,
+  fm_data: false,
+  mode_address: 0,
+  address: 0,
+  data: 0,
+  lfo_enable: 0,
+  lfo_rate: 0,
+  lfo_count: 0,
+  lfo_divider: 0,
+  lfo_step: false,
+  lfo_pm: 0,
+  lfo_am: 0,
+  pg_fnum: 0,
+  pg_block: 0,
+  pg_kcode: 0,
+  pg_inc: #[0; 24],
+  pg_phase: #[0; 24],
+  pg_reset: #[false; 24],
+  eg_divider: 0,
+  eg_timer: 0,
+  eg_timer_carry: 0,
+  eg_bit: 0,
+  eg_bit_found: false,
+  eg_shift: 0,
+  eg_shift_locked: 0,
+  eg_timer_low: 0,
+  eg_rate: 0,
+  eg_ksv: 0,
+  eg_inc: 0,
+  eg_rate_max: false,
+  eg_lfo_am: 0,
+  eg_tl: #[0, 0],
+  eg_sl: #[0, 0],
+  eg_state: #[RELEASE; 24],
+  eg_level: #[0x3FF; 24],
+  eg_out: #[0x3FF; 24],
+  eg_key: #[false; 24],
+  eg_key_latch: #[false; 24],
+  eg_key_csm: #[false; 24],
+  ssg_enable: #[false; 24],
+  ssg_reset: #[false; 24],
+  ssg_repeat: #[false; 24],
+  ssg_hold: #[false; 24],
+  ssg_dir: #[false; 24],
+  ssg_inv: #[false; 24],
+  op1_out: #[0; 12],
+  op2_out: #[0; 6],
+  fm_out: #[0; 24],
+  fm_mod: #[0; 24],
+  ch_acc: #[0; 6],
+  ch_out: #[0; 6],
+  ch_lock: 0,
+  ch_lock_l: false,
+  ch_lock_r: false,
+  timer_a: idle_timer,
+  timer_b: idle_timer,
+  timer_b_sub: 0,
+  mode_ch3: 0,
+  mode_csm: false,
+  csm_key: false,
+  key_channel: 0,
+  key_ops: #[false; 4],
+  key: #[false; 24],
+  dac_on: false,
+  dac_data: 0,
+  dt: #[0; 24],
+  multi: #[1; 24],
+  tl: #[0; 24],
+  ks: #[0; 24],
+  ar: #[0; 24],
+  am: #[false; 24],
+  dr: #[0; 24],
+  sr: #[0; 24],
+  sl: #[0; 24],
+  rr: #[0; 24],
+  ssg_eg: #[0; 24],
+  fnum: #[0; 6],
+  block: #[0; 6],
+  kcode: #[0; 6],
+  fnum3: #[0; 6],
+  block3: #[0; 6],
+  kcode3: #[0; 6],
+  latch_a4: 0,
+  latch_ac: 0,
+  algorithm: #[0; 6],
+  feedback: #[0; 6],
+  pan_l: #[true; 6],
+  pan_r: #[true; 6],
+  ams: #[0; 6],
+  pms: #[0; 6],
+  status: 0,
+  status_time: 0,
+  out_l: 0,
+  out_r: 0,
+  logsin: logsin_rom(),
+  exp: exp_rom(),
+}
+
+// ── The bus ──────────────────────────────────────────────────────────────────
+
+impl Ym2612 {
+  /// A byte written to port 0–3: an address (0, 2) or data (1, 3), port 2–3 being the
+  /// second register bank. The chip sees it at its next cycle.
+  pub let write = (self: mut, port: u8, value: u8) -> void => {
+    self.write_data = (u16(port & 2) << 7) | u16(value)
+    if (port & 1) != 0 { self.write_d = self.write_d | 1 } else { self.write_a = self.write_a | 1 }
+  }
+
+  /// The status register, read from port `port`: busy (bit 7) and the timers' overflow
+  /// flags (1, 0). The YM2612 answers on port 0; the other ports give back what port 0
+  /// last answered, for a while (the value fading from the bus), then 0.
+  pub let read = (self: mut, port: u8) -> u8 => {
+    if (port & 3) == 0 {
+      self.status = (if self.busy { 0x80 } else { 0 }) | (if self.timer_b.flag { 2 } else { 0 }) |
+        (if self.timer_a.flag { 1 } else { 0 })
+      self.status_time = 300000
+    }
+    if self.status_time != 0 { self.status } else { 0 }
+  }
+
+  /// Whether either timer's overflow flag is up — the chip's /IRQ (unconnected on the
+  /// Genesis).
+  pub let irq = pure (self: ref) -> bool => self.timer_a.flag || self.timer_b.flag
+
+  /// One internal cycle: every unit's step on its own slot, in the chip's order, leaving
+  /// the DAC's outputs this cycle in `out_l` and `out_r`.
+  pub let clock = (self: mut) -> void => run_cycle(self)
+}
+
+// ── A cycle ──────────────────────────────────────────────────────────────────
+
+/// [Ym2612.clock]'s cycle.
+let run_cycle = (ym: mut Ym2612) -> void => {
+  let c = ym.cycle
+  ym.lfo_step = false
+  ym.eg_bit += 1
+  if c == 1 && ym.eg_divider == 2 {
+    ym.eg_shift_locked = if ym.eg_bit_found { ym.eg_shift + 1 } else { 0 }
+    ym.eg_timer_low = u8(ym.eg_timer & 3)
+  }
+  if c == 0 {
+    ym.lfo_pm = ym.lfo_count >> 2
+    let am = if (ym.lfo_count & 0x40) != 0 { ym.lfo_count & 0x3F } else { ym.lfo_count ~ 0x3F }
+    ym.lfo_am = am << 1
+  } else if c == 1 {
+    ym.eg_divider = (ym.eg_divider + 1) % 3
+    restart_eg_scan(ym)
+    ym.eg_timer_carry = ym.eg_timer_carry | u16(ym.eg_divider >> 1)
+    advance_eg_timer(ym)
+  } else if c == 13 {
+    restart_eg_scan(ym)
+    advance_eg_timer(ym)
+  } else if c == 23 {
+    ym.lfo_step = true
+  }
+  // The envelope timer's lowest set bit, found by scanning a bit a cycle.
+  if ym.eg_bit_found == false && ((ym.eg_timer >> u16(ym.eg_bit)) & 1) != 0 && ym.eg_bit < 16 {
+    ym.eg_shift = ym.eg_bit
+    ym.eg_bit_found = true
+  }
+  bus_interface(ym)
+  timer_a_cycle(ym)
+  timer_b_cycle(ym)
+  key_on(ym)
+  dac_output(ym)
+  channel_accumulate(ym)
+  prepare_modulation(ym)
+  operator_output(ym)
+  phase_step(ym)
+  phase_increment(ym)
+  envelope_step(ym)
+  envelope_output(ym)
+  ssg_eg_step(ym)
+  envelope_rate(ym)
+  choose_frequency(ym)
+  lfo_cycle(ym)
+  register_file(ym)
+  ym.cycle = (c + 1) % 24
+  if ym.status_time != 0 { ym.status_time -= 1 }
+}
+
+/// The scan for the timer's lowest set bit starts over, at cycles 1 and 13.
+let restart_eg_scan = (ym: mut Ym2612) -> void => {
+  ym.eg_bit = 0
+  ym.eg_bit_found = false
+  ym.eg_shift = 0
+}
+
+/// The envelope timer (12 bits) takes its carry in; its own carry out waits for the next
+/// half-sample.
+let advance_eg_timer = (ym: mut Ym2612) -> void => {
+  let t = ym.eg_timer + ym.eg_timer_carry
+  ym.eg_timer_carry = t >> 12
+  ym.eg_timer = t & 0xFFF
+}
+
+/// The write strobes are sampled, and the busy flag counts its 32 cycles.
+let bus_interface = (ym: mut Ym2612) -> void => {
+  ym.write_a = u8((u16(ym.write_a) << 1) & 0xFF)
+  ym.write_d = u8((u16(ym.write_d) << 1) & 0xFF)
+  ym.busy = ym.busy_pending
+  if ym.busy_pending { ym.busy_count += 1 }
+  let data_seen = (ym.write_d & 6) == 2
+  ym.busy_pending = (ym.busy_pending && (ym.busy_count >> 5) == 0) || data_seen
+  ym.busy_count = ym.busy_count & 0x1F
+}
+
+// ── Timers ───────────────────────────────────────────────────────────────────
+
+/// Timer A: a load, requested at register 27 and taken at cycle 2, sets the count to the
+/// period; it counts once a sample, at cycle 1; at 1024 it overflows, reloading itself and
+/// — if enabled — raising its flag (and, in CSM mode, keying channel 3 on).
+let timer_a_cycle = (ym: mut Ym2612) -> void => {
+  var t = ym.timer_a
+  var load = t.overflow
+  if ym.cycle == 2 {
+    load = load || (!t.load_lock && t.load)
+    t.load_lock = t.load
+    ym.csm_key = ym.mode_csm && load
+  }
+  var time = if t.load_latch { t.period } else { t.count }
+  t.load_latch = load
+  if ym.cycle == 1 && t.load_lock { time += 1 }
+  update_flag(t)
+  t.overflow = (time >> 10) != 0
+  t.count = time & 0x3FF
+  ym.timer_a = t
+}
+
+/// Timer B: the same, 8 bits, counting once every 16 samples.
+let timer_b_cycle = (ym: mut Ym2612) -> void => {
+  var t = ym.timer_b
+  var load = t.overflow
+  if ym.cycle == 2 {
+    load = load || (!t.load_lock && t.load)
+    t.load_lock = t.load
+  }
+  var time = if t.load_latch { t.period } else { t.count }
+  t.load_latch = load
+  if ym.cycle == 1 { ym.timer_b_sub += 1 }
+  if ym.timer_b_sub == 16 && t.load_lock { time += 1 }
+  ym.timer_b_sub = ym.timer_b_sub & 0x0F
+  update_flag(t)
+  t.overflow = (time >> 8) != 0
+  t.count = time & 0xFF
+  ym.timer_b = t
+}
+
+/// A reset request clears the flag; otherwise an overflow raises it, if the timer's flag is
+/// enabled.
+let update_flag = (t: mut Timer) -> void => {
+  if t.reset {
+    t.reset = false
+    t.flag = false
+  } else if t.overflow && t.enable {
+    t.flag = true
+  }
+}
+
+// ── Key on ───────────────────────────────────────────────────────────────────
+
+/// Slot c's key is latched from register 28's last word (channel 3's forced on by a CSM
+/// overflow); and when the cycle is the channel register 28 named, its four operators take
+/// that word's keys.
+let key_on = (ym: mut Ym2612) -> void => {
+  let s = ym.cycle
+  ym.eg_key_latch[s] = ym.key[s]
+  ym.eg_key_csm[s] = false
+  if s % 6 == 2 && ym.csm_key {
+    ym.eg_key_latch[s] = true
+    ym.eg_key_csm[s] = true
+  }
+  if u8(s) == ym.key_channel {
+    ym.key[s] = ym.key_ops[0]
+    ym.key[s + 12] = ym.key_ops[1]
+    ym.key[s + 6] = ym.key_ops[2]
+    ym.key[s + 18] = ym.key_ops[3]
+  }
+}
+
+// ── The DAC ──────────────────────────────────────────────────────────────────
+
+/// The DAC's cycle. Every fourth, it latches a channel's output and panning — channels 2,
+/// 6, 4, 1, 5, 3 at cycles 0, 4, 8, 12, 16, 20 — and in the cycle before the next latch it
+/// puts that channel out (channel 6 replaced by the DAC register when enabled); the rest of
+/// the time it rests at the sign of what it holds. The YM2612's 9-bit ladder puts a
+/// non-negative value out one step up, and a negative one as is, and its outputs are three
+/// times the value.
+let dac_output = (ym: mut Ym2612) -> void => {
+  let c = ym.cycle
+  if (c & 3) == 0 {
+    let ch = c % 6 + (if c < 12 { 1 } else { 0 })
+    ym.ch_lock = ym.ch_out[ch]
+    ym.ch_lock_l = ym.pan_l[ch]
+    ym.ch_lock_r = ym.pan_r[ch]
+  }
+  var out = i64(ym.ch_lock)
+  if (c >> 2) == 1 && ym.dac_on {
+    let d = i64(ym.dac_data)
+    out = (d & 0xFF) - (d & 0x100)
+  }
+  var sign = out >> 8
+  if out >= 0 {
+    out += 1
+    sign += 1
+  }
+  let on = (c & 3) == 3
+  ym.out_l = 3 * (if ym.ch_lock_l && on { out } else { sign })
+  ym.out_r = 3 * (if ym.ch_lock_r && on { out } else { sign })
+}
+
+// ── Channels and operators ───────────────────────────────────────────────────
+
+/// The algorithm's routing, one mask per connection, bit n for algorithm n. For each of the
+/// four operator groups (1, 3, 2, 4 — slot / 6): which sources its modulation takes (the
+/// operator 1 outputs of this and the previous sample, operator 2's, and the previous
+/// slot's, into either of two inputs) and whether it is a carrier, summed to the channel.
+const FROM_OP1_NEW: [4]u8 = #[0xFF, 0x22, 0x00, 0x24]
+const FROM_OP1_OLD: [4]u8 = #[0xFF, 0x00, 0x00, 0x00]
+const FROM_OP2: [4]u8 = #[0x00, 0x07, 0x00, 0x08]
+const FROM_PREV_A: [4]u8 = #[0x00, 0x00, 0x79, 0x1B]
+const FROM_PREV_B: [4]u8 = #[0x00, 0x00, 0x00, 0x04]
+const CARRIER: [4]u8 = #[0x80, 0xE0, 0xF0, 0xFF]
+
+let routes = pure (mask: [4]u8, group: i64, algorithm: u8) -> bool =>
+  ((mask[group] >> algorithm) & 1) != 0
+
+/// The channel accumulator, on slot c + 18: it restarts at each channel's operator 1,
+/// handing its last sum to the DAC, and adds each carrier's output (its top 9 bits),
+/// clamped to 9 bits.
+let channel_accumulate = (ym: mut Ym2612) -> void => {
+  let s = (ym.cycle + 18) % 24
+  let ch = ym.cycle % 6
+  let group = s / 6
+  var acc = if group == 0 { 0 } else { i64(ym.ch_acc[ch]) }
+  if routes(CARRIER, group, ym.algorithm[ch]) { acc += i64(ym.fm_out[s]) >> 5 }
+  if acc > 255 { acc = 255 }
+  if acc < -256 { acc = -256 }
+  if group == 0 { ym.ch_out[ch] = ym.ch_acc[ch] }
+  ym.ch_acc[ch] = i16(acc)
+}
+
+/// The modulation of slot c + 6, from the outputs its algorithm routes to it; operator 1
+/// modulates itself by its feedback. Then the outputs of slot c + 18 are kept where the
+/// routing finds them: operator 1's two latest, operator 2's.
+let prepare_modulation = (ym: mut Ym2612) -> void => {
+  let s = (ym.cycle + 6) % 24
+  let ch = ym.cycle % 6
+  let group = s / 6
+  let algorithm = ym.algorithm[ch]
+  let previous = (ym.cycle + 18) % 24
+  var a: i64 = 0
+  var b: i64 = 0
+  if routes(FROM_OP1_NEW, group, algorithm) { b = b | i64(ym.op1_out[ch * 2]) }
+  if routes(FROM_OP1_OLD, group, algorithm) { a = a | i64(ym.op1_out[ch * 2 + 1]) }
+  if routes(FROM_OP2, group, algorithm) { a = a | i64(ym.op2_out[ch]) }
+  if routes(FROM_PREV_A, group, algorithm) { b = b | i64(ym.fm_out[previous]) }
+  if routes(FROM_PREV_B, group, algorithm) { a = a | i64(ym.fm_out[previous]) }
+  var m = sign16(a + b)
+  if group == 0 {
+    let fb = ym.feedback[ch]
+    m = if fb == 0 { 0 } else { m >> (10 - i64(fb)) }
+  } else {
+    m = m >> 1
+  }
+  ym.fm_mod[s] = i16(sign16(m))
+  let group_prev = previous / 6
+  if group_prev == 0 {
+    ym.op1_out[ch * 2 + 1] = ym.op1_out[ch * 2]
+    ym.op1_out[ch * 2] = ym.fm_out[previous]
+  }
+  if group_prev == 2 { ym.op2_out[ch] = ym.fm_out[previous] }
+}
+
+/// A value as a 16-bit two's complement number.
+let sign16 = pure (v: i64) -> i64 => {
+  let w = v & 0xFFFF
+  if w >= 0x8000 { w - 0x10000 } else { w }
+}
+
+/// Operator output, slot c + 19: its phase (plus modulation) through the log-sine ROM,
+/// attenuated by its envelope in the log domain, back through the exponent ROM — a 14-bit
+/// signed value.
+let operator_output = (ym: mut Ym2612) -> void => {
+  let s = (ym.cycle + 19) % 24
+  let phase = (i64(ym.fm_mod[s]) + i64(ym.pg_phase[s] >> 10)) & 0x3FF
+  let quarter = if (phase & 0x100) != 0 { (phase ~ 0xFF) & 0xFF } else { phase & 0xFF }
+  var attenuation = i64(ym.logsin[quarter]) + (i64(ym.eg_out[s]) << 2)
+  if attenuation > 0x1FFF { attenuation = 0x1FFF }
+  let magnitude = ((i64(ym.exp[(attenuation & 0xFF) ~ 0xFF]) | 0x400) << 2) >> (attenuation >> 8)
+  ym.fm_out[s] = i16(if (phase & 0x200) != 0 { -magnitude } else { magnitude })
+}
+
+// ── Phase ────────────────────────────────────────────────────────────────────
+
+/// The phase counters, slot c + 19 (20 bits), stepped by their increments — which a key-on
+/// (or an SSG-EG repeat) zeroes, on slot c + 20, as it zeroes the phase.
+let phase_step = (ym: mut Ym2612) -> void => {
+  let r = (ym.cycle + 20) % 24
+  if ym.pg_reset[r] { ym.pg_inc[r] = 0 }
+  let s = (ym.cycle + 19) % 24
+  if ym.pg_reset[s] { ym.pg_phase[s] = 0 }
+  ym.pg_phase[s] = (ym.pg_phase[s] + ym.pg_inc[s]) & 0xFFFFF
+}
+
+/// Slot c's phase increment: F-number shifted by the vibrato the LFO and PMS make, by the
+/// block, detuned, times MUL.
+let phase_increment = (ym: mut Ym2612) -> void => {
+  let s = ym.cycle
+  let ch = s % 6
+  let top = i64(ym.pg_fnum >> 4)
+  var lfo_step = i64(ym.lfo_pm & 0x0F)
+  if (lfo_step & 8) != 0 { lfo_step = lfo_step ~ 0x0F }
+  let pms = i64(ym.pms[ch])
+  var vibrato = (top >> vibrato_shift(PM_SHIFT_1, pms, lfo_step)) +
+    (top >> vibrato_shift(PM_SHIFT_2, pms, lfo_step))
+  if pms > 5 { vibrato = vibrato << (pms - 5) }
+  vibrato = vibrato >> 2
+  var fnum = i64(ym.pg_fnum) << 1
+  fnum = if (ym.lfo_pm & 0x10) != 0 { fnum - vibrato } else { fnum + vibrato }
+  fnum = fnum & 0xFFF
+  var base = (fnum << i64(ym.pg_block)) >> 2
+  let dt = ym.dt[s]
+  let dt_size = i64(dt & 3)
+  if dt_size != 0 {
+    let kcode = if ym.pg_kcode > 0x1C { 0x1C } else { i64(ym.pg_kcode) }
+    let octave = (kcode >> 2) + 9 + (if dt_size == 3 { 3 } else { dt_size & 2 })
+    let detune = DETUNE[((octave & 1) << 2) | (kcode & 3)] >> (9 - (octave >> 1))
+    base = if (dt & 4) != 0 { base - detune } else { base + detune }
+  }
+  base = base & 0x1FFFF
+  ym.pg_inc[s] = u32(((base * i64(ym.multi[s])) >> 1) & 0xFFFFF)
+}
+
+/// The detune ROM's steps, by block parity and note.
+const DETUNE: [8]i64 = #[16, 17, 19, 20, 22, 24, 27, 29]
+
+/// The vibrato's two shifts, by PMS (row) and the LFO's step folded to 0–7 (column): 7
+/// shifts the F-number away entirely.
+const PM_SHIFT_1: [64]u8 = #[
+  7, 7, 7, 7, 7, 7, 7, 7,
+  7, 7, 7, 7, 7, 7, 7, 7,
+  7, 7, 7, 7, 7, 7, 1, 1,
+  7, 7, 7, 7, 1, 1, 1, 1,
+  7, 7, 7, 1, 1, 1, 1, 0,
+  7, 7, 1, 1, 0, 0, 0, 0,
+  7, 7, 1, 1, 0, 0, 0, 0,
+  7, 7, 1, 1, 0, 0, 0, 0,
+]
+const PM_SHIFT_2: [64]u8 = #[
+  7, 7, 7, 7, 7, 7, 7, 7,
+  7, 7, 7, 7, 2, 2, 2, 2,
+  7, 7, 7, 2, 2, 2, 7, 7,
+  7, 7, 2, 2, 7, 7, 2, 2,
+  7, 7, 2, 7, 7, 7, 2, 7,
+  7, 7, 7, 2, 7, 7, 2, 1,
+  7, 7, 7, 2, 7, 7, 2, 1,
+  7, 7, 7, 2, 7, 7, 2, 1,
+]
+
+let vibrato_shift = pure (table: [64]u8, pms: i64, step: i64) -> i64 =>
+  i64(table[pms * 8 + step])
+
+/// The F-number, block and key code the next cycle's slot will use: its channel's — or in
+/// channel 3's special and CSM modes, for its operators 1, 3 and 2, their own (A9, A8, AA).
+let choose_frequency = (ym: mut Ym2612) -> void => {
+  let c = ym.cycle
+  let ch = (c + 1) % 6
+  var special = -1
+  if ym.mode_ch3 != 0 {
+    special = match c {
+      1 => 1,
+      7 => 0,
+      13 => 2,
+      _ => -1,
+    }
+  }
+  if special >= 0 {
+    ym.pg_fnum = ym.fnum3[special]
+    ym.pg_block = ym.block3[special]
+    ym.pg_kcode = ym.kcode3[special]
+  } else {
+    ym.pg_fnum = ym.fnum[ch]
+    ym.pg_block = ym.block[ch]
+    ym.pg_kcode = ym.kcode[ch]
+  }
+}
+
+// ── The LFO ──────────────────────────────────────────────────────────────────
+
+/// The LFO's divider counts samples; at its rate's mask it restarts and the 7-bit counter
+/// steps (held at zero while the LFO is off).
+let lfo_cycle = (ym: mut Ym2612) -> void => {
+  let mask = LFO_DIVIDE[i64(ym.lfo_rate)]
+  if (ym.lfo_divider & mask) == mask {
+    ym.lfo_divider = 0
+    ym.lfo_count += 1
+  } else if ym.lfo_step {
+    ym.lfo_divider += 1
+  }
+  ym.lfo_count = ym.lfo_count & ym.lfo_enable
+}
+
+const LFO_DIVIDE: [8]u8 = #[108, 77, 71, 67, 62, 44, 8, 5]
+
+// ── The envelope ─────────────────────────────────────────────────────────────
+
+/// Slot c's rate for the step two cycles on — and, from the rate set a cycle ago, the
+/// step's size: rates below 48 step by 1 when the envelope timer's lowest set bit lines up
+/// with the rate, and above by 1–4 by the timer's low bits; either way only on every third
+/// sample. Then slot c's own rate (by its state; key-on and an SSG-EG repeat go to attack),
+/// key scaling, AM, and its TL and SL, a cycle late.
+let envelope_rate = (ym: mut Ym2612) -> void => {
+  let s = ym.cycle
+  var rate = (i64(ym.eg_rate) << 1) + i64(ym.eg_ksv)
+  if rate > 0x3F { rate = 0x3F }
+  let slot_bit = ((rate >> 2) + i64(ym.eg_shift_locked)) & 0x0F
+  var inc: i64 = 0
+  if ym.eg_rate != 0 && ym.eg_divider == 2 {
+    if rate < 48 {
+      inc = match slot_bit {
+        12 => 1,
+        13 => (rate >> 1) & 1,
+        14 => rate & 1,
+        _ => 0,
+      }
+    } else {
+      inc = i64(EG_STEP_HIGH[i64(rate & 3) * 4 + i64(ym.eg_timer_low)]) + (rate >> 2) - 11
+      if inc > 4 { inc = 4 }
+    }
+  }
+  ym.eg_inc = u8(inc)
+  ym.eg_rate_max = (rate >> 1) == 0x1F
+  var state = ym.eg_state[s]
+  if (ym.eg_key[s] && ym.ssg_repeat[s]) || (!ym.eg_key[s] && ym.eg_key_latch[s]) { state = ATTACK }
+  ym.eg_rate = match state {
+    0 => ym.ar[s],
+    1 => ym.dr[s],
+    2 => ym.sr[s],
+    _ => (ym.rr[s] << 1) | 1,
+  }
+  ym.eg_ksv = ym.pg_kcode >> (ym.ks[s] ~ 3)
+  ym.eg_lfo_am = if ym.am[s] { u16(ym.lfo_am >> AM_SHIFT[i64(ym.ams[s % 6])]) } else { 0 }
+  ym.eg_tl[1] = ym.eg_tl[0]
+  ym.eg_tl[0] = u16(ym.tl[s])
+  ym.eg_sl[1] = ym.eg_sl[0]
+  ym.eg_sl[0] = ym.sl[s]
+}
+
+/// For rates 48 and up, the extra step by rate's low bits (row) and the timer's (column).
+const EG_STEP_HIGH: [16]u8 = #[0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0]
+
+/// AMS: how far the LFO's amplitude is shifted down.
+const AM_SHIFT: [4]u8 = #[7, 3, 1, 0]
+
+/// The envelope's step, on slot c + 22: key-on and key-off events, the states' progress,
+/// the attack's exponential approach, decay to the sustain level, SSG-EG's quadrupled steps
+/// and its inversion on key-off, and an envelope that has run out.
+let envelope_step = (ym: mut Ym2612) -> void => {
+  let s = (ym.cycle + 22) % 24
+  let key_now = ym.eg_key_latch[s]
+  let key_was = ym.eg_key[s]
+  ym.pg_reset[s] = (key_now && !key_was) || ym.ssg_reset[s]
+  let key_on_event = (key_now && !key_was) || (key_was && ym.ssg_repeat[s])
+  let key_off_event = key_was && !key_now
+  var level = i64(ym.eg_level[s])
+  if key_off_event && ym.ssg_inv[s] { level = (512 - level) & 0x3FF }
+  let ended = if ym.ssg_enable[s] { (level >> 9) != 0 } else { (level & 0x3F0) == 0x3F0 }
+  let state = ym.eg_state[s]
+  var next_state = state
+  var next = level
+  var inc: i64 = 0
+  let eg_inc = i64(ym.eg_inc)
+  let linear = if !ended && eg_inc != 0 {
+    (1 << (eg_inc - 1)) << (if ym.ssg_enable[s] { 2 } else { 0 })
+  } else {
+    0
+  }
+  if key_on_event {
+    next_state = ATTACK
+    if ym.eg_rate_max {
+      next = 0
+    } else if state == ATTACK && level != 0 && eg_inc != 0 && key_now {
+      inc = ((-level - 1) << eg_inc) >> 5
+    }
+  } else {
+    if state == ATTACK {
+      if level == 0 {
+        next_state = DECAY
+      } else if eg_inc != 0 && !ym.eg_rate_max && key_now {
+        inc = ((-level - 1) << eg_inc) >> 5
+      }
+    } else if state == DECAY {
+      if (level >> 4) == (i64(ym.eg_sl[1]) << 1) { next_state = SUSTAIN } else { inc = linear }
+    } else {
+      inc = linear
+    }
+    if !key_now { next_state = RELEASE }
+  }
+  if ym.eg_key_csm[s] { next = next | (i64(ym.eg_tl[1]) << 3) }
+  if !key_on_event && !ym.ssg_hold[s] && state != ATTACK && ended {
+    next_state = RELEASE
+    next = 0x3FF
+  }
+  next += inc
+  ym.eg_key[s] = key_now
+  ym.eg_level[s] = u16(next & 0x3FF)
+  ym.eg_state[s] = next_state
+}
+
+/// The envelope's output, slot c + 23: its level (inverted under SSG-EG), plus the LFO's
+/// amplitude and TL (not for channel 3 in CSM mode), capped at silence.
+let envelope_output = (ym: mut Ym2612) -> void => {
+  let s = (ym.cycle + 23) % 24
+  var level = i64(ym.eg_level[s])
+  if ym.ssg_inv[s] { level = 512 - level }
+  level = (level & 0x3FF) + i64(ym.eg_lfo_am)
+  if !(ym.mode_csm && ym.cycle % 6 == 3) { level += i64(ym.eg_tl[0]) << 3 }
+  if level > 0x3FF { level = 0x3FF }
+  ym.eg_out[s] = u16(level)
+}
+
+/// SSG-EG, slot c: with bit 3 set, an envelope reaching the bottom half (level bit 9)
+/// repeats (unless bit 0 holds it), resets the phase (bits 1–0 clear), flips its direction
+/// (alternate, 2) or rises to stay (3); hold modes keep their level while keyed; the
+/// inversion follows the direction and the attack bit, while keyed.
+let ssg_eg_step = (ym: mut Ym2612) -> void => {
+  let s = ym.cycle
+  let mode = ym.ssg_eg[s]
+  ym.ssg_reset[s] = false
+  ym.ssg_repeat[s] = false
+  ym.ssg_hold[s] = false
+  var dir = false
+  if (mode & 8) != 0 {
+    dir = ym.ssg_dir[s]
+    if (ym.eg_level[s] & 0x200) != 0 {
+      if (mode & 3) == 0 { ym.ssg_reset[s] = true }
+      if (mode & 1) == 0 { ym.ssg_repeat[s] = true }
+      if (mode & 3) == 2 { dir = !dir }
+      if (mode & 3) == 3 { dir = true }
+    }
+    if ym.eg_key_latch[s] && ((mode & 7) == 5 || (mode & 7) == 3) { ym.ssg_hold[s] = true }
+    dir = dir && ym.eg_key[s]
+  }
+  ym.ssg_dir[s] = dir
+  ym.ssg_enable[s] = (mode & 8) != 0
+  ym.ssg_inv[s] = (dir != ((mode & 0x0C) == 0x0C)) && ym.eg_key[s]
+}
+
+// ── The register file ────────────────────────────────────────────────────────
+
+/// The write strobes decoded, a cycle after the write: an address selects a mode register
+/// (below 30, in bank 0) or an FM register; a data byte goes to a mode register at once, or
+/// is held for an FM register, which takes it when its slot (operator registers) or
+/// channel (channel registers) comes round — every 12 or 6 cycles, for as long as it is
+/// held.
+let register_file = (ym: mut Ym2612) -> void => {
+  if ym.fm_data {
+    operator_register(ym)
+    channel_register(ym)
+  }
+  let address_seen = (ym.write_a & 6) == 2
+  let data_seen = (ym.write_d & 6) == 2
+  if address_seen { ym.fm_data = false }
+  if data_seen && ym.fm_address { ym.fm_data = true }
+  if address_seen { ym.fm_address = (ym.write_data & 0xF0) != 0 }
+  if address_seen { ym.address = if ym.fm_address { ym.write_data } else { ym.address } }
+  let bank0_data = data_seen && (ym.write_data & 0x100) == 0
+  if bank0_data { mode_register(ym, u8(ym.write_data & 0xFF)) }
+  if address_seen { ym.mode_address = ym.write_data & 0x1FF }
+  if ym.fm_data { ym.data = u8(ym.write_data & 0xFF) }
+}
+
+/// Operator registers 30–9F, for the slot this cycle's group names.
+let operator_register = (ym: mut Ym2612) -> void => {
+  let group = ym.cycle % 12
+  let bank_channel = u16(group % 3) | (if group % 6 >= 3 { 0x100 } else { 0 })
+  let wanted = bank_channel | (if group >= 6 { 4 } else { 0 })
+  if (ym.address & 0x107) != wanted { return }
+  let s = group + (if (ym.address & 8) != 0 { 12 } else { 0 })
+  let d = ym.data
+  match ym.address & 0xF0 {
+    0x30 => {
+      let m = d & 0x0F
+      ym.multi[s] = if m == 0 { 1 } else { m << 1 }
+      ym.dt[s] = (d >> 4) & 7
+    },
+    0x40 => { ym.tl[s] = d & 0x7F },
+    0x50 => {
+      ym.ar[s] = d & 0x1F
+      ym.ks[s] = (d >> 6) & 3
+    },
+    0x60 => {
+      ym.dr[s] = d & 0x1F
+      ym.am[s] = (d & 0x80) != 0
+    },
+    0x70 => { ym.sr[s] = d & 0x1F },
+    0x80 => {
+      ym.rr[s] = d & 0x0F
+      let level = (d >> 4) & 0x0F
+      ym.sl[s] = level | ((level + 1) & 0x10)
+    },
+    0x90 => { ym.ssg_eg[s] = d & 0x0F },
+    _ => {},
+  }
+}
+
+/// Channel registers A0–B6, for this cycle's channel.
+let channel_register = (ym: mut Ym2612) -> void => {
+  let ch = ym.cycle % 6
+  let wanted = u16(ch % 3) | (if ch >= 3 { 0x100 } else { 0 })
+  if (ym.address & 0x103) != wanted { return }
+  let d = ym.data
+  match ym.address & 0xFC {
+    0xA0 => {
+      ym.fnum[ch] = u16(d) | (u16(ym.latch_a4 & 7) << 8)
+      ym.block[ch] = (ym.latch_a4 >> 3) & 7
+      ym.kcode[ch] = key_code(ym.block[ch], ym.fnum[ch])
+    },
+    0xA4 => { ym.latch_a4 = d },
+    0xA8 => {
+      ym.fnum3[ch] = u16(d) | (u16(ym.latch_ac & 7) << 8)
+      ym.block3[ch] = (ym.latch_ac >> 3) & 7
+      ym.kcode3[ch] = key_code(ym.block3[ch], ym.fnum3[ch])
+    },
+    0xAC => { ym.latch_ac = d },
+    0xB0 => {
+      ym.algorithm[ch] = d & 7
+      ym.feedback[ch] = (d >> 3) & 7
+    },
+    0xB4 => {
+      ym.pms[ch] = d & 7
+      ym.ams[ch] = (d >> 4) & 3
+      ym.pan_l[ch] = (d & 0x80) != 0
+      ym.pan_r[ch] = (d & 0x40) != 0
+    },
+    _ => {},
+  }
+}
+
+/// The key code: the block and the note the F-number's top four bits make (its bit 10,
+/// and bits 9–7 all set or not: 0 below 0x380, 1, 2, 3 from 0x480).
+let key_code = pure (block: u8, fnum: u16) -> u8 => {
+  let top = fnum >> 7
+  let note: u8 = if top >= 9 { 3 } else if top == 8 { 2 } else if top == 7 { 1 } else { 0 }
+  (block << 2) | note
+}
+
+/// Mode registers 22–2B (bank 0), by the address last written.
+let mode_register = (ym: mut Ym2612, d: u8) -> void => {
+  match ym.mode_address {
+    0x22 => {
+      ym.lfo_enable = if (d & 8) != 0 { 0x7F } else { 0 }
+      ym.lfo_rate = d & 7
+    },
+    0x24 => { ym.timer_a.period = (ym.timer_a.period & 3) | (u16(d) << 2) },
+    0x25 => { ym.timer_a.period = (ym.timer_a.period & 0x3FC) | u16(d & 3) },
+    0x26 => { ym.timer_b.period = u16(d) },
+    0x27 => {
+      ym.mode_ch3 = (d >> 6) & 3
+      ym.mode_csm = ym.mode_ch3 == 2
+      ym.timer_a.load = (d & 1) != 0
+      ym.timer_a.enable = (d & 4) != 0
+      ym.timer_a.reset = (d & 0x10) != 0
+      ym.timer_b.load = (d & 2) != 0
+      ym.timer_b.enable = (d & 8) != 0
+      ym.timer_b.reset = (d & 0x20) != 0
+    },
+    0x28 => {
+      for i in 0..<4 { ym.key_ops[i] = ((d >> u8(4 + i)) & 1) != 0 }
+      ym.key_channel = if (d & 3) == 3 { 0xFF } else { (d & 3) + ((d >> 2) & 1) * 3 }
+    },
+    0x2A => { ym.dac_data = (ym.dac_data & 1) | (u16(d ~ 0x80) << 1) },
+    0x2B => { ym.dac_on = (d & 0x80) != 0 },
+    _ => {},
+  }
+}
+
+// ── The ROMs ─────────────────────────────────────────────────────────────────
+
+/// The log-sine ROM: a quarter wave's attenuation in 1/256ths of a bit, −log2 of the sine
+/// at the middle of each of 256 steps.
+let logsin_rom = pure () -> []u16 => [
+  i in 0..<256 | u16(((f64(2 * i + 1) * 3.141592653589793 / 1024.0).sin().log2() * -256.0).round())
+]
+
+/// The exponent ROM: 2^(i/256) − 1 in 1024ths, for i in 0–255 (read backwards).
+let exp_rom = pure () -> []u16 =>
+  [i in 0..<256 | u16((((f64(i) / 256.0).exp2() - 1.0) * 1024.0).round())]

@@ -49,6 +49,9 @@ unsafe extern sdl_put_audio_stream_data: (stream: ^u8, buf: ^f32, len: i32) -> b
 @symbol("SDL_GetAudioStreamQueued")
 unsafe extern sdl_get_audio_stream_queued: (stream: ^u8) -> i32
 
+@symbol("SDL_ClearAudioStream")
+unsafe extern sdl_clear_audio_stream: (stream: ^u8) -> bool
+
 @symbol("SDL_DestroyAudioStream")
 unsafe extern sdl_destroy_audio_stream: (stream: ^u8) -> void
 
@@ -89,6 +92,10 @@ impl AudioStream {
       unsafe { sdl_put_audio_stream_data(self.handle, samples.data(), bytes) }
     }
   }
+
+  /// Drop everything queued and not yet played — to start a sound over rather than after
+  /// the one playing.
+  pub let clear_audio = (self) -> bool => unsafe { sdl_clear_audio_stream(self.handle) }
 
   /// How many frames (one sample per channel) are queued and not yet played — what a loop
   /// compares against its target to decide how much more to render.

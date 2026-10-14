@@ -820,6 +820,9 @@ per size, a generic passing its own size on. LANGUAGE.md § Generic parameter li
 - **[OPEN] Arithmetic in a type position** (`[N + 1]t`) — a solver; and constraints on a
   value parameter, which wait on CTFE.
 - **[OPEN] A turbofish value** (`f::<64>(…)`): the turbofish takes types today.
+- **[OPEN] A named `const` as an array type's size** (`[MAX_BYTES]u8`): `lyra-E031` takes it
+  for an undeclared `const` parameter, so only a literal or a parameter sizes one. Found
+  10/14 by `std.chips.psg_effects`, whose buffer is written `[8]u8` beside `MAX_BYTES = 8`.
 - **[IDEA]** a named turbofish form `sum::<i64, N = 3>`, purely additive.
 
 ## Bounded stack buffers

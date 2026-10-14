@@ -664,7 +664,7 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — and entity modules —
+  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.psg_effects`' bytes to the PSG's port — modules —
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/game/` (the same runtime for every modern platform, on SDL3, in `f32` pixels at a fixed
   60 updates a second: screen, pad, planes, sprites, camera, collision, entity — the first std
@@ -675,8 +675,16 @@ of Markdown.
   **on a phone** the screen is the whole display in real pixels, landscape, with an on-screen
   pad (`pad.touch_layout`, drawn in real pixels beside the game, `--touch` scripting it), a
   pause while the app is away, and `--ppm` sampling the game's own pixels back out of the
-  scaled window — the walker's frame in the Simulator is the Mac's byte for byte),
-  `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
+  scaled window — the walker's frame in the Simulator is the Mac's byte for byte; **sound**,
+  `std/game/sound.lyra`: the PSG run in the game and streamed to SDL a sixtieth of a second
+  an update, or with `--frames N --wav FILE` written to a WAV instead of a device),
+  `std/chips/` (sound chips, written once for every console and runtime that has them: the
+  SN76489 PSG and the YM2612, cycle-exact — **held bit for bit to BlastEm's PSG and to
+  Nuked-OPN2 by the Sheliak emulator's `tests/psg.sh` and `tests/ym.sh`**, which use these
+  modules, so a change to either chip is run there; `resample` (by area, between steady
+  rates); `psg_effects`, the sound-effect player `std.genesis.sound` and `std.game.sound`
+  share — the bytes the PSG is sent each frame — no heap, so the 68000 runs it; tested in
+  `cmd/lyrac/sound_test.go`), `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read, and written as 8-bit RGBA in stored
   deflate blocks — no compressor; both tested against Go's `image/png` in
   `cmd/lyrac/png_test.go`), `std/base64.lyra` (standard alphabet, padded, strict; tested

@@ -1,0 +1,164 @@
+module std.chips.sn76489
+//! The SN76489 programmable sound generator — the Genesis's PSG (inside its VDP), and the
+//! Master System's and Game Gear's sound chip: three square-wave tone channels and a noise
+//! channel, each with a 4-bit attenuation.
+//!
+//! ```
+//! import std.chips.sn76489.{ new_psg, level }
+//!
+//! var psg = new_psg()
+//! psg.write(0x8E)          // tone 0's period, low 4 bits: 14
+//! psg.write(0x0F)          // and its upper 6: 0x0FE, about 440 Hz at 3.58 MHz
+//! psg.write(0x90)          // tone 0 at full volume
+//! psg.tick()               // once every 16 input clocks
+//! let sample = psg.channel_level(0)
+//! ```
+//!
+//! **Its state is what is modelled and checked**, tick by tick: each channel's counter and
+//! output, the noise shift register, the attenuations — held to BlastEm's PSG, run as a
+//! separate program, by the Sheliak emulator's `tests/psg.sh`, which uses this module. How
+//! loud an attenuation is — 2 dB a step, 15 silent — is [level]'s; mixing the channels and
+//! resampling them (`std.chips.resample`) are the caller's.
+//!
+//! **What was settled**: a tick comes every 16 input clocks (the Genesis feeds it the
+//! Z80's, so 240 master clocks). A tone counter counts down each tick and, reaching zero,
+//! reloads its period and flips the channel's output — so periods 0 and 1 both flip every
+//! tick. The noise channel's counter does the same with its own period (16, 32, 64, or
+//! tone 3's), and each time its output rises the shift register steps: its bit 0 is the
+//! noise output, it rotates right, and for white noise bit 15 takes bit 0 XOR bit 3 (the
+//! Sega variant's taps; periodic noise just rotates). Writing the noise register resets the
+//! register to 8000.
+//!
+//! **Where the documents part**: a data byte (bit 7 clear) written while a volume or noise
+//! register is latched sets that register's low 4 bits on the hardware (SMS Power's tests);
+//! BlastEm ignores it. Sheliak follows the hardware, and the comparison avoids the case.
+
+/// The PSG's registers and counters.
+pub struct Psg {
+  /// The tone periods (10 bits) of channels 0–2, and the noise control (3 bits) in 3.
+  period: [4]u16,
+  /// Attenuation per channel, 0 (loudest) to 15 (off).
+  volume: [4]u8,
+  /// The counters, counting down to a flip.
+  counter: [4]u16,
+  /// Each channel's square wave: its flip-flop.
+  output: [4]bool,
+  /// The noise shift register, and what it last put out.
+  lfsr: u16,
+  noise_out: bool,
+  /// The register the last latch byte chose: channel (bits 2–1) and volume (bit 0).
+  latched: u8,
+}
+
+/// A PSG as it powers up: every channel silent, the noise register at 8000.
+pub let new_psg = pure () -> Psg => Psg {
+  period: #[0, 0, 0, 0],
+  volume: #[15, 15, 15, 15],
+  counter: #[0, 0, 0, 0],
+  output: #[false, false, false, false],
+  lfsr: 0x8000,
+  noise_out: false,
+  latched: 0,
+}
+
+impl Psg {
+  /// A byte written to the PSG: a latch byte (bit 7 set) chooses a register — channel in
+  /// bits 6–5, volume if bit 4 — and writes its low 4 bits; a data byte writes the latched
+  /// register's upper bits (a tone period's 9–4) or, for a volume or the noise register,
+  /// its low 4 bits.
+  pub let write = (self: mut, value: u8) -> void => {
+    if (value & 0x80) != 0 {
+      self.latched = (value >> 4) & 7
+      self.set_low(value & 0x0F)
+      return
+    }
+    let channel = i64(self.latched >> 1)
+    if (self.latched & 1) == 0 && channel < 3 {
+      self.period[channel] = (self.period[channel] & 0x00F) | ((u16(value) & 0x3F) << 4)
+    } else {
+      self.set_low(value & 0x0F)
+    }
+  }
+
+  /// One tick: every counter counts, the flips fall where they fall, and the noise
+  /// register steps on its channel's rising edge.
+  pub let tick = (self: mut) -> void => {
+    for channel in 0..<4 {
+      if self.counter[channel] != 0 { self.counter[channel] -= 1 }
+      if self.counter[channel] == 0 {
+        self.counter[channel] = self.reload(channel)
+        self.output[channel] = !self.output[channel]
+        if channel == 3 && self.output[3] { self.step_noise() }
+      }
+    }
+  }
+
+  /// Channel `channel`'s output now: its attenuation's level while its wave (or the
+  /// noise) is high, else 0.
+  pub let channel_level = pure (self: ref, channel: i64) -> i64 => {
+    let high = if channel < 3 { self.output[channel] } else { self.noise_out }
+    if high { level(self.volume[channel]) } else { 0 }
+  }
+
+  /// The latched register's low 4 bits.
+  let set_low = (self: mut, bits: u8) -> void => {
+    let channel = i64(self.latched >> 1)
+    if (self.latched & 1) != 0 {
+      self.volume[channel] = bits
+    } else if channel < 3 {
+      self.period[channel] = (self.period[channel] & 0x3F0) | u16(bits)
+    } else {
+      self.period[3] = u16(bits & 7)
+      self.lfsr = 0x8000
+    }
+  }
+
+  /// A channel's period: a tone's own; the noise channel's 16, 32 or 64 ticks by its
+  /// control's low bits, or tone 3's when they are both set.
+  let reload = pure (self: ref, channel: i64) -> u16 => {
+    if channel < 3 { return self.period[channel] }
+    match self.period[3] & 3 {
+      0 => 0x10,
+      1 => 0x20,
+      2 => 0x40,
+      _ => self.period[2],
+    }
+  }
+
+  /// The noise register's step: bit 0 out, rotated right, and for white noise (control
+  /// bit 2) bit 15 XORed with the bit that was 3.
+  let step_noise = (self: mut) -> void => {
+    self.noise_out = (self.lfsr & 1) != 0
+    let white = (self.period[3] & 4) != 0
+    let tap = ((self.lfsr >> 3) & 1) != 0
+    self.lfsr = (self.lfsr >> 1) | ((self.lfsr & 1) << 15)
+    if white && tap { self.lfsr = self.lfsr ~ 0x8000 }
+  }
+}
+
+/// An attenuation's amplitude, out of 32767: 2 dB a step, 15 silent (SMS Power's table,
+/// from the chip's measured output).
+pub let level = pure (attenuation: u8) -> i64 => LEVELS[i64(attenuation & 15)]
+
+const LEVELS: [16]i64 = #[
+  32767, 26028, 20675, 16422, 13045, 10362, 8231, 6568,
+  5193, 4125, 3277, 2603, 2067, 1642, 1304, 0,
+]
+
+// ── What to write ────────────────────────────────────────────────────────────
+
+/// The two bytes that set tone channel `channel`'s (0–2) period, 10 bits: a latch byte
+/// with its low 4, then a data byte with its upper 6. A tone's pitch is the clock over 32
+/// times its period.
+pub let period_bytes = pure (channel: u8, period: u16) -> [2]u8 =>
+  #[0x80 | ((channel & 3) << 5) | u8(period & 0x0F), u8((period >> 4) & 0x3F)]
+
+/// The byte that sets channel `channel`'s attenuation (3 is the noise channel's): 0 the
+/// loudest, 15 silent.
+pub let attenuation_byte = pure (channel: u8, attenuation: u8) -> u8 =>
+  0x90 | ((channel & 3) << 5) | (attenuation & 0x0F)
+
+/// The byte that sets the noise channel: white (a hiss) or periodic (a buzz), at the rate
+/// of tone channel 2's period — which pitches it, a periodic noise sounding four octaves
+/// below the tone that period plays. Writing it restarts the noise register.
+pub let noise_byte = pure (white: bool) -> u8 => if white { 0xE7 } else { 0xE3 }

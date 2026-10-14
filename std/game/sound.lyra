@@ -1,0 +1,170 @@
+module std.game.sound
+//! Sound effects in a modern game: the PSG of the Sega consoles (`std.chips.sn76489`) run in
+//! the game and heard through SDL — so an effect made in Vega's sound editor is the sound it
+//! is on a Genesis, in a game for any platform SDL3 runs on.
+//!
+//! ```
+//! import std.game.sound
+//!
+//! assets.JUMP.play()           // an effect, by the name Vega gave it
+//! // each update (60 a second):
+//! assets.update_sounds()       // Vega's: sound.update(its steps)
+//! ```
+//!
+//! **The playing is `std.chips.psg_effects`'s**, as `std.genesis.sound`'s is: each update
+//! the bytes it says are written to the chip, which is run for a sixtieth of a second and
+//! heard at [RATE] ([Synth]). Paced by updates, not the display: a frame's sound is made
+//! with its update, and the device's queue is kept a few frames deep.
+//!
+//! **Heard without anyone at it**: played with `--frames N --wav FILE` (as `std.game.screen`
+//! plays headless), nothing is sent to a device; the sound of the first N updates is
+//! written to `FILE` as a 16-bit mono WAV — how Vega's checks listen to a game, as Sheliak's
+//! `--wav` lets them listen to a ROM.
+
+import bindings.sdl3.{ init, INIT_AUDIO, AudioStream, open_audio }
+import std.io.{ write_bytes }
+import std.chips.psg_effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.sn76489.{ Psg, new_psg }
+import std.chips.resample.{ Resampler, new_resampler }
+
+/// The rate a game's sound is heard at, in samples a second.
+pub const RATE: i64 = 48000
+
+/// The PSG's clock, as the Sega consoles feed it (their Z80's): what pitches an effect's
+/// periods, so a period is the same note here.
+pub const PSG_CLOCK: i64 = 3579545
+
+impl Effect {
+  /// Start the effect from its first step, in place of any its channel was playing. It is
+  /// heard from the next [update].
+  pub let play = (self) -> void => player.start(self)
+}
+
+/// Whether an effect is still playing.
+pub let playing = () -> bool => player.playing()
+
+/// The update's step of each effect playing, made sound: once an update. `steps` is the
+/// game's table of them (Vega's `assets.lyra` passes its own).
+pub let update<const N: i64> = (steps: ref [N]EffectStep) -> void => {
+  if !started { start() }
+  var out: [8]u8 = #[0; 8]
+  let n = player.frame(steps, out)
+  let samples = synth.frame(out, n)
+  updates += 1
+  if wav_path != "" {
+    for s in samples { recorded.push(s) }
+    if updates == wav_frames && !write_bytes(wav_path, wav(recorded, RATE)) {
+      println("could not write ${wav_path}")
+    }
+    return
+  }
+  if let Some(s) = stream {
+    // A queue grown past a few frames means the updates outran the device: drop the
+    // frame's sound rather than fall further behind.
+    if s.queued_frames() < QUEUE_LIMIT { let _ = s.put_audio(samples) }
+  }
+}
+
+/// The PSG heard: the chip, run a sixtieth of a second at a time from the bytes written to
+/// it, resampled by area to [RATE] and its DC taken out — mono, -1 to 1. `std.game.sound`
+/// plays through one; an editor may preview through its own.
+pub struct Synth {
+  psg: Psg,
+  resampler: Resampler,
+  /// The chip's clock, and the clocks owed it, in sixtieths of a clock.
+  clock: i64,
+  owed: i64 = 0,
+  /// The DC blocker's last input and output.
+  dc_in: f64 = 0.0,
+  dc_out: f64 = 0.0,
+}
+
+/// A silent PSG at `clock`, heard at [RATE].
+pub let new_synth = pure (clock: i64 = PSG_CLOCK) -> Synth => Synth {
+  psg: new_psg(),
+  resampler: new_resampler(f64(TICK_CLOCKS), f64(clock) / f64(RATE)),
+  clock: clock,
+}
+
+impl Synth {
+  /// The first `n` of `bytes` written to the chip, then a sixtieth of a second of its
+  /// sound.
+  pub let frame = (self: mut, bytes: [8]u8, n: i64) -> []f32 => {
+    for i in 0..<n.min(8) { self.psg.write(bytes[i]) }
+    self.owed += self.clock
+    var heard: []f64 = []
+    while self.owed >= TICK_CLOCKS * 60 {
+      self.psg.tick()
+      var level: i64 = 0
+      for channel in 0..<4 { level += self.psg.channel_level(channel) }
+      let v = f64(level) / 65536.0
+      self.resampler.push(v, v, heard)
+      self.owed -= TICK_CLOCKS * 60
+    }
+    var out: []f32 = []
+    var k = 0
+    while k < heard.len() {
+      let x = heard[k]
+      let y = x - self.dc_in + 0.9987 * self.dc_out
+      self.dc_in = x
+      self.dc_out = y
+      out.push(f32(y.clamp(-1.0, 1.0)))
+      k += 2
+    }
+    out
+  }
+}
+
+/// `samples` (mono, -1 to 1, at `rate`) as a 16-bit WAV file's bytes.
+pub let wav = pure (samples: []f32, rate: i64) -> []u8 => {
+  let data = samples.len() * 2
+  var out: []u8 = [
+    ..."RIFF".encode_utf8(), ...le32(36 + data), ...("WAVE".encode_utf8()),
+    ...("fmt ".encode_utf8()), ...le32(16), ...le16(1), ...le16(1), ...le32(rate),
+    ...le32(rate * 2), ...le16(2), ...le16(16),
+    ...("data".encode_utf8()), ...le32(data),
+  ]
+  for s in samples {
+    let v = i64((f64(s) * 32767.0).round()) & 0xFFFF
+    out.push(u8(v & 0xFF))
+    out.push(u8(v >> 8))
+  }
+  out
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Input clocks a PSG tick.
+const TICK_CLOCKS: i64 = 16
+
+/// The most samples kept queued for the device: six frames.
+const QUEUE_LIMIT: i64 = 4800
+
+var player: Player = new_player()
+var synth: Synth = new_synth()
+var stream: Maybe<AudioStream> = None
+var started = false
+var updates: i64 = 0
+/// Played with `--wav`: where, after how many updates, and what has been heard.
+var wav_path: string = ""
+var wav_frames: i64 = 0
+var recorded: []f32 = []
+
+/// The first update: `--frames N --wav FILE` read, or the device opened — none (a headless
+/// machine) is silence, not a failure.
+let start = () -> void => {
+  started = true
+  let args = program_args()
+  var i = 1
+  while i + 1 < args.len() {
+    if args[i] == "--wav" { wav_path = args[i + 1] }
+    if args[i] == "--frames" { wav_frames = args[i + 1].parse_i64().unwrap_or(0) }
+    i += 1
+  }
+  if wav_path != "" { return }
+  if init(INIT_AUDIO) { stream = open_audio(i32(RATE), 1) }
+}
+
+let le16 = pure (v: i64) -> []u8 => [u8(v & 0xFF), u8((v >> 8) & 0xFF)]
+
+let le32 = pure (v: i64) -> []u8 => [...le16(v & 0xFFFF), ...le16((v >> 16) & 0xFFFF)]
