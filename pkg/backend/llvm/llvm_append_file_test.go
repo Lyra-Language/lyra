@@ -3,6 +3,7 @@ package llvm
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +62,34 @@ let main = () -> void => {
 	}
 	if _, err := os.Stat(unopenable); err == nil {
 		t.Errorf("a file appeared at the unopenable path")
+	}
+}
+
+// `std.io.write_stdout` and `write_stderr` reach their own streams, whole: a reply far past
+// a pipe's buffer (64 KB on macOS and Linux) lands entire on standard output, with nothing
+// of standard error in it — what a stdio server's replies need.
+func TestExec_WriteStdoutAndStderr(t *testing.T) {
+	t.Parallel()
+	src := `import std.io.{ write_stdout, write_stderr }
+let main = () -> u8 => {
+  var big = ""
+  for _ in 0..<20000 { big = big ++ "0123456789" }
+  let out = write_stdout(big ++ "\n")
+  let err = write_stderr("to stderr\n")
+  if out && err { 0 } else { 1 }
+}`
+	bin := preludeBinary(t, src)
+	cmd := command(bin)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run: %v; stderr %q", err, stderr.String())
+	}
+	if len(out) != 200001 || !strings.HasSuffix(string(out), "789\n") {
+		t.Errorf("stdout is %d bytes, want 200001 ending in a newline", len(out))
+	}
+	if stderr.String() != "to stderr\n" {
+		t.Errorf("stderr %q", stderr.String())
 	}
 }

@@ -189,8 +189,18 @@ pub let append_file = (path: string, contents: string) -> bool => {
   landed
 }
 
+/// `contents` to standard output, all of it — short writes retried, as `write_file`'s are —
+/// answering whether every byte was taken. For a program whose output is a protocol (a
+/// stdio server's replies), where `print`'s one `write` a piece is not a promise of the
+/// whole: a large reply into a full pipe goes through whole.
+pub let write_stdout = (contents: string) -> bool => write_all(STDOUT, contents)
+
+/// `contents` to standard error, all of it: where a program whose standard output is
+/// spoken for (a stdio server) says what went wrong.
+pub let write_stderr = (contents: string) -> bool => write_all(STDERR, contents)
+
 // Writes all of `contents` to `fd`, answering whether every byte was taken. The writer for
-// both `write_file` and `append_file`.
+// `write_file`, `append_file`, `write_stdout` and `write_stderr`.
 //
 // **Every write loops.** `write` is permitted to take fewer bytes than it was offered, and
 // a single call that assumed otherwise would truncate a large file at whatever boundary the
@@ -240,6 +250,10 @@ const APPEND_MODE = "a"
 
 /// Standard input's descriptor.
 const STDIN: i32 = 0
+
+/// Standard output's and standard error's.
+const STDOUT: i32 = 1
+const STDERR: i32 = 2
 
 // File descriptors rather than `FILE *`: a raw pointer cannot be tested for null, an
 // integer can be compared with -1. `open` is variadic in C (the mode, read only under

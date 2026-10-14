@@ -863,6 +863,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `read_stdin()` | `std.io` | shares the chunked reader |
 | `write_file(path, contents) -> bool` | `std.io`, over `creat` | loops on short writes |
 | `append_file(path, contents) -> bool` | `std.io`, over `fopen(path, "a")` + `fileno` | creates if missing; shares `write_file`'s loop |
+| `write_stdout(contents) -> bool` / `write_stderr(contents) -> bool` | `std.io`, over `write(1/2, …)` | all of it, short writes retried (`write_file`'s loop) — a stdio server's replies; `print` makes one `write` a piece |
 | `remove_file(path) -> bool` | `std.io`, over `unlink` | deletes a file; `false` if it is not there or is a directory; a symbolic link is removed, never its target |
 | `write_bytes(path, bytes: []u8) -> bool` | `std.io`, over `creat` | `write_file` for data that is not text (`read_bytes`'s pair); same loop |
 | `read_dir(path) -> Maybe<[]string>` | `std.io`, over the `dir_names` builtin | names only, sorted, without `.`/`..`; dotfiles kept; `None` if unopenable, `Some([])` when empty |
