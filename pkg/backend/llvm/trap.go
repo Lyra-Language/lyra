@@ -30,34 +30,35 @@ import (
 // rather than merely that the process failed.
 const trapExitCode = 101
 
-// Trap messages, written to stderr (fd 2) before the process exits.
+// Trap messages, written to stderr (fd 2) before the process exits, each followed by
+// where the trap was (" at file:line:col") and a newline.
 const (
-	overflowTrapMessage     = "lyra: arithmetic overflow\n"
-	divideByZeroTrapMessage = "lyra: divide by zero\n"
-	indexOOBTrapMessage     = "lyra: array index out of bounds\n"
+	overflowTrapMessage     = "lyra: arithmetic overflow"
+	divideByZeroTrapMessage = "lyra: divide by zero"
+	// Followed by the index and the length, then where.
+	indexOOBTrapMessage = "lyra: array index out of bounds"
 	// A string is indexed and sliced in *runes*, not elements, and both had been
 	// reporting the array message — which sends the reader looking for an array. The
 	// slice message says "range" rather than "index" because it covers a second
 	// mistake the index form cannot make: `start > end`, an inverted range, which
 	// traps rather than quietly yielding "".
-	stringIndexOOBTrapMessage  = "lyra: string index out of bounds\n"
-	stringSliceOOBTrapMessage  = "lyra: string slice out of range\n"
-	arraySliceOOBTrapMessage   = "lyra: array slice out of range\n"
-	interiorNULTrapMessage     = "lyra: a C string cannot contain a NUL byte\n"
-	negativeByteLenTrapMessage = "lyra: byte length must not be negative\n"
-	matchFailedTrapMessage     = "lyra: match not exhaustive\n"
-	shiftOverflowTrapMessage   = "lyra: shift amount out of range\n"
-	rangeStepTrapMessage       = "lyra: range step must be positive\n"
-	constraintTrapMessage      = "lyra: value violates its type's constraint\n"
+	stringIndexOOBTrapMessage  = "lyra: string index out of bounds"
+	stringSliceOOBTrapMessage  = "lyra: string slice out of range"
+	arraySliceOOBTrapMessage   = "lyra: array slice out of range"
+	interiorNULTrapMessage     = "lyra: a C string cannot contain a NUL byte"
+	negativeByteLenTrapMessage = "lyra: byte length must not be negative"
+	matchFailedTrapMessage     = "lyra: match not exhaustive"
+	shiftOverflowTrapMessage   = "lyra: shift amount out of range"
+	rangeStepTrapMessage       = "lyra: range step must be positive"
+	constraintTrapMessage      = "lyra: value violates its type's constraint"
 	// A rounded float that no i64 can hold, or a NaN. Named for the *conversion*
 	// rather than for `floor`/`ceil`/`round`, because that is where the loss happens —
 	// the rounding itself is exact and total.
-	floatToIntTrapMessage = "lyra: float value is out of range for an integer\n"
+	floatToIntTrapMessage = "lyra: float value is out of range for an integer"
 	// `[v; n]` with a negative runtime n. The constant form refuses one at compile
 	// time; this is the same rule at the only moment a runtime count exists.
-	negativeLengthTrapMessage = "lyra: array length must not be negative\n"
-	// The user message and its newline follow this at run time, so unlike the four
-	// above it carries neither.
+	negativeLengthTrapMessage = "lyra: array length must not be negative"
+	// The user message, where and the newline follow this at run time.
 	panicPrefixMessage = "lyra: panic: "
 )
 
@@ -73,25 +74,66 @@ func (l *lowerer) exitFunc() *ir.Func {
 	return fn
 }
 
-// panicFunc lazily emits a noreturn `void @name()` into the module: write msg to
-// stderr, then exit(trapExitCode). Defined as a real body (like the rc runtime),
-// so `lyrac build`'s single `clang out.ll` stays self-contained. Cached by name,
-// so every trap site of a given kind shares the one function.
+// panicFunc lazily emits a noreturn `void @name(i8* where, i64 len)` into the
+// module: write msg, then where (whereArgs), then a newline to stderr, then
+// exit(trapExitCode). Defined as a real body (like the rc runtime), so `lyrac
+// build`'s single `clang out.ll` stays self-contained. Cached by name, so every
+// trap site of a given kind shares the one function and passes only its place.
 func (l *lowerer) panicFunc(name, msg string) *ir.Func {
 	if fn, ok := l.panics[name]; ok {
 		return fn
 	}
-	fn := l.module.NewFunc(name, lltypes.Void)
+	fn, b, where := l.trapFunc(name)
+	b.NewCall(l.writeFunc(), i32c(2), l.cString(msg), i64c(int64(len(msg))))
+	l.endTrap(b, where)
+	return fn
+}
+
+// trapFunc begins a trap: the noreturn function `name(i8* where, i64 len, extra...)`,
+// its entry block, and its two where parameters, which endTrap writes.
+func (l *lowerer) trapFunc(name string, extra ...*ir.Param) (*ir.Func, *ir.Block, [2]value.Value) {
+	where := ir.NewParam("where", lltypes.NewPointer(lltypes.I8))
+	whereLen := ir.NewParam("where_len", lltypes.I64)
+	fn := l.module.NewFunc(name, lltypes.Void, append([]*ir.Param{where, whereLen}, extra...)...)
 	fn.FuncAttrs = append(fn.FuncAttrs, enum.FuncAttrNoReturn)
-	b := fn.NewBlock("entry")
-	b.NewCall(l.writeFunc(),
-		i32c(2), // stderr
-		l.cString(msg),
-		i64c(int64(len(msg))))
+	l.panics[name] = fn
+	return fn, fn.NewBlock("entry"), [2]value.Value{where, whereLen}
+}
+
+// endTrap writes where the trap was and a newline to stderr, and exits.
+func (l *lowerer) endTrap(b *ir.Block, where [2]value.Value) {
+	stderr := i32c(2)
+	b.NewCall(l.writeFunc(), stderr, where[0], where[1])
+	b.NewCall(l.writeFunc(), stderr, l.newlinePtr(), i64c(1))
 	b.NewCall(l.exitFunc(), i32c(trapExitCode))
 	b.NewUnreachable()
-	l.panics[name] = fn
-	return fn
+}
+
+// at makes loc the place a trap emitted from now on names, when it has one, and
+// returns what puts the previous place back. The innermost expression wins, and
+// restoring on the way out means `xs[f(i)]` names the index expression again once
+// `f(i)` is lowered.
+func (l *lowerer) at(loc ast.Location) func() {
+	saved := l.here
+	if loc.StartLine > 0 {
+		l.here = loc
+	}
+	return func() { l.here = saved }
+}
+
+// whereArgs is a trap call's place: " at file:line:col" for the source lowered now
+// (" at line:col" when it has no file, as a test's source does), or nothing for code
+// with no source location. A trap without it sent the reader
+// looking — an index out of bounds in Vega took a scripted reproduction to place.
+func (l *lowerer) whereArgs() []value.Value {
+	text := ""
+	if l.here.StartLine > 0 {
+		text = fmt.Sprintf(" at %d:%d", l.here.StartLine, l.here.StartCol)
+		if l.here.File != "" {
+			text = fmt.Sprintf(" at %s:%d:%d", l.here.File, l.here.StartLine, l.here.StartCol)
+		}
+	}
+	return []value.Value{l.cString(text), i64c(int64(len(text)))}
 }
 
 func (l *lowerer) panicOverflowFunc() *ir.Func {
@@ -102,8 +144,81 @@ func (l *lowerer) panicDivideByZeroFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_divide_by_zero", divideByZeroTrapMessage)
 }
 
+// panicIndexOOBFunc is the trap for an array index out of bounds, which says the index
+// and the length too: `void @lyra_panic_index_out_of_bounds(i8* where, i64 len, i64
+// index, i64 length)`, writing "lyra: array index out of bounds (index 5, length 3)"
+// and where. The numbers are written by lyra_trap_write_int, not printf: a Genesis
+// program has no formatting in its C library, and a trap cannot allocate.
 func (l *lowerer) panicIndexOOBFunc() *ir.Func {
-	return l.panicFunc("lyra_panic_index_out_of_bounds", indexOOBTrapMessage)
+	const name = "lyra_panic_index_out_of_bounds"
+	if fn, ok := l.panics[name]; ok {
+		return fn
+	}
+	index := ir.NewParam("index", lltypes.I64)
+	length := ir.NewParam("length", lltypes.I64)
+	fn, b, where := l.trapFunc(name, index, length)
+	stderr := i32c(2)
+	text := func(s string) {
+		b.NewCall(l.writeFunc(), stderr, l.cString(s), i64c(int64(len(s))))
+	}
+	text(indexOOBTrapMessage + " (index ")
+	b.NewCall(l.trapWriteIntFunc(), index)
+	text(", length ")
+	b.NewCall(l.trapWriteIntFunc(), length)
+	text(")")
+	l.endTrap(b, where)
+	return fn
+}
+
+// emitIndexTrapIf is emitTrapIf for an index out of bounds, passing the index and the
+// length (both i64) the message names.
+func (l *lowerer) emitIndexTrapIf(block *ir.Block, cond, index, length value.Value) *ir.Block {
+	return l.emitTrapIf(block, cond, l.panicIndexOOBFunc(), index, length)
+}
+
+// trapWriteIntFunc lazily defines `void @lyra_trap_write_int(i64)`: the number in
+// decimal on stderr, from a buffer on the stack. The digits come off the magnitude
+// as an unsigned value, so the most negative i64 (whose magnitude is 2^63) needs no
+// case of its own; the '-' is stored before the first digit every time and included
+// only for a negative number, so the tail has no branch.
+func (l *lowerer) trapWriteIntFunc() *ir.Func {
+	const name = "lyra_trap_write_int"
+	if fn, ok := l.panics[name]; ok {
+		return fn
+	}
+	n := ir.NewParam("n", lltypes.I64)
+	fn := l.module.NewFunc(name, lltypes.Void, n)
+	l.panics[name] = fn
+	entry := fn.NewBlock("entry")
+	loop := fn.NewBlock("digit")
+	done := fn.NewBlock("done")
+
+	// 19 digits hold 2^63, and one more byte the sign.
+	const size = 20
+	bufTy := lltypes.NewArray(size, lltypes.I8)
+	buf := entry.NewAlloca(bufTy)
+	negative := entry.NewICmp(enum.IPredSLT, n, i64c(0))
+	magnitude := entry.NewSelect(negative, entry.NewSub(i64c(0), n), n)
+	entry.NewBr(loop)
+
+	rest := loop.NewPhi(ir.NewIncoming(magnitude, entry))
+	at := loop.NewPhi(ir.NewIncoming(i64c(size), entry))
+	pos := loop.NewSub(at, i64c(1))
+	digit := loop.NewTrunc(loop.NewURem(rest, i64c(10)), lltypes.I8)
+	loop.NewStore(loop.NewAdd(digit, constant.NewInt(lltypes.I8, '0')),
+		loop.NewGetElementPtr(bufTy, buf, i64c(0), pos))
+	next := loop.NewUDiv(rest, i64c(10))
+	rest.Incs = append(rest.Incs, ir.NewIncoming(next, loop))
+	at.Incs = append(at.Incs, ir.NewIncoming(pos, loop))
+	loop.NewCondBr(loop.NewICmp(enum.IPredNE, next, i64c(0)), loop, done)
+
+	sign := done.NewSub(pos, i64c(1))
+	done.NewStore(constant.NewInt(lltypes.I8, '-'), done.NewGetElementPtr(bufTy, buf, i64c(0), sign))
+	start := done.NewSelect(negative, sign, pos)
+	done.NewCall(l.writeFunc(), i32c(2),
+		done.NewGetElementPtr(bufTy, buf, i64c(0), start), done.NewSub(i64c(size), start))
+	done.NewRet(nil)
+	return fn
 }
 
 func (l *lowerer) panicStringIndexOOBFunc() *ir.Func {
@@ -224,17 +339,12 @@ func (l *lowerer) panicMessageFunc() *ir.Func {
 	}
 	data := ir.NewParam("data", lltypes.NewPointer(lltypes.I8))
 	length := ir.NewParam("len", lltypes.I64)
-	fn := l.module.NewFunc(name, lltypes.Void, data, length)
-	fn.FuncAttrs = append(fn.FuncAttrs, enum.FuncAttrNoReturn)
-	b := fn.NewBlock("entry")
+	fn, b, where := l.trapFunc(name, data, length)
 	stderr := i32c(2)
 	b.NewCall(l.writeFunc(), stderr, l.cString(panicPrefixMessage),
 		i64c(int64(len(panicPrefixMessage))))
 	b.NewCall(l.writeFunc(), stderr, data, length)
-	b.NewCall(l.writeFunc(), stderr, l.newlinePtr(), i64c(1))
-	b.NewCall(l.exitFunc(), i32c(trapExitCode))
-	b.NewUnreachable()
-	l.panics[name] = fn
+	l.endTrap(b, where)
 	return fn
 }
 
@@ -265,7 +375,7 @@ func (l *lowerer) lowerPanicCall(block *ir.Block, e *ast.FunctionCallExpr) (valu
 	if err != nil {
 		return nil, nil, err
 	}
-	block.NewCall(l.panicMessageFunc(), dataPtr, length)
+	block.NewCall(l.panicMessageFunc(), append(l.whereArgs(), dataPtr, length)...)
 	block.NewUnreachable()
 	return nil, block, nil
 }
@@ -298,20 +408,21 @@ func diverged(v value.Value, block *ir.Block) bool {
 // enforced (a bool ladder, a `data` tag switch) this is defense in depth: the call
 // is unreachable in a well-typed program and costs one basic block.
 func (l *lowerer) sealMatchFallthrough(block *ir.Block) {
-	block.NewCall(l.panicMatchFailedFunc())
+	block.NewCall(l.panicMatchFailedFunc(), l.whereArgs()...)
 	block.NewUnreachable()
 }
 
 // emitTrapIf branches to a trap when cond is true and continues otherwise: it
 // creates a trap block (call trapFn; unreachable) and a continuation block, cond-
 // brs `block` between them, and returns the continuation — the caller keeps
-// lowering into that. The shared shape behind every arithmetic check.
-func (l *lowerer) emitTrapIf(block *ir.Block, cond value.Value, trapFn *ir.Func) *ir.Block {
+// lowering into that. The shared shape behind every arithmetic check. The call passes
+// where (whereArgs), then extra — what a trap like the index one also names.
+func (l *lowerer) emitTrapIf(block *ir.Block, cond value.Value, trapFn *ir.Func, extra ...value.Value) *ir.Block {
 	fn := block.Parent
 	trap := fn.NewBlock("")
 	cont := fn.NewBlock("")
 	block.NewCondBr(cond, trap, cont)
-	trap.NewCall(trapFn)
+	trap.NewCall(trapFn, append(l.whereArgs(), extra...)...)
 	trap.NewUnreachable()
 	return cont
 }

@@ -135,9 +135,9 @@ let unwrap<t, e> = (self: Result<t, e>) -> t => match self {
 		name, main, want string
 	}{
 		{"maybe", `let m: Maybe<i64> = None
-  u8(m.unwrap())`, "lyra: panic: unwrap on a None\n"},
+  u8(m.unwrap())`, "lyra: panic: unwrap on a None at 7:11\n"},
 		{"result", `let r: Result<i64, string> = Err "boom"
-  u8(r.unwrap())`, "lyra: panic: unwrap on an Err\n"},
+  u8(r.unwrap())`, "lyra: panic: unwrap on an Err at 12:12\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -177,7 +177,7 @@ let main = () -> u8 => {
 	if code != trapExitCode {
 		t.Errorf("exit code: got %d, want %d", code, trapExitCode)
 	}
-	if want := "lyra: panic: config for database on port 5432 is required\n"; stderr != want {
+	if want := "lyra: panic: config for database on port 5432 is required at 6:11\n"; stderr != want {
 		t.Errorf("stderr: got %q, want %q", stderr, want)
 	}
 }

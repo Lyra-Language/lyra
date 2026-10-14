@@ -30,6 +30,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 | Internal | `never`, `untyped_int`, `untyped_signed_int`, `untyped_float` | no syntax |
 
 - **`never`** is the bottom type, the result of `panic(msg)`: assignable to every type, so `match m { Some(v) => v, None => panic("…") }` works. `panic` is EffectNone (legal in `pure`/`det`/`noalloc`).
+- **A trap** — `panic`, or a failed runtime check (overflow, an index, a constraint…) — writes one line to stderr and exits 101. The line ends with where it happened, the innermost expression's `file:line:col`, and an index out of bounds also names the index and the length: `lyra: array index out of bounds (index 5, length 3) at app.lyra:4:14`. The file is as the compiler was given it. A `panic` inside a function names the `panic`, so `unwrap` on a `None` names the prelude's line, not its caller's.
 - **`i128`/`u128`** lower natively (LLVM `i128`): checked arithmetic, `match`, comparisons, conversions; division and `%%` via compiler-rt; `print` via `lyra_i128_to_str`. A literal's magnitude lives in a `big.Int` on the node (nil if it fits 64 bits) and stays untyped where both could hold it. Folding is arbitrary-precision (`ast.FoldBigExpr`; `FoldIntExpr` returns ok=false rather than wrapping). Value-range analysis leaves 128-bit (and `u64`) values untracked.
 - **Literals of both signs share a type** wherever values must agree — an array's elements,
   `if`/`match` branches — at the signed kind: `[-1, 2]`, `if c { -1 } else { 2 }`. **Inside

@@ -314,7 +314,7 @@ func (l *lowerer) lowerDynArrayIndex(block *ir.Block, e *ast.IndexExpr, dynType 
 	signed, _ := l.getIntSignedness(e.Index)
 	idx64 := coerceIntWidth(block, idx, signed, lltypes.I64)
 	oob := block.NewICmp(enum.IPredUGE, idx64, length)
-	block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
+	block = l.emitIndexTrapIf(block, oob, idx64, length)
 
 	elemPtr := dynArrayElemPtr(block, boxTy, box, idx64)
 	return block.NewLoad(elemLL, elemPtr), block, nil
@@ -394,7 +394,7 @@ func (l *lowerer) lowerArrayFromEnd(block *ir.Block, call *ast.FunctionCallExpr,
 		}
 		size := i64c(int64(it.Size))
 		idx := block.NewSub(size, k)
-		block = l.emitTrapIf(block, block.NewICmp(enum.IPredUGE, idx, size), l.panicIndexOOBFunc())
+		block = l.emitIndexTrapIf(block, block.NewICmp(enum.IPredUGE, idx, size), idx, size)
 		elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, i64c(0), idx)
 		return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
 	case types.DynamicArrayType:
@@ -413,7 +413,7 @@ func (l *lowerer) lowerArrayFromEnd(block *ir.Block, call *ast.FunctionCallExpr,
 			return nil, nil, err
 		}
 		idx := block.NewSub(length, k)
-		block = l.emitTrapIf(block, block.NewICmp(enum.IPredUGE, idx, length), l.panicIndexOOBFunc())
+		block = l.emitIndexTrapIf(block, block.NewICmp(enum.IPredUGE, idx, length), idx, length)
 		elemPtr := dynArrayElemPtr(block, boxTy, box, idx)
 		return block.NewLoad(elem, elemPtr), block, nil
 	}

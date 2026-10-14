@@ -571,10 +571,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
-- **[OPEN] A trap says where it was.** An index out of bounds prints `lyra: array index out
-  of bounds` and nothing else — Vega's crash deleting the only entity (10/14) took a scripted
-  reproduction to place. The source file, line and column of the index (and the index and
-  length) in the message, as a panic's own text is.
+- **[OPEN] A panic in the standard library names its caller.** `m.unwrap()` on a `None`
+  traps `at …/std/prelude/…`, the `panic`'s own line, which says nothing about which
+  `unwrap`. A function marked to take its caller's place (Rust's `#[track_caller]`) would fix it.
 - **[OPEN] A deflate compressor.** `std.compress` inflates only, so `std.png.write_png` stores
   its pixels uncompressed: an MCP image from Vega is ~1.8 MB of base64 for a 768×432 frame
   that compresses to a tenth of it. Fixed-Huffman deflate with a small hash-chain matcher

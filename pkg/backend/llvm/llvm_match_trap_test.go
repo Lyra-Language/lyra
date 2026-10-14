@@ -112,8 +112,8 @@ func TestEmit_NonExhaustiveMatch_EmitsTrapCall(t *testing.T) {
 		t.Fatalf("emit: %v", err)
 	}
 	for _, want := range []string{
-		"define void @lyra_panic_match_failed()",
-		"call void @lyra_panic_match_failed()",
+		"define void @lyra_panic_match_failed(i8* %where, i64 %where_len)",
+		"call void @lyra_panic_match_failed(i8*",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in IR, got:\n%s", want, out)

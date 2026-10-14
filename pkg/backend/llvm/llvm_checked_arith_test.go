@@ -118,7 +118,7 @@ func TestEmit_CheckedArithmeticIR(t *testing.T) {
 	let main = () -> u8 => add(1, 2)`)
 	for _, needle := range []string{
 		"llvm.uadd.with.overflow.i8",
-		"call void @lyra_panic_overflow()",
+		"call void @lyra_panic_overflow(i8*",
 		"unreachable",
 	} {
 		if !strings.Contains(add, needle) {

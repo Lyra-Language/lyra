@@ -80,6 +80,37 @@ let main = () -> void => {
 	}
 }
 
+// An index out of bounds writes its index and length with lyra_trap_write_int, whose
+// 64-bit division the 68000 has no instruction for: the ROM must link it from
+// compiler-rt and still reach the panic screen.
+func TestGenesis_AnIndexOutOfBoundsTurnsTheScreenRed(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "index.lyra")
+	if err := os.WriteFile(src, []byte(`let status = pure () -> ^u16 => unsafe { pointer_at(0xC00004) }
+let port = pure () -> ^mut u16 => unsafe { pointer_at(0xC00000) }
+let main = () -> void => {
+  let xs: [2]u16 = #[1, 2]
+  let s = unsafe { status().read_volatile() }
+  unsafe { port().write_volatile(xs[i64(s & 1) + 2]) }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "index.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", out, src); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	if got := screenOf(t, out); got != "ff0000" {
+		t.Errorf("the screen is %s, want the runtime's panic red (ff0000)", got)
+	}
+}
+
 // A heap allocation the front end does not see is still refused, by the link, with the
 // reason — not a linker's "undefined symbol".
 func TestGenesis_AnAllocationIsExplainedAtTheLink(t *testing.T) {

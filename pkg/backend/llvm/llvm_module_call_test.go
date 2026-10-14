@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"errors"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -39,16 +38,7 @@ func emitModules(t *testing.T, files map[string]string) string {
 // cases whose subject *is* the refusal.
 func emitModulesErr(t *testing.T, files map[string]string) (string, error) {
 	t.Helper()
-	root := t.TempDir()
-	for name, body := range files {
-		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	root := sourceTree(t, files)
 	units, diags := modules.Resolve(filepath.Join(root, "app.lyra"), []string{root}, modules.Options{})
 	if len(diags) != 0 {
 		t.Fatalf("resolve: %v", diags)

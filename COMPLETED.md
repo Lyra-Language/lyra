@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 10/14/26 — A trap says where it was
+
+An index out of bounds printed `lyra: array index out of bounds` and nothing else. Vega's crash
+deleting the only entity took a scripted reproduction to place, when the program had known
+the line all along. Every trap now ends `at file:line:col`, and the index trap says the index
+and the length: `lyra: array index out of bounds (index 5, length 3) at app.lyra:4:14`.
+
+**The trap stays one function per kind.** Each call site passes its place, an interned
+string, so N sites still cost a call each rather than N copies of the writes.
+
+**The place is the innermost expression being lowered** (`l.here`):
+- `lowerExpr` sets it, and so does `lowerBlockStmts` for each statement.
+- Both restore it on the way out, so `xs[i + 1]` names the index expression after `i + 1`
+  is lowered.
+- An assignment's target isn't lowered through `lowerExpr`, so `boundsCheckedIndex` sets
+  its own.
+
+**The numbers are formatted in emitted IR** (`lyra_trap_write_int`), not by `printf`:
+- A Genesis program's C library has only `write` and `exit`, and a trap can't allocate.
+- It takes the digits of the unsigned magnitude, so the most negative `i64` needs no case
+  of its own.
+- Its 64-bit division comes from compiler-rt on the 68000:
+  `TestGenesis_AnIndexOutOfBoundsTurnsTheScreenRed` builds and runs one in Sheliak.
+
+**The backend test cache needed a change.** The message names the source file, so the file's
+path is in the IR, and the binary cache is keyed on the IR. The harnesses wrote each source
+into a fresh temporary directory, so a warm run rebuilt 68 binaries. `sourceDir`/`sourceTree`
+name the directory by the sources' hash instead, and a warm run rebuilds 3.
+
+`TestExec_AnIndexTrapSaysTheIndexTheLengthAndWhere` covers every indexing path: fixed and
+dynamic, read and assigned, `from_end`, and `program_arg`. It and
+`TestExec_EveryTrapSaysWhere` fail without the change.
+
+**Left open (todo.md):** a `panic` inside `unwrap` names the prelude's line, not the caller's.
+
 ### 10/14/26 — A spread of a literal takes the context's width
 
 `let b: []u8 = [...[0x55, 0x55], ...[0x33, 0x33]]` held 85, 0, 51, 0. The array arm of

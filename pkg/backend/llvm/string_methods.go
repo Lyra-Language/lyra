@@ -118,7 +118,7 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	yes := constant.NewInt(lltypes.I1, 1)
 
 	trapBlock := fn.NewBlock("")
-	trapBlock.NewCall(l.panicStringSliceOOBFunc())
+	trapBlock.NewCall(l.panicStringSliceOOBFunc(), l.whereArgs()...)
 	trapBlock.NewUnreachable()
 
 	// Each bound is resolved to a byte offset independently, allowEnd set because the
@@ -205,7 +205,7 @@ func (l *lowerer) lowerStringFromEnd(block *ir.Block, call *ast.FunctionCallExpr
 	foundBlock := fn.NewBlock("")
 	trapBlock := fn.NewBlock("")
 	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, i64c(0)), trapBlock, foundBlock)
-	trapBlock.NewCall(l.panicStringIndexOOBFunc())
+	trapBlock.NewCall(l.panicStringIndexOOBFunc(), l.whereArgs()...)
 	trapBlock.NewUnreachable()
 
 	cpSlot := fn.Blocks[0].NewAlloca(lltypes.I32)

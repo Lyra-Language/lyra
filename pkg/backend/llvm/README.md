@@ -29,7 +29,13 @@ Built on `github.com/llir/llvm` v0.3.6 (pure Go, emits **typed** pointers such a
   `_string_index_out_of_bounds`, `_array_slice_out_of_range`, `_string_slice_out_of_range`,
   `_shift_overflow`, `_range_step`, `_float_to_int`, `_constraint`, `_match_failed`,
   `_interior_nul`, `_negative_length`, `_negative_byte_len`, and `lyra_panic` (user
-  `panic`).
+  `panic`). One function per kind; **every call passes its place** (`whereArgs`: an
+  interned `" at file:line:col"` and its length) first. The place is `l.here`, set by
+  `lowerExpr` and per statement in `lowerBlockStmts` through `at`, which restores it on the
+  way out — so a site building a trap outside those (an assignment's target,
+  `boundsCheckedIndex`) sets it itself. The index trap also takes the index and length
+  (`emitIndexTrapIf`), written by `lyra_trap_write_int`: digits into a stack buffer, no
+  libc formatting, which a Genesis program does not have.
 - **Top-level `const`** has no storage: `Emit` records them in `l.consts` and an
   identifier read that misses `l.locals` inlines the value expression — **unless its type
   owns a managed value** (`ownership.OwnsManaged`): inlined, an array was allocated at every
@@ -742,3 +748,6 @@ serialized system-wide), so:
   SHA-256(clang version | GOOS/GOARCH | flags | IR) in `~/Library/Caches/lyra-llvm-tests`
   (`os.UserCacheDir()`). Warm run ~2 s; cold ~2 min. Entries unused for 30 days are pruned;
   deleting the directory forces a full recompile.
+- **A source file's path is in its IR** (every trap names its place), so a harness writing
+  sources to disk uses `sourceDir`/`sourceTree` (named by the sources' hash), never
+  `t.TempDir()`: a fresh directory each run is a cache miss each run.

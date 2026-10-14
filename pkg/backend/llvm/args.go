@@ -100,7 +100,7 @@ func (l *lowerer) lowerProgramArgCall(block *ir.Block, e *ast.FunctionCallExpr) 
 	argcG, argvG := l.ensureArgsGlobals()
 	argc := block.NewLoad(lltypes.I64, argcG)
 	// One unsigned compare covers both a negative index and one past the end.
-	block = l.emitTrapIf(block, block.NewICmp(enum.IPredUGE, i, argc), l.panicIndexOOBFunc())
+	block = l.emitIndexTrapIf(block, block.NewICmp(enum.IPredUGE, i, argc), i, argc)
 
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	argv := block.NewLoad(lltypes.NewPointer(i8ptr), argvG)

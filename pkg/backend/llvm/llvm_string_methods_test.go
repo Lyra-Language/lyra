@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -787,11 +786,8 @@ func buildAndRunPanicWithPrelude(t *testing.T, src string) (string, int) {
 	t.Helper()
 	clang := lookClang(t)
 
-	dir := t.TempDir()
+	dir := sourceDir(t, src)
 	entry := filepath.Join(dir, "app.lyra")
-	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	roots := []string{dir, repoStdRoot(t)}
 	units, diags := modules.Resolve(entry, roots, modules.Options{Prelude: modules.PreludeModule})
 	if len(diags) != 0 {
@@ -1022,11 +1018,8 @@ let main = () -> void => {
   bytes.push_utf8("no")
 }
 `
-	dir := t.TempDir()
+	dir := sourceDir(t, src)
 	entry := filepath.Join(dir, "app.lyra")
-	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	units, diags := modules.Resolve(entry, []string{dir, repoStdRoot(t)},
 		modules.Options{Prelude: modules.PreludeModule})
 	if len(diags) != 0 {

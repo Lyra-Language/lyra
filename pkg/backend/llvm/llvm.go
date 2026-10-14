@@ -460,6 +460,10 @@ type lowerer struct {
 	// divide-by-zero); exit is libc's.
 	overflowIntrinsics map[string]*ir.Func
 	panics             map[string]*ir.Func
+	// here is the source being lowered now — the innermost expression or statement
+	// with a location — and so where a trap emitted now says it was (whereArgs).
+	// Set and restored by lowerExpr and lowerBlockStmts (at).
+	here ast.Location
 
 	// The ref-counted heap runtime (runtime.go), emitted lazily into the module
 	// the first time a value needs the heap (today: string concatenation). nil
@@ -672,6 +676,7 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	// A filled-in default names its declaring module's top level, never the function it
 	// was filled into: with the locals hidden, a name falls through to the module-keyed
 	// globals and consts (typetable.MarkDefault).
+	defer l.at(expr.GetLocation())()
 	if l.res.TypeTable.IsDefault(expr) {
 		saved := l.locals
 		l.locals = map[string]value.Value{}

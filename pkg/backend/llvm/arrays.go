@@ -186,7 +186,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	// and `xs.from_end(k)` is the explicit spelling now.)
 	if !l.res.RangeSafety.IndexInBounds(e) {
 		oob := block.NewICmp(enum.IPredUGE, idx64, size)
-		block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
+		block = l.emitIndexTrapIf(block, oob, idx64, size)
 	}
 
 	// getelementptr [N x T], [N x T]* arrPtr, i64 0, i64 idx64  →  T*

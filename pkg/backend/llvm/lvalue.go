@@ -448,6 +448,9 @@ func (l *lowerer) lvalueBoxPtr(block *ir.Block, objExpr ast.Expression, objType 
 // does not consult the value-range analysis's IndexInBounds — an assignment target
 // isn't marked — so the check is always emitted.
 func (l *lowerer) boundsCheckedIndex(block *ir.Block, e *ast.IndexExpr, size value.Value) (value.Value, *ir.Block, error) {
+	// An assignment's target is not lowered through lowerExpr, so the trap's place
+	// is set here.
+	defer l.at(e.GetLocation())()
 	idx, block, err := l.lowerExpr(block, e.Index)
 	if err != nil {
 		return nil, nil, err
@@ -455,6 +458,6 @@ func (l *lowerer) boundsCheckedIndex(block *ir.Block, e *ast.IndexExpr, size val
 	signed, _ := l.getIntSignedness(e.Index)
 	idx64 := coerceIntWidth(block, idx, signed, lltypes.I64)
 	oob := block.NewICmp(enum.IPredUGE, idx64, size)
-	block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
+	block = l.emitIndexTrapIf(block, oob, idx64, size)
 	return idx64, block, nil
 }

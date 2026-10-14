@@ -167,7 +167,7 @@ func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Val
 	trapBlock := fn.NewBlock("")
 	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, i64c(0)), trapBlock, foundBlock)
 
-	trapBlock.NewCall(l.panicStringIndexOOBFunc())
+	trapBlock.NewCall(l.panicStringIndexOOBFunc(), l.whereArgs()...)
 	trapBlock.NewUnreachable()
 
 	cpSlot := fn.Blocks[0].NewAlloca(lltypes.I32) // decode out-param

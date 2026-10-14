@@ -52,7 +52,7 @@ let main = () -> u8 => {
 	if code != trapExitCode {
 		t.Errorf("exit code: got %d, want %d", code, trapExitCode)
 	}
-	if want := "lyra: panic: the config port was missing\n"; stderr != want {
+	if want := "lyra: panic: the config port was missing at 5:10\n"; stderr != want {
 		t.Errorf("stderr: got %q, want %q", stderr, want)
 	}
 }
@@ -89,7 +89,7 @@ let main = () -> u8 => u8(at(-3))`)
 	if code != trapExitCode {
 		t.Errorf("exit code: got %d, want %d", code, trapExitCode)
 	}
-	if want := "lyra: panic: negative index -3\n"; stderr != want {
+	if want := "lyra: panic: negative index -3 at 2:45\n"; stderr != want {
 		t.Errorf("stderr: got %q, want %q", stderr, want)
 	}
 }

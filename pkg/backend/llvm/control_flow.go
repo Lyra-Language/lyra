@@ -85,6 +85,7 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 			break // a prior break/continue/return sealed this block; the rest is unreachable
 		}
 		stmtStart := block // the block this statement begins in (before any branch it contains)
+		restoreHere := l.at(stmt.GetLocation())
 		var err error
 		switch s := stmt.(type) {
 		case *ast.ExpressionStmt:
@@ -139,6 +140,7 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		default:
 			return nil, nil, fmt.Errorf("llvm: block statement lowering not implemented for %T", stmt)
 		}
+		restoreHere()
 		if err != nil {
 			return nil, nil, err
 		}

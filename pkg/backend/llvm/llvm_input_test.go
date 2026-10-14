@@ -1,10 +1,14 @@
 package llvm
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -78,11 +82,8 @@ func preludeBinary(t *testing.T, src string) string {
 // silently binds nothing and every use of it reports "undefined".
 func emitWithPrelude(t *testing.T, src string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := sourceDir(t, src)
 	entry := filepath.Join(dir, "app.lyra")
-	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	roots := []string{dir, repoStdRoot(t)}
 	units, diags := modules.Resolve(entry, roots, modules.Options{Prelude: modules.PreludeModule})
 	if len(diags) != 0 {
@@ -101,6 +102,53 @@ func emitWithPrelude(t *testing.T, src string) string {
 		t.Fatalf("emit: %v", err)
 	}
 	return string(ir)
+}
+
+// sourceDir is a directory holding src as app.lyra, named by src's hash rather than
+// made fresh. A trap's message names its source file, so the path is in the emitted
+// IR, and a new temporary directory each run would make every compile a binary-cache
+// miss.
+func sourceDir(t *testing.T, src string) string {
+	t.Helper()
+	return sourceTree(t, map[string]string{"app.lyra": src})
+}
+
+// sourceTree is sourceDir for several files, named relative to the directory. Each is
+// written through a rename, so tests compiling the same sources at once never read a
+// half-written file.
+func sourceTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		fmt.Fprintf(h, "%s\x00%d\x00%s", name, len(files[name]), files[name])
+	}
+	dir := filepath.Join(os.TempDir(), "lyra-llvm-test-src", hex.EncodeToString(h.Sum(nil)[:8]))
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if have, err := os.ReadFile(path); err == nil && string(have) == files[name] {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		tmp, err := os.CreateTemp(filepath.Dir(path), ".write-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, werr := tmp.WriteString(files[name])
+		if cerr := tmp.Close(); werr != nil || cerr != nil {
+			t.Fatalf("writing %s: %v %v", tmp.Name(), werr, cerr)
+		}
+		if err := os.Rename(tmp.Name(), path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 // read_line's contract, one case per thing that can come off a stream. The EOF
@@ -325,11 +373,8 @@ let main = () -> void => {
   println("sum ${n}");
 }
 `
-	dir := t.TempDir()
+	dir := sourceDir(t, src)
 	entry := filepath.Join(dir, "app.lyra")
-	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	units, diags := modules.Resolve(entry, []string{dir, repoStdRoot(t)},
 		modules.Options{Prelude: modules.PreludeModule})
 	if len(diags) != 0 {
