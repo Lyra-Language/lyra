@@ -1351,7 +1351,13 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		}
 		return nil
 	}
-	objType := tc.inferExprType(member.Object)
+	// **The receiver is not the call's value**, so the call's context does not reach it —
+	// behind a barrier, as a statement in a branch is (withoutExpectedType). In a chain
+	// `m.flat_map(f).flat_map(g)` under `-> Maybe<string>`, the inner call solved its own
+	// result from the outer's context and refused `f` returning `Maybe<i64>` (10/13, Vega's
+	// `mcp_checks.image_png`); split at a `let`, the same chain was typed.
+	var objType types.Type
+	tc.withoutExpectedType(func() { objType = tc.inferExprType(member.Object) })
 	if objType == nil {
 		return nil
 	}

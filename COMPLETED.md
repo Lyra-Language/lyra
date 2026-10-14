@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 10/13/26 — A chain's context reaches its last call alone
+
+`-> Maybe<string> => m.flat_map((n) => Some(n * 2)).flat_map((k) => Some("${k}"))` was refused
+at the *first* lambda: "expected Maybe<string>, got Maybe<i64>". The function's return is a
+context (`pushExpectedType`), and it stayed on the stack while the outer call inferred its
+receiver — so the inner `flat_map` solved its `u` from the outer call's result and checked
+`f` against it. Split at a `let`, the chain was typed. A context belongs to a value and
+reaches it through branches, tails and arms; a receiver is not the call's value, nor a
+field read's object the field's. Both are now inferred behind `withoutExpectedType`, the
+barrier a statement in a branch already had. Nothing in the suite, Vega, Sheliak or the
+examples relied on the context reaching a receiver.
+`TestNestedConstruction_AChainsContextReachesItsLastCall` fails without it. Found writing
+Vega's `mcp_checks.image_png`.
+
 ### 10/13/26 — `std.png` writes, and `std.base64`
 
 Vega's MCP server shows an agent its pictures, and MCP carries an image as base64 PNG; Lyra

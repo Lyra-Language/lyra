@@ -5806,7 +5806,10 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	if t, _, handled := tc.moduleMemberType(m); handled {
 		return t
 	}
-	objType := tc.inferExprType(m.Object)
+	// The object is not the field's value: the context stays out of it, as out of a call's
+	// receiver (inferMemberCall).
+	var objType types.Type
+	tc.withoutExpectedType(func() { objType = tc.inferExprType(m.Object) })
 	// A field whose declared type is itself a named struct is stored as an
 	// UnresolvedType (just the name), so member access on it (`line.start.x`)
 	// would otherwise fall through to the non-struct error. Resolve the object
