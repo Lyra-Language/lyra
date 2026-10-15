@@ -1,6 +1,6 @@
 module std.genesis.sound
-//! Sound effects on the Genesis's PSG (the SN76489 inside its VDP): a jump, a coin, a hit,
-//! made in Vega's sound editor and played by name.
+//! Sound effects on the Genesis's PSG (the SN76489 inside its VDP) and its YM2612: a jump, a
+//! coin, a bell, made in Vega's sound editor and played by name.
 //!
 //! ```
 //! import std.genesis.sound
@@ -11,18 +11,30 @@ module std.genesis.sound
 //! assets.update_sounds()       // Vega's: sound.update(its steps)
 //! ```
 //!
-//! **The playing is `std.chips.psg_effects`'s**, the bytes it says each frame written to the
-//! PSG's port — as `std.game.sound` writes the same bytes to the chip it runs, so an effect
-//! is the same sound in a ROM and a modern game. A tone effect plays on tone channel 0, a
-//! noise effect on the noise channel, pitched by tone channel 2; one effect at a time on
-//! each, a new one taking the old one's place.
+//! **The playing is `std.chips.effects`'**, what it says each frame written to the PSG's port
+//! and the YM2612's — as `std.game.sound` writes the same to the chips it runs, so an effect
+//! is the same sound in a ROM and a modern game. A tone effect plays on PSG tone channel 0,
+//! a noise effect on the noise channel, pitched by tone channel 2, and an FM effect on FM
+//! channel 6; one effect at a time on each, a new one taking the old one's place.
+//!
+//! **The YM2612 is the Z80's**, at A04000 on the 68000's side only while the 68000 holds the
+//! Z80's bus — and the chip is held in reset with the Z80. So [init] takes the bus, lets the
+//! Z80 (and the chip) out of reset, and keeps the bus: the Z80 runs nothing, and the 68000
+//! writes the chip itself, waiting out its busy flag before each write.
 
-import std.chips.psg_effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.effects.{ Effect, EffectStep, Player, new_player }
 import std.chips.sn76489.{ attenuation_byte }
+import std.chips.ym2612.{ FmPatch }
 
-/// Every channel silent. A PSG may power up sounding, so a game calls this first.
+/// Every PSG channel silent — a PSG may power up sounding — and the YM2612 the 68000's to
+/// write. A game calls this first.
 pub let init = () -> void => {
   for channel: u8 in 0..<4 { write(attenuation_byte(channel, 15)) }
+  unsafe {
+    z80_bus().write_volatile(0x0100)
+    z80_reset().write_volatile(0x0100)
+    while (z80_bus().read_volatile() & 0x0100) != 0 {}
+  }
   player = new_player()
 }
 
@@ -35,12 +47,19 @@ impl Effect {
 /// Whether an effect is still playing.
 pub let playing = () -> bool => player.playing()
 
-/// The frame's step of each effect playing, written to the PSG: once each vertical blank.
-/// `steps` is the game's table of them (Vega's `assets.lyra` passes its own).
-pub let update<const N: i64> = (steps: ref [N]EffectStep) -> void => {
+/// The frame's step of each effect playing, written to the chips: once each vertical blank.
+/// `steps` is the game's table of them, and `patches` its FM instruments' (Vega's
+/// `assets.lyra` passes its own).
+pub let update<const N: i64, const P: i64> = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch
+) -> void => {
   var out: [8]u8 = #[0; 8]
   let n = player.frame(steps, out)
   for i in 0..<n { write(out[i]) }
+  var fm: [128]u8 = #[0; 128]
+  let writes = player.fm_frame(steps, patches, fm)
+  for i in 0..<writes { write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
 }
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
@@ -49,5 +68,28 @@ pub let update<const N: i64> = (steps: ref [N]EffectStep) -> void => {
 let write = (value: u8) -> void => unsafe { port().write_volatile(value) }
 
 let port = pure () -> ^mut u8 => unsafe { pointer_at(0xC00011) }
+
+/// `value` to register `reg` of the YM2612's bank `bank`: the address to its port, then the
+/// data to the next, each once the chip is no longer busy.
+let write_fm = (bank: u8, reg: u8, value: u8) -> void => unsafe {
+  let base: u32 = 0xA04000 + u32(bank & 1) * 2
+  let address_port: ^mut u8 = pointer_at(base)
+  let value_port: ^mut u8 = pointer_at(base + 1)
+  wait_fm()
+  address_port.write_volatile(reg)
+  wait_fm()
+  value_port.write_volatile(value)
+}
+
+/// Until the YM2612's busy flag (bit 7 of its status, at A04000) falls.
+let wait_fm = () -> void => unsafe {
+  let status: ^mut u8 = pointer_at(0xA04000)
+  while (status.read_volatile() & 0x80) != 0 {}
+}
+
+/// The Z80's bus request (A11100) and reset (A11200) lines: a word, bit 8 the line.
+let z80_bus = pure () -> ^mut u16 => unsafe { pointer_at(0xA11100) }
+
+let z80_reset = pure () -> ^mut u16 => unsafe { pointer_at(0xA11200) }
 
 var player: Player = new_player()

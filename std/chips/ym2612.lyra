@@ -996,3 +996,92 @@ let logsin_rom = pure () -> []u16 => [
 /// The exponent ROM: 2^(i/256) − 1 in 1024ths, for i in 0–255 (read backwards).
 let exp_rom = pure () -> []u16 =>
   [i in 0..<256 | u16((((f64(i) / 256.0).exp2() - 1.0) * 1024.0).round())]
+
+// ── What to write ────────────────────────────────────────────────────────────
+
+/// A patch as the chip's registers hold it — an FM instrument, to the YM2612: each
+/// operator's seven registers, the channel's feedback and algorithm, its LFO
+/// sensitivities, and the LFO.
+pub struct FmPatch {
+  /// Operators 1 to 4, as the algorithms number them, seven bytes each: registers 30
+  /// (detune, multiple), 40 (total level), 50 (rate scaling, attack), 60 (AM, decay), 70
+  /// (sustain rate), 80 (sustain level, release) and 90 (SSG-EG).
+  ops: [28]u8,
+  /// Register B0: feedback (bits 3–5) and algorithm (0–2).
+  feedback_algorithm: u8,
+  /// Register B4 without its stereo bits: AMS (bits 4–5) and PMS (0–2).
+  sensitivity: u8,
+  /// Register 22: the LFO on (bit 3) at a rate (0–2) — the chip's one LFO, set with the
+  /// patch.
+  lfo: u8 = 0,
+}
+
+/// The seven operator registers, in [FmPatch]'s order.
+pub const OPERATOR_REGISTERS: [7]u8 = #[0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90]
+
+/// Where operator `op` (1–4, as the algorithms number them) is among a channel's
+/// registers: the chip orders its slots 1, 3, 2, 4.
+pub let operator_offset = pure (op: i64) -> u8 => match op {
+  1 => 0,
+  2 => 8,
+  3 => 4,
+  _ => 12,
+}
+
+/// The operators algorithm `algorithm` sounds — its carriers, the rest modulating them — as
+/// bits, operator `k` bit `k - 1`.
+pub let carrier_mask = pure (algorithm: u8) -> u8 => match algorithm & 7 {
+  0 | 1 | 2 | 3 => 0x8,
+  4 => 0xA,
+  5 | 6 => 0xE,
+  _ => 0xF,
+}
+
+/// Channel `channel`'s (0–5) code in the key-on register, 28: 0–2, then 4–6.
+pub let key_on_code = pure (channel: u8) -> u8 =>
+  if channel < 3 { channel } else { channel + 1 }
+
+/// The block (0–7) and F-number (11 bits) that play `hz` on a chip fed `clock` Hz — the
+/// lowest block that holds it, so the F-number is as fine as it can be. Past the highest
+/// note (about 6.6 kHz at the Genesis's clock), block 7 at the largest F-number.
+pub let fm_note = pure (clock: i64, hz: f64) -> (i64, i64) => {
+  for block in 0..<8 {
+    let fnum = i64((hz * 144.0 * f64(1 << (21 - block)) / f64(clock)).round())
+    if fnum <= 2047 { return (block, fnum.max(0)) }
+  }
+  (7, 2047)
+}
+
+/// How many writes [patch_write] answers for a patch: 28 operator registers, then B0, B4
+/// and the LFO's 22.
+pub const PATCH_WRITES: i64 = 31
+
+/// Write `k` (0 to [PATCH_WRITES] - 1) of `patch` on channel `channel` (0–5): its bank, its
+/// register and the value — the operators' registers in [OPERATOR_REGISTERS]' order, then
+/// feedback and algorithm, then the sensitivities with both stereo bits on, then the LFO.
+pub let patch_write = pure (channel: u8, patch: FmPatch, k: i64) -> (u8, u8, u8) => {
+  let bank: u8 = if channel < 3 { 0 } else { 1 }
+  let ch = channel % 3
+  if k < 28 {
+    let op = k / 7 + 1
+    return (bank, OPERATOR_REGISTERS[k % 7] + operator_offset(op) + ch, patch.ops[k])
+  }
+  if k == 28 { return (bank, 0xB0 + ch, patch.feedback_algorithm) }
+  if k == 29 { return (bank, 0xB4 + ch, 0xC0 | (patch.sensitivity & 0x37)) }
+  (0, 0x22, patch.lfo & 0xF)
+}
+
+/// The two writes that set channel `channel`'s note: A4 (block and the F-number's top three
+/// bits) first, as the chip latches it, then A0 (its low eight).
+pub let note_writes = pure (channel: u8, block: u8, fnum: u16) -> [6]u8 => {
+  let bank: u8 = if channel < 3 { 0 } else { 1 }
+  let ch = channel % 3
+  #[
+    bank,
+    0xA4 + ch,
+    ((block & 7) << 3) | u8((fnum >> 8) & 7),
+    bank,
+    0xA0 + ch,
+    u8(fnum & 0xFF)
+  ]
+}

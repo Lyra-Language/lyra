@@ -1,19 +1,20 @@
 module std.game.sound
-//! Sound effects in a modern game: the PSG of the Sega consoles (`std.chips.sn76489`) run in
-//! the game and heard through SDL — so an effect made in Vega's sound editor is the sound it
-//! is on a Genesis, in a game for any platform SDL3 runs on.
+//! Sound effects in a modern game: the Genesis's chips — its PSG (`std.chips.sn76489`) and
+//! its FM chip (`std.chips.ym2612`) — run in the game and heard through SDL, so an effect or
+//! an FM instrument made in Vega is the sound it is on a Genesis, in a game for any platform
+//! SDL3 runs on.
 //!
 //! ```
 //! import std.game.sound
 //!
 //! assets.JUMP.play()           // an effect, by the name Vega gave it
 //! // each update (60 a second):
-//! assets.update_sounds()       // Vega's: sound.update(its steps)
+//! assets.update_sounds()       // Vega's: sound.update(its steps, its FM patches)
 //! ```
 //!
-//! **The playing is `std.chips.psg_effects`'s**, as `std.genesis.sound`'s is: each update
-//! the bytes it says are written to the chip, which is run for a sixtieth of a second and
-//! heard at [RATE] ([Synth]). Paced by updates, not the display: a frame's sound is made
+//! **The playing is `std.chips.effects`'s**, as `std.genesis.sound`'s is: each update the
+//! bytes and register writes it says are written to the chips, which are run for a
+//! sixtieth of a second and heard at [RATE] ([Synth]). Paced by updates, not the display: a frame's sound is made
 //! with its update, and the device's queue is kept a few frames deep.
 //!
 //! **Heard without anyone at it**: played with `--frames N --wav FILE` (as `std.game.screen`
@@ -23,8 +24,9 @@ module std.game.sound
 
 import bindings.sdl3.{ init, INIT_AUDIO, AudioStream, open_audio }
 import std.io.{ write_bytes }
-import std.chips.psg_effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.effects.{ Effect, EffectStep, Player, new_player }
 import std.chips.sn76489.{ Psg, new_psg }
+import std.chips.ym2612.{ Ym2612, FmPatch, new_ym2612 }
 import std.chips.resample.{ Resampler, new_resampler }
 
 /// The rate a game's sound is heard at, in samples a second.
@@ -44,12 +46,18 @@ impl Effect {
 pub let playing = () -> bool => player.playing()
 
 /// The update's step of each effect playing, made sound: once an update. `steps` is the
-/// game's table of them (Vega's `assets.lyra` passes its own).
-pub let update<const N: i64> = (steps: ref [N]EffectStep) -> void => {
+/// game's table of them, and `patches` its FM instruments' (Vega's `assets.lyra` passes its
+/// own).
+pub let update<const N: i64, const P: i64> = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch
+) -> void => {
   if !started { start() }
   var out: [8]u8 = #[0; 8]
   let n = player.frame(steps, out)
-  let samples = synth.frame(out, n)
+  var fm: [128]u8 = #[0; 128]
+  let writes = player.fm_frame(steps, patches, fm)
+  let samples = synth.frame(out, n, fm, writes)
   updates += 1
   if wav_path != "" {
     for s in samples { recorded.push(s) }
@@ -65,53 +73,133 @@ pub let update<const N: i64> = (steps: ref [N]EffectStep) -> void => {
   }
 }
 
-/// The PSG heard: the chip, run a sixtieth of a second at a time from the bytes written to
-/// it, resampled by area to [RATE] and its DC taken out — mono, -1 to 1. `std.game.sound`
-/// plays through one; an editor may preview through its own.
+/// The NTSC Genesis's master clock, on which the chips are run together: the PSG ticks
+/// every 240 of its clocks (its 3.58 MHz over 16), the YM2612 cycles every 42 (its 7.67 MHz
+/// over 6) and makes a sample every 24 cycles.
+pub const MASTER_CLOCK: i64 = 53693175
+
+/// The PSG and the YM2612 heard: both chips run on one clock from what is written to them,
+/// each resampled by area to [RATE], mixed — a PSG channel at full as loud as an FM one — and
+/// the DC taken out: mono, -1 to 1. `std.game.sound` plays through one; an editor may
+/// preview through its own ([run] for as long as it likes, [write_fm] a note at a time).
+///
+/// **The YM2612 is run only once written to**: until then its time passes as silence, so a
+/// game of PSG effects alone pays nothing for it.
 pub struct Synth {
   psg: Psg,
-  resampler: Resampler,
-  /// The chip's clock, and the clocks owed it, in sixtieths of a clock.
-  clock: i64,
-  owed: i64 = 0,
+  ym: Ym2612,
+  psg_out: Resampler,
+  fm_out: Resampler,
+  /// Master clocks: how far output has been asked for, and how far each chip has run.
+  now: f64 = 0.0,
+  psg_clock: i64 = 0,
+  ym_clock: i64 = 0,
+  ym_used: bool = false,
+  /// The YM2612's sample being summed, a cycle at a time.
+  sum_l: i64 = 0,
+  sum_r: i64 = 0,
+  /// Each chip's resampled output not yet mixed with the other's.
+  psg_heard: []f64 = [],
+  fm_heard: []f64 = [],
   /// The DC blocker's last input and output.
   dc_in: f64 = 0.0,
   dc_out: f64 = 0.0,
 }
 
-/// A silent PSG at `clock`, heard at [RATE].
-pub let new_synth = pure (clock: i64 = PSG_CLOCK) -> Synth => Synth {
+/// Silent chips, heard at [RATE].
+pub let new_synth = pure () -> Synth => Synth {
   psg: new_psg(),
-  resampler: new_resampler(f64(TICK_CLOCKS), f64(clock) / f64(RATE)),
-  clock: clock,
+  ym: new_ym2612(),
+  psg_out: new_resampler(f64(PSG_TICK), f64(MASTER_CLOCK) / f64(RATE)),
+  fm_out: new_resampler(f64(YM_CYCLE * 24), f64(MASTER_CLOCK) / f64(RATE)),
 }
 
 impl Synth {
-  /// The first `n` of `bytes` written to the chip, then a sixtieth of a second of its
-  /// sound.
-  pub let frame = (self: mut, bytes: [8]u8, n: i64) -> []f32 => {
+  /// The first `n` of `bytes` written to the PSG and the first `writes` of `fm` to the
+  /// YM2612 (three bytes each: bank, register, value), then a sixtieth of a second of
+  /// their sound.
+  pub let frame = (
+    self: mut,
+    bytes: [8]u8,
+    n: i64,
+    fm: [128]u8 = #[0; 128],
+    writes: i64 = 0
+  ) -> []f32 => {
     for i in 0..<n.min(8) { self.psg.write(bytes[i]) }
-    self.owed += self.clock
-    var heard: []f64 = []
-    while self.owed >= TICK_CLOCKS * 60 {
+    for i in 0..<writes.min(42) { self.write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
+    self.run(RATE / 60)
+  }
+
+  /// A byte written to the PSG.
+  pub let write_psg = (self: mut, value: u8) -> void => self.psg.write(value)
+
+  /// `value` written to register `reg` of the YM2612's bank `bank` (0 or 1) — as a driver
+  /// writes one: the address, then the data, then a wait while the chip is busy, which takes
+  /// its time.
+  pub let write_fm = (self: mut, bank: u8, reg: u8, value: u8) -> void => {
+    // Its time until now was silence, a sample at a time: it runs on from there.
+    self.ym_used = true
+    self.ym.write((bank & 1) * 2, reg)
+    for _ in 0..<2 { self.ym_cycle() }
+    self.ym.write((bank & 1) * 2 + 1, value)
+    // The busy flag rises a cycle or two after the data — waiting only while it is up, from
+    // the first cycle, waited for nothing, and the next address dropped a value still held
+    // for its operator's slot. Then it holds 32 cycles, which every slot comes round in.
+    var waited = 0
+    while waited < BUSY_RISES || (self.ym.busy && waited < 64) {
+      self.ym_cycle()
+      waited += 1
+    }
+  }
+
+  /// The next `samples` samples of both chips' sound — fewer by one now and then, as the
+  /// resampling falls.
+  pub let run = (self: mut, samples: i64) -> []f32 => {
+    self.now += f64(samples) * f64(MASTER_CLOCK) / f64(RATE)
+    let target = self.now.floor()
+    while self.psg_clock + PSG_TICK <= target {
       self.psg.tick()
       var level: i64 = 0
       for channel in 0..<4 { level += self.psg.channel_level(channel) }
       let v = f64(level) / 65536.0
-      self.resampler.push(v, v, heard)
-      self.owed -= TICK_CLOCKS * 60
+      self.psg_out.push(v, v, self.psg_heard)
+      self.psg_clock += PSG_TICK
     }
+    while self.ym_clock + YM_CYCLE <= target {
+      if self.ym_used {
+        self.ym_cycle()
+      } else {
+        // Silence a whole sample at a time.
+        self.fm_out.push(0.0, 0.0, self.fm_heard)
+        self.ym_clock += YM_CYCLE * 24
+      }
+    }
+    let pairs = self.psg_heard.len().min(self.fm_heard.len()) / 2
     var out: []f32 = []
-    var k = 0
-    while k < heard.len() {
-      let x = heard[k]
+    for k in 0..<pairs {
+      let x = self.psg_heard[2 * k] + (self.fm_heard[2 * k] + self.fm_heard[2 * k + 1]) / 2.0
       let y = x - self.dc_in + 0.9987 * self.dc_out
       self.dc_in = x
       self.dc_out = y
       out.push(f32(y.clamp(-1.0, 1.0)))
-      k += 2
     }
+    self.psg_heard = self.psg_heard.slice(2 * pairs, self.psg_heard.len())
+    self.fm_heard = self.fm_heard.slice(2 * pairs, self.fm_heard.len())
     out
+  }
+
+  /// One YM2612 cycle, its output summed into the sample under way, which is resampled when
+  /// its 24 cycles are done.
+  let ym_cycle = (self: mut) -> void => {
+    self.ym.clock()
+    self.sum_l += self.ym.out_l
+    self.sum_r += self.ym.out_r
+    if self.ym.cycle == 0 {
+      self.fm_out.push(f64(self.sum_l) / 1536.0, f64(self.sum_r) / 1536.0, self.fm_heard)
+      self.sum_l = 0
+      self.sum_r = 0
+    }
+    self.ym_clock += YM_CYCLE
   }
 }
 
@@ -134,8 +222,12 @@ pub let wav = pure (samples: []f32, rate: i64) -> []u8 => {
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
-/// Input clocks a PSG tick.
-const TICK_CLOCKS: i64 = 16
+/// Master clocks a PSG tick, and a YM2612 cycle.
+const PSG_TICK: i64 = 240
+const YM_CYCLE: i64 = 42
+
+/// YM2612 cycles after a data write by which its busy flag is up.
+const BUSY_RISES: i64 = 3
 
 /// The most samples kept queued for the device: six frames.
 const QUEUE_LIMIT: i64 = 4800

@@ -664,7 +664,7 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.psg_effects`' bytes to the PSG's port — modules —
+  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.effects`' bytes to the PSG's port, and its writes to the YM2612 from the 68000, holding the Z80's bus and the Z80 out of reset — the YM2612 is held in reset with it — and waiting on its busy flag before each port — modules —
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/game/` (the same runtime for every modern platform, on SDL3, in `f32` pixels at a fixed
   60 updates a second: screen, pad, planes, sprites, camera, collision, entity — the first std
@@ -676,14 +676,22 @@ of Markdown.
   pad (`pad.touch_layout`, drawn in real pixels beside the game, `--touch` scripting it), a
   pause while the app is away, and `--ppm` sampling the game's own pixels back out of the
   scaled window — the walker's frame in the Simulator is the Mac's byte for byte; **sound**,
-  `std/game/sound.lyra`: the PSG run in the game and streamed to SDL a sixtieth of a second
-  an update, or with `--frames N --wav FILE` written to a WAV instead of a device),
+  `std/game/sound.lyra`: the PSG and the YM2612 run in the game on the Genesis's master clock
+  (`Synth`, which an editor may preview through, a register at a time) and streamed to SDL
+  a sixtieth of a second an update, or with `--frames N --wav FILE` written to a WAV instead
+  of a device. **`Synth.write_fm` waits for the busy flag to rise before waiting for it to
+  fall**: it rises cycles after the data, and an address written before the held value's
+  operator slot came round dropped it — most of a patch, silently (`sound_test.go` hears
+  the silenced operators' third harmonic if it happens again). An FM pitch is checked by
+  the spectrum, never zero crossings, which the YM2612's ladder moves),
   `std/chips/` (sound chips, written once for every console and runtime that has them: the
   SN76489 PSG and the YM2612, cycle-exact — **held bit for bit to BlastEm's PSG and to
   Nuked-OPN2 by the Sheliak emulator's `tests/psg.sh` and `tests/ym.sh`**, which use these
   modules, so a change to either chip is run there; `resample` (by area, between steady
-  rates); `psg_effects`, the sound-effect player `std.genesis.sound` and `std.game.sound`
-  share — the bytes the PSG is sent each frame — no heap, so the 68000 runs it; tested in
+  rates); `effects`, the sound-effect player `std.genesis.sound` and `std.game.sound`
+  share — the bytes the PSG is sent each frame, and for an FM effect (on channel 6, a patch,
+  `ym2612.FmPatch`, keyed on at its first step and off after its last so its release rings)
+  the YM2612's register writes — no heap, so the 68000 runs it; tested in
   `cmd/lyrac/sound_test.go`), `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
   (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read, and written as 8-bit RGBA in stored
   deflate blocks — no compressor; both tested against Go's `image/png` in

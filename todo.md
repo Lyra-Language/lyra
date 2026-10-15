@@ -822,7 +822,7 @@ per size, a generic passing its own size on. LANGUAGE.md § Generic parameter li
 - **[OPEN] A turbofish value** (`f::<64>(…)`): the turbofish takes types today.
 - **[OPEN] A named `const` as an array type's size** (`[MAX_BYTES]u8`): `lyra-E031` takes it
   for an undeclared `const` parameter, so only a literal or a parameter sizes one. Found
-  10/14 by `std.chips.psg_effects`, whose buffer is written `[8]u8` beside `MAX_BYTES = 8`.
+  10/14 by `std.chips.effects`, whose buffers are written `[8]u8` and `[128]u8` beside their constants.
 - **[IDEA]** a named turbofish form `sum::<i64, N = 3>`, purely additive.
 
 ## Bounded stack buffers

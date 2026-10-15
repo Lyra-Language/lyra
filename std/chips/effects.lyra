@@ -1,0 +1,290 @@
+module std.chips.effects
+//! Sound effects on the Sega consoles' chips — a jump, a coin, a bell: a step a frame, on
+//! the SN76489's PSG or the YM2612's FM, what `std.genesis.sound` and `std.game.sound` play
+//! and Vega makes. A [Player] says what the chips are sent each frame; the runtime sends
+//! it, to the console's ports or to the chips running in the game (`std.chips`), so an
+//! effect is the same sound on both.
+//!
+//! ```
+//! import std.chips.effects.{ Effect, EffectStep, new_player, MAX_BYTES }
+//!
+//! const STEPS: [3]EffectStep = #[
+//!   EffectStep { period: 254, volume: 15 },
+//!   EffectStep { period: 254, volume: 10 },
+//!   EffectStep { period: 254, volume: 5 },
+//! ]
+//! var player = new_player()
+//! player.start(Effect { first: 0, count: 3 })
+//! var out: [8]u8 = #[0; MAX_BYTES]
+//! let n = player.frame(STEPS, out)          // once a frame; send out[0..n] to the PSG
+//! ```
+//!
+//! **Three effects at once**: a tone effect on PSG tone channel 0; a noise effect on the
+//! noise channel, pitched by tone channel 2's period (that channel kept silent); and an FM
+//! effect on FM channel 6 ([FM_CHANNEL]), a patch ([std.chips.ym2612.FmPatch]) keyed on at
+//! its first step and off after its last, so its release rings on as an instrument's does.
+//! An effect started where one is playing takes its place.
+//!
+//! **An FM step** is a note — its block in bits 11–13 of `period`, its F-number in 0–10 —
+//! and a volume, which lowers the patch's carriers (the operators the algorithm sounds) 2
+//! dB a step below 15, as the PSG's volume falls, and silences them at 0.
+//!
+//! **No heap, no host**: the steps and patches are the game's tables, read where they are,
+//! and what is to be written goes into buffers the caller gives — so the 68000 runs this as
+//! it is.
+
+import std.chips.sn76489.{ period_bytes, attenuation_byte, noise_byte }
+import std.chips.ym2612.{
+  FmPatch,
+  PATCH_WRITES,
+  patch_write,
+  note_writes,
+  operator_offset,
+  carrier_mask,
+  key_on_code
+}
+
+/// One frame of an effect: a PSG period (10 bits) — the tone's, or the noise's pitch's —
+/// or an FM note (block and F-number, [fm_period]); and how loud, 0 silent to 15.
+pub struct EffectStep {
+  period: u16,
+  volume: u8,
+}
+
+/// An effect: `count` steps of a game's table from `first`, on a PSG tone channel, the
+/// noise channel (white or periodic), or FM in patch `patch` of the game's patches.
+pub struct Effect {
+  first: u16,
+  count: u16,
+  noise: bool = false,
+  white: bool = true,
+  fm: bool = false,
+  patch: u16 = 0,
+}
+
+/// An FM note as a step's `period`: its block (0–7) above its F-number (11 bits).
+pub let fm_period = pure (block: i64, fnum: i64) -> u16 =>
+  u16(((block & 7) << 11) | (fnum & 0x7FF))
+
+/// The most bytes a frame sends the PSG, and so the length of [Player.frame]'s buffer
+/// (written `[8]u8`: a named constant cannot size an array type yet): a tone's period and
+/// volume (3), and noise's setting, its pitch's channel silenced, its period and volume (5).
+pub const MAX_BYTES: i64 = 8
+
+/// The most writes a frame makes to the YM2612 — an FM effect's first: the channel keyed
+/// off, its patch (28 operator registers, B0, B4 and the LFO), its note (A4, A0), its
+/// carriers' levels and the key on — each three bytes in [Player.fm_frame]'s buffer
+/// (`[128]u8`): the register bank (0 or 1), the register and the value.
+pub const MAX_FM_WRITES: i64 = 42
+
+/// The FM channel effects play on: the sixth (bank 1's third), whose DAC games leave off.
+pub const FM_CHANNEL: u8 = 5
+
+/// What is playing: an effect a channel.
+pub struct Player {
+  tone: Slot,
+  noise: Slot,
+  fm: Slot,
+}
+
+/// An effect under way: the next step to play, the step after its last, and whether the
+/// chip has been set for it yet — and FM's patch, and whether its note is keyed on.
+pub struct Slot {
+  next: u16 = 0,
+  end: u16 = 0,
+  playing: bool = false,
+  white: bool = true,
+  fresh: bool = false,
+  patch: u16 = 0,
+  keyed: bool = false,
+}
+
+impl Slot {
+  /// The step due on the channel, or -1 where it is playing none.
+  let step_due = pure (self: ref) -> i64 =>
+    if self.playing && self.next < self.end { i64(self.next) } else { -1 }
+}
+
+/// A player with nothing playing.
+pub let new_player = pure () -> Player =>
+  Player { tone: Slot {}, noise: Slot {}, fm: Slot {} }
+
+/// The tone channel effects play on, and the one whose period pitches the noise.
+const TONE: u8 = 0
+const NOISE_PITCH: u8 = 2
+const NOISE: u8 = 3
+
+impl Player {
+  /// Start `effect` from its first step, in place of any its channel was playing.
+  pub let start = (self: mut, effect: Effect) -> void => {
+    let slot = Slot {
+      next: effect.first,
+      end: effect.first + effect.count,
+      playing: true,
+      white: effect.white,
+      fresh: true,
+      patch: effect.patch,
+    }
+    if effect.fm {
+      self.fm = slot
+    } else if effect.noise {
+      self.noise = slot
+    } else {
+      self.tone = slot
+    }
+  }
+
+  /// Whether an effect is still playing on any channel.
+  pub let playing = pure (self: ref) -> bool =>
+    self.tone.playing || self.noise.playing || self.fm.playing
+
+  /// The PSG steps due this frame, as indices into the game's table: the tone channel's and
+  /// the noise's, -1 where none is playing a step.
+  pub let due = pure (self: ref) -> (i64, i64) =>
+    (self.tone.step_due(), self.noise.step_due())
+
+  /// The FM step due this frame, and the patch it plays; -1 when none is.
+  pub let fm_due = pure (self: ref) -> (i64, i64) =>
+    (self.fm.step_due(), i64(self.fm.patch))
+
+  /// This frame's bytes for the PSG, into `out`, and how many: each channel playing an
+  /// effect its next step, and one past its last step silenced. Steps past the end of
+  /// `steps` are silence.
+  pub let frame<const N: i64> = (
+    self: mut,
+    steps: ref [N]EffectStep,
+    out: mut [8]u8
+  ) -> i64 => {
+    let (t, nz) = self.due()
+    let tone = if t >= 0 && t < steps.len() { Some(steps[t]) } else { None }
+    let noise = if nz >= 0 && nz < steps.len() { Some(steps[nz]) } else { None }
+    self.frame_with(tone, noise, out)
+  }
+
+  /// [frame], given the steps due ([due]) rather than the table — for a caller whose steps
+  /// are not a fixed table (an editor's). `None` for a channel ends its effect.
+  pub let frame_with = (
+    self: mut,
+    tone: Maybe<EffectStep>,
+    noise: Maybe<EffectStep>,
+    out: mut [8]u8
+  ) -> i64 => {
+    var n: i64 = 0
+    if self.tone.playing {
+      if let Some(step) = tone {
+        let p = period_bytes(TONE, step.period)
+        out[0] = p[0]
+        out[1] = p[1]
+        out[2] = attenuation_byte(TONE, 15 - (step.volume & 15))
+        n = 3
+        self.tone.next += 1
+      } else {
+        out[0] = attenuation_byte(TONE, 15)
+        n = 1
+        self.tone.playing = false
+      }
+    }
+    if self.noise.playing {
+      if self.noise.fresh {
+        out[n] = noise_byte(self.noise.white)
+        out[n + 1] = attenuation_byte(NOISE_PITCH, 15)
+        n += 2
+        self.noise.fresh = false
+      }
+      if let Some(step) = noise {
+        let p = period_bytes(NOISE_PITCH, step.period)
+        out[n] = p[0]
+        out[n + 1] = p[1]
+        out[n + 2] = attenuation_byte(NOISE, 15 - (step.volume & 15))
+        n += 3
+        self.noise.next += 1
+      } else {
+        out[n] = attenuation_byte(NOISE, 15)
+        n += 1
+        self.noise.playing = false
+      }
+    }
+    n
+  }
+
+  /// This frame's writes to the YM2612 for the FM effect playing, into `out` — three bytes
+  /// a write: bank, register, value — and how many writes: its patch and the key on at its
+  /// first step, each step's note and its carriers' levels, the key off after its last.
+  /// Steps or a patch past the end of the tables end it.
+  pub let fm_frame<const N: i64, const P: i64> = (
+    self: mut,
+    steps: ref [N]EffectStep,
+    patches: ref [P]FmPatch,
+    out: mut [128]u8
+  ) -> i64 => {
+    if !self.fm.playing { return 0 }
+    let (k, p) = self.fm_due()
+    if p >= patches.len() {
+      self.fm.playing = false
+      return 0
+    }
+    let step = if k >= 0 && k < steps.len() { Some(steps[k]) } else { None }
+    self.fm_frame_with(step, patches[p], out)
+  }
+
+  /// [fm_frame], given the step due and its patch rather than the tables (an editor's).
+  /// `None` ends the effect: its note keyed off, to ring out its release.
+  pub let fm_frame_with = (
+    self: mut,
+    step: Maybe<EffectStep>,
+    patch: FmPatch,
+    out: mut [128]u8
+  ) -> i64 => {
+    if !self.fm.playing { return 0 }
+    let bank: u8 = if FM_CHANNEL < 3 { 0 } else { 1 }
+    let ch = FM_CHANNEL % 3
+    var n: i64 = 0
+    if self.fm.fresh {
+      n = write(out, n, 0, 0x28, key_on_code(FM_CHANNEL))
+      for k in 0..<PATCH_WRITES {
+        let (b, reg, value) = patch_write(FM_CHANNEL, patch, k)
+        n = write(out, n, b, reg, value)
+      }
+      self.fm.fresh = false
+      self.fm.keyed = false
+    }
+    if let Some(s) = step {
+      let note = note_writes(FM_CHANNEL, u8((s.period >> 11) & 7), s.period & 0x7FF)
+      n = write(out, n, note[0], note[1], note[2])
+      n = write(out, n, note[3], note[4], note[5])
+      let carriers = carrier_mask(patch.feedback_algorithm & 7)
+      for op in 1..<=4 {
+        if (carriers >> u8(op - 1)) & 1 == 0 { continue }
+        let base = patch.ops[(op - 1) * 7 + 1] & 0x7F
+        n = write(out, n, bank, 0x40 + operator_offset(op) + ch, quieter(base, s.volume))
+      }
+      if !self.fm.keyed {
+        n = write(out, n, 0, 0x28, 0xF0 | key_on_code(FM_CHANNEL))
+        self.fm.keyed = true
+      }
+      self.fm.next += 1
+    } else {
+      n = write(out, n, 0, 0x28, key_on_code(FM_CHANNEL))
+      self.fm.playing = false
+      self.fm.keyed = false
+    }
+    n
+  }
+}
+
+/// `out` with write `n` — bank, register, value — put at its place, and the count after it.
+let write = (out: mut [128]u8, n: i64, bank: u8, reg: u8, value: u8) -> i64 => {
+  if n >= MAX_FM_WRITES { return n }
+  out[n * 3] = bank
+  out[n * 3 + 1] = reg
+  out[n * 3 + 2] = value
+  n + 1
+}
+
+/// A carrier's total level `base` at volume `volume`: 2 dB lower a step below 15 (a level
+/// step is 0.75 dB), and silent (127) at 0.
+pub let quieter = pure (base: u8, volume: u8) -> u8 => {
+  let v = i64(volume & 15)
+  if v == 0 { return 127 }
+  u8((i64(base) + ((15 - v) * 8 + 1) / 3).min(127))
+}

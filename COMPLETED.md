@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 10/14/26 — FM effects, and a YM2612 that dropped most of a patch
+
+`std.chips.psg_effects` became `std.chips.effects`: an effect may be FM, a patch
+(`ym2612.FmPatch`, the registers as written) keyed on at its first step and off after its
+last, on channel 6 — the one whose DAC games leave off. `std.genesis.sound` writes the
+YM2612 from the 68000, and `std.game.sound`'s `Synth` runs it beside the PSG.
+
+**A step is a note, its block and F-number packed into `period`**, so the table stays one
+`[N]EffectStep` for both chips; its volume lowers the patch's carriers, 2 dB a step, as
+the PSG's attenuation falls.
+
+**`Synth.write_fm` waited for nothing.** It cycled the chip once after the data and then
+while busy — but the busy flag rises a cycle or two after the write. So it never waited,
+and the next address write ended the value held for its operator's slot, which comes round
+every 12 cycles. A patch lost most of its writes and played silent or wrong, depending on
+which slots happened by. The first test passed by luck: its one heard operator's writes
+survived. It now cycles until the flag has risen and fallen. The test's silenced operators
+sit at three times the note, so a dropped level write shows as a 1320 Hz partial.
+
+**The 68000 driver waits before each port, not after**: its call and return are enough
+cycles for the flag to rise. Vega's hero, heard in Sheliak, rings its FM bell at the
+chip's pitches.
+
 ### 10/14/26 — A trap says where it was
 
 An index out of bounds printed `lyra: array index out of bounds` and nothing else. Vega's crash
