@@ -511,6 +511,16 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
+- **[OPEN] An aliased import beside another module's type of the name breaks it**:
+  `import tunes.{ Song as Tune }` with `import model.{ Song }` reports `unknown type "Tune"`
+  at `tunes.lyra:1:1` and refuses `Tune` values where `tunes` expects its `Song`. Alone
+  either import works. Found 10/15 by Vega's `song.lyra`; `std.chips.music`'s type became
+  `Tune` instead.
+- **[OPEN] No float from its bits** (`f32.from_bits`/`f64.from_bits`, and back): Vega's
+  Furnace reader decodes a file's IEEE `f32` by hand (`module_import.Bytes.float`).
+- **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
+  trait — a game's music tables) must be `data X = X` instead. Either accept it or say so.
+
 - **[DONE 09/23] A match arm names alternatives with `|`** (`1 | 2`, `"get" | "post"`),
   over literals and ranges. A binding alternative stays refused, deliberately — see
   LANGUAGE.md § patterns. (COMPLETED.md, 09/23.)
@@ -959,6 +969,21 @@ sets V on every add. What stands between that and a ROM:
   addressed as the object alone (`matchAddressBase` set an index beside a frame-index
   base, which `hasIndexReg` does not see). Patched locally by
   `tools/llvm-m68k-patches/0001`; check `main` for the same code before reporting.
+
+- **[OPEN] Report the `fastcc` demoted-return mismatch upstream**: a function returning an
+  aggregate too big for registers, made `fastcc` by the optimizer, read the hidden pointer
+  from `d0` while its caller passed it in `a0` (10/15). Lyra moves every aggregate through
+  memory on the 68000 since (COMPLETED.md 10/15); a reduced IR case would settle it.
+- **[OPEN] `std.chips.music` costs a tenth of a frame idle on the 68000** (10/15: 0.075 of a
+  frame a call with nothing sounding, 0.175 with two channels): trait calls, field
+  addressing in a `[10]` array, the pitch tables. Profile with the Sheliak profiler idea.
+- **[OPEN] The Genesis DAC's pitch on hardware**: the Z80 driver plays 0.5% flat in Sheliak
+  (the bus held while the frame is queued), and a real Z80's bank-window reads wait about
+  3 T-states more, which Sheliak does not model — about 1% more. Measure on a console, then
+  correct `Z80_RATE` or model the wait in Sheliak.
+- **[IDEA] The DAC past 64 KB and past 11.5 kHz**: the driver counts a sample in 16 bits and
+  plays at a fixed 11,473 bytes a second, so a long voice clip is cut and a 32 kHz drum loses
+  its top. A count of 24 bits, and a faster loop with the queue every other byte.
 
 ## Large aggregates
 

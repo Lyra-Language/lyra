@@ -141,9 +141,38 @@ void exit(int code) {
     __lyra_fault();
 }
 
+/*
+ * Memory a long at a time where both ends are even — the 68000 moves a long to and from any
+ * even address — and the odd bytes left a byte at a time. A byte at a time throughout, a
+ * 768-byte buffer cleared each frame cost a third of a frame (10/15), and the backend moves
+ * every aggregate through memory on the 68000 (`sret.go`).
+ */
+static int even(const void *a, const void *b) {
+    return ((((unsigned long)a) | ((unsigned long)b)) & 1) == 0;
+}
+
 void *memcpy(void *to, const void *from, size_t n) {
     u8 *d = to;
     const u8 *s = from;
+    if (even(d, s)) {
+        u32 *dl = (u32 *)d;
+        const u32 *sl = (const u32 *)s;
+        while (n >= 16) {
+            dl[0] = sl[0];
+            dl[1] = sl[1];
+            dl[2] = sl[2];
+            dl[3] = sl[3];
+            dl += 4;
+            sl += 4;
+            n -= 16;
+        }
+        while (n >= 4) {
+            *dl++ = *sl++;
+            n -= 4;
+        }
+        d = (u8 *)dl;
+        s = (const u8 *)sl;
+    }
     while (n--) {
         *d++ = *s++;
     }
@@ -154,9 +183,8 @@ void *memmove(void *to, const void *from, size_t n) {
     u8 *d = to;
     const u8 *s = from;
     if (d < s) {
-        while (n--) {
-            *d++ = *s++;
-        }
+        /* Forwards, each long read before the one below it is written. */
+        return memcpy(to, from, n);
     } else {
         d += n;
         s += n;
@@ -169,6 +197,25 @@ void *memmove(void *to, const void *from, size_t n) {
 
 void *memset(void *to, int value, size_t n) {
     u8 *d = to;
+    if (even(d, d)) {
+        u32 v = (u8)value;
+        v |= v << 8;
+        v |= v << 16;
+        u32 *dl = (u32 *)d;
+        while (n >= 16) {
+            dl[0] = v;
+            dl[1] = v;
+            dl[2] = v;
+            dl[3] = v;
+            dl += 4;
+            n -= 16;
+        }
+        while (n >= 4) {
+            *dl++ = v;
+            n -= 4;
+        }
+        d = (u8 *)dl;
+    }
     while (n--) {
         *d++ = (u8)value;
     }

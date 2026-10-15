@@ -62,3 +62,25 @@ let main = () -> u8 => {
 		t.Errorf("p.offset(-2)^ from xs[2] exited %d; want 5", got)
 	}
 }
+
+// `p.address()` — a pointer as a number, for hardware told where memory is (a Genesis's
+// Z80 playing a sample from the cartridge). It counts bytes, as an address does, and
+// `pointer_at` takes it back; needing no `unsafe`, as reading it reaches nothing.
+func TestExec_PointerAddressIsInBytes(t *testing.T) {
+	t.Parallel()
+	src := `module main
+const DATA: [4]u16 = #[1, 2, 3, 4]
+
+let main = () -> u8 => {
+  let p: ^u16 = unsafe { &DATA[0] }
+  let q = unsafe { p.offset(3) }
+  let back: ^u16 = unsafe { pointer_at(q.address()) }
+  let array: ^[4]u16 = unsafe { &DATA }
+  let whole: u8 = if array.address() == p.address() { 100 } else { 0 }
+  u8(q.address() - p.address()) * 10 + unsafe { u8(back^) } + whole
+}
+`
+	if got := buildAndRun(t, src); got != 164 {
+		t.Errorf("address() exited %d; want 164 (6 bytes apart, read back 4, the array's own address)", got)
+	}
+}

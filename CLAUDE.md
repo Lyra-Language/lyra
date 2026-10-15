@@ -630,6 +630,13 @@ of Markdown.
   memory functions, the panic screen) is compiled by `lyrac build` for a Genesis program with
   the M68k LLVM from `tools/llvm-m68k.sh`, cached in the user cache directory
   (`lyra-genesis/`), and linked by `pkg/rom` with the program and compiler-rt's helpers.
+  **On the 68000 every aggregate moves through memory** (`lowerer.inMemory`, `sret.go`):
+  returned through an `sret` slot and passed as a pointer to a copy, however small. The M68k
+  LLVM's own demotion of a return too big for registers puts the hidden pointer in `a0` at
+  the call and reads it from `d0` in a `fastcc` callee, and a function stops being inlined
+  the moment it has a second caller (COMPLETED.md 10/15). **The runtime's `memcpy` and
+  `memset` move longs** where both ends are even — a byte at a time, a cleared buffer cost a
+  third of a frame.
   **The M68k LLVM is patched** (`tools/llvm-m68k-patches/*.patch`, applied by
   `tools/llvm-m68k.sh` on top of its pin): an index beside a stack object was dropped
   from the address, so `xs[i]` on the stack read `xs[0]` (`TestGenesis_AVariableIndex…`);
@@ -664,7 +671,7 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.effects`' bytes to the PSG's port, and its writes to the YM2612 from the 68000, holding the Z80's bus and the Z80 out of reset — the YM2612 is held in reset with it — and waiting on its busy flag before each port — modules —
+  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.effects`' and `std.chips.music`'s bytes to the PSG's port, and the YM2612 given to **a Z80 driver** (`Z80_DRIVER`, hand-assembled, loaded by `sound.init`): it plays the DAC's sample from the cartridge through the bank window, a byte every 312 T-states whichever way through its loop, and makes the YM2612 writes the 68000 queues in its RAM between bytes, spaced so the chip is never written busy; the 68000 takes the Z80's bus once a frame only to copy what it made, the arithmetic done before — held through the music's frame, the sample stuttered every frame — modules —
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/game/` (the same runtime for every modern platform, on SDL3, in `f32` pixels at a fixed
   60 updates a second: screen, pad, planes, sprites, camera, collision, entity — the first std
@@ -691,9 +698,19 @@ of Markdown.
   rates); `effects`, the sound-effect player `std.genesis.sound` and `std.game.sound`
   share — the bytes the PSG is sent each frame, and for an FM effect (on channel 6, a patch,
   `ym2612.FmPatch`, keyed on at its first step and off after its last so its release rings)
-  the YM2612's register writes — no heap, so the 68000 runs it; tested in
-  `cmd/lyrac/sound_test.go`), `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
-  (inflate, LZMA, LZMA2, CRC-32), `std/png.lyra` (read, and written as 8-bit RGBA in stored
+  the YM2612's register writes — no heap, so the 68000 runs it; and `music`, the song player
+  both runtimes run under the effects (`update_music`): a tracker's ten channels, Furnace's
+  effect numbers, pitch in 64ths of a semitone, a game's tables read through the
+  `MusicData` trait, a channel an effect plays on left to it; a note's envelope (a PSG
+  sound's or an FM instrument's steps) loops and waits at its release as Furnace's macros
+  do, two speeds alternate a row each, and a song's tick rate need not be 60 Hz (an owed
+  tick carried, at most two a frame); a sampled instrument (`Sample`) on FM 6 turns it into
+  the DAC and the player says what the DAC plays (`MusicPlayer.dac`) — the runtime streams
+  it, `std.game.sound` in its chip, the Genesis's Z80 from the cartridge — both through
+  `dac_byte`'s level tables, so it is the same sound on each; `std.game.sound` mixes the
+  chips at Furnace's levels, checked against its renders; `i32`/`i16` and in place, for
+  the 68000's frame; tested in `cmd/lyrac/sound_test.go`, on both runtimes), `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
+  (inflate, gunzip, LZMA, LZMA2, CRC-32; tested against Go's `compress/flate` and `compress/gzip`), `std/png.lyra` (read, and written as 8-bit RGBA in stored
   deflate blocks — no compressor; both tested against Go's `image/png` in
   `cmd/lyrac/png_test.go`), `std/base64.lyra` (standard alphabet, padded, strict; tested
   against Go's `encoding/base64`), `std/xml.lyra` (read only; tested against Go's

@@ -179,6 +179,15 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 			return l.lowerPointerOffset(block, call, member, ptrT)
 		}
 
+	case "address":
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, isPtr := l.resolveForLayout(t).(types.RawPointerType); isPtr {
+			return l.lowerPointerAddress(block, call, member)
+		}
+
 	case "read_volatile", "write_volatile":
 		t, err := receiver()
 		if err != nil {

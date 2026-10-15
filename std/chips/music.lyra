@@ -1,0 +1,1041 @@
+module std.chips.music
+//! Music on the Sega consoles' chips — a tracker's song, as Vega makes one: the YM2612's six
+//! FM channels, the PSG's three tones and its noise, each row of each channel a note, an
+//! instrument, a volume and up to two effects, played a tick a frame. A [MusicPlayer] says
+//! what the chips are sent each frame, as `std.chips.effects`' player does for effects, and
+//! **shares the channels with it**: a channel an effect is playing on is the effect's for as
+//! long as it plays, and the music's again from its next note.
+//!
+//! **A song** ([Tune]) is an order list — each order a pattern a channel — and its patterns'
+//! rows, `rows` a pattern, read through a game's tables ([MusicData]): its cells, where each
+//! order's patterns start, its FM patches and its PSG envelopes. Vega writes them, and the
+//! same player reads Vega's own while it previews.
+//!
+//! **A cell** ([Cell]) is a note (MIDI-numbered, [NOTE_OFF] or [EMPTY]), an instrument — an
+//! FM channel's patch, a PSG channel's envelope — a volume (0–15) and two effects, each a
+//! code and a parameter, numbered as Furnace numbers them:
+//!
+//! | effect | does |
+//! |---|---|
+//! | `00xy` | arpeggio: the note, `x` semitones up, `y` up, a tick each |
+//! | `01xx` / `02xx` | the pitch slides up / down `xx` 64ths of a semitone a tick |
+//! | `03xx` | portamento: a note slides to, `xx` a tick, rather than starting |
+//! | `04xy` | vibrato: speed `x`, depth `y` (`F` a semitone either way) |
+//! | `05xy` / `06xy` | volume slide (as `0A`), the portamento / the vibrato going on |
+//! | `08xy` | FM panning: left on where `x` is, right where `y` is |
+//! | `0Axy` | volume slide: up `x`, or down `y`, 16ths of a step a tick |
+//! | `0Bxx` | jump to order `xx` after this row |
+//! | `0Dxx` | to row `xx` of the next order after this row |
+//! | `0Fxx` | `xx` ticks a row (both speeds) |
+//! | `20xy` | noise: white where `y` is, periodic where not |
+//! | `E1xy` / `E2xy` | the note slides `y` semitones up / down, at speed `x` |
+//! | `E5xx` | fine pitch: `80` none, ±1 semitone either side |
+//! | `ECxx` | the note cut `xx` ticks into the row |
+//! | `EDxx` | the row's cell taken `xx` ticks into it |
+//!
+//! **An instrument's envelope** ([Envelope]) — a PSG channel's sound's, an FM channel's
+//! instrument's — is a volume and a pitch a frame from the note's start: looping, and with a
+//! release held until the note is let go (`OFF`), which then plays on past it rather than
+//! silencing it — Furnace's macros, as far as volume and arpeggio.
+//!
+//! **A sampled instrument plays on FM 6 through the YM2612's DAC** ([Sample]: drums,
+//! mostly, as Furnace's sample instruments are): its note sets the rate the sample is played
+//! at — its own rate at C4, an octave up twice it — and its volume how loud. The player
+//! turns the DAC on and off (register `2B`) as FM 6's notes change between a sample and a
+//! patch, and says what the DAC should play ([MusicPlayer.dac], [Dac]); **the runtime plays
+//! it**, a byte at a time — `std.game.sound` in its chip, the Genesis's Z80 from the
+//! cartridge.
+//!
+//! **Pitch is a 64th of a semitone** from MIDI note 0, made the chip's numbers each tick from
+//! [PSG_PERIODS] and [FM_FNUMS] (the Genesis's clocks, which the Master System's PSG and
+//! the modern target's chips share): so a slide or a vibrato is even across octaves. **The
+//! noise channel is pitched through PSG tone 3**, as an effect's noise is through it, and
+//! takes that channel while it sounds.
+//!
+//! **No heap, no host**: the tables are read where they are, and the writes go into buffers
+//! the caller gives — so the 68000 runs this as it is.
+
+import std.chips.sn76489.{ period_bytes, attenuation_byte, noise_byte }
+import std.chips.ym2612.{
+  FmPatch,
+  PATCH_WRITES,
+  patch_write,
+  note_writes,
+  operator_offset,
+  carrier_mask,
+  key_on_code
+}
+import std.chips.effects.{ Player, quieter, FM_CHANNEL }
+
+/// FM 6, the DAC's channel: the effects' FM channel.
+const DAC_CHANNEL: i16 = 5
+
+/// A cell's note, instrument, volume or effect left empty.
+pub const EMPTY: u8 = 0xFF
+
+/// A cell's note that lets go: an FM note released, a PSG one silenced.
+pub const NOTE_OFF: u8 = 0xFE
+
+/// The channels: FM 1–6, PSG tones 1–3, the noise.
+pub const CHANNELS: i16 = 10
+pub const FIRST_PSG: i16 = 6
+pub const NOISE: i16 = 9
+
+/// One row of one channel.
+pub struct Cell {
+  note: u8 = EMPTY,
+  instrument: u8 = EMPTY,
+  volume: u8 = EMPTY,
+  effect: u8 = EMPTY,
+  param: u8 = 0,
+  effect2: u8 = EMPTY,
+  param2: u8 = 0,
+}
+
+/// A song: its orders, from `first_order` of the game's, `rows` rows a pattern, `speed`
+/// ticks a row to start with, and the order it goes back to after its last.
+pub struct Tune {
+  first_order: u16,
+  orders: u16,
+  rows: u16,
+  speed: u8 = 6,
+  loop_to: u16 = 0,
+  /// A second speed, for the odd rows — a shuffle; 0 for the first on every row.
+  speed2: u8 = 0,
+  /// Ticks a second: a song is made for 60 (the NTSC frame), 50 (PAL) or another rate, and
+  /// played at its own rate a frame at a time — a frame now and then with no tick, or two.
+  rate: u8 = 60,
+}
+
+/// An instrument's envelope — a PSG instrument's, or an FM one's — `count` steps of the
+/// game's envelope steps from `first`, a step a frame: from `loop` on again after the last
+/// (or the last held), and, with a `release`, held there until the note is let go and then
+/// on past it. [NO_POINT] for no loop or release. And, on the noise channel, white noise or
+/// periodic.
+pub struct Envelope {
+  first: u16,
+  count: u16,
+  white: bool = true,
+  loop: u16 = 0xFFFF,
+  release: u16 = 0xFFFF,
+}
+
+/// An envelope's loop or release when it has none.
+pub const NO_POINT: u16 = 0xFFFF
+
+/// A frame of an envelope: how loud (0–15) and how far from the note, in 64ths of a semitone.
+pub struct EnvelopeStep {
+  volume: u8,
+  pitch: i16,
+}
+
+/// A sampled instrument — drums, mostly — played on FM 6 through the YM2612's DAC: `length`
+/// of the game's sample bytes from `first`, 8-bit with `0x80` the middle (as the DAC takes
+/// them), `rate` bytes a second at MIDI note 60 (C4), and played again from `loop_at` after
+/// its last (-1: once). An FM instrument's is `length` 0: none.
+pub struct Sample {
+  first: u32 = 0,
+  length: u32 = 0,
+  rate: u16 = 0,
+  loop_at: i32 = -1,
+}
+
+/// What the DAC plays, as the song says: [MusicPlayer.dac]. The runtime starts `sample` from
+/// its first byte whenever `note` changes, plays it at `rate` bytes a second and `level`
+/// (0–15, [dac_byte]) while `playing`, and stops when not.
+pub struct Dac {
+  sample: Sample = Sample {},
+  rate: u32 = 0,
+  level: i16 = 15,
+  playing: bool = false,
+  note: u16 = 0,
+}
+
+/// A game's music tables, as the player reads them: Vega's `assets.lyra` implements it over
+/// constant tables, and Vega over its project while it previews. Indices are `i32`: the
+/// 68000 does 64-bit arithmetic in calls.
+pub trait MusicData {
+  /// Cell `index` of the cells.
+  pure cell: (Self, i32) -> Cell,
+  /// Where channel `channel`'s pattern in order `order` (of the whole table) starts among
+  /// the cells.
+  pure pattern: (Self, i32, i32) -> i32,
+  /// FM patch `index`, and how many there are.
+  pure patch: (Self, i32) -> FmPatch,
+  pure patches: (Self) -> i32,
+  /// PSG envelope `index`, and how many; FM instrument `index`'s envelope (no steps for
+  /// none); and envelope step `index`.
+  pure envelope: (Self, i32) -> Envelope,
+  pure fm_envelope: (Self, i32) -> Envelope,
+  pure envelopes: (Self) -> i32,
+  pure envelope_step: (Self, i32) -> EnvelopeStep,
+  /// FM instrument `index`'s sample, `length` 0 for a patch's.
+  pure sample: (Self, i32) -> Sample,
+}
+
+/// The most bytes a frame sends the PSG — [MusicPlayer.frame]'s `psg` buffer, `[16]u8`.
+pub const MAX_PSG_BYTES: i64 = 16
+
+/// The most writes a frame makes to the YM2612 — six channels each keyed off, its patch,
+/// its panning, its note, its carriers' levels and keyed on — three bytes each in
+/// [MusicPlayer.frame]'s `fm` buffer, `[768]u8`.
+pub const MAX_MUSIC_FM_WRITES: i64 = 256
+
+/// The channels the effects `player` is playing on, as bits of the music's channels: the
+/// music leaves them alone.
+pub let held_by = pure (player: Player) -> u16 => {
+  var held: u16 = 0
+  if player.fm.playing { held = held | (u16(1) << u16(FM_CHANNEL)) }
+  if player.tone.playing { held = held | (u16(1) << u16(FIRST_PSG)) }
+  if player.noise.playing { held = held | (u16(1) << u16(NOISE)) | (u16(1) << u16(FIRST_PSG + 2)) }
+  held
+}
+
+/// A channel's state. **Narrow and worked on in place** (its methods): a 68000 frame
+/// has room for neither 64-bit arithmetic nor copying ten of these about.
+pub struct MusicChannel {
+  /// The note's pitch now (64ths of a semitone), and the one a portamento slides to.
+  pitch: i32 = 0,
+  target: i32 = 0,
+  sounding: bool = false,
+  instrument: i16 = -1,
+  /// The patch last written to the channel; -1 for none (or an effect's since).
+  written: i16 = -1,
+  /// The volume, in 16ths of a step (0–240), and the last given the chip (-1 none yet).
+  volume: i16 = 240,
+  heard_volume: i16 = -1,
+  heard_pitch: i32 = -1,
+  pan: u8 = 0xC0,
+  heard_pan: u8 = 0xC0,
+  /// Frames into the note's envelope, and whether the note has been let go past its
+  /// release.
+  step: i16 = 0,
+  released: bool = false,
+  /// A fine pitch (`E5`), in 64ths of a semitone; and the vibrato's depth kept for `06`.
+  fine: i16 = 0,
+  vibrato_kept: i16 = 0,
+  /// Effects remembered from the row.
+  arpeggio: u8 = 0,
+  slide: i16 = 0,
+  portamento: i16 = 0,
+  vibrato_speed: i16 = 0,
+  vibrato_depth: i16 = 0,
+  vibrato_at: i16 = 0,
+  volume_slide: i16 = 0,
+  /// The tick the note is cut at, and a cell delayed to a tick; -1 for neither.
+  cut_at: i16 = -1,
+  delay_at: i16 = -1,
+  delayed: Cell = Cell {},
+  /// The noise channel's noise as last set (white, or periodic) and whether it is set, and
+  /// what its note wants.
+  white: bool = true,
+  noise_set: bool = false,
+  white_wanted: bool = true,
+  /// A note just started, to be keyed on once its pitch and level are written.
+  keying: bool = false,
+  /// FM 6: the DAC on (register `2B` written so), the note a sample's, and one just struck.
+  dac: bool = false,
+  sampled: bool = false,
+  struck: bool = false,
+}
+
+/// The song playing.
+pub struct MusicPlayer {
+  song: Tune,
+  playing: bool = false,
+  order: i32 = 0,
+  row: i32 = 0,
+  tick: i16 = 0,
+  speed: i16 = 6,
+  /// Channels kept silent (an editor's mutes), as bits.
+  muted: u16 = 0,
+  /// The two speeds rows alternate between, and the ticks owed the song's rate (60ths).
+  speed1: i16 = 6,
+  speed2: i16 = 6,
+  owed: i16 = 0,
+  /// The row's song control, taken when the row ends: an order to jump to, a row of the
+  /// next order to go to; -1 for neither.
+  jump: i32 = -1,
+  break_to: i32 = -1,
+  voices: [10]MusicChannel,
+  /// What the DAC on FM 6 plays: the runtime's to play.
+  dac: Dac = Dac {},
+}
+
+/// A player with nothing playing.
+pub let new_music = pure () -> MusicPlayer =>
+  MusicPlayer {
+    song: Tune { first_order: 0, orders: 0, rows: 0 },
+    voices: #[MusicChannel {}; 10]
+  }
+
+impl MusicPlayer {
+  /// Play `song` from its start, in place of any song playing.
+  pub let play_song = (self: mut, song: Tune) -> void => self.play_from(song, 0, 0)
+
+  /// Play `song` from row `row` of order `order` — an editor's play from the cursor.
+  pub let play_from = (self: mut, song: Tune, order: i64, row: i64) -> void => {
+    self.song = song
+    self.playing = song.orders > 0 && song.rows > 0
+    self.order = i32(order.clamp(0, (i64(song.orders) - 1).max(0)))
+    self.row = i32(row.clamp(0, (i64(song.rows) - 1).max(0)))
+    self.tick = 0
+    self.speed1 = i16(song.speed).max(1)
+    self.speed2 = if song.speed2 > 0 { i16(song.speed2) } else { self.speed1 }
+    self.speed = if (self.row & 1) == 0 { self.speed1 } else { self.speed2 }
+    // Its first tick on its first frame, however slow its rate.
+    self.owed = (60 - i16(song.rate.max(1))).max(0)
+    self.jump = -1
+    self.break_to = -1
+    // What the chips were given is kept, so nothing stale is taken as written.
+    for k: i16 in 0..<10 { self.voices[k].restart() }
+  }
+
+  /// Stop the song: every channel it sounds let go on the next [frame].
+  pub let stop = (self: mut) -> void => {
+    self.playing = false
+  }
+
+  /// This frame's writes for the song: bytes to the PSG into `psg` and writes to the
+  /// YM2612 into `fm` (three bytes each: bank, register, value), and how many of each.
+  /// Channels in `held` (an effect's, [held_by]) are left alone. A tick a frame.
+  pub let frame<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    held: u16,
+    psg: mut [16]u8,
+    fm: mut [768]u8
+  ) -> (i64, i64) => {
+    var out = Out {}
+    if !self.playing {
+      for k: i16 in 0..<10 {
+        if self.voices[k].sounding && !is_held(
+          held,
+          k
+        ) { self.voices[k].silence(k, psg, fm, out) }
+      }
+      self.dac.playing = false
+      return (i64(out.psg), i64(out.fm))
+    }
+    // The song's ticks at its rate: none some frames, two some others.
+    self.owed += i16(self.song.rate.max(1))
+    var ticks: i16 = 0
+    while self.owed >= 60 && ticks < 2 {
+      self.owed -= 60
+      self.tick_once(tables, held, psg, fm, out)
+      ticks += 1
+    }
+    if self.owed >= 60 { self.owed = 0 }
+    (i64(out.psg), i64(out.fm))
+  }
+
+  /// One tick of the song: the row read at its first, every channel sounded, on to the next.
+  let tick_once<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    held: u16,
+    psg: mut [16]u8,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    let reading = self.tick == 0
+    let at = i32(self.song.first_order) + self.order
+    // PSG 3 is the noise's pitch while the noise sounds.
+    let noise_owns = self.voices[9].sounding && !is_held(held, 9)
+    for k: i16 in 0..<10 {
+      if reading {
+        let cell = tables.cell(tables.pattern(at, i32(k)) + self.row)
+        self.song_control(cell)
+        if is_held(held, k) {
+          self.voices[k].remember(cell)
+        } else {
+          self.voices[k].read(tables, k, cell, self.speed, psg, fm, out)
+        }
+      } else if self.voices[k].delay_at == self.tick && !is_held(held, k) {
+        self.voices[k].delay_at = -1
+        let cell = self.voices[k].delayed
+        self.voices[k].take(tables, k, cell, psg, fm, out)
+      }
+      if is_held(held, k) {
+        // An effect on FM 6 is heard only with the DAC off.
+        if self.voices[k].dac {
+          out.put_fm(fm, 0, 0x2B, 0)
+          self.voices[k].dac = false
+        }
+        self.voices[k].lent()
+        continue
+      }
+      if self.voices[k].cut_at == self.tick { self.voices[k].silence(k, psg, fm, out) }
+      self.voices[k].tick_effects(self.tick)
+      if k == FIRST_PSG + 2 && noise_owns {
+        self.voices[k].heard_pitch = -1
+        self.voices[k].heard_volume = -1
+        continue
+      }
+      let silent = (self.muted >> u16(k)) & 1 == 1
+      self.voices[k].sound(tables, k, self.tick, silent, psg, fm, out)
+    }
+    self.follow_dac(tables)
+    self.advance()
+  }
+
+  /// The DAC as FM 6 now wants it: a sample note just struck starts its sample, and its
+  /// pitch and level say its rate and loudness.
+  let follow_dac<d> where d: MusicData = (self: mut, tables: ref d) -> void => {
+    let k = DAC_CHANNEL
+    if self.voices[k].struck {
+      self.voices[k].struck = false
+      self.dac.note += 1
+      self.dac.sample = tables.sample(i32(self.voices[k].instrument))
+    }
+    self.dac.playing = self.voices[k].sounding && self.voices[k].sampled
+    if self.dac.playing {
+      self.dac.rate = sample_rate(self.dac.sample.rate, self.voices[k].heard_pitch)
+      self.dac.level = self.voices[k].heard_volume
+    }
+  }
+
+  /// A row's song control, any channel's: a jump, a break, a speed.
+  let song_control = (self: mut, cell: Cell) -> void => {
+    self.control(cell.effect, cell.param)
+    self.control(cell.effect2, cell.param2)
+  }
+
+  let control = (self: mut, code: u8, param: u8) -> void => {
+    if code == 0x0B { self.jump = i32(param) }
+    if code == 0x0D { self.break_to = i32(param) }
+    if code == 0x0F && param > 0 {
+      self.speed1 = i16(param)
+      self.speed2 = i16(param)
+      self.speed = i16(param)
+    }
+  }
+
+  /// The tick done: on to the next row when the row's ticks are, following a jump or a
+  /// break, and back to the loop's order after the last.
+  let advance = (self: mut) -> void => {
+    self.tick += 1
+    if self.tick < self.speed { return }
+    self.tick = 0
+    let orders = i32(self.song.orders)
+    let rows = i32(self.song.rows)
+    if self.jump >= 0 {
+      self.order = self.jump
+      self.row = if self.break_to >= 0 { self.break_to } else { 0 }
+    } else if self.break_to >= 0 {
+      self.order += 1
+      self.row = self.break_to
+    } else {
+      self.row += 1
+      if self.row >= rows {
+        self.row = 0
+        self.order += 1
+      }
+    }
+    self.jump = -1
+    self.break_to = -1
+    if self.order >= orders || self.order < 0 { self.order = i32(self.song.loop_to)
+        .min(orders - 1)
+        .max(0) }
+    if self.row >= rows { self.row = 0 }
+    self.speed = if (self.row & 1) == 0 { self.speed1 } else { self.speed2 }
+  }
+}
+
+impl MusicChannel {
+  /// A song started: what the chip holds kept, the rest new.
+  let restart = (self: mut) -> void => {
+    let written = self.written
+    let pan = self.heard_pan
+    let sounding = self.sounding
+    let dac = self.dac
+    self = MusicChannel {}
+    self.written = written
+    self.heard_pan = pan
+    self.sounding = sounding
+    self.dac = dac
+  }
+
+  /// An effect has the channel: the music sounds there again from its next note, its
+  /// patch written again.
+  let lent = (self: mut) -> void => {
+    self.sounding = false
+    self.written = -1
+    self.heard_pitch = -1
+    self.heard_volume = -1
+    self.noise_set = false
+  }
+
+  /// Cell `cell` at the row's start: taken now, or kept for its tick when it is delayed.
+  let read<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    k: i16,
+    cell: Cell,
+    speed: i16,
+    psg: mut [16]u8,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    self.cut_at = -1
+    self.delay_at = -1
+    let delay = if cell.effect == 0xED { i16(cell.param) } else if cell.effect2 == 0xED { i16(cell.param2) } else { 0 }
+    if delay > 0 && delay < speed {
+      self.delay_at = delay
+      self.delayed = cell
+      return
+    }
+    self.take(tables, k, cell, psg, fm, out)
+  }
+
+  /// Cell `cell` on channel `k`: its instrument, its volume, its effects and its note.
+  let take<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    k: i16,
+    cell: Cell,
+    psg: mut [16]u8,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    self.remember(cell)
+    if cell.note == NOTE_OFF {
+      self.let_go(tables, k, psg, fm, out)
+      return
+    }
+    if cell.note == EMPTY { return }
+    let pitch = i32(cell.note) << 6
+    let gliding = cell.effect == 0x03 || cell.effect2 == 0x03
+    if gliding && self.sounding {
+      self.target = pitch
+      return
+    }
+    self.pitch = pitch
+    self.target = pitch
+    self.step = 0
+    self.released = false
+    self.vibrato_at = 0
+    // A note slide on the note's own row slides from it.
+    self.note_slide(cell.effect, cell.param)
+    self.note_slide(cell.effect2, cell.param2)
+    self.key_on(tables, k, fm, out)
+  }
+
+  /// `E1xy` / `E2xy`: the note slides `y` semitones up / down at speed `x`.
+  let note_slide = (self: mut, code: u8, param: u8) -> void => {
+    if code != 0xE1 && code != 0xE2 { return }
+    let by = i32(param & 15) << 6
+    self.target = if code == 0xE1 { (self.pitch + by).min(127 * 64) } else { (self.pitch - by).max(0) }
+    self.portamento = (i16(param >> 4) * 4).max(1)
+  }
+
+  /// The note let go: with an envelope that has a release, on past it — an FM note keyed off
+  /// too — and otherwise silenced.
+  let let_go<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    k: i16,
+    psg: mut [16]u8,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    let e = self.envelope_of(tables, k)
+    // A sample stops when let go, as Furnace's does.
+    if !self.sounding || e.count == 0 || e.release == NO_POINT || self.sampled {
+      self.silence(k, psg, fm, out)
+      return
+    }
+    self.released = true
+    self.step = i16(e.release) + 1
+    if k < FIRST_PSG { out.put_fm(fm, 0, 0x28, key_on_code(u8(k))) }
+  }
+
+  /// The envelope of the channel's instrument: a PSG channel's sound's, an FM channel's
+  /// instrument's; one of no steps for none.
+  let envelope_of<d> where d: MusicData = pure (
+    self,
+    tables: ref d,
+    k: i16
+  ) -> Envelope => {
+    let ins = i32(self.instrument)
+    if k < FIRST_PSG {
+      return if ins >= 0 && ins < tables.patches() { tables.fm_envelope(ins) } else { Envelope {
+        first: 0,
+        count: 0
+      } }
+    }
+    if ins >= 0 && ins < tables.envelopes() { tables.envelope(ins) } else { Envelope {
+      first: 0,
+      count: 0
+    } }
+  }
+
+  /// What a cell sets that lasts: its instrument, volume and effects' memories.
+  let remember = (self: mut, cell: Cell) -> void => {
+    if cell.instrument != EMPTY { self.instrument = i16(cell.instrument) }
+    if cell.volume != EMPTY { self.volume = i16(cell.volume.min(15)) << 4 }
+    self.arpeggio = 0
+    self.slide = 0
+    self.volume_slide = 0
+    self.vibrato_depth = 0
+    self.effect(cell.effect, cell.param)
+    self.effect(cell.effect2, cell.param2)
+  }
+
+  /// Effect `code` with `param`, as the row sets it (the song's control is the player's).
+  let effect = (self: mut, code: u8, param: u8) -> void => {
+    let p = i16(param)
+    match code {
+      0x00 => { self.arpeggio = param },
+      0x01 => { self.slide = p },
+      0x02 => { self.slide = -p },
+      0x03 => { if p > 0 { self.portamento = p } },
+      0x04 => {
+        if (p >> 4) > 0 { self.vibrato_speed = p >> 4 }
+        self.vibrato_depth = p & 15
+        self.vibrato_kept = p & 15
+      },
+      0x05 => { self.volume_slide = if (p >> 4) > 0 { p >> 4 } else { -(p & 15) } },
+      0x06 => {
+        self.volume_slide = if (p >> 4) > 0 { p >> 4 } else { -(p & 15) }
+        self.vibrato_depth = self.vibrato_kept
+      },
+      0xE1 | 0xE2 => self.note_slide(code, param),
+      0xE5 => { self.fine = (p - 128) / 2 },
+      0x20 => { self.white_wanted = (param & 15) != 0 },
+      0x08 => {
+        self.pan = (if (param >> 4) > 0 { 0x80 } else { 0 }) | (if (param & 15) > 0 { 0x40 } else { 0 })
+      },
+      0x0A => { self.volume_slide = if (p >> 4) > 0 { p >> 4 } else { -(p & 15) } },
+      0xEC => { self.cut_at = p },
+      _ => {},
+    }
+  }
+
+  /// The note started on channel `k`: an FM channel keyed off, its instrument's patch
+  /// written where it is not the one there; the noise's white or periodic taken from its
+  /// envelope. It is keyed on (or heard) when it is sounded, this tick.
+  let key_on<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    k: i16,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    let ins = i32(self.instrument)
+    self.heard_pitch = -1
+    self.heard_volume = -1
+    if k < FIRST_PSG {
+      if ins < 0 || ins >= tables.patches() {
+        self.sounding = false
+        return
+      }
+      let ch = u8(k)
+      out.put_fm(fm, 0, 0x28, key_on_code(ch))
+      // A sampled instrument plays only on FM 6, as in Furnace: elsewhere, nothing.
+      if k != DAC_CHANNEL && tables.sample(ins).length > 0 {
+        self.sounding = false
+        return
+      }
+      if k == DAC_CHANNEL {
+        // A sample instrument turns FM 6 into the DAC; a patch turns it back.
+        if tables.sample(ins).length > 0 {
+          if !self.dac { out.put_fm(fm, 0, 0x2B, 0x80) }
+          self.dac = true
+          self.sampled = true
+          self.struck = true
+          self.sounding = true
+          return
+        }
+        if self.dac { out.put_fm(fm, 0, 0x2B, 0) }
+        self.dac = false
+        self.sampled = false
+      }
+      if i32(self.written) != ins {
+        let patch = tables.patch(ins)
+        for w in 0..<PATCH_WRITES {
+          let (bank, reg, value) = patch_write(ch, patch, w)
+          out.put_fm(fm, bank, reg, value)
+        }
+        self.written = i16(ins)
+        self.heard_pan = 0xC0
+      }
+      self.keying = true
+    }
+    if k == NOISE {
+      let known = ins >= 0 && ins < tables.envelopes()
+      self.white_wanted = if known { tables.envelope(ins).white } else { true }
+    }
+    self.sounding = true
+  }
+
+  /// Channel `k` let go: an FM note keyed off to ring out its release, a PSG one silenced.
+  let silence = (
+    self: mut,
+    k: i16,
+    psg: mut [16]u8,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    self.sounding = false
+    self.heard_volume = -1
+    self.heard_pitch = -1
+    if k < FIRST_PSG {
+      out.put_fm(fm, 0, 0x28, key_on_code(u8(k)))
+    } else if k == NOISE {
+      out.put_psg(psg, attenuation_byte(3, 15))
+    } else {
+      out.put_psg(psg, attenuation_byte(u8(k - FIRST_PSG), 15))
+    }
+  }
+
+  /// The tick's slides: pitch, portamento, volume, and the vibrato's place.
+  let tick_effects = (self: mut, tick: i16) -> void => {
+    if tick > 0 {
+      if self.slide != 0 {
+        self.pitch = (self.pitch + i32(self.slide)).clamp(0, 127 * 64)
+        self.target = self.pitch
+      }
+      if self.target != self.pitch && self.portamento > 0 {
+        let by = i32(self.portamento)
+        self.pitch = if self.target > self.pitch { (self.pitch + by).min(self.target) } else { (self.pitch - by).max(self.target) }
+      }
+      if self.volume_slide != 0 { self.volume = (self.volume + self.volume_slide).clamp(
+        0,
+        240
+      ) }
+    }
+    if self.vibrato_depth > 0 { self.vibrato_at = (self.vibrato_at + self.vibrato_speed) & 63 }
+  }
+
+  /// Channel `k` as it sounds this tick — its pitch with its arpeggio, vibrato and envelope,
+  /// its level (none, `silent`) — written where it changed, and a note just started keyed on.
+  let sound<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    k: i16,
+    tick: i16,
+    silent: bool,
+    psg: mut [16]u8,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    if !self.sounding { return }
+    var pitch = self.pitch + i32(self.fine)
+    var level = self.volume >> 4
+    let e = self.envelope_of(tables, k)
+    if e.count > 0 {
+      let at = self.envelope_step(e)
+      let s = tables.envelope_step(i32(e.first) + at)
+      pitch += i32(s.pitch)
+      level = (i16(s.volume) * self.volume + 120) / 240
+      self.step = i16(at + 1)
+    }
+    if self.arpeggio != 0 {
+      let phase = tick % 3
+      if phase == 1 { pitch += i32(self.arpeggio >> 4) << 6 }
+      if phase == 2 { pitch += i32(self.arpeggio & 15) << 6 }
+    }
+    if self.vibrato_depth > 0 { pitch += i32(sine(self.vibrato_at) * self.vibrato_depth / 32) }
+    if silent { level = 0 }
+    pitch = pitch.clamp(0, 127 * 64)
+    level = level.clamp(0, 15)
+    if self.sampled {
+      // The DAC's: the player reads them ([MusicPlayer.follow_dac]).
+      self.heard_pitch = pitch
+      self.heard_volume = level
+    } else if k < FIRST_PSG {
+      self.sound_fm(tables, k, pitch, level, fm, out)
+    } else {
+      self.sound_psg(k, pitch, level, psg, out)
+    }
+  }
+
+  /// The envelope's step for this frame: the next, or — past its release while the note is
+  /// held — back to its loop (or held at the release), and past its end its loop (the loop
+  /// on the side of the release the note is) or its last held.
+  let envelope_step = pure (self, e: Envelope) -> i32 => {
+    let n = i32(e.count)
+    let lp = i32(e.loop)
+    let rel = i32(e.release)
+    var at = i32(self.step)
+    if !self.released && e.release != NO_POINT && at > rel {
+      at = if e.loop != NO_POINT && lp <= rel { lp } else { rel }
+    }
+    if at >= n {
+      let loops = e.loop != NO_POINT && lp < n &&
+        (e.release == NO_POINT ||
+            (self.released && lp > rel) ||
+            (!self.released && lp <= rel))
+      at = if loops { lp } else { n - 1 }
+    }
+    at.clamp(0, n - 1)
+  }
+
+  let sound_fm<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    k: i16,
+    pitch: i32,
+    level: i16,
+    fm: mut [768]u8,
+    out: mut Out
+  ) -> void => {
+    let ch = u8(k)
+    let bank: u8 = if k < 3 { 0 } else { 1 }
+    let slot = ch % 3
+    if self.written < 0 || i32(self.written) >= tables.patches() { return }
+    if pitch != self.heard_pitch {
+      let (block, fnum) = fm_pitch(pitch)
+      let w = note_writes(ch, u8(block), u16(fnum))
+      out.put_fm(fm, w[0], w[1], w[2])
+      out.put_fm(fm, w[3], w[4], w[5])
+      self.heard_pitch = pitch
+    }
+    if self.pan != self.heard_pan || level != self.heard_volume {
+      let patch = tables.patch(i32(self.written))
+      if self.pan != self.heard_pan {
+        out.put_fm(fm, bank, 0xB4 + slot, self.pan | (patch.sensitivity & 0x37))
+        self.heard_pan = self.pan
+      }
+      if level != self.heard_volume {
+        let carriers = carrier_mask(patch.feedback_algorithm & 7)
+        for op in 1..<=4 {
+          if (carriers >> u8(op - 1)) & 1 == 0 { continue }
+          let base = patch.ops[(op - 1) * 7 + 1] & 0x7F
+          out.put_fm(
+            fm,
+            bank,
+            0x40 + operator_offset(op) + slot,
+            quieter(base, u8(level))
+          )
+        }
+        self.heard_volume = level
+      }
+    }
+    if self.keying {
+      out.put_fm(fm, 0, 0x28, 0xF0 | key_on_code(ch))
+      self.keying = false
+    }
+  }
+
+  let sound_psg = (
+    self: mut,
+    k: i16,
+    pitch: i32,
+    level: i16,
+    psg: mut [16]u8,
+    out: mut Out
+  ) -> void => {
+    if k == NOISE {
+      if !self.noise_set || self.white_wanted != self.white {
+        out.put_psg(psg, noise_byte(self.white_wanted))
+        out.put_psg(psg, attenuation_byte(2, 15))
+        self.white = self.white_wanted
+        self.noise_set = true
+      }
+      if pitch != self.heard_pitch {
+        let period = ((psg_period(pitch) + 8) >> 4).clamp(1, 1023)
+        let p = period_bytes(2, u16(period))
+        out.put_psg(psg, p[0])
+        out.put_psg(psg, p[1])
+        self.heard_pitch = pitch
+      }
+      if level != self.heard_volume {
+        out.put_psg(psg, attenuation_byte(3, u8(15 - level)))
+        self.heard_volume = level
+      }
+      return
+    }
+    let c = u8(k - FIRST_PSG)
+    if pitch != self.heard_pitch {
+      let p = period_bytes(c, u16(psg_period(pitch).clamp(1, 1023)))
+      out.put_psg(psg, p[0])
+      out.put_psg(psg, p[1])
+      self.heard_pitch = pitch
+    }
+    if level != self.heard_volume {
+      out.put_psg(psg, attenuation_byte(c, u8(15 - level)))
+      self.heard_volume = level
+    }
+  }
+}
+
+/// A frame's writes under way: how many bytes in the PSG's buffer, and writes in the
+/// YM2612's.
+pub struct Out {
+  psg: i16 = 0,
+  fm: i16 = 0,
+}
+
+impl Out {
+  let put_psg = (self: mut, buffer: mut [16]u8, value: u8) -> void => {
+    if self.psg >= 16 { return }
+    buffer[self.psg] = value
+    self.psg += 1
+  }
+
+  let put_fm = (self: mut, buffer: mut [768]u8, bank: u8, reg: u8, value: u8) -> void => {
+    if self.fm >= 256 { return }
+    let at = self.fm * 3
+    buffer[at] = bank
+    buffer[at + 1] = reg
+    buffer[at + 2] = value
+    self.fm += 1
+  }
+}
+
+/// Whether channel `k` is among `held`.
+let is_held = pure (held: u16, k: i16) -> bool => (held >> u16(k)) & 1 == 1
+
+// ── Pitch ────────────────────────────────────────────────────────────────────
+
+/// The PSG's period for MIDI notes 0 to 12 on its 3.58 MHz clock, a tone's clock over 32 ×
+/// the note's frequency; an octave up halves it.
+pub const PSG_PERIODS: [13]i32 = #[
+  13682,
+  12914,
+  12189,
+  11505,
+  10859,
+  10250,
+  9675,
+  9132,
+  8619,
+  8135,
+  7679,
+  7248,
+  6841
+]
+
+/// The YM2612's F-number, times four, for C4 to C5 at block 4 on its 7.67 MHz clock; an
+/// octave is a block.
+pub const FM_FNUMS: [13]i32 = #[
+  2575,
+  2728,
+  2890,
+  3062,
+  3244,
+  3437,
+  3642,
+  3858,
+  4088,
+  4331,
+  4588,
+  4861,
+  5150
+]
+
+/// A note (0–127) as its octave and its semitone in it — by subtraction: the 68000 divides
+/// in a call.
+let octave_of = pure (note: i32) -> (i32, i32) => {
+  var n = note
+  var octave: i32 = 0
+  while n >= 12 {
+    n -= 12
+    octave += 1
+  }
+  (octave, n)
+}
+
+/// The PSG period that plays `pitch` (64ths of a semitone from MIDI 0), before it is held
+/// to the chip's 1–1023: between the semitones either side.
+pub let psg_period = pure (pitch: i32) -> i32 => {
+  let p = pitch.max(0)
+  let (octave, semitone) = octave_of(p >> 6)
+  let a = PSG_PERIODS[semitone]
+  let b = PSG_PERIODS[semitone + 1]
+  let v = (a << 6) - (a - b) * (p & 63)
+  let shift = octave + 6
+  (v + (1 << (shift - 1))) >> shift
+}
+
+/// The block and F-number that play `pitch`: the note's octave the block, held to 0–7.
+pub let fm_pitch = pure (pitch: i32) -> (i32, i32) => {
+  let p = pitch.max(0)
+  let (octave, semitone) = octave_of(p >> 6)
+  let a = FM_FNUMS[semitone]
+  let b = FM_FNUMS[semitone + 1]
+  let v = (a << 6) + (b - a) * (p & 63)
+  var fnum = (v + 128) >> 8
+  var block = octave - 1
+  if block < 0 {
+    fnum = fnum >> (-block)
+    block = 0
+  }
+  if block > 7 {
+    fnum = (fnum << (block - 7)).min(2047)
+    block = 7
+  }
+  (block, fnum.min(2047))
+}
+
+/// The rate, in bytes a second, a sample of rate `rate` at C4 plays at `pitch`: up an octave,
+/// twice as fast — between the semitones as [FM_FNUMS] has them.
+pub let sample_rate = pure (rate: u16, pitch: i32) -> u32 => {
+  let p = pitch.max(0)
+  let (octave, semitone) = octave_of(p >> 6)
+  let a = FM_FNUMS[semitone]
+  let b = FM_FNUMS[semitone + 1]
+  // C4's F-number times four is 2575: 10300 here, sixteenths of it in 64ths.
+  let v = ((a << 6) + (b - a) * (p & 63)) >> 4
+  let at_c = i32(rate) * v / 10300
+  let hz = if octave >= 5 { at_c << (octave - 5) } else { at_c >> (5 - octave) }
+  u32(hz.max(0))
+}
+
+/// Sample byte `value` at level `level` (0–15): its distance from the middle scaled 2 dB a
+/// step down from 15, as the FM's levels are, and rounded down; 0 is the middle, silence.
+/// Both runtimes play a sample's bytes through this, so it sounds the same on each (the
+/// 68000 makes its tables by adding the gain a byte at a time, which this equals).
+pub let dac_byte = pure (value: u8, level: i16) -> u8 => {
+  let gain = DAC_GAINS[level.clamp(0, 15)]
+  u8(128 + (((i16(value) - 128) * gain) >> 8))
+}
+
+/// 256ths, 2 dB a step from 15 (256) down; 0 silent.
+pub const DAC_GAINS: [16]i16 = #[
+  0,
+  10,
+  13,
+  16,
+  20,
+  26,
+  32,
+  41,
+  51,
+  64,
+  81,
+  102,
+  128,
+  162,
+  203,
+  256
+]
+
+/// A sine over 64 places, -127 to 127.
+let sine = pure (at: i16) -> i16 => {
+  let quarter = at & 15
+  let v = SINE_QUARTER[if (at & 16) != 0 { 16 - quarter } else { quarter }]
+  if (at & 32) != 0 { -v } else { v }
+}
+
+const SINE_QUARTER: [17]i16 = #[
+  0,
+  12,
+  25,
+  37,
+  49,
+  60,
+  71,
+  81,
+  90,
+  98,
+  106,
+  112,
+  117,
+  122,
+  125,
+  126,
+  127
+]

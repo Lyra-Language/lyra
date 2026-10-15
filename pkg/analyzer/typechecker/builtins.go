@@ -384,6 +384,13 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			ReturnType: types.ReturnType{Type: types.VoidType{}},
 		}, true
 	}
+	// `p.address()` — the pointer as a number: what a console's hardware is told about
+	// memory (the Genesis's Z80 playing a sample from the cartridge needs its address in
+	// ROM). `pointer_at(address)` is its inverse. Nothing is reached through the pointer, so
+	// it needs no `unsafe`, as `==` on pointers does not.
+	if _, ok := recv.(types.RawPointerType); ok && name == "address" {
+		return &types.LambdaType{ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.UInt64}}}, true
+	}
 	if ptr, ok := recv.(types.RawPointerType); ok && name == "offset" {
 		return &types.LambdaType{
 			Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.Int64}}},

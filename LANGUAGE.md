@@ -922,6 +922,9 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 - `&mut` on a closure-captured binding is **`lyra-E024`** (captures are by value). Watch for `s.with_cstring((p) => f(p, &mut size))` — take the pointer outside. `&n` is fine.
 - Only storage has an address: `&f()` is `lyra-E059`; `^` on a non-pointer is `lyra-E060`.
 - Arithmetic is `p.offset(n) -> ^T` only (elements, signed, preserves mutability). No `p[i]`.
+- **`p.address() -> u64`** is the pointer as a number, in bytes — what hardware is told about
+  memory (the Genesis's Z80 plays a sample from the cartridge at its address); `pointer_at`
+  takes it back. It reaches nothing through the pointer, so it needs no `unsafe`.
 - **`nullptr`**: safe (no `unsafe`) along with `==`/`!=` on pointers. Untyped with **no default** — context must pin the pointee (annotation, parameter, return, other side of `==`), else **`lyra-E069`**. Fills `^T` and `^mut T`; a mismatched pair pins to immutable. No `<` on pointers. `let nullptr = 5` is **`lyra-E070`** (collector).
 - The ways to make a pointer are `&`, `nullptr` and **`pointer_at(address)`** — a pointer to a
   fixed address, for a console's hardware registers (`0xC00004` is the Genesis VDP's control

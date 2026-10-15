@@ -51,6 +51,73 @@ func TestGenesis_BuildsARunnableROM(t *testing.T) {
 	}
 }
 
+// A function taking a struct too big for registers and returning a tuple too big for them,
+// with two callers so it is not inlined: on the 68000 the M68k LLVM demoted the tuple's
+// return to a hidden pointer that the caller passed in a0 and the fastcc callee read from
+// d0, every argument after it a register off. The backend passes and returns every
+// aggregate through memory there; the screen is green when each tuple is right.
+func TestGenesis_AnAggregateCallIsRightWhenNotInlined(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "tuple.lyra")
+	if err := os.WriteFile(src, []byte(`import std.genesis.vdp
+
+struct Big {
+  bytes: [28]u8,
+  a: u8,
+  b: u8,
+  c: u8,
+}
+
+/// Write k of the struct: a bank, a register, a value — the shape of the YM2612's patch writes.
+let pick = pure (channel: u8, big: Big, k: i64) -> (u8, u8, u8) => {
+  if k < 28 { return (channel / 3, 0x30 + u8(k % 7) * 16 + u8(k / 7) * 4, big.bytes[k]) }
+  if k == 28 { return (channel / 3, 0xB0, big.a) }
+  if k == 29 { return (channel / 3, 0xB4, 0xC0 | big.b) }
+  (0, 0x22, big.c)
+}
+
+let status = pure () -> ^u16 => unsafe { pointer_at(0xC00004) }
+
+let main = () -> void => {
+  vdp.init()
+  vdp.set_color(0, 1, vdp.rgb(7, 0, 0))
+  vdp.set_color(0, 2, vdp.rgb(0, 7, 0))
+  var big = Big { bytes: #[0; 28], a: 7, b: 5, c: 9 }
+  for i in 0..<28 { big.bytes[i] = u8(i * 3 + 1) }
+  let zero = unsafe { status().read_volatile() } & 0
+  var ok = true
+  for k in 0..<31 {
+    let (bank, reg, value) = pick(u8(zero), big, k + i64(zero))
+    let want: u8 = if k < 28 { u8(k * 3 + 1) } else if k == 28 { 7 } else if k == 29 { 0xC5 } else { 9 }
+    if bank != 0 || value != want { ok = false }
+    if k == 0 && reg != 0x30 { ok = false }
+  }
+  for k in 0..<31 {
+    let (bank, _, value) = pick(u8(zero) + 3, big, k)
+    if k < 28 && (bank != 1 || value != u8(k * 3 + 1)) { ok = false }
+  }
+  vdp.set_backdrop(0, if ok { 2 } else { 1 })
+  vdp.display_on()
+  loop {}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "tuple.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", out, src); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	if got := runROM(t, out, "60", "").dominant(); got != "00ff00" {
+		t.Errorf("the screen is %s, want the green of every tuple right (00ff00)", got)
+	}
+}
+
 func TestGenesis_APanicTurnsTheScreenRed(t *testing.T) {
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)

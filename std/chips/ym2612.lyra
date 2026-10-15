@@ -315,6 +315,13 @@ impl Ym2612 {
     if (port & 1) != 0 { self.write_d = self.write_d | 1 } else { self.write_a = self.write_a | 1 }
   }
 
+  /// Register `2A`, the DAC's byte, as a write to it sets it — without the bus: for a
+  /// runtime streaming a sample between its other writes, which the address port's last
+  /// register would otherwise have to be put back after.
+  pub let set_dac = (self: mut, value: u8) -> void => {
+    self.dac_data = (self.dac_data & 1) | (u16(value ~ 0x80) << 1)
+  }
+
   /// The status register, read from port `port`: busy (bit 7) and the timers' overflow
   /// flags (1, 0). The YM2612 answers on port 0; the other ports give back what port 0
   /// last answered, for a while (the value fading from the bus), then 0.

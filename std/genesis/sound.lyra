@@ -1,33 +1,48 @@
 module std.genesis.sound
-//! Sound effects on the Genesis's PSG (the SN76489 inside its VDP) and its YM2612: a jump, a
-//! coin, a bell, made in Vega's sound editor and played by name.
+//! Sound on the Genesis: effects on its PSG (the SN76489 inside its VDP) and its YM2612 — a
+//! jump, a coin, a bell, made in Vega's sound editor and played by name — and music on both,
+//! sampled drums on the YM2612's DAC among it.
 //!
 //! ```
 //! import std.genesis.sound
 //!
-//! sound.init()                 // the PSG silenced: it may power up sounding
+//! sound.init()                 // the PSG silenced, the Z80's driver started
 //! assets.JUMP.play()           // an effect, by the name Vega gave it
 //! // each vertical blank, after the frame is shown:
-//! assets.update_sounds()       // Vega's: sound.update(its steps)
+//! assets.update_sounds()       // Vega's: sound.update(its steps) or update_music(…)
 //! ```
 //!
-//! **The playing is `std.chips.effects`'**, what it says each frame written to the PSG's port
-//! and the YM2612's — as `std.game.sound` writes the same to the chips it runs, so an effect
-//! is the same sound in a ROM and a modern game. A tone effect plays on PSG tone channel 0,
-//! a noise effect on the noise channel, pitched by tone channel 2, and an FM effect on FM
-//! channel 6; one effect at a time on each, a new one taking the old one's place.
+//! **The playing is `std.chips.effects`' and `std.chips.music`'s**, what they say each frame
+//! written to the PSG's port and the YM2612's — as `std.game.sound` writes the same to the
+//! chips it runs, so an effect or a song is the same sound in a ROM and a modern game. A
+//! tone effect plays on PSG tone channel 0, a noise effect on the noise channel, pitched by
+//! tone channel 2, and an FM effect on FM channel 6; one effect at a time on each, a new one
+//! taking the old one's place.
 //!
-//! **The YM2612 is the Z80's**, at A04000 on the 68000's side only while the 68000 holds the
-//! Z80's bus — and the chip is held in reset with the Z80. So [init] takes the bus, lets the
-//! Z80 (and the chip) out of reset, and keeps the bus: the Z80 runs nothing, and the 68000
-//! writes the chip itself, waiting out its busy flag before each write.
+//! **The YM2612 is the Z80's**, and so is the DAC's sample: [init] loads a driver into the
+//! Z80's RAM ([Z80_DRIVER]) that plays a sample from the cartridge a byte at a time —
+//! through the bank window, at a fixed [Z80_RATE] a second, stepping through the sample at
+//! the rate its note asks — and makes the frame's YM2612 writes between its bytes, which the
+//! 68000 leaves in a queue in the Z80's RAM. A 68000 writing the chip itself would stop the
+//! Z80, and the sample, for as long as its writes waited on the chip. Each frame the 68000
+//! takes the Z80's bus once — the queue filled, the sample told to start, stop or change —
+//! and gives it back.
 
 import std.chips.effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.music.{
+  Tune,
+  MusicData,
+  MusicPlayer,
+  Dac,
+  new_music,
+  held_by,
+  DAC_GAINS
+}
 import std.chips.sn76489.{ attenuation_byte }
 import std.chips.ym2612.{ FmPatch }
 
-/// Every PSG channel silent — a PSG may power up sounding — and the YM2612 the 68000's to
-/// write. A game calls this first.
+/// Every PSG channel silent — a PSG may power up sounding — and the Z80's driver loaded and
+/// started, the YM2612 its to write. A game calls this first.
 pub let init = () -> void => {
   for channel: u8 in 0..<4 { write(attenuation_byte(channel, 15)) }
   unsafe {
@@ -35,7 +50,40 @@ pub let init = () -> void => {
     z80_reset().write_volatile(0x0100)
     while (z80_bus().read_volatile() & 0x0100) != 0 {}
   }
+  unsafe {
+    var to: ^mut u8 = pointer_at(0xA00000)
+    for i: i16 in 0..<326 {
+      to.write_volatile(Z80_DRIVER[i])
+      to = to.offset(1)
+    }
+    // A sample's bytes at each level, a table a level: `dac_byte`'s, so the same bytes
+    // `std.game.sound` plays — its product made by adding the gain a byte at a time, which
+    // a frame of the 68000's multiplying would not have been.
+    to = pointer_at(0xA00000 + u32(VOLUME_TABLES))
+    for level: i16 in 0..<16 {
+      let gain = i32(DAC_GAINS[level])
+      var product = -128 * gain
+      for _: i16 in 0..<256 {
+        to.write_volatile(u8(128 + (product >> 8)))
+        to = to.offset(1)
+        product += gain
+      }
+    }
+  }
+  for i: u16 in 0..<32 { z80_poke(QTAIL + i, 0) }
+  queue_tail = 0
+  dac_serial = 0
+  dac_command = 0
+  dac_on = false
+  unsafe {
+    // Held in reset with its bus given back, then let go: the Z80 runs the driver from 0.
+    z80_reset().write_volatile(0)
+    z80_bus().write_volatile(0)
+    for _: i16 in 0..<16 { let _ = z80_reset().read_volatile() }
+    z80_reset().write_volatile(0x0100)
+  }
   player = new_player()
+  music = new_music()
 }
 
 impl Effect {
@@ -47,6 +95,42 @@ impl Effect {
 /// Whether an effect is still playing.
 pub let playing = () -> bool => player.playing()
 
+impl Tune {
+  /// Play the song from its start, in place of any song playing; heard from the next
+  /// [update_music], under the effects.
+  pub let play = (self) -> void => music.play_song(self)
+}
+
+/// Stop the song playing.
+pub let stop_music = () -> void => music.stop()
+
+/// [update], and the song playing's tick under the effects — a channel an effect is
+/// playing on the effect's (`std.chips.music`): once each vertical blank. `tables` is the
+/// game's music, and `samples` its sampled instruments' bytes, which the DAC plays from
+/// where they are in the cartridge.
+pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: MusicData = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch,
+  tables: ref d,
+  samples: ref [S]u8
+) -> void => {
+  let before = held_by(player)
+  let effect_writes = effects_frame(steps, patches)
+  let (bytes, writes) = music.frame(tables, before | held_by(player), music_psg, music_fm)
+  for i in 0..<bytes { write(music_psg[i]) }
+  follow_dac(music.dac, samples)
+  // The Z80 stopped only while what was made is copied to it: a byte copied a byte.
+  take_bus()
+  queue_effects(effect_writes)
+  for i in 0..<writes { queue_fm(
+    music_fm[i * 3],
+    music_fm[i * 3 + 1],
+    music_fm[i * 3 + 2]
+  ) }
+  send_dac()
+  give_bus()
+}
+
 /// The frame's step of each effect playing, written to the chips: once each vertical blank.
 /// `steps` is the game's table of them, and `patches` its FM instruments' (Vega's
 /// `assets.lyra` passes its own).
@@ -54,38 +138,722 @@ pub let update<const N: i64, const P: i64> = (
   steps: ref [N]EffectStep,
   patches: ref [P]FmPatch
 ) -> void => {
+  let writes = effects_frame(steps, patches)
+  take_bus()
+  queue_effects(writes)
+  give_bus()
+}
+
+/// The Z80's driver, loaded at 0 by [init]: it plays the DAC's sample at [Z80_RATE] bytes a
+/// second, a byte every 312 of its T-states whichever way through its loop — reading it
+/// through the bank window, through its level's table, to register `2A` — and between
+/// bytes makes one YM2612 write from the queue (`QTAIL`/`QHEAD`, the writes' ports,
+/// registers and values a page each from `1400`), spaced so the chip is never written while
+/// busy. A command (`SERIAL` changed; `KIND` 1 start, 2 stop, 3 a new rate or level) is
+/// taken between bytes. Assembled by hand: each instruction above its bytes, with the
+/// T-states the timing rests on.
+pub const Z80_DRIVER: [326]u8 = #[
+  // start:
+  // di
+  0xF3,
+  // ld sp,0x2000
+  0x31,
+  0x00,
+  0x20,
+  // exx
+  0xD9,
+  // ld bc,0x1400  the queue's head, C', at 0
+  0x01,
+  0x00,
+  0x14,
+  // exx
+  0xD9,
+  // ld a,0x2A
+  0x3E,
+  0x2A,
+  // ld (0x4000),a  the address port at the DAC's register
+  0x32,
+  0x00,
+  0x40,
+  // idle:
+  // ld a,(SERIAL)
+  0x3A,
+  0x02,
+  0x1F,
+  // ld hl,SEEN
+  0x21,
+  0x03,
+  0x1F,
+  // cp (hl)
+  0xBE,
+  // jp nz,command  a command the 68000 has given
+  0xC2,
+  0x43,
+  0x00,
+  // exx
+  0xD9,
+  // ld a,(QTAIL)
+  0x3A,
+  0x00,
+  0x1F,
+  // cp c
+  0xB9,
+  // jr z,idle_on  the queue empty
+  0x28,
+  0x06,
+  // call wait_ym
+  0xCD,
+  0x3C,
+  0x00,
+  // call write_one
+  0xCD,
+  0x29,
+  0x00,
+  // idle_on:
+  // exx
+  0xD9,
+  // jp idle
+  0xC3,
+  0x0E,
+  0x00,
+  // write_one:  the queue's next write: its port, register and value
+  // ld b,0x14
+  0x06,
+  0x14,
+  // ld a,(bc)
+  0x0A,
+  // ld l,a
+  0x6F,
+  // ld h,0x40
+  0x26,
+  0x40,
+  // inc b
+  0x04,
+  // ld a,(bc)
+  0x0A,
+  // ld (hl),a
+  0x77,
+  // inc b
+  0x04,
+  // ld a,(bc)
+  0x0A,
+  // inc l
+  0x2C,
+  // ld (hl),a
+  0x77,
+  // inc c
+  0x0C,
+  // ld a,c
+  0x79,
+  // ld (QHEAD),a
+  0x32,
+  0x01,
+  0x1F,
+  // ret
+  0xC9,
+  // wait_ym:  until the YM2612 is no longer busy
+  // ld a,(0x4000)
+  0x3A,
+  0x00,
+  0x40,
+  // rla
+  0x17,
+  // jr c,wait_ym
+  0x38,
+  0xFA,
+  // ret
+  0xC9,
+  // command:  A the serial: start, stop or tune
+  // ld (SEEN),a
+  0x32,
+  0x03,
+  0x1F,
+  // ld (cp_seen+1),a
+  0x32,
+  0xE0,
+  0x00,
+  // ld a,(KIND)
+  0x3A,
+  0x04,
+  0x1F,
+  // cp 2
+  0xFE,
+  0x02,
+  // jr z,stop
+  0x28,
+  0x40,
+  // cp 3
+  0xFE,
+  0x03,
+  // jr z,tune
+  0x28,
+  0x15,
+  // ld hl,(BANK)
+  0x2A,
+  0x05,
+  0x1F,
+  // ld (CBANK),hl
+  0x22,
+  0x16,
+  0x1F,
+  // call set_bank
+  0xCD,
+  0x21,
+  0x01,
+  // ld bc,(PTR)
+  0xED,
+  0x4B,
+  0x07,
+  0x1F,
+  // ld hl,0
+  0x21,
+  0x00,
+  0x00,
+  // ld a,1
+  0x3E,
+  0x01,
+  // ld (ACTIVE),a
+  0x32,
+  0x18,
+  0x1F,
+  // tune:
+  // ld a,(ACTIVE)
+  0x3A,
+  0x18,
+  0x1F,
+  // or a
+  0xB7,
+  // jr z,stop  nothing playing to tune
+  0x28,
+  0x21,
+  // exx
+  0xD9,
+  // ld de,(COUNT)
+  0xED,
+  0x5B,
+  0x09,
+  0x1F,
+  // exx
+  0xD9,
+  // ld a,(STEPI)
+  0x3A,
+  0x0B,
+  0x1F,
+  // ld (adc_step+1),a
+  0x32,
+  0xCC,
+  0x00,
+  // ld de,(STEPF)
+  0xED,
+  0x5B,
+  0x0C,
+  0x1F,
+  // ld a,(VOLPAGE)
+  0x3A,
+  0x0E,
+  0x1F,
+  // ld (ld_vol+1),a
+  0x32,
+  0x96,
+  0x00,
+  // call wait_ym
+  0xCD,
+  0x3C,
+  0x00,
+  // ld a,0x2A
+  0x3E,
+  0x2A,
+  // ld (0x4000),a
+  0x32,
+  0x00,
+  0x40,
+  // jp play
+  0xC3,
+  0x93,
+  0x00,
+  // stop:
+  // jp idle
+  0xC3,
+  0x0E,
+  0x00,
+  // play:  312 T-states a byte, whichever way through
+  // ld a,(bc)  7  the sample's byte
+  0x0A,
+  // exx  4
+  0xD9,
+  // ld_vol:
+  // ld h,0x13  7  its level's table (written by command)
+  0x26,
+  0x13,
+  // ld l,a  4
+  0x6F,
+  // ld a,(hl)  7
+  0x7E,
+  // ld (0x4001),a  13 to the DAC
+  0x32,
+  0x01,
+  0x40,
+  // dec de  6
+  0x1B,
+  // ld a,d  4
+  0x7A,
+  // or e  4
+  0xB3,
+  // jp z,finished  10
+  0xCA,
+  0xEC,
+  0x00,
+  // ld a,(QTAIL)  13
+  0x3A,
+  0x00,
+  0x1F,
+  // cp c  4
+  0xB9,
+  // jr z,no_write  7 / 12
+  0x28,
+  0x18,
+  // ld b,0x14  7  a queued write, 103 after the DAC's
+  0x06,
+  0x14,
+  // ld a,(bc)  7
+  0x0A,
+  // ld l,a  4
+  0x6F,
+  // ld h,0x40  7
+  0x26,
+  0x40,
+  // inc b  4
+  0x04,
+  // ld a,(bc)  7
+  0x0A,
+  // nop  4
+  0x00,
+  // nop  4
+  0x00,
+  // ld (hl),a  7  its register
+  0x77,
+  // inc b  4
+  0x04,
+  // ld a,(bc)  7
+  0x0A,
+  // inc l  4
+  0x2C,
+  // ld (hl),a  7  its value
+  0x77,
+  // inc c  4
+  0x0C,
+  // ld a,c  4
+  0x79,
+  // ld (QHEAD),a  13
+  0x32,
+  0x01,
+  0x1F,
+  // exx  4
+  0xD9,
+  // jp stepping  10
+  0xC3,
+  0xC9,
+  0x00,
+  // no_write:
+  // ld b,6  7  as long as a write takes
+  0x06,
+  0x06,
+  // djnz $  73
+  0x10,
+  0xFE,
+  // inc hl  6
+  0x23,
+  // ld a,0  7
+  0x3E,
+  0x00,
+  // inc hl  6
+  0x23,
+  // exx  4
+  0xD9,
+  // stepping:  the pointer on by the step, 54 either way
+  // add hl,de  11 the fraction
+  0x19,
+  // ld a,c  4
+  0x79,
+  // adc_step:
+  // adc a,0  7  the whole bytes (written by command)
+  0xCE,
+  0x00,
+  // ld c,a  4
+  0x4F,
+  // jr c,carry  7 / 12
+  0x38,
+  0x06,
+  // ld a,0  7
+  0x3E,
+  0x00,
+  // nop  4
+  0x00,
+  // jp stepped  10
+  0xC3,
+  0xDC,
+  0x00,
+  // carry:
+  // inc b  4
+  0x04,
+  // jr nz,stepped  12 / 7
+  0x20,
+  0x03,
+  // call next_bank  past the window's end: the next 32 KB
+  0xCD,
+  0x12,
+  0x01,
+  // stepped:
+  // ld a,(SERIAL)  13
+  0x3A,
+  0x02,
+  0x1F,
+  // cp_seen:
+  // cp 0  7  the serial last seen (written by command)
+  0xFE,
+  0x00,
+  // jp nz,command  10
+  0xC2,
+  0x43,
+  0x00,
+  // ld a,0x2A  7
+  0x3E,
+  0x2A,
+  // ld (0x4000),a  13 the address back at the DAC's, 139 after a queued value
+  0x32,
+  0x00,
+  0x40,
+  // jp play  10
+  0xC3,
+  0x93,
+  0x00,
+  // finished:  the count run out: the loop again, or idle
+  // ld a,(LOOPS)
+  0x3A,
+  0x0F,
+  0x1F,
+  // or a
+  0xB7,
+  // jr z,ended
+  0x28,
+  0x18,
+  // ld de,(LCOUNT)
+  0xED,
+  0x5B,
+  0x14,
+  0x1F,
+  // exx
+  0xD9,
+  // ld hl,(LBANK)
+  0x2A,
+  0x10,
+  0x1F,
+  // ld (CBANK),hl
+  0x22,
+  0x16,
+  0x1F,
+  // call set_bank
+  0xCD,
+  0x21,
+  0x01,
+  // ld bc,(LPTR)
+  0xED,
+  0x4B,
+  0x12,
+  0x1F,
+  // ld hl,0
+  0x21,
+  0x00,
+  0x00,
+  // jp play
+  0xC3,
+  0x93,
+  0x00,
+  // ended:
+  // xor a
+  0xAF,
+  // ld (ACTIVE),a
+  0x32,
+  0x18,
+  0x1F,
+  // exx
+  0xD9,
+  // jp idle
+  0xC3,
+  0x0E,
+  0x00,
+  // next_bank:
+  // push hl
+  0xE5,
+  // ld hl,(CBANK)
+  0x2A,
+  0x16,
+  0x1F,
+  // inc hl
+  0x23,
+  // ld (CBANK),hl
+  0x22,
+  0x16,
+  0x1F,
+  // call set_bank
+  0xCD,
+  0x21,
+  0x01,
+  // pop hl
+  0xE1,
+  // ld b,0x80
+  0x06,
+  0x80,
+  // ret
+  0xC9,
+  // set_bank:  HL's nine bits to the bank register, A15 first
+  // ld a,l
+  0x7D,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // rrca
+  0x0F,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // rrca
+  0x0F,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // rrca
+  0x0F,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // rrca
+  0x0F,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // rrca
+  0x0F,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // rrca
+  0x0F,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // rrca
+  0x0F,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // ld a,h
+  0x7C,
+  // ld (0x6000),a
+  0x32,
+  0x00,
+  0x60,
+  // ret
+  0xC9,
+]
+
+/// The bytes a second the driver plays a sample at: the Z80's 3.58 MHz over 312.
+pub const Z80_RATE: u32 = 11473
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// The driver's memory: its level tables (a page each, from 0400), the queue's three pages
+/// (1400, 1500, 1600) and the block of what the 68000 tells it (from 1F00).
+const VOLUME_TABLES: u16 = 0x0400
+const QUEUE: u16 = 0x1400
+const QTAIL: u16 = 0x1F00
+const QHEAD: u16 = 0x1F01
+const SERIAL: u16 = 0x1F02
+const KIND: u16 = 0x1F04
+const BANK: u16 = 0x1F05
+const PTR: u16 = 0x1F07
+const COUNT: u16 = 0x1F09
+const STEP: u16 = 0x1F0B
+const VOLUME_PAGE: u16 = 0x1F0E
+const LOOPS: u16 = 0x1F0F
+const LOOP_BANK: u16 = 0x1F10
+const LOOP_PTR: u16 = 0x1F12
+const LOOP_COUNT: u16 = 0x1F14
+
+/// The block's bytes from `BANK` to the loop's count.
+const BLOCK_BYTES: u16 = 17
+
+/// The driver's commands.
+const START: u8 = 1
+const STOP: u8 = 2
+const TUNE: u8 = 3
+
+/// The effects' frame: the PSG's bytes written, the YM2612's kept in [effects_fm] for
+/// [queue_effects], and how many.
+let effects_frame<const N: i64, const P: i64> = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch
+) -> i64 => {
   var out: [8]u8 = #[0; 8]
   let n = player.frame(steps, out)
   for i in 0..<n { write(out[i]) }
-  var fm: [128]u8 = #[0; 128]
-  let writes = player.fm_frame(steps, patches, fm)
-  for i in 0..<writes { write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
+  player.fm_frame(steps, patches, effects_fm)
 }
 
-// ── Beneath ──────────────────────────────────────────────────────────────────────────
+let queue_effects = (writes: i64) -> void => {
+  for i in 0..<writes { queue_fm(
+    effects_fm[i * 3],
+    effects_fm[i * 3 + 1],
+    effects_fm[i * 3 + 2]
+  ) }
+}
+
+/// The DAC as the song wants it, made a command for the driver ([send_dac]): a new note's
+/// sample started, a sample stopped, a new rate or level; and where the sample has got to,
+/// kept here a frame at a time — the driver counts down in its own bytes, which a new rate
+/// changes.
+let follow_dac<const S: i64> = (dac: Dac, samples: ref [S]u8) -> void => {
+  if dac.note != dac_note {
+    dac_note = dac.note
+    if dac.playing && dac.sample.length > 0 && samples.len() > 0 {
+      let base = u32(unsafe { (&samples[0]).address() })
+      start_sample(dac, base)
+    } else if dac_on {
+      stop_sample()
+    }
+  } else if dac_on && !dac.playing {
+    stop_sample()
+  } else if dac_on && (dac.rate != dac_rate || dac.level != dac_level) {
+    tune_sample(dac)
+  }
+  if !dac_on { return }
+  dac_pos += dac_step * (Z80_RATE / 60)
+  let end = dac_length << 16
+  if dac_pos >= end {
+    if dac_loop < 0 {
+      dac_on = false
+      return
+    }
+    let looped = end - (u32(dac_loop) << 16)
+    dac_pos = (u32(dac_loop) << 16) + (dac_pos - end) % looped.max(1)
+  }
+}
+
+/// `dac`'s sample, from address `base` of the cartridge's sample bytes, started.
+let start_sample = (dac: Dac, base: u32) -> void => {
+  let at = base + dac.sample.first
+  dac_length = dac.sample.length.min(65535)
+  dac_loop = if dac.sample.loop_at >= 0 && u32(dac.sample.loop_at) < dac_length { dac.sample.loop_at } else { -1 }
+  dac_pos = 0
+  set_rate(dac)
+  block16(BANK, u16(at >> 15))
+  block16(PTR, u16(0x8000 | (at & 0x7FFF)))
+  block16(COUNT, outputs(dac_length << 16))
+  if dac_loop >= 0 {
+    let from = at + u32(dac_loop)
+    block8(LOOPS, 1)
+    block16(LOOP_BANK, u16(from >> 15))
+    block16(LOOP_PTR, u16(0x8000 | (from & 0x7FFF)))
+    block16(LOOP_COUNT, outputs((dac_length - u32(dac_loop)) << 16))
+  } else {
+    block8(LOOPS, 0)
+  }
+  dac_on = true
+  dac_command = START
+}
+
+/// The playing sample at `dac`'s rate and level from where it has got to.
+let tune_sample = (dac: Dac) -> void => {
+  set_rate(dac)
+  block16(COUNT, outputs((dac_length << 16) - dac_pos.min(dac_length << 16)))
+  dac_command = TUNE
+}
+
+let stop_sample = () -> void => {
+  dac_on = false
+  dac_command = STOP
+}
+
+/// `dac`'s rate as the driver's step through the sample — bytes an output, in 65536ths —
+/// and its level as its table, given the driver.
+let set_rate = (dac: Dac) -> void => {
+  dac_rate = dac.rate
+  dac_level = dac.level
+  dac_step = ((dac.rate.min(65535) << 16) / Z80_RATE).max(1)
+  block8(STEP, u8(dac_step >> 16))
+  block16(STEP + 1, u16(dac_step & 0xFFFF))
+  block8(VOLUME_PAGE, u8((VOLUME_TABLES >> 8) + u16(dac.level.clamp(0, 15))))
+}
+
+/// The driver's bytes out for `span` of the sample (65536ths of a byte), at least one.
+let outputs = (span: u32) -> u16 =>
+  u16(((span + dac_step - 1) / dac_step).clamp(1, 65535))
+
+/// The command made, given the driver (the bus held): its block, its kind, then the serial
+/// it watches.
+let send_dac = () -> void => {
+  if dac_command == 0 { return }
+  for i: u16 in 0..<BLOCK_BYTES { z80_poke(BANK + i, dac_block[i]) }
+  z80_poke(KIND, dac_command)
+  dac_serial = (dac_serial + 1) & 0xFF
+  z80_poke(SERIAL, u8(dac_serial))
+  dac_command = 0
+}
+
+/// A value at `at` of the driver's block, kept for [send_dac].
+let block8 = (at: u16, value: u8) -> void => { dac_block[at - BANK] = value }
+
+let block16 = (at: u16, value: u16) -> void => {
+  block8(at, u8(value & 0xFF))
+  block8(at + 1, u8(value >> 8))
+}
+
+/// `value` to register `reg` of the YM2612's bank `bank`, queued for the driver — waiting,
+/// the bus given back, while the queue is full.
+let queue_fm = (bank: u8, reg: u8, value: u8) -> void => {
+  while ((u16(z80_peek(QHEAD)) + 255 - queue_tail) & 0xFF) == 0 {
+    give_bus()
+    for _: i16 in 0..<64 { let _ = unsafe { z80_bus().read_volatile() } }
+    take_bus()
+  }
+  z80_poke(QUEUE + queue_tail, (bank & 1) * 2)
+  z80_poke(QUEUE + 0x100 + queue_tail, reg)
+  z80_poke(QUEUE + 0x200 + queue_tail, value)
+  queue_tail = (queue_tail + 1) & 0xFF
+  z80_poke(QTAIL, u8(queue_tail))
+}
 
 /// A byte to the PSG's port.
 let write = (value: u8) -> void => unsafe { port().write_volatile(value) }
 
 let port = pure () -> ^mut u8 => unsafe { pointer_at(0xC00011) }
 
-/// `value` to register `reg` of the YM2612's bank `bank`: the address to its port, then the
-/// data to the next, each once the chip is no longer busy.
-let write_fm = (bank: u8, reg: u8, value: u8) -> void => unsafe {
-  let base: u32 = 0xA04000 + u32(bank & 1) * 2
-  let address_port: ^mut u8 = pointer_at(base)
-  let value_port: ^mut u8 = pointer_at(base + 1)
-  wait_fm()
-  address_port.write_volatile(reg)
-  wait_fm()
-  value_port.write_volatile(value)
+/// The Z80's RAM, which the 68000 reaches at A00000 while it holds the bus.
+let z80_poke = (at: u16, value: u8) -> void => unsafe {
+  let p: ^mut u8 = pointer_at(0xA00000 + u32(at))
+  p.write_volatile(value)
 }
 
-/// Until the YM2612's busy flag (bit 7 of its status, at A04000) falls.
-let wait_fm = () -> void => unsafe {
-  let status: ^mut u8 = pointer_at(0xA04000)
-  while (status.read_volatile() & 0x80) != 0 {}
+let z80_peek = (at: u16) -> u8 => unsafe {
+  let p: ^mut u8 = pointer_at(0xA00000 + u32(at))
+  p.read_volatile()
 }
+
+/// The Z80 stopped and its bus the 68000's, and given back.
+let take_bus = () -> void => unsafe {
+  z80_bus().write_volatile(0x0100)
+  while (z80_bus().read_volatile() & 0x0100) != 0 {}
+}
+
+let give_bus = () -> void => unsafe { z80_bus().write_volatile(0) }
 
 /// The Z80's bus request (A11100) and reset (A11200) lines: a word, bit 8 the line.
 let z80_bus = pure () -> ^mut u16 => unsafe { pointer_at(0xA11100) }
@@ -93,3 +861,29 @@ let z80_bus = pure () -> ^mut u16 => unsafe { pointer_at(0xA11100) }
 let z80_reset = pure () -> ^mut u16 => unsafe { pointer_at(0xA11200) }
 
 var player: Player = new_player()
+var music: MusicPlayer = new_music()
+
+/// The music's writes, a frame's: kept, not made each frame — clearing 784 bytes is
+/// thousands of the 68000's cycles, and what is read is only what the frame wrote.
+var music_psg: [16]u8 = #[0; 16]
+var music_fm: [768]u8 = #[0; 768]
+var effects_fm: [128]u8 = #[0; 128]
+
+/// The queue's next free place.
+var queue_tail: u16 = 0
+
+/// The DAC as last told the driver: the command's serial, whether a sample plays, the note
+/// it was started for, its rate and level; and, to tell it where a new rate leaves it, the
+/// sample's length and loop, the step (65536ths of a byte an output) and where it has got
+/// to (65536ths of a byte).
+var dac_serial: u16 = 0
+var dac_command: u8 = 0
+var dac_block: [17]u8 = #[0; 17]
+var dac_on: bool = false
+var dac_note: u16 = 0
+var dac_rate: u32 = 0
+var dac_level: i16 = 15
+var dac_length: u32 = 0
+var dac_loop: i32 = -1
+var dac_step: u32 = 1
+var dac_pos: u32 = 0

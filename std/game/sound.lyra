@@ -25,6 +25,7 @@ module std.game.sound
 import bindings.sdl3.{ init, INIT_AUDIO, AudioStream, open_audio }
 import std.io.{ write_bytes }
 import std.chips.effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.music.{ Tune, MusicData, MusicPlayer, Dac, new_music, held_by, dac_byte }
 import std.chips.sn76489.{ Psg, new_psg }
 import std.chips.ym2612.{ Ym2612, FmPatch, new_ym2612 }
 import std.chips.resample.{ Resampler, new_resampler }
@@ -45,6 +46,15 @@ impl Effect {
 /// Whether an effect is still playing.
 pub let playing = () -> bool => player.playing()
 
+impl Tune {
+  /// Play the song from its start, in place of any song playing; heard from the next
+  /// [update_music], under the effects.
+  pub let play = (self) -> void => music.play_song(self)
+}
+
+/// Stop the song playing.
+pub let stop_music = () -> void => music.stop()
+
 /// The update's step of each effect playing, made sound: once an update. `steps` is the
 /// game's table of them, and `patches` its FM instruments' (Vega's `assets.lyra` passes its
 /// own).
@@ -57,7 +67,47 @@ pub let update<const N: i64, const P: i64> = (
   let n = player.frame(steps, out)
   var fm: [128]u8 = #[0; 128]
   let writes = player.fm_frame(steps, patches, fm)
-  let samples = synth.frame(out, n, fm, writes)
+  heard(synth.frame(out, n, fm, writes))
+}
+
+/// [update], and the song playing's tick under the effects — a channel an effect is
+/// playing on the effect's (`std.chips.music`). `tables` is the game's music, and `samples`
+/// its sampled instruments' bytes, which the DAC plays from.
+pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: MusicData = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch,
+  tables: ref d,
+  samples: ref [S]u8
+) -> void => {
+  if !started { start() }
+  let before = held_by(player)
+  var out: [8]u8 = #[0; 8]
+  let n = player.frame(steps, out)
+  var fm: [128]u8 = #[0; 128]
+  let writes = player.fm_frame(steps, patches, fm)
+  for i in 0..<n { synth.write_psg(out[i]) }
+  for i in 0..<writes { synth.write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
+  var psg: [16]u8 = #[0; 16]
+  var music_fm: [768]u8 = #[0; 768]
+  let (bytes, music_writes) = music.frame(tables, before | held_by(player), psg, music_fm)
+  for i in 0..<bytes { synth.write_psg(psg[i]) }
+  for i in 0..<music_writes { synth.write_fm(
+    music_fm[i * 3],
+    music_fm[i * 3 + 1],
+    music_fm[i * 3 + 2]
+  ) }
+  let dac = music.dac
+  if synth.new_sample(dac) {
+    let from = i64(dac.sample.first).min(samples.len())
+    let to = (from + i64(dac.sample.length)).min(samples.len())
+    synth.play_sample(dac, [k in from..<to | samples[k]])
+  }
+  synth.follow(dac)
+  heard(synth.run(RATE / 60))
+}
+
+/// An update's samples to the device, or kept for the WAV.
+let heard = (samples: []f32) -> void => {
   updates += 1
   if wav_path != "" {
     for s in samples { recorded.push(s) }
@@ -79,7 +129,7 @@ pub let update<const N: i64, const P: i64> = (
 pub const MASTER_CLOCK: i64 = 53693175
 
 /// The PSG and the YM2612 heard: both chips run on one clock from what is written to them,
-/// each resampled by area to [RATE], mixed — a PSG channel at full as loud as an FM one — and
+/// each resampled by area to [RATE], mixed at Furnace's balance ([FM_SCALE], [PSG_SCALE]) — and
 /// the DC taken out: mono, -1 to 1. `std.game.sound` plays through one; an editor may
 /// preview through its own ([run] for as long as it likes, [write_fm] a note at a time).
 ///
@@ -104,6 +154,17 @@ pub struct Synth {
   /// The DC blocker's last input and output.
   dc_in: f64 = 0.0,
   dc_out: f64 = 0.0,
+  /// The sample the DAC plays ([play_sample]): its bytes, where in them, from where it
+  /// loops (-1 not), the note it was started for; its rate (bytes a second) and level, and
+  /// master clocks owed towards its next byte.
+  dac_bytes: []u8 = [],
+  dac_at: i64 = 0,
+  dac_loop: i64 = -1,
+  dac_note: u16 = 0,
+  dac_rate: i64 = 0,
+  dac_level: i16 = 15,
+  dac_period: i64 = 0,
+  dac_playing: bool = false,
 }
 
 /// Silent chips, heard at [RATE].
@@ -152,6 +213,31 @@ impl Synth {
     }
   }
 
+  /// Whether `dac` (`std.chips.music`'s [Dac]) has a note this synth has not started: then
+  /// its sample's bytes go to [play_sample].
+  pub let new_sample = pure (self, dac: Dac) -> bool => dac.note != self.dac_note
+
+  /// `bytes`, `dac`'s sample, played on the DAC from its first, as [follow] says.
+  pub let play_sample = (self: mut, dac: Dac, bytes: []u8) -> void => {
+    self.dac_note = dac.note
+    self.dac_bytes = bytes
+    self.dac_at = 0
+    self.dac_loop = if dac.sample.loop_at >= 0 && i64(dac.sample.loop_at) < bytes.len() { i64(dac.sample.loop_at) } else { -1 }
+    self.dac_period = 0
+    self.follow(dac)
+  }
+
+  /// The DAC's sample at `dac`'s rate and level, or stopped where it is not playing — as
+  /// Furnace plays one: a byte each time the rate's share of a chip sample comes round, and
+  /// the last held when it ends.
+  pub let follow = (self: mut, dac: Dac) -> void => {
+    self.dac_rate = i64(dac.rate)
+    self.dac_level = dac.level
+    self.dac_playing = dac.playing && self.dac_at < self.dac_bytes.len()
+    // The DAC's time until now was silence, as an FM write's is.
+    if self.dac_playing { self.ym_used = true }
+  }
+
   /// The next `samples` samples of both chips' sound — fewer by one now and then, as the
   /// resampling falls.
   pub let run = (self: mut, samples: i64) -> []f32 => {
@@ -161,7 +247,7 @@ impl Synth {
       self.psg.tick()
       var level: i64 = 0
       for channel in 0..<4 { level += self.psg.channel_level(channel) }
-      let v = f64(level) / 65536.0
+      let v = f64(level) / PSG_SCALE
       self.psg_out.push(v, v, self.psg_heard)
       self.psg_clock += PSG_TICK
     }
@@ -195,7 +281,12 @@ impl Synth {
     self.sum_l += self.ym.out_l
     self.sum_r += self.ym.out_r
     if self.ym.cycle == 0 {
-      self.fm_out.push(f64(self.sum_l) / 1536.0, f64(self.sum_r) / 1536.0, self.fm_heard)
+      if self.dac_playing { self.dac_step() }
+      self.fm_out.push(
+        f64(self.sum_l) / FM_SCALE,
+        f64(self.sum_r) / FM_SCALE,
+        self.fm_heard
+      )
       self.sum_l = 0
       self.sum_r = 0
     }
@@ -220,11 +311,37 @@ pub let wav = pure (samples: []f32, rate: i64) -> []u8 => {
   out
 }
 
+impl Synth {
+  /// A chip sample's worth of the DAC's: its rate's share of a byte, and the next byte
+  /// written (register `2A`) when a whole one has come round — at most one a chip sample.
+  let dac_step = (self: mut) -> void => {
+    self.dac_period += self.dac_rate * YM_CYCLE * 24
+    if self.dac_period < MASTER_CLOCK { return }
+    while self.dac_period >= MASTER_CLOCK { self.dac_period -= MASTER_CLOCK }
+    self.ym.set_dac(dac_byte(self.dac_bytes[self.dac_at], self.dac_level))
+    self.dac_at += 1
+    if self.dac_at >= self.dac_bytes.len() {
+      if self.dac_loop >= 0 {
+        self.dac_at = self.dac_loop
+      } else {
+        self.dac_playing = false
+      }
+    }
+  }
+}
+
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
 /// Master clocks a PSG tick, and a YM2612 cycle.
 const PSG_TICK: i64 = 240
 const YM_CYCLE: i64 = 42
+
+/// What the chips' outputs are divided by to be heard: the PSG's summed levels, and the
+/// YM2612's a sample (24 cycles of both outputs). Set against Furnace's mix of the two
+/// (10/15): a full channel of either well under 1, and a song of all ten clear of clipping —
+/// FM at 1536 and the PSG at 65536 clipped, the FM 1.4 times as loud as Furnace's.
+const PSG_SCALE: f64 = 100000.0
+const FM_SCALE: f64 = 2200.0
 
 /// YM2612 cycles after a data write by which its busy flag is up.
 const BUSY_RISES: i64 = 3
@@ -233,6 +350,7 @@ const BUSY_RISES: i64 = 3
 const QUEUE_LIMIT: i64 = 4800
 
 var player: Player = new_player()
+var music: MusicPlayer = new_music()
 var synth: Synth = new_synth()
 var stream: Maybe<AudioStream> = None
 var started = false

@@ -9,6 +9,92 @@ Newest first.
 
 ## Dated log
 
+### 10/15/26 — `gunzip`, and a slow song's first tick
+
+Vega's VGM import needed gzip (`.vgz`), and Vega's Tiled import had a gzip reader of its own
+that skipped the trailer. **`std.compress.gunzip`** reads the header's optional fields,
+inflates, and checks the CRC-32 and length — which found that the Tiled check's hand-made
+gzip had a trailer of zeros, passing only because nothing read it. Tested against Go's
+`compress/gzip`, a changed CRC refused.
+
+**A song ticking slower than 60 a second started late**: its first tick waited for a whole
+tick's time to be owed, 100 ms at 10 a second, and every note came that late. It now ticks
+on its first frame.
+
+### 10/15/26 — Sampled drums on the YM2612's DAC, and a Z80 driver
+
+Most of Furnace's Genesis demos drum on FM 6's DAC, and an import without it sounded
+empty. **`std.chips.music` plays samples as Furnace does**: a sampled instrument on FM 6
+(`MusicData.sample`) writes `2B` on and keys the channel off, and its note sets the rate —
+the sample's C4 rate scaled by the pitch, from the same F-number table the FM uses. The
+player only says what the DAC should play (`MusicPlayer.dac`): streaming a byte at a time is
+a runtime's job, and the two runtimes could not share it.
+
+**On the host**, `Synth` steps the sample at each chip sample, as Furnace's hardware path
+does, and sets register `2A` without the bus (`Ym2612.set_dac`): a port write would move
+the address latch the next FM write relies on. **On the Genesis**, a 68000 streaming bytes
+would spend its frame on it, so the Z80 does, as commercial drivers do: a 326-byte driver,
+hand-assembled (`Z80_DRIVER`), playing through the bank window at a fixed rate — 312
+T-states whichever way through its loop, branches padded to equal length, so the pitch
+holds — stepping through the sample in 65536ths for any note. **The YM2612 became the
+Z80's alone**: a 68000 write stops the Z80 for as long as it waits on the busy flag, and
+the drum with it. The 68000 queues its writes in Z80 RAM; the driver makes one between
+bytes, timed so no write comes within 32 chip cycles of a data write (the address of one
+written early drops the value before it, the 10/14 trap again).
+
+**The stutter Sheliak found was the 68000's, not Sheliak's.** A bare Z80 loop ran exactly
+as counted and a bare DAC toggle sounded clean; with the music on, the sample lost about a
+millisecond a frame. The 68000 held the Z80's bus through the whole music frame. Now the
+frame is made first and the bus taken only to copy it, about 0.5% of the time, and the DAC
+plays 0.5% flat in Sheliak. Building the 16 level tables (`dac_byte`) by multiplying took
+the 68000 ten frames at start-up; adding the gain a byte at a time takes three, and
+`dac_byte` rounds down by a shift so the two are equal.
+
+**`p.address()`** came with it: the driver needs the sample's address in ROM, and a pointer
+had no way to be a number.
+
+### 10/15/26 — Music on the chips, and three things the 68000 was hiding
+
+`std.chips.music` plays a tracker's song — FM 1–6, PSG tones 1–3, the noise; a note, an
+instrument, a volume and two effects a row of each channel, Furnace's effect numbers — a
+tick a frame, beside `std.chips.effects`, and a channel an effect plays on is the effect's
+until it ends. A game's tables are read through a trait (`MusicData`), so the 68000 reads
+constant tables and Vega's preview its live project through one player.
+
+**Pitch is a 64th of a semitone, made the chip's numbers each tick from two 13-entry tables**
+(`PSG_PERIODS`, `FM_FNUMS`) — the Genesis's clocks, shared by the Master System's PSG and the
+modern target. A slide or a vibrato is then even across octaves.
+
+**The FM was silent on the 68000 and right on the host.** Every write the 68000 computed
+matched the host's, byte for byte, until an idle effects player was called first. Then
+`patch_write` had two callers and was not inlined, and its `(u8, u8, u8)` return — too big
+for registers — was demoted by the M68k LLVM to a hidden pointer. The caller passed it in
+`a0` and the `fastcc` callee read it from `d0`, every argument after it a register off.
+Optimisation level made no difference; the assembly settled it. **The backend now moves every aggregate through memory on the 68000**
+(`lowerer.inMemory`): returned through an explicit `sret`, passed as a pointer to a copy —
+ordinary arguments both sides agree on. `TestGenesis_AnAggregateCallIsRightWhenNotInlined`
+fails without it.
+
+**Then the hero's game could not keep up.** A music frame cost two thirds of a frame. Two
+causes: `i64` arithmetic and copies of a 260-byte channel state, five a channel a frame. The player is
+now `i32`/`i16` and works on each channel in place (methods on `MusicChannel`). The runtime's `memset`
+and `memcpy` went a byte at a time, so clearing a 768-byte buffer each frame was a third of
+one; they now move a long at a time where both ends are even. The driver keeps its buffers
+between frames. A frame of the hero's theme is now about a sixth of one, and every Genesis program's copies are faster.
+
+**Then Furnace's demos sounded wrong in Vega** — distorted, instruments missing. Each was
+measured against Furnace's own renders (its `-vgmout` register writes and its WAVs, a
+channel at a time) rather than by ear. The mixer clipped: `std.game.sound` now mixes the
+PSG and the YM2612 at Furnace's balance. Notes held by a macro's release point decayed at
+once: an envelope (`Envelope`) now has a loop and a release, kept until the note is let go,
+and an FM instrument has one too (`MusicData.fm_envelope`), which its arpeggio macro needs
+to sound in the right octave. Songs that alternate two speeds or tick at other than 60 Hz
+ran at the wrong tempo: `Tune` has `speed2` and `rate`. The rest was Vega's import.
+
+**The FM's busy wait was not the cause**, though it looked like one. A ROM writing a sine
+patch's registers by hand sounded; the library's patch did not; a busy-rise wait added to
+the driver changed nothing. Bisecting the driver's own code found the call above.
+
 ### 10/14/26 — FM effects, and a YM2612 that dropped most of a patch
 
 `std.chips.psg_effects` became `std.chips.effects`: an effect may be FM, a patch

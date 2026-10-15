@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Lyra-Language/lyra/pkg/abi"
 	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/modules"
@@ -88,7 +87,7 @@ func buildGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		return "", 1
 	}
 	o.report(20, "generating code")
-	ir, err := llvm.NewForTarget(abi.Unknown).Emit(res, entry)
+	ir, err := llvm.NewForGenesis().Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: llvm backend: %v\n", err)
 		return "", 1

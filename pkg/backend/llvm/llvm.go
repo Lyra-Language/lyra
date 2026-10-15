@@ -158,8 +158,15 @@ func NewForPlatform(p target.Platform) *Backend {
 }
 
 // NewForTarget returns a backend that classifies aggregates for t, for a target with no
-// operating system (the Genesis), or a test of the boundary alone.
+// operating system, or a test of the boundary alone.
 func NewForTarget(t abi.Target) *Backend { return &Backend{target: t} }
+
+// NewForGenesis returns the backend for the 68000: no operating system and no C boundary
+// it classifies, and every aggregate moved through memory ([lowerer.inMemory]).
+func NewForGenesis() *Backend { return &Backend{target: abi.Unknown, arch: M68k} }
+
+// M68k is the 68000's arch, as the backend keys what it does differently there.
+const M68k = "m68k"
 
 // Compile-time assertion that Backend satisfies the contract.
 var _ backend.Backend = (*Backend)(nil)

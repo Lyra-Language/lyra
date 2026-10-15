@@ -45,10 +45,28 @@ import (
 const sretMinBytes = 256
 
 // returnsInMemory reports whether a function returning t returns it through an `sret` slot: a
-// large aggregate, on every target. (The 68000 was left out for a day: its copies had come
-// back empty, which looked like the M68k LLVM's `sret` and was a `memcpy` of the wrong
-// length — see [copyBytes].)
+// large aggregate, on every target ([inMemory]). (The 68000 was left out for a day: its
+// copies had come back empty, which looked like the M68k LLVM's `sret` and was a `memcpy` of
+// the wrong length — see [copyBytes].)
 func (l *lowerer) returnsInMemory(t lltypes.Type) bool {
+	return l.inMemory(t)
+}
+
+// inMemory reports whether an aggregate of type t is returned through an `sret` slot and
+// passed as a pointer to a copy: a large one on every target, and **every one on the
+// 68000**. There the M68k LLVM's own way with an aggregate it cannot return in registers —
+// demoting the return to a hidden pointer — puts that pointer in `a0` at the call and reads
+// it from `d0` in a `fastcc` callee, every argument after it one register off: a
+// `(u8, u8, u8)` from a function given a 31-byte struct came back wrong, but only once the
+// function had two callers and was no longer inlined (10/14, `std.chips.music`'s FM writes).
+// An explicit slot is an ordinary argument, which both sides agree on.
+func (l *lowerer) inMemory(t lltypes.Type) bool {
+	if l.arch == M68k {
+		switch t.(type) {
+		case *lltypes.ArrayType, *lltypes.StructType:
+			return true
+		}
+	}
 	return isLarge(t)
 }
 
@@ -89,7 +107,7 @@ func (l *lowerer) lyraParams(fn *ir.Func) []*ir.Param {
 // passByCopy makes irParam, a by-value parameter of a large aggregate, a pointer to the
 // caller's copy, and records it so the body binds it and each call copies for it.
 func (l *lowerer) passByCopy(param ast.Parameter, irParam *ir.Param) {
-	if paramIsByRef(param) || !isLarge(irParam.Typ) {
+	if paramIsByRef(param) || !l.inMemory(irParam.Typ) {
 		return
 	}
 	irParam.Typ = lltypes.NewPointer(irParam.Typ)

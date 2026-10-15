@@ -179,6 +179,22 @@ func (l *lowerer) lowerPointerOffset(block *ir.Block, call *ast.FunctionCallExpr
 	return block.NewGetElementPtr(elem, ptr, idx), block, nil
 }
 
+// lowerPointerAddress lowers `p.address()`: the pointer as a u64 (`ptrtoint`), zero-extended
+// on a target whose pointers are narrower — the 68000's are 32 bits.
+func (l *lowerer) lowerPointerAddress(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 0 {
+		return nil, nil, fmt.Errorf("llvm: address() takes no arguments, got %d", len(call.Arguments))
+	}
+	ptr, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(ptr, block) {
+		return nil, block, nil
+	}
+	return block.NewPtrToInt(ptr, lltypes.I64), block, nil
+}
+
 // lowerVolatile lowers `p.read_volatile()` and `p.write_volatile(v)`: a load or store
 // marked volatile, which LLVM performs exactly as written — not merged, not dropped, not
 // reordered against another volatile access. The typechecker allows only a scalar pointee

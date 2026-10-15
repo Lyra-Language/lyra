@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/flate"
+	"compress/gzip"
 	"fmt"
 	"hash/crc32"
 	"math/rand"
@@ -120,6 +121,70 @@ let main = () -> void => {
 		if !strings.HasSuffix(line, ": ok") {
 			t.Errorf("%s", line)
 		}
+	}
+}
+
+// gunzip reads what Go's compress/gzip writes — with and without a name and comment in the
+// header — and refuses a file whose CRC-32 has been changed.
+func TestExec_GunzipMatchesGoGzip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var input strings.Builder
+	input.WriteString(dir + "\n")
+	for name, data := range inflateCorpus() {
+		for _, named := range []bool{false, true} {
+			var z bytes.Buffer
+			w := gzip.NewWriter(&z)
+			if named {
+				w.Name = name + ".bin"
+				w.Comment = "a comment"
+				w.Extra = []byte{1, 2, 3}
+			}
+			w.Write(data)
+			w.Close()
+			file := fmt.Sprintf("%s-%v", name, named)
+			os.WriteFile(filepath.Join(dir, file+".gz"), z.Bytes(), 0o644)
+			os.WriteFile(filepath.Join(dir, file+".raw"), data, 0o644)
+			fmt.Fprintf(&input, "%s\n", file)
+			if name == "text" && named {
+				bad := append([]byte{}, z.Bytes()...)
+				bad[len(bad)-8] ^= 1
+				os.WriteFile(filepath.Join(dir, "bad.gz"), bad, 0o644)
+			}
+		}
+	}
+	out := buildAndRunWithPrelude(t, `module main
+import std.compress.{ gunzip }
+import std.io.{ read_bytes }
+let main = () -> void => {
+  let Some(dir) = read_line() else { return }
+  loop {
+    let Some(name) = read_line() else { break }
+    let Some(file) = read_bytes("${dir}/${name}.gz") else { continue }
+    let Some(want) = read_bytes("${dir}/${name}.raw") else { continue }
+    match gunzip(file) {
+      Ok(got) => println(if got == want { "${name}: ok" } else { "${name}: differs" }),
+      Err(why) => println("${name}: ${why}"),
+    }
+  }
+  let Some(bad) = read_bytes("${dir}/bad.gz") else { return }
+  match gunzip(bad) {
+    Ok(_) => println("bad: read"),
+    Err(why) => println("bad refused: ${why}"),
+  }
+}
+`, input.String())
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2*len(inflateCorpus())+1 {
+		t.Fatalf("%d results:\n%s", len(lines), out)
+	}
+	for _, line := range lines[:len(lines)-1] {
+		if !strings.HasSuffix(line, ": ok") {
+			t.Errorf("%s", line)
+		}
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "bad refused: gzip data whose CRC-32 does not match") {
+		t.Errorf("a changed CRC-32: %s", last)
 	}
 }
 

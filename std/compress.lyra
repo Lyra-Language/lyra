@@ -1,7 +1,8 @@
 module std.compress
 //! Decompression: [inflate] undoes DEFLATE (RFC 1951) — the compression inside zip, gzip
-//! and PNG — [lzma_decode] and [lzma2_decode] undo LZMA and LZMA2 — 7z's and xz's — and
-//! [crc32] is the checksum all of them are checked with.
+//! and PNG — [gunzip] a gzip file (RFC 1952: its header, DEFLATE, its checksum),
+//! [lzma_decode] and [lzma2_decode] undo LZMA and LZMA2 — 7z's and xz's — and [crc32] is the
+//! checksum all of them are checked with.
 //!
 //! ```
 //! import std.compress.{ inflate, crc32 }
@@ -13,8 +14,8 @@ module std.compress
 //! ```
 //!
 //! **A raw DEFLATE stream, not a container.** `inflate` reads the blocks and stops after the
-//! final one; a zlib or gzip header, and the checksum after the data, are the container's
-//! to read (`std.zip` reads zip's).
+//! final one; a zlib header, and the checksum after the data, are the container's to read
+//! (`std.zip` reads zip's, [gunzip] gzip's).
 //!
 //! **Every helper is a question about the input, answered by value.** The only state is
 //! `inflate`'s own — how far into the input it has read, in bits, and the output so far —
@@ -97,6 +98,37 @@ pub let inflate = pure (data: []u8) -> Result<[]u8, string> => {
     }
     if last { break }
   }
+  Ok(out)
+}
+
+/// The bytes a gzip file holds — its first member: past its header's optional fields (the
+/// extra field, the name, the comment, the header's CRC), inflated, and checked against
+/// its CRC-32 and length; or what is wrong with it.
+pub let gunzip = pure (data: []u8) -> Result<[]u8, string> => {
+  if data.len() < 18 || data[0] != 0x1F || data[1] != 0x8B { return Err("not gzip") }
+  if data[2] != 8 { return Err("gzip compressed with method ${data[2]}, not DEFLATE") }
+  let flags = i64(data[3])
+  var at: i64 = 10
+  if flags & 4 != 0 {
+    if at + 2 > data.len() { return Err("a gzip header cut short") }
+    at += 2 + (i64(data[at]) | (i64(data[at + 1]) << 8))
+  }
+  for flag in [8, 16] {
+    if flags & flag != 0 {
+      while at < data.len() && data[at] != 0 { at += 1 }
+      at += 1
+    }
+  }
+  if flags & 2 != 0 { at += 2 }
+  if at + 8 > data.len() { return Err("a gzip header cut short") }
+  let out = inflate(data.slice(at, data.len()))?
+  // The trailer, after the stream: its CRC-32 and its length (modulo 2^32), the member's
+  // last eight bytes when it is the only one.
+  let n = data.len()
+  let word = (from: i64) -> u32 =>
+    u32(data[from]) | (u32(data[from + 1]) << 8) | (u32(data[from + 2]) << 16) | (u32(data[from + 3]) << 24)
+  if word(n - 8) != crc32(out) { return Err("gzip data whose CRC-32 does not match") }
+  if word(n - 4) != u32(out.len() & 0xFFFFFFFF) { return Err("gzip data whose length does not match") }
   Ok(out)
 }
 

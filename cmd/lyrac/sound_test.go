@@ -249,3 +249,228 @@ let main = () -> u8 => {
 		t.Errorf("after the key off, still %.3f", quiet)
 	}
 }
+
+// songTables is a song for std.chips.music, as Vega's assets.lyra writes one: FM 1 plays
+// A4 on a sine patch, PSG tone 1 an E5 it lets go at row 4, and FM 6 a looped square wave
+// sample (eight periods of 32 bytes at 8 kHz: 250 Hz at C4) at C5, 500 Hz, let go at row 4 too; the other
+// channels share an empty pattern. `sound` is the runtime's module, `std.game.sound` or `std.genesis.sound`.
+const songTables = `import std.chips.effects.{ EffectStep }
+import std.chips.ym2612.{ FmPatch }
+import std.chips.music.{ Tune, Cell, Envelope, EnvelopeStep, MusicData, Sample }
+
+const STEPS: [1]EffectStep = #[EffectStep { period: 0, volume: 0 }]
+
+const SINE: FmPatch = FmPatch {
+  ops: #[
+    0x03, 0x7F, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+    0x03, 0x7F, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+    0x03, 0x7F, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+    0x01, 0x00, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+  ],
+  feedback_algorithm: 0x07,
+  sensitivity: 0,
+}
+
+const PATCHES: [2]FmPatch = #[SINE, SINE]
+
+const SAMPLE_BYTES: [256]u8 = #[
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+]
+
+const SAMPLES: [2]Sample = #[Sample {}, Sample { first: 0, length: 256, rate: 8000, loop_at: 0 }]
+
+const CELLS: [32]Cell = #[
+  Cell { note: 69, instrument: 0 }, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {},
+  Cell { note: 76 }, Cell {}, Cell {}, Cell {}, Cell { note: 0xFE }, Cell {}, Cell {}, Cell {},
+  Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {},
+  Cell { note: 72, instrument: 1 }, Cell {}, Cell {}, Cell {}, Cell { note: 0xFE }, Cell {}, Cell {}, Cell {},
+]
+
+const NO_ENVELOPES: [1]Envelope = #[Envelope { first: 0, count: 0 }]
+const NO_STEPS: [1]EnvelopeStep = #[EnvelopeStep { volume: 15, pitch: 0 }]
+
+/// The song's tables, read through std.chips.music's trait.
+data Tables = Tables
+
+impl MusicData for Tables {
+  cell = pure (self, index) => CELLS[index]
+  pattern = pure (self, order, channel) => if channel == 0 { 0 } else if channel == 6 { 8 } else if channel == 5 { 24 } else { 16 }
+  patch = pure (self, index) => PATCHES[index]
+  patches = pure (self) => 2
+  envelope = pure (self, index) => NO_ENVELOPES[index]
+  fm_envelope = pure (self, index) => NO_ENVELOPES[0]
+  envelopes = pure (self) => 0
+  envelope_step = pure (self, index) => NO_STEPS[index]
+  sample = pure (self, index) => SAMPLES[index]
+}
+
+const TUNE: Tune = Tune { first_order: 0, orders: 1, rows: 8, speed: 6 }
+`
+
+// A song plays on both chips through std.game.sound — FM 1's A4 at the YM2612's pitch for
+// it and PSG 1's E5 at the PSG's, the PSG let go at its row — and the same program builds
+// for the 68000 through std.genesis.sound, played in Sheliak where it is.
+func TestRun_GameMusicPlaysBothChips(t *testing.T) {
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "song.lyra")
+	program := "import std.game.sound\n" + songTables + `
+let main = () -> u8 => {
+  TUNE.play()
+  let tables = Tables
+  for _ in 0..<60 { sound.update_music(STEPS, PATCHES, tables, SAMPLE_BYTES) }
+  0
+}
+`
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wav := filepath.Join(dir, "song.wav")
+	if _, stderr, code := captureRun(t, "run", src, "--", "--frames", "60", "--wav", wav); code != 0 {
+		t.Fatalf("run exited %d\nstderr: %s", code, stderr)
+	}
+	samples := wavSamples(t, wav)
+	checkSong(t, "modern", samples, 48000)
+
+	// The 68000's build of the same.
+	genesisToolchainOrSkip(t)
+	gdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gdir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gsrc := filepath.Join(gdir, "song.lyra")
+	gprogram := "import std.genesis.vdp\nimport std.genesis.sound\n" + songTables + `
+let tables = Tables
+
+@interrupt(vblank)
+let on_vblank = () -> void => sound.update_music(STEPS, PATCHES, tables, SAMPLE_BYTES)
+
+let main = () -> void => {
+  vdp.init()
+  sound.init()
+  TUNE.play()
+  vdp.display_on()
+  vdp.enable_vblank_interrupt()
+  loop {}
+}
+`
+	if err := os.WriteFile(gsrc, []byte(gprogram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rom := filepath.Join(gdir, "song.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", rom, gsrc); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	emulator := os.Getenv("SHELIAK")
+	if emulator == "" {
+		t.Log("SHELIAK is not set; the ROM was built but not heard")
+		return
+	}
+	gwav := filepath.Join(gdir, "song.wav")
+	cmd := exec.Command(emulator, rom, "--frames", "90", "--wav", gwav)
+	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sheliak: %v\n%s", err, out)
+	}
+	gsamples, rate := wavSamplesRate(t, gwav)
+	// The ROM's start-up before the song: from where it is first heard.
+	onset := 0
+	for i, v := range gsamples {
+		if math.Abs(v) > 0.05 {
+			onset = i
+			break
+		}
+	}
+	checkSong(t, "Genesis", gsamples[onset:], rate)
+}
+
+// checkSong: from its first frame, `samples` sound A4 on the YM2612, E5 on the PSG and the
+// DAC's 500 Hz together, and after row 4 (24 frames) the E5 and the DAC's are gone and the
+// A4 rings on. The DAC's within 1%: the Genesis's Z80 plays it at its own fixed rate,
+// stopped a little each frame while the 68000 queues the frame's writes (0.5% flat in
+// Sheliak).
+func checkSong(t *testing.T, runtime string, samples []float64, rate int) {
+	t.Helper()
+	frame := rate / 60
+	fm := 7670453.0 / 144 * 1083 * 16 / (1 << 21)
+	psg := 3579545.0 / (32 * 170)
+	dac := 500.0
+	power := func(from, to int, f float64) float64 {
+		var re, im float64
+		window := samples[from*frame : to*frame]
+		for i, v := range window {
+			re += v * math.Cos(2*math.Pi*f*float64(i)/float64(rate))
+			im += v * math.Sin(2*math.Pi*f*float64(i)/float64(rate))
+		}
+		return (re*re + im*im) / float64(len(window)*len(window))
+	}
+	if len(samples) < 46*frame {
+		t.Fatalf("%s: only %d samples", runtime, len(samples))
+	}
+	near := func(f float64) float64 {
+		best := 0.0
+		for g := f * 0.99; g <= f*1.01; g += 0.5 {
+			best = math.Max(best, power(2, 22, g))
+		}
+		return best
+	}
+	for _, f := range []float64{fm, psg, dac} {
+		at, off := power(2, 22, f), power(2, 22, f*1.03)
+		if f == dac {
+			at = near(f)
+		}
+		if at < 100*off {
+			t.Errorf(runtime+": %.1f Hz is not heard in the song's first rows: %.3g there, %.3g beside it", f, at, off)
+		}
+	}
+	if late, early := power(28, 46, psg), power(2, 22, psg); late > early/1000 {
+		t.Errorf(runtime+": the PSG's E5 sounds on after its note off: %.3g, against %.3g", late, early)
+	}
+	if late, early := power(28, 46, dac), power(2, 22, dac); late > early/1000 {
+		t.Errorf(runtime+": the DAC's sample sounds on after its note off: %.3g, against %.3g", late, early)
+	}
+	if late, early := power(28, 46, fm), power(2, 22, fm); late < early/10 {
+		t.Errorf(runtime+": the FM A4 stops with the PSG's: %.3g, against %.3g", late, early)
+	}
+}
+
+func wavSamples(t *testing.T, path string) []float64 {
+	t.Helper()
+	s, _ := wavSamplesRate(t, path)
+	return s
+}
+
+// wavSamplesRate is a 16-bit WAV's first channel, -1 to 1, and its rate.
+func wavSamplesRate(t *testing.T, path string) ([]float64, int) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := int(binary.LittleEndian.Uint16(data[22:]))
+	rate := int(binary.LittleEndian.Uint32(data[24:]))
+	var samples []float64
+	for i := 44; i+1 < len(data); i += 2 * channels {
+		samples = append(samples, float64(int16(binary.LittleEndian.Uint16(data[i:])))/32768)
+	}
+	return samples, rate
+}
