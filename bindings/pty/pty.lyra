@@ -1,0 +1,133 @@
+@link("lyra-pty")
+module bindings.pty
+//! A program run on a pseudo-terminal — what a terminal emulator does with a shell. The
+//! program sees a terminal (`isatty` is true, it has a size, Ctrl-C interrupts it); this
+//! side holds the terminal's other end, reading what the program writes and writing what
+//! the user types.
+//!
+//! ```
+//! let Some(pty) = spawn(["/bin/zsh", "-l"], 80, 24) else { return }
+//! pty.write("ls\r")
+//! loop {
+//!   match pty.read() {
+//!     None => break, // the shell has ended
+//!     Some(bytes) => draw(bytes), // empty: nothing new yet
+//!   }
+//! }
+//! pty.close()
+//! ```
+//!
+//! **Nothing blocks.** [read] answers at once with what is there, so a program polls it
+//! once a frame beside its window's events — Lyra has no threads, and needs none for this.
+//!
+//! **The C half is `lib/liblyra-pty.a`** (`pty.c`, built by `./build.sh`): the child's half
+//! of `fork`, the `ioctl`s and the flags are all numbers or steps that differ by platform,
+//! which Lyra cannot ask about. macOS and Linux.
+
+import std.ffi
+
+/// A program running on a pseudo-terminal: the terminal's controlling end and the
+/// program's process id. Hand it to [close] when finished, whether or not it has ended.
+@must_release(close)
+pub struct Pty {
+  fd: i32,
+  pid: i32,
+}
+
+/// The environment a program on a [Pty] is given on top of this one's, unless [spawn] is
+/// handed another: an xterm with 256 colours and 24-bit colour, which is what every
+/// terminal emulator in use today claims to be, and what programs test for.
+pub const DEFAULT_ENV: []string = ["TERM=xterm-256color", "COLORTERM=truecolor"]
+
+/// Start `args[0]` (a path, or a name found on the `PATH`) with the rest of `args` as its
+/// arguments, on a new terminal `cols` × `rows` cells, in the directory `cwd` (this one's
+/// when `None`). Its environment is this program's with each `NAME=value` of `env`
+/// replacing that variable. `None` when no terminal could be opened, `args` is empty, or
+/// the program could not be started.
+pub let spawn = (
+  args: []string,
+  cols: i64,
+  rows: i64,
+  cwd: Maybe<string> = None,
+  env: []string = DEFAULT_ENV
+) -> Maybe<Pty> => {
+  if args.len() == 0 { return None }
+  // `const char * const *`, NULL-terminated, pointing into `args` and `env`, which the
+  // caller holds for the length of the call; the child copies what it keeps.
+  var argv: []^u8 = []
+  for a in args { argv.push(unsafe { a.cstring_ptr() }) }
+  argv.push(nullptr)
+  var envp: []^u8 = []
+  for e in env { envp.push(unsafe { e.cstring_ptr() }) }
+  envp.push(nullptr)
+  let dir = cwd ?? ""
+  let dir_ptr: ^u8 = if dir == "" { nullptr } else { unsafe { dir.cstring_ptr() } }
+  var child: i32 = 0
+  let fd = unsafe {
+    lyra_pty_spawn(argv.data(), envp.data(), dir_ptr, i32(cols), i32(rows), &mut child)
+  }
+  // The arrays are read during the call; keep them until it returns.
+  let _ = argv.len() + envp.len() + dir.len()
+  if fd < 0 { None } else { Some(Pty { fd: fd, pid: child }) }
+}
+
+impl Pty {
+  /// What the program has written since the last read: empty when nothing yet, `None`
+  /// once the terminal is closed — every program on it has ended. Bytes, not text: a read
+  /// can end inside a UTF-8 sequence, or an escape sequence, and the next read finishes it.
+  pub let read = (self) -> Maybe<[]u8> => {
+    var buf: []u8 = [0; READ_CHUNK]
+    let n = unsafe { lyra_pty_read(self.fd, &mut buf[0], READ_CHUNK) }
+    let nothing: []u8 = []
+    if n < 0 { None } else if n == 0 { Some(nothing) } else { Some(buf.slice(0, n)) }
+  }
+
+  /// Send `bytes` to the program as if typed: all of them, waiting while the terminal's
+  /// buffer is full. `false` when the terminal is closed. An empty array sends nothing.
+  pub let write_bytes = (self, bytes: []u8) -> bool => {
+    if bytes.len() == 0 { return true }
+    unsafe { lyra_pty_write(self.fd, bytes.data(), bytes.len()) } == 0
+  }
+
+  /// [write_bytes] for text, as its UTF-8. A terminal's Return is `"\r"`, not `"\n"`.
+  pub let write = (self, text: string) -> bool => self.write_bytes(text.encode_utf8())
+
+  /// Tell the program its terminal is now `cols` × `rows` cells; it is sent `SIGWINCH`
+  /// and redraws. Whether the terminal took the size.
+  pub let resize = (self, cols: i64, rows: i64) -> bool =>
+    unsafe { lyra_pty_resize(self.fd, i32(cols), i32(rows)) } == 0
+
+  /// The program's exit status once it has ended, without waiting — 128 plus the signal's
+  /// number when a signal ended it, as shells report it — and `None` while it runs. Answers
+  /// once: the process is reaped by the call that sees it end.
+  pub let exit_status = (self) -> Maybe<i64> => {
+    var code: i32 = 0
+    let ended = unsafe { lyra_pty_exited(self.pid, &mut code) }
+    if ended == 1 { Some(i64(code)) } else { None }
+  }
+
+  /// The program's process id.
+  pub let pid = pure (self) -> i64 => i64(self.pid)
+}
+
+/// Hang up: close the terminal, which sends the program `SIGHUP` as closing a terminal
+/// window does. The [Pty] must not be used afterwards.
+pub let close = (pty: Pty) -> void => unsafe { lyra_pty_close(pty.fd, pty.pid) }
+
+/// Bytes per [read]: a frame's worth of a fast program's output, so that `cat` of a large
+/// file arrives in large pieces rather than many small ones.
+const READ_CHUNK: i64 = 65536
+
+unsafe extern lyra_pty_spawn: (
+  argv: ^^u8,
+  env: ^^u8,
+  cwd: ^u8,
+  cols: i32,
+  rows: i32,
+  pid: ^mut i32
+) -> i32
+unsafe extern lyra_pty_resize: (fd: i32, cols: i32, rows: i32) -> i32
+unsafe extern lyra_pty_read: (fd: i32, buf: ^mut u8, cap: i64) -> i64
+unsafe extern lyra_pty_write: (fd: i32, bytes: ^u8, len: i64) -> i32
+unsafe extern lyra_pty_exited: (pid: i32, code: ^mut i32) -> i32
+unsafe extern lyra_pty_close: (fd: i32, pid: i32) -> void

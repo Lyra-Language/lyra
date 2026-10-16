@@ -228,6 +228,13 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   - `input_text(label, value: mut string)`, `…_with_hint`, `…_multiline`: the host copies
     the string into a buffer ImGui grows through its resize callback, and the wrapper copies
     it back only when it changed. Any length.
+  - **Typed text for a widget of the program's own** (a terminal, an editor):
+    `request_text_input(pos, line_height)` each frame it has the keyboard, then
+    `typed_text()`. **SDL3 sends characters only while text input is on**, and ImGui turns
+    it on for its own `InputText` alone — this sets `PlatformImeData.WantTextInput` as
+    InputText does (with the caret for an IME). Not `want_text_input`: that name is
+    `IO`'s generated field getter. ImWchar is 16-bit, so a character past the BMP arrives
+    as U+FFFD.
   - **Textures**: `create_texture(host, w, h)` → `Texture` (`@must_release(destroy_texture)`),
     `update_texture(t, rgba)` (w × h × 4 bytes, uploaded at once), and `image`,
     `image_button`, `draw_list.add_image`, each with `filter: Filter = Nearest` — the
@@ -302,6 +309,22 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   and SHA-256 and cached in `build/deps/`. Bump both tags together.
 - **No C++ runtime**: `-fno-exceptions -fno-rtti -fno-threadsafe-statics` leaves only
   `__cxa_atexit` (libc's), so `@link("lyra-imgui")` + `@link("SDL3")` is the whole link line.
+
+## `bindings/pty/`
+
+A program on a pseudo-terminal, for a terminal emulator (`../sulafat`). `spawn(args, cols,
+rows, cwd, env) -> Maybe<Pty>` (`@must_release(close)`); `read()` never blocks — empty when
+nothing is there, `None` once the terminal is closed; `write`/`write_bytes` loop through a full
+buffer; `resize` (SIGWINCH); `exit_status()` reaps without waiting. macOS and Linux.
+
+- **The C half is `pty.c`**, built by `build.sh` into `build/lib/liblyra-pty.a`: `TIOCSWINSZ`,
+  `TIOCSCTTY`, `O_NONBLOCK` and the wait-status encoding all differ by platform, and the
+  child's half of `fork` may only make system calls — so argv and the environment are built
+  before it. `posix_openpt`, not `forkpty` (which needs libutil on older glibc).
+- **The terminal closes before the program can be reaped**: `read()` answering `None` comes
+  a moment before `exit_status()` answers — poll the second until it does.
+- **SIGCHLD ignored is put back to the default** at the first `spawn`; inherited `SIG_IGN`
+  makes the kernel reap children, and no exit status can ever be read.
 
 ## `bindings/sdl3_image.lyra`
 

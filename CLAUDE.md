@@ -494,7 +494,7 @@ such changes on a user module.
 | `pkg/printer` | Reflection AST printer for golden tests | below |
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
-| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter, `menubar` with its own Objective-C shim, and Dear ImGui over a downloaded, pinned C++ half) | [README](bindings/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, and Dear ImGui over a downloaded, pinned C++ half) | [README](bindings/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
 semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
@@ -662,7 +662,8 @@ of Markdown.
   `move.w #…, %sr` as a move to d0, so the runtime writes that instruction as `.short`s.
 - **`build.sh` builds `build/lib/liblyra-menubar.a`**, `bindings.menubar`'s C half (the
   AppKit shim on macOS, a do-nothing stub elsewhere). `lyrac` passes `-L<root>/lib`
-  (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH`.
+  (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH`. **And
+  `build/lib/liblyra-pty.a`**, `bindings.pty`'s (`pty.c`, plain POSIX).
 - **`build.sh` builds `build/lib/liblyra-imgui.a`** when it can (`bindings/imgui/build.sh`):
   it downloads a pinned, SHA-256-checked ImGui and dear_bindings into `build/deps/` (not
   vendored), needs SDL3, and skips with a note when offline or without it.

@@ -54,6 +54,13 @@ rm -f "$OUT/lib/liblyra-menubar.a"
 ar rcs "$OUT/lib/liblyra-menubar.a" "$OUT/lib/menubar.o"
 rm -f "$OUT/lib/menubar.o"
 
+# **The C half of `bindings.pty`** (`pty.c`), likewise: a program started on a
+# pseudo-terminal, for a terminal emulator. Plain POSIX, the same source on macOS and Linux.
+"${LYRA_CC:-clang}" -O2 -std=c11 -c "$ROOT/bindings/pty/pty.c" -o "$OUT/lib/pty.o"
+rm -f "$OUT/lib/liblyra-pty.a"
+ar rcs "$OUT/lib/liblyra-pty.a" "$OUT/lib/pty.o"
+rm -f "$OUT/lib/pty.o"
+
 # **lyrafmt is built when it can be**, and skipped with a note when it cannot. The
 # formatter is a Lyra program that links the tree-sitter runtime and the grammar
 # (examples/lyrafmt/libs.sh), so it needs a C compiler, `libtree-sitter` and the sibling
@@ -84,4 +91,4 @@ else
   imgui_note="no liblyra-imgui.a (${imgui_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, lib/liblyra-menubar.a and %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note" "$imgui_note"
+printf 'built %s/{lyrac,lyra-lsp} %s, lib/liblyra-{menubar,pty}.a and %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note" "$imgui_note"

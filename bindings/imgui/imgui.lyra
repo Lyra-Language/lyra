@@ -114,6 +114,26 @@ pub let input_text_multiline = (
   flags: i32 = 0
 ) -> bool => edit_text(label, None, value, flags, true, size)
 
+/// Ask for typed text this frame, for a widget of the program's own — a terminal, an
+/// editor — whose text cursor is at `pos` (screen coordinates), `line_height` tall, where an
+/// input method shows what it is composing. SDL sends characters only while some widget
+/// asks; ImGui's own [input_text] asks for itself. Call it every frame the widget has the
+/// keyboard, and read what arrived with [typed_text].
+pub let request_text_input = (pos: Vec2, line_height: f32) -> void =>
+  unsafe { lyra_imgui_want_text_input(pos.x, pos.y, line_height) }
+
+/// The text typed since the last frame, after the keyboard layout and any input method:
+/// what a widget taking text inserts. Keys that type nothing (arrows, Return, a shortcut)
+/// are not in it — ask [is_key_pressed]. Empty unless a widget asked with
+/// [request_text_input] the frame before. A character beyond the Basic Multilingual Plane
+/// (most emoji) arrives as U+FFFD: ImGui is built with 16-bit characters.
+pub let typed_text = () -> string => {
+  let n = unsafe { lyra_imgui_typed_count() }
+  var out = ""
+  for i in 0..<n { out = "${out}${rune(i64(unsafe { lyra_imgui_typed_char(i) }))}" }
+  out
+}
+
 // ── Textures ─────────────────────────────────────────────────────────────────
 
 /// An RGBA texture ImGui can draw — tiles, sprites, a canvas. Made by [create_texture],
@@ -681,6 +701,15 @@ unsafe extern lyra_imgui_input_text: (
   size: Vec2,
   changed: ^mut bool
 ) -> ^u8
+
+@symbol("lyra_imgui_want_text_input")
+unsafe extern lyra_imgui_want_text_input: (x: f32, y: f32, line_height: f32) -> void
+
+@symbol("lyra_imgui_typed_count")
+unsafe extern lyra_imgui_typed_count: () -> i32
+
+@symbol("lyra_imgui_typed_char")
+unsafe extern lyra_imgui_typed_char: (i: i32) -> u32
 
 @symbol("lyra_imgui_texture_create")
 unsafe extern lyra_imgui_texture_create: (host: Host, width: i32, height: i32) -> ^u8

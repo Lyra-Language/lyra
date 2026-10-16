@@ -724,6 +724,23 @@ const char* lyra_imgui_input_text(const char* label, const char* hint, const cha
     return text_buf;
 }
 
+// A widget of the program's own takes typed text this frame — a terminal, an editor — with
+// its text cursor at (x, y), `line_height` tall, where an input method shows what it is
+// composing. SDL3 sends characters only while text input is on, and ImGui turns it on for
+// its own InputText alone; this is the same request InputText makes.
+void lyra_imgui_want_text_input(float x, float y, float line_height) {
+    ImGuiContext& g = *GImGui;
+    g.PlatformImeData.WantTextInput = true;
+    g.PlatformImeData.InputPos = ImVec2(x, y);
+    g.PlatformImeData.InputLineHeight = line_height;
+    g.PlatformImeData.ViewportId = ImGui::GetWindowViewport()->ID;
+}
+
+// The characters typed since the last frame (ImGui's input queue, UTF-16 surrogates already
+// joined into code points): how many, and each.
+int32_t lyra_imgui_typed_count(void) { return ImGui::GetIO().InputQueueCharacters.Size; }
+uint32_t lyra_imgui_typed_char(int32_t i) { return (uint32_t)ImGui::GetIO().InputQueueCharacters[i]; }
+
 // ── Textures ───────────────────────────────────────────────────────────────────
 //
 // An RGBA texture the program fills from Lyra and ImGui draws: tiles, sprites, a canvas.
