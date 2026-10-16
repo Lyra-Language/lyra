@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 10/15/26 — Extended FM 3, and where a song's frame went
+
+**`std.chips.music` plays Furnace's extended CH3**: a `Tune` marked `extended` has thirteen
+channels, FM 3's operators 2–4 after the noise and FM 3 itself operator 1. Register `27`'s
+special mode gives each operator a frequency of its own (`A9`/`AD`, `AA`/`AE`, `A8`/`AC`, and
+op 4 the channel's `A2`/`A6`), and `28`'s high bits key them one by one — so an operator voice
+writes only its own operator's seven registers, its level only if it is a carrier, and the
+player gathers the four voices' keys into one `28` write at the end of the tick, letting go
+of a re-struck operator first. Every write still fits the 256 a frame the buffer holds.
+`TestRun_GameMusicExtendedChannel3` hears A4 and E5 from one channel's two operators on both
+runtimes, and fails on both with the `27` write left out.
+
+**Vega's hero then missed its frames.** Its theme gained a pad on the operator channels, and
+the scripted hero no longer reached frame 100 on time. Two measurements were wrong before one
+was right:
+
+- A benchmark ROM linked a copy of `std.genesis.sound` beside the real one; the song it
+  started was the real module's, so the copy's `update_music` was timed with nothing
+  playing — and a constant-zero `held` that looked twelve times faster was the same no-op.
+  Timing one module, the song cost 0.45 of a frame an update (0.38 not extended).
+- **Field reads loaded the whole struct**: `lowerMemberExpr` lowered the object and took the
+  field with `extractvalue`, so `self.voices[k].operator` loaded the 1 KB `MusicPlayer` and
+  then a `MusicChannel`, and on the 68000 `opt -O2` kept those loads. A struct with storage
+  is now read in place, as an array's element already was (`structInPlace`, its element hop
+  trapping as an element read does). Worth 5% here, and correct everywhere.
+- A PC profile (a scratch Sheliak counting master clocks per instruction address; the
+  program's local symbols from `llvm-nm` on its object) found the rest: **compiler-rt's C
+  division and 64-bit multiply**, about 5,000 and 3,700 cycles a call, two divides and five
+  multiplies a frame — a quarter of a frame. The runtime now has its own: `divu` twice for a
+  16-bit divisor (the high half's remainder carried into the low half), a bit at a time for
+  the 16-bit quotient a wider divisor leaves, and `__muldi3` from four `mulu`s, one where both
+  fit 16 bits. `TestGenesis_ArithmeticHelpersAgreeWithTheHost` folds 300 of each into one
+  word the host computes too; each of four planted mistakes turns it blue. **A remainder beside
+  a division of the same operands never calls `__modsi3`** — LLVM makes it `a - (a/b)·b` — so
+  the test's remainders have operands of their own, or the signed one went untested.
+
+The extended theme is 0.29 of a frame now, below the 0.38 the plain one was when the hero
+last passed, and the hero's scripts pass. What remains is in todo.md.
+
 ### 10/15/26 — `gunzip`, and a slow song's first tick
 
 Vega's VGM import needed gzip (`.vgz`), and Vega's Tiled import had a gzip reader of its own

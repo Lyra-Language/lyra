@@ -474,3 +474,154 @@ func wavSamplesRate(t *testing.T, path string) ([]float64, int) {
 	}
 	return samples, rate
 }
+
+// extendedTables is a song with FM 3 extended: four sine operators, every one a carrier
+// (algorithm 7), operator 1 (FM 3 itself) playing A4 and operator 2 (channel 10) E5.
+const extendedTables = `import std.chips.effects.{ EffectStep }
+import std.chips.ym2612.{ FmPatch }
+import std.chips.music.{ Tune, Cell, Envelope, EnvelopeStep, MusicData, Sample }
+
+const STEPS: [1]EffectStep = #[EffectStep { period: 0, volume: 0 }]
+
+const PATCHES: [1]FmPatch = #[FmPatch {
+  ops: #[
+    0x01, 0x00, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+    0x01, 0x00, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+    0x01, 0x00, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+    0x01, 0x00, 0x1F, 0x00, 0x00, 0x0F, 0x00,
+  ],
+  feedback_algorithm: 0x07,
+  sensitivity: 0,
+}]
+
+const SAMPLE_BYTES: [0]u8 = #[]
+
+const CELLS: [24]Cell = #[
+  Cell { note: 69, instrument: 0 }, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {},
+  Cell { note: 76, instrument: 0 }, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {},
+  Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {}, Cell {},
+]
+
+const NO_ENVELOPES: [1]Envelope = #[Envelope { first: 0, count: 0 }]
+const NO_STEPS: [1]EnvelopeStep = #[EnvelopeStep { volume: 15, pitch: 0 }]
+
+data Tables = Tables
+
+impl MusicData for Tables {
+  cell = pure (self, index) => CELLS[index]
+  pattern = pure (self, order, channel) => if channel == 2 { 0 } else if channel == 10 { 8 } else { 16 }
+  patch = pure (self, index) => PATCHES[index]
+  patches = pure (self) => 1
+  envelope = pure (self, index) => NO_ENVELOPES[index]
+  fm_envelope = pure (self, index) => NO_ENVELOPES[0]
+  envelopes = pure (self) => 0
+  envelope_step = pure (self, index) => NO_STEPS[index]
+  sample = pure (self, index) => Sample {}
+}
+
+const TUNE: Tune = Tune { first_order: 0, orders: 1, rows: 8, speed: 6, extended: true }
+`
+
+// FM 3 extended: two of its operators each sound their own note — A4 and E5 together, on
+// one channel — through std.game.sound, and through std.genesis.sound in Sheliak.
+func TestRun_GameMusicExtendedChannel3(t *testing.T) {
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	check := func(runtime string, samples []float64, rate int) {
+		t.Helper()
+		frame := rate / 60
+		power := func(f float64) float64 {
+			var re, im float64
+			window := samples[2*frame : 30*frame]
+			for i, v := range window {
+				re += v * math.Cos(2*math.Pi*f*float64(i)/float64(rate))
+				im += v * math.Sin(2*math.Pi*f*float64(i)/float64(rate))
+			}
+			return re*re + im*im
+		}
+		a4 := 7670453.0 / 144 * 1083 * 16 / (1 << 21)
+		e5 := 7670453.0 / 144 * 811 * 32 / (1 << 21)
+		// Each a real share of what is heard — silence has nothing beside either — and well
+		// clear of its neighbourhood.
+		window := samples[2*frame : 30*frame]
+		energy := 0.0
+		for _, v := range window {
+			energy += v * v
+		}
+		for _, f := range []float64{a4, e5} {
+			if at, off := power(f), power(f*1.03); at < 100*off || at < 0.05*float64(len(window))*energy {
+				t.Errorf("%s: FM 3's %.1f Hz is not heard: %.3g there, %.3g beside it, %.3g in all", runtime, f, at, off, energy)
+			}
+		}
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "song.lyra")
+	program := "import std.game.sound\n" + extendedTables + `
+let main = () -> u8 => {
+  TUNE.play()
+  let tables = Tables
+  for _ in 0..<40 { sound.update_music(STEPS, PATCHES, tables, SAMPLE_BYTES) }
+  0
+}
+`
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wav := filepath.Join(dir, "song.wav")
+	if _, stderr, code := captureRun(t, "run", src, "--", "--frames", "40", "--wav", wav); code != 0 {
+		t.Fatalf("run exited %d\nstderr: %s", code, stderr)
+	}
+	check("modern", wavSamples(t, wav), 48000)
+
+	genesisToolchainOrSkip(t)
+	emulator := os.Getenv("SHELIAK")
+	if emulator == "" {
+		t.Log("SHELIAK is not set; the Genesis's extended FM 3 not heard")
+		return
+	}
+	gdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gdir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gsrc := filepath.Join(gdir, "song.lyra")
+	gprogram := "import std.genesis.vdp\nimport std.genesis.sound\n" + extendedTables + `
+let tables = Tables
+
+@interrupt(vblank)
+let on_vblank = () -> void => sound.update_music(STEPS, PATCHES, tables, SAMPLE_BYTES)
+
+let main = () -> void => {
+  vdp.init()
+  sound.init()
+  TUNE.play()
+  vdp.display_on()
+  vdp.enable_vblank_interrupt()
+  loop {}
+}
+`
+	if err := os.WriteFile(gsrc, []byte(gprogram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rom := filepath.Join(gdir, "song.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", rom, gsrc); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	gwav := filepath.Join(gdir, "song.wav")
+	cmd := exec.Command(emulator, rom, "--frames", "60", "--wav", gwav)
+	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sheliak: %v\n%s", err, out)
+	}
+	gsamples, rate := wavSamplesRate(t, gwav)
+	onset := 0
+	for i, v := range gsamples {
+		if math.Abs(v) > 0.05 {
+			onset = i
+			break
+		}
+	}
+	check("Genesis", gsamples[onset:], rate)
+}

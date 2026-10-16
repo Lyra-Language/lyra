@@ -313,8 +313,13 @@ runs at managed boundaries — `resolveNamedType`, `boxDropFn`, `dropFuncFor`/`r
 
 ### Tuples and structs
 
-First-class values: `insertvalue` to build, `extractvalue` to read. Anonymous tuples build a
-structural type on the fly (`lowerAnonymousTupleType`). Struct literals may list fields out
+First-class values: `insertvalue` to build, `extractvalue` to read a value with no storage
+(a call's result, a literal). **A field of a struct with storage is read in place**
+(`structInPlace`): a name's slot, a field path through stack structs from one, or an element
+of a fixed array with storage (bounds-trapped as an element read is, `elementPtr`) — a GEP to
+the field and a load of it alone. Loading the object whole and extracting kept a 1 KB load
+per field read on the 68000 even after `opt -O2`. A `shared` object reads through its box.
+Anonymous tuples build a structural type on the fly (`lowerAnonymousTupleType`). Struct literals may list fields out
 of order; values are keyed by name and built in declared order. Field position comes from
 `namedStructFields`, which resolves `UnresolvedType` (how a field typed as another struct is
 recorded).

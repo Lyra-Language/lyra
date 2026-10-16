@@ -946,8 +946,9 @@ sets V on every add. What stands between that and a ROM:
   prologue saves eight registers. Probe `llc`'s register allocators and `i16` bounds before
   writing more Genesis loops around it; COMPLETED 10/06 has the profile.
 - **[IDEA] A profiler in Sheliak**: master clocks by opcode address, named from the program's
-  symbols — the throwaway build that found the 10/06 hot spot. `pkg/rom` would need to keep
-  local symbols (it maps globals only) for the ROM's own map.
+  symbols — the throwaway build that found the 10/06 and 10/15 hot spots. `pkg/rom` would
+  need to keep local symbols (it maps globals only) for the ROM's own map; 10/15 read them
+  with `llvm-nm` from the program's object, offset by `main`'s address.
 - **[OPEN] Untyped loop variables default to `i64`** (09/29) — emulated, and slow, on the
   68000. A console profile should steer to `i16`/`i32`, or make the default per target.
 - **[OPEN] Memory-mapped I/O needs volatile reads and writes** (the VDP ports, the pads):
@@ -974,9 +975,11 @@ sets V on every add. What stands between that and a ROM:
   aggregate too big for registers, made `fastcc` by the optimizer, read the hidden pointer
   from `d0` while its caller passed it in `a0` (10/15). Lyra moves every aggregate through
   memory on the 68000 since (COMPLETED.md 10/15); a reduced IR case would settle it.
-- **[OPEN] `std.chips.music` costs a tenth of a frame idle on the 68000** (10/15: 0.075 of a
-  frame a call with nothing sounding, 0.175 with two channels): trait calls, field
-  addressing in a `[10]` array, the pitch tables. Profile with the Sheliak profiler idea.
+- **[OPEN] `std.chips.music` costs a quarter of a frame on the 68000**: the heroes' theme,
+  extended, 0.29 of a frame an update (0.23 not extended), after whole-struct field reads and
+  compiler-rt's divide and multiply were fixed (0.45, COMPLETED 10/15). What is left is flat
+  across the channel loop — spills, checks — and `i64` index arithmetic: M68k LLVM makes
+  `x * 3` on `i64` a `__muldi3` call, still 8%.
 - **[OPEN] The Genesis DAC's pitch on hardware**: the Z80 driver plays 0.5% flat in Sheliak
   (the bus held while the frame is queued), and a real Z80's bank-window reads wait about
   3 T-states more, which Sheliak does not model — about 1% more. Measure on a console, then

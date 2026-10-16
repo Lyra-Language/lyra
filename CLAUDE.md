@@ -636,7 +636,10 @@ of Markdown.
   the call and reads it from `d0` in a `fastcc` callee, and a function stops being inlined
   the moment it has a second caller (COMPLETED.md 10/15). **The runtime's `memcpy` and
   `memset` move longs** where both ends are even — a byte at a time, a cleared buffer cost a
-  third of a frame.
+  third of a frame. **Its 32-bit division and 64-bit multiply are its own** (`divu`, `mulu`;
+  `__mulsi3` beside them), not compiler-rt's C, which took thousands of cycles each — a
+  song's player spent a quarter of a frame in them (10/15);
+  `TestGenesis_ArithmeticHelpersAgreeWithTheHost` holds them to the host's answers.
   **The M68k LLVM is patched** (`tools/llvm-m68k-patches/*.patch`, applied by
   `tools/llvm-m68k.sh` on top of its pin): an index beside a stack object was dropped
   from the address, so `xs[i]` on the stack read `xs[0]` (`TestGenesis_AVariableIndex…`);
@@ -699,7 +702,9 @@ of Markdown.
   share — the bytes the PSG is sent each frame, and for an FM effect (on channel 6, a patch,
   `ym2612.FmPatch`, keyed on at its first step and off after its last so its release rings)
   the YM2612's register writes — no heap, so the 68000 runs it; and `music`, the song player
-  both runtimes run under the effects (`update_music`): a tracker's ten channels, Furnace's
+  both runtimes run under the effects (`update_music`): a tracker's ten channels (thirteen
+  in a song whose FM 3 is extended, `Tune.extended`: its operators 2–4 channels of their own,
+  each keyed through register `28` on the chip's special mode, as Furnace's extended CH3), Furnace's
   effect numbers, pitch in 64ths of a semitone, a game's tables read through the
   `MusicData` trait, a channel an effect plays on left to it; a note's envelope (a PSG
   sound's or an FM instrument's steps) loops and waits at its release as Furnace's macros

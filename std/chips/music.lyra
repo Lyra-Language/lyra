@@ -76,10 +76,15 @@ pub const EMPTY: u8 = 0xFF
 /// A cell's note that lets go: an FM note released, a PSG one silenced.
 pub const NOTE_OFF: u8 = 0xFE
 
-/// The channels: FM 1–6, PSG tones 1–3, the noise.
-pub const CHANNELS: i16 = 10
+/// The channels: FM 1–6, PSG tones 1–3, the noise — and, in a song whose FM 3 is extended
+/// ([Tune.extended]), FM 3's operators 2–4, FM 3 itself its operator 1.
+pub const CHANNELS: i16 = 13
 pub const FIRST_PSG: i16 = 6
 pub const NOISE: i16 = 9
+pub const FIRST_OPERATOR: i16 = 10
+
+/// Whether channel `k` is an FM channel (or one of FM 3's operators).
+pub let is_fm = pure (k: i16) -> bool => k < FIRST_PSG || k >= FIRST_OPERATOR
 
 /// One row of one channel.
 pub struct Cell {
@@ -105,6 +110,10 @@ pub struct Tune {
   /// Ticks a second: a song is made for 60 (the NTSC frame), 50 (PAL) or another rate, and
   /// played at its own rate a frame at a time — a frame now and then with no tick, or two.
   rate: u8 = 60,
+  /// FM 3 in its special mode, its four operators four channels — FM 3 (operator 1) and
+  /// channels [FIRST_OPERATOR] on (2–4) — each its own note, pitch and key: the YM2612's
+  /// extended channel 3, as Furnace's Genesis (extended channel 3) has it.
+  extended: bool = false,
 }
 
 /// An instrument's envelope — a PSG instrument's, or an FM one's — `count` steps of the
@@ -237,6 +246,12 @@ pub struct MusicChannel {
   dac: bool = false,
   sampled: bool = false,
   struck: bool = false,
+  /// In an extended song, the FM 3 operator (1–4) the channel plays, 0 for none; whether
+  /// it is keyed on, and keyed on anew this tick (off first). The player writes FM 3's keys,
+  /// its four operators' together ([MusicPlayer.key_ch3]).
+  operator: i16 = 0,
+  op_keyed: bool = false,
+  op_struck: bool = false,
 }
 
 /// The song playing.
@@ -257,16 +272,19 @@ pub struct MusicPlayer {
   /// next order to go to; -1 for neither.
   jump: i32 = -1,
   break_to: i32 = -1,
-  voices: [10]MusicChannel,
+  voices: [13]MusicChannel,
   /// What the DAC on FM 6 plays: the runtime's to play.
   dac: Dac = Dac {},
+  /// FM 3's operators keyed on, as last written; whether its special mode is on.
+  ch3_keys: u8 = 0,
+  ch3_special: bool = false,
 }
 
 /// A player with nothing playing.
 pub let new_music = pure () -> MusicPlayer =>
   MusicPlayer {
     song: Tune { first_order: 0, orders: 0, rows: 0 },
-    voices: #[MusicChannel {}; 10]
+    voices: #[MusicChannel {}; 13]
   }
 
 impl MusicPlayer {
@@ -288,8 +306,13 @@ impl MusicPlayer {
     self.jump = -1
     self.break_to = -1
     // What the chips were given is kept, so nothing stale is taken as written.
-    for k: i16 in 0..<10 { self.voices[k].restart() }
+    for k: i16 in 0..<CHANNELS { self.voices[k].restart() }
+    for k: i16 in 0..<CHANNELS { self.voices[k].operator = operator_of(k, song.extended) }
   }
+
+  /// The channels the song plays: ten, or with FM 3 extended thirteen.
+  let channels = pure (self) -> i16 =>
+    if self.song.extended { CHANNELS } else { FIRST_OPERATOR }
 
   /// Stop the song: every channel it sounds let go on the next [frame].
   pub let stop = (self: mut) -> void => {
@@ -308,13 +331,14 @@ impl MusicPlayer {
   ) -> (i64, i64) => {
     var out = Out {}
     if !self.playing {
-      for k: i16 in 0..<10 {
+      for k: i16 in 0..<CHANNELS {
         if self.voices[k].sounding && !is_held(
           held,
           k
         ) { self.voices[k].silence(k, psg, fm, out) }
       }
       self.dac.playing = false
+      self.key_ch3(fm, out)
       return (i64(out.psg), i64(out.fm))
     }
     // The song's ticks at its rate: none some frames, two some others.
@@ -342,7 +366,7 @@ impl MusicPlayer {
     let at = i32(self.song.first_order) + self.order
     // PSG 3 is the noise's pitch while the noise sounds.
     let noise_owns = self.voices[9].sounding && !is_held(held, 9)
-    for k: i16 in 0..<10 {
+    for k: i16 in 0..<self.channels() {
       if reading {
         let cell = tables.cell(tables.pattern(at, i32(k)) + self.row)
         self.song_control(cell)
@@ -376,7 +400,34 @@ impl MusicPlayer {
       self.voices[k].sound(tables, k, self.tick, silent, psg, fm, out)
     }
     self.follow_dac(tables)
+    self.key_ch3(fm, out)
     self.advance()
+  }
+
+  /// FM 3's special mode as the song wants it, and its operators' keys: each operator
+  /// keyed on anew let go first, then those sounding keyed on — the four in one register,
+  /// written where they changed.
+  let key_ch3 = (self: mut, fm: mut [768]u8, out: mut Out) -> void => {
+    if self.song.extended != self.ch3_special {
+      out.put_fm(fm, 0, 0x27, if self.song.extended { 0x40 } else { 0 })
+      self.ch3_special = self.song.extended
+    }
+    if !self.song.extended { return }
+    var off = self.ch3_keys
+    var on: u8 = 0
+    for k: i16 in 0..<CHANNELS {
+      let op = self.voices[k].operator
+      if op == 0 { continue }
+      let bit = u8(1) << u8(op - 1)
+      if self.voices[k].op_struck {
+        off = off & ~bit
+        self.voices[k].op_struck = false
+      }
+      if self.voices[k].op_keyed { on = on | bit }
+    }
+    if off != self.ch3_keys { out.put_fm(fm, 0, 0x28, (off << 4) | 2) }
+    if on != off { out.put_fm(fm, 0, 0x28, (on << 4) | 2) }
+    self.ch3_keys = on
   }
 
   /// The DAC as FM 6 now wants it: a sample note just struck starts its sample, and its
@@ -547,7 +598,11 @@ impl MusicChannel {
     }
     self.released = true
     self.step = i16(e.release) + 1
-    if k < FIRST_PSG { out.put_fm(fm, 0, 0x28, key_on_code(u8(k))) }
+    if self.operator > 0 {
+      self.op_keyed = false
+    } else if is_fm(k) {
+      out.put_fm(fm, 0, 0x28, key_on_code(u8(k)))
+    }
   }
 
   /// The envelope of the channel's instrument: a PSG channel's sound's, an FM channel's
@@ -558,7 +613,7 @@ impl MusicChannel {
     k: i16
   ) -> Envelope => {
     let ins = i32(self.instrument)
-    if k < FIRST_PSG {
+    if is_fm(k) {
       return if ins >= 0 && ins < tables.patches() { tables.fm_envelope(ins) } else { Envelope {
         first: 0,
         count: 0
@@ -625,6 +680,31 @@ impl MusicChannel {
     let ins = i32(self.instrument)
     self.heard_pitch = -1
     self.heard_volume = -1
+    if self.operator > 0 {
+      // One of FM 3's operators: its own registers from its instrument's same operator,
+      // and the channel's shared ones; keyed with the others ([MusicPlayer.key_ch3]).
+      if ins < 0 || ins >= tables.patches() || tables.sample(ins).length > 0 {
+        self.sounding = false
+        self.op_keyed = false
+        return
+      }
+      if i32(self.written) != ins {
+        let patch = tables.patch(ins)
+        let op = self.operator
+        for r in 0..<7 {
+          let (bank, reg, value) = patch_write(2, patch, i64(op - 1) * 7 + r)
+          out.put_fm(fm, bank, reg, value)
+        }
+        let (bank, reg, value) = patch_write(2, patch, 28)
+        out.put_fm(fm, bank, reg, value)
+        self.written = i16(ins)
+        self.heard_pan = 0xC0
+      }
+      self.op_keyed = true
+      self.op_struck = true
+      self.sounding = true
+      return
+    }
     if k < FIRST_PSG {
       if ins < 0 || ins >= tables.patches() {
         self.sounding = false
@@ -680,7 +760,9 @@ impl MusicChannel {
     self.sounding = false
     self.heard_volume = -1
     self.heard_pitch = -1
-    if k < FIRST_PSG {
+    if self.operator > 0 {
+      self.op_keyed = false
+    } else if k < FIRST_PSG {
       out.put_fm(fm, 0, 0x28, key_on_code(u8(k)))
     } else if k == NOISE {
       out.put_psg(psg, attenuation_byte(3, 15))
@@ -744,7 +826,7 @@ impl MusicChannel {
       // The DAC's: the player reads them ([MusicPlayer.follow_dac]).
       self.heard_pitch = pitch
       self.heard_volume = level
-    } else if k < FIRST_PSG {
+    } else if is_fm(k) {
       self.sound_fm(tables, k, pitch, level, fm, out)
     } else {
       self.sound_psg(k, pitch, level, psg, out)
@@ -781,15 +863,23 @@ impl MusicChannel {
     fm: mut [768]u8,
     out: mut Out
   ) -> void => {
-    let ch = u8(k)
-    let bank: u8 = if k < 3 { 0 } else { 1 }
+    // One of FM 3's operators plays on FM 3, its pitch its own register pair.
+    let op = self.operator
+    let ch = if op > 0 { u8(2) } else { u8(k) }
+    let bank: u8 = if ch < 3 { 0 } else { 1 }
     let slot = ch % 3
     if self.written < 0 || i32(self.written) >= tables.patches() { return }
     if pitch != self.heard_pitch {
       let (block, fnum) = fm_pitch(pitch)
-      let w = note_writes(ch, u8(block), u16(fnum))
-      out.put_fm(fm, w[0], w[1], w[2])
-      out.put_fm(fm, w[3], w[4], w[5])
+      if op > 0 {
+        let low = OPERATOR_FREQUENCY[op - 1]
+        out.put_fm(fm, 0, low + 4, (u8(block) << 3) | u8((fnum >> 8) & 7))
+        out.put_fm(fm, 0, low, u8(fnum & 0xFF))
+      } else {
+        let w = note_writes(ch, u8(block), u16(fnum))
+        out.put_fm(fm, w[0], w[1], w[2])
+        out.put_fm(fm, w[3], w[4], w[5])
+      }
       self.heard_pitch = pitch
     }
     if self.pan != self.heard_pan || level != self.heard_volume {
@@ -799,20 +889,22 @@ impl MusicChannel {
         self.heard_pan = self.pan
       }
       if level != self.heard_volume {
+        // Its carriers quieter — an operator channel's own operator only, if it is one.
         let carriers = carrier_mask(patch.feedback_algorithm & 7)
-        for op in 1..<=4 {
-          if (carriers >> u8(op - 1)) & 1 == 0 { continue }
-          let base = patch.ops[(op - 1) * 7 + 1] & 0x7F
+        for o in 1..<=4 {
+          if (carriers >> u8(o - 1)) & 1 == 0 || (op > 0 && i64(op) != o) { continue }
+          let base = patch.ops[(o - 1) * 7 + 1] & 0x7F
           out.put_fm(
             fm,
             bank,
-            0x40 + operator_offset(op) + slot,
+            0x40 + operator_offset(o) + slot,
             quieter(base, u8(level))
           )
         }
         self.heard_volume = level
       }
     }
+    if op > 0 { return }
     if self.keying {
       out.put_fm(fm, 0, 0x28, 0xF0 | key_on_code(ch))
       self.keying = false
@@ -884,6 +976,15 @@ impl Out {
     self.fm += 1
   }
 }
+
+/// The low byte of FM 3's operators' own frequencies in special mode, operator 1 to 4 —
+/// A9, AA, A8, and the channel's A2 — each with its high byte four above.
+const OPERATOR_FREQUENCY: [4]u8 = #[0xA9, 0xAA, 0xA8, 0xA2]
+
+/// The FM 3 operator channel `k` plays in a song, `extended` or not: 1 for FM 3 itself,
+/// 2–4 for the operator channels; 0 for none.
+let operator_of = pure (k: i16, extended: bool) -> i16 =>
+  if !extended { 0 } else if k == 2 { 1 } else if k >= FIRST_OPERATOR { k - FIRST_OPERATOR + 2 } else { 0 }
 
 /// Whether channel `k` is among `held`.
 let is_held = pure (held: u16, k: i16) -> bool => (held >> u16(k)) & 1 == 1

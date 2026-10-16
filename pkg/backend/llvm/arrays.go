@@ -110,8 +110,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	if types.IsString(objType) {
 		return l.lowerStringIndex(block, e)
 	}
-	arrType, ok := objType.(types.StaticArrayType)
-	if !ok {
+	if _, ok := objType.(types.StaticArrayType); !ok {
 		return nil, nil, fmt.Errorf("llvm: indexing into %s not implemented yet (only fixed-size arrays and strings)", objType)
 	}
 
@@ -165,6 +164,18 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	if err != nil {
 		return nil, nil, err
 	}
+	elemPtr, block, err := l.elementPtr(block, e, arrPtr, arrayTy)
+	if err != nil {
+		return nil, nil, err
+	}
+	return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
+}
+
+// elementPtr lowers the index of `e` and returns the address of that element of the
+// `[N x T]` at arrPtr, bounds-trapped unless the value-range analysis proved it in range.
+// A struct element read in place (lowerMemberExpr's `xs[i].field`) asks it too, so the
+// two reads trap alike.
+func (l *lowerer) elementPtr(block *ir.Block, e *ast.IndexExpr, arrPtr value.Value, arrayTy *lltypes.ArrayType) (value.Value, *ir.Block, error) {
 	idx, block, err := l.lowerExpr(block, e.Index)
 	if err != nil {
 		return nil, nil, err
@@ -174,7 +185,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	// wrap below is a no-op for it.
 	signed, _ := l.getIntSignedness(e.Index)
 	idx64 := coerceIntWidth(block, idx, signed, lltypes.I64)
-	size := i64c(int64(arrType.Size))
+	size := i64c(int64(arrayTy.Len))
 
 	// The value-range analysis may have proved 0 <= i < size (res.RangeSafety): then
 	// the bounds trap is dead — emit the bare gep+load. Otherwise a single *unsigned*
@@ -190,8 +201,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	}
 
 	// getelementptr [N x T], [N x T]* arrPtr, i64 0, i64 idx64  →  T*
-	elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, i64c(0), idx64)
-	return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
+	return block.NewGetElementPtr(arrayTy, arrPtr, i64c(0), idx64), block, nil
 }
 
 // arrayLValue returns an addressable `[N x T]*` pointer for an array-typed object

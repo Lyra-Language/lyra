@@ -246,6 +246,102 @@ static inline u32 mulu16(u16 a, u16 b) {
 
 u32 __mulsi3(u32 a, u32 b) {
     u16 al = (u16)a, ah = (u16)(a >> 16), bl = (u16)b, bh = (u16)(b >> 16);
+    if (!(ah | bh)) {
+        return mulu16(al, bl);
+    }
     u16 cross = (u16)(mulu16(ah, bl) + mulu16(al, bh));
     return mulu16(al, bl) + ((u32)cross << 16);
+}
+
+/*
+ * A 64-bit multiply's low 64 bits: an `i64`/`u64` `*` — Lyra's default integer, so an
+ * index times three is one. compiler-rt's built it from 32-bit C multiplies, each a call
+ * to __mulsi3: some 3,700 cycles a multiply, five of them a frame in a song's player
+ * (10/15). Here the low words' whole product is four `mulu`s — one where both fit 16 bits,
+ * as most of a Genesis game's numbers do — and the high words add theirs past bit 32,
+ * skipped where they are 0.
+ */
+typedef unsigned long long u64;
+
+static u64 mulu32(u32 a, u32 b) {
+    u16 a0 = (u16)a, a1 = (u16)(a >> 16), b0 = (u16)b, b1 = (u16)(b >> 16);
+    u32 low = mulu16(a0, b0);
+    if (!(a1 | b1)) {
+        return low;
+    }
+    u32 p01 = mulu16(a0, b1), p10 = mulu16(a1, b0);
+    u32 mid = p01 + p10;
+    // A carry out of the middle products is worth 2^48: 2^16 of the high word.
+    u32 high = mulu16(a1, b1) + (mid >> 16) + (mid < p01 ? 0x10000 : 0);
+    u32 sum = low + (mid << 16);
+    high += sum < low;
+    return ((u64)high << 32) | sum;
+}
+
+u64 __muldi3(u64 a, u64 b) {
+    u32 al = (u32)a, ah = (u32)(a >> 32), bl = (u32)b, bh = (u32)(b >> 32);
+    u32 high = 0;
+    if (ah) {
+        high += __mulsi3(ah, bl);
+    }
+    if (bh) {
+        high += __mulsi3(al, bh);
+    }
+    return mulu32(al, bl) + ((u64)high << 32);
+}
+
+/*
+ * 32-bit division, which the 68000 has only as 32 ÷ 16 (`divu`: a 16-bit quotient and
+ * remainder): an `i32`/`u32` `/` or `%`. compiler-rt's was a shift and subtract of up to
+ * 32 steps in C, some 5,000 cycles a division, which a song's player made every frame
+ * (10/15). A divisor of 16 bits is two `divu`s, the high half's remainder carried into the
+ * low half's; a wider one leaves a quotient of at most 16 bits, found a bit at a time.
+ * A divisor of 0 is never asked: Lyra traps before dividing.
+ */
+static inline u32 divu16(u32 a, u16 b) {
+    __asm__("divu %1, %0" : "+d"(a) : "d"(b));
+    return a;
+}
+
+static u32 udivmod(u32 a, u32 b, u32 *rem) {
+    if (b <= 0xFFFF) {
+        u32 high = divu16(a >> 16, (u16)b);
+        u32 low = divu16((high & 0xFFFF0000) | (a & 0xFFFF), (u16)b);
+        *rem = low >> 16;
+        return (high << 16) | (low & 0xFFFF);
+    }
+    // a < b·2^16, so each step's `b << i` is at most a where it is taken: no overflow.
+    u32 q = 0;
+    for (int i = 15; i >= 0; i--) {
+        if ((a >> i) >= b) {
+            a -= b << i;
+            q |= (u32)1 << i;
+        }
+    }
+    *rem = a;
+    return q;
+}
+
+u32 __udivsi3(u32 a, u32 b) {
+    u32 rem;
+    return udivmod(a, b, &rem);
+}
+
+u32 __umodsi3(u32 a, u32 b) {
+    u32 rem;
+    udivmod(a, b, &rem);
+    return rem;
+}
+
+/* Truncated, as C's and Lyra's `/` and `%`: the remainder takes the dividend's sign. */
+long __divsi3(long a, long b) {
+    u32 rem;
+    u32 q = udivmod(a < 0 ? -(u32)a : (u32)a, b < 0 ? -(u32)b : (u32)b, &rem);
+    return (long)((a < 0) != (b < 0) ? -q : q);
+}
+
+long __modsi3(long a, long b) {
+    u32 rem;
+    udivmod(a < 0 ? -(u32)a : (u32)a, b < 0 ? -(u32)b : (u32)b, &rem);
+    return (long)(a < 0 ? -rem : rem);
 }

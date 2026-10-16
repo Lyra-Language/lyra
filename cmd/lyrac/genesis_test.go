@@ -863,6 +863,88 @@ let main = () -> void => {
 	}
 }
 
+// TestGenesis_ArithmeticHelpersAgreeWithTheHost runs the runtime's own 32-bit division and
+// 32- and 64-bit multiplies (runtime.c, `divu` and `mulu` where compiler-rt's C was some
+// thousands of cycles each) on operands of every width — divisors under 16 bits and past
+// them, signs both ways — and folds the answers into one word, which must be the host's.
+func TestGenesis_ArithmeticHelpersAgreeWithTheHost(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	seed := uint32(2463534242)
+	next := func() uint32 {
+		seed ^= seed << 13
+		seed ^= seed >> 17
+		seed ^= seed << 5
+		return seed
+	}
+	signed := func(v uint32) int32 {
+		if v&1 == 1 {
+			return -int32(v >> 1)
+		}
+		return int32(v >> 1)
+	}
+	var sum uint32
+	for range 300 {
+		shape := next()
+		a := next() >> (shape & 31)
+		b := max(next()>>((shape>>5)&31), 1)
+		sa, sb := signed(a), signed(b)
+		if sb == 0 {
+			sb = 1
+		}
+		// Each remainder of other operands than a division's: LLVM makes the remainder of a
+		// division's own `a - (a/b)·b`, and __modsi3 went untested.
+		sum ^= a/b ^ ((a>>1)%b)<<3
+		sum ^= uint32(sa/sb) ^ uint32((sa/2)%sb)<<7
+		sum ^= a * b
+		p := int64(sa) * int64(sb)
+		sum ^= uint32(p) ^ uint32(p>>32)
+		q := uint64(a) * (uint64(b)*3 + 1)
+		sum ^= uint32(q) ^ uint32(q>>32)
+	}
+	out := genesisProgram(t, "arithmetic", fmt.Sprintf(`import std.genesis.vdp
+
+var seed: u32 = 2463534242
+
+let main = () -> void => {
+  vdp.init()
+  vdp.display_on()
+  var sum: u32 = 0
+  for _: i16 in 0..<300 {
+    let shape = next()
+    let a = next() >> (shape & 31)
+    let b = (next() >> ((shape >> 5) & 31)).max(1)
+    let sa = signed(a)
+    let sb = if signed(b) == 0 { 1 } else { signed(b) }
+    sum = sum ~ (a / b) ~ (((a >> 1) %% b) << 3)
+    sum = sum ~ word(i64(sa / sb)) ~ (word(i64((sa / 2) %% sb)) << 7)
+    sum = sum ~ a.wrapping_mul(b)
+    let p = i64(sa).wrapping_mul(i64(sb))
+    sum = sum ~ word(p) ~ word(p >> 32)
+    let q = u64(a).wrapping_mul(u64(b) * 3 + 1)
+    sum = sum ~ u32(q & 0xFFFFFFFF) ~ u32(q >> 32)
+  }
+  // Green when right, blue when wrong; the runtime's panic screen is red.
+  vdp.set_color(0, 0, if sum == %d { vdp.rgb(0, 7, 0) } else { vdp.rgb(0, 0, 7) })
+  loop {}
+}
+
+let next = () -> u32 => {
+  seed = seed ~ (seed << 13)
+  seed = seed ~ (seed >> 17)
+  seed = seed ~ (seed << 5)
+  seed
+}
+
+let signed = (v: u32) -> i32 => if v & 1 == 1 { -i32(v >> 1) } else { i32(v >> 1) }
+
+/// The low 32 bits of v.
+let word = (v: i64) -> u32 => u32(v & 0xFFFFFFFF)
+`, sum))
+	if got := runROM(t, out, "60", "").dominant(); got != "00ff00" {
+		t.Errorf("the screen is %s, want 00ff00 (blue: an answer differs from the host's)", got)
+	}
+}
+
 // TestGenesis_WriteCellSetsOneCell puts one tile into plane A's cell (2, 1) with
 // vdp.write_cell: it must show at pixels 16–24 across and 8–16 down, and nothing else.
 func TestGenesis_WriteCellSetsOneCell(t *testing.T) {

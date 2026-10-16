@@ -302,6 +302,23 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 	if idx < 0 {
 		return nil, nil, fmt.Errorf("llvm: struct has no field %q", e.Property.Name)
 	}
+	// **A field of a struct with storage is read in place** — a local's, a parameter's,
+	// a module's, through fields and fixed arrays' elements — as an array's element is
+	// (lowerIndexExpr): a gep to the field and a load of it alone. Lowering the object
+	// loaded it whole and took the field out, and on the 68000 `opt -O2` kept those loads:
+	// `self.voices[k].operator` moved the whole 1 KB music player, then a channel, for one
+	// word — the hero's frame overran when the song grew to 13 channels (10/15).
+	if types.AllocationOf(objType) != types.Shared {
+		if ptr, structTy, end, ok, err := l.structInPlace(block, e.Object); err != nil {
+			return nil, nil, err
+		} else if ok {
+			if idx >= len(structTy.Fields) {
+				return nil, nil, fmt.Errorf("llvm: field %q past %s's layout", e.Property.Name, structTy)
+			}
+			fieldPtr := end.NewGetElementPtr(structTy, ptr, i32c(0), i32c(int64(idx)))
+			return end.NewLoad(structTy.Fields[idx], fieldPtr), end, nil
+		}
+	}
 	obj, block, err := l.lowerExpr(block, e.Object)
 	if err != nil {
 		return nil, nil, err
@@ -326,6 +343,65 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 		return nil, nil, fmt.Errorf("llvm: member access on non-struct value of type %s", obj.Type())
 	}
 	return block.NewExtractValue(obj, uint64(idx)), block, nil
+}
+
+// structInPlace addresses a stack struct's own storage when obj names one — a name with a
+// struct slot, a field path through stack structs from one (fieldPathInPlace), or an
+// element of a fixed array with storage (addressableArray) — and reports false, emitting
+// nothing, for anything else (a call, a box, a literal), which keeps the copying path.
+func (l *lowerer) structInPlace(block *ir.Block, obj ast.Expression) (value.Value, *lltypes.StructType, *ir.Block, bool, error) {
+	switch o := obj.(type) {
+	case *ast.IdentifierExpr:
+		slot, found := l.slotFor(o.Name, o.GetLocation())
+		if !found {
+			return nil, nil, nil, false, nil
+		}
+		elem, err := slotElemType(slot)
+		if err != nil {
+			return nil, nil, nil, false, nil
+		}
+		structTy, ok := elem.(*lltypes.StructType)
+		return slot, structTy, block, ok, nil
+	case *ast.MemberExpr:
+		if !l.fieldPathInPlace(o) {
+			return nil, nil, nil, false, nil
+		}
+		loc, end, err := l.lvalueAddress(block, o)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		llTy, err := l.lowerType(loc.ty)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		structTy, ok := llTy.(*lltypes.StructType)
+		if !ok {
+			return nil, nil, nil, false, fmt.Errorf("llvm: field %s in place is not a struct (%s)", o.Property.Name, llTy)
+		}
+		return loc.ptr, structTy, end, true, nil
+	case *ast.IndexExpr:
+		arrType, ok := l.recordedType(o.Object)
+		if !ok || types.AllocationOf(arrType) == types.Shared || !l.addressableArray(o.Object) {
+			return nil, nil, nil, false, nil
+		}
+		if _, ok := arrType.(types.StaticArrayType); !ok {
+			return nil, nil, nil, false, nil
+		}
+		arrPtr, arrayTy, end, err := l.arrayLValue(block, o.Object)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		structTy, ok := arrayTy.ElemType.(*lltypes.StructType)
+		if !ok {
+			return nil, nil, nil, false, fmt.Errorf("llvm: element in place is not a struct (%s)", arrayTy.ElemType)
+		}
+		elemPtr, end, err := l.elementPtr(end, o, arrPtr, arrayTy)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		return elemPtr, structTy, end, true, nil
+	}
+	return nil, nil, nil, false, nil
 }
 
 // namedStructFields returns the declared fields (name + order) of a named-struct

@@ -103,16 +103,19 @@ func TestExec_StructInstances(t *testing.T) {
 }
 
 // TestEmit_StructInstanceIR pins the emitted shape: construction builds the
-// declared struct type via insertvalue and field access reads it via extractvalue.
+// declared struct type via insertvalue; a field of a struct with storage is read in place
+// (a gep and a load of the field alone, never the struct loaded whole), and a field of a
+// value without storage — a call's result — by extractvalue.
 func TestEmit_StructInstanceIR(t *testing.T) {
 	t.Parallel()
 	got, err := emitSource(t, `
 	struct Node {
 		value: u8,
 	}
+	let make = () -> Node => Node { value: 7 }
 	let main = () -> u8 => {
 		let n = Node { value: 42 }
-		n.value
+		n.value + make().value
 	}
 	`)
 	if err != nil {
@@ -121,11 +124,16 @@ func TestEmit_StructInstanceIR(t *testing.T) {
 	for _, want := range []string{
 		"%Node = type { i8 }",
 		"insertvalue",
+		"getelementptr %Node, %Node* %",
+		"load i8, i8* %",
 		"extractvalue",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("emitted IR missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "load %Node") {
+		t.Errorf("a field read loaded the whole struct:\n%s", got)
 	}
 }
 
