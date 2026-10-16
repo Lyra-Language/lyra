@@ -121,6 +121,14 @@ func (tc *TypeChecker) checkLiteralRange(varName string, expr ast.Expression, ta
 			}
 		}
 		return
+	case *ast.UnsafeBlockExpr:
+		// The value-position sibling propagateExpected follows too (rule 8): without it
+		// `let x: u8 = unsafe { 300 }` was accepted, the leaf left at i64 because it did
+		// not fit, and printed 300 from a u8 (10/16).
+		if e.Body != nil {
+			tc.checkLiteralRange(varName, e.Body, targetType)
+		}
+		return
 	}
 	// A newtype is checked against its base — a Percent value is a u8 and cannot
 	// hold 300 either. Skipped when the newtype carries a range constraint, since

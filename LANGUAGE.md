@@ -303,7 +303,7 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 
 - **The spelling is the flavor**: `[1, 2, 3]` is a dynamic `[]T` (a heap box; allocates, so `noalloc` refuses it) and `#[1, 2, 3]` a fixed `[3]T` (inline storage; never allocates). No context changes it, anywhere — an annotation, argument, return, payload, receiver or branch.
 - **Neither converts** (`lyra-E079`, naming the other spelling): `[1, 2]` where a `[2]i64` is wanted, `#[1, 2]` where a `[]i64` is. A fixed-array binding does not widen either (`let xs = #[1, 2]; xs.map(f)` is refused); `.slice(0, n)` is the explicit copy.
-- **Element types still come from context**: `let xs: []u8 = [1, 2]`, `let m: [][]u8 = [[1], [2, 3]]`, `-> []u8 => if c { [1] } else { [2, 3] }`. An empty `[]` takes any element type; `#[]` is `[0]T`.
+- **Element types still come from context**: `let xs: []u8 = [1, 2]`, `let m: [][]u8 = [[1], [2, 3]]`, `-> []u8 => if c { [1] } else { [2, 3] }`. An empty `[]` takes any element type; `#[]` is `[0]T`. A comprehension's result takes it the same way (`let xs: []u8 = [i in 0..<3 | 7]`, `[p in 0..<4 | None]` under `[]Maybe<i16>`), and so does each element of a tuple literal, a construction inside included (`(9, Some(-3))` under `(u8, Maybe<i16>)`).
 - `#[` is one token: `# [1]` is not a fixed array. Array *patterns* (`[a, b, ...rest]`) match either flavor.
 - **`==`/`!=` are structural**: a fixed array compares element-wise, a dynamic array by length and then elements in order, recursing into nested arrays, strings, structs and `data` payloads.
 - Elements: any type but `void` (tuples, raw pointers, anonymous structs), optionally with one allocation or `weak` modifier (`[]shared Node`).

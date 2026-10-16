@@ -4442,6 +4442,27 @@ func (tc *TypeChecker) arrayElementContext(loc ast.Location) types.Type {
 	return tc.resolveTypeIfKnown(elem, loc)
 }
 
+// tupleElementContexts is arrayElementContext for an anonymous tuple literal of n
+// elements: the type the innermost context wants each element to have, nil for one that
+// still mentions a variable, and nil altogether where the context is no tuple of n.
+func (tc *TypeChecker) tupleElementContexts(n int, loc ast.Location) []types.Type {
+	want := tc.currentExpectedType()
+	if want == nil {
+		return nil
+	}
+	tt, ok := tc.stripNewtypeResolving(want, loc).(types.TupleType)
+	if !ok || len(tt.Elements) != n {
+		return nil
+	}
+	out := make([]types.Type, n)
+	for i, elem := range tt.Elements {
+		if elem != nil && mentionsNoTypeVar(elem) {
+			out[i] = tc.resolveTypeIfKnown(elem, loc)
+		}
+	}
+	return out
+}
+
 // elementTakesContext applies an array literal's element context to one element before
 // the elements are joined, and answers the element's type afterwards.
 //
@@ -4940,10 +4961,32 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 		// Anonymous tuple: structural, so every element's type is required (no
 		// declaration exists to fall back on for a failed element).
 		elements := make([]types.Type, len(expr.Elements))
+		// **The context reaches each element before it is inferred**, as an array
+		// literal's does (inferArrayLiteralType): a construction inside solves against the
+		// element it is wanted as. Without it `(9, Some(-3))` under `(u8, Maybe<i16>)`
+		// solved `Some(-3)` alone, as `Maybe<i64>`, and assignability refused the tuple at
+		// a binding, an argument and a `push` alike — before the annotation that settled
+		// it was consulted — while `(9, None)`, left open, was accepted (10/16).
+		elemContexts := tc.tupleElementContexts(len(expr.Elements), expr.GetLocation())
 		for i, elem := range expr.Elements {
+			restoreExpected := func() {}
+			if elemContexts != nil {
+				restoreExpected = tc.pushExpectedType(elemContexts[i], elem.GetLocation())
+			}
 			t := tc.inferExprType(elem)
+			restoreExpected()
 			if t == nil {
 				return nil
+			}
+			if elemContexts != nil && elemContexts[i] != nil {
+				var reported bool
+				t, reported = tc.elementTakesContext(elem, t, elemContexts[i])
+				// The element was refused for its context and said so; the literal has
+				// failed, as an array literal's does, so the site that pushed the context
+				// does not refuse it a second time.
+				if reported {
+					return nil
+				}
 			}
 			// Keep an untyped leaf untyped (don't promote to i64/f64 here) so a
 			// surrounding context — a tuple annotation, a data-ctor or struct tuple

@@ -26,22 +26,52 @@ func (tc *TypeChecker) inferArrayCompType(comp *ast.ArrayCompExpr) types.Type {
 			"an array comprehension needs at least one clause, as in `[ x in xs | x ]`")
 		return nil
 	}
+	// **The context reaches the result before it is inferred**, as it reaches an array
+	// literal's elements (inferArrayLiteralType). Until 10/16 the result was typed alone, so
+	// `[i in 0..<3 | 7]` under `[]u8` was settled at `[]i64` and refused before the
+	// annotation was consulted, and `[p in 0..<4 | None]` under `[]Maybe<i16>` never had
+	// its parameter solved (lyra-E073), where `[7, 7]` and `[None; 4]` were both accepted.
+	// The clauses and guards are statements of the comprehension, not its value, so they
+	// are checked behind a barrier.
+	elemContext := tc.comprehensionElementContext(comp.GetLocation())
 	var result types.Type
 	tc.enterScope(comp, func() {
-		for i := range comp.Generators {
-			tc.bindGenerator(&comp.Generators[i])
-		}
-		for _, guard := range comp.Guards {
-			tc.checkComprehensionGuard(guard)
+		tc.withoutExpectedType(func() {
+			for i := range comp.Generators {
+				tc.bindGenerator(&comp.Generators[i])
+			}
+			for _, guard := range comp.Guards {
+				tc.checkComprehensionGuard(guard)
+			}
+		})
+		restoreExpected := func() {}
+		if elemContext != nil {
+			restoreExpected = tc.pushExpectedType(elemContext, comp.Result.GetLocation())
 		}
 		result = tc.inferExprType(comp.Result)
+		restoreExpected()
 	})
 	if result == nil {
 		return nil
 	}
-	// An untyped literal result settles to its default width, exactly as it would in an
-	// array literal: the element type is the array's representation, so it cannot stay
-	// untyped once the comprehension has a type.
+	if elemContext != nil {
+		// An untyped literal result is left untyped, as an array literal's element is, for
+		// the context to narrow (propagateExpected's comprehension arm, which also checks
+		// that it fits); an open construction takes the instantiation now.
+		if isUntypedNumeric(result) {
+			out := types.DynamicArrayType{ElementType: result}
+			tc.typeTable.Set(comp, out)
+			return out
+		}
+		var reported bool
+		result, reported = tc.elementTakesContext(comp.Result, result, elemContext)
+		if reported {
+			return nil
+		}
+	}
+	// With no context, an untyped literal result settles to its default width, exactly as
+	// it would in an array literal: the element type is the array's representation, so it
+	// cannot stay untyped once the comprehension has a type.
 	if types.IsNumeric(result) {
 		result = promoteToDefault(result)
 		tc.propagateExpectedType(comp.Result, result)
@@ -49,6 +79,22 @@ func (tc *TypeChecker) inferArrayCompType(comp *ast.ArrayCompExpr) types.Type {
 	out := types.DynamicArrayType{ElementType: result}
 	tc.typeTable.Set(comp, out)
 	return out
+}
+
+// comprehensionElementContext is the element type the innermost context wants a
+// comprehension's results to have: a `[]T` context's `T`, since a comprehension always
+// builds a dynamic array — a `[N]T` context offers it nothing, the mismatch being
+// assignability's to report.
+func (tc *TypeChecker) comprehensionElementContext(loc ast.Location) types.Type {
+	want := tc.currentExpectedType()
+	if want == nil {
+		return nil
+	}
+	da, ok := tc.stripNewtypeResolving(want, loc).(types.DynamicArrayType)
+	if !ok || da.ElementType == nil || !mentionsNoTypeVar(da.ElementType) {
+		return nil
+	}
+	return tc.resolveTypeIfKnown(da.ElementType, loc)
 }
 
 // bindGenerator infers a generator's source and binds its name to the source's element
