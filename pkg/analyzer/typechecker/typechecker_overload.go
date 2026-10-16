@@ -52,7 +52,36 @@ func receiverAccepts(symTable *symbols.SymbolTable, fn *ast.LambdaExpr, recvType
 		return false
 	}
 	written := expandAliases(recv.Type, symTable, fn.GetLocation())
+	written = keyedReceiver(written, symTable, fn.GetLocation())
 	return unifyGenericTarget(written, recvType, lambdaTypeVars(fn), map[string]types.Type{})
+}
+
+// keyedReceiver stamps a written receiver type's head with the declaration it names from
+// the function's own module, so the unifier can tell two modules' same-named types apart:
+// `alpha.Player`'s `bump` and `beta.Player`'s were both "a `Player`", and `p.bump()` on
+// either was refused as ambiguous (10/16). A name that is no type there (a type variable)
+// is left as it is.
+func keyedReceiver(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) types.Type {
+	if symTable == nil {
+		return t
+	}
+	switch v := t.(type) {
+	case types.UnresolvedType:
+		if v.Key == "" {
+			if _, ok := symTable.LookupTypeFrom(v.Name, loc); ok {
+				v.Key = symTable.TypeKey(v.Name, loc)
+			}
+		}
+		return v
+	case types.ParameterizedType:
+		if v.Key == "" {
+			if _, ok := symTable.LookupTypeFrom(v.Name, loc); ok {
+				v.Key = symTable.TypeKey(v.Name, loc)
+			}
+		}
+		return v
+	}
+	return t
 }
 
 // expandAliases replaces every transparent `alias X = T` alias named anywhere in t with

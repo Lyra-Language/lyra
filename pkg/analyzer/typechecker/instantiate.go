@@ -682,8 +682,7 @@ func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr, name string) st
 	for _, set := range tc.symTable.OverloadSets {
 		for _, member := range set.Lambdas() {
 			if member == lambda {
-				head, _ := types.HeadName(recv.Type)
-				return head
+				return tc.receiverDisc(recv.Type, lambda)
 			}
 		}
 	}
@@ -698,10 +697,29 @@ func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr, name string) st
 	// visible. Only a name with a rival gets a discriminant, which keeps every symbol that
 	// had none exactly as it was.
 	if tc.nameIsDeclaredElsewhere(name, lambda) {
-		head, _ := types.HeadName(recv.Type)
-		return head
+		return tc.receiverDisc(recv.Type, lambda)
 	}
 	return ""
+}
+
+// receiverDisc is a receiver-keyed generic's discriminant: its receiver's head — and, where
+// that head names a type declared in more than one module, the declaration's key instead.
+// Two modules' `MusicPlayer`, each with a generic `frame`, were both `frame$MusicPlayer` at
+// one binding: one body was emitted and both modules' calls ran it, in silence — a copy of
+// a module beside the original ran the original's code over its own struct (10/16). Keys are
+// on exactly the names declared more than once (KeyAmbiguousTypes), so every other symbol
+// stays as it was.
+func (tc *TypeChecker) receiverDisc(recvType types.Type, lambda *ast.LambdaExpr) string {
+	head, _ := types.HeadName(recvType)
+	if head == "" || tc.symTable == nil {
+		return head
+	}
+	if decl, ok := tc.symTable.LookupTypeFrom(head, lambda.GetLocation()); ok {
+		if key := types.NominalKey(decl.Type); key != "" {
+			return key
+		}
+	}
+	return head
 }
 
 // nameIsDeclaredElsewhere reports whether some *other* declaration — in this module or in

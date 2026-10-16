@@ -88,10 +88,10 @@ Package management, versioning and separate compilation are out of scope by deci
   anywhere else, including later in a block. Found writing `std.rar` (09/29), whose
   parameters are named `data` throughout.
 
-- **A tuple literal's context does not reach a `Some(…)` inside it.** `let b: (u8,
-  Maybe<i16>) = (9, Some(-3))` is refused ("cannot assign AnonymousTuple(integer literal,
-  Maybe<i64>) …") at a binding, an argument and a `push` alike, though `(9, None)` works;
-  and the message spells the type `AnonymousTuple(…)` rather than `(u8, Maybe<i16>)`.
+- **Diagnostics spell types as the compiler does, not as source does**:
+  `AnonymousTuple(u8, Maybe<i16>)`, `DynamicArray<u8>`, `StaticArray<i64, 3>`.
+  `pkg/docgen`'s `typeName` already renders source syntax; diagnostics could use it, but
+  `String()` is also mangled into symbols and ~35 tests assert the old spelling (10/16).
 
 - **A large struct passed bare is a silent copy.** Sheliak's `pure (bus: GenesisBus, …)`
   helpers copied a multi-kilobyte bus on every memory read — two thirds of its frame time,
@@ -593,12 +593,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (`TypeTable.IsDefault`) names its module's top level, but captures, `@must_release` and
   the value-range pass still match its names against the caller's bindings. Each needs a
   probe like `TestMove_ADefaultIsNotTheCallersBinding`, and the skip if it misreads.
-- **[OPEN] A comprehension's literal result is typed before its context reaches it.**
-  `let xs: []u8 = [i in 0..<3 | 7]` is refused as `[]i64` into `[]u8`, where `[7, 7]` is
-  accepted: the comprehension is inferred eagerly and assignability runs before
-  `propagateExpectedType` (which now narrows a comprehension's result, 10/01). Its sharper
-  form: `var art: []Maybe<Texture> = [p in 0..<16 | None]` is lyra-E073, the annotation
-  never solving `None`'s parameter — `[None; 16]` is typed (10/11, std.game).
 - **[OPEN] No `contains` (or `any`) on an array.** `string.contains` exists; for `[]t` a
   program writes the loop — Vega's `project.is_taken` did (10/01). A `contains<t> where t:
   Eq` on arrays, and `any`/`all` taking a predicate, would replace it.
@@ -914,9 +908,6 @@ sets V on every add. What stands between that and a ROM:
   run `examples/genesis/walker.lyra`. Next: DMA (needs a pointer's address as an integer),
   planes and scrolling (name tables, a tilemap loader), the window, 6-button pads, and the
   sound chips; then the engine layer over them (actors, animation from Vega's frames).
-- **[OPEN] A `#[…]` literal argument does not narrow to the parameter's element type**:
-  `sum(#[1, 2, 3])` against `ref [3]u16` is "cannot assign StaticArray<i64, 3>", where a
-  `let` annotation narrows the same literal. Found 09/30 beside const generics.
 - **[DONE 09/30] Interrupt handlers in Lyra**: `@interrupt(vblank)` / `@interrupt(hblank)`;
   a `var` the handler writes is volatile everywhere. Still open: variables written by a
   function the handler *calls* (not seen — read them with `read_volatile`), masking
@@ -949,10 +940,6 @@ sets V on every add. What stands between that and a ROM:
   68000. A console profile should steer to `i16`/`i32`, or make the default per target.
 - **[OPEN] Memory-mapped I/O needs volatile reads and writes** (the VDP ports, the pads):
   LLVM may otherwise merge or drop them.
-- **[OPEN] A literal does not have to fit through a block**: `let big: u8 = { 300 }` (or
-  `unsafe { 300 }`) compiles and holds 44, where `let big: u8 = 300` is refused. The context
-  reaches the leaf (propagateExpected) without the fit check the direct form gets. Found
-  09/30 beside the `unsafe`-block propagation fix.
 - **[OPEN] `data` is a keyword where a call is**: `let data = …` declares, but `data()` and
   `data.f()` do not parse, so a hardware helper named for the VDP's data port has to be
   called something else. Either reserve it everywhere or accept it as a name in expressions.
@@ -985,11 +972,12 @@ sets V on every add. What stands between that and a ROM:
   initializer built on the stack and stored as one value (COMPLETED 10/16).
 - **[OPEN] `-Os` fails for the Genesis**: this LLVM's `opt` refuses `default<Os>` ("use O2 with
   the optsize attribute"); the backend would mark every function `optsize` instead.
-- **[OPEN] Same-named types in two modules confuse method calls**: with `alpha.Player` and
-  `beta.Player` each given a `bump`, `p.bump()` on an `alpha.Player` is refused as ambiguous
-  (`alpha.bump(p)` works). Seen with it, not reproduced alone: a copy of `std.chips.music`
-  beside the real one read `now.voices[k].steady` as false throughout, until the copy's
-  types were renamed.
+- **[DONE 10/16] Same-named types in two modules confused method calls**: refused as
+  ambiguous, and generic methods sharing one body (COMPLETED 10/16).
+- **[OPEN] A generic called twice with untyped lambdas fails the second time**:
+  `let apply<t> = (by: t, f: (t) -> i64) -> i64 => f(by)`, then `apply(5, (x) => x)` twice —
+  the second says "undefined symbol x" and "cannot infer type variable t". Typing either
+  lambda moves the error to the other; at least as old as 09/29.
 - **[OPEN] The Genesis DAC's pitch on hardware**: the Z80 driver plays 0.5% flat in Sheliak
   (the bus held while the frame is queued), and a real Z80's bank-window reads wait about
   3 T-states more, which Sheliak does not model — about 1% more. Measure on a console, then

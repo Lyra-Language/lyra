@@ -90,6 +90,12 @@ Each of these produces something that looks like it works. Other docs cite them 
    - **A type is program-wide — unkeyed — only if its name is declared once**
      (`KeyAmbiguousTypes`). An exported type beside another module's private one of the same
      name was left unkeyed, and inside that module laid out as the private one (09/30).
+   - **Receivers and specializations are told apart by that key too.** A written `self`
+     type is keyed from its function's module (`keyedReceiver`) and the unifier refuses two
+     different keys (`nominalIdentity`), and a generic receiver method's discriminant is the
+     key where the name is declared twice (`receiverDisc`) — named by head alone, two modules'
+     `Player` made `p.bump()` ambiguous, and their generic methods shared one emitted body
+     in silence (10/16).
 
 5. **The backend errors loudly rather than emitting wrong code** — including repeating checks
    the front end made. "Loudly" also means no llir panic and no clang error: `ir.NewPhi`

@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/16/26 — A context reaches what sits inside a literal
+
+Four todo entries, one shape: a context type that reached a value's sibling spellings and
+not this one. Re-run first, as the entries ask — one was stale and one was worse than it said.
+
+- **An anonymous tuple now pushes each element's type before inferring it**, as an array
+  literal always had (`tupleElementContexts`, beside `arrayElementContext`). `(9, Some(-3))`
+  under `(u8, Maybe<i16>)` solved `Some(-3)` alone as `Maybe<i64>`, and assignability
+  refused the tuple at a binding, an argument and a `push` before the annotation was
+  consulted; `(9, None)` worked only because it stayed open. `Ok(-3)` worked too, being
+  half-solved. The entry's second complaint, the `AnonymousTuple(…)` spelling, is every
+  diagnostic's (`DynamicArray<u8>` too) and `String()` feeds symbols, so it is its own entry.
+- **A comprehension's result takes the context's element**, the same way and for the same
+  reason: an untyped literal result stays untyped for `propagateExpected`'s comprehension arm
+  to narrow (it already checked the fit), and an open `None` takes the instantiation. Its
+  clauses and guards are checked behind `withoutExpectedType`, as statements of it rather than
+  its value — measured to change nothing: `[x in [1, 2] | x]` under `[]u8` was refused before
+  and after, `x` being the source's `i64`.
+- **`checkLiteralRange` follows an `unsafe { … }` block**, the arm `propagateExpected` had
+  since 09/30. The entry said a plain block was open too; that was fixed 10/13 with `if` and
+  `match`. And it said the value was truncated to 44 — it was not: the leaf, too big to
+  narrow, stayed `i64`, and a `u8` binding printed 300.
+- **`sum(#[1, 2, 3])` against `ref [3]u16` was already right**; a test keeps it.
+
 ### 10/16/26 — A write through `mut` is charged by its argument
 
 `pure` refused `declare_save(cart)` on a `pure` function's own `var cart` (Sheliak, 09/28),
@@ -38,6 +62,31 @@ LZMA, `std.sevenzip` and `std.rar`.
   could not find (the member form keeps it outside `Arguments`) with `EffectMut` and **no
   message**: a `pure` function was refused by the effect row and told nothing. A missing
   argument for a written slot now reports.
+
+### 10/16/26 — Two modules' same-named types, told apart
+
+`alpha.Player` and `beta.Player`, each with a `bump`: `p.bump()` was "ambiguous" on either.
+Two causes, one shape — a type named by its head alone where its declaration was known:
+
+- **The receiver test compared names.** A written `self` type is a bare `UnresolvedType`,
+  and `unifyGenericTarget` matched nominal types by name. `keyedReceiver` now stamps the
+  written type with the key it resolves to from its function's own module, and the unifier
+  refuses two keys that differ (`nominalIdentity`) — one predicate, so UFCS, overload sets
+  and `receiverFallback` all gain it.
+- **Generic methods shared a body, in silence — the worse half.** A receiver-keyed generic's
+  specialization is `name$<receiver head>$<bindings>`, so `std.chips.music`'s `frame` and a
+  module copied from it, both at `SongTables`, were one symbol: one body emitted, both
+  modules' calls running it. That was yesterday's comparison harness reading `steady` as
+  false throughout with the copy's original type names — its "old" player was running the
+  new one's code on its own struct, or the reverse, and a comparison of one player with
+  itself said "the same". `receiverDisc` uses the type's key where its name is declared more
+  than once (the names `KeyAmbiguousTypes` keys), so every other symbol is unchanged. The
+  steady-channel verification of 10/16 stands: it ran with the copy's types renamed, apart.
+- `TestMethodCall_SameNamedTypesInTwoModules` and `…GenericMethods` pin each; undone, the
+  first reports the ambiguity and the second traps. Vega, Sheliak and Sulafat build as
+  before, and the comparison harness now catches a planted mistake with the names kept.
+- Writing the generic test found an older bug: a generic called twice with untyped lambdas
+  fails the second time (todo.md).
 
 ### 10/16/26 — A global initializer clang could not optimize
 

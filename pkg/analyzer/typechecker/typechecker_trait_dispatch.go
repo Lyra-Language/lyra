@@ -389,6 +389,11 @@ func unifyGenericTarget(implType, receiverType types.Type, generics map[string]b
 		if implName != recvName {
 			return false
 		}
+		// One name, two declarations — two modules' `Player` — is two types, where both
+		// sides say which declaration they mean.
+		if ik, rk := nominalIdentity(implType), nominalIdentity(receiverType); ik != "" && rk != "" && ik != rk {
+			return false
+		}
 		if len(implArgs) == 0 || len(recvArgs) == 0 {
 			return true // one side carries no type arguments: match on head name
 		}
@@ -403,6 +408,18 @@ func unifyGenericTarget(implType, receiverType types.Type, generics map[string]b
 		return true
 	}
 	return types.TypesEqual(implType, receiverType)
+}
+
+// nominalIdentity is the declaration a nominal type names, `<module>::<name>`, where it
+// carries one; "" where it does not (an unstamped name), which matches by name alone.
+func nominalIdentity(t types.Type) string {
+	switch v := t.(type) {
+	case types.UnresolvedType:
+		return v.Key
+	case types.ParameterizedType:
+		return v.Key
+	}
+	return types.NominalKey(t)
 }
 
 // nominalHead extracts the head name and type arguments of a nominal type: a
