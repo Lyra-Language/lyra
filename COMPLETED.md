@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 10/16/26 — A song's frame on the 68000: steady channels
+
+The heroes' theme cost 0.29 of a frame an update on the 68000; it costs 0.18 now (a
+benchmark ROM playing it, timed through the backdrop, 120 updates: 35 frames to 22).
+
+- **The cost was flat.** A PC profile found no hot spot in `update_music`, which inlines
+  the whole player — 12 KB of branchy code where a bool is tested in five instructions and an
+  overflow check goes through the status register. Timing the player with parts removed
+  placed it: sounding the channels 12 frames, the loop over thirteen of them 7, starting
+  notes 6, reading cells 4, the DAC's rate 4. **Rearranging code moved the time both ways** —
+  looping to the constant `CHANNELS` made it 34 — since what LLVM inlines and spills in one
+  huge function changes with it; only doing less held.
+- **Steady channels** (`MusicChannel.steady`): a held note with no envelope, slide, vibrato
+  or arpeggio, nothing left to write, sounds the same next tick, so `sound` returns at once,
+  and between rows a resting channel is skipped. Anything that changes it clears the flag —
+  a cell remembered, a note let go or silenced, an effect taking the channel, a mute changed
+  — and PSG 3 is never skipped, since the noise lends its period back.
+- **The DAC's rate** — a 32-bit multiply and divide — is worked out when its pitch moves, not
+  every frame; FM 3's keys look at the four voices that can be operators, not thirteen.
+- **`patch_write` divided an `i64` by 7** for 28 of a patch's 31 writes, each a compiler-rt
+  64-bit divide: half a frame for every instrument change, which an imported song makes
+  often. A table of the 28 registers now (a tenth of a frame), and the patch by `ref`.
+- **Checked by playing both players side by side**: the old one, copied as a module, against
+  the new over Furnace's 25 Genesis demos and Vega's projects, mutes switched and effects
+  holding channels, 4000 frames each — the same writes every frame. The comparison caught a
+  missing re-sound after a mute, a skipped held channel and a stale DAC rate when each was
+  planted. **Its copy first had the real module's type names**, and with them read
+  `steady` as false everywhere — a false "the same" until the types were renamed (todo.md).
+
+Found on the way, in todo.md: a Genesis build inlined less crashes, `-Os` fails there, and
+two modules' same-named types make a method call ambiguous.
+
 ### 10/15/26 — Extended FM 3, and where a song's frame went
 
 **`std.chips.music` plays Furnace's extended CH3**: a `Tune` marked `extended` has thirteen

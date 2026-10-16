@@ -122,7 +122,7 @@ pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: Music
   // The Z80 stopped only while what was made is copied to it: a byte copied a byte.
   take_bus()
   queue_effects(effect_writes)
-  for i in 0..<writes { queue_fm(
+  for i: i16 in 0..<i16(writes) { queue_fm(
     music_fm[i * 3],
     music_fm[i * 3 + 1],
     music_fm[i * 3 + 2]
@@ -709,7 +709,7 @@ let effects_frame<const N: i64, const P: i64> = (
 }
 
 let queue_effects = (writes: i64) -> void => {
-  for i in 0..<writes { queue_fm(
+  for i: i16 in 0..<i16(writes) { queue_fm(
     effects_fm[i * 3],
     effects_fm[i * 3 + 1],
     effects_fm[i * 3 + 2]

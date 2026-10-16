@@ -252,6 +252,11 @@ pub struct MusicChannel {
   operator: i16 = 0,
   op_keyed: bool = false,
   op_struck: bool = false,
+  /// Sounding as it did last tick and will next: no envelope, slide, vibrato or arpeggio,
+  /// nothing waiting to be written — so [sound] has nothing to do until the channel's state
+  /// changes, which clears it. The 68000's frame is too short to work out every tick what
+  /// a held note already is.
+  steady: bool = false,
 }
 
 /// The song playing.
@@ -278,6 +283,10 @@ pub struct MusicPlayer {
   /// FM 3's operators keyed on, as last written; whether its special mode is on.
   ch3_keys: u8 = 0,
   ch3_special: bool = false,
+  /// The mutes the channels last sounded with, and the pitch FM 6's sample's rate was last
+  /// worked out for (-1: none): each worked out again only when it changes.
+  heard_muted: u16 = 0,
+  dac_pitch: i32 = -1,
 }
 
 /// A player with nothing playing.
@@ -364,9 +373,18 @@ impl MusicPlayer {
   ) -> void => {
     let reading = self.tick == 0
     let at = i32(self.song.first_order) + self.order
+    // A mute changed: every channel's level worked out again.
+    if self.muted != self.heard_muted {
+      for k: i16 in 0..<CHANNELS { self.voices[k].steady = false }
+      self.heard_muted = self.muted
+    }
     // PSG 3 is the noise's pitch while the noise sounds.
     let noise_owns = self.voices[9].sounding && !is_held(held, 9)
     for k: i16 in 0..<self.channels() {
+      // Between rows a resting channel has nothing to do — unless an effect has it, or it is
+      // PSG 3, whose period the noise may have just given back.
+      let skipped = self.voices[k].resting() && !is_held(held, k) && k != FIRST_PSG + 2
+      if !reading && skipped { continue }
       if reading {
         let cell = tables.cell(tables.pattern(at, i32(k)) + self.row)
         self.song_control(cell)
@@ -394,6 +412,7 @@ impl MusicPlayer {
       if k == FIRST_PSG + 2 && noise_owns {
         self.voices[k].heard_pitch = -1
         self.voices[k].heard_volume = -1
+        self.voices[k].steady = false
         continue
       }
       let silent = (self.muted >> u16(k)) & 1 == 1
@@ -415,7 +434,8 @@ impl MusicPlayer {
     if !self.song.extended { return }
     var off = self.ch3_keys
     var on: u8 = 0
-    for k: i16 in 0..<CHANNELS {
+    // FM 3 and the operator channels: the only voices an operator plays on.
+    for k in OPERATOR_VOICES {
       let op = self.voices[k].operator
       if op == 0 { continue }
       let bit = u8(1) << u8(op - 1)
@@ -438,10 +458,15 @@ impl MusicPlayer {
       self.voices[k].struck = false
       self.dac.note += 1
       self.dac.sample = tables.sample(i32(self.voices[k].instrument))
+      self.dac_pitch = -1
     }
     self.dac.playing = self.voices[k].sounding && self.voices[k].sampled
     if self.dac.playing {
-      self.dac.rate = sample_rate(self.dac.sample.rate, self.voices[k].heard_pitch)
+      // Its rate a multiply and a divide the 68000 has not got: worked out as the pitch moves.
+      if self.voices[k].heard_pitch != self.dac_pitch {
+        self.dac.rate = sample_rate(self.dac.sample.rate, self.voices[k].heard_pitch)
+        self.dac_pitch = self.voices[k].heard_pitch
+      }
       self.dac.level = self.voices[k].heard_volume
     }
   }
@@ -507,10 +532,15 @@ impl MusicChannel {
     self.dac = dac
   }
 
+  /// Whether nothing is due on the channel this tick: it is [steady], and no note is delayed
+  /// to a tick or cut at one.
+  let resting = pure (self) -> bool => self.steady && self.delay_at < 0 && self.cut_at < 0
+
   /// An effect has the channel: the music sounds there again from its next note, its
   /// patch written again.
   let lent = (self: mut) -> void => {
     self.sounding = false
+    self.steady = false
     self.written = -1
     self.heard_pitch = -1
     self.heard_volume = -1
@@ -597,6 +627,7 @@ impl MusicChannel {
       return
     }
     self.released = true
+    self.steady = false
     self.step = i16(e.release) + 1
     if self.operator > 0 {
       self.op_keyed = false
@@ -627,6 +658,7 @@ impl MusicChannel {
 
   /// What a cell sets that lasts: its instrument, volume and effects' memories.
   let remember = (self: mut, cell: Cell) -> void => {
+    self.steady = false
     if cell.instrument != EMPTY { self.instrument = i16(cell.instrument) }
     if cell.volume != EMPTY { self.volume = i16(cell.volume.min(15)) << 4 }
     self.arpeggio = 0
@@ -691,8 +723,8 @@ impl MusicChannel {
       if i32(self.written) != ins {
         let patch = tables.patch(ins)
         let op = self.operator
-        for r in 0..<7 {
-          let (bank, reg, value) = patch_write(2, patch, i64(op - 1) * 7 + r)
+        for r: i16 in 0..<7 {
+          let (bank, reg, value) = patch_write(2, patch, i64((op - 1) * 7 + r))
           out.put_fm(fm, bank, reg, value)
         }
         let (bank, reg, value) = patch_write(2, patch, 28)
@@ -758,6 +790,7 @@ impl MusicChannel {
     out: mut Out
   ) -> void => {
     self.sounding = false
+    self.steady = false
     self.heard_volume = -1
     self.heard_pitch = -1
     if self.operator > 0 {
@@ -802,7 +835,7 @@ impl MusicChannel {
     fm: mut [768]u8,
     out: mut Out
   ) -> void => {
-    if !self.sounding { return }
+    if !self.sounding || self.steady { return }
     var pitch = self.pitch + i32(self.fine)
     var level = self.volume >> 4
     let e = self.envelope_of(tables, k)
@@ -831,6 +864,11 @@ impl MusicChannel {
     } else {
       self.sound_psg(k, pitch, level, psg, out)
     }
+    self.steady = e.count == 0 &&
+      self.arpeggio == 0 &&
+      self.vibrato_depth == 0 &&
+      self.slide == 0 &&
+      self.volume_slide == 0 && self.target == self.pitch && !self.keying
   }
 
   /// The envelope's step for this frame: the next, or — past its release while the note is
@@ -891,13 +929,13 @@ impl MusicChannel {
       if level != self.heard_volume {
         // Its carriers quieter — an operator channel's own operator only, if it is one.
         let carriers = carrier_mask(patch.feedback_algorithm & 7)
-        for o in 1..<=4 {
-          if (carriers >> u8(o - 1)) & 1 == 0 || (op > 0 && i64(op) != o) { continue }
+        for o: i16 in 1..<=4 {
+          if (carriers >> u8(o - 1)) & 1 == 0 || (op > 0 && op != o) { continue }
           let base = patch.ops[(o - 1) * 7 + 1] & 0x7F
           out.put_fm(
             fm,
             bank,
-            0x40 + operator_offset(o) + slot,
+            0x40 + operator_offset(i64(o)) + slot,
             quieter(base, u8(level))
           )
         }
@@ -976,6 +1014,15 @@ impl Out {
     self.fm += 1
   }
 }
+
+/// The voices FM 3's operators play on in an extended song: FM 3, then the operator
+/// channels.
+const OPERATOR_VOICES: [4]i16 = #[
+  2,
+  FIRST_OPERATOR,
+  FIRST_OPERATOR + 1,
+  FIRST_OPERATOR + 2
+]
 
 /// The low byte of FM 3's operators' own frequencies in special mode, operator 1 to 4 —
 /// A9, AA, A8, and the channel's A2 — each with its high byte four above.

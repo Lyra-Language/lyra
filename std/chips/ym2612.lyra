@@ -1066,17 +1066,25 @@ pub const PATCH_WRITES: i64 = 31
 /// Write `k` (0 to [PATCH_WRITES] - 1) of `patch` on channel `channel` (0–5): its bank, its
 /// register and the value — the operators' registers in [OPERATOR_REGISTERS]' order, then
 /// feedback and algorithm, then the sensitivities with both stereo bits on, then the LFO.
-pub let patch_write = pure (channel: u8, patch: FmPatch, k: i64) -> (u8, u8, u8) => {
+pub let patch_write = pure (channel: u8, patch: ref FmPatch, k: i64) -> (u8, u8, u8) => {
   let bank: u8 = if channel < 3 { 0 } else { 1 }
   let ch = channel % 3
-  if k < 28 {
-    let op = k / 7 + 1
-    return (bank, OPERATOR_REGISTERS[k % 7] + operator_offset(op) + ch, patch.ops[k])
-  }
+  if k < 28 { return (bank, PATCH_REGISTERS[k] + ch, patch.ops[k]) }
   if k == 28 { return (bank, 0xB0 + ch, patch.feedback_algorithm) }
   if k == 29 { return (bank, 0xB4 + ch, 0xC0 | (patch.sensitivity & 0x37)) }
   (0, 0x22, patch.lfo & 0xF)
 }
+
+/// Operator write `k`'s register on channel 1: [OPERATOR_REGISTERS]`[k % 7]` at operator
+/// `k / 7 + 1`'s [operator_offset]. A table, as the 68000 divides an `i64` through a
+/// compiler-rt call some thousands of cycles long — 28 of them a patch, a frame's worth
+/// each time a song changed a channel's instrument (10/16).
+const PATCH_REGISTERS: [28]u8 = #[
+  0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90,
+  0x38, 0x48, 0x58, 0x68, 0x78, 0x88, 0x98,
+  0x34, 0x44, 0x54, 0x64, 0x74, 0x84, 0x94,
+  0x3C, 0x4C, 0x5C, 0x6C, 0x7C, 0x8C, 0x9C,
+]
 
 /// The two writes that set channel `channel`'s note: A4 (block and the F-number's top three
 /// bits) first, as the chip latches it, then A0 (its low eight).

@@ -978,11 +978,22 @@ sets V on every add. What stands between that and a ROM:
   aggregate too big for registers, made `fastcc` by the optimizer, read the hidden pointer
   from `d0` while its caller passed it in `a0` (10/15). Lyra moves every aggregate through
   memory on the 68000 since (COMPLETED.md 10/15); a reduced IR case would settle it.
-- **[OPEN] `std.chips.music` costs a quarter of a frame on the 68000**: the heroes' theme,
-  extended, 0.29 of a frame an update (0.23 not extended), after whole-struct field reads and
-  compiler-rt's divide and multiply were fixed (0.45, COMPLETED 10/15). What is left is flat
-  across the channel loop — spills, checks — and `i64` index arithmetic: M68k LLVM makes
-  `x * 3` on `i64` a `__muldi3` call, still 8%.
+- **[OPEN] `std.chips.music` costs a fifth of a frame on the 68000**: the heroes' extended
+  theme 0.18 of a frame an update (0.29 before steady channels, COMPLETED 10/16). What is left
+  is flat across the channel loop's code — a bool tested in five instructions, overflow checks
+  through the status register, spills — and `MUSIC_STARTS[order * 13 + channel]`, which LLVM
+  widens to an `i64` multiply (`__muldi3`) for its bounds check.
+- **[OPEN] A Genesis program inlined less crashes**: the music benchmark built with
+  `opt -inline-threshold=50` (or 100, or 0) ends in `exit` with no panic written — a CPU-level
+  fault or a bad return, not a Lyra trap. A large game crosses LLVM's inlining limits on its
+  own; reduce it (COMPLETED 10/16 has the setup).
+- **[OPEN] `-Os` fails for the Genesis**: this LLVM's `opt` refuses `default<Os>` ("use O2 with
+  the optsize attribute"); the backend would mark every function `optsize` instead.
+- **[OPEN] Same-named types in two modules confuse method calls**: with `alpha.Player` and
+  `beta.Player` each given a `bump`, `p.bump()` on an `alpha.Player` is refused as ambiguous
+  (`alpha.bump(p)` works). Seen with it, not reproduced alone: a copy of `std.chips.music`
+  beside the real one read `now.voices[k].steady` as false throughout, until the copy's
+  types were renamed.
 - **[OPEN] The Genesis DAC's pitch on hardware**: the Z80 driver plays 0.5% flat in Sheliak
   (the bus held while the frame is queued), and a real Z80's bank-window reads wait about
   3 T-states more, which Sheliak does not model — about 1% more. Measure on a console, then
