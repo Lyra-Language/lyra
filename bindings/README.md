@@ -210,6 +210,10 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   edited) by `gen/gen.lyra` from dear_bindings' `dcimgui.json`; the generator's header has
   the command and the type mapping. Rerun it after bumping the pin;
   `cmd/lyrac/imgui_example_test.go` fails when the committed files are not what it makes.
+- **On macOS `io.key_ctrl()` is ⌘ and `io.key_super()` is Ctrl**: ImGui swaps them
+  (`ConfigMacOSXBehaviors`, on by default there, off on the headless host), so Ctrl reads as
+  "the shortcut key". A program needing the physical keys — a terminal — swaps back when
+  `io.config_mac_osx_behaviors()` (Sulafat's `ui/modifiers.lyra`).
 - **Fields are methods**: `generated.cpp` is a C accessor per field of `ImGuiIO`,
   `ImGuiStyle` and `ImGuiViewport` (`FIELD_STRUCTS`), so `get_io().delta_time()`,
   `get_style().set_alpha(0.9)`, `get_style().set_colors(COL_TEXT, v)`. An array's index is
