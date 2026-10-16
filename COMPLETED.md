@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 10/16/26 — A write through `mut` is charged by its argument
+
+`pure` refused `declare_save(cart)` on a `pure` function's own `var cart` (Sheliak, 09/28),
+though writing `cart.saves += 1` there inline was accepted: `EffectMut` is one bit, so a
+callee writing only through its `mut` parameters looked like one writing a capture. Hit four
+times by 09/29 — it shaped `inflate`, made romtest's zip writer impure, and kept `pure` off
+LZMA, `std.sevenzip` and `std.rar`.
+
+- **The rule is the direct write's, moved to the call.** The callee's write lands on the
+  argument's place, so the caller is charged as if it wrote there: nothing on its own local
+  (or a field or element of one), the write passed on through its own `mut` parameter, and
+  `EffectMut` on a capture. That reuses the three cases `p.x = v` already had rather than
+  inventing a fourth, so it inherits their known gap (observable aliasing, todo.md's (e)) and
+  no new one.
+- **It is callback polymorphism's shape again**: a body's written `mut` parameters
+  (`paramWrites`) are left out of its base (`beyondParams`) and charged per argument at the
+  call site, in the same monotone fixpoint. The full row in `impureLambdas` keeps `EffectMut`,
+  so W018, `det`, bound joins and callbacks passed as values — every reader with no argument
+  in hand — read exactly what they did before. Only the two call-site charges changed.
+- **The writer itself is not `pure`.** Treating a `mut`-writing function as `pure`, D's
+  "weakly pure", was the alternative; it would change what `pure` promises to every caller
+  (no longer memoizable) to save writing nothing on a helper. The decoders' helpers stay
+  unmarked and their entry points are `pure`, which is where W018 now points.
+- **Found on the way**: `methodArgumentAt` applied `x.m(a)`'s receiver offset to
+  `Trait::m(x, a)` too, which passes its receiver first — so a path call's callback was read
+  from the receiver, refusing a pure one. And the first cut charged a `mut Self` receiver it
+  could not find (the member form keeps it outside `Arguments`) with `EffectMut` and **no
+  message**: a `pure` function was refused by the effect row and told nothing. A missing
+  argument for a written slot now reports.
+
 ### 10/16/26 — A struct return that popped what nobody pushed
 
 The music benchmark crashed on the 68000 once `opt` inlined less (`-inline-threshold` 120 or

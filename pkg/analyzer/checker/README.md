@@ -151,9 +151,22 @@ Asked of value-**producing** forms only (a `[]T` identifier allocates nothing):
   whole-value bindings alias (not `Some v`'s payload).
 - **Trait-impl methods**: `methodEffects`/`methodCallEffect`; parameter types come from the trait
   declaration via `collectMethodSignatures`; bounds via `signatureBound`.
-- **Receiver offset hazard**: trait signature index i is `Arguments[i-1]` (`methodArgumentAt`).
-  Off-by-one is silent; a two-callback test guards it.
+- **Receiver offset hazard**: in `x.m(a)` trait signature index i is `Arguments[i-1]` and 0 is
+  the callee's object; in `Trait::m(x, a)` it is `Arguments[i]` (`methodArgumentAt`, both
+  shapes). Off-by-one is silent; a two-callback test and a path-call test guard it.
 - Still conservative (charged `AllEffects`): callbacks via struct field, call result, array element.
+
+### Writes through `mut` parameters
+
+- The same arrangement for a write: a body's writes through its `mut` parameters (directly, or by
+  handing one to a callee's written slot) are **`paramWrites`**, left out of **`beyondParams`**,
+  and a call site charges each by its argument (`callable.mutArgument`): free on the caller's own
+  local, passed on through the caller's own `mut` parameter, `EffectMut` on a capture.
+- **`impureLambdas`/`impureMethods` still carry `EffectMut` for them**, so every reader without a
+  call site in hand — W018, `det`, bound joins, operators, callbacks passed as values — stays
+  conservative. Only `callEffect`/`methodCallEffect` read `lambdaBase`/`methodBase`.
+- A `pure` function's own `mut`-parameter writes are still refused, including the indirect one
+  (`mutArgument` reports it); a missing argument for a written slot is reported, never skipped.
 
 ### Declared callback bounds (`f: pure () -> t`)
 

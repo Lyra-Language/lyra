@@ -26,7 +26,7 @@ module std.sevenzip
 //! (PPMd, BZip2, …), a chain of coders (a filter such as BCJ in front of the compressor,
 //! and encryption, which is one), and "additional streams", which no 7-Zip writes.
 //!
-//! **Not `pure`**, because LZMA is not yet (see `std.compress`).
+//! **`pure`**, as `std.compress`'s decoders are.
 
 import std.compress.{ inflate, lzma_decode, lzma2_decode, crc32 }
 
@@ -77,7 +77,7 @@ pub let is_7z = pure (data: []u8) -> bool => {
 
 /// An archive's table of contents: its start header checked, its header found (and
 /// decompressed, if it is encoded) and read.
-pub let open_7z = (data: []u8) -> Result<SevenZip, string> => {
+pub let open_7z = pure (data: []u8) -> Result<SevenZip, string> => {
   if !is_7z(data) { return Err("not a 7z archive") }
   if data.len() < 32 { return Err("a 7z archive cut off inside its start header") }
   if crc32(data.slice(12, 32)) != u32_le(data, 8) {
@@ -108,7 +108,7 @@ pub let open_7z = (data: []u8) -> Result<SevenZip, string> => {
 }
 
 /// An entry's bytes: its block decompressed, the entry's own cut out and checked.
-pub let extract_7z = (
+pub let extract_7z = pure (
   archive: ref SevenZip,
   entry: ref SevenZipEntry
 ) -> Result<[]u8, string> => {
@@ -462,7 +462,7 @@ let read_files = (c: mut Cursor, streams: Streams) -> Result<[]SevenZipEntry, st
 // ── Blocks ───────────────────────────────────────────────────────────────────
 
 /// A block's bytes, unpacked by its one coder and checked against its size and CRC-32.
-let unpack_block = (data: []u8, block: SevenZipBlock) -> Result<[]u8, string> => {
+let unpack_block = pure (data: []u8, block: SevenZipBlock) -> Result<[]u8, string> => {
   for method in block.methods {
     if method == AES { return Err("encrypted (it needs a password), which is not read") }
   }

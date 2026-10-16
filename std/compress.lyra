@@ -23,11 +23,11 @@ module std.compress
 //! that took. So a malformed stream cannot leave a half-updated reader behind, and the
 //! whole decoder is `pure`.
 //!
-//! **LZMA is not `pure` yet.** Its range decoder changes with every bit it reads, advanced
-//! by a dozen helpers through `mut` parameters — and a `pure` function may not call one
-//! on its own local, a limitation of the purity checker (`todo.md`). Answering by value,
-//! as DEFLATE's helpers do, would mean returning the whole decoder from each bit. So the
-//! LZMA functions are ordinary ones, and will be marked `pure` when the checker allows it.
+//! **LZMA is `pure` too, by another road.** Its range decoder changes with every bit it
+//! reads, so its helpers advance it through `mut` parameters rather than answering by value
+//! (which would mean returning the whole decoder from each bit). [lzma_decode] keeps the
+//! decoder as a local, and a write through a `mut` parameter to the caller's own local
+//! escapes nothing, so the helpers are unmarked and the two entry points are `pure`.
 //!
 //! **Huffman codes are decoded canonically** (Mark Adler's `puff` method): a table is the
 //! number of codes of each length and the symbols in code order, and a code is found by
@@ -144,7 +144,7 @@ pub let crc32 = pure (data: []u8) -> u32 => {
 /// five property bytes (lc/lp/pb, then the dictionary size) and its decompressed size kept
 /// beside it. An end marker, if the stream carries one, may end it at `size`; one before
 /// is refused, as is a stream that ends before `size` bytes come out.
-pub let lzma_decode = (
+pub let lzma_decode = pure (
   data: []u8,
   properties: []u8,
   size: i64
@@ -164,7 +164,7 @@ pub let lzma_decode = (
 /// The bytes an LZMA2 stream decompresses to: LZMA2 is LZMA in chunks, each compressed or
 /// stored, which may reset the decoder's state, its properties or its dictionary, up to
 /// an end byte of 0.
-pub let lzma2_decode = (data: []u8) -> Result<[]u8, string> => {
+pub let lzma2_decode = pure (data: []u8) -> Result<[]u8, string> => {
   var out: []u8 = []
   var decoder = new_lzma(0, 0).expect("lc 0, lp 0, pb 0 is in range")
   var have_properties = false

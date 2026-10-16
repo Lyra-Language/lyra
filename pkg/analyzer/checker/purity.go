@@ -652,6 +652,18 @@ type inference struct {
 	// methodCallbacks is callbacks' counterpart for trait-impl methods. Positions index the
 	// *signature*, where the receiver is parameter 0 — see methodArgumentAt.
 	methodCallbacks map[*ast.TraitMethodImpl]map[string]int
+	// paramWrites holds each lambda's written `mut` parameters (name → position): the ones
+	// it writes through, directly or by handing them on to another `mut` slot. Such a write
+	// lands on the argument and nowhere else, so a call site charges it by what the argument
+	// is rooted in (callable.mutArgument) — nothing for the caller's own local. impureLambdas
+	// still carries EffectMut for them, so every reader without a call site in hand stays
+	// conservative; beyondParams is the row with those writes left out.
+	paramWrites  map[*ast.LambdaExpr]map[string]int
+	beyondParams map[*ast.LambdaExpr]Effect
+	// methodParamWrites and methodBeyondParams are the trait-impl counterparts, positions
+	// indexing the signature as methodCallbacks' do.
+	methodParamWrites  map[*ast.TraitMethodImpl]map[string]int
+	methodBeyondParams map[*ast.TraitMethodImpl]Effect
 	// signatures maps each impl method to the signature its trait declares, the only place
 	// a method's parameter types (and so its declared callback bounds) exist.
 	signatures map[*ast.TraitMethodImpl]*types.LambdaType
@@ -692,18 +704,40 @@ func newInference(
 	lookup *symbols.SymbolTable,
 ) *inference {
 	return &inference{
-		impureLambdas:   map[*ast.LambdaExpr]Effect{},
-		impureMethods:   map[*ast.TraitMethodImpl]Effect{},
-		callbacks:       map[*ast.LambdaExpr]map[string]int{},
-		methodCallbacks: map[*ast.TraitMethodImpl]map[string]int{},
-		signatures:      signatures,
-		methodTable:     methodTable,
-		boundGroups:     boundGroups,
-		guaranteed:      guaranteed,
-		frames:          frames,
-		allocSites:      alloc,
-		lookup:          lookup,
+		impureLambdas:      map[*ast.LambdaExpr]Effect{},
+		impureMethods:      map[*ast.TraitMethodImpl]Effect{},
+		callbacks:          map[*ast.LambdaExpr]map[string]int{},
+		methodCallbacks:    map[*ast.TraitMethodImpl]map[string]int{},
+		paramWrites:        map[*ast.LambdaExpr]map[string]int{},
+		beyondParams:       map[*ast.LambdaExpr]Effect{},
+		methodParamWrites:  map[*ast.TraitMethodImpl]map[string]int{},
+		methodBeyondParams: map[*ast.TraitMethodImpl]Effect{},
+		signatures:         signatures,
+		methodTable:        methodTable,
+		boundGroups:        boundGroups,
+		guaranteed:         guaranteed,
+		frames:             frames,
+		allocSites:         alloc,
+		lookup:             lookup,
 	}
+}
+
+// lambdaBase is what a call to lam costs before its arguments are read: its whole row, or
+// — when it writes through `mut` parameters — the row without those writes, which the call
+// site charges argument by argument instead.
+func (inf *inference) lambdaBase(lam *ast.LambdaExpr) Effect {
+	if len(inf.paramWrites[lam]) > 0 {
+		return inf.beyondParams[lam]
+	}
+	return inf.impureLambdas[lam]
+}
+
+// methodBase is lambdaBase for a trait-impl method.
+func (inf *inference) methodBase(m *ast.TraitMethodImpl) Effect {
+	if len(inf.methodParamWrites[m]) > 0 {
+		return inf.methodBeyondParams[m]
+	}
+	return inf.impureMethods[m]
 }
 
 type purityChecker struct {
@@ -1787,10 +1821,8 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 	for {
 		changed := false
 		for lam, capture := range lambdaDefs {
-			effects, cbs := lambdaEffects(lam, capture, inf)
-			e := impureLambdas[lam] | effects
-			if e != impureLambdas[lam] {
-				impureLambdas[lam] = e
+			effects, cbs, writes := lambdaEffects(lam, capture, inf)
+			if recordEffects(impureLambdas, inf.beyondParams, inf.paramWrites, lam, effects, writes) {
 				changed = true
 			}
 			// The callback set grows monotonically too, and never shrinks: a parameter
@@ -1808,10 +1840,8 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			}
 		}
 		for _, m := range methods {
-			effects, cbs := methodEffects(m, base, inf)
-			e := impureMethods[m] | effects
-			if e != impureMethods[m] {
-				impureMethods[m] = e
+			effects, cbs, writes := methodEffects(m, base, inf)
+			if recordEffects(impureMethods, inf.methodBeyondParams, inf.methodParamWrites, m, effects, writes) {
 				changed = true
 			}
 			// Monotone, exactly as the lambda side: a parameter found to be called stays
@@ -1830,6 +1860,36 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			break
 		}
 	}
+}
+
+// recordEffects folds one pass's result for a callable into the fixpoint's tables and
+// reports whether anything grew. effects is the body's row without its writes through
+// `mut` parameters; the full row adds EffectMut for them, so a reader with no call site to
+// discharge them at sees the write. All three only grow, which keeps the fixpoint monotone.
+func recordEffects[K comparable](full, beyond map[K]Effect, paramWrites map[K]map[string]int, key K, effects Effect, writes map[string]int) bool {
+	changed := false
+	all := effects
+	if len(writes) > 0 {
+		all |= EffectMut
+	}
+	if e := full[key] | all; e != full[key] {
+		full[key] = e
+		changed = true
+	}
+	if e := beyond[key] | effects; e != beyond[key] {
+		beyond[key] = e
+		changed = true
+	}
+	for name, idx := range writes {
+		if _, seen := paramWrites[key][name]; !seen {
+			if paramWrites[key] == nil {
+				paramWrites[key] = map[string]int{}
+			}
+			paramWrites[key][name] = idx
+			changed = true
+		}
+	}
+	return changed
 }
 
 // collectMethodImpls gathers every trait-impl method declared in program,
@@ -1960,12 +2020,28 @@ func clauseParams(m *ast.TraitMethodImpl) map[string]int {
 //
 // **The offset is the whole point.** A trait signature counts `Self` as parameter 0, but
 // `x.foo(a, b)` puts the receiver outside `call.Arguments` — so signature index i is
-// `Arguments[i-1]`, and index 0 is the receiver, which is never a callback (it is the value
-// being dispatched on). Reading `Arguments[i]` instead would check every callback against
+// `Arguments[i-1]`, and index 0 is the receiver — never a callback, but a `mut Self` the
+// method may write. Reading `Arguments[i]` instead would check every callback against
 // the argument one place to its right, silently, since a wrong function-typed argument
 // type-checks against the wrong parameter just as well.
+//
+// **`Trait::method(x, a)` has no offset**: the path form passes the receiver as its first
+// argument, as the typechecker reads it. Until 10/16 this applied the member form's offset
+// to both, so a path call's callbacks were read one place to their left.
 func methodArgumentAt(call *ast.FunctionCallExpr, idx int) (ast.Expression, bool) {
-	if idx <= 0 || idx-1 >= len(call.Arguments) {
+	if _, isPath := call.Function.(*ast.TraitMethodPathExpr); isPath {
+		if idx < 0 || idx >= len(call.Arguments) {
+			return nil, false
+		}
+		return call.Arguments[idx], true
+	}
+	if idx == 0 {
+		if member, ok := call.Function.(*ast.MemberExpr); ok {
+			return member.Object, true
+		}
+		return nil, false
+	}
+	if idx < 0 || idx-1 >= len(call.Arguments) {
 		return nil, false
 	}
 	return call.Arguments[idx-1], true
@@ -2145,6 +2221,10 @@ func boundCallEffect(ref typetable.BoundMethodRef, inf *inference) Effect {
 // enclosing/enclosingCallbacks let a callback that is passed straight through — the
 // argument is one of the *caller's* own callback parameters — propagate rather than taint:
 // it is recorded as a callback of the enclosing function, to be charged one level up.
+//
+// mutArg prices an argument supplied for a `mut` parameter the callee writes (see
+// callable.mutArgument), the same way: what the write costs depends on whose place it is.
+// It is handed nil where the call supplies no argument there.
 func callEffect(
 	callee *ast.LambdaExpr,
 	call *ast.FunctionCallExpr,
@@ -2152,8 +2232,16 @@ func callEffect(
 	inf *inference,
 	enclosing map[string]int,
 	enclosingCallbacks map[string]int,
+	mutArg func(ast.Expression) Effect,
 ) Effect {
-	found := inf.impureLambdas[callee]
+	found := inf.lambdaBase(callee)
+	for _, idx := range inf.paramWrites[callee] {
+		if idx >= len(call.Arguments) {
+			found |= mutArg(nil)
+			continue
+		}
+		found |= mutArg(call.Arguments[idx])
+	}
 	for _, idx := range inf.callbacks[callee] {
 		if idx >= len(call.Arguments) {
 			// Arity mismatch — the typechecker reports it; assume the worst here rather
@@ -2178,8 +2266,16 @@ func methodCallEffect(
 	inf *inference,
 	enclosing map[string]int,
 	enclosingCallbacks map[string]int,
+	mutArg func(ast.Expression) Effect,
 ) Effect {
-	found := inf.impureMethods[method]
+	found := inf.methodBase(method)
+	for _, idx := range inf.methodParamWrites[method] {
+		arg, ok := methodArgumentAt(call, idx)
+		if !ok {
+			arg = nil
+		}
+		found |= mutArg(arg)
+	}
 	for _, idx := range inf.methodCallbacks[method] {
 		arg, ok := methodArgumentAt(call, idx)
 		if !ok {
@@ -2187,6 +2283,28 @@ func methodCallEffect(
 			continue
 		}
 		found |= argumentEffect(arg, capture, inf, enclosing, enclosingCallbacks)
+	}
+	return found
+}
+
+// methodCallbackEffect is the callback half of methodCallEffect alone — what the arguments
+// supplied for the method's callback parameters cost — for a message that has to say which
+// half of a call was impure. It records nothing.
+func methodCallbackEffect(
+	method *ast.TraitMethodImpl,
+	call *ast.FunctionCallExpr,
+	capture []scopeBindings,
+	inf *inference,
+	enclosing map[string]int,
+) Effect {
+	var found Effect
+	for _, idx := range inf.methodCallbacks[method] {
+		arg, ok := methodArgumentAt(call, idx)
+		if !ok {
+			found |= AllEffects
+			continue
+		}
+		found |= argumentEffect(arg, capture, inf, enclosing, nil)
 	}
 	return found
 }
@@ -2328,13 +2446,51 @@ func (c *callable) declares(name string) bool {
 	return ok
 }
 
+// mutArgument is what this body pays for handing arg to a `mut` parameter that callee
+// writes through. The write lands on arg's place, so it is charged exactly as if this body
+// had written there itself — the three cases of `p.x = v`:
+//
+//   - rooted in a local this body declares: nothing escapes, and `pure` code may do it;
+//   - rooted in one of this body's own `mut` parameters: the write goes on up, recorded in
+//     writes to be charged at *this* body's call sites in turn;
+//   - rooted in a capture, through a pointer, or in nothing nameable: EffectMut.
+//
+// Until 10/16 every such call was EffectMut, `EffectMut` being one bit: a callee that
+// writes only through its `mut` parameters looked like one writing a capture, so a `pure`
+// function could not call a helper on its own `var` (Sheliak's `declare_save(cart)`).
+func (c *callable) mutArgument(arg ast.Expression, callee string, writes map[string]int) Effect {
+	root := rootIdentName(arg)
+	// The argument is a write target, as an assignment's is: its root is reported here,
+	// not again as a read of captured mutable state.
+	c.markAssignRoot(rootIdentExpr(arg))
+	switch {
+	case writesThroughPointer(arg) || root == "":
+		c.pure(arg.GetLocation(),
+			"pure function passes a place it does not own to `mut` parameter of %q, which writes through it", callee)
+		return EffectMut
+	case c.mutBorrows[root]:
+		if idx, ok := c.params[root]; ok {
+			writes[root] = idx
+			c.pure(arg.GetLocation(),
+				"pure function passes `mut`-borrowed parameter %q to %q, which writes through it; the write escapes to the caller's value", root, callee)
+			return EffectNone
+		}
+		return EffectMut
+	case !c.declares(root):
+		c.pure(arg.GetLocation(),
+			"pure function passes captured binding %q to %q, which writes through it; mutation must not escape the function", root, callee)
+		return EffectMut
+	}
+	return EffectNone
+}
+
 // lambdaEffects is the effect of a free function's body, plus the callback parameters it
 // calls. See callable for why this is a descriptor rather than a walk.
-func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inference) (Effect, map[string]int) {
+func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inference) (Effect, map[string]int, map[string]int) {
 	if lam.IsExtern {
 		// No body to walk, and no reason to walk one: what a foreign function does is
 		// what its declaration claims. See externEffects.
-		return externEffects(lam), nil
+		return externEffects(lam), nil, nil
 	}
 	return bodyEffects(lambdaCallable(lam, defCapture, inf), inf)
 }
@@ -2368,7 +2524,7 @@ func lambdaCallable(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *infere
 // The method's declared parameter bounds come from its *trait's* signature, the only place
 // a method's parameter types live. A nil signature falls back to treating every called
 // parameter as unconstrained, which is the conservative answer.
-func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) (Effect, map[string]int) {
+func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) (Effect, map[string]int, map[string]int) {
 	return bodyEffects(methodCallable(m, base, inf), inf)
 }
 
@@ -2412,7 +2568,9 @@ func methodMutBorrows(params map[string]int, sig *types.LambdaType) map[string]b
 
 // bodyEffects walks one callable's body and returns its base effect together with the
 // effect-polymorphic parameters it was found to call — the ones whose cost belongs to
-// whoever supplies them, charged at that call site instead.
+// whoever supplies them, charged at that call site instead — and the `mut` parameters it
+// writes through, which are the same arrangement for a write: the base leaves them out, and
+// the call site charges each by its argument (callable.mutArgument).
 //
 // With c.reportPure set it is also the **enforcement pass**: each arm that charges a
 // purity-violating effect reports the site in the same breath, so there is no second
@@ -2420,11 +2578,34 @@ func methodMutBorrows(params map[string]int, sig *types.LambdaType) map[string]b
 // and its history is exactly why it is gone: three copies of this ladder once agreed and
 // were wrong together, and the last divergence was a soundness hole the diagnostics
 // could not see because the reporting copy was the correct one (see callable).
-func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
+func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[string]int) {
 	// foundCallbacks are the effect-polymorphic parameters discovered on this pass: the
 	// ones this body calls, or hands on to another function's callback slot.
 	foundCallbacks := make(map[string]int)
+	// foundWrites are the `mut` parameters this body writes through, or hands on to a
+	// callee's written `mut` slot.
+	foundWrites := make(map[string]int)
 	var found Effect
+	// writeParam charges a write through `mut` parameter name to the caller's argument. A
+	// name with no position (none is expected) is charged here, conservatively.
+	writeParam := func(name string) {
+		if idx, ok := c.params[name]; ok {
+			foundWrites[name] = idx
+		} else {
+			found |= EffectMut
+		}
+	}
+	mutArg := func(callee string, call *ast.FunctionCallExpr) func(ast.Expression) Effect {
+		return func(arg ast.Expression) Effect {
+			if arg == nil {
+				// Not expected of a checked call; charged, and said, rather than skipped.
+				c.pure(call.GetLocation(),
+					"pure function calls %q, which writes through a `mut` parameter this call supplies no argument for", callee)
+				return EffectMut
+			}
+			return c.mutArgument(arg, callee, foundWrites)
+		}
+	}
 	// noteAlloc sets the bit *and* remembers where it came from, so lyra-E016 can point at
 	// the allocation instead of listing every form the language can allocate with.
 	noteAlloc := func(ex ast.Expression) {
@@ -2439,7 +2620,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			// reassigning it whole (`open = !open`, a `mut` scalar's only write) escapes.
 			switch {
 			case c.mutBorrows[st.Name]:
-				found |= EffectMut
+				writeParam(st.Name)
 				c.pure(st.GetLocation(),
 					"pure function reassigns `mut`-borrowed parameter %q; the write escapes to the caller's value", st.Name)
 			case !c.declares(st.Name):
@@ -2459,7 +2640,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				// to the caller's value, a capture mutates state observable elsewhere.
 				switch {
 				case c.mutBorrows[root]:
-					found |= EffectMut
+					writeParam(root)
 					c.pure(st.GetLocation(),
 						"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
 				case !c.declares(root):
@@ -2535,7 +2716,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 			switch root := rootIdentName(ex.Left); {
 			case c.mutBorrows[root]:
 				// `n += 1` / `p.x += 1` on a `mut` parameter: the caller's storage.
-				found |= EffectMut
+				writeParam(root)
 				c.pure(ex.GetLocation(),
 					"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
 			case !c.declares(root):
@@ -2622,7 +2803,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 							// A receiver with no identifier at its root — a call's result,
 							// say — is a value this function alone can see.
 						case c.mutBorrows[root]:
-							found |= EffectMut
+							writeParam(root)
 							c.pure(ex.GetLocation(),
 								"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
 						case !c.declares(root):
@@ -2636,16 +2817,17 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				// The method's own base effect **plus** whatever this site supplies for
 				// its callback parameters. The second half is what the free-function walk
 				// used to omit; see callable.
-				eff := methodCallEffect(method, ex, c.capture, inf, c.params, foundCallbacks)
+				eff := methodCallEffect(method, ex, c.capture, inf, c.params, foundCallbacks, mutArg(method.Name.GetName(), ex))
 				found |= eff
 				c.charge(ex, inf.impureMethods[method]&^inf.guaranteed[method], method.Name.GetName())
 				if eff&PurityEffects != 0 {
 					// The split names the guilty half — the same two values the charge
 					// was computed from, so the verdict and the message cannot drift.
-					if inf.impureMethods[method]&PurityEffects != 0 {
+					// A `mut` argument the method writes has reported itself (mutArgument).
+					if inf.methodBase(method)&PurityEffects != 0 {
 						c.pure(ex.GetLocation(),
 							"pure function calls non-pure trait method %q", method.Name.GetName())
-					} else {
+					} else if methodCallbackEffect(method, ex, c.capture, inf, c.params)&PurityEffects != 0 {
 						c.pure(ex.GetLocation(),
 							"pure function calls trait method %q with an impure callback argument; "+
 								"the callback's effects are this call's", method.Name.GetName())
@@ -2670,7 +2852,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 				if target, ok := inf.calleeFor(inf.allocSites.table(), ex, c.capture, name); ok {
 					// The callee's *base* effect plus whatever this site supplies for its
 					// callback parameters.
-					eff := callEffect(target, ex, c.capture, inf, c.params, foundCallbacks)
+					eff := callEffect(target, ex, c.capture, inf, c.params, foundCallbacks, mutArg(name, ex))
 					found |= eff
 					c.charge(ex, inf.impureLambdas[target], name)
 					if eff&PurityEffects != 0 {
@@ -2794,7 +2976,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 		return true
 	}
 	c.walk(onStmt, onExpr)
-	return found, foundCallbacks
+	return found, foundCallbacks, foundWrites
 }
 
 // reportImpureCall says which half of an impure call's effect is the guilty one — the
@@ -2804,7 +2986,9 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 // whatever binding the callee's body called it through, which for a multi-clause function
 // is an arm binding the caller cannot see anywhere).
 func (c *callable) reportImpureCall(target *ast.LambdaExpr, call *ast.FunctionCallExpr, name string, inf *inference) {
-	if inf.impureLambdas[target]&PurityEffects != 0 {
+	// The base without the callee's `mut`-parameter writes: an argument for one of those
+	// has reported itself (mutArgument), naming the binding rather than the callee.
+	if inf.lambdaBase(target)&PurityEffects != 0 {
 		c.pure(call.GetLocation(), "pure function calls impure function %q", name)
 		return
 	}

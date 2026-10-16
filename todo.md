@@ -83,16 +83,6 @@ Package management, versioning and separate compilation are out of scope by deci
   **It also collapses deliberate spacing** in a table (`7, 7,  7, 7`, grouping rows), which
   is fine, but then a table written as rows of 8 in one line of 24 reads as noise.
 
-- **`pure` refuses a `mut`-parameter call on its own local.** A write to a local is fine in
-  `pure` code, directly or by `push` (LANGUAGE.md), but `pure` `new_cartridge` calling
-  `declare_save(cart)` on its own `var cart` was lyra-E007 (09/28, Sheliak): `EffectMut` is one
-  bit, so a callee that writes only through its `mut` parameters looks like one that writes a
-  capture. Wants a separate "through my parameters" effect a caller discharges when every
-  `mut` argument is rooted in a local. Hit three more times on 09/29: it shaped `inflate`
-  (helpers answer by value), made romtest's zip writer impure, and leaves LZMA,
-  `std.sevenzip` and `std.rar` unmarked — a decoder whose state changes each bit cannot
-  answer by value. Mark them `pure` when it lands.
-
 - **A block beginning with a name `data` does not parse.** `if c { data.len() } else { 0 }`
   is a syntax error, `data` being taken for a `data` declaration; the same name works
   anywhere else, including later in a block. Found writing `std.rar` (09/29), whose
@@ -536,6 +526,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   `index`), each a natural local name. A policy call, not a bug.
 - **[DONE 09/29] `?.`/`?[` are safe navigation**, desugared by the collector (`lyra-E083` on
   a non-Maybe); and **nullary constructors are or-pattern alternatives**. (COMPLETED.md, 09/29.)
+- **[OPEN] `f()?.len()` on a `Result` cascades with an internal name.** Beside the right
+  `lyra-E083`, a `pure` caller also gets "calls impure function `__opt_9_43.len`" — the
+  safe-navigation desugaring's binding, which no user wrote (10/16). One error, not two.
 - **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
   and alternations below the top of a pattern (`Some(1 | 2)`, `(1 | 2, _)`, both refused
   today). Neither needed yet.

@@ -37,8 +37,8 @@ module std.rar
 //! link's target (links and directories are listed, with no bytes). A file recording only a
 //! BLAKE2 hash, not a CRC-32, is extracted unverified.
 //!
-//! **Not `pure`**: the bit reader and decoder are advanced by helpers through `mut`
-//! parameters, as LZMA's are (see `std.compress`).
+//! **`pure`**: the bit reader and decoder are advanced by helpers through `mut` parameters,
+//! as LZMA's are (see `std.compress`), and both are locals of the function reading them.
 
 import std.compress.{ crc32 }
 
@@ -77,7 +77,7 @@ pub let is_rar = pure (data: []u8) -> bool =>
   starts_with_bytes(data, 0, RAR4_SIGNATURE)
 
 /// An archive's entries, its headers read and checked.
-pub let open_rar = (data: []u8) -> Result<Rar, string> => {
+pub let open_rar = pure (data: []u8) -> Result<Rar, string> => {
   if starts_with_bytes(data, 0, RAR4_SIGNATURE) {
     return Err("an archive in RAR's older format (RAR 1.5 to 4.x), which is not read; only RAR 5 is")
   }
@@ -109,7 +109,10 @@ pub let open_rar = (data: []u8) -> Result<Rar, string> => {
 
 /// An entry's bytes: stored, or decompressed — in a solid archive, with every file before it
 /// back to the start of its run — and checked against its CRC-32.
-pub let extract_rar = (archive: ref Rar, entry: ref RarEntry) -> Result<[]u8, string> => {
+pub let extract_rar = pure (
+  archive: ref Rar,
+  entry: ref RarEntry
+) -> Result<[]u8, string> => {
   if entry.directory { return Ok([]) }
   if entry.link { return Err("${entry.name} is a link, which is not extracted") }
   if entry.encrypted { return Err("${entry.name} is encrypted (it needs a password), which is not read") }
@@ -186,7 +189,7 @@ let find_signature = pure (data: []u8) -> Maybe<i64> => {
 
 /// The header at `at`, its CRC-32 checked: a CRC, the header's size, then its kind, flags
 /// and — as the flags say — the sizes of its extra and data areas.
-let read_header = (data: []u8, at: i64) -> Result<Header, string> => {
+let read_header = pure (data: []u8, at: i64) -> Result<Header, string> => {
   if at + 5 > data.len() { return Err("a RAR archive cut off inside a header (a partial download?)") }
   var c = Cursor { data: data, at: at + 4 }
   let size = vint(c)?
@@ -215,7 +218,7 @@ let read_header = (data: []u8, at: i64) -> Result<Header, string> => {
 /// A file header's entry: its flags, sizes, CRC-32, compression and name; and from its extra
 /// area, whether it is encrypted or a link, and a kept older version's number, which names
 /// it `name;N` beside the current `name`, as RAR's own listing and libarchive do.
-let read_file_header = (data: []u8, header: Header) -> Result<RarEntry, string> => {
+let read_file_header = pure (data: []u8, header: Header) -> Result<RarEntry, string> => {
   var c = Cursor { data: data, at: header.fields }
   let file_flags = vint(c)?
   let size = vint(c)?
@@ -265,7 +268,10 @@ let read_file_header = (data: []u8, header: Header) -> Result<RarEntry, string> 
 
 /// An entry's bytes before its checks: stored bytes as they are; compressed ones decoded
 /// from the start of the entry's solid run, the files before it decoded and dropped.
-let unpack_entry = (archive: ref Rar, entry: ref RarEntry) -> Result<[]u8, string> => {
+let unpack_entry = pure (
+  archive: ref Rar,
+  entry: ref RarEntry
+) -> Result<[]u8, string> => {
   let packed = archive.data.slice(
     entry.data_offset,
     entry.data_offset + entry.packed_size
