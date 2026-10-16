@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/16/26 — A struct return that popped what nobody pushed
+
+The music benchmark crashed on the 68000 once `opt` inlined less (`-inline-threshold` 120 or
+below; 121 ran) — which a large enough game does on its own. Found, then fixed in LLVM:
+
+- **The threshold's one difference** (`-pass-remarks=inline` at 120 and 121): `remember`
+  stayed a call. The crash was a Lyra panic — an index out of bounds queuing the effects' FM
+  writes, 42 of a 128-byte buffer — though the count it ran to was set correctly.
+- **A scratch Sheliak** kept the last 20,000 instructions (PC, SP and two registers) up to
+  `exit`, and a watchpoint logged each write to the count's flag in RAM with its PC. The last
+  write was a 24-byte copy at `sp - 24` — inside `update_music`'s own frame, because the stack
+  pointer stood 24 bytes above the frame's bottom. Following SP through the trail: it rose by
+  4 at every call to `Music$MusicData$patch` and `…$sample`.
+- **Both are `fastcc` functions returning a struct through memory** (`sret`). M68k's `fastcc`
+  passes the hidden pointer in A0; but `M68kISelLowering`, from X86, made an `sret` callee pop
+  it on return (`rtd`'s four bytes, written out by hand) unless marked `inreg`, and told the
+  caller the callee would pop it, so the caller made up nothing. Each call left SP a word
+  higher. Inlined, the calls were few, and `unlk` put SP right on return — latent until
+  something used SP below the frame.
+- **Patch 0004**: a struct-return pointer the convention put in a register is popped by
+  neither side, for a call and a definition alike. `TestGenesis_ARegisterStructReturnIsNotPopped`
+  holds `llc` to it on a fastcc `sret` function, and fails on the unpatched one. The benchmark
+  runs at every threshold since, without inlining at all too.
+
 ### 10/16/26 — A song's frame on the 68000: steady channels
 
 The heroes' theme cost 0.29 of a frame an update on the 68000; it costs 0.18 now (a

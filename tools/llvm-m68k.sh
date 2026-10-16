@@ -41,6 +41,12 @@
 #     registers only: `and.l #65535, %aN` is no 68000 instruction, and llc's object
 #     writer encodes it as another — the hero's position came out as garbage once his
 #     game grew stars (10/01). They are data-register-only now, as the 8-bit ones were.
+#   - 0004: a struct-return function (every Lyra function returning an aggregate on the
+#     68000) popped four bytes for its hidden pointer on return, as if the caller had pushed
+#     it — but `fastcc`, which the optimizer gives internal functions, passes it in A0, and
+#     the caller made nothing up. The stack pointer crept a word a call into the caller's
+#     locals until one read garbage (10/16; found by the music player crashing once LLVM
+#     inlined less). Only a pointer passed on the stack is popped now. Not yet reported.
 #
 # Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
 # Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a

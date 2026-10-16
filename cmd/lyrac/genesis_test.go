@@ -1045,6 +1045,55 @@ entry:
 	}
 }
 
+// TestGenesis_ARegisterStructReturnIsNotPopped holds llc to tools/llvm-m68k-patches/0004: a
+// `fastcc` function returning a struct through memory gets its hidden pointer in A0, but
+// returned popping four bytes for it as if the caller had pushed it, and its caller did not
+// make them up — the stack pointer crept up a word a call, into the caller's locals, until a
+// count kept there read garbage and the music player ran past its buffer (10/16; seen once
+// LLVM inlined less, as a large game makes it).
+func TestGenesis_ARegisterStructReturnIsNotPopped(t *testing.T) {
+	genesisToolchainOrSkip(t)
+	tc, err := findM68kToolchain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "sret.ll")
+	if err := os.WriteFile(ll, []byte(`target datalayout = "E-m:e-p:32:16:32-i8:8:8-i16:16:16-i32:16:32-n8:16:32-a:0:16-S16"
+target triple = "m68k-unknown-unknown-elf"
+
+%Pair = type { i32, i32 }
+
+define internal fastcc void @make(ptr sret(%Pair) %out, i32 %n) noinline {
+entry:
+  store i32 %n, ptr %out
+  %b = getelementptr i8, ptr %out, i32 4
+  store i32 %n, ptr %b
+  ret void
+}
+
+define void @caller(ptr %p, i32 %n) {
+entry:
+  call fastcc void @make(ptr sret(%Pair) %p, i32 %n)
+  ret void
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asm, err := exec.Command(tc.tool("llc"), "-mtriple=m68k-unknown-elf", "-mcpu=M68000", "-O2", ll, "-o", "-").CombinedOutput()
+	if err != nil {
+		t.Fatalf("llc: %v\n%s", err, asm)
+	}
+	text := string(asm)
+	start := strings.Index(text, "make:")
+	end := strings.Index(text[start:], "rts")
+	if start < 0 || end < 0 {
+		t.Fatalf("no make in llc's output:\n%s", asm)
+	}
+	if body := text[start : start+end]; strings.Contains(body, "#4, %sp") {
+		t.Errorf("make pops a struct-return pointer passed in A0: rebuild llc with tools/llvm-m68k.sh's patches\n%s", body)
+	}
+}
+
 // A large struct returned through memory and passed by copy runs on the 68000. Its copies
 // called a `memcpy(i8*, i8*, i64)` the backend declared, and the runtime's reads a 32-bit
 // `size_t`: the eight bytes pushed were read as their high half, 0, so nothing was copied and

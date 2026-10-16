@@ -646,7 +646,10 @@ of Markdown.
   and a checked multiply was the 68020's `muls.l` (i32, a fault on the 68000) or never
   overflowed (i8/i16) (`TestGenesis_CheckedMultipliesRunOnThe68000`); and a 16→32-bit
   extension into an address register was `and.l #65535, %aN`, no instruction at all
-  (`TestGenesis_NoExtendIntoAnAddressRegister`, IR cut by `llvm-reduce`). **llc writes
+  (`TestGenesis_NoExtendIntoAnAddressRegister`, IR cut by `llvm-reduce`); and a `fastcc`
+  function returning a struct popped its hidden pointer, passed in A0, off the stack, so each
+  call left the stack pointer a word higher, into its caller's locals
+  (`TestGenesis_ARegisterStructReturnIsNotPopped`). **llc writes
   objects without assembling text**, so an instruction the 68000 lacks reaches the ROM
   silently: when a Genesis program misbehaves, compare llc `-O0` with `-O2`, then toggle
   its passes (`-disable-machine-licm`, `-regalloc=fast`) before suspecting Lyra. **A Genesis test

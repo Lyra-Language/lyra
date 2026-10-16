@@ -974,6 +974,9 @@ sets V on every add. What stands between that and a ROM:
   base, which `hasIndexReg` does not see). Patched locally by
   `tools/llvm-m68k-patches/0001`; check `main` for the same code before reporting.
 
+- **[OPEN] Report patch 0004 upstream** (`M68kISelLowering`: a struct-return pointer passed
+  in a register is popped as if pushed) with the IR in
+  `TestGenesis_ARegisterStructReturnIsNotPopped`, beside the next item.
 - **[OPEN] Report the `fastcc` demoted-return mismatch upstream**: a function returning an
   aggregate too big for registers, made `fastcc` by the optimizer, read the hidden pointer
   from `d0` while its caller passed it in `a0` (10/15). Lyra moves every aggregate through
@@ -983,10 +986,11 @@ sets V on every add. What stands between that and a ROM:
   is flat across the channel loop's code — a bool tested in five instructions, overflow checks
   through the status register, spills — and `MUSIC_STARTS[order * 13 + channel]`, which LLVM
   widens to an `i64` multiply (`__muldi3`) for its bounds check.
-- **[OPEN] A Genesis program inlined less crashes**: the music benchmark built with
-  `opt -inline-threshold=50` (or 100, or 0) ends in `exit` with no panic written — a CPU-level
-  fault or a bad return, not a Lyra trap. A large game crosses LLVM's inlining limits on its
-  own; reduce it (COMPLETED 10/16 has the setup).
+- **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a
+  pointer passed in a register (`tools/llvm-m68k-patches/0004`, COMPLETED 10/16).
+- **[OPEN] clang segfaulted compiling a copy of Sheliak** given a global
+  `[20000](u32, u32, u32, u32)` written in its frame loop; the same array alone compiles.
+  Reduce it from Sheliak's `machine.lyra` (10/16).
 - **[OPEN] `-Os` fails for the Genesis**: this LLVM's `opt` refuses `default<Os>` ("use O2 with
   the optsize attribute"); the backend would mark every function `optsize` instead.
 - **[OPEN] Same-named types in two modules confuse method calls**: with `alpha.Player` and

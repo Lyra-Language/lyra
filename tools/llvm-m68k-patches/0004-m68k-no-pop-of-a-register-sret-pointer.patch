@@ -1,0 +1,35 @@
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.cpp b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+--- a/llvm/lib/Target/M68k/M68kISelLowering.cpp
++++ b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+@@ -591,6 +591,11 @@
+                      *DAG.getContext());
+   CCInfo.AnalyzeCallOperands(Outs, CC_M68k);
+ 
++  // A struct-return pointer the convention passed in a register (fastcc puts it in A0) was
++  // not pushed, so the callee does not pop it: only one passed on the stack is.
++  if (SR == StackStructReturn && !ArgLocs.empty() && ArgLocs[0].isRegLoc())
++    SR = RegStructReturn;
++
+   // Get a count of how many bytes are to be pushed on the stack.
+   unsigned NumBytes = CCInfo.getAlignedCallFrameSize();
+   if (IsSibcall) {
+@@ -944,6 +949,9 @@
+   M68kCCState CCInfo(ArgTypes, CCID, IsVarArg, MF, ArgLocs, *DAG.getContext());
+ 
+   CCInfo.AnalyzeFormalArguments(Ins, CC_M68k);
++  // A struct-return pointer passed in a register (fastcc's A0) is not on the stack for the
++  // return to pop.
++  bool SRetInReg = !ArgLocs.empty() && ArgLocs[0].isRegLoc();
+ 
+   unsigned LastVal = ~0U;
+   SDValue ArgValue;
+@@ -1057,7 +1065,8 @@
+   } else {
+     MMFI->setBytesToPopOnReturn(0); // Callee pops nothing.
+     // If this is an sret function, the return should pop the hidden pointer.
+-    if (!canGuaranteeTCO(CCID) && argsAreStructReturn(Ins) == StackStructReturn)
++    if (!canGuaranteeTCO(CCID) && argsAreStructReturn(Ins) == StackStructReturn &&
++        !SRetInReg)
+       MMFI->setBytesToPopOnReturn(4);
+   }
+ 
