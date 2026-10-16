@@ -125,11 +125,109 @@ func containsPos(loc ast.Location, line, col int) bool {
 }
 
 // hoverContent formats the hover markdown string for an expression and its type.
-func hoverContent(expr ast.Expression, typ types.Type) string {
+func hoverContent(expr ast.Expression, typ types.Type, analysis *docAnalysis, line, col int) string {
+	shown := typeWithParamNames(typ, paramNamesAt(expr, line, col, analysis))
 	if ident, ok := expr.(*ast.IdentifierExpr); ok {
-		return fmt.Sprintf("```lyra\n%s: %s\n```", ident.Name, typ)
+		return fmt.Sprintf("```lyra\n%s: %s\n```", ident.Name, shown)
 	}
-	return fmt.Sprintf("```lyra\n%s\n```", typ)
+	return fmt.Sprintf("```lyra\n%s\n```", shown)
+}
+
+// typeWithParamNames renders a function type with each parameter's name before its type —
+// `(width: i64, height: i64) -> i64` rather than `(i64, i64) -> i64`, which says what a
+// function takes but not which argument is which.
+//
+// The **types are the recorded ones**, not the declaration's: at a use of a generic
+// function the recorded type is the instantiation, and that is what the hover showed
+// before names were added. Only the names come from the declaration, and a name list
+// whose length disagrees with the type is dropped whole rather than lined up by guesswork.
+// An `extern`'s names need no declaration — they are part of its type.
+func typeWithParamNames(typ types.Type, names []string) string {
+	fn, ok := typ.(*types.LambdaType)
+	if !ok {
+		return typ.String()
+	}
+	if len(names) != len(fn.Parameters) {
+		names = nil
+	}
+	params := make([]string, 0, len(fn.Parameters)+1)
+	for i, p := range fn.Parameters {
+		name := p.Name
+		if names != nil {
+			name = names[i]
+		}
+		if name == "" {
+			params = append(params, p.String())
+		} else {
+			params = append(params, name+": "+p.String())
+		}
+	}
+	if fn.IsVariadic {
+		params = append(params, "...")
+	}
+	return fmt.Sprintf("%s(%s) -> %s", fn.EffectPrefix(), strings.Join(params, ", "), fn.ReturnType)
+}
+
+// paramNamesAt returns the parameter names of the function the hovered expression is or
+// names, or nil when it is neither.
+//
+// For a name, the declaration it resolves to — except at a **receiver-overloaded call**,
+// where the name alone does not pick a declaration (rule 9) and the one the typechecker
+// chose is read from `TypeTable.Callee` first. A function value with no declaration of
+// its own (a parameter `f: (i64) -> i64`, `let g = f`) has no names to give.
+func paramNamesAt(expr ast.Expression, line, col int, analysis *docAnalysis) []string {
+	switch e := expr.(type) {
+	case *ast.LambdaExpr:
+		return lambdaParamNames(e)
+	case *ast.IdentifierExpr:
+		if call := callOf(analysis.program, e); call != nil {
+			if fn, ok := analysis.typeTable.Callee(call); ok {
+				return lambdaParamNames(fn)
+			}
+		}
+		named, ok := resolveNameAtPos(e, line, col, analysis)
+		if !ok {
+			return nil
+		}
+		return declParamNames(named)
+	}
+	return nil
+}
+
+// declParamNames is paramNamesAt for a declaration in hand: a `let` (or `var`, `const`)
+// bound to a function literal. An overload set is not one function and answers nil.
+func declParamNames(named ast.Named) []string {
+	if v, ok := named.(*ast.VarDeclStmt); ok {
+		if fn, ok := v.Value.(*ast.LambdaExpr); ok {
+			return lambdaParamNames(fn)
+		}
+	}
+	return nil
+}
+
+// lambdaParamNames lists the name each parameter binds, or "" for one that binds a
+// pattern — a destructured tuple, or a multi-clause function's desugared parameters —
+// which is shown by its type alone.
+func lambdaParamNames(fn *ast.LambdaExpr) []string {
+	names := make([]string, len(fn.Parameters))
+	for i := range fn.Parameters {
+		if id, ok := fn.Parameters[i].Pattern.(*ast.IdentifierPattern); ok {
+			names[i] = id.Name
+		}
+	}
+	return names
+}
+
+// callOf returns the call whose callee is exactly ident, or nil.
+func callOf(program *ast.Program, ident *ast.IdentifierExpr) *ast.FunctionCallExpr {
+	var found *ast.FunctionCallExpr
+	walkProgramExprs(program, func(e ast.Expression) bool {
+		if call, ok := e.(*ast.FunctionCallExpr); ok && call.Function == ast.Expression(ident) {
+			found = call
+		}
+		return found == nil
+	})
+	return found
 }
 
 // hoverTypeReference renders the declaration a written type name refers to, for a cursor

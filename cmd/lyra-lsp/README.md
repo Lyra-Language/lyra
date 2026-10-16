@@ -83,6 +83,12 @@ to disagree the first day either changed. One formatter, two callers — the CLI
 - **Hover docs** (`hoverdoc.go`): `resolveDoc` mirrors `resolveDefinition` case for case —
   keep them in step. A typeless expression may still be documented (a UFCS method name is a
   synthesized callee with no recorded type), so `Hover` must not bail on a missing type.
+- **A function's hover names its parameters** (`typeWithParamNames`, `hover.go`): the
+  *recorded* type, with names from the declaration (`paramNamesAt`). At a call to a
+  receiver-overloaded name the names come from `TypeTable.Callee` first (rule 9); with no
+  single declaration the hover shows types alone, never another overload's names. A
+  declaration's own name (`let`/`var`/`const`, `extern`) is `hoverDeclarationName`, tried
+  before the expression walk, since a local `let` sits inside its function's `LambdaExpr`.
 - A map key is not a source name: completion labels read `decl.Name`.
 
 ## Per-keystroke caching

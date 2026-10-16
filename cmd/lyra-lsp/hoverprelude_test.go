@@ -55,7 +55,7 @@ func TestHover_PreludeDocReachesTheEditor(t *testing.T) {
 	// though it were a rule — `unwrap_or(m, 0)` showed a signature and `m.unwrap_or(0)`
 	// did not, for the same call, and the spelling the standard library is documented in
 	// was the one missing it. `desugarUFCSCall` records the signature now.
-	if !strings.Contains(got, "unwrap_or: (Maybe<t>, t) -> t") {
+	if !strings.Contains(got, "unwrap_or: (self: Maybe<t>, fallback: t) -> t") {
 		t.Errorf("expected the signature above the doc; got: %q", got)
 	}
 }

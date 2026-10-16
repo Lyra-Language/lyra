@@ -167,8 +167,54 @@ func hoverPatternBinding(analysis *docAnalysis, line, col int) *lsp.Hover {
 		}
 		typ = v.Type
 	}
-	content := fmt.Sprintf("```lyra\n%s: %s\n```", b.Name, typ)
+	// The declaration's own name is a binding too: `area` in `let area = (w: i64, …)`.
+	content := fmt.Sprintf("```lyra\n%s: %s\n```", b.Name, typeWithParamNames(typ, declParamNames(named)))
 	return &lsp.Hover{Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content}}
+}
+
+// hoverDeclarationName answers for a cursor on the name a `let`/`var`/`const` or an
+// `extern` declares — `area` in `let area = (w: i64, h: i64) -> i64 => …` — with the same
+// signature and doc comment a use of the name shows.
+//
+// No other path reached it. The name is not an expression, and it is not a pattern a
+// statement holds (`ast.PatternsOf` has nothing for a plain `let`), so the declaration
+// site — where a reader most often looks for what a function takes — answered nothing.
+// Checked before the expression lookup because a local `let` sits inside its function's
+// LambdaExpr, which would otherwise answer with the enclosing function's type.
+func hoverDeclarationName(analysis *docAnalysis, line, col int) *lsp.Hover {
+	var content string
+	for _, node := range analysis.program.Statements {
+		stmt, ok := node.(ast.Statement)
+		if !ok {
+			continue
+		}
+		ast.WalkStmt(stmt, func(s ast.Statement) bool {
+			switch d := s.(type) {
+			case *ast.VarDeclStmt:
+				if d.Name == "" || !containsPos(d.NameLocation, line, col) {
+					return content == ""
+				}
+				typ := d.Type
+				if typ == nil {
+					typ, _ = analysis.typeTable.Get(d.Value)
+				}
+				if typ != nil {
+					sig := fmt.Sprintf("```lyra\n%s: %s\n```", d.Name, typeWithParamNames(typ, declParamNames(d)))
+					content = renderHover(sig, d.Doc)
+				}
+			case *ast.ExternDeclStmt:
+				if containsPos(d.NameLocation, line, col) && d.Signature != nil {
+					sig := fmt.Sprintf("```lyra\n%s: %s\n```", d.Name, typeWithParamNames(d.Signature, nil))
+					content = renderHover(sig, d.Doc)
+				}
+			}
+			return content == ""
+		}, func(ast.Expression) bool { return content == "" })
+		if content != "" {
+			return &lsp.Hover{Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content}}
+		}
+	}
+	return nil
 }
 
 // hoverPatternReference renders a constructor named in a pattern: which data type it

@@ -193,7 +193,7 @@ let area = pure (s: Shape) -> i64 => match s {
 }
 
 // TestHover_MethodStyleCallShowsTheSignature pins the two spellings of one call answering
-// the same thing. `twice(a)` always showed `twice: (i64) -> i64`; `a.twice()` showed an
+// the same thing. `twice(a)` always showed `twice: (self: i64) -> i64`; `a.twice()` showed an
 // empty tooltip, because `desugarUFCSCall` synthesizes the callee and nothing recorded a
 // type for it — so the *documented* spelling of the standard library was the one with no
 // signature in the editor.
@@ -224,7 +224,7 @@ func TestHover_MethodStyleCallShowsTheSignature(t *testing.T) {
 		t.Errorf("the two spellings answer differently:\n method style: %q\n free style:   %q",
 			method.Contents.Value, free.Contents.Value)
 	}
-	if !strings.Contains(method.Contents.Value, "(i64) -> i64") {
+	if !strings.Contains(method.Contents.Value, "(self: i64) -> i64") {
 		t.Errorf("expected the signature, got %q", method.Contents.Value)
 	}
 }

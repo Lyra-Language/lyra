@@ -519,6 +519,11 @@ func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp
 		return hov, nil
 	}
 
+	// A **declaration's own name** — `area` in `let area = …`, or an `extern`'s.
+	if hov := hoverDeclarationName(analysis, line, col); hov != nil {
+		return hov, nil
+	}
+
 	expr := findExprAtPos(analysis.program, line, col)
 	if expr == nil {
 		return nil, nil
@@ -546,7 +551,7 @@ func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp
 		}, nil
 	}
 
-	content := renderHover(hoverContent(expr, typ), doc)
+	content := renderHover(hoverContent(expr, typ, analysis, line, col), doc)
 	return &lsp.Hover{
 		Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content},
 	}, nil
