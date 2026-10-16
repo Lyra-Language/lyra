@@ -981,9 +981,8 @@ sets V on every add. What stands between that and a ROM:
   widens to an `i64` multiply (`__muldi3`) for its bounds check.
 - **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a
   pointer passed in a register (`tools/llvm-m68k-patches/0004`, COMPLETED 10/16).
-- **[OPEN] clang segfaulted compiling a copy of Sheliak** given a global
-  `[20000](u32, u32, u32, u32)` written in its frame loop; the same array alone compiles.
-  Reduce it from Sheliak's `machine.lyra` (10/16).
+- **[DONE 10/16] clang segfaulted compiling a copy of Sheliak**: a global's 320 KB
+  initializer built on the stack and stored as one value (COMPLETED 10/16).
 - **[OPEN] `-Os` fails for the Genesis**: this LLVM's `opt` refuses `default<Os>` ("use O2 with
   the optsize attribute"); the backend would mark every function `optsize` instead.
 - **[OPEN] Same-named types in two modules confuse method calls**: with `alpha.Player` and

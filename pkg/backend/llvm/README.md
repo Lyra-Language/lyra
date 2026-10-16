@@ -338,7 +338,11 @@ recorded).
 - `shared [N]T` — see ALLOCATION.md.
 - `[v; n]` evaluates `v` once and retains a managed element once per slot beyond the first.
   Up to `repeatUnrollLimit` (64) it is an `insertvalue` chain; above it `fillFixedArray` fills a
-  stack slot in a counted loop and loads it, and an all-zero `v` is one `zeroinitializer` store.
+  stack slot in a counted loop and loads it, and an all-zero `v` — a tuple or array of zeros
+  too (`isZeroValue`) — is one `zeroinitializer` store. **A module `var` of zeros has no
+  start-up code** (`zeroRepeat`/`zeroLiteral`: every global is defined zeroed), and any other
+  initializer reaches its global through `storeAggregate`, so a large one is copied, never
+  stored as one value — `#[(0, 0, 0, 0); 20000]` stored whole crashed clang's optimizer.
   The dynamic path (`lowerDynArrayRepeat`) has the same limit.
 
 ### Dynamic `[]T` (`dynarray.go`)

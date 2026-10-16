@@ -39,6 +39,25 @@ LZMA, `std.sevenzip` and `std.rar`.
   message**: a `pure` function was refused by the effect row and told nothing. A missing
   argument for a written slot now reports.
 
+### 10/16/26 — A global initializer clang could not optimize
+
+A scratch copy of Sheliak with `pub var trail: [20000](u32, u32, u32, u32) =
+#[(0, 0, 0, 0); 20000]` made clang crash (a segfault at `-O1` and `-O2`, never `-O0`); the
+same declaration in a small program compiled. Its IR showed why: `initGlobals` built the
+array in a 320 KB stack slot, loaded it as **one first-class value** and stored that into
+the global — and in a `main` as large as Sheliak's, LLVM's optimizer fell over on it.
+
+- **Zeros were already there.** `zeroRepeat` skipped a global of `#[0; n]` (every global is
+  defined zeroed, 10/11) but knew only a literal `0`, `0.0` or `false`; a tuple or nested
+  array of them (`zeroLiteral`) is zero too now. **An unnamed tuple's name is `"?"`, not
+  empty** — the first version tested `""` and matched nothing; `types.IsAnonymousTupleName`
+  is the test. `fillFixedArray` likewise takes an `insertvalue` chain of zeros as zero
+  (`isZeroValue`) and `memset`s, with no loop.
+- **Anything else is copied**: `initGlobals` stores through `storeAggregate`, as CLAUDE.md's
+  table already said every large aggregate must go, so a load-then-store becomes `memcpy`.
+- `TestEmit_AZeroArrayGlobalNeedsNoStartup` pins both, each half failing it when undone.
+  The Sheliak copy builds in 19 seconds.
+
 ### 10/16/26 — A struct return that popped what nobody pushed
 
 The music benchmark crashed on the 68000 once `opt` inlined less (`-inline-threshold` 120 or

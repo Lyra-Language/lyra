@@ -443,7 +443,7 @@ func (l *lowerer) lowerArrayRepeatExpr(block *ir.Block, e *ast.ArrayRepeatExpr) 
 func (l *lowerer) fillFixedArray(block *ir.Block, arrayTy *lltypes.ArrayType, elemVal value.Value, elemType types.Type) (value.Value, *ir.Block, error) {
 	slot := block.Parent.Blocks[0].NewAlloca(arrayTy)
 	n := i64c(int64(arrayTy.Len))
-	if isZeroConstant(elemVal) {
+	if isZeroValue(elemVal) {
 		l.zeroFill(block, slot, arrayTy)
 		return block.NewLoad(arrayTy, slot), block, nil
 	}
@@ -478,6 +478,35 @@ func isZeroConstant(v value.Value) bool {
 		return true
 	case *constant.ZeroInitializer:
 		return true
+	}
+	return false
+}
+
+// isZeroValue reports whether v is all zero bits: a zero constant ([isZeroConstant]), or an
+// aggregate built of them by `insertvalue` — how a tuple of zeros, `(0, 0, 0, 0)`, arrives.
+func isZeroValue(v value.Value) bool {
+	if isZeroConstant(v) {
+		return true
+	}
+	switch c := v.(type) {
+	case *constant.Undef:
+		return true // what an insertvalue chain starts from: every field is inserted
+	case *constant.Struct:
+		for _, f := range c.Fields {
+			if !isZeroValue(f) {
+				return false
+			}
+		}
+		return true
+	case *constant.Array:
+		for _, el := range c.Elems {
+			if !isZeroValue(el) {
+				return false
+			}
+		}
+		return true
+	case *ir.InstInsertValue:
+		return isZeroValue(c.X) && isZeroValue(c.Elem)
 	}
 	return false
 }

@@ -1199,7 +1199,7 @@ func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 		// `var art: [28672]u32 = #[0; 28672]` needs no start-up code. Lowered, it built the
 		// array on the stack and stored it whole — a 112 KB aggregate value, the kind LLVM's
 		// optimizer is slowest on, for nothing (10/11, a game's tile art).
-		if zeroRepeat(vd.Value) {
+		if zeroRepeat(vd.Value) && !l.sharedValue(vd.Value) {
 			continue
 		}
 		v, next, err := l.lowerExpr(block, vd.Value)
@@ -1210,25 +1210,61 @@ func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 		if diverged(v, block) {
 			return block, nil
 		}
-		block.NewStore(v, g)
+		// A large initializer is copied, never stored as one value: a `#[(1, 2); 20000]`
+		// built on the stack and stored whole was a 320 KB aggregate, and in a program as
+		// large as Sheliak clang crashed on it (10/16).
+		l.storeAggregate(block, v, g)
 	}
 	return block, nil
 }
 
-// zeroRepeat reports whether e is `#[0; n]` — a fixed array of a literal zero, `0.0` or
-// `false` — which a zeroed global already holds.
+// sharedValue reports whether e's recorded type is `shared` — a box pointer, which a zeroed
+// global does not hold.
+func (l *lowerer) sharedValue(e ast.Expression) bool {
+	t, ok := l.recordedType(e)
+	return ok && types.AllocationOf(t) == types.Shared
+}
+
+// zeroRepeat reports whether e is `#[v; n]` of a value whose every bit is zero
+// ([zeroLiteral]), which a zeroed global already holds.
 func zeroRepeat(e ast.Expression) bool {
 	rep, ok := e.(*ast.ArrayRepeatExpr)
-	if !ok || !rep.Fixed {
-		return false
-	}
-	switch v := rep.Value.(type) {
+	return ok && rep.Fixed && zeroLiteral(rep.Value)
+}
+
+// zeroLiteral reports whether e is written as a value of all zero bits: a literal zero,
+// `0.0` or `false`, or an unnamed tuple or fixed array of them — `(0, 0)`, `#[0, 0]`,
+// `#[(0, 0); 8]`. A named tuple (a constructor, which may carry a tag) is not.
+func zeroLiteral(e ast.Expression) bool {
+	switch v := e.(type) {
 	case *ast.IntegerLiteralExpr:
 		return v.Value == 0 && !v.Unsigned
 	case *ast.FloatLiteralExpr:
 		return v.Value == 0 && !math.Signbit(v.Value)
 	case *ast.BooleanLiteralExpr:
 		return !v.Value
+	case *ast.TupleLiteralExpr:
+		if !types.IsAnonymousTupleName(v.Name) {
+			return false
+		}
+		for _, el := range v.Elements {
+			if !zeroLiteral(el) {
+				return false
+			}
+		}
+		return len(v.Elements) > 0
+	case *ast.ArrayLiteralExpr:
+		if !v.Fixed {
+			return false
+		}
+		for _, el := range v.Elements {
+			if !zeroLiteral(el) {
+				return false
+			}
+		}
+		return true
+	case *ast.ArrayRepeatExpr:
+		return zeroRepeat(v)
 	}
 	return false
 }
