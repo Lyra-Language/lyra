@@ -591,6 +591,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
   Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.
+- **[OPEN] `bindings.imgui`: `IsMousePosValid` is unbound** (its `const ImVec2 *` parameter).
+  Sulafat tests `get_mouse_pos()` against -FLT_MAX instead; `floor()` on that position traps.
+  A hand-written no-argument wrapper would do.
 - **[DONE 09/29] `bindings.imgui`: `cancel_quit` and SDL's open/save dialogs**; `std`:
   `string.replace` and `std.json`'s writer. (COMPLETED.md, 09/29.)
 - **[OPEN] Defaults in the remaining by-name passes.** A filled-in default
