@@ -974,9 +974,9 @@ sets V on every add. What stands between that and a ROM:
   base, which `hasIndexReg` does not see). Patched locally by
   `tools/llvm-m68k-patches/0001`; check `main` for the same code before reporting.
 
-- **[OPEN] Report patch 0004 upstream** (`M68kISelLowering`: a struct-return pointer passed
-  in a register is popped as if pushed) with the IR in
-  `TestGenesis_ARegisterStructReturnIsNotPopped`, beside the next item.
+- **[OPEN] Patch 0004 upstream**: reported as llvm/llvm-project#232869 (10/16, the fix
+  suggested in it). Drop the patch once a fix lands past the pin; a pull request with an
+  `llc` lit test is the next step if nobody takes it.
 - **[OPEN] Report the `fastcc` demoted-return mismatch upstream**: a function returning an
   aggregate too big for registers, made `fastcc` by the optimizer, read the hidden pointer
   from `d0` while its caller passed it in `a0` (10/15). Lyra moves every aggregate through

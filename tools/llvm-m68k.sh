@@ -46,7 +46,8 @@
 #     it — but `fastcc`, which the optimizer gives internal functions, passes it in A0, and
 #     the caller made nothing up. The stack pointer crept a word a call into the caller's
 #     locals until one read garbage (10/16; found by the music player crashing once LLVM
-#     inlined less). Only a pointer passed on the stack is popped now. Not yet reported.
+#     inlined less). Only a pointer passed on the stack is popped now. Reported as
+#     llvm/llvm-project#232869.
 #
 # Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
 # Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a
