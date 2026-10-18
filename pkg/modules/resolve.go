@@ -89,10 +89,68 @@ func Resolve(entryFile string, roots []string, opts Options) ([]Unit, []diag.Dia
 	if !ok {
 		return nil, r.diags
 	}
+	r.addProgramRoot(entry)
 	group := r.entryGroup(entry)
 	r.includePrelude(opts, entry)
 	r.visit(group)
 	return r.units, r.diags
+}
+
+// addProgramRoot adds the root the entry file's own module path implies, when its place
+// says it is a module of a larger program: `src/ui/grid.lyra` declaring `module ui` sits in
+// its module's directory, so its program's modules — the `vt` it imports — are found
+// beneath `src`, not beneath `src/ui`, which is where `DefaultRoots` looks first. Without it
+// an editor opening any file of a multi-module program but its entry file reported every
+// import of a sibling module missing, while `lyrac` built the program from its entry file
+// without a word. The same holds for a single-file module named by its path (`a/b.lyra`
+// declaring `module a.b`).
+//
+// The implied root goes after the roots given, so it never changes what they already
+// resolve; it is not added twice.
+func (r *resolver) addProgramRoot(entry Unit) {
+	if entry.Path == "" {
+		return
+	}
+	segments := strings.Split(entry.Path, ".")
+	dir := filepath.Dir(entry.File)
+	// In the module's own directory (one file of it), or the module is the file itself.
+	inDir := trailingDirs(dir, segments)
+	stem := strings.TrimSuffix(filepath.Base(entry.File), filepath.Ext(entry.File))
+	asFile := stem == segments[len(segments)-1] && trailingDirs(dir, segments[:len(segments)-1])
+	var root string
+	switch {
+	case inDir:
+		root = ancestor(dir, len(segments))
+	case asFile:
+		root = ancestor(dir, len(segments)-1)
+	default:
+		return
+	}
+	for _, have := range r.roots {
+		if filepath.Clean(have) == filepath.Clean(root) {
+			return
+		}
+	}
+	r.roots = append(r.roots, root)
+}
+
+// trailingDirs reports whether dir's last directories are names, in order.
+func trailingDirs(dir string, names []string) bool {
+	for i := len(names) - 1; i >= 0; i-- {
+		if filepath.Base(dir) != names[i] {
+			return false
+		}
+		dir = filepath.Dir(dir)
+	}
+	return true
+}
+
+// ancestor is dir n levels up.
+func ancestor(dir string, n int) string {
+	for ; n > 0; n-- {
+		dir = filepath.Dir(dir)
+	}
+	return dir
 }
 
 // entryGroup returns every unit of the entry file's own module — the entry file alone

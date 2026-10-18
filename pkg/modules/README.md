@@ -43,6 +43,14 @@ errors.
 front end (`lyrac` and the LSP — without it the editor ran with no prelude).
 
 - **The root is the directory *containing* `std/`**, not `std/` itself.
+- **A module file's place implies its program's root** (`addProgramRoot`, in `Resolve`): an
+  entry file in its own module's directory (`src/ui/grid.lyra` declaring `module ui`), or a
+  file module at its path (`src/net/http.lyra` declaring `module net.http`), adds the
+  directory above (`src`) after the roots given, so it finds its program's other modules.
+  `DefaultRoots` gives only the file's own directory, which is right for an entry file at the
+  top and wrong for any other — an editor opening `grid.lyra` reported `vt` missing while
+  `lyrac`, built from the top, did not. A file whose place does not match its path implies
+  nothing.
 - **The executable path is symlink-resolved** before taking its directory (the LSP is usually a
   symlink on `PATH`).
 
