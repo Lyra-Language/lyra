@@ -32,12 +32,12 @@ func TestTypeCheck_RangeExpr_StringEnd_Error(t *testing.T) {
 
 func TestTypeCheck_RangeExpr_BoolStart_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `for i in true..<=10 { }`, false)
-	assertErrorsAre(t, res, "range start must be numeric, got boolean")
+	assertErrorsAre(t, res, "range start must be numeric, got bool")
 }
 
 func TestTypeCheck_RangeExpr_BoolEnd_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `for i in 1..<=true { }`, false)
-	assertErrorsAre(t, res, "range end must be numeric, got boolean")
+	assertErrorsAre(t, res, "range end must be numeric, got bool")
 }
 
 func TestTypeCheck_RangeExpr_IncompatibleOperands_Error(t *testing.T) {
@@ -110,7 +110,7 @@ func TestTypeCheck_ForIn_BoolVar_Error(t *testing.T) {
 		let b: bool = true
 		for x in b { }
 	`, false)
-	assertErrorsAre(t, res, "cannot iterate over boolean: expected an array, string, range, or Seq")
+	assertErrorsAre(t, res, "cannot iterate over bool: expected an array, string, range, or Seq")
 }
 
 func TestTypeCheck_ForIn_FloatLiteral_Error(t *testing.T) {

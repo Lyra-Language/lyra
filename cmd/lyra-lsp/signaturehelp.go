@@ -8,6 +8,7 @@ import (
 	"github.com/owenrumney/go-lsp/lsp"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // SignatureHelp implements textDocument/signatureHelp. When the cursor is inside
@@ -138,7 +139,7 @@ func buildSignatureInfo(callee string, lambda *ast.LambdaExpr) lsp.SignatureInfo
 
 	if lambda.ReturnType.Type != nil {
 		sb.WriteString(" -> ")
-		sb.WriteString(lambda.ReturnType.String())
+		sb.WriteString(types.Source(lambda.ReturnType.Type))
 	}
 
 	return lsp.SignatureInformation{
@@ -152,7 +153,7 @@ func buildSignatureInfo(callee string, lambda *ast.LambdaExpr) lsp.SignatureInfo
 func formatParamLabel(p ast.Parameter) string {
 	name := p.Pattern.GetName()
 	if p.Type != nil {
-		return fmt.Sprintf("%s: %s", name, p.Type.String())
+		return fmt.Sprintf("%s: %s", name, types.Source(p.Type))
 	}
 	return name
 }

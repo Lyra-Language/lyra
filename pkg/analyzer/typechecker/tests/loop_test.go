@@ -91,7 +91,7 @@ func TestTypeCheck_While_AndWithIntOperand_Error(t *testing.T) {
 		let b: bool = true
 		while a && b { }
 	`, false)
-	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got i64 and boolean")
+	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got i64 and bool")
 }
 
 // A while with || whose right operand is a string should error.
@@ -101,7 +101,7 @@ func TestTypeCheck_While_OrWithStringOperand_Error(t *testing.T) {
 		let s: string = "x"
 		while a || s { }
 	`, false)
-	assertErrorsAre(t, res, "operator ||: operands must both be boolean, got boolean and string")
+	assertErrorsAre(t, res, "operator ||: operands must both be boolean, got bool and string")
 }
 
 // ── loop-body locals ─────────────────────────────────────────────────────────

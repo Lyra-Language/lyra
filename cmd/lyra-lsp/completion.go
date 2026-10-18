@@ -337,5 +337,5 @@ func typeDetail(t types.Type) string {
 	if t == nil {
 		return ""
 	}
-	return t.String()
+	return types.Source(t)
 }

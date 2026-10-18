@@ -145,7 +145,7 @@ func hoverContent(expr ast.Expression, typ types.Type, analysis *docAnalysis, li
 func typeWithParamNames(typ types.Type, names []string) string {
 	fn, ok := typ.(*types.LambdaType)
 	if !ok {
-		return typ.String()
+		return types.Source(typ)
 	}
 	if len(names) != len(fn.Parameters) {
 		names = nil
@@ -156,16 +156,20 @@ func typeWithParamNames(typ types.Type, names []string) string {
 		if names != nil {
 			name = names[i]
 		}
+		// The name is written here, from the declaration or the extern; the parameter
+		// without it, or an extern's would be written twice.
+		unnamed := p
+		unnamed.Name = ""
 		if name == "" {
-			params = append(params, p.String())
+			params = append(params, types.SourceParameter(unnamed))
 		} else {
-			params = append(params, name+": "+p.String())
+			params = append(params, name+": "+types.SourceParameter(unnamed))
 		}
 	}
 	if fn.IsVariadic {
 		params = append(params, "...")
 	}
-	return fmt.Sprintf("%s(%s) -> %s", fn.EffectPrefix(), strings.Join(params, ", "), fn.ReturnType)
+	return fmt.Sprintf("%s(%s) -> %s", fn.EffectPrefix(), strings.Join(params, ", "), types.Source(fn.ReturnType.Type))
 }
 
 // paramNamesAt returns the parameter names of the function the hovered expression is or
@@ -295,7 +299,7 @@ func typeDeclSummary(decl *ast.TypeDeclStmt) string {
 		name += "<" + strings.Join(params, ", ") + ">"
 	}
 	if decl.IsAlias {
-		return "alias " + name + " = " + decl.Type.GetName()
+		return "alias " + name + " = " + types.Source(decl.Type)
 	}
 	switch decl.Type.(type) {
 	case types.NamedStructType:
@@ -305,10 +309,10 @@ func typeDeclSummary(decl *ast.TypeDeclStmt) string {
 	case types.TupleType:
 		return "tuple " + name
 	case *types.ConstrainedType:
-		// The **base**, not `decl.Type.GetName()`: a ConstrainedType's name is the
-		// newtype's own, so asking it produced `type Cents = Cents`.
+		// The **base**, not the newtype: a ConstrainedType's name is the newtype's own, so
+		// asking it produced `type Cents = Cents`.
 		ct := decl.Type.(*types.ConstrainedType)
-		return "type " + name + " = " + ct.Type.GetName()
+		return "type " + name + " = " + types.Source(ct.Type)
 	}
 	return "type " + name
 }

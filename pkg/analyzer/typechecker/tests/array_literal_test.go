@@ -149,12 +149,12 @@ func TestArrayLiteral_StaticAnnotation_MatchingSize_Ok(t *testing.T) {
 
 func TestArrayLiteral_StaticAnnotation_FewerElements_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let xs: [3]i64 = #[1, 2]`, false)
-	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 2> to StaticArray<i64, 3>")
+	assertErrorsAre(t, res, "xs: cannot assign [2]integer literal to [3]i64")
 }
 
 func TestArrayLiteral_StaticAnnotation_MoreElements_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let xs: [3]i64 = #[1, 2, 3, 4]`, false)
-	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 4> to StaticArray<i64, 3>")
+	assertErrorsAre(t, res, "xs: cannot assign [4]integer literal to [3]i64")
 }
 
 func TestArrayLiteral_StaticAnnotation_OneElement_Ok(t *testing.T) {
@@ -197,7 +197,7 @@ func TestArrayLiteral_CannotAssignDynamicVarToStaticAnnotation_Error(t *testing.
 		let dyn: []i64 = [1, 2, 3]
 		let stat: [3]i64 = dyn
 	`, false)
-	assertErrorsAre(t, res, "stat: cannot assign DynamicArray<i64> to StaticArray<i64, 3>")
+	assertErrorsAre(t, res, "stat: cannot assign []i64 to [3]i64")
 }
 
 func TestArrayLiteral_CannotAssignDynamicVarToDifferentSizeStaticAnnotation_Error(t *testing.T) {
@@ -205,7 +205,7 @@ func TestArrayLiteral_CannotAssignDynamicVarToDifferentSizeStaticAnnotation_Erro
 		let dyn: []i64 = [1, 2, 3]
 		let stat: [5]i64 = dyn
 	`, false)
-	assertErrorsAre(t, res, "stat: cannot assign DynamicArray<i64> to StaticArray<i64, 5>")
+	assertErrorsAre(t, res, "stat: cannot assign []i64 to [5]i64")
 }
 
 // ── element type mismatches ───────────────────────────────────────────────────
@@ -222,7 +222,7 @@ func TestArrayLiteral_MixedIntAndString_Error(t *testing.T) {
 func TestArrayLiteral_MixedIntAndBool_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let xs = [1, true]`, false)
 	assertErrorsAre(t, res,
-		"array literal: element type boolean is not compatible with preceding element type integer literal")
+		"array literal: element type bool is not compatible with preceding element type integer literal")
 }
 
 func TestArrayLiteral_StaticAnnotation_WrongElementType_Error(t *testing.T) {
@@ -234,7 +234,7 @@ func TestArrayLiteral_StaticAnnotation_WrongElementType_Error(t *testing.T) {
 
 func TestArrayLiteral_DynamicAnnotation_WrongElementType_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let xs: []i64 = ["a", "b"]`, false)
-	assertErrorsAre(t, res, "xs: cannot assign DynamicArray<string> to DynamicArray<i64>")
+	assertErrorsAre(t, res, "xs: cannot assign []string to []i64")
 }
 
 // ── static ↔ static size mismatch via variable ───────────────────────────────
@@ -252,7 +252,7 @@ func TestArrayLiteral_StaticToStaticDifferentSizeVar_Error(t *testing.T) {
 		let a: [3]i64 = #[1, 2, 3]
 		let b: [4]i64 = a
 	`, false)
-	assertErrorsAre(t, res, "b: cannot assign StaticArray<i64, 3> to StaticArray<i64, 4>")
+	assertErrorsAre(t, res, "b: cannot assign [3]i64 to [4]i64")
 }
 
 // ── unannotated: untyped integer elements promote to i64 ─────────────────────

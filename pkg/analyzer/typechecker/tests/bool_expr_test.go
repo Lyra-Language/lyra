@@ -71,10 +71,10 @@ func TestTypeCheck_NotBooleanExpr_NonBool(t *testing.T) {
 
 func TestTypeCheck_BoolAndBinaryExpr_OneNonBoolLiteralOnLeft(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = "true" && true`, false)
-	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got string and boolean")
+	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got string and bool")
 }
 
 func TestTypeCheck_BoolAndBinaryExpr_OneNonBoolLiteralOnRight(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = true && 4`, false)
-	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got boolean and integer literal")
+	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got bool and integer literal")
 }

@@ -90,6 +90,10 @@ to disagree the first day either changed. One formatter, two callers — the CLI
   declaration's own name (`let`/`var`/`const`, `extern`) is `hoverDeclarationName`, tried
   before the expression walk, since a local `let` sits inside its function's `LambdaExpr`.
 - A map key is not a source name: completion labels read `decl.Name`.
+- **A type shown to the user is `types.Source`, never `String()`** (hover, completion
+  detail, signature help), and one the editor writes for them — the inlay hint, the
+  "Insert inferred type annotation" edit — is `types.SourceAnnotation`, which compiles:
+  `: []bool`, where String() had the action insert `: DynamicArray<boolean>` (10/17).
 
 ## Per-keystroke caching
 

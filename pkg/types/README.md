@@ -3,6 +3,8 @@
 Every type implements `Type` (`typeNode()`, `String()`, `GetName()`). Language-level semantics of
 each type are in [`LANGUAGE.md`](../../LANGUAGE.md); this file covers representation.
 
+**Two spellings.** `String()` is the compiler's name for a type — mangled into symbols and keys, so `DynamicArray<u8>` and `AnonymousTuple(u8, i16)` are identities and must not change. `Source(t)` (`source.go`) is the spelling a program writes — `[]u8`, `(u8, i16)`, `bool` — for every diagnostic and hover; `SourceSettled(t)` the same for a signature (`lyrac doc`), an untyped literal at its default and every written flavor; and `SourceAnnotation(t)` for an annotation the editor shows or inserts, a literal at its default and only `shared` written. `SourceParameter` is one function-type parameter.
+
 | Type | Notes |
 |---|---|
 | `PrimitiveType` | the fixed-width integers (incl. `i128`/`u128`), `f16`/`f32`/`f64`, `bool`, `string`, `rune`. Width tables live in `layout.go` (`LLVMPrimitive`, `IsSignedInt`, `IsNumericConversionTarget`, `primitiveSizeAndAlign`) plus `IsNumeric` and `assignable.go`'s int predicates — a new width must be added to all of them. `rune` is an i32: `IsSignedInt(rune)` is true, it converts to/from integers, but it is **not** `IsNumeric` (no arithmetic). |

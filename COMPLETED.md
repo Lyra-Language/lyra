@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 10/17/26 — Diagnostics spell types as a program writes them
+
+`cannot assign DynamicArray<i64> to DynamicArray<u8>` became `cannot assign []i64 to []u8`;
+likewise `[3]i64` for `StaticArray<i64, 3>`, `(u8, Maybe<i16>)` for `AnonymousTuple(…)`, and
+`bool` for `boolean`.
+
+- **`String()` stays as it was, and that was the constraint.** It is mangled into
+  specialization symbols and keys caches and glue, so it is an identity, not a spelling. The
+  source spelling is `types.Source`, a second walk beside it, and SourceSettled is its
+  signature form, which is what `pkg/docgen` had privately all along as `typeName`.
+  `array_repeat_alias.go`'s `renderElement` was a third copy; both now delegate.
+- **One sink, not hundreds of sites.** The typechecker's messages all pass through
+  `addErrorCode`, which now renders any `types.Type` argument through Source before
+  formatting. A type turned into a string first escapes that, so those were found by
+  scanning every call and fixed (`?`'s operand used `GetName()`, which dropped the arguments:
+  `got Result` is now `got Result<i64, i64>`), plus the driver's entry-point and
+  instantiation messages and purity's function-value message. A temporary probe in the
+  driver logged every diagnostic still holding an old spelling across the lyrac, LSP,
+  driver and backend suites, and found none.
+- **Two choices a diagnostic makes differently from a signature.** An untyped literal keeps
+  its phrase ("integer literal"), and only the `shared` flavor is written. `stack` is what
+  the checker stamps on something written bare, and `weak stack Node` named a word nobody
+  wrote. Where a message wrapped a type in "`shared %s`", `sharedSpelling` writes the word
+  once.
+- **Found on the way**: docgen rendered an anonymous struct type as `struct { x: i64 }`, which
+  does not parse (the grammar writes `{ x: i64 }`), and dropped a function type's parameter
+  modes (`(mut Self) -> void` printed as `(Self) -> void`). Nothing round-tripped either.
+- 62 test expectations changed, each checked mechanically to differ only by spelling, except
+  the deliberate `Result<i64, i64>`.
+- **The editor followed the same day**: hover, completion detail and signature help speak
+  `types.Source`, and the inlay hint and "Insert inferred type annotation" speak
+  `SourceAnnotation`, a literal at its default and only `shared` written. That action
+  **inserted `: DynamicArray<boolean>` into the program**, which does not compile; nothing
+  tested it on a type whose spelling differs, and now `TestCodeAction_InsertTypeAnnotationIsSource`
+  does. Hover's parameters go through `SourceParameter` without their names, or an extern's
+  would be written twice.
+
 ### 10/16/26 — A context reaches what sits inside a literal
 
 Four todo entries, one shape: a context type that reached a value's sibling spellings and

@@ -38,7 +38,7 @@ tuple Point(i32, i32)
 let p = Point(1, 2)
 let q: bool = p.0
 `, false)
-	assertErrorsAre(t, res, "q: cannot assign i32 to boolean")
+	assertErrorsAre(t, res, "q: cannot assign i32 to bool")
 }
 
 // An index past the tuple's arity is a compile error.

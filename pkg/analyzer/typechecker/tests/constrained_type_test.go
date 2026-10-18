@@ -770,7 +770,7 @@ let r: Row = [1, 2, 3]
 let plain: []i64 = r
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Row as DynamicArray<i64> implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `base(...)`")
+		"cannot use Row as []i64 implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `base(...)`")
 }
 
 // …and `base(r)` is the way through: it strips exactly one newtype layer, is an

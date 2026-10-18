@@ -391,3 +391,21 @@ func TestCodeAction_AddImportThroughASymlinkedRoot(t *testing.T) {
 		t.Errorf("a module behind a symlinked root should be offered; got %v", titles(actions))
 	}
 }
+
+// The inserted annotation goes into the program, so it has to compile: it inserted
+// `: DynamicArray<boolean>` until 10/17, where `: []bool` is the type.
+func TestCodeAction_InsertTypeAnnotationIsSource(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	openAndDiags(t, h, "let xs = [true, false]")
+	actions := requestActions(t, h, nil)
+	a := findAction(actions, "Insert inferred type annotation")
+	if a == nil {
+		t.Fatalf("no insert-annotation action; actions=%v", titles(actions))
+	}
+	if _, text := editText(t, a); text != ": []bool" {
+		t.Errorf("inserted %q, want %q", text, ": []bool")
+	}
+	if a.Title != "Insert inferred type annotation: []bool" {
+		t.Errorf("title = %q", a.Title)
+	}
+}

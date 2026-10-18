@@ -88,10 +88,6 @@ Package management, versioning and separate compilation are out of scope by deci
   anywhere else, including later in a block. Found writing `std.rar` (09/29), whose
   parameters are named `data` throughout.
 
-- **Diagnostics spell types as the compiler does, not as source does**:
-  `AnonymousTuple(u8, Maybe<i16>)`, `DynamicArray<u8>`, `StaticArray<i64, 3>`.
-  `pkg/docgen`'s `typeName` already renders source syntax; diagnostics could use it, but
-  `String()` is also mangled into symbols and ~35 tests assert the old spelling (10/16).
 
 - **A large struct passed bare is a silent copy.** Sheliak's `pure (bus: GenesisBus, …)`
   helpers copied a multi-kilobyte bus on every memory read — two thirds of its frame time,

@@ -86,7 +86,7 @@ func TestTypeCheck_IntAnnotation_StringLiteral(t *testing.T) {
 
 func TestTypeCheck_BoolAnnotation_IntLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: bool = 1`, false)
-	assertErrorsAre(t, res, "x: cannot assign integer literal to boolean")
+	assertErrorsAre(t, res, "x: cannot assign integer literal to bool")
 }
 
 func TestTypeCheck_IntAnnotation_FloatLiteral(t *testing.T) {
@@ -128,7 +128,7 @@ func TestTypeCheck_UnsignedIntAnnotation_ConcreteSignedIntDeclaration(t *testing
 
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = false`, false)
-	assertErrorsAre(t, res, "x: cannot assign boolean to string")
+	assertErrorsAre(t, res, "x: cannot assign bool to string")
 }
 
 // --- multiple declarations: each checked independently ---

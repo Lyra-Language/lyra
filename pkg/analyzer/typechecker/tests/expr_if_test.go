@@ -176,7 +176,7 @@ func TestTypeCheck_IfElse_StringAndBool_Value_Error(t *testing.T) {
 		let cond: bool = true
 		let x = if cond { "a" } else { true }
 	`, false)
-	assertErrorsAre(t, res, "if/else branches have incompatible types: then is string, else is boolean")
+	assertErrorsAre(t, res, "if/else branches have incompatible types: then is string, else is bool")
 }
 
 // ── if/else as a value ───────────────────────────────────────────────────────

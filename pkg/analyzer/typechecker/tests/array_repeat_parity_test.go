@@ -127,7 +127,7 @@ let xs: []i64 = [1, 2, 3]
 let n: Nums = xs
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use DynamicArray<i64> as Nums implicitly: Nums is a distinct type over DynamicArray<i64>, so the conversion must be written — `Nums(...)`")
+		"cannot use []i64 as Nums implicitly: Nums is a distinct type over []i64, so the conversion must be written — `Nums(...)`")
 }
 
 // A lambda literal joined the form exemption once the binding-type decision was

@@ -100,5 +100,5 @@ func TestTypeCheck_ReturnTypeInference_TurbofishBeatsTheAnnotation(t *testing.T)
 let empty<t> = pure () -> []t => []
 let xs: []string = empty::<i64>()
 `, false)
-	assertErrorsAre(t, res, "xs: cannot assign DynamicArray<i64> to DynamicArray<string>")
+	assertErrorsAre(t, res, "xs: cannot assign []i64 to []string")
 }

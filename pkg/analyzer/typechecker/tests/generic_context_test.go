@@ -142,7 +142,7 @@ func TestGenericContext_WrongAggregateInstantiationStillReported(t *testing.T) {
 struct Box<t> { value: t }
 let f = () -> Box<bool> => Box { value: 42 }
 `, false)
-	if !hasError(res, "expected Box<boolean>, got Box<i64>") {
+	if !hasError(res, "expected Box<bool>, got Box<i64>") {
 		t.Errorf("expected a return-type mismatch; got %v", res.errors)
 	}
 }

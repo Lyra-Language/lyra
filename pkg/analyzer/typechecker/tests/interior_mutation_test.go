@@ -408,7 +408,7 @@ func TestTypeCheck_ParamReassign_BoolToInt_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let f = (n: own i64) -> i64 => { n = true; n }
 	`, false)
-	assertErrorsAre(t, res, "n: cannot assign boolean to i64")
+	assertErrorsAre(t, res, "n: cannot assign bool to i64")
 }
 
 // The literal-range check now runs on a parameter target too.

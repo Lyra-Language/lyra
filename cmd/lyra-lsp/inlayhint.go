@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/owenrumney/go-lsp/lsp"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // InlayHint implements textDocument/inlayHint, returning type hints for
@@ -78,7 +78,8 @@ func varDeclHint(source string, stmt *ast.VarDeclStmt, analysis *docAnalysis) *l
 	// converted to a UTF-16 column for the hint position.
 	byteCol := lspPos(loc.StartCol) + len(stmt.BindingKind.String()) + 1 + len(stmt.Name)
 	kind := lsp.InlayHintKindType
-	label, _ := json.Marshal(fmt.Sprintf(": %s", typ))
+	// The annotation the hint stands in for, as it would be written (types.SourceAnnotation).
+	label, _ := json.Marshal(": " + types.SourceAnnotation(typ))
 	return &lsp.InlayHint{
 		Position: lsp.Position{
 			Line:      lspPos(loc.StartLine),

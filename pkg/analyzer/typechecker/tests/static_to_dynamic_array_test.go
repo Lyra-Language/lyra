@@ -16,7 +16,7 @@ import "testing"
 // `take(ys)` below compiled clean and crashed. The allowance now walks the
 // expression alongside the type, so it applies exactly where a literal sits.
 
-const dynArrayRefusal = "cannot assign StaticArray<i64, 3> to DynamicArray<i64>"
+const dynArrayRefusal = "cannot assign [3]i64 to []i64"
 
 // ── refused: a built fixed array reaching a dynamic slot ────────────────────
 
@@ -44,7 +44,7 @@ let ret = () -> []i64 => {
   ys
 }
 `, false)
-	assertHasErrorContaining(t, res, "expected DynamicArray<i64>, got StaticArray<i64, 3>")
+	assertHasErrorContaining(t, res, "expected []i64, got [3]i64")
 }
 
 // The nested variant, and the reason the allowance walks expressions rather than
@@ -57,7 +57,7 @@ let y2: [2]i64 = #[3, 4]
 let bad: [][]i64 = [y1, y2]
 `, false)
 	assertHasErrorContaining(t, res,
-		"cannot assign DynamicArray<StaticArray<i64, 2>> to DynamicArray<DynamicArray<i64>>")
+		"cannot assign [][2]i64 to [][]i64")
 }
 
 // ── allowed: a literal, wherever one legitimately sits ──────────────────────

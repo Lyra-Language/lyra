@@ -32,7 +32,7 @@ unsafe extern clamp: (value: i64, low: i64, high: i64) -> i64`
 		{"the declaration's name", 1, 5, "area: (w: i64, h: i64) -> i64"},
 		{"a call", 4, 9, "area: (w: i64, h: i64) -> i64"},
 		{"a method-style call", 5, 11, "twice: (self: i64) -> i64"},
-		{"a generic call", 6, 9, "first: (xs: DynamicArray<t>, fallback: t) -> t"},
+		{"a generic call", 6, 9, "first: (xs: []t, fallback: t) -> t"},
 		{"an extern's name", 7, 15, "clamp: (value: i64, low: i64, high: i64) -> i64"},
 	} {
 		hover, err := h.Hover(testURI, tc.line, tc.col)

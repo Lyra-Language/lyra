@@ -18,7 +18,7 @@ type Bag = []string
 let take = (b: Bag) -> i64 => 1
 let xs: []string = ["x"]
 let out = take(xs)`,
-			"cannot use DynamicArray<string> as Bag implicitly: Bag is a distinct type over DynamicArray<string>, so the conversion must be written — `Bag(...)`"},
+			"cannot use []string as Bag implicitly: Bag is a distinct type over []string, so the conversion must be written — `Bag(...)`"},
 		// Two newtypes over one base are distinct. The diagnostic names *both* newtypes,
 		// which it could not do while the wrapper was being lost — it used to describe the
 		// base instead.
@@ -53,7 +53,7 @@ let b: Bag = ["x"]
 let out = take(b)
 `, false)
 	assertErrorsAre(t, res,
-		"cannot use Bag as DynamicArray<string> implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `base(...)`")
+		"cannot use Bag as []string implicitly: reading a `type` out to its base discards the name it carries, so the conversion must be written — `base(...)`")
 }
 
 // …and writing the read-out is the way through at a call, as everywhere.

@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -1331,6 +1332,17 @@ func (tc *TypeChecker) reportStoredFlavor(
 // call monomorphizes the body, so `t` takes the flavor of whatever this instantiation binds
 // it to. Firing here would refuse every generic function called with a `shared` value,
 // which is most of the prelude's combinator layer.
+// sharedSpelling is a type written `shared`, once: types.Source writes the flavor a type
+// carries in its value (an array's, a struct's), and a data type or an instantiation
+// carries none there, so the word is added only where the rendering lacks it.
+func sharedSpelling(t types.Type) string {
+	s := types.Source(t)
+	if strings.HasPrefix(s, "shared ") {
+		return s
+	}
+	return "shared " + s
+}
+
 func (tc *TypeChecker) checkArgumentAllocation(subject string, arg ast.Expression, argType, paramType types.Type) {
 	from, to, crossing := polymorphicFlavorCrossing(argType, paramType)
 	if !crossing {
@@ -1339,14 +1351,14 @@ func (tc *TypeChecker) checkArgumentAllocation(subject string, arg ast.Expressio
 	switch {
 	case to == types.Shared:
 		tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeAllocationMismatch,
-			"%s: a `shared %s` parameter takes a `shared` value, and this one is not — "+
+			"%s: a `%s` parameter takes a `shared` value, and this one is not — "+
 				"bind it `shared` where it is built, or construct it in the argument",
-			subject, paramType)
+			subject, sharedSpelling(paramType))
 	case from == types.Shared:
 		tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeAllocationMismatch,
-			"%s: this is a `shared %s` and the parameter takes a plain one — "+
-				"declare the parameter `shared %s`, since a function has one representation "+
+			"%s: this is a `%s` and the parameter takes a plain one — "+
+				"declare the parameter `%s`, since a function has one representation "+
 				"and cannot take either",
-			subject, argType, paramType)
+			subject, sharedSpelling(argType), sharedSpelling(paramType))
 	}
 }

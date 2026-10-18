@@ -173,7 +173,7 @@ func TestTypeCheck_StructLiteral_GenericArgs_Error(t *testing.T) {
 		let float_point = Point::<i32> { x: 10.5, y: 20.5 }
 	`, false)
 	assertErrorsAre(t, res,
-		"Point.x: cannot assign boolean to f64",
+		"Point.x: cannot assign bool to f64",
 		"Point.y: cannot assign string to f64",
 		"Point.x: cannot assign float literal to i32",
 		"Point.y: cannot assign float literal to i32",
@@ -300,7 +300,7 @@ func TestCall_MemberExpr_WrongArgType(t *testing.T) {
 		let c = Callable { fn: (n: i64) -> i64 => n * 2 }
 		c.fn(true)
 	`, false)
-	assertErrorsAre(t, res, `fn: argument 1: cannot assign boolean to i64`)
+	assertErrorsAre(t, res, `fn: argument 1: cannot assign bool to i64`)
 }
 
 func TestCall_MemberExpr_NonCallableField_Error(t *testing.T) {

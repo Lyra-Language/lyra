@@ -194,6 +194,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
    | where a trap says it was | `l.here`, set through `l.at(loc)` and passed by `whereArgs` (`backend/llvm/trap.go`) |
    | is this CST node a comment? | `cst.IsComment` |
+   | spell a type for a person (a diagnostic, a hover, a doc page) | `types.Source` (`types.SourceSettled` for a signature, `types.SourceAnnotation` for an annotation the editor shows or inserts) — **never `String()`**, which is mangled into symbols and spells `DynamicArray<u8>`. The typechecker's sink (`addErrorCode`) renders any `types.Type` argument itself, so pass the type, not a string made from it |
    | a constructor's payload fields (a lone `void` is none — `Ok()`) | `DataTypeConstructor.FieldTypes` |
    | declare a libc function the runtime calls | `declareLibc` / `declareLibcVariadic` — **never `module.NewFunc`**, which a program's `extern` of the same name collides with |
    | store, copy or zero a possibly large aggregate; call a Lyra function | `storeAggregate`, `zeroFill`, `sizeOf` (LLVM's size, padding included — never a sum of fields), `copyBytes`/`zeroBytes` (LLVM's `llvm.memcpy`/`llvm.memset`, right on a 32-bit target — never a declared libc `memcpy`), `callLyra` and `copyForParam` (`sret.go`): a large aggregate is returned through memory, passed as a pointer to the caller's copy, and never moved as a whole value |

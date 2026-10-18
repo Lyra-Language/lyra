@@ -100,7 +100,7 @@ func TestCall_NonCallable_BoolVariable(t *testing.T) {
 		let b = true
 		b()
 	`, false)
-	assertErrorsAre(t, res, `identifier "b" is not callable (type boolean)`)
+	assertErrorsAre(t, res, `identifier "b" is not callable (type bool)`)
 }
 
 func TestCall_NonCallable_WithArguments(t *testing.T) {
@@ -154,7 +154,7 @@ func TestCall_LambdaInVariable_WrongArgType(t *testing.T) {
 		let double = (n: i64) -> i64 => n * 2
 		let r: i64 = double(true)
 	`, false)
-	assertErrorsAre(t, res, `double: argument 1 (n): cannot assign boolean to i64`)
+	assertErrorsAre(t, res, `double: argument 1 (n): cannot assign bool to i64`)
 }
 
 // ── 4. Direct lambda calls ─────────────────────────────────────────────────
@@ -172,7 +172,7 @@ func TestCall_DirectLambda_WrongArgCount(t *testing.T) {
 
 func TestCall_DirectLambda_WrongArgType(t *testing.T) {
 	res := parseCollectAndCheck(t, `((n: i64) -> i64 => n * 2)(true)`, false)
-	assertErrorsAre(t, res, `lambda: argument 1 (n): cannot assign boolean to i64`)
+	assertErrorsAre(t, res, `lambda: argument 1 (n): cannot assign bool to i64`)
 }
 
 func TestCall_DirectLambda_MultipleParams_Ok(t *testing.T) {

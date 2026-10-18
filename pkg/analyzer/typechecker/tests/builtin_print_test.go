@@ -58,7 +58,7 @@ func TestTypeCheck_Print_AggregateArg_Error(t *testing.T) {
   }
 	`, false)
 	assertErrorsAre(t, res,
-		"print: cannot print a value of type AnonymousTuple(integer literal, integer literal) (expected a string, an integer, a float, bool, or rune)")
+		"print: cannot print a value of type (integer literal, integer literal) (expected a string, an integer, a float, bool, or rune)")
 }
 
 func TestTypeCheck_Print_WrongArity_Error(t *testing.T) {

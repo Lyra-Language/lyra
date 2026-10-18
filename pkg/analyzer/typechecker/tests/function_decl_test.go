@@ -162,7 +162,7 @@ func TestTypeCheck_Call_ArgType_Mismatch_BoolToInt(t *testing.T) {
 		let flag: bool = true
 		add(flag, 2)
 	`, false)
-	assertErrorsAre(t, res, "add: argument 1 (a): cannot assign boolean to i64")
+	assertErrorsAre(t, res, "add: argument 1 (a): cannot assign bool to i64")
 }
 
 func TestTypeCheck_Call_ArgType_Mismatch_IntToString(t *testing.T) {

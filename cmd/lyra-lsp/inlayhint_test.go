@@ -103,3 +103,19 @@ func TestInlayHint_NestedInLambda(t *testing.T) {
 		t.Error("expected hints for nested unannotated bindings, got none")
 	}
 }
+
+// A hint stands in for the annotation, so it is spelled as one would be written — `[]bool`,
+// `(i64, bool)` — never String()'s `DynamicArray<boolean>`, and an untyped literal at the
+// default it settles to rather than "integer literal" (10/17).
+func TestInlayHint_SpelledAsTheAnnotation(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	openAndWait(t, h, "let xs = [true, false]\nlet pair = (1, true)")
+	hints, err := h.InlayHint(testURI, fullRange())
+	if err != nil {
+		t.Fatalf("InlayHint: %v", err)
+	}
+	got := strings.Join(hintLabels(hints), " | ")
+	if got != ": []bool | : (i64, bool)" {
+		t.Errorf("hints = %q, want %q", got, ": []bool | : (i64, bool)")
+	}
+}

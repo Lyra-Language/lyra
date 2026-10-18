@@ -41,7 +41,7 @@ func TestHover_IdentifierExpr_ShowsType(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "xs") {
 		t.Errorf("expected hover to mention 'xs', got: %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "StaticArray") {
+	if !strings.Contains(hover.Contents.Value, "[3]i64") {
 		t.Errorf("expected hover to mention type, got: %q", hover.Contents.Value)
 	}
 }

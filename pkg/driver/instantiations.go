@@ -155,7 +155,7 @@ func describeBinding(subst map[string]types.Type) string {
 func abbreviateType(t types.Type, depth int) string {
 	p, ok := t.(types.ParameterizedType)
 	if !ok || len(p.TypeArguments) == 0 {
-		return t.String()
+		return types.Source(t)
 	}
 	if depth <= 0 {
 		return "…"

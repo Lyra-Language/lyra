@@ -19,10 +19,10 @@ func TestPatternBindingHoverAndDefinition(t *testing.T) {
 		name, body, id, hover string
 	}{
 		{"arm", "  match s { Rect(ww, h) => ww + h, Dot => 0 }\n}", "ww", "ww: i64"},
-		{"tuple rest", "  match s { Rect(...wh) => wh.0, Dot => 0 }\n}", "wh", "wh: AnonymousTuple(i64, i64)"},
-		{"whole payload", "  match s { Rect wh => wh.0, Dot => 0 }\n}", "wh", "wh: AnonymousTuple(i64, i64)"},
+		{"tuple rest", "  match s { Rect(...wh) => wh.0, Dot => 0 }\n}", "wh", "wh: (i64, i64)"},
+		{"whole payload", "  match s { Rect wh => wh.0, Dot => 0 }\n}", "wh", "wh: (i64, i64)"},
 		{"at binding", "  match s { rr @ Rect(_, _) => area(rr), Dot => 0 }\n}\nlet area = (s: Shape) -> i64 => 1", "rr", "rr: Shape"},
-		{"array rest", "  match xs { [a, ...more] => more.len() + a, _ => 0 }\n}", "more", "more: DynamicArray<i64>"},
+		{"array rest", "  match xs { [a, ...more] => more.len() + a, _ => 0 }\n}", "more", "more: []i64"},
 		{"destructuring let", "  let (aa, b) = (1, 2)\n  aa + b\n}", "aa", "aa: i64"},
 		{"struct field", "  let Pt { x: xx, y } = p\n  xx + y\n}", "xx", "xx: i64"},
 		{"struct shorthand", "  let Pt { x, y } = p\n  x + y\n}", "x", "x: i64"},

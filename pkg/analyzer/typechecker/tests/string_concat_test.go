@@ -84,7 +84,7 @@ func TestStringConcat_BothNonString_Error(t *testing.T) {
 		let b: bool = true
 		let s = n ++ b
 	`, false)
-	assertErrorsAre(t, res, "operator ++: operands must be strings, got i64 and boolean — `++` does not convert; render each operand first, with `.show()` or `\"${…}\"` interpolation")
+	assertErrorsAre(t, res, "operator ++: operands must be strings, got i64 and bool — `++` does not convert; render each operand first, with `.show()` or `\"${…}\"` interpolation")
 }
 
 func TestStringConcat_BoolVar_Error(t *testing.T) {
@@ -92,7 +92,7 @@ func TestStringConcat_BoolVar_Error(t *testing.T) {
 		let flag: bool = true
 		let s = flag ++ "hello"
 	`, false)
-	assertErrorsAre(t, res, "operator ++: operands must be strings, got boolean and string — `++` does not convert; render the left operand first, with `.show()` or `\"${…}\"` interpolation")
+	assertErrorsAre(t, res, "operator ++: operands must be strings, got bool and string — `++` does not convert; render the left operand first, with `.show()` or `\"${…}\"` interpolation")
 }
 
 // --- annotation mismatch ---

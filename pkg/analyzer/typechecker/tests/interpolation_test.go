@@ -49,7 +49,7 @@ func TestInterpolation_NonPrintableSegment_Error(t *testing.T) {
 		let p: (i32, i32) = (1, 2)
 		let s = "point ${p}"`, false)
 	assertErrorsAre(t, res,
-		"cannot interpolate a value of type AnonymousTuple(i32, i32) (expected a string, an integer, a float, bool, or rune)")
+		"cannot interpolate a value of type (i32, i32) (expected a string, an integer, a float, bool, or rune)")
 }
 
 // An untyped numeric-literal segment is settled to its default width so the

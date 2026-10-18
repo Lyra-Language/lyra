@@ -122,7 +122,7 @@ func TestCheck_OptionalChainOnANonMaybe(t *testing.T) {
 		name, expr, want string
 	}{
 		{"a struct", `p?.name`, "this is a Pet, which is always there: write `.` or `[`"},
-		{"an array", `xs?[0]`, "this is a DynamicArray<i64>, which is always there"},
+		{"an array", `xs?[0]`, "this is a []i64, which is always there"},
 		{"a result", `r?.name`, "convert it with `.ok()`, or propagate the error with `?` first"},
 		{"a plain field of a Maybe", `p.name?.len()`, "this is a string"},
 		// The other mistake: a chain that drops a `?`, so `.len()` meets a Maybe.

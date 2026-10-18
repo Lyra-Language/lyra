@@ -144,7 +144,7 @@ let a = () -> i64 => { let z = Zero::zero(); 1 }`,
 			"Zero::zero takes no receiver, so its impl is chosen by what the result is used as, and nothing here says; give the result a type, as in `let x: T = Zero::zero(…)`"},
 		"no impl for the wanted type": {zero + `
 let a = () -> bool => Zero::zero()`,
-			"no implementation of Zero::zero for boolean, the type the result is used as"},
+			"no implementation of Zero::zero for bool, the type the result is used as"},
 		"a variable without the bound": {zero + `
 let a<t> = (x: t) -> t => Zero::zero()`,
 			"Zero::zero: the result is a t, which has no `where t: Zero` bound"},

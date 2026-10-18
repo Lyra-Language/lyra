@@ -5975,8 +5975,25 @@ func (tc *TypeChecker) addErrorCode(loc ast.Location, sev Severity, code, format
 		Location: loc,
 		Severity: sev,
 		Code:     code,
-		Message:  fmt.Sprintf(format, args...),
+		Message:  fmt.Sprintf(format, sourceSpelled(args)...),
 	})
+}
+
+// sourceSpelled renders each type among a message's arguments as a program writes it
+// (types.Source): `[]u8`, not `DynamicArray<u8>`. Here rather than at each of the hundreds
+// of call sites, which pass types to `%s` and would each be a place to forget. A type
+// formatted into a string *before* it arrives is out of its reach — write the type itself
+// as the argument.
+func sourceSpelled(args []any) []any {
+	out := make([]any, len(args))
+	for i, a := range args {
+		if t, ok := a.(types.Type); ok && t != nil {
+			out[i] = types.Source(t)
+			continue
+		}
+		out[i] = a
+	}
+	return out
 }
 
 // checkAllocationCompat verifies that owning a value of type from into a slot of

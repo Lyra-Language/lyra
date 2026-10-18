@@ -44,7 +44,7 @@ func TestUnknownType_LetDecl_BoolValue(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: MyBool = true`, false)
 	assertErrorsAre(t, res,
 		`unknown type "MyBool"`,
-		`x: cannot assign boolean to MyBool`,
+		`x: cannot assign bool to MyBool`,
 	)
 }
 

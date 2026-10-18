@@ -50,8 +50,8 @@ let b: Bag = ["a"]`,
 // spelling, once, instead of two whole types.
 func TestArrayLiteralFlavor_OtherSpellingRefusedEverywhere(t *testing.T) {
 	t.Parallel()
-	const wantFixed = "`[…]` builds a dynamic array, and StaticArray<i64, 2> is a fixed-size one — write `#[…]` for a fixed array"
-	const wantDyn = "`#[…]` builds a fixed-size array, and DynamicArray<i64> is a dynamic one — write `[…]` for a dynamic array"
+	const wantFixed = "`[…]` builds a dynamic array, and [2]i64 is a fixed-size one — write `#[…]` for a fixed array"
+	const wantDyn = "`#[…]` builds a fixed-size array, and []i64 is a dynamic one — write `[…]` for a dynamic array"
 	cases := map[string]struct{ src, want string }{
 		"annotation":          {`let a: [2]i64 = [1, 2]`, wantFixed},
 		"annotation, dynamic": {`let a: []i64 = #[1, 2]`, wantDyn},
@@ -65,7 +65,7 @@ let a = take([1, 2])`, wantFixed},
 		"struct field":         {"struct S { xs: [2]i64 }\nlet s = S { xs: [1, 2] }", wantFixed},
 		"anonymous tuple":      {`let t: ([2]i64, i64) = ([1, 2], 3)`, wantFixed},
 		"data payload":         {"data D = Full([2]i64) | Empty\nlet d = Full([1, 2])", wantFixed},
-		"generic parameter":    {"let first<t> = (xs: [2]t) -> t => xs[0]\nlet a = first([1, 2])", "`[…]` builds a dynamic array, and StaticArray<t, 2> is a fixed-size one — write `#[…]` for a fixed array"},
+		"generic parameter":    {"let first<t> = (xs: [2]t) -> t => xs[0]\nlet a = first([1, 2])", "`[…]` builds a dynamic array, and [2]t is a fixed-size one — write `#[…]` for a fixed array"},
 		"generic struct field": {"struct H<t> { xs: [2]t }\nlet h = () -> H<i64> => H { xs: [1, 2] }", wantFixed},
 	}
 	for name, tc := range cases {

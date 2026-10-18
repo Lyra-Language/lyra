@@ -149,17 +149,17 @@ func TestArrayLiteralContext_BranchesKeepTheirRefusals(t *testing.T) {
 	cases := map[string]struct{ src, want string }{
 		"fixed binding, same length": {
 			`let g = (c: bool) -> []i64 => { let fixed = #[1, 2]; if c { fixed } else { [3, 4] } }`,
-			"if/else branches have incompatible types: then is StaticArray<i64, 2>, else is DynamicArray<integer literal>"},
+			"if/else branches have incompatible types: then is [2]i64, else is []integer literal"},
 		"fixed binding, different length": {
 			`let g = (c: bool) -> []i64 => { let fixed = #[1, 2]; if c { fixed } else { #[3] } }`,
-			"if/else branches have incompatible types: then is StaticArray<i64, 2>, else is StaticArray<integer literal, 1>"},
+			"if/else branches have incompatible types: then is [2]i64, else is [1]integer literal"},
 		"fixed literals of different lengths": {
 			`let g = (c: bool) -> i64 => { let k = if c { #[1] } else { #[2, 3] }; 0 }`,
-			"if/else branches have incompatible types: then is StaticArray<integer literal, 1>, else is StaticArray<integer literal, 2>"},
+			"if/else branches have incompatible types: then is [1]integer literal, else is [2]integer literal"},
 		"a binding into a newtype": {`
 type Bag = []string
 let g = (c: bool, ys: []string) -> Bag => if c { ys } else { ["b"] }`,
-			"cannot use DynamicArray<string> as Bag implicitly: Bag is a distinct type over DynamicArray<string>, so the conversion must be written — `Bag(...)`"},
+			"cannot use []string as Bag implicitly: Bag is a distinct type over []string, so the conversion must be written — `Bag(...)`"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

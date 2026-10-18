@@ -206,11 +206,11 @@ let f = (c: bool) -> (i8, i8) => if c { (-1, 0) } else { (1, 0) }`, false))
 // another length, a string where a number was, or fixed arrays of two sizes still differ.
 func TestUntypedIntegerJoin_InsideTuplesStillRefusesMismatches(t *testing.T) {
 	assertErrorsAre(t, parseCollectAndCheck(t, `let a = [(-1, 0), ("x", 0)]`, false),
-		"array literal: element type AnonymousTuple(string, integer literal) is not compatible with preceding element type AnonymousTuple(integer literal, integer literal)")
+		"array literal: element type (string, integer literal) is not compatible with preceding element type (integer literal, integer literal)")
 	assertErrorsAre(t, parseCollectAndCheck(t, `let a = [(-1, 0), (1, 0, 0)]`, false),
-		"array literal: element type AnonymousTuple(integer literal, integer literal, integer literal) is not compatible with preceding element type AnonymousTuple(integer literal, integer literal)")
+		"array literal: element type (integer literal, integer literal, integer literal) is not compatible with preceding element type (integer literal, integer literal)")
 	assertErrorsAre(t, parseCollectAndCheck(t, `let a = [#[-1], #[1, 2]]`, false),
-		"array literal: element type StaticArray<integer literal, 2> is not compatible with preceding element type StaticArray<integer literal, 1>")
+		"array literal: element type [2]integer literal is not compatible with preceding element type [1]integer literal")
 }
 
 // The join produces an *untyped* result, so an annotation still narrows it — and the

@@ -352,9 +352,9 @@ func implMembers(s *ast.TraitImplStmt) []Member {
 
 // typeName renders a type in **source syntax**, nil-safe.
 //
-// It is not `t.GetName()` or `t.String()`, and it cannot be. Those exist for diagnostics,
-// where a type is *described*; a documentation page is read as the code to write, so
-// every name on it has to be a spelling the parser accepts. The two disagree in ways
+// It is not `t.GetName()` or `t.String()`, and it cannot be. Those name a type for the
+// compiler — String() is mangled into symbols and keys caches — while a documentation page
+// is read as the code to write, so every name on it has to be a spelling the parser accepts. The two disagree in ways
 // that are individually small and collectively fatal to that promise:
 //
 //	GetName()                 source            why it matters
@@ -364,101 +364,14 @@ func implMembers(s *ast.TraitImplStmt) []Member {
 //	Maybe                     Maybe<t>          GetName drops the arguments entirely
 //
 // The last is the worst of them: a page rendering `self: Maybe` states a type that
-// exists and is the wrong one. Anything this function does not special-case falls
-// through to String(), which is right for a primitive, a named type and a type
-// variable — the cases where the diagnostic spelling *is* the source spelling.
+// exists and is the wrong one. The walk is `types.SourceSettled` — shared with every
+// diagnostic since 10/17, which until then spoke String() — with an untyped literal
+// rendered as the default it settles to, since a caller of an unannotated binding sees that.
 //
 // A nil type is an un-annotated binding inference did not reach; `?` matches what
 // types.ReturnType already prints rather than crashing a run on an incomplete program.
 func typeName(t types.Type) string {
-	switch v := t.(type) {
-	case nil:
-		return "?"
-	case types.PrimitiveType:
-		return primitiveName(v.Name)
-	case types.DynamicArrayType:
-		return allocationPrefix(v.Allocation) + "[]" + typeName(v.ElementType)
-	case types.StaticArrayType:
-		return allocationPrefix(v.Allocation) + fmt.Sprintf("[%d]", v.Size) + typeName(v.ElementType)
-	case types.TupleType:
-		// An anonymous tuple is written as a bare parenthesized list; a named one
-		// is its name applied to that list.
-		if types.IsAnonymousTupleName(v.Name) {
-			return "(" + typeNames(v.Elements) + ")"
-		}
-		return v.Name + "(" + typeNames(v.Elements) + ")"
-	case types.ParameterizedType:
-		if len(v.TypeArguments) == 0 {
-			return v.Name
-		}
-		return v.Name + "<" + typeNames(v.TypeArguments) + ">"
-	case types.WeakType:
-		return "weak " + typeName(v.Inner)
-	case types.RawPointerType:
-		if v.IsMut {
-			return "^mut " + typeName(v.Pointee)
-		}
-		return "^" + typeName(v.Pointee)
-	case types.NamedStructType:
-		return allocationPrefix(v.Allocation) + v.Name
-	case types.AnonymousStructType:
-		fields := make([]string, len(v.Fields))
-		for i, f := range v.Fields {
-			fields[i] = f.Name + ": " + typeName(f.Type)
-		}
-		return "struct { " + strings.Join(fields, ", ") + " }"
-	case *types.LambdaType:
-		params := make([]string, len(v.Parameters))
-		for i, p := range v.Parameters {
-			// **A named parameter renders its name**, which only an `extern` has: E067
-			// requires one there and refuses it in a plain function type, so rendering it
-			// whenever present is right everywhere without asking which kind this is.
-			// It also has to be rendered — a page's signature is read as the code to
-			// write, and an extern printed without its names no longer parses.
-			params[i] = typeName(p.Type)
-			if p.Name != "" {
-				params[i] = p.Name + ": " + params[i]
-			}
-		}
-		if v.IsVariadic {
-			params = append(params, "...")
-		}
-		return v.EffectPrefix() + "(" + strings.Join(params, ", ") + ") -> " + typeName(v.ReturnType.Type)
-	}
-	return t.String()
-}
-
-// primitiveName is the *keyword* for a primitive, which is not always what the type
-// calls itself.
-//
-// Three of them differ, and each differs because the internal name is written for a
-// diagnostic rather than for a reader copying it:
-//
-//   - `boolean` is spelled `bool` in the language. There is no `boolean` keyword, so a
-//     signature printing one does not compile.
-//   - the untyped literal types render as "integer literal" / "float literal", which are
-//     phrases for a sentence ("cannot assign integer literal to string"), not types. A
-//     binding still untyped at the end of inference takes the literal's default, so the
-//     type a caller sees is `i64` or `f64`.
-func primitiveName(n types.PrimitiveTypeName) string {
-	switch n {
-	case types.Boolean:
-		return "bool"
-	case types.UntypedInt, types.UntypedSignedInt:
-		return "i64"
-	case types.UntypedFloat:
-		return "f64"
-	}
-	return string(n)
-}
-
-// allocationPrefix renders `shared `/`stack `/`fixed ` before a type that carries one.
-// Unspecified renders nothing, which is the common case and the one with no keyword.
-func allocationPrefix(a types.AllocationModifier) string {
-	if a == types.AllocationModifier("") || a == types.Unspecified {
-		return ""
-	}
-	return string(a) + " "
+	return types.SourceSettled(t)
 }
 
 func typeNames(ts []types.Type) string {

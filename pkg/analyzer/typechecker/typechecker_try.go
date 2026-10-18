@@ -47,7 +47,7 @@ func (tc *TypeChecker) inferTryExpr(e *ast.TryExpr) types.Type {
 			return nil
 		}
 		tc.addError(e.GetLocation(), SeverityError,
-			"`?` operand must be a Result or Maybe, got %s", operandT.GetName())
+			"`?` operand must be a Result or Maybe, got %s", operandT)
 		return nil
 	}
 

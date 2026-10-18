@@ -49,7 +49,7 @@ func TestMatchExpr_ArmsHaveDifferentTypesWithBlocks(t *testing.T) {
 		3 => { "three" },
 		_ => { "other" },
 	}`, false)
-	assertErrorsAre(t, res, "match arms have incompatible types: string vs boolean")
+	assertErrorsAre(t, res, "match arms have incompatible types: string vs bool")
 }
 
 // A `match` used as a statement checks its arms individually and does not require their

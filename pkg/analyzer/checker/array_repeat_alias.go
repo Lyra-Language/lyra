@@ -118,51 +118,10 @@ func elementType(t types.Type) types.Type {
 	return nil
 }
 
-// renderElement names the element type the way a Lyra program spells it, for the
-// cases that can reach here.
-//
-// The compiler's own rendering is written for diagnostics that are already discussing
-// types (`DynamicArray<rune>`), and this message is discussing a *value* the author
-// wrote — so it has to read as the annotation they would write. Deliberately partial:
-// only a type that shares mutable state reaches this, which in practice is `[]T` and
-// the named aggregates, whose String() is already their source spelling. Anything
-// else falls through, exactly as docgen's fuller typeName does.
+// renderElement names the element type the way a Lyra program spells it — this message
+// discusses a *value* the author wrote, so it has to read as the annotation they would
+// write. types.Source, which every diagnostic speaks since 10/17; this was a third private
+// copy of that walk until then, beside docgen's.
 func renderElement(t types.Type) string {
-	switch v := types.StripNewtype(t).(type) {
-	case types.DynamicArrayType:
-		return "[]" + renderElement(v.ElementType)
-	case types.StaticArrayType:
-		return fmt.Sprintf("[%d]%s", v.Size, renderElement(v.ElementType))
-	case types.TupleType:
-		parts := make([]string, len(v.Elements))
-		for i, e := range v.Elements {
-			parts[i] = renderElement(e)
-		}
-		inner := "(" + strings.Join(parts, ", ") + ")"
-		if types.IsAnonymousTupleName(v.Name) {
-			return inner
-		}
-		return v.Name + inner
-	case types.PrimitiveType:
-		// `boolean` and `integer literal` are diagnostic spellings, not Lyra ones.
-		switch v.Name {
-		case types.Boolean:
-			return "bool"
-		case types.UntypedInt, types.UntypedSignedInt:
-			return "i64"
-		case types.UntypedFloat:
-			return "f64"
-		}
-		return string(v.Name)
-	case types.ParameterizedType:
-		if len(v.TypeArguments) == 0 {
-			return v.Name
-		}
-		parts := make([]string, len(v.TypeArguments))
-		for i, a := range v.TypeArguments {
-			parts[i] = renderElement(a)
-		}
-		return v.Name + "<" + strings.Join(parts, ", ") + ">"
-	}
-	return t.String()
+	return types.Source(types.StripNewtype(t))
 }

@@ -114,7 +114,7 @@ func TestTypeCheck_Negation_NonNumeric_Error(t *testing.T) {
 		let flag: bool = true
 		let x = -flag
 	`, false)
-	assertErrorsAre(t, res, "cannot negate non-numeric type boolean")
+	assertErrorsAre(t, res, "cannot negate non-numeric type bool")
 }
 
 // --- i64 min literal ---

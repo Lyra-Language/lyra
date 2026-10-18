@@ -234,6 +234,9 @@ func insertTypeAnnotationActions(analysis *docAnalysis, source string, uri lsp.D
 		if !ok {
 			continue
 		}
+		// Written into the program, so it has to be an annotation that compiles: `[]u8`, not
+		// String()'s `DynamicArray<u8>`, which this inserted until 10/17.
+		annotation := types.SourceAnnotation(typ)
 		loc := decl.GetLocation()
 		// Byte column just after the binding name: keyword (+ " mut") + space +
 		// name; converted to a UTF-16 column for the edit position.
@@ -247,11 +250,11 @@ func insertTypeAnnotationActions(analysis *docAnalysis, source string, uri lsp.D
 		}
 		edit := lsp.TextEdit{
 			Range:   lsp.Range{Start: pos, End: pos},
-			NewText: fmt.Sprintf(": %s", typ),
+			NewText: ": " + annotation,
 		}
 		kind := lsp.CodeActionRefactorRewrite
 		out = append(out, lsp.CodeAction{
-			Title: fmt.Sprintf("Insert inferred type annotation: %s", typ),
+			Title: "Insert inferred type annotation: " + annotation,
 			Kind:  &kind,
 			Edit:  &lsp.WorkspaceEdit{Changes: map[lsp.DocumentURI][]lsp.TextEdit{uri: {edit}}},
 		})

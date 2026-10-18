@@ -124,7 +124,7 @@ func TestTypeCheck_BinaryExpr_NonNumericOperand(t *testing.T) {
 		let flag: bool = true
 		let x = flag + 1
 	`, false)
-	assertErrorsAre(t, res, "operator +: operands must be numeric, got boolean and integer literal")
+	assertErrorsAre(t, res, "operator +: operands must be numeric, got bool and integer literal")
 }
 
 // TypeTable records the result type

@@ -134,7 +134,7 @@ let f = (n: i64) -> i64 => {
 }`
 	res := parseCollectAndCheck(t, source, false)
 	assertErrorsAre(t, res,
-		"`?` operand must be a Result or Maybe, got Result")
+		"`?` operand must be a Result or Maybe, got Result<i64, i64>")
 }
 
 // A struct error type propagates into the same struct. The enclosing function's return

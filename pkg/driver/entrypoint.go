@@ -114,7 +114,7 @@ func ResolveEntryPoint(res *Result) (*EntryPoint, []diag.Diagnostic) {
 		diags = append(diags, diag.Diagnostic{
 			Severity: diag.SeverityError,
 			Location: decl.GetLocation(),
-			Message:  fmt.Sprintf("entry point %q must return u8 or void, got %s", EntryPointName, lambda.ReturnType.Type),
+			Message:  fmt.Sprintf("entry point %q must return u8 or void, got %s", EntryPointName, types.Source(lambda.ReturnType.Type)),
 		})
 	}
 	if len(diags) > 0 {

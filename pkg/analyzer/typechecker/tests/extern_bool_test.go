@@ -11,5 +11,5 @@ unsafe extern is_ready: (fd: i32, strict: bool) -> bool
 let go = (fd: i32) -> bool => unsafe { is_ready(fd, true) }`, false))
 	assertHasErrorContaining(t, parseCollectAndCheck(t, `
 unsafe extern on_each: (cb: (i32) -> bool) -> void
-let main = () -> void => {}`, false), "callback whose return type is boolean")
+let main = () -> void => {}`, false), "callback whose return type is bool")
 }

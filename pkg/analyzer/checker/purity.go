@@ -2891,7 +2891,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 					found |= AllEffects
 					c.pure(ex.GetLocation(),
 						"pure function calls %q, a function value (`%s`) whose effects cannot be verified here — only a parameter's declared bound is checked where the function is supplied",
-						name, lt)
+						name, types.Source(lt))
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
 					c.charge(ex, e, name)
