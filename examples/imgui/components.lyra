@@ -1,6 +1,8 @@
-// An interface as a tree of values (`bindings.imgui.ui`), built from components: functions
-// returning a `Node`, each with its own scoped style sheet.
+// An interface as a tree of values (`bindings.imgui.ui`), written as markup: the view and
+// its components are `components_view.lui`, which `build/lui` generates into
+// `components_view.lyra`. This file is the program around them, and its checks.
 //
+//   build/lui examples/imgui/components_view.lui                     # after editing the markup
 //   build/lyrac run examples/imgui/components.lyra
 //   build/lyrac run examples/imgui/components.lyra -- --frames 120   # quit after 120 frames
 //   build/lyrac run examples/imgui/components.lyra -- --check        # headless: click it through
@@ -29,49 +31,17 @@ import bindings.imgui.{
 }
 import bindings.imgui.ui.{
   Node,
-  Window,
-  MainMenuBar,
   Menu,
   MenuItem,
   Button,
   Checkbox,
-  Text,
-  Separator,
-  SeparatorText,
-  Row,
-  Component,
-  WindowAttrs,
-  MenuAttrs,
-  MenuItemAttrs,
-  ButtonAttrs,
-  CheckboxAttrs,
-  TextAttrs,
-  Shortcut,
   Style,
   Sheet,
   StyleRule,
   render,
   pressed_shortcut,
 }
-
-data Event =
-  ToggleSound
-  | ToggleMusic
-  | AskReset
-  | ConfirmReset
-  | CancelReset
-  | AskQuit
-  | ConfirmQuit
-  | CancelQuit
-
-struct State {
-  sound: bool = true,
-  music: bool = false,
-  asking_reset: bool = false,
-  asking_quit: bool = false,
-  resets: i64 = 0,
-  quit: bool = false,
-}
+import components_view.{ Event, State, view, update }
 
 let main = () -> u8 => {
   let args = program_args()
@@ -84,7 +54,7 @@ let main = () -> u8 => {
   var state = State {}
   var frames = 0
   while frames != limit && !state.quit && begin_frame(host) {
-    let nodes = view(state)
+    let nodes = [view(state)]
     for event in render(nodes, (_) => {}) { state = update(state, event) }
     if let Some(event) = pressed_shortcut(nodes) { state = update(state, event) }
     end_frame(host, 0.1, 0.1, 0.12)
@@ -92,92 +62,6 @@ let main = () -> u8 => {
   }
   destroy_host(host)
   0
-}
-
-// ── The interface ────────────────────────────────────────────────────────────
-
-/// The whole interface for `s`: a pure function of the state, drawn afresh each frame.
-let view = pure (s: State) -> []Node<Event> => {
-  var nodes: []Node<Event> = [
-    MainMenuBar([
-      Menu(MenuAttrs { label: "File" }, [
-        MenuItem(MenuItemAttrs { label: "Reset...", on_select: AskReset, shortcut: Some(Shortcut { key: "r" }) }),
-        Separator,
-        MenuItem(MenuItemAttrs { label: "Quit", on_select: AskQuit, shortcut: Some(Shortcut { key: "q" }) }),
-      ]),
-    ]),
-    Window(
-      WindowAttrs { title: "Settings", style: Style { width: Some(340.0), height: Some(260.0) } },
-      [
-        SeparatorText("Audio"),
-        toggle_row("Sound", "effects and voices", s.sound, ToggleSound),
-        toggle_row("Music", "the soundtrack", s.music, ToggleMusic),
-        SeparatorText("Saves"),
-        Text(TextAttrs { text: "Reset ${s.resets} times", disabled: true }),
-        if s.asking_reset {
-          confirm("Erase every save?", ConfirmReset, CancelReset)
-        } else {
-          Button(ButtonAttrs { label: "Reset...", on_click: AskReset })
-        },
-      ]
-    ),
-  ]
-  if s.asking_quit {
-    nodes.push(Window(WindowAttrs { title: "Quit", on_close: Some(CancelQuit) }, [
-      confirm("Quit without saving?", ConfirmQuit, CancelQuit),
-    ]))
-  }
-  nodes
-}
-
-/// `s` after `event`.
-let update = pure (s: State, event: Event) -> State => match event {
-  ToggleSound => State { s | sound: !s.sound },
-  ToggleMusic => State { s | music: !s.music },
-  AskReset => State { s | asking_reset: true },
-  ConfirmReset => State { s | asking_reset: false, resets: s.resets + 1 },
-  CancelReset => State { s | asking_reset: false },
-  AskQuit => State { s | asking_quit: true },
-  ConfirmQuit => State { s | quit: true },
-  CancelQuit => State { s | asking_quit: false },
-}
-
-// ── Components ───────────────────────────────────────────────────────────────
-
-/// A question and its two answers — any program's, whatever its events.
-let confirm = pure (question: string, yes: e, no: e) -> Node<e> =>
-  Component(confirm_sheet, [
-    Text(TextAttrs { text: question, class: "question" }),
-    Row([
-      Button(ButtonAttrs { label: "Yes", on_click: yes, class: "danger" }),
-      Button(ButtonAttrs { label: "No", on_click: no }),
-    ]),
-  ])
-
-/// Every button of a [confirm] rounded and padded; its Yes red; its question amber.
-let confirm_sheet = Sheet {
-  rules: [
-    StyleRule { selector: "Button", style: Style { rounding: Some(6.0), padding: Some(Vec2 { x: 14.0, y: 4.0 }) } },
-    StyleRule { selector: "Button.danger", style: Style { background: Some(col32(170, 40, 40)) } },
-    StyleRule { selector: ".question", style: Style { color: Some(col32(240, 200, 90)) } },
-  ],
-}
-
-/// A setting's checkbox and a note on what it covers, on one line.
-let toggle_row = pure (label: string, note: string, on: bool, toggle: e) -> Node<e> =>
-  Component(toggle_row_sheet, [
-    Row([
-      Checkbox(CheckboxAttrs { label: label, checked: on, on_toggle: toggle }),
-      Text(TextAttrs { text: note, class: "note" }),
-    ]),
-  ])
-
-/// A [toggle_row]'s box green, its note grey.
-let toggle_row_sheet = Sheet {
-  rules: [
-    StyleRule { selector: "Checkbox", style: Style { background: Some(col32(40, 110, 60)) } },
-    StyleRule { selector: "Text.note", style: Style { color: Some(col32(140, 140, 140)) } },
-  ],
 }
 
 // ── Running ──────────────────────────────────────────────────────────────────
@@ -233,6 +117,12 @@ let check = () -> u8 => {
   )
   state = click(host, state, "Sound")
   failures += verify(!state.sound, "the toggle row's checkbox toggles Sound off")
+  state = click(host, state, "File")
+  state = click(host, state, "Slot 2")
+  failures += verify(
+    state.loaded == 1,
+    "File > Slot 2, one of a <for>'s items, loads slot 1"
+  )
   state = State { state | asking_quit: true }
   state = frame(host, state)
   failures += verify(
@@ -249,23 +139,33 @@ let check = () -> u8 => {
   u8(failures.min(255))
 }
 
-/// The sheets' cascade, without ImGui: specificity, order, inline over a rule, and scope.
+/// The sheets' cascade, without ImGui: specificity, order, inline over a rule, and scope —
+/// on sheets as `<style>` makes them.
 let check_sheets = () -> i64 => {
   var f = 0
   let red = col32(170, 40, 40)
-  let yes = confirm_sheet.style_for("Button", "danger", Style {})
+  let buttons = Sheet {
+    rules: [
+      StyleRule { selector: "Button", style: Style { rounding: Some(6.0) } },
+      StyleRule { selector: "Button.danger", style: Style { background: Some(red) } },
+    ],
+  }
+  let boxes = Sheet {
+    rules: [StyleRule { selector: "Checkbox", style: Style { background: Some(col32(40, 110, 60)) } }],
+  }
+  let yes = buttons.style_for("Button", "danger", Style {})
   f += verify(
     yes.background == Some(red) && yes.rounding == Some(6.0),
     "Button.danger gets both its rules"
   )
-  let inline = confirm_sheet.style_for("Button", "danger", Style { background: Some(0) })
+  let inline = buttons.style_for("Button", "danger", Style { background: Some(0) })
   f += verify(inline.background == Some(0), "inline style wins over the sheet")
   f += verify(
-    confirm_sheet.style_for("Checkbox", "", Style {}).rounding.is_none(),
+    buttons.style_for("Checkbox", "", Style {}).rounding.is_none(),
     "a Button rule does not reach a Checkbox"
   )
   f += verify(
-    toggle_row_sheet.style_for("Button", "danger", Style {}).background.is_none(),
+    boxes.style_for("Button", "danger", Style {}).background.is_none(),
     "another component's sheet does not match"
   )
   let later = Sheet {
@@ -286,7 +186,7 @@ let frame = (host: Host, state: State) -> State => {
   drawn = []
   if !begin_frame(host) { return state }
   var s = state
-  for event in render(view(s), record) { s = update(s, event) }
+  for event in render([view(s)], record) { s = update(s, event) }
   end_frame(host, 0.0, 0.0, 0.0)
   s
 }
@@ -295,6 +195,8 @@ let record = (node: Node<Event>) -> void => {
   let label = match node {
     Button(b) => b.label,
     Checkbox(c) => c.label,
+    Menu(m, _) => m.label,
+    MenuItem(it) => it.label,
     _ => "",
   }
   if label.len() == 0 { return }

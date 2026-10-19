@@ -501,7 +501,7 @@ such changes on a user module.
 | `pkg/printer` | Reflection AST printer for golden tests | below |
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
-| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets) | [README](bindings/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
 semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
@@ -674,6 +674,9 @@ of Markdown.
   AppKit shim on macOS, a do-nothing stub elsewhere). `lyrac` passes `-L<root>/lib`
   (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH`. **And
   `build/lib/liblyra-pty.a`**, `bindings.pty`'s (`pty.c`, plain POSIX).
+- **`build.sh` builds `build/lui`** (`tools/lui/lui.lyra`, std only): the `.lui` markup
+  generator for `bindings.imgui.ui` (bindings/README.md). Its output is ignored by
+  lyrafmt and held current by `cmd/lyrac/lui_test.go`.
 - **`build.sh` builds `build/lib/liblyra-imgui.a`** when it can (`bindings/imgui/build.sh`):
   it downloads a pinned, SHA-256-checked ImGui and dear_bindings into `build/deps/` (not
   vendored), needs SDL3, and skips with a note when offline or without it.
@@ -806,8 +809,8 @@ the private `vega` repo): the first binding generated rather than written, by a 
 program (`bindings/imgui/gen/gen.lyra`) reading dear_bindings' JSON. Its first run found
 that equality on a recursive type (`Maybe<JsonValue>`) overflowed lyrac's stack, and the
 binding's in-out pointers are why a `mut` scalar is by reference (COMPLETED.md 09/27).
-**`bindings.imgui.ui`** (an interface as a tree of values — the layer a JSX-like markup
-would lower to — with components and scoped style sheets) found that a global read from a
+**`bindings.imgui.ui`** (an interface as a tree of values, with components and scoped
+style sheets — the layer `.lui` markup is generated into by `tools/lui`) found that a global read from a
 function above its declaration went untyped and so unretained (COMPLETED.md 10/19).
 
 **`examples/calendar` does the same for dates**, and **`examples/schedule/when.lyra` for

@@ -550,10 +550,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   its pixels uncompressed: an MCP image from Vega is ~1.8 MB of base64 for a 768×432 frame
   that compresses to a tenth of it. Fixed-Huffman deflate with a small hash-chain matcher
   would do.
-- **[OPEN] A markup syntax for `bindings.imgui.ui`.** `<Menu label="File">…</Menu>` as an
-  expression lowering to its `Node`s, a capitalized tag a component function; `<` never
-  starts an expression today (the turbofish is `::<`), so the grammar has room. Needs the
-  grammar, collector, both editors' queries and lyrafmt.
+- **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by
+  `tools/lui`, not a Lyra grammar change (COMPLETED.md, 10/19).
+- **[OPEN] `.lui`: what is next.** Components called across files (an import each), `.lui`
+  highlighting in both editors (an HTML-ish grammar with Lyra injected in `{…}`), and
+  lyrac's errors in a generated module mapped back to the markup's line.
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), widgets with values (sliders, text fields — an event carrying the value),
   layout past `Row`, and style sheets kept outside Lyra.

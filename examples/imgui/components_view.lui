@@ -1,0 +1,100 @@
+<!--
+  The interface of components.lyra, as markup: `build/lui examples/imgui/components_view.lui`
+  writes components_view.lyra beside it, which components.lyra imports.
+-->
+
+<script>
+  /// What the interface can be asked to do.
+  pub data Event =
+    ToggleSound
+    | ToggleMusic
+    | AskReset
+    | ConfirmReset
+    | CancelReset
+    | AskQuit
+    | ConfirmQuit
+    | CancelQuit
+    | Load(i64)
+
+  pub struct State {
+    sound: bool = true,
+    music: bool = false,
+    asking_reset: bool = false,
+    asking_quit: bool = false,
+    resets: i64 = 0,
+    loaded: i64 = -1,
+    quit: bool = false,
+  }
+
+  /// `s` after `event`.
+  pub let update = pure (s: State, event: Event) -> State => match event {
+    ToggleSound => State { s | sound: !s.sound },
+    ToggleMusic => State { s | music: !s.music },
+    AskReset => State { s | asking_reset: true },
+    ConfirmReset => State { s | asking_reset: false, resets: s.resets + 1 },
+    CancelReset => State { s | asking_reset: false },
+    AskQuit => State { s | asking_quit: true },
+    ConfirmQuit => State { s | quit: true },
+    CancelQuit => State { s | asking_quit: false },
+    Load(slot) => State { s | loaded: slot },
+  }
+</script>
+
+<!-- The whole interface for a state: drawn afresh each frame. -->
+<component name="view" props="s: State" event="Event">
+  <MainMenuBar>
+    <Menu label="File">
+      <MenuItem on_select={AskReset} shortcut="Cmd+R">Reset...</MenuItem>
+      <SeparatorText>Load</SeparatorText>
+      <for each={slot in 0..<3}>
+        <MenuItem on_select={Load(slot)} checked={s.loaded == slot}>Slot {slot + 1}</MenuItem>
+      </for>
+      <Separator/>
+      <MenuItem on_select={AskQuit} shortcut="Cmd+Q">Quit</MenuItem>
+    </Menu>
+  </MainMenuBar>
+  <Window title="Settings" style="width: 340; height: 260">
+    <SeparatorText>Audio</SeparatorText>
+    <toggle_row label="Sound" note="effects and voices" on={s.sound} toggle={ToggleSound}/>
+    <toggle_row label="Music" note="the soundtrack" on={s.music} toggle={ToggleMusic}/>
+    <SeparatorText>Saves</SeparatorText>
+    <Text disabled>Reset {s.resets} times</Text>
+    <if test={s.asking_reset}>
+      <confirm question="Erase every save?" yes={ConfirmReset} no={CancelReset}/>
+    </if>
+    <else>
+      <Button on_click={AskReset}>Reset...</Button>
+    </else>
+  </Window>
+  <if test={s.asking_quit}>
+    <Window title="Quit" on_close={CancelQuit}>
+      <confirm question="Quit without saving?" yes={ConfirmQuit} no={CancelQuit}/>
+    </Window>
+  </if>
+</component>
+
+<!-- A question and its two answers: any program's, whatever its events. -->
+<component name="confirm" props="question: string, yes: e, no: e">
+  <style>
+    Button { rounding: 6; padding: 14 4 }
+    Button.danger { background: #aa2828 }
+    .question { color: #f0c85a }
+  </style>
+  <Text class="question">{question}</Text>
+  <Row>
+    <Button class="danger" on_click={yes}>Yes</Button>
+    <Button on_click={no}>No</Button>
+  </Row>
+</component>
+
+<!-- A setting's checkbox and a note on what it covers, on one line. -->
+<component name="toggle_row" props="label: string, note: string, on: bool, toggle: e">
+  <style>
+    Checkbox { background: #286e3c }
+    Text.note { color: #8c8c8c }
+  </style>
+  <Row>
+    <Checkbox checked={on} on_toggle={toggle}>{label}</Checkbox>
+    <Text class="note">{note}</Text>
+  </Row>
+</component>

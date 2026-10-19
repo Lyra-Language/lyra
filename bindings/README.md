@@ -323,14 +323,13 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
 
 ### `bindings.imgui.ui` — an interface as a tree (`imgui/ui/ui.lyra`)
 
-The shape a JSX-like markup would write, as plain Lyra values — the layer such a markup
-would lower to, built first so the syntax is the last step, not a guess. A prototype:
-`examples/imgui/components.lyra` shows it, and Vega's menus are its first user.
+An interface as plain Lyra values — the layer the `.lui` markup (below) is generated into.
+A prototype: `examples/imgui/components.lyra` shows it, and Vega's menus are its first user.
 
 - **`Node<e>`** — `Window`, `MainMenuBar`, `MenuBar`, `Menu`, `MenuItem`, `Button`,
-  `Checkbox`, `Text`, `Separator`, `SeparatorText`, `Row` (children side by side), and
-  `Component` — each with an `…Attrs` struct of its attributes. `e` is the program's
-  event type.
+  `Checkbox`, `Text`, `Separator`, `SeparatorText`, `Row` (children side by side),
+  `Component` and `Fragment` (children in place, several where one is expected) — each
+  with an `…Attrs` struct of its attributes. `e` is the program's event type.
 - **`render(nodes, seen) -> []e`** draws the tree and answers the frame's events. Every
   `begin_*` is ended, and only when ImGui says it began (`end_menu` under a `begin_menu`
   that answered true; `end` after every `begin`); `seen` is called with each element just
@@ -357,9 +356,56 @@ would lower to, built first so the syntax is the last step, not a guess. A proto
   around the component, nor a component inside it, which has its own sheet (Vue's
   `scoped`, CSS modules) — while what a rule pushes is inherited as inline style is.
   `Sheet.style_for(tag, classes, inline)` is the cascade, pure.
-- **Not yet**: a markup syntax, stylesheets outside Lyra, `id`s for repeated labels
-  (ImGui's `##`/`push_id`; a `key` as JSX has), layout beyond `Row`, and widgets with
-  values (sliders, text fields — an event carrying the value).
+- **Not yet**: `id`s for repeated labels (ImGui's `##`/`push_id`; a `key` as JSX has),
+  layout beyond `Row`, and widgets with values (sliders, text fields — an event carrying
+  the value).
+
+### `.lui` markup — `tools/lui`, built into `build/lui`
+
+Markup for the tree, in files of its own, **generated into Lyra** so lyrac checks it: `lui
+view.lui` writes `view.lyra` beside it, `lui --check view.lui` fails when that is stale.
+The example's interface is `examples/imgui/components_view.lui`.
+
+```
+<component name="confirm" props="question: string, yes: e, no: e">
+  <style>
+    Button { rounding: 6; padding: 14 4 }
+    Button.danger { background: #aa2828 }
+  </style>
+  <Text>{question}</Text>
+  <Row>
+    <Button class="danger" on_click={yes}>Yes</Button>
+    <Button on_click={no}>No</Button>
+  </Row>
+</component>
+```
+
+- **A file is `<script>`s and `<component>`s.** A script's Lyra is copied to the top of the
+  module (imports, the state and event types, `update`); a component is a `pure` function
+  of its `props` returning `Node<event>` (`event="Event"`; default `e`, so it fits any
+  tree), wrapped in its `Component`.
+- **A capitalized tag is an element**, its attributes its `…Attrs` fields and its text its
+  label. Attributes are `"text"` (a string; `{…}` inside interpolates), `{Lyra}`, or bare
+  (a flag, `true`); `on_close={X}` is `Some(X)`; `shortcut="Cmd+Shift+S"` (Cmd or Ctrl is
+  the primary modifier either way) and `style="rounding: 4"` are read for you. An unknown
+  tag or attribute, a missing one, and text where none goes are lui's errors, at their line.
+- **A lowercase tag calls a component of the same file**, its attributes matched to the
+  props by name (a prop's `= default` fills a missing one), its children passed as a
+  `children: []Node<e>` prop. Another file's component, or one written in Lyra, is a
+  `{name(…)}` child.
+- **`{…}` is Lyra, copied through**: in text (`Reset {n} times`), in attributes, and as a
+  child — `{node}`, or `{...nodes}` for an array. **Control flow** is `<if test={…}>`
+  followed by an optional `<else>`, and `<for each={x in xs}>` (a comprehension; several
+  children make a `Fragment`).
+- **`<style>` is the component's scoped sheet**: `Tag`, `.class` and `Tag.class` selectors
+  (comma lists), `color`/`background` as `#rgb`, `#rrggbb` or `#rrggbbaa`, `padding` one
+  or two numbers, `rounding`, `opacity`, `width`, `height`; `/* … */` comments.
+- **The generated module is not formatted** (`.lyrafmtignore` lists it) — one element to a
+  line, a `/// From view.lui, line N.` above each component. lyrac's errors in it name the
+  generated line; the comment leads back.
+- **Tested** by `cmd/lyrac/lui_test.go`: the example's module is what lui makes and checks
+  clean, and each kind of mistake is reported at its line. **Not yet**: components across
+  files, highlighting `.lui` in the editors, and lyrac's errors mapped back to the markup.
 
 ## `bindings/pty/`
 

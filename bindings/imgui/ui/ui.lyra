@@ -180,6 +180,9 @@ pub data Node<e> =
   | Row([]Node<e>)
   /// A component's elements: its [Sheet] styles them, and nothing outside them.
   | Component(Sheet, []Node<e>)
+  /// Its children as they are, in place — several elements where one is expected (a
+  /// markup loop's body), with no layout or style of its own.
+  | Fragment([]Node<e>)
 
 pub struct WindowAttrs<e> {
   title: string,
@@ -467,6 +470,7 @@ let draw = (
     },
     // Its own sheet in place of the enclosing one: selectors stop at the boundary.
     Component(own, children) => { for child in children { draw(child, own, seen, events) } },
+    Fragment(children) => { for child in children { draw(child, sheet, seen, events) } },
   }
 
 let collect_items = (node: Node<e>, out: mut []MenuItemAttrs<e>) -> void => match node {
@@ -477,6 +481,7 @@ let collect_items = (node: Node<e>, out: mut []MenuItemAttrs<e>) -> void => matc
   Menu(_, children) => { for child in children { collect_items(child, out) } },
   Row(children) => { for child in children { collect_items(child, out) } },
   Component(_, children) => { for child in children { collect_items(child, out) } },
+  Fragment(children) => { for child in children { collect_items(child, out) } },
   _ => {},
 }
 

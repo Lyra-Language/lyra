@@ -34,6 +34,32 @@ reader's hand-assembled `f32`), and the W001 policy question they forced.
 - **Not done**: the ImGui `IsMousePosValid` wrapper, left in todo.md while another session
   works in `bindings/imgui`.
 
+### 10/19/26 — `.lui`: markup for `bindings.imgui.ui`, generated into Lyra
+
+The markup went into files of its own rather than into Lyra's grammar. In Lyra it would
+have meant the grammar (pushed before the compiler), the collector, both editors' queries
+— where a wrong Zed query blanks all highlighting — and lyrafmt, for a syntax over a tree
+one program uses. In its own files it is one Lyra program, `tools/lui`.
+
+- **Generated, not read at run time.** Markup read at run time can reach the program only
+  by name — Lyra has no reflection — so an event misspelt would surface when clicked.
+  Generated, `{…}` is Lyra copied through and lyrac checks it: the compile-time checking
+  was worth more than hot reload, which the same parser could still serve later.
+- **lui checks what lyrac cannot place.** Errors in a generated module name the generated
+  line, so what the markup itself gets wrong — an unknown tag or attribute, a missing
+  `on_click`, text where none goes, an `<else>` with no `<if>`, a bad colour — is lui's to
+  report, at the `.lui` line (`lui_test.go`). A `/// From view.lui, line N.` above each
+  component leads back from the rest.
+- **Control flow lowers to spreads**: `<if>`/`<else>` to `...(if c { […] } else { […] })`,
+  `<for each={x in xs}>` to `...[x in xs | node]` — a `Fragment` (new in the tree) when
+  the body is several. The example opens File and clicks Slot 2 to hold the second.
+- **A component is called by its own props' names** (`<confirm question=… yes=…/>`), lui
+  ordering them, since Lyra calls are positional — which is why a lowercase tag reaches only
+  components of the same file: lui knows no other's props.
+- **Found writing it**: `gen` is a keyword (a generator function), a `match` cannot be a
+  call's argument, and `if let … else if` does not parse — the last reported at line 1
+  (todo.md).
+
 ### 10/19/26 — `bindings.imgui.ui`, and a global read above its declaration went unretained
 
 A JSX-like markup for ImGui was asked for, then reusable components with scoped styles. The

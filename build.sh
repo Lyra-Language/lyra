@@ -81,6 +81,14 @@ if [ -f "$ROOT/../tree-sitter-lyra/src/parser.c" ] && pkg-config --exists tree-s
   fi
 fi
 
+# **lui**, the markup generator for `bindings.imgui.ui` (tools/lui), beside lyrac: a Lyra
+# program over std alone, so it builds wherever lyrac can link anything.
+if "$OUT/lyrac" build -o "$OUT/lui" "$ROOT/tools/lui/lui.lyra" >/dev/null 2>&1; then
+  lui_note='lui'
+else
+  lui_note='(lui failed to build)'
+fi
+
 # **The C half of `bindings.imgui`**, into `build/lib/liblyra-imgui.a`, when it can be —
 # the lyrafmt rule again. It downloads a pinned Dear ImGui and dear_bindings on first
 # use (`bindings/imgui/build.sh` has the pins and why), and needs SDL3; a machine
@@ -91,4 +99,4 @@ else
   imgui_note="no liblyra-imgui.a (${imgui_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, lib/liblyra-{menubar,pty}.a and %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note" "$imgui_note"
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a and %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note"
