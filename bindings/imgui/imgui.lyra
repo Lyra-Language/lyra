@@ -356,6 +356,16 @@ pub let font_file = (
   if font == nullptr { None } else { Some(font) }
 }
 
+/// Draw `host`'s fonts from files ([font_file], and what is merged into them) through
+/// FreeType (built into the binding), hinted, their advances whole pixels — crisp on a
+/// display of a pixel a point, where ImGui's own rasterizer, stb_truetype, draws glyphs
+/// unhinted and soft — or, `on` false, through stb_truetype, as by default. The interface's
+/// own font (ImGui's default) stays as it was drawn. The host's choice rather than a
+/// font's: ImGui 1.92 takes FreeType only for the whole atlas. Glyphs already drawn are
+/// drawn again as they are next used.
+pub let set_font_hinting = (host: Host, on: bool) -> void =>
+  unsafe { lyra_imgui_host_set_font_hinting(host, on) }
+
 /// Merge the font file at `path` into `font` as a fallback: a glyph `font` lacks — CJK, say,
 /// in a Latin face — is drawn from the file instead, at the font's size; several files are
 /// tried in the order merged. The file is read once however many fonts it is merged into;
@@ -611,6 +621,9 @@ unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
 
 @symbol("lyra_imgui_host_set_layout_file")
 unsafe extern lyra_imgui_host_set_layout_file: (host: Host, path: ^u8) -> void
+
+@symbol("lyra_imgui_host_set_font_hinting")
+unsafe extern lyra_imgui_host_set_font_hinting: (host: Host, on: bool) -> void
 
 @symbol("lyra_imgui_host_merge_font_file")
 unsafe extern lyra_imgui_host_merge_font_file: (host: Host, font: Font, path: ^u8) -> bool

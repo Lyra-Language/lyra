@@ -678,8 +678,9 @@ of Markdown.
   generator for `bindings.imgui.ui` (bindings/README.md). Its output is ignored by
   lyrafmt and held current by `cmd/lyrac/lui_test.go`.
 - **`build.sh` builds `build/lib/liblyra-imgui.a`** when it can (`bindings/imgui/build.sh`):
-  it downloads a pinned, SHA-256-checked ImGui and dear_bindings into `build/deps/` (not
-  vendored), needs SDL3, and skips with a note when offline or without it.
+  it downloads a pinned, SHA-256-checked ImGui, dear_bindings and FreeType into
+  `build/deps/` (not vendored; FreeType compiled into the archive, for `set_font_hinting`),
+  needs SDL3, and skips with a note when offline or without it.
 - **`tools/sdl3-ios.sh`** (not run by `build.sh`, as `llvm-m68k.sh` is not) builds SDL3 for
   `--target ios|ios-simulator` into `build/lib/<platform>/`.
 - **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling

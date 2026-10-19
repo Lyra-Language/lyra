@@ -17,6 +17,7 @@
 #include "imgui_internal.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
+#include "misc/freetype/imgui_freetype.h"
 #include <SDL3/SDL.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -442,6 +443,38 @@ bool lyra_imgui_host_merge_font_file(LyraImGuiHost* host, ImFont* font, const ch
         return false;
     host->merged[host->merged_count++] = LyraFontMerged{file, font};
     return true;
+}
+
+// The fonts from files (lyra_imgui_host_font_file, and what is merged into them) drawn
+// through FreeType, hinted — stems on the pixel grid and advances in whole pixels, crisp
+// on a display of a pixel a point, where stb_truetype's unhinted glyphs are soft — or
+// (`on` false) through stb_truetype, ImGui's own and the default. ImGui 1.92 takes
+// FreeType only as the whole atlas's loader (one font's may not have FreeType's start-up,
+// which needs the atlas), so the atlas's becomes FreeType and **the interface's own font
+// is kept on stb_truetype**, as it was drawn: ImGui's default, added now if it is not yet
+// (as ImGui would at the first frame, the same one chosen), its sources given stb's loader
+// before the switch — which tears each source down with the loader that made it.
+// Switching drops what was drawn; glyphs are drawn again as they are next used.
+void lyra_imgui_host_set_font_hinting(LyraImGuiHost* host, bool on) {
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    const ImFontLoader* stb = ImFontAtlasGetFontLoaderForStbTruetype();
+    const ImFontLoader* loader = on ? ImGuiFreeType::GetFontLoader() : stb;
+    if (atlas->FontLoader == loader)
+        return;
+    if (atlas->Sources.Size == 0)
+        atlas->AddFontDefault();
+    for (ImFont* font : atlas->Fonts) {
+        bool from_file = false;
+        for (int i = 0; i < host->font_count; i++)
+            if (host->fonts[i].font == font)
+                from_file = true;
+        if (from_file)
+            continue;
+        for (ImFontConfig* src : font->Sources)
+            if (src->FontLoader == NULL)
+                src->FontLoader = stb;
+    }
+    atlas->SetFontLoader(loader);
 }
 
 // The merged files' bytes, once the context that read them is gone.

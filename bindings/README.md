@@ -313,11 +313,24 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     the host's to free after the context (`FontDataOwnedByAtlas` off: the atlas reads them
     while it lives); merging the same pair again is a no-op. Sulafat merges CJK and symbol
     fonts into each face.
+  - **Hinted text**: `set_font_hinting(host, on)` draws the host's fonts from files
+    (`font_file`, and what is merged into them) through FreeType (`imgui_freetype.cpp`),
+    hinted, advances in whole pixels — crisp on a display of a pixel a point, where
+    stb_truetype's unhinted glyphs are soft. ImGui 1.92 refuses FreeType as one font's
+    `FontLoader` (its start-up needs the atlas), so it is `SetFontLoader` on the atlas,
+    and **the interface's own font is pinned to stb_truetype** (ImGui's default, added
+    then if it is not yet): a font may have a loader of its own if the loader has no
+    start-up, which stb's has not. Off by default: a program that never asks (Vega)
+    draws as before. Sulafat asks off macOS.
 - **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
   reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into
   `build/lib/liblyra-imgui.a` from a **downloaded** ImGui and dear_bindings, pinned by tag
-  and SHA-256 and cached in `build/deps/`. Bump both tags together.
+  and SHA-256 and cached in `build/deps/`. Bump both tags together. **FreeType is
+  downloaded the same way** (a release tarball, its hash the same from savannah.gnu.org and
+  SourceForge) and compiled into the archive with only the modules `lyra_ftmodule.h` lists
+  — TrueType and OpenType, CFF and variable fonts, the smooth rasterizer, the auto-hinter —
+  so no program needs a system FreeType.
 - **No C++ runtime**: `-fno-exceptions -fno-rtti -fno-threadsafe-statics` leaves only
   `__cxa_atexit` (libc's), so `@link("lyra-imgui")` + `@link("SDL3")` is the whole link line.
 
