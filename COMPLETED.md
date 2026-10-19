@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — `if let … else if …`
+
+`if let p = v { … } else if c { … }` was a syntax error, reported at the enclosing
+declaration's first line rather than at the `else if`: an `if let`'s alternative was a
+block only, while a plain `if`'s could be another `if`. Found by `tools/lui`, which was
+rewritten around it with a `match`.
+
+- **The grammar** (`destructuring_if_declaration`) takes an `if`, an `if let` or a block
+  after `else`, and **`if_block_expr` takes an `if let` there too**, so the chain works in
+  both directions (`if c { } else if let …` was the same gap from the other side). The
+  field keeps its name, `else_block`, though it may hold an `if` now — renaming it would
+  have reached the collector and lyrafmt for no behaviour. +25 parser states, no new
+  conflicts.
+- **The collector erases the chain** (`expressions.CollectElseIf`): the nested `if` or
+  `if let` becomes the one-statement block `else { if … }` already produced, scope
+  recorded as `CollectBlockExpr` records one. So the `match v { p => A, _ => B }` reading,
+  the value-tail rule and the pattern's scope (its names reach only `A`) needed nothing —
+  the same treatment a match arm's bare jump gets. An `if let` is a statement, which is
+  why an `if`'s `else` could not simply hold it as an expression.
+- Pinned by three corpus tests (`destructuring.txt`) and `TestExec_IfLetElseIf` (ASan:
+  statement and value chains, `else if let`, the mirror, a managed `string` out of the
+  chain). Neither editor's queries name the two nodes; lyrafmt formats the chain as it
+  does an `if`'s.
+
 ### 10/19/26 — `contains`, `any`, `all`, and a float's bits
 
 Two standard-library gaps Vega had written around (`project.is_taken`'s loop, the Furnace

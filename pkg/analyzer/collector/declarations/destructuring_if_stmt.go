@@ -43,7 +43,11 @@ func CollectDestructuringIfStatement(node *sitter.Node, ctx *collector_ctx.Ctx) 
 
 	var elseBlock *ast.BlockExpr
 	if elseNode := cst.Field(node, "else_block"); elseNode != nil {
-		elseBlock = expressions.CollectBlockExpr(elseNode, ctx, ctx.NodeLocation(elseNode))
+		if elseNode.Kind() == "block" {
+			elseBlock = expressions.CollectBlockExpr(elseNode, ctx, ctx.NodeLocation(elseNode))
+		} else {
+			elseBlock = expressions.CollectElseIf(elseNode, ctx)
+		}
 	}
 
 	stmt.Then = thenBlock

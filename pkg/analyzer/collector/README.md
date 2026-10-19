@@ -90,6 +90,8 @@ and skips the rewrite. Patterns already resolved these.
   (`collectAppliedConstructorExpr`).
 - `None => break` builds the single-statement `BlockExpr` that `None => { break }` builds
   (`collectMatchArmBody`), so `MatchArm.Body` stays an expression.
+- `else if …` / `else if let …`, after an `if let` or an `if`, builds the single-statement
+  `BlockExpr` that `else { if … }` builds (`CollectElseIf`). `TestElseIf_CollectsAsTheBracedForm`.
 - `label: while let p = v { … }` builds `label: loop { if let p = v { … } else { break } }`
   (`CollectWhileLetLoop`). Every synthesized block gets a recorded scope, nested as written
   — the typechecker re-enters scopes by node, and a miss is silent.
