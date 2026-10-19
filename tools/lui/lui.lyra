@@ -2,6 +2,8 @@
 //
 //   build/lui view.lui            # writes view.lyra beside it
 //   build/lui --check view.lui    # exit 1 when view.lyra is not what view.lui makes
+//   build/lui --watch view.lui    # again whenever view.lui changes, until stopped
+//   build/lyrac check app.lyra 2>&1 | build/lui map   # errors at the markup's lines
 //
 // A `.lui` file holds components, each a function returning a `Node<e>`; lyrac checks
 // what it generates, so a misspelt event or field is a compile error as it would be in
@@ -41,48 +43,151 @@
 //   type variable, so the component fits any program's tree.
 
 import std.collections.{ parse_args }
-import std.io.{ read_file, write_file }
+import std.io.{ read_file, write_file, read_stdin, sleep_ms }
 import std.path
 
 let main = () -> u8 => {
   let args = parse_args([])
+  if args.positional.len() == 1 && args.positional[0] == "map" {
+    for line in read_stdin().lines() { println(mapped(line)) }
+    return 0
+  }
   if args.positional.len() == 0 {
-    println("usage: lui [--check] <file.lui>...")
+    println("usage: lui [--check | --watch] <file.lui>...    or    lyrac check … 2>&1 | lui map")
     return 2
   }
+  if args.has("--watch") { return watch(args.positional) }
   let check = args.has("--check")
   var failures = 0
   for path in args.positional {
-    if !path.ends_with(".lui") {
-      println("lui: ${path} is not a .lui file")
-      failures += 1
-      continue
-    }
-    let Some(source) = read_file(path) else {
-      println("lui: cannot read ${path}")
-      failures += 1
-      continue
-    }
-    let out = "${path.slice(0, path.len() - 4)}.lyra"
-    match generate(path.base(), source) {
-      Err(problem) => {
-        println("${path}:${problem}")
-        failures += 1
-      },
-      Ok(code) => {
-        if check {
-          if read_file(out).unwrap_or("") != code {
-            println("lui: ${out} is not what ${path} makes; run lui ${path}")
-            failures += 1
-          }
-        } else if !write_file(out, code) {
-          println("lui: cannot write ${out}")
-          failures += 1
-        }
-      },
-    }
+    if !run(path, read_file(path), check) { failures += 1 }
   }
   u8(failures.min(255))
+}
+
+/// `path` (its text `source`, `None` when it could not be read) generated into the module
+/// beside it, or with `check`, compared with it; whether all was well, what was not said.
+let run = (path: string, source: Maybe<string>, check: bool) -> bool => {
+  if !path.ends_with(".lui") {
+    println("lui: ${path} is not a .lui file")
+    return false
+  }
+  let Some(text) = source else {
+    println("lui: cannot read ${path}")
+    return false
+  }
+  let out = "${path.slice(0, path.len() - 4)}.lyra"
+  match generate(path.base(), text) {
+    Err(problem) => {
+      println("${path}:${problem}")
+      false
+    },
+    Ok(code) => {
+      if check {
+        if read_file(out).unwrap_or("") != code {
+          println("lui: ${out} is not what ${path} makes; run lui ${path}")
+          return false
+        }
+      } else if read_file(out).unwrap_or("") != code && !write_file(out, code) {
+        println("lui: cannot write ${out}")
+        return false
+      }
+      true
+    },
+  }
+}
+
+/// `paths` generated now and again whenever one's text changes — read a few times a
+/// second, as a markup file is small — until the program is stopped. Each generation is
+/// said, and a mistake at its line, as when run once.
+let watch = (paths: []string) -> u8 => {
+  // A NUL no file holds, so each is generated on the first pass.
+  var seen: []string = [p in paths | "\u0000"]
+  println("lui: watching ${paths.len()} file(s); Ctrl-C stops")
+  loop {
+    for i, path in paths {
+      let text = read_file(path)
+      let now = text.unwrap_or("")
+      if now == seen[i] { continue }
+      seen[i] = now
+      if run(path, text, false) { println("lui: ${path} generated") }
+    }
+    sleep_ms(WATCH_MS)
+  }
+}
+
+/// How often `--watch` reads its files.
+const WATCH_MS: i64 = 250
+
+// ── Errors, put back at the markup ───────────────────────────────────────────
+
+/// A line of lyrac's output with its place in a module lui generated put back at the
+/// markup's line: `src/view.lyra:41:12: error …` is `src/view.lui:17: error …`. A line
+/// naming no such place is as it was.
+let mapped = (line: string) -> string => {
+  let Some(at) = line.index(".lyra:") else { return line }
+  let runes = line.to_runes()
+  var start = at
+  while start > 0 && runes[start - 1] != ' ' && runes[start - 1] != '\t' { start -= 1 }
+  let path = line.slice(start, at + 5)
+  var k = at + 6
+  var row = 0
+  while k < runes.len() && runes[k] >= '0' && runes[k] <= '9' {
+    row = row * 10 + (i64(runes[k]) - i64('0'))
+    k += 1
+  }
+  if k == at + 6 { return line }
+  // The column is the generated module's, so it goes too.
+  if k < runes.len() && runes[k] == ':' {
+    var c = k + 1
+    while c < runes.len() && runes[c] >= '0' && runes[c] <= '9' { c += 1 }
+    if c > k + 1 { k = c }
+  }
+  let Some(code) = read_file(path) else { return line }
+  let Some((markup, at_line)) = markup_line(path, code, row) else { return line }
+  "${line.slice(0, start)}${markup}:${at_line}${line.slice(k, line.len())}"
+}
+
+/// The markup file and line that line `row` of the generated module `code` (at `path`)
+/// came from: the nearest marker at or above it. `None` for a module lui did not write,
+/// or a line no marker covers (its imports).
+let markup_line = pure (path: string, code: string, row: i64) -> Maybe<(string, i64)> => {
+  let rows = code.lines()
+  if rows.len() == 0 { return None }
+  let Some(header) = rows[0].strip_prefix("// Generated by lui from ") else { return None }
+  let file = header.split(":")[0]
+  let markup = match path.parent() {
+    Some(dir) => if dir.len() > 0 { dir.join(file) } else { file },
+    None => file,
+  }
+  var k = (row - 1).min(rows.len() - 1)
+  while k > 0 {
+    let r = rows[k]
+    if let Some(n) = marker_line(
+      r,
+      "/// From ${file}, line "
+    ) { return Some((markup, n)) }
+    if let Some(n) = marker_line(r, "// ${file}:") {
+      // A marker alone on its line is the next line's: a script's first line.
+      let alone = r.trim().starts_with("// ")
+      return Some((markup, if alone { n + (row - 1) - (k + 1) } else { n }))
+    }
+    k -= 1
+  }
+  None
+}
+
+/// The number after `prefix` in `row`, if `row` holds it.
+let marker_line = pure (row: string, prefix: string) -> Maybe<i64> => {
+  let Some(at) = row.index(prefix) else { return None }
+  var n = 0
+  var digits = 0
+  for c in row.slice(at + prefix.len(), row.len()) {
+    if c < '0' || c > '9' { break }
+    n = n * 10 + (i64(c) - i64('0'))
+    digits += 1
+  }
+  if digits > 0 { Some(n) } else { None }
 }
 
 // ── The file, generated ──────────────────────────────────────────────────────
@@ -96,12 +201,12 @@ pub let generate = pure (name: string, source: string) -> Result<string, string>
   var components: []Component = []
   for t in tops {
     match t.name {
-      "script" => scripts.push(dedent(t.raw)),
+      "script" => scripts.push("// ${name}:${first_line(t)}\n${dedent(t.raw)}"),
       "component" => components.push(read_component(t)?),
       _ => { return Err("${t.line}: <${t.name}> at the top of a file; only <script> and <component> go there") },
     }
   }
-  var writer = Writer { components: components, used: [] }
+  var writer = Writer { components: components, used: [], file: name }
   var bodies: []string = []
   var sheets: []string = []
   for c in components {
@@ -110,9 +215,7 @@ pub let generate = pure (name: string, source: string) -> Result<string, string>
   }
   var out: []string = ["// Generated by lui from ${name}: edit that file, not this one."]
   out.push(writer.imports())
-  for s in scripts {
-    if s.len() > 0 { out.push(s) }
-  }
+  for s in scripts { out.push(s) }
   for body in bodies { out.push(body) }
   for s in sheets { out.push(s) }
   Ok("${out.join("\n\n")}\n")
@@ -125,6 +228,8 @@ struct Component {
   props_text: string,
   event: string,
   rules: []Rule,
+  /// Its `<style>`'s line, 0 for none.
+  style_line: i64,
   children: []Markup,
   line: i64,
 }
@@ -146,11 +251,13 @@ let read_component = pure (t: Tag) -> Result<Component, string> => {
   }
   let props_text = t.text_attr("props").unwrap_or("")
   var rules: []Rule = []
+  var style_line = 0
   var children: []Markup = []
   for child in t.children {
     if let Element(c) = child {
       if c.name == "style" {
         for r in read_style(c.raw, c.line)? { rules.push(r) }
+        style_line = c.line
         continue
       }
     }
@@ -162,6 +269,7 @@ let read_component = pure (t: Tag) -> Result<Component, string> => {
     props_text: props_text,
     event: t.text_attr("event").unwrap_or("e"),
     rules: rules,
+    style_line: style_line,
     children: children,
     line: t.line,
   })
@@ -172,6 +280,14 @@ let read_component = pure (t: Tag) -> Result<Component, string> => {
 struct Writer {
   components: []Component,
   used: []string,
+  /// The markup file's name, for the markers `lui map` reads.
+  file: string,
+}
+
+/// A generated array element and the markup line it came from.
+struct Item {
+  text: string,
+  line: i64,
 }
 
 impl Writer {
@@ -191,7 +307,7 @@ impl Writer {
     }
     let items = self.nodes_of(c.children, "    ")?
     let head = "/// From ${file}, line ${c.line}.\npub let ${c.name}${generic} = pure (${c.props_text}) -> Node<${c.event}> =>"
-    Ok("${head}\n  Component(${sheet_name}, ${list(items, "  ")})")
+    Ok("${head}\n  Component(${sheet_name}, ${self.listed(items, "  ")})")
   }
 
   let sheet = (self: mut, c: Component) -> string => {
@@ -203,7 +319,7 @@ impl Writer {
       self.uses_in(r.fields)
       rules.push("StyleRule { selector: ${quote(r.selector)}, style: Style { ${r.fields.join(", ")} } }")
     }
-    "let ${c.name}_sheet = Sheet {\n  rules: ${list(rules, "  ")},\n}"
+    "let ${c.name}_sheet = Sheet { // ${self.file}:${c.style_line}\n  rules: ${list(rules, "  ")},\n}"
   }
 
   /// `children` as array elements, each written at `indent`.
@@ -211,8 +327,8 @@ impl Writer {
     self: mut,
     children: []Markup,
     indent: string
-  ) -> Result<[]string, string> => {
-    var items: []string = []
+  ) -> Result<[]Item, string> => {
+    var items: []Item = []
     var i = 0
     while i < children.len() {
       match children[i] {
@@ -221,11 +337,11 @@ impl Writer {
             return Err("${line}: text \"${text.trim()}\" outside an element that takes it; wrap it in <Text>")
           }
         },
-        Code(code, _) => items.push(code),
+        Code(code, line) => items.push(Item { text: code, line: line }),
         Element(t) => {
           if t.name == "if" {
             let then_items = self.nodes_of(t.children, "${indent}    ")?
-            var else_items: []string = []
+            var else_items: []Item = []
             let next = next_element(children, i + 1)
             if let Some((k, e)) = next {
               if e.name == "else" {
@@ -236,22 +352,27 @@ impl Writer {
             let test = t.code_attr("test").unwrap_or("")
             if test.len() == 0 { return Err("${t.line}: <if> needs test={…}") }
             self.use("Node")
-            items.push("...(if ${test} {\n${indent}  ${list(then_items, "${indent}  ")}\n${indent}} else {\n${indent}  ${list(else_items, "${indent}  ")}\n${indent}})")
+            let then_list = self.listed(then_items, "${indent}  ")
+            let else_list = self.listed(else_items, "${indent}  ")
+            items.push(Item {
+              text: "...(if ${test} {\n${indent}  ${then_list}\n${indent}} else {\n${indent}  ${else_list}\n${indent}})",
+              line: t.line,
+            })
           } else if t.name == "else" {
             return Err("${t.line}: <else> with no <if> before it")
           } else if t.name == "for" {
             let each = t.code_attr("each").unwrap_or("")
             if each.len() == 0 { return Err("${t.line}: <for> needs each={x in xs}") }
             let body = self.nodes_of(t.children, "${indent}  ")?
-            let one = if body.len() == 1 && !body[0].starts_with("...") {
-              body[0]
+            let one = if body.len() == 1 && !body[0].text.starts_with("...") {
+              body[0].text
             } else {
               self.use("Fragment")
-              "Fragment(${list(body, indent)})"
+              "Fragment(${self.listed(body, indent)})"
             }
-            items.push("...[${each} | ${one}]")
+            items.push(Item { text: "...[${each} | ${one}]", line: t.line })
           } else {
-            items.push(self.element(t, indent)?)
+            items.push(Item { text: self.element(t, indent)?, line: t.line })
           }
         },
       }
@@ -276,7 +397,7 @@ impl Writer {
         return Ok(t.name)
       }
       let items = self.nodes_of(t.children, "${indent}  ")?
-      return Ok("${t.name}(${list(items, indent)})")
+      return Ok("${t.name}(${self.listed(items, indent)})")
     }
     // An element whose text is its only payload (SeparatorText).
     if kind.attrs_struct.len() == 0 {
@@ -304,7 +425,7 @@ impl Writer {
     let attrs = "${kind.attrs_struct} { ${fields.join(", ")} }"
     if !kind.holds { return Ok("${t.name}(${attrs})") }
     let items = self.nodes_of(t.children, "${indent}  ")?
-    Ok("${t.name}(${attrs}, ${list(items, indent)})")
+    Ok("${t.name}(${attrs}, ${self.listed(items, indent)})")
   }
 
   /// A call of a component of this file: its props in order, from the attributes, the
@@ -325,7 +446,7 @@ impl Writer {
         None => {
           if p.name == "children" {
             let items = self.nodes_of(t.children, "${indent}  ")?
-            args.push(list(items, indent))
+            args.push(self.listed(items, indent))
           } else if p.default.len() > 0 {
             args.push(p.default)
           } else {
@@ -375,6 +496,23 @@ impl Writer {
       if f.contains("col32(") { self.use("col32") }
       if f.contains("Vec2 {") { self.use("Vec2") }
     }
+  }
+
+  /// `items` as an array literal, one a line, each marked with the markup line it came
+  /// from (`// view.lui:12`, on its first line) for `lui map`; the bracket at `indent`.
+  let listed = pure (self, items: []Item, indent: string) -> string => {
+    if items.len() == 0 { return "[]" }
+    var out = "["
+    for item in items {
+      let marker = " // ${self.file}:${item.line}"
+      let text = match item.text.index("\n") {
+        Some(nl) =>
+          "${item.text.slice(0, nl)}${marker}${item.text.slice(nl, item.text.len())},",
+        None => "${item.text},${marker}",
+      }
+      out = "${out}\n${indent}  ${text}"
+    }
+    "${out}\n${indent}]"
   }
 
   let use = (self: mut, name: string) -> void => {
@@ -942,6 +1080,16 @@ let words_of = pure (children: []Markup) -> string => {
     if let Words(w, _) = child { out = "${out}${w}" }
   }
   out
+}
+
+/// The markup line a `<script>`'s first line of Lyra is on: past the blank ones.
+let first_line = pure (t: Tag) -> i64 => {
+  var line = t.line
+  for row in t.raw.lines() {
+    if row.trim().len() > 0 { return line }
+    line += 1
+  }
+  line
 }
 
 /// A `<script>`'s Lyra, its common indentation removed and blank lines at either end gone.

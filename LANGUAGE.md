@@ -873,6 +873,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `program_args() -> []string` | prelude over `program_arg_count()`/`program_arg(i)` | index 0 is program name; `program_arg` traps out of range; EffectInput. `main` is emitted as `main(argc, argv)` |
 | `read_file(path) -> Maybe<string>` | `std.io`, over `extern` `open`/`read`/`close` | `None` if unopenable; no UTF-8 validation; `open` declared variadic |
 | `read_stdin()` | `std.io` | shares the chunked reader |
+| `sleep_ms(ms)` | `std.io`, over `extern` `usleep` | at least `ms`; half-second steps (POSIX may refuse a second or more); nothing at or below 0 |
 | `write_file(path, contents) -> bool` | `std.io`, over `creat` | loops on short writes |
 | `append_file(path, contents) -> bool` | `std.io`, over `fopen(path, "a")` + `fileno` | creates if missing; shares `write_file`'s loop |
 | `write_stdout(contents) -> bool` / `write_stderr(contents) -> bool` | `std.io`, over `write(1/2, …)` | all of it, short writes retried (`write_file`'s loop) — a stdio server's replies; `print` makes one `write` a piece |

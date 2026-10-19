@@ -422,11 +422,20 @@ The example's interface is `examples/imgui/components_view.lui`.
   or two numbers, `rounding`, `opacity`, `width` (in pixels, or `6em`), `height`;
   `/* … */` comments.
 - **The generated module is not formatted** (`.lyrafmtignore` lists it) — one element to a
-  line, a `/// From view.lui, line N.` above each component. lyrac's errors in it name the
-  generated line; the comment leads back.
+  line, each marked with the markup line it came from (`// view.lui:12`; a sheet's at its
+  `<style>`, a component's `/// From view.lui, line N.`, a script's alone on the line
+  above it, meaning the next line).
+- **`lui map` puts lyrac's errors back at the markup**: `lyrac check app.lyra 2>&1 | lui
+  map` rewrites each `view.lyra:L:C` in a module lui generated (its first line says so)
+  to `view.lui:N`, the nearest marker at or above `L`, and leaves every other line as it
+  was — so a whole program's build maps too. The column goes: it was the generated one.
+- **`lui --watch view.lui …`** generates at once and again whenever a file's text changes
+  (read every 250 ms, `std.io.sleep_ms`), saying each generation and any mistake at its
+  line; a mistake leaves the last good module in place. Stop it with Ctrl-C.
 - **Tested** by `cmd/lyrac/lui_test.go`: the example's module is what lui makes and checks
   clean, and each kind of mistake is reported at its line. **Not yet**: components across
-  files, and lyrac's errors mapped back to the markup.
+  files, and errors at the markup in the editors (the language server reports them on the
+  generated module).
 - **Highlighted in both editors**: VS Code by `lyra-vscode-ext/syntaxes/lui.tmLanguage.json`,
   Zed from the grammar in `tree-sitter-lyra/lui/` (`lyra-zed-ext/languages/lui/`) — Lyra in
   `{…}` and `<script>`, CSS in `<style>`.

@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — lui: errors at the markup, and `--watch`
+
+- **Errors mapped by lui, not the compiler.** Each generated element's line ends with the
+  markup line it came from (`// view.lui:12`) — a sheet's at its `<style>`, a script's on
+  the line above it, alone, meaning the next — and `lui map` rewrites any `view.lyra:L:C`
+  in lyrac's output to `view.lui:N`, the nearest marker at or above. A `#line` directive
+  in Lyra would have reached the language server too, but as a compiler feature for one
+  tool; a filter works on a whole program's build today and leaves lyrac alone. The
+  editors' diagnostics are what is left (todo.md).
+- **`--watch` reads, rather than watches**: std has no file times, and a markup file is
+  small, so each is read every 250 ms and regenerated when its text changes — written only
+  when the module would differ, so a watcher of the module sees no churn. It needed a
+  sleep, which std lacked: **`std.io.sleep_ms`**, over `usleep` in half-second steps.
+  It does not run lyrac; pipe a build through `lui map` for that.
+- Tested in `lui_test.go`: lyrac's real errors in a script and an attribute mapped to their
+  lines, an unrelated line untouched, and `--watch` generating at once and on a change.
+
 ### 10/19/26 — Vega's Settings window, written as `.lui`
 
 The second user of `bindings.imgui.ui`, and the first window of Vega's in markup

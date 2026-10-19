@@ -420,6 +420,21 @@ pub let create_dir_all = (path: string) -> bool => {
   read_dir(path).is_some()
 }
 
+/// The program paused for `ms` milliseconds — a polling loop's wait (`lui --watch`
+/// reading its files a few times a second). Not a timer: the wait is at least `ms`, and
+/// as much longer as the system makes it. Nothing at or below 0.
+///
+/// Over libc's `usleep` in steps of half a second: POSIX lets it refuse a second or more.
+pub let sleep_ms = (ms: i64) -> void => {
+  var left = ms
+  while left > 0 {
+    let step = left.min(500)
+    let _ = unsafe { usleep(u32(step * 1000)) }
+    left -= step
+  }
+}
+
+unsafe extern usleep: (micros: u32) -> i32
 unsafe extern open: (path: ^u8, flags: i32, ...) -> i32
 unsafe extern creat: (path: ^u8, mode: u32) -> i32
 unsafe extern mkdir: (path: ^u8, mode: u32) -> i32

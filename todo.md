@@ -555,7 +555,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by
   `tools/lui`, not a Lyra grammar change (COMPLETED.md, 10/19).
 - **[OPEN] `.lui`: what is next.** Components called across files (an import each), and
-  lyrac's errors in a generated module mapped back to the markup's line.
+  errors at the markup in the editors: `lui map` maps lyrac's output, but `lyra-lsp`
+  still reports on the generated module.
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), widgets whose event carries a value (sliders, text fields: a function in
   the tree, or the value written back), and layout past `Row` and `Form`. Vega's Settings

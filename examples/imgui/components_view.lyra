@@ -3,6 +3,7 @@
 import bindings.imgui.ui.{ Node, Window, MainMenuBar, Menu, MenuItem, Button, Checkbox, Text, Separator, SeparatorText, Row, Component, WindowAttrs, MenuAttrs, MenuItemAttrs, ButtonAttrs, CheckboxAttrs, TextAttrs, Shortcut, Style, Sheet, StyleRule }
 import bindings.imgui.{ col32, Vec2 }
 
+// components_view.lui:7
 /// What the interface can be asked to do.
 pub data Event =
   ToggleSound
@@ -41,35 +42,35 @@ pub let update = pure (s: State, event: Event) -> State => match event {
 /// From components_view.lui, line 44.
 pub let view = pure (s: State) -> Node<Event> =>
   Component(Sheet {}, [
-    MainMenuBar([
-      Menu(MenuAttrs { label: "File" }, [
-        MenuItem(MenuItemAttrs { label: "Reset...", on_select: AskReset, shortcut: Some(Shortcut { key: "r" }) }),
-        SeparatorText("Load"),
-        ...[slot in 0..<3 | MenuItem(MenuItemAttrs { label: "Slot ${slot + 1}", on_select: Load(slot), checked: s.loaded == slot })],
-        Separator,
-        MenuItem(MenuItemAttrs { label: "Quit", on_select: AskQuit, shortcut: Some(Shortcut { key: "q" }) }),
+    MainMenuBar([ // components_view.lui:45
+      Menu(MenuAttrs { label: "File" }, [ // components_view.lui:46
+        MenuItem(MenuItemAttrs { label: "Reset...", on_select: AskReset, shortcut: Some(Shortcut { key: "r" }) }), // components_view.lui:47
+        SeparatorText("Load"), // components_view.lui:48
+        ...[slot in 0..<3 | MenuItem(MenuItemAttrs { label: "Slot ${slot + 1}", on_select: Load(slot), checked: s.loaded == slot })], // components_view.lui:49
+        Separator, // components_view.lui:52
+        MenuItem(MenuItemAttrs { label: "Quit", on_select: AskQuit, shortcut: Some(Shortcut { key: "q" }) }), // components_view.lui:53
       ]),
     ]),
-    Window(WindowAttrs { title: "Settings", style: Style { width: Some(340.0), height: Some(260.0) } }, [
-      SeparatorText("Audio"),
-      toggle_row("Sound", "effects and voices", s.sound, ToggleSound),
-      toggle_row("Music", "the soundtrack", s.music, ToggleMusic),
-      SeparatorText("Saves"),
-      Text(TextAttrs { text: "Reset ${s.resets} times", disabled: true }),
-      ...(if s.asking_reset {
+    Window(WindowAttrs { title: "Settings", style: Style { width: Some(340.0), height: Some(260.0) } }, [ // components_view.lui:56
+      SeparatorText("Audio"), // components_view.lui:57
+      toggle_row("Sound", "effects and voices", s.sound, ToggleSound), // components_view.lui:58
+      toggle_row("Music", "the soundtrack", s.music, ToggleMusic), // components_view.lui:59
+      SeparatorText("Saves"), // components_view.lui:60
+      Text(TextAttrs { text: "Reset ${s.resets} times", disabled: true }), // components_view.lui:61
+      ...(if s.asking_reset { // components_view.lui:62
         [
-          confirm("Erase every save?", ConfirmReset, CancelReset),
+          confirm("Erase every save?", ConfirmReset, CancelReset), // components_view.lui:63
         ]
       } else {
         [
-          Button(ButtonAttrs { label: "Reset...", on_click: AskReset }),
+          Button(ButtonAttrs { label: "Reset...", on_click: AskReset }), // components_view.lui:66
         ]
       }),
     ]),
-    ...(if s.asking_quit {
+    ...(if s.asking_quit { // components_view.lui:69
       [
-        Window(WindowAttrs { title: "Quit", on_close: Some(CancelQuit) }, [
-          confirm("Quit without saving?", ConfirmQuit, CancelQuit),
+        Window(WindowAttrs { title: "Quit", on_close: Some(CancelQuit) }, [ // components_view.lui:70
+          confirm("Quit without saving?", ConfirmQuit, CancelQuit), // components_view.lui:71
         ]),
       ]
     } else {
@@ -80,23 +81,23 @@ pub let view = pure (s: State) -> Node<Event> =>
 /// From components_view.lui, line 77.
 pub let confirm = pure (question: string, yes: e, no: e) -> Node<e> =>
   Component(confirm_sheet, [
-    Text(TextAttrs { text: "${question}", class: "question" }),
-    Row([
-      Button(ButtonAttrs { label: "Yes", class: "danger", on_click: yes }),
-      Button(ButtonAttrs { label: "No", on_click: no }),
+    Text(TextAttrs { text: "${question}", class: "question" }), // components_view.lui:83
+    Row([ // components_view.lui:84
+      Button(ButtonAttrs { label: "Yes", class: "danger", on_click: yes }), // components_view.lui:85
+      Button(ButtonAttrs { label: "No", on_click: no }), // components_view.lui:86
     ]),
   ])
 
 /// From components_view.lui, line 91.
 pub let toggle_row = pure (label: string, note: string, on: bool, toggle: e) -> Node<e> =>
   Component(toggle_row_sheet, [
-    Row([
-      Checkbox(CheckboxAttrs { label: "${label}", checked: on, on_toggle: toggle }),
-      Text(TextAttrs { text: "${note}", class: "note" }),
+    Row([ // components_view.lui:96
+      Checkbox(CheckboxAttrs { label: "${label}", checked: on, on_toggle: toggle }), // components_view.lui:97
+      Text(TextAttrs { text: "${note}", class: "note" }), // components_view.lui:98
     ]),
   ])
 
-let confirm_sheet = Sheet {
+let confirm_sheet = Sheet { // components_view.lui:78
   rules: [
     StyleRule { selector: "Button", style: Style { rounding: Some(6.0), padding: Some(Vec2 { x: 14.0, y: 4.0 }) } },
     StyleRule { selector: "Button.danger", style: Style { background: Some(col32(170, 40, 40)) } },
@@ -104,7 +105,7 @@ let confirm_sheet = Sheet {
   ],
 }
 
-let toggle_row_sheet = Sheet {
+let toggle_row_sheet = Sheet { // components_view.lui:92
   rules: [
     StyleRule { selector: "Checkbox", style: Style { background: Some(col32(40, 110, 60)) } },
     StyleRule { selector: "Text.note", style: Style { color: Some(col32(140, 140, 140)) } },
