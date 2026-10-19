@@ -493,8 +493,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
-- **[OPEN] No float from its bits** (`f32.from_bits`/`f64.from_bits`, and back): Vega's
-  Furnace reader decodes a file's IEEE `f32` by hand (`module_import.Bytes.float`).
 - **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
   trait — a game's music tables) must be `data X = X` instead. Either accept it or say so.
 
@@ -507,10 +505,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   undefined names. Parentheses work. Found 09/28 in Sheliak's test runner. **`match` too**
   (09/29, Sheliak's `--hold`): `held | match name { … }` reports "undefined identifier
   match" and each arm's binding undefined.
-- **[OPEN] Should W001 exempt a local named like a prelude *receiver method*?** `let index
-  = …` shadows the prelude's `index`, but `s.index("b")` still resolves — only the rarer
-  free call `index(s, "b")` breaks. Sheliak's core met it three times (`count`, `first`,
-  `index`), each a natural local name. A policy call, not a bug.
 - **[DONE 09/29] `?.`/`?[` are safe navigation**, desugared by the collector (`lyra-E083` on
   a non-Maybe); and **nullary constructors are or-pattern alternatives**. (COMPLETED.md, 09/29.)
 - **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
@@ -575,9 +569,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (`TypeTable.IsDefault`) names its module's top level, but captures, `@must_release` and
   the value-range pass still match its names against the caller's bindings. Each needs a
   probe like `TestMove_ADefaultIsNotTheCallersBinding`, and the skip if it misreads.
-- **[OPEN] No `contains` (or `any`) on an array.** `string.contains` exists; for `[]t` a
-  program writes the loop — Vega's `project.is_taken` did (10/01). A `contains<t> where t:
-  Eq` on arrays, and `any`/`all` taking a predicate, would replace it.
 - **[OPEN] `bindings.imgui` on Linux is unverified.** `@link` flags are sorted, so `-lSDL3`
   precedes the static `-llyra-imgui`; check the link under `--as-needed`, and that the
   archive needs nothing from libstdc++ there either.

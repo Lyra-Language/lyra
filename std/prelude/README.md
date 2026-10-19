@@ -63,10 +63,11 @@ an error that names the shadow.
 | `prelude.lyra` | module header and module doc |
 | `maybe.lyra` | `Maybe` and its combinators |
 | `result.lyra` | `Result` and its combinators |
-| `array.lyra` | combinators over `[]t`, sorting |
+| `array.lyra` | combinators over `[]t` (`map`, `filter`, `contains`, `any`, `all`), sorting |
 | `seq.lyra` | `Seq<t>` combinators |
 | `ordering.lyra` | `Ordering`, `Ord`, `Eq`, `min`/`max`/`clamp` |
 | `math.lyra` | `Add`/`Sub`/`Mul`/`Div`, `Arithmetic` |
+| `bits.lyra` | a float's IEEE bits and back: `to_bits`, `f32_from_bits`, `f64_from_bits` |
 | `show.lyra` | `Show` |
 | `convert.lyra` | `From`, the conversion `?` applies to an error |
 | `format.lyra` | `to_fixed` and number formatting |

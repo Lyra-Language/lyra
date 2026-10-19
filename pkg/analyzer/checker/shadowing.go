@@ -71,15 +71,19 @@ type topLevelScopes struct {
 	// moduleBase memoises "this module's names plus the prelude's exports", which every
 	// file of a module shares outright when it has no selective imports.
 	moduleBase map[string]map[string]ast.Location
+	// receiverOnly marks, per module, the top-level names every declaration of which is a
+	// function taking `self` — a receiver method, overloaded or not.
+	receiverOnly map[string]map[string]bool
 }
 
 func newTopLevelScopes(stmts []ast.Statement, symTable *symbols.SymbolTable) *topLevelScopes {
 	v := &topLevelScopes{
-		symTable:   symTable,
-		byModule:   map[string]map[string]ast.Location{},
-		all:        map[string]ast.Location{},
-		cache:      map[string]map[string]ast.Location{},
-		moduleBase: map[string]map[string]ast.Location{},
+		symTable:     symTable,
+		byModule:     map[string]map[string]ast.Location{},
+		all:          map[string]ast.Location{},
+		cache:        map[string]map[string]ast.Location{},
+		moduleBase:   map[string]map[string]ast.Location{},
+		receiverOnly: map[string]map[string]bool{},
 	}
 	for _, stmt := range stmts {
 		module := ""
@@ -90,8 +94,12 @@ func newTopLevelScopes(stmts []ast.Statement, symTable *symbols.SymbolTable) *to
 			v.all[nl.Name] = nl.Location
 			if v.byModule[module] == nil {
 				v.byModule[module] = map[string]ast.Location{}
+				v.receiverOnly[module] = map[string]bool{}
 			}
+			_, seen := v.byModule[module][nl.Name]
 			v.byModule[module][nl.Name] = nl.Location
+			takesSelf := isReceiverMethod(stmt, nl.Name)
+			v.receiverOnly[module][nl.Name] = takesSelf && (!seen || v.receiverOnly[module][nl.Name])
 		}
 	}
 	return v
@@ -153,8 +161,20 @@ func (v *topLevelScopes) baseFor(module string) map[string]ast.Location {
 	maps.Copy(out, v.byModule[module])
 	// The prelude is implicitly imported everywhere, so its exports are in scope — but
 	// only its exports: a prelude-private helper is as unreachable as any other module's.
+	//
+	// **A prelude receiver method is not among them** (10/19). A local `any`, `count` or
+	// `index` shadows only the free-call spelling of one: `xs.any(p)` beside it still reaches
+	// the method, which is how the prelude's are called. W001 fired on every such local —
+	// natural names, and 21 of them in std, the examples and Vega the day `any`, `all` and
+	// `contains` joined the prelude — for a conflict a method call never meets. A user
+	// module's own receiver methods still count: that is code the author is writing.
 	if prelude := v.symTable.PreludeModule; prelude != "" && prelude != module {
 		v.addExported(out, prelude)
+		for name := range v.receiverOnly[prelude] {
+			if v.receiverOnly[prelude][name] {
+				delete(out, name)
+			}
+		}
 	}
 	v.moduleBase[module] = out
 	return out
@@ -167,6 +187,20 @@ func (v *topLevelScopes) addExported(out map[string]ast.Location, module string)
 			out[name] = loc
 		}
 	}
+}
+
+// isReceiverMethod reports whether stmt declares name as a function whose first parameter
+// is `self` — an `impl` block's member is erased into exactly that.
+func isReceiverMethod(stmt ast.Statement, name string) bool {
+	decl, ok := stmt.(*ast.VarDeclStmt)
+	if !ok || decl.Name != name {
+		return false
+	}
+	lam, ok := decl.Value.(*ast.LambdaExpr)
+	if !ok || len(lam.Parameters) == 0 || lam.Parameters[0].Pattern == nil {
+		return false
+	}
+	return lam.Parameters[0].Pattern.GetName() == "self"
 }
 
 // shadowChecker accumulates shadowing warnings as it walks the AST.

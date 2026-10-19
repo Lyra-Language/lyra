@@ -1,0 +1,52 @@
+module std.prelude
+//! A float's IEEE 754 bits and back: `x.to_bits()`, `f32_from_bits` and `f64_from_bits`.
+
+// **Plain Lyra over a union**, as the README asks of anything Lyra can express: an untagged
+// union's members share offset 0, so writing one member and reading another reinterprets the
+// bytes — exactly C's type pun, and what LLVM folds to a `bitcast`. The read is `unsafe`
+// (lyra-E011) because a union in general may hold anything; here both members are plain bits
+// of one width, so every pattern is a valid value of each and the functions are safe to call.
+//
+// Not `f32.from_bits(b)`: a function namespaced by a type is lyra-E035. The integer is the
+// receiver instead, so `b.f32_from_bits()` reads the same way a binary reader is written.
+
+/// A union of an `f32` and the `u32` holding its bits.
+union F32Bits {
+  value: f32,
+  bits: u32,
+}
+
+/// A union of an `f64` and the `u64` holding its bits.
+union F64Bits {
+  value: f64,
+  bits: u64,
+}
+
+impl f32 {
+  /// The IEEE 754 binary32 bits of `self`: sign in bit 31, exponent in bits 23–30, fraction
+  /// below. Exact for every value, NaNs and their payloads included.
+  ///
+  /// ```
+  /// let b = f32(1.0).to_bits()   // 0x3F800000
+  /// ```
+  pub let to_bits = pure noalloc (self) -> u32 => unsafe { F32Bits { value: self }.bits }
+}
+
+impl f64 {
+  /// The IEEE 754 binary64 bits of `self`: sign in bit 63, exponent in bits 52–62, fraction
+  /// below. Exact for every value, NaNs and their payloads included.
+  pub let to_bits = pure noalloc (self) -> u64 => unsafe { F64Bits { value: self }.bits }
+}
+
+/// The `f32` whose IEEE 754 binary32 bits are `self` — `to_bits`' inverse, which is how a
+/// file format's little-endian float is read once its four bytes are assembled:
+///
+/// ```
+/// let x = (u32(b0) | (u32(b1) << 8) | (u32(b2) << 16) | (u32(b3) << 24)).f32_from_bits()
+/// ```
+pub let f32_from_bits = pure noalloc (self: u32) -> f32 =>
+  unsafe { F32Bits { bits: self }.value }
+
+/// The `f64` whose IEEE 754 binary64 bits are `self` — `to_bits`' inverse.
+pub let f64_from_bits = pure noalloc (self: u64) -> f64 =>
+  unsafe { F64Bits { bits: self }.value }

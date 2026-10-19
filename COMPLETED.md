@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — `contains`, `any`, `all`, and a float's bits
+
+Two standard-library gaps Vega had written around (`project.is_taken`'s loop, the Furnace
+reader's hand-assembled `f32`), and the W001 policy question they forced.
+
+- **`contains`, `any` and `all` on `[]t`** (`std/prelude/array.lyra`), `pure noalloc`,
+  stopping early. `contains` compares with `==` and so needs no `Eq` bound: equality is
+  structural on every type, and an `Eq` impl only overrides it. It sits beside
+  `string.contains` as a receiver overload.
+- **`x.to_bits()` on `f32`/`f64`, `f32_from_bits` and `f64_from_bits`**
+  (`std/prelude/bits.lyra`) are plain Lyra over a two-member `union`, whose `unsafe` read
+  reinterprets the bytes, so no builtin was needed. They are free functions taking the
+  integer as `self` (`b.f32_from_bits()`), because `f32.from_bits(b)` is a type-namespaced
+  call (lyra-E035). They are checked against Python's `struct`, π's bits included.
+- **W001 no longer warns on a local named like a prelude receiver method**, decided with the
+  user. The new names made 21 existing locals warn (`let any`, `var all`, in std, the
+  examples and Vega), for a conflict a method call never meets: `xs.any(p)` beside a local
+  `any` still reaches the method, and only the free call is hidden. `baseFor` leaves a
+  prelude name out of the outer set when every declaration of it takes `self`. A prelude
+  free function (`program_args`) and a module's own receiver methods still warn. This also
+  quiets the older `count`, `first` and `index` locals. `TestDiagnostics_RelatedInformation…`
+  had used `let index` as its vehicle and now uses `program_args`.
+- **Not done**: the ImGui `IsMousePosValid` wrapper, left in todo.md while another session
+  works in `bindings/imgui`.
+
 ### 10/19/26 — `bindings.imgui.ui`, and a global read above its declaration went unretained
 
 A JSX-like markup for ImGui was asked for, then reusable components with scoped styles. The

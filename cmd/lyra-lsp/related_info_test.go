@@ -28,10 +28,11 @@ func TestDiagnostics_RelatedInformationPointsAtTheShadowedFile(t *testing.T) {
 	t.Setenv("LYRA_STD", stdRootDir(t))
 	h := servertest.New(t, newHandler())
 	dir := t.TempDir()
-	// `index` is the prelude's own — a shadow of another file's declaration, and short
-	// enough that the prelude's line number is past the end of this file, which is the
-	// shape that made the old behaviour visible.
-	src := "let f = pure (n: i64) -> i64 => {\n  let index = n + 1\n  index\n}\n"
+	// `program_args` is the prelude's own — a shadow of another file's declaration, and
+	// short enough that the prelude's line number is past the end of this file, which is the
+	// shape that made the old behaviour visible. (It was `index` until 10/19, when a local
+	// named like a prelude *receiver method* stopped warning: `s.index(…)` still reaches it.)
+	src := "let f = pure (n: i64) -> i64 => {\n  let program_args = n + 1\n  program_args\n}\n"
 	uri := openFileAndWait(t, h, dir, "app.lyra", src)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -50,8 +51,8 @@ func TestDiagnostics_RelatedInformationPointsAtTheShadowedFile(t *testing.T) {
 		t.Fatalf("want a shadowing warning carrying its prior declaration; got %v", diags)
 	}
 	target := uriToPath(string(related[0].Location.URI))
-	if filepath.Base(target) != "strings.lyra" {
-		t.Errorf("the link points at %s; want the prelude file declaring `index`", target)
+	if filepath.Base(target) != "args.lyra" {
+		t.Errorf("the link points at %s; want the prelude file declaring `program_args`", target)
 	}
 	if target == filepath.Join(dir, "app.lyra") {
 		t.Errorf("the link points back at the open document, which is the bug itself")
