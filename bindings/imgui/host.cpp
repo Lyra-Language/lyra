@@ -47,6 +47,21 @@ struct LyraFontFile {
     ImFont* font;
 };
 
+// A file merged into fonts for the glyphs they lack (lyra_imgui_host_merge_font_file): its
+// bytes, read once and shared by every font it goes into — the atlas reads them for as
+// long as it lives, so the host frees them after the context — or NULL for a file that
+// could not be read. `LyraFontMerged` is one font it went into, so it goes in once.
+enum { LYRA_IMGUI_MAX_MERGE_FILES = 8, LYRA_IMGUI_MAX_MERGES = 64 };
+struct LyraMergeFile {
+    char path[LYRA_IMGUI_FONT_PATH];
+    void* data;
+    size_t size;
+};
+struct LyraFontMerged {
+    int file;
+    ImFont* font;
+};
+
 struct LyraImGuiHost {
     SDL_Window* window;
     SDL_GPUDevice* device;
@@ -83,6 +98,10 @@ struct LyraImGuiHost {
     // goes with it — a program-wide cache handed a later host the last one's freed font.
     LyraFontFile fonts[LYRA_IMGUI_MAX_FONT_FILES];
     int font_count;
+    LyraMergeFile merge_files[LYRA_IMGUI_MAX_MERGE_FILES];
+    int merge_file_count;
+    LyraFontMerged merged[LYRA_IMGUI_MAX_MERGES];
+    int merged_count;
     // The window's buttons drawn as macOS's traffic lights — red, yellow and green circles —
     // rather than as glyphs on the bar (lyra_imgui_host_set_traffic_lights).
     bool traffic_lights;
@@ -384,6 +403,51 @@ ImFont* lyra_imgui_host_font_file(LyraImGuiHost* host, const char* path, float s
         kept->font = font;
     }
     return font;
+}
+
+// A font file merged into `font` as a fallback: a glyph `font` lacks is drawn from it (the
+// last merged, if several lack it, after the earlier ones), at the font's size. ImGui 1.92
+// merges a source into the font its DstFont names, and the bytes are the host's
+// (FontDataOwnedByAtlas off) so that one copy serves every font. False when the file cannot
+// be read, or the host has no room left to keep it; merging again is a no-op that answers
+// true.
+bool lyra_imgui_host_merge_font_file(LyraImGuiHost* host, ImFont* font, const char* path) {
+    if (font == NULL || strlen(path) >= LYRA_IMGUI_FONT_PATH)
+        return false;
+    int file = -1;
+    for (int i = 0; i < host->merge_file_count; i++)
+        if (strcmp(host->merge_files[i].path, path) == 0)
+            file = i;
+    if (file < 0) {
+        if (host->merge_file_count >= LYRA_IMGUI_MAX_MERGE_FILES)
+            return false;
+        file = host->merge_file_count++;
+        LyraMergeFile* kept = &host->merge_files[file];
+        strcpy(kept->path, path);
+        kept->data = SDL_LoadFile(path, &kept->size);
+    }
+    LyraMergeFile* source = &host->merge_files[file];
+    if (source->data == NULL)
+        return false;
+    for (int i = 0; i < host->merged_count; i++)
+        if (host->merged[i].file == file && host->merged[i].font == font)
+            return true;
+    if (host->merged_count >= LYRA_IMGUI_MAX_MERGES)
+        return false;
+    ImFontConfig config;
+    config.MergeMode = true;
+    config.DstFont = font;
+    config.FontDataOwnedByAtlas = false;
+    if (ImGui::GetIO().Fonts->AddFontFromMemoryTTF(source->data, (int)source->size, 0.0f, &config) == NULL)
+        return false;
+    host->merged[host->merged_count++] = LyraFontMerged{file, font};
+    return true;
+}
+
+// The merged files' bytes, once the context that read them is gone.
+static void free_merge_files(LyraImGuiHost* host) {
+    for (int i = 0; i < host->merge_file_count; i++)
+        SDL_free(host->merge_files[i].data);
 }
 
 // ── The window's own title bar (HOST_CUSTOM_TITLE_BAR) ───────────────────────
@@ -1035,6 +1099,7 @@ const char* lyra_imgui_poll_file_dialog(LyraImGuiHost* host, int32_t* tag, int32
 void lyra_imgui_host_destroy(LyraImGuiHost* host) {
     if (host->headless) {
         ImGui::DestroyContext();
+        free_merge_files(host);
         for (LyraDialogAnswer* a = host->answers; a != nullptr;) {
             LyraDialogAnswer* next = a->next;
             free(a->text);
@@ -1057,6 +1122,7 @@ void lyra_imgui_host_destroy(LyraImGuiHost* host) {
     ImGui_ImplSDL3_Shutdown();
     ImGui_ImplSDLGPU3_Shutdown();
     ImGui::DestroyContext();
+    free_merge_files(host);
     // After DestroyContext, which writes the layout through it.
     free(host->layout_file);
     SDL_ReleaseWindowFromGPUDevice(host->device, host->window);

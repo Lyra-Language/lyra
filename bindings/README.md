@@ -306,6 +306,13 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     checks, a host each, 10/05). `None` when the file cannot be read (ImGui itself asserts).
     1.92's fonts are dynamic, so the size drawn is chosen at the push; `offset_y` raises
     (negative) or lowers every glyph, in pixels at `size`. Vega's macOS look loads SF with it.
+  - **A fallback font**: `merge_font_file(host, font, path)` → `bool` merges a file into a
+    font for the glyphs it lacks (CJK in a Latin face), at the font's size — 1.92's
+    `MergeMode` with `DstFont` naming the font, so it need not be the last one added. The
+    file is read once (`SDL_LoadFile`) and its bytes shared by every font it goes into,
+    the host's to free after the context (`FontDataOwnedByAtlas` off: the atlas reads them
+    while it lives); merging the same pair again is a no-op. Sulafat merges CJK and symbol
+    fonts into each face.
 - **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
   reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into

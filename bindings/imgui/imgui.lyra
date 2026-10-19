@@ -356,6 +356,14 @@ pub let font_file = (
   if font == nullptr { None } else { Some(font) }
 }
 
+/// Merge the font file at `path` into `font` as a fallback: a glyph `font` lacks — CJK, say,
+/// in a Latin face — is drawn from the file instead, at the font's size; several files are
+/// tried in the order merged. The file is read once however many fonts it is merged into;
+/// merging the same file into the same font again does nothing. `false` when the file
+/// cannot be read (or the host keeps no more of them).
+pub let merge_font_file = (host: Host, font: Font, path: string) -> bool =>
+  path.with_cstring((c_path) => unsafe { lyra_imgui_host_merge_font_file(host, font, c_path) })
+
 /// Scale the whole interface — text, padding, spacing — by `scale`, for readability: 1 is
 /// as the host set it up (the display's density already applied), 1.25 a quarter larger.
 /// From the host's own style each time, so scales never compound; clamped to 0.5–3.
@@ -590,6 +598,9 @@ unsafe extern lyra_imgui_host_destroy: (host: Host) -> void
 
 @symbol("lyra_imgui_host_set_layout_file")
 unsafe extern lyra_imgui_host_set_layout_file: (host: Host, path: ^u8) -> void
+
+@symbol("lyra_imgui_host_merge_font_file")
+unsafe extern lyra_imgui_host_merge_font_file: (host: Host, font: Font, path: ^u8) -> bool
 
 @symbol("lyra_imgui_host_font_file")
 unsafe extern lyra_imgui_host_font_file: (
