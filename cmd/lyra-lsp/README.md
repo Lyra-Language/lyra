@@ -59,6 +59,27 @@ to disagree the first day either changed. One formatter, two callers — the CLI
   but the client computes that from a whole-file replace better than a line differ here
   would, and a wrong range on a formatting edit corrupts the buffer.
 
+## `.lui` markup is diagnosed at its own lines (`markup.go`)
+
+A `.lui` document (`lyra/tools/lui`) is analyzed through the module lui generates from it:
+the buffer goes through **`lui --stdin --name view.lui`** — the generator's one
+implementation, never a copy here — and the module it answers is analyzed as an overlay at
+the path its `view.lyra` would have, so its imports resolve as the real file's would. Each
+diagnostic is moved to the markup line its nearest marker names (`// view.lui:12`; see
+bindings/README.md), its range the line's text past the indentation, duplicates on a line
+dropped.
+
+- **A mistake in the markup itself** is lui's (`N: what`, exit 1), published at line `N`.
+- **lui is found as lyrafmt is** (`toolLookup` in `formatting.go`): `$LYRA_LUI`, `lui` on
+  `PATH`, beside this executable, symlinks resolved — `./build.sh` puts it there. Without
+  it a `.lui` gets no diagnostics, never an error.
+- **The marker format has two readers**, `lui map` and `markupLineOf`;
+  `TestMarkup_MapsAsLuiMapDoes` holds them to the same answer on every line of the
+  example's module.
+- Only diagnostics: no analysis is stored for a `.lui`, so hover and the rest answer
+  nothing there. A program importing a generated module still reads it from disk — keep
+  `lui --watch` running, or regenerate.
+
 ## Handler conventions
 
 - Prologue is `handler.go`'s: `defer recoverHandler(name, &result, &retErr)`, `h.docFor(uri)`

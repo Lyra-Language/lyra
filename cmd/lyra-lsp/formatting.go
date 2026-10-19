@@ -88,48 +88,64 @@ func runLyrafmt(formatter, source string) (string, bool) {
 	return out.String(), true
 }
 
+// A tool the server runs, found once: `$<env>`, then `<name>` on `PATH`, then beside this
+// executable (toolBeside). Cached, since nothing in a running server changes the answer
+// and formatting is on a keystroke path.
+type toolLookup struct {
+	env, name string
+	mu        sync.Mutex
+	looked    bool
+	found     string
+}
+
 var (
-	lyrafmtMu     sync.Mutex
-	lyrafmtLooked bool
-	lyrafmtFound  string
+	lyrafmtTool = &toolLookup{env: "LYRA_FMT", name: "lyrafmt"}
+	// lui generates `.lui` markup for its diagnostics (markup.go).
+	luiTool = &toolLookup{env: "LYRA_LUI", name: "lui"}
 )
 
-// resetLyrafmtLookup clears the cached path so a test can point LYRA_FMT elsewhere. The
-// cache is what keeps formatting off the filesystem on every keystroke; nothing in a
-// running server changes the answer.
-func resetLyrafmtLookup() {
-	lyrafmtMu.Lock()
-	defer lyrafmtMu.Unlock()
-	lyrafmtLooked, lyrafmtFound = false, ""
+// reset clears the cached path so a test can point the variable elsewhere.
+func (t *toolLookup) reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.looked, t.found = false, ""
 }
 
-func lyrafmtPath() (string, bool) {
-	lyrafmtMu.Lock()
-	defer lyrafmtMu.Unlock()
-	if lyrafmtLooked {
-		return lyrafmtFound, lyrafmtFound != ""
+func (t *toolLookup) path() (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.looked {
+		return t.found, t.found != ""
 	}
-	lyrafmtLooked = true
-	if env := os.Getenv("LYRA_FMT"); env != "" {
+	t.looked = true
+	if env := os.Getenv(t.env); env != "" {
 		if _, err := os.Stat(env); err == nil {
-			lyrafmtFound = env
-			return lyrafmtFound, true
+			t.found = env
+			return t.found, true
 		}
 	}
-	if found, err := exec.LookPath("lyrafmt"); err == nil {
-		lyrafmtFound = found
-		return lyrafmtFound, true
+	if found, err := exec.LookPath(t.name); err == nil {
+		t.found = found
+		return t.found, true
 	}
 	if self, err := os.Executable(); err == nil {
-		if beside, ok := lyrafmtBeside(self); ok {
-			lyrafmtFound = beside
+		if beside, ok := toolBeside(self, t.name); ok {
+			t.found = beside
 		}
 	}
-	return lyrafmtFound, lyrafmtFound != ""
+	return t.found, t.found != ""
 }
 
-// lyrafmtBeside looks for the formatter in the directory holding exe, **with symlinks
-// resolved first**.
+// resetLyrafmtLookup clears the cached path so a test can point LYRA_FMT elsewhere.
+func resetLyrafmtLookup() { lyrafmtTool.reset() }
+
+func lyrafmtPath() (string, bool) { return lyrafmtTool.path() }
+
+// lyrafmtBeside is toolBeside for the formatter.
+func lyrafmtBeside(exe string) (string, bool) { return toolBeside(exe, "lyrafmt") }
+
+// toolBeside looks for a tool (lyrafmt, lui) in the directory holding exe, **with
+// symlinks resolved first**.
 //
 // `os.Executable` does not resolve them consistently — on Linux it reads /proc/self/exe,
 // already resolved, and on macOS it can hand back the symlink's own path — and the language
@@ -140,7 +156,7 @@ func lyrafmtPath() (string, bool) {
 //
 // The unresolved directory is tried too, for the layout where someone copies both binaries
 // somewhere together: `EvalSymlinks` on a real file answers itself, so the two collapse.
-func lyrafmtBeside(exe string) (string, bool) {
+func toolBeside(exe, name string) (string, bool) {
 	dirs := []string{filepath.Dir(exe)}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		if dir := filepath.Dir(resolved); dir != dirs[0] {
@@ -148,7 +164,7 @@ func lyrafmtBeside(exe string) (string, bool) {
 		}
 	}
 	for _, dir := range dirs {
-		candidate := filepath.Join(dir, "lyrafmt")
+		candidate := filepath.Join(dir, name)
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, true
 		}

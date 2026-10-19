@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — `.lui` errors in the editors, at the markup
+
+`lyra-lsp` diagnoses a `.lui` buffer through what lui makes of it: `lui --stdin --name
+view.lui` generates the module to standard output (a markup mistake is `N: what` and exit
+1), the server analyzes it as an overlay where `view.lyra` would be — its imports resolved
+from disk as the real file's are — and moves each diagnostic to the markup line its marker
+names. Both extensions send `.lui` to the server (VS Code's document selector, Zed's
+`languages = ["Lyra", "Lui"]`).
+
+- **The generator is run, not reimplemented**, the rule formatting already follows with
+  lyrafmt: a Go copy of lui would be a second answer to one question. The marker format
+  is read twice — `lui map` over a file, `markupLineOf` over the module in memory — and
+  `TestMarkup_MapsAsLuiMapDoes` holds them to one answer on every line of the example.
+- **Checked over stdio against the built server**, as an editor runs it: Vega's Settings
+  markup with a typo in the unsaved buffer reported three diagnostics, all on the
+  `<Checkbox>`'s line, and none as saved — lui found beside the server, no variable set.
+
 ### 10/19/26 — lui: errors at the markup, and `--watch`
 
 - **Errors mapped by lui, not the compiler.** Each generated element's line ends with the

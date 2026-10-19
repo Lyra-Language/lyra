@@ -434,8 +434,10 @@ The example's interface is `examples/imgui/components_view.lui`.
   line; a mistake leaves the last good module in place. Stop it with Ctrl-C.
 - **Tested** by `cmd/lyrac/lui_test.go`: the example's module is what lui makes and checks
   clean, and each kind of mistake is reported at its line. **Not yet**: components across
-  files, and errors at the markup in the editors (the language server reports them on the
-  generated module).
+  files.
+- **The editors show errors at the markup**: `lyra-lsp` runs `lui --stdin` on a `.lui`
+  buffer, analyzes the module beside it, and publishes each diagnostic at the markup line
+  its marker names (`cmd/lyra-lsp/README.md`); both extensions send `.lui` to it.
 - **Highlighted in both editors**: VS Code by `lyra-vscode-ext/syntaxes/lui.tmLanguage.json`,
   Zed from the grammar in `tree-sitter-lyra/lui/` (`lyra-zed-ext/languages/lui/`) — Lyra in
   `{…}` and `<script>`, CSS in `<style>`.

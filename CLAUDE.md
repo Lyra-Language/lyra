@@ -676,7 +676,8 @@ of Markdown.
   `build/lib/liblyra-pty.a`**, `bindings.pty`'s (`pty.c`, plain POSIX).
 - **`build.sh` builds `build/lui`** (`tools/lui/lui.lyra`, std only): the `.lui` markup
   generator for `bindings.imgui.ui` (bindings/README.md). Its output is ignored by
-  lyrafmt and held current by `cmd/lyrac/lui_test.go`.
+  lyrafmt and held current by `cmd/lyrac/lui_test.go`. Beside `lyra-lsp`, it is what the
+  server runs to diagnose a `.lui` buffer (`cmd/lyra-lsp/markup.go`), as it runs lyrafmt.
 - **`build.sh` builds `build/lib/liblyra-imgui.a`** when it can (`bindings/imgui/build.sh`):
   it downloads a pinned, SHA-256-checked ImGui, dear_bindings and FreeType into
   `build/deps/` (not vendored; FreeType compiled into the archive, for `set_font_hinting`),

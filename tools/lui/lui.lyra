@@ -3,6 +3,7 @@
 //   build/lui view.lui            # writes view.lyra beside it
 //   build/lui --check view.lui    # exit 1 when view.lyra is not what view.lui makes
 //   build/lui --watch view.lui    # again whenever view.lui changes, until stopped
+//   build/lui --stdin --name view.lui < view.lui   # the module on stdout (lyra-lsp's way)
 //   build/lyrac check app.lyra 2>&1 | build/lui map   # errors at the markup's lines
 //
 // A `.lui` file holds components, each a function returning a `Node<e>`; lyrac checks
@@ -47,13 +48,24 @@ import std.io.{ read_file, write_file, read_stdin, sleep_ms }
 import std.path
 
 let main = () -> u8 => {
-  let args = parse_args([])
+  let args = parse_args(["--name"])
+  // An editor's buffer, not a file: the module on standard output, or `line: what` and 1.
+  if args.has("--stdin") {
+    match generate(args.value("--name").unwrap_or("stdin.lui"), read_stdin()) {
+      Ok(code) => print(code),
+      Err(problem) => {
+        println(problem)
+        return 1
+      },
+    }
+    return 0
+  }
   if args.positional.len() == 1 && args.positional[0] == "map" {
     for line in read_stdin().lines() { println(mapped(line)) }
     return 0
   }
   if args.positional.len() == 0 {
-    println("usage: lui [--check | --watch] <file.lui>...    or    lyrac check … 2>&1 | lui map")
+    println("usage: lui [--check | --watch] <file.lui>...  |  lyrac check … 2>&1 | lui map  |  lui --stdin --name <file.lui>")
     return 2
   }
   if args.has("--watch") { return watch(args.positional) }

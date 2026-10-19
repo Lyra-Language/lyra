@@ -292,6 +292,13 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		}
 	}()
 
+	// Markup is diagnosed through the module lui generates from it (markup.go).
+	if path := uriToPath(string(uri)); isMarkup(path) {
+		diags := h.analyzeMarkup(uri, path, source)
+		log.Printf("analyze: publishing %d markup diagnostics", len(diags))
+		return h.client.PublishDiagnostics(ctx, &lsp.PublishDiagnosticsParams{URI: uri, Diagnostics: diags})
+	}
+
 	// The whole import graph, not just this buffer — see units.go for why, and for
 	// what has to be filtered back out afterwards.
 	res, file := h.analyzeDocument(uri, source)
