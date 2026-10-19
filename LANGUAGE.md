@@ -652,6 +652,12 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   `t.unwrap_or((0.5, "x"))` on a `Maybe<(f32, string)>` — the receiver binds the variable,
   the literal adopts it, narrowed and range-checked there (`(300, "y")` against `(u8,
   string)` overflows). Only a variable nothing else bound takes the literal's default.
+- **…except where a lambda's parameters need it.** A variable an unannotated lambda's
+  parameters are typed by, which nothing with a width bound, takes the literal's default
+  before the lambda is checked: `apply(5, (x) => x)` and `fold(xs, 0, (acc, x) => acc + x)`
+  give `x` and `acc` an `i64`. A context still comes first (`let a: u8 = app(250, (x) => x
+  + 5)` is `u8` throughout), and a variable only the lambda's *return* reaches still waits
+  for it.
 - **A construction compared with `==`/`!=` takes the other operand's type**, as an
   annotated binding gives it one: `m == Some(0.4)` on a `Maybe<f32>` builds a
   `Maybe<f32>`, and `r == Ok(7)` on a `Result<u8, string>` narrows the `7`. One that cannot

@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — A literal settles a lambda's parameter
+
+`apply(5, (x) => x)` against `let apply<t> = (by: t, f: (t) -> i64) -> i64` reported
+"undefined symbol x" and "cannot infer type variable t". The todo entry said a *second*
+call failed; one was enough, since the entry's first call had a typed lambda. And
+`fold([1, 2, 3], 0, (acc, x) => acc + x)` failed the same way, which is the commonest fold
+there is.
+
+- **The cause was the solve's order** (`solveArgumentTypeVars`): typed arguments, then
+  deferred lambdas, then untyped literals, so that anything with a width speaks first. A
+  variable reached only by a literal and by a lambda's *parameters* was still open when the
+  lambda was elaborated, and an unannotated parameter has no other source.
+- **The fix is narrow on purpose.** Before a deferred lambda is elaborated, a variable its
+  parameters need (`lambdaParameterVars`) that nothing has bound is settled from an untyped
+  literal argument reaching it. No call that solved before can solve differently: such a
+  lambda could never be elaborated. A context still binds first (`let a: u8 = app(250, …)`
+  is `u8` and traps at 250 + 10), and a variable only a lambda's return reaches keeps the
+  literal last (`late(5, () => b)` on a `u8` `b` is `u8`). `TestExec_ALiteralStillSpeaksAfterAWidth`
+  holds both, and passes before and after.
+
 ### 10/17/26 — Diagnostics spell types as a program writes them
 
 `cannot assign DynamicArray<i64> to DynamicArray<u8>` became `cannot assign []i64 to []u8`;

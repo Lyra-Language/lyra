@@ -302,6 +302,28 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 	}
 	for _, i := range deferred {
 		declared := declaredParam(i)
+		// **A lambda's parameters cannot wait for the literals.** A variable the lambda's
+		// own parameters are typed by, which no typed argument or context bound, is settled
+		// here from an untyped literal argument that reaches it — before the lambda is
+		// elaborated, since an unannotated parameter has no other source. Until 10/19
+		// `apply(5, (x) => x)` against `(by: t, f: (t) -> i64)` elaborated the lambda with `t`
+		// open, left `x` untyped ("undefined symbol x") and failed the call, while
+		// `apply(n, (x) => x)` on a typed `n` solved. Only a variable the *parameters* need:
+		// one the lambda's return alone reaches keeps the literal last, so `(by: t, f: () ->
+		// t)` with a lambda returning a `u8` still binds `t = u8` and the `5` adopts it.
+		for v := range lambdaParameterVars(declared, vars) {
+			if _, bound := subst[v]; bound {
+				continue
+			}
+			for _, u := range untyped {
+				if lit := declaredParam(u.index); mentionsGenericParam(lit, map[string]bool{v: true}) {
+					if !unify(lit, promoteToDefault(u.typ)) {
+						return nil, false
+					}
+					break
+				}
+			}
+		}
 		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
 		// and the lambda has something concrete to be elaborated against.
 		plantable := plantableVars(subst)
@@ -390,6 +412,27 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		}
 	}
 	return subst, true
+}
+
+// lambdaParameterVars is the set of solving variables a function-typed parameter's own
+// *parameters* mention — the `t` of `(t) -> i64`, not of `() -> t` — which an unannotated
+// lambda supplied for it needs bound before it can be elaborated.
+func lambdaParameterVars(declared types.Type, vars map[string]bool) map[string]bool {
+	fn, ok := declared.(*types.LambdaType)
+	if !ok || fn == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for v := range vars {
+		one := map[string]bool{v: true}
+		for _, p := range fn.Parameters {
+			if mentionsGenericParam(p.Type, one) {
+				out[v] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 // isUnsettledArrayLiteral reports whether arg is an array literal or repeat whose element
