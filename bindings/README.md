@@ -213,7 +213,7 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
 - **On macOS `io.key_ctrl()` is ⌘ and `io.key_super()` is Ctrl**: ImGui swaps them
   (`ConfigMacOSXBehaviors`, on by default there, off on the headless host), so Ctrl reads as
   "the shortcut key". A program needing the physical keys — a terminal — swaps back when
-  `io.config_mac_osx_behaviors()` (Sulafat's `ui/modifiers.lyra`).
+  `io.config_mac_osx_behaviors()` (Termina's `ui/modifiers.lyra`).
 - **Fields are methods**: `generated.cpp` is a C accessor per field of `ImGuiIO`,
   `ImGuiStyle` and `ImGuiViewport` (`FIELD_STRUCTS`), so `get_io().delta_time()`,
   `get_style().set_alpha(0.9)`, `get_style().set_colors(COL_TEXT, v)`. An array's index is
@@ -311,7 +311,7 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     `MergeMode` with `DstFont` naming the font, so it need not be the last one added. The
     file is read once (`SDL_LoadFile`) and its bytes shared by every font it goes into,
     the host's to free after the context (`FontDataOwnedByAtlas` off: the atlas reads them
-    while it lives); merging the same pair again is a no-op. Sulafat merges CJK and symbol
+    while it lives); merging the same pair again is a no-op. Termina merges CJK and symbol
     fonts into each face.
   - **Hinted text**: `set_font_hinting(host, on)` draws the host's fonts from files
     (`font_file`, and what is merged into them) through FreeType (`imgui_freetype.cpp`),
@@ -321,7 +321,7 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     and **the interface's own font is pinned to stb_truetype** (ImGui's default, added
     then if it is not yet): a font may have a loader of its own if the loader has no
     start-up, which stb's has not. Off by default: a program that never asks (Vega)
-    draws as before. Sulafat asks off macOS.
+    draws as before. Termina asks off macOS.
 - **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
   reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into
@@ -444,7 +444,7 @@ The example's interface is `examples/imgui/components_view.lui`.
 
 ## `bindings/pty/`
 
-A program on a pseudo-terminal, for a terminal emulator (`../sulafat`). `spawn(args, cols,
+A program on a pseudo-terminal, for a terminal emulator (`../termina`). `spawn(args, cols,
 rows, cwd, env) -> Maybe<Pty>` (`@must_release(close)`); `read()` never blocks — empty when
 nothing is there, `None` once the terminal is closed; `write`/`write_bytes` loop through a full
 buffer; `resize` (SIGWINCH); `exit_status()` reaps without waiting. macOS and Linux.
