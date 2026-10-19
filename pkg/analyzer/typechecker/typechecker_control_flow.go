@@ -380,6 +380,22 @@ func (tc *TypeChecker) optionalChainReadable(expr *ast.MatchExpr, scrutineeType 
 	return false
 }
 
+// markUncheckedCalls publishes every call in a refused `?.`'s arms as refused
+// (SetUnresolvedCallee): the arms are the collector's and are deliberately not checked, so
+// a pass after this one must not analyse them either. Until 10/19 the purity pass did, and
+// `make()?.len()` on a Result drew, beside the right lyra-E083, "pure function calls impure
+// function `__opt_2_42.len`" — the desugaring's binding, which nobody wrote.
+func (tc *TypeChecker) markUncheckedCalls(expr *ast.MatchExpr) {
+	for _, arm := range expr.MatchArms {
+		ast.WalkExpr(arm.Body, nil, func(e ast.Expression) bool {
+			if call, ok := e.(*ast.FunctionCallExpr); ok {
+				tc.typeTable.SetUnresolvedCallee(call)
+			}
+			return true
+		})
+	}
+}
+
 // maybeReceiverHint is the advice for a `.` on a Maybe: most often a safe-navigation
 // chain that dropped a `?` (`m?.name.len()` for `m?.name?.len()`), since each `?.` reads
 // through one Maybe and gives back a Maybe.
@@ -555,6 +571,7 @@ func (tc *TypeChecker) matchKindOf(scrutineeType, kindType types.Type, expr *ast
 func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) types.Type {
 	scrutineeType := tc.inferExprType(expr.Scrutinee)
 	if expr.OptionalChain && !tc.optionalChainReadable(expr, scrutineeType) {
+		tc.markUncheckedCalls(expr)
 		return nil
 	}
 	// Every integer literal a pattern carries is value-checked against the type it

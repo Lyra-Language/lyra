@@ -43,10 +43,6 @@ not a formality.
     today). Costs: a lambda-set type analysis through the typechecker and one copy of each
     higher-order function per lambda set. Verdict: not worth it for speed alone; revisit if
     the `noalloc` refusal starts biting or a self-hosting profile shows indirect-call cost.
-- **[OPEN] A module-qualified call inside a lambda fails in the backend** (10/04, Vega):
-  `[1, 2].map((x) => helper.twice(x))` is checked, then `no type recorded for captured
-  binding "helper"` — the module name is collected as a capture. Vega's `tiled_import`
-  calls the method style instead.
 
 ### Traits: a method's own type variables
 
@@ -497,11 +493,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
-- **[OPEN] An aliased import beside another module's type of the name breaks it**:
-  `import tunes.{ Song as Tune }` with `import model.{ Song }` reports `unknown type "Tune"`
-  at `tunes.lyra:1:1` and refuses `Tune` values where `tunes` expects its `Song`. Alone
-  either import works. Found 10/15 by Vega's `song.lyra`; `std.chips.music`'s type became
-  `Tune` instead.
+- **[OPEN] A constructor cannot be imported under an alias**: `import owner.{ OfMap as
+  Theirs }` binds nothing, and a use of `Theirs` is lyra-E035 "undefined constructor or
+  type". Types and functions alias; a constructor is not a name the import binds (10/19).
 - **[OPEN] No float from its bits** (`f32.from_bits`/`f64.from_bits`, and back): Vega's
   Furnace reader decodes a file's IEEE `f32` by hand (`module_import.Bytes.float`).
 - **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
@@ -522,17 +516,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   `index`), each a natural local name. A policy call, not a bug.
 - **[DONE 09/29] `?.`/`?[` are safe navigation**, desugared by the collector (`lyra-E083` on
   a non-Maybe); and **nullary constructors are or-pattern alternatives**. (COMPLETED.md, 09/29.)
-- **[OPEN] `f()?.len()` on a `Result` cascades with an internal name.** Beside the right
-  `lyra-E083`, a `pure` caller also gets "calls impure function `__opt_9_43.len`" — the
-  safe-navigation desugaring's binding, which no user wrote (10/16). One error, not two.
 - **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
   and alternations below the top of a pattern (`Some(1 | 2)`, `(1 | 2, _)`, both refused
   today). Neither needed yet.
-- **[OPEN] An imported name the file also declares is silently its own.** `import
-  owner.{ OfMap }` beside a `data Tool = … | OfMap` compiles with no word, every `OfMap`
-  the file's — an import that does nothing, and a reader who trusts it misreads every use
-  (10/13, Vega's `commands.MapShapes` against the map editor's tool of that name). An
-  error naming both, as a duplicate declaration is.
 - **[OPEN] A data constructor resolves without its import**: `JsonString("a")` compiles with
   only `import std.json.{ parse_json }`, and listing `JsonString` draws `lyra-W004` ("never
   used") — yet std.json's own docs list `JsonNull`. Decide the rule; either the visibility or

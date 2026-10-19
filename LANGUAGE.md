@@ -827,7 +827,7 @@ target = "genesis"
 
 ### Shadowing
 
-A local declaration of an imported (or prelude) name wins every bare reference in that module and warns **`lyra-W016`** (the prelude's own is `lyra-W012`).
+A local declaration of an imported (or prelude) name wins every bare reference in that module and warns **`lyra-W016`** (the prelude's own is `lyra-W012`). A **constructor** is such a name too: `import owner.{ OfMap }` beside this module's `data Tool = … | OfMap` means the module's own everywhere, and warns. A function on a different receiver is no shadow — it overloads, and the import still reaches the other.
 
 **Only a name the import admitted shadows.** `import lib` binds no bare name, so it shadows nothing; `import lib.{ a }` shadows `a` and no other export of `lib`; `import lib.{ a as b }` shadows `b`, never `a`. The shadowed declaration is reached by renaming one side — the local one, or the import (`import lib.{ a as other }`) — since a selective import binds no namespace to qualify through.
 

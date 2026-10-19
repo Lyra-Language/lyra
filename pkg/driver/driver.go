@@ -195,6 +195,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
 	res.Diagnostics = append(res.Diagnostics, shadowWarnings(symTable)...)
+	res.Diagnostics = append(res.Diagnostics, constructorShadowWarnings(program, symTable)...)
 	for _, rawErr := range collectorErrors {
 		if ce, ok := rawErr.(diag.Diagnostic); ok {
 			res.Diagnostics = append(res.Diagnostics, ce)
@@ -660,6 +661,72 @@ func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
 	return out
 }
 
+// constructorShadowWarnings is shadowWarnings for a **constructor**: `import owner.{ OfMap }`
+// beside this module's own `data Tool = … | OfMap`. Every `OfMap` here is the module's own,
+// so the import does nothing — and it said nothing, because a constructor is not a name the
+// symbol table maps (symbols.DeclaringDataType), so the declaration never reached
+// `Shadowed` the way a struct, trait or function taking an imported name does (10/13, Vega's
+// `commands.MapShapes` against the map editor's tool of that name). The same warning, at
+// the declaration. A constructor cannot be imported under an alias, so the advice is only
+// to rename.
+func constructorShadowWarnings(program *ast.Program, st *symbols.SymbolTable) []diag.Diagnostic {
+	if program == nil || st == nil {
+		return nil
+	}
+	var out []diag.Diagnostic
+	for _, node := range program.Statements {
+		imp, ok := node.(*ast.ImportStmt)
+		if !ok || imp.Alias != "" || len(imp.Members) == 0 {
+			continue
+		}
+		module := st.ModuleOfFile[imp.GetLocation().File]
+		source := joinModulePath(imp.Path)
+		for _, m := range imp.Members {
+			if m.Alias != "" || st.ModuleDeclares(source, m.Name) {
+				continue // aliased, or not a constructor where it comes from
+			}
+			own, ok := ownConstructor(st, module, m.Name)
+			if !ok {
+				continue
+			}
+			out = append(out, diag.Diagnostic{
+				Location: own.GetLocation(),
+				Severity: diag.SeverityWarning,
+				Code:     diag.CodeImportShadowed,
+				Message: fmt.Sprintf(
+					"%s takes the name imported from module %q: inside this module %s now means"+
+						" this declaration's constructor, and the import does nothing. Rename one"+
+						" — a constructor cannot be imported under another name",
+					m.Name, source, m.Name),
+				RelatedInformation: []diag.RelatedInformation{{
+					Location: m.Location,
+					Message:  fmt.Sprintf("%s imported from %s here", m.Name, source),
+				}},
+			})
+		}
+	}
+	return out
+}
+
+// ownConstructor is the data type in module that declares a constructor named name.
+func ownConstructor(st *symbols.SymbolTable, module, name string) (*ast.TypeDeclStmt, bool) {
+	for _, decl := range st.Types {
+		if st.ModuleOfFile[decl.GetLocation().File] != module {
+			continue
+		}
+		dt, ok := decl.Type.(types.DataType)
+		if !ok {
+			continue
+		}
+		for _, c := range dt.Constructors {
+			if c.Name == name {
+				return decl, true
+			}
+		}
+	}
+	return nil, false
+}
+
 // collectPackages is the union of every `@link`'s `pkg:`, sorted and deduplicated —
 // collectLinks' twin for where the libraries are rather than which.
 func collectPackages(program *ast.Program) []string {
@@ -764,4 +831,14 @@ func checkTarget(res *Result, units []modules.Unit, tt *typetable.TypeTable) []d
 	}
 	inScope := func(file string) bool { return !library[file] }
 	return append(interrupts, checker.CheckTarget(res.Program, res.SymbolTable, res.ScopeTable, tt, res.MethodTable, res.Captures, tgt, inScope)...)
+}
+
+// joinModulePath renders an import's dotted module path ("util.math"), the key the symbol
+// table holds a module's scope under.
+func joinModulePath(path []ast.ModuleName) string {
+	parts := make([]string, len(path))
+	for i, p := range path {
+		parts[i] = p.Name
+	}
+	return strings.Join(parts, ".")
 }

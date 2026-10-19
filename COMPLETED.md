@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — Four small compiler entries, re-run first
+
+Each entry's reproduction was run before anything was changed. Two were already fixed, and
+one wider probe turned up the bug next door.
+
+- **A module-qualified call inside a lambda** (`[1, 2].map((x) => helper.twice(x))`) had
+  been fixed by the captures pass ("a namespace inside a closure is not a capture"). The
+  same family's live bug was a module's function as a **value**: `let h = helper.twice`,
+  or `apply_to(helper.twice, 6)`, failed in the backend with "no type recorded for
+  member-access object". The member-access path knew a namespace's consts and globals and
+  not its functions; `namespaceFunction` resolves one as `namespaceCallee` does a call's,
+  and `namedFunctionValue` builds the closure a bare name gets. A generic module function as
+  a value is refused by the checker in both spellings, which is a separate limit.
+- **An aliased import beside another module's type of the name** works in every shape tried
+  (parameter, return, array element, `push`). Fixed by the same-named-types work (10/16).
+- **An imported name the file also declares** was asked to be an error naming both. The
+  first cut was one, over every name, and it was wrong twice. lyra-W016 already warns for
+  a struct, trait, data type or function taking an imported name, and was made a warning on
+  purpose (08/08). And a function on a *different receiver* is no shadow at all: the
+  import's `area(self: Sq)` stays reachable beside the module's `area(self: Circle)`, and
+  the error refused a program that ran. The real gap was only **constructors**, which never
+  reach `symTable.Shadowed`, being no name the table maps. `constructorShadowWarnings`
+  gives them the same W016, advising a rename only, since a constructor cannot be imported
+  under an alias (its own todo entry). Vega, Sheliak and Sulafat raise none.
+- **`f()?.len()` on a Result** now reports only lyra-E083. The refused chain's arms are
+  deliberately unchecked; `markUncheckedCalls` publishes their calls as refused
+  (`SetUnresolvedCallee`), so purity no longer charged `__opt_2_42.len()`.
+
 ### 10/19/26 — A literal settles a lambda's parameter
 
 `apply(5, (x) => x)` against `let apply<t> = (by: t, f: (t) -> i64) -> i64` reported

@@ -279,6 +279,14 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 		}
 		return nil, nil, fmt.Errorf("llvm: %s.%s has no storage or value", e.Object.(*ast.IdentifierExpr).Name, decl.Name)
 	}
+	// `helper.twice` named in value position — bound, or passed to `apply` — is the module's
+	// function as a closure, exactly as a bare `twice` is (namedFunctionValue). Until 10/19
+	// it fell through to field access and failed here as "no type recorded for
+	// member-access object", on a program the front end had checked clean.
+	if key, ok := l.namespaceFunction(e); ok {
+		v, err := l.namedFunctionValue(block, key)
+		return v, block, err
+	}
 	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for member-access object")
@@ -757,6 +765,34 @@ func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.Anony
 		return boxed, block, err
 	}
 	return agg, block, nil
+}
+
+// namespaceFunction is the funcKey of the function `m.f` names when m is an imported
+// module's namespace and f one of its top-level functions with an emitted body — the value
+// twin of namespaceCallee, resolved through the module and keyed from the declaration's own
+// location for the same reason (rule 9).
+func (l *lowerer) namespaceFunction(e *ast.MemberExpr) (string, bool) {
+	id, ok := e.Object.(*ast.IdentifierExpr)
+	if !ok {
+		return "", false
+	}
+	if _, isLocal := l.locals[id.Name]; isLocal {
+		return "", false // a value shadows the namespace
+	}
+	st := l.res.SymbolTable
+	imp, ok := st.NamespaceImport(e.GetLocation().File, id.Name)
+	if !ok || !st.ModuleDeclares(imp.Path, e.Property.Name) {
+		return "", false
+	}
+	lam, ok := st.LookupFunctionIn(imp.Path, e.Property.Name)
+	if !ok {
+		return "", false
+	}
+	key := l.funcKey(e.Property.Name, lam.GetLocation())
+	if l.funcs[key] == nil {
+		return "", false
+	}
+	return key, true
 }
 
 // namespaceBinding is the declaration `m.X` names when m is an imported module's namespace
