@@ -403,9 +403,12 @@ impl Writer {
     if !is_upper(t.name) { return self.call(t, indent) }
     // A slot is its name alone: where the caller draws, through `seen`.
     if t.name == "Slot" {
-      let Some(name) = t.text_attr("name") else { return Err("${t.line}: <Slot> needs name=\"…\"") }
+      let Some(name) = attr_named(t.attrs, "name") else {
+        return Err("${t.line}: <Slot> needs name=\"…\"")
+      }
+      if name.value == Bare { return Err("${t.line}: <Slot> needs name=\"…\"") }
       self.use("Slot")
-      return Ok("Slot(${quote(name)})")
+      return Ok("Slot(${attr_lyra(name.value)})")
     }
     let Some(kind) = element_kind(t.name) else {
       return Err("${t.line}: <${t.name}> is not an element of bindings.imgui.ui")
@@ -869,30 +872,49 @@ let container = pure () -> Kind =>
   Kind { attrs_struct: "", text_field: "", attrs: [], required: [], holds: true }
 
 /// `"Cmd+Shift+S"` as a `Shortcut`: the primary modifier (Cmd or Ctrl, whichever the
-/// platform has; either may be written), Shift, and one key.
+/// platform has; either may be written), Alt, Shift, and one key — a character, or `PgUp`
+/// or `PgDn`. The primary modifier is held unless Alt is written without it (`Alt+1`).
 let shortcut = pure (text: string) -> Result<string, string> => {
   var shift = false
+  var alt = false
+  var primary = false
   var key = ""
   let parts = text.split("+")
   for i, part in parts {
     let p = part.trim().to_ascii_lower()
     if i < parts.len() - 1 {
       match p {
-        "cmd" => {},
-        "ctrl" => {},
+        "cmd" => { primary = true },
+        "ctrl" => { primary = true },
+        "alt" => { alt = true },
         "shift" => { shift = true },
-        _ => { return Err("${part} is not Cmd, Ctrl or Shift") },
+        _ => { return Err("${part} is not Cmd, Ctrl, Alt or Shift") },
       }
     } else {
-      key = p
+      key = part.trim()
     }
   }
   // `Cmd++`: the key is the last `+`, which split leaves empty.
   if key.len() == 0 && text.ends_with("+") { key = "+" }
-  if key.len() != 1 { return Err("a shortcut's key is one character, not \"${key}\"") }
+  var named = ""
+  for k in NAMED_KEYS {
+    if k.to_ascii_lower() == key.to_ascii_lower() { named = k }
+  }
+  if named.len() > 0 {
+    key = named
+  } else if key.len() == 1 {
+    key = key.to_ascii_lower()
+  } else {
+    return Err("a shortcut's key is one character, PgUp or PgDn, not \"${key}\"")
+  }
   let with_shift = if shift { ", shift: true" } else { "" }
-  Ok("Some(Shortcut { key: ${quote(key)}${with_shift} })")
+  let with_alt = if alt { ", alt: true" } else { "" }
+  let without_primary = if alt && !primary { ", primary: false" } else { "" }
+  Ok("Some(Shortcut { key: ${quote(key)}${with_shift}${with_alt}${without_primary} })")
 }
+
+/// The keys a shortcut names rather than types.
+const NAMED_KEYS = ["PgUp", "PgDn"]
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 

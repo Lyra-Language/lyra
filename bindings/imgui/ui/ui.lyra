@@ -137,6 +137,7 @@ import bindings.imgui.{
   COND_APPEARING,
   MOD_CTRL,
   MOD_SHIFT,
+  MOD_ALT,
   KEY_A,
   KEY_B,
   KEY_C,
@@ -178,6 +179,8 @@ import bindings.imgui.{
   KEY_EQUAL,
   KEY_MINUS,
   KEY_SLASH,
+  KEY_PAGE_UP,
+  KEY_PAGE_DOWN,
 }
 
 // ── The tree ─────────────────────────────────────────────────────────────────
@@ -393,10 +396,15 @@ pub struct TextAttrs {
 }
 
 /// A menu item's key, held with the primary modifier — Cmd on macOS, Ctrl elsewhere:
-/// `"n"`, `","`. [key_known] says whether ImGui can press it.
+/// `"n"`, `","`, or a key by its name (`"PgUp"`, `"PgDn"`). [key_known] says whether ImGui
+/// can press it.
 pub struct Shortcut {
   key: string,
   shift: bool = false,
+  /// Alt (Option on a Mac) held too.
+  alt: bool = false,
+  /// The primary modifier held; `false` for a key of Alt's alone (`Alt+1`).
+  primary: bool = true,
 }
 
 /// How an element looks, in its own terms; a field unset leaves the theme's (or an
@@ -484,7 +492,10 @@ impl []Node<e> {
       if !it.enabled { continue }
       let Some(s) = it.shortcut else { continue }
       let Some(key) = imgui_key(s.key) else { continue }
-      let chord = MOD_CTRL | key | (if s.shift { MOD_SHIFT } else { 0 })
+      let chord = key |
+        (if s.primary { MOD_CTRL } else { 0 }) |
+        (if s.shift { MOD_SHIFT } else { 0 }) |
+        (if s.alt { MOD_ALT } else { 0 })
       if is_key_chord_pressed(chord) { return Some(it.on_select) }
     }
     None
@@ -500,8 +511,13 @@ impl []Node<e> {
 
 /// How a shortcut is spelled beside its item: `Cmd+Shift+S`, `Ctrl+O`.
 pub let shortcut_text = (s: Shortcut) -> string => {
-  let shift = if s.shift { "Shift+" } else { "" }
-  "${primary_key_name()}+${shift}${s.key.to_ascii_upper()}"
+  var parts: []string = []
+  if s.primary { parts.push(primary_key_name()) }
+  if s.alt { parts.push("Alt") }
+  if s.shift { parts.push("Shift") }
+  // A key named is shown as named; a character, capitalised.
+  parts.push(if s.key.len() == 1 { s.key.to_ascii_upper() } else { s.key })
+  parts.join("+")
 }
 
 /// `"Cmd"` on macOS, where ImGui reads Command as its Ctrl modifier; `"Ctrl"` elsewhere.
@@ -934,5 +950,7 @@ let imgui_key = pure (key: string) -> Maybe<i32> => match key {
   "=" => Some(KEY_EQUAL),
   "-" => Some(KEY_MINUS),
   "/" => Some(KEY_SLASH),
+  "PgUp" => Some(KEY_PAGE_UP),
+  "PgDn" => Some(KEY_PAGE_DOWN),
   _ => None,
 }

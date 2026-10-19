@@ -572,7 +572,12 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), tooltips, tables, child regions, sliders and colour editors (InputInt and
   InputText are there, with change and commit events), and layout past `Row` and `Form`.
-  Grow it as Vega's next dialogs and panels move to markup.
+  Grow it as Vega's next dialogs and panels move to markup. Termina's Settings draws its
+  sliders and colour editors in Slots meanwhile, and an InputText has no hint text yet.
+- **[OPEN] `bindings.imgui.ui`: install a tree in the Mac's bar.** Vega's `menus.lyra` and
+  Termina's `menus/menus.lyra` each walk a menus tree into `bindings.menubar` (items by tag,
+  greying synced each frame). One shared function could serve both, and Vega's would then
+  read `Shortcut.alt`.
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
   Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.

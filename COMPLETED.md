@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — Termina's settings and menus as `.lui`, and what they needed
+
+Termina's Settings tab and its menus moved to markup (`settings_view.lui`,
+`menus_view.lui`), the menus one tree for both bars as Vega's are: installed in the Mac's
+bar, drawn by ImGui elsewhere. Two gaps in the layer showed up, both fixed here.
+
+- **A Slot's name is an attribute like any other.** lui wrote `name` through `quote`, so
+  `<Slot name="colour {which}"/>` became the literal text `colour {which}` and its prop went
+  unused (W005 the only sign). It now goes through `attr_lyra`: interpolated, or `{Lyra}`.
+  A bare `name` is refused.
+- **A `Shortcut` can be a Linux terminal's.** It was the primary modifier, maybe Shift,
+  and one character, but Termina's keys there are Ctrl+PgUp and Alt+1–9 (Ctrl alone
+  belongs to the shell). It gained `alt` and `primary` (false for Alt alone), and named
+  keys, `PgUp` and `PgDn`. `shortcut_text` keeps a named key as written, and
+  `pressed_shortcut` adds Alt's bit. lui reads `Alt+1` as Alt alone, and `Cmd+Alt+1` as
+  both. Vega's `native_key` doesn't read the new fields; Vega has no such shortcut.
+- **Where Form aligns**: a Form lines up the labels of its direct `Field` children only. A
+  same-file component wrapping a Field arrives as a `Component` and draws unaligned, so
+  Termina's colour rows are a `<for>` over (label, slot) pairs, not a component.
+- The sliders and colour editors are drawn in Slots, on a module-level copy of the
+  settings, because `seen` is a callback and cannot write the caller's locals.
+
 ### 10/19/26 — Inputs that carry a value; Vega's import dialog as markup
 
 The import dialog was chosen to force the tree's open question — an event carrying a

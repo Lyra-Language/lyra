@@ -54,7 +54,7 @@ func TestLui_ReportsMistakesAtTheirLine(t *testing.T) {
 		{"closing", "<component name=\"a\">\n  <Row>\n</component>", "x.lui:3: </component> closes <Row> (line 2)"},
 		{"bare text", "<component name=\"a\">\n  <Row>hello</Row>\n</component>", "x.lui:2: text \"hello\" outside an element that takes it"},
 		{"style", "<component name=\"a\">\n  <style> Button { colour: #fff } </style>\n</component>", "x.lui:2: no style property colour"},
-		{"shortcut", "<component name=\"a\" props=\"x: e\">\n  <MenuItem on_select={x} shortcut=\"Alt+X\">Hi</MenuItem>\n</component>", "Alt is not Cmd, Ctrl or Shift"},
+		{"shortcut", "<component name=\"a\" props=\"x: e\">\n  <MenuItem on_select={x} shortcut=\"Meta+X\">Hi</MenuItem>\n</component>", "Meta is not Cmd, Ctrl, Alt or Shift"},
 		{"prop", "<component name=\"a\" props=\"x: e\">\n  <b y={x}/>\n</component>\n<component name=\"b\" props=\"x: e\"></component>", "x.lui:2: component b has no prop y"},
 		{"else", "<component name=\"a\">\n  <else>no</else>\n</component>", "x.lui:2: <else> with no <if> before it"},
 		{"quoted event", "<component name=\"a\" props=\"x: e\">\n  <Button on_click=\"x\">Hi</Button>\n</component>", "x.lui:2: on_click of <Button> takes {…}"},
@@ -109,6 +109,50 @@ func TestLui_ComboFormAndEmWidths(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"width_em: Some(6.0)", "centered: true", "Field(FieldAttrs { label: \"Size\" }", "Combo(ComboAttrs {"} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+// A shortcut's modifiers and keys as a Linux terminal's menus show them: Alt alone (no
+// primary modifier), a named key, and every modifier at once; the module checks clean.
+func TestLui_ShortcutsWithAltAndNamedKeys(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script>
+  pub data Ev = First | Previous | All
+</script>
+<component name="view" event="Ev">
+  <MainMenuBar>
+    <Menu label="Window">
+      <MenuItem on_select={First} shortcut="Alt+1">First</MenuItem>
+      <MenuItem on_select={Previous} shortcut="Ctrl+pgup">Previous</MenuItem>
+      <MenuItem on_select={All} shortcut="Cmd+Alt+Shift+K">All</MenuItem>
+    </Menu>
+  </MainMenuBar>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`Shortcut { key: "1", alt: true, primary: false }`,
+		`Shortcut { key: "PgUp" }`,
+		`Shortcut { key: "k", shift: true, alt: true }`,
+	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)
 		}
@@ -204,7 +248,8 @@ func TestLui_WatchRegeneratesOnChange(t *testing.T) {
 
 // The value inputs and the modal: `on_change={Width}` names a constructor, which lui makes
 // a typed lambda of (Lyra has no constructor values, and a lambda in a generic field gets
-// no parameter types from it); the rest — a radio, a closing button, a slot — as written.
+// no parameter types from it); the rest — a radio, a closing button, a slot — as written,
+// a slot's name interpolated as any attribute is (a component naming its caller's slot).
 // The module checks clean.
 func TestLui_InputsModalAndSlot(t *testing.T) {
 	lui := buildLui(t)
@@ -214,12 +259,16 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 </script>
 <component name="view" props="w: i64, name: string" event="Ev">
   <Modal title="Edit###edit" on_escape={Close}>
+    <swatch which="fg"/>
     <InputInt label="Width" value={w} step={8} on_change={Width} on_commit={Done}/>
     <InputText label="Name" value={name} on_change={(text: string) -> Ev => Named(text)}/>
     <Radio selected on_select={Pick}>Pick</Radio>
     <Slot name="preview"/>
     <Button closes on_click={Close}>OK</Button>
   </Modal>
+</component>
+<component name="swatch" props="which: string">
+  <Slot name="colour {which}"/>
 </component>
 `
 	path := filepath.Join(dir, "view.lui")
@@ -238,6 +287,7 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 		"on_commit: Some(Done)",
 		"on_change: (text: string) -> Ev => Named(text)",
 		`Slot("preview")`,
+		`Slot("colour ${which}")`,
 		"closes: true",
 		"on_escape: Some(Close)",
 	} {

@@ -369,7 +369,8 @@ window is markup (`vega/src/settings_view.lui`).
   `node_id(node)` is any element's `id` (else its label), for a `seen` that probes.
 - **The tree is data more than ImGui reads**: `menu_items(nodes)` flattens the menu items
   (Vega installs the same tree in macOS's menu bar), `pressed_shortcut(nodes)` presses a
-  `Shortcut` (the primary modifier, Cmd or Ctrl, and optionally Shift) while its menu is
+  `Shortcut` (the primary modifier, Cmd or Ctrl, and optionally Shift and Alt — or Alt
+  alone, `primary: false`; a character or a named key, `PgUp` `PgDn`) while its menu is
   closed, `key_known` says whether ImGui has a shortcut's key.
 - **Inline style** (`Style`: `color`, `background`, `padding`, `rounding`, `opacity`,
   `width`, `height`, and `width_em` — a width in the font's size, growing with the
@@ -420,8 +421,10 @@ The example's interface is `examples/imgui/components_view.lui`.
   types. Attributes are `"text"` (a string; `{…}` inside interpolates, and text that is one
   `{n}` alone is the string `"${n}"`, whatever `n` is), `{Lyra}`, or bare
   (a flag, `true`); `on_close={X}` is `Some(X)`; `shortcut="Cmd+Shift+S"` (Cmd or Ctrl is
-  the primary modifier either way) and `style="rounding: 4"` are read for you. An unknown
-  tag or attribute, a missing one, and text where none goes are lui's errors, at their line.
+  the primary modifier either way; `Alt+1` holds Alt alone, `Ctrl+PgUp` names its key)
+  and `style="rounding: 4"` are read for you; a `<Slot name="…">` is named as any
+  attribute is, so a component can name its caller's (`<Slot name="colour {which}"/>`).
+  An unknown tag or attribute, a missing one, and text where none goes are lui's errors, at their line.
 - **A lowercase tag calls a component of the same file**, its attributes matched to the
   props by name (a prop's `= default` fills a missing one), its children passed as a
   `children: []Node<e>` prop. Another file's component, or one written in Lyra, is a
