@@ -557,8 +557,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `.lui`: what is next.** Components called across files (an import each), and
   lyrac's errors in a generated module mapped back to the markup's line.
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
-  `push_id`), widgets with values (sliders, text fields — an event carrying the value),
-  layout past `Row`, and style sheets kept outside Lyra.
+  `push_id`), widgets whose event carries a value (sliders, text fields: a function in
+  the tree, or the value written back), and layout past `Row` and `Form`. Vega's Settings
+  needed none of them; port the next window that has one.
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
   Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.

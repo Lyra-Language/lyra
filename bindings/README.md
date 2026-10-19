@@ -337,12 +337,18 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
 ### `bindings.imgui.ui` — an interface as a tree (`imgui/ui/ui.lyra`)
 
 An interface as plain Lyra values — the layer the `.lui` markup (below) is generated into.
-A prototype: `examples/imgui/components.lyra` shows it, and Vega's menus are its first user.
+`examples/imgui/components.lyra` shows it; in Vega the menus are a tree and the Settings
+window is markup (`vega/src/settings_view.lui`).
 
 - **`Node<e>`** — `Window`, `MainMenuBar`, `MenuBar`, `Menu`, `MenuItem`, `Button`,
-  `Checkbox`, `Text`, `Separator`, `SeparatorText`, `Row` (children side by side),
-  `Component` and `Fragment` (children in place, several where one is expected) — each
-  with an `…Attrs` struct of its attributes. `e` is the program's event type.
+  `Checkbox`, `Combo` (a drop-down whose children are `Selectable`s, each its own event —
+  ImGui's own shape, so a choice needs no event carrying a value), `Form` and `Field` (a
+  label right-aligned in a column as wide as the widest, its controls after it), `Text`,
+  `Separator`, `SeparatorText`, `Row` (children side by side), `Component` and `Fragment`
+  (children in place, several where one is expected) — each with an `…Attrs` struct of
+  its attributes. `e` is the program's event type. A `Window` may be `centered` (each time
+  it appears); a button, checkbox, combo, selectable or menu item has an `id`, what a
+  program's tests know it by.
 - **`render(nodes, seen) -> []e`** draws the tree and answers the frame's events. Every
   `begin_*` is ended, and only when ImGui says it began (`end_menu` under a `begin_menu`
   that answered true; `end` after every `begin`); `seen` is called with each element just
@@ -355,7 +361,8 @@ A prototype: `examples/imgui/components.lyra` shows it, and Vega's menus are its
   `Shortcut` (the primary modifier, Cmd or Ctrl, and optionally Shift) while its menu is
   closed, `key_known` says whether ImGui has a shortcut's key.
 - **Inline style** (`Style`: `color`, `background`, `padding`, `rounding`, `opacity`,
-  `width`, `height`) means each field in the element's own terms — `background` is a
+  `width`, `height`, and `width_em` — a width in the font's size, growing with the
+  interface) means each field in the element's own terms — `background` is a
   button's face (its hover and press shades derived), a checkbox's box, a menu item's
   highlight, a window's or menu's fill — and is pushed onto ImGui's style stack around the
   element and popped after its children, so it is **inherited** as CSS's inherited
@@ -369,9 +376,8 @@ A prototype: `examples/imgui/components.lyra` shows it, and Vega's menus are its
   around the component, nor a component inside it, which has its own sheet (Vue's
   `scoped`, CSS modules) — while what a rule pushes is inherited as inline style is.
   `Sheet.style_for(tag, classes, inline)` is the cascade, pure.
-- **Not yet**: `id`s for repeated labels (ImGui's `##`/`push_id`; a `key` as JSX has),
-  layout beyond `Row`, and widgets with values (sliders, text fields — an event carrying
-  the value).
+- **Not yet**: keys for repeated labels (ImGui's `push_id`; a `key` as JSX has), layout
+  beyond `Row` and `Form`, and widgets whose event carries a value (sliders, text fields).
 
 ### `.lui` markup — `tools/lui`, built into `build/lui`
 
@@ -398,7 +404,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   of its `props` returning `Node<event>` (`event="Event"`; default `e`, so it fits any
   tree), wrapped in its `Component`.
 - **A capitalized tag is an element**, its attributes its `…Attrs` fields and its text its
-  label. Attributes are `"text"` (a string; `{…}` inside interpolates), `{Lyra}`, or bare
+  label. Attributes are `"text"` (a string; `{…}` inside interpolates, and text that is one
+  `{n}` alone is the string `"${n}"`, whatever `n` is), `{Lyra}`, or bare
   (a flag, `true`); `on_close={X}` is `Some(X)`; `shortcut="Cmd+Shift+S"` (Cmd or Ctrl is
   the primary modifier either way) and `style="rounding: 4"` are read for you. An unknown
   tag or attribute, a missing one, and text where none goes are lui's errors, at their line.
@@ -412,7 +419,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   children make a `Fragment`).
 - **`<style>` is the component's scoped sheet**: `Tag`, `.class` and `Tag.class` selectors
   (comma lists), `color`/`background` as `#rgb`, `#rrggbb` or `#rrggbbaa`, `padding` one
-  or two numbers, `rounding`, `opacity`, `width`, `height`; `/* … */` comments.
+  or two numbers, `rounding`, `opacity`, `width` (in pixels, or `6em`), `height`;
+  `/* … */` comments.
 - **The generated module is not formatted** (`.lyrafmtignore` lists it) — one element to a
   line, a `/// From view.lui, line N.` above each component. lyrac's errors in it name the
   generated line; the comment leads back.

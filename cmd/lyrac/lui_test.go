@@ -73,3 +73,47 @@ func TestLui_ReportsMistakesAtTheirLine(t *testing.T) {
 		}
 	}
 }
+
+// The value-bearing elements Vega's Settings needed — a combo of selectables, a form's
+// field, a centered window, a width in ems — generate Lyra that checks clean.
+func TestLui_ComboFormAndEmWidths(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script>
+  pub data Ev = Pick(i64) | Close
+</script>
+<component name="view" props="chosen: i64" event="Ev">
+  <Window title="Pick" centered on_close={Close}>
+    <Form>
+      <Field label="Size">
+        <Combo label="##size" id="Size" preview="{chosen}" style="width: 6em">
+          <for each={n in 0..<3}>
+            <Selectable id="size {n}" selected={n == chosen} on_select={Pick(n)}>{n}</Selectable>
+          </for>
+        </Combo>
+      </Field>
+    </Form>
+  </Window>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"width_em: Some(6.0)", "centered: true", "Field(FieldAttrs { label: \"Size\" }", "Combo(ComboAttrs {"} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}

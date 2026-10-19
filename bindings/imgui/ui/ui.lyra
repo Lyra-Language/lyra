@@ -75,6 +75,17 @@ import bindings.imgui.{
   begin_menu,
   end_menu,
   menu_item,
+  begin_combo,
+  end_combo,
+  selectable,
+  calc_text_size,
+  get_font_size,
+  get_cursor_pos_x,
+  set_cursor_pos_x,
+  align_text_to_frame_padding,
+  set_next_item_width,
+  set_next_window_pos,
+  get_main_viewport,
   button,
   checkbox,
   text,
@@ -111,6 +122,7 @@ import bindings.imgui.{
   STYLE_VAR_FRAME_PADDING,
   STYLE_VAR_FRAME_ROUNDING,
   COND_FIRST_USE_EVER,
+  COND_APPEARING,
   MOD_CTRL,
   MOD_SHIFT,
   KEY_A,
@@ -172,6 +184,15 @@ pub data Node<e> =
   | MenuItem(MenuItemAttrs<e>)
   | Button(ButtonAttrs<e>)
   | Checkbox(CheckboxAttrs<e>)
+  /// A drop-down: its preview shown closed, its children (`Selectable`s) open.
+  | Combo(ComboAttrs, []Node<e>)
+  /// A choice in a [Combo] (or a list): its event when picked.
+  | Selectable(SelectableAttrs<e>)
+  /// Labelled fields lined up: each [Field]'s label right-aligned in a column as wide as
+  /// the widest, its controls starting together past it.
+  | Form([]Node<e>)
+  /// A label and its controls on one line — in a [Form], in its column.
+  | Field(FieldAttrs, []Node<e>)
   | Text(TextAttrs)
   | Separator
   /// A line with a label in it.
@@ -190,9 +211,11 @@ pub struct WindowAttrs<e> {
   on_close: Maybe<e> = None,
   /// `WINDOW_FLAGS_*`, combined with `|`.
   flags: i32 = 0,
-  /// `width` and `height` are its size on first use; ImGui remembers it after.
+  /// Opened in the middle of the main viewport (each time it appears).
+  centered: bool = false,
   /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
   class: string = "",
+  /// `width` and `height` are its size on first use; ImGui remembers it after.
   style: Style = Style {},
 }
 
@@ -223,9 +246,11 @@ pub struct ButtonAttrs<e> {
   label: string,
   on_click: e,
   enabled: bool = true,
-  /// `width` and `height` size it; unset, it fits its label.
+  /// What a program's own tests or tools know it by; `""`, its label.
+  id: string = "",
   /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
   class: string = "",
+  /// `width` and `height` size it; unset, it fits its label.
   style: Style = Style {},
 }
 
@@ -235,8 +260,40 @@ pub struct CheckboxAttrs<e> {
   /// The checkbox does not write `checked`: a click is this event, and the program flips it.
   on_toggle: e,
   enabled: bool = true,
+  /// What a program's own tests or tools know it by; `""`, its label.
+  id: string = "",
   /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
   class: string = "",
+  style: Style = Style {},
+}
+
+pub struct ComboAttrs {
+  /// ImGui's label: shown beside it, and its identity (`##scale` hides the text).
+  label: string,
+  /// What it shows while closed: the chosen option's label.
+  preview: string,
+  /// What a program's own tests or tools know it by; `""`, its label.
+  id: string = "",
+  class: string = "",
+  /// `width` (or `width_em`) is the field's.
+  style: Style = Style {},
+}
+
+pub struct SelectableAttrs<e> {
+  label: string,
+  /// Shown chosen.
+  selected: bool = false,
+  on_select: e,
+  /// What a program's own tests or tools know it by; `""`, its label.
+  id: string = "",
+  class: string = "",
+  style: Style = Style {},
+}
+
+pub struct FieldAttrs {
+  label: string,
+  class: string = "",
+  /// The label's.
   style: Style = Style {},
 }
 
@@ -270,9 +327,11 @@ pub struct Style {
   rounding: Maybe<f32> = None,
   /// 0–1, multiplied into the opacity already in force.
   opacity: Maybe<f32> = None,
-  /// A button's or window's size, in pixels; unset, the element's own.
+  /// A button's, combo's or window's size, in pixels; unset, the element's own.
   width: Maybe<f32> = None,
   height: Maybe<f32> = None,
+  /// The width in ems, the font's size: it grows with the interface. `width` wins.
+  width_em: Maybe<f32> = None,
 }
 
 /// A component's styles: rules matched against its own elements.
@@ -296,6 +355,7 @@ impl Style {
     opacity: self.opacity.or(base.opacity),
     width: self.width.or(base.width),
     height: self.height.or(base.height),
+    width_em: self.width_em.or(base.width_em),
   }
 }
 
@@ -379,10 +439,18 @@ let draw = (
     Window(w, children) => {
       let style = sheet.style_for("Window", w.class, w.style)
       let pushed = push_style(style, WindowPart)
-      if style.width.is_some() || style.height.is_some() {
+      let width = width_of(style)
+      if width.is_some() || style.height.is_some() {
         set_next_window_size(
-          Vec2 { x: style.width.unwrap_or(0.0), y: style.height.unwrap_or(0.0) },
+          Vec2 { x: width.unwrap_or(0.0), y: style.height.unwrap_or(0.0) },
           COND_FIRST_USE_EVER
+        )
+      }
+      if w.centered {
+        set_next_window_pos(
+          get_main_viewport().get_center(),
+          COND_APPEARING,
+          Vec2 { x: 0.5, y: 0.5 }
         )
       }
       var open = true
@@ -434,7 +502,10 @@ let draw = (
     Button(b) => {
       let style = sheet.style_for("Button", b.class, b.style)
       let pushed = push_style(style, FramePart)
-      let size = Vec2 { x: style.width.unwrap_or(0.0), y: style.height.unwrap_or(0.0) }
+      let size = Vec2 {
+        x: width_of(style).unwrap_or(0.0),
+        y: style.height.unwrap_or(0.0)
+      }
       begin_disabled(!b.enabled)
       let clicked = button(b.label, size)
       end_disabled()
@@ -453,6 +524,40 @@ let draw = (
       pop_style(pushed)
       if toggled { events.push(c.on_toggle) }
     },
+    Combo(c, children) => {
+      let style = sheet.style_for("Combo", c.class, c.style)
+      let pushed = push_style(style, FramePart)
+      if let Some(w) = width_of(style) { set_next_item_width(w) }
+      let open = begin_combo(c.label, c.preview)
+      seen(node)
+      if open {
+        for child in children { draw(child, sheet, seen, events) }
+        end_combo()
+      }
+      pop_style(pushed)
+    },
+    Selectable(o) => {
+      let style = sheet.style_for("Selectable", o.class, o.style)
+      let pushed = push_style(style, ItemPart)
+      let picked = selectable(o.label, o.selected)
+      seen(node)
+      pop_style(pushed)
+      if picked { events.push(o.on_select) }
+    },
+    Form(children) => {
+      var column: f32 = 0.0
+      for child in children {
+        if let Field(f, _) = child { column = column.max(calc_text_size(f.label).x) }
+      }
+      for child in children {
+        match child {
+          Field(f, fields) => draw_field(child, f, fields, column, sheet, seen, events),
+          _ => draw(child, sheet, seen, events),
+        }
+      }
+    },
+    Field(f, fields) =>
+      draw_field(node, f, fields, calc_text_size(f.label).x, sheet, seen, events),
     Text(t) => {
       let style = sheet.style_for("Text", t.class, t.style)
       let pushed = push_style(style, TextPart)
@@ -473,6 +578,36 @@ let draw = (
     Fragment(children) => { for child in children { draw(child, sheet, seen, events) } },
   }
 
+/// A field's label right-aligned in a `column` that wide, on its controls' line, and its
+/// controls side by side after it.
+let draw_field = (
+  node: Node<e>,
+  f: FieldAttrs,
+  fields: []Node<e>,
+  column: f32,
+  sheet: Sheet,
+  seen: (Node<e>) -> void,
+  events: mut []e
+) -> void => {
+  let style = sheet.style_for("Field", f.class, f.style)
+  let pushed = push_style(style, TextPart)
+  set_cursor_pos_x(get_cursor_pos_x() + column - calc_text_size(f.label).x)
+  align_text_to_frame_padding()
+  text(f.label)
+  seen(node)
+  pop_style(pushed)
+  for child in fields {
+    same_line()
+    draw(child, sheet, seen, events)
+  }
+}
+
+/// A style's width in pixels: `width`, else `width_em` ems of the current font.
+let width_of = (style: Style) -> Maybe<f32> => match style.width {
+  Some(w) => Some(w),
+  None => style.width_em.map((em) => em * get_font_size()),
+}
+
 let collect_items = (node: Node<e>, out: mut []MenuItemAttrs<e>) -> void => match node {
   MenuItem(it) => out.push(it),
   Window(_, children) => { for child in children { collect_items(child, out) } },
@@ -482,6 +617,9 @@ let collect_items = (node: Node<e>, out: mut []MenuItemAttrs<e>) -> void => matc
   Row(children) => { for child in children { collect_items(child, out) } },
   Component(_, children) => { for child in children { collect_items(child, out) } },
   Fragment(children) => { for child in children { collect_items(child, out) } },
+  Combo(_, children) => { for child in children { collect_items(child, out) } },
+  Form(children) => { for child in children { collect_items(child, out) } },
+  Field(_, children) => { for child in children { collect_items(child, out) } },
   _ => {},
 }
 

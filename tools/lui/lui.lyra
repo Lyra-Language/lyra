@@ -29,11 +29,13 @@
 //   passed as a `children: []Node<e>` prop. `<if test={…}>`, `<else>` and
 //   `<for each={x in xs}>` are control flow.
 // - **`{…}` is Lyra**, copied through: an attribute (`on_click={yes}`), part of a text or
-//   quoted string (`Reset {n} times`), or a child node (`{node}`, or `{...nodes}` for an
+//   quoted string (`Reset {n} times`; a text of one `{n}` alone is `"${n}"`, a string
+//   whatever `n` is), or a child node (`{node}`, or `{...nodes}` for an
 //   array).
 // - **A component's `<style>` is its scoped sheet**: rules of `Tag`, `.class` or
 //   `Tag.class` selectors, with `color`/`background` (`#rgb`, `#rrggbb`, `#rrggbbaa`),
-//   `padding` (one or two numbers), `rounding`, `opacity`, `width` and `height`. An
+//   `padding` (one or two numbers), `rounding`, `opacity`, `width` (pixels, or `6em`)
+//   and `height`. An
 //   element's `style="…"` takes the same declarations.
 // - `event="Event"` makes a component's events a concrete type; the default is `e`, a
 //   type variable, so the component fits any program's tree.
@@ -405,6 +407,10 @@ let ui_names = [
   "MenuItem",
   "Button",
   "Checkbox",
+  "Combo",
+  "Selectable",
+  "Form",
+  "Field",
   "Text",
   "Separator",
   "SeparatorText",
@@ -416,6 +422,9 @@ let ui_names = [
   "MenuItemAttrs",
   "ButtonAttrs",
   "CheckboxAttrs",
+  "ComboAttrs",
+  "SelectableAttrs",
+  "FieldAttrs",
   "TextAttrs",
   "Shortcut",
   "Style",
@@ -516,6 +525,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
   let class = Field { name: "class", kind: Str }
   let style = Field { name: "style", kind: Looks }
   let enabled = Field { name: "enabled", kind: Flag }
+  let id = Field { name: "id", kind: Str }
   match tag {
     "Window" => Some(Kind {
       attrs_struct: "WindowAttrs",
@@ -524,6 +534,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
         Field { name: "title", kind: Str },
         Field { name: "on_close", kind: MaybeOf },
         Field { name: "flags", kind: Any },
+        Field { name: "centered", kind: Flag },
         class,
         style,
       ],
@@ -559,7 +570,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
     "Button" => Some(Kind {
       attrs_struct: "ButtonAttrs",
       text_field: "label",
-      attrs: [Field { name: "on_click", kind: Any }, enabled, class, style],
+      attrs: [Field { name: "on_click", kind: Any }, enabled, id, class, style],
       required: ["label", "on_click"],
       holds: false,
     }),
@@ -570,11 +581,34 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
         Field { name: "checked", kind: Flag },
         Field { name: "on_toggle", kind: Any },
         enabled,
+        id,
         class,
         style,
       ],
       required: ["label", "checked", "on_toggle"],
       holds: false,
+    }),
+    "Combo" => Some(Kind {
+      attrs_struct: "ComboAttrs",
+      text_field: "",
+      attrs: [Field { name: "label", kind: Str }, Field { name: "preview", kind: Str }, id, class, style],
+      required: ["label", "preview"],
+      holds: true,
+    }),
+    "Selectable" => Some(Kind {
+      attrs_struct: "SelectableAttrs",
+      text_field: "label",
+      attrs: [Field { name: "selected", kind: Flag }, Field { name: "on_select", kind: Any }, id, class, style],
+      required: ["label", "on_select"],
+      holds: false,
+    }),
+    "Form" => Some(container()),
+    "Field" => Some(Kind {
+      attrs_struct: "FieldAttrs",
+      text_field: "",
+      attrs: [Field { name: "label", kind: Str }, class, style],
+      required: ["label"],
+      holds: true,
     }),
     "Text" => Some(Kind {
       attrs_struct: "TextAttrs",
@@ -660,12 +694,13 @@ let declarations = pure (text: string, line: i64) -> Result<[]string, string> =>
       "padding" => padding(given),
       "rounding" => number(given),
       "opacity" => number(given),
-      "width" => number(given),
+      "width" => if given.ends_with("em") { em(given) } else { number(given) },
       "height" => number(given),
       _ => Err("no style property ${name}"),
     }
+    let field = if name == "width" && given.ends_with("em") { "width_em" } else { name }
     match lyra {
-      Ok(v) => fields.push("${name}: Some(${v})"),
+      Ok(v) => fields.push("${field}: Some(${v})"),
       Err(what) => { return Err("${line}: ${what}") },
     }
   }
@@ -705,6 +740,10 @@ let padding = pure (value: string) -> Result<string, string> => {
   Ok("Vec2 { x: ${x}, y: ${y} }")
 }
 
+/// `6em` as the number of ems, an `f32` literal.
+let em = pure (value: string) -> Result<string, string> =>
+  number(value.slice(0, value.len() - 2).trim())
+
 /// A number as an `f32` literal: `4` is `4.0`.
 let number = pure (value: string) -> Result<string, string> => {
   var seen_digit = false
@@ -721,13 +760,10 @@ let number = pure (value: string) -> Result<string, string> => {
 
 // ── Strings, props ───────────────────────────────────────────────────────────
 
-/// Text with `{…}` in it as a Lyra string: `Reset {n} times` is `"Reset ${n} times"`, and
-/// a text that is one `{…}` alone is its Lyra as it is.
+/// Text with `{…}` in it as a Lyra string: `Reset {n} times` is `"Reset ${n} times"`. A
+/// text that is one `{…}` alone is a string too, `"${n}"`, whatever `n` is — text is.
 let interpolated = pure (text: string) -> string => {
   let runes = text.to_runes()
-  if runes.len() > 1 && runes[0] == '{' && closing(runes, 0) == runes.len() - 1 {
-    return text.slice(1, text.len() - 1).trim()
-  }
   var out = "\""
   var i = 0
   while i < runes.len() {

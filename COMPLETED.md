@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — Vega's Settings window, written as `.lui`
+
+The second user of `bindings.imgui.ui`, and the first window of Vega's in markup
+(`vega/src/settings_view.lui`): a centered window fitted to its contents, a form's label,
+a size combo with Reset beside it, two checkboxes, and hints. It was chosen to force the
+tree's open design question, an event carrying a value; it did not.
+
+- **A combo is ImGui's own shape**: `Combo` holding `Selectable`s, each naming its event
+  (`on_select={ScaleTo(scale)}`), so a choice is a value like every other event and no
+  function goes into the tree. The question stays open for a text field or a slider,
+  whose value is typed or dragged rather than picked from a list (todo.md).
+- **What it did need**: `Form`/`Field` (Vega's right-aligned label column, moved into the
+  library), a `centered` window, a width in ems (`width: 6em`, `Style.width_em` — a
+  combo sized to the font, growing with the interface), and an `id` on buttons and
+  checkboxes, which Vega's `seen` turns into the probe names its interface tests click.
+  The tests did not change: they click the markup's window by the old names.
+- **lui's text rule changed**: a text that is one `{n}` alone was passed through as `n`, so
+  `<Selectable>{n}</Selectable>` over an `i64` was a type error in the generated module.
+  Text is a string wherever it is, so it is `"${n}"` now.
+- **The constant comprehension source bit again**: a `<for>` is a comprehension, and the
+  scales are a `const` (todo.md, Sulafat's note); the script hands the markup a copy.
+- `vega --check` holds the generated module current (`check_views`, run when `lui` is
+  found), as `lui_test.go` does the example's.
+
 ### 10/19/26 — `if let … else if …`
 
 `if let p = v { … } else if c { … }` was a syntax error, reported at the enclosing

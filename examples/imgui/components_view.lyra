@@ -80,7 +80,7 @@ pub let view = pure (s: State) -> Node<Event> =>
 /// From components_view.lui, line 77.
 pub let confirm = pure (question: string, yes: e, no: e) -> Node<e> =>
   Component(confirm_sheet, [
-    Text(TextAttrs { text: question, class: "question" }),
+    Text(TextAttrs { text: "${question}", class: "question" }),
     Row([
       Button(ButtonAttrs { label: "Yes", class: "danger", on_click: yes }),
       Button(ButtonAttrs { label: "No", on_click: no }),
@@ -91,8 +91,8 @@ pub let confirm = pure (question: string, yes: e, no: e) -> Node<e> =>
 pub let toggle_row = pure (label: string, note: string, on: bool, toggle: e) -> Node<e> =>
   Component(toggle_row_sheet, [
     Row([
-      Checkbox(CheckboxAttrs { label: label, checked: on, on_toggle: toggle }),
-      Text(TextAttrs { text: note, class: "note" }),
+      Checkbox(CheckboxAttrs { label: "${label}", checked: on, on_toggle: toggle }),
+      Text(TextAttrs { text: "${note}", class: "note" }),
     ]),
   ])
 
