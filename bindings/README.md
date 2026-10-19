@@ -321,6 +321,46 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
 - **No C++ runtime**: `-fno-exceptions -fno-rtti -fno-threadsafe-statics` leaves only
   `__cxa_atexit` (libc's), so `@link("lyra-imgui")` + `@link("SDL3")` is the whole link line.
 
+### `bindings.imgui.ui` — an interface as a tree (`imgui/ui/ui.lyra`)
+
+The shape a JSX-like markup would write, as plain Lyra values — the layer such a markup
+would lower to, built first so the syntax is the last step, not a guess. A prototype:
+`examples/imgui/components.lyra` shows it, and Vega's menus are its first user.
+
+- **`Node<e>`** — `Window`, `MainMenuBar`, `MenuBar`, `Menu`, `MenuItem`, `Button`,
+  `Checkbox`, `Text`, `Separator`, `SeparatorText`, `Row` (children side by side), and
+  `Component` — each with an `…Attrs` struct of its attributes. `e` is the program's
+  event type.
+- **`render(nodes, seen) -> []e`** draws the tree and answers the frame's events. Every
+  `begin_*` is ended, and only when ImGui says it began (`end_menu` under a `begin_menu`
+  that answered true; `end` after every `begin`); `seen` is called with each element just
+  after it is drawn (Vega names its menus for the interface tests there).
+- **Events, not callbacks**: an element names the event its use stands for (`on_select`,
+  `on_click`, `on_toggle`, a window's `on_close`); a checkbox does not write its value, the
+  program flips it. A view is a `pure` function of the state.
+- **The tree is data more than ImGui reads**: `menu_items(nodes)` flattens the menu items
+  (Vega installs the same tree in macOS's menu bar), `pressed_shortcut(nodes)` presses a
+  `Shortcut` (the primary modifier, Cmd or Ctrl, and optionally Shift) while its menu is
+  closed, `key_known` says whether ImGui has a shortcut's key.
+- **Inline style** (`Style`: `color`, `background`, `padding`, `rounding`, `opacity`,
+  `width`, `height`) means each field in the element's own terms — `background` is a
+  button's face (its hover and press shades derived), a checkbox's box, a menu item's
+  highlight, a window's or menu's fill — and is pushed onto ImGui's style stack around the
+  element and popped after its children, so it is **inherited** as CSS's inherited
+  properties are.
+- **A component is a function returning a `Node<e>`**, generic in `e` so any program's
+  tree can hold it, its props its parameters. Wrapping its elements in
+  `Component(sheet, children)` **scopes a style sheet** to them: a `Sheet`'s
+  `StyleRule`s match by tag (`Button`), class (`.primary`; an element's `class` is
+  space-separated) or both (`Button.primary`), the more specific winning, then the later;
+  inline style is laid over the sheet's. **Selectors stop at the boundary** — not the tree
+  around the component, nor a component inside it, which has its own sheet (Vue's
+  `scoped`, CSS modules) — while what a rule pushes is inherited as inline style is.
+  `Sheet.style_for(tag, classes, inline)` is the cascade, pure.
+- **Not yet**: a markup syntax, stylesheets outside Lyra, `id`s for repeated labels
+  (ImGui's `##`/`push_id`; a `key` as JSX has), layout beyond `Row`, and widgets with
+  values (sliders, text fields — an event carrying the value).
+
 ## `bindings/pty/`
 
 A program on a pseudo-terminal, for a terminal emulator (`../sulafat`). `spawn(args, cols,

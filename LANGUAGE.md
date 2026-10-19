@@ -670,6 +670,7 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 - **Each `?.` reads through one Maybe** (Kotlin's rule, not Swift's chain-wide short-circuit), so every link says it: `m?.name?.len()`, where `m?.name.len()` is a `.len()` on a `Maybe<string>` and refused with that advice.
 - **A result that is already a Maybe is not wrapped again**: `m?.age` on an `age: Maybe<i64>` is a `Maybe<i64>`. Inside generic code a `t` field is wrapped even when `t` is later a Maybe, as Swift's generics do.
 - **A method call's arguments are evaluated only on `Some`**.
+- **`??` unwraps; `a.or(b)` does not**: `m ?? d` needs `d` of the payload's type and answers it bare, so laying one optional setting over another — `self.color ?? base.color`, both `Maybe<u32>` — is refused. `a.or(b)` (prelude) is the first of two Maybes that holds a value, still a Maybe.
 - **Only on a Maybe** (`lyra-E083`): on a value that is always there, write `.`; on a `Result`, `?.` does not propagate — convert with `.ok()`, or propagate first with `(r?).x`. `?` (propagate) and `?.` (navigate) are different operators; `?.` is one token, so `f()?.x` is never "`?` then `.x`".
 - **A desugaring**, done by the collector: `match m { Some(v) => __optional_chain(v.x), None => None }`, the prelude's `__optional_chain` being identity on a Maybe and `Some` on anything else. Unimplemented until 09/29 (it parsed, and failed in the typechecker and backend).
 
@@ -721,6 +722,7 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   as a form only when it holds a `.lyra` file directly: one of no source beside the module's
   file (a game's art, named as its `assets` module is) is not the module, and the file is.
 - Compiling one file of a multi-file module brings its siblings.
+- **Declaration order is the reader's.** A function may read a top-level `let` or `var` declared below it, as it may call one: an unannotated binding read before the pass reaches it is checked there and then (`typechecker_on_demand.go`), so the read has the binding's type. Until 10/19 only an annotated binding or a plain literal had one there; anything else read untyped, and ownership — which asks the type — stored a global struct into a construction without a retain.
 - **`pub` is a top-level modifier.** On a binding inside a function body it is `lyra-E081`: `pub` exports a name from its module and a local binding has none to export. It was accepted and ignored before 09/16.
 
 ### Targets (`lyra.toml`)

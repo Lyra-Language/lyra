@@ -1,0 +1,624 @@
+module bindings.imgui.ui
+//! An interface as a tree of values, drawn with ImGui — the shape a markup would write
+//! (`<Menu label="File"><MenuItem shortcut=…>Open</MenuItem></Menu>`), as plain Lyra:
+//!
+//! ```
+//! import bindings.imgui.ui.{ Node, Window, Checkbox, Button, WindowAttrs, CheckboxAttrs,
+//!   ButtonAttrs, Style, render }
+//!
+//! data Event = ToggleLoud | Save
+//!
+//! let view = pure (loud: bool) -> []Node<Event> => [
+//!   Window(WindowAttrs { title: "Settings" }, [
+//!     Checkbox(CheckboxAttrs { label: "Loud", checked: loud, on_toggle: ToggleLoud }),
+//!     Button(ButtonAttrs { label: "Save", on_click: Save, style: Style { background: Some(GREEN) } }),
+//!   ]),
+//! ]
+//!
+//! // each frame:
+//! for event in render(view(loud), (node) => {}) {
+//!   match event { ToggleLoud => { loud = !loud }, Save => save(loud) }
+//! }
+//! ```
+//!
+//! **What the tree buys over the calls it makes**: a `begin_*` is always ended, and ended
+//! only when ImGui says it began (`begin_menu`'s `end_menu`, but `begin`'s `end` always); a
+//! style pushed is popped when its element closes. And the tree is a value — a `pure`
+//! function of the program's state — that more than ImGui can read: Vega installs the same
+//! menus in macOS's own menu bar ([menu_items], walking [Node] itself).
+//!
+//! **Events, not callbacks.** An element names the event its use stands for (`on_click`,
+//! `on_select`, `on_toggle`), of the program's own type `e`; [render] answers the events of
+//! the frame, in the order drawn, and the program carries them out. A checkbox does not
+//! write its value: it says it was toggled, and the program flips it — the state stays the
+//! program's.
+//!
+//! **Inline style** ([Style]) names what an element looks like in its own terms —
+//! `background` is a button's face, a checkbox's box, a window's or menu's fill — and is
+//! pushed onto ImGui's style stack around the element, so it is inherited by everything
+//! inside it, as CSS's is: a window's `color` is its text's and its buttons'.
+//!
+//! **A component is a function returning a [Node]** — its parameters are its props, and
+//! it is generic in the event type, so any program's tree can hold it:
+//!
+//! ```
+//! let confirm = (question: string, yes: e, no: e) -> Node<e> => Component(CONFIRM, [
+//!   Text(TextAttrs { text: question }),
+//!   Row([
+//!     Button(ButtonAttrs { label: "Yes", on_click: yes, class: "primary" }),
+//!     Button(ButtonAttrs { label: "No", on_click: no }),
+//!   ]),
+//! ])
+//!
+//! let CONFIRM = Sheet { rules: [
+//!   StyleRule { selector: "Button", style: Style { rounding: Some(6.0) } },
+//!   StyleRule { selector: "Button.primary", style: Style { background: Some(BLUE) } },
+//! ] }
+//! ```
+//!
+//! **Its styles are scoped** — [Component]'s [Sheet] is matched against the elements it
+//! holds and no others: not the tree around it, and not a component inside it, which has
+//! its own. A selector is an element's tag (`Button`), a class (`.primary`), or both
+//! (`Button.primary`); the more specific wins, then the later. What a rule pushes is
+//! inherited as inline style is — a window's `color` reaches the component inside it —
+//! but a selector never crosses the boundary, as with Vue's `scoped` or CSS modules. An
+//! element's inline `style` is laid over whatever its sheet gave it.
+
+import bindings.imgui.{
+  begin,
+  begin_closable,
+  end,
+  begin_main_menu_bar,
+  end_main_menu_bar,
+  begin_menu_bar,
+  end_menu_bar,
+  begin_menu,
+  end_menu,
+  menu_item,
+  button,
+  checkbox,
+  text,
+  text_disabled,
+  separator,
+  separator_text,
+  same_line,
+  begin_disabled,
+  end_disabled,
+  push_style_color,
+  pop_style_color,
+  push_style_var,
+  push_style_var_vec2,
+  pop_style_var,
+  set_next_window_size,
+  is_key_chord_pressed,
+  get_io,
+  get_style,
+  Vec2,
+  COL_TEXT,
+  COL_WINDOW_BG,
+  COL_POPUP_BG,
+  COL_BUTTON,
+  COL_BUTTON_HOVERED,
+  COL_BUTTON_ACTIVE,
+  COL_FRAME_BG,
+  COL_FRAME_BG_HOVERED,
+  COL_FRAME_BG_ACTIVE,
+  COL_HEADER_HOVERED,
+  STYLE_VAR_ALPHA,
+  STYLE_VAR_WINDOW_PADDING,
+  STYLE_VAR_WINDOW_ROUNDING,
+  STYLE_VAR_POPUP_ROUNDING,
+  STYLE_VAR_FRAME_PADDING,
+  STYLE_VAR_FRAME_ROUNDING,
+  COND_FIRST_USE_EVER,
+  MOD_CTRL,
+  MOD_SHIFT,
+  KEY_A,
+  KEY_B,
+  KEY_C,
+  KEY_D,
+  KEY_E,
+  KEY_F,
+  KEY_G,
+  KEY_H,
+  KEY_I,
+  KEY_J,
+  KEY_K,
+  KEY_L,
+  KEY_M,
+  KEY_N,
+  KEY_O,
+  KEY_P,
+  KEY_Q,
+  KEY_R,
+  KEY_S,
+  KEY_T,
+  KEY_U,
+  KEY_V,
+  KEY_W,
+  KEY_X,
+  KEY_Y,
+  KEY_Z,
+  KEY_0,
+  KEY_1,
+  KEY_2,
+  KEY_3,
+  KEY_4,
+  KEY_5,
+  KEY_6,
+  KEY_7,
+  KEY_8,
+  KEY_9,
+  KEY_COMMA,
+  KEY_PERIOD,
+  KEY_EQUAL,
+  KEY_MINUS,
+  KEY_SLASH,
+}
+
+// ── The tree ─────────────────────────────────────────────────────────────────
+
+/// One element of an interface: its attributes, and for a container its children. `e` is
+/// the program's event type — what choosing, clicking or toggling an element stands for.
+pub data Node<e> =
+  /// A window; its children are drawn while it is open (not collapsed or off-screen).
+  Window(WindowAttrs<e>, []Node<e>)
+  /// The main menu bar, across the top of the main viewport; its children are [Menu]s.
+  | MainMenuBar([]Node<e>)
+  /// A window's own menu bar — its window needs `WINDOW_FLAGS_MENU_BAR`.
+  | MenuBar([]Node<e>)
+  /// A menu: its title in a bar, or a submenu's item in another menu.
+  | Menu(MenuAttrs, []Node<e>)
+  | MenuItem(MenuItemAttrs<e>)
+  | Button(ButtonAttrs<e>)
+  | Checkbox(CheckboxAttrs<e>)
+  | Text(TextAttrs)
+  | Separator
+  /// A line with a label in it.
+  | SeparatorText(string)
+  /// Its children side by side, rather than each on a line of its own.
+  | Row([]Node<e>)
+  /// A component's elements: its [Sheet] styles them, and nothing outside them.
+  | Component(Sheet, []Node<e>)
+
+pub struct WindowAttrs<e> {
+  title: string,
+  /// What the window's close button stands for; `None`, no close button.
+  on_close: Maybe<e> = None,
+  /// `WINDOW_FLAGS_*`, combined with `|`.
+  flags: i32 = 0,
+  /// `width` and `height` are its size on first use; ImGui remembers it after.
+  /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
+  class: string = "",
+  style: Style = Style {},
+}
+
+pub struct MenuAttrs {
+  label: string,
+  /// A menu greyed out cannot be opened.
+  enabled: bool = true,
+  /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
+  class: string = "",
+  style: Style = Style {},
+}
+
+pub struct MenuItemAttrs<e> {
+  label: string,
+  on_select: e,
+  /// What a program's own tests or tools know it by; `""`, its label.
+  id: string = "",
+  /// Shown beside the label, and pressed from anywhere with [pressed_shortcut].
+  shortcut: Maybe<Shortcut> = None,
+  checked: bool = false,
+  enabled: bool = true,
+  /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
+  class: string = "",
+  style: Style = Style {},
+}
+
+pub struct ButtonAttrs<e> {
+  label: string,
+  on_click: e,
+  enabled: bool = true,
+  /// `width` and `height` size it; unset, it fits its label.
+  /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
+  class: string = "",
+  style: Style = Style {},
+}
+
+pub struct CheckboxAttrs<e> {
+  label: string,
+  checked: bool,
+  /// The checkbox does not write `checked`: a click is this event, and the program flips it.
+  on_toggle: e,
+  enabled: bool = true,
+  /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
+  class: string = "",
+  style: Style = Style {},
+}
+
+pub struct TextAttrs {
+  text: string,
+  /// Greyed: the theme's disabled text colour.
+  disabled: bool = false,
+  /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
+  class: string = "",
+  style: Style = Style {},
+}
+
+/// A menu item's key, held with the primary modifier — Cmd on macOS, Ctrl elsewhere:
+/// `"n"`, `","`. [key_known] says whether ImGui can press it.
+pub struct Shortcut {
+  key: string,
+  shift: bool = false,
+}
+
+/// How an element looks, in its own terms; a field unset leaves the theme's (or an
+/// enclosing element's). Pushed for the element and everything inside it.
+pub struct Style {
+  /// Text colour, `col32(r, g, b)`.
+  color: Maybe<u32> = None,
+  /// Fill: a button's face, a checkbox's box, a menu item's highlight, a window's or a
+  /// menu's background. A button's and checkbox's hovered and pressed fills are shades of it.
+  background: Maybe<u32> = None,
+  /// Space inside the edge: a button's or checkbox's frame, a window's or menu's border.
+  padding: Maybe<Vec2> = None,
+  /// Corner radius of the same.
+  rounding: Maybe<f32> = None,
+  /// 0–1, multiplied into the opacity already in force.
+  opacity: Maybe<f32> = None,
+  /// A button's or window's size, in pixels; unset, the element's own.
+  width: Maybe<f32> = None,
+  height: Maybe<f32> = None,
+}
+
+/// A component's styles: rules matched against its own elements.
+pub struct Sheet {
+  rules: []StyleRule = [],
+}
+
+/// `style` for every element `selector` matches: `Button`, `.primary` or `Button.primary`.
+pub struct StyleRule {
+  selector: string,
+  style: Style,
+}
+
+impl Style {
+  /// This style laid over `base`: each field this one sets, else `base`'s.
+  pub let over = pure (self, base: Style) -> Style => Style {
+    color: self.color.or(base.color),
+    background: self.background.or(base.background),
+    padding: self.padding.or(base.padding),
+    rounding: self.rounding.or(base.rounding),
+    opacity: self.opacity.or(base.opacity),
+    width: self.width.or(base.width),
+    height: self.height.or(base.height),
+  }
+}
+
+impl Sheet {
+  /// The style this sheet gives an element of `tag` with `classes`, its inline `style`
+  /// laid over it: matching rules applied least specific first, a later one after an
+  /// earlier of the same specificity.
+  pub let style_for = pure (
+    self,
+    tag: string,
+    classes: string,
+    inline: Style
+  ) -> Style => {
+    var out = Style {}
+    for rank in [1, 10, 11] {
+      for rule in self.rules {
+        if specificity(rule.selector, tag, classes) == rank { out = rule.style.over(out) }
+      }
+    }
+    inline.over(out)
+  }
+}
+
+// ── Drawing ──────────────────────────────────────────────────────────────────
+
+/// `nodes` drawn; the events of this frame, in the order drawn. `seen` is called with each
+/// element just after ImGui has it as its last item — a menu's or window's header, before
+/// its children — which is where a caller asks ImGui about it (`get_item_rect_min`).
+pub let render = (nodes: []Node<e>, seen: (Node<e>) -> void) -> []e => {
+  var events: []e = []
+  for node in nodes { draw(node, Sheet {}, seen, events) }
+  events
+}
+
+/// The enabled menu item in `nodes` whose shortcut was pressed this frame, if one was —
+/// a menu's keys working while the menu is closed, which ImGui's own do not.
+pub let pressed_shortcut = (nodes: []Node<e>) -> Maybe<e> => {
+  for it in menu_items(nodes) {
+    if !it.enabled { continue }
+    let Some(s) = it.shortcut else { continue }
+    let Some(key) = imgui_key(s.key) else { continue }
+    let chord = MOD_CTRL | key | (if s.shift { MOD_SHIFT } else { 0 })
+    if is_key_chord_pressed(chord) { return Some(it.on_select) }
+  }
+  None
+}
+
+/// Every menu item in `nodes`, at any depth, in the order drawn.
+pub let menu_items = pure (nodes: []Node<e>) -> []MenuItemAttrs<e> => {
+  var out: []MenuItemAttrs<e> = []
+  for node in nodes { collect_items(node, out) }
+  out
+}
+
+/// How a shortcut is spelled beside its item: `Cmd+Shift+S`, `Ctrl+O`.
+pub let shortcut_text = (s: Shortcut) -> string => {
+  let shift = if s.shift { "Shift+" } else { "" }
+  "${primary_key_name()}+${shift}${s.key.to_ascii_upper()}"
+}
+
+/// `"Cmd"` on macOS, where ImGui reads Command as its Ctrl modifier; `"Ctrl"` elsewhere.
+pub let primary_key_name = () -> string =>
+  if get_io().config_mac_osx_behaviors() { "Cmd" } else { "Ctrl" }
+
+/// Whether ImGui has a key for a [Shortcut]'s `key` — one it does not can never be pressed.
+pub let key_known = pure (key: string) -> bool => imgui_key(key).is_some()
+
+/// The menu item's id: its own, else its label.
+pub let item_id = pure (it: MenuItemAttrs<e>) -> string =>
+  if it.id.len() > 0 { it.id } else { it.label }
+
+// ── Each element ─────────────────────────────────────────────────────────────
+
+let draw = (
+  node: Node<e>,
+  sheet: Sheet,
+  seen: (Node<e>) -> void,
+  events: mut []e
+) -> void =>
+  match node {
+    Window(w, children) => {
+      let style = sheet.style_for("Window", w.class, w.style)
+      let pushed = push_style(style, WindowPart)
+      if style.width.is_some() || style.height.is_some() {
+        set_next_window_size(
+          Vec2 { x: style.width.unwrap_or(0.0), y: style.height.unwrap_or(0.0) },
+          COND_FIRST_USE_EVER
+        )
+      }
+      var open = true
+      let visible = match w.on_close {
+        Some(_) => begin_closable(w.title, open, w.flags),
+        None => begin(w.title, w.flags),
+      }
+      seen(node)
+      if visible { for child in children { draw(child, sheet, seen, events) } }
+      end()
+      pop_style(pushed)
+      if !open { if let Some(event) = w.on_close { events.push(event) } }
+    },
+    MainMenuBar(children) => {
+      if begin_main_menu_bar() {
+        for child in children { draw(child, sheet, seen, events) }
+        end_main_menu_bar()
+      }
+    },
+    MenuBar(children) => {
+      if begin_menu_bar() {
+        for child in children { draw(child, sheet, seen, events) }
+        end_menu_bar()
+      }
+    },
+    Menu(m, children) => {
+      let style = sheet.style_for("Menu", m.class, m.style)
+      let pushed = push_style(style, MenuPart)
+      let open = begin_menu(m.label, m.enabled)
+      seen(node)
+      if open {
+        for child in children { draw(child, sheet, seen, events) }
+        end_menu()
+      }
+      pop_style(pushed)
+    },
+    MenuItem(it) => {
+      let style = sheet.style_for("MenuItem", it.class, it.style)
+      let pushed = push_style(style, ItemPart)
+      let shortcut = match it.shortcut {
+        Some(s) => Some(shortcut_text(s)),
+        None => None,
+      }
+      let picked = menu_item(it.label, shortcut, it.checked, it.enabled)
+      seen(node)
+      pop_style(pushed)
+      if picked { events.push(it.on_select) }
+    },
+    Button(b) => {
+      let style = sheet.style_for("Button", b.class, b.style)
+      let pushed = push_style(style, FramePart)
+      let size = Vec2 { x: style.width.unwrap_or(0.0), y: style.height.unwrap_or(0.0) }
+      begin_disabled(!b.enabled)
+      let clicked = button(b.label, size)
+      end_disabled()
+      seen(node)
+      pop_style(pushed)
+      if clicked { events.push(b.on_click) }
+    },
+    Checkbox(c) => {
+      let style = sheet.style_for("Checkbox", c.class, c.style)
+      let pushed = push_style(style, FramePart)
+      var value = c.checked
+      begin_disabled(!c.enabled)
+      let toggled = checkbox(c.label, value)
+      end_disabled()
+      seen(node)
+      pop_style(pushed)
+      if toggled { events.push(c.on_toggle) }
+    },
+    Text(t) => {
+      let style = sheet.style_for("Text", t.class, t.style)
+      let pushed = push_style(style, TextPart)
+      if t.disabled { text_disabled(t.text) } else { text(t.text) }
+      seen(node)
+      pop_style(pushed)
+    },
+    Separator => separator(),
+    SeparatorText(label) => separator_text(label),
+    Row(children) => {
+      for i, child in children {
+        if i > 0 { same_line() }
+        draw(child, sheet, seen, events)
+      }
+    },
+    // Its own sheet in place of the enclosing one: selectors stop at the boundary.
+    Component(own, children) => { for child in children { draw(child, own, seen, events) } },
+  }
+
+let collect_items = (node: Node<e>, out: mut []MenuItemAttrs<e>) -> void => match node {
+  MenuItem(it) => out.push(it),
+  Window(_, children) => { for child in children { collect_items(child, out) } },
+  MainMenuBar(children) => { for child in children { collect_items(child, out) } },
+  MenuBar(children) => { for child in children { collect_items(child, out) } },
+  Menu(_, children) => { for child in children { collect_items(child, out) } },
+  Row(children) => { for child in children { collect_items(child, out) } },
+  Component(_, children) => { for child in children { collect_items(child, out) } },
+  _ => {},
+}
+
+// ── Style ────────────────────────────────────────────────────────────────────
+
+/// How specific `selector` is for an element of `tag` with `classes` (space-separated):
+/// 1 for its tag, 10 for one of its classes, 11 for both; 0 when it does not match.
+let specificity = pure (selector: string, tag: string, classes: string) -> i64 => {
+  let parts = selector.split(".")
+  if parts.len() > 2 { return 0 }
+  let want_tag = parts[0]
+  let want_class = if parts.len() == 2 { parts[1] } else { "" }
+  if want_tag.len() > 0 && want_tag != tag { return 0 }
+  if want_class.len() > 0 && classes
+    .split(" ")
+    .filter((c) => c == want_class)
+    .len() == 0 {
+    return 0
+  }
+  (if want_tag.len() > 0 { 1 } else { 0 }) + (if want_class.len() > 0 { 10 } else { 0 })
+}
+
+/// Which of ImGui's colours and sizes a [Style]'s fields mean, by the kind of element.
+data Part = WindowPart | MenuPart | ItemPart | FramePart | TextPart
+
+/// How many colours and variables [push_style] pushed, for [pop_style].
+struct Pushed {
+  colors: i32,
+  vars: i32,
+}
+
+/// `style` pushed for an element of `part`.
+let push_style = (style: Style, part: Part) -> Pushed => {
+  var colors: i32 = 0
+  var vars: i32 = 0
+  if let Some(c) = style.color {
+    push_style_color(COL_TEXT, c)
+    colors += 1
+  }
+  if let Some(fill) = style.background {
+    for (slot, color) in fills(part, fill) {
+      push_style_color(slot, color)
+      colors += 1
+    }
+  }
+  if let Some(o) = style.opacity {
+    push_style_var(STYLE_VAR_ALPHA, get_style().alpha() * o)
+    vars += 1
+  }
+  if let Some(p) = style.padding {
+    match part {
+      WindowPart => { push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, p); vars += 1 },
+      MenuPart => { push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, p); vars += 1 },
+      FramePart => { push_style_var_vec2(STYLE_VAR_FRAME_PADDING, p); vars += 1 },
+      _ => {},
+    }
+  }
+  if let Some(r) = style.rounding {
+    match part {
+      WindowPart => { push_style_var(STYLE_VAR_WINDOW_ROUNDING, r); vars += 1 },
+      MenuPart => { push_style_var(STYLE_VAR_POPUP_ROUNDING, r); vars += 1 },
+      FramePart => { push_style_var(STYLE_VAR_FRAME_ROUNDING, r); vars += 1 },
+      _ => {},
+    }
+  }
+  Pushed { colors: colors, vars: vars }
+}
+
+let pop_style = (pushed: Pushed) -> void => {
+  if pushed.colors > 0 { pop_style_color(pushed.colors) }
+  if pushed.vars > 0 { pop_style_var(pushed.vars) }
+}
+
+/// The colours a `background` sets for an element of `part`: a frame's hovered and
+/// pressed fills are lighter shades of it.
+let fills = pure (part: Part, fill: u32) -> [](i32, u32) => match part {
+  WindowPart => [(COL_WINDOW_BG, fill)],
+  MenuPart => [(COL_POPUP_BG, fill)],
+  ItemPart => [(COL_HEADER_HOVERED, fill)],
+  FramePart => [
+    (COL_BUTTON, fill),
+    (COL_BUTTON_HOVERED, lighter(fill, 24)),
+    (COL_BUTTON_ACTIVE, lighter(fill, 48)),
+    (COL_FRAME_BG, fill),
+    (COL_FRAME_BG_HOVERED, lighter(fill, 24)),
+    (COL_FRAME_BG_ACTIVE, lighter(fill, 48)),
+  ],
+  TextPart => [],
+}
+
+/// `color` (`col32`) with `amount` added to each of red, green and blue; alpha kept.
+let lighter = pure (color: u32, amount: u32) -> u32 => {
+  var out = color & 0xFF000000
+  for shift in [0, 8, 16] {
+    let channel = (color >> u32(shift)) & 0xFF
+    out = out | ((channel + amount).min(255) << u32(shift))
+  }
+  out
+}
+
+/// ImGui's key for a [Shortcut]'s `key`; `None` for one it does not have.
+let imgui_key = pure (key: string) -> Maybe<i32> => match key {
+  "a" => Some(KEY_A),
+  "b" => Some(KEY_B),
+  "c" => Some(KEY_C),
+  "d" => Some(KEY_D),
+  "e" => Some(KEY_E),
+  "f" => Some(KEY_F),
+  "g" => Some(KEY_G),
+  "h" => Some(KEY_H),
+  "i" => Some(KEY_I),
+  "j" => Some(KEY_J),
+  "k" => Some(KEY_K),
+  "l" => Some(KEY_L),
+  "m" => Some(KEY_M),
+  "n" => Some(KEY_N),
+  "o" => Some(KEY_O),
+  "p" => Some(KEY_P),
+  "q" => Some(KEY_Q),
+  "r" => Some(KEY_R),
+  "s" => Some(KEY_S),
+  "t" => Some(KEY_T),
+  "u" => Some(KEY_U),
+  "v" => Some(KEY_V),
+  "w" => Some(KEY_W),
+  "x" => Some(KEY_X),
+  "y" => Some(KEY_Y),
+  "z" => Some(KEY_Z),
+  "0" => Some(KEY_0),
+  "1" => Some(KEY_1),
+  "2" => Some(KEY_2),
+  "3" => Some(KEY_3),
+  "4" => Some(KEY_4),
+  "5" => Some(KEY_5),
+  "6" => Some(KEY_6),
+  "7" => Some(KEY_7),
+  "8" => Some(KEY_8),
+  "9" => Some(KEY_9),
+  "," => Some(KEY_COMMA),
+  "." => Some(KEY_PERIOD),
+  "=" => Some(KEY_EQUAL),
+  "-" => Some(KEY_MINUS),
+  "/" => Some(KEY_SLASH),
+  _ => None,
+}

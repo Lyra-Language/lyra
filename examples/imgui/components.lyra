@@ -1,0 +1,338 @@
+// An interface as a tree of values (`bindings.imgui.ui`), built from components: functions
+// returning a `Node`, each with its own scoped style sheet.
+//
+//   build/lyrac run examples/imgui/components.lyra
+//   build/lyrac run examples/imgui/components.lyra -- --frames 120   # quit after 120 frames
+//   build/lyrac run examples/imgui/components.lyra -- --check        # headless: click it through
+//
+// `confirm` is used twice — Reset's and Quit's — and its sheet rounds and colours its own
+// buttons only: the Reset… button beside it, outside the component, keeps the theme's
+// look, and so does the `toggle_row` inside the same window, whose sheet is its own.
+
+import bindings.imgui.{
+  create_host,
+  create_headless_host,
+  begin_frame,
+  end_frame,
+  destroy_host,
+  get_io,
+  get_style,
+  get_item_rect_min,
+  get_item_rect_max,
+  col32,
+  color_convert_float4_to_u32,
+  Host,
+  Vec2,
+  HOST_DOCKING,
+  MOUSE_BUTTON_LEFT,
+  COL_BUTTON,
+}
+import bindings.imgui.ui.{
+  Node,
+  Window,
+  MainMenuBar,
+  Menu,
+  MenuItem,
+  Button,
+  Checkbox,
+  Text,
+  Separator,
+  SeparatorText,
+  Row,
+  Component,
+  WindowAttrs,
+  MenuAttrs,
+  MenuItemAttrs,
+  ButtonAttrs,
+  CheckboxAttrs,
+  TextAttrs,
+  Shortcut,
+  Style,
+  Sheet,
+  StyleRule,
+  render,
+  pressed_shortcut,
+}
+
+data Event =
+  ToggleSound
+  | ToggleMusic
+  | AskReset
+  | ConfirmReset
+  | CancelReset
+  | AskQuit
+  | ConfirmQuit
+  | CancelQuit
+
+struct State {
+  sound: bool = true,
+  music: bool = false,
+  asking_reset: bool = false,
+  asking_quit: bool = false,
+  resets: i64 = 0,
+  quit: bool = false,
+}
+
+let main = () -> u8 => {
+  let args = program_args()
+  if args.filter((a) => a == "--check").len() > 0 { return check() }
+  let limit = frame_limit(args)
+  let Some(host) = create_host("Components", 900, 600, HOST_DOCKING) else {
+    println("could not open a window")
+    return 1
+  }
+  var state = State {}
+  var frames = 0
+  while frames != limit && !state.quit && begin_frame(host) {
+    let nodes = view(state)
+    for event in render(nodes, (_) => {}) { state = update(state, event) }
+    if let Some(event) = pressed_shortcut(nodes) { state = update(state, event) }
+    end_frame(host, 0.1, 0.1, 0.12)
+    frames += 1
+  }
+  destroy_host(host)
+  0
+}
+
+// ── The interface ────────────────────────────────────────────────────────────
+
+/// The whole interface for `s`: a pure function of the state, drawn afresh each frame.
+let view = pure (s: State) -> []Node<Event> => {
+  var nodes: []Node<Event> = [
+    MainMenuBar([
+      Menu(MenuAttrs { label: "File" }, [
+        MenuItem(MenuItemAttrs { label: "Reset...", on_select: AskReset, shortcut: Some(Shortcut { key: "r" }) }),
+        Separator,
+        MenuItem(MenuItemAttrs { label: "Quit", on_select: AskQuit, shortcut: Some(Shortcut { key: "q" }) }),
+      ]),
+    ]),
+    Window(
+      WindowAttrs { title: "Settings", style: Style { width: Some(340.0), height: Some(260.0) } },
+      [
+        SeparatorText("Audio"),
+        toggle_row("Sound", "effects and voices", s.sound, ToggleSound),
+        toggle_row("Music", "the soundtrack", s.music, ToggleMusic),
+        SeparatorText("Saves"),
+        Text(TextAttrs { text: "Reset ${s.resets} times", disabled: true }),
+        if s.asking_reset {
+          confirm("Erase every save?", ConfirmReset, CancelReset)
+        } else {
+          Button(ButtonAttrs { label: "Reset...", on_click: AskReset })
+        },
+      ]
+    ),
+  ]
+  if s.asking_quit {
+    nodes.push(Window(WindowAttrs { title: "Quit", on_close: Some(CancelQuit) }, [
+      confirm("Quit without saving?", ConfirmQuit, CancelQuit),
+    ]))
+  }
+  nodes
+}
+
+/// `s` after `event`.
+let update = pure (s: State, event: Event) -> State => match event {
+  ToggleSound => State { s | sound: !s.sound },
+  ToggleMusic => State { s | music: !s.music },
+  AskReset => State { s | asking_reset: true },
+  ConfirmReset => State { s | asking_reset: false, resets: s.resets + 1 },
+  CancelReset => State { s | asking_reset: false },
+  AskQuit => State { s | asking_quit: true },
+  ConfirmQuit => State { s | quit: true },
+  CancelQuit => State { s | asking_quit: false },
+}
+
+// ── Components ───────────────────────────────────────────────────────────────
+
+/// A question and its two answers — any program's, whatever its events.
+let confirm = pure (question: string, yes: e, no: e) -> Node<e> =>
+  Component(confirm_sheet, [
+    Text(TextAttrs { text: question, class: "question" }),
+    Row([
+      Button(ButtonAttrs { label: "Yes", on_click: yes, class: "danger" }),
+      Button(ButtonAttrs { label: "No", on_click: no }),
+    ]),
+  ])
+
+/// Every button of a [confirm] rounded and padded; its Yes red; its question amber.
+let confirm_sheet = Sheet {
+  rules: [
+    StyleRule { selector: "Button", style: Style { rounding: Some(6.0), padding: Some(Vec2 { x: 14.0, y: 4.0 }) } },
+    StyleRule { selector: "Button.danger", style: Style { background: Some(col32(170, 40, 40)) } },
+    StyleRule { selector: ".question", style: Style { color: Some(col32(240, 200, 90)) } },
+  ],
+}
+
+/// A setting's checkbox and a note on what it covers, on one line.
+let toggle_row = pure (label: string, note: string, on: bool, toggle: e) -> Node<e> =>
+  Component(toggle_row_sheet, [
+    Row([
+      Checkbox(CheckboxAttrs { label: label, checked: on, on_toggle: toggle }),
+      Text(TextAttrs { text: note, class: "note" }),
+    ]),
+  ])
+
+/// A [toggle_row]'s box green, its note grey.
+let toggle_row_sheet = Sheet {
+  rules: [
+    StyleRule { selector: "Checkbox", style: Style { background: Some(col32(40, 110, 60)) } },
+    StyleRule { selector: "Text.note", style: Style { color: Some(col32(140, 140, 140)) } },
+  ],
+}
+
+// ── Running ──────────────────────────────────────────────────────────────────
+
+let frame_limit = pure (args: []string) -> i64 => {
+  for i, a in args {
+    if a == "--frames" && i + 1 < args.len() { return args[i + 1].parse_i64().unwrap_or(-1) }
+  }
+  -1
+}
+
+// ── --check ──────────────────────────────────────────────────────────────────
+
+/// Where each button was drawn last frame, by label, and the button fill in force then —
+/// filled by [record], the `seen` of the checks' frames.
+var drawn: []Drawn = []
+
+struct Drawn {
+  label: string,
+  center: Vec2,
+  fill: u32,
+}
+
+/// The interface on a headless host, clicked through: the scoped sheets' looks, then the
+/// events a click answers and the state they lead to. The exit status is the failures.
+let check = () -> u8 => {
+  var failures = check_sheets()
+  let Some(host) = create_headless_host(900, 600, 0) else {
+    println("no headless host")
+    return 1
+  }
+  var state = State {}
+  state = frame(host, state)
+  let theme = color_convert_float4_to_u32(get_style().colors(COL_BUTTON))
+  failures += verify(
+    fill_of("Reset...") == Some(theme),
+    "a button outside every component keeps the theme's fill"
+  )
+  state = click(host, state, "Reset...")
+  failures += verify(state.asking_reset, "Reset... asks first")
+  failures += verify(
+    fill_of("Yes") == Some(col32(170, 40, 40)),
+    "confirm's sheet makes its Yes red"
+  )
+  failures += verify(
+    fill_of("No") == Some(theme),
+    "and leaves its No the theme's, Button.danger not matching"
+  )
+  state = click(host, state, "Yes")
+  failures += verify(
+    !state.asking_reset && state.resets == 1,
+    "Yes resets, and the question goes"
+  )
+  state = click(host, state, "Sound")
+  failures += verify(!state.sound, "the toggle row's checkbox toggles Sound off")
+  state = State { state | asking_quit: true }
+  state = frame(host, state)
+  failures += verify(
+    fill_of("Yes") == Some(col32(170, 40, 40)),
+    "the same component in the Quit window looks the same"
+  )
+  state = click(host, state, "No")
+  failures += verify(
+    !state.asking_quit && !state.quit,
+    "No in Quit's confirm cancels it, its own event"
+  )
+  destroy_host(host)
+  println(if failures == 0 { "all passed" } else { "${failures} failed" })
+  u8(failures.min(255))
+}
+
+/// The sheets' cascade, without ImGui: specificity, order, inline over a rule, and scope.
+let check_sheets = () -> i64 => {
+  var f = 0
+  let red = col32(170, 40, 40)
+  let yes = confirm_sheet.style_for("Button", "danger", Style {})
+  f += verify(
+    yes.background == Some(red) && yes.rounding == Some(6.0),
+    "Button.danger gets both its rules"
+  )
+  let inline = confirm_sheet.style_for("Button", "danger", Style { background: Some(0) })
+  f += verify(inline.background == Some(0), "inline style wins over the sheet")
+  f += verify(
+    confirm_sheet.style_for("Checkbox", "", Style {}).rounding.is_none(),
+    "a Button rule does not reach a Checkbox"
+  )
+  f += verify(
+    toggle_row_sheet.style_for("Button", "danger", Style {}).background.is_none(),
+    "another component's sheet does not match"
+  )
+  let later = Sheet {
+    rules: [
+      StyleRule { selector: ".a", style: Style { rounding: Some(1.0) } },
+      StyleRule { selector: "Text", style: Style { rounding: Some(2.0) } },
+    ],
+  }
+  f += verify(
+    later.style_for("Text", "a", Style {}).rounding == Some(1.0),
+    "a class beats a tag, written before or after"
+  )
+  f
+}
+
+/// One frame of `state`'s interface, its events applied.
+let frame = (host: Host, state: State) -> State => {
+  drawn = []
+  if !begin_frame(host) { return state }
+  var s = state
+  for event in render(view(s), record) { s = update(s, event) }
+  end_frame(host, 0.0, 0.0, 0.0)
+  s
+}
+
+let record = (node: Node<Event>) -> void => {
+  let label = match node {
+    Button(b) => b.label,
+    Checkbox(c) => c.label,
+    _ => "",
+  }
+  if label.len() == 0 { return }
+  let top_left = get_item_rect_min()
+  let bottom_right = get_item_rect_max()
+  let fill = color_convert_float4_to_u32(get_style().colors(COL_BUTTON))
+  drawn.push(Drawn {
+    label: label,
+    center: Vec2 { x: (top_left.x + bottom_right.x) / 2.0, y: (top_left.y + bottom_right.y) / 2.0 },
+    fill: fill
+  })
+}
+
+let fill_of = (label: string) -> Maybe<u32> => {
+  for d in drawn { if d.label == label { return Some(d.fill) } }
+  None
+}
+
+/// The element `label` clicked as a person would: moved to, pressed, released, a frame each.
+let click = (host: Host, state: State, label: string) -> State => {
+  var at: Maybe<Vec2> = None
+  for d in drawn { if d.label == label { at = Some(d.center) } }
+  let Some(p) = at else {
+    println("FAIL: \"${label}\" is not on screen")
+    return state
+  }
+  get_io().add_mouse_pos_event(p.x, p.y)
+  var s = frame(host, state)
+  get_io().add_mouse_button_event(MOUSE_BUTTON_LEFT, true)
+  s = frame(host, s)
+  get_io().add_mouse_button_event(MOUSE_BUTTON_LEFT, false)
+  s = frame(host, s)
+  // And one more, so what was drawn is the state the click led to.
+  frame(host, s)
+}
+
+let verify = (ok: bool, what: string) -> i64 => {
+  if ok { return 0 }
+  println("FAIL: ${what}")
+  1
+}

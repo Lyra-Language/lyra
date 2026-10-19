@@ -103,3 +103,49 @@ let main = () -> void => { print(bold ++ "hi" ++ reset ++ "\n"); }
 		t.Errorf("got %q; want the bolded string with both escapes", got)
 	}
 }
+
+// **A global declared below the function reading it is retained when stored** (10/19).
+// The house style puts helpers and their tables below their users, and an unannotated
+// global's read there had no recorded type — the typechecker reached the declaration
+// after the function — so ownership, which asks the recorded type whether a value is
+// managed, stored `sheet` into each construction without a retain. Two constructions,
+// two releases of one array: a use-after-free in the drop glue, found by
+// `bindings.imgui.ui`'s components, whose style sheets are globals written below them.
+// Plain and generic, since the generic specialization is where it first showed.
+func TestExec_GlobalBelowItsReaderIsRetainedWhenStored(t *testing.T) {
+	t.Parallel()
+	src := `
+struct Sheet { rules: []string = [] }
+data Node<e> = Comp(Sheet, []Node<e>) | Leaf(e)
+data Plain = PlainComp(Sheet) | PlainLeaf
+
+let main = () -> u8 => {
+  let nodes: []Node<i64> = [wrap(1), wrap(2)]
+  let plain: []Plain = [wrap_plain(), wrap_plain()]
+  var n = 0
+  for node in nodes {
+    match node {
+      Comp(s, children) => { n += s.rules.len() + children.len() },
+      Leaf(_) => {},
+    }
+  }
+  for p in plain {
+    match p {
+      PlainComp(s) => { n += s.rules.len() },
+      PlainLeaf => {},
+    }
+  }
+  u8(n)
+}
+
+let wrap = (v: e) -> Node<e> => Comp(sheet, [Leaf(v)])
+
+let wrap_plain = () -> Plain => PlainComp(sheet)
+
+let sheet = Sheet { rules: ["a", "b"] }
+`
+	// (2 rules + 1 child) twice, then 2 rules twice.
+	if got := buildAndRunASanWithPrelude(t, src); got != 10 {
+		t.Errorf("under ASan: exited %d; want 10", got)
+	}
+}

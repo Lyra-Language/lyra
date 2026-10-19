@@ -69,6 +69,29 @@ func (tc *TypeChecker) forceCheckFunction(fn *ast.LambdaExpr) bool {
 	return fn.ReturnType.Type != nil
 }
 
+// forceCheckValue checks a top-level binding that is not a function now — a global
+// declared below the function reading it, the order the house style asks for — and
+// answers its type, or nil when it has none yet (a cycle, or an initializer that failed,
+// which its own check reports).
+//
+// Unlike a call's return, a read cannot defer: the identifier's recorded type is what
+// every later pass asks of it, and ownership in particular treats an untyped read as
+// unmanaged, so a global struct stored into a construction went unretained.
+func (tc *TypeChecker) forceCheckValue(decl *ast.VarDeclStmt) types.Type {
+	if !tc.topLevelValues[decl] || tc.inferringRet[decl] || tc.checkedDecls[decl] {
+		return nil
+	}
+	tc.inferringRet[decl] = true
+	tc.atTopLevel(func() {
+		// The reader's context is not the initializer's: `xs.push(sheet)` must not
+		// make `sheet`'s value an element type.
+		tc.withoutExpectedType(func() { tc.checkInModule(decl) })
+	})
+	delete(tc.inferringRet, decl)
+	t, _ := tc.typeTable.Get(decl.Value)
+	return t
+}
+
 // atTopLevel runs fn with the enclosing body's context cleared, and restores it after.
 //
 // **A hoisted declaration must be checked as if the pass had reached it in order** — from
@@ -127,6 +150,7 @@ func (tc *TypeChecker) markChecked(decl *ast.VarDeclStmt) bool {
 // name to the *lambda*) back to the declaration that has to be checked.
 func (tc *TypeChecker) collectTopLevelFuncs(program *ast.Program) {
 	tc.declOfFunc = map[*ast.LambdaExpr]*ast.VarDeclStmt{}
+	tc.topLevelValues = map[*ast.VarDeclStmt]bool{}
 	tc.inferringRet = map[*ast.VarDeclStmt]bool{}
 	tc.checkedDecls = map[*ast.VarDeclStmt]bool{}
 	for _, stmt := range program.Statements {
@@ -136,6 +160,8 @@ func (tc *TypeChecker) collectTopLevelFuncs(program *ast.Program) {
 		}
 		if lam, ok := decl.Value.(*ast.LambdaExpr); ok {
 			tc.declOfFunc[lam] = decl
+		} else if decl.Value != nil {
+			tc.topLevelValues[decl] = true
 		}
 	}
 }

@@ -47,13 +47,14 @@ type TypeChecker struct {
 	topLevelLambdas   []*ast.LambdaExpr    // every top-level function body, collected up front by Check; see enclosingTypeVars
 	genericBounds     map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 	publishing        map[string]bool      // impl-body candidate publications in progress, so a body reaching itself terminates; see publishImplBodyCandidates
-	// declOfFunc/inferring/checked back on-demand return inference: the declaration a
-	// top-level function's lambda belongs to, the ones currently being inferred (the cycle
-	// guard) and the ones already checked (so nothing is checked twice). See
-	// typechecker_on_demand.go.
-	declOfFunc   map[*ast.LambdaExpr]*ast.VarDeclStmt
-	inferringRet map[*ast.VarDeclStmt]bool
-	checkedDecls map[*ast.VarDeclStmt]bool
+	// declOfFunc/topLevelValues/inferring/checked back on-demand checking: the
+	// declaration a top-level function's lambda belongs to, the top-level bindings that
+	// are not functions, the ones currently being inferred (the cycle guard) and the ones
+	// already checked (so nothing is checked twice). See typechecker_on_demand.go.
+	declOfFunc     map[*ast.LambdaExpr]*ast.VarDeclStmt
+	topLevelValues map[*ast.VarDeclStmt]bool
+	inferringRet   map[*ast.VarDeclStmt]bool
+	checkedDecls   map[*ast.VarDeclStmt]bool
 	// inUnsafe is whether the expression being checked sits inside an `unsafe` block or an
 	// `unsafe` function body. It exists so that "calling an unsafe function" can be
 	// reported *here*, where the callee has been resolved — the syntactic pass that owns
@@ -487,6 +488,11 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 }
 
 func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
+	// A top-level value may have been checked already, out of order, because a function
+	// above it read it first (forceCheckValue).
+	if tc.topLevelValues[decl] && tc.markChecked(decl) {
+		return
+	}
 	if decl.Value == nil {
 		// Uninitialized declarations are not allowed: a binding must have a value
 		// at its declaration so it can never be read before assignment. (Allowing
@@ -3355,6 +3361,15 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 			// declaration will infer it; anything else waits for an annotation.
 			if t == nil && v.Type == nil && isPlainLiteral(v.Value) {
 				t = tc.inferExprType(v.Value)
+			}
+			// Anything else unannotated is checked now, out of order, as a callee below its
+			// caller is: `let sheet = Sheet { … }` below the function reading it had no
+			// type there, so the read went unrecorded and ownership — which asks the
+			// recorded type whether a value is managed — stored it into a construction
+			// without a retain. Two such constructions freed the global's array twice
+			// (10/19, bindings.imgui.ui's components).
+			if t == nil && v.Type == nil {
+				t = tc.forceCheckValue(v)
 			}
 			// A function *referred to* before its declaration has been checked — passed
 			// as a value to a call above it in the file, the order the house style asks

@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — `bindings.imgui.ui`, and a global read above its declaration went unretained
+
+A JSX-like markup for ImGui was asked for, then reusable components with scoped styles. The
+tree came first, as plain Lyra (`bindings/imgui/ui/ui.lyra`): the markup would lower to it,
+so it is the part whose design matters, and a syntax over a layer nobody has used is a
+guess. Vega's menus are its first user, since they were already data read three ways.
+
+- **Events, not callbacks.** An element names the event its use stands for, of the
+  program's type `e`; `render` answers the frame's events. A view stays `pure`, a
+  checkbox does not write its value, and no closure lives in the tree, so the tree can be
+  read by more than ImGui: Vega's macOS menu bar walks the same nodes.
+- **Style means each field in the element's own terms** (`background` is a button's face,
+  a window's fill), pushed around the element and popped after its children, so ImGui's
+  style stack gives CSS's inheritance for nothing. **A sheet's selectors stop at a
+  `Component`**, while what they push is inherited, as Vue's `scoped` styles behave.
+- **The first run crashed** — nondeterministically, a segfault one run and a trace trap
+  the next. Under ASan (an `--cc` wrapper adding `sanitize_address` to every `define`, as
+  the test harness does) it was a use-after-free in `[]Node<Event>`'s drop glue: each
+  component stored its global sheet, `let toggle_row_sheet = Sheet { … }`, without a
+  retain, and two components released one array. Reduced by script — top-level
+  declarations, then lines, keyed on the IR — to twelve lines: **the global was declared
+  below the function reading it**, the house style. The typechecker had no type for the
+  read there: `inferExprType` covered an annotated global and a plain literal ahead of the
+  pass, and "anything else waits for an annotation" — silently, so ownership, which asks
+  the recorded type whether a value is managed, saw nothing to retain. Fixed the way a
+  callee below its caller already was: **the declaration is checked on demand**
+  (`forceCheckValue`, beside `forceCheckFunction`, memoized by `checkedDecls` so the main
+  pass skips it, behind `withoutExpectedType` so the reader's context is not the
+  initializer's). `TestExec_GlobalBelowItsReaderIsRetainedWhenStored` fails without it.
+- **`Maybe.or` joined the prelude**: laying one `Style` over another is `Maybe` over
+  `Maybe`, which `??` cannot do — it unwraps.
+
 ### 10/19/26 — A constructor is a name an import binds
 
 Two entries, one undecided rule: is a constructor a name an import binds, or does it only

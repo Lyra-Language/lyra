@@ -49,6 +49,15 @@ impl Maybe<t> {
     (None, f) => f(),
   }
 
+  /// This `Maybe` if it holds a value, else `other` — the first of two that is present.
+  ///
+  /// `??` is the same choice for a fallback that is a plain value; this one keeps the
+  /// answer a `Maybe`, for laying one optional setting over another.
+  pub let or<t> = pure noalloc (self, other: Maybe<t>) -> Maybe<t> {
+    (Some v, _) => Some(v),
+    (None, other) => other,
+  }
+
   /// The contained value, trapping with `msg` if there is none.
   ///
   /// Prefer this to `unwrap` wherever you can say what you expected — the message is the
