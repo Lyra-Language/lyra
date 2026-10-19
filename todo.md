@@ -495,6 +495,19 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 - **[DONE 10/19] `if let … { } else if … { }` parses**, `else if let` too, and an `if`'s
   `else` may be an `if let`. (COMPLETED.md, 10/19.)
+- **[OPEN] A constructor of another module's type resolves in a module that never imported
+  it.** `data ImportEvent = … | TrueColor` in `vega/src/import_view.lyra` made `TrueColor`
+  in five modules importing only `project.{ … }` mean the event, not `PixelFormat`'s —
+  "cannot assign ImportEvent to PixelFormat". Resolution should be the module's own names
+  and imports; found porting Vega's import dialog (10/19).
+- **[OPEN] A constructor is not a function value**: `on_change: Width` for a
+  `(i64) -> Ev` is refused ("cannot assign Ev"), so lui writes `(value: i64) -> Ev =>
+  Width(value)` for it. Rust and Haskell allow it.
+- **[OPEN] A lambda in a generic struct field gets no types from it**: `IntAttrs<e> {
+  on_change: (v) => Width(v) }` against `(i64) -> e` leaves `v` unknown — the parameter
+  does not mention `e`, so it could be filled. And the backend then wants the lambda's
+  return type written ("a lambda used as a value needs a return type annotation"), which
+  the typechecker had accepted.
 - **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
   trait — a game's music tables) must be `data X = X` instead. Either accept it or say so.
 
@@ -557,9 +570,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `.lui`: components called across files** (an import each). A lowercase tag
   reaches only the same file's components, since lui must know a component's props.
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
-  `push_id`), widgets whose event carries a value (sliders, text fields: a function in
-  the tree, or the value written back), and layout past `Row` and `Form`. Vega's Settings
-  needed none of them; port the next window that has one.
+  `push_id`), tooltips, tables, child regions, sliders and colour editors (InputInt and
+  InputText are there, with change and commit events), and layout past `Row` and `Form`.
+  Grow it as Vega's next dialogs and panels move to markup.
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
   Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
   data (`void *`), and a layout location for `imgui.ini` chosen by the program.

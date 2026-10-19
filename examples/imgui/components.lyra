@@ -28,9 +28,11 @@ import bindings.imgui.{
   HOST_DOCKING,
   MOUSE_BUTTON_LEFT,
   COL_BUTTON,
+  KEY_ENTER,
 }
 import bindings.imgui.ui.{
   Node,
+  InputText,
   Menu,
   MenuItem,
   Button,
@@ -123,6 +125,24 @@ let check = () -> u8 => {
     state.loaded == 1,
     "File > Slot 2, one of a <for>'s items, loads slot 1"
   )
+  // A text field: each keystroke is on_change with the new text; Enter is on_commit, once.
+  state = click(host, state, "field name")
+  get_io().add_input_characters_utf8("Jo")
+  state = frame(host, state)
+  state = frame(host, state)
+  failures += verify(
+    state.name == "HeroJo" && state.commits == 0,
+    "typing changes the name, uncommitted: ${state.name}"
+  )
+  get_io().add_key_event(KEY_ENTER, true)
+  state = frame(host, state)
+  get_io().add_key_event(KEY_ENTER, false)
+  state = frame(host, state)
+  state = frame(host, state)
+  failures += verify(
+    state.saved_name == "HeroJo" && state.commits == 1,
+    "Enter commits it, once: ${state.saved_name}, ${state.commits}"
+  )
   state = State { state | asking_quit: true }
   state = frame(host, state)
   failures += verify(
@@ -197,6 +217,7 @@ let record = (node: Node<Event>) -> void => {
     Checkbox(c) => c.label,
     Menu(m, _) => m.label,
     MenuItem(it) => it.label,
+    InputText(i) => i.id,
     _ => "",
   }
   if label.len() == 0 { return }

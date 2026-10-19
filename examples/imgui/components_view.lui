@@ -15,6 +15,8 @@
     | ConfirmQuit
     | CancelQuit
     | Load(i64)
+    | Rename(string)
+    | NameDone
 
   pub struct State {
     sound: bool = true,
@@ -24,6 +26,10 @@
     resets: i64 = 0,
     loaded: i64 = -1,
     quit: bool = false,
+    /// The player's name as typed, and as last committed (Enter, or the focus gone).
+    name: string = "Hero",
+    saved_name: string = "",
+    commits: i64 = 0,
   }
 
   /// `s` after `event`.
@@ -37,6 +43,8 @@
     ConfirmQuit => State { s | quit: true },
     CancelQuit => State { s | asking_quit: false },
     Load(slot) => State { s | loaded: slot },
+    Rename(name) => State { s | name: name },
+    NameDone => State { s | saved_name: s.name, commits: s.commits + 1 },
   }
 </script>
 
@@ -54,6 +62,11 @@
     </Menu>
   </MainMenuBar>
   <Window title="Settings" style="width: 340; height: 260">
+    <Form>
+      <Field label="Name">
+        <InputText label="##name" id="field name" value={s.name} on_change={Rename} on_commit={NameDone}/>
+      </Field>
+    </Form>
     <SeparatorText>Audio</SeparatorText>
     <toggle_row label="Sound" note="effects and voices" on={s.sound} toggle={ToggleSound}/>
     <toggle_row label="Music" note="the soundtrack" on={s.music} toggle={ToggleMusic}/>

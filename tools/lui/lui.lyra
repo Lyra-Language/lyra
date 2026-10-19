@@ -31,6 +31,8 @@
 //   component of the same file**, attributes matched to its props by name, its children
 //   passed as a `children: []Node<e>` prop. `<if test={…}>`, `<else>` and
 //   `<for each={x in xs}>` are control flow.
+// - **An input's `on_change={Width}`** — a bare name — is written as the typed lambda
+//   calling it, `(value: i64) -> Ev => Width(value)`; a lambda written out passes through.
 // - **`{…}` is Lyra**, copied through: an attribute (`on_click={yes}`), part of a text or
 //   quoted string (`Reset {n} times`; a text of one `{n}` alone is `"${n}"`, a string
 //   whatever `n` is), or a child node (`{node}`, or `{...nodes}` for an
@@ -294,6 +296,8 @@ struct Writer {
   used: []string,
   /// The markup file's name, for the markers `lui map` reads.
   file: string,
+  /// The event type of the component being written, for the lambdas `on_change` becomes.
+  event: string = "e",
 }
 
 /// A generated array element and the markup line it came from.
@@ -311,6 +315,7 @@ impl Writer {
     }
     self.use("Node")
     self.use("Component")
+    self.event = c.event
     let sheet_name = if c.rules.len() > 0 {
       "${c.name}_sheet"
     } else {
@@ -396,6 +401,12 @@ impl Writer {
   /// One element or component call, its continuation lines at `indent`.
   let element = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
     if !is_upper(t.name) { return self.call(t, indent) }
+    // A slot is its name alone: where the caller draws, through `seen`.
+    if t.name == "Slot" {
+      let Some(name) = t.text_attr("name") else { return Err("${t.line}: <Slot> needs name=\"…\"") }
+      self.use("Slot")
+      return Ok("Slot(${quote(name)})")
+    }
     let Some(kind) = element_kind(t.name) else {
       return Err("${t.line}: <${t.name}> is not an element of bindings.imgui.ui")
     }
@@ -479,6 +490,15 @@ impl Writer {
   ) -> Result<string, string> => {
     let wrong = "${a.line}: ${a.name} of <${tag}>"
     match (field.kind, a.value) {
+      (Changes(value_type), Braced(code)) => Ok(if is_bare_name(code) {
+        "(value: ${value_type}) -> ${self.event} => ${code}(value)"
+      } else {
+        code
+      }),
+      (Looks, Braced(code)) => {
+        self.use("Style")
+        Ok(code)
+      },
       (_, Braced(code)) => Ok(if field.kind == MaybeOf { "Some(${code})" } else { code }),
       (Str, Quoted(text)) => Ok(interpolated(text)),
       (Flag, Bare) => Ok("true"),
@@ -559,6 +579,11 @@ let ui_names = [
   "Checkbox",
   "Combo",
   "Selectable",
+  "Radio",
+  "InputInt",
+  "InputText",
+  "Modal",
+  "Slot",
   "Form",
   "Field",
   "Text",
@@ -574,6 +599,10 @@ let ui_names = [
   "CheckboxAttrs",
   "ComboAttrs",
   "SelectableAttrs",
+  "RadioAttrs",
+  "InputIntAttrs",
+  "InputTextAttrs",
+  "ModalAttrs",
   "FieldAttrs",
   "TextAttrs",
   "Shortcut",
@@ -669,7 +698,9 @@ struct Field {
 /// How an attribute is written: a string (quoted, `{…}` interpolated), any Lyra
 /// (`{…}`), a `Maybe` of one (`{x}` is `Some(x)`), a flag (bare is true), a shortcut
 /// (`"Cmd+Shift+S"`) or a style (`"rounding: 4"`).
-data FieldKind = Str | Any | MaybeOf | Flag | Keys | Looks
+/// A `Changes` attribute is `on_change`: a function of the new value, of the type named; a
+/// bare name (a constructor, a function) becomes the lambda calling it.
+data FieldKind = Str | Any | MaybeOf | Flag | Keys | Looks | Changes(string)
 
 let element_kind = pure (tag: string) -> Maybe<Kind> => {
   let class = Field { name: "class", kind: Str }
@@ -720,7 +751,14 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
     "Button" => Some(Kind {
       attrs_struct: "ButtonAttrs",
       text_field: "label",
-      attrs: [Field { name: "on_click", kind: Any }, enabled, id, class, style],
+      attrs: [
+        Field { name: "on_click", kind: Any },
+        enabled,
+        Field { name: "closes", kind: Flag },
+        id,
+        class,
+        style,
+      ],
       required: ["label", "on_click"],
       holds: false,
     }),
@@ -752,6 +790,59 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
       required: ["label", "on_select"],
       holds: false,
     }),
+    "Radio" => Some(Kind {
+      attrs_struct: "RadioAttrs",
+      text_field: "label",
+      attrs: [Field { name: "selected", kind: Flag }, Field { name: "on_select", kind: Any }, id, enabled, class, style],
+      required: ["label", "on_select"],
+      holds: false,
+    }),
+    "InputInt" => Some(Kind {
+      attrs_struct: "InputIntAttrs",
+      text_field: "",
+      attrs: [
+        Field { name: "label", kind: Str },
+        Field { name: "value", kind: Any },
+        Field { name: "step", kind: Any },
+        Field { name: "on_change", kind: Changes("i64") },
+        Field { name: "on_commit", kind: MaybeOf },
+        id,
+        enabled,
+        class,
+        style,
+      ],
+      required: ["label", "value", "on_change"],
+      holds: false,
+    }),
+    "InputText" => Some(Kind {
+      attrs_struct: "InputTextAttrs",
+      text_field: "",
+      attrs: [
+        Field { name: "label", kind: Str },
+        Field { name: "value", kind: Str },
+        Field { name: "on_change", kind: Changes("string") },
+        Field { name: "on_commit", kind: MaybeOf },
+        id,
+        enabled,
+        class,
+        style,
+      ],
+      required: ["label", "value", "on_change"],
+      holds: false,
+    }),
+    "Modal" => Some(Kind {
+      attrs_struct: "ModalAttrs",
+      text_field: "",
+      attrs: [
+        Field { name: "title", kind: Str },
+        Field { name: "flags", kind: Any },
+        Field { name: "on_escape", kind: MaybeOf },
+        class,
+        style,
+      ],
+      required: ["title"],
+      holds: true,
+    }),
     "Form" => Some(container()),
     "Field" => Some(Kind {
       attrs_struct: "FieldAttrs",
@@ -763,7 +854,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
     "Text" => Some(Kind {
       attrs_struct: "TextAttrs",
       text_field: "text",
-      attrs: [Field { name: "disabled", kind: Flag }, class, style],
+      attrs: [Field { name: "disabled", kind: Flag }, Field { name: "wrapped", kind: Flag }, class, style],
       required: ["text"],
       holds: false,
     }),
@@ -1042,6 +1133,16 @@ let top_level_equals = pure (p: string) -> Maybe<i64> => {
     }
   }
   None
+}
+
+/// Whether `code` is a name alone (`FrameWidth`, `doc.rename`): what `on_change` calls.
+let is_bare_name = pure (code: string) -> bool => {
+  if code.len() == 0 { return false }
+  for i, c in code {
+    let letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+    if !(letter || (i > 0 && ((c >= '0' && c <= '9') || c == '.'))) { return false }
+  }
+  true
 }
 
 /// Whether the rune before `i` is `c` (`->` is an arrow, not a bracket).

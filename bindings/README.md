@@ -344,8 +344,11 @@ window is markup (`vega/src/settings_view.lui`).
   `Checkbox`, `Combo` (a drop-down whose children are `Selectable`s, each its own event —
   ImGui's own shape, so a choice needs no event carrying a value), `Form` and `Field` (a
   label right-aligned in a column as wide as the widest, its controls after it), `Text`,
-  `Separator`, `SeparatorText`, `Row` (children side by side), `Component` and `Fragment`
-  (children in place, several where one is expected) — each with an `…Attrs` struct of
+  `Separator`, `SeparatorText`, `Row` (children side by side), `Radio`, `InputInt` and
+  `InputText` (below), `Modal` (open while it is in the tree; a `closes` button closes it,
+  Escape is its `on_escape`), `Slot` (where the caller draws — a canvas, a preview — in
+  its `seen`), `Component` and `Fragment` (children in place, several where one is
+  expected) — each with an `…Attrs` struct of
   its attributes. `e` is the program's event type. A `Window` may be `centered` (each time
   it appears); a button, checkbox, combo, selectable or menu item has an `id`, what a
   program's tests know it by.
@@ -355,7 +358,15 @@ window is markup (`vega/src/settings_view.lui`).
   after it is drawn (Vega names its menus for the interface tests there).
 - **Events, not callbacks**: an element names the event its use stands for (`on_select`,
   `on_click`, `on_toggle`, a window's `on_close`); a checkbox does not write its value, the
-  program flips it. A view is a `pure` function of the state.
+  program flips it. A view is a `pure` function of the state. **An event shows from the
+  next frame**: `render` draws the whole tree, then answers the events, so state they
+  change is drawn a frame later — unseen by a person, but a test clicking what a click
+  moved must let that frame pass.
+- **Inputs carry their value in a function**: `InputInt`/`InputText`'s `on_change:
+  (value) -> e` is called with the value the field would now hold, each keystroke or step
+  (the field never writes `value`; the program keeps or refuses it), and `on_commit` is
+  sent once when the edit ends — change per edit, commit once, as an undo step wants.
+  `node_id(node)` is any element's `id` (else its label), for a `seen` that probes.
 - **The tree is data more than ImGui reads**: `menu_items(nodes)` flattens the menu items
   (Vega installs the same tree in macOS's menu bar), `pressed_shortcut(nodes)` presses a
   `Shortcut` (the primary modifier, Cmd or Ctrl, and optionally Shift) while its menu is
@@ -377,7 +388,7 @@ window is markup (`vega/src/settings_view.lui`).
   `scoped`, CSS modules) — while what a rule pushes is inherited as inline style is.
   `Sheet.style_for(tag, classes, inline)` is the cascade, pure.
 - **Not yet**: keys for repeated labels (ImGui's `push_id`; a `key` as JSX has), layout
-  beyond `Row` and `Form`, and widgets whose event carries a value (sliders, text fields).
+  beyond `Row` and `Form`, tooltips, tables, child regions, sliders and colour editors.
 
 ### `.lui` markup — `tools/lui`, built into `build/lui`
 
@@ -404,7 +415,9 @@ The example's interface is `examples/imgui/components_view.lui`.
   of its `props` returning `Node<event>` (`event="Event"`; default `e`, so it fits any
   tree), wrapped in its `Component`.
 - **A capitalized tag is an element**, its attributes its `…Attrs` fields and its text its
-  label. Attributes are `"text"` (a string; `{…}` inside interpolates, and text that is one
+  label. An `on_change` given a bare name (`on_change={Width}`) is made the typed lambda
+  calling it, `(value: i64) -> Ev => Width(value)`; a lambda written out must give its
+  types. Attributes are `"text"` (a string; `{…}` inside interpolates, and text that is one
   `{n}` alone is the string `"${n}"`, whatever `n` is), `{Lyra}`, or bare
   (a flag, `true`); `on_close={X}` is `Some(X)`; `shortcut="Cmd+Shift+S"` (Cmd or Ctrl is
   the primary modifier either way) and `style="rounding: 4"` are read for you. An unknown

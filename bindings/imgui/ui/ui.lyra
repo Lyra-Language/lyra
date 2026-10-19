@@ -76,6 +76,18 @@ import bindings.imgui.{
   end_menu,
   menu_item,
   begin_combo,
+  input_int,
+  input_text,
+  radio_button,
+  open_popup,
+  is_popup_open,
+  begin_popup_modal,
+  end_popup,
+  close_current_popup,
+  is_item_deactivated_after_edit,
+  is_key_pressed,
+  text_wrapped,
+  KEY_ESCAPE,
   end_combo,
   selectable,
   calc_text_size,
@@ -188,6 +200,21 @@ pub data Node<e> =
   | Combo(ComboAttrs, []Node<e>)
   /// A choice in a [Combo] (or a list): its event when picked.
   | Selectable(SelectableAttrs<e>)
+  /// One of a set of choices, shown as a round button: its event when picked.
+  | Radio(RadioAttrs<e>)
+  /// A whole number typed or stepped: `on_change` with the new value as it is edited,
+  /// `on_commit` when the edit is done.
+  | InputInt(InputIntAttrs<e>)
+  /// A line of text typed: `on_change` with the new text as it is edited, `on_commit`
+  /// when the edit is done.
+  | InputText(InputTextAttrs<e>)
+  /// A modal popup over the window, **open while it is in the tree**: put it there to
+  /// show it, leave it out to have it gone. A `closes` button in it closes it as it is
+  /// clicked; Escape is its `on_escape`.
+  | Modal(ModalAttrs<e>, []Node<e>)
+  /// Where the caller draws something of its own (a picture, a canvas): `seen` is called
+  /// with it at its place, in the window as it stands there.
+  | Slot(string)
   /// Labelled fields lined up: each [Field]'s label right-aligned in a column as wide as
   /// the widest, its controls starting together past it.
   | Form([]Node<e>)
@@ -246,6 +273,8 @@ pub struct ButtonAttrs<e> {
   label: string,
   on_click: e,
   enabled: bool = true,
+  /// In a [Modal], it closes the modal as it is clicked.
+  closes: bool = false,
   /// What a program's own tests or tools know it by; `""`, its label.
   id: string = "",
   /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
@@ -290,6 +319,61 @@ pub struct SelectableAttrs<e> {
   style: Style = Style {},
 }
 
+pub struct RadioAttrs<e> {
+  label: string,
+  /// Shown chosen.
+  selected: bool = false,
+  on_select: e,
+  /// What a program's own tests or tools know it by; `""`, its label.
+  id: string = "",
+  enabled: bool = true,
+  class: string = "",
+  style: Style = Style {},
+}
+
+/// **Change and commit**: the widget does not write `value` — each edit is `on_change` with
+/// the value it would now hold, which the program keeps (or refuses); a keystroke, a click
+/// on a step, each frame a step is held. When the edit is over — Enter, or the focus gone
+/// after a change — `on_commit` follows, once: where an undo step or a save belongs.
+pub struct InputIntAttrs<e> {
+  /// ImGui's label: beside it, and its identity (`##width` hides the text).
+  label: string,
+  value: i64,
+  /// What the − and + buttons add; 0 shows none.
+  step: i64 = 1,
+  on_change: (i64) -> e,
+  on_commit: Maybe<e> = None,
+  /// What a program's own tests or tools know it by; `""`, its label.
+  id: string = "",
+  enabled: bool = true,
+  class: string = "",
+  /// `width` (or `width_em`) is the field's.
+  style: Style = Style {},
+}
+
+/// As [InputIntAttrs], over a line of text.
+pub struct InputTextAttrs<e> {
+  label: string,
+  value: string,
+  on_change: (string) -> e,
+  on_commit: Maybe<e> = None,
+  id: string = "",
+  enabled: bool = true,
+  class: string = "",
+  style: Style = Style {},
+}
+
+pub struct ModalAttrs<e> {
+  /// Its title, and its identity: `Import PNG###import` keeps one popup as the title changes.
+  title: string,
+  /// `WINDOW_FLAGS_*`, combined with `|`.
+  flags: i32 = 0,
+  /// What Escape stands for, which also closes it; `None`, Escape does nothing.
+  on_escape: Maybe<e> = None,
+  class: string = "",
+  style: Style = Style {},
+}
+
 pub struct FieldAttrs {
   label: string,
   class: string = "",
@@ -301,6 +385,8 @@ pub struct TextAttrs {
   text: string,
   /// Greyed: the theme's disabled text colour.
   disabled: bool = false,
+  /// Wrapped at the window's edge rather than running past it.
+  wrapped: bool = false,
   /// Its classes, space-separated, for a [Sheet]'s selectors: `"primary wide"`.
   class: string = "",
   style: Style = Style {},
@@ -381,33 +467,35 @@ impl Sheet {
 
 // ── Drawing ──────────────────────────────────────────────────────────────────
 
-/// `nodes` drawn; the events of this frame, in the order drawn. `seen` is called with each
-/// element just after ImGui has it as its last item — a menu's or window's header, before
-/// its children — which is where a caller asks ImGui about it (`get_item_rect_min`).
-pub let render = (nodes: []Node<e>, seen: (Node<e>) -> void) -> []e => {
-  var events: []e = []
-  for node in nodes { draw(node, Sheet {}, seen, events) }
-  events
-}
-
-/// The enabled menu item in `nodes` whose shortcut was pressed this frame, if one was —
-/// a menu's keys working while the menu is closed, which ImGui's own do not.
-pub let pressed_shortcut = (nodes: []Node<e>) -> Maybe<e> => {
-  for it in menu_items(nodes) {
-    if !it.enabled { continue }
-    let Some(s) = it.shortcut else { continue }
-    let Some(key) = imgui_key(s.key) else { continue }
-    let chord = MOD_CTRL | key | (if s.shift { MOD_SHIFT } else { 0 })
-    if is_key_chord_pressed(chord) { return Some(it.on_select) }
+impl []Node<e> {
+  /// `nodes` drawn; the events of this frame, in the order drawn. `seen` is called with each
+  /// element just after ImGui has it as its last item — a menu's or window's header, before
+  /// its children — which is where a caller asks ImGui about it (`get_item_rect_min`).
+  pub let render = (self, seen: (Node<e>) -> void) -> []e => {
+    var events: []e = []
+    for node in self { draw(node, Sheet {}, seen, events) }
+    events
   }
-  None
-}
 
-/// Every menu item in `nodes`, at any depth, in the order drawn.
-pub let menu_items = pure (nodes: []Node<e>) -> []MenuItemAttrs<e> => {
-  var out: []MenuItemAttrs<e> = []
-  for node in nodes { collect_items(node, out) }
-  out
+  /// The enabled menu item in `nodes` whose shortcut was pressed this frame, if one was —
+  /// a menu's keys working while the menu is closed, which ImGui's own do not.
+  pub let pressed_shortcut = (self) -> Maybe<e> => {
+    for it in menu_items(self) {
+      if !it.enabled { continue }
+      let Some(s) = it.shortcut else { continue }
+      let Some(key) = imgui_key(s.key) else { continue }
+      let chord = MOD_CTRL | key | (if s.shift { MOD_SHIFT } else { 0 })
+      if is_key_chord_pressed(chord) { return Some(it.on_select) }
+    }
+    None
+  }
+
+  /// Every menu item in `nodes`, at any depth, in the order drawn.
+  pub let menu_items = pure (self) -> []MenuItemAttrs<e> => {
+    var out: []MenuItemAttrs<e> = []
+    for node in self { collect_items(node, out) }
+    out
+  }
 }
 
 /// How a shortcut is spelled beside its item: `Cmd+Shift+S`, `Ctrl+O`.
@@ -429,198 +517,318 @@ pub let item_id = pure (it: MenuItemAttrs<e>) -> string =>
 
 // ── Each element ─────────────────────────────────────────────────────────────
 
-let draw = (
-  node: Node<e>,
-  sheet: Sheet,
-  seen: (Node<e>) -> void,
-  events: mut []e
-) -> void =>
-  match node {
-    Window(w, children) => {
-      let style = sheet.style_for("Window", w.class, w.style)
-      let pushed = push_style(style, WindowPart)
-      let width = width_of(style)
-      if width.is_some() || style.height.is_some() {
-        set_next_window_size(
-          Vec2 { x: width.unwrap_or(0.0), y: style.height.unwrap_or(0.0) },
-          COND_FIRST_USE_EVER
-        )
-      }
-      if w.centered {
-        set_next_window_pos(
-          get_main_viewport().get_center(),
-          COND_APPEARING,
-          Vec2 { x: 0.5, y: 0.5 }
-        )
-      }
-      var open = true
-      let visible = match w.on_close {
-        Some(_) => begin_closable(w.title, open, w.flags),
-        None => begin(w.title, w.flags),
-      }
-      seen(node)
-      if visible { for child in children { draw(child, sheet, seen, events) } }
-      end()
-      pop_style(pushed)
-      if !open { if let Some(event) = w.on_close { events.push(event) } }
-    },
-    MainMenuBar(children) => {
-      if begin_main_menu_bar() {
-        for child in children { draw(child, sheet, seen, events) }
-        end_main_menu_bar()
-      }
-    },
-    MenuBar(children) => {
-      if begin_menu_bar() {
-        for child in children { draw(child, sheet, seen, events) }
-        end_menu_bar()
-      }
-    },
-    Menu(m, children) => {
-      let style = sheet.style_for("Menu", m.class, m.style)
-      let pushed = push_style(style, MenuPart)
-      let open = begin_menu(m.label, m.enabled)
-      seen(node)
-      if open {
-        for child in children { draw(child, sheet, seen, events) }
-        end_menu()
-      }
-      pop_style(pushed)
-    },
-    MenuItem(it) => {
-      let style = sheet.style_for("MenuItem", it.class, it.style)
-      let pushed = push_style(style, ItemPart)
-      let shortcut = match it.shortcut {
-        Some(s) => Some(shortcut_text(s)),
-        None => None,
-      }
-      let picked = menu_item(it.label, shortcut, it.checked, it.enabled)
-      seen(node)
-      pop_style(pushed)
-      if picked { events.push(it.on_select) }
-    },
-    Button(b) => {
-      let style = sheet.style_for("Button", b.class, b.style)
-      let pushed = push_style(style, FramePart)
-      let size = Vec2 {
-        x: width_of(style).unwrap_or(0.0),
-        y: style.height.unwrap_or(0.0)
-      }
-      begin_disabled(!b.enabled)
-      let clicked = button(b.label, size)
-      end_disabled()
-      seen(node)
-      pop_style(pushed)
-      if clicked { events.push(b.on_click) }
-    },
-    Checkbox(c) => {
-      let style = sheet.style_for("Checkbox", c.class, c.style)
-      let pushed = push_style(style, FramePart)
-      var value = c.checked
-      begin_disabled(!c.enabled)
-      let toggled = checkbox(c.label, value)
-      end_disabled()
-      seen(node)
-      pop_style(pushed)
-      if toggled { events.push(c.on_toggle) }
-    },
-    Combo(c, children) => {
-      let style = sheet.style_for("Combo", c.class, c.style)
-      let pushed = push_style(style, FramePart)
-      if let Some(w) = width_of(style) { set_next_item_width(w) }
-      let open = begin_combo(c.label, c.preview)
-      seen(node)
-      if open {
-        for child in children { draw(child, sheet, seen, events) }
-        end_combo()
-      }
-      pop_style(pushed)
-    },
-    Selectable(o) => {
-      let style = sheet.style_for("Selectable", o.class, o.style)
-      let pushed = push_style(style, ItemPart)
-      let picked = selectable(o.label, o.selected)
-      seen(node)
-      pop_style(pushed)
-      if picked { events.push(o.on_select) }
-    },
-    Form(children) => {
-      var column: f32 = 0.0
-      for child in children {
-        if let Field(f, _) = child { column = column.max(calc_text_size(f.label).x) }
-      }
-      for child in children {
-        match child {
-          Field(f, fields) => draw_field(child, f, fields, column, sheet, seen, events),
-          _ => draw(child, sheet, seen, events),
+impl Node<e> {
+  /// What a program knows `node` by: its `id` where it has one (an empty one, its label),
+  /// else `""` — for a `seen` that names what it is shown (`probe(node_id(node))`).
+  pub let node_id = pure (self) -> string => match self {
+    MenuItem(it) => item_id(it),
+    Button(b) => if b.id.len() > 0 { b.id } else { b.label },
+    Checkbox(c) => if c.id.len() > 0 { c.id } else { c.label },
+    Combo(c, _) => if c.id.len() > 0 { c.id } else { c.label },
+    Selectable(o) => if o.id.len() > 0 { o.id } else { o.label },
+    Radio(r) => if r.id.len() > 0 { r.id } else { r.label },
+    InputInt(i) => if i.id.len() > 0 { i.id } else { i.label },
+    InputText(i) => if i.id.len() > 0 { i.id } else { i.label },
+    _ => "",
+  }
+
+  let draw = (
+    self,
+    sheet: Sheet,
+    seen: (Node<e>) -> void,
+    events: mut []e
+  ) -> void =>
+    match self {
+      Window(w, children) => {
+        let style = sheet.style_for("Window", w.class, w.style)
+        let pushed = push_style(style, WindowPart)
+        let width = width_of(style)
+        if width.is_some() || style.height.is_some() {
+          set_next_window_size(
+            Vec2 { x: width.unwrap_or(0.0), y: style.height.unwrap_or(0.0) },
+            COND_FIRST_USE_EVER
+          )
         }
-      }
-    },
-    Field(f, fields) =>
-      draw_field(node, f, fields, calc_text_size(f.label).x, sheet, seen, events),
-    Text(t) => {
-      let style = sheet.style_for("Text", t.class, t.style)
-      let pushed = push_style(style, TextPart)
-      if t.disabled { text_disabled(t.text) } else { text(t.text) }
-      seen(node)
-      pop_style(pushed)
-    },
-    Separator => separator(),
-    SeparatorText(label) => separator_text(label),
-    Row(children) => {
-      for i, child in children {
-        if i > 0 { same_line() }
-        draw(child, sheet, seen, events)
-      }
-    },
-    // Its own sheet in place of the enclosing one: selectors stop at the boundary.
-    Component(own, children) => { for child in children { draw(child, own, seen, events) } },
-    Fragment(children) => { for child in children { draw(child, sheet, seen, events) } },
+        if w.centered {
+          set_next_window_pos(
+            get_main_viewport().get_center(),
+            COND_APPEARING,
+            Vec2 { x: 0.5, y: 0.5 }
+          )
+        }
+        var open = true
+        let visible = match w.on_close {
+          Some(_) => begin_closable(w.title, open, w.flags),
+          None => begin(w.title, w.flags),
+        }
+        seen(self)
+        if visible { for child in children { draw(child, sheet, seen, events) } }
+        end()
+        pop_style(pushed)
+        if !open { if let Some(event) = w.on_close { events.push(event) } }
+      },
+      MainMenuBar(children) => {
+        if begin_main_menu_bar() {
+          for child in children { draw(child, sheet, seen, events) }
+          end_main_menu_bar()
+        }
+      },
+      MenuBar(children) => {
+        if begin_menu_bar() {
+          for child in children { draw(child, sheet, seen, events) }
+          end_menu_bar()
+        }
+      },
+      Menu(m, children) => {
+        let style = sheet.style_for("Menu", m.class, m.style)
+        let pushed = push_style(style, MenuPart)
+        let open = begin_menu(m.label, m.enabled)
+        seen(self)
+        if open {
+          for child in children { draw(child, sheet, seen, events) }
+          end_menu()
+        }
+        pop_style(pushed)
+      },
+      MenuItem(it) => {
+        let style = sheet.style_for("MenuItem", it.class, it.style)
+        let pushed = push_style(style, ItemPart)
+        let shortcut = match it.shortcut {
+          Some(s) => Some(shortcut_text(s)),
+          None => None,
+        }
+        let picked = menu_item(it.label, shortcut, it.checked, it.enabled)
+        seen(self)
+        pop_style(pushed)
+        if picked { events.push(it.on_select) }
+      },
+      Button(b) => {
+        let style = sheet.style_for("Button", b.class, b.style)
+        let pushed = push_style(style, FramePart)
+        let size = Vec2 {
+          x: width_of(style).unwrap_or(0.0),
+          y: style.height.unwrap_or(0.0)
+        }
+        begin_disabled(!b.enabled)
+        let clicked = button(b.label, size)
+        end_disabled()
+        seen(self)
+        pop_style(pushed)
+        if clicked {
+          events.push(b.on_click)
+          if b.closes { close_current_popup() }
+        }
+      },
+      Checkbox(c) => {
+        let style = sheet.style_for("Checkbox", c.class, c.style)
+        let pushed = push_style(style, FramePart)
+        var value = c.checked
+        begin_disabled(!c.enabled)
+        let toggled = checkbox(c.label, value)
+        end_disabled()
+        seen(self)
+        pop_style(pushed)
+        if toggled { events.push(c.on_toggle) }
+      },
+      Combo(c, children) => {
+        let style = sheet.style_for("Combo", c.class, c.style)
+        let pushed = push_style(style, FramePart)
+        if let Some(w) = width_of(style) { set_next_item_width(w) }
+        let open = begin_combo(c.label, c.preview)
+        seen(self)
+        if open {
+          for child in children { draw(child, sheet, seen, events) }
+          end_combo()
+        }
+        pop_style(pushed)
+      },
+      Selectable(o) => {
+        let style = sheet.style_for("Selectable", o.class, o.style)
+        let pushed = push_style(style, ItemPart)
+        let picked = selectable(o.label, o.selected)
+        seen(self)
+        pop_style(pushed)
+        if picked { events.push(o.on_select) }
+      },
+      Radio(r) => {
+        let style = sheet.style_for("Radio", r.class, r.style)
+        let pushed = push_style(style, FramePart)
+        begin_disabled(!r.enabled)
+        let picked = radio_button(r.label, r.selected)
+        end_disabled()
+        seen(self)
+        pop_style(pushed)
+        if picked { events.push(r.on_select) }
+      },
+      InputInt(i) => {
+        let style = sheet.style_for("InputInt", i.class, i.style)
+        let pushed = push_style(style, FramePart)
+        if let Some(w) = width_of(style) { set_next_item_width(w) }
+        var value = i32(i.value)
+        begin_disabled(!i.enabled)
+        let changed = input_int(i.label, value, i32(i.step))
+        let done = is_item_deactivated_after_edit()
+        end_disabled()
+        seen(self)
+        pop_style(pushed)
+        if changed { events.push(i.on_change(i64(value))) }
+        if done { if let Some(event) = i.on_commit { events.push(event) } }
+      },
+      InputText(i) => {
+        let style = sheet.style_for("InputText", i.class, i.style)
+        let pushed = push_style(style, FramePart)
+        if let Some(w) = width_of(style) { set_next_item_width(w) }
+        var value = i.value
+        begin_disabled(!i.enabled)
+        let changed = input_text(i.label, value)
+        let done = is_item_deactivated_after_edit()
+        end_disabled()
+        seen(self)
+        pop_style(pushed)
+        if changed { events.push(i.on_change(value)) }
+        if done { if let Some(event) = i.on_commit { events.push(event) } }
+      },
+      Modal(m, children) => {
+        let style = sheet.style_for("Modal", m.class, m.style)
+        let pushed = push_style(style, WindowPart)
+        if !is_popup_open(m.title) { let _ = open_popup(m.title) }
+        if begin_popup_modal(m.title, m.flags) {
+          for child in children { draw(child, sheet, seen, events) }
+          if let Some(event) = m.on_escape {
+            if is_key_pressed(KEY_ESCAPE) {
+              events.push(event)
+              close_current_popup()
+            }
+          }
+          end_popup()
+        }
+        pop_style(pushed)
+      },
+      Slot(_) => seen(self),
+      Form(children) => {
+        var column: f32 = 0.0
+        for child in children {
+          if let Field(f, _) = child { column = column.max(calc_text_size(f.label).x) }
+        }
+        for child in children {
+          match child {
+            Field(f, fields) => draw_field(child, f, fields, column, sheet, seen, events),
+            _ => draw(child, sheet, seen, events),
+          }
+        }
+      },
+      Field(f, fields) =>
+        draw_field(self, f, fields, calc_text_size(f.label).x, sheet, seen, events),
+      Text(t) => {
+        let style = sheet.style_for("Text", t.class, t.style)
+        let pushed = push_style(style, TextPart)
+        if t.disabled {
+          text_disabled(t.text)
+        } else if t.wrapped {
+          text_wrapped(t.text)
+        } else {
+          text(t.text)
+        }
+        seen(self)
+        pop_style(pushed)
+      },
+      Separator => separator(),
+      SeparatorText(label) => separator_text(label),
+      Row(children) => {
+        for i, child in children {
+          if i > 0 { same_line() }
+          draw(child, sheet, seen, events)
+        }
+      },
+      // Its own sheet in place of the enclosing one: selectors stop at the boundary.
+      Component(own, children) => { for child in children { draw(child, own, seen, events) } },
+      Fragment(children) => { for child in children { draw(child, sheet, seen, events) } },
+    }
+
+  /// A field's label right-aligned in a `column` that wide, on its controls' line, and its
+  /// controls side by side after it.
+  let draw_field = (
+    self,
+    f: FieldAttrs,
+    fields: []Node<e>,
+    column: f32,
+    sheet: Sheet,
+    seen: (Node<e>) -> void,
+    events: mut []e
+  ) -> void => {
+    let style = sheet.style_for("Field", f.class, f.style)
+    let pushed = push_style(style, TextPart)
+    set_cursor_pos_x(get_cursor_pos_x() + column - calc_text_size(f.label).x)
+    align_text_to_frame_padding()
+    text(f.label)
+    seen(self)
+    pop_style(pushed)
+    for child in fields {
+      same_line()
+      draw(child, sheet, seen, events)
+    }
   }
 
-/// A field's label right-aligned in a `column` that wide, on its controls' line, and its
-/// controls side by side after it.
-let draw_field = (
-  node: Node<e>,
-  f: FieldAttrs,
-  fields: []Node<e>,
-  column: f32,
-  sheet: Sheet,
-  seen: (Node<e>) -> void,
-  events: mut []e
-) -> void => {
-  let style = sheet.style_for("Field", f.class, f.style)
-  let pushed = push_style(style, TextPart)
-  set_cursor_pos_x(get_cursor_pos_x() + column - calc_text_size(f.label).x)
-  align_text_to_frame_padding()
-  text(f.label)
-  seen(node)
-  pop_style(pushed)
-  for child in fields {
-    same_line()
-    draw(child, sheet, seen, events)
+  let collect_items = (self, out: mut []MenuItemAttrs<e>) -> void => match self {
+    MenuItem(it) => out.push(it),
+    Window(_, children) => { for child in children { collect_items(child, out) } },
+    MainMenuBar(children) => { for child in children { collect_items(child, out) } },
+    MenuBar(children) => { for child in children { collect_items(child, out) } },
+    Menu(_, children) => { for child in children { collect_items(child, out) } },
+    Row(children) => { for child in children { collect_items(child, out) } },
+    Component(_, children) => { for child in children { collect_items(child, out) } },
+    Fragment(children) => { for child in children { collect_items(child, out) } },
+    Combo(_, children) => { for child in children { collect_items(child, out) } },
+    Modal(_, children) => { for child in children { collect_items(child, out) } },
+    Form(children) => { for child in children { collect_items(child, out) } },
+    Field(_, children) => { for child in children { collect_items(child, out) } },
+    _ => {},
   }
 }
 
-/// A style's width in pixels: `width`, else `width_em` ems of the current font.
-let width_of = (style: Style) -> Maybe<f32> => match style.width {
-  Some(w) => Some(w),
-  None => style.width_em.map((em) => em * get_font_size()),
-}
+impl Style {
+  /// A style's width in pixels: `width`, else `width_em` ems of the current font.
+  let width_of = (self) -> Maybe<f32> => match self.width {
+    Some(w) => Some(w),
+    None => self.width_em.map((em) => em * get_font_size()),
+  }
 
-let collect_items = (node: Node<e>, out: mut []MenuItemAttrs<e>) -> void => match node {
-  MenuItem(it) => out.push(it),
-  Window(_, children) => { for child in children { collect_items(child, out) } },
-  MainMenuBar(children) => { for child in children { collect_items(child, out) } },
-  MenuBar(children) => { for child in children { collect_items(child, out) } },
-  Menu(_, children) => { for child in children { collect_items(child, out) } },
-  Row(children) => { for child in children { collect_items(child, out) } },
-  Component(_, children) => { for child in children { collect_items(child, out) } },
-  Fragment(children) => { for child in children { collect_items(child, out) } },
-  Combo(_, children) => { for child in children { collect_items(child, out) } },
-  Form(children) => { for child in children { collect_items(child, out) } },
-  Field(_, children) => { for child in children { collect_items(child, out) } },
-  _ => {},
+  /// `style` pushed for an element of `part`.
+  let push_style = (self, part: Part) -> Pushed => {
+    var colors: i32 = 0
+    var vars: i32 = 0
+    if let Some(c) = self.color {
+      push_style_color(COL_TEXT, c)
+      colors += 1
+    }
+    if let Some(fill) = self.background {
+      for (slot, color) in fills(part, fill) {
+        push_style_color(slot, color)
+        colors += 1
+      }
+    }
+    if let Some(o) = self.opacity {
+      push_style_var(STYLE_VAR_ALPHA, get_style().alpha() * o)
+      vars += 1
+    }
+    if let Some(p) = self.padding {
+      match part {
+        WindowPart => { push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, p); vars += 1 },
+        MenuPart => { push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, p); vars += 1 },
+        FramePart => { push_style_var_vec2(STYLE_VAR_FRAME_PADDING, p); vars += 1 },
+        _ => {},
+      }
+    }
+    if let Some(r) = self.rounding {
+      match part {
+        WindowPart => { push_style_var(STYLE_VAR_WINDOW_ROUNDING, r); vars += 1 },
+        MenuPart => { push_style_var(STYLE_VAR_POPUP_ROUNDING, r); vars += 1 },
+        FramePart => { push_style_var(STYLE_VAR_FRAME_ROUNDING, r); vars += 1 },
+        _ => {},
+      }
+    }
+    Pushed { colors: colors, vars: vars }
+  }
 }
 
 // ── Style ────────────────────────────────────────────────────────────────────
@@ -649,43 +857,6 @@ data Part = WindowPart | MenuPart | ItemPart | FramePart | TextPart
 struct Pushed {
   colors: i32,
   vars: i32,
-}
-
-/// `style` pushed for an element of `part`.
-let push_style = (style: Style, part: Part) -> Pushed => {
-  var colors: i32 = 0
-  var vars: i32 = 0
-  if let Some(c) = style.color {
-    push_style_color(COL_TEXT, c)
-    colors += 1
-  }
-  if let Some(fill) = style.background {
-    for (slot, color) in fills(part, fill) {
-      push_style_color(slot, color)
-      colors += 1
-    }
-  }
-  if let Some(o) = style.opacity {
-    push_style_var(STYLE_VAR_ALPHA, get_style().alpha() * o)
-    vars += 1
-  }
-  if let Some(p) = style.padding {
-    match part {
-      WindowPart => { push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, p); vars += 1 },
-      MenuPart => { push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, p); vars += 1 },
-      FramePart => { push_style_var_vec2(STYLE_VAR_FRAME_PADDING, p); vars += 1 },
-      _ => {},
-    }
-  }
-  if let Some(r) = style.rounding {
-    match part {
-      WindowPart => { push_style_var(STYLE_VAR_WINDOW_ROUNDING, r); vars += 1 },
-      MenuPart => { push_style_var(STYLE_VAR_POPUP_ROUNDING, r); vars += 1 },
-      FramePart => { push_style_var(STYLE_VAR_FRAME_ROUNDING, r); vars += 1 },
-      _ => {},
-    }
-  }
-  Pushed { colors: colors, vars: vars }
 }
 
 let pop_style = (pushed: Pushed) -> void => {

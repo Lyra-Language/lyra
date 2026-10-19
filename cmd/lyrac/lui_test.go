@@ -201,3 +201,52 @@ func TestLui_WatchRegeneratesOnChange(t *testing.T) {
 		t.Fatal("--watch did not regenerate after the markup changed")
 	}
 }
+
+// The value inputs and the modal: `on_change={Width}` names a constructor, which lui makes
+// a typed lambda of (Lyra has no constructor values, and a lambda in a generic field gets
+// no parameter types from it); the rest — a radio, a closing button, a slot — as written.
+// The module checks clean.
+func TestLui_InputsModalAndSlot(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script>
+  pub data Ev = Width(i64) | Named(string) | Done | Pick | Close
+</script>
+<component name="view" props="w: i64, name: string" event="Ev">
+  <Modal title="Edit###edit" on_escape={Close}>
+    <InputInt label="Width" value={w} step={8} on_change={Width} on_commit={Done}/>
+    <InputText label="Name" value={name} on_change={(text: string) -> Ev => Named(text)}/>
+    <Radio selected on_select={Pick}>Pick</Radio>
+    <Slot name="preview"/>
+    <Button closes on_click={Close}>OK</Button>
+  </Modal>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"on_change: (value: i64) -> Ev => Width(value)",
+		"on_commit: Some(Done)",
+		"on_change: (text: string) -> Ev => Named(text)",
+		`Slot("preview")`,
+		"closes: true",
+		"on_escape: Some(Close)",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}

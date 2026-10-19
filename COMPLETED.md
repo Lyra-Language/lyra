@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — Inputs that carry a value; Vega's import dialog as markup
+
+The import dialog was chosen to force the tree's open question — an event carrying a
+value — and it did: two frame-size fields. The answer is **a function in the tree**:
+`InputInt`/`InputText` hold `on_change: (value) -> e`, fired with the value the field
+would now hold, which the program keeps or refuses (the field never writes its `value`),
+and `on_commit: Maybe<e>`, fired once when the edit ends (ImGui's deactivated-after-edit).
+Change per keystroke or step, commit once: what Vega's undo needs, a held `+` being one
+step. The example types into a name field headlessly and sees both.
+
+- **lui writes the lambda**: `on_change={Width}` is `(value: i64) -> Ev => Width(value)`.
+  Three compiler gaps meet there (todo.md): a constructor is not a function value, a
+  lambda in a generic field gets no parameter types from it, and the backend wants a
+  lambda's return type written. lui knows the widget's value type and the component's
+  event, so the markup never sees any of them.
+- **A `Modal` is open while it is in the tree** — the program shows a popup by putting it
+  there, and it is gone when left out; a `closes` button closes it as clicked, Escape is
+  `on_escape`. React's model, over ImGui's open-once/begin-each-frame pair.
+- **A `Slot` is where the caller draws**: the preview is pixels drawn by hand, and stays
+  Lyra, called by `seen` at the slot's place in the modal. That is how markup and a
+  canvas will meet in the editors.
+- **The view model is the view's whole input** (`ImportView`, filled by `view_of`): the
+  markup reads plain fields and the dialog keeps its logic, with no import cycle between
+  them. `scaled` reads the interface size, so the widths come in through it too.
+- **Probe names are the ids** (`probe_id(node_id(node))`), Settings moved to the same, so
+  every view's `seen` is one line; `ui_checks` clicks the new dialog's radios, checkbox and
+  buttons by the old names.
+- **An event shows a frame later**, and one scenario saw it: the hand-written dialog
+  changed its state as Replace was clicked and drew its notes in the same frame; the tree
+  draws, then answers events, so the notes appear on the next frame and push the slices
+  checkbox down after the check had read where it was. A person never sees it; the check
+  now lets a frame pass after Replace (three scenarios), and the rule is in the README.
+- **Found**: a constructor named in a new module (`TrueColor`) leaked into five that never
+  imported it (todo.md); the events were renamed around it.
+
 ### 10/19/26 — A field's value is judged as itself
 
 `h.items = [t in h.items | t.name != "a"]` — a comprehension of `bool`s into a `[]Item`
