@@ -332,9 +332,9 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 - **Several clauses nest left to right**: in `[y in ys, x in xs | …]` the `y` clause is the
   outer loop, so `ys = [10, 20]`, `xs = [1, 2, 3]` yields the pairs in the order `10:1
   10:2 10:3 20:1 …`.
-- A source is an array, a range, a string (by rune), or one `Seq`, **written** as a name, a
-  call, a field or an element (`g.sprites`, `grid[0]`, since 09/29), or a literal; anything
-  else is parenthesized. Capacity is the product
+- A source is an array, a range, a string (by rune), or one `Seq`, **written** as a name
+  (a constant's too, `PAIRS`, since 10/19), a call, a field or an element (`g.sprites`,
+  `grid[0]`, since 09/29), or a literal; anything else is parenthesized. Capacity is the product
   of the sources' lengths, computed up front, which is why a clause whose source depends on
   an **earlier clause's binding** (`[row in grid, cell in row | cell]`) is refused today.
 - The result is any expression, and the brackets make a `[]T` — there is no `collect`.

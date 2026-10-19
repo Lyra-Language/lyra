@@ -669,6 +669,30 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   CLAUDE.md states and the backend's own message already follows.
 - **[DONE 09/29] A field, an element or a parenthesized expression is a comprehension
   source.** (COMPLETED.md, 09/29.)
+- **[DONE 10/19] A constant is a comprehension source** — `[p in PAIRS | p.1]` was a
+  syntax error at `in`: an all-caps name lexes as a `const_identifier`, which the clause's
+  source list lacked. (COMPLETED.md, 10/19.)
+- **[OPEN] A guard is only a comparison, a call or a name** — `[p in pairs | p.1 | p.0]`
+  (a `bool` field as the guard) reads as the single result `p.1 | p.0`, a bitwise-or, and
+  is refused as one; `p.1 == true` works. A field, an element or a tuple position could be
+  a guard too.
+- **[OPEN] A push through a local alias of a parameter's array is called pure** —
+  `let f = (xs: []i64) -> i64 => { var all = xs; all.push(99); all.len() }` grows the
+  caller's array (as documented: a variable set to an array shares its buffer), yet W018
+  says `f` "has no observable effect; mark it `pure`": the purity walk takes `all` for a
+  local. Sulafat's frame layout did this to its sessions' blocks, a block a frame (10/19).
+- **[OPEN] A later `let … else` hides an earlier binding of its name** — `var value = 1;
+  value += 1; println("${value}"); let Some(value) = find(5) else { return }` reports
+  `undefined identifier "value"` in the interpolation (the `+=` line is fine). Found by
+  Sulafat (10/19).
+- **[OPEN] `if` is not an operand** — `let n = 1 + if flag { 2 } else { 3 }` is a syntax
+  error, and the recovery then reports `lyra-E074` (a `let … else` that falls through),
+  naming a construct the line does not have. Parenthesized or bound first it works. Found
+  by Sulafat (10/19).
+- **[OPEN] A field accepts the wrong array** — `h.items = [t in h.items | t.name != "a"]`
+  (a `[]bool`) into a `[]Item` field passes `lyrac check`, and the backend fails: "cannot
+  store i1 into %Item". The same into a local is refused (`cannot assign []bool to []Item`).
+  Found by Sulafat (10/19).
 
 ## Lazy sequences — `gen` and `Seq<t>`
 

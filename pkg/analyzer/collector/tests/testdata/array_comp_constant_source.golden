@@ -1,0 +1,33 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(foo) {
+			BindingKind: let
+			Name: foo
+			Value: {
+				ArrayCompExpr {
+					Generators: {
+						Generator {
+							Identifier: p
+							Value: {
+								IdentifierExpr(PAIRS) {
+									IsConst: true
+									Name: PAIRS
+								}
+							}
+						}
+					}
+					Result: {
+						TupleIndexExpr {
+							Index: 1
+							Object: {
+								IdentifierExpr(p) {
+									Name: p
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

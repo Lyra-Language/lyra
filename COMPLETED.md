@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — A constant as a comprehension source
+
+`[p in PAIRS | p.1]` over a `const PAIRS` was a syntax error at `in`, reported from
+Sulafat, whose Edit menu reads a constant table. The clause's source is a fixed list in
+`array_comprehension.js` — a range, a literal, a name, a call, a field, an element, or
+something parenthesized — and "a name" there was `identifier`. An all-caps name never
+reaches that rule: it lexes as a `const_identifier` (the lexer picks it for any
+`[A-Z][A-Z0-9_]*`, which is why `W009` warns about all-caps type names), so a constant
+matched no alternative. Adding `const_identifier` to the list fixed it without a new
+conflict; the collector reads the source with `CollectExpression`, which already makes a
+`const_identifier` an `IdentifierExpr` with `IsConst`, so nothing below the grammar
+changed. Tested at both ends: the corpus (with a guard), a collector golden, and a
+behavioural test pairing a constant source with another clause.
+
+Found on the way and left open: a guard is a comparison, a call or a name only, so a
+`bool` field as a guard reads as a bitwise-or result (todo.md).
+
 ### 10/19/26 — `.lui` errors in the editors, at the markup
 
 `lyra-lsp` diagnoses a `.lui` buffer through what lui makes of it: `lui --stdin --name

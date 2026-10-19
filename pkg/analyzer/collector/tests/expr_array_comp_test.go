@@ -22,3 +22,8 @@ func TestCollectArrayCompExprWithArrayLiteralGenerator(t *testing.T) {
 func TestCollectArrayCompExprWithFieldAndElementSources(t *testing.T) {
 	runGoldenTest(t, `let foo = [ s in game.sprites, c in grid[0] | (s.name, c) ]`, "array_comp_field_and_element_sources")
 }
+
+// A constant as a source (10/19), a `const_identifier` under `Iterable` as a name is.
+func TestCollectArrayCompExprWithConstantSource(t *testing.T) {
+	runGoldenTest(t, `let foo = [ p in PAIRS | p.1 ]`, "array_comp_constant_source")
+}

@@ -531,6 +531,27 @@ let main = () -> void => {
 	}
 }
 
+// A constant is a source (10/19): `[p in PAIRS | p.1]` over a `const PAIRS` was a syntax
+// error at `in`, an all-caps name lexing as a `const_identifier` rather than the
+// `identifier` the clause took. Found by Sulafat, reading its Edit menu's table. It takes a
+// guard, and pairs with another clause.
+func TestExec_ArrayCompConstantSource(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+const PAIRS: [](i64, bool) = [(1, true), (2, false), (3, true)]
+const NAMES: []string = ["a", "b"]
+
+let main = () -> void => {
+  let flags = [p in PAIRS | p.1]
+  let kept = [p in PAIRS | p.1 == true | p.0]
+  let both = [n in NAMES, p in PAIRS | p.0 < 3 | "${n}${p.0}"]
+  print("${flags.len()} ${kept.len()} ${kept[1]} ${both.join(" ")}")
+}`, "")
+	if want := "3 2 3 a1 a2 b1 b2"; out != want {
+		t.Errorf("printed %q; want %q", out, want)
+	}
+}
+
 // A comprehension's result takes its element type from the context, as a literal's
 // elements do (10/01): `[i in 0..<3 | []]` against `[][]i64` left each `[]` with no element
 // type, and the backend refused it as "dynamic array has no element type". Found by Vega
