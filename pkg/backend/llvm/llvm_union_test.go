@@ -315,12 +315,12 @@ let wav_bytes = pure (freq: i64, ms: i64) -> []u8 => {
   out
 }
 let ascii = pure (buf: []u8, s: string) -> []u8 => {
-  var out = buf
+  var out = [...buf]
   for b in s.encode_utf8() { out.push(b) }
   out
 }
 let u32le = pure (buf: []u8, v: i64) -> []u8 => {
-  var out = buf
+  var out = [...buf]
   out.push(u8(v % 256))
   out.push(u8((v / 256) % 256))
   out.push(u8((v / 65536) % 256))
@@ -328,7 +328,7 @@ let u32le = pure (buf: []u8, v: i64) -> []u8 => {
   out
 }
 let u16le = pure (buf: []u8, v: i64) -> []u8 => {
-  var out = buf
+  var out = [...buf]
   out.push(u8(v % 256))
   out.push(u8((v / 256) % 256))
   out

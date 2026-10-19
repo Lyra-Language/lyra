@@ -270,14 +270,14 @@ let wav_bytes = pure (samples: []u8, rate: i64) -> []u8 => {
 }
 
 let push_ascii = pure (buf: []u8, s: string) -> []u8 => {
-  var out = buf
+  var out = [...buf]
   for b in s.encode_utf8() { out.push(b) }
   out
 }
 
 /// WAV is little-endian, so the low byte goes first.
 let push_u32 = pure (buf: []u8, v: i64) -> []u8 => {
-  var out = buf
+  var out = [...buf]
   out.push(u8(v % 256))
   out.push(u8((v / 256) % 256))
   out.push(u8((v / 65536) % 256))
@@ -286,7 +286,7 @@ let push_u32 = pure (buf: []u8, v: i64) -> []u8 => {
 }
 
 let push_u16 = pure (buf: []u8, v: i64) -> []u8 => {
-  var out = buf
+  var out = [...buf]
   out.push(u8(v % 256))
   out.push(u8((v / 256) % 256))
   out

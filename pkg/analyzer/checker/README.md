@@ -167,6 +167,20 @@ Asked of value-**producing** forms only (a `[]T` identifier allocates nothing):
   conservative. Only `callEffect`/`methodCallEffect` read `lambdaBase`/`methodBase`.
 - A `pure` function's own `mut`-parameter writes are still refused, including the indirect one
   (`mutArgument` reports it); a missing argument for a written slot is reported, never skipped.
+- **A local alias is its source** (`aliasSources`, before the walk): a `let`/`var` set from a
+  place rooted in a binding (through branches and literals) or a `for` element over one, whose
+  type shares a buffer (`ownership.SharesMutableState`). Each write case resolves its root
+  through it (`writeThrough`, `mutArgument`), but **only a write landing inside a heap buffer
+  escapes** (`intoShared`: an object on the way is a `[]T` or `shared`, or a mutating
+  builtin's receiver is one) — a struct's inline fields are the local's own copy. So the
+  parameter tables carry **`sharedWrites`**: which written parameters some write reaches
+  into the buffer of, which is what passing an alias costs. **A write into a plain
+  parameter's buffer is a parameter write too** (`paramWrites`, shared), so it is charged at
+  the call by its argument — free on a clone or temporary, passed on through the caller's own
+  parameter — rather than as a flat EffectMut. A literal's parts alias only where their own
+  type shares, and an array literal's only through its elements (`alias.viaElement`,
+  `intoShared(…, belowRoot)`). Name-keyed and flow-insensitive; a call returning its argument
+  is not followed.
 
 ### Declared callback bounds (`f: pure () -> t`)
 

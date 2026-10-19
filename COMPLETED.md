@@ -31,6 +31,45 @@ bar, drawn by ImGui elsewhere. Two gaps in the layer showed up, both fixed here.
 - The sliders and colour editors are drawn in Slots, on a module-level copy of the
   settings, because `seen` is a callback and cannot write the caller's locals.
 
+### 10/19/26 — A write through a local alias reaches its source
+
+`let f = (xs: []i64) -> i64 => { var all = xs; all.push(99); all.len() }` grew the caller's
+array, since a variable set to an array shares its buffer, and W018 advised `pure` for it. A
+`pure` bound accepted it, and so did four other shapes: a field (`var items = b.items`), a row
+of an array of arrays, an alias of an alias, and a captured array. One `pure` function over an
+immutable `let` global answered 2 and then 3. The purity walk asked only whether the body
+declared the written root.
+
+- **A local alias is its source.** `aliasSources` maps a local set from a place rooted in a
+  binding (through `if`/`match` and literals), or a `for` element over one, to that binding,
+  when the value's type shares a buffer (`ownership.SharesMutableState`). Every write case
+  resolves its root through it. An alias of a `mut` parameter writes that parameter, of a
+  capture escapes, and of any other non-`own` parameter writes the caller's buffer, which is
+  new: a direct write to such a parameter was already refused, as an immutable borrow.
+- **Only a write into the buffer escapes**, which the first cut missed: `std.rar` copies a
+  `Cursor { data, at }` and advances `c.at` through a `mut` helper, and every such call was
+  refused, though `at` is the local's own copy. `intoShared` asks whether the written place
+  passes inside a `[]T` or `shared` value. The parameter tables carry `sharedWrites`, which
+  written `mut` parameters some write reaches *into*, and that is what passing an alias
+  costs a caller.
+- **A write into a plain parameter's buffer is charged at the call**, as a `mut`
+  parameter's is: free on a clone or temporary, passed on through the caller's own
+  parameter. Vega's `refused_at` runs `applied` on `clone_project()` and is pure, though
+  `applied` itself is not.
+- **A literal shares only what its parts do**: the first cut refused Sheliak's `var kept:
+  []string = [path]` (a new array of strings) and `script_bus` (a struct of scalars and
+  fresh arrays). Only parts whose type shares count, and an array literal's elements
+  only below its own buffer (`rows[0].push(1)` reaches `xs`, `rows.push(…)` does not).
+- **Not followed**: a call returning its argument (`var a = id(xs)`), and a local reassigned
+  to a fresh array (still charged, which errs toward an effect). The language's aliasing
+  itself, a `let` global's buffer grown through a `var`, is todo.md's (e), unchanged.
+- **What it found elsewhere**, each a function marked `pure` that changed its argument:
+  Vega's `applied` (marked 10/18 on W018 advice this hole produced; unmarked), `to_module`
+  (pushed onto `self.notes`; now copies), Sheliak's `first_columns_alike` and Breakout's WAV
+  helpers (wrote the buffer they were given and returned it; now copy, the output unchanged
+  for every caller). **A repo scan in zsh must split its list** (`${(f)files}`): an unquoted
+  `$files` is one word there, and the first scan of this change checked nothing.
+
 ### 10/19/26 — Inputs that carry a value; Vega's import dialog as markup
 
 The import dialog was chosen to force the tree's open question — an event carrying a

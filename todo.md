@@ -694,11 +694,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (a `bool` field as the guard) reads as the single result `p.1 | p.0`, a bitwise-or, and
   is refused as one; `p.1 == true` works. A field, an element or a tuple position could be
   a guard too.
-- **[OPEN] A push through a local alias of a parameter's array is called pure** —
-  `let f = (xs: []i64) -> i64 => { var all = xs; all.push(99); all.len() }` grows the
-  caller's array (as documented: a variable set to an array shares its buffer), yet W018
-  says `f` "has no observable effect; mark it `pure`": the purity walk takes `all` for a
-  local. Sulafat's frame layout did this to its sessions' blocks, a block a frame (10/19).
 - **[OPEN] A later `let … else` hides an earlier binding of its name** — `var value = 1;
   value += 1; println("${value}"); let Some(value) = find(5) else { return }` reports
   `undefined identifier "value"` in the interpolation (the `+=` line is fine). Found by
@@ -801,7 +796,9 @@ annotations.
   interior borrows force it. Leaning toward statement-scoped projections over a static
   container freeze.
 - **[OPEN] (e) Observable aliasing.** `var b = a; b[0] = 99` changes `a` silently for `[]T`
-  and structs holding one. Warning on every copy is too noisy; copy-on-write
+  and structs holding one — even an immutable `let` global's, through a `var` set to it.
+  `pure` now sees through such a local (10/19); the language rule itself is unchanged.
+  Warning on every copy is too noisy; copy-on-write
   (`lyra_rc_drop_reuse` is already the uniqueness test) would make `xs[i] = v` allocate
   under `noalloc`, so it needs (c) first. Check whatever lands for (c) against this.
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -660,10 +661,17 @@ type inference struct {
 	// conservative; beyondParams is the row with those writes left out.
 	paramWrites  map[*ast.LambdaExpr]map[string]int
 	beyondParams map[*ast.LambdaExpr]Effect
+	// sharedWrites marks the written `mut` parameters some write reaches *into the buffer*
+	// of — `p.items.push(…)`, `p[0] = …` — rather than only their own inline parts (`p.at
+	// += 1`). Passing a local that shares another binding's buffer (aliasSources) costs a
+	// caller something only for these: the inline parts of a struct are the local's own
+	// copy.
+	sharedWrites map[*ast.LambdaExpr]map[string]bool
 	// methodParamWrites and methodBeyondParams are the trait-impl counterparts, positions
 	// indexing the signature as methodCallbacks' do.
 	methodParamWrites  map[*ast.TraitMethodImpl]map[string]int
 	methodBeyondParams map[*ast.TraitMethodImpl]Effect
+	methodSharedWrites map[*ast.TraitMethodImpl]map[string]bool
 	// signatures maps each impl method to the signature its trait declares, the only place
 	// a method's parameter types (and so its declared callback bounds) exist.
 	signatures map[*ast.TraitMethodImpl]*types.LambdaType
@@ -709,8 +717,10 @@ func newInference(
 		callbacks:          map[*ast.LambdaExpr]map[string]int{},
 		methodCallbacks:    map[*ast.TraitMethodImpl]map[string]int{},
 		paramWrites:        map[*ast.LambdaExpr]map[string]int{},
+		sharedWrites:       map[*ast.LambdaExpr]map[string]bool{},
 		beyondParams:       map[*ast.LambdaExpr]Effect{},
 		methodParamWrites:  map[*ast.TraitMethodImpl]map[string]int{},
+		methodSharedWrites: map[*ast.TraitMethodImpl]map[string]bool{},
 		methodBeyondParams: map[*ast.TraitMethodImpl]Effect{},
 		signatures:         signatures,
 		methodTable:        methodTable,
@@ -1821,8 +1831,9 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 	for {
 		changed := false
 		for lam, capture := range lambdaDefs {
-			effects, cbs, writes := lambdaEffects(lam, capture, inf)
-			if recordEffects(impureLambdas, inf.beyondParams, inf.paramWrites, lam, effects, writes) {
+			effects, cbs, writes, shared := lambdaEffects(lam, capture, inf)
+			if recordEffects(impureLambdas, inf.beyondParams, inf.paramWrites, lam, effects, writes) ||
+				recordShared(inf.sharedWrites, lam, shared) {
 				changed = true
 			}
 			// The callback set grows monotonically too, and never shrinks: a parameter
@@ -1840,8 +1851,9 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			}
 		}
 		for _, m := range methods {
-			effects, cbs, writes := methodEffects(m, base, inf)
-			if recordEffects(impureMethods, inf.methodBeyondParams, inf.methodParamWrites, m, effects, writes) {
+			effects, cbs, writes, shared := methodEffects(m, base, inf)
+			if recordEffects(impureMethods, inf.methodBeyondParams, inf.methodParamWrites, m, effects, writes) ||
+				recordShared(inf.methodSharedWrites, m, shared) {
 				changed = true
 			}
 			// Monotone, exactly as the lambda side: a parameter found to be called stays
@@ -1860,6 +1872,22 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			break
 		}
 	}
+}
+
+// recordShared merges a pass's into-the-buffer parameter writes into the table, reporting
+// whether it grew. Monotone, as the parameter writes are.
+func recordShared[K comparable](table map[K]map[string]bool, key K, shared map[string]bool) bool {
+	changed := false
+	for name := range shared {
+		if !table[key][name] {
+			if table[key] == nil {
+				table[key] = map[string]bool{}
+			}
+			table[key][name] = true
+			changed = true
+		}
+	}
+	return changed
 }
 
 // recordEffects folds one pass's result for a callable into the fixpoint's tables and
@@ -2232,15 +2260,15 @@ func callEffect(
 	inf *inference,
 	enclosing map[string]int,
 	enclosingCallbacks map[string]int,
-	mutArg func(ast.Expression) Effect,
+	mutArg func(ast.Expression, bool) Effect,
 ) Effect {
 	found := inf.lambdaBase(callee)
-	for _, idx := range inf.paramWrites[callee] {
+	for name, idx := range inf.paramWrites[callee] {
 		if idx >= len(call.Arguments) {
-			found |= mutArg(nil)
+			found |= mutArg(nil, true)
 			continue
 		}
-		found |= mutArg(call.Arguments[idx])
+		found |= mutArg(call.Arguments[idx], inf.sharedWrites[callee][name])
 	}
 	for _, idx := range inf.callbacks[callee] {
 		if idx >= len(call.Arguments) {
@@ -2266,15 +2294,15 @@ func methodCallEffect(
 	inf *inference,
 	enclosing map[string]int,
 	enclosingCallbacks map[string]int,
-	mutArg func(ast.Expression) Effect,
+	mutArg func(ast.Expression, bool) Effect,
 ) Effect {
 	found := inf.methodBase(method)
-	for _, idx := range inf.methodParamWrites[method] {
+	for name, idx := range inf.methodParamWrites[method] {
 		arg, ok := methodArgumentAt(call, idx)
 		if !ok {
 			arg = nil
 		}
-		found |= mutArg(arg)
+		found |= mutArg(arg, inf.methodSharedWrites[method][name])
 	}
 	for _, idx := range inf.methodCallbacks[method] {
 		arg, ok := methodArgumentAt(call, idx)
@@ -2382,6 +2410,15 @@ type callable struct {
 	mutBorrows map[string]bool
 	// params maps a parameter name to its position, for callback detection.
 	params map[string]int
+	// ownParams are the `own` parameters: a value the caller gave up, so a write through a
+	// local sharing its buffer is the callee's own business (see aliasSources).
+	ownParams map[string]bool
+	// aliases maps a local sharing storage with a parameter or capture to it, set by
+	// bodyEffects before the walk (aliasSources).
+	aliases map[string]alias
+	// inf is the inference the walk runs against, set by bodyEffects, for the helpers it
+	// calls that need the type table.
+	inf *inference
 	// note records an allocation *site* against whichever owner this body belongs to, so
 	// lyra-E016 can point at the expression.
 	note func(ex ast.Expression)
@@ -2458,39 +2495,74 @@ func (c *callable) declares(name string) bool {
 // Until 10/16 every such call was EffectMut, `EffectMut` being one bit: a callee that
 // writes only through its `mut` parameters looked like one writing a capture, so a `pure`
 // function could not call a helper on its own `var` (Sheliak's `declare_save(cart)`).
-func (c *callable) mutArgument(arg ast.Expression, callee string, writes map[string]int) Effect {
+//
+// calleeShared says the callee writes into its parameter's buffer (sharedWrites), not only
+// its inline parts; through an alias only that, or a place reaching into a buffer, escapes.
+func (c *callable) mutArgument(arg ast.Expression, callee string, calleeShared bool, writes map[string]int, shared map[string]bool) Effect {
 	root := rootIdentName(arg)
 	// The argument is a write target, as an assignment's is: its root is reported here,
 	// not again as a read of captured mutable state.
 	c.markAssignRoot(rootIdentExpr(arg))
 	switch {
-	case writesThroughPointer(arg) || root == "":
+	case writesThroughPointer(arg):
 		c.pure(arg.GetLocation(),
 			"pure function passes a place it does not own to `mut` parameter of %q, which writes through it", callee)
 		return EffectMut
-	case c.mutBorrows[root]:
-		if idx, ok := c.params[root]; ok {
-			writes[root] = idx
+	case root == "":
+		// A temporary — a call's result, a literal — that nothing else holds: what the
+		// callee writes into it is gone with it. (A `mut` parameter refuses one outright.)
+		return EffectNone
+	}
+	// Through a local sharing a buffer, the write reaches that local's source
+	// (aliasSources), so it is charged as a write to the source would be — when it reaches
+	// the buffer at all.
+	src, viaElement := source(c.aliases, root)
+	intoBuffer := c.intoShared(arg, false, nil, src != root && viaElement) || calleeShared
+	if src != root && !intoBuffer {
+		return EffectNone
+	}
+	switch {
+	case c.mutBorrows[src]:
+		if idx, ok := c.params[src]; ok {
+			writes[src] = idx
+			if intoBuffer {
+				shared[src] = true
+			}
 			c.pure(arg.GetLocation(),
-				"pure function passes `mut`-borrowed parameter %q to %q, which writes through it; the write escapes to the caller's value", root, callee)
+				"pure function passes `mut`-borrowed parameter %q to %q, which writes through it; the write escapes to the caller's value", src, callee)
 			return EffectNone
 		}
 		return EffectMut
-	case !c.declares(root):
+	case !c.declares(src):
 		c.pure(arg.GetLocation(),
-			"pure function passes captured binding %q to %q, which writes through it; mutation must not escape the function", root, callee)
+			"pure function passes captured binding %q to %q, which writes through it; mutation must not escape the function", src, callee)
 		return EffectMut
+	case c.isSharedParam(src) && intoBuffer && (src != root || calleeShared):
+		// Into this function's own plain parameter's buffer — directly or through a local
+		// sharing it — so the write is passed on, to be charged at this function's callers.
+		if idx, ok := c.params[src]; ok {
+			writes[src] = idx
+			shared[src] = true
+		}
+		if src == root {
+			c.pure(arg.GetLocation(),
+				"pure function passes parameter %q to %q, which writes into its buffer — the caller's", src, callee)
+		} else {
+			c.pure(arg.GetLocation(),
+				"pure function passes %q, which shares parameter %q's storage with the caller, to %q, which writes through it — copy where %q is set (`[...value]`)", root, src, callee, root)
+		}
+		return EffectNone
 	}
 	return EffectNone
 }
 
 // lambdaEffects is the effect of a free function's body, plus the callback parameters it
 // calls. See callable for why this is a descriptor rather than a walk.
-func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inference) (Effect, map[string]int, map[string]int) {
+func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inference) (Effect, map[string]int, map[string]int, map[string]bool) {
 	if lam.IsExtern {
 		// No body to walk, and no reason to walk one: what a foreign function does is
 		// what its declaration claims. See externEffects.
-		return externEffects(lam), nil, nil
+		return externEffects(lam), nil, nil, nil
 	}
 	return bodyEffects(lambdaCallable(lam, defCapture, inf), inf)
 }
@@ -2507,6 +2579,7 @@ func lambdaCallable(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *infere
 		// same body), not just the scope it was defined in.
 		capture:    pushScope(defCapture, scope),
 		mutBorrows: inf.frames.mutBorrowsFor(lam),
+		ownParams:  ownParamsOf(lam),
 		params:     inf.frames.paramsFor(lam),
 		note:       func(ex ast.Expression) { inf.allocSites.noteLambda(lam, ex) },
 		boundAt:    func(idx int) *types.LambdaType { return declaredBound(lam, idx) },
@@ -2524,7 +2597,7 @@ func lambdaCallable(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *infere
 // The method's declared parameter bounds come from its *trait's* signature, the only place
 // a method's parameter types live. A nil signature falls back to treating every called
 // parameter as unconstrained, which is the conservative answer.
-func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) (Effect, map[string]int, map[string]int) {
+func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) (Effect, map[string]int, map[string]int, map[string]bool) {
 	return bodyEffects(methodCallable(m, base, inf), inf)
 }
 
@@ -2538,6 +2611,7 @@ func methodCallable(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference
 		scope:      scope,
 		capture:    pushScope(base, scope),
 		mutBorrows: methodMutBorrows(params, signature),
+		ownParams:  methodOwnParams(params, signature),
 		params:     params,
 		note:       func(ex ast.Expression) { inf.allocSites.noteMethod(m, ex) },
 		boundAt:    func(idx int) *types.LambdaType { return signatureBound(signature, idx) },
@@ -2566,6 +2640,246 @@ func methodMutBorrows(params map[string]int, sig *types.LambdaType) map[string]b
 	return mut
 }
 
+// ownParamsOf is the set of a lambda's `own` parameters.
+func ownParamsOf(lam *ast.LambdaExpr) map[string]bool {
+	own := map[string]bool{}
+	for i := range lam.Parameters {
+		p := &lam.Parameters[i]
+		if p.TypeModifier == types.Own && p.Pattern != nil {
+			own[p.Pattern.GetName()] = true
+		}
+	}
+	return own
+}
+
+// methodOwnParams is ownParamsOf for a trait-impl method, read from its trait's signature
+// by position as methodMutBorrows reads `mut`.
+func methodOwnParams(params map[string]int, sig *types.LambdaType) map[string]bool {
+	own := map[string]bool{}
+	if sig == nil {
+		return own
+	}
+	for name, idx := range params {
+		if idx < len(sig.Parameters) && sig.Parameters[idx].Borrow == types.Own {
+			own[name] = true
+		}
+	}
+	return own
+}
+
+// aliasSources maps each local of a body that may share storage with a parameter or a
+// capture to that source — the binding a write through the local reaches.
+//
+// **A variable set to an array shares its buffer** (LANGUAGE.md), and so does one set to a
+// struct or tuple holding one (ownership.SharesMutableState). So `var all = xs;
+// all.push(99)` grows the caller's `xs`, and until 10/19 the purity walk, asking only
+// "did this body declare the root?", called it a local write: W018 advised `pure` for it
+// and a `pure` bound accepted it (Sulafat's frame layout grew its sessions' blocks a frame
+// at a time). A local here is one a `let`/`var` sets from a chain rooted in a binding
+// (`xs`, `b.items`, `grid[0]`, through `if`/`match` branches and inside a literal), or a
+// `for` element over one, where the value's type shares a buffer. A copy (`[...xs]`) and a
+// call's result are not aliases; a call returning its argument would be, and is the known
+// limit. Name-keyed and flow-insensitive, as the rest of this walk is: a local reassigned
+// to a fresh array afterwards is still charged, which errs toward an effect.
+func (c *callable) aliasSources(inf *inference) map[string]alias {
+	tt := inf.allocSites.table()
+	shares := func(e ast.Expression) bool {
+		if tt == nil {
+			return true // no types to ask: assume it shares, which errs toward an effect
+		}
+		t, ok := tt.Get(e)
+		if !ok {
+			return true
+		}
+		return ownership.SharesMutableState(t, inf.lookup, e.GetLocation())
+	}
+	elementShares := func(iterable ast.Expression) bool {
+		if tt == nil {
+			return true
+		}
+		t, ok := tt.Get(iterable)
+		if !ok {
+			return true
+		}
+		switch a := types.StripNewtype(t).(type) {
+		case types.DynamicArrayType:
+			return ownership.SharesMutableState(a.ElementType, inf.lookup, iterable.GetLocation())
+		case types.StaticArrayType:
+			return ownership.SharesMutableState(a.ElementType, inf.lookup, iterable.GetLocation())
+		}
+		return false
+	}
+	out := map[string]alias{}
+	c.walk(func(s ast.Statement) bool {
+		if decl, ok := s.(*ast.VarDeclStmt); ok && decl.Value != nil && shares(decl.Value) {
+			for _, root := range valueRoots(decl.Value, shares, false) {
+				if root.name != decl.Name {
+					out[decl.Name] = root
+					break
+				}
+			}
+		}
+		return true
+	}, func(e ast.Expression) bool {
+		switch ex := e.(type) {
+		case *ast.LambdaExpr:
+			return false // a nested lambda's locals are its own
+		case *ast.ForInLoopExpr:
+			elem := ex.Key
+			if ex.Value != "" {
+				elem = ex.Value
+			}
+			if elem != "" && ex.Iterable != nil && elementShares(ex.Iterable) {
+				if root := rootIdentName(ex.Iterable); root != "" && root != elem {
+					out[elem] = alias{name: root}
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// alias is the binding a local shares storage with. viaElement says the local's own buffer is
+// new — it was set from an array literal holding the binding — so only a write reaching
+// below that buffer, into an element's, reaches the binding.
+type alias struct {
+	name       string
+	viaElement bool
+}
+
+// valueRoots is the bindings a value may share storage with: the root of a place it reads
+// (`b.items` → b), through the branches and tail it takes its value from, and those parts of
+// a literal whose own type shares a buffer — a struct's or tuple's directly, an array
+// literal's through its elements (it is a new buffer itself). A copy, a call's result and a
+// scalar have none.
+func valueRoots(e ast.Expression, shares func(ast.Expression) bool, viaElement bool) []alias {
+	parts := func(exprs []ast.Expression, below bool) []alias {
+		var roots []alias
+		for _, el := range exprs {
+			if el == nil {
+				continue
+			}
+			if _, spread := el.(*ast.SpreadExpr); spread {
+				continue // a spread copies its operand's elements
+			}
+			if shares(el) {
+				roots = append(roots, valueRoots(el, shares, below)...)
+			}
+		}
+		return roots
+	}
+	switch ex := e.(type) {
+	case *ast.IfExpr:
+		roots := valueRoots(ex.Then, shares, viaElement)
+		if ex.Else != nil {
+			roots = append(roots, valueRoots(ex.Else, shares, viaElement)...)
+		}
+		return roots
+	case *ast.MatchExpr:
+		var roots []alias
+		for _, arm := range ex.MatchArms {
+			roots = append(roots, valueRoots(arm.Body, shares, viaElement)...)
+		}
+		return roots
+	case *ast.BlockExpr:
+		if n := len(ex.Statements); n > 0 {
+			if es, ok := ex.Statements[n-1].(*ast.ExpressionStmt); ok {
+				return valueRoots(es.Expression, shares, viaElement)
+			}
+		}
+		return nil
+	case *ast.TupleLiteralExpr:
+		return parts(ex.Elements, viaElement)
+	case *ast.ArrayLiteralExpr:
+		return parts(ex.Elements, true)
+	case *ast.StructInstanceExpr:
+		values := make([]ast.Expression, 0, len(ex.Fields))
+		for _, f := range ex.Fields {
+			values = append(values, f.Value)
+		}
+		return parts(values, viaElement)
+	case *ast.FunctionCallExpr:
+		return nil
+	}
+	if root := rootIdentName(e); root != "" {
+		return []alias{{name: root, viaElement: viaElement}}
+	}
+	return nil
+}
+
+// intoShared reports whether a write to place lands inside a heap buffer on its way: some
+// object it is reached through is a `[]T` or a `shared` value (`all[0]`, `c.items[i]`,
+// `node.x` on a shared node), or — inside, for a mutating builtin like `push` — place is one
+// itself. `c.at` on a struct is the struct's own inline storage, and no buffer. With no
+// types to ask it answers true, which errs toward an effect.
+//
+// belowRoot leaves the root's own buffer out: for a local whose buffer is new (an array
+// literal holding a binding), only a buffer below it — an element's — is shared.
+func (c *callable) intoShared(place ast.Expression, inside bool, inf *inference, belowRoot bool) bool {
+	if inf == nil {
+		inf = c.inf
+	}
+	var tt *typetable.TypeTable
+	if inf != nil {
+		tt = inf.allocSites.table()
+	}
+	if tt == nil {
+		return true
+	}
+	heap := func(e ast.Expression) bool {
+		t, ok := tt.Get(e)
+		if !ok {
+			return true
+		}
+		t = types.StripNewtype(t)
+		if _, dyn := t.(types.DynamicArrayType); dyn {
+			return true
+		}
+		return types.AllocationOf(t) == types.Shared
+	}
+	isRoot := func(e ast.Expression) bool {
+		_, ok := e.(*ast.IdentifierExpr)
+		return ok
+	}
+	if inside && heap(place) && !(belowRoot && isRoot(place)) {
+		return true
+	}
+	cur := place
+	for {
+		obj, ok := ast.PlaceObject(cur)
+		if !ok {
+			return false
+		}
+		if heap(obj) && !(belowRoot && isRoot(obj)) {
+			return true
+		}
+		cur = obj
+	}
+}
+
+// isSharedParam reports whether name is a parameter whose storage the caller still holds —
+// any but an `own` one, which the caller gave up. (A `mut` one is charged on its own.)
+func (c *callable) isSharedParam(name string) bool {
+	_, isParam := c.params[name]
+	return isParam && !c.ownParams[name]
+}
+
+// source follows a local's alias to the binding it shares storage with — or answers the
+// name itself — and whether some step was through an array literal's elements (alias).
+func source(aliases map[string]alias, name string) (string, bool) {
+	viaElement := false
+	for i := 0; i < 32; i++ {
+		next, ok := aliases[name]
+		if !ok || next.name == name {
+			return name, viaElement
+		}
+		viaElement = viaElement || next.viaElement
+		name = next.name
+	}
+	return name, viaElement
+}
+
 // bodyEffects walks one callable's body and returns its base effect together with the
 // effect-polymorphic parameters it was found to call — the ones whose cost belongs to
 // whoever supplies them, charged at that call site instead — and the `mut` parameters it
@@ -2578,13 +2892,15 @@ func methodMutBorrows(params map[string]int, sig *types.LambdaType) map[string]b
 // and its history is exactly why it is gone: three copies of this ladder once agreed and
 // were wrong together, and the last divergence was a soundness hole the diagnostics
 // could not see because the reporting copy was the correct one (see callable).
-func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[string]int) {
+func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[string]int, map[string]bool) {
 	// foundCallbacks are the effect-polymorphic parameters discovered on this pass: the
 	// ones this body calls, or hands on to another function's callback slot.
 	foundCallbacks := make(map[string]int)
 	// foundWrites are the `mut` parameters this body writes through, or hands on to a
 	// callee's written `mut` slot.
 	foundWrites := make(map[string]int)
+	// foundShared are those of them some write reaches into the buffer of (sharedWrites).
+	foundShared := make(map[string]bool)
 	var found Effect
 	// writeParam charges a write through `mut` parameter name to the caller's argument. A
 	// name with no position (none is expected) is charged here, conservatively.
@@ -2595,15 +2911,61 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 			found |= EffectMut
 		}
 	}
-	mutArg := func(callee string, call *ast.FunctionCallExpr) func(ast.Expression) Effect {
-		return func(arg ast.Expression) Effect {
+	// writeThrough charges a write to a place rooted at root — an assignment, `+=`, a
+	// mutating builtin — by whose storage it reaches: the root's own, or, where the root
+	// is a local sharing a buffer, its source's (aliasSources). The three cases of `p.x =
+	// v` read the source: a `mut` parameter's write goes to the caller, a capture's escapes,
+	// and a local alias of any other parameter but an `own` one writes the caller's
+	// buffer. A root that is no alias says what it always said.
+	//
+	// shared says the write lands inside a heap buffer on its way (intoShared) rather than
+	// in the root's own inline storage. Through an alias only such a write escapes: the
+	// inline parts of a struct copied into a local are the local's own.
+	c.inf = inf
+	c.aliases = c.aliasSources(inf)
+	writeThrough := func(place ast.Expression, root string, inside bool, loc ast.Location) {
+		src, viaElement := source(c.aliases, root)
+		shared := c.intoShared(place, inside, inf, src != root && viaElement)
+		if src != root && !shared {
+			return
+		}
+		switch {
+		case c.mutBorrows[src]:
+			writeParam(src)
+			if shared {
+				foundShared[src] = true
+			}
+			if src == root {
+				c.pure(loc, "pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
+			} else {
+				c.pure(loc, "pure function mutates %q, which shares `mut`-borrowed parameter %q's storage; the write escapes to the caller's value", root, src)
+			}
+		case !c.declares(src):
+			found |= EffectMut
+			if src == root {
+				c.pure(loc, "pure function mutates captured binding %q; mutation must not escape the function", root)
+			} else {
+				c.pure(loc, "pure function mutates %q, which shares captured binding %q's storage; mutation must not escape the function", root, src)
+			}
+		case src != root && c.isSharedParam(src):
+			// Into a plain parameter's buffer: the write lands on whatever the caller
+			// passes, exactly as a `mut` parameter's does, so it is charged there — free
+			// on the caller's own fresh value (a clone, a literal), passed on through the
+			// caller's own parameter, an effect on a capture (mutArgument).
+			writeParam(src)
+			foundShared[src] = true
+			c.pure(loc, "pure function mutates %q, which shares parameter %q's storage with the caller — a variable set to an array shares its buffer; copy where %q is set (`[...value]`) to change it here alone", root, src, root)
+		}
+	}
+	mutArg := func(callee string, call *ast.FunctionCallExpr) func(ast.Expression, bool) Effect {
+		return func(arg ast.Expression, calleeShared bool) Effect {
 			if arg == nil {
 				// Not expected of a checked call; charged, and said, rather than skipped.
 				c.pure(call.GetLocation(),
 					"pure function calls %q, which writes through a `mut` parameter this call supplies no argument for", callee)
 				return EffectMut
 			}
-			return c.mutArgument(arg, callee, foundWrites)
+			return c.mutArgument(arg, callee, calleeShared, foundWrites, foundShared)
 		}
 	}
 	// noteAlloc sets the bit *and* remembers where it came from, so lyra-E016 can point at
@@ -2636,18 +2998,9 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 				c.pure(st.GetLocation(),
 					"pure function writes through a pointer; pointer writes may mutate external state")
 			} else if root := rootIdentName(st.Target); root != "" {
-				// The two causes get their own sentences: a `mut`-borrow writes through
-				// to the caller's value, a capture mutates state observable elsewhere.
-				switch {
-				case c.mutBorrows[root]:
-					writeParam(root)
-					c.pure(st.GetLocation(),
-						"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
-				case !c.declares(root):
-					found |= EffectMut
-					c.pure(st.GetLocation(),
-						"pure function mutates captured binding %q; mutation must not escape the function", root)
-				}
+				// The causes get their own sentences: a `mut`-borrow writes through to the
+				// caller's value, a capture mutates state observable elsewhere.
+				writeThrough(st.Target, root, false, st.GetLocation())
 				// The base of the target (`origin` in `origin.x = v`) is a write, not a
 				// read; suppress the read report on it. A mutable global used as an
 				// *index* (`grid[i]`) is left untouched, so reading it is still flagged.
@@ -2713,17 +3066,8 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 		case *ast.MathAssignOpExpr:
 			// The LHS is a write target (reported here); don't also flag it as a read.
 			c.markAssignRoot(rootIdentExpr(ex.Left))
-			switch root := rootIdentName(ex.Left); {
-			case c.mutBorrows[root]:
-				// `n += 1` / `p.x += 1` on a `mut` parameter: the caller's storage.
-				writeParam(root)
-				c.pure(ex.GetLocation(),
-					"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
-			case !c.declares(root):
-				found |= EffectMut
-				c.pure(ex.GetLocation(),
-					"pure function mutates captured binding %q; mutation must not escape the function", root)
-			}
+			// `n += 1` / `p.x += 1` on a `mut` parameter is the caller's storage.
+			writeThrough(ex.Left, rootIdentName(ex.Left), false, ex.GetLocation())
 		case *ast.TryExpr:
 			// A `?` converting its error through `impl From<…>` runs that impl's `from`
 			// on the failure path: the method's effect is this site's, exactly as a
@@ -2798,18 +3142,10 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 				// `pure` function and the push was not.
 				if inf.methodTable.BuiltinMethodMutates(ex) {
 					if member, isMember := ex.Function.(*ast.MemberExpr); isMember {
-						switch root := rootIdentName(member.Object); {
-						case root == "":
-							// A receiver with no identifier at its root — a call's result,
-							// say — is a value this function alone can see.
-						case c.mutBorrows[root]:
-							writeParam(root)
-							c.pure(ex.GetLocation(),
-								"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
-						case !c.declares(root):
-							found |= EffectMut
-							c.pure(ex.GetLocation(),
-								"pure function mutates captured binding %q; mutation must not escape the function", root)
+						// A receiver with no identifier at its root — a call's result, say —
+						// is a value this function alone can see.
+						if root := rootIdentName(member.Object); root != "" {
+							writeThrough(member.Object, root, true, ex.GetLocation())
 						}
 					}
 				}
@@ -2976,7 +3312,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 		return true
 	}
 	c.walk(onStmt, onExpr)
-	return found, foundCallbacks, foundWrites
+	return found, foundCallbacks, foundWrites, foundShared
 }
 
 // reportImpureCall says which half of an impure call's effect is the guilty one — the
