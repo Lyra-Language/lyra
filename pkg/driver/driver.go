@@ -194,6 +194,9 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	}
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
+	// Before every pass: an aliased constructor import is erased into the constructor's own
+	// name, and the uses it rewrote count the import as used (lyra-W004, below).
+	aliasedConstructorUses := eraseConstructorAliases(program, symTable)
 	res.Diagnostics = append(res.Diagnostics, shadowWarnings(symTable)...)
 	res.Diagnostics = append(res.Diagnostics, constructorShadowWarnings(program, symTable)...)
 	for _, rawErr := range collectorErrors {
@@ -409,7 +412,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// never writes that module's name, so the syntactic check cannot see the use.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, checker.ImportUse{
 		Modules: tc.UFCSModules(),
-		Names:   tc.DispatchedTraits(),
+		Names:   mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses),
 		Callees: tc.UFCSCallees(),
 		Exports: func(file, name string) []string {
 			return typechecker.UFCSReachableExporters(symTable, file, name)
@@ -841,4 +844,25 @@ func joinModulePath(path []ast.ModuleName) string {
 		parts[i] = p.Name
 	}
 	return strings.Join(parts, ".")
+}
+
+// mergeNameUses is the union of two per-file sets of declared names a file used without
+// writing them as a reference — a trait reached by dispatch, a constructor written under its
+// alias — each of which counts its import as used.
+func mergeNameUses(a, b map[string]map[string]bool) map[string]map[string]bool {
+	if len(b) == 0 {
+		return a
+	}
+	out := map[string]map[string]bool{}
+	for _, m := range []map[string]map[string]bool{a, b} {
+		for file, names := range m {
+			if out[file] == nil {
+				out[file] = map[string]bool{}
+			}
+			for n := range names {
+				out[file][n] = true
+			}
+		}
+	}
+	return out
 }

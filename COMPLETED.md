@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — A constructor is a name an import binds
+
+Two entries, one undecided rule: is a constructor a name an import binds, or does it only
+come with its type? Decided: the first. Listing one is a real use, and an alias works, as it
+does for a type or a function.
+
+- **Listing one was already right.** The W004 complaint ("never used" for a listed
+  `JsonString`) did not reproduce in any shape tried, including patterns, arrays, nested
+  uses and `std.json` itself. It was fixed when `cdacebb4` put a constructor imported by
+  name in scope. A constructor still resolves through its type too, unlisted, which is how
+  every `match` on an imported data type reads.
+- **The alias bound nothing.** `Theirs` was lyra-E035 and `Big(3)` "undefined tuple type".
+  A constructor is resolved by name in a dozen places (construction, payloads, patterns,
+  exhaustiveness, the backend's tags), each comparing against the declaration's
+  `c.Name`. Honouring an alias at some of them would check and then miscompile, so it is a
+  **desugaring**, as an `impl` block is: `eraseConstructorAliases` (driver) rewrites each
+  aliased use to the original name before any pass, `importsConstructor` admits a member
+  by its original name, and the rewritten uses count the import as used, through
+  `ImportUse.Names` as a dispatched trait does. Constructing, matching (exhaustive in
+  aliases), `if let`, arrays and a generic `Opt<t>` all hold.
+- **What it costs**: the original name resolves too in a module that imported it under an
+  alias. Strictness would mean carrying "this came from an alias" through every resolution
+  site, which is the dozen-site problem again.
+
 ### 10/19/26 — Four small compiler entries, re-run first
 
 Each entry's reproduction was run before anything was changed. Two were already fixed, and

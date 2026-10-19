@@ -493,9 +493,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
-- **[OPEN] A constructor cannot be imported under an alias**: `import owner.{ OfMap as
-  Theirs }` binds nothing, and a use of `Theirs` is lyra-E035 "undefined constructor or
-  type". Types and functions alias; a constructor is not a name the import binds (10/19).
 - **[OPEN] No float from its bits** (`f32.from_bits`/`f64.from_bits`, and back): Vega's
   Furnace reader decodes a file's IEEE `f32` by hand (`module_import.Bytes.float`).
 - **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
@@ -519,10 +516,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
   and alternations below the top of a pattern (`Some(1 | 2)`, `(1 | 2, _)`, both refused
   today). Neither needed yet.
-- **[OPEN] A data constructor resolves without its import**: `JsonString("a")` compiles with
-  only `import std.json.{ parse_json }`, and listing `JsonString` draws `lyra-W004` ("never
-  used") — yet std.json's own docs list `JsonNull`. Decide the rule; either the visibility or
-  the warning is wrong. Found 09/29 in Vega.
 - **[DONE 10/08] `loop { … }` and `while cond { … }`**; `for` only iterates, and the
   C-style `for init; cond; post` is gone. (COMPLETED.md, 10/08.)
 - **[DONE 10/08] `while let p = v { … }`**, erased by the collector into `loop { if let … }`.

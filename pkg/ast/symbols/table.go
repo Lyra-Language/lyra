@@ -1335,8 +1335,13 @@ func (st *SymbolTable) importsConstructor(loc ast.Location, ctorName string, dec
 		if imp.IsNamespace() || imp.Path != declaring {
 			continue
 		}
-		if member, ok := imp.Members[ctorName]; ok && member == ctorName {
-			return true
+		// By its original name, under whatever name the import gave it: an aliased
+		// constructor's uses are rewritten to the original before any pass reads them
+		// (driver, eraseConstructorAliases), so `Theirs` arrives here as `OfMap`.
+		for _, original := range imp.Members {
+			if original == ctorName {
+				return true
+			}
 		}
 	}
 	return false

@@ -831,6 +831,8 @@ A local declaration of an imported (or prelude) name wins every bare reference i
 
 **Only a name the import admitted shadows.** `import lib` binds no bare name, so it shadows nothing; `import lib.{ a }` shadows `a` and no other export of `lib`; `import lib.{ a as b }` shadows `b`, never `a`. The shadowed declaration is reached by renaming one side — the local one, or the import (`import lib.{ a as other }`) — since a selective import binds no namespace to qualify through.
 
+**A constructor is a name an import binds.** `import owner.{ OfMap }` lists one, and counts as used wherever it is (`lyra-W004` sees a pattern or a construction); `import owner.{ OfMap as Theirs }` binds `Theirs`, which constructs, matches and unwraps as `OfMap` would, generic ones included. A constructor is also reachable through its type, so one never listed still resolves where the value's type names it (`JsonString(s)` against a `JsonValue`). The alias is the program's spelling, though writing the original name beside it resolves too.
+
 **Several modules may export one name**, and a module may re-export a name it imports (`pub let map = (n) => seq.map(n) + 1`). A bare name reaches a module only through its own member list, so the importer chooses; importing one name from two modules is an error, fixed with an alias (`import two.{ helper as other }`) or the namespace.
 
 **Two modules' types of one name are different types**, wherever a value carries one: `let p: Point = two.make()` is refused when `Point` here is not two's, and the message spells them `two.Point` and `Point`.

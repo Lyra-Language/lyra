@@ -55,3 +55,36 @@ let main = () -> u8 => u8(area(Sq { s: 2 }) + area(Circle { r: 1 }))
 		t.Fatalf("want no W016, got %v", got)
 	}
 }
+
+// unusedImportWarnings returns the lyra-W004 messages a program produces.
+func unusedImportWarnings(t *testing.T, files map[string]string) []string {
+	t.Helper()
+	var out []string
+	for _, d := range analyzeTree(t, files).Diagnostics {
+		if d.Code == diag.CodeUnusedImport {
+			out = append(out, d.Message)
+		}
+	}
+	return out
+}
+
+// A constructor imported under an alias and used by it is a used import — its uses are
+// rewritten to the original name before W004 counts references, and counted for the import
+// — while one never used is still reported, under the name the import gave it (10/19).
+func TestUnusedImport_AnAliasedConstructor(t *testing.T) {
+	owner := "module owner\npub data Tool = OfMap | Other\npub let describe = (t: Tool) -> i64 => 1\n"
+	used := unusedImportWarnings(t, map[string]string{
+		"owner.lyra": owner,
+		"main.lyra":  "import owner.{ OfMap as Theirs, describe }\nlet main = () -> u8 => u8(describe(Theirs))\n",
+	})
+	if len(used) != 0 {
+		t.Errorf("a used alias: want no W004, got %v", used)
+	}
+	unused := unusedImportWarnings(t, map[string]string{
+		"owner.lyra": owner,
+		"main.lyra":  "import owner.{ OfMap as Theirs, describe }\nlet main = () -> u8 => u8(describe(Other))\n",
+	})
+	if len(unused) != 1 || !strings.Contains(unused[0], `"Theirs" is never used`) {
+		t.Errorf("an unused alias: want one W004 naming Theirs, got %v", unused)
+	}
+}
