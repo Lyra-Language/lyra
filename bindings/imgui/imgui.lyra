@@ -362,7 +362,11 @@ pub let font_file = (
 /// merging the same file into the same font again does nothing. `false` when the file
 /// cannot be read (or the host keeps no more of them).
 pub let merge_font_file = (host: Host, font: Font, path: string) -> bool =>
-  path.with_cstring((c_path) => unsafe { lyra_imgui_host_merge_font_file(host, font, c_path) })
+  path.with_cstring((c_path) => unsafe { lyra_imgui_host_merge_font_file(
+    host,
+    font,
+    c_path
+  ) })
 
 /// Scale the whole interface — text, padding, spacing — by `scale`, for readability: 1 is
 /// as the host set it up (the display's density already applied), 1.25 a quarter larger.
@@ -479,6 +483,15 @@ let window_button = (host: Host, kind: i32, after_button: (string) -> void) -> v
 
 /// Whether the main window is maximised (never, headless).
 pub let is_maximized = (host: Host) -> bool => unsafe { lyra_imgui_host_maximized(host) }
+
+/// Minimize the main window, as its title bar's button does — for a program's own Window
+/// menu.
+pub let minimize = (host: Host) -> void => unsafe { lyra_imgui_host_minimize(host) }
+
+/// Maximise the main window, or restore it when it is maximised, as the title bar's button
+/// does.
+pub let toggle_maximized = (host: Host) -> void =>
+  unsafe { lyra_imgui_host_toggle_maximized(host) }
 
 /// Ask the host to quit, as closing its window does: the next [begin_frame] answers false,
 /// and [cancel_quit] takes it back. How a test reaches "unsaved changes?".
