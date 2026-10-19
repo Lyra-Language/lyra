@@ -689,10 +689,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   error, and the recovery then reports `lyra-E074` (a `let … else` that falls through),
   naming a construct the line does not have. Parenthesized or bound first it works. Found
   by Sulafat (10/19).
-- **[OPEN] A field accepts the wrong array** — `h.items = [t in h.items | t.name != "a"]`
-  (a `[]bool`) into a `[]Item` field passes `lyrac check`, and the backend fails: "cannot
-  store i1 into %Item". The same into a local is refused (`cannot assign []bool to []Item`).
-  Found by Sulafat (10/19).
+- **[DONE 10/19] A field refuses the wrong array** — `h.items = [true]` (or a
+  comprehension of `bool`s) into a `[]Item` field passed `lyrac check` and failed in the
+  backend; the check now runs before the field's type is pushed into the value.
+  (COMPLETED.md, 10/19.)
 
 ## Lazy sequences — `gen` and `Seq<t>`
 

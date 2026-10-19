@@ -1889,13 +1889,21 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	// backend errors on programs the front end passed, which is rule 5 inverted — the
 	// backend refusing to guess about something nobody had told it.
 	//
-	// Before checkStorable, so the check sees the type the value will actually have.
+	//
+	// **After checkStorable, as a binding's assignment does** (checkAssignedValue). It ran
+	// first until 10/19, and the check then read the value's type back from the table —
+	// where propagation had just recorded the *target's* type on an array literal or a
+	// comprehension whatever its elements were. So `h.items = [true]` (a `[]bool` into a
+	// `[]Item` field) checked as `[]Item` into `[]Item`, passed, and reached the backend
+	// as "cannot store i1 into %Item"; the same into a local was refused. The check
+	// already admits what propagation then settles — a literal's flavour, an empty `[]` —
+	// as it does for a binding's annotated `let`.
+	if !tc.checkStorable(stmt.Value, valueType, targetType, targetType, stmt.GetLocation(), "") {
+		return
+	}
 	tc.propagateExpectedType(stmt.Value, targetType)
 	if t, ok := tc.typeTable.Get(stmt.Value); ok && t != nil {
 		valueType = t
-	}
-	if !tc.checkStorable(stmt.Value, valueType, targetType, targetType, stmt.GetLocation(), "") {
-		return
 	}
 	tc.checkLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
 	if ct, ok := targetType.(*types.ConstrainedType); ok {

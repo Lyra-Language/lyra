@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — A field's value is judged as itself
+
+`h.items = [t in h.items | t.name != "a"]` — a comprehension of `bool`s into a `[]Item`
+field — passed `lyrac check` and failed in the backend ("cannot store i1 into %Item");
+Sulafat wrote it filtering its saved themes. Into a local the same was refused. Every
+array literal or comprehension into a field, through an element too (`hs[0].items =
+[true]`), passed; a variable of the wrong type and a wrong scalar did not.
+
+`checkLValueAssignment` pushed the target's type into the value (`propagateExpectedType`)
+and then read the value's type back from the table before `checkStorable` — so that a
+literal is judged as the flavour it becomes, `["x"]` as `[]string` rather than `[1]string`.
+But propagation records the target's type on an array literal or a comprehension whatever
+its elements are, so the check compared `[]Item` with `[]Item`. A binding's assignment
+(`checkAssignedValue`) checks first and propagates after, and its check already admits a
+literal's flavour and an empty `[]` — an annotated `let` relies on it — so the field path
+now does the same. Tested both ways (`field_assignment_value_test.go`): the three wrong
+forms refused, and `["x"]`, `[]`, a right comprehension and `(1, [])` into fields still
+accepted. Sulafat, Vega, Sheliak and lyrafmt check clean under it.
+
 ### 10/19/26 — A constant as a comprehension source
 
 `[p in PAIRS | p.1]` over a `const PAIRS` was a syntax error at `in`, reported from
