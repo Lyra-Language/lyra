@@ -418,7 +418,10 @@ The example's interface is `examples/imgui/components_view.lui`.
   generated line; the comment leads back.
 - **Tested** by `cmd/lyrac/lui_test.go`: the example's module is what lui makes and checks
   clean, and each kind of mistake is reported at its line. **Not yet**: components across
-  files, highlighting `.lui` in the editors, and lyrac's errors mapped back to the markup.
+  files, and lyrac's errors mapped back to the markup.
+- **Highlighted in both editors**: VS Code by `lyra-vscode-ext/syntaxes/lui.tmLanguage.json`,
+  Zed from the grammar in `tree-sitter-lyra/lui/` (`lyra-zed-ext/languages/lui/`) — Lyra in
+  `{…}` and `<script>`, CSS in `<style>`.
 
 ## `bindings/pty/`
 
