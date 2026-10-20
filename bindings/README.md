@@ -282,6 +282,12 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   - **`cancel_quit(host)`**: `begin_frame` answering false reports a quit (the window
     closed, Cmd+Q) and it *stays* requested; this takes it back, so a program with unsaved
     work asks first and keeps looping. SIGTERM arrives as the same quit.
+  - **`take_dropped_file(host)`**: the next file the system asked the program to open —
+    dropped on a window, or on macOS opened from Finder, which SDL hands over as a drop
+    (the app's `CFBundleDocumentTypes` say which files Finder offers it) — collected as
+    `begin_frame` pumps, so one the app was launched to open is there by its first frame.
+    `drop_file(host, path)` queues one, for a test on a headless host. Vega opens its
+    projects so.
   - **File dialogs**: `show_open_dialog`/`show_save_dialog(host, tag, filters,
     default_location)` return at once; the answer (`Chosen(tag, path)`, `Cancelled(tag)`,
     `DialogFailed(tag, why)`) comes from `poll_dialog(host)`, called each frame. SDL may run

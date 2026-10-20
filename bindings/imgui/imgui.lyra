@@ -520,6 +520,22 @@ pub let toggle_maximized = (host: Host) -> void =>
 pub let request_quit = (host: Host) -> void =>
   unsafe { lyra_imgui_host_request_quit(host) }
 
+/// The oldest file the system asked the program to open that it has not taken yet: one
+/// dropped on a window, or on macOS one opened from Finder — double-clicked, or Open With —
+/// which reaches the program as a drop does (its `CFBundleDocumentTypes` say which files it
+/// is offered). Collected as [begin_frame] pumps events, so a file the program was started
+/// to open is here by its first frame. `None` when there is none.
+pub let take_dropped_file = (host: Host) -> Maybe<string> => {
+  let path = unsafe { lyra_imgui_host_take_dropped_file(host) }
+  if path == nullptr { return None }
+  Some(unsafe { path.decode_utf8(cstring_len(path)) })
+}
+
+/// `path` as if the system had asked the program to open it, for [take_dropped_file]: how a
+/// test opens a file from Finder on a headless host.
+pub let drop_file = (host: Host, path: string) -> void =>
+  path.with_cstring((p) => unsafe { lyra_imgui_host_drop_file(host, p) })
+
 /// A file dialog a headless host was asked to show: its tag, and whether it saves.
 pub struct DialogRequest {
   tag: i32,
@@ -705,6 +721,12 @@ unsafe extern lyra_imgui_host_create_headless: (
 
 @symbol("lyra_imgui_host_request_quit")
 unsafe extern lyra_imgui_host_request_quit: (host: Host) -> void
+
+@symbol("lyra_imgui_host_take_dropped_file")
+unsafe extern lyra_imgui_host_take_dropped_file: (host: Host) -> ^u8
+
+@symbol("lyra_imgui_host_drop_file")
+unsafe extern lyra_imgui_host_drop_file: (host: Host, path: ^u8) -> void
 
 @symbol("lyra_imgui_host_take_dialog_request")
 unsafe extern lyra_imgui_host_take_dialog_request: (

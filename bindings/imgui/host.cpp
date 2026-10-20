@@ -67,6 +67,12 @@ struct LyraImGuiHost {
     SDL_Window* window;
     SDL_GPUDevice* device;
     bool quit;
+    // Files the system asked the program to open, oldest first — a file dropped on a window,
+    // or on macOS one opened from Finder (SDL hands both over as SDL_EVENT_DROP_FILE) — each
+    // a copy until lyra_imgui_host_take_dropped_file hands it over; `taken` is the last one
+    // handed over, kept until the next.
+    ImVector<char*> dropped;
+    char* taken;
     // A headless host has no window and no GPU (both NULL): ImGui runs a frame at a time
     // at a fixed size and step, and its input is only what the program injects — how a
     // program tests its interface. See lyra_imgui_host_create_headless.
@@ -686,6 +692,24 @@ void lyra_imgui_host_request_quit(LyraImGuiHost* host) {
     host->quit = true;
 }
 
+// The oldest file the system asked the program to open that it has not taken yet, or NULL:
+// valid until the next call.
+const char* lyra_imgui_host_take_dropped_file(LyraImGuiHost* host) {
+    SDL_free(host->taken);
+    host->taken = nullptr;
+    if (host->dropped.empty())
+        return nullptr;
+    host->taken = host->dropped[0];
+    host->dropped.erase(host->dropped.begin());
+    return host->taken;
+}
+
+// `path` as if the system had asked the program to open it — how a test opens a file from
+// Finder on a headless host.
+void lyra_imgui_host_drop_file(LyraImGuiHost* host, const char* path) {
+    host->dropped.push_back(SDL_strdup(path));
+}
+
 static bool begin_headless_frame(LyraImGuiHost* host) {
     if (host->quit)
         return false;
@@ -759,6 +783,8 @@ bool lyra_imgui_host_begin_frame(LyraImGuiHost* host) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (event.type == SDL_EVENT_QUIT)
                 host->quit = true;
+            if (event.type == SDL_EVENT_DROP_FILE && event.drop.data != nullptr)
+                host->dropped.push_back(SDL_strdup(event.drop.data));
             if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(host->window))
                 host->quit = true;
         }
@@ -1170,8 +1196,18 @@ const char* lyra_imgui_poll_file_dialog(LyraImGuiHost* host, int32_t* tag, int32
     return answer->text;
 }
 
+// The files asked to be opened that the program never took, and the last one it did.
+static void free_dropped_files(LyraImGuiHost* host) {
+    for (char* path : host->dropped)
+        SDL_free(path);
+    host->dropped.clear();
+    SDL_free(host->taken);
+    host->taken = nullptr;
+}
+
 // Tear everything down, SDL included. The host must not be used afterwards.
 void lyra_imgui_host_destroy(LyraImGuiHost* host) {
+    free_dropped_files(host);
     if (host->headless) {
         ImGui::DestroyContext();
         free_merge_files(host);
