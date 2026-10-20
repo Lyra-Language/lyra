@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — An `if` or a `match` is an operand
+
+`1 + if c { 2 } else { 3 }`, `"x" ++ if … `, `held | match name { … }` were syntax errors,
+found three times (Sheliak's test runner 09/28 and `--hold` 09/29, Termina today) and
+listed twice in todo.md. The recovery made it worse than a plain refusal: it read the rest
+of the line as a `let … else` and reported `lyra-E074` and undefined names.
+
+- **The grammar lists them as operands**, as `unsafe` blocks were made on 09/27: in
+  `_math_operand`, `_string_concat_operand`, `_comparison_operand` and `_bool_operand`.
+  Compound assignment's right side had listed `if` and `match` itself, so those came out
+  of it — a second path to one node is the conflict tree-sitter would report. No conflict
+  entry was needed; the parser grew 45 states (8,290 → 8,335).
+- **Each is an atom from its `}`**, so `1 + if c { 2 } else { 3 } * 4` multiplies the
+  `if`, as Rust does once an `if` is an operand. A statement-level `if` followed by `-1` or
+  `(2)` on the next line stays two statements — the scanner's terminator comes first — and
+  a corpus test pins it.
+- **An arm's literal now has to fit the operation's width.** Arithmetic pushes its width
+  into a branch operand's arms, but `checkLiteralRange` looked only at a value that folds,
+  so `x + if c { 300 } else { 2 }` on a `u8` left the 300 at i64 with nothing said. The
+  backend refused the `if` merging i64 with i8 (rule 5 held), and `x + unsafe { 300 }`
+  went further, to a clang error. Both spellings parsed before today, in parentheses, so
+  the gap was older than the grammar change, which only made it easier to reach.
+  `checkBranchOperands` walks the arithmetic down to each branch operand, from the
+  operator's inference and from any later context such as an annotation; a literal is
+  reported once whichever walk reaches it (`overflowReported`).
+- **`d += 300` on a `u8` name passed outright**: the compound form on a place
+  (`xs[0] += 300`) ran the literal check, and on a name it did not. It does now.
+- An `if` as a compound target (`if c { x } else { y } += 1`) parses and is refused as
+  not a place, as an `unsafe` block already was.
+
 ### 10/19/26 — Two names that meant the wrong binding
 
 Both found by Sulafat and Vega the same day; each was a lookup answering from the wrong

@@ -57,7 +57,7 @@ lambda). The one named argument in the language is `@link`'s `pkg:`, an attribut
 
 ### Literals must fit
 
-A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a `type` constraint, a return-position `() -> u8 => 300`, and each arm of an `if` or `match` whose value has the type (`let x: u8 = if c { 300 } else { 2 }`) (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
+A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a `type` constraint, a return-position `() -> u8 => 300`, and each arm of an `if` or `match` whose value has the type (`let x: u8 = if c { 300 } else { 2 }`), an operand's arms included (`x + if c { 300 } else { 2 }` on a `u8` `x`, and `d += 300` on a `u8` name) (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
 
 ### Ranges
 
@@ -181,6 +181,10 @@ constructor's payload, an array element, a tuple element.
 ---
 
 ## 2. Operators and Assignment
+
+### Operands
+
+**An `if`, a `match` and an `unsafe` block are operands** wherever a value is, on either side of an operator: `1 + if c { 2 } else { 3 }`, `"n=" ++ match n { … }`, `held | match name { … }`, `x == if c { 1 } else { 2 }`, `ok && match m { … }`. Each ends at its `}` and is an atom from there, so `1 + if c { 2 } else { 3 } * 4` multiplies the `if`'s value, as it would a call's. At the start of a statement the line still ends it: `if c { … }` with `-1` on the next line is two statements.
 
 ### Bitwise
 

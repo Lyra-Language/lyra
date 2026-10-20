@@ -62,6 +62,48 @@ func integerFitsInType(value int64, name types.PrimitiveTypeName) bool {
 	return true
 }
 
+// checkBranchOperands is checkLiteralRange for the operands of arithmetic that does not
+// fold: each operand that is a branch (`if`, `match`, a block, `unsafe`) is checked arm by
+// arm against the operation's width, as a binding's value is, through any further
+// width-preserving arithmetic and negation. The width is pushed into every arm, and an
+// arm's literal that does not fit was left at i64 with nothing said — `x + if c { 300 }
+// else { 2 }` on a u8 reached the backend as an `if` merging i64 with i8, and `x + unsafe
+// { 300 }` a clang error (10/19). A bare literal operand is not this walk's: the
+// value-range pass reports `x + 300` (lyra-E020).
+//
+// skipSettled is set by the operator's own inference, where a nested operation already of
+// this width checked its operands when it was inferred — re-walking it at every level of
+// `a + b + … + z` would be quadratic. A context arriving later (an annotation) has settled
+// every node's width by then, so it walks the whole tree; a literal is reported once
+// however many walks reach it (overflowReported).
+func (tc *TypeChecker) checkBranchOperands(varName string, expr ast.Expression, target types.Type, skipSettled bool) {
+	switch e := expr.(type) {
+	case *ast.NegationExpr:
+		tc.checkBranchOperand(varName, e.Operand, target, skipSettled)
+	case *ast.MathBinaryOpExpr:
+		tc.checkBranchOperand(varName, e.Left, target, skipSettled)
+		if !e.Operator.IsShift() {
+			tc.checkBranchOperand(varName, e.Right, target, skipSettled)
+		}
+	}
+}
+
+func (tc *TypeChecker) checkBranchOperand(varName string, operand ast.Expression, target types.Type, skipSettled bool) {
+	switch e := operand.(type) {
+	case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr, *ast.UnsafeBlockExpr:
+		tc.checkLiteralRange(varName, e, target)
+	case *ast.MathBinaryOpExpr:
+		if skipSettled {
+			if cur, ok := tc.typeTable.Get(e); ok && types.TypesEqual(cur, target) {
+				return
+			}
+		}
+		tc.checkBranchOperands(varName, e, target, skipSettled)
+	case *ast.NegationExpr:
+		tc.checkBranchOperands(varName, e, target, skipSettled)
+	}
+}
+
 // signedTypeMinMagnitude returns the positive magnitude of a bounded signed
 // integer type's minimum value — 2^(bits-1), e.g. 128 for i8 (min -128), 32768
 // for i16, 2147483648 for i32 — and true when name is one of i8/i16/i32. This
@@ -193,6 +235,7 @@ func (tc *TypeChecker) checkLiteralRange(varName string, expr ast.Expression, ta
 	}
 	value, isLiteral := extractIntLiteralValue(expr)
 	if !isLiteral {
+		tc.checkBranchOperands(varName, expr, toP, false)
 		return
 	}
 	if !integerFitsInType(value, toP.Name) {

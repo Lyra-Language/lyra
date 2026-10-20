@@ -2158,8 +2158,12 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	}
 	// Record the target's width on untyped literal leaves of the RHS, so
 	// `i += 1` with a narrow `i` lowers `1` at that width (matching plain
-	// reassignment — see checkVarReassignment) rather than the i64 default.
+	// reassignment — see checkVarReassignment) rather than the i64 default — and
+	// each must fit it, as the place form (checkMathAssignOpToLValue) asks: without
+	// it `d += 300` on a u8 passed, and `d += if c { 300 } else { 2 }` reached the
+	// backend as an `if` merging i64 with i8 (10/19).
 	tc.propagateExpectedType(expr.Right, effective)
+	tc.checkLiteralRange("compound assignment", expr.Right, effective)
 }
 
 // checkMathAssignOpToLValue is checkMathAssignOp for a place that is not a binding:
@@ -3681,6 +3685,7 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 	// This matches Rust/Go/C; the trap for an out-of-range count is what makes it
 	// safe (see trap.go's shift-amount check).
 	if expr.Operator.IsShift() {
+		tc.checkBranchOperands("operator "+string(expr.Operator), expr, left, true)
 		tc.propagateOperandType(expr.Left, left)
 		tc.typeTable.Set(expr, left)
 		return left
@@ -3706,6 +3711,7 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 	// concrete numeric type (e.g. one operand was `i8`, the other an untyped
 	// literal), push that width down into any untyped literal leaves so the
 	// backend can lower them at the right width instead of the i64 default.
+	tc.checkBranchOperands("operator "+string(expr.Operator), expr, result, true)
 	tc.propagateOperandType(expr.Left, result)
 	tc.propagateOperandType(expr.Right, result)
 

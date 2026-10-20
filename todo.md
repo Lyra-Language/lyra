@@ -516,12 +516,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 09/23] A match arm names alternatives with `|`** (`1 | 2`, `"get" | "post"`),
   over literals and ranges. A binding alternative stays refused, deliberately — see
   LANGUAGE.md § patterns. (COMPLETED.md, 09/23.)
-- **[OPEN] An `if` expression is not a binary operand.** `"x" ++ if n > 2 { "a" } else { "b" }`
-  and `1 + if c { 10 } else { 20 }` are syntax errors, though `unsafe { … }` already is an
-  operand; the recovery then misreads the rest as a `let … else` and reports E074 and
-  undefined names. Parentheses work. Found 09/28 in Sheliak's test runner. **`match` too**
-  (09/29, Sheliak's `--hold`): `held | match name { … }` reports "undefined identifier
-  match" and each arm's binding undefined.
+- **[DONE 10/19] An `if` or a `match` is an operand**, on either side of arithmetic,
+  `++`, a comparison and `&&`/`||`; and an arm's literal must fit the operation's width.
+  (COMPLETED.md, 10/19.)
 - **[DONE 09/29] `?.`/`?[` are safe navigation**, desugared by the collector (`lyra-E083` on
   a non-Maybe); and **nullary constructors are or-pattern alternatives**. (COMPLETED.md, 09/29.)
 - **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
@@ -699,10 +696,7 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 10/19] A later `let … else` no longer hides an earlier binding of its name**, a
   plain destructuring neither, and a destructured name is rebound like a `let`'s.
   (COMPLETED.md, 10/19.)
-- **[OPEN] `if` is not an operand** — `let n = 1 + if flag { 2 } else { 3 }` is a syntax
-  error, and the recovery then reports `lyra-E074` (a `let … else` that falls through),
-  naming a construct the line does not have. Parenthesized or bound first it works. Found
-  by Sulafat (10/19).
+- **[DONE 10/19] `if` is an operand** — see Language surface. (COMPLETED.md, 10/19.)
 - **[DONE 10/19] A field refuses the wrong array** — `h.items = [true]` (or a
   comprehension of `bool`s) into a `[]Item` field passed `lyrac check` and failed in the
   backend; the check now runs before the field's type is pushed into the value.

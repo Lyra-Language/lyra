@@ -162,3 +162,30 @@ func TestJoinPhi_AcceptsMatchingOperands(t *testing.T) {
 		t.Fatalf("joinPhi refused two floats: %v", err)
 	}
 }
+
+// **An `if` or a `match` is an operand** (10/19), as an `unsafe` block already was: `1 + if
+// c { 10 } else { 20 }` and `held | match name { … }` were syntax errors — Sheliak's test
+// runner and `--hold`, then Termina — and the recovery reported a `let … else` the line did
+// not have. Arithmetic on either side, concatenation, a comparison, `&&`, and a narrow
+// width carried into the arms, where 200 + 55 must be the u8 255 rather than wrap.
+func TestExec_IfAndMatchAreOperands(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let pick = (c: bool) -> u8 => 200 + if c { 55 } else { 0 }
+let main = () -> void => {
+  let flag = true
+  let name = "two"
+  let sum = 1 + if flag { 2 } else { 3 } * 4
+  let left = if flag { 2 } else { 3 } * 4 + 1
+  let label = "n=" ++ match sum { 9 => "nine", _ => "other" }
+  let held = 1 | match name { "one" => 2, _ => 4 }
+  let same = sum == if flag { 9 } else { 0 }
+  let both = flag && match name { "two" => true, _ => false }
+  println("${sum} ${left} ${label} ${held} ${same} ${both} ${pick(true)} ${pick(false)}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "9 9 n=nine 5 true true 255 200" {
+		t.Errorf("if and match as operands = %q; want \"9 9 n=nine 5 true true 255 200\"", got)
+	}
+}

@@ -280,6 +280,36 @@ func TestTypeCheck_Overflow_InABranchsArms(t *testing.T) {
 		"r: literal value 500 overflows u8")
 }
 
+// A branch that is an operand of arithmetic takes the operation's width, and its arms must
+// fit it as a binding's must (10/19). Until then nothing looked: the `+` folds no constant,
+// so `x + if c { 300 } else { 2 }` on a u8 reached the backend as an `if` merging i64 with
+// i8, `x + unsafe { 300 }` a clang error, and `d += 300` on a u8 name passed outright —
+// the compound form on a place (`xs[0] += 300`) was checked and on a name was not. Each
+// literal is reported once, through nested arithmetic and whichever context fixed the width.
+func TestTypeCheck_Overflow_InABranchOperand(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+  let f = (c: bool, x: u8) -> void => {
+    let a = x + if c { 300 } else { 2 }
+    let b = x * (2 + match c { true => 1, false => 999 })
+    let k = x + unsafe { 256 }
+    let d: u8 = 1 + if c { 400 } else { 2 }
+    let e: u8 = 2 * (1 + if c { 500 } else { 2 })
+    var g: u8 = 1
+    g += if c { 600 } else { 2 }
+    g += 700
+    let fine = x + if c { 3 } else { 2 }
+  }
+	`, false)
+	assertErrorsAre(t, res,
+		"operator +: literal value 300 overflows u8",
+		"operator *: literal value 999 overflows u8",
+		"operator +: literal value 256 overflows u8",
+		"d: literal value 400 overflows u8",
+		"e: literal value 500 overflows u8",
+		"compound assignment: literal value 600 overflows u8",
+		"compound assignment: literal value 700 overflows u8")
+}
+
 // A spread literal's elements are checked against the outer array's element type, as the
 // literal would be alone (10/14): until then they were never narrowed, so a 300 inside one
 // was neither refused nor stored as a u8.
