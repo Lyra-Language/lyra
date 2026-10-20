@@ -60,7 +60,7 @@
 </script>
 
 <!-- The whole interface for a state: drawn afresh each frame. -->
-<component name="view" props={{ s: State }} event="Event">
+<component name="view" props={{ s: State }} event={Event}>
   <MainMenuBar>
     <Menu label="File">
       <MenuItem on_select={AskReset} shortcut="Cmd+R">Reset...</MenuItem>

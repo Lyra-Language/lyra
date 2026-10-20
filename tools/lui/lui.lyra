@@ -42,7 +42,7 @@
 //   `padding` (one or two numbers), `rounding`, `opacity`, `width` (pixels, or `6em`)
 //   and `height`. An
 //   element's `style="…"` takes the same declarations.
-// - `event="Event"` makes a component's events a concrete type; the default is `e`, a
+// - `event={Event}` makes a component's events a concrete type; the default is `e`, a
 //   type variable, so the component fits any program's tree.
 
 import std.collections.{ parse_args }
@@ -270,6 +270,14 @@ let read_component = pure (t: Tag) -> Result<Component, string> => {
       _ => { return Err("${a.line}: props are an object: props={{ name: Type, other: Type = default }}") },
     },
   }
+  // The events' type, Lyra in braces: `event={SettingsEvent}`; none, the variable `e`.
+  let event = match attr_named(t.attrs, "event") {
+    None => "e",
+    Some(a) => match a.value {
+      Braced(code) => code,
+      _ => { return Err("${a.line}: event is a type in braces: event={SettingsEvent}") },
+    },
+  }
   var rules: []Rule = []
   var style_line = 0
   var children: []Markup = []
@@ -287,7 +295,7 @@ let read_component = pure (t: Tag) -> Result<Component, string> => {
     name: name,
     props: read_props(props_text),
     props_text: props_text,
-    event: t.text_attr("event").unwrap_or("e"),
+    event: event,
     rules: rules,
     style_line: style_line,
     children: children,

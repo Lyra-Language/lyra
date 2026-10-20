@@ -24,6 +24,9 @@ unchanged but for line markers.
   type keeps `<…>`, `(…)` and `->` whole, so `HashMap<k, v>` and `(i64) -> e` are one.
 - **Commas are required between entries**: with them optional, `pick: (i64) -> e` read
   `e` as the next prop's name — the type's word and a name lex alike.
+- **`event` followed**: `event={SettingsEvent}`, a type as Lyra in braces, in place of
+  `event="SettingsEvent"`, which is refused saying so. No grammar or editor change: both
+  already read `{…}` as Lyra, which colours a type name as a type.
 
 ### 10/20/26 — `Slider`, `ColorEdit`, and a text field's hint
 

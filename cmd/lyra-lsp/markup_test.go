@@ -72,7 +72,7 @@ func TestMarkup_LyraErrorsAtTheMarkupsLines(t *testing.T) {
 
   let broken = () -> bool => 7
 </script>
-<component name="view" event="Ev">
+<component name="view" event={Ev}>
   <Row>
     <Button on_click={Gone}>Go</Button>
   </Row>

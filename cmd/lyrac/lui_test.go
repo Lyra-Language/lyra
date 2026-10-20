@@ -58,6 +58,7 @@ func TestLui_ReportsMistakesAtTheirLine(t *testing.T) {
 		{"prop", "<component name=\"a\" props={{ x: e }}>\n  <b y={x}/>\n</component>\n<component name=\"b\" props={{ x: e }}></component>", "x.lui:2: component b has no prop y"},
 		{"else", "<component name=\"a\">\n  <else>no</else>\n</component>", "x.lui:2: <else> with no <if> before it"},
 		{"string props", "<component name=\"a\" props=\"x: e\">\n</component>", "x.lui:1: props are an object: props={{ name: Type, other: Type = default }}"},
+		{"string event", "<component name=\"a\" event=\"Ev\">\n</component>", "x.lui:1: event is a type in braces: event={SettingsEvent}"},
 		{"untyped prop", "<component name=\"a\" props={{ x }}>\n</component>", "x.lui:1: prop \"x\" has no type"},
 		{"quoted event", "<component name=\"a\" props={{ x: e }}>\n  <Button on_click=\"x\">Hi</Button>\n</component>", "x.lui:2: on_click of <Button> takes {…}"},
 	}
@@ -85,7 +86,7 @@ func TestLui_ComboFormAndEmWidths(t *testing.T) {
 	source := `<script>
   pub data Ev = Pick(i64) | Close
 </script>
-<component name="view" props={{ chosen: i64 }} event="Ev">
+<component name="view" props={{ chosen: i64 }} event={Ev}>
   <Window title="Pick" centered on_close={Close}>
     <Form>
       <Field label="Size">
@@ -131,7 +132,7 @@ func TestLui_SliderColorEditAndHint(t *testing.T) {
 	source := `<script>
   pub data Ev = Size(f32) | SizeDone | Paint(string, u32) | Named(string)
 </script>
-<component name="view" props={{ size: f32, fg: u32, name: string }} event="Ev">
+<component name="view" props={{ size: f32, fg: u32, name: string }} event={Ev}>
   <Slider label="##size" value={size} min={8.0} max={32.0} format="%.0f pt" on_change={Size} on_commit={SizeDone}/>
   <ColorEdit label="##fg" value={fg} inputs={false} on_change={(v: u32) -> Ev => Paint("fg", v)}/>
   <InputText label="##name" value={name} hint="Theme name" on_change={Named}/>
@@ -175,7 +176,7 @@ func TestLui_ShortcutsWithAltAndNamedKeys(t *testing.T) {
 	source := `<script>
   pub data Ev = First | Previous | All
 </script>
-<component name="view" event="Ev">
+<component name="view" event={Ev}>
   <MainMenuBar>
     <Menu label="Window">
       <MenuItem on_select={First} shortcut="Alt+1">First</MenuItem>
@@ -222,7 +223,7 @@ func TestLui_MapPutsErrorsBackAtTheMarkup(t *testing.T) {
 
   let broken = () -> bool => 7
 </script>
-<component name="view" event="Ev">
+<component name="view" event={Ev}>
   <Row>
     <Button on_click={Gone}>Go</Button>
   </Row>
@@ -305,7 +306,7 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 	source := `<script>
   pub data Ev = Width(i64) | Named(string) | Done | Pick | Close
 </script>
-<component name="view" props={{ w: i64, name: string }} event="Ev">
+<component name="view" props={{ w: i64, name: string }} event={Ev}>
   <Modal title="Edit###edit" on_escape={Close}>
     <swatch which="fg"/>
     <InputInt label="Width" value={w} step={8} on_change={Width} on_commit={Done}/>

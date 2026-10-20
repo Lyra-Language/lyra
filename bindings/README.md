@@ -418,7 +418,7 @@ The example's interface is `examples/imgui/components_view.lui`.
 
 - **A file is `<script>`s and `<component>`s.** A script's Lyra is copied to the top of the
   module (imports, the state and event types, `update`); a component is a `pure` function
-  of its props returning `Node<event>` (`event="Event"`; default `e`, so it fits any
+  of its props returning `Node<event>` (`event={Event}`; default `e`, so it fits any
   tree), wrapped in its `Component`. **Props are an object**, `props={{ question: string,
   title: string = "Sure?", }}` — each `name: Type` (a Lyra type, generics and functions
   whole), an optional `= default` (Lyra), a trailing comma allowed; they become the
