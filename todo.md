@@ -507,9 +507,6 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] lui can write `on_change={Width}` through** rather than the typed lambda it
   generates, now that the compiler accepts both; it would also pass a function name (`doc.
   rename`) as itself. Regenerates Vega's and Termina's views.
-- **[OPEN] Definition and references on a constructor in an expression** find nothing —
-  `Quit`, `Width(4)` and `xs.map(Width)` alike; only the pattern form resolves (definition.go,
-  references.go's `constructorOccurrences`).
 - **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
   trait — a game's music tables) must be `data X = X` instead. Either accept it or say so.
 

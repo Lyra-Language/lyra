@@ -31,6 +31,22 @@ and the Slots are gone.
 - Driven in `examples/imgui/components.lyra --check`: a click near the slider's right end
   sets it near the top and commits once.
 
+### 10/19/26 — Definition and references on a constructor in an expression
+
+Only the pattern form `Width(n) =>` navigated; `Quit`, `Width(4)` and `apply(Width)` did
+nothing, and always had. Definition's expression case asked `LookupTypeFrom` with the
+*constructor's* name, which finds a type only where one is spelled the same, and the
+applied form (a named `TupleLiteralExpr`) had no case at all. References from a value fell
+through to the type path, which made the same lookup.
+
+- **One resolver, `constructorOwner`**: `DeclaringDataType` (ranked by how the file reaches
+  the type), then the best-effort scan the pattern path already had for a constructor whose
+  type the file never names. A name that resolves as a type and has no owning data type is a
+  named tuple's `Point(3, 4)`, and definition lands on that type instead.
+- References from every spelling share `constructorReferences`, so a value and a pattern
+  list the same uses. Still this document only, as the pattern path was.
+- `TestConstructorInExpression_DefinitionAndReferences`.
+
 ### 10/19/26 — A constructor is a function value; a generic field types its lambda
 
 Both found by lui (`on_change={Width}`), which wrote `(value: i64) -> Ev => Width(value)`

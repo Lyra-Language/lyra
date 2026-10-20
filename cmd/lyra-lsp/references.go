@@ -34,7 +34,18 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 		return locs, nil
 	}
 
-	ident, ok := findExprAtPos(analysis.program, line, col).(*ast.IdentifierExpr)
+	expr := findExprAtPos(analysis.program, line, col)
+	// A **constructor written as a value** — `Quit`, `Width(4)`, `xs.map(Width)` — asks the
+	// question the pattern form above answers, and gets the same list. It fell through to
+	// the type path until 10/19, which looks a constructor up as a type name and so found
+	// nothing from any of the three.
+	if name, ok := constructorExprName(expr); ok && cursorOnName(expr.GetLocation(), name, line, col) {
+		if decl, ok := constructorOwner(analysis, name, expr.GetLocation()); ok {
+			return h.constructorReferences(uri, source, analysis, name, decl, params.Context.IncludeDeclaration), nil
+		}
+	}
+
+	ident, ok := expr.(*ast.IdentifierExpr)
 	if !ok {
 		// A **type or trait name**, which is not an expression and so cannot be found by
 		// the walk above — the same gap go-to-definition had. Answered from the
@@ -143,22 +154,36 @@ func (h *Handler) patternReferences(uri, source string, analysis *docAnalysis, l
 		if !cursorOnName(p.GetLocation(), p.Name, line, col) {
 			return nil, false
 		}
-		for _, loc := range constructorOccurrences(analysis, p.Name) {
-			add(loc)
-		}
-		if includeDecl {
-			if decl, ok := analysis.symTable.DeclaringDataType(p.Name, p.GetLocation()); ok {
-				add(namedNameLoc(decl))
-			} else if decl, ok := anyDeclaringDataType(analysis, p.Name); ok {
-				add(namedNameLoc(decl))
-			}
-		}
-		sortLocations(out)
-		log.Printf("references: constructor %q resolved to %d occurrence(s)", p.Name, len(out))
-		return out, true
-
+		decl, _ := constructorOwner(analysis, p.Name, p.GetLocation())
+		return h.constructorReferences(uri, source, analysis, p.Name, decl, includeDecl), true
 	}
 	return nil, false
+}
+
+// constructorReferences lists every use of a constructor, from whichever spelling the
+// cursor is on — a pattern or a value. decl, the data type owning it, may be nil; it is
+// only the declaration added when the client asks for it.
+func (h *Handler) constructorReferences(uri, source string, analysis *docAnalysis, name string, decl *ast.TypeDeclStmt, includeDecl bool) []lsp.Location {
+	var out []lsp.Location
+	seen := map[ast.Location]bool{}
+	add := func(loc ast.Location) {
+		if seen[loc] {
+			return
+		}
+		seen[loc] = true
+		if target, ok := h.locationIn(uri, source, analysis, loc); ok {
+			out = append(out, target)
+		}
+	}
+	for _, loc := range constructorOccurrences(analysis, name) {
+		add(loc)
+	}
+	if includeDecl && decl != nil {
+		add(namedNameLoc(decl))
+	}
+	sortLocations(out)
+	log.Printf("references: constructor %q resolved to %d occurrence(s)", name, len(out))
+	return out
 }
 
 // constructorOccurrences finds every mention of a constructor in this document, in both

@@ -12,8 +12,8 @@ import (
 // the narrowest nodes at every column of `Width`, so without care the editor answers about
 // `__Width0`, a parameter nobody wrote. Hover names the constructor's function type, and
 // definition never lands on that parameter (a binding's definition is itself, which
-// would put the cursor back where it was). Definition on a constructor in expression
-// position finds nothing yet, as for `Quit` or `Width(4)` (todo.md).
+// would put the cursor back where it was); it reaches the `data` line, as for `Quit` or
+// `Width(4)` (constructor_navigation_test.go).
 func TestConstructorValue_EditorAnswersAboutTheConstructor(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	src := `

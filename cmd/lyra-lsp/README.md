@@ -100,6 +100,11 @@ dropped.
   `walkProgramExprs` and semantic tokens visit the constructor instead of the lambda, and
   `ast.PatternsOf` reports none of its parameters, so hover and definition answer about
   `Width`; a walk of its own must do the same (`TestConstructorValue_*`).
+- **A constructor resolves by the data type owning it** (`constructorOwner`, definition.go:
+  `DeclaringDataType`, then a best-effort scan), never `LookupTypeFrom` — a constructor is not
+  a type name. Every spelling goes through it: a pattern, `Quit`, `Width(4)` (a named
+  `TupleLiteralExpr`, which may instead be a named tuple's type) and a function value, and
+  references from any of them list all of them (`constructorReferences`).
 - **A pattern binding resolves through `patternBindingAt`** (`rename.go`), from the name's own
   span (`ast.PatternBinding.Loc`), and its declaration's span through `bindingNameLoc`, never
   `namedNameLoc` alone: a destructured name's entry spans the whole statement. **Hover and

@@ -132,31 +132,7 @@ func resolvePatternReference(analysis *docAnalysis, line, col int) *ast.Location
 		// expression-position case above resolves `Some` — so both spellings of a
 		// constructor reach the same declaration.
 		if cursorOnName(p.GetLocation(), p.Name, line, col) {
-			// By the data type that *owns* the constructor, not by the constructor's own
-			// name: `import std.tui.{ Event }` admits `Event` and not `Keyboard`, and it
-			// should not have to — a module using a type's constructors has already
-			// imported the type. DeclaringDataType is the same scan the typechecker uses
-			// to decide which `Some` a `match` arm means.
-			if decl, ok := analysis.symTable.DeclaringDataType(p.Name, p.GetLocation()); ok {
-				loc := namedNameLoc(decl)
-				return &loc
-			}
-			// **A constructor whose type the file cannot name at all.** `match m.button {
-			// WheelUp => … }` never mentions `MouseButton`, and need not: the value came
-			// from a field, and the typechecker resolves the arm through the *scrutinee's*
-			// type rather than by looking the constructor up. Navigation has no scrutinee
-			// in hand, so the scan above — which requires the owning type to resolve from
-			// this file — finds nothing.
-			//
-			// Answered best-effort, and deliberately not by inventing a second rule about
-			// which constructor a program *means*: this picks a declaration to jump to,
-			// and where two types share a constructor name it may pick the other one. That
-			// is a wrong jump, which a reader sees and corrects; refusing is a feature that
-			// looks broken on ordinary code.
-			if decl, ok := anyDeclaringDataType(analysis, p.Name); ok {
-				loc := namedNameLoc(decl)
-				return &loc
-			}
+			return constructorDefinition(analysis, p.Name, p.GetLocation())
 		}
 	case *ast.StructPattern:
 		if p.Name != "" && cursorOnName(p.GetLocation(), p.Name, line, col) {
@@ -182,8 +158,66 @@ func resolvePatternReference(analysis *docAnalysis, line, col int) *ast.Location
 	return nil
 }
 
+// constructorDefinition is where a constructor written at loc is declared — the name of
+// the data type owning it, since a constructor carries no span of its own — or, for a
+// named tuple's `Point(3, 4)`, the type it names. One answer for every spelling: a
+// pattern (`Width(n) =>`), a bare value (`Quit`), an application (`Width(4)`) and a
+// function value (`xs.map(Width)`).
+func constructorDefinition(analysis *docAnalysis, name string, loc ast.Location) *ast.Location {
+	if decl, ok := constructorOwner(analysis, name, loc); ok {
+		l := namedNameLoc(decl)
+		return &l
+	}
+	if decl, ok := analysis.symTable.LookupTypeFrom(name, loc); ok {
+		l := namedNameLoc(decl)
+		return &l
+	}
+	return nil
+}
+
+// constructorOwner is the data type declaring the constructor `name` written at loc, and
+// false when the name is not a constructor the program declares — including a named
+// tuple's, which is a type the file can name and no data type's constructor.
+//
+// By the data type that *owns* the constructor, not by the constructor's own name: `import
+// std.tui.{ Event }` admits `Event` and not `Keyboard`, and it should not have to — a module
+// using a type's constructors has already imported the type. DeclaringDataType is the same
+// scan the typechecker uses to decide which `Some` a `match` arm means.
+func constructorOwner(analysis *docAnalysis, name string, loc ast.Location) (*ast.TypeDeclStmt, bool) {
+	if decl, ok := analysis.symTable.DeclaringDataType(name, loc); ok {
+		return decl, true
+	}
+	if _, ok := analysis.symTable.LookupTypeFrom(name, loc); ok {
+		return nil, false
+	}
+	// **A constructor whose type the file cannot name at all.** `match m.button { WheelUp =>
+	// … }` never mentions `MouseButton`, and need not: the value came from a field, and the
+	// typechecker resolves the arm through the *scrutinee's* type rather than by looking the
+	// constructor up. Navigation has no scrutinee in hand, so the scan above — which requires
+	// the owning type to resolve from this file — finds nothing.
+	//
+	// Answered best-effort, and deliberately not by inventing a second rule about which
+	// constructor a program *means*: this picks a declaration to jump to, and where two types
+	// share a constructor name it may pick the other one. That is a wrong jump, which a
+	// reader sees and corrects; refusing is a feature that looks broken on ordinary code.
+	return anyDeclaringDataType(analysis, name)
+}
+
+// constructorExprName is the constructor a value expression writes: a bare one (`Quit`, and
+// the node a function value `xs.map(Width)` presents) or an applied one, which parses as a
+// tuple literal carrying the name (`Width(4)`, and a named tuple's `Point(3, 4)`).
+func constructorExprName(expr ast.Expression) (string, bool) {
+	switch e := expr.(type) {
+	case *ast.DataConstructorExpr:
+		return e.Constructor, true
+	case *ast.TupleLiteralExpr:
+		return e.Name, e.Name != ""
+	}
+	return "", false
+}
+
 // anyDeclaringDataType finds a data type owning a constructor without requiring the type to
-// be nameable from the asking file. See its one caller for why that is a navigation
+// be nameable from the asking file. See constructorOwner for why that is a navigation
 // concession rather than a resolution rule.
 func anyDeclaringDataType(analysis *docAnalysis, ctorName string) (*ast.TypeDeclStmt, bool) {
 	var best *ast.TypeDeclStmt
@@ -282,13 +316,13 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 			}
 		}
 
-	case *ast.DataConstructorExpr:
-		// Cursor is on a data-type constructor name (e.g. Some, None, Ok, Err).
-		if cursorOnName(e.GetLocation(), e.Constructor, line, col) {
-			if decl, ok := analysis.symTable.LookupTypeFrom(e.Constructor, e.GetLocation()); ok {
-				loc := namedNameLoc(decl)
-				return &loc
-			}
+	case *ast.DataConstructorExpr, *ast.TupleLiteralExpr:
+		// A constructor written as a value: `Quit`, `Width(4)`, or `Width` passed as a
+		// function. Resolved by the data type owning it, as the pattern form is — a
+		// constructor is not a type name, so asking LookupTypeFrom (as this case did until
+		// 10/19) found nothing for any of them.
+		if name, ok := constructorExprName(e); ok && cursorOnName(e.GetLocation(), name, line, col) {
+			return constructorDefinition(analysis, name, e.GetLocation())
 		}
 	}
 	return nil
