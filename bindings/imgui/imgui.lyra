@@ -466,18 +466,47 @@ pub let end_title_bar = (
   title: string,
   after_button: (string) -> void
 ) -> void => {
-  if has_custom_title_bar(host) {
-    let right = !buttons_on_the_left(host)
-    let buttons: i32 = if right { 3 } else { 0 }
-    title.with_cstring((t) => unsafe { lyra_imgui_title_bar(host, t, buttons) })
-    if right {
-      window_button(host, WINDOW_MINIMIZE, after_button)
-      window_button(host, WINDOW_MAXIMIZE, after_button)
-      window_button(host, WINDOW_CLOSE, after_button)
-    }
+  title_bar_title(host, title, 0.0)
+  title_bar_end(host, after_button)
+}
+
+/// [end_title_bar] in two, for a program's own items between the title and the window's
+/// buttons — a menu button, as a GNOME header bar has: the title and the drag area, leaving
+/// `trailing` points before the buttons, and the cursor where those points start. The
+/// program draws its items there, then [title_bar_end].
+pub let title_bar_title = (host: Host, title: string, trailing: f32) -> void => {
+  if !has_custom_title_bar(host) { return }
+  let buttons: i32 = if buttons_on_the_left(host) { 0 } else { 3 }
+  title.with_cstring((t) => unsafe { lyra_imgui_title_bar(host, t, buttons, trailing) })
+}
+
+/// The window's buttons, off macOS, after the program's trailing items ([title_bar_title]),
+/// and the bar ended.
+pub let title_bar_end = (host: Host, after_button: (string) -> void) -> void => {
+  if has_custom_title_bar(host) && !buttons_on_the_left(host) {
+    unsafe { lyra_imgui_title_bar_buttons(host) }
+    window_button(host, WINDOW_MINIMIZE, after_button)
+    window_button(host, WINDOW_MAXIMIZE, after_button)
+    window_button(host, WINDOW_CLOSE, after_button)
   }
   end_main_menu_bar()
 }
+
+/// One of the program's own buttons on the title bar at the cursor — a GNOME header bar's new
+/// tab or menu — the bar's full height and a window button's width, filled under the pointer
+/// as they are; whether it was clicked. Its glyph is the program's, drawn over ImGui's last
+/// item (`get_item_rect_min`/`max`). `after_button` is called with `name` once it is drawn,
+/// for a test to find it by.
+pub let title_bar_button = (host: Host, name: string, after_button: (string) -> void) -> bool => {
+  let pressed = name.with_cstring((n) => unsafe { lyra_imgui_title_bar_button(host, n) })
+  after_button(name)
+  pressed
+}
+
+/// How wide one of the window's buttons is on the title bar: what a program's own button
+/// beside them takes, to match.
+pub let title_bar_button_width = (host: Host) -> f32 =>
+  unsafe { lyra_imgui_title_bar_button_width(host) }
 
 /// Which of the window's buttons `lyra_imgui_window_button` draws.
 const WINDOW_MINIMIZE: i32 = 0
@@ -704,7 +733,16 @@ unsafe extern lyra_imgui_host_window_buttons_left: (host: Host) -> bool
 unsafe extern lyra_imgui_title_bar_start: (host: Host) -> void
 
 @symbol("lyra_imgui_title_bar")
-unsafe extern lyra_imgui_title_bar: (host: Host, title: ^u8, buttons: i32) -> void
+unsafe extern lyra_imgui_title_bar: (host: Host, title: ^u8, buttons: i32, trailing: f32) -> void
+
+@symbol("lyra_imgui_title_bar_button")
+unsafe extern lyra_imgui_title_bar_button: (host: Host, id: ^u8) -> bool
+
+@symbol("lyra_imgui_title_bar_buttons")
+unsafe extern lyra_imgui_title_bar_buttons: (host: Host) -> void
+
+@symbol("lyra_imgui_title_bar_button_width")
+unsafe extern lyra_imgui_title_bar_button_width: (host: Host) -> f32
 
 @symbol("lyra_imgui_window_button")
 unsafe extern lyra_imgui_window_button: (host: Host, kind: i32) -> bool

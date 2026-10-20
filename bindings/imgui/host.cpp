@@ -100,6 +100,9 @@ struct LyraImGuiHost {
     bool custom_title_bar;
     bool drag_area_set;
     SDL_FRect drag_area;
+    // Where the window's buttons start on the bar being drawn (lyra_imgui_title_bar), in
+    // screen coordinates: after the program's trailing items, which come between.
+    float buttons_x;
     // Fonts loaded from files (lyra_imgui_host_font_file), each once: a font belongs to
     // the context that loaded it, so it is kept with the host that owns that context and
     // goes with it — a program-wide cache handed a later host the last one's freed font.
@@ -565,15 +568,18 @@ void lyra_imgui_host_set_traffic_lights(LyraImGuiHost* host, bool on) {
 
 // In the menu bar being drawn, after the program's menus (and the window's buttons, where
 // they lead): the title centred on the bar (moved right of the menus when they reach past
-// where it would start, left out when it does not fit before the buttons), the stretch
-// between the menus and `buttons` window buttons at the right end (0 where they lead)
-// kept as the drag area, and the cursor where the first of those goes.
-void lyra_imgui_title_bar(LyraImGuiHost* host, const char* title, int32_t buttons) {
+// where it would start, left out when it does not fit before what follows), the stretch
+// between the menus and what follows kept as the drag area, and the cursor where it
+// starts. What follows is `trailing` points of the program's own (a menu button), then
+// `buttons` window buttons at the right end (0 where they lead), which
+// lyra_imgui_title_bar_buttons puts the cursor at.
+void lyra_imgui_title_bar(LyraImGuiHost* host, const char* title, int32_t buttons, float trailing) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImRect bar = window->MenuBarRect();
     const float left = window->DC.CursorPos.x;
-    const float right = bar.Max.x - (float)buttons * window_button_width(host);
+    host->buttons_x = bar.Max.x - (float)buttons * window_button_width(host);
+    const float right = host->buttons_x - trailing;
 
     const ImVec2 size = ImGui::CalcTextSize(title);
     float x = IM_ROUND((bar.Min.x + bar.Max.x - size.x) * 0.5f);
@@ -589,6 +595,36 @@ void lyra_imgui_title_bar(LyraImGuiHost* host, const char* title, int32_t button
     host->drag_area = SDL_FRect{left - origin.x, bar.Min.y - origin.y, ImMax(right - left, 0.0f), bar.GetHeight()};
     host->drag_area_set = true;
     window->DC.CursorPos.x = right;
+}
+
+// One of the program's own buttons on the title bar — a GNOME header bar's new tab or menu —
+// at the cursor: the bar's full height and a window button's width, filled under the pointer
+// as they are; whether it was clicked. Its glyph is the program's, drawn over the item it
+// leaves as the last (ImGui's item rectangle).
+bool lyra_imgui_title_bar_button(LyraImGuiHost* host, const char* id) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImRect bar = window->MenuBarRect();
+    const float w = window_button_width(host);
+    const ImVec2 min(window->DC.CursorPos.x, bar.Min.y);
+    ImGui::SetCursorScreenPos(min);
+    const bool pressed = ImGui::InvisibleButton(id, ImVec2(w, bar.GetHeight()));
+    const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    if (hovered || held)
+        window->DrawList->AddRectFilled(min, ImVec2(min.x + w, bar.Max.y),
+            ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered));
+    window->DC.CursorPos.x = min.x + w;
+    return pressed;
+}
+
+// After the program's trailing items: the cursor where the window's buttons start.
+void lyra_imgui_title_bar_buttons(LyraImGuiHost* host) {
+    ImGui::GetCurrentWindow()->DC.CursorPos.x = host->buttons_x;
+}
+
+// A window button's width on the title bar: what a program's own button beside them takes
+// to match.
+float lyra_imgui_title_bar_button_width(LyraImGuiHost* host) {
+    return window_button_width(host);
 }
 
 // One of the window's buttons (LYRA_WINDOW_*) at the cursor, the bar's height and
@@ -655,9 +691,11 @@ bool lyra_imgui_window_button(LyraImGuiHost* host, int32_t kind) {
         draw->AddRectFilled(min, max, ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered));
     }
 
-    const float font = ImGui::GetFontSize();
-    const float g = IM_ROUND(font * 0.38f);  // half the glyph's width
-    const float t = ImMax(1.0f, IM_ROUND(font / 13.0f));
+    // Half the glyph's width, and its stroke, in proportion to the bar: a taller bar (a GNOME
+    // header bar's) has larger glyphs. 0.19 of the bar is what 0.38 of the font was on a bar
+    // of ImGui's own height.
+    const float g = IM_ROUND(bar.GetHeight() * 0.19f);
+    const float t = ImMax(1.0f, IM_ROUND(bar.GetHeight() / 26.0f));
     const ImVec2 c(IM_ROUND((min.x + max.x) * 0.5f), IM_ROUND((min.y + max.y) * 0.5f));
     switch (kind) {
     case LYRA_WINDOW_MINIMIZE:

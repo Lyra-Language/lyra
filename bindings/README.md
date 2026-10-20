@@ -301,7 +301,17 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     centred, and the window's buttons (glyphs drawn with lines: the default font has none)
     where the platform puts them — at the left end on macOS, close, minimize, maximize,
     before the menus; at the right end elsewhere, minimize, maximize/restore, close.
-    Without the flag the pair is `begin_main_menu_bar`/`end_main_menu_bar`. Close is
+    Without the flag the pair is `begin_main_menu_bar`/`end_main_menu_bar`. **Items of the
+    program's own between the title and the buttons** — a GNOME header bar's menu button —
+    split `end_title_bar` in two: `title_bar_title(host, title, trailing)` leaves `trailing`
+    points before the buttons (`title_bar_button_width(host)` is a button's) and the cursor
+    where they start, the drag area stopping there; the program draws its items, then
+    `title_bar_end(host, after_button)` draws the buttons and ends the bar (Termina's
+    `menus.draw_header_bar`). `title_bar_button(host, name, after_button)` is such an item
+    the window buttons' size — the bar's full height, filled as they are when hovered — and
+    answers whether it was pressed; the program draws its glyph over `get_item_rect_*`.
+    The window's corners are square: SDL's GPU API refuses a transparent window (3.4's, on
+    every driver, since D3D12 cannot present one), which round ones would need. Close is
     `request_quit`, so a program's "unsaved changes?" path is the same. **The window still
     moves and resizes as one with a frame**: SDL's hit test answers *draggable* for the
     bar's empty stretch, as the last frame drew it (`drag_area`, between the menus and the

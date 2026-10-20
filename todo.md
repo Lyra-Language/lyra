@@ -568,6 +568,12 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), tooltips, tables, child regions, an integer slider, and layout past `Row` and
   `Form`. Grow it as Vega's next dialogs and panels move to markup.
+- **[OPEN] A float literal array's element times an f32 is invalid IR** — `let step: f32 =
+  2.0; for k in [-1.0, 0.0, 1.0] { total = total + k * step }` typechecks, then clang
+  refuses `fmul double %a, %b` with `%b` a float: the elements stay `f64` in the backend
+  while the product was taken as `f32`. Either the context settles the literals as `f32`
+  or the mix is refused; the backend must not emit it (rule 5). Found by Termina's ☰
+  glyph, which types the array meanwhile.
 - **[OPEN] A tuple index is not a comprehension's source**: `[c in g.1 | c]` is a syntax
   error where `[c in g.colors | c]` and a constant parse (the grammar's generator value).
   Found by Termina's color groups, which became a struct for it.
