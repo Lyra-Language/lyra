@@ -14,7 +14,7 @@
 //     import app.{ State, Event }        // copied to the top of the module as written
 //   </script>
 //
-//   <component name="confirm" props="question: string, yes: e, no: e">
+//   <component name="confirm" props={{ question: string, yes: e, no: e }}>
 //     <style>
 //       Button { rounding: 6; padding: 14 4 }
 //       Button.danger { background: #aa2828 }
@@ -263,7 +263,13 @@ let read_component = pure (t: Tag) -> Result<Component, string> => {
   let Some(name) = t.text_attr("name") else {
     return Err("${t.line}: a <component> needs a name")
   }
-  let props_text = t.text_attr("props").unwrap_or("")
+  let props_text = match attr_named(t.attrs, "props") {
+    None => "",
+    Some(a) => match a.value {
+      Braced(code) => object_props(code, a.line)?,
+      _ => { return Err("${a.line}: props are an object: props={{ name: Type, other: Type = default }}") },
+    },
+  }
   var rules: []Rule = []
   var style_line = 0
   var children: []Markup = []
@@ -1122,7 +1128,28 @@ let closing = pure (runes: []rune, open: i64) -> i64 => {
   runes.len() - 1
 }
 
-/// `props="question: string, yes: e, no: e = Cancel"` as names and defaults.
+/// A component's `props={{ question: string, yes: e, no: e = Cancel, }}` as the parameter
+/// list it becomes, `question: string, yes: e, no: e = Cancel`: the object's entries (a
+/// trailing comma allowed), each `name: Type` with an optional `= default`. `code` is what
+/// is inside the attribute's outer braces — the object, braces and all.
+let object_props = pure (code: string, line: i64) -> Result<string, string> => {
+  let text = code.trim()
+  if !text.starts_with("{") || !text.ends_with("}") {
+    return Err("${line}: props are an object in a second pair of braces: props={{ name: Type }}")
+  }
+  var entries: []string = []
+  for part in split_top_level(text.slice(1, text.len() - 1), ',') {
+    let entry = part.trim()
+    if entry.len() == 0 { continue }
+    if entry
+      .index(":")
+      .is_none() { return Err("${line}: prop \"${entry}\" has no type: name: Type") }
+    entries.push(entry)
+  }
+  Ok(entries.join(", "))
+}
+
+/// `question: string, yes: e, no: e = Cancel` as names and defaults.
 let read_props = pure (text: string) -> []Prop => {
   var props: []Prop = []
   for part in split_top_level(text, ',') {

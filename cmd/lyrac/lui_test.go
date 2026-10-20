@@ -49,15 +49,17 @@ func TestLui_ReportsMistakesAtTheirLine(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct{ name, source, want string }{
 		{"unknown", "<component name=\"a\">\n  <Buton/>\n</component>", "x.lui:2: <Buton> is not an element of bindings.imgui.ui"},
-		{"attribute", "<component name=\"a\" props=\"x: e\">\n  <Button onclick={x}>Hi</Button>\n</component>", "x.lui:2: <Button> has no attribute onclick"},
-		{"required", "<component name=\"a\" props=\"x: e\">\n  <Button>Hi</Button>\n</component>", "x.lui:2: <Button> needs on_click"},
+		{"attribute", "<component name=\"a\" props={{ x: e }}>\n  <Button onclick={x}>Hi</Button>\n</component>", "x.lui:2: <Button> has no attribute onclick"},
+		{"required", "<component name=\"a\" props={{ x: e }}>\n  <Button>Hi</Button>\n</component>", "x.lui:2: <Button> needs on_click"},
 		{"closing", "<component name=\"a\">\n  <Row>\n</component>", "x.lui:3: </component> closes <Row> (line 2)"},
 		{"bare text", "<component name=\"a\">\n  <Row>hello</Row>\n</component>", "x.lui:2: text \"hello\" outside an element that takes it"},
 		{"style", "<component name=\"a\">\n  <style> Button { colour: #fff } </style>\n</component>", "x.lui:2: no style property colour"},
-		{"shortcut", "<component name=\"a\" props=\"x: e\">\n  <MenuItem on_select={x} shortcut=\"Meta+X\">Hi</MenuItem>\n</component>", "Meta is not Cmd, Ctrl, Alt or Shift"},
-		{"prop", "<component name=\"a\" props=\"x: e\">\n  <b y={x}/>\n</component>\n<component name=\"b\" props=\"x: e\"></component>", "x.lui:2: component b has no prop y"},
+		{"shortcut", "<component name=\"a\" props={{ x: e }}>\n  <MenuItem on_select={x} shortcut=\"Meta+X\">Hi</MenuItem>\n</component>", "Meta is not Cmd, Ctrl, Alt or Shift"},
+		{"prop", "<component name=\"a\" props={{ x: e }}>\n  <b y={x}/>\n</component>\n<component name=\"b\" props={{ x: e }}></component>", "x.lui:2: component b has no prop y"},
 		{"else", "<component name=\"a\">\n  <else>no</else>\n</component>", "x.lui:2: <else> with no <if> before it"},
-		{"quoted event", "<component name=\"a\" props=\"x: e\">\n  <Button on_click=\"x\">Hi</Button>\n</component>", "x.lui:2: on_click of <Button> takes {…}"},
+		{"string props", "<component name=\"a\" props=\"x: e\">\n</component>", "x.lui:1: props are an object: props={{ name: Type, other: Type = default }}"},
+		{"untyped prop", "<component name=\"a\" props={{ x }}>\n</component>", "x.lui:1: prop \"x\" has no type"},
+		{"quoted event", "<component name=\"a\" props={{ x: e }}>\n  <Button on_click=\"x\">Hi</Button>\n</component>", "x.lui:2: on_click of <Button> takes {…}"},
 	}
 	for _, c := range cases {
 		path := filepath.Join(dir, "x.lui")
@@ -83,7 +85,7 @@ func TestLui_ComboFormAndEmWidths(t *testing.T) {
 	source := `<script>
   pub data Ev = Pick(i64) | Close
 </script>
-<component name="view" props="chosen: i64" event="Ev">
+<component name="view" props={{ chosen: i64 }} event="Ev">
   <Window title="Pick" centered on_close={Close}>
     <Form>
       <Field label="Size">
@@ -129,7 +131,7 @@ func TestLui_SliderColorEditAndHint(t *testing.T) {
 	source := `<script>
   pub data Ev = Size(f32) | SizeDone | Paint(string, u32) | Named(string)
 </script>
-<component name="view" props="size: f32, fg: u32, name: string" event="Ev">
+<component name="view" props={{ size: f32, fg: u32, name: string }} event="Ev">
   <Slider label="##size" value={size} min={8.0} max={32.0} format="%.0f pt" on_change={Size} on_commit={SizeDone}/>
   <ColorEdit label="##fg" value={fg} inputs={false} on_change={(v: u32) -> Ev => Paint("fg", v)}/>
   <InputText label="##name" value={name} hint="Theme name" on_change={Named}/>
@@ -263,7 +265,7 @@ func TestLui_WatchRegeneratesOnChange(t *testing.T) {
 	path := filepath.Join(dir, "view.lui")
 	out := filepath.Join(dir, "view.lyra")
 	write := func(label string) {
-		src := `<component name="view" props="go: e"><Button on_click={go}>` + label + `</Button></component>`
+		src := `<component name="view" props={{ go: e }}><Button on_click={go}>` + label + `</Button></component>`
 		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -303,7 +305,7 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 	source := `<script>
   pub data Ev = Width(i64) | Named(string) | Done | Pick | Close
 </script>
-<component name="view" props="w: i64, name: string" event="Ev">
+<component name="view" props={{ w: i64, name: string }} event="Ev">
   <Modal title="Edit###edit" on_escape={Close}>
     <swatch which="fg"/>
     <InputInt label="Width" value={w} step={8} on_change={Width} on_commit={Done}/>
@@ -313,7 +315,7 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
     <Button closes on_click={Close}>OK</Button>
   </Modal>
 </component>
-<component name="swatch" props="which: string">
+<component name="swatch" props={{ which: string }}>
   <Slot name="colour {which}"/>
 </component>
 `

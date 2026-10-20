@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 10/20/26 — `.lui` props are an object
+
+`props="question: string, yes: e"` was a string the editors could only colour as one, and
+whose mistakes lyrac found in the generated module. It is now `props={{ question: string,
+title: string = "Sure?", }}` — the shape a component's parameters have in Lyra, a trailing
+comma allowed — and the string is refused with the form to write. lui reads the object's
+entries (each needs a type) into the same parameter list, so every generated module was
+unchanged but for line markers.
+
+- **Highlighted as what it is**: the Zed grammar has `props` → `prop` (`name`, `type`,
+  `default`), the name a parameter, the type a type, the default injected Lyra; VS Code's
+  `#props` rule colours names as parameters and gives the rest to the Lyra grammar. A
+  type keeps `<…>`, `(…)` and `->` whole, so `HashMap<k, v>` and `(i64) -> e` are one.
+- **Commas are required between entries**: with them optional, `pick: (i64) -> e` read
+  `e` as the next prop's name — the type's word and a name lex alike.
+
 ### 10/20/26 — `Slider`, `ColorEdit`, and a text field's hint
 
 Termina's Settings drew its sliders and color editors by hand in Slots, on a module-level

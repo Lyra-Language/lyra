@@ -60,7 +60,7 @@
 </script>
 
 <!-- The whole interface for a state: drawn afresh each frame. -->
-<component name="view" props="s: State" event="Event">
+<component name="view" props={{ s: State }} event="Event">
   <MainMenuBar>
     <Menu label="File">
       <MenuItem on_select={AskReset} shortcut="Cmd+R">Reset...</MenuItem>
@@ -104,7 +104,11 @@
 </component>
 
 <!-- A question and its two answers: any program's, whatever its events. -->
-<component name="confirm" props="question: string, yes: e, no: e">
+<component name="confirm" props={{
+  question: string,
+  yes: e,
+  no: e,
+}}>
   <style>
     Button { rounding: 6; padding: 14 4 }
     Button.danger { background: #aa2828 }
@@ -118,7 +122,12 @@
 </component>
 
 <!-- A setting's checkbox and a note on what it covers, on one line. -->
-<component name="toggle_row" props="label: string, note: string, on: bool, toggle: e">
+<component name="toggle_row" props={{
+  label: string,
+  note: string,
+  on: bool,
+  toggle: e,
+}}>
   <style>
     Checkbox { background: #286e3c }
     Text.note { color: #8c8c8c }

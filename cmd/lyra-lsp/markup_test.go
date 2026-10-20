@@ -117,7 +117,7 @@ func TestMarkup_MarkupMistakesAndCleanFiles(t *testing.T) {
 	if len(diags) != 1 || diags[0].Range.Start.Line != 1 || !strings.Contains(diags[0].Message, "<Buton> is not an element") {
 		t.Errorf("want lui's own error on line 2: %v", diags)
 	}
-	clean := openMarkup(t, h, "<component name=\"a\" props=\"go: e\">\n  <Button on_click={go}>Go</Button>\n</component>\n")
+	clean := openMarkup(t, h, "<component name=\"a\" props={{ go: e }}>\n  <Button on_click={go}>Go</Button>\n</component>\n")
 	if len(clean) != 0 {
 		t.Errorf("a clean file was given diagnostics: %v", clean)
 	}

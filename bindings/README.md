@@ -403,7 +403,7 @@ view.lui` writes `view.lyra` beside it, `lui --check view.lui` fails when that i
 The example's interface is `examples/imgui/components_view.lui`.
 
 ```
-<component name="confirm" props="question: string, yes: e, no: e">
+<component name="confirm" props={{ question: string, yes: e, no: e }}>
   <style>
     Button { rounding: 6; padding: 14 4 }
     Button.danger { background: #aa2828 }
@@ -418,8 +418,11 @@ The example's interface is `examples/imgui/components_view.lui`.
 
 - **A file is `<script>`s and `<component>`s.** A script's Lyra is copied to the top of the
   module (imports, the state and event types, `update`); a component is a `pure` function
-  of its `props` returning `Node<event>` (`event="Event"`; default `e`, so it fits any
-  tree), wrapped in its `Component`.
+  of its props returning `Node<event>` (`event="Event"`; default `e`, so it fits any
+  tree), wrapped in its `Component`. **Props are an object**, `props={{ question: string,
+  title: string = "Sure?", }}` — each `name: Type` (a Lyra type, generics and functions
+  whole), an optional `= default` (Lyra), a trailing comma allowed; they become the
+  function's parameters in order. The old `props="…"` string is refused, saying so.
 - **A capitalized tag is an element**, its attributes its `…Attrs` fields and its text its
   label. An `on_change` given a bare name (`on_change={Width}`) is made the typed lambda
   calling it, `(value: i64) -> Ev => Width(value)`; a lambda written out must give its
