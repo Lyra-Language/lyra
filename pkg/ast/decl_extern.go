@@ -20,10 +20,14 @@ type ExternDeclStmt struct {
 	// than about its signature. Tagged out of the printer like every auxiliary position.
 	NameLocation Location `print:"-"`
 	Signature    *types.LambdaType
-	IsUnsafe     bool
-	IsPure       bool
-	IsDet        bool
-	IsNoAlloc    bool
+	// IsPublic is `pub`, which exports the extern from its module, as `pub` exports a
+	// binding. A call to it needs `unsafe` in every module (Func), so what crosses the
+	// boundary is the declaration, never a way around writing `unsafe`.
+	IsPublic  bool
+	IsUnsafe  bool
+	IsPure    bool
+	IsDet     bool
+	IsNoAlloc bool
 	// Links are the libraries `@link("m")` names, in source order. Collected here and
 	// unioned across the program by the driver; see todo.md, Foreign functions.
 	Links []string

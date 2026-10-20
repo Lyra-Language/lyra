@@ -829,6 +829,8 @@ target = "genesis"
 - `import lib` binds `lib.x` and no bare names. An alias binds only its local name. `lib.x`
   reaches a function, a type, **and a `const` or top-level `let`/`var`** (`pad.LEFT`,
   `vdp.SCREEN_WIDTH`) — the last was "no member" until 09/30.
+- `pub extern` exports a foreign function as `pub let` does a binding; a call still needs
+  `unsafe` (§8, `extern`).
 - Resolution: **own scope → imports → prelude**. Using an export you didn't import names the fix (`add import lib.{ … }`), distinct from a missing `pub`.
 - **Every position that writes a type's name takes the rule**: parameter, return type, local annotation, struct field, `alias`. It is one pass over the written occurrences (`TypeRefs`), not a check inside a resolver — until 09/22 it was the latter, and the first two were refused while the last three were not. A type a value merely *carries* across the boundary is untouched: `m.col` on a value from a constructor payload writes no name, so there is nothing to refuse.
 - **So does every position that writes a trait's name**: an impl head (`impl Bus for TestBus`), a `where` bound, a supertrait list, a `Trait::method` path. Each needs the trait imported, and each counts as a use of the import (no `lyra-W004`); implementing another module's private trait is `lyra-E028`. A trait reached only by dispatch (`x.area()`, an operator) writes no name and needs only its module loaded. Until 09/28 all four positions resolved an unimported public trait.
@@ -924,6 +926,21 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 ---
 
 ## 8. FFI and Unsafe
+
+### `extern`
+
+`[pub] [unsafe] extern [pure det noalloc] name: (p: T, …) -> R` declares a C function; the
+compiler checks each type crosses (`pkg/backend/FFI.md` has the table and the backend side).
+- **A call needs `unsafe`** (`lyra-E011`), always — `unsafe` before `extern` asserts the bound,
+  not that the call is safe.
+- **A C callback** is a function type in a parameter position (refused as the result). The
+  argument must be a **top-level function** (`lyra-E066`): a lambda, a closure, a local — even
+  one shadowing a top-level name — or a *parameter* has no single code pointer to hand over.
+- **Private to its module** unless `pub`: two modules may each declare `extern abs`. A module
+  usually exports a Lyra wrapper over one, where `unsafe` stops; **`pub extern`** is for the one a
+  wrapper cannot stand in for — a function taking a callback, since the wrapper's parameter is not
+  a top-level function. The importer calls it in `unsafe` with its own top-level function
+  (`bindings.imgui`'s `set_redraw`). Imported as any export, selectively or `lib.name`.
 
 ### Raw pointers
 

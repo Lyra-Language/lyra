@@ -38,6 +38,7 @@ func CollectExternDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Ex
 		Name:         ctx.NodeText(nameNode),
 		NameLocation: ctx.NodeLocation(nameNode),
 		Signature:    signature,
+		IsPublic:     cst.Field(node, "visibility") != nil,
 		IsUnsafe:     cst.Field(node, "is_unsafe") != nil,
 	}
 	if mods := cst.Field(node, "modifiers"); mods != nil {

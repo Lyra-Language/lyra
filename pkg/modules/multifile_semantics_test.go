@@ -2,6 +2,7 @@ package modules_test
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -174,12 +175,11 @@ let twice = pure (n: i64) -> i64 => n * 2`)
 // **An `extern` is private to its module**, and two modules declaring the same foreign
 // function do not collide.
 //
-// There is no `pub extern` to write, so an extern that keyed as *exported* would put every
-// foreign symbol a program uses in one program-wide namespace: two libraries both
-// declaring `strlen` — which is what two libraries using `strlen` look like — would be a
-// duplicate-definition error with no way to say otherwise. What a module exports is the
-// Lyra wrapper it puts over an extern, which is the division of labour the whole FFI
-// design rests on.
+// An extern that keyed as *exported* without `pub` would put every foreign symbol a
+// program uses in one program-wide namespace: two libraries both declaring `strlen` —
+// which is what two libraries using `strlen` look like — would be a duplicate-definition
+// error with no way to say otherwise. What a module usually exports is the Lyra wrapper
+// it puts over an extern; `pub extern` is the exception (see below).
 //
 // The symbol they share is the *linker's*, and the backend declares it once (llvm's
 // extern.go); the front end's job is only to keep the two declarations apart.
@@ -200,8 +200,8 @@ pub let two = unsafe () -> i64 => i64(unsafe { abs(-2) })`,
 	}
 }
 
-// And it stays private: a module cannot call another's extern by name. The wrapper is the
-// export, so this is the same rule a private `let` follows.
+// And it stays private: a module cannot call another's extern by name. Without `pub` the
+// wrapper is the export, so this is the same rule a private `let` follows.
 func TestMultiFile_ExternIsNotReachableFromAnotherModule(t *testing.T) {
 	res := analyzeTree(t, map[string]string{
 		"app.lyra": `import lib.a
@@ -212,5 +212,57 @@ pub let one = unsafe () -> i64 => i64(unsafe { abs(-1) })`,
 	})
 	if len(res.Errors()) == 0 {
 		t.Error("an extern is private to its module, so a bare `abs` elsewhere must not resolve")
+	}
+}
+
+// **A `pub extern` is exported**, selectively and through its namespace, for the extern no
+// wrapper can stand in for: one taking a C callback. The callback must be a top-level
+// function at the call (lyra-E066), and a wrapper's parameter is not one — so the binding
+// offers the extern itself, and the importer passes its own top-level function.
+func TestMultiFile_PubExternIsReachableFromAnotherModule(t *testing.T) {
+	lib := `module lib.host
+@symbol("host_set_redraw")
+pub extern set_redraw: (frame: () -> void) -> void`
+	for _, c := range []struct{ name, app string }{
+		{"selective", `import lib.host.{ set_redraw }
+let frame = () -> void => {}
+let main = () -> u8 => { unsafe { set_redraw(frame) }; 0 }`},
+		{"namespace", `import lib.host
+let frame = () -> void => {}
+let main = () -> u8 => { unsafe { host.set_redraw(frame) }; 0 }`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := analyzeTree(t, map[string]string{"app.lyra": c.app, "lib/host.lyra": lib})
+			if errs := res.Errors(); len(errs) != 0 {
+				t.Errorf("a `pub extern` must be callable from an importer; got %v", errs)
+			}
+		})
+	}
+}
+
+// What crosses is the declaration, not a way around its rules: the importer's call still
+// needs `unsafe` (lyra-E011), and its callback must still be a top-level function — here
+// a parameter, which is the wrapper case `pub extern` exists to avoid (lyra-E066).
+func TestMultiFile_PubExternKeepsItsCallRules(t *testing.T) {
+	lib := `module lib.host
+pub extern set_redraw: (frame: () -> void) -> void`
+	for _, c := range []struct{ name, app, want string }{
+		{"unsafe", `import lib.host.{ set_redraw }
+let frame = () -> void => {}
+let main = () -> u8 => { set_redraw(frame); 0 }`, "lyra-E011"},
+		{"top-level", `import lib.host.{ set_redraw }
+let wrap = (frame: () -> void) -> void => unsafe { set_redraw(frame) }
+let main = () -> u8 => 0`, "lyra-E066"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := analyzeTree(t, map[string]string{"app.lyra": c.app, "lib/host.lyra": lib})
+			var codes []string
+			for _, e := range res.Errors() {
+				codes = append(codes, e.Code)
+			}
+			if !slices.Contains(codes, c.want) {
+				t.Errorf("errors %v; want %s", res.Errors(), c.want)
+			}
+		})
 	}
 }

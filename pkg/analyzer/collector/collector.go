@@ -171,16 +171,16 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 		case *ast.TraitDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.exportToGlobal(modulePath, s, s.IsPublic)
-		// **An extern is always private to its module**, which is why nothing exports it
-		// here and why the grammar gives it no `pub`. A module that wants to offer a
-		// foreign function offers a Lyra function around it — which is what
-		// `std/prelude/rand.lyra` already does with the `random_seed` builtin, and it
-		// means an `unsafe` declaration can never cross a module boundary: every use of
-		// FFI has a checked Lyra function standing in front of it. The cost is a one-line
-		// wrapper; the gain is that `unsafe` stays where it was written.
+		// **An extern is private to its module unless written `pub extern`.** A module
+		// that offers a foreign function usually offers a Lyra function around it, so
+		// `unsafe` stays inside the module; `pub` is for the one a wrapper cannot pass on
+		// — a function taking a C callback, whose argument must be a top-level function
+		// at the call (lyra-E066), which a wrapper's parameter is not. Calling an extern
+		// needs `unsafe` wherever it is called, so the importer still writes it.
 		case *ast.ExternDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.defineInModule(moduleScope, s)
+			c.exportToGlobal(modulePath, s, s.IsPublic)
 		case *ast.VarDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.defineInModule(moduleScope, s)

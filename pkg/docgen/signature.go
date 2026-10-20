@@ -412,6 +412,9 @@ func externSignature(s *ast.ExternDeclStmt) string {
 		}
 		b.WriteString(")\n")
 	}
+	if s.IsPublic {
+		b.WriteString("pub ")
+	}
 	if s.IsUnsafe {
 		b.WriteString("unsafe ")
 	}

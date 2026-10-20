@@ -472,7 +472,7 @@ pub let ordinary = pure () -> i64 => 1
 		t.Errorf("kind = %v; want KindExtern", found.Kind)
 	}
 	if found.IsPublic {
-		t.Error("an extern is always private — there is no `pub extern` to write")
+		t.Error("an extern without `pub` is private")
 	}
 	// **The `@link` line is part of the signature.** Elsewhere an attribute is metadata
 	// a reader can skip; here it is a build requirement riding the declaration, so a
@@ -483,5 +483,21 @@ pub let ordinary = pure () -> i64 => 1
 	}
 	if found.Doc == nil || found.Doc.Summary != "Square root, from libm." {
 		t.Errorf("doc = %v; want the summary above the declaration", found.Doc)
+	}
+}
+
+// **A `pub extern` is on the public page**, `pub` in its signature: it is the module's API
+// — the function a binding offers when it takes a C callback no wrapper can pass on.
+func TestCollect_PubExternIsPublic(t *testing.T) {
+	m := collectOne(t, `
+/// Draws frame while the window is resized.
+@symbol("host_set_redraw")
+pub extern set_redraw: (frame: () -> void) -> void
+`, docgen.Options{})
+	if len(m.Decls) != 1 || m.Decls[0].Name != "set_redraw" || !m.Decls[0].IsPublic {
+		t.Fatalf("decls = %+v; want the public `set_redraw`", m.Decls)
+	}
+	if want := "pub extern set_redraw: (frame: () -> void) -> void"; m.Decls[0].Signature != want {
+		t.Errorf("signature = %q; want %q", m.Decls[0].Signature, want)
 	}
 }

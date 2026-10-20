@@ -7,9 +7,13 @@ notes are in [`pkg/backend/FFI.md`](../pkg/backend/FFI.md); language rules are i
 
 ## Conventions for every binding
 
-- **Externs are private; the module exports Lyra.** There is no `pub extern`, so the
-  wrapper is where `unsafe` stops, NULL becomes a `Maybe`, and untagged C unions become
-  `data` types. An example using a binding should contain no `unsafe` and no `extern`.
+- **Externs are private; the module exports Lyra.** The wrapper is where `unsafe` stops,
+  NULL becomes a `Maybe`, and untagged C unions become `data` types. An example using a
+  binding should contain no `extern`, and no `unsafe` but the one below.
+- **`pub extern` only for a function taking a C callback.** A callback must be a top-level
+  function at the call (`lyra-E066`), which a wrapper's parameter is not, so no wrapper
+  can pass one on: export the extern itself, documented with `///`, and the program calls
+  it in `unsafe` with its own top-level function (`bindings.imgui`'s `set_redraw`).
 - **`@link("lib", pkg: "package")` goes on the `module` header**, once. `pkg:` names the
   pkg-config package, which `lyrac` asks where the library lives — so a Homebrew install
   links with no `LIBRARY_PATH`. Give every binding for a packaged library one.
@@ -265,6 +269,16 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     The texture handling is `imgui_impl_null.cpp`'s: every request marked done. A test
     finds widgets by rectangles it records itself (`get_item_rect_min/max`); Vega's
     `probe.lyra` is the pattern.
+  - **Live resizing — `set_redraw(host, frame)`**: the host draws `frame`,
+    the program's whole frame from `begin_frame` to `end_frame`, at each expose SDL hands
+    an event watch during a live resize (`data1` 1), so the contents follow the edge. On
+    macOS AppKit's resize loop holds the main thread inside `begin_frame`'s event pump
+    until the mouse is let go, and the program's own loop draws nothing meanwhile; such a
+    frame's `begin_frame` pumps nothing. **A `pub extern`**, not a wrapper: a C callback
+    is a top-level function, which no wrapper's parameter is (`lyra-E066`), so the binding
+    exports the extern itself and the program calls it in `unsafe`; its frames' state is
+    module-level and **read after `begin_frame`**, which may have drawn frames while it
+    waited. Termina is the user.
   - **`cancel_quit(host)`**: `begin_frame` answering false reports a quit (the window
     closed, Cmd+Q) and it *stays* requested; this takes it back, so a program with unsaved
     work asks first and keeps looping. SIGTERM arrives as the same quit.

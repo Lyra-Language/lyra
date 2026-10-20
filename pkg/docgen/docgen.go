@@ -348,15 +348,15 @@ func declFor(stmt ast.AstNode) (Decl, bool) {
 		}, true
 
 	case *ast.ExternDeclStmt:
-		// **Always private**, and recorded as such rather than as a page-visible
-		// declaration: there is no `pub extern` to write, so an extern reaches a page
-		// only under `--private`. What a module exports is the Lyra wrapper over one.
+		// **Private unless `pub extern`**, so most reach a page only under `--private`:
+		// what a module usually exports is the Lyra wrapper over one, and `pub` is for
+		// the extern no wrapper can pass a C callback on to.
 		return Decl{
 			Name:      s.Name,
 			Kind:      KindExtern,
 			Signature: externSignature(s),
 			Doc:       s.Doc,
-			IsPublic:  false,
+			IsPublic:  s.IsPublic,
 			Location:  s.NameLocation,
 		}, true
 

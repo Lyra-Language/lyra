@@ -110,6 +110,13 @@ struct LyraImGuiHost {
     // default: the host's own copy, since io.IniFilename keeps the pointer and ImGui writes
     // the file again as the context is destroyed.
     char* layout_file;
+    // The program's frame, drawn while the main window is resized
+    // (lyra_imgui_host_set_redraw): AppKit holds the main thread in its resize loop, inside
+    // SDL_PollEvent, until the mouse is let go, and SDL hands an event watch each expose
+    // of that loop to draw from. `redrawing` while such a frame runs: its begin_frame is
+    // already inside the poll, and pumps nothing.
+    void (*redraw)(void);
+    bool redrawing;
 };
 
 // Flags for lyra_imgui_host_create; Lyra spells them HOST_DOCKING and HOST_VIEWPORTS.
@@ -705,12 +712,47 @@ static void end_headless_frame() {
         }
 }
 
+// SDL's event watch for a live resize: each expose AppKit's resize loop makes of the main
+// window is a frame of the program's, drawn there and then. Not one inside the program's
+// own frame, nor inside a frame this drew.
+static bool redraw_on_resize(void* userdata, SDL_Event* event) {
+    LyraImGuiHost* host = static_cast<LyraImGuiHost*>(userdata);
+    if (event->type == SDL_EVENT_WINDOW_EXPOSED && event->window.data1 == 1 &&
+        event->window.windowID == SDL_GetWindowID(host->window) && host->redraw != nullptr &&
+        !host->redrawing && !host->quit) {
+        host->redrawing = true;
+        host->redraw();
+        host->redrawing = false;
+    }
+    return true;
+}
+
+// The program's frame — begin_frame, its interface, end_frame — for the host to draw while
+// the main window is resized, so its contents follow the edge rather than stretch.
+void lyra_imgui_host_set_redraw(LyraImGuiHost* host, void (*redraw)(void)) {
+    if (host->headless)
+        return;
+    if (host->redraw == nullptr && redraw != nullptr)
+        SDL_AddEventWatch(redraw_on_resize, host);
+    if (host->redraw != nullptr && redraw == nullptr)
+        SDL_RemoveEventWatch(redraw_on_resize, host);
+    host->redraw = redraw;
+}
+
 // Pump events and start an ImGui frame. False once the user has asked to quit, and
 // then no frame was started. While the main window is minimised this waits rather
-// than returning, so every true answer is a frame worth drawing.
+// than returning, so every true answer is a frame worth drawing. A frame the host draws
+// during a resize pumps nothing: it is drawn from inside the pump.
 bool lyra_imgui_host_begin_frame(LyraImGuiHost* host) {
     if (host->headless)
         return begin_headless_frame(host);
+    if (host->redrawing) {
+        host->drag_area_set = false;
+        ImGui_ImplSDLGPU3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        return true;
+    }
     for (;;) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -1148,6 +1190,8 @@ void lyra_imgui_host_destroy(LyraImGuiHost* host) {
         return;
     }
     SDL_WaitForGPUIdle(host->device);
+    if (host->redraw != nullptr)
+        SDL_RemoveEventWatch(redraw_on_resize, host);
 #if defined(__APPLE__)
     if (host->custom_title_bar)
         lyra_imgui_macos_unwatch_title_bar();

@@ -86,6 +86,18 @@ pub let end_frame = (host: Host, r: f32, g: f32, b: f32) -> void =>
 /// Close the window and shut ImGui and SDL down. The host must not be used afterwards.
 pub let destroy_host = (host: Host) -> void => unsafe { lyra_imgui_host_destroy(host) }
 
+/// Have the host draw `frame` — the program's whole frame, [begin_frame] to [end_frame] —
+/// whenever the main window is resized, so its contents follow the edge as it is dragged
+/// rather than stretch: on macOS the resize holds the main thread inside `begin_frame`'s
+/// event pump until the mouse is let go, and the program's own loop draws nothing
+/// meanwhile. `frame` is a C callback, so a top-level function (`lyra-E066`), and what
+/// it shares with the program's own frames lives at module level — read after
+/// `begin_frame`, which may have drawn frames of its own while it waited. A headless host
+/// draws nothing. An extern rather than a wrapper, since no wrapper can pass a callback
+/// on, so the call is `unsafe { set_redraw(host, frame) }`.
+@symbol("lyra_imgui_host_set_redraw")
+pub extern set_redraw: (host: Host, frame: () -> void) -> void
+
 // ── Text ─────────────────────────────────────────────────────────────────────
 
 /// `ImGui::Text` — a line of text. ImGui's own `Text` is printf-style and is not bound;

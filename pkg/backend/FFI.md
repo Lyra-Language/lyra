@@ -17,8 +17,13 @@ are in [`bindings/README.md`](../../bindings/README.md).
 - **`lyra-E011`'s "call to an unsafe function" half is in the typechecker**
   (`requireUnsafeCall`), not the syntactic pass: a name does not identify a declaration
   (rule 9).
-- **Private to its module, global as a symbol.** `declIsPublic` is false for an extern; two
-  modules may each declare `strlen`. Modules export Lyra wrappers.
+- **Private to its module unless `pub`, global as a symbol.** `declIsPublic` answers
+  `ExternDeclStmt.IsPublic`, and `recordModuleBindings` exports a `pub extern` as it does a
+  `pub let`; two modules may each declare a private `strlen`. Modules export Lyra wrappers,
+  and `pub extern` only where none can stand in: a callback parameter, whose argument must be
+  top-level (below). The call keeps `Func()`'s `IsUnsafe`, so `unsafe` is still written at
+  every call site; the backend declares the extern in the importer's program as it would
+  its own (`l.externs`, by C symbol).
 - **Parameters are named** (`lyra-E067`); a plain function *type* is refused a name, and a
   callback's own signature stays unnamed. Names are unchecked against the header but appear
   in diagnostics (`argument 2 (destLen)`).
@@ -55,7 +60,9 @@ are in [`bindings/README.md`](../../bindings/README.md).
 - **Callbacks**: a function type in *parameter* position is a C function pointer (each type
   checked FFI-safe); in return position it is refused. Only a top-level function qualifies —
   `declareFunctionAs` has no environment word, so its signature *is* the C one. A closure,
-  including a local that shadows a top-level function, is `lyra-E066`.
+  including a local that shadows a top-level function, is `lyra-E066` — as is a wrapper's
+  parameter, which is why a binding offering a callback exports the extern itself.
+  `TestExec_CallbackThroughAnExportedExtern` runs one across a module boundary.
 - **`@link`** on the module header or the declaration, unioned across the compile, sorted,
   deduplicated, emitted as `-l` (`lyrac`'s `linkFlags`, also in every "compile with" hint).
   Its `pkg: "…"` packages (`driver.Result.Packages`) become `-L` directories from

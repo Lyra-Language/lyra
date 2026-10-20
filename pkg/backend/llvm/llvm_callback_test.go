@@ -131,3 +131,42 @@ let main = () -> void => println(1)
 		t.Errorf("diagnostics = %q; want the callback-signature error", diags)
 	}
 }
+
+// **A callback through another module's `pub extern`** — how a binding offers a function
+// taking a C callback, since no wrapper can pass one on (its parameter is not a top-level
+// function, lyra-E066). The importer's own top-level function crosses, called bare and
+// through the namespace, and from inside a closure, whose captures must know an imported
+// extern is no binding to capture.
+func TestExec_CallbackThroughAnExportedExtern(t *testing.T) {
+	t.Parallel()
+	out := runModules(t, map[string]string{
+		"lib/cbits.lyra": `module lib.cbits
+/// libc's sort, offered as it is: its comparator is a C callback.
+@symbol("qsort")
+pub unsafe extern sort_bytes: (out: ^mut u8, len: u64, size: u64, cmp: (^u8, ^u8) -> i32) -> void
+`,
+		"main.lyra": `module main
+import std.ffi.{ data_mut }
+import lib.cbits
+import lib.cbits.{ sort_bytes }
+let up = pure (a: ^u8, b: ^u8) -> i32 => unsafe { i32(a^) - i32(b^) }
+let down = pure (a: ^u8, b: ^u8) -> i32 => unsafe { i32(b^) - i32(a^) }
+let main = () -> void => {
+  var xs: []u8 = [50, 10, 40, 20, 30]
+  unsafe { sort_bytes(xs.data_mut(), 5, 1, up) }
+  print("${xs[0]} ${xs[4]} ")
+  unsafe { cbits.sort_bytes(xs.data_mut(), 5, 1, down) }
+  print("${xs[0]} ${xs[4]} ")
+  let again = () -> void => {
+    var ys: []u8 = [3, 1, 2]
+    unsafe { sort_bytes(ys.data_mut(), 3, 1, up) }
+    println("${ys[0]} ${ys[2]}")
+  }
+  again()
+}
+`,
+	})
+	if got := strings.TrimSpace(out); got != "10 50 50 10 1 3" {
+		t.Errorf("output = %q; want \"10 50 50 10 1 3\"", got)
+	}
+}

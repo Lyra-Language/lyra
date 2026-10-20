@@ -806,7 +806,11 @@ annotations.
 ## Foreign functions — `extern`
 
 - **[OPEN] Returning a C function pointer, or passing a closure to C.** Both need a way to
-  call a bare code address; the `void *` context parameter covers captures meanwhile.
+  call a bare code address; the `void *` context parameter covers captures meanwhile. A
+  closure could cross as that pair — a trampoline and its environment — where C takes a
+  `void *userdata` beside the pointer (who keeps the environment alive is the question);
+  never as a bare pointer, which needs code made at run time, and executable memory the
+  hardened runtime refuses without an entitlement.
 - **[PARTIAL] `@link` search paths, static archives and macOS frameworks.** Search paths
   landed 09/26 as `@link(…, pkg: "…")`, asked of pkg-config. Still the build system's
   problem: a library with no pkg-config package, static archives, and macOS frameworks —

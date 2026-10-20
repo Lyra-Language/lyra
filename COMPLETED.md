@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 10/20/26 — `pub extern`: a binding offers a function taking a C callback
+
+`bindings.imgui`'s `set_redraw(host, frame)` was the program's to declare: `frame` is a C
+callback, which must be a top-level function at the call (`lyra-E066`), so a wrapper could
+not pass its parameter on, and an extern could not be exported. Termina declared the host's
+extern in `termina.lyra`.
+
+- **An extern may be `pub`** (`pub [unsafe] extern …`, grammar and collector), exported as a
+  `pub let` is, selectively or through the namespace. `bindings.imgui` now exports
+  `set_redraw`, and Termina imports it.
+- **Chosen over a wrapper forwarding a callback-typed parameter.** That needed a type of its
+  own — a bare C function, not a `{code, env}` closure — through every type operation, so
+  the wrapper's parameter lowered as C's and each caller of the wrapper was held to a
+  top-level function. `pub extern` needed one field: the call rules already applied at the
+  importer's call.
+- **`unsafe` is still written at every call**: calling an extern always needs it
+  (`Func()`'s `IsUnsafe`), so what crosses is the declaration, not a way around `unsafe`.
+  Binding modules keep wrapping every other extern; `bindings/README.md` says `pub extern`
+  is for a callback only.
+- Proof: `TestMultiFile_PubExtern*` (reachable both ways; `lyra-E011` and `lyra-E066`
+  still at the importer), `TestCollect_PubExternIsPublic`, and
+  `TestExec_CallbackThroughAnExportedExtern` (libc's `qsort` behind another module's
+  `pub extern`, called bare, through the namespace, and from a closure).
+
+### 10/20/26 — Contents that follow a window's edge as it is resized
+
+On macOS the window stretched its last frame until the mouse was let go: AppKit's resize
+loop holds the main thread inside SDL's event pump, so a program drawing from its own loop
+draws nothing meanwhile. SDL3 hands each expose of that loop to an event watch, on the main
+thread, marked `data1` 1, and expects a redraw there.
+
+- **The host draws the program's frame from the watch** (`lyra_imgui_host_set_redraw`):
+  `begin_frame` to `end_frame`, with that `begin_frame` pumping nothing, since it is
+  already inside the pump. Not inside a frame it is drawing, nor after a quit.
+- **The frame is Lyra, called from C**: a top-level function, with its state module-level,
+  since a C callback has no closure's environment. **The state is read after
+  `begin_frame`**: frames drawn during a resize happen inside it, and a copy taken before
+  would undo them on its way back, the terminals' parsed screens included.
+- **Passing closures to C first was considered and is not what this needed**: Lyra's
+  captures are by value and writing one is `lyra-E024`, so a frame closure in `main` could
+  not change the loop's state, and the restructure would be needed anyway.
+- **Found: a binding cannot offer a callback-taking function.** A wrapper's parameter is not
+  top-level (`lyra-E066`), and an extern could not be exported, so the program declared the
+  host's extern itself — until `pub extern`, the entry above.
+
 ### 10/20/26 — A row that wraps
 
 Termina's color groups, side by side, ran past a narrow window's edge. `<Row wrap>` puts a
