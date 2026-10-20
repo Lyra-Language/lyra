@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/20/26 — `Slider`, `ColorEdit`, and a text field's hint
+
+Termina's Settings drew its sliders and color editors by hand in Slots, on a module-level
+copy of the settings, since `seen` cannot write the caller's locals. Both are elements now,
+and the Slots are gone.
+
+- **The inputs' rule, kept**: each `on_change` is called with the value the widget would
+  now hold, and `on_commit` is sent once when the edit ends. For a slider that is the
+  button coming up, so a drag is one undo step. A `Slider` is an `f32` between `min` and
+  `max`, clamped however it is entered (`SLIDER_FLAGS_ALWAYS_CLAMP`: a Ctrl-click typed
+  value is not otherwise).
+- **A color is `0xRRGGBB`**, as people write them and as Termina's settings keep them, not
+  `col32`'s byte order. ImGui edits three floats, so `rgb_channels` and `rgb_of` convert,
+  rounding and clamping. The example checks the round trip at both ends and a channel past
+  each end.
+- **An event carrying more than the value** is a lambda written out
+  (`on_change={(v: u32) -> Ev => Paint("fg", v)}`); a bare constructor of the value alone
+  is made into one by lui, as for the other inputs.
+- `InputText` gained `hint`, which Termina's theme name had lost in the move to markup.
+- Driven in `examples/imgui/components.lyra --check`: a click near the slider's right end
+  sets it near the top and commits once.
+
 ### 10/19/26 — An `if` or a `match` is an operand
 
 `1 + if c { 2 } else { 3 }`, `"x" ++ if … `, `held | match name { … }` were syntax errors,

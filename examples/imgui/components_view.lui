@@ -17,6 +17,9 @@
     | Load(i64)
     | Rename(string)
     | NameDone
+    | SetVolume(f32)
+    | VolumeDone
+    | SetAccent(u32)
 
   pub struct State {
     sound: bool = true,
@@ -30,6 +33,11 @@
     name: string = "Hero",
     saved_name: string = "",
     commits: i64 = 0,
+    /// The music's volume as dragged, and how many drags have ended.
+    volume: f32 = 0.5,
+    volume_commits: i64 = 0,
+    /// A color, `0xRRGGBB`.
+    accent: u32 = 0x3C78D8,
   }
 
   /// `s` after `event`.
@@ -45,6 +53,9 @@
     Load(slot) => State { s | loaded: slot },
     Rename(name) => State { s | name: name },
     NameDone => State { s | saved_name: s.name, commits: s.commits + 1 },
+    SetVolume(v) => State { s | volume: v },
+    VolumeDone => State { s | volume_commits: s.volume_commits + 1 },
+    SetAccent(c) => State { s | accent: c },
   }
 </script>
 
@@ -61,10 +72,16 @@
       <MenuItem on_select={AskQuit} shortcut="Cmd+Q">Quit</MenuItem>
     </Menu>
   </MainMenuBar>
-  <Window title="Settings" style="width: 340; height: 260">
+  <Window title="Settings" style="width: 340; height: 330">
     <Form>
       <Field label="Name">
-        <InputText label="##name" id="field name" value={s.name} on_change={Rename} on_commit={NameDone}/>
+        <InputText label="##name" id="field name" hint="your name" value={s.name} on_change={Rename} on_commit={NameDone}/>
+      </Field>
+      <Field label="Volume">
+        <Slider label="##volume" id="slider volume" value={s.volume} min={0.0} max={1.0} format="%.2f" on_change={SetVolume} on_commit={VolumeDone} style="width: 12em"/>
+      </Field>
+      <Field label="Accent">
+        <ColorEdit label="##accent" id="color accent" value={s.accent} inputs={false} on_change={SetAccent}/>
       </Field>
     </Form>
     <SeparatorText>Audio</SeparatorText>

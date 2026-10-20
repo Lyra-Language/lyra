@@ -78,6 +78,11 @@ import bindings.imgui.{
   begin_combo,
   input_int,
   input_text,
+  input_text_with_hint,
+  slider_float,
+  color_edit3,
+  SLIDER_FLAGS_ALWAYS_CLAMP,
+  COLOR_EDIT_FLAGS_NO_INPUTS,
   radio_button,
   open_popup,
   is_popup_open,
@@ -211,6 +216,12 @@ pub data Node<e> =
   /// A line of text typed: `on_change` with the new text as it is edited, `on_commit`
   /// when the edit is done.
   | InputText(InputTextAttrs<e>)
+  /// A number dragged along a bar between two ends: `on_change` with the new value as it is
+  /// dragged, `on_commit` when it is let go.
+  | Slider(SliderAttrs<e>)
+  /// A color's swatch, which opens ImGui's picker when clicked: `on_change` with the new
+  /// color as it is picked, `on_commit` when the edit is done.
+  | ColorEdit(ColorEditAttrs<e>)
   /// A modal popup over the window, **open while it is in the tree**: put it there to
   /// show it, leave it out to have it gone. A `closes` button in it closes it as it is
   /// clicked; Escape is its `on_escape`.
@@ -358,7 +369,42 @@ pub struct InputIntAttrs<e> {
 pub struct InputTextAttrs<e> {
   label: string,
   value: string,
+  /// Shown greyed while `value` is empty: what to type there.
+  hint: string = "",
   on_change: (string) -> e,
+  on_commit: Maybe<e> = None,
+  id: string = "",
+  enabled: bool = true,
+  class: string = "",
+  style: Style = Style {},
+}
+
+/// As [InputIntAttrs], over a number between `min` and `max`, dragged along a bar (or typed,
+/// Ctrl-clicked); one typed past either end is that end. `format` is how the bar shows it,
+/// printf's way: `"%.0f pt"`.
+pub struct SliderAttrs<e> {
+  label: string,
+  value: f32,
+  min: f32,
+  max: f32,
+  format: string = "%.3f",
+  on_change: (f32) -> e,
+  on_commit: Maybe<e> = None,
+  id: string = "",
+  enabled: bool = true,
+  class: string = "",
+  /// `width` (or `width_em`) is the bar's.
+  style: Style = Style {},
+}
+
+/// As [InputIntAttrs], over a color, `0xRRGGBB` as people write them (not [col32]'s byte
+/// order; [rgb_channels] and [rgb_of] convert). Its swatch opens ImGui's picker, and with
+/// `inputs` its three channels are fields beside it.
+pub struct ColorEditAttrs<e> {
+  label: string,
+  value: u32,
+  inputs: bool = true,
+  on_change: (u32) -> e,
   on_commit: Maybe<e> = None,
   id: string = "",
   enabled: bool = true,
@@ -527,6 +573,21 @@ pub let primary_key_name = () -> string =>
 /// Whether ImGui has a key for a [Shortcut]'s `key` — one it does not can never be pressed.
 pub let key_known = pure (key: string) -> bool => imgui_key(key).is_some()
 
+/// `0xRRGGBB` as the three channels ImGui's color editors edit, 0 to 1.
+pub let rgb_channels = pure (rgb: u32) -> [3]f32 => #[
+  f32((rgb >> 16) & 0xFF) / 255.0,
+  f32((rgb >> 8) & 0xFF) / 255.0,
+  f32(rgb & 0xFF) / 255.0,
+]
+
+/// Three channels, 0 to 1 (outside it, the nearer end), as `0xRRGGBB`.
+pub let rgb_of = pure (c: [3]f32) -> u32 => {
+  let r = u32((c[0].clamp(0.0, 1.0) * 255.0).round())
+  let g = u32((c[1].clamp(0.0, 1.0) * 255.0).round())
+  let b = u32((c[2].clamp(0.0, 1.0) * 255.0).round())
+  (r << 16) | (g << 8) | b
+}
+
 /// The menu item's id: its own, else its label.
 pub let item_id = pure (it: MenuItemAttrs<e>) -> string =>
   if it.id.len() > 0 { it.id } else { it.label }
@@ -545,6 +606,8 @@ impl Node<e> {
     Radio(r) => if r.id.len() > 0 { r.id } else { r.label },
     InputInt(i) => if i.id.len() > 0 { i.id } else { i.label },
     InputText(i) => if i.id.len() > 0 { i.id } else { i.label },
+    Slider(sl) => if sl.id.len() > 0 { sl.id } else { sl.label },
+    ColorEdit(c) => if c.id.len() > 0 { c.id } else { c.label },
     _ => "",
   }
 
@@ -696,13 +759,56 @@ impl Node<e> {
         if let Some(w) = width_of(style) { set_next_item_width(w) }
         var value = i.value
         begin_disabled(!i.enabled)
-        let changed = input_text(i.label, value)
+        let changed = if i.hint.len() > 0 {
+          input_text_with_hint(i.label, i.hint, value)
+        } else {
+          input_text(i.label, value)
+        }
         let done = is_item_deactivated_after_edit()
         end_disabled()
         seen(self)
         pop_style(pushed)
         if changed { events.push(i.on_change(value)) }
         if done { if let Some(event) = i.on_commit { events.push(event) } }
+      },
+      Slider(sl) => {
+        let style = sheet.style_for("Slider", sl.class, sl.style)
+        let pushed = push_style(style, FramePart)
+        if let Some(w) = width_of(style) { set_next_item_width(w) }
+        var value = sl.value
+        begin_disabled(!sl.enabled)
+        let changed = slider_float(
+          sl.label,
+          value,
+          sl.min,
+          sl.max,
+          sl.format,
+          SLIDER_FLAGS_ALWAYS_CLAMP
+        )
+        let done = is_item_deactivated_after_edit()
+        end_disabled()
+        seen(self)
+        pop_style(pushed)
+        if changed { events.push(sl.on_change(value)) }
+        if done { if let Some(event) = sl.on_commit { events.push(event) } }
+      },
+      ColorEdit(c) => {
+        let style = sheet.style_for("ColorEdit", c.class, c.style)
+        let pushed = push_style(style, FramePart)
+        if let Some(w) = width_of(style) { set_next_item_width(w) }
+        var channels = rgb_channels(c.value)
+        begin_disabled(!c.enabled)
+        let changed = color_edit3(
+          c.label,
+          channels,
+          if c.inputs { 0 } else { COLOR_EDIT_FLAGS_NO_INPUTS }
+        )
+        let done = is_item_deactivated_after_edit()
+        end_disabled()
+        seen(self)
+        pop_style(pushed)
+        if changed { events.push(c.on_change(rgb_of(channels))) }
+        if done { if let Some(event) = c.on_commit { events.push(event) } }
       },
       Modal(m, children) => {
         let style = sheet.style_for("Modal", m.class, m.style)

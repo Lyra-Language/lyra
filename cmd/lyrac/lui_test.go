@@ -119,6 +119,52 @@ func TestLui_ComboFormAndEmWidths(t *testing.T) {
 	}
 }
 
+// A slider and a color editor, and a text field's hint: `on_change={Size}` names a
+// constructor of an f32 or a u32, which lui makes the typed lambda as for the other
+// inputs; a lambda written out carries what the constructor needs besides (`Paint("fg", v)`).
+// The module checks clean.
+func TestLui_SliderColorEditAndHint(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script>
+  pub data Ev = Size(f32) | SizeDone | Paint(string, u32) | Named(string)
+</script>
+<component name="view" props="size: f32, fg: u32, name: string" event="Ev">
+  <Slider label="##size" value={size} min={8.0} max={32.0} format="%.0f pt" on_change={Size} on_commit={SizeDone}/>
+  <ColorEdit label="##fg" value={fg} inputs={false} on_change={(v: u32) -> Ev => Paint("fg", v)}/>
+  <InputText label="##name" value={name} hint="Theme name" on_change={Named}/>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Slider(SliderAttrs {",
+		"on_change: (value: f32) -> Ev => Size(value)",
+		`format: "%.0f pt"`,
+		"on_commit: Some(SizeDone)",
+		"ColorEdit(ColorEditAttrs {",
+		"inputs: false",
+		`hint: "Theme name"`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
 // A shortcut's modifiers and keys as a Linux terminal's menus show them: Alt alone (no
 // primary modifier), a named key, and every modifier at once; the module checks clean.
 func TestLui_ShortcutsWithAltAndNamedKeys(t *testing.T) {

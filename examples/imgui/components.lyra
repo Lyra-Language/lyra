@@ -33,6 +33,10 @@ import bindings.imgui.{
 import bindings.imgui.ui.{
   Node,
   InputText,
+  Slider,
+  ColorEdit,
+  rgb_channels,
+  rgb_of,
   Menu,
   MenuItem,
   Button,
@@ -84,6 +88,9 @@ var drawn: []Drawn = []
 struct Drawn {
   label: string,
   center: Vec2,
+  /// Its left and right edges.
+  left: f32,
+  right: f32,
   fill: u32,
 }
 
@@ -142,6 +149,27 @@ let check = () -> u8 => {
   failures += verify(
     state.saved_name == "HeroJo" && state.commits == 1,
     "Enter commits it, once: ${state.saved_name}, ${state.commits}"
+  )
+  // A slider: a click near its right end drags it there — on_change with a value clamped
+  // to the top, and on_commit once as the button comes up.
+  state = click_at(host, state, "slider volume", 0.98)
+  failures += verify(
+    state.volume > 0.9 && state.volume <= 1.0 && state.volume_commits == 1,
+    "the slider moves near its top and commits once: ${state.volume}, ${state.volume_commits}"
+  )
+  failures += verify(
+    on_screen("color accent"),
+    "the color's swatch is drawn"
+  )
+  // A color through ImGui's channels and back is the color: every byte, both ends.
+  var round_trips = true
+  for c in [u32(0x000000), u32(0xFFFFFF), u32(0x3C78D8), u32(0x010203), u32(0xFEFDFC)] {
+    if rgb_of(rgb_channels(c)) != c { round_trips = false }
+  }
+  failures += verify(round_trips, "a color is the same through rgb_channels and rgb_of")
+  failures += verify(
+    rgb_of(#[1.5, -0.25, 0.5]) == u32(0xFF0080),
+    "a channel past either end is that end"
   )
   state = State { state | asking_quit: true }
   state = frame(host, state)
@@ -218,6 +246,8 @@ let record = (node: Node<Event>) -> void => {
     Menu(m, _) => m.label,
     MenuItem(it) => it.label,
     InputText(i) => i.id,
+    Slider(sl) => sl.id,
+    ColorEdit(c) => c.id,
     _ => "",
   }
   if label.len() == 0 { return }
@@ -227,6 +257,8 @@ let record = (node: Node<Event>) -> void => {
   drawn.push(Drawn {
     label: label,
     center: Vec2 { x: (top_left.x + bottom_right.x) / 2.0, y: (top_left.y + bottom_right.y) / 2.0 },
+    left: top_left.x,
+    right: bottom_right.x,
     fill: fill
   })
 }
@@ -236,10 +268,24 @@ let fill_of = (label: string) -> Maybe<u32> => {
   None
 }
 
+/// Whether the last frame drew `label`.
+let on_screen = (label: string) -> bool => {
+  for d in drawn { if d.label == label { return true } }
+  false
+}
+
 /// The element `label` clicked as a person would: moved to, pressed, released, a frame each.
-let click = (host: Host, state: State, label: string) -> State => {
+let click = (host: Host, state: State, label: string) -> State =>
+  click_at(host, state, label, 0.5)
+
+/// [click] at `fraction` of the way across it, left to right: a slider's place.
+let click_at = (host: Host, state: State, label: string, fraction: f32) -> State => {
   var at: Maybe<Vec2> = None
-  for d in drawn { if d.label == label { at = Some(d.center) } }
+  for d in drawn {
+    if d.label == label {
+      at = Some(Vec2 { x: d.left + (d.right - d.left) * fraction, y: d.center.y })
+    }
+  }
   let Some(p) = at else {
     println("FAIL: \"${label}\" is not on screen")
     return state

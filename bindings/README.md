@@ -344,8 +344,12 @@ window is markup (`vega/src/settings_view.lui`).
   `Checkbox`, `Combo` (a drop-down whose children are `Selectable`s, each its own event —
   ImGui's own shape, so a choice needs no event carrying a value), `Form` and `Field` (a
   label right-aligned in a column as wide as the widest, its controls after it), `Text`,
-  `Separator`, `SeparatorText`, `Row` (children side by side), `Radio`, `InputInt` and
-  `InputText` (below), `Modal` (open while it is in the tree; a `closes` button closes it,
+  `Separator`, `SeparatorText`, `Row` (children side by side), `Radio`, `InputInt`,
+  `InputText` (a `hint` greyed while it is empty), `Slider` (an `f32` dragged between
+  `min` and `max`, shown in `format`, clamped to them however entered) and `ColorEdit` (a
+  `0xRRGGBB` color's swatch, which opens ImGui's picker; `inputs` adds its channels'
+  fields; `rgb_channels`/`rgb_of` convert to and from ImGui's floats) — the inputs below —
+  `Modal` (open while it is in the tree; a `closes` button closes it,
   Escape is its `on_escape`), `Slot` (where the caller draws — a canvas, a preview — in
   its `seen`), `Component` and `Fragment` (children in place, several where one is
   expected) — each with an `…Attrs` struct of
@@ -362,10 +366,11 @@ window is markup (`vega/src/settings_view.lui`).
   next frame**: `render` draws the whole tree, then answers the events, so state they
   change is drawn a frame later — unseen by a person, but a test clicking what a click
   moved must let that frame pass.
-- **Inputs carry their value in a function**: `InputInt`/`InputText`'s `on_change:
-  (value) -> e` is called with the value the field would now hold, each keystroke or step
-  (the field never writes `value`; the program keeps or refuses it), and `on_commit` is
-  sent once when the edit ends — change per edit, commit once, as an undo step wants.
+- **Inputs carry their value in a function**: `InputInt`, `InputText`, `Slider` and
+  `ColorEdit` call `on_change: (value) -> e` with the value the field would now hold, each
+  keystroke, step, drag or pick (the field never writes `value`; the program keeps or
+  refuses it), and send `on_commit` once when the edit ends — change per edit, commit
+  once, as an undo step wants; a slider's commit is the button coming up.
   `node_id(node)` is any element's `id` (else its label), for a `seen` that probes.
 - **The tree is data more than ImGui reads**: `menu_items(nodes)` flattens the menu items
   (Vega installs the same tree in macOS's menu bar), `pressed_shortcut(nodes)` presses a
