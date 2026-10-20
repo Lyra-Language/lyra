@@ -52,4 +52,89 @@ impl Set<t> {
   /// The items, in no order — `HashMap`'s key order, which is the table's and not the
   /// insertion's.
   pub let members<t> = pure (self) -> []t => self.items.keys()
+
+  /// Whether every item of this set is also in `other`. An empty set is a subset of every
+  /// set, and every set is a subset of itself. A set larger than `other` is answered without
+  /// looking at its items.
+  pub let is_subset_of<t> where t: Hash = pure (self, other: Set<t>) -> bool => {
+    if self.len() > other.len() { return false }
+    for item in self.members() {
+      if !other.contains(item) { return false }
+    }
+    return true
+  }
+
+  /// Whether this set is a subset of `other` and smaller than it, so `other` holds at least
+  /// one item this set lacks. No set is a proper subset of itself.
+  pub let is_proper_subset_of<t> where t: Hash = pure (self, other: Set<t>) -> bool => {
+    if self.len() >= other.len() { return false }
+    for item in self.members() {
+      if !other.contains(item) { return false }
+    }
+    return true
+  }
+
+  /// Whether the two sets have no item in common. Two empty sets are disjoint, and so is
+  /// any set with an empty one.
+  pub let disjoint<t> where t: Hash = pure (self, other: Set<t>) -> bool => {
+    for item in self.members() {
+      if other.contains(item) { return false }
+    }
+    return true
+  }
+
+  /// A new set of every item in either set. Neither set is changed.
+  pub let union<t> where t: Hash = pure (self, other: Set<t>) -> Set<t> => {
+    var result = set_new::<t>()
+    for item in self.members() {
+      result.insert(item)
+    }
+    for item in other.members() {
+      result.insert(item)
+    }
+    result
+  }
+
+  /// A new set of the items in this set that are not in `other`. Unlike a union, the order
+  /// matters: `a.difference(b)` keeps what only `a` has, `b.difference(a)` what only `b` has.
+  pub let difference<t> where t: Hash = pure (self, other: Set<t>) -> Set<t> => {
+    var result = set_new::<t>()
+    for item in self.members() {
+      if !other.contains(item) {
+        result.insert(item)
+      }
+    }
+    result
+  }
+
+  /// A new set of the items in both sets. Neither set is changed.
+  pub let intersection<t> where t: Hash = pure (self, other: Set<t>) -> Set<t> => {
+    var result = set_new::<t>()
+    for item in self.members() {
+      if other.contains(item) {
+        result.insert(item)
+      }
+    }
+    result
+  }
+
+  /// A new set of the items in exactly one of the two sets: the union without the
+  /// intersection. Neither set is changed.
+  pub let symmetric_difference<t> where t: Hash = pure (
+    self,
+    other: Set<t>
+  ) -> Set<t> => {
+    var result = set_new::<t>()
+    for item in self.members() {
+      if !other.contains(item) {
+        result.insert(item)
+      }
+    }
+    for item in other.members() {
+      if !self.contains(item) {
+        result.insert(item)
+      }
+    }
+    result
+  }
 }
