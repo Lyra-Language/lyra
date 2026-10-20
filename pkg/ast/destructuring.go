@@ -23,6 +23,11 @@ type DestructuringDeclStmt struct {
 	// statements, so no walker descends through this field and none should — nor the
 	// golden printer, which would print each assignment twice.
 	Assigns []Statement `print:"-"`
+	// Shadows is VarDeclStmt.Shadows per bound name: the prior same-scope binding each
+	// name this pattern binds replaced (`let x = 1; let Some(x) = m else { … }`). The
+	// collector's scope holds only the latest binding of a name, so without it a use of
+	// `x` *before* this statement found this placeholder and nothing behind it.
+	Shadows map[string]Named `print:"-"`
 }
 
 func (d *DestructuringDeclStmt) statementNode() {}

@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 10/19/26 — Two names that meant the wrong binding
+
+Both found by Sulafat and Vega the same day; each was a lookup answering from the wrong
+place.
+
+- **A destructured name hid the binding before it.** The collector's scope holds a
+  block's *latest* binding of a name, and the typechecker reads it positionally: a use
+  means the binding in effect where it is written, the replaced ones reached through
+  `VarDeclStmt.Shadows`. A destructuring's names went in as a placeholder with no such
+  link, so after `var value = 1`, a later `let Some(value) = … else { … }` made every
+  earlier `value` undefined — a plain `let (value, other) = …` too. The placeholder now
+  keeps what each name replaced (`DestructuringDeclStmt.Shadows`), and `walkLocals` follows
+  a chain through either kind; a checked destructuring's typed binding is found by
+  (declaration, name), since a later `let` of the name, not it, is the scope's entry.
+- **The placeholder was a copy.** `let … else` and `if let` hold their destructuring by
+  value, and the collector registered the original, so the typechecker's binding never
+  replaced it by identity. Each registers the statement's own copy now.
+- **A destructured name could not be rebound.** `let Some(v) = …` twice, or `let v = v + 1`
+  after one, was "already declared in this scope": rebinding was allowed only over a
+  `VarDeclStmt`. Both forms now rebind either (`rebindable`), as LANGUAGE.md's shadowing
+  rule always said of a `let`.
+- **The passes beside it missed `let … else` too** (rule 8): use-before-declaration did
+  not count its names as declared, so `let v = v + 10` after one was `lyra-E002`; and W001
+  neither warned when its names shadowed an outer one nor kept them out of its else
+  block, which reported a `let` there as shadowing names the else never sees. Three
+  locals that now warn as a `let` in their place would (`month`, `second` in
+  `std.temporal`, `text` in Vega — each its own module's receiver method) were renamed.
+- **A constructor meant a type its module never reached.** `DeclaringDataType` tried the
+  asking module's own type and then the rest alphabetically, and any `pub` type resolves
+  program-wide — so Vega's new `ImportEvent = … | TrueColor` took `TrueColor` from five
+  modules that imported only `project.{ … }`. The candidates are now ranked: own module,
+  one an import names (type or constructor), the prelude, a module imported for other
+  names, then the rest. A namespace import binds no bare name, so it ranks with the rest —
+  the first cut counted it, and still picked the event. The prelude stays above a module
+  imported for something else, so a module declaring its own `Some` does not take `Some`
+  from the files that import other names from it.
+- Not fixed: a constructor cannot be qualified (`import_view.Chosen(1)` does not parse),
+  now in todo.md.
+
 ### 10/19/26 — Termina's settings and menus as `.lui`, and what they needed
 
 Termina's Settings tab and its menus moved to markup (`settings_view.lui`,

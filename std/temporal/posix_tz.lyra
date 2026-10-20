@@ -273,7 +273,7 @@ let scan_rule = pure (runes: []rune, at: i64) -> Maybe<(PosixRule, i64)> => {
     at_second: 7200
   }
   if runes[i] == 'M' {
-    let Some((month, after_month)) = scan_number(runes, i + 1) else { return None }
+    let Some((month_number, after_month)) = scan_number(runes, i + 1) else { return None }
     if after_month >= runes.len() || runes[after_month] != '.' { return None }
     let Some((week, after_week)) = scan_number(
       runes,
@@ -284,7 +284,7 @@ let scan_rule = pure (runes: []rune, at: i64) -> Maybe<(PosixRule, i64)> => {
       runes,
       after_week + 1
     ) else { return None }
-    rule = PosixRule { rule | kind: 0, month: month, week: week, weekday: weekday }
+    rule = PosixRule { rule | kind: 0, month: month_number, week: week, weekday: weekday }
     i = after_weekday
   } else if runes[i] == 'J' {
     let Some((ordinal, after_ordinal)) = scan_number(runes, i + 1) else { return None }

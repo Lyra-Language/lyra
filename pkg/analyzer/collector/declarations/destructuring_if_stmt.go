@@ -31,13 +31,14 @@ func CollectDestructuringIfStatement(node *sitter.Node, ctx *collector_ctx.Ctx) 
 
 	// `if let pat = v { Then } else { Else }` scopes pat's bound names to Then
 	// only (mirroring Rust's if-let): push a scope, record it against stmt so
-	// the typechecker can re-enter it, register the names into it, collect Then
-	// as a nested child of that scope (so it resolves them via the parent
-	// chain), then pop before collecting Else — which must not see them, since
-	// reaching Else means the pattern failed to match.
+	// the typechecker can re-enter it, register the names into it (as stmt's
+	// own copy of the destructuring, the declaration the typechecker is
+	// handed), collect Then as a nested child of that scope (so it resolves
+	// them via the parent chain), then pop before collecting Else — which must
+	// not see them, since reaching Else means the pattern failed to match.
 	letScope := ctx.PushBlockScope()
 	ctx.RecordScope(stmt, letScope)
-	registerDestructuredNames(declNode, destructuringStatement.Pattern, destructuringStatement, ctx)
+	registerDestructuredNames(declNode, stmt.DestructuringStatement.Pattern, &stmt.DestructuringStatement, ctx)
 	thenBlock := expressions.CollectBlockExpr(thenNode, ctx, ctx.NodeLocation(thenNode))
 	ctx.PopScope()
 

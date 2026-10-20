@@ -141,12 +141,13 @@ type VarDeclStmt struct {
 	Type          types.Type // may be nil if needs inference
 	Value         Expression
 	// Shadows points to the prior same-scope binding of this name that this
-	// declaration replaced via sequential rebinding (`let x = 5; let x = x + 1`).
-	// It lets the typechecker resolve a self-reference inside this binding's own
-	// initializer to the *previous* value rather than to this (not-yet-typed)
-	// declaration. nil for a first binding. `print:"-"`: excluded from golden
+	// declaration replaced via sequential rebinding (`let x = 5; let x = x + 1`):
+	// a *VarDeclStmt, or the *DestructuringDeclStmt whose pattern bound it (`let
+	// Some(x) = m else { … }; let x = x + 1`). It lets the typechecker resolve a use
+	// before this declaration ends — its own initializer included — to the binding
+	// in effect there. nil for a first binding. `print:"-"`: excluded from golden
 	// output (it would recurse into the prior decl).
-	Shadows *VarDeclStmt `print:"-"`
+	Shadows Named `print:"-"`
 	// Doc is the `///` comment block immediately above the declaration, nil if
 	// undocumented. Only a *top-level* binding is documented — a local `let` gets
 	// the stray-doc warning instead, since nothing renders it.

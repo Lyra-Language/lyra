@@ -1294,11 +1294,38 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 	for k := range st.Types {
 		keys = append(keys, k)
 	}
+	// **Ranked by how the asking file reaches the type**, then by key: its own module's,
+	// one it imports by name (or whose constructor it does), the prelude's, one whose module
+	// it imports other names from, and last one merely program-wide (a namespace import
+	// binds no bare name, so it reaches no further than that). Until 10/19 only the
+	// first rung existed and the rest was alphabetical — so a `pub data ImportEvent = … |
+	// TrueColor` anywhere in the program took `TrueColor` from five Vega modules that
+	// imported only `project.{ … }`, where `PixelFormat`'s is, since "ImportEvent" sorts
+	// before "PixelFormat" and any `pub` type resolves program-wide. The prelude sits above a
+	// module imported for something else, so a file importing a module that declares its own
+	// `Some` still means `Maybe`'s, as it always did.
+	rank := func(k string) int {
+		decl := st.Types[k]
+		declaring := st.ModuleOfFile[decl.GetLocation().File]
+		switch {
+		case declaring == asking:
+			return 0
+		case st.importsName(loc, declaring, decl.Name) || st.importsConstructor(loc, ctorName, decl):
+			return 1
+		case declaring == st.PreludeModule && st.PreludeModule != "":
+			return 2
+		case st.importsModule(loc, declaring):
+			return 3
+		}
+		return 4
+	}
+	ranks := make(map[string]int, len(keys))
+	for _, k := range keys {
+		ranks[k] = rank(k)
+	}
 	sort.Slice(keys, func(i, j int) bool {
-		li := st.ModuleOfFile[st.Types[keys[i]].GetLocation().File] == asking
-		lj := st.ModuleOfFile[st.Types[keys[j]].GetLocation().File] == asking
-		if li != lj {
-			return li
+		if ranks[keys[i]] != ranks[keys[j]] {
+			return ranks[keys[i]] < ranks[keys[j]]
 		}
 		return keys[i] < keys[j]
 	})
@@ -1321,6 +1348,34 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 		}
 	}
 	return nil, false
+}
+
+// importsName reports whether the file at loc imports name, under any local name, from
+// module.
+func (st *SymbolTable) importsName(loc ast.Location, module, name string) bool {
+	for _, imp := range st.ImportsFor(loc.File) {
+		if imp.IsNamespace() || imp.Path != module {
+			continue
+		}
+		for _, original := range imp.Members {
+			if original == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// importsModule reports whether the file at loc imports names from module selectively. A
+// namespace import (`import lib`) binds no bare name, so it does not make a bare
+// constructor of lib's reachable.
+func (st *SymbolTable) importsModule(loc ast.Location, module string) bool {
+	for _, imp := range st.ImportsFor(loc.File) {
+		if !imp.IsNamespace() && imp.Path == module {
+			return true
+		}
+	}
+	return false
 }
 
 // importsConstructor reports whether the file at loc imports the constructor ctorName by

@@ -245,6 +245,28 @@ let result = {
 	assertShadowingWarningContains(t, warns, "a")
 }
 
+// A `let … else` binds into its block like a plain destructuring, and so shadows the same
+// way — while its else block, reached only when the pattern failed, sees none of its names.
+func TestShadow_Diag_LetElse(t *testing.T) {
+	source := `
+let a = 1
+let result = {
+    let Some(a) = found else {
+        let a = 2
+        return a
+    }
+    a
+}`
+	warns := parseCollectAndCheckShadowing(t, source)
+	assertShadowingWarningCount(t, warns, 2)
+	for _, w := range warns {
+		if w.OriginalLocation.StartLine != 2 {
+			t.Errorf("%s at line %d shadows line %d, want the top-level a on line 2",
+				w.Message, w.Location.StartLine, w.OriginalLocation.StartLine)
+		}
+	}
+}
+
 // TestShadow_NoDiag_DestructuringIf verifies that an if-destructuring
 // statement's pattern names do NOT produce warnings even when they shadow outer
 // names.

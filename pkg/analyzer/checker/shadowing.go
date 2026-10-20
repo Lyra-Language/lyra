@@ -269,13 +269,16 @@ func (c *shadowChecker) checkStmt(stmt ast.Statement, outerNames, accumulated ma
 			c.checkStatements(s.Else.Statements, accumulated)
 		}
 
+	// The names belong to the enclosing block, like a plain destructuring's, and the else
+	// block — reached only when the pattern failed — never sees them.
 	case *ast.ElseDestructuringStmt:
 		c.checkExpr(s.DestructuringStatement.Value, accumulated)
-		elseOuter := copyLocMap(accumulated)
+		c.checkStatements(s.Else.Statements, accumulated)
 		for _, name := range patternBoundNames(s.DestructuringStatement.Pattern) {
-			elseOuter[name] = s.DestructuringStatement.GetLocation()
+			if origLoc, ok := outerNames[name]; ok {
+				c.warn(s.GetLocation(), origLoc, name)
+			}
 		}
-		c.checkStatements(s.Else.Statements, elseOuter)
 
 	default:
 		// All other statements have only expression children; delegate to walker.

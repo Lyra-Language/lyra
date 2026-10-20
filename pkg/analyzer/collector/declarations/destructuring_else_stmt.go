@@ -29,10 +29,14 @@ func CollectDestructuringElseStatement(node *sitter.Node, ctx *collector_ctx.Ctx
 	if destructuringStatement == nil || elseBlock == nil {
 		return nil
 	}
-	registerDestructuredNames(declNode, destructuringStatement.Pattern, destructuringStatement, ctx)
-	return &ast.ElseDestructuringStmt{
+	stmt := &ast.ElseDestructuringStmt{
 		AstBase:                ast.AstBase{Location: ctx.NodeLocation(node)},
 		DestructuringStatement: *destructuringStatement,
 		Else:                   elseBlock,
 	}
+	// The statement holds its destructuring by value, so the placeholder registered
+	// is the statement's own copy — the declaration the typechecker is handed, and
+	// so the one its typed binding replaces in scope.
+	registerDestructuredNames(declNode, stmt.DestructuringStatement.Pattern, &stmt.DestructuringStatement, ctx)
+	return stmt
 }

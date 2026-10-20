@@ -165,8 +165,8 @@ let parse_tzif = pure (name: string, data: []u8) -> Maybe<TimeZone> => {
   var width = 4
   if first.version >= 50 {
     // '2' is 50: the second header sits past the first block, and its times are 8 bytes.
-    let Some(second) = read_header(data, 44 + block_size(first, 4)) else { return None }
-    head = second
+    let Some(later) = read_header(data, 44 + block_size(first, 4)) else { return None }
+    head = later
     at = 44 + block_size(first, 4) + 44
     width = 8
   }

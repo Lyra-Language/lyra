@@ -184,3 +184,55 @@ let main = () -> u8 => {
 `, false)
 	assertErrorsAre(t, res, `undefined identifier "undefinedThing"`)
 }
+
+// A `let … else` rebinding a name hid the earlier binding *before* it: the collector's
+// scope holds only a block's latest binding of a name, and the destructured name's
+// placeholder had no link back to the one it replaced, so `value` on the lines above read
+// as undefined (found by Sulafat, 10/19). Each use means the binding in effect where it is
+// written — the declared types prove which.
+func TestLetElse_EarlierUseReadsTheEarlierBinding(t *testing.T) {
+	source := `
+data Found = Has(string) | Nope
+let f = (o: Found) -> i64 => {
+    var value = 1
+    value += 1
+    let early: i64 = value
+    let Has(value) = o else { return 0 }
+    let late: string = value
+    early
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// The same for a plain destructuring, which shared the placeholder.
+func TestDestructuring_EarlierUseReadsTheEarlierBinding(t *testing.T) {
+	source := `
+let f = () -> string => {
+    let value = 1
+    let early: i64 = value
+    let (value, other) = ("a", 2)
+    value
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// A destructured name is rebound like a `let`'s — by another destructuring or by a `let` —
+// where each was refused as "already declared in this scope".
+func TestLetElse_DestructuredNameIsRebound(t *testing.T) {
+	source := `
+data Found = Has(i64) | Nope
+let f = (o: Found, p: Found) -> string => {
+    let Has(v) = o else { return "" }
+    let first: i64 = v
+    let Has(v) = p else { return "" }
+    let (a, b) = (v + first, 3)
+    let (a, c) = (a + b, "c")
+    let a = a * 2
+    let v = c
+    v
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}

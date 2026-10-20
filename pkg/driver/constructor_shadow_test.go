@@ -88,3 +88,48 @@ func TestUnusedImport_AnAliasedConstructor(t *testing.T) {
 		t.Errorf("an unused alias: want one W004 naming Theirs, got %v", unused)
 	}
 }
+
+// **A constructor means a type the module can reach.** Two modules declare `TrueColor`, and
+// a module importing only `project.{ describe }` meant the other one's — the candidates were
+// tried own-module first, then in alphabetical order, so `import_view`'s won, and every use
+// was "cannot assign ImportEvent to PixelFormat" (Vega, 10/19). Reachability now ranks them:
+// declared here, then named by an import, then the prelude, then a module imported
+// selectively; a namespace import binds no bare names and so reaches none.
+func TestConstructor_ResolvesToTheTypeTheModuleReaches(t *testing.T) {
+	project := "module project\npub data PixelFormat = Paletted | TrueColor\n" +
+		"pub let describe = (f: PixelFormat) -> string => match f { Paletted => \"paletted\", TrueColor => \"true colour\" }\n"
+	importView := "module import_view\npub data ImportEvent = Chosen(i64) | TrueColor | Cancel\n"
+	for name, files := range map[string]map[string]string{
+		"the other module elsewhere in the program": {
+			"project.lyra":     project,
+			"import_view.lyra": importView,
+			"dialog.lyra":      "module dialog\nimport import_view.{ ImportEvent }\npub let cancelled = () -> ImportEvent => Cancel\n",
+			"main.lyra": `import project.{ describe }
+import dialog.{ cancelled }
+let main = () -> u8 => {
+  let shown = describe(TrueColor)
+  let c = cancelled()
+  0
+}
+`,
+		},
+		"the other module imported as a namespace": {
+			"project.lyra":     project,
+			"import_view.lyra": importView,
+			"main.lyra": `import project.{ describe }
+import import_view
+let main = () -> u8 => {
+  let f = TrueColor
+  let shown = describe(f)
+  0
+}
+`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if errs := analyzeTree(t, files).Errors(); len(errs) != 0 {
+				t.Fatalf("want no errors, got %v", errs)
+			}
+		})
+	}
+}

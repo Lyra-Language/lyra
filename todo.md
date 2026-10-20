@@ -495,11 +495,13 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 - **[DONE 10/19] `if let … { } else if … { }` parses**, `else if let` too, and an `if`'s
   `else` may be an `if let`. (COMPLETED.md, 10/19.)
-- **[OPEN] A constructor of another module's type resolves in a module that never imported
-  it.** `data ImportEvent = … | TrueColor` in `vega/src/import_view.lyra` made `TrueColor`
-  in five modules importing only `project.{ … }` mean the event, not `PixelFormat`'s —
-  "cannot assign ImportEvent to PixelFormat". Resolution should be the module's own names
-  and imports; found porting Vega's import dialog (10/19).
+- **[DONE 10/19] A constructor means the type its module reaches** — `TrueColor` in a
+  module importing only `project.{ … }` meant another module's `ImportEvent`, the
+  alphabetically first; candidates are now ranked by how the module reaches them.
+  (COMPLETED.md, 10/19.)
+- **[OPEN] A constructor cannot be qualified** — `import_view.Chosen(1)` is a syntax error,
+  so a namespace import reaches a module's functions and none of its constructors. It
+  belongs beside the qualified type names (Modules and tooling).
 - **[OPEN] A constructor is not a function value**: `on_change: Width` for a
   `(i64) -> Ev` is refused ("cannot assign Ev"), so lui writes `(value: i64) -> Ev =>
   Width(value)` for it. Rust and Haskell allow it.
@@ -694,10 +696,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (a `bool` field as the guard) reads as the single result `p.1 | p.0`, a bitwise-or, and
   is refused as one; `p.1 == true` works. A field, an element or a tuple position could be
   a guard too.
-- **[OPEN] A later `let … else` hides an earlier binding of its name** — `var value = 1;
-  value += 1; println("${value}"); let Some(value) = find(5) else { return }` reports
-  `undefined identifier "value"` in the interpolation (the `+=` line is fine). Found by
-  Sulafat (10/19).
+- **[DONE 10/19] A later `let … else` no longer hides an earlier binding of its name**, a
+  plain destructuring neither, and a destructured name is rebound like a `let`'s.
+  (COMPLETED.md, 10/19.)
 - **[OPEN] `if` is not an operand** — `let n = 1 + if flag { 2 } else { 3 }` is a syntax
   error, and the recovery then reports `lyra-E074` (a `let … else` that falls through),
   naming a construct the line does not have. Parenthesized or bound first it works. Found

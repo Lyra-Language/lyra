@@ -26,6 +26,8 @@ func directDeclaredNames(stmt ast.Statement) []string {
 		return []string{s.Name}
 	case *ast.DestructuringDeclStmt:
 		return patternBoundNames(s.Pattern)
+	case *ast.ElseDestructuringStmt:
+		return patternBoundNames(s.DestructuringStatement.Pattern)
 	}
 	return nil
 }
@@ -45,14 +47,20 @@ func directDeclaredNamesWithLocations(stmt ast.Statement) []nameLocation {
 	case *ast.VarDeclStmt:
 		return []nameLocation{{Name: s.Name, Location: s.GetLocation()}}
 	case *ast.DestructuringDeclStmt:
-		names := patternBoundNames(s.Pattern)
-		result := make([]nameLocation, len(names))
-		for i, name := range names {
-			result[i] = nameLocation{Name: name, Location: s.GetLocation()}
-		}
-		return result
+		return destructuredNameLocations(s)
+	case *ast.ElseDestructuringStmt:
+		return destructuredNameLocations(&s.DestructuringStatement)
 	}
 	return nil
+}
+
+func destructuredNameLocations(s *ast.DestructuringDeclStmt) []nameLocation {
+	names := patternBoundNames(s.Pattern)
+	result := make([]nameLocation, len(names))
+	for i, name := range names {
+		result[i] = nameLocation{Name: name, Location: s.GetLocation()}
+	}
+	return result
 }
 
 // patternBoundNames collects all variable names introduced by a pattern.

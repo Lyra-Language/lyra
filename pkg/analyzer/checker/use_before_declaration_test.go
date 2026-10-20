@@ -269,3 +269,15 @@ let f = (n: i64) -> i64 => {
 	assertErrorCount(t, errs, 1)
 	assertErrorContains(t, errs, `"y"`)
 }
+
+// A `let … else` declares its names in the enclosing block, so a later `let` of one of
+// them reads it rather than using the name before its declaration.
+func TestUBD_NoDiag_LetAfterLetElseReadsIt(t *testing.T) {
+	source := `
+let f = (m: Maybe<i64>) -> i64 => {
+    let Some(v) = m else { return 0 }
+    let v = v + 10
+    v
+}`
+	assertNoErrors(t, parseCollectAndCheck(t, source))
+}

@@ -26,6 +26,10 @@ type TypeChecker struct {
 	paramMods    map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
 	patternBound map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
 	paramHome    map[string]*symbols.Scope     // per paramTypes name, the scope it was introduced in; a local binding between a use and it shadows the entry (name_resolution.go)
+	// destructured holds the typed binding checkDestructuringDecl made for each name a
+	// destructuring bound, for a use reaching its placeholder through a later binding's
+	// Shadows chain (name_resolution.go).
+	destructured map[destructuredName]*ast.VarDeclStmt
 	// constBuiltinCalls holds the float-builtin method calls that a `const` initializer's
 	// constancy walk accepted, pending the verification sweep at the end of the pass
 	// (verifyConstBuiltinCalls, typechecker_const.go). The walk runs before the
@@ -766,13 +770,21 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) t
 			nameLoc = b.Loc
 		}
 		tc.recordBindingType(decl.Pattern, name, typ)
-		tc.scope.Symbols[name] = &ast.VarDeclStmt{
+		typed := &ast.VarDeclStmt{
 			AstBase:      ast.AstBase{Location: decl.GetLocation()},
 			BindingKind:  bindingKind,
 			IsMut:        decl.IsMut,
 			Name:         name,
 			NameLocation: nameLoc,
 			Type:         typ,
+			Shadows:      decl.Shadows[name],
+		}
+		tc.recordDestructured(decl, name, typed)
+		// Not over a later binding of the name in this block (`let x = x + 1`), which
+		// replaced the placeholder there and stays the entry — reaching this one through
+		// its Shadows chain.
+		if cur, ok := tc.scope.Symbols[name]; !ok || cur == ast.Named(decl) {
+			tc.scope.Symbols[name] = typed
 		}
 	})
 	return inferredType

@@ -49,7 +49,7 @@ func CollectWhileLetLoop(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Express
 	}
 	letScope := ctx.PushBlockScope()
 	ctx.RecordScope(ifLet, letScope)
-	registerDestructuredNames(declNode, destructuring.Pattern, destructuring, ctx)
+	registerDestructuredNames(declNode, ifLet.DestructuringStatement.Pattern, &ifLet.DestructuringStatement, ctx)
 	ifLet.Then = expressions.CollectBlockExpr(bodyNode, ctx, ctx.NodeLocation(bodyNode))
 	ctx.PopScope()
 

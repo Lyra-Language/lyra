@@ -15,7 +15,7 @@ import (
 // **ahead of time**, so a scope holds every name its block declares — including one declared
 // *after* the use being resolved — and sequential rebinding (`let x = x + 1`) leaves only
 // the latest declaration in the map, the earlier ones reachable through
-// VarDeclStmt.Shadows.
+// VarDeclStmt.Shadows (DestructuringDeclStmt.Shadows for a name a destructuring bound).
 //
 // Consulting paramTypes first made a parameter unshadowable: `for c in items { c.x }` read
 // the parameter `c`, and so did the `c` after `let c = c.side + 1`, although the
@@ -61,18 +61,31 @@ func (tc *TypeChecker) walkLocals(name string, at ast.Location) (local ast.Named
 		if !ok {
 			continue
 		}
-		d, isVar := sym.(*ast.VarDeclStmt)
-		if !isVar {
-			// A parameter, a pattern binding, or the collector's placeholder for a
-			// destructured name — which a successful `let (a, b) = …` overwrites with a
-			// typed VarDeclStmt, so one still standing is a binder whose names live in
-			// paramTypes (`if let`) or a destructuring that failed. Either way it is the
-			// name's own binder, not a later declaration shadowing it.
-			return nil, nil
-		}
-		for ; d != nil; d = d.Shadows {
-			if endsBefore(d.GetLocation(), at) {
-				return d, nil
+		// The scope's entry is the block's *latest* binding of the name; the ones it
+		// replaced are behind it, latest first.
+		for sym != nil {
+			switch d := sym.(type) {
+			case *ast.VarDeclStmt:
+				if endsBefore(d.GetLocation(), at) {
+					return d, nil
+				}
+				sym = d.Shadows
+			case *ast.DestructuringDeclStmt:
+				// The collector's placeholder for a destructured name. Once the
+				// destructuring has been checked its typed binding stands in for it;
+				// without one, it is a binder whose names live in paramTypes (`if let`)
+				// or a destructuring that failed — the name's own binder either way.
+				if endsBefore(d.GetLocation(), at) {
+					if typed := tc.destructured[destructuredName{d, name}]; typed != nil {
+						return typed, nil
+					}
+					return nil, nil
+				}
+				sym = d.Shadows[name]
+			default:
+				// A parameter or a pattern binding: the name's own binder, not a later
+				// declaration shadowing it.
+				return nil, nil
 			}
 		}
 	}
@@ -80,6 +93,22 @@ func (tc *TypeChecker) walkLocals(name string, at ast.Location) (local ast.Named
 		return nil, nil
 	}
 	return nil, s
+}
+
+// destructuredName is one name a destructuring bound: the key of the typed binding
+// checkDestructuringDecl made for it.
+type destructuredName struct {
+	decl *ast.DestructuringDeclStmt
+	name string
+}
+
+// recordDestructured keeps the typed binding made for name, so a use reaching decl's
+// placeholder through a later binding's Shadows chain finds it.
+func (tc *TypeChecker) recordDestructured(decl *ast.DestructuringDeclStmt, name string, typed *ast.VarDeclStmt) {
+	if tc.destructured == nil {
+		tc.destructured = map[destructuredName]*ast.VarDeclStmt{}
+	}
+	tc.destructured[destructuredName{decl, name}] = typed
 }
 
 // paramAt reports whether name, used at `at`, means a parameter or pattern binding — the

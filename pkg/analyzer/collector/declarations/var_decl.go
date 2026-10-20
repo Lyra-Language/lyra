@@ -145,7 +145,7 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 		if accepted, _ := ctx.DeclareOverload(astNode); accepted {
 			return astNode
 		}
-		if v, ok := existing.(*ast.VarDeclStmt); ok && v.BindingKind != ast.BindingConst {
+		if rebindable(existing) {
 			// Same-scope sequential rebinding (e.g. `let x = parse(x)`) is
 			// idiomatic and safe in ML-family languages, so it is allowed for
 			// let/var bindings. Replace the prior binding so later references
@@ -154,7 +154,7 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 			// Remember the prior binding so the typechecker can resolve a
 			// self-reference in this declaration's own initializer (`let x = x + 1`)
 			// to the previous value rather than to this not-yet-typed one.
-			astNode.Shadows = v
+			astNode.Shadows = existing
 			ctx.RedefineVariable(astNode)
 		} else {
 			ctx.AddErrorRelated(node, diag.SeverityError,
@@ -258,10 +258,11 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 // the non-conflicting ones so later references resolve to decl. All conflict
 // checks run before any registration so that a name legitimately repeated
 // across sub-patterns of one destructuring (e.g. two `...rest` slots) is not
-// flagged against itself. Same-scope sequential rebinding is allowed for
-// let/var bindings (see collectIdentifierDeclaration); a const may not be
-// re-declared and a name occupied by a non-variable symbol is a conflict — in
-// both cases the prior binding is kept and the name not registered.
+// flagged against itself. Same-scope sequential rebinding is allowed over a
+// let/var binding or another destructured name (rebindable), and the binding
+// replaced is kept in decl.Shadows; a const may not be re-declared and a name
+// occupied by a non-variable symbol is a conflict — in both cases the prior
+// binding is kept and the name not registered.
 //
 // Shared by plain destructuring decls (collectPatternDeclaration) and if-let /
 // let-else declarations, which call this against whichever scope is current
@@ -271,20 +272,41 @@ func registerDestructuredNames(node *sitter.Node, pattern ast.Pattern, decl *ast
 	boundNames := destructuringPatternBoundNames(pattern)
 	conflicted := map[string]bool{}
 	for _, name := range boundNames {
-		if existing, alreadyDeclared := ctx.LookupCurrentScope(name); alreadyDeclared {
-			if v, ok := existing.(*ast.VarDeclStmt); !ok || v.BindingKind == ast.BindingConst {
-				ctx.AddErrorRelated(node, diag.SeverityError,
-					[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
-					"%s", redeclarationMessage(existing, name))
-				conflicted[name] = true
-			}
+		existing, alreadyDeclared := ctx.LookupCurrentScope(name)
+		if !alreadyDeclared {
+			continue
 		}
+		if !rebindable(existing) {
+			ctx.AddErrorRelated(node, diag.SeverityError,
+				[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
+				"%s", redeclarationMessage(existing, name))
+			conflicted[name] = true
+			continue
+		}
+		if decl.Shadows == nil {
+			decl.Shadows = map[string]ast.Named{}
+		}
+		decl.Shadows[name] = existing
 	}
 	for _, name := range boundNames {
 		if !conflicted[name] {
 			ctx.RegisterDestructuredName(name, decl)
 		}
 	}
+}
+
+// rebindable reports whether a later binding in the same scope may replace existing —
+// sequential rebinding, `let x = 1` then `let x = x + 1`. A `let` or `var` may be rebound,
+// and so may a name a destructuring bound (`let Some(x) = m else { … }`), by either form: the
+// two spell one kind of binding. A `const`, a parameter or a type may not.
+func rebindable(existing ast.Named) bool {
+	switch e := existing.(type) {
+	case *ast.VarDeclStmt:
+		return e.BindingKind != ast.BindingConst
+	case *ast.DestructuringDeclStmt:
+		return true
+	}
+	return false
 }
 
 // redeclarationMessage builds the diagnostic message for an illegal re-declaration
