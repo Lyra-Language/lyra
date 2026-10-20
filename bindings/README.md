@@ -344,7 +344,12 @@ window is markup (`vega/src/settings_view.lui`).
   `Checkbox`, `Combo` (a drop-down whose children are `Selectable`s, each its own event —
   ImGui's own shape, so a choice needs no event carrying a value), `Form` and `Field` (a
   label right-aligned in a column as wide as the widest, its controls after it), `Text`,
-  `Separator`, `SeparatorText`, `Row` (children side by side), `Radio`, `InputInt`,
+  `Separator`, `SeparatorText`, `Row` (children side by side; with `wrap`, onto a new
+  line when the next would not fit across, as CSS's `flex-wrap` — each child taken to be
+  as wide as it was last frame, kept in ImGui's state storage), `Group` (its children
+  one under another as a single item, ImGui's group, a `<div>`: groups in a `Row` stand
+  as columns, their tops lined up), `Space` (empty room, a
+  `height` down or a `width` across: ImGui's `Dummy`), `Radio`, `InputInt`,
   `InputText` (a `hint` greyed while it is empty), `Slider` (an `f32` dragged between
   `min` and `max`, shown in `format`, clamped to them however entered) and `ColorEdit` (a
   `0xRRGGBB` color's swatch, which opens ImGui's picker; `inputs` adds its channels'
@@ -378,8 +383,12 @@ window is markup (`vega/src/settings_view.lui`).
   alone, `primary: false`; a character or a named key, `PgUp` `PgDn`) while its menu is
   closed, `key_known` says whether ImGui has a shortcut's key.
 - **Inline style** (`Style`: `color`, `background`, `padding`, `rounding`, `opacity`,
-  `width`, `height`, and `width_em` — a width in the font's size, growing with the
-  interface) means each field in the element's own terms — `background` is a
+  `width`, `height`, `width_em` — a width in the font's size, growing with the
+  interface — and `gap`, the space between a container's children: a `Form`'s and a
+  `Group`'s down, a `Row`'s children and a `Field`'s controls across; a `Form`, a `Row`
+  and a `Group` take a `class` and a `style` for it, and nothing else of a style applies
+  to them) means each
+  field in the element's own terms — `background` is a
   button's face (its hover and press shades derived), a checkbox's box, a menu item's
   highlight, a window's or menu's fill — and is pushed onto ImGui's style stack around the
   element and popped after its children, so it is **inherited** as CSS's inherited
@@ -400,6 +409,8 @@ window is markup (`vega/src/settings_view.lui`).
 
 Markup for the tree, in files of its own, **generated into Lyra** so lyrac checks it: `lui
 view.lui` writes `view.lyra` beside it, `lui --check view.lui` fails when that is stale.
+A directory stands for every `.lui` file beneath it (`lui --check src`), names beginning
+with `.` and symlinked directories skipped, as lyrafmt walks.
 The example's interface is `examples/imgui/components_view.lui`.
 
 ```
@@ -443,7 +454,7 @@ The example's interface is `examples/imgui/components_view.lui`.
   children make a `Fragment`).
 - **`<style>` is the component's scoped sheet**: `Tag`, `.class` and `Tag.class` selectors
   (comma lists), `color`/`background` as `#rgb`, `#rrggbb` or `#rrggbbaa`, `padding` one
-  or two numbers, `rounding`, `opacity`, `width` (in pixels, or `6em`), `height`;
+  or two numbers, `rounding`, `opacity`, `width` (in pixels, or `6em`), `height`, `gap`;
   `/* … */` comments.
 - **The generated module is not formatted** (`.lyrafmtignore` lists it) — one element to a
   line, each marked with the markup line it came from (`// view.lui:12`; a sheet's at its
@@ -455,7 +466,9 @@ The example's interface is `examples/imgui/components_view.lui`.
   was — so a whole program's build maps too. The column goes: it was the generated one.
 - **`lui --watch view.lui …`** generates at once and again whenever a file's text changes
   (read every 250 ms, `std.io.sleep_ms`), saying each generation and any mistake at its
-  line; a mistake leaves the last good module in place. Stop it with Ctrl-C.
+  line; a mistake leaves the last good module in place. Stop it with Ctrl-C. **A
+  directory is walked again every pass** (`lui --watch src`), so a file added beneath it
+  is generated as it appears.
 - **Tested** by `cmd/lyrac/lui_test.go`: the example's module is what lui makes and checks
   clean, and each kind of mistake is reported at its line. **Not yet**: components across
   files.

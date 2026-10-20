@@ -568,6 +568,12 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), tooltips, tables, child regions, an integer slider, and layout past `Row` and
   `Form`. Grow it as Vega's next dialogs and panels move to markup.
+- **[OPEN] A tuple index is not a comprehension's source**: `[c in g.1 | c]` is a syntax
+  error where `[c in g.colors | c]` and a constant parse (the grammar's generator value).
+  Found by Termina's color groups, which became a struct for it.
+- **[OPEN] `std.io`: walking a directory tree.** lyrafmt and lui each walk one by hand
+  (`read_dir`, skipping `.` names and symlinked directories). A `std.io` walk, sorted,
+  with the caller's filter, would serve both.
 - **[OPEN] `bindings.imgui.ui`: install a tree in the Mac's bar.** Vega's `menus.lyra` and
   Termina's `menus/menus.lyra` each walk a menus tree into `bindings.menubar` (items by tag,
   greying synced each frame). One shared function could serve both, and Vega's would then

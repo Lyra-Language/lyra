@@ -168,6 +168,66 @@ func TestLui_SliderColorEditAndHint(t *testing.T) {
 	}
 }
 
+// Spacing and boxes: `gap` in a sheet and inline, a Form and a Row with their attributes
+// (and with none, an empty attributes struct), a Space, and Groups side by side in a Row;
+// the module checks clean.
+func TestLui_GapFormRowAndSpace(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<component name="view" props={{ go: e }}>
+  <style>
+    Form { gap: 10 }
+    Row.tight { gap: 2 }
+  </style>
+  <Form>
+    <Field label="A"><Button on_click={go}>One</Button></Field>
+  </Form>
+  <Form style="gap: 4"/>
+  <Space height={12}/>
+  <Row class="tight">
+    <Button on_click={go}>Two</Button>
+  </Row>
+  <Row wrap>
+    <Group style="gap: 6">
+      <Text>Left</Text>
+      <Button on_click={go}>Three</Button>
+    </Group>
+    <Group class="right"><Text>Right</Text></Group>
+  </Row>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`StyleRule { selector: "Form", style: Style { gap: Some(10.0) } }`,
+		`StyleRule { selector: "Row.tight", style: Style { gap: Some(2.0) } }`,
+		"Form(FormAttrs {}, [",
+		"Form(FormAttrs { style: Style { gap: Some(4.0) } }, [",
+		"Space(SpaceAttrs { height: 12 })",
+		`Row(RowAttrs { class: "tight" }, [`,
+		"Row(RowAttrs { wrap: true }, [",
+		"Group(GroupAttrs { style: Style { gap: Some(6.0) } }, [",
+		`Group(GroupAttrs { class: "right" }, [`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
 // A shortcut's modifiers and keys as a Linux terminal's menus show them: Alt alone (no
 // primary modifier), a named key, and every modifier at once; the module checks clean.
 func TestLui_ShortcutsWithAltAndNamedKeys(t *testing.T) {
@@ -293,6 +353,62 @@ func TestLui_WatchRegeneratesOnChange(t *testing.T) {
 	if !waitFor(`"Second"`) {
 		t.Fatal("--watch did not regenerate after the markup changed")
 	}
+}
+
+// A directory is every .lui file beneath it — nested ones too, a hidden directory's not —
+// and under --watch it is walked again on every pass, so a file added after the watch
+// began is generated as it appears.
+func TestLui_DirectoriesAndNewFilesUnderWatch(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	view := func(label string) string {
+		return `<component name="view" props={{ go: e }}><Button on_click={go}>` + label + `</Button></component>`
+	}
+	put := func(rel, text string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("top.lui", view("Top"))
+	put("deep/down/nested.lui", view("Nested"))
+	put(".hidden/skipped.lui", view("Hidden"))
+	if b, err := exec.Command(lui, dir).CombinedOutput(); err != nil {
+		t.Fatalf("lui on a directory failed: %v\n%s", err, b)
+	}
+	for _, rel := range []string{"top.lyra", "deep/down/nested.lyra"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("%s was not generated: %v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".hidden/skipped.lyra")); err == nil {
+		t.Error("a hidden directory's markup was generated")
+	}
+	if b, err := exec.Command(lui, "--check", dir).CombinedOutput(); err != nil {
+		t.Errorf("--check on the directory just generated failed: %v\n%s", err, b)
+	}
+	empty := t.TempDir()
+	if b, err := exec.Command(lui, empty).CombinedOutput(); err == nil || !strings.Contains(string(b), "no .lui file") {
+		t.Errorf("a directory with no markup should be refused, said %q", b)
+	}
+
+	cmd := exec.Command(lui, "--watch", dir)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	put("later/added.lui", view("Added"))
+	out := filepath.Join(dir, "later/added.lyra")
+	for i := 0; i < 50; i++ {
+		if b, _ := os.ReadFile(out); strings.Contains(string(b), `"Added"`) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("--watch on a directory did not generate a file added after it began")
 }
 
 // The value inputs and the modal: `on_change={Width}` names a constructor, which lui makes

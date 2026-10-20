@@ -21,6 +21,7 @@ import bindings.imgui.{
   get_style,
   get_item_rect_min,
   get_item_rect_max,
+  get_frame_height,
   col32,
   color_convert_float4_to_u32,
   Host,
@@ -88,9 +89,10 @@ var drawn: []Drawn = []
 struct Drawn {
   label: string,
   center: Vec2,
-  /// Its left and right edges.
+  /// Its left, right and top edges.
   left: f32,
   right: f32,
+  top: f32,
   fill: u32,
 }
 
@@ -109,8 +111,31 @@ let check = () -> u8 => {
     fill_of("Reset...") == Some(theme),
     "a button outside every component keeps the theme's fill"
   )
+  // The form's `gap: 10` between its fields: the next field's top a frame and the gap
+  // below the last's.
+  if let (
+    Some(name),
+    Some(volume)
+  ) = (drawn_named("field name"), drawn_named("slider volume")) {
+    let apart = volume.top - name.top
+    failures += verify(
+      (apart - (get_frame_height() + 10.0)).abs() < 0.5,
+      "a form's gap spaces its fields: ${apart} apart, a frame being ${get_frame_height()}"
+    )
+  } else {
+    failures += verify(false, "the name and volume fields are drawn")
+  }
   state = click(host, state, "Reset...")
   failures += verify(state.asking_reset, "Reset... asks first")
+  // confirm's sheet's `Row { gap: 12 }` between its buttons.
+  if let (Some(yes), Some(no)) = (drawn_named("Yes"), drawn_named("No")) {
+    failures += verify(
+      (no.left - yes.right - 12.0).abs() < 0.5,
+      "a row's gap spaces its children: ${no.left - yes.right}"
+    )
+  } else {
+    failures += verify(false, "confirm's buttons are drawn")
+  }
   failures += verify(
     fill_of("Yes") == Some(col32(170, 40, 40)),
     "confirm's sheet makes its Yes red"
@@ -259,12 +284,19 @@ let record = (node: Node<Event>) -> void => {
     center: Vec2 { x: (top_left.x + bottom_right.x) / 2.0, y: (top_left.y + bottom_right.y) / 2.0 },
     left: top_left.x,
     right: bottom_right.x,
+    top: top_left.y,
     fill: fill
   })
 }
 
 let fill_of = (label: string) -> Maybe<u32> => {
   for d in drawn { if d.label == label { return Some(d.fill) } }
+  None
+}
+
+/// What the last frame drew as `label`, if it drew it.
+let drawn_named = (label: string) -> Maybe<Drawn> => {
+  for d in drawn { if d.label == label { return Some(d) } }
   None
 }
 

@@ -73,7 +73,7 @@
     </Menu>
   </MainMenuBar>
   <Window title="Settings" style="width: 340; height: 330">
-    <Form>
+    <Form style="gap: 10">
       <Field label="Name">
         <InputText label="##name" id="field name" hint="your name" value={s.name} on_change={Rename} on_commit={NameDone}/>
       </Field>
@@ -113,6 +113,7 @@
     Button { rounding: 6; padding: 14 4 }
     Button.danger { background: #aa2828 }
     .question { color: #f0c85a }
+    Row { gap: 12 }
   </style>
   <Text class="question">{question}</Text>
   <Row>

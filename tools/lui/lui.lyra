@@ -1,8 +1,10 @@
 // lui — markup for `bindings.imgui.ui`, generated into Lyra.
 //
 //   build/lui view.lui            # writes view.lyra beside it
+//   build/lui src                 # every .lui file beneath src, each its module
 //   build/lui --check view.lui    # exit 1 when view.lyra is not what view.lui makes
 //   build/lui --watch view.lui    # again whenever view.lui changes, until stopped
+//   build/lui --watch src         # every .lui beneath src, files added later too
 //   build/lui --stdin --name view.lui < view.lui   # the module on stdout (lyra-lsp's way)
 //   build/lyrac check app.lyra 2>&1 | build/lui map   # errors at the markup's lines
 //
@@ -46,7 +48,7 @@
 //   type variable, so the component fits any program's tree.
 
 import std.collections.{ parse_args }
-import std.io.{ read_file, write_file, read_stdin, sleep_ms }
+import std.io.{ read_file, write_file, read_stdin, sleep_ms, read_dir, is_symlink }
 import std.path
 
 let main = () -> u8 => {
@@ -67,16 +69,49 @@ let main = () -> u8 => {
     return 0
   }
   if args.positional.len() == 0 {
-    println("usage: lui [--check | --watch] <file.lui>...  |  lyrac check … 2>&1 | lui map  |  lui --stdin --name <file.lui>")
+    println("usage: lui [--check | --watch] <file.lui | directory>...  |  lyrac check … 2>&1 | lui map  |  lui --stdin --name <file.lui>")
     return 2
   }
   if args.has("--watch") { return watch(args.positional) }
   let check = args.has("--check")
+  let paths = lui_files(args.positional)
+  if paths.len() == 0 {
+    println("lui: no .lui file in ${args.positional.join(", ")}")
+    return 1
+  }
   var failures = 0
-  for path in args.positional {
+  for path in paths {
     if !run(path, read_file(path), check) { failures += 1 }
   }
   u8(failures.min(255))
+}
+
+/// `paths` with each directory among them the `.lui` files beneath it, in `read_dir`'s
+/// sorted order; any other path as written, for `run` to judge. **A directory is a path
+/// `read_dir` can read.** A name beginning with `.` is skipped and a symlinked directory
+/// never followed, while walking only — as lyrafmt walks for `.lyra` files: `.git` holds no
+/// markup, and a link back up the tree would not end.
+let lui_files = (paths: []string) -> []string => {
+  var out: []string = []
+  for path in paths {
+    match read_dir(path) {
+      Some(names) => gather(path, names, out),
+      None => out.push(path),
+    }
+  }
+  out
+}
+
+/// Appends every `.lui` file at or below `dir`, whose entries are `names`, to `out`.
+let gather = (dir: string, names: []string, out: mut []string) -> void => {
+  for name in names {
+    if name.starts_with(".") { continue }
+    let entry = "${dir}/${name}"
+    match read_dir(entry) {
+      Some(below) => if !is_symlink(entry) { gather(entry, below, out) },
+      None => if entry.ends_with(".lui") { out.push(entry) },
+    }
+  }
 }
 
 /// `path` (its text `source`, `None` when it could not be read) generated into the module
@@ -112,18 +147,27 @@ let run = (path: string, source: Maybe<string>, check: bool) -> bool => {
 }
 
 /// `paths` generated now and again whenever one's text changes — read a few times a
-/// second, as a markup file is small — until the program is stopped. Each generation is
-/// said, and a mistake at its line, as when run once.
+/// second, as a markup file is small — until the program is stopped. A directory is walked
+/// again on every pass ([lui_files]), so a `.lui` file added beneath it is generated as it
+/// appears. Each generation is said, and a mistake at its line, as when run once.
 let watch = (paths: []string) -> u8 => {
-  // A NUL no file holds, so each is generated on the first pass.
-  var seen: []string = [p in paths | "\u0000"]
-  println("lui: watching ${paths.len()} file(s); Ctrl-C stops")
+  // The files met so far, and the text each was last generated from: a NUL no file holds
+  // at first, so each is generated on the pass that finds it.
+  var known: []string = []
+  var seen: []string = []
+  println("lui: watching ${paths.join(", ")}; Ctrl-C stops")
   loop {
-    for i, path in paths {
+    for path in lui_files(paths) {
+      var k = known.len()
+      for i, p in known { if p == path { k = i } }
+      if k == known.len() {
+        known.push(path)
+        seen.push("\u0000")
+      }
       let text = read_file(path)
       let now = text.unwrap_or("")
-      if now == seen[i] { continue }
-      seen[i] = now
+      if now == seen[k] { continue }
+      seen[k] = now
       if run(path, text, false) { println("lui: ${path} generated") }
     }
     sleep_ms(WATCH_MS)
@@ -462,7 +506,11 @@ impl Writer {
       }
     }
     self.use(kind.attrs_struct)
-    let attrs = "${kind.attrs_struct} { ${fields.join(", ")} }"
+    let attrs = if fields.len() == 0 {
+      "${kind.attrs_struct} {}"
+    } else {
+      "${kind.attrs_struct} { ${fields.join(", ")} }"
+    }
     if !kind.holds { return Ok("${t.name}(${attrs})") }
     let items = self.nodes_of(t.children, "${indent}  ")?
     Ok("${t.name}(${attrs}, ${self.listed(items, indent)})")
@@ -609,6 +657,8 @@ let ui_names = [
   "Separator",
   "SeparatorText",
   "Row",
+  "Space",
+  "Group",
   "Component",
   "Fragment",
   "WindowAttrs",
@@ -625,6 +675,10 @@ let ui_names = [
   "ColorEditAttrs",
   "ModalAttrs",
   "FieldAttrs",
+  "FormAttrs",
+  "RowAttrs",
+  "SpaceAttrs",
+  "GroupAttrs",
   "TextAttrs",
   "Shortcut",
   "Style",
@@ -745,7 +799,27 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
     }),
     "MainMenuBar" => Some(container()),
     "MenuBar" => Some(container()),
-    "Row" => Some(container()),
+    "Row" => Some(Kind {
+      attrs_struct: "RowAttrs",
+      text_field: "",
+      attrs: [Field { name: "wrap", kind: Flag }, class, style],
+      required: [],
+      holds: true,
+    }),
+    "Group" => Some(Kind {
+      attrs_struct: "GroupAttrs",
+      text_field: "",
+      attrs: [class, style],
+      required: [],
+      holds: true,
+    }),
+    "Space" => Some(Kind {
+      attrs_struct: "SpaceAttrs",
+      text_field: "",
+      attrs: [Field { name: "width", kind: Any }, Field { name: "height", kind: Any }],
+      required: [],
+      holds: false,
+    }),
     "Fragment" => Some(container()),
     "Menu" => Some(Kind {
       attrs_struct: "MenuAttrs",
@@ -901,7 +975,13 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
       required: ["title"],
       holds: true,
     }),
-    "Form" => Some(container()),
+    "Form" => Some(Kind {
+      attrs_struct: "FormAttrs",
+      text_field: "",
+      attrs: [class, style],
+      required: [],
+      holds: true,
+    }),
     "Field" => Some(Kind {
       attrs_struct: "FieldAttrs",
       text_field: "",
@@ -1014,6 +1094,7 @@ let declarations = pure (text: string, line: i64) -> Result<[]string, string> =>
       "opacity" => number(given),
       "width" => if given.ends_with("em") { em(given) } else { number(given) },
       "height" => number(given),
+      "gap" => number(given),
       _ => Err("no style property ${name}"),
     }
     let field = if name == "width" && given.ends_with("em") { "width_em" } else { name }

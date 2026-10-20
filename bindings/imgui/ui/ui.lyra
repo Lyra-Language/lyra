@@ -44,7 +44,7 @@ module bindings.imgui.ui
 //! ```
 //! let confirm = (question: string, yes: e, no: e) -> Node<e> => Component(CONFIRM, [
 //!   Text(TextAttrs { text: question }),
-//!   Row([
+//!   Row(RowAttrs {}, [
 //!     Button(ButtonAttrs { label: "Yes", on_click: yes, class: "primary" }),
 //!     Button(ButtonAttrs { label: "No", on_click: no }),
 //!   ]),
@@ -110,6 +110,18 @@ import bindings.imgui.{
   separator,
   separator_text,
   same_line,
+  dummy,
+  begin_group,
+  end_group,
+  get_state_storage,
+  get_id,
+  get_cursor_pos,
+  get_cursor_screen_pos,
+  get_content_region_avail,
+  get_item_rect_min,
+  get_item_rect_max,
+  get_cursor_pos_y,
+  set_cursor_pos_y,
   begin_disabled,
   end_disabled,
   push_style_color,
@@ -230,16 +242,24 @@ pub data Node<e> =
   /// with it at its place, in the window as it stands there.
   | Slot(string)
   /// Labelled fields lined up: each [Field]'s label right-aligned in a column as wide as
-  /// the widest, its controls starting together past it.
-  | Form([]Node<e>)
+  /// the widest, its controls starting together past it; a style's `gap` between them.
+  | Form(FormAttrs, []Node<e>)
   /// A label and its controls on one line — in a [Form], in its column.
   | Field(FieldAttrs, []Node<e>)
   | Text(TextAttrs)
   | Separator
   /// A line with a label in it.
   | SeparatorText(string)
-  /// Its children side by side, rather than each on a line of its own.
-  | Row([]Node<e>)
+  /// Its children side by side, rather than each on a line of its own; a style's `gap`
+  /// between them.
+  | Row(RowAttrs, []Node<e>)
+  /// Its children one under another as a single item, ImGui's group — a box, as a `<div>`
+  /// is: in a [Row], groups stand side by side as columns. A style's `gap` between its
+  /// children; `seen` is called with it after them, with its whole rectangle as the item.
+  | Group(GroupAttrs, []Node<e>)
+  /// Empty room in the layout, `height` down (or `width` across, in a [Row]): an item of
+  /// that size with nothing drawn, ImGui's `Dummy`, followed by the usual spacing.
+  | Space(SpaceAttrs)
   /// A component's elements: its [Sheet] styles them, and nothing outside them.
   | Component(Sheet, []Node<e>)
   /// Its children as they are, in place — several elements where one is expected (a
@@ -472,6 +492,35 @@ pub struct Style {
   height: Maybe<f32> = None,
   /// The width in ems, the font's size: it grows with the interface. `width` wins.
   width_em: Maybe<f32> = None,
+  /// The space between a container's children, in pixels: a [Form]'s fields (down), a
+  /// [Row]'s children and a [Field]'s controls (across). Unset, ImGui's item spacing.
+  gap: Maybe<f32> = None,
+}
+
+/// A [Form]'s classes and style; of a style, only `gap` applies.
+pub struct FormAttrs {
+  class: string = "",
+  style: Style = Style {},
+}
+
+/// A [Row]'s classes and style (of a style, only `gap` applies), and whether its children
+/// `wrap` to a new line when the next would not fit across — CSS's `flex-wrap`.
+pub struct RowAttrs {
+  wrap: bool = false,
+  class: string = "",
+  style: Style = Style {},
+}
+
+/// A [Group]'s classes and style; of a style, only `gap` applies.
+pub struct GroupAttrs {
+  class: string = "",
+  style: Style = Style {},
+}
+
+/// A [Space]'s size, in pixels.
+pub struct SpaceAttrs {
+  width: f32 = 0.0,
+  height: f32 = 0.0,
 }
 
 /// A component's styles: rules matched against its own elements.
@@ -496,6 +545,7 @@ impl Style {
     width: self.width.or(base.width),
     height: self.height.or(base.height),
     width_em: self.width_em.or(base.width_em),
+    gap: self.gap.or(base.gap),
   }
 }
 
@@ -572,6 +622,48 @@ pub let primary_key_name = () -> string =>
 
 /// Whether ImGui has a key for a [Shortcut]'s `key` — one it does not can never be pressed.
 pub let key_known = pure (key: string) -> bool => imgui_key(key).is_some()
+
+/// A wrapping [Row]'s children: side by side while the next fits before the region's
+/// right edge, else from a new line, `gap` (or ImGui's item spacing) between them across
+/// and between the lines. **A child's width is known only once it is drawn**, so it is
+/// the width it had last frame, kept in ImGui's state storage by the row's place and the
+/// child's index; one never drawn is taken to be as wide as the child before it.
+let draw_wrapped = (
+  children: []Node<e>,
+  gap: Maybe<f32>,
+  groups: bool,
+  sheet: Sheet,
+  seen: (Node<e>) -> void,
+  events: mut []e
+) -> void => {
+  let storage = get_state_storage()
+  let start = get_cursor_pos()
+  let right = get_cursor_screen_pos().x + get_content_region_avail().x
+  let across = gap ?? get_style().item_spacing().x
+  var last_width: f32 = 0.0
+  for i, child in children {
+    let key = get_id("##wrap ${start.x},${start.y} ${i}")
+    if i > 0 {
+      let width = storage.get_float(key, last_width)
+      if get_item_rect_max().x + across + width <= right {
+        same_line(0.0, across)
+      } else {
+        gap_below(gap)
+        if groups { align_text_to_frame_padding() }
+      }
+    }
+    draw(child, sheet, seen, events)
+    last_width = get_item_rect_max().x - get_item_rect_min().x
+    storage.set_float(key, last_width)
+  }
+}
+
+/// The cursor, which stands an item spacing below the last line, moved to `gap` below it
+/// instead — not ImGui's item spacing pushed, which would space a combo's open list too.
+let gap_below = (gap: Maybe<f32>) -> void => {
+  let Some(g) = gap else { return }
+  set_cursor_pos_y(get_cursor_pos_y() + g - get_style().item_spacing().y)
+}
 
 /// `0xRRGGBB` as the three channels ImGui's color editors edit, 0 to 1.
 pub let rgb_channels = pure (rgb: u32) -> [3]f32 => #[
@@ -827,12 +919,14 @@ impl Node<e> {
         pop_style(pushed)
       },
       Slot(_) => seen(self),
-      Form(children) => {
+      Form(form, children) => {
+        let gap = sheet.style_for("Form", form.class, form.style).gap
         var column: f32 = 0.0
         for child in children {
           if let Field(f, _) = child { column = column.max(calc_text_size(f.label).x) }
         }
-        for child in children {
+        for i, child in children {
+          if i > 0 { gap_below(gap) }
           match child {
             Field(f, fields) => draw_field(child, f, fields, column, sheet, seen, events),
             _ => draw(child, sheet, seen, events),
@@ -856,11 +950,35 @@ impl Node<e> {
       },
       Separator => separator(),
       SeparatorText(label) => separator_text(label),
-      Row(children) => {
+      Row(row, children) => {
+        let gap = sheet.style_for("Row", row.class, row.style).gap
+        let groups = children.any((c) => match c {
+          Group(_, _) => true,
+          _ => false,
+        })
+        // Groups side by side line up at their tops: `same_line` after a group ending in
+        // framed widgets drops the next one's text by the frame padding to meet them, so
+        // each line's first group is laid out as a frame's too.
+        if groups { align_text_to_frame_padding() }
+        if !row.wrap {
+          for i, child in children {
+            if i > 0 { same_line(0.0, gap ?? -1.0) }
+            draw(child, sheet, seen, events)
+          }
+        } else {
+          draw_wrapped(children, gap, groups, sheet, seen, events)
+        }
+      },
+      Space(room) => dummy(Vec2 { x: room.width, y: room.height }),
+      Group(group, children) => {
+        let gap = sheet.style_for("Group", group.class, group.style).gap
+        begin_group()
         for i, child in children {
-          if i > 0 { same_line() }
+          if i > 0 { gap_below(gap) }
           draw(child, sheet, seen, events)
         }
+        end_group()
+        seen(self)
       },
       // Its own sheet in place of the enclosing one: selectors stop at the boundary.
       Component(own, children) => { for child in children { draw(child, own, seen, events) } },
@@ -886,7 +1004,7 @@ impl Node<e> {
     seen(self)
     pop_style(pushed)
     for child in fields {
-      same_line()
+      same_line(0.0, style.gap ?? -1.0)
       draw(child, sheet, seen, events)
     }
   }
@@ -897,12 +1015,13 @@ impl Node<e> {
     MainMenuBar(children) => { for child in children { collect_items(child, out) } },
     MenuBar(children) => { for child in children { collect_items(child, out) } },
     Menu(_, children) => { for child in children { collect_items(child, out) } },
-    Row(children) => { for child in children { collect_items(child, out) } },
+    Row(_, children) => { for child in children { collect_items(child, out) } },
+    Group(_, children) => { for child in children { collect_items(child, out) } },
     Component(_, children) => { for child in children { collect_items(child, out) } },
     Fragment(children) => { for child in children { collect_items(child, out) } },
     Combo(_, children) => { for child in children { collect_items(child, out) } },
     Modal(_, children) => { for child in children { collect_items(child, out) } },
-    Form(children) => { for child in children { collect_items(child, out) } },
+    Form(_, children) => { for child in children { collect_items(child, out) } },
     Field(_, children) => { for child in children { collect_items(child, out) } },
     _ => {},
   }

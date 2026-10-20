@@ -9,6 +9,64 @@ Newest first.
 
 ## Dated log
 
+### 10/20/26 — A row that wraps
+
+Termina's color groups, side by side, ran past a narrow window's edge. `<Row wrap>` puts a
+child on a new line when it would not fit before the region's right edge, `gap` spacing
+the lines as it spaces the children, as CSS's `flex-wrap` and `gap` do.
+
+- **A child's width is known only once drawn**, and ImGui cannot undo an item. The row
+  decides by the width each child had last frame, kept in ImGui's state storage under the
+  row's place and the child's index; one never drawn yet is taken to be as wide as the
+  child before it. A resize is right from the frame after, and a first frame with children
+  of unequal widths can be wrong for that frame.
+- Each wrapped line's first group is aligned to frame padding, as the row's first is, so
+  the groups on every line keep their tops lined up.
+- Termina's uitest draws the tab at 1400 and 360 pixels: side by side, then on more than
+  one line with no swatch past the edge — and both narrow checks fail when the markup
+  drops `wrap`.
+
+### 10/20/26 — `Group`: a box, so columns
+
+Termina's color groups took the Settings tab's height in one column. A `Row` puts its
+children side by side, but a `Form` in one is several lines, and only its first stood beside
+the next. `Group` is ImGui's `BeginGroup`/`EndGroup`: its children one under another as a
+single item, so groups in a `Row` are columns. It takes a `class` and a `style` whose `gap`
+spaces its children as a form's does, and `seen` gets it after its children, its whole
+rectangle the item.
+
+- **Groups side by side line up at their tops.** After a group whose last line held framed
+  widgets, `same_line` drops the next group's first text by the frame padding to meet them,
+  so in Termina the first heading sat 3 pixels above the other three. A row of groups
+  aligns its first line to frame padding before the first, as `same_line` does for the
+  rest. Termina's uitest checks each group's first swatch on one line, left to right.
+- Found: a tuple index is not a comprehension's source (`[c in g.1 | …]` is a syntax error
+  where `g.colors` is not); todo.md. Termina's groups are a struct for it.
+
+### 10/20/26 — `gap`, and a `Space`
+
+Spacing between fields could not be written: a `Style` had no margin, and `Form` and `Row`
+took no attributes. `gap` is CSS's: the space between a container's children — a `Form`'s
+fields down, a `Row`'s children and a `Field`'s controls across — in a sheet
+(`Form { gap: 10 }`) or inline, `Form` and `Row` now carrying a `class` and a `style`
+(`FormAttrs`, `RowAttrs`; a changed node shape, every generated module regenerated). A
+`Space` is a one-off gap, ImGui's `Dummy`.
+
+- **A form's gap moves the cursor, not ImGui's item spacing.** Pushing
+  `STYLE_VAR_ITEM_SPACING` around the fields would space a combo's open list as well,
+  drawn inside them; the cursor is set to `gap` below each line instead. A row's and a
+  field's are `same_line`'s spacing.
+- Measured in the example's `--check`: the next field's top a frame height and the gap
+  below the last's, and confirm's buttons the sheet's 12 pixels apart.
+
+### 10/20/26 — lui takes a directory
+
+`lui src`, `lui --check src` and `lui --watch src` stand for every `.lui` file beneath `src`,
+in sorted order, names beginning with `.` and symlinked directories skipped, as lyrafmt walks
+for `.lyra`. `--watch` walks its arguments again every pass, so a file added later is
+generated as it appears; a shell glob fixed the list when the watch began. A directory with
+no markup is refused, not silently passed. Tested in `TestLui_DirectoriesAndNewFilesUnderWatch`.
+
 ### 10/20/26 — `.lui` props are an object
 
 `props="question: string, yes: e"` was a string the editors could only colour as one, and
