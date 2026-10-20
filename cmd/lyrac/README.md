@@ -33,7 +33,9 @@ lyrac run --target linux-arm64 prog.lyra     # run there: the Simulator, or Dock
 - Links with `clang <ir> -lm -o <exe>` plus `-l` flags from `@link` (`linkFlags`); `-lm` is
   unconditional, matching the backend tests. Library directories come first: the install's
   `<root>/lib` when it exists (`installLibDir` — where `build.sh` puts a binding's shim
-  archive), then pkg-config's for each `pkg:`.
+  archive), then pkg-config's for each `pkg:`. A shared library in that `lib/` adds an rpath
+  to it (`holdsSharedLibrary`), so the program finds it when it runs: Vega's release ships
+  SDL3 there on macOS. The workspace's `lib/` holds archives only.
 - **`-o` and the `.ll`** (`llPath`): the `.ll` goes beside the executable `-o` names; under
   `--emit-llvm`, `-o` names the `.ll` itself.
 - **Default `-O2`**: no debug info is emitted at any level, so `-O0` buys nothing. The level

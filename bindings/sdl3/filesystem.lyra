@@ -1,5 +1,5 @@
 module bindings.sdl3
-//! Where a program keeps what it writes.
+//! Where a program keeps what it writes, and where it was installed.
 
 import std.ffi.{ cstring_len }
 
@@ -15,5 +15,19 @@ pub let pref_path = (org: string, app: string) -> Maybe<string> => {
   Some(text)
 }
 
+/// The folder the program was started from, for what it ships beside itself:
+/// `<App>.app/Contents/Resources/` when it runs from a macOS app bundle, else the folder
+/// holding the executable (`$ORIGIN` on Linux, the AppImage's own when it is one). Ends in
+/// the separator. `None` when the system cannot say. Needs no `init`.
+pub let base_path = () -> Maybe<string> => {
+  // SDL keeps the string: it is SDL's to free, unlike pref_path's.
+  let path = unsafe { sdl_get_base_path() }
+  if path == nullptr { return None }
+  Some(unsafe { path.decode_utf8(cstring_len(path)) })
+}
+
 @symbol("SDL_GetPrefPath")
 unsafe extern sdl_get_pref_path: (org: ^u8, app: ^u8) -> ^u8
+
+@symbol("SDL_GetBasePath")
+unsafe extern sdl_get_base_path: () -> ^u8

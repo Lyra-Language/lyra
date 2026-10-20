@@ -630,7 +630,11 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 // **The install's own `lib/` comes first of all** (`installLibDir`): the root holding
 // `std/` and `bindings/` also holds the archives a binding's C half builds into — `build.sh`
 // puts `liblyra-menubar.a` there — so a binding with a shim links with no `LIBRARY_PATH`,
-// as one over a packaged library does through `pkg:`.
+// as one over a packaged library does through `pkg:`. **A shared library there is found at
+// run time too** (an rpath to the directory): an install that carries one — Vega's release
+// puts SDL3 in its lyra's `lib/` on macOS, where an app opened from Finder has no Homebrew
+// on its PATH — builds programs that run against it. The workspace's `lib/` holds archives
+// only, so its builds are unchanged.
 //
 // **For another platform** the libraries are that platform's: the install's
 // `lib/<platform>/` (platformLibDir) and its `lib/`, and each `pkg:` answered by the
@@ -673,6 +677,9 @@ func linkFlags(res *driver.Result, p target.Platform) []string {
 	if dir := installLibDir(); dir != "" {
 		seenDir[dir] = true
 		flags = append(flags, "-L"+dir)
+		if holdsSharedLibrary(dir) {
+			flags = append(flags, "-Wl,-rpath,"+dir)
+		}
 	}
 	for _, pkg := range res.Packages {
 		dirs, err := pkgConfigLibDirs(pkg)
@@ -695,6 +702,22 @@ func linkFlags(res *driver.Result, p target.Platform) []string {
 		flags = append(flags, "-l"+lib)
 	}
 	return flags
+}
+
+// holdsSharedLibrary is whether dir has a shared library in it (`.dylib`, `.so`, `.so.N`),
+// which a program linked against it must find again when it runs.
+func holdsSharedLibrary(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasSuffix(name, ".dylib") || strings.HasSuffix(name, ".so") || strings.Contains(name, ".so.") {
+			return true
+		}
+	}
+	return false
 }
 
 // installLibDir is `<root>/lib` when the standard library's root has one, else "". A

@@ -108,6 +108,32 @@ func TestLinkFlags_SearchesTheInstallsLibFirst(t *testing.T) {
 	}
 }
 
+// **A shared library in the install's `lib/` is found at run time** — an rpath to it —
+// so a program built by an install that carries SDL3 (Vega's release on macOS) runs
+// against that SDL3. Archives alone, as the workspace's `lib/` has, add none.
+func TestLinkFlags_AnInstallsSharedLibraryIsFoundAtRunTime(t *testing.T) {
+	savedLib, savedPkg := installLibDir, pkgConfigLibDirs
+	defer func() { installLibDir, pkgConfigLibDirs = savedLib, savedPkg }()
+	dir := t.TempDir()
+	installLibDir = func() string { return dir }
+	pkgConfigLibDirs = func(pkg string) ([]string, error) { return nil, errors.New("none") }
+	if err := os.WriteFile(filepath.Join(dir, "liblyra-menubar.a"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := &driver.Result{Links: []string{"SDL3"}, Packages: []string{"sdl3"}}
+	want := "-L" + dir + " -lm -lSDL3"
+	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
+		t.Errorf("archives only: linkFlags = %q; want %q", got, want)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "libSDL3.dylib"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want = "-L" + dir + " -Wl,-rpath," + dir + " -lm -lSDL3"
+	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
+		t.Errorf("with a shared library: linkFlags = %q; want %q", got, want)
+	}
+}
+
 // mustMachine is the platform lyrac runs on, which the link tests build for.
 func mustMachine() target.Platform {
 	m, err := target.Machine()

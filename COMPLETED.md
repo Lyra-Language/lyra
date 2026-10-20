@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 10/20/26 — What Vega's release needs of Lyra: `base_path`, and an install's shared library found at run time
+
+Vega's release (its `package.sh`) carries lyrac and Sheliak, and has to find them and have
+lyrac's games run on a machine with no workspace.
+
+- **`bindings.sdl3.base_path()`** (SDL_GetBasePath): the folder a program ships things
+  beside — a bundle's `Resources/`, else the executable's. SDL owns the string, so unlike
+  `pref_path`'s it is not freed.
+- **A shared library in the install's `lib/` adds an rpath to it.** A Mac app opened from
+  Finder has no Homebrew on its PATH: no pkg-config, so no `-L` for SDL3, and a modern game
+  would not link. The release puts SDL3 in its lyra's `lib/` (links to the app's own copy),
+  which lyrac already searches first; the rpath makes the game find it when it runs. The
+  workspace's `lib/` holds archives only, so no build here changed.
+- **Not on Linux**: an AppImage's folder moves at each launch, so a game pointed into it
+  would not run the next time. Linux's games link the system's SDL3, as before.
+
 ### 10/20/26 — `pub extern`: a binding offers a function taking a C callback
 
 `bindings.imgui`'s `set_redraw(host, frame)` was the program's to declare: `frame` is a C

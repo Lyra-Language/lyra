@@ -682,7 +682,9 @@ of Markdown.
   `move.w #…, %sr` as a move to d0, so the runtime writes that instruction as `.short`s.
 - **`build.sh` builds `build/lib/liblyra-menubar.a`**, `bindings.menubar`'s C half (the
   AppKit shim on macOS, a do-nothing stub elsewhere). `lyrac` passes `-L<root>/lib`
-  (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH`. **And
+  (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH` — and, for a
+  shared library there (an install that ships one, as Vega's release does SDL3 on macOS),
+  `-Wl,-rpath` to it, so the program runs against it. **And
   `build/lib/liblyra-pty.a`**, `bindings.pty`'s (`pty.c`, plain POSIX).
 - **`build.sh` builds `build/lui`** (`tools/lui/lui.lyra`, std only): the `.lui` markup
   generator for `bindings.imgui.ui` (bindings/README.md). Its output is ignored by
