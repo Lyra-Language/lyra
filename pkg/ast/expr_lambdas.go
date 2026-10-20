@@ -46,6 +46,16 @@ type LambdaExpr struct {
 	IsNoAlloc   bool
 	IsAsync     bool
 	IsGenerator bool
+	// ConstructorValue is the constructor this lambda stands for, when the driver made it
+	// from one written as a function value — `xs.map(Width)` is `xs.map((p0) =>
+	// Width(p0))` from then on (pkg/driver/constructor_value.go). The typechecker fills a
+	// parameter no context typed from the constructor's field (fillConstructorLambda), so
+	// `let g = Width` is a `(i64) -> Ev` as the hand-written lambda would need annotating
+	// to be, and records that type on this node too. Kept as the node the program wrote,
+	// so an editor answers about `Width` rather than the parameters the lambda invented:
+	// PatternsOf reports none of them, and the server's walks visit this node instead
+	// of the lambda. nil for every lambda the program wrote.
+	ConstructorValue *DataConstructorExpr `print:"-"`
 	// GenericBounds are the `where` bounds of the declaration this lambda is the
 	// value of, keyed by type-parameter name — lifted here by the collector exactly
 	// as the leading modifiers are, because the bounds are written on the *binding*

@@ -99,6 +99,11 @@ func PatternsOf(node AstNode) []Pattern {
 		}
 		return out
 	case *LambdaExpr:
+		// A constructor written as a function value: its parameters are the driver's,
+		// with no name a program wrote, at the constructor's own span.
+		if n.ConstructorValue != nil {
+			return nil
+		}
 		var out []Pattern
 		for i := range n.Parameters {
 			out = append(out, n.Parameters[i].Pattern)

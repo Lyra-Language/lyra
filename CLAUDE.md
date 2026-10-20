@@ -448,6 +448,16 @@ starts one before its expression).
 - An under-reporting pass is silent when broken: keep must-fire tests (`assertLeaks`) and check
   against real programs using `bindings/raylib`.
 
+**Constructors as function values** (`pkg/driver/constructor_value.go`) — a payload
+constructor written bare (`xs.map(Width)`) is erased by the driver, before every pass, into
+`(p0) => Width(p0)`, with `LambdaExpr.ConstructorValue` holding the node the program wrote.
+- The parameters are blank: the context types them, and `fillConstructorLambda` (typechecker)
+  fills what none did from the declaration, or refuses a generic one once (`lyra-E073`).
+- **The invented parameters sit at the constructor's span**, the narrowest nodes there, so
+  the editor must not see them: `ast.PatternsOf` reports none, and the server's expression
+  walks (`walkProgramExprs`, semantic tokens) visit `ConstructorValue` instead of the lambda.
+  A new LSP walk over raw `ast.WalkStmt` needs the same substitution.
+
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 
 **Naming: the two remainders** — `%` is the **truncated** remainder (sign of the dividend,

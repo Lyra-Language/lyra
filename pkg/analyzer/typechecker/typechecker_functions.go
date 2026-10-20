@@ -105,6 +105,9 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 	// anything looks at the body, so the rest of this function — and every pass after it —
 	// sees an ordinary lambda. See multi_clause.go for why this is a front-end elaboration.
 	tc.desugarClauses(funcName, lambda)
+	if tc.fillConstructorLambda(lambda); tc.constructorValueReported[lambda] {
+		return
+	}
 	// Positional arguments fill left to right, so a defaulted parameter followed by one
 	// without a default can never be called as written.
 	tc.checkDefaultsAreTrailing(funcName, lambda)

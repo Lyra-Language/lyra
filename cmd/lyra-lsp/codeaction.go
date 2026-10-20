@@ -417,6 +417,13 @@ func walkProgramExprs(program *ast.Program, onExpr func(ast.Expression) bool) {
 				return true
 			}, func(e ast.Expression) bool {
 				bounds(e)
+				// A constructor written as a function value is a lambda the driver made;
+				// every feature answers about the constructor the program wrote, never the
+				// lambda's invented parameters at the same span.
+				if lam, ok := e.(*ast.LambdaExpr); ok && lam.ConstructorValue != nil {
+					onExpr(lam.ConstructorValue)
+					return false
+				}
 				return onExpr(e)
 			})
 		}

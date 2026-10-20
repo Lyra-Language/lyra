@@ -95,6 +95,11 @@ dropped.
   `definition.go`'s `scopeInExpr` is its twin and still switches on kinds — a missing kind
   resolves names in the wrong scope. A missing case in a position lookup shows up as the
   editor doing nothing.
+- **A constructor written as a function value is a lambda the driver made**
+  (`LambdaExpr.ConstructorValue`), its parameters `__Width0`… at the constructor's span.
+  `walkProgramExprs` and semantic tokens visit the constructor instead of the lambda, and
+  `ast.PatternsOf` reports none of its parameters, so hover and definition answer about
+  `Width`; a walk of its own must do the same (`TestConstructorValue_*`).
 - **A pattern binding resolves through `patternBindingAt`** (`rename.go`), from the name's own
   span (`ast.PatternBinding.Loc`), and its declaration's span through `bindingNameLoc`, never
   `namedNameLoc` alone: a destructured name's entry spans the whole statement. **Hover and

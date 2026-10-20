@@ -30,6 +30,9 @@ type TypeChecker struct {
 	// destructuring bound, for a use reaching its placeholder through a later binding's
 	// Shadows chain (name_resolution.go).
 	destructured map[destructuredName]*ast.VarDeclStmt
+	// constructorValueReported holds the constructor lambdas already refused as untypable,
+	// so the several paths that read a lambda's signature report one once.
+	constructorValueReported map[*ast.LambdaExpr]bool
 	// constBuiltinCalls holds the float-builtin method calls that a `const` initializer's
 	// constancy walk accepted, pending the verification sweep at the end of the pass
 	// (verifyConstBuiltinCalls, typechecker_const.go). The walk runs before the
@@ -5552,6 +5555,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// field once it does). Asked of the whole type, not just its name, so a
 		// partly-substituted `Maybe<t>` is covered as well as a bare `t`.
 		if mentionsGenericParam(expected, genericParamNames) {
+			tc.elaborateLambda(f.Value, expected, nil)
 			tc.inferExprType(f.Value) // still record the value's type
 			continue
 		}
@@ -5559,6 +5563,12 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// as an UnresolvedType, which would otherwise never compare equal to the
 		// inferred NamedStructType of a nested struct literal (`Point{...}`).
 		expected = tc.resolveType(expected, f.Value.GetLocation())
+		// A lambda's blanks are filled from the field, now that the substitution has
+		// solved what it mentions — the return of `(v) => Width(v)` in a `(i64) -> e` field
+		// is `Ev` once `e` is. The backend lowers a lambda value from its annotations, and
+		// an unannotated return was "a lambda used as a value needs a return type
+		// annotation" there, on a literal the typechecker had accepted.
+		tc.elaborateLambda(f.Value, expected, nil)
 		// The declared field type is a **context for the value's inference**, not only
 		// something to check it against afterwards — the same push an annotated binding,
 		// a declared return and an argument slot each make (pushExpectedType). Without
@@ -5743,6 +5753,13 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 		if !ok {
 			continue
 		}
+		// A lambda takes what its field's type already states before it is inferred, as an
+		// argument takes its slot's: `on_change: (v) => Width(v)` against `(i64) -> e` gets
+		// `v: i64`, which the field says outright although `e` is what this walk is solving.
+		// Only the concrete parts are written (elaborateLambda), so `e` is left to the body —
+		// which is what solves it. Without this `v` was undefined, the parameter mentioning
+		// no type variable notwithstanding (10/19).
+		tc.elaborateLambda(f.Value, substituteGenerics(declared, typeSubst), nil)
 		vt := tc.inferExprType(f.Value)
 		if vt == nil {
 			continue
@@ -5851,6 +5868,7 @@ func (tc *TypeChecker) convertAnonymousStructFieldsToTypeFields(fields []ast.Str
 // lambda) use this, so recording the callee's type cannot double-check a body the
 // declaration path already checked.
 func (tc *TypeChecker) lambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType {
+	tc.fillConstructorLambda(lambda)
 	t := &types.LambdaType{
 		ReturnType: types.ReturnType{Type: tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())},
 	}
@@ -5866,6 +5884,11 @@ func (tc *TypeChecker) lambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType
 
 func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 	t := tc.lambdaSignature(lambda)
+	// A constructor no context could type has been refused, once; its body would only
+	// report the parameters the program never wrote.
+	if tc.constructorValueReported[lambda] {
+		return nil
+	}
 	// Infer the return type from the body when the lambda carries no return
 	// annotation (`(n: u8) => n`). Without this an unannotated lambda literal
 	// has a nil (un-inferred) return type, so passing it where a concrete
@@ -5892,6 +5915,9 @@ func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 		tc.checkLambdaBody("lambda", lambda)
 	}
 	tc.typeTable.Set(lambda, t)
+	if lambda.ConstructorValue != nil {
+		tc.typeTable.Set(lambda.ConstructorValue, t) // what an editor hovering on `Width` reads
+	}
 	return t
 }
 

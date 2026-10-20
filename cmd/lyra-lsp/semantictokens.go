@@ -105,6 +105,12 @@ func collectSemanticTokens(source string, analysis *docAnalysis) []semToken {
 
 	// onExpr tokenizes usages (and parameter declarations carried on lambdas).
 	onExpr := func(e ast.Expression) bool {
+		// A constructor written as a function value colours as the constructor, not as
+		// the parameters of the lambda the driver made of it (see walkProgramExprs).
+		if lam, ok := e.(*ast.LambdaExpr); ok && lam.ConstructorValue != nil {
+			add(nameLoc(lam.GetLocation(), lam.ConstructorValue.Constructor), lam.ConstructorValue.Constructor, semTypeEnumMember, 0)
+			return false
+		}
 		switch ex := e.(type) {
 		case *ast.IdentifierExpr:
 			if tt, mods, ok := classifyIdentifier(ex, analysis); ok {

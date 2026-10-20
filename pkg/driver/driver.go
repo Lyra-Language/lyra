@@ -197,6 +197,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// Before every pass: an aliased constructor import is erased into the constructor's own
 	// name, and the uses it rewrote count the import as used (lyra-W004, below).
 	aliasedConstructorUses := eraseConstructorAliases(program, symTable)
+	// And a constructor written as a function value becomes the lambda that applies it.
+	eraseConstructorValues(program, symTable)
 	res.Diagnostics = append(res.Diagnostics, shadowWarnings(symTable)...)
 	res.Diagnostics = append(res.Diagnostics, constructorShadowWarnings(program, symTable)...)
 	for _, rawErr := range collectorErrors {

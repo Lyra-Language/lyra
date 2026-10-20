@@ -31,6 +31,40 @@ and the Slots are gone.
 - Driven in `examples/imgui/components.lyra --check`: a click near the slider's right end
   sets it near the top and commits once.
 
+### 10/19/26 — A constructor is a function value; a generic field types its lambda
+
+Both found by lui (`on_change={Width}`), which wrote `(value: i64) -> Ev => Width(value)`
+for them. Rust and Haskell treat a constructor as a function, and the second gap was a
+lambda the typechecker accepted and the backend could not lower.
+
+- **A payload constructor written bare is erased into its lambda**, by the driver before
+  every pass: `Width` is `(p0) => Width(p0)` (`constructor_value.go`). Captures, purity,
+  ownership and the backend's closures already understand a lambda, where a constructor
+  that is also a function would have been a new case in each. Until today the bare form
+  was typed as a value of its data type, so `let e: Ev = Width` was *accepted* — a
+  constructor with no payload that only the backend refused.
+- **Typed as any lambda literal is**: by its context (`[1, 2].map(Some)` solves `map`'s
+  `t`), and with none from the declaration (`fillConstructorLambda`), so `let make =
+  Width` is a `(i64) -> Ev` where the hand-written lambda would need annotations. A
+  generic one with no context is refused once (`lyra-E073`), not as the undefined
+  parameters of a lambda the program never wrote.
+- **The editor still sees the constructor.** The invented parameters sit at `Width`'s span,
+  the narrowest nodes there, so hover and definition answered about `__Width0`.
+  `LambdaExpr.ConstructorValue` keeps the node the program wrote, `ast.PatternsOf` reports
+  none of the parameters (every caller wants written patterns), and the server's two
+  expression walks visit the constructor in the lambda's place. Definition and
+  references on a constructor in an expression never worked, `Quit` and `Width(4)`
+  included; that is in todo.md.
+- **A generic struct's field now types a lambda.** The field of `IntAttrs<e>` is
+  `(i64) -> e`, and a field mentioning an unsolved parameter was inferred with no context
+  at all, so `v` in `(v) => Width(v)` was undefined though its type is stated outright.
+  The struct literal elaborates each lambda field against its declared type before the
+  generic arguments are solved (filling the parameters, leaving `e`), and again against
+  the solved type when the field is checked (filling the return). The return matters: the
+  backend lowers a lambda value from its annotations, and the inferred one had been
+  recorded only in the TypeTable.
+- lui still writes the lambda; it could write `Width` through now (todo.md).
+
 ### 10/19/26 — An `if` or a `match` is an operand
 
 `1 + if c { 2 } else { 3 }`, `"x" ++ if … `, `held | match name { … }` were syntax errors,
