@@ -1,0 +1,152 @@
+@link("freetype", pkg: "freetype2")
+module bindings.freetype
+//! Glyph rasterizing, over FreeType: a glyph of a font, at a size in pixels, as the coverage
+//! of each pixel it touches — what a text renderer copies into a glyph atlas.
+//!
+//! ```
+//! import bindings.freetype.{ open_ft_font, render_glyph, close_ft_font }
+//!
+//! let Some(font) = open_ft_font("/System/Library/Fonts/Helvetica.ttc") else { return 1 }
+//! if let Some(g) = render_glyph(font, 43, 32) { println("${g.width}x${g.rows}") }
+//! close_ft_font(font)
+//! ```
+//!
+//! **Glyphs are named by number, not character** — the numbers HarfBuzz's shaping answers
+//! (`bindings.harfbuzz`), for a font opened from the same file.
+//!
+//! **Two of FreeType's records are read by offset**: a face's current glyph slot and the slot's
+//! bitmap. FreeType has no function answering either — its API is the public layout of
+//! `FT_FaceRec` and `FT_GlyphSlotRec` — so this reads them where they sit on an LP64 machine,
+//! the only kind Lyra builds for (`cmd/lyrac/ui_test.go`'s `TestFreetypeOffsets` holds them to
+//! a C compiler's `offsetof`). The layout has been FreeType 2's ABI since 2.0.
+//!
+//! Link with `-lfreetype`; on macOS that is `brew install freetype`, on Debian
+//! `libfreetype-dev`. `pkg: "freetype2"` on the header has lyrac ask pkg-config where it is.
+
+/// One face of a font file, with the FreeType library it was opened by: opened by
+/// [open_ft_font], put away by [close_ft_font].
+@must_release(close_ft_font)
+pub struct FtFont {
+  library: ^u8,
+  face: ^u8,
+}
+
+/// A rendered glyph: `width` × `rows` pixels, row by row from the top, each byte its coverage
+/// (0 none, 255 whole); and where its top-left pixel sits from the pen on the baseline — `left`
+/// across, `top` up.
+pub struct GlyphBitmap {
+  width: i64,
+  rows: i64,
+  left: i64,
+  top: i64,
+  coverage: []u8,
+}
+
+/// Open face `index` of the font file at `path`, or `None` if there is no such file or it is
+/// not a font.
+pub let open_ft_font = (path: string, index: i64 = 0) -> Maybe<FtFont> => {
+  var library: ^u8 = nullptr
+  if unsafe { ft_init_freetype(&mut library) } != 0 { return None }
+  var face: ^u8 = nullptr
+  if unsafe { ft_new_face(library, path.cstring_ptr(), index, &mut face) } != 0 {
+    unsafe { ft_done_freetype(library) }
+    return None
+  }
+  Some(FtFont { library: library, face: face })
+}
+
+/// Put a font away. It must not be used afterwards.
+pub let close_ft_font = (font: FtFont) -> void => {
+  unsafe { ft_done_face(font.face) }
+  unsafe { ft_done_freetype(font.library) }
+}
+
+/// Glyph number `glyph` rendered `pixels` pixels to the em, lightly hinted (vertically only,
+/// so its shape keeps its width and its advance), or `None` if the font has no such glyph or
+/// it cannot be rendered. A glyph with no ink — a space — is an empty bitmap.
+pub let render_glyph = (font: FtFont, glyph: u32, pixels: u32) -> Maybe<GlyphBitmap> => {
+  if unsafe { ft_set_pixel_sizes(font.face, 0, pixels) } != 0 { return None }
+  if unsafe { ft_load_glyph(font.face, glyph, LOAD_RENDER | LOAD_TARGET_LIGHT) } != 0 {
+    return None
+  }
+  let slot = read_pointer(font.face.address() + FACE_GLYPH)
+  let bitmap = read_bitmap(slot.address() + SLOT_BITMAP)
+  if bitmap.pixel_mode != PIXEL_MODE_GRAY && bitmap.rows > 0 { return None }
+  let width = i64(bitmap.width)
+  let rows = i64(bitmap.rows)
+  var coverage: []u8 = []
+  for y in 0..<rows {
+    // `pitch` is the bytes from one row to the next: negative for a bitmap stored bottom up.
+    let row = unsafe { bitmap.buffer.offset(y * i64(bitmap.pitch)) }
+    for x in 0..<width { coverage.push(unsafe { row.offset(x)^ }) }
+  }
+  Some(GlyphBitmap {
+    width: width,
+    rows: rows,
+    left: i64(read_i32(slot.address() + SLOT_BITMAP_LEFT)),
+    top: i64(read_i32(slot.address() + SLOT_BITMAP_TOP)),
+    coverage: coverage,
+  })
+}
+
+/// The pointer stored at `address` — an address inside a record FreeType holds.
+let read_pointer = pure (address: u64) -> ^u8 => unsafe {
+  let at: ^^u8 = pointer_at(address)
+  at^
+}
+
+/// The `FT_Bitmap` stored at `address`.
+let read_bitmap = pure (address: u64) -> FtBitmap => unsafe {
+  let at: ^FtBitmap = pointer_at(address)
+  at^
+}
+
+/// The `int` stored at `address`.
+let read_i32 = pure (address: u64) -> i32 => unsafe {
+  let at: ^i32 = pointer_at(address)
+  at^
+}
+
+/// Where `FT_FaceRec.glyph` and `FT_GlyphSlotRec`'s `bitmap`, `bitmap_left` and `bitmap_top`
+/// sit, in bytes, on LP64 (`TestFreetypeOffsets`).
+const FACE_GLYPH: u64 = 152
+const SLOT_BITMAP: u64 = 152
+const SLOT_BITMAP_LEFT: u64 = 192
+const SLOT_BITMAP_TOP: u64 = 196
+
+/// `FT_LOAD_RENDER` and `FT_LOAD_TARGET_LIGHT`, and `FT_PIXEL_MODE_GRAY` — C macros and
+/// enumerators, with no symbol.
+const LOAD_RENDER: i32 = 4
+const LOAD_TARGET_LIGHT: i32 = 0x10000
+const PIXEL_MODE_GRAY: u8 = 2
+
+// ---------------------------------------------------------------------------------------
+// Foreign declarations
+// ---------------------------------------------------------------------------------------
+
+/// `FT_Bitmap`: 8-bit coverage when `pixel_mode` is `FT_PIXEL_MODE_GRAY`, which a glyph
+/// rendered as [render_glyph] asks is.
+struct FtBitmap {
+  rows: u32,
+  width: u32,
+  pitch: i32,
+  buffer: ^u8,
+  num_grays: u16,
+  pixel_mode: u8,
+  palette_mode: u8,
+  palette: ^u8,
+}
+
+// `FT_Library` and `FT_Face` cross as opaque `^u8`; `FT_Error` is an `int`, 0 for success.
+@symbol("FT_Init_FreeType")
+unsafe extern ft_init_freetype: (library: ^mut ^u8) -> i32
+@symbol("FT_Done_FreeType")
+unsafe extern ft_done_freetype: (library: ^u8) -> i32
+@symbol("FT_New_Face")
+unsafe extern ft_new_face: (library: ^u8, path: ^u8, index: i64, face: ^mut ^u8) -> i32
+@symbol("FT_Done_Face")
+unsafe extern ft_done_face: (face: ^u8) -> i32
+@symbol("FT_Set_Pixel_Sizes")
+unsafe extern ft_set_pixel_sizes: (face: ^u8, width: u32, height: u32) -> i32
+@symbol("FT_Load_Glyph")
+unsafe extern ft_load_glyph: (face: ^u8, glyph: u32, flags: i32) -> i32

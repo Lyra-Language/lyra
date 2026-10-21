@@ -540,6 +540,19 @@ libjpeg-turbo, because Homebrew's raylib is built without JPEG support. `decode_
 `Image` pointed at that buffer must **never** be `unload_image`d. Link `-lturbojpeg` (`brew
 install jpeg-turbo`, Debian `libturbojpeg0-dev`), found through `pkg: "libturbojpeg"`.
 
+## `bindings/harfbuzz.lyra` and `bindings/freetype.lyra`
+
+`ui.text`'s shaping and rasterizing, one library each, both reading the same font file.
+`open_hb_font(path, index)` / `shape(font, utf8, size) -> []ShapedGlyph` / `font_extents`:
+HarfBuzz's 26.6 fixed point divided out, so a position is in the units of the size asked for,
+and a glyph's `cluster` is a **byte** offset into the UTF-8 given. `open_ft_font(path, index)`
+/ `render_glyph(font, glyph, pixels) -> Maybe<GlyphBitmap>`: 8-bit coverage, lightly hinted,
+with its bearing from the pen. Both fonts are `@must_release`. **FreeType's glyph slot and
+its bitmap are read by offset** (`FT_FaceRec.glyph` and three `FT_GlyphSlotRec` fields: no
+function answers them), held to `offsetof` by `TestFreetypeOffsets`. `brew install harfbuzz
+freetype` (Debian `libharfbuzz-dev libfreetype-dev`), found through `pkg: "harfbuzz"` and
+`pkg: "freetype2"`.
+
 ## `bindings/treesitter/`
 
 The tree-sitter runtime (`@link("tree-sitter")`; `brew install tree-sitter`, Debian

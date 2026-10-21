@@ -79,7 +79,12 @@ jobs:
       # Lyra shows it matching a convention it had to obey rather than choose. `-lz` links
       # on macOS without a package and not on Linux, so the test self-skips when it is
       # missing — which is exactly why it is installed here rather than left to chance.
-      - name: Install clang and zlib
+      #
+      # libharfbuzz-dev and libfreetype-dev are `ui/`'s text (`bindings.harfbuzz`,
+      # `bindings.freetype`), which every `ui.layout` program links: without them
+      # TestRun_UiLayout, TestRun_UiCascade and TestFreetypeOffsets skip. (The pixel tests
+      # skip here anyway, for want of SDL3.)
+      - name: Install clang, zlib, HarfBuzz and FreeType
         run: |
           # Drop the runner image's third-party apt lists before updating. We need
           # `clang` and `zlib1g-dev` from Ubuntu's own repositories and nothing from
@@ -94,7 +99,7 @@ jobs:
           sudo grep -rlE 'dl\.google\.com|packages\.microsoft\.com' \
             /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
           sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev pkg-config
+          sudo apt-get install -y clang zlib1g-dev pkg-config libharfbuzz-dev libfreetype-dev
 
       # The formatter (`examples/lyrafmt`) links the tree-sitter **runtime** as a system
       # library, and `TestExample_LyrafmtRoundTrips` skips without it — which it silently

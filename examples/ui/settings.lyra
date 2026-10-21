@@ -1,0 +1,224 @@
+// A static settings screen laid out by `ui.layout` and styled by `ui.style`: text shaped and
+// broken into lines, rows and columns with gaps and alignment, padding, a stack, components
+// whose parts are styled from outside, and a subtree in a dark theme.
+//
+//     lyrac run examples/ui/settings.lyra
+//     lyrac run examples/ui/settings.lyra -- --frames 1 --png settings.png --boxes
+//
+// **The second form draws one frame to a PNG instead of showing it** (headless with
+// `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software`), and `--boxes` prints where each
+// element with a class was laid out — `cmd/lyrac/ui_test.go` reads both.
+//
+// Nothing is positioned by hand: the screen is a tree of values ([view]) and a sheet of
+// rules ([sheet]), and the layout decides where everything goes at the window's size.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.backend.{ Platform, Renderer, InputEvent, CloseRequested, KeyPressed, Escape }
+import ui.draw.{ DrawOp, Point, Color }
+import ui.text.{ fonts_new, glyph_atlas }
+import ui.style.{ Style, Sheet, Rule, Theme, insets, insets_xy, light_theme, dark_theme }
+import ui.layout.{
+  Node,
+  Laid,
+  Edges,
+  MainStart,
+  SpaceBetween,
+  CrossCenter,
+  CrossStretch,
+  column,
+  row,
+  stack,
+  positioned,
+  sized,
+  text,
+  themed,
+  component,
+  layout,
+  loose,
+  paint,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 420.0
+const HEIGHT: f32 = 560.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--frames", "--png", "--boxes"])
+  let frames = args.value("--frames").flat_map((n) => n.parse_i64()).unwrap_or(0)
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let opened = sdl3.open("Settings", WIDTH, HEIGHT)
+  let window = match opened {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  var atlas = glyph_atlas()
+  let theme = light_theme()
+  var drawn = 0
+  var status: u8 = 0
+  loop {
+    let laid = layout(view(theme), loose(platform.window_size()), fonts)
+    let list = paint(laid, Point {}, platform.scale(), fonts, atlas, renderer)
+    drawn += 1
+    if frames > 0 && drawn >= frames {
+      if args.has("--boxes") { print_boxes(laid, Point {}) }
+      if let Some(path) = args.value("--png") {
+        if !save(renderer, theme.colors.background, list, path) { status = 1 }
+      }
+      break
+    }
+    renderer.draw(theme.colors.background, list)
+    if wants_to_close(platform.next_events(if frames > 0 { 0 } else { -1 })) { break }
+  }
+  sdl3.close(platform, renderer)
+  fonts.close()
+  status
+}
+
+/// The screen: a title, a card of settings, a paragraph, and a card in the dark theme.
+let view = pure (theme: Theme) -> Node => themed(theme, sheet(theme), [
+  column([
+    text("Settings").with_class("title"),
+    column([
+      setting("Display name", text("Ada Lovelace").with_class("value")),
+      setting("Theme", text("Light").with_class("value")),
+      setting("Volume", meter(0.8)),
+      setting("Notifications", toggle(true)),
+    ]).with_class("card"),
+    text(
+      "Lyra draws this text itself: shaped by HarfBuzz, rasterized by FreeType into a glyph atlas, and broken into lines at the width the layout gives it."
+    ).with_class("muted"),
+    themed(dark_theme(), sheet(dark_theme()), [
+      column([
+        text("A darker card").with_class("heading"),
+        text("The same rules in another theme's colours.").with_class("muted"),
+      ]).with_class("card"),
+    ]),
+  ]).aligned(MainStart, CrossStretch).with_class("page"),
+])
+
+/// A labelled setting: its label at the start of the row, its control at the end.
+let setting = pure (label: string, control: Node) -> Node =>
+  row([text(label), control]).aligned(SpaceBetween, CrossCenter).with_class("setting")
+
+/// A bar `level` of the way full: a component whose `track` and `fill` are styled from
+/// outside, by `Meter::track` and `Meter::fill`.
+let meter = pure (level: f32) -> Node => component("Meter", METER, [
+  stack([
+    sized(Some(METER_WIDTH), Some(6.0)).with_part("track"),
+    positioned(
+      Edges { left: Some(0.0), top: Some(0.0), width: Some(METER_WIDTH * level), height: Some(6.0) },
+      sized(None, None).with_part("fill")
+    ),
+  ]),
+])
+
+const METER_WIDTH: f32 = 120.0
+
+/// A meter's own rules: its corners. Its colours are its user's, through its parts.
+const METER: Sheet = Sheet { rules: [Rule {
+  selector: "SizedBox",
+  style: Style { radius: Some(3.0) }
+}] }
+
+/// A switch, on or off: a pill with its knob at one end.
+let toggle = pure (on: bool) -> Node => component("Toggle", TOGGLE, [
+  stack([
+    sized(Some(36.0), Some(20.0)).with_part(if on { "on" } else { "off" }),
+    positioned(
+      Edges {
+        left: if on { None } else { Some(2.0) },
+        right: if on { Some(2.0) } else { None },
+        top: Some(2.0),
+        width: Some(16.0),
+        height: Some(16.0),
+      },
+      sized(None, None).with_class("knob")
+    ),
+  ]),
+])
+
+/// A switch's own rules: a round pill and a white knob.
+const TOGGLE: Sheet = Sheet { rules: [
+  Rule { selector: "SizedBox", style: Style { radius: Some(10.0) } },
+  Rule { selector: ".knob", style: Style { radius: Some(8.0), background: Some(Color { r: 255, g: 255, b: 255 }) } },
+] }
+
+/// The screen's rules, in `theme`'s colours.
+let sheet = pure (theme: Theme) -> Sheet => {
+  let c = theme.colors
+  Sheet { rules: [
+    Rule { selector: ".page", style: Style { padding: Some(insets(24.0)), gap: Some(16.0) } },
+    Rule { selector: "Text.title", style: Style { font_size: Some(26.0) } },
+    Rule { selector: ".heading", style: Style { font_size: Some(17.0) } },
+    Rule { selector: ".muted", style: Style { color: Some(c.muted), font_size: Some(13.0) } },
+    Rule { selector: ".value", style: Style { color: Some(c.muted) } },
+    Rule {
+      selector: ".card",
+      style: Style {
+        background: Some(c.surface),
+        border_color: Some(c.border),
+        border_width: Some(1.0),
+        radius: Some(theme.radius * 2.0),
+        padding: Some(insets_xy(16.0, 14.0)),
+        gap: Some(14.0),
+      },
+    },
+    Rule { selector: "Meter::track", style: Style { background: Some(c.border) } },
+    Rule { selector: "Meter::fill", style: Style { background: Some(c.accent) } },
+    Rule { selector: "Toggle::on", style: Style { background: Some(c.accent) } },
+    Rule { selector: "Toggle::off", style: Style { background: Some(c.border) } },
+  ] }
+}
+
+/// Every element with a class, and its box in the window: `class x y w h`, a line each.
+let print_boxes = (laid: Laid, origin: Point) -> void => {
+  if laid.class.len() > 0 {
+    println("${laid.class} ${origin.x} ${origin.y} ${laid.size.w} ${laid.size.h}")
+  }
+  for child in laid.children {
+    let at = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    print_boxes(child.laid, at)
+  }
+}
+
+/// Whether the user asked to close the window, or pressed Escape.
+let wants_to_close = pure (events: []InputEvent) -> bool =>
+  events.any((e) => match e {
+    CloseRequested => true,
+    KeyPressed(Escape, _) => true,
+    _ => false,
+  })
+
+/// Draw `list` without showing it, and write the frame to `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  background: Color,
+  list: []DrawOp,
+  path: string
+) -> bool => {
+  let Some(frame) = capture(renderer, background, list) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

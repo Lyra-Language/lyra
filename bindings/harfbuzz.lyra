@@ -1,0 +1,211 @@
+@link("harfbuzz", pkg: "harfbuzz")
+module bindings.harfbuzz
+//! Text shaping, over HarfBuzz: a line of text in, the glyphs a font draws it with out — which
+//! glyph, where it sits and how far it moves the pen.
+//!
+//! ```
+//! import bindings.harfbuzz.{ open_hb_font, shape }
+//!
+//! let Some(font) = open_hb_font("/System/Library/Fonts/Helvetica.ttc") else { return 1 }
+//! for g in shape(font, "Hello".encode_utf8(), 16.0) {
+//!   println("glyph ${g.glyph} advances ${g.x_advance}")
+//! }
+//! ```
+//!
+//! **Shaping is what a renderer cannot do by itself**: a glyph is not a character. `fi` may be
+//! one glyph, an Arabic letter takes one of four forms by its neighbours, and kerning moves
+//! `AV` closer than either's advance. HarfBuzz reads the font's own tables for all of it.
+//!
+//! **Positions are in the units the font was scaled to** — [shape] sets the scale to the
+//! size asked for, so an advance is in the caller's units (logical units, for `ui`), not in
+//! the font's design units. HarfBuzz answers them in 26.6 fixed point, which this divides out.
+//!
+//! **A glyph's `cluster` is a byte offset** into the UTF-8 the text was given as: the first
+//! byte of the characters it draws. A line breaker matches its break opportunities, found in
+//! the same bytes, against it.
+//!
+//! Link with `-lharfbuzz`; on macOS that is `brew install harfbuzz`, on Debian
+//! `libharfbuzz-dev`. `pkg: "harfbuzz"` on the header has lyrac ask pkg-config where it is.
+
+import std.ffi
+
+/// A font HarfBuzz shapes with: one face of a font file, opened by [open_hb_font] and put
+/// away by [close_hb_font].
+@must_release(close_hb_font)
+pub struct HbFont {
+  handle: ^u8,
+}
+
+/// A font's vertical metrics at the size [font_extents] was asked for, in the same units:
+/// how far the tallest glyphs reach above the baseline (`ascender`, positive), below it
+/// (`descender`, negative), and the gap the font asks for between lines.
+pub struct FontExtents {
+  ascender: f32,
+  descender: f32,
+  line_gap: f32,
+}
+
+/// One glyph of shaped text: the font's glyph number (not a character), the byte offset of the
+/// text it draws, how far it moves the pen, and how far it is drawn from the pen.
+pub struct ShapedGlyph {
+  glyph: u32,
+  cluster: u32,
+  x_advance: f32,
+  y_advance: f32,
+  x_offset: f32,
+  y_offset: f32,
+}
+
+/// Open face `index` of the font file at `path` — `0` for a plain `.ttf`, any face of a `.ttc`
+/// collection — or `None` if there is no such file or it is not a font.
+pub let open_hb_font = (path: string, index: u32 = 0) -> Maybe<HbFont> => {
+  let blob = unsafe { hb_blob_create_from_file(path.cstring_ptr()) }
+  // HarfBuzz answers an empty blob, not NULL, for a file it cannot read.
+  if unsafe { hb_blob_get_length(blob) } == 0 {
+    unsafe { hb_blob_destroy(blob) }
+    return None
+  }
+  let face = unsafe { hb_face_create(blob, index) }
+  unsafe { hb_blob_destroy(blob) }
+  if unsafe { hb_face_get_glyph_count(face) } == 0 {
+    unsafe { hb_face_destroy(face) }
+    return None
+  }
+  let font = unsafe { hb_font_create(face) }
+  unsafe { hb_face_destroy(face) }
+  Some(HbFont { handle: font })
+}
+
+/// Put a font away. It must not be used afterwards.
+pub let close_hb_font = (font: HbFont) -> void => unsafe { hb_font_destroy(font.handle) }
+
+/// The font's vertical metrics at `size` — the size [shape] would be asked for.
+pub let font_extents = (font: HbFont, size: f32) -> FontExtents => {
+  set_size(font, size)
+  var raw = HbFontExtents {}
+  unsafe { hb_font_get_h_extents(font.handle, &mut raw) }
+  FontExtents {
+    ascender: f32(raw.ascender) / FIXED,
+    descender: f32(raw.descender) / FIXED,
+    line_gap: f32(raw.line_gap) / FIXED,
+  }
+}
+
+/// The glyphs `utf8` is drawn with at `size`, left to right: one run of one font, its script
+/// and language guessed from the text. Each glyph's `cluster` is a byte offset into `utf8`.
+pub let shape = (font: HbFont, utf8: []u8, size: f32) -> []ShapedGlyph => {
+  if utf8.len() == 0 { return [] }
+  set_size(font, size)
+  let buffer = unsafe { hb_buffer_create() }
+  let count = i32(utf8.len())
+  unsafe { hb_buffer_add_utf8(buffer, utf8.data(), count, 0, count) }
+  unsafe { hb_buffer_set_direction(buffer, DIRECTION_LTR) }
+  unsafe { hb_buffer_guess_segment_properties(buffer) }
+  unsafe { hb_shape(font.handle, buffer, nullptr, 0) }
+  var length: u32 = 0
+  let infos = unsafe { hb_buffer_get_glyph_infos(buffer, &mut length) }
+  let positions = unsafe { hb_buffer_get_glyph_positions(buffer, &mut length) }
+  var glyphs: []ShapedGlyph = []
+  for i in 0..<i64(length) {
+    let info = unsafe { infos.offset(i)^ }
+    let at = unsafe { positions.offset(i)^ }
+    glyphs.push(ShapedGlyph {
+      glyph: info.codepoint,
+      cluster: info.cluster,
+      x_advance: f32(at.x_advance) / FIXED,
+      y_advance: f32(at.y_advance) / FIXED,
+      x_offset: f32(at.x_offset) / FIXED,
+      y_offset: f32(at.y_offset) / FIXED,
+    })
+  }
+  unsafe { hb_buffer_destroy(buffer) }
+  glyphs
+}
+
+/// Scale the font so a unit of its answers is a unit of `size`'s, in 26.6 fixed point: an em
+/// is `size` units, and a position has six bits of fraction.
+let set_size = (font: HbFont, size: f32) -> void => {
+  let scale = i32((size * FIXED).round())
+  unsafe { hb_font_set_scale(font.handle, scale, scale) }
+}
+
+/// 26.6 fixed point: 64 to a unit.
+const FIXED: f32 = 64.0
+
+/// `HB_DIRECTION_LTR`, by its value in `hb_direction_t` — a C enumerator, with no symbol.
+const DIRECTION_LTR: i32 = 4
+
+// ---------------------------------------------------------------------------------------
+// Foreign declarations
+// ---------------------------------------------------------------------------------------
+
+/// `hb_font_extents_t`: three metrics and nine reserved words.
+struct HbFontExtents {
+  ascender: i32 = 0,
+  descender: i32 = 0,
+  line_gap: i32 = 0,
+  reserved: [9]i32 = #[0; 9],
+}
+
+/// `hb_glyph_info_t`: after shaping, `codepoint` is a glyph number, not a character.
+struct HbGlyphInfo {
+  codepoint: u32,
+  mask: u32,
+  cluster: u32,
+  var1: u32,
+  var2: u32,
+}
+
+/// `hb_glyph_position_t`, in 26.6 fixed point at the font's scale.
+struct HbGlyphPosition {
+  x_advance: i32,
+  y_advance: i32,
+  x_offset: i32,
+  y_offset: i32,
+  var: u32,
+}
+
+// Every HarfBuzz object crosses as an opaque `^u8`.
+@symbol("hb_blob_create_from_file")
+unsafe extern hb_blob_create_from_file: (path: ^u8) -> ^u8
+@symbol("hb_blob_get_length")
+unsafe extern hb_blob_get_length: (blob: ^u8) -> u32
+@symbol("hb_blob_destroy")
+unsafe extern hb_blob_destroy: (blob: ^u8) -> void
+@symbol("hb_face_create")
+unsafe extern hb_face_create: (blob: ^u8, index: u32) -> ^u8
+@symbol("hb_face_get_glyph_count")
+unsafe extern hb_face_get_glyph_count: (face: ^u8) -> u32
+@symbol("hb_face_destroy")
+unsafe extern hb_face_destroy: (face: ^u8) -> void
+@symbol("hb_font_create")
+unsafe extern hb_font_create: (face: ^u8) -> ^u8
+@symbol("hb_font_destroy")
+unsafe extern hb_font_destroy: (font: ^u8) -> void
+@symbol("hb_font_set_scale")
+unsafe extern hb_font_set_scale: (font: ^u8, x_scale: i32, y_scale: i32) -> void
+@symbol("hb_font_get_h_extents")
+unsafe extern hb_font_get_h_extents: (font: ^u8, extents: ^mut HbFontExtents) -> i32
+@symbol("hb_buffer_create")
+unsafe extern hb_buffer_create: () -> ^u8
+@symbol("hb_buffer_destroy")
+unsafe extern hb_buffer_destroy: (buffer: ^u8) -> void
+@symbol("hb_buffer_add_utf8")
+unsafe extern hb_buffer_add_utf8:
+  (buffer: ^u8, text: ^u8, length: i32, offset: u32, item_length: i32) -> void
+@symbol("hb_buffer_set_direction")
+unsafe extern hb_buffer_set_direction: (buffer: ^u8, direction: i32) -> void
+@symbol("hb_buffer_guess_segment_properties")
+unsafe extern hb_buffer_guess_segment_properties: (buffer: ^u8) -> void
+@symbol("hb_shape")
+unsafe extern hb_shape: (
+  font: ^u8,
+  buffer: ^u8,
+  features: ^u8,
+  feature_count: u32
+) -> void
+@symbol("hb_buffer_get_glyph_infos")
+unsafe extern hb_buffer_get_glyph_infos: (buffer: ^u8, length: ^mut u32) -> ^HbGlyphInfo
+@symbol("hb_buffer_get_glyph_positions")
+unsafe extern hb_buffer_get_glyph_positions:
+  (buffer: ^u8, length: ^mut u32) -> ^HbGlyphPosition

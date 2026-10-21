@@ -522,8 +522,8 @@ such changes on a user module.
 | `pkg/printer` | Reflection AST printer for golden tests | below |
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
-| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
-| `ui/` | The GUI framework (Lyra): the display list (`ui.draw`), its tessellation (`ui.tess`), the `Platform`/`Renderer` seams (`ui.backend`) and their SDL3 implementation (`ui.sdl3`). A root beside `std` and `bindings`, linked by `build.sh` | [README](ui/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, HarfBuzz, FreeType, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
+| `ui/` | The GUI framework (Lyra): the display list (`ui.draw`), its tessellation (`ui.tess`), the `Platform`/`Renderer` seams (`ui.backend`) and their SDL3 implementation (`ui.sdl3`); text (`ui.text`, HarfBuzz shaping and a FreeType glyph atlas), styles and the cascade (`ui.style`), and a constraints layout painted as a display list (`ui.layout`). A root beside `std` and `bindings`, linked by `build.sh` | [README](ui/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
 semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
@@ -840,9 +840,11 @@ style sheets — the layer `.lui` markup is generated into by `tools/lui`) found
 function above its declaration went untyped and so unretained (COMPLETED.md 10/19).
 
 **`ui/` does the same for a GUI written in Lyra** (`ui/README.md`): a display list drawn as
-triangles through SDL3, behind `Platform`/`Renderer` traits a later backend implements. Its
-first module found that a type imported under an alias was unknown inside a declaration, and
-that a constructor alias cannot separate two constructors of one name (COMPLETED.md 10/21).
+triangles through SDL3, behind `Platform`/`Renderer` traits a later backend implements, and
+since phase 2 text, a constraints layout and a styling cascade above it (gate:
+`examples/ui/settings.lyra`). Its first module found that a type imported under an alias was
+unknown inside a declaration, and that a constructor alias cannot separate two constructors
+of one name (COMPLETED.md 10/21).
 
 **`examples/calendar` does the same for dates**, and **`examples/schedule/when.lyra` for
 zones**: `std.temporal`, after the web's Temporal API, grows only as they need it (the month

@@ -1,0 +1,321 @@
+module ui.style
+//! How an interface looks: [Style] (what an element asks for), [Theme] (a palette, spacing,
+//! a font and the defaults each element starts from), [Sheet]s of rules, and the cascade
+//! that settles them into each element's [Computed] style.
+//!
+//! ```
+//! import ui.style.{ Style, Sheet, Rule, light_theme }
+//!
+//! let SETTINGS = Sheet { rules: [
+//!   Rule { selector: "Text.title", style: Style { font_size: Some(20.0) } },
+//!   Rule { selector: ".card", style: Style { background: Some(WHITE), radius: Some(8.0) } },
+//!   Rule { selector: "Toggle::knob", style: Style { background: Some(BLUE) } },
+//! ] }
+//! ```
+//!
+//! **A selector** is an element's tag (`Text`), a class (`.title`), both (`Text.title`), or a
+//! component's part (`Toggle::knob` — an element marked as part `knob` inside a component
+//! tagged `Toggle`). Classes are space-separated on an element (`"card wide"`).
+//!
+//! **The cascade is five layers**, each beating every one below it whatever its rules'
+//! specificity; within a layer, the more specific rule wins, then the later:
+//!
+//! 1. the theme's `elements` sheet — the defaults every element starts from;
+//! 2. the global sheets ([Themed](ui.layout) nodes'), outermost first;
+//! 3. the scoped sheet of the component the element is in — which matches its own elements
+//!    only, never the tree around it nor a component inside it;
+//! 4. part rules (`Toggle::knob`), from the theme, the global sheets and the sheet of the
+//!    component around the one the part is in — how the outside styles a component's insides,
+//!    as CSS's `::part` does;
+//! 5. the element's own inline `style`.
+//!
+//! **Inherited**: `color`, `font` (and `font_size` and `line_height`) and `opacity` — an element that does not
+//! set them takes its parent's, and an opacity multiplies into its parent's, so a half-
+//! transparent card's text is half-transparent too. Everything else starts unset.
+
+import ui.draw.{ Color, rgb }
+import ui.text.{ FontSpec }
+
+/// Space inside an element's edge, on each side, in logical units.
+pub struct Insets {
+  top: f32 = 0.0,
+  right: f32 = 0.0,
+  bottom: f32 = 0.0,
+  left: f32 = 0.0,
+}
+
+/// The same space on every side.
+pub let insets = pure (all: f32) -> Insets =>
+  Insets { top: all, right: all, bottom: all, left: all }
+
+/// `x` on the left and right, `y` on the top and bottom.
+pub let insets_xy = pure (x: f32, y: f32) -> Insets =>
+  Insets { top: y, right: x, bottom: y, left: x }
+
+impl Insets {
+  /// The left and right together.
+  pub let horizontal = pure (self) -> f32 => self.left + self.right
+
+  /// The top and bottom together.
+  pub let vertical = pure (self) -> f32 => self.top + self.bottom
+
+  /// Both insets, side by side.
+  pub let plus = pure (self, other: Insets) -> Insets => Insets {
+    top: self.top + other.top,
+    right: self.right + other.right,
+    bottom: self.bottom + other.bottom,
+    left: self.left + other.left,
+  }
+}
+
+/// What an element asks to look like; a field unset leaves it to the layers below (or, for
+/// an inherited one, to its parent).
+pub struct Style {
+  /// Text colour. Inherited.
+  color: Maybe<Color> = None,
+  /// The fill behind the element, to its rounded edge.
+  background: Maybe<Color> = None,
+  border_color: Maybe<Color> = None,
+  /// The border's width, inside the element's edge; drawn when it and `border_color` are set.
+  border_width: Maybe<f32> = None,
+  /// Every corner's radius.
+  radius: Maybe<f32> = None,
+  /// Space between the element's edge and what is inside it.
+  padding: Maybe<Insets> = None,
+  /// Space between a Row's or Column's children.
+  gap: Maybe<f32> = None,
+  /// The font. Inherited.
+  font: Maybe<FontSpec> = None,
+  /// The font's size alone, its family kept. Inherited (as part of the font).
+  font_size: Maybe<f32> = None,
+  /// Lines this many font sizes apart (CSS's unitless `line-height`). Inherited (as part of
+  /// the font).
+  line_height: Maybe<f32> = None,
+  /// 0–1, multiplied into the parent's: inherited that way.
+  opacity: Maybe<f32> = None,
+}
+
+impl Style {
+  /// This style laid over `base`: each field this one sets, else `base`'s.
+  pub let over = pure (self, base: Style) -> Style => Style {
+    color: self.color.or(base.color),
+    background: self.background.or(base.background),
+    border_color: self.border_color.or(base.border_color),
+    border_width: self.border_width.or(base.border_width),
+    radius: self.radius.or(base.radius),
+    padding: self.padding.or(base.padding),
+    gap: self.gap.or(base.gap),
+    font: self.font.or(base.font),
+    font_size: self.font_size.or(base.font_size),
+    line_height: self.line_height.or(base.line_height),
+    opacity: self.opacity.or(base.opacity),
+  }
+}
+
+/// `style` for every element `selector` matches: `Text`, `.title`, `Text.title` or
+/// `Toggle::knob`.
+pub struct Rule {
+  selector: string,
+  style: Style,
+}
+
+/// Rules, in order.
+pub struct Sheet {
+  rules: []Rule = [],
+}
+
+/// The colours a theme's styles are written in.
+pub struct Palette {
+  background: Color,
+  surface: Color,
+  text: Color,
+  muted: Color,
+  accent: Color,
+  border: Color,
+}
+
+/// A theme's steps of space, smallest to largest, in logical units.
+pub struct Spacing {
+  xs: f32 = 4.0,
+  s: f32 = 8.0,
+  m: f32 = 12.0,
+  l: f32 = 16.0,
+  xl: f32 = 24.0,
+}
+
+/// A look for a whole tree: its palette, spacing, corner radius and font, and the defaults
+/// each kind of element starts from (`elements`, the cascade's lowest layer).
+pub struct Theme {
+  colors: Palette,
+  space: Spacing = Spacing {},
+  radius: f32 = 6.0,
+  font: FontSpec = FontSpec {},
+  elements: Sheet = Sheet {},
+}
+
+/// A light theme: dark text on near-white, a blue accent, lines 1.3 sizes apart.
+pub let light_theme = pure () -> Theme => Theme {
+  font: FontSpec { line_height: 1.3 },
+  colors: Palette {
+    background: rgb(0xF2F2F5),
+    surface: rgb(0xFFFFFF),
+    text: rgb(0x1C1C1E),
+    muted: rgb(0x6E6E73),
+    accent: rgb(0x0A84FF),
+    border: rgb(0xD1D1D6),
+  },
+}
+
+/// A dark theme: light text on near-black, the same accent, lines 1.3 sizes apart.
+pub let dark_theme = pure () -> Theme => Theme {
+  font: FontSpec { line_height: 1.3 },
+  colors: Palette {
+    background: rgb(0x1C1C1E),
+    surface: rgb(0x2C2C2E),
+    text: rgb(0xF2F2F7),
+    muted: rgb(0x98989F),
+    accent: rgb(0x0A84FF),
+    border: rgb(0x3A3A3C),
+  },
+}
+
+/// An element's style once the cascade has run: every property settled.
+pub struct Computed {
+  color: Color,
+  background: Maybe<Color> = None,
+  border_color: Maybe<Color> = None,
+  border_width: f32 = 0.0,
+  radius: f32 = 0.0,
+  padding: Insets = Insets {},
+  gap: f32 = 0.0,
+  font: FontSpec = FontSpec {},
+  opacity: f32 = 1.0,
+}
+
+/// Where an element stands in the cascade: the theme in force, the global rules (outermost
+/// sheet first), the component it is in and that component's rules, the rules of the
+/// component around that one (for its parts), and what its parent passes down.
+pub struct Cascade {
+  theme: Theme,
+  globals: []Rule = [],
+  component: string = "",
+  scoped: []Rule = [],
+  outer_scoped: []Rule = [],
+  inherited: Computed,
+}
+
+/// The cascade at the root of a tree drawn in `theme`.
+pub let cascade_root = pure (theme: Theme) -> Cascade =>
+  Cascade {
+    theme: theme,
+    inherited: Computed { color: theme.colors.text, font: theme.font }
+  }
+
+impl Cascade {
+  /// The style for an element of `tag`, with `classes` (space-separated), marked as `part`
+  /// (`""` for none) and asking for `inline`: the five layers, lowest first.
+  pub let style_of = pure (
+    self,
+    tag: string,
+    classes: string,
+    part: string,
+    inline: Style
+  ) -> Style => {
+    var out = applied(self.theme.elements.rules, tag, classes, Style {})
+    out = applied(self.globals, tag, classes, out)
+    out = applied(self.scoped, tag, classes, out)
+    if part.len() > 0 && self.component.len() > 0 {
+      let selector = "${self.component}::${part}"
+      for rules in [self.theme.elements.rules, self.globals, self.outer_scoped] {
+        for rule in rules {
+          if rule.selector == selector { out = rule.style.over(out) }
+        }
+      }
+    }
+    inline.over(out)
+  }
+
+  /// [style_of] settled against what the parent passes down.
+  pub let compute = pure (
+    self,
+    tag: string,
+    classes: string,
+    part: string,
+    inline: Style
+  ) -> Computed => {
+    let s = self.style_of(tag, classes, part, inline)
+    let base_font = s.font ?? self.inherited.font
+    Computed {
+      color: s.color ?? self.inherited.color,
+      background: s.background,
+      border_color: s.border_color,
+      border_width: s.border_width ?? 0.0,
+      radius: s.radius ?? 0.0,
+      padding: s.padding ?? Insets {},
+      gap: s.gap ?? 0.0,
+      font: FontSpec {
+        base_font |
+        size: s.font_size ?? base_font.size,
+        line_height: s.line_height ?? base_font.line_height,
+      },
+      opacity: self.inherited.opacity * (s.opacity ?? 1.0),
+    }
+  }
+
+  /// The cascade for a subtree drawn in `theme`, with `sheet` as its innermost global sheet:
+  /// its text takes the theme's colour and font again.
+  pub let themed = pure (self, theme: Theme, sheet: Sheet) -> Cascade => Cascade {
+    self |
+    theme: theme,
+    globals: [...self.globals, ...sheet.rules],
+    inherited: Computed { self.inherited | color: theme.colors.text, font: theme.font },
+  }
+
+  /// The cascade inside a component tagged `name` whose scoped sheet is `sheet`.
+  pub let in_component = pure (self, name: string, sheet: Sheet) -> Cascade => Cascade {
+    self |
+    component: name,
+    scoped: sheet.rules,
+    outer_scoped: self.scoped,
+  }
+
+  /// The cascade for the children of an element computed as `computed`.
+  pub let inside = pure (self, computed: Computed) -> Cascade =>
+    Cascade { self | inherited: computed }
+}
+
+/// `base` with the rules of one layer matching an element of `tag` and `classes` laid over it,
+/// least specific first and, among equals, in order. A part selector is no rule of a layer's.
+let applied = pure (
+  rules: []Rule,
+  tag: string,
+  classes: string,
+  base: Style
+) -> Style => {
+  var out = base
+  for rank in #[1, 10, 11] {
+    for rule in rules {
+      if specificity(rule.selector, tag, classes) == rank { out = rule.style.over(out) }
+    }
+  }
+  out
+}
+
+/// How specific `selector` is for an element of `tag` with `classes`: 1 for its tag, 10 for
+/// one of its classes, 11 for both, 0 when it does not match (a part selector never does).
+pub let specificity = pure (selector: string, tag: string, classes: string) -> i64 => {
+  if selector.contains("::") { return 0 }
+  let parts = selector.split(".")
+  if parts.len() > 2 { return 0 }
+  let want_tag = parts[0]
+  let want_class = if parts.len() == 2 { parts[1] } else { "" }
+  if want_tag.len() > 0 && want_tag != tag { return 0 }
+  if want_class.len() > 0 && !classes.split(" ").any((c) => c == want_class) { return 0 }
+  (if want_tag.len() > 0 { 1 } else { 0 }) + (if want_class.len() > 0 { 10 } else { 0 })
+}
+
+/// `color` at `opacity` times its own alpha.
+pub let faded = pure (color: Color, opacity: f32) -> Color =>
+  if opacity >= 1.0 { color } else {
+    Color { color | a: u8((f32(color.a) * opacity.clamp(0.0, 1.0)).round()) }
+  }

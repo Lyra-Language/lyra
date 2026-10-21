@@ -687,9 +687,21 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 
 - **[DONE 10/21] Phase 1, the seams** — `ui.draw`'s display list, `ui.tess`, the
   `Platform`/`Renderer` traits and `ui.sdl3` over `SDL_RenderGeometry` (COMPLETED.md, 10/21).
-- **[OPEN] Phase 2, text and layout.** HarfBuzz shaping and a FreeType glyph atlas behind
-  `Glyphs` (`Renderer.update` writes the atlas); a constraints layout in Lyra; `Row`,
-  `Column`, `Stack`, `Scroll`. Gate: a static screen lays out.
+- **[DONE 10/21] Phase 2, text and layout** — `ui.text` (HarfBuzz, a FreeType atlas),
+  `ui.style` (themes, the five-layer cascade), `ui.layout` (constraints, `paint`); gate
+  `examples/ui/settings.lyra` (COMPLETED.md, 10/21).
+- **[OPEN] `ui.text`: one font, left to right.** No fallback for a character the font lacks,
+  no itemizing by script and no bidi; a paragraph is one HarfBuzz run. Also no text
+  alignment (a line starts at its box's left) and no ellipsis.
+- **[OPEN] `ui.text`: the atlas is one 1024² page that never empties.** A glyph that does not
+  fit is left out; it needs a second page or eviction (sizes animating, many fonts).
+- **[OPEN] `ui.layout`: a `Picture` ignores opacity.** `DrawOp.Picture` has no colour to
+  fade by; give it one (a tint, as `Glyphs` has) and `paint` can pass the opacity on.
+- **[OPEN] `ui.layout` lays out the whole tree every frame**, only shaped text cached. A
+  relayout boundary (a subtree whose constraints and node are unchanged keeps its `Laid`)
+  waits for phase 3's state, as `Scroll`'s offset, held by the program for now, does.
+- **[OPEN] `./asan.sh` has no HarfBuzz or FreeType** (`asan.Dockerfile`), so the `ui`
+  layout, cascade and offset tests skip there; CI installs both.
 - **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind
   `SDL_PushEvent` and script events, as `std.game`'s `--hold` scripts a pad.
 - **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):

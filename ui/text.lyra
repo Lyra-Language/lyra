@@ -1,0 +1,462 @@
+module ui.text
+//! Text: fonts, a paragraph shaped and broken into lines ([TextBlock]), and the glyph atlas
+//! a renderer draws the lines from ([GlyphAtlas]) — what becomes a display list's [Glyphs].
+//!
+//! ```
+//! import ui.text.{ fonts_new, glyph_atlas, FontSpec }
+//!
+//! var fonts = fonts_new()
+//! fonts.add_system_font()
+//! var atlas = glyph_atlas()
+//! let block = fonts.lay_out("Hello, world", FontSpec { size: 16.0 }, 200.0)
+//! let op = atlas.glyphs(fonts, renderer, block, Point { x: 20.0, y: 20.0 }, scale, BLACK)
+//! ```
+//!
+//! **Shaping is HarfBuzz's, rasterizing FreeType's** (`bindings.harfbuzz`,
+//! `bindings.freetype`), both reading the same font file; nothing else here calls a library.
+//!
+//! **A paragraph is shaped once and broken afterwards.** Its break opportunities — a simple
+//! reading of Unicode's line breaking (UAX #14): after a run of spaces, after a hyphen inside
+//! a word, either side of an ideograph, and a mandatory break at a newline — are byte offsets
+//! of its UTF-8, matched against each glyph's cluster. Lines are filled greedily; spaces at
+//! a line's end hang past its width, as a browser's do. One font and left to right: no
+//! fallback for a character the font lacks, and no bidirectional text yet.
+//!
+//! **Positions are logical units** and a glyph is rasterized at the pixel size the display
+//! needs (the size times the scale), its origin rounded to a whole pixel so its edges stay
+//! where the hinting put them.
+
+import bindings.harfbuzz.{
+  HbFont,
+  open_hb_font,
+  close_hb_font,
+  shape,
+  font_extents,
+  ShapedGlyph
+}
+import bindings.freetype.{ FtFont, open_ft_font, close_ft_font, render_glyph }
+import std.collections.{ HashMap, hashmap_new }
+import ui.draw.{ Point, Rect, Color, Image, TextureId, GlyphQuad, DrawOp, Glyphs }
+import ui.backend.{ Renderer }
+
+/// Which font, and how large: a `family` added to [Fonts] (`""` is the first added) at `size`
+/// logical units to the em, its lines `line_height` sizes apart — CSS's unitless
+/// `line-height`; `0.0` for the font's own spacing.
+pub struct FontSpec {
+  family: string = "",
+  size: f32 = 14.0,
+  line_height: f32 = 0.0,
+}
+
+/// The fonts a program draws with, and the paragraphs already laid out in them.
+pub struct Fonts {
+  faces: []Face = [],
+  laid: HashMap<string, TextBlock>,
+}
+
+/// A paragraph laid out: its lines, top to bottom, and the box they fill — as wide as its
+/// widest line, as tall as its lines.
+pub struct TextBlock {
+  face: i64 = -1,
+  size: f32 = 0.0,
+  lines: []TextLine = [],
+  width: f32 = 0.0,
+  height: f32 = 0.0,
+  /// From one line's baseline to the next.
+  line_height: f32 = 0.0,
+}
+
+/// One line of a [TextBlock]: its glyphs, its width (its trailing spaces left out) and
+/// where its baseline is, down from the block's top.
+pub struct TextLine {
+  glyphs: []LineGlyph = [],
+  width: f32 = 0.0,
+  baseline: f32 = 0.0,
+}
+
+/// A glyph placed on a line: its number in the font, and where it is drawn — `x` across from
+/// the line's start, `y` up from the baseline.
+pub struct LineGlyph {
+  glyph: u32,
+  x: f32,
+  y: f32,
+}
+
+/// Fonts with none added.
+pub let fonts_new = pure () -> Fonts => Fonts { laid: hashmap_new() }
+
+/// The font files tried by [Fonts.add_system_font], in order: macOS's, then the common
+/// places Linux distributions keep DejaVu Sans.
+pub const SYSTEM_FONTS: []string = [
+  "/System/Library/Fonts/Helvetica.ttc",
+  "/System/Library/Fonts/Supplemental/Arial.ttf",
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "/usr/share/fonts/TTF/DejaVuSans.ttf",
+  "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+]
+
+impl Fonts {
+  /// Add face `index` of the font file at `path` as `family`; `false` if it cannot be opened.
+  pub let add = (self: mut, family: string, path: string, index: i64 = 0) -> bool => {
+    let Some(hb) = open_hb_font(path, u32(index)) else { return false }
+    let Some(ft) = open_ft_font(path, index) else {
+      close_hb_font(hb)
+      return false
+    }
+    // Extents scale with the size, so they are kept for one unit to the em, read at a
+    // thousand so their 26.6 fixed point keeps its precision.
+    let at = font_extents(hb, 1000.0)
+    self.faces.push(Face {
+      family: family,
+      hb: hb,
+      ft: ft,
+      ascender: at.ascender / 1000.0,
+      descender: at.descender / 1000.0,
+      line_gap: at.line_gap / 1000.0,
+    })
+    true
+  }
+
+  /// Add the first of [SYSTEM_FONTS] there is as `"system"`; `false` if there is none.
+  pub let add_system_font = (self: mut) -> bool => {
+    for path in SYSTEM_FONTS {
+      if self.add("system", path) { return true }
+    }
+    false
+  }
+
+  /// Whether any font has been added.
+  pub let has_fonts = pure (self) -> bool => self.faces.len() > 0
+
+  /// `text` set in `font` and broken into lines no wider than `width` (where it can be
+  /// broken — a word longer than the line runs past it). Remembered, so laying the same
+  /// text out again at the same font and width costs a lookup. With no font added, an empty
+  /// block.
+  pub let lay_out = (
+    self: mut,
+    text: string,
+    font: FontSpec,
+    width: f32
+  ) -> TextBlock => {
+    let face = self.face_for(font.family)
+    if face < 0 { return TextBlock {} }
+    let key = "${face}|${font.size}|${font.line_height}|${width}|${text}"
+    if let Some(block) = self.laid.get(key) { return block }
+    let block = break_lines(self.faces[face], face, text, font, width)
+    self.laid.insert(key, block)
+    block
+  }
+
+  /// Put every font away. The fonts must not be used afterwards.
+  pub let close = (self) -> void => {
+    for face in self.faces {
+      close_hb_font(face.hb)
+      close_ft_font(face.ft)
+    }
+  }
+
+  /// The face added as `family`, else the first; `-1` with none added.
+  let face_for = pure (self, family: string) -> i64 => {
+    for i, face in self.faces {
+      if face.family == family { return i }
+    }
+    if self.faces.len() > 0 { 0 } else { -1 }
+  }
+}
+
+/// The glyphs a renderer has been given, packed in one texture: each rendered once, at one
+/// pixel size, and found again by its face, number and size.
+pub struct GlyphAtlas {
+  texture: Maybe<TextureId> = None,
+  slots: HashMap<string, AtlasSlot>,
+  /// The shelf being filled: its top, how far across it is, and its tallest glyph.
+  shelf_y: i64 = 0,
+  shelf_x: i64 = 0,
+  shelf_height: i64 = 0,
+}
+
+/// The atlas's texture is this many texels on a side.
+pub const ATLAS_SIZE: i64 = 1024
+
+/// An empty atlas; its texture is uploaded the first time a glyph is needed.
+pub let glyph_atlas = pure () -> GlyphAtlas => GlyphAtlas { slots: hashmap_new() }
+
+impl GlyphAtlas {
+  /// `block`'s glyphs drawn in `color` with its top-left corner at `origin`, for a display
+  /// at `scale` pixels a unit: a [Glyphs] op, any glyph not yet in the atlas rendered into it
+  /// through `renderer` first. A glyph that no longer fits is left out (todo.md).
+  pub let glyphs<r> where r: Renderer = (
+    self: mut,
+    fonts: Fonts,
+    renderer: mut r,
+    block: TextBlock,
+    origin: Point,
+    scale: f32,
+    color: Color
+  ) -> Maybe<DrawOp> => {
+    if block.face < 0 || block.lines.len() == 0 { return None }
+    let Some(texture) = self.texture_in(renderer) else { return None }
+    let face = fonts.faces[block.face]
+    let pixels = i64((block.size * scale).round()).max(1)
+    var quads: []GlyphQuad = []
+    for line in block.lines {
+      for g in line.glyphs {
+        let found = self.slot_for(renderer, texture, face, block.face, g.glyph, pixels)
+        let Some(slot) = found else { continue }
+        if slot.texels.is_empty() { continue }
+        // The pen rounded to a whole pixel, the bitmap placed from it as FreeType says.
+        let pen_x = f32(((origin.x + g.x) * scale).round())
+        let pen_y = f32(((origin.y + line.baseline - g.y) * scale).round())
+        quads.push(GlyphQuad {
+          at: Rect {
+            x: (pen_x + slot.left) / scale,
+            y: (pen_y - slot.top) / scale,
+            w: slot.texels.w / scale,
+            h: slot.texels.h / scale,
+          },
+          texels: slot.texels,
+        })
+      }
+    }
+    Some(Glyphs(texture, quads, color))
+  }
+
+  /// The atlas's texture, uploaded empty the first time.
+  let texture_in<r> where r: Renderer = (
+    self: mut,
+    renderer: mut r
+  ) -> Maybe<TextureId> => {
+    if let Some(id) = self.texture { return Some(id) }
+    let blank = Image {
+      width: ATLAS_SIZE,
+      height: ATLAS_SIZE,
+      argb: [0x00FFFFFF; ATLAS_SIZE * ATLAS_SIZE],
+    }
+    let Some(id) = renderer.upload(blank) else { return None }
+    self.texture = Some(id)
+    Some(id)
+  }
+
+  /// Where glyph `glyph` of face number `index` at `pixels` to the em is in the atlas,
+  /// rendering it there if it is not yet — or `None` if it cannot be rendered or no longer
+  /// fits. A glyph with no ink has an empty slot.
+  let slot_for<r> where r: Renderer = (
+    self: mut,
+    renderer: mut r,
+    texture: TextureId,
+    face: Face,
+    index: i64,
+    glyph: u32,
+    pixels: i64
+  ) -> Maybe<AtlasSlot> => {
+    let key = "${index}|${glyph}|${pixels}"
+    if let Some(slot) = self.slots.get(key) { return Some(slot) }
+    let Some(bitmap) = render_glyph(face.ft, glyph, u32(pixels)) else { return None }
+    var slot = AtlasSlot { left: f32(bitmap.left), top: f32(bitmap.top) }
+    if bitmap.width > 0 && bitmap.rows > 0 {
+      let Some(at) = self.place(bitmap.width, bitmap.rows) else { return None }
+      let image = Image {
+        width: bitmap.width,
+        height: bitmap.rows,
+        argb: [c in bitmap.coverage | white_at(c)],
+      }
+      if !renderer.update(texture, at, image) { return None }
+      slot = AtlasSlot {
+        slot |
+        texels: Rect { x: at.x, y: at.y, w: f32(bitmap.width), h: f32(bitmap.rows) }
+      }
+    }
+    self.slots.insert(key, slot)
+    Some(slot)
+  }
+
+  /// Room for a `width` × `height` bitmap, a texel clear of its neighbours: along the shelf
+  /// being filled, or on a new one below it. `None` when the atlas is full.
+  let place = (self: mut, width: i64, height: i64) -> Maybe<Point> => {
+    if self.shelf_x + width + 1 > ATLAS_SIZE {
+      self.shelf_y += self.shelf_height + 1
+      self.shelf_x = 0
+      self.shelf_height = 0
+    }
+    if self.shelf_y + height + 1 > ATLAS_SIZE || width + 1 > ATLAS_SIZE { return None }
+    let at = Point { x: f32(self.shelf_x), y: f32(self.shelf_y) }
+    self.shelf_x += width + 1
+    self.shelf_height = self.shelf_height.max(height)
+    Some(at)
+  }
+}
+
+/// White, at `coverage` opacity: a glyph's texel, which [Glyphs] tints with its colour.
+let white_at = pure (coverage: u8) -> u32 => (u32(coverage) << 24) | 0x00FFFFFF
+
+// ── Faces ────────────────────────────────────────────────────────────────────
+
+/// A font file opened for both libraries, and its vertical metrics for one unit to the em.
+struct Face {
+  family: string,
+  hb: HbFont,
+  ft: FtFont,
+  ascender: f32,
+  descender: f32,
+  line_gap: f32,
+}
+
+/// Where a glyph is in the atlas (`texels`, empty for one with no ink), and where its
+/// bitmap's top-left corner is from the pen: `left` across, `top` up, in pixels.
+struct AtlasSlot {
+  texels: Rect = Rect {},
+  left: f32 = 0.0,
+  top: f32 = 0.0,
+}
+
+// ── Line breaking ────────────────────────────────────────────────────────────
+
+/// `text` in `face` (number `index`) at `font`'s size, broken into lines no wider than `width`.
+/// A `line_height` taller than the font's own splits the extra above and below each line.
+let break_lines = (
+  face: Face,
+  index: i64,
+  text: string,
+  font: FontSpec,
+  width: f32
+) -> TextBlock => {
+  let size = font.size
+  let natural = (face.ascender - face.descender + face.line_gap) * size
+  let line_height = if font.line_height > 0.0 { font.line_height * size } else { natural }
+  let ascent = face.ascender * size + (line_height - natural) / 2.0
+  var lines: []TextLine = []
+  for paragraph in text.split("\n") {
+    let bytes = paragraph.encode_utf8()
+    let shaped = shape(face.hb, bytes, size)
+    let breaks = break_opportunities(paragraph, bytes.len())
+    for line in fill_lines(shaped, bytes, breaks, width) {
+      let baseline = f32(lines.len()) * line_height + ascent
+      lines.push(TextLine { line | baseline: baseline })
+    }
+  }
+  var widest: f32 = 0.0
+  for line in lines { widest = widest.max(line.width) }
+  TextBlock {
+    face: index,
+    size: size,
+    lines: lines,
+    width: widest,
+    height: f32(lines.len()) * line_height,
+    line_height: line_height,
+  }
+}
+
+/// Lines from one paragraph's glyphs, filled greedily: each runs to the last opportunity at
+/// which it still fits in `width`, or past it to the first opportunity when even one word
+/// does not. An empty paragraph is one empty line.
+let fill_lines = pure (
+  glyphs: []ShapedGlyph,
+  bytes: []u8,
+  breaks: []bool,
+  width: f32
+) -> []TextLine => {
+  // Where the pen is before each glyph, and after the last.
+  var pens: []f32 = [0.0]
+  for g in glyphs { pens.push(pens[pens.len() - 1] + g.x_advance) }
+  let count = glyphs.len()
+  var lines: []TextLine = []
+  var start = 0
+  loop {
+    var end = count
+    if visible_width(glyphs, bytes, pens, start, count) > width {
+      // The last opportunity that fits, else the first there is.
+      var fits = -1
+      var first = -1
+      for i in (start + 1)..<count {
+        if !breaks_before(glyphs, breaks, i) { continue }
+        if first < 0 { first = i }
+        if visible_width(
+          glyphs,
+          bytes,
+          pens,
+          start,
+          i
+        ) <= width { fits = i } else { break }
+      }
+      end = if fits > 0 { fits } else if first > 0 { first } else { count }
+    }
+    var placed: []LineGlyph = []
+    for i in start..<end {
+      let g = glyphs[i]
+      placed.push(LineGlyph {
+        glyph: g.glyph,
+        x: pens[i] - pens[start] + g.x_offset,
+        y: g.y_offset
+      })
+    }
+    lines.push(TextLine {
+      glyphs: placed,
+      width: visible_width(glyphs, bytes, pens, start, end),
+    })
+    if end >= count { return lines }
+    start = end
+  }
+}
+
+/// How wide glyphs `start` up to `end` are, spaces at the end left out: they hang.
+let visible_width = pure (
+  glyphs: []ShapedGlyph,
+  bytes: []u8,
+  pens: []f32,
+  start: i64,
+  end: i64
+) -> f32 => {
+  var last = end
+  while last > start && bytes[i64(glyphs[last - 1].cluster)] == SPACE { last -= 1 }
+  pens[last] - pens[start]
+}
+
+/// Whether a line may start at glyph `i`: it is its cluster's first glyph, and its cluster
+/// starts at an opportunity.
+let breaks_before = pure (glyphs: []ShapedGlyph, breaks: []bool, i: i64) -> bool =>
+  glyphs[i].cluster != glyphs[i - 1].cluster && breaks[i64(glyphs[i].cluster)]
+
+/// For each byte offset of `text`'s UTF-8 (`length` bytes, and one past the end), whether a
+/// line may start there: after a run of spaces, after a hyphen between two letters, and
+/// before or after an ideograph.
+let break_opportunities = pure (text: string, length: i64) -> []bool => {
+  var breaks: []bool = [false; length + 1]
+  var at = 0
+  var previous: rune = ' '
+  var before_previous: rune = ' '
+  for c in text {
+    if at > 0 {
+      let after_spaces = previous == ' ' && c != ' '
+      let after_hyphen = previous == '-' && is_letter(before_previous) && is_letter(c)
+      breaks[at] = after_spaces ||
+        after_hyphen ||
+        is_ideograph(previous) ||
+        is_ideograph(c)
+    }
+    before_previous = previous
+    previous = c
+    at += utf8_length(c)
+  }
+  breaks
+}
+
+/// Whether `c` is a letter for hyphenation's sake: ASCII's, or any past it.
+let is_letter = pure (c: rune) -> bool => c.is_ascii_alpha() || i32(c) >= 0xC0
+
+/// Whether `c` is a CJK ideograph, kana or a full-width form — UAX #14's `ID` class, near
+/// enough: a line may break either side of one.
+let is_ideograph = pure (c: rune) -> bool => {
+  let n = i32(c)
+  (n >= 0x3040 && n <= 0x30FF) ||
+    (n >= 0x3400 && n <= 0x9FFF) ||
+    (n >= 0xF900 && n <= 0xFAFF) ||
+    (n >= 0xFF00 && n <= 0xFFEF)
+}
+
+/// How many bytes `c` takes in UTF-8.
+let utf8_length = pure (c: rune) -> i64 => {
+  let n = i32(c)
+  if n < 0x80 { 1 } else if n < 0x800 { 2 } else if n < 0x10000 { 3 } else { 4 }
+}
+
+const SPACE: u8 = 0x20

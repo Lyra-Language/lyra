@@ -16,9 +16,13 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.tess` | Rounded rectangles and borders as triangles (`Mesh` of `Vertex`), edges softened over one pixel. In **pixels**: a renderer scales first. | no |
 | `ui.backend` | The two seams: `Platform` (window, events, scale, text input, clipboard, cursor) and `Renderer` (`upload`, `update`, `draw(background, ops)`), and `InputEvent`, `Key`, `Modifiers`, `PointerButton`, `Cursor`. | no |
 | `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }`, `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`. | SDL3 |
+| `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into one texture through `Renderer.update` and answers a `Glyphs` op. | HarfBuzz, FreeType |
+| `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
+| `ui.layout` | `Node` (kind, tag, class, part, style, children) built by `row`, `column`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component`, and `.with_class`/`.with_style`/`.with_part`/`.aligned`; `layout(node, Constraints, fonts) -> Laid` and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. | no (text through `ui.text`) |
 
-**Nothing above `ui.backend` calls a library.** A new backend — a GPU renderer, the web, a
-phone's own layer — implements the two traits; the display list is the whole contract.
+**Nothing above `ui.backend` calls a platform's library**; `ui.text` calls the two text
+libraries, which every platform has. A new backend — a GPU renderer, the web, a phone's own
+layer — implements the two traits; the display list is the whole contract.
 
 ## Rules
 
@@ -34,6 +38,21 @@ phone's own layer — implements the two traits; the display list is the whole c
 - **A texture is smooth unless its `Image` is `pixelated`** (CSS's `image-rendering`), which a
   renderer reads at `upload`: pixel art sets it, glyphs and photos do not. `ui.sdl3` samples a
   pixelated texture with SDL 3.4's pixel-art mode, or nearest on an older SDL.
+- **Layout is Flutter's protocol**: constraints down (a least and greatest width and
+  height, `UNBOUNDED` a large number, not an infinity), sizes up, the parent places. A row
+  or column with a limit along its axis fills it (Flutter's `mainAxisSize.max`) and shares
+  what its fixed children leave among its `expanded` ones; a wrapper hands one child its own
+  constraints and lays several out as a column. A row's child may overflow its width.
+- **The cascade is five layers**, each beating the ones below whatever their specificity:
+  the theme's `elements`, the global sheets (`themed`'s, outermost first, one layer), the
+  enclosing component's scoped sheet (never reaching a component inside it), part rules
+  (`Card::label`, from the theme, the global sheets and the sheet of the component around
+  the part's), and inline style. Within a layer the more specific (tag 1, class 10, both 11),
+  then the later. `color`, `font` and `opacity` are inherited, opacity multiplied.
+- **Text is shaped once a paragraph and broken afterwards**, at a simple reading of UAX #14's
+  opportunities (spaces, a hyphen inside a word, ideographs; a newline is a paragraph), with
+  trailing spaces hanging. One font, left to right: no fallback and no bidi yet (todo.md).
+  A glyph is rasterized at the size times the scale and drawn from a whole pixel.
 - **What SDL's 2D renderer cannot do**: a clip is a whole-pixel rectangle, so `PushClip`'s
   radii are ignored there; and its software renderer (headless, or no GPU) truncates each
   vertex to a whole pixel, so edges come out half a pixel soft.
@@ -42,5 +61,11 @@ phone's own layer — implements the two traits; the display list is the whole c
 
 - `examples/ui/shapes.lyra` — every op, in a window; `--frames 1 --png FILE` draws one frame
   to a PNG instead (headless with `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software`).
-- `cmd/lyrac/ui_test.go` — `TestRun_UiDrawsADisplayList` reads that frame a pixel at a
-  time; `TestRun_UiGeometry` checks the pure geometry and mesh sizes. Neither needs a display.
+- `examples/ui/settings.lyra` — phase 2's gate, a static settings screen: text, rows and
+  columns, a stack, components styled through their parts, a dark-themed card. `--boxes`
+  prints where each element with a class was laid out.
+- `cmd/lyrac/ui_test.go` — `TestRun_UiDrawsADisplayList` reads the shapes frame a pixel at a
+  time; `TestRun_UiGeometry` checks the pure geometry and mesh sizes; `TestRun_UiLayout` and
+  `TestRun_UiCascade` the layout and the cascade's order, with no font; `TestRun_UiLaysOutAScreen`
+  the settings frame against its boxes; `TestFreetypeOffsets` the binding's offsets. None
+  needs a display; the ones that draw need SDL3 and a font, and all need HarfBuzz and FreeType.

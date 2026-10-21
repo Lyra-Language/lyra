@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`, phase 2: text, a constraints layout and the cascade
+
+The GUI's second phase, per its design document; gate `examples/ui/settings.lyra`, a static
+screen laid out and drawn, read back pixel by pixel in `TestRun_UiLaysOutAScreen`.
+
+- **Bindings are plain `extern`s, no C shim** (`bindings.harfbuzz`, `bindings.freetype`).
+  HarfBuzz is all functions and small records. FreeType answers a rendered glyph only through
+  `face->glyph->bitmap`, so those are read by their LP64 offsets via `pointer_at` — a shim
+  would have meant a third archive in `build.sh` for four field reads — and
+  `TestFreetypeOffsets` compiles `offsetof` against the installed headers to hold them.
+  (HarfBuzz 14 has its own rasterizer, `hb-raster`, but no distribution ships it yet.)
+- **A paragraph is shaped once and broken afterwards**: break opportunities are byte offsets
+  of its UTF-8, matched against each glyph's cluster, so shaping (kerning, ligatures) is never
+  redone per line. A simple reading of UAX #14 — spaces, a hyphen between letters,
+  ideographs, newline as a paragraph — and greedy filling with hanging spaces. Laid-out text
+  is cached by text, font and width, so a relayout at the same width costs a lookup.
+- **Glyphs are rasterized at the size times the scale, from a whole pixel**: shaping stays in
+  logical units, so the layout is the same at every density, and the bitmap is FreeType's
+  at the real pixel size with its pen rounded, so hinting's edges land on pixels.
+- **Layout is Flutter's protocol**, one pass down and up. A row or column with a limit fills
+  it (`mainAxisSize.max`, which `SpaceBetween` needs); a wrapper hands one child its own
+  constraints (a positioned 16×16 knob got 0×0 while wrappers always laid out a column) and
+  lays several out as a column. `UNBOUNDED` is `1.0e30`, not an infinity, so `max - used`
+  never makes a NaN.
+- **Styles resolve during layout**, not before: padding, gap and font decide sizes. The
+  cascade is the design's five layers; global sheets are one layer (outermost first) rather
+  than one each, so a more specific outer rule still beats an inner tag rule. Part rules come
+  from the theme, the global sheets and the *enclosing* component's sheet — the case `::part`
+  exists for, a component styling the insides of one it holds.
+- **Constructor names avoid the program's others** (matched by name, phase 1's rule):
+  `Flow`, not `Linear` (`bindings.imgui`); `Vertical`, not `Down` (`std.tui`); `Measured`,
+  `Prose`. The builders are lowercase functions (`row`, `text`), so no element constructor
+  meets `bindings.imgui.ui`'s `Row` or `Text` in a program using both.
+- **A `line_height`** (CSS's unitless one) joined the plan: Helvetica's own line gap is 0, so
+  a wrapped paragraph's lines touched. The extra is split above and below each line.
+- No compiler bug turned up.
+
 ### 10/21/26 — `lyrac run --live`: stored callbacks reach new code, and a new top-level `let` is applied
 
 LIVE.md's step 4. Before it, `on_click = save` kept in `main`'s state called the `save` it

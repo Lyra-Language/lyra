@@ -1,0 +1,704 @@
+module ui.layout
+//! An interface as a tree of [Node]s, laid out by constraints and painted as a display list.
+//!
+//! ```
+//! import ui.layout.{ column, row, text, expanded, layout, paint, loose }
+//!
+//! let view = column([
+//!   text("Settings").with_class("title"),
+//!   row([text("Volume"), expanded(text("80%"))]),
+//! ]).with_style(Style { padding: Some(insets(16.0)), gap: Some(8.0) })
+//!
+//! let laid = layout(view, loose(window.window_size()), fonts)
+//! renderer.draw(BACKGROUND, paint(laid, ORIGIN, platform.scale(), fonts, atlas, renderer))
+//! ```
+//!
+//! **Layout is Flutter's protocol**: a parent hands each child [Constraints] — a least and a
+//! greatest width and height — the child answers the size it chose within them, and the
+//! parent places it. One pass down and up, each node visited once, so a tree lays out in
+//! linear time. [layout] answers a [Laid] tree: every node's size, its children's offsets
+//! from its top-left corner, its settled style and what it draws. [paint] turns that into
+//! `ui.draw`'s display list.
+//!
+//! **Elements**: [row] and [column] (with a `gap`, and main- and cross-axis alignment),
+//! [expanded] (a share of a row's or column's free space), [stack] and [positioned], [padding],
+//! [align], [sized], [scroll] (at an offset the program holds, for now), [text], [image],
+//! [themed] (a theme and a global sheet for a subtree) and [component] (a scoped sheet).
+//! A wrapper hands one child its own constraints, and lays several out as a column does.
+//!
+//! **Every element can be styled** (`ui.style`): its tag (`Row`, `Text`, a component's own),
+//! classes and inline [Style] go through the cascade, and any element may have a background,
+//! a border, rounded corners and padding. A row's or column's `gap` is a style too, so a
+//! theme can set it.
+//!
+//! **Unbounded** is [UNBOUNDED], a large number rather than an infinity, so arithmetic on it
+//! stays finite: a row's children are measured with an unbounded width, a scroll's child with
+//! an unbounded height.
+
+import ui.draw.{
+  Point,
+  Size,
+  Rect,
+  TextureId,
+  DrawOp,
+  Fill,
+  Border,
+  Picture,
+  PushClip,
+  PopClip,
+  radius,
+}
+import ui.backend.{ Renderer }
+import ui.text.{ Fonts, TextBlock, GlyphAtlas }
+import ui.style.{
+  Style,
+  Sheet,
+  Theme,
+  Insets,
+  Computed,
+  Cascade,
+  cascade_root,
+  light_theme,
+  faded,
+}
+
+// ── The tree ─────────────────────────────────────────────────────────────────
+
+/// One element: what kind it is, how it is named for the cascade (its `tag`, `class`es and
+/// the `part` of its component it is), its inline style, and its children.
+pub struct Node {
+  kind: Kind,
+  tag: string,
+  class: string = "",
+  part: string = "",
+  style: Style = Style {},
+  children: []Node = [],
+}
+
+/// What an element does with its children and its space. Built by the functions below
+/// ([row], [text], …), which name them.
+pub data Kind =
+  /// A row or column: its children along an axis.
+  Flow(Axis, MainAlign, CrossAlign)
+  /// A share of a [Flow]'s free space, in proportion to this factor.
+  | Grow(f32)
+  /// Its children over one another, the first at the bottom.
+  | Layers
+  /// Placed by its edges in a [Layers].
+  | Pin(Edges)
+  /// Space around its children.
+  | Inset(Insets)
+  /// Its children placed in its space at this alignment.
+  | Place(Alignment)
+  /// A width and a height, each unset to take the children's.
+  | Measured(Maybe<f32>, Maybe<f32>)
+  /// Its children moved by this offset along the axis and clipped to its box.
+  | Scrolls(Axis, f32)
+  /// A paragraph of text.
+  | Words(string)
+  /// Part of a texture, at a natural size.
+  | Texels(TextureId, Rect, Size)
+  /// A subtree in a theme, with a global sheet.
+  | Theming(Theme, Sheet)
+  /// A component: its tag is its name, and the sheet is scoped to it.
+  | Scope(Sheet)
+
+/// A row's axis or a column's.
+pub data Axis = Horizontal | Vertical
+
+/// Where a row's or column's children sit along it, with what space is left over: packed at
+/// the start, middle or end, or the space shared out between them — between only, around
+/// each (half at the ends), or evenly (whole at the ends).
+pub data MainAlign = MainStart | MainCenter | MainEnd | SpaceBetween | SpaceAround | SpaceEvenly
+
+/// Where a row's or column's children sit across it: at the start, middle or end, or
+/// stretched to fill it.
+pub data CrossAlign = CrossStart | CrossCenter | CrossEnd | CrossStretch
+
+/// A positioned child's edges in its stack, each from the stack's own, and its size; what is
+/// unset is the child's. Both `left` and `right` set fix its width, as `top` and `bottom` do
+/// its height.
+pub struct Edges {
+  left: Maybe<f32> = None,
+  top: Maybe<f32> = None,
+  right: Maybe<f32> = None,
+  bottom: Maybe<f32> = None,
+  width: Maybe<f32> = None,
+  height: Maybe<f32> = None,
+}
+
+/// A point in a box, as fractions of its width and height: `0.0, 0.0` its top-left corner,
+/// `0.5, 0.5` its middle.
+pub struct Alignment {
+  x: f32 = 0.0,
+  y: f32 = 0.0,
+}
+
+pub const TOP_LEFT: Alignment = Alignment { x: 0.0, y: 0.0 }
+pub const CENTER: Alignment = Alignment { x: 0.5, y: 0.5 }
+pub const BOTTOM_RIGHT: Alignment = Alignment { x: 1.0, y: 1.0 }
+
+/// Children side by side, left to right.
+pub let row = pure (children: []Node) -> Node =>
+  Node { kind: Flow(Horizontal, MainStart, CrossCenter), tag: "Row", children: children }
+
+/// Children one under another.
+pub let column = pure (children: []Node) -> Node =>
+  Node { kind: Flow(Vertical, MainStart, CrossStart), tag: "Column", children: children }
+
+/// `child` taking a share of its row's or column's free space, in proportion to `flex`.
+pub let expanded = pure (child: Node, flex: f32 = 1.0) -> Node =>
+  Node { kind: Grow(flex), tag: "Expanded", children: [child] }
+
+/// Children over one another, the first at the bottom; as large as the largest that is not
+/// [positioned].
+pub let stack = pure (children: []Node) -> Node =>
+  Node { kind: Layers, tag: "Stack", children: children }
+
+/// `child` placed in its [stack] by `edges`.
+pub let positioned = pure (edges: Edges, child: Node) -> Node =>
+  Node { kind: Pin(edges), tag: "Positioned", children: [child] }
+
+/// `child` with `space` around it.
+pub let padding = pure (space: Insets, child: Node) -> Node =>
+  Node { kind: Inset(space), tag: "Padding", children: [child] }
+
+/// `child` placed at `at` in all the space it is given.
+pub let align = pure (at: Alignment, child: Node) -> Node =>
+  Node { kind: Place(at), tag: "Align", children: [child] }
+
+/// A box `width` × `height` (each `None` for its children's), its children inside.
+pub let sized = pure (
+  width: Maybe<f32>,
+  height: Maybe<f32>,
+  children: []Node = []
+) -> Node =>
+  Node { kind: Measured(width, height), tag: "SizedBox", children: children }
+
+/// `child` along `axis` with all the room it wants, seen through a window as large as this
+/// element is given and moved `offset` units along — clipped to the window.
+pub let scroll = pure (axis: Axis, offset: f32, child: Node) -> Node =>
+  Node { kind: Scrolls(axis, offset), tag: "Scroll", children: [child] }
+
+/// A paragraph, broken into lines at the width it is given.
+pub let text = pure (content: string) -> Node =>
+  Node { kind: Words(content), tag: "Text" }
+
+/// The `texels` of a texture, `size` units large where there is room.
+pub let image = pure (texture: TextureId, texels: Rect, size: Size) -> Node =>
+  Node { kind: Texels(texture, texels, size), tag: "Image" }
+
+/// `children` drawn in `theme`, with `sheet` as their innermost global sheet.
+pub let themed = pure (theme: Theme, sheet: Sheet, children: []Node) -> Node =>
+  Node { kind: Theming(theme, sheet), tag: "Themed", children: children }
+
+/// A component named `name` (its tag, for the cascade), whose `sheet` styles `children` and
+/// nothing else.
+pub let component = pure (name: string, sheet: Sheet, children: []Node) -> Node =>
+  Node { kind: Scope(sheet), tag: name, children: children }
+
+impl Node {
+  /// The node with these classes, space-separated (`"card wide"`), added to its own.
+  pub let with_class = pure (self, classes: string) -> Node =>
+    Node { self | class: if self.class.len() == 0 { classes } else { "${self.class} ${classes}" } }
+
+  /// The node with `style` laid over its inline style.
+  pub let with_style = pure (self, style: Style) -> Node =>
+    Node { self | style: style.over(self.style) }
+
+  /// The node marked as part `name` of the component it is in, for a `Component::name` rule.
+  pub let with_part = pure (self, name: string) -> Node => Node { self | part: name }
+
+  /// A row or column with its children placed by `main` and `cross`; any other node unchanged.
+  pub let aligned = pure (self, main: MainAlign, cross: CrossAlign) -> Node =>
+    match self.kind {
+      Flow(axis, _, _) => Node { self | kind: Flow(axis, main, cross) },
+      _ => self,
+    }
+}
+
+// ── Constraints ──────────────────────────────────────────────────────────────
+
+/// The sizes a node may choose from: a least and a greatest width and height. A greatest of
+/// [UNBOUNDED] is no limit.
+pub struct Constraints {
+  min_w: f32 = 0.0,
+  max_w: f32 = UNBOUNDED,
+  min_h: f32 = 0.0,
+  max_h: f32 = UNBOUNDED,
+}
+
+/// No limit, in logical units: larger than any screen, small enough to add to.
+pub const UNBOUNDED: f32 = 1.0e30
+
+/// Exactly `size`.
+pub let tight = pure (size: Size) -> Constraints =>
+  Constraints { min_w: size.w, max_w: size.w, min_h: size.h, max_h: size.h }
+
+/// Anything up to `size`.
+pub let loose = pure (size: Size) -> Constraints =>
+  Constraints { max_w: size.w, max_h: size.h }
+
+impl Constraints {
+  /// The size within these constraints nearest `size`.
+  pub let constrain = pure (self, size: Size) -> Size => Size {
+    w: size.w.clamp(self.min_w, self.max_w.max(self.min_w)),
+    h: size.h.clamp(self.min_h, self.max_h.max(self.min_h)),
+  }
+
+  /// The constraints for what is inside `space`.
+  pub let deflate = pure (self, space: Insets) -> Constraints => Constraints {
+    min_w: (self.min_w - space.horizontal()).max(0.0),
+    max_w: if self.max_w >= UNBOUNDED { UNBOUNDED } else { (self.max_w - space.horizontal()).max(0.0) },
+    min_h: (self.min_h - space.vertical()).max(0.0),
+    max_h: if self.max_h >= UNBOUNDED { UNBOUNDED } else { (self.max_h - space.vertical()).max(0.0) },
+  }
+
+  /// The same greatest sizes, and no least.
+  pub let loosened = pure (self) -> Constraints =>
+    Constraints { self | min_w: 0.0, min_h: 0.0 }
+
+  /// Whether the width or the height has a limit.
+  pub let bounded_w = pure (self) -> bool => self.max_w < UNBOUNDED
+  pub let bounded_h = pure (self) -> bool => self.max_h < UNBOUNDED
+}
+
+// ── The laid-out tree ────────────────────────────────────────────────────────
+
+/// A node laid out: its tag and classes (for finding it again), the size it chose, its
+/// settled style, what it draws itself (at `content_at`, inside its padding), whether it
+/// clips its children to its box, and its children, each at its offset from this node's
+/// top-left corner.
+pub struct Laid {
+  tag: string = "",
+  class: string = "",
+  size: Size,
+  style: Computed,
+  content: Content = Blank,
+  content_at: Point = Point {},
+  clips: bool = false,
+  children: []Placed = [],
+}
+
+/// A laid-out child and its offset from its parent's top-left corner.
+pub struct Placed {
+  at: Point,
+  laid: Laid,
+}
+
+/// What a node draws besides its box: nothing, a paragraph, or part of a texture at a size.
+pub data Content = Blank | Prose(TextBlock) | Bitmap(TextureId, Rect, Size)
+
+/// `root` laid out within `c`, in the light theme until a [themed] node says otherwise, its
+/// text set in `fonts`.
+pub let layout = (root: Node, c: Constraints, fonts: mut Fonts) -> Laid =>
+  lay(root, c, cascade_root(light_theme()), fonts)
+
+/// One node within `c`, styled at `cascade`.
+let lay = (node: Node, c: Constraints, cascade: Cascade, fonts: mut Fonts) -> Laid => {
+  // A theme reaches its own node; a component's sheet only what it holds.
+  let own = match node.kind {
+    Theming(theme, sheet) => cascade.themed(theme, sheet),
+    _ => cascade,
+  }
+  let style = own.compute(node.tag, node.class, node.part, node.style)
+  let within = match node.kind {
+    Scope(sheet) => own.in_component(node.tag, sheet).inside(style),
+    _ => own.inside(style),
+  }
+  let space = match node.kind {
+    Inset(extra) => style.padding.plus(extra),
+    _ => style.padding,
+  }
+  let inner = c.deflate(space)
+  let body = match node.kind {
+    Flow(axis, main, cross) => {
+      lay_line(node.children, axis, main, cross, style.gap, inner, true, within, fonts)
+    },
+    Layers => lay_layers(node.children, inner, within, fonts),
+    Place(at) => {
+      let content = lay_wrapped(node.children, style.gap, inner.loosened(), within, fonts)
+      let w = if inner.bounded_w() { inner.max_w } else { content.size.w }
+      let h = if inner.bounded_h() { inner.max_h } else { content.size.h }
+      let size = inner.constrain(Size { w: w, h: h })
+      let shift = Point {
+        x: (size.w - content.size.w) * at.x,
+        y: (size.h - content.size.h) * at.y,
+      }
+      Body { size: size, children: moved(content.children, shift) }
+    },
+    Measured(w, h) => {
+      let wanted = Constraints {
+        min_w: w ?? inner.min_w,
+        max_w: w ?? inner.max_w,
+        min_h: h ?? inner.min_h,
+        max_h: h ?? inner.max_h,
+      }
+      // The size asked for, within what the parent allows.
+      let fixed = Constraints {
+        min_w: wanted.min_w.clamp(inner.min_w, inner.max_w),
+        max_w: wanted.max_w.clamp(inner.min_w, inner.max_w),
+        min_h: wanted.min_h.clamp(inner.min_h, inner.max_h),
+        max_h: wanted.max_h.clamp(inner.min_h, inner.max_h),
+      }
+      let content = lay_wrapped(node.children, style.gap, fixed, within, fonts)
+      Body { size: fixed.constrain(content.size), children: content.children }
+    },
+    Scrolls(axis, offset) => {
+      let open = match axis {
+        Horizontal => Constraints { min_h: inner.min_h, max_h: inner.max_h },
+        Vertical => Constraints { min_w: inner.min_w, max_w: inner.max_w },
+      }
+      let content = lay_wrapped(node.children, style.gap, open, within, fonts)
+      let size = inner.constrain(Size {
+        w: if axis == Horizontal && inner.bounded_w() { inner.max_w } else { content.size.w },
+        h: if axis == Vertical && inner.bounded_h() { inner.max_h } else { content.size.h },
+      })
+      // Never further than the content's end.
+      let room = match axis {
+        Horizontal => (content.size.w - size.w).max(0.0),
+        Vertical => (content.size.h - size.h).max(0.0),
+      }
+      let by = offset.clamp(0.0, room)
+      let shift = match axis {
+        Horizontal => Point { x: -by },
+        Vertical => Point { y: -by },
+      }
+      Body { size: size, children: moved(content.children, shift), clips: true }
+    },
+    Words(content) => {
+      let block = fonts.lay_out(content, style.font, inner.max_w)
+      Body {
+        size: inner.constrain(Size { w: block.width, h: block.height }),
+        content: Prose(block),
+      }
+    },
+    Texels(texture, texels, natural) => {
+      Body { size: inner.constrain(natural), content: Bitmap(texture, texels, natural) }
+    },
+    // A wrapper of its children: Grow, Pin, Inset, Theming and Scope.
+    _ => {
+      let content = lay_wrapped(node.children, style.gap, inner, within, fonts)
+      Body { size: content.size, children: content.children }
+    },
+  }
+  let size = c.constrain(Size {
+    w: body.size.w + space.horizontal(),
+    h: body.size.h + space.vertical(),
+  })
+  let corner = Point { x: space.left, y: space.top }
+  Laid {
+    tag: node.tag,
+    class: node.class,
+    size: size,
+    style: style,
+    content: body.content,
+    content_at: corner,
+    clips: body.clips,
+    children: moved(body.children, corner),
+  }
+}
+
+/// What a node's kind made of the space inside its padding: the size it fills, its children
+/// placed from that space's corner, what it draws itself, and whether it clips.
+struct Body {
+  size: Size,
+  children: []Placed = [],
+  content: Content = Blank,
+  clips: bool = false,
+}
+
+/// A wrapper's children within `c`: one laid out with `c` as it stands — a wrapper hands its
+/// child its own constraints, as Flutter's do — and several as a column lays them out.
+let lay_wrapped = (
+  children: []Node,
+  gap: f32,
+  c: Constraints,
+  cascade: Cascade,
+  fonts: mut Fonts
+) -> Body => {
+  if children.len() == 1 {
+    let one = lay(children[0], c, cascade, fonts)
+    return Body { size: one.size, children: [Placed { at: Point {}, laid: one }] }
+  }
+  lay_line(children, Vertical, MainStart, CrossStart, gap, c, false, cascade, fonts)
+}
+
+/// `children` along `axis` within `c`, `gap` apart, placed by `main` and `cross` — a row's or
+/// column's layout, and how a wrapper lays out several children. `fill` takes all the room
+/// along the axis when it has a limit, as a row or column does; a wrapper takes what its
+/// children need.
+let lay_line = (
+  children: []Node,
+  axis: Axis,
+  main: MainAlign,
+  cross: CrossAlign,
+  gap: f32,
+  c: Constraints,
+  fill: bool,
+  cascade: Cascade,
+  fonts: mut Fonts
+) -> Body => {
+  let count = children.len()
+  if count == 0 { return Body { size: c.constrain(Size {}) } }
+  let max_main = along(axis, c.max_w, c.max_h)
+  let min_main = along(axis, c.min_w, c.min_h)
+  let max_cross = along(axis, c.max_h, c.max_w)
+  let min_cross = along(axis, c.min_h, c.min_w)
+  let bounded = max_main < UNBOUNDED
+  let stretch = cross == CrossStretch && max_cross < UNBOUNDED
+  let cross_min = if stretch { max_cross } else { 0.0 }
+  var laid: []Maybe<Laid> = [i in 0..<count | None]
+  // Children that do not grow first: what they take is what the growing ones share.
+  var used = gap * f32(count - 1)
+  var flex: f32 = 0.0
+  for i, child in children {
+    let factor = grow_factor(child)
+    if factor > 0.0 {
+      flex += factor
+      continue
+    }
+    let one = lay(
+      child,
+      oriented(axis, 0.0, UNBOUNDED, cross_min, max_cross),
+      cascade,
+      fonts
+    )
+    used += along(axis, one.size.w, one.size.h)
+    laid[i] = Some(one)
+  }
+  let free = if bounded { (max_main - used).max(0.0) } else { 0.0 }
+  for i, child in children {
+    let factor = grow_factor(child)
+    if factor <= 0.0 { continue }
+    let share = free * factor / flex
+    let main_c = if bounded { (share, share) } else { (0.0, UNBOUNDED) }
+    let one = lay(
+      child,
+      oriented(axis, main_c.0, main_c.1, cross_min, max_cross),
+      cascade,
+      fonts
+    )
+    used += along(axis, one.size.w, one.size.h)
+    laid[i] = Some(one)
+  }
+  var thickest: f32 = 0.0
+  for one in laid {
+    if let Some(l) = one { thickest = thickest.max(along(axis, l.size.h, l.size.w)) }
+  }
+  let main_size = (if fill && bounded { max_main } else { used }).max(min_main)
+  let cross_size = (if stretch { max_cross } else { thickest }).max(min_cross)
+  let left = (main_size - used).max(0.0)
+  let n = f32(count)
+  let starts = match main {
+    MainStart => (0.0, gap),
+    MainCenter => (left / 2.0, gap),
+    MainEnd => (left, gap),
+    SpaceBetween => if count > 1 { (0.0, gap + left / (n - 1.0)) } else { (0.0, gap) },
+    SpaceAround => (left / n / 2.0, gap + left / n),
+    SpaceEvenly => (left / (n + 1.0), gap + left / (n + 1.0)),
+  }
+  var pen = starts.0
+  var placed: []Placed = []
+  for one in laid {
+    let Some(l) = one else { continue }
+    let thick = along(axis, l.size.h, l.size.w)
+    let across = match cross {
+      CrossCenter => (cross_size - thick) / 2.0,
+      CrossEnd => cross_size - thick,
+      _ => 0.0,
+    }
+    placed.push(Placed { at: oriented_point(axis, pen, across), laid: l })
+    pen += along(axis, l.size.w, l.size.h) + starts.1
+  }
+  Body { size: oriented_size(axis, main_size, cross_size), children: placed }
+}
+
+/// `children` over one another within `c`: the ones not [positioned] at the top-left corner,
+/// as large as the largest of them; the positioned ones by their edges within that.
+let lay_layers = (
+  children: []Node,
+  c: Constraints,
+  cascade: Cascade,
+  fonts: mut Fonts
+) -> Body => {
+  var laid: []Maybe<Laid> = [i in 0..<children.len() | None]
+  var w: f32 = 0.0
+  var h: f32 = 0.0
+  for i, child in children {
+    if pinned(child).is_some() { continue }
+    let one = lay(child, c.loosened(), cascade, fonts)
+    w = w.max(one.size.w)
+    h = h.max(one.size.h)
+    laid[i] = Some(one)
+  }
+  let size = c.constrain(Size { w: w, h: h })
+  var placed: []Placed = []
+  for i, child in children {
+    if let Some(l) = laid[i] {
+      placed.push(Placed { at: Point {}, laid: l })
+      continue
+    }
+    let Some(edges) = pinned(child) else { continue }
+    let across = span(edges.left, edges.right, edges.width, size.w)
+    let down = span(edges.top, edges.bottom, edges.height, size.h)
+    let one = lay(
+      child,
+      Constraints { min_w: across.0, max_w: across.1, min_h: down.0, max_h: down.1 },
+      cascade,
+      fonts
+    )
+    let x = match (edges.left, edges.right) {
+      (Some(l), _) => l,
+      (None, Some(r)) => size.w - r - one.size.w,
+      _ => 0.0,
+    }
+    let y = match (edges.top, edges.bottom) {
+      (Some(t), _) => t,
+      (None, Some(b)) => size.h - b - one.size.h,
+      _ => 0.0,
+    }
+    placed.push(Placed { at: Point { x: x, y: y }, laid: one })
+  }
+  Body { size: size, children: placed }
+}
+
+/// The least and greatest a positioned child may be along one axis of a stack `room` long:
+/// exactly the space between its two edges when both are set, else exactly its size when that
+/// is, else anything.
+let span = pure (
+  start: Maybe<f32>,
+  end: Maybe<f32>,
+  length: Maybe<f32>,
+  room: f32
+) -> (f32, f32) => {
+  if let Some(a) = start {
+    if let Some(b) = end {
+      let between = (room - a - b).max(0.0)
+      return (between, between)
+    }
+  }
+  match length {
+    Some(l) => (l, l),
+    None => (0.0, UNBOUNDED),
+  }
+}
+
+/// How much of a row's or column's free space a child takes, `0.0` for one that takes none.
+let grow_factor = pure (node: Node) -> f32 => match node.kind {
+  Grow(f) => f.max(0.0),
+  _ => 0.0,
+}
+
+/// A child's edges in its stack, if it is positioned.
+let pinned = pure (node: Node) -> Maybe<Edges> => match node.kind {
+  Pin(edges) => Some(edges),
+  _ => None,
+}
+
+/// `across` for a row's axis, `down` for a column's.
+let along = pure (axis: Axis, across: f32, down: f32) -> f32 => match axis {
+  Horizontal => across,
+  Vertical => down,
+}
+
+/// Constraints from a least and greatest along the axis and across it.
+let oriented = pure (
+  axis: Axis,
+  main_min: f32,
+  main_max: f32,
+  cross_min: f32,
+  cross_max: f32
+) -> Constraints => match axis {
+  Horizontal =>
+    Constraints { min_w: main_min, max_w: main_max, min_h: cross_min, max_h: cross_max },
+  Vertical =>
+    Constraints { min_w: cross_min, max_w: cross_max, min_h: main_min, max_h: main_max },
+}
+
+let oriented_point = pure (axis: Axis, main: f32, cross: f32) -> Point => match axis {
+  Horizontal => Point { x: main, y: cross },
+  Vertical => Point { x: cross, y: main },
+}
+
+let oriented_size = pure (axis: Axis, main: f32, cross: f32) -> Size => match axis {
+  Horizontal => Size { w: main, h: cross },
+  Vertical => Size { w: cross, h: main },
+}
+
+/// `placed`, each moved by `by`.
+let moved = pure (placed: []Placed, by: Point) -> []Placed =>
+  [p in placed | Placed { p | at: Point { x: p.at.x + by.x, y: p.at.y + by.y } }]
+
+// ── Painting ─────────────────────────────────────────────────────────────────
+
+/// `laid` as a display list, its top-left corner at `origin`: each node's background, border
+/// and content, then its children, clipped where the node clips. Text is drawn from `atlas`,
+/// which renders the glyphs it lacks through `renderer` at `scale` pixels a unit.
+pub let paint<r> where r: Renderer = (
+  laid: Laid,
+  origin: Point,
+  scale: f32,
+  fonts: Fonts,
+  atlas: mut GlyphAtlas,
+  renderer: mut r
+) -> []DrawOp => {
+  var ops: []DrawOp = []
+  paint_into(ops, laid, origin, scale, fonts, atlas, renderer)
+  ops
+}
+
+let paint_into<r> where r: Renderer = (
+  ops: mut []DrawOp,
+  laid: Laid,
+  origin: Point,
+  scale: f32,
+  fonts: Fonts,
+  atlas: mut GlyphAtlas,
+  renderer: mut r
+) -> void => {
+  let s = laid.style
+  let box = Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }
+  let corners = radius(s.radius)
+  if let Some(fill) = s.background { ops.push(Fill(
+    box,
+    corners,
+    faded(fill, s.opacity)
+  )) }
+  if let Some(line) = s.border_color {
+    if s.border_width > 0.0 { ops.push(Border(
+      box,
+      corners,
+      s.border_width,
+      faded(line, s.opacity)
+    )) }
+  }
+  let at = Point { x: origin.x + laid.content_at.x, y: origin.y + laid.content_at.y }
+  match laid.content {
+    Prose(block) => {
+      let color = faded(s.color, s.opacity)
+      if let Some(op) = atlas.glyphs(
+        fonts,
+        renderer,
+        block,
+        at,
+        scale,
+        color
+      ) { ops.push(op) }
+    },
+    Bitmap(texture, texels, natural) => {
+      ops.push(Picture(
+        texture,
+        texels,
+        Rect { x: at.x, y: at.y, w: natural.w, h: natural.h }
+      ))
+    },
+    Blank => {},
+  }
+  if laid.clips { ops.push(PushClip(box, corners)) }
+  for child in laid.children {
+    let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    paint_into(ops, child.laid, corner, scale, fonts, atlas, renderer)
+  }
+  if laid.clips { ops.push(PopClip) }
+}
