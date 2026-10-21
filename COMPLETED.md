@@ -60,6 +60,11 @@ frame headless.
 - **`ui.backend`'s keys are the web's names** (`ArrowLeft`, `KeyPressed`), because a
   constructor is matched program-wide by name: SDL's `Event` has `KeyDown`, and a program's
   own `data Dir = Left | Right` would take `Left`.
+- **`Image.pixelated`**, CSS's `image-rendering: pixelated`, chosen per texture at `upload`
+  (a texture is drawn one way wherever it appears): SDL samples linearly by default, which
+  blurred the example's 8×8 checkerboard into grey at every texel edge. `ui.sdl3` asks for
+  `SCALE_PIXELART`, crisp at a scale like 1.5 too, and falls back to `SCALE_NEAREST`; the
+  test samples both sides of a texel edge, which linear sampling turns 113 and 141 grey.
 - **Bindings grown for it**: geometry and clipping (`draw_geometry`, `set_clip`,
   `Vertex`, `PixelRect`), `update_texture_area`, `wait_event`, text input, the window's size,
   density and scale, the clipboard, and `TextInput`/`WindowResized`/`WindowScaleChanged`

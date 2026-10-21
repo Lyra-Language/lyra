@@ -56,6 +56,9 @@ import bindings.sdl3.{
   create_texture,
   update_texture_area,
   destroy_texture,
+  set_texture_scale_mode,
+  SCALE_NEAREST,
+  SCALE_PIXELART,
   Event,
   Quit as SdlQuit,
   WindowResized as SdlResized,
@@ -390,6 +393,13 @@ impl Renderer for SdlRenderer {
       image.argb
     ) else {
       return None
+    }
+    if image.pixelated {
+      // SDL 3.4's pixel-art mode stays crisp at a scale like 1.5 too, where nearest
+      // sampling makes some texels wider than others; an older SDL refuses it.
+      if !set_texture_scale_mode(texture, SCALE_PIXELART) {
+        set_texture_scale_mode(texture, SCALE_NEAREST)
+      }
     }
     self.textures.push(texture)
     Some(TextureId(self.textures.len() - 1))

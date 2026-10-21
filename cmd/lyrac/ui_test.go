@@ -61,14 +61,18 @@ func TestRun_UiDrawsADisplayList(t *testing.T) {
 			t.Errorf("%s does not show: (%d, %d) is %v and (%d, %d) %v", c.what, c.x0, c.y, a, c.x1, c.y, b)
 		}
 	}
-	// The picture: an 8×8 checkerboard 8 units a texel, sampled smoothly, so a texel's
-	// middle is its own colour or nearly.
+	// The picture: an 8×8 checkerboard 8 units a texel, uploaded `pixelated`, so a texel is
+	// its own colour right up to its edge — the last pixel of one and the first of the next
+	// (x 27 and 28, y 167 and 168) — where smooth sampling would blend the two into grey.
 	for _, c := range []struct {
 		x, y  int
 		black bool
-	}{{24, 164, true}, {32, 164, false}, {24, 172, false}, {80, 220, true}} {
+	}{
+		{24, 164, true}, {32, 164, false}, {24, 172, false}, {80, 220, true},
+		{27, 164, true}, {28, 164, false}, {24, 167, true}, {24, 168, false},
+	} {
 		got := rgbAt(frame, c.x, c.y)
-		if (c.black && got[0] > 60) || (!c.black && got[0] < 195) {
+		if (c.black && got[0] > 8) || (!c.black && got[0] < 247) {
 			t.Errorf("the checkerboard at (%d, %d) is %v, want it %s", c.x, c.y, got,
 				map[bool]string{true: "black", false: "white"}[c.black])
 		}

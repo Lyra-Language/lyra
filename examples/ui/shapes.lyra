@@ -99,7 +99,7 @@ let scene = pure (size: Size, art: Art) -> []DrawOp => [
   PushClip(Rect { x: 240.0, y: 150.0, w: 100.0, h: 70.0 }, radius(0.0)),
   Fill(Rect { x: 220.0, y: 130.0, w: 140.0, h: 110.0 }, radius(0.0), rgb(0xF0C85A)),
   PopClip,
-  // The checkerboard, each of its 8 × 8 texels 8 units square.
+  // The checkerboard, each of its 8 × 8 texels 8 units square and crisp: it is `pixelated`.
   Picture(art.checker, Rect { x: 0.0, y: 0.0, w: 8.0, h: 8.0 }, Rect { x: 20.0, y: 160.0, w: 64.0, h: 64.0 }),
   // Two "glyphs" in dark grey.
   Glyphs(art.glyph, [
@@ -121,7 +121,8 @@ let upload_art = (renderer: mut SdlRenderer) -> Maybe<Art> => {
   let Some(board) = renderer.upload(Image {
     width: 8,
     height: 8,
-    argb: checker
+    argb: checker,
+    pixelated: true
   }) else { return None }
   let Some(glyph) = renderer.upload(Image {
     width: 4,

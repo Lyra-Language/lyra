@@ -12,7 +12,7 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 
 | module | what | calls a library? |
 |---|---|---|
-| `ui.draw` | The display list: `DrawOp` (`Fill`, `Border`, `Glyphs`, `Picture`, `PushClip`, `PopClip`) and its geometry — `Point`, `Size`, `Rect`, `Radii` (CSS's fitting), `Color` (`rgb`/`rgba`), `Image`, `TextureId`, `GlyphQuad`. Logical units throughout. | no |
+| `ui.draw` | The display list: `DrawOp` (`Fill`, `Border`, `Glyphs`, `Picture`, `PushClip`, `PopClip`) and its geometry — `Point`, `Size`, `Rect`, `Radii` (CSS's fitting), `Color` (`rgb`/`rgba`), `Image` (`pixelated` keeps its texels crisp when drawn larger), `TextureId`, `GlyphQuad`. Logical units throughout. | no |
 | `ui.tess` | Rounded rectangles and borders as triangles (`Mesh` of `Vertex`), edges softened over one pixel. In **pixels**: a renderer scales first. | no |
 | `ui.backend` | The two seams: `Platform` (window, events, scale, text input, clipboard, cursor) and `Renderer` (`upload`, `update`, `draw(background, ops)`), and `InputEvent`, `Key`, `Modifiers`, `PointerButton`, `Cursor`. | no |
 | `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }`, `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`. | SDL3 |
@@ -31,6 +31,9 @@ phone's own layer — implements the two traits; the display list is the whole c
   collide: `KeyPressed`/`KeyReleased` (SDL's `Event` has `KeyDown`/`KeyUp`), and keys named
   as the web's `KeyboardEvent.key` (`ArrowLeft`, not `Left`). An aliased import cannot
   separate two constructors of one name (LANGUAGE.md § Imports).
+- **A texture is smooth unless its `Image` is `pixelated`** (CSS's `image-rendering`), which a
+  renderer reads at `upload`: pixel art sets it, glyphs and photos do not. `ui.sdl3` samples a
+  pixelated texture with SDL 3.4's pixel-art mode, or nearest on an older SDL.
 - **What SDL's 2D renderer cannot do**: a clip is a whole-pixel rectangle, so `PushClip`'s
   radii are ignored there; and its software renderer (headless, or no GPU) truncates each
   vertex to a whole pixel, so edges come out half a pixel soft.

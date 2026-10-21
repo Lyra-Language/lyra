@@ -83,10 +83,15 @@ pub let rgba = pure (hex: u32) -> Color => Color {
 
 /// Pixels a program holds: `width` × `height`, row by row, `0xAARRGGBB` each — what a
 /// renderer uploads as a texture, and what [Glyphs] and [Picture] draw from once it has.
+///
+/// `pixelated` is CSS's `image-rendering: pixelated`: drawn larger, each texel stays a crisp
+/// square instead of blending into its neighbours — what pixel art wants, and a photo or a
+/// glyph does not. A renderer reads it once, at `upload`.
 pub struct Image {
   width: i64,
   height: i64,
   argb: []u32,
+  pixelated: bool = false,
 }
 
 /// A texture a renderer holds, named by the number its `upload` answered.
