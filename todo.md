@@ -697,11 +697,34 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   fit is left out; it needs a second page or eviction (sizes animating, many fonts).
 - **[OPEN] `ui.layout`: a `Picture` ignores opacity.** `DrawOp.Picture` has no colour to
   fade by; give it one (a tint, as `Glyphs` has) and `paint` can pass the opacity on.
-- **[OPEN] `ui.layout` lays out the whole tree every frame**, only shaped text cached. A
-  relayout boundary (a subtree whose constraints and node are unchanged keeps its `Laid`)
-  waits for phase 3's state, as `Scroll`'s offset, held by the program for now, does.
+- **[OPEN] `ui.layout` lays out the whole tree every frame** (and again after every input),
+  only shaped text cached. A relayout boundary — a subtree whose constraints, node and state
+  are unchanged keeps its `Laid` — is the fix when a screen grows large enough to need it.
 - **[OPEN] `./asan.sh` has no HarfBuzz or FreeType** (`asan.Dockerfile`), so the `ui`
   layout, cascade and offset tests skip there; CI installs both.
+- **[DONE 10/21] Phase 3, interaction** — `Node<e>`, `ui.interact` (identity, hit-testing,
+  focus, the keyboard, a drawn text field), `ui.app`'s loop, `ui.script`; gate
+  `examples/ui/form.lyra` (COMPLETED.md, 10/21).
+- **[OPEN] `ui`: `:hover`-style selectors.** A control's states are classes the framework adds
+  (`Button.hover`); whether the cascade grows pseudo-classes, and their specificity, is open.
+- **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`
+  and a combining accent, or an emoji sequence, takes several Left presses; needs UAX #29.
+- **[OPEN] `ui.interact`: a field's caret does not blink**, and typing is not coalesced into
+  one undo step a word. Blinking wants phase 4's timers.
+- **[OPEN] `ui.layout`: `Node<void>` does not compile.** A payload instantiated at `void` in a
+  constructor with other fields lowers as `{ i1, void }` (`Checkable(bool, e)`); `NoEvent`
+  stands in. A void field should take no space, as a lone void payload already does.
+- **[OPEN] `ui.layout`: a control's insides show to assistive technology** — a button's
+  text, a slider's parts stack — as roles of their own; AccessKit wants them presentational.
+- **[OPEN] Typechecker: a nullary constructor in a struct literal beside a field mentioning
+  its variable** — `Nd { k: L, xs: xs }` for `struct Nd<e> { k: K<e>, xs: []e }` is E073 at
+  `L`, though the return type `Nd<e>` settles it; `let k: K<e> = L` first works.
+- **[OPEN] Typechecker: a generic call's element in an array beside typed siblings has no
+  context.** `column([box(1.0), sized(None, Some(2.0))])`, `box` typed `Node<Ev>`, cannot infer
+  `sized`'s `e`: elements are inferred one by one, before the array's type is joined.
+- **[OPEN] lyrafmt is not idempotent on a long struct literal holding a lambda**: `App { view:
+  (f: Form) -> Node<Ev> => view(theme, f), update: update, background: … }` past 90 columns is
+  re-indented differently on a second `-w`, so `--check` fails right after a format.
 - **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind
   `SDL_PushEvent` and script events, as `std.game`'s `--hold` scripts a pad.
 - **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):

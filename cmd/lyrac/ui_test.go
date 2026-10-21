@@ -246,7 +246,7 @@ func TestRun_UiLayout(t *testing.T) {
 import ui.text.{ fonts_new }
 import ui.style.{ Style, insets }
 import ui.layout.{
-  Node, Laid, Edges, Constraints, CENTER, Vertical,
+  Node, NoEvent, Laid, Edges, Constraints, CENTER, Vertical,
   MainStart, MainCenter, MainEnd, SpaceBetween, SpaceAround, SpaceEvenly,
   CrossStart, CrossCenter, CrossEnd, CrossStretch,
   row, column, expanded, stack, positioned, padding, align, sized, scroll,
@@ -255,7 +255,8 @@ import ui.layout.{
 
 let main = () -> u8 => {
   var fonts = fonts_new()
-  let box = (w: f32, h: f32) -> Node => sized(Some(w), Some(h))
+  let box = (w: f32, h: f32) -> Node<NoEvent> => sized(Some(w), Some(h))
+  let open = (w: Maybe<f32>, h: Maybe<f32>) -> Node<NoEvent> => sized(w, h)
   let screen = loose(Size { w: 300.0, h: 200.0 })
   // A row: two boxes 10 apart, the middle one growing into the rest.
   show("row", layout(row([box(40.0, 20.0), expanded(box(0.0, 10.0)), box(30.0, 30.0)]).with_style(Style { gap: Some(10.0) }), screen, fonts))
@@ -265,14 +266,14 @@ let main = () -> u8 => {
     show("main", layout(column([box(10.0, 20.0), box(10.0, 20.0)]).aligned(along, CrossStart), screen, fonts))
   }
   for cross in [CrossStart, CrossCenter, CrossEnd, CrossStretch] {
-    show("cross", layout(column([box(10.0, 20.0), sized(None, Some(20.0))]).aligned(MainStart, cross).with_style(Style { padding: Some(insets(5.0)) }), tight(Size { w: 100.0, h: 100.0 }), fonts))
+    show("cross", layout(column([box(10.0, 20.0), open(None, Some(20.0))]).aligned(MainStart, cross).with_style(Style { padding: Some(insets(5.0)) }), tight(Size { w: 100.0, h: 100.0 }), fonts))
   }
   // A row in a column: unbounded nowhere, so it fills the width.
   show("nest", layout(column([row([box(10.0, 10.0)])]), screen, fonts))
   // Stack: the largest unpositioned child sizes it; positioned ones by their edges.
   show("stack", layout(stack([
     box(100.0, 60.0),
-    positioned(Edges { left: Some(10.0), right: Some(20.0), top: Some(5.0), height: Some(8.0) }, sized(None, None)),
+    positioned(Edges { left: Some(10.0), right: Some(20.0), top: Some(5.0), height: Some(8.0) }, open(None, None)),
     positioned(Edges { right: Some(0.0), bottom: Some(0.0) }, box(15.0, 15.0)),
   ]), screen, fonts))
   show("padding", layout(padding(insets(7.0), box(10.0, 10.0)).with_style(Style { padding: Some(insets(3.0)) }), screen, fonts))
@@ -289,9 +290,9 @@ let main = () -> u8 => {
 }
 
 /// A laid tree on one line: each node's size, and in brackets its children at their offsets.
-let show = (name: string, laid: Laid) -> void => println("${name} ${shape(laid)}")
+let show = (name: string, laid: Laid<NoEvent>) -> void => println("${name} ${shape(laid)}")
 
-let shape = pure (laid: Laid) -> string => {
+let shape = pure (laid: Laid<NoEvent>) -> string => {
   var out = "${laid.size.w}x${laid.size.h}"
   if laid.clips { out = out ++ " clip" }
   if laid.children.len() > 0 {
@@ -338,7 +339,7 @@ func TestRun_UiCascade(t *testing.T) {
 	got := runUiProgram(t, `import ui.draw.{ Size, Color }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, Sheet, Rule, Theme, light_theme, dark_theme, specificity }
-import ui.layout.{ Laid, column, text, themed, component, layout, loose }
+import ui.layout.{ Node, NoEvent, Laid, column, text, themed, component, layout, loose }
 
 let main = () -> u8 => {
   println("specificity ${specificity("Text", "Text", "a b")} ${specificity(".b", "Text", "a b")} ${specificity("Text.a", "Text", "a b")} ${specificity("Row", "Text", "a")} ${specificity(".c", "Text", "a b")} ${specificity("X::p", "Text", "")}")
@@ -365,7 +366,7 @@ let main = () -> u8 => {
   let inner = Sheet { rules: [rule(".outer", 9)] }
   let card_sheet = Sheet { rules: [rule("Text", 10), rule("Badge::dot", 11)] }
   let badge_sheet = Sheet { rules: [rule(".dot", 12)] }
-  let tree = themed(theme, globals, [
+  let tree: Node<NoEvent> = themed(theme, globals, [
     column([
       text("").with_class("spec"),
       text("").with_class("order"),
@@ -388,8 +389,8 @@ let main = () -> u8 => {
       // Inherited: colour, font and opacity; not the background. (Columns, which no rule
       // matches.)
       column([
-        column([]).with_class("child"),
-        column([column([]).with_class("grandchild").with_style(Style { opacity: Some(0.5) })])
+        blank().with_class("child"),
+        column([blank().with_class("grandchild").with_style(Style { opacity: Some(0.5) })])
           .with_style(Style { font_size: Some(30.0) }),
       ]).with_class("parent").with_style(Style {
         color: Some(gray(20)),
@@ -397,12 +398,15 @@ let main = () -> u8 => {
         background: Some(gray(21)),
       }),
       // A theme's subtree takes its text colour again.
-      themed(dark_theme(), Sheet {}, [column([]).with_class("dark")]),
+      themed(dark_theme(), Sheet {}, [blank().with_class("dark")]),
     ]),
   ])
   report(layout(tree, loose(Size { w: 100.0, h: 100.0 }), fonts))
   0
 }
+
+/// An empty column, which no rule matches.
+let blank = pure () -> Node<NoEvent> => column([])
 
 /// A rule setting the colour gray n, so which rule won can be read back.
 let rule = pure (selector: string, n: u8) -> Rule => Rule { selector: selector, style: Style { color: Some(gray(n)) } }
@@ -411,7 +415,7 @@ let gray = pure (n: u8) -> Color => Color { r: n, g: n, b: n }
 
 /// Each element with a class: its colour's gray, font size, opacity and whether it has a
 /// background.
-let report = (laid: Laid) -> void => {
+let report = (laid: Laid<NoEvent>) -> void => {
   if laid.class.len() > 0 {
     let s = laid.style
     println("${laid.class}: ${s.color.r} ${s.font.size} ${s.opacity} ${s.background.is_some()}")
@@ -609,5 +613,374 @@ int main(void) {
 		if !strings.Contains(string(binding), want) {
 			t.Errorf("bindings/freetype.lyra lacks %q: FreeType has it at %s here", strings.TrimSpace(want), value)
 		}
+	}
+}
+
+// `ui.interact` and `ui.app`, driven by scripted input with no window (`ui.script`) and a
+// renderer that draws nothing. **Hit-testing**: a click reaches the control under it through a
+// scroll's offset (after scrolling it to its end), never what the scroll clips away, and a press
+// released over another control presses nothing. **Identity**: a keyed field keeps its focus and
+// caret when another is inserted before it, where an unkeyed one's pass to whatever now stands
+// at its index; and a field leaving the tree takes its focus and its state with it. **The
+// keyboard**: Tab and Shift-Tab through the controls in order, wrapping; Enter and Space press
+// a button and tick a box; the arrows step a slider, Home and End take it to its ends. **A text
+// field**, an edit at a time: typing, a word back, selecting to the start and deleting it, the
+// clipboard's copy, cut and paste, undo twice, deleting a word either way, the selection
+// extended a rune at a time — and text input asked for while the field has the focus. **The
+// pointer's shape**: an I-beam over a text field and while a selection is dragged out of one,
+// the arrow anywhere else. **A checkbox**: its box bordered ticked or not, and when ticked
+// holding the accent a gap inside the border, its corners less round by the inset. **Roles and labels**: each control's role, and its
+// label its visible text unless it was given one.
+func TestRun_UiInteraction(t *testing.T) {
+	got := runUiProgram(t, `import ui.app.{ App, run }
+import ui.script.{ ScriptPlatform, script_platform, parse_script }
+import ui.interact.{ ui_new, find }
+import ui.backend.{ Renderer, Arrow, IBeam }
+import ui.draw.{ Point, Size, Color, TextureId }
+import std.collections
+import ui.text.{ fonts_new, Fonts }
+import ui.layout.{
+  Node,
+  Laid,
+  Role,
+  NoRole,
+  GroupRole,
+  TextRole,
+  ImageRole,
+  ButtonRole,
+  CheckboxRole,
+  SliderRole,
+  TextFieldRole,
+  ScrollRole,
+  FieldSpec,
+  SliderSpec,
+  Vertical,
+  column,
+  sized,
+  scroll,
+  text,
+  button,
+  checkbox,
+  slider,
+  text_input,
+}
+
+/// A renderer that draws nothing: the tests read state, not pixels.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Pick(string) | Toggle | Slide(f32) | Typed(string)
+
+struct State {
+  picks: []string = [],
+  on: bool = false,
+  level: f32 = 5.0,
+  value: string = "",
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  hits(fonts)
+  identity(fonts)
+  keyboard(fonts)
+  editing(fonts)
+  cursors(fonts)
+  checks(fonts)
+  roles(fonts)
+  0
+}
+
+/// The state a script leaves a view in, run as a program.
+let play = (view: (State) -> Node<Ev>, script: string, fonts: mut Fonts) -> (State, ScriptPlatform) => {
+  let Ok(inputs) = parse_script(script) else { panic("bad script: ${script}") }
+  var platform = script_platform(inputs, Size { w: 300.0, h: 200.0 })
+  var renderer = Blank {}
+  let app = App { view: view, update: update, background: Color { r: 0, g: 0, b: 0 } }
+  let last = run(app, State {}, platform, renderer, fonts)
+  (last, platform)
+}
+
+let update = pure (s: State, e: Ev) -> State => match e {
+  Pick(name) => State { s | picks: [...s.picks, name] },
+  Toggle => State { s | on: !s.on, picks: [...s.picks, "toggle"] },
+  Slide(v) => State { s | level: v },
+  Typed(v) => State { s | value: v },
+}
+
+/// Hit-testing: a click reaches the control under it, through a scroll's offset, and never
+/// what the scroll clips away.
+let hits = (fonts: mut Fonts) -> void => {
+  let view = (_: State) -> Node<Ev> => column([
+    sized(Some(100.0), Some(30.0), [button("A", Pick("a"))]),
+    sized(Some(100.0), Some(50.0), [
+      scroll(Vertical, 0.0, column([
+        sized(Some(100.0), Some(30.0), [button("B", Pick("b"))]),
+        sized(Some(100.0), Some(30.0), [button("C", Pick("c"))]),
+      ])),
+    ]),
+  ])
+  // A; C at 70 (40 into the scroll); C's rest at 85 is clipped away; scrolled to its end
+  // (10), 40 is B and 75 is C; a press on A released over B presses nothing.
+  let (s, _) = play(view, "click:10,10 click:10,70 click:10,85 move:10,50 scroll:1 click:10,40 click:10,75 down:10,10 up:10,40", fonts)
+  println("hits ${s.picks.join(",")}")
+}
+
+/// Identity: a keyed field keeps its focus and caret when one is inserted before it, an
+/// unkeyed one's pass to whatever now stands at its index; and an element leaving the tree
+/// takes its state with it. (Each field's label is its placeholder, its name.)
+let identity = (fonts: mut Fonts) -> void => {
+  for keyed in [true, false] {
+    var ui = ui_new()
+    var platform = script_platform([], Size { w: 300.0, h: 200.0 })
+    let size = Size { w: 300.0, h: 200.0 }
+    var laid = ui.frame(fields(["b", "c"], keyed), size, fonts)
+    let Ok(keys) = parse_script("Tab Tab End Left") else { panic("script") }
+    for input in keys {
+      let _ = ui.handle(laid, input, platform)
+      laid = ui.frame(fields(["b", "c"], keyed), size, fonts)
+    }
+    let focused = ui.state.focus
+    laid = ui.frame(fields(["a", "b", "c"], keyed), size, fonts)
+    let now = find(laid, ui.state.focus, Point {}).map((f) => f.laid.label) ?? "none"
+    let caret = ui.state.widgets.get(ui.state.focus).map((w) => w.caret) ?? -1
+    laid = ui.frame(fields(["a", "b"], keyed), size, fonts)
+    let kept = ui.state.widgets.contains_key(focused)
+    println("identity keyed=${keyed} ${focused} -> ${now} caret ${caret}; removed: focus '${ui.state.focus}' state kept ${kept}")
+  }
+}
+
+/// A field for each of the names, its placeholder (its label) the name, keyed by it or not.
+let fields = pure (names: []string, keyed: bool) -> Node<Ev> =>
+  column([n in names | field(n, keyed)])
+
+let field = pure (name: string, keyed: bool) -> Node<Ev> => {
+  let f = text_input(FieldSpec { value: "${name}123", placeholder: name, on_edit: Typed })
+  if keyed { f.keyed(name) } else { f }
+}
+
+/// The keyboard: Tab and Shift-Tab through the controls in order, wrapping; Enter and Space
+/// press; the arrows move a slider by its step, Home and End to its ends.
+let keyboard = (fonts: mut Fonts) -> void => {
+  let view = (s: State) -> Node<Ev> => column([
+    button("A", Pick("a")),
+    checkbox("On", s.on, Toggle),
+    slider(SliderSpec { value: s.level, min: 0.0, max: 10.0, step: 1.0, on_change: Slide }),
+    text_input(FieldSpec { value: s.value, on_edit: Typed }),
+    button("B", Pick("b")),
+  ])
+  let (s, _) = play(view, "Tab Enter Tab Space Tab Right Right Left Shift+Tab Space Tab End Tab Tab Enter Tab Space Shift+Tab Shift+Tab Shift+Tab Home Up", fonts)
+  println("keys ${s.picks.join(",")} on ${s.on} level ${s.level}")
+}
+
+/// A text field's editing, from the keyboard alone.
+let editing = (fonts: mut Fonts) -> void => {
+  let view = (s: State) -> Node<Ev> => column([text_input(FieldSpec { value: s.value, on_edit: Typed })])
+  let steps = [
+    "Tab 'hello world'",
+    "Alt+Left 'big '",
+    "Shift+Home Backspace",
+    "End ' wide'",
+    "Primary+a Primary+c End Primary+v",
+    "Primary+z",
+    "Alt+Backspace",
+    "Home Delete Right Shift+Right Shift+Right Primary+x",
+    "Primary+z Primary+z",
+    "Left Left Ctrl+Delete",
+  ]
+  var script = ""
+  for step in steps {
+    script = if script.len() == 0 { step } else { "${script} ${step}" }
+    let (s, platform) = play(view, script, fonts)
+    println("edit [${step}] '${s.value}' clipboard '${platform.clip}' typing ${platform.typing.is_some()}")
+  }
+}
+
+/// The pointer's shape: an I-beam over a text field and while dragging a selection out of one,
+/// the arrow over anything else.
+let cursors = (fonts: mut Fonts) -> void => {
+  let view = (s: State) -> Node<Ev> => column([
+    sized(Some(100.0), Some(30.0), [text_input(FieldSpec { value: s.value, on_edit: Typed })]),
+    sized(Some(100.0), Some(30.0), [button("B", Pick("b"))]),
+  ])
+  var shapes: []string = []
+  for script in ["move:10,10", "move:10,10 move:10,40", "move:10,40 move:10,10 move:10,100", "move:10,10 down:10,10 move:10,40"] {
+    let (_, platform) = play(view, script, fonts)
+    shapes.push(if platform.shape == IBeam { "ibeam" } else if platform.shape == Arrow { "arrow" } else { "other" })
+  }
+  println("cursors ${shapes.join(",")}")
+}
+
+/// A checkbox's box keeps its border ticked or not, and when ticked holds the theme's accent a
+/// gap inside it: the fill inset by the border and the gap, its corners less round by as much.
+let checks = (fonts: mut Fonts) -> void => {
+  var ui = ui_new()
+  for on in [true, false] {
+    let view: Node<Ev> = checkbox("Loud", on, Toggle)
+    let laid = ui.frame(view, Size { w: 300.0, h: 200.0 }, fonts)
+    let b = laid.children[0].laid.children[0].laid.children[0].laid
+    let face = b.style.background ?? Color { r: 0, g: 0, b: 0, a: 0 }
+    var line = "check ${on} ${b.size.w}x${b.size.h} face ${face.r},${face.g},${face.b} border ${b.style.border_width}"
+    for inner in b.children {
+      let fill = inner.laid.style.background ?? Color { r: 0, g: 0, b: 0, a: 0 }
+      line = "${line}; fill at ${inner.at.x},${inner.at.y} ${inner.laid.size.w}x${inner.laid.size.h} ${fill.r},${fill.g},${fill.b} radius ${inner.laid.style.radius}"
+    }
+    println(line)
+  }
+}
+
+/// Every element's role and label, as assistive technology would read them.
+let roles = (fonts: mut Fonts) -> void => {
+  var ui = ui_new()
+  let view: Node<Ev> = column([
+    text("Title"),
+    button("Save", Pick("save")),
+    checkbox("Loud", true, Toggle),
+    slider(SliderSpec { value: 1.0, on_change: Slide }).labelled("Volume"),
+    text_input(FieldSpec { value: "x", placeholder: "Name", on_edit: Typed }),
+    scroll(Vertical, 0.0, sized(Some(10.0), Some(10.0))),
+  ])
+  let laid = ui.frame(view, Size { w: 300.0, h: 200.0 }, fonts)
+  var out: []string = []
+  describe(laid, out)
+  println("roles ${out.join(" | ")}")
+}
+
+let describe = (laid: Laid<Ev>, out: mut []string) -> void => {
+  if laid.role != NoRole { out.push("${role_name(laid.role)} '${laid.label}'") }
+  for child in laid.children { describe(child.laid, out) }
+}
+
+let role_name = pure (role: Role) -> string => match role {
+  NoRole => "none",
+  GroupRole => "group",
+  TextRole => "text",
+  ImageRole => "image",
+  ButtonRole => "button",
+  CheckboxRole => "checkbox",
+  SliderRole => "slider",
+  TextFieldRole => "field",
+  ScrollRole => "scroll",
+}
+`)
+	want := `hits a,c,b,c
+identity keyed=true #/:c -> c caret 3; removed: focus '' state kept false
+identity keyed=false #/1 -> b caret 3; removed: focus '#/1' state kept true
+keys a,toggle,toggle,b,a on false level 1
+edit [Tab 'hello world'] 'hello world' clipboard '' typing true
+edit [Alt+Left 'big '] 'hello big world' clipboard '' typing true
+edit [Shift+Home Backspace] 'world' clipboard '' typing true
+edit [End ' wide'] 'world wide' clipboard '' typing true
+edit [Primary+a Primary+c End Primary+v] 'world wideworld wide' clipboard 'world wide' typing true
+edit [Primary+z] 'world wide' clipboard 'world wide' typing true
+edit [Alt+Backspace] 'world ' clipboard 'world wide' typing true
+edit [Home Delete Right Shift+Right Shift+Right Primary+x] 'od ' clipboard 'rl' typing true
+edit [Primary+z Primary+z] 'world ' clipboard 'rl' typing true
+edit [Left Left Ctrl+Delete] ' ' clipboard 'rl' typing true
+cursors ibeam,arrow,arrow,ibeam
+check true 18x18 face 255,255,255 border 1.5; fill at 3.5,3.5 11x11 10,132,255 radius 1.5
+check false 18x18 face 255,255,255 border 1.5
+roles group '' | text 'Title' | button 'Save' | text 'Save' | checkbox 'Loud' | group '' | text 'Loud' | slider 'Volume' | group '' | field 'Name' | scroll ''
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Phase 3's gate: a form that works from the keyboard alone (`examples/ui/form.lyra`, played
+// by its own `--script`) — Tab into the name field and type, Tab to the email and type, Tab to
+// the checkbox and tick it with Space, Tab to the slider and step it twice, Tab to Submit and
+// press Enter — leaves the state a user would have, and the last frame is drawn.
+func TestRun_UiFormFromTheKeyboard(t *testing.T) {
+	skipWithoutText(t)
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "form")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "form.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "form.png")
+	cmd := exec.Command(bin, "--script",
+		"Tab 'Ada' Tab 'ada@example.com' Tab Space Tab Right Right Tab Enter", "--png", shot)
+	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+		strings.Contains(string(out), "SDL could not") {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("running: %v\n%s", err, out)
+	}
+	want := `name: Ada
+email: ada@example.com
+newsletter: true
+volume: 7
+result: Thanks, Ada: ada@example.com, with the newsletter, volume 7.
+`
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+	f, err := os.Open(shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	frame, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("the frame is not a PNG: %v", err)
+	}
+	if b := frame.Bounds(); b.Dx() != 420 || b.Dy() != 460 {
+		t.Fatalf("the frame is %dx%d, want 420x460", b.Dx(), b.Dy())
+	}
+	// The ticked checkbox, wherever the font put it: the first accent pixel down the form's
+	// left edge is its fill's corner. The fill's middle is the accent, and just left of it —
+	// between the fill and the box's border — is the box's white surface: the gap.
+	accent := [3]int{10, 132, 255}
+	left, top := -1, -1
+	for y := 0; y < 460 && top < 0; y++ {
+		for x := 20; x < 45; x++ {
+			if near(rgbAt(frame, x, y), accent, 8) {
+				left, top = x, y
+				break
+			}
+		}
+	}
+	if top < 0 {
+		t.Fatal("no accent down the form's left edge: the checkbox is not ticked, or not drawn")
+	}
+	right, bottom := left, top
+	for near(rgbAt(frame, right+1, top+2), accent, 8) {
+		right++
+	}
+	for near(rgbAt(frame, left+2, bottom+1), accent, 8) {
+		bottom++
+	}
+	midX, midY := (left+right)/2, (top+bottom)/2
+	if got := rgbAt(frame, midX, midY); !near(got, accent, 8) {
+		t.Errorf("the checkbox's fill middle (%d, %d) is %v, want the accent", midX, midY, got)
+	}
+	gap := false
+	for d := 1; d <= 3; d++ {
+		gap = gap || near(rgbAt(frame, left-d, midY), [3]int{255, 255, 255}, 12)
+	}
+	if !gap {
+		t.Errorf("left of the checkbox's fill at (%d, %d), no white surface before the border: %v %v %v",
+			left, midY, rgbAt(frame, left-1, midY), rgbAt(frame, left-2, midY), rgbAt(frame, left-3, midY))
+	}
+	if w := right - left + 1; w < 9 || w > 13 {
+		t.Errorf("the checkbox's fill is %d pixels wide, want about 11 (18 less the border and gap each side)", w)
 	}
 }

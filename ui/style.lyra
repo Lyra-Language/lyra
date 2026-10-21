@@ -33,7 +33,7 @@ module ui.style
 //! set them takes its parent's, and an opacity multiplies into its parent's, so a half-
 //! transparent card's text is half-transparent too. Everything else starts unset.
 
-import ui.draw.{ Color, rgb }
+import ui.draw.{ Color, rgb, rgba }
 import ui.text.{ FontSpec }
 
 /// Space inside an element's edge, on each side, in logical units.
@@ -124,7 +124,8 @@ pub struct Sheet {
   rules: []Rule = [],
 }
 
-/// The colours a theme's styles are written in.
+/// The colours a theme's styles are written in. `focus` is the ring drawn round the element
+/// the keyboard is at.
 pub struct Palette {
   background: Color,
   surface: Color,
@@ -132,6 +133,7 @@ pub struct Palette {
   muted: Color,
   accent: Color,
   border: Color,
+  focus: Color,
 }
 
 /// A theme's steps of space, smallest to largest, in logical units.
@@ -154,29 +156,119 @@ pub struct Theme {
 }
 
 /// A light theme: dark text on near-white, a blue accent, lines 1.3 sizes apart.
-pub let light_theme = pure () -> Theme => Theme {
-  font: FontSpec { line_height: 1.3 },
-  colors: Palette {
-    background: rgb(0xF2F2F5),
-    surface: rgb(0xFFFFFF),
-    text: rgb(0x1C1C1E),
-    muted: rgb(0x6E6E73),
-    accent: rgb(0x0A84FF),
-    border: rgb(0xD1D1D6),
-  },
-}
+pub let light_theme = pure () -> Theme => theme_of(Palette {
+  background: rgb(0xF2F2F5),
+  surface: rgb(0xFFFFFF),
+  text: rgb(0x1C1C1E),
+  muted: rgb(0x6E6E73),
+  accent: rgb(0x0A84FF),
+  border: rgb(0xC7C7CC),
+  focus: rgba(0x0A84FF80),
+})
 
 /// A dark theme: light text on near-black, the same accent, lines 1.3 sizes apart.
-pub let dark_theme = pure () -> Theme => Theme {
+pub let dark_theme = pure () -> Theme => theme_of(Palette {
+  background: rgb(0x1C1C1E),
+  surface: rgb(0x2C2C2E),
+  text: rgb(0xF2F2F7),
+  muted: rgb(0x98989F),
+  accent: rgb(0x0A84FF),
+  border: rgb(0x48484A),
+  focus: rgba(0x409CFF99),
+})
+
+/// A theme in `colors`, its controls styled by [control_rules] and its lines 1.3 sizes apart.
+pub let theme_of = pure (colors: Palette) -> Theme => Theme {
+  colors: colors,
   font: FontSpec { line_height: 1.3 },
-  colors: Palette {
-    background: rgb(0x1C1C1E),
-    surface: rgb(0x2C2C2E),
-    text: rgb(0xF2F2F7),
-    muted: rgb(0x98989F),
-    accent: rgb(0x0A84FF),
-    border: rgb(0x3A3A3C),
+  elements: Sheet { rules: control_rules(colors) },
+}
+
+/// How the controls look by default, in `c`'s colours: a theme's `elements` rules, which any
+/// sheet above them overrides. A control's state is a class the framework adds — `hover`,
+/// `pressed`, `focus` — and its insides are parts (`Checkbox::box`, `Slider::thumb`).
+pub let control_rules = pure (c: Palette) -> []Rule => [
+  Rule {
+    selector: "Button",
+    style: Style {
+      background: Some(c.accent),
+      color: Some(rgb(0xFFFFFF)),
+      radius: Some(6.0),
+      padding: Some(insets_xy(14.0, 6.0)),
+    },
   },
+  Rule { selector: "Button.hover", style: Style { background: Some(shade(c.accent, 0.88)) } },
+  Rule { selector: "Button.pressed", style: Style { background: Some(shade(c.accent, 0.75)) } },
+  Rule {
+    selector: "Checkbox::box",
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(CHECK_BORDER),
+      radius: Some(CHECK_RADIUS),
+    },
+  },
+  // Ticked, the box keeps its border and holds the accent a gap inside it: padded by the
+  // border and the gap, the fill's corners as much less round as it is inset.
+  Rule {
+    selector: "Checkbox::checked",
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(CHECK_BORDER),
+      radius: Some(CHECK_RADIUS),
+      padding: Some(insets(CHECK_BORDER + CHECK_GAP)),
+    },
+  },
+  Rule {
+    selector: "Checkbox::fill",
+    style: Style {
+      background: Some(c.accent),
+      radius: Some((CHECK_RADIUS - CHECK_BORDER - CHECK_GAP).max(0.0)),
+    },
+  },
+  Rule {
+    selector: "Slider::track",
+    style: Style { background: Some(c.border), radius: Some(2.0) },
+  },
+  Rule { selector: "Slider::fill", style: Style { background: Some(c.accent), radius: Some(2.0) } },
+  Rule {
+    selector: "Slider::thumb",
+    style: Style {
+      background: Some(rgb(0xFFFFFF)),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(10.0),
+    },
+  },
+  Rule {
+    selector: "TextInput",
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(6.0),
+      padding: Some(insets_xy(8.0, 6.0)),
+    },
+  },
+  Rule { selector: "TextInput.focus", style: Style { border_color: Some(c.accent) } },
+  Rule { selector: "TextInput::placeholder", style: Style { color: Some(c.muted) } },
+  Rule { selector: "TextInput::selection", style: Style { background: Some(faded(c.accent, 0.3)) } },
+  Rule { selector: "TextInput::caret", style: Style { background: Some(c.text) } },
+]
+
+/// A checkbox's border, the corner radius of its box, and the gap between a ticked box's
+/// border and its fill.
+pub const CHECK_BORDER: f32 = 1.5
+pub const CHECK_RADIUS: f32 = 5.0
+pub const CHECK_GAP: f32 = 2.0
+
+/// `color` darker by `factor` (`1.0` unchanged), its alpha kept.
+pub let shade = pure (color: Color, factor: f32) -> Color => Color {
+  color |
+  r: u8((f32(color.r) * factor).round()),
+  g: u8((f32(color.g) * factor).round()),
+  b: u8((f32(color.b) * factor).round()),
 }
 
 /// An element's style once the cascade has run: every property settled.

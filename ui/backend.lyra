@@ -49,6 +49,20 @@ pub trait Platform {
   set_cursor: (mut Self, Cursor) -> void
 }
 
+/// **A platform with its own text fields** — a phone, whose keyboard, autocorrect, dictation
+/// and selection handles belong to the system's field and not to one drawn here — places one
+/// over a text field rather than letting `ui.interact` draw and edit it: by the field's
+/// identity, at its rectangle, showing the value and caret the program's state has; and takes
+/// it away when the field leaves the tree. The edits come back as [FieldEdited]. Declared now
+/// so the seam is in place; no platform implements it yet, and a desktop never will.
+pub trait NativeFields {
+  /// Show a system text field identified as the first argument, over this rectangle, holding
+  /// this value with the caret before this rune — or move or update the one already shown.
+  place_field: (mut Self, string, Rect, string, i64) -> void
+  /// Take away the field identified as this.
+  remove_field: (mut Self, string) -> void
+}
+
 /// Pixels, from a display list.
 pub trait Renderer {
   /// Keep `image` as a texture to draw from, named by the answer — `None` if the backend
@@ -83,6 +97,9 @@ pub data InputEvent =
   /// what an input method composed. Its key's [KeyPressed] arrives as well, and a text field
   /// takes the text from here, not from the key.
   | TextTyped(string)
+  /// A system text field ([NativeFields]) identified as the first string was edited: its value
+  /// is now the second, with the caret before this rune. Never sent by a desktop platform.
+  | FieldEdited(string, string, i64)
 
 /// A mouse button, or a touch (which is [Primary]).
 pub data PointerButton = Primary | Secondary | Middle | OtherButton(u8)

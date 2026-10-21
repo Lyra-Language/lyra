@@ -523,7 +523,7 @@ such changes on a user module.
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
 | `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, HarfBuzz, FreeType, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
-| `ui/` | The GUI framework (Lyra): the display list (`ui.draw`), its tessellation (`ui.tess`), the `Platform`/`Renderer` seams (`ui.backend`) and their SDL3 implementation (`ui.sdl3`); text (`ui.text`, HarfBuzz shaping and a FreeType glyph atlas), styles and the cascade (`ui.style`), and a constraints layout painted as a display list (`ui.layout`). A root beside `std` and `bindings`, linked by `build.sh` | [README](ui/README.md) |
+| `ui/` | The GUI framework (Lyra): the display list (`ui.draw`), its tessellation (`ui.tess`), the `Platform`/`Renderer` seams (`ui.backend`) and their SDL3 implementation (`ui.sdl3`); text (`ui.text`, HarfBuzz shaping and a FreeType glyph atlas), styles and the cascade (`ui.style`), a constraints layout of `Node<e>` painted as a display list (`ui.layout`), input routed to the program's events with the framework's state by identity (`ui.interact`), the run loop (`ui.app`) and scripted input (`ui.script`). A root beside `std` and `bindings`, linked by `build.sh` | [README](ui/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
 semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
@@ -842,9 +842,12 @@ function above its declaration went untyped and so unretained (COMPLETED.md 10/1
 **`ui/` does the same for a GUI written in Lyra** (`ui/README.md`): a display list drawn as
 triangles through SDL3, behind `Platform`/`Renderer` traits a later backend implements, and
 since phase 2 text, a constraints layout and a styling cascade above it (gate:
-`examples/ui/settings.lyra`). Its first module found that a type imported under an alias was
-unknown inside a declaration, and that a constructor alias cannot separate two constructors
-of one name (COMPLETED.md 10/21).
+`examples/ui/settings.lyra`), and since phase 3 interaction (gate: `examples/ui/form.lyra`,
+a form that works from the keyboard). Its first module found that a type imported under an
+alias was unknown inside a declaration, and that a constructor alias cannot separate two
+constructors of one name; making `Node` generic in its events found that no generic struct
+could be record-updated, that a generic struct's `[]` default had one type for every
+instantiation, and three places a generic call's solve gave up early (COMPLETED.md 10/21).
 
 **`examples/calendar` does the same for dates**, and **`examples/schedule/when.lyra` for
 zones**: `std.temporal`, after the web's Temporal API, grows only as they need it (the month

@@ -66,20 +66,50 @@ pub struct TextBlock {
   line_height: f32 = 0.0,
 }
 
-/// One line of a [TextBlock]: its glyphs, its width (its trailing spaces left out) and
-/// where its baseline is, down from the block's top.
+/// One line of a [TextBlock]: its glyphs, its width (its trailing spaces left out) and its
+/// advance (them included — where a caret after them goes), where its baseline is, down from
+/// the block's top, and the byte offset its text starts at.
 pub struct TextLine {
   glyphs: []LineGlyph = [],
   width: f32 = 0.0,
+  advance: f32 = 0.0,
   baseline: f32 = 0.0,
+  start: i64 = 0,
 }
 
 /// A glyph placed on a line: its number in the font, and where it is drawn — `x` across from
-/// the line's start, `y` up from the baseline.
+/// the line's start, `y` up from the baseline. `pen` is where the pen was before it (`x`
+/// without the glyph's own offset), `advance` how far it moved it, and `cluster` the byte
+/// offset, in the block's UTF-8, of the text it draws.
 pub struct LineGlyph {
   glyph: u32,
   x: f32,
   y: f32,
+  pen: f32 = 0.0,
+  advance: f32 = 0.0,
+  cluster: i64 = 0,
+}
+
+/// Where a caret before byte `offset` of a one-line block's text stands, across from its
+/// start: before the first glyph drawing text at or after it, else at the line's end.
+pub let caret_x = pure (block: TextBlock, offset: i64) -> f32 => {
+  if block.lines.len() == 0 { return 0.0 }
+  let line = block.lines[0]
+  for g in line.glyphs {
+    if g.cluster >= offset { return g.pen }
+  }
+  line.advance
+}
+
+/// The byte offset a caret at `x` across a one-line block nearest stands before: a glyph's
+/// start when `x` is in its first half, its end in its second. `length` is the text's length
+/// in bytes, for a caret past the last glyph.
+pub let offset_at_x = pure (block: TextBlock, x: f32, length: i64) -> i64 => {
+  if block.lines.len() == 0 { return 0 }
+  for g in block.lines[0].glyphs {
+    if x < g.pen + g.advance / 2.0 { return g.cluster }
+  }
+  length
 }
 
 /// Fonts with none added.
@@ -325,14 +355,22 @@ let break_lines = (
   let line_height = if font.line_height > 0.0 { font.line_height * size } else { natural }
   let ascent = face.ascender * size + (line_height - natural) / 2.0
   var lines: []TextLine = []
+  // Each paragraph's bytes start where the last one's newline ended.
+  var base = 0
   for paragraph in text.split("\n") {
     let bytes = paragraph.encode_utf8()
     let shaped = shape(face.hb, bytes, size)
     let breaks = break_opportunities(paragraph, bytes.len())
     for line in fill_lines(shaped, bytes, breaks, width) {
       let baseline = f32(lines.len()) * line_height + ascent
-      lines.push(TextLine { line | baseline: baseline })
+      let moved = [g in line.glyphs | LineGlyph { g | cluster: g.cluster + base }]
+      lines.push(TextLine {
+        line | glyphs: moved,
+        baseline: baseline,
+        start: line.start + base
+      })
     }
+    base += bytes.len() + 1
   }
   var widest: f32 = 0.0
   for line in lines { widest = widest.max(line.width) }
@@ -386,12 +424,17 @@ let fill_lines = pure (
       placed.push(LineGlyph {
         glyph: g.glyph,
         x: pens[i] - pens[start] + g.x_offset,
-        y: g.y_offset
+        y: g.y_offset,
+        pen: pens[i] - pens[start],
+        advance: g.x_advance,
+        cluster: i64(g.cluster),
       })
     }
     lines.push(TextLine {
       glyphs: placed,
       width: visible_width(glyphs, bytes, pens, start, end),
+      advance: pens[end] - pens[start],
+      start: if start < count { i64(glyphs[start].cluster) } else { bytes.len() },
     })
     if end >= count { return lines }
     start = end

@@ -1,0 +1,194 @@
+// A form that works from the keyboard: two text fields, a checkbox, a slider and a button,
+// run by `ui.app` — the state is the program's, the controls raise its events, and the
+// focus, carets and selections are the framework's.
+//
+//     lyrac run examples/ui/form.lyra
+//     lyrac run examples/ui/form.lyra -- --script "Tab 'Ada' Tab 'ada@example.com' Tab Space Tab Right Right Tab Enter"
+//
+// **The second form plays the script instead of waiting for a user** (`ui.script` says how
+// one is written), then prints the state it left — headless with `SDL_VIDEODRIVER=dummy
+// SDL_RENDER_DRIVER=software`, and `--png FILE` also writes the last frame. Tab moves through
+// the controls, Space ticks the box, the arrows move the slider and Enter presses Submit.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.app.{ App, run }
+import ui.script.{ script_platform, parse_script }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ Style, Sheet, Rule, Theme, insets, light_theme }
+import ui.layout.{
+  Node,
+  FieldSpec,
+  SliderSpec,
+  MainStart,
+  CrossStretch,
+  column,
+  row,
+  text,
+  text_input,
+  checkbox,
+  slider,
+  button,
+  expanded,
+  themed,
+  layout,
+  loose,
+  paint,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 420.0
+const HEIGHT: f32 = 460.0
+
+/// What the form holds: the program's state, all of it.
+struct Form {
+  name: string = "",
+  email: string = "",
+  newsletter: bool = false,
+  volume: f32 = 5.0,
+  result: string = "",
+}
+
+/// What the form's controls say happened.
+data FormEvent = NameEdited(string) | EmailEdited(string) | NewsletterToggled | VolumeChanged(f32) | Submitted
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let opened = sdl3.open("Sign up", WIDTH, HEIGHT)
+  let window = match opened {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let theme = light_theme()
+  let shown = (form: Form) -> Node<FormEvent> => view(theme, form)
+  let app = App { view: shown, update: update, background: theme.colors.background }
+  var status: u8 = 0
+  if let Some(script) = args.value("--script") {
+    match parse_script(script) {
+      Ok(inputs) => {
+        var scripted = script_platform(inputs, Size { w: WIDTH, h: HEIGHT })
+        let last = run(app, Form {}, scripted, renderer, fonts)
+        report(last)
+        if let Some(path) = args.value("--png") {
+          if !save(
+            renderer,
+            fonts,
+            view(theme, last),
+            theme.colors.background,
+            path
+          ) { status = 1 }
+        }
+      },
+      Err(why) => {
+        println("the script: ${why}")
+        status = 1
+      },
+    }
+  } else {
+    let _ = run(app, Form {}, platform, renderer, fonts)
+  }
+  sdl3.close(platform, renderer)
+  fonts.close()
+  status
+}
+
+/// The form for `state`.
+let view = pure (theme: Theme, state: Form) -> Node<FormEvent> =>
+  themed(theme, sheet(theme), [
+    column([
+      text("Sign up").with_class("title"),
+      labelled("Name", text_input(FieldSpec { value: state.name, placeholder: "Ada Lovelace", on_edit: NameEdited })),
+      labelled("Email", text_input(FieldSpec { value: state.email, placeholder: "ada@example.com", on_edit: EmailEdited })),
+      checkbox("Send me the newsletter", state.newsletter, NewsletterToggled),
+      row([
+        text("Volume").with_class("label"),
+        expanded(slider(SliderSpec { value: state.volume, min: 0.0, max: 10.0, step: 1.0, on_change: VolumeChanged })),
+        text("${i64(state.volume.round())}").with_class("value"),
+      ]).with_style(Style { gap: Some(12.0) }),
+      row([button("Submit", Submitted)]),
+      text(state.result).with_class("result"),
+    ]).aligned(MainStart, CrossStretch).with_class("page"),
+  ])
+
+/// A field with its label above it.
+let labelled = pure (label: string, field: Node<FormEvent>) -> Node<FormEvent> =>
+  column([text(label).with_class("label"), field]).aligned(
+    MainStart,
+    CrossStretch
+  ).with_style(Style { gap: Some(4.0) })
+
+/// The next state for `event`: an edit keeps the field's new text, Submit checks the form.
+let update = pure (state: Form, event: FormEvent) -> Form => match event {
+  NameEdited(name) => Form { state | name: name },
+  EmailEdited(email) => Form { state | email: email },
+  NewsletterToggled => Form { state | newsletter: !state.newsletter },
+  VolumeChanged(volume) => Form { state | volume: volume },
+  Submitted => Form { state | result: verdict(state) },
+}
+
+/// What Submit says of the form.
+let verdict = pure (state: Form) -> string => {
+  if state.name.trim().len() == 0 { return "Please enter your name." }
+  if !state.email.contains("@") { return "That email address needs an @." }
+  let news = if state.newsletter { "with" } else { "without" }
+  "Thanks, ${state.name}: ${state.email}, ${news} the newsletter, volume ${i64(state.volume.round())}."
+}
+
+/// The screen's rules, in `theme`'s colours.
+let sheet = pure (theme: Theme) -> Sheet => Sheet { rules: [
+  Rule { selector: ".page", style: Style { padding: Some(insets(24.0)), gap: Some(16.0) } },
+  Rule { selector: "Text.title", style: Style { font_size: Some(24.0) } },
+  Rule { selector: ".label", style: Style { color: Some(theme.colors.muted), font_size: Some(13.0) } },
+  Rule { selector: ".value", style: Style { color: Some(theme.colors.muted) } },
+  Rule { selector: ".result", style: Style { color: Some(theme.colors.accent) } },
+] }
+
+/// The state the script left, a line a field.
+let report = (form: Form) -> void => {
+  println("name: ${form.name}")
+  println("email: ${form.email}")
+  println("newsletter: ${form.newsletter}")
+  println("volume: ${i64(form.volume.round())}")
+  println("result: ${form.result}")
+}
+
+/// `view` drawn without showing it, and written to `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  view: Node<FormEvent>,
+  background: Color,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let laid = layout(view, loose(Size { w: WIDTH, h: HEIGHT }), f)
+  let list = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, background, list) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

@@ -1,0 +1,700 @@
+module ui.interact
+//! Input: what the user does, turned into the program's events — and the state of the
+//! interface that is the framework's rather than the program's.
+//!
+//! ```
+//! var ui = ui_new()
+//! loop {
+//!   let laid = ui.frame(view(state), platform.window_size(), fonts)
+//!   for input in platform.next_events(-1) {
+//!     for event in ui.handle(laid, input, platform) { state = update(state, event) }
+//!   }
+//! }
+//! ```
+//!
+//! **Events are data.** A control names the event its use stands for, of the program's own type
+//! (`ui.layout`), and [Ui.handle] answers the events an input raised, in order; the program's
+//! `update` decides what they mean. A control does not change its own value: a checkbox says
+//! it was toggled, a field says what an edit leaves its text, and the next frame shows what the
+//! program kept.
+//!
+//! **What is the framework's** is held in [Ui] by each element's identity (`ui.layout`'s
+//! path from the root, keyed where a node has a key): which element has the focus, which is
+//! under the pointer and which is held down, a scroll's offset, and a field's caret, selection
+//! and undo. [Ui.frame] drops what belongs to an identity no longer in the tree.
+//!
+//! **The pointer's shape** follows it: an I-beam over a text field (and while a selection is
+//! dragged in one), the arrow elsewhere — said to the platform as the pointer moves.
+//!
+//! **Hit-testing** walks the laid-out tree to the deepest element under the pointer, through
+//! scrolled children (their offsets are in the tree) and never outside a clip; the element an
+//! input is for is the deepest control on that path.
+//!
+//! **The keyboard**: Tab and Shift-Tab move the focus through the controls in the tree's order
+//! (wrapping); Space and Enter press a focused button or checkbox; the arrows move a focused
+//! slider by its step, Home and End to its ends; and a focused text field edits — runes typed
+//! or composed ([TextTyped]), Left and Right (with Shift to select, and Alt — Control off a
+//! Mac — by word, Command to the ends), Home and End, Backspace and Delete (by word with Alt or
+//! Control), and the primary modifier's A (select all), C, X and V (the platform's clipboard)
+//! and Z (undo). A field's caret moves by rune, not yet by grapheme cluster (todo.md).
+
+import ui.backend.{
+  Platform,
+  InputEvent,
+  PointerMoved,
+  PointerDown,
+  PointerUp,
+  Scrolled,
+  KeyPressed,
+  TextTyped,
+  Primary,
+  Key,
+  Modifiers,
+  Enter,
+  Tab,
+  Backspace,
+  Delete,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Home,
+  End,
+  PageUp,
+  PageDown,
+  Character,
+  Cursor,
+  Arrow,
+  IBeam,
+}
+import ui.draw.{ Point, Rect, Size }
+import ui.text.{ Fonts, offset_at_x }
+import ui.layout.{
+  Node,
+  Laid,
+  Interaction,
+  WidgetState,
+  Edit,
+  SliderSpec,
+  Pressable,
+  Checkable,
+  Ranged,
+  Editable,
+  Scrolls,
+  Horizontal,
+  Vertical,
+  Prose,
+  interaction_new,
+  layout_with,
+  loose,
+  focusable,
+  byte_at,
+  SLIDER_THUMB,
+}
+import ui.style
+import std.collections.{ HashMap, hashmap_new }
+
+/// The framework's state between frames: the [Interaction] the layout reads, where the pointer
+/// was last, and the text field the platform was last told text input is for, and where.
+pub struct Ui {
+  state: Interaction,
+  pointer: Point = Point {},
+  typing_into: string = "",
+  typing_at: Rect = Rect {},
+}
+
+/// An element found in a laid-out tree, and where its top-left corner is in the window.
+pub struct Found<e> {
+  laid: Laid<e>,
+  origin: Point,
+}
+
+/// No focus, nothing hovered or held, no element's state.
+pub let ui_new = pure () -> Ui => Ui { state: interaction_new() }
+
+/// How far a scroll moves for a line of a wheel, in units.
+pub const SCROLL_LINE: f32 = 40.0
+
+impl Ui {
+  /// `view` laid out in a window `size` large, with this state — and the state of every
+  /// element no longer in it dropped, and the focus, hover or press on one cleared.
+  pub let frame<e> = (
+    self: mut,
+    view: Node<e>,
+    size: Size,
+    fonts: mut Fonts
+  ) -> Laid<e> => {
+    let laid = layout_with(view, loose(size), fonts, self.state)
+    var present: HashMap<string, bool> = hashmap_new()
+    note_ids(laid, present)
+    for id in self.state.widgets.keys() {
+      if !present.contains_key(id) { let _ = self.state.widgets.remove(id) }
+    }
+    if !present.contains_key(self.state.focus) { self.state.focus = "" }
+    if !present.contains_key(self.state.hover) { self.state.hover = "" }
+    if !present.contains_key(self.state.pressed) { self.state.pressed = "" }
+    // A field's text scrolled to keep its caret in view is remembered, so it stays put
+    // until the caret leaves the view again.
+    keep_field_scrolls(laid, self)
+    laid
+  }
+
+  /// The events `input` raises in `laid` — the frame the user is looking at — and the
+  /// framework's state moved on by it. `platform` is the clipboard's.
+  pub let handle<e, p> where p: Platform = (
+    self: mut,
+    laid: Laid<e>,
+    input: InputEvent,
+    platform: mut p
+  ) -> []e => match input {
+    PointerMoved(at) => {
+      platform.set_cursor(self.cursor_at(laid, at))
+      self.pointer_moved(laid, at)
+    },
+    PointerDown(Primary, at) => self.pointer_down(laid, at),
+    PointerUp(Primary, at) => self.pointer_up(laid, at),
+    Scrolled(across, down) => {
+      self.scrolled(laid, across, down)
+      []
+    },
+    KeyPressed(key, mods) => self.key_pressed(laid, key, mods, platform),
+    TextTyped(typed) => {
+      let Some(field) = self.focused_field(laid) else { return [] }
+      self.edit(field, (ed) => ed.insert(typed))
+    },
+    _ => [],
+  }
+
+  /// Tell `platform` where text is being typed: near the caret of the focused text field —
+  /// where an input method's window goes, and what a phone's keyboard keeps clear of — or
+  /// nowhere when no field has the focus. Said only when it changes.
+  pub let place_text_input<e, p> where p: Platform = (
+    self: mut,
+    laid: Laid<e>,
+    platform: mut p
+  ) -> void => {
+    if let Some(f) = find(laid, self.state.focus, Point {}) {
+      if let Some(look) = f.laid.field {
+        let at = Rect {
+          x: f.origin.x + f.laid.content_at.x + look.caret,
+          y: f.origin.y + f.laid.content_at.y,
+          w: 1.0,
+          h: look.line_height,
+        }
+        if self.typing_into != f.laid.id || self.typing_at != at {
+          platform.set_text_input(Some(at))
+          self.typing_into = f.laid.id
+          self.typing_at = at
+        }
+        return
+      }
+    }
+    if self.typing_into.len() > 0 {
+      let nowhere: Maybe<Rect> = None
+      platform.set_text_input(nowhere)
+      self.typing_into = ""
+    }
+  }
+
+  /// The pointer's shape at `at`: an I-beam over a text field, or while a selection is being
+  /// dragged in one, else the arrow.
+  let cursor_at<e> = pure (self, laid: Laid<e>, at: Point) -> Cursor => {
+    let held = find(laid, self.state.pressed, Point {})
+    let over = if held.is_some() { held } else { control_at(laid, at) }
+    match over {
+      Some(f) => if f.laid.field.is_some() { IBeam } else { Arrow },
+      None => Arrow,
+    }
+  }
+
+  /// The pointer moved to `at`: what is under it is hovered; a held slider follows it, and a
+  /// held field's selection reaches it.
+  let pointer_moved<e> = (self: mut, laid: Laid<e>, at: Point) -> []e => {
+    self.pointer = at
+    self.state.hover = control_at(laid, at).map((f) => f.laid.id) ?? ""
+    if self.state.pressed.len() == 0 { return [] }
+    let Some(held) = find(laid, self.state.pressed, Point {}) else { return [] }
+    match held.laid.kind {
+      Ranged(spec) => slide_to(held, spec, at),
+      Editable(_) => {
+        let caret = rune_at_x(held, at)
+        let state = self.widget(held.laid.id)
+        self.state.widgets.insert(held.laid.id, WidgetState { state | caret: caret })
+        []
+      },
+      _ => [],
+    }
+  }
+
+  /// The primary button went down at `at`: the control under it is held and takes the
+  /// focus (a click elsewhere takes the focus from whatever had it); a slider jumps to the
+  /// pointer, and a field's caret goes where it was clicked.
+  let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point) -> []e => {
+    self.pointer = at
+    let Some(target) = control_at(laid, at) else {
+      self.state.focus = ""
+      self.state.pressed = ""
+      return []
+    }
+    self.state.pressed = target.laid.id
+    self.state.focus = target.laid.id
+    match target.laid.kind {
+      Ranged(spec) => slide_to(target, spec, at),
+      Editable(_) => {
+        let caret = rune_at_x(target, at)
+        let state = self.widget(target.laid.id)
+        self.state.widgets.insert(
+          target.laid.id,
+          WidgetState { state | caret: caret, anchor: caret }
+        )
+        []
+      },
+      _ => [],
+    }
+  }
+
+  /// The primary button came up at `at`: a button or checkbox held and still under the
+  /// pointer is pressed.
+  let pointer_up<e> = (self: mut, laid: Laid<e>, at: Point) -> []e => {
+    self.pointer = at
+    let held = self.state.pressed
+    self.state.pressed = ""
+    let Some(target) = control_at(laid, at) else { return [] }
+    if target.laid.id != held { return [] }
+    activated(target.laid)
+  }
+
+  /// A wheel or trackpad scrolled by `across` and `down` lines: the innermost scroll under the
+  /// pointer moves along its axis, never past its content's ends.
+  let scrolled<e> = (self: mut, laid: Laid<e>, across: f32, down: f32) -> void => {
+    let path = hit(laid, self.pointer)
+    for i in (path.len() - 1)..>=0 {
+      let f = path[i]
+      let Scrolls(axis, offset) = f.laid.kind else { continue }
+      if f.laid.children.len() == 0 { return }
+      let content = f.laid.children[0]
+      let pad = f.laid.style.padding
+      let (by, room) = match axis {
+        Horizontal => (across, content.laid.size.w - (f.laid.size.w - pad.horizontal())),
+        Vertical => (down, content.laid.size.h - (f.laid.size.h - pad.vertical())),
+      }
+      let state = self.widget(f.laid.id)
+      let now = state.scroll ?? offset
+      let next = (now + by * SCROLL_LINE).clamp(0.0, room.max(0.0))
+      self.state.widgets.insert(f.laid.id, WidgetState { state | scroll: Some(next) })
+      return
+    }
+  }
+
+  /// A key went down: Tab moves the focus, and the rest is for the focused control.
+  let key_pressed<e, p> where p: Platform = (
+    self: mut,
+    laid: Laid<e>,
+    key: Key,
+    mods: Modifiers,
+    platform: mut p
+  ) -> []e => {
+    if key == Tab {
+      self.move_focus(laid, mods.shift)
+      return []
+    }
+    let Some(focused) = find(laid, self.state.focus, Point {}) else { return [] }
+    match focused.laid.kind {
+      Pressable(_) =>
+        if key == Enter || key == Character(' ') { activated(focused.laid) } else { [] },
+      Checkable(_, _) =>
+        if key == Enter || key == Character(' ') { activated(focused.laid) } else { [] },
+      Ranged(spec) => step_slider(spec, key),
+      Editable(_) => self.field_key(focused, key, mods, platform),
+      _ => [],
+    }
+  }
+
+  /// The focus to the next control in the tree's order, or the previous with `backwards`,
+  /// wrapping at the ends. A text field it reaches has its text selected.
+  let move_focus<e> = (self: mut, laid: Laid<e>, backwards: bool) -> void => {
+    var order: []string = []
+    focus_order(laid, order)
+    if order.len() == 0 { return }
+    var at = -1
+    for i, id in order {
+      if id == self.state.focus { at = i }
+    }
+    let next = if at < 0 {
+      if backwards { order.len() - 1 } else { 0 }
+    } else if backwards {
+      (at - 1 + order.len()) % order.len()
+    } else {
+      (at + 1) % order.len()
+    }
+    self.state.focus = order[next]
+    if let Some(found) = find(laid, order[next], Point {}) {
+      if let Editable(spec) = found.laid.kind {
+        let state = self.widget(found.laid.id)
+        let end = spec.value.len()
+        self.state.widgets.insert(
+          found.laid.id,
+          WidgetState { state | caret: end, anchor: 0 }
+        )
+      }
+    }
+  }
+
+  /// A key for the focused text field.
+  let field_key<e, p> where p: Platform = (
+    self: mut,
+    field: Found<e>,
+    key: Key,
+    mods: Modifiers,
+    platform: mut p
+  ) -> []e => {
+    let by_word = mods.alt || (mods.control && !mods.command)
+    let shift = mods.shift
+    if mods.primary {
+      match key {
+        Character('a') => return self.edit(field, (ed) => ed.select_all()),
+        Character('c') => {
+          let ed = self.editing(field)
+          if ed.selected().len() > 0 { platform.set_clipboard(ed.selected()) }
+          return []
+        },
+        Character('x') => {
+          let ed = self.editing(field)
+          if ed.selected().len() == 0 { return [] }
+          platform.set_clipboard(ed.selected())
+          return self.edit(field, (e2) => e2.insert(""))
+        },
+        Character('v') => {
+          let pasted = platform.clipboard().replace("\n", " ")
+          return self.edit(field, (ed) => ed.insert(pasted))
+        },
+        Character('z') => return self.undo(field),
+        _ => {},
+      }
+    }
+    match key {
+      ArrowLeft => self.edit(field, (ed) => {
+        let to = if mods.command {
+          0
+        } else if by_word {
+          ed.word_before()
+        } else if shift {
+          ed.caret - 1
+        } else {
+          ed.left()
+        }
+        ed.move_to(to, shift)
+      }),
+      ArrowRight => self.edit(field, (ed) => {
+        let to = if mods.command {
+          ed.runes.len()
+        } else if by_word {
+          ed.word_after()
+        } else if shift {
+          ed.caret + 1
+        } else {
+          ed.right()
+        }
+        ed.move_to(to, shift)
+      }),
+      Home => self.edit(field, (ed) => ed.move_to(0, shift)),
+      End => self.edit(field, (ed) => ed.move_to(ed.runes.len(), shift)),
+      Backspace => self.edit(field, (ed) => ed.erase_back(by_word)),
+      Delete => self.edit(field, (ed) => ed.erase_forward(by_word)),
+      _ => [],
+    }
+  }
+
+  /// `change` applied to the focused field's text, caret and selection: the caret kept, and
+  /// if the text changed, the edit remembered for undo and the field's event raised with it.
+  let edit<e> = (self: mut, field: Found<e>, change: (Editing) -> Editing) -> []e => {
+    let Editable(spec) = field.laid.kind else { return [] }
+    let before = self.editing(field)
+    let after = change(before)
+    let state = self.widget(field.laid.id)
+    let result = after.text()
+    if result == spec.value {
+      self.state.widgets.insert(
+        field.laid.id,
+        WidgetState { state | caret: after.caret, anchor: after.anchor }
+      )
+      return []
+    }
+    let history = [...state.undo, Edit { value: spec.value, caret: before.caret }]
+    self.state.widgets.insert(field.laid.id, WidgetState {
+      state |
+      caret: after.caret,
+      anchor: after.anchor,
+      undo: history,
+    })
+    [(spec.on_edit)(result)]
+  }
+
+  /// The focused field's last edit undone: its text as it was, the caret where it was.
+  let undo<e> = (self: mut, field: Found<e>) -> []e => {
+    let Editable(spec) = field.laid.kind else { return [] }
+    let state = self.widget(field.laid.id)
+    if state.undo.len() == 0 { return [] }
+    let last = state.undo[state.undo.len() - 1]
+    self.state.widgets.insert(field.laid.id, WidgetState {
+      state |
+      caret: last.caret,
+      anchor: last.caret,
+      undo: state.undo.slice(0, state.undo.len() - 1),
+    })
+    [(spec.on_edit)(last.value)]
+  }
+
+  /// The focused field, if a field has the focus.
+  let focused_field<e> = pure (self, laid: Laid<e>) -> Maybe<Found<e>> => {
+    let Some(f) = find(laid, self.state.focus, Point {}) else { return None }
+    if f.laid.field.is_some() { Some(f) } else { None }
+  }
+
+  /// A field's text, caret and selection as an [Editing], the caret kept inside the text.
+  let editing<e> = pure (self, field: Found<e>) -> Editing => {
+    let Editable(spec) = field.laid.kind else { return Editing { runes: [] } }
+    let state = self.widget(field.laid.id)
+    let runes = spec.value.to_runes()
+    Editing {
+      runes: runes,
+      caret: state.caret.clamp(0, runes.len()),
+      anchor: state.anchor.clamp(0, runes.len()),
+    }
+  }
+
+  /// What the framework holds for the element identified as `id`, or nothing yet.
+  let widget = pure (self, id: string) -> WidgetState =>
+    self.state.widgets.get(id) ?? WidgetState {}
+}
+
+/// A text field's text being edited: its runes, the caret and the other end of the selection
+/// (`anchor`, the caret itself when nothing is selected), both before rune indices.
+pub struct Editing {
+  runes: []rune,
+  caret: i64 = 0,
+  anchor: i64 = 0,
+}
+
+impl Editing {
+  /// The text.
+  pub let text = pure (self) -> string => self.runes.join()
+
+  /// The selected text, `""` for none.
+  pub let selected = pure (self) -> string =>
+    self.runes.slice(self.caret.min(self.anchor), self.caret.max(self.anchor)).join()
+
+  /// `typed` in place of the selection (or at the caret), the caret after it.
+  pub let insert = pure (self, typed: string) -> Editing => {
+    let from = self.caret.min(self.anchor)
+    let to = self.caret.max(self.anchor)
+    let added = typed.to_runes()
+    let runes = [
+      ...self.runes.slice(0, from),
+      ...added,
+      ...self.runes.slice(to, self.runes.len())
+    ]
+    Editing { runes: runes, caret: from + added.len(), anchor: from + added.len() }
+  }
+
+  /// Everything selected, the caret at the end.
+  pub let select_all = pure (self) -> Editing =>
+    Editing { self | caret: self.runes.len(), anchor: 0 }
+
+  /// The caret moved to `to`; the selection extended to it with `extend`, else gone.
+  pub let move_to = pure (self, to: i64, extend: bool) -> Editing => {
+    let at = to.clamp(0, self.runes.len())
+    Editing { self | caret: at, anchor: if extend { self.anchor } else { at } }
+  }
+
+  /// Where Left takes the caret: to the selection's start if there is one, else a rune back.
+  /// (Shift-Left moves the caret itself a rune, extending the selection.)
+  pub let left = pure (self) -> i64 =>
+    if self.caret != self.anchor { self.caret.min(self.anchor) } else { (self.caret - 1).max(0) }
+
+  /// Where Right takes the caret: to the selection's end, else a rune on.
+  pub let right = pure (self) -> i64 =>
+    if self.caret != self.anchor {
+      self.caret.max(self.anchor)
+    } else {
+      (self.caret + 1).min(self.runes.len())
+    }
+
+  /// The start of the word before the caret: back over spaces, then over the word.
+  pub let word_before = pure (self) -> i64 => {
+    var at = self.caret
+    while at > 0 && is_space(self.runes[at - 1]) { at -= 1 }
+    while at > 0 && !is_space(self.runes[at - 1]) { at -= 1 }
+    at
+  }
+
+  /// The end of the word after the caret: on over spaces, then over the word.
+  pub let word_after = pure (self) -> i64 => {
+    var at = self.caret
+    while at < self.runes.len() && is_space(self.runes[at]) { at += 1 }
+    while at < self.runes.len() && !is_space(self.runes[at]) { at += 1 }
+    at
+  }
+
+  /// Backspace: the selection deleted, else the rune — or with `by_word` the word — before the
+  /// caret.
+  pub let erase_back = pure (self, by_word: bool) -> Editing => {
+    if self.caret != self.anchor { return self.insert("") }
+    let from = if by_word { self.word_before() } else { (self.caret - 1).max(0) }
+    Editing { self | anchor: from }.insert("")
+  }
+
+  /// Delete: the selection deleted, else the rune — or the word — after the caret.
+  pub let erase_forward = pure (self, by_word: bool) -> Editing => {
+    if self.caret != self.anchor { return self.insert("") }
+    let to = if by_word { self.word_after() } else { (self.caret + 1).min(self.runes.len()) }
+    Editing { self | anchor: to }.insert("")
+  }
+}
+
+/// Whether `c` separates words: a space or a tab.
+let is_space = pure (c: rune) -> bool => c == ' ' || c == '\t'
+
+// ── Finding elements ─────────────────────────────────────────────────────────
+
+/// The elements under `at`, outermost first: each one whose box holds it, through children
+/// placed at their offsets, but nothing outside an element that clips.
+pub let hit<e> = pure (laid: Laid<e>, at: Point) -> []Found<e> => {
+  var path: []Found<e> = []
+  hit_into(laid, Point {}, at, path)
+  path
+}
+
+let hit_into<e> = (
+  laid: Laid<e>,
+  origin: Point,
+  at: Point,
+  path: mut []Found<e>
+) -> void => {
+  let inside = Rect {
+    x: origin.x,
+    y: origin.y,
+    w: laid.size.w,
+    h: laid.size.h
+  }.contains(at)
+  if !inside && laid.clips { return }
+  if inside { path.push(Found { laid: laid, origin: origin }) }
+  // The last child drawn is the one on top, so the deepest path through the latest child wins.
+  for i in (laid.children.len() - 1)..>=0 {
+    let child = laid.children[i]
+    let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    let before = path.len()
+    hit_into(child.laid, corner, at, path)
+    if path.len() > before { return }
+  }
+}
+
+/// The control the pointer at `at` is over: the deepest on the path to it.
+pub let control_at<e> = pure (laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
+  let path = hit(laid, at)
+  for i in (path.len() - 1)..>=0 {
+    if focusable(path[i].laid.kind) { return Some(path[i]) }
+  }
+  None
+}
+
+/// The element identified as `id` in `laid` (whose top-left corner is at `origin`), and
+/// where it is.
+pub let find<e> = pure (laid: Laid<e>, id: string, origin: Point) -> Maybe<Found<e>> => {
+  if id.len() == 0 { return None }
+  if laid.id == id { return Some(Found { laid: laid, origin: origin }) }
+  // An identity names its ancestors, so only the child it continues is searched.
+  if !id.starts_with(laid.id) { return None }
+  for child in laid.children {
+    let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    if let Some(found) = find(child.laid, id, corner) { return Some(found) }
+  }
+  None
+}
+
+/// The identities of the controls in `laid`, in the order Tab visits them: the tree's.
+pub let focus_order<e> = (laid: Laid<e>, order: mut []string) -> void => {
+  if focusable(laid.kind) { order.push(laid.id) }
+  for child in laid.children { focus_order(child.laid, order) }
+}
+
+/// Every identity in `laid`.
+let note_ids<e> = (laid: Laid<e>, present: mut HashMap<string, bool>) -> void => {
+  present.insert(laid.id, true)
+  for child in laid.children { note_ids(child.laid, present) }
+}
+
+/// Each text field's scroll in `laid` remembered in `ui`.
+let keep_field_scrolls<e> = (laid: Laid<e>, ui: mut Ui) -> void => {
+  if let Some(look) = laid.field {
+    let state = ui.state.widgets.get(laid.id) ?? WidgetState {}
+    if (state.field_scroll - look.scroll).abs() > 0.001 {
+      ui.state.widgets.insert(laid.id, WidgetState { state | field_scroll: look.scroll })
+    }
+  }
+  for child in laid.children { keep_field_scrolls(child.laid, ui) }
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+
+/// The event a button or checkbox raises when it is pressed.
+let activated<e> = pure (laid: Laid<e>) -> []e => match laid.kind {
+  Pressable(event) => [event],
+  Checkable(_, event) => [event],
+  _ => [],
+}
+
+/// A slider's value for the pointer at `at`, on its step, and the event for it if it moved.
+let slide_to<e> = (found: Found<e>, spec: SliderSpec<e>, at: Point) -> []e => {
+  let pad = found.laid.style.padding
+  let travel = found.laid.size.w - pad.horizontal() - SLIDER_THUMB
+  let from = found.origin.x + pad.left + SLIDER_THUMB / 2.0
+  let fraction: f32 = if travel <= 0.0 { 0.0 } else { ((at.x - from) / travel).clamp(
+    0.0,
+    1.0
+  ) }
+  changed(spec, spec.min + fraction * (spec.max - spec.min))
+}
+
+/// A slider moved from the keyboard: the arrows by a step (a hundredth of its range when it
+/// has none), Page Up and Down by ten, Home and End to its ends.
+let step_slider<e> = (spec: SliderSpec<e>, key: Key) -> []e => {
+  let step = if spec.step > 0.0 { spec.step } else { (spec.max - spec.min) / 100.0 }
+  match key {
+    ArrowLeft => changed(spec, spec.value - step),
+    ArrowDown => changed(spec, spec.value - step),
+    ArrowRight => changed(spec, spec.value + step),
+    ArrowUp => changed(spec, spec.value + step),
+    PageDown => changed(spec, spec.value - step * 10.0),
+    PageUp => changed(spec, spec.value + step * 10.0),
+    Home => changed(spec, spec.min),
+    End => changed(spec, spec.max),
+    _ => [],
+  }
+}
+
+/// `value` within the slider's range and on its step, and the event for it — none if it is
+/// the value the slider has.
+let changed<e> = (spec: SliderSpec<e>, value: f32) -> []e => {
+  var v = value.clamp(spec.min, spec.max)
+  if spec.step > 0.0 {
+    v = (spec.min + f32(((v - spec.min) / spec.step).round()) * spec.step).clamp(
+      spec.min,
+      spec.max
+    )
+  }
+  if (v - spec.value).abs() < 0.000001 { [] } else { [(spec.on_change)(v)] }
+}
+
+/// The rune index a click at `at` puts a field's caret before.
+let rune_at_x<e> = pure (found: Found<e>, at: Point) -> i64 => {
+  let Editable(spec) = found.laid.kind else { return 0 }
+  let Prose(block) = found.laid.content else { return 0 }
+  if spec.value.len() == 0 { return 0 }
+  let x = at.x - found.origin.x - found.laid.content_at.x
+  let offset = offset_at_x(block, x, spec.value.byte_len())
+  // The byte offset back to a rune index: the runes before it.
+  var index = 0
+  while index < spec.value.len() && byte_at(spec.value, index) < offset { index += 1 }
+  index
+}

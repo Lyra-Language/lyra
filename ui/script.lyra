@@ -1,0 +1,200 @@
+module ui.script
+//! Input written down: a [ScriptPlatform] that plays a list of inputs to a program with no
+//! window and no user, and [parse_script], which reads that list from a line of text — how a
+//! test drives an interface, and how an example shows it working without anyone at the keys.
+//!
+//! ```
+//! let Ok(inputs) = parse_script("Tab 'Ada' Tab Space Shift+Tab Primary+a click:40,120") else { … }
+//! var platform = script_platform(inputs, Size { w: 400.0, h: 300.0 })
+//! let final = run(app, state, platform, renderer, fonts)
+//! ```
+//!
+//! **A script** is tokens a space apart:
+//!
+//! - `'text'` — text typed, as an input method would hand it over (a [TextTyped]); a quote
+//!   inside is written `\'`.
+//! - a key, held with any of `Shift+`, `Alt+`, `Ctrl+`, `Cmd+` and `Primary+` (Command on a
+//!   Mac, Control elsewhere — the shortcut modifier): `Tab`, `Enter`, `Space`, `Escape`,
+//!   `Backspace`, `Delete`, `Left`, `Right`, `Up`, `Down`, `Home`, `End`, `PageUp`,
+//!   `PageDown`, or one character (`a`, `/`), which is its key.
+//! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
+//!   pointer, in logical units; `scroll:N` scrolls down `N` lines (up for a negative `N`).
+//!
+//! Every input is one pass of a program's loop: the platform answers one at a time, then
+//! [CloseRequested] once they are spent.
+
+import ui.backend.{
+  Platform,
+  InputEvent,
+  CloseRequested,
+  PointerMoved,
+  PointerDown,
+  PointerUp,
+  Scrolled,
+  KeyPressed,
+  TextTyped,
+  Primary,
+  Key,
+  Modifiers,
+  Enter,
+  Escape,
+  Tab,
+  Backspace,
+  Delete,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Home,
+  End,
+  PageUp,
+  PageDown,
+  Character,
+  Cursor,
+  Arrow,
+}
+import ui.draw.{ Point, Size, Rect }
+
+/// A platform with no window: its inputs come from a list, its size and scale are fixed, and
+/// its clipboard, its text-input field and the pointer's shape are values a test can read.
+pub struct ScriptPlatform {
+  inputs: []InputEvent,
+  next: i64 = 0,
+  size: Size,
+  units: f32 = 1.0,
+  clip: string = "",
+  typing: Maybe<Rect> = None,
+  shape: Cursor = Arrow,
+}
+
+/// A platform playing `inputs`, its window `size` large.
+pub let script_platform = pure (inputs: []InputEvent, size: Size) -> ScriptPlatform =>
+  ScriptPlatform { inputs: inputs, size: size }
+
+impl Platform for ScriptPlatform {
+  next_events = (self, wait_ms) => {
+    if self.next >= self.inputs.len() { return [CloseRequested] }
+    let input = self.inputs[self.next]
+    self.next += 1
+    [input]
+  }
+  window_size = pure (self) => self.size
+  scale = pure (self) => self.units
+  set_text_input = (self, field) => { self.typing = field }
+  clipboard = pure (self) => self.clip
+  set_clipboard = (self, text) => { self.clip = text }
+  set_cursor = (self, cursor) => { self.shape = cursor }
+}
+
+/// The inputs `script` writes down, or what is wrong with it.
+pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => {
+  var inputs: []InputEvent = []
+  for token in tokens(script) {
+    if token.starts_with("'") {
+      inputs.push(TextTyped(token.slice(1, token.len() - 1).replace("\\'", "'")))
+      continue
+    }
+    if let Some((verb, place)) = pointer_token(token) {
+      let Some(at) = point(place) else { return Err("not a point: ${token}") }
+      match verb {
+        "move" => inputs.push(PointerMoved(at)),
+        "down" => inputs.push(PointerDown(Primary, at)),
+        "up" => inputs.push(PointerUp(Primary, at)),
+        "click" => {
+          inputs.push(PointerMoved(at))
+          inputs.push(PointerDown(Primary, at))
+          inputs.push(PointerUp(Primary, at))
+        },
+        _ => return Err("not a pointer input: ${token}"),
+      }
+      continue
+    }
+    if let Some(lines) = token.strip_prefix("scroll:") {
+      let Some(n) = lines.parse_i64() else { return Err("not a number of lines: ${token}") }
+      inputs.push(Scrolled(0.0, f32(n)))
+      continue
+    }
+    let parts = token.split("+")
+    var mods = Modifiers {}
+    for i in 0..<(parts.len() - 1) {
+      match parts[i] {
+        "Shift" => { mods = Modifiers { mods | shift: true } },
+        "Alt" => { mods = Modifiers { mods | alt: true } },
+        "Ctrl" => { mods = Modifiers { mods | control: true } },
+        "Cmd" => { mods = Modifiers { mods | command: true } },
+        "Primary" => { mods = Modifiers { mods | primary: true } },
+        _ => return Err("not a modifier: ${parts[i]} in ${token}"),
+      }
+    }
+    let Some(key) = key_named(parts[parts.len() - 1]) else { return Err("not a key: ${token}") }
+    inputs.push(KeyPressed(key, mods))
+  }
+  Ok(inputs)
+}
+
+/// `script` cut into tokens at spaces, a quoted run of text being one token however many
+/// spaces it holds.
+let tokens = pure (script: string) -> []string => {
+  var out: []string = []
+  var current: []rune = []
+  var quoted = false
+  var escaped = false
+  for c in script {
+    if quoted {
+      current.push(c)
+      if escaped {
+        escaped = false
+      } else if c == '\\' {
+        escaped = true
+      } else if c == '\'' {
+        quoted = false
+      }
+      continue
+    }
+    if c == ' ' {
+      if current.len() > 0 { out.push(current.join()) }
+      current = []
+      continue
+    }
+    if c == '\'' && current.len() == 0 { quoted = true }
+    current.push(c)
+  }
+  if current.len() > 0 { out.push(current.join()) }
+  out
+}
+
+/// A pointer token's verb and place: `click:40,120` is `("click", "40,120")`.
+let pointer_token = pure (token: string) -> Maybe<(string, string)> => {
+  for verb in ["move", "down", "up", "click"] {
+    if let Some(place) = token.strip_prefix("${verb}:") { return Some((verb, place)) }
+  }
+  None
+}
+
+/// `X,Y` as a point.
+let point = pure (place: string) -> Maybe<Point> => {
+  let parts = place.split(",")
+  if parts.len() != 2 { return None }
+  let Some(x) = parts[0].parse_i64() else { return None }
+  let Some(y) = parts[1].parse_i64() else { return None }
+  Some(Point { x: f32(x), y: f32(y) })
+}
+
+/// The key a script names.
+let key_named = pure (name: string) -> Maybe<Key> => match name {
+  "Tab" => Some(Tab),
+  "Enter" => Some(Enter),
+  "Space" => Some(Character(' ')),
+  "Escape" => Some(Escape),
+  "Backspace" => Some(Backspace),
+  "Delete" => Some(Delete),
+  "Left" => Some(ArrowLeft),
+  "Right" => Some(ArrowRight),
+  "Up" => Some(ArrowUp),
+  "Down" => Some(ArrowDown),
+  "Home" => Some(Home),
+  "End" => Some(End),
+  "PageUp" => Some(PageUp),
+  "PageDown" => Some(PageDown),
+  _ => if name.len() == 1 { Some(Character(name[0])) } else { None },
+}

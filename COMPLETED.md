@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`, phase 3: interaction, and five compiler fixes generic nodes needed
+
+The GUI's third phase, per its design document; gate `examples/ui/form.lyra`, a form that
+works from the keyboard alone, played by its own `--script` in `TestRun_UiFormFromTheKeyboard`.
+
+- **`Node<e>`**: a control names an event of the program's type, and `ui.interact` answers
+  the events an input raised; `ui.app`'s `update` is pure and makes the next state. Commands
+  and subscriptions (phase 4) will grow `App`, which is why the loop's program is a struct.
+- **Identity is the path from the root**, a `.keyed` key standing for an index — the design's
+  choice, and React's — and `Ui` keeps what is the framework's by it, dropping an entry the
+  frame its identity leaves. Stored in a `HashMap` the layout reads (`Interaction`): state
+  classes, scroll offsets and a field's caret are laid out, not patched on afterwards.
+- **A control's state is a class** (`hover`, `pressed`, `focus`) rather than a pseudo-
+  selector: the cascade needed nothing new, and `Button.hover` beats `Button` by the
+  specificity it already had. Pseudo-classes stay an open question (todo.md).
+- **The text field is drawn and edited here** (desktop): runes, words, Home/End, selection,
+  the platform's clipboard, undo, its text scrolled to keep the caret in view, and the input
+  method placed at the caret through `Platform.set_text_input`. A phone's own fields have
+  their seam (`NativeFields`, `FieldEdited`) and no implementation yet.
+- **`ui.script` plays input with no window**, one input a pass of the loop, so a test drives
+  the same loop a user does and reads the state it left.
+- **The compiler, for `Node<e>`** — each found by writing it, each with its test:
+  - **No generic struct could be record-updated** (`Box { b | tag: t }` on a `Box<e>`): the
+    base was compared with the bare declaration. Its instantiation is the literal's now.
+  - **A generic struct's `[]` default had one type for every literal** — the default is one
+    node — so a generic function's leaf lowered with no element type, and two
+    instantiations collided. An empty default array is built from the literal's field type.
+  - **A method whose result is its receiver passes its context to the receiver**: the one
+    language change, chosen over a positional class argument (LANGUAGE.md). Without it
+    `text("Title").with_class("title")` could not solve `text`'s return-only `e`.
+  - **A generic call's solve no longer gives up early** in three places: a parameter that
+    mentions none of the call's variables (`Some(1.0)` for a `Maybe<f32>` was a `Maybe<f64>`
+    compared by equality, and the error blamed `e`); a parameter left to its default (whose
+    value, typed in the declaration's variables, clashed with the context); and an empty
+    `[]`, which says nothing whatever its parameter.
+- **Found and left** (todo.md): a nullary constructor beside a field mentioning its variable
+  is E073; a generic call in an array beside typed siblings has no context; `Node<void>`
+  lowers a void field as `{ i1, void }`; lyrafmt is not idempotent on a long struct literal
+  holding a lambda.
+
 ### 10/21/26 — `ui/`, phase 2: text, a constraints layout and the cascade
 
 The GUI's second phase, per its design document; gate `examples/ui/settings.lyra`, a static

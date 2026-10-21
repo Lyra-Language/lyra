@@ -2,16 +2,24 @@ module ui.layout
 //! An interface as a tree of [Node]s, laid out by constraints and painted as a display list.
 //!
 //! ```
-//! import ui.layout.{ column, row, text, expanded, layout, paint, loose }
+//! import ui.layout.{ Node, column, row, text, button, expanded, layout, paint, loose }
 //!
-//! let view = column([
+//! data Msg = Save
+//!
+//! let view = pure (volume: i64) -> Node<Msg> => column([
 //!   text("Settings").with_class("title"),
-//!   row([text("Volume"), expanded(text("80%"))]),
+//!   row([text("Volume"), expanded(text("${volume}%"))]),
+//!   button("Save", Save),
 //! ]).with_style(Style { padding: Some(insets(16.0)), gap: Some(8.0) })
-//!
-//! let laid = layout(view, loose(window.window_size()), fonts)
-//! renderer.draw(BACKGROUND, paint(laid, ORIGIN, platform.scale(), fonts, atlas, renderer))
 //! ```
+//!
+//! **A node is generic in the program's event type** `e`: a control names the event its use
+//! stands for (`button("Save", Save)`, `checkbox(…, ToggleLoud)`, a slider's or a field's
+//! `(value) -> e`), and `ui.interact` answers those events — the program decides what they do.
+//! A tree that raises none is a `Node<NoEvent>`. **Write the event type on the view** (its
+//! return type, or a binding's): a leaf such as `text("…")` raises none, so only the context
+//! says which `e` it is — and it reaches through a chain of its builder methods
+//! (`text("Title").with_class("title")`), each of which returns its receiver's type.
 //!
 //! **Layout is Flutter's protocol**: a parent hands each child [Constraints] — a least and a
 //! greatest width and height — the child answers the size it chose within them, and the
@@ -22,14 +30,24 @@ module ui.layout
 //!
 //! **Elements**: [row] and [column] (with a `gap`, and main- and cross-axis alignment),
 //! [expanded] (a share of a row's or column's free space), [stack] and [positioned], [padding],
-//! [align], [sized], [scroll] (at an offset the program holds, for now), [text], [image],
-//! [themed] (a theme and a global sheet for a subtree) and [component] (a scoped sheet).
-//! A wrapper hands one child its own constraints, and lays several out as a column does.
+//! [align], [sized], [scroll], [text], [image], [themed] (a theme and a global sheet for a
+//! subtree) and [component] (a scoped sheet); and the controls [button], [checkbox],
+//! [slider] and [text_input]. A wrapper hands one child its own constraints, and lays several
+//! out as a column does.
 //!
 //! **Every element can be styled** (`ui.style`): its tag (`Row`, `Text`, a component's own),
 //! classes and inline [Style] go through the cascade, and any element may have a background,
 //! a border, rounded corners and padding. A row's or column's `gap` is a style too, so a
-//! theme can set it.
+//! theme can set it. **A control's state is a class** the framework adds while it holds:
+//! `hover`, `pressed`, `focus` — so `Button.hover` is a rule like any other.
+//!
+//! **Identity** is a node's path from the root ([Laid.id]): each step its index among its
+//! siblings, or its [Node.keyed] key where it has one — so a keyed item keeps its identity,
+//! and the state `ui.interact` holds for it (focus, a field's caret, a scroll's offset), when
+//! items are inserted before it.
+//!
+//! **Every element has a role and a label** ([Role], [Laid.label]) for assistive technology:
+//! a control's label is its visible text unless [Node.labelled] says otherwise.
 //!
 //! **Unbounded** is [UNBOUNDED], a large number rather than an infinity, so arithmetic on it
 //! stays finite: a row's children are measured with an unbounded width, a scroll's child with
@@ -39,6 +57,7 @@ import ui.draw.{
   Point,
   Size,
   Rect,
+  Color,
   TextureId,
   DrawOp,
   Fill,
@@ -49,7 +68,7 @@ import ui.draw.{
   radius,
 }
 import ui.backend.{ Renderer }
-import ui.text.{ Fonts, TextBlock, GlyphAtlas }
+import ui.text.{ Fonts, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,
   Sheet,
@@ -61,23 +80,28 @@ import ui.style.{
   light_theme,
   faded,
 }
+import std.collections.{ HashMap, hashmap_new }
 
 // ── The tree ─────────────────────────────────────────────────────────────────
 
 /// One element: what kind it is, how it is named for the cascade (its `tag`, `class`es and
-/// the `part` of its component it is), its inline style, and its children.
-pub struct Node {
-  kind: Kind,
+/// the `part` of its component it is), its inline style, its children, the `key` standing for
+/// its index in its identity, and the `label` assistive technology reads for it (`""` for its
+/// visible text).
+pub struct Node<e> {
+  kind: Kind<e>,
   tag: string,
   class: string = "",
   part: string = "",
   style: Style = Style {},
-  children: []Node = [],
+  children: []Node<e> = [],
+  key: string = "",
+  label: string = "",
 }
 
-/// What an element does with its children and its space. Built by the functions below
-/// ([row], [text], …), which name them.
-pub data Kind =
+/// What an element does with its children, its space and its input. Built by the functions
+/// below ([row], [text], [button], …), which name them.
+pub data Kind<e> =
   /// A row or column: its children along an axis.
   Flow(Axis, MainAlign, CrossAlign)
   /// A share of a [Flow]'s free space, in proportion to this factor.
@@ -92,7 +116,8 @@ pub data Kind =
   | Place(Alignment)
   /// A width and a height, each unset to take the children's.
   | Measured(Maybe<f32>, Maybe<f32>)
-  /// Its children moved by this offset along the axis and clipped to its box.
+  /// Its children moved along the axis — by this offset until the user scrolls it — and
+  /// clipped to its box.
   | Scrolls(Axis, f32)
   /// A paragraph of text.
   | Words(string)
@@ -102,6 +127,48 @@ pub data Kind =
   | Theming(Theme, Sheet)
   /// A component: its tag is its name, and the sheet is scoped to it.
   | Scope(Sheet)
+  /// A button: this event when it is pressed.
+  | Pressable(e)
+  /// A checkbox, ticked or not: this event when it is toggled.
+  | Checkable(bool, e)
+  /// A slider.
+  | Ranged(SliderSpec<e>)
+  /// A one-line text field.
+  | Editable(FieldSpec<e>)
+
+/// A slider's value between `min` and `max`, moved in steps of `step` (`0.0` for none) from
+/// the keyboard, and the event for a new value.
+pub struct SliderSpec<e> {
+  value: f32,
+  min: f32 = 0.0,
+  max: f32 = 1.0,
+  step: f32 = 0.0,
+  on_change: (f32) -> e,
+}
+
+/// A text field's value — the program's, set from its state each frame — the text shown while
+/// it is empty, and the event for an edit, carrying the value as the edit leaves it.
+pub struct FieldSpec<e> {
+  value: string,
+  placeholder: string = "",
+  on_edit: (string) -> e,
+}
+
+/// The event type of a tree that raises none: `Node<NoEvent>`. (Not `Node<void>`, which does
+/// not compile yet — todo.md.)
+pub data NoEvent = NoEvent
+
+/// What an element is, to assistive technology: AccessKit's roles, the ones `ui` has.
+pub data Role =
+  NoRole
+  | GroupRole
+  | TextRole
+  | ImageRole
+  | ButtonRole
+  | CheckboxRole
+  | SliderRole
+  | TextFieldRole
+  | ScrollRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical
@@ -139,80 +206,158 @@ pub const CENTER: Alignment = Alignment { x: 0.5, y: 0.5 }
 pub const BOTTOM_RIGHT: Alignment = Alignment { x: 1.0, y: 1.0 }
 
 /// Children side by side, left to right.
-pub let row = pure (children: []Node) -> Node =>
-  Node { kind: Flow(Horizontal, MainStart, CrossCenter), tag: "Row", children: children }
+pub let row<e> = pure (children: []Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Flow(Horizontal, MainStart, CrossCenter)
+  Node { kind: kind, tag: "Row", children: children }
+}
 
 /// Children one under another.
-pub let column = pure (children: []Node) -> Node =>
-  Node { kind: Flow(Vertical, MainStart, CrossStart), tag: "Column", children: children }
+pub let column<e> = pure (children: []Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Flow(Vertical, MainStart, CrossStart)
+  Node { kind: kind, tag: "Column", children: children }
+}
 
 /// `child` taking a share of its row's or column's free space, in proportion to `flex`.
-pub let expanded = pure (child: Node, flex: f32 = 1.0) -> Node =>
-  Node { kind: Grow(flex), tag: "Expanded", children: [child] }
+pub let expanded<e> = pure (child: Node<e>, flex: f32 = 1.0) -> Node<e> => {
+  let kind: Kind<e> = Grow(flex)
+  Node { kind: kind, tag: "Expanded", children: [child] }
+}
 
 /// Children over one another, the first at the bottom; as large as the largest that is not
 /// [positioned].
-pub let stack = pure (children: []Node) -> Node =>
-  Node { kind: Layers, tag: "Stack", children: children }
+pub let stack<e> = pure (children: []Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Layers
+  Node { kind: kind, tag: "Stack", children: children }
+}
 
 /// `child` placed in its [stack] by `edges`.
-pub let positioned = pure (edges: Edges, child: Node) -> Node =>
-  Node { kind: Pin(edges), tag: "Positioned", children: [child] }
+pub let positioned<e> = pure (edges: Edges, child: Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Pin(edges)
+  Node { kind: kind, tag: "Positioned", children: [child] }
+}
 
 /// `child` with `space` around it.
-pub let padding = pure (space: Insets, child: Node) -> Node =>
-  Node { kind: Inset(space), tag: "Padding", children: [child] }
+pub let padding<e> = pure (space: Insets, child: Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Inset(space)
+  Node { kind: kind, tag: "Padding", children: [child] }
+}
 
 /// `child` placed at `at` in all the space it is given.
-pub let align = pure (at: Alignment, child: Node) -> Node =>
-  Node { kind: Place(at), tag: "Align", children: [child] }
+pub let align<e> = pure (at: Alignment, child: Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Place(at)
+  Node { kind: kind, tag: "Align", children: [child] }
+}
 
 /// A box `width` × `height` (each `None` for its children's), its children inside.
-pub let sized = pure (
+pub let sized<e> = pure (
   width: Maybe<f32>,
   height: Maybe<f32>,
-  children: []Node = []
-) -> Node =>
-  Node { kind: Measured(width, height), tag: "SizedBox", children: children }
+  children: []Node<e> = []
+) -> Node<e> => {
+  let kind: Kind<e> = Measured(width, height)
+  Node { kind: kind, tag: "SizedBox", children: children }
+}
 
 /// `child` along `axis` with all the room it wants, seen through a window as large as this
-/// element is given and moved `offset` units along — clipped to the window.
-pub let scroll = pure (axis: Axis, offset: f32, child: Node) -> Node =>
-  Node { kind: Scrolls(axis, offset), tag: "Scroll", children: [child] }
+/// element is given — moved `offset` units along until the user scrolls it, and clipped to
+/// the window.
+pub let scroll<e> = pure (axis: Axis, offset: f32, child: Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Scrolls(axis, offset)
+  Node { kind: kind, tag: "Scroll", children: [child] }
+}
 
 /// A paragraph, broken into lines at the width it is given.
-pub let text = pure (content: string) -> Node =>
-  Node { kind: Words(content), tag: "Text" }
+pub let text<e> = pure (content: string) -> Node<e> => {
+  let kind: Kind<e> = Words(content)
+  Node { kind: kind, tag: "Text" }
+}
 
 /// The `texels` of a texture, `size` units large where there is room.
-pub let image = pure (texture: TextureId, texels: Rect, size: Size) -> Node =>
-  Node { kind: Texels(texture, texels, size), tag: "Image" }
+pub let image<e> = pure (texture: TextureId, texels: Rect, size: Size) -> Node<e> => {
+  let kind: Kind<e> = Texels(texture, texels, size)
+  Node { kind: kind, tag: "Image" }
+}
 
 /// `children` drawn in `theme`, with `sheet` as their innermost global sheet.
-pub let themed = pure (theme: Theme, sheet: Sheet, children: []Node) -> Node =>
-  Node { kind: Theming(theme, sheet), tag: "Themed", children: children }
+pub let themed<e> = pure (theme: Theme, sheet: Sheet, children: []Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Theming(theme, sheet)
+  Node { kind: kind, tag: "Themed", children: children }
+}
 
 /// A component named `name` (its tag, for the cascade), whose `sheet` styles `children` and
 /// nothing else.
-pub let component = pure (name: string, sheet: Sheet, children: []Node) -> Node =>
-  Node { kind: Scope(sheet), tag: name, children: children }
+pub let component<e> = pure (
+  name: string,
+  sheet: Sheet,
+  children: []Node<e>
+) -> Node<e> => {
+  let kind: Kind<e> = Scope(sheet)
+  Node { kind: kind, tag: name, children: children }
+}
 
-impl Node {
+/// A button showing `label`: `on_click` when it is clicked, or pressed from the keyboard
+/// (Space or Enter) while it has the focus.
+pub let button<e> = pure (label: string, on_click: e) -> Node<e> =>
+  Node { kind: Pressable(on_click), tag: "Button", children: [text::<e>(label)] }
+
+/// A checkbox labelled `label`, ticked when `checked`: its box (the `Checkbox::box` part, or
+/// `Checkbox::checked` while ticked) holding, when ticked, a fill (`Checkbox::fill`) inset from
+/// its border by the box's padding. `on_toggle` when it is clicked, or pressed from the
+/// keyboard. The program flips its own value.
+pub let checkbox<e> = pure (label: string, checked: bool, on_toggle: e) -> Node<e> => {
+  let fill: []Node<e> = if checked { [sized::<e>(
+    None,
+    None
+  ).with_part("fill")] } else { [] }
+  // Fixed at 18 outside, so the part's padding — the gap round a ticked fill — comes out of
+  // the 18 rather than adding to it.
+  let face = sized::<e>(
+    None,
+    None,
+    fill
+  ).with_part(if checked { "checked" } else { "box" })
+  let ticked = sized::<e>(Some(18.0), Some(18.0), [face])
+  let body = row::<e>([ticked, text::<e>(label)]).with_style(Style { gap: Some(8.0) })
+  Node { kind: Checkable(checked, on_toggle), tag: "Checkbox", children: [body] }
+}
+
+/// A slider at `spec.value`, as wide as it is given: `spec.on_change` with each new value as
+/// it is dragged, clicked, or moved from the keyboard (the arrows by a step, Home and End to
+/// the ends).
+pub let slider<e> = pure (spec: SliderSpec<e>) -> Node<e> =>
+  Node { kind: Ranged(spec), tag: "Slider" }
+
+/// A one-line text field showing `spec.value`, as wide as it is given: `spec.on_edit` with the
+/// value each edit leaves. The caret, the selection and an edit's undo are the framework's.
+pub let text_input<e> = pure (spec: FieldSpec<e>) -> Node<e> =>
+  Node { kind: Editable(spec), tag: "TextInput", label: spec.placeholder }
+
+impl Node<e> {
   /// The node with these classes, space-separated (`"card wide"`), added to its own.
-  pub let with_class = pure (self, classes: string) -> Node =>
+  pub let with_class = pure (self, classes: string) -> Node<e> =>
     Node { self | class: if self.class.len() == 0 { classes } else { "${self.class} ${classes}" } }
 
   /// The node with `style` laid over its inline style.
-  pub let with_style = pure (self, style: Style) -> Node =>
+  pub let with_style = pure (self, style: Style) -> Node<e> =>
     Node { self | style: style.over(self.style) }
 
   /// The node marked as part `name` of the component it is in, for a `Component::name` rule.
-  pub let with_part = pure (self, name: string) -> Node => Node { self | part: name }
+  pub let with_part = pure (self, name: string) -> Node<e> => Node { self | part: name }
+
+  /// The node with `key` in its identity in place of its index among its siblings: an item
+  /// of a list keeps its state when others are inserted before it.
+  pub let keyed = pure (self, key: string) -> Node<e> => Node { self | key: key }
+
+  /// The node read to assistive technology as `label`, rather than its visible text.
+  pub let labelled = pure (self, label: string) -> Node<e> => Node { self | label: label }
 
   /// A row or column with its children placed by `main` and `cross`; any other node unchanged.
-  pub let aligned = pure (self, main: MainAlign, cross: CrossAlign) -> Node =>
+  pub let aligned = pure (self, main: MainAlign, cross: CrossAlign) -> Node<e> =>
     match self.kind {
-      Flow(axis, _, _) => Node { self | kind: Flow(axis, main, cross) },
+      Flow(axis, _, _) => {
+        let kind: Kind<e> = Flow(axis, main, cross)
+        Node { self | kind: kind }
+      },
       _ => self,
     }
 }
@@ -249,9 +394,17 @@ impl Constraints {
   /// The constraints for what is inside `space`.
   pub let deflate = pure (self, space: Insets) -> Constraints => Constraints {
     min_w: (self.min_w - space.horizontal()).max(0.0),
-    max_w: if self.max_w >= UNBOUNDED { UNBOUNDED } else { (self.max_w - space.horizontal()).max(0.0) },
+    max_w: if self.max_w >= UNBOUNDED {
+      UNBOUNDED
+    } else {
+      (self.max_w - space.horizontal()).max(0.0)
+    },
     min_h: (self.min_h - space.vertical()).max(0.0),
-    max_h: if self.max_h >= UNBOUNDED { UNBOUNDED } else { (self.max_h - space.vertical()).max(0.0) },
+    max_h: if self.max_h >= UNBOUNDED {
+      UNBOUNDED
+    } else {
+      (self.max_h - space.vertical()).max(0.0)
+    },
   }
 
   /// The same greatest sizes, and no least.
@@ -263,61 +416,151 @@ impl Constraints {
   pub let bounded_h = pure (self) -> bool => self.max_h < UNBOUNDED
 }
 
+// ── What the framework holds ─────────────────────────────────────────────────
+
+/// The state of the interface that is not the program's: which element has the focus, which
+/// is under the pointer and which is held down (each by its identity, `""` for none), and each
+/// element's own state. `ui.interact` keeps it; [layout_with] reads it.
+pub struct Interaction {
+  focus: string = "",
+  hover: string = "",
+  pressed: string = "",
+  widgets: HashMap<string, WidgetState>,
+}
+
+/// What the framework keeps for one element: a scroll's offset once the user has scrolled
+/// it, and a text field's caret and the other end of its selection (`anchor`, the caret
+/// itself for none), in runes; how far its text is scrolled to keep the caret in view; and
+/// the edits that undo steps back through.
+pub struct WidgetState {
+  scroll: Maybe<f32> = None,
+  caret: i64 = 0,
+  anchor: i64 = 0,
+  field_scroll: f32 = 0.0,
+  undo: []Edit = [],
+}
+
+/// A text field's value and caret, before an edit.
+pub struct Edit {
+  value: string,
+  caret: i64,
+}
+
+/// No focus, nothing under the pointer, no element's state.
+pub let interaction_new = pure () -> Interaction => Interaction { widgets: hashmap_new() }
+
 // ── The laid-out tree ────────────────────────────────────────────────────────
 
-/// A node laid out: its tag and classes (for finding it again), the size it chose, its
-/// settled style, what it draws itself (at `content_at`, inside its padding), whether it
-/// clips its children to its box, and its children, each at its offset from this node's
-/// top-left corner.
-pub struct Laid {
+/// A node laid out: its identity (`id`), tag and classes; its kind, which says what input it
+/// takes and the events it raises; its role and label; the size it chose; its settled style;
+/// what it draws itself (at `content_at`, inside its padding); whether it clips its children
+/// to its box; the focus ring to draw round it; a text field's caret and selection; and its
+/// children, each at its offset from this node's top-left corner.
+pub struct Laid<e> {
+  id: string = "",
   tag: string = "",
   class: string = "",
+  kind: Kind<e>,
+  role: Role = NoRole,
+  label: string = "",
   size: Size,
   style: Computed,
   content: Content = Blank,
   content_at: Point = Point {},
   clips: bool = false,
-  children: []Placed = [],
+  ring: Maybe<Color> = None,
+  field: Maybe<FieldLook> = None,
+  children: []Placed<e> = [],
 }
 
 /// A laid-out child and its offset from its parent's top-left corner.
-pub struct Placed {
+pub struct Placed<e> {
   at: Point,
-  laid: Laid,
+  laid: Laid<e>,
 }
 
 /// What a node draws besides its box: nothing, a paragraph, or part of a texture at a size.
 pub data Content = Blank | Prose(TextBlock) | Bitmap(TextureId, Rect, Size)
 
-/// `root` laid out within `c`, in the light theme until a [themed] node says otherwise, its
-/// text set in `fonts`.
-pub let layout = (root: Node, c: Constraints, fonts: mut Fonts) -> Laid =>
-  lay(root, c, cascade_root(light_theme()), fonts)
+/// How a text field is drawn: its text's colour (the placeholder's while it is empty), how
+/// far its text is scrolled, the caret's and the selection's ends across its text (each from
+/// the text's start), their colours, how tall a line is, and whether it has the focus.
+pub struct FieldLook {
+  color: Color,
+  scroll: f32 = 0.0,
+  caret: f32 = 0.0,
+  selection_from: f32 = 0.0,
+  selection_to: f32 = 0.0,
+  caret_color: Color,
+  selection_color: Color,
+  line_height: f32 = 0.0,
+  focused: bool = false,
+}
 
-/// One node within `c`, styled at `cascade`.
-let lay = (node: Node, c: Constraints, cascade: Cascade, fonts: mut Fonts) -> Laid => {
-  // A theme reaches its own node; a component's sheet only what it holds.
+/// `root` laid out within `c`, in the light theme until a [themed] node says otherwise, its
+/// text set in `fonts`, with nothing focused, hovered or scrolled.
+pub let layout<e> = (root: Node<e>, c: Constraints, fonts: mut Fonts) -> Laid<e> =>
+  layout_with(root, c, fonts, interaction_new())
+
+/// `root` laid out as [layout] does, with the framework's state: the focused, hovered and
+/// pressed elements' classes, scroll offsets and text fields' carets.
+pub let layout_with<e> = (
+  root: Node<e>,
+  c: Constraints,
+  fonts: mut Fonts,
+  ui: Interaction
+) -> Laid<e> => lay(root, c, cascade_root(light_theme()), fonts, ui, "#")
+
+/// The identity of `node`, child `index` of the node identified as `parent`.
+pub let child_id<e> = pure (parent: string, node: Node<e>, index: i64) -> string =>
+  if node.key.len() > 0 { "${parent}/:${node.key}" } else { "${parent}/${index}" }
+
+/// Whether an element of `kind` takes the focus: a control.
+pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
+  Pressable(_) => true,
+  Checkable(_, _) => true,
+  Ranged(_) => true,
+  Editable(_) => true,
+  _ => false,
+}
+
+/// One node within `c`, styled at `cascade`, identified as `id`.
+let lay<e> = (
+  node: Node<e>,
+  c: Constraints,
+  cascade: Cascade,
+  fonts: mut Fonts,
+  ui: Interaction,
+  id: string
+) -> Laid<e> => {
+  // A theme reaches its own node; a component's sheet — and a control's insides — only what
+  // it holds.
   let own = match node.kind {
     Theming(theme, sheet) => cascade.themed(theme, sheet),
     _ => cascade,
   }
-  let style = own.compute(node.tag, node.class, node.part, node.style)
+  let classes = with_state(node.class, id, ui)
+  let style = own.compute(node.tag, classes, node.part, node.style)
   let within = match node.kind {
     Scope(sheet) => own.in_component(node.tag, sheet).inside(style),
-    _ => own.inside(style),
+    _ => if focusable(node.kind) {
+      own.in_component(node.tag, Sheet {}).inside(style)
+    } else {
+      own.inside(style)
+    },
   }
   let space = match node.kind {
     Inset(extra) => style.padding.plus(extra),
     _ => style.padding,
   }
   let inner = c.deflate(space)
-  let body = match node.kind {
-    Flow(axis, main, cross) => {
-      lay_line(node.children, axis, main, cross, style.gap, inner, true, within, fonts)
-    },
-    Layers => lay_layers(node.children, inner, within, fonts),
+  let ctx = Ctx { cascade: within, ui: ui, id: id, gap: style.gap }
+  let body: Body<e> = match node.kind {
+    Flow(axis, main, cross) =>
+      lay_line(node.children, axis, main, cross, inner, true, ctx, fonts),
+    Layers => lay_layers(node.children, inner, ctx, fonts),
     Place(at) => {
-      let content = lay_wrapped(node.children, style.gap, inner.loosened(), within, fonts)
+      let content = lay_wrapped(node.children, inner.loosened(), ctx, fonts)
       let w = if inner.bounded_w() { inner.max_w } else { content.size.w }
       let h = if inner.bounded_h() { inner.max_h } else { content.size.h }
       let size = inner.constrain(Size { w: w, h: h })
@@ -341,7 +584,7 @@ let lay = (node: Node, c: Constraints, cascade: Cascade, fonts: mut Fonts) -> La
         min_h: wanted.min_h.clamp(inner.min_h, inner.max_h),
         max_h: wanted.max_h.clamp(inner.min_h, inner.max_h),
       }
-      let content = lay_wrapped(node.children, style.gap, fixed, within, fonts)
+      let content = lay_wrapped(node.children, fixed, ctx, fonts)
       Body { size: fixed.constrain(content.size), children: content.children }
     },
     Scrolls(axis, offset) => {
@@ -349,7 +592,7 @@ let lay = (node: Node, c: Constraints, cascade: Cascade, fonts: mut Fonts) -> La
         Horizontal => Constraints { min_h: inner.min_h, max_h: inner.max_h },
         Vertical => Constraints { min_w: inner.min_w, max_w: inner.max_w },
       }
-      let content = lay_wrapped(node.children, style.gap, open, within, fonts)
+      let content = lay_wrapped(node.children, open, ctx, fonts)
       let size = inner.constrain(Size {
         w: if axis == Horizontal && inner.bounded_w() { inner.max_w } else { content.size.w },
         h: if axis == Vertical && inner.bounded_h() { inner.max_h } else { content.size.h },
@@ -359,7 +602,8 @@ let lay = (node: Node, c: Constraints, cascade: Cascade, fonts: mut Fonts) -> La
         Horizontal => (content.size.w - size.w).max(0.0),
         Vertical => (content.size.h - size.h).max(0.0),
       }
-      let by = offset.clamp(0.0, room)
+      let wanted = ui.widgets.get(id).flat_map((w) => w.scroll) ?? offset
+      let by = wanted.clamp(0.0, room)
       let shift = match axis {
         Horizontal => Point { x: -by },
         Vertical => Point { y: -by },
@@ -368,17 +612,22 @@ let lay = (node: Node, c: Constraints, cascade: Cascade, fonts: mut Fonts) -> La
     },
     Words(content) => {
       let block = fonts.lay_out(content, style.font, inner.max_w)
-      Body {
+      Body::<e> {
         size: inner.constrain(Size { w: block.width, h: block.height }),
         content: Prose(block),
       }
     },
     Texels(texture, texels, natural) => {
-      Body { size: inner.constrain(natural), content: Bitmap(texture, texels, natural) }
+      Body::<e> {
+        size: inner.constrain(natural),
+        content: Bitmap(texture, texels, natural)
+      }
     },
-    // A wrapper of its children: Grow, Pin, Inset, Theming and Scope.
+    Ranged(spec) => lay_slider(spec, inner, ctx, fonts),
+    Editable(spec) => lay_field(spec, inner, style, ctx, fonts),
+    // A wrapper of its children: Grow, Pin, Inset, Theming, Scope, Pressable and Checkable.
     _ => {
-      let content = lay_wrapped(node.children, style.gap, inner, within, fonts)
+      let content = lay_wrapped(node.children, inner, ctx, fonts)
       Body { size: content.size, children: content.children }
     },
   }
@@ -387,60 +636,139 @@ let lay = (node: Node, c: Constraints, cascade: Cascade, fonts: mut Fonts) -> La
     h: body.size.h + space.vertical(),
   })
   let corner = Point { x: space.left, y: space.top }
+  let children = moved(body.children, corner)
+  let role = role_of(node.kind)
   Laid {
+    id: id,
     tag: node.tag,
-    class: node.class,
+    class: classes,
+    kind: node.kind,
+    role: role,
+    label: label_of(node, children),
     size: size,
     style: style,
     content: body.content,
-    content_at: corner,
+    content_at: Point { x: corner.x - body.scrolled, y: corner.y },
     clips: body.clips,
-    children: moved(body.children, corner),
+    ring: if ui.focus == id && focusable(node.kind) { Some(own.theme.colors.focus) } else { None },
+    field: body.field,
+    children: children,
   }
 }
 
+/// What lays a node's children out needs besides them: the cascade they are styled at, the
+/// framework's state, their parent's identity and its `gap`.
+struct Ctx {
+  cascade: Cascade,
+  ui: Interaction,
+  id: string,
+  gap: f32,
+}
+
 /// What a node's kind made of the space inside its padding: the size it fills, its children
-/// placed from that space's corner, what it draws itself, and whether it clips.
-struct Body {
+/// placed from that space's corner, what it draws itself, whether it clips, and a text field's
+/// look and how far its text is scrolled.
+struct Body<e> {
   size: Size,
-  children: []Placed = [],
+  children: []Placed<e> = [],
   content: Content = Blank,
   clips: bool = false,
+  field: Maybe<FieldLook> = None,
+  scrolled: f32 = 0.0,
+}
+
+/// `classes` with the states the element identified as `id` is in: `hover`, `pressed`,
+/// `focus`.
+let with_state = pure (classes: string, id: string, ui: Interaction) -> string => {
+  var out = classes
+  for (
+    state,
+    holder
+  ) in [("hover", ui.hover), ("pressed", ui.pressed), ("focus", ui.focus)] {
+    if holder == id { out = if out.len() == 0 { state } else { "${out} ${state}" } }
+  }
+  out
+}
+
+/// The role an element of `kind` has.
+let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
+  Pressable(_) => ButtonRole,
+  Checkable(_, _) => CheckboxRole,
+  Ranged(_) => SliderRole,
+  Editable(_) => TextFieldRole,
+  Words(_) => TextRole,
+  Texels(_, _, _) => ImageRole,
+  Scrolls(_, _) => ScrollRole,
+  Flow(_, _, _) => GroupRole,
+  Layers => GroupRole,
+  Scope(_) => GroupRole,
+  _ => NoRole,
+}
+
+/// What assistive technology reads for `node`: its `label`, else for text its text, and for a
+/// button or checkbox the text inside it.
+let label_of<e> = pure (node: Node<e>, children: []Placed<e>) -> string => {
+  if node.label.len() > 0 { return node.label }
+  match node.kind {
+    Words(content) => content,
+    Pressable(_) => text_inside(children),
+    Checkable(_, _) => text_inside(children),
+    _ => "",
+  }
+}
+
+/// The text of every paragraph below `children`, in order, a space apart.
+let text_inside<e> = pure (children: []Placed<e>) -> string => {
+  var parts: []string = []
+  for child in children {
+    let own = match child.laid.content {
+      Prose(_) => child.laid.label,
+      _ => text_inside(child.laid.children),
+    }
+    if own.len() > 0 { parts.push(own) }
+  }
+  parts.join(" ")
 }
 
 /// A wrapper's children within `c`: one laid out with `c` as it stands — a wrapper hands its
 /// child its own constraints, as Flutter's do — and several as a column lays them out.
-let lay_wrapped = (
-  children: []Node,
-  gap: f32,
+let lay_wrapped<e> = (
+  children: []Node<e>,
   c: Constraints,
-  cascade: Cascade,
+  ctx: Ctx,
   fonts: mut Fonts
-) -> Body => {
+) -> Body<e> => {
   if children.len() == 1 {
-    let one = lay(children[0], c, cascade, fonts)
+    let one = lay(
+      children[0],
+      c,
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, children[0], 0)
+    )
     return Body { size: one.size, children: [Placed { at: Point {}, laid: one }] }
   }
-  lay_line(children, Vertical, MainStart, CrossStart, gap, c, false, cascade, fonts)
+  lay_line(children, Vertical, MainStart, CrossStart, c, false, ctx, fonts)
 }
 
-/// `children` along `axis` within `c`, `gap` apart, placed by `main` and `cross` — a row's or
-/// column's layout, and how a wrapper lays out several children. `fill` takes all the room
+/// `children` along `axis` within `c`, `ctx.gap` apart, placed by `main` and `cross` — a row's
+/// or column's layout, and how a wrapper lays out several children. `fill` takes all the room
 /// along the axis when it has a limit, as a row or column does; a wrapper takes what its
 /// children need.
-let lay_line = (
-  children: []Node,
+let lay_line<e> = (
+  children: []Node<e>,
   axis: Axis,
   main: MainAlign,
   cross: CrossAlign,
-  gap: f32,
   c: Constraints,
   fill: bool,
-  cascade: Cascade,
+  ctx: Ctx,
   fonts: mut Fonts
-) -> Body => {
+) -> Body<e> => {
   let count = children.len()
-  if count == 0 { return Body { size: c.constrain(Size {}) } }
+  if count == 0 { return Body::<e> { size: c.constrain(Size {}) } }
+  let gap = ctx.gap
   let max_main = along(axis, c.max_w, c.max_h)
   let min_main = along(axis, c.min_w, c.min_h)
   let max_cross = along(axis, c.max_h, c.max_w)
@@ -448,7 +776,8 @@ let lay_line = (
   let bounded = max_main < UNBOUNDED
   let stretch = cross == CrossStretch && max_cross < UNBOUNDED
   let cross_min = if stretch { max_cross } else { 0.0 }
-  var laid: []Maybe<Laid> = [i in 0..<count | None]
+  var laid: []Maybe<Laid<e>> = []
+  for _ in 0..<count { laid.push(None) }
   // Children that do not grow first: what they take is what the growing ones share.
   var used = gap * f32(count - 1)
   var flex: f32 = 0.0
@@ -458,12 +787,8 @@ let lay_line = (
       flex += factor
       continue
     }
-    let one = lay(
-      child,
-      oriented(axis, 0.0, UNBOUNDED, cross_min, max_cross),
-      cascade,
-      fonts
-    )
+    let limits = oriented(axis, 0.0, UNBOUNDED, cross_min, max_cross)
+    let one = lay(child, limits, ctx.cascade, fonts, ctx.ui, child_id(ctx.id, child, i))
     used += along(axis, one.size.w, one.size.h)
     laid[i] = Some(one)
   }
@@ -473,12 +798,8 @@ let lay_line = (
     if factor <= 0.0 { continue }
     let share = free * factor / flex
     let main_c = if bounded { (share, share) } else { (0.0, UNBOUNDED) }
-    let one = lay(
-      child,
-      oriented(axis, main_c.0, main_c.1, cross_min, max_cross),
-      cascade,
-      fonts
-    )
+    let limits = oriented(axis, main_c.0, main_c.1, cross_min, max_cross)
+    let one = lay(child, limits, ctx.cascade, fonts, ctx.ui, child_id(ctx.id, child, i))
     used += along(axis, one.size.w, one.size.h)
     laid[i] = Some(one)
   }
@@ -499,7 +820,7 @@ let lay_line = (
     SpaceEvenly => (left / (n + 1.0), gap + left / (n + 1.0)),
   }
   var pen = starts.0
-  var placed: []Placed = []
+  var placed: []Placed<e> = []
   for one in laid {
     let Some(l) = one else { continue }
     let thick = along(axis, l.size.h, l.size.w)
@@ -516,24 +837,32 @@ let lay_line = (
 
 /// `children` over one another within `c`: the ones not [positioned] at the top-left corner,
 /// as large as the largest of them; the positioned ones by their edges within that.
-let lay_layers = (
-  children: []Node,
+let lay_layers<e> = (
+  children: []Node<e>,
   c: Constraints,
-  cascade: Cascade,
+  ctx: Ctx,
   fonts: mut Fonts
-) -> Body => {
-  var laid: []Maybe<Laid> = [i in 0..<children.len() | None]
+) -> Body<e> => {
+  var laid: []Maybe<Laid<e>> = []
+  for _ in children { laid.push(None) }
   var w: f32 = 0.0
   var h: f32 = 0.0
   for i, child in children {
     if pinned(child).is_some() { continue }
-    let one = lay(child, c.loosened(), cascade, fonts)
+    let one = lay(
+      child,
+      c.loosened(),
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, child, i)
+    )
     w = w.max(one.size.w)
     h = h.max(one.size.h)
     laid[i] = Some(one)
   }
   let size = c.constrain(Size { w: w, h: h })
-  var placed: []Placed = []
+  var placed: []Placed<e> = []
   for i, child in children {
     if let Some(l) = laid[i] {
       placed.push(Placed { at: Point {}, laid: l })
@@ -545,8 +874,10 @@ let lay_layers = (
     let one = lay(
       child,
       Constraints { min_w: across.0, max_w: across.1, min_h: down.0, max_h: down.1 },
-      cascade,
-      fonts
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, child, i)
     )
     let x = match (edges.left, edges.right) {
       (Some(l), _) => l,
@@ -562,6 +893,108 @@ let lay_layers = (
   }
   Body { size: size, children: placed }
 }
+
+/// A slider within `c`: as wide as it may be (160 units with no limit), its track, the part
+/// of it up to the value, and a thumb at the value — the `Slider::track`, `Slider::fill` and
+/// `Slider::thumb` parts, so a sheet styles them.
+let lay_slider<e> = (
+  spec: SliderSpec<e>,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts
+) -> Body<e> => {
+  let w = (if c.bounded_w() { c.max_w } else { 160.0 }).max(SLIDER_THUMB)
+  let size = c.constrain(Size { w: w, h: SLIDER_THUMB })
+  let travel = size.w - SLIDER_THUMB
+  let at = slider_fraction(spec) * travel
+  let middle = (SLIDER_THUMB - SLIDER_TRACK) / 2.0
+  let parts = stack::<e>([
+    slider_piece::<e>("track", 0.0, middle, size.w, SLIDER_TRACK),
+    slider_piece::<e>("fill", 0.0, middle, at + SLIDER_THUMB / 2.0, SLIDER_TRACK),
+    slider_piece::<e>("thumb", at, 0.0, SLIDER_THUMB, SLIDER_THUMB),
+  ])
+  let one = lay(parts, tight(size), ctx.cascade, fonts, ctx.ui, "${ctx.id}/parts")
+  Body { size: size, children: [Placed { at: Point {}, laid: one }] }
+}
+
+/// Part `name` of a slider, `w` × `h` at `left`, `top`.
+let slider_piece<e> = pure (
+  name: string,
+  left: f32,
+  top: f32,
+  w: f32,
+  h: f32
+) -> Node<e> =>
+  positioned::<e>(
+    Edges { left: Some(left), top: Some(top), width: Some(w), height: Some(h) },
+    sized::<e>(None, None).with_part(name)
+  )
+
+/// A slider's thumb is this wide and tall; its track this thick.
+pub const SLIDER_THUMB: f32 = 20.0
+pub const SLIDER_TRACK: f32 = 4.0
+
+/// How far along its range a slider's value is, `0.0` to `1.0`.
+pub let slider_fraction<e> = pure (spec: SliderSpec<e>) -> f32 =>
+  if spec.max <= spec.min { 0.0 } else {
+    ((spec.value - spec.min) / (spec.max - spec.min)).clamp(0.0, 1.0)
+  }
+
+/// A text field within `c`: as wide as it may be (200 units with no limit), a line tall, its
+/// value (or its placeholder, in the `TextInput::placeholder` part's colour) scrolled so its
+/// caret is in view, and clipped to it.
+let lay_field<e> = (
+  spec: FieldSpec<e>,
+  c: Constraints,
+  style: Computed,
+  ctx: Ctx,
+  fonts: mut Fonts
+) -> Body<e> => {
+  let empty = spec.value.len() == 0
+  let shown = if empty { spec.placeholder } else { spec.value }
+  let block = fonts.lay_out(shown, style.font, UNBOUNDED)
+  let line = if block.line_height > 0.0 { block.line_height } else { style.font.size }
+  let size = c.constrain(Size { w: if c.bounded_w() { c.max_w } else { 200.0 }, h: line })
+  let state = ctx.ui.widgets.get(ctx.id) ?? WidgetState {}
+  let runes = spec.value.len()
+  let caret = if empty { 0.0 } else { caret_x(
+    block,
+    byte_at(spec.value, state.caret.clamp(0, runes))
+  ) }
+  let anchor = if empty { 0.0 } else { caret_x(
+    block,
+    byte_at(spec.value, state.anchor.clamp(0, runes))
+  ) }
+  // Scrolled as little as keeps the caret inside, a pixel or two from the edge.
+  var scrolled = state.field_scroll
+  if caret - scrolled > size.w - 2.0 { scrolled = caret - size.w + 2.0 }
+  if caret - scrolled < 0.0 { scrolled = caret }
+  scrolled = scrolled.max(0.0)
+  let part = (name: string) -> Computed =>
+    ctx.cascade.compute("TextInput", "", name, Style {})
+  let look = FieldLook {
+    color: if empty { part("placeholder").color } else { style.color },
+    scroll: scrolled,
+    caret: caret,
+    selection_from: caret.min(anchor),
+    selection_to: caret.max(anchor),
+    caret_color: part("caret").background ?? style.color,
+    selection_color: part("selection").background ?? faded(style.color, 0.25),
+    line_height: line,
+    focused: ctx.ui.focus == ctx.id,
+  }
+  Body::<e> {
+    size: size,
+    content: Prose(block),
+    clips: true,
+    field: Some(look),
+    scrolled: scrolled
+  }
+}
+
+/// The byte offset of rune `index` of `text`, or its length past the end.
+pub let byte_at = pure (text: string, index: i64) -> i64 =>
+  text.byte_offset(index) ?? text.byte_len()
 
 /// The least and greatest a positioned child may be along one axis of a stack `room` long:
 /// exactly the space between its two edges when both are set, else exactly its size when that
@@ -585,13 +1018,13 @@ let span = pure (
 }
 
 /// How much of a row's or column's free space a child takes, `0.0` for one that takes none.
-let grow_factor = pure (node: Node) -> f32 => match node.kind {
+let grow_factor<e> = pure (node: Node<e>) -> f32 => match node.kind {
   Grow(f) => f.max(0.0),
   _ => 0.0,
 }
 
 /// A child's edges in its stack, if it is positioned.
-let pinned = pure (node: Node) -> Maybe<Edges> => match node.kind {
+let pinned<e> = pure (node: Node<e>) -> Maybe<Edges> => match node.kind {
   Pin(edges) => Some(edges),
   _ => None,
 }
@@ -610,10 +1043,18 @@ let oriented = pure (
   cross_min: f32,
   cross_max: f32
 ) -> Constraints => match axis {
-  Horizontal =>
-    Constraints { min_w: main_min, max_w: main_max, min_h: cross_min, max_h: cross_max },
-  Vertical =>
-    Constraints { min_w: cross_min, max_w: cross_max, min_h: main_min, max_h: main_max },
+  Horizontal => Constraints {
+    min_w: main_min,
+    max_w: main_max,
+    min_h: cross_min,
+    max_h: cross_max,
+  },
+  Vertical => Constraints {
+    min_w: cross_min,
+    max_w: cross_max,
+    min_h: main_min,
+    max_h: main_max,
+  },
 }
 
 let oriented_point = pure (axis: Axis, main: f32, cross: f32) -> Point => match axis {
@@ -627,16 +1068,17 @@ let oriented_size = pure (axis: Axis, main: f32, cross: f32) -> Size => match ax
 }
 
 /// `placed`, each moved by `by`.
-let moved = pure (placed: []Placed, by: Point) -> []Placed =>
+let moved<e> = pure (placed: []Placed<e>, by: Point) -> []Placed<e> =>
   [p in placed | Placed { p | at: Point { x: p.at.x + by.x, y: p.at.y + by.y } }]
 
 // ── Painting ─────────────────────────────────────────────────────────────────
 
 /// `laid` as a display list, its top-left corner at `origin`: each node's background, border
-/// and content, then its children, clipped where the node clips. Text is drawn from `atlas`,
-/// which renders the glyphs it lacks through `renderer` at `scale` pixels a unit.
-pub let paint<r> where r: Renderer = (
-  laid: Laid,
+/// and content, then its children, clipped where the node clips, and a focus ring last. Text
+/// is drawn from `atlas`, which renders the glyphs it lacks through `renderer` at `scale`
+/// pixels a unit.
+pub let paint<e, r> where r: Renderer = (
+  laid: Laid<e>,
   origin: Point,
   scale: f32,
   fonts: Fonts,
@@ -648,9 +1090,9 @@ pub let paint<r> where r: Renderer = (
   ops
 }
 
-let paint_into<r> where r: Renderer = (
+let paint_into<e, r> where r: Renderer = (
   ops: mut []DrawOp,
-  laid: Laid,
+  laid: Laid<e>,
   origin: Point,
   scale: f32,
   fonts: Fonts,
@@ -666,17 +1108,31 @@ let paint_into<r> where r: Renderer = (
     faded(fill, s.opacity)
   )) }
   if let Some(line) = s.border_color {
-    if s.border_width > 0.0 { ops.push(Border(
-      box,
-      corners,
-      s.border_width,
-      faded(line, s.opacity)
-    )) }
+    if s.border_width > 0.0 {
+      ops.push(Border(box, corners, s.border_width, faded(line, s.opacity)))
+    }
   }
   let at = Point { x: origin.x + laid.content_at.x, y: origin.y + laid.content_at.y }
-  match laid.content {
-    Prose(block) => {
-      let color = faded(s.color, s.opacity)
+  if let Some(look) = laid.field {
+    // A field's text, selection and caret, clipped to the space inside its padding.
+    let inside = Rect {
+      x: origin.x + s.padding.left,
+      y: origin.y + s.padding.top,
+      w: (laid.size.w - s.padding.horizontal()).max(0.0),
+      h: (laid.size.h - s.padding.vertical()).max(0.0),
+    }
+    ops.push(PushClip(inside, radius(0.0)))
+    if look.focused && look.selection_to > look.selection_from {
+      let from = Rect {
+        x: at.x + look.selection_from,
+        y: at.y,
+        w: look.selection_to - look.selection_from,
+        h: look.line_height,
+      }
+      ops.push(Fill(from, radius(0.0), faded(look.selection_color, s.opacity)))
+    }
+    if let Prose(block) = laid.content {
+      let color = faded(look.color, s.opacity)
       if let Some(op) = atlas.glyphs(
         fonts,
         renderer,
@@ -685,20 +1141,47 @@ let paint_into<r> where r: Renderer = (
         scale,
         color
       ) { ops.push(op) }
-    },
-    Bitmap(texture, texels, natural) => {
-      ops.push(Picture(
-        texture,
-        texels,
-        Rect { x: at.x, y: at.y, w: natural.w, h: natural.h }
-      ))
-    },
-    Blank => {},
+    }
+    if look.focused && look.selection_to <= look.selection_from {
+      let caret = Rect {
+        x: at.x + look.caret - 0.75,
+        y: at.y,
+        w: 1.5,
+        h: look.line_height
+      }
+      ops.push(Fill(caret, radius(0.0), faded(look.caret_color, s.opacity)))
+    }
+    ops.push(PopClip)
+  } else {
+    match laid.content {
+      Prose(block) => {
+        let color = faded(s.color, s.opacity)
+        if let Some(op) = atlas.glyphs(
+          fonts,
+          renderer,
+          block,
+          at,
+          scale,
+          color
+        ) { ops.push(op) }
+      },
+      Bitmap(texture, texels, natural) => {
+        ops.push(Picture(
+          texture,
+          texels,
+          Rect { x: at.x, y: at.y, w: natural.w, h: natural.h }
+        ))
+      },
+      Blank => {},
+    }
   }
-  if laid.clips { ops.push(PushClip(box, corners)) }
+  if laid.clips && laid.field.is_none() { ops.push(PushClip(box, corners)) }
   for child in laid.children {
     let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
     paint_into(ops, child.laid, corner, scale, fonts, atlas, renderer)
   }
-  if laid.clips { ops.push(PopClip) }
+  if laid.clips && laid.field.is_none() { ops.push(PopClip) }
+  if let Some(ring) = laid.ring {
+    ops.push(Border(box.inset(-3.0), radius(s.radius + 3.0), 2.5, ring))
+  }
 }

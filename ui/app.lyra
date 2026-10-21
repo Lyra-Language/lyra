@@ -1,0 +1,73 @@
+module ui.app
+//! A program's loop: its state, a `view` of it, an `update` for each event the view's
+//! controls raise — and the framework between them.
+//!
+//! ```
+//! import ui.app.{ App, run }
+//!
+//! data Msg = Increment
+//!
+//! let view = pure (count: i64) -> Node<Msg> => column([
+//!   text("${count}"),
+//!   button("More", Increment),
+//! ])
+//! let update = pure (count: i64, msg: Msg) -> i64 => match msg { Increment => count + 1 }
+//!
+//! let final = run(App { view: view, update: update, background: BACKGROUND }, 0, platform, renderer, fonts)
+//! ```
+//!
+//! **Each pass**: the view of the state, laid out with the framework's state (`ui.interact`'s
+//! `Ui`), painted and drawn; then the platform's input, **waited for** when there is none —
+//! an interface with nothing changing costs nothing while the user is away — each input routed
+//! to the events it raises, `update` applied to each in turn, and the view laid out again
+//! before the next input, so a key pressed after a click acts on what the click made.
+//!
+//! **`update` is pure and answers only the next state** for now. Phase 4 gives it work to ask
+//! for — commands (a file read, a timer, a request) and subscriptions — which is what [App]
+//! will grow, beside `update`, rather than a change to how a view or an event is written.
+
+import ui.backend.{ Platform, Renderer, InputEvent, CloseRequested }
+import ui.draw.{ Point, Color }
+import ui.text.{ Fonts, glyph_atlas }
+import ui.layout.{ Node, paint }
+import ui.interact.{ ui_new }
+
+/// A program: its view of its state `s`, and the next state for each event `e` its view raises;
+/// the colour the window is cleared to behind the view.
+pub struct App<s, e> {
+  view: (s) -> Node<e>,
+  update: (s, e) -> s,
+  background: Color,
+}
+
+/// Run `app` from `state` until the user closes the window, drawing through `renderer`, its
+/// input from `platform` and its text in `fonts`; answer the last state.
+pub let run<s, e, p, r> where p: Platform, r: Renderer = (
+  app: App<s, e>,
+  state: s,
+  platform: mut p,
+  renderer: mut r,
+  fonts: mut Fonts
+) -> s => {
+  var current = state
+  var ui = ui_new()
+  var atlas = glyph_atlas()
+  var laid = ui.frame((app.view)(current), platform.window_size(), fonts)
+  loop {
+    ui.place_text_input(laid, platform)
+    let ops = paint(laid, Point {}, platform.scale(), fonts, atlas, renderer)
+    renderer.draw(app.background, ops)
+    for input in platform.next_events(-1) {
+      if closes(input) { return current }
+      let events = ui.handle(laid, input, platform)
+      for event in events { current = (app.update)(current, event) }
+      laid = ui.frame((app.view)(current), platform.window_size(), fonts)
+    }
+  }
+}
+
+/// Whether `input` asks the program to end.
+let closes = pure (input: InputEvent) -> bool => match input {
+  CloseRequested => true,
+  _ => false,
+}
