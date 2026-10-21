@@ -20,3 +20,8 @@ imgui.ini
 
 # A Genesis example built in place (`lyrac build examples/genesis/backdrop.lyra`).
 /examples/genesis/*.bin
+
+# What examples/ui/components.lyra saves if it is pointed at the working directory
+# (it saves to its preference folder unless --save-to says otherwise).
+/name.txt
+/examples/ui/name.txt

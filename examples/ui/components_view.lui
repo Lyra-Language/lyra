@@ -39,13 +39,15 @@
     resets: i64 = 0,
     loaded: i64 = -1,
     quit: bool = false,
-    /// The player's name as typed, and as last saved (to the file `name.txt`).
+    /// The player's name as typed, and as last saved — to the file `save_to`, which `main`
+    /// puts in the program's own folder rather than wherever it was started.
     name: string = "Hero",
     saved_name: string = "",
     commits: i64 = 0,
     volume: f32 = 0.5,
     /// A colour, `0xRRGGBB`.
     accent: u32 = 0x3C78D8,
+    save_to: string = "name.txt",
     /// A line shown for two seconds after something happens.
     notice: string = "",
     /// The system's look, followed.
@@ -64,9 +66,9 @@
     CancelQuit => (State { s | asking_quit: false }, []),
     Load(slot) => noticed(State { s | loaded: slot }, "Slot ${slot + 1} loaded."),
     Rename(name) => (State { s | name: name }, []),
-    NameDone => (State { s | commits: s.commits + 1 }, [WriteFile("name.txt", s.name, NameSaved)]),
+    NameDone => (State { s | commits: s.commits + 1 }, [WriteFile(s.save_to, s.name, NameSaved)]),
     NameSaved(ok) => if ok {
-      noticed(State { s | saved_name: s.name }, "Saved ${s.name}.")
+      noticed(State { s | saved_name: s.name }, "Saved ${s.name} to ${s.save_to}.")
     } else {
       noticed(s, "Could not save the name.")
     },

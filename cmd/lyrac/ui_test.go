@@ -1180,7 +1180,7 @@ func TestRun_UiComponentsPort(t *testing.T) {
 	}
 	cmd := exec.Command(bin, "--script",
 		"Tab Tab Tab Enter Tab Tab Tab 'Ada' Tab Enter Tab Right Right Tab Tab Enter Tab Tab Space Tab Tab Enter Shift+Tab Shift+Tab Enter wait:2500",
-		"--png", filepath.Join(dir, "end.png"))
+		"--png", filepath.Join(dir, "end.png"), "--save-to", filepath.Join(dir, "name.txt"))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
 	out, err := cmd.CombinedOutput()

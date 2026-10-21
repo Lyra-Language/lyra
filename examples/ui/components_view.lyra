@@ -38,13 +38,15 @@ pub struct State {
   resets: i64 = 0,
   loaded: i64 = -1,
   quit: bool = false,
-  /// The player's name as typed, and as last saved (to the file `name.txt`).
+  /// The player's name as typed, and as last saved — to the file `save_to`, which `main`
+  /// puts in the program's own folder rather than wherever it was started.
   name: string = "Hero",
   saved_name: string = "",
   commits: i64 = 0,
   volume: f32 = 0.5,
   /// A colour, `0xRRGGBB`.
   accent: u32 = 0x3C78D8,
+  save_to: string = "name.txt",
   /// A line shown for two seconds after something happens.
   notice: string = "",
   /// The system's look, followed.
@@ -63,9 +65,9 @@ pub let update = pure (s: State, event: Event) -> (State, []Command<Event>) => m
   CancelQuit => (State { s | asking_quit: false }, []),
   Load(slot) => noticed(State { s | loaded: slot }, "Slot ${slot + 1} loaded."),
   Rename(name) => (State { s | name: name }, []),
-  NameDone => (State { s | commits: s.commits + 1 }, [WriteFile("name.txt", s.name, NameSaved)]),
+  NameDone => (State { s | commits: s.commits + 1 }, [WriteFile(s.save_to, s.name, NameSaved)]),
   NameSaved(ok) => if ok {
-    noticed(State { s | saved_name: s.name }, "Saved ${s.name}.")
+    noticed(State { s | saved_name: s.name }, "Saved ${s.name} to ${s.save_to}.")
   } else {
     noticed(s, "Could not save the name.")
   },
@@ -93,104 +95,104 @@ let swatch = pure (s: State, rgb_hex: u32) -> Node<Event> => sized(Some(28.0), S
     .labelled("accent #${rgb_hex}"),
 ])
 
-/// From components_view.lui, line 122.
+/// From components_view.lui, line 124.
 pub let view = pure (s: State) -> Node<Event> =>
   component("view", Sheet {}, [
-    themed(theme_for(s), components_sheet(theme_for(s)), [ // components_view.lui:123
-      column([ // components_view.lui:124
-        row([ // components_view.lui:125
-          button("Reset...", AskReset), // components_view.lui:126
-          ...[slot in 0..<3 | button("Slot ${slot + 1}", Load(slot)).keyed("slot ${slot}").with_class(if s.loaded == slot { "loaded" } else { "" })], // components_view.lui:127
-          button("Quit", AskQuit), // components_view.lui:130
+    themed(theme_for(s), components_sheet(theme_for(s)), [ // components_view.lui:125
+      column([ // components_view.lui:126
+        row([ // components_view.lui:127
+          button("Reset...", AskReset), // components_view.lui:128
+          ...[slot in 0..<3 | button("Slot ${slot + 1}", Load(slot)).keyed("slot ${slot}").with_class(if s.loaded == slot { "loaded" } else { "" })], // components_view.lui:129
+          button("Quit", AskQuit), // components_view.lui:132
         ]).with_class("toolbar"),
-        column([ // components_view.lui:132
-          text("Settings").with_class("title"), // components_view.lui:133
-          text("Name").with_class("label"), // components_view.lui:134
-          row([ // components_view.lui:135
-            expanded(text_input(FieldSpec { value: s.name, placeholder: "your name", on_edit: (value: string) -> Event => Rename(value) }).labelled("Name")), // components_view.lui:136
-            button("Save", NameDone), // components_view.lui:139
+        column([ // components_view.lui:134
+          text("Settings").with_class("title"), // components_view.lui:135
+          text("Name").with_class("label"), // components_view.lui:136
+          row([ // components_view.lui:137
+            expanded(text_input(FieldSpec { value: s.name, placeholder: "your name", on_edit: (value: string) -> Event => Rename(value) }).labelled("Name")), // components_view.lui:138
+            button("Save", NameDone), // components_view.lui:141
           ]).with_style(Style { gap: Some(8.0) }),
-          text("Volume").with_class("label"), // components_view.lui:141
-          slider(SliderSpec { value: s.volume, min: 0.0, max: 1.0, step: 0.05, on_change: (value: f32) -> Event => SetVolume(value) }).labelled("Volume"), // components_view.lui:142
-          text("Accent").with_class("label"), // components_view.lui:143
-          row([ // components_view.lui:144
-            swatch(s, 0x3C78D8), // components_view.lui:145
-            swatch(s, 0x2E8B57), // components_view.lui:146
-            swatch(s, 0xC0392B), // components_view.lui:147
+          text("Volume").with_class("label"), // components_view.lui:143
+          slider(SliderSpec { value: s.volume, min: 0.0, max: 1.0, step: 0.05, on_change: (value: f32) -> Event => SetVolume(value) }).labelled("Volume"), // components_view.lui:144
+          text("Accent").with_class("label"), // components_view.lui:145
+          row([ // components_view.lui:146
+            swatch(s, 0x3C78D8), // components_view.lui:147
+            swatch(s, 0x2E8B57), // components_view.lui:148
+            swatch(s, 0xC0392B), // components_view.lui:149
           ]).with_style(Style { gap: Some(8.0) }),
-          text("Audio").with_class("label"), // components_view.lui:149
-          toggle_row("Sound", "effects and voices", s.sound, ToggleSound), // components_view.lui:150
-          toggle_row("Music", "the soundtrack", s.music, ToggleMusic), // components_view.lui:151
-          text("Saves").with_class("label"), // components_view.lui:152
-          text("Reset ${s.resets} times"), // components_view.lui:153
-          ...(if s.asking_reset { // components_view.lui:154
+          text("Audio").with_class("label"), // components_view.lui:151
+          toggle_row("Sound", "effects and voices", s.sound, ToggleSound), // components_view.lui:152
+          toggle_row("Music", "the soundtrack", s.music, ToggleMusic), // components_view.lui:153
+          text("Saves").with_class("label"), // components_view.lui:154
+          text("Reset ${s.resets} times"), // components_view.lui:155
+          ...(if s.asking_reset { // components_view.lui:156
             [
-              confirm("Erase every save?", ConfirmReset, CancelReset), // components_view.lui:155
+              confirm("Erase every save?", ConfirmReset, CancelReset), // components_view.lui:157
             ]
           } else {
             [
-              row([ // components_view.lui:158
-                button("Reset...", AskReset), // components_view.lui:158
+              row([ // components_view.lui:160
+                button("Reset...", AskReset), // components_view.lui:160
               ]),
             ]
           }),
         ]).aligned(MainStart, CrossStretch).with_class("card"),
-        ...(if s.asking_quit { // components_view.lui:161
+        ...(if s.asking_quit { // components_view.lui:163
           [
-            column([ // components_view.lui:162
-              confirm("Quit without saving?", ConfirmQuit, CancelQuit), // components_view.lui:163
+            column([ // components_view.lui:164
+              confirm("Quit without saving?", ConfirmQuit, CancelQuit), // components_view.lui:165
             ]).with_class("card"),
           ]
         } else {
           []
         }),
-        text("${s.notice}").with_class("notice"), // components_view.lui:166
+        text("${s.notice}").with_class("notice"), // components_view.lui:168
       ]).aligned(MainStart, CrossStretch).with_class("page"),
     ]),
   ])
 
-/// From components_view.lui, line 172.
+/// From components_view.lui, line 174.
 pub let confirm = pure (question: string, yes: e, no: e) -> Node<e> =>
   component_of("confirm", confirm_sheet, [
-    column([ // components_view.lui:182
-      text("${question}").with_part("question"), // components_view.lui:183
-      row([ // components_view.lui:184
-        button("Yes", yes).with_class("danger"), // components_view.lui:185
-        button("No", no), // components_view.lui:186
+    column([ // components_view.lui:184
+      text("${question}").with_part("question"), // components_view.lui:185
+      row([ // components_view.lui:186
+        button("Yes", yes).with_class("danger"), // components_view.lui:187
+        button("No", no), // components_view.lui:188
       ]),
     ]).with_style(Style { gap: Some(8.0) }),
   ])
 
-/// From components_view.lui, line 192.
+/// From components_view.lui, line 194.
 pub let toggle_row = pure (label: string, note: string, on: bool, toggle: e) -> Node<e> =>
   component("toggle_row", Sheet {}, [
-    row([ // components_view.lui:198
-      checkbox("${label}", on, toggle), // components_view.lui:199
-      text("${note}").with_part("note"), // components_view.lui:200
+    row([ // components_view.lui:200
+      checkbox("${label}", on, toggle), // components_view.lui:201
+      text("${note}").with_part("note"), // components_view.lui:202
     ]).with_style(Style { gap: Some(12.0) }),
   ])
 
-let confirm_sheet = pure (t: Theme) -> Sheet => Sheet { // components_view.lui:177
+let confirm_sheet = pure (t: Theme) -> Sheet => Sheet { // components_view.lui:179
   rules: [
-    Rule { selector: "Button", style: Style { radius: Some(6.0), padding: Some(insets_xy(14.0, 4.0)) } }, // components_view.lui:178
-    Rule { selector: "Button.danger", style: Style { background: Some(rgb(0xAA2828)) } }, // components_view.lui:179
-    Rule { selector: "Row", style: Style { gap: Some(t.space.m) } }, // components_view.lui:180
+    Rule { selector: "Button", style: Style { radius: Some(6.0), padding: Some(insets_xy(14.0, 4.0)) } }, // components_view.lui:180
+    Rule { selector: "Button.danger", style: Style { background: Some(rgb(0xAA2828)) } }, // components_view.lui:181
+    Rule { selector: "Row", style: Style { gap: Some(t.space.m) } }, // components_view.lui:182
   ],
 }
 
-/// From components_view.lui, line 99.
+/// From components_view.lui, line 101.
 pub let components_sheet = pure (t: Theme) -> Sheet => Sheet {
   rules: [
-    Rule { selector: ".page", style: Style { background: Some(t.colors.background), padding: Some(insets(t.space.xl)), gap: Some(t.space.l) } }, // components_view.lui:100
-    Rule { selector: ".toolbar", style: Style { gap: Some(t.space.s) } }, // components_view.lui:101
-    Rule { selector: ".card", style: Style { background: Some(t.colors.surface), border_color: Some(t.colors.border), border_width: Some(1.0), radius: Some(12.0), padding: Some(insets(t.space.l)), gap: Some(t.space.m) } }, // components_view.lui:102
-    Rule { selector: "Text.title", style: Style { font_size: Some(20.0) } }, // components_view.lui:110
-    Rule { selector: "Text.label", style: Style { color: Some(t.colors.muted), font_size: Some(13.0) } }, // components_view.lui:111
-    Rule { selector: ".notice", style: Style { color: Some(t.colors.accent) } }, // components_view.lui:112
-    Rule { selector: ".swatch", style: Style { radius: Some(14.0), padding: Some(insets(0.0)) } }, // components_view.lui:113
-    Rule { selector: ".picked", style: Style { border_color: Some(t.colors.text), border_width: Some(2.0) } }, // components_view.lui:114
-    Rule { selector: ".loaded", style: Style { background: Some(rgb(0x1D4F91)) } }, // components_view.lui:115
-    Rule { selector: "confirm::question", style: Style { color: Some(t.colors.accent) } }, // components_view.lui:117
-    Rule { selector: "toggle_row::note", style: Style { color: Some(t.colors.muted), font_size: Some(13.0) } }, // components_view.lui:118
+    Rule { selector: ".page", style: Style { background: Some(t.colors.background), padding: Some(insets(t.space.xl)), gap: Some(t.space.l) } }, // components_view.lui:102
+    Rule { selector: ".toolbar", style: Style { gap: Some(t.space.s) } }, // components_view.lui:103
+    Rule { selector: ".card", style: Style { background: Some(t.colors.surface), border_color: Some(t.colors.border), border_width: Some(1.0), radius: Some(12.0), padding: Some(insets(t.space.l)), gap: Some(t.space.m) } }, // components_view.lui:104
+    Rule { selector: "Text.title", style: Style { font_size: Some(20.0) } }, // components_view.lui:112
+    Rule { selector: "Text.label", style: Style { color: Some(t.colors.muted), font_size: Some(13.0) } }, // components_view.lui:113
+    Rule { selector: ".notice", style: Style { color: Some(t.colors.accent) } }, // components_view.lui:114
+    Rule { selector: ".swatch", style: Style { radius: Some(14.0), padding: Some(insets(0.0)) } }, // components_view.lui:115
+    Rule { selector: ".picked", style: Style { border_color: Some(t.colors.text), border_width: Some(2.0) } }, // components_view.lui:116
+    Rule { selector: ".loaded", style: Style { background: Some(rgb(0x1D4F91)) } }, // components_view.lui:117
+    Rule { selector: "confirm::question", style: Style { color: Some(t.colors.accent) } }, // components_view.lui:119
+    Rule { selector: "toggle_row::note", style: Style { color: Some(t.colors.muted), font_size: Some(13.0) } }, // components_view.lui:120
   ],
 }

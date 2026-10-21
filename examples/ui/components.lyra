@@ -7,6 +7,9 @@
 //     lyrac run --live examples/ui/components.lyra   # edit the view, keep the state
 //     lyrac run examples/ui/components.lyra -- --script "Tab Enter Tab Tab Enter" --png FILE
 //
+// **Save writes the name to `name.txt` in the program's own folder** (SDL's preference path —
+// `~/Library/Application Support/Lyra/components/` on a Mac), or to `--save-to FILE`.
+//
 // **The loop is `main`'s own** (`while host.step(…) {}`), which is what `lyrac run --live`
 // needs to swap a changed view or update in while the window, the framework's state and the
 // program's stay as they are: run `lui --watch` beside it and an edit to the markup lands in
@@ -18,6 +21,7 @@
 
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
+import bindings.sdl3.{ pref_path }
 import ui.app.{ App, host_of }
 import ui.script.{ timed_platform, parse_steps }
 import ui.backend.{ Platform, DarkMode }
@@ -33,7 +37,7 @@ const WIDTH: f32 = 520.0
 const HEIGHT: f32 = 640.0
 
 let main = () -> u8 => {
-  let args = parse_args(["--script", "--png"])
+  let args = parse_args(["--script", "--png", "--save-to"])
   var fonts = fonts_new()
   if !fonts.add_system_font() {
     println("no font: none of ui.text's SYSTEM_FONTS is here")
@@ -56,7 +60,9 @@ let main = () -> u8 => {
     subscriptions: subscriptions,
     background: Color { r: 0, g: 0, b: 0 }
   }
-  let start = State { dark: platform.appearance() == DarkMode }
+  let folder = pref_path("Lyra", "components") ?? ""
+  let save_to = args.value("--save-to") ?? "${folder}name.txt"
+  let start = State { dark: platform.appearance() == DarkMode, save_to: save_to }
   var status: u8 = 0
   if let Some(script) = args.value("--script") {
     match parse_steps(script) {
